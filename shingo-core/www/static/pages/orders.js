@@ -23,6 +23,16 @@ async function terminateOrder(id) {
   orderControlPost('/api/orders/terminate', {order_id: oid});
 }
 
+// Force-confirm a delivered order whose bin can't be recovered (moved by
+// something else, or arrival side effects never propagated). Same effect
+// as waiting 5 min for the auto-confirm loop. Goes through the recovery
+// repair endpoint, which routes to ForceConfirmDelivered server-side.
+async function forceConfirmDelivered(id) {
+  var oid = parseInt(id, 10);
+  if (!await uiConfirm('Force-confirm order #' + oid + ' (skip operator confirm)? Use when the bin has been moved elsewhere and the order is stuck in delivered.')) return;
+  orderControlPost('/api/recovery/repair', {action: 'force_confirm_delivered', order_id: oid, bin_id: 0});
+}
+
 function setOrderPriority(id) {
   var oid = parseInt(id, 10);
   var p = parseInt(document.getElementById('order-priority').value, 10);
@@ -519,6 +529,7 @@ delegateActions(document.body, {
     closeOrderModal,
     field,
     fieldH,
+    forceConfirmDelivered,
     loadManualOrderBinDropdown,
     loadManualOrderDropdowns,
     manualOrderTransportTypeChanged,

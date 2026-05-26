@@ -4,6 +4,10 @@ func (e *Engine) ReapplyOrderCompletion(orderID int64, actor string) error {
 	return e.recovery.ReapplyOrderCompletion(orderID, actor)
 }
 
+func (e *Engine) ForceConfirmDelivered(orderID int64, actor string) error {
+	return e.recovery.ForceConfirmDelivered(orderID, actor)
+}
+
 func (e *Engine) ReleaseTerminalBinClaim(binID int64, actor string) error {
 	return e.recovery.ReleaseTerminalBinClaim(binID, actor)
 }

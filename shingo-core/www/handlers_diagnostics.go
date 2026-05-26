@@ -128,6 +128,15 @@ func (h *Handlers) apiRepairAnomaly(w http.ResponseWriter, r *http.Request) {
 			h.jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+	case "force_confirm_delivered":
+		if req.OrderID == 0 {
+			h.jsonError(w, "order_id is required", http.StatusBadRequest)
+			return
+		}
+		if err := h.engine.Recovery().ForceConfirmDelivered(req.OrderID, actor); err != nil {
+			h.jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	case "release_terminal_claim":
 		if req.BinID == 0 {
 			h.jsonError(w, "bin_id is required", http.StatusBadRequest)

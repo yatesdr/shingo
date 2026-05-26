@@ -86,6 +86,40 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 	return nil
 }
 
+// ForceConfirmDelivered advances a delivered order through confirm →
+// complete immediately, the same transition the 5-minute auto-confirm
+// loop performs. Used when the operator is stuck — the bin has been
+// moved elsewhere or the arrival side effects never propagated — and
+// waiting 5 minutes isn't acceptable. The onOrderCompleted callback
+// fires the standard completion chain; handleOrderCompleted's
+// claim-based teleport guard ensures the bin isn't snapped back if it
+// no longer claims this order, so calling it is safe regardless of
+// the bin's current physical location.
+func (s *RecoveryService) ForceConfirmDelivered(orderID int64, actor string) error {
+	order, err := s.db.GetOrder(orderID)
+	if err != nil {
+		return fmt.Errorf("order not found")
+	}
+	if order.Status != "delivered" {
+		return fmt.Errorf("order %d is not delivered (status=%q)", orderID, order.Status)
+	}
+	detail := fmt.Sprintf("manually force-confirmed by %s", actor)
+	if err := s.db.UpdateOrderStatus(order.ID, "confirmed", detail); err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+	if err := s.db.CompleteOrder(order.ID); err != nil {
+		return fmt.Errorf("complete order: %w", err)
+	}
+	s.db.AppendAudit("order", order.ID, "recovery.force_confirm_delivered", "", "", actor)
+	s.db.RecordRecoveryAction("force_confirm_delivered", "order", order.ID,
+		"manually advanced delivered → confirmed → completed", actor)
+	if s.engine != nil && s.engine.reconciliation != nil &&
+		s.engine.reconciliation.onOrderCompleted != nil {
+		s.engine.reconciliation.onOrderCompleted(order.ID, order.EdgeUUID, order.StationID)
+	}
+	return nil
+}
+
 func (s *RecoveryService) ReleaseTerminalBinClaim(binID int64, actor string) error {
 	orderID, err := s.db.ReleaseTerminalBinClaim(binID)
 	if err != nil {

@@ -54,6 +54,9 @@
       {{if and (ne .Order.Status "completed") (ne .Order.Status "cancelled") (ne .Order.Status "failed")}}
       <button class="btn btn-danger btn-sm" data-action="terminateOrder:{{.Order.ID}}">Terminate Order</button>
       {{end}}
+      {{if eq .Order.Status "delivered"}}
+      <button class="btn btn-warning btn-sm" data-action="forceConfirmDelivered:{{.Order.ID}}">Force Confirm</button>
+      {{end}}
       <label style="font-size:0.85rem;margin-left:1rem">Priority:</label>
       <input type="number" id="order-priority" value="{{.Order.Priority}}" style="width:5rem">
       <button class="btn btn-sm" data-action="setOrderPriority:{{.Order.ID}}">Set Priority</button>

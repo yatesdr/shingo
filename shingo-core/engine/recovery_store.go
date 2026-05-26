@@ -28,6 +28,11 @@ type RecoveryStore interface {
 	RepairConfirmedOrderCompletion(orderID, binID, toNodeID int64, staged bool, expiresAt *time.Time) error
 	ReleaseTerminalBinClaim(binID int64) (int64, error)
 	ReleaseStagedBin(binID int64) error
+	// ForceConfirmDelivered advances delivered → confirmed → complete
+	// without waiting for the auto-confirm timeout. Two writes — the
+	// same pair the reconciliation auto-confirm loop performs.
+	UpdateOrderStatus(orderID int64, status, detail string) error
+	CompleteOrder(orderID int64) error
 
 	// Audit + recovery action log writes.
 	AppendAudit(entityType string, entityID int64, action, oldValue, newValue, actor string) error
