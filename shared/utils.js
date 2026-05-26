@@ -475,6 +475,23 @@ export function delegateActions(root, handlerMap, opts) {
         : 'action' + event.charAt(0).toUpperCase() + event.slice(1);
     const sentinel = opts.sentinel
         || 'delegated' + (event === 'click' ? '' : '_' + event);
+
+    // Stash a per-(root, sentinel) handler map on the root so multiple
+    // delegateActions calls compose instead of clobbering. The first
+    // call binds the listener and creates the map; subsequent calls
+    // (often from sibling page-script modules that all attach to
+    // document.body) merge their handlers into the same map. Without
+    // this, the sentinel below dropped every map after the first on
+    // the floor, which left half the buttons on pages like Nodes
+    // (where three modules each register their own handlers) unwired.
+    const mapKey = '__delegateActionsMap_' + sentinel;
+    let mergedMap = root[mapKey];
+    if (!mergedMap) {
+        mergedMap = {};
+        root[mapKey] = mergedMap;
+    }
+    Object.assign(mergedMap, handlerMap);
+
     if (root.dataset && root.dataset[sentinel] === '1') return;
     if (root.dataset) root.dataset[sentinel] = '1';
 
@@ -518,7 +535,7 @@ export function delegateActions(root, handlerMap, opts) {
             evt.preventDefault();
         }
 
-        const fn = handlerMap[verb];
+        const fn = mergedMap[verb];
         if (typeof fn !== 'function') return;
         const args = parts.slice(1);
         args.push(el, evt);
