@@ -90,12 +90,23 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 // complete immediately, the same transition the 5-minute auto-confirm
 // loop performs. Used when the operator is stuck — the bin has been
 // moved elsewhere or the arrival side effects never propagated — and
-// waiting 5 minutes isn't acceptable. The onOrderCompleted callback
-// fires the standard completion chain; handleOrderCompleted's
-// claim-based teleport guard ensures the bin isn't snapped back if it
-// no longer claims this order, so calling it is safe regardless of
+// waiting 5 minutes isn't acceptable.
+//
+// Routes through dispatch.LifecycleService.ConfirmReceipt so the
+// transition goes through the order state machine (the forbidigo
+// rule against bare UpdateOrderStatus exists exactly to prevent
+// direct status writes from bypassing the lifecycle's invariants).
+// ConfirmReceipt also handles the CompleteOrder write and is
+// idempotent on already-completed orders.
+//
+// After the transition, fire onOrderCompleted manually so the
+// standard completion chain runs (cleanup, child-order advance,
+// bin-arrival safety net). handleOrderCompleted's claim-based
+// teleport guard ensures the bin isn't snapped back if it no
+// longer claims this order, so calling it is safe regardless of
 // the bin's current physical location.
 func (s *RecoveryService) ForceConfirmDelivered(orderID int64, actor string) error {
+	e := s.engine
 	order, err := s.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("order not found")
@@ -103,19 +114,15 @@ func (s *RecoveryService) ForceConfirmDelivered(orderID int64, actor string) err
 	if order.Status != "delivered" {
 		return fmt.Errorf("order %d is not delivered (status=%q)", orderID, order.Status)
 	}
-	detail := fmt.Sprintf("manually force-confirmed by %s", actor)
-	if err := s.db.UpdateOrderStatus(order.ID, "confirmed", detail); err != nil {
-		return fmt.Errorf("update status: %w", err)
-	}
-	if err := s.db.CompleteOrder(order.ID); err != nil {
-		return fmt.Errorf("complete order: %w", err)
+	receiptType := "force_confirm:" + actor
+	if _, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.StationID, receiptType, 0); err != nil {
+		return fmt.Errorf("confirm receipt: %w", err)
 	}
 	s.db.AppendAudit("order", order.ID, "recovery.force_confirm_delivered", "", "", actor)
 	s.db.RecordRecoveryAction("force_confirm_delivered", "order", order.ID,
 		"manually advanced delivered → confirmed → completed", actor)
-	if s.engine != nil && s.engine.reconciliation != nil &&
-		s.engine.reconciliation.onOrderCompleted != nil {
-		s.engine.reconciliation.onOrderCompleted(order.ID, order.EdgeUUID, order.StationID)
+	if e.reconciliation != nil && e.reconciliation.onOrderCompleted != nil {
+		e.reconciliation.onOrderCompleted(order.ID, order.EdgeUUID, order.StationID)
 	}
 	return nil
 }
