@@ -594,7 +594,7 @@ function createNodeButton(entry) {
             }));
         }
         const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
-        appendETAPills(btn, inboundOrders);
+        appendETAPills(btn, inboundOrders, entry.bin_state);
         btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));
     }
 
@@ -602,24 +602,37 @@ function createNodeButton(entry) {
     return btn;
 }
 
-// Renders one ETA pill per inbound order (in_transit or staged). On a
-// two-robot swap with both legs inbound, stacks two pills (Order A on
-// top, Order B below). The tile is already purple via os-in-transit, so
-// the pill answers the operator's natural follow-up question ("how
-// soon?") rather than restating "in transit".
+// Renders one pill per inbound order. Three states:
+//   - in_transit + no bin at this node → ETA countdown ("ETA: ~3 min")
+//   - staged                           → "Arrived" (robot at the spot)
+//   - in_transit + bin already at node → skip (the order has reverted
+//     to in_transit on the back half of a two-robot swap — partner
+//     robot leaving with the old bin; operator already had their
+//     moment when the bin first landed)
 //
 // inboundOrders is the same list used by the color-priority decision in
-// createNodeButton — passed in rather than recomputed so the pill row
-// and the background color can't disagree.
-function appendETAPills(btn, inboundOrders) {
+// createNodeButton so the pill row and the background color can't
+// disagree. binAtNode discriminates the approach half from the depart
+// half of a swap; without it the pill would tick into "Running late"
+// even though the robot has been at the spot for minutes.
+function appendETAPills(btn, inboundOrders, binState) {
     if (!inboundOrders || inboundOrders.length === 0) return;
-    const displays = inboundOrders.map(o => formatETA(o.eta)).filter(d => !d.empty);
-    if (displays.length === 0) return;
+    const binAtNode = !!(binState && binState.occupied);
+    const pills = [];
+    inboundOrders.forEach(o => {
+        if (o.status === 'staged') {
+            pills.push({ text: 'Arrived', overdue: false });
+        } else if (o.status === 'in_transit' && !binAtNode) {
+            const d = formatETA(o.eta);
+            if (!d.empty) pills.push(d);
+        }
+    });
+    if (pills.length === 0) return;
     const row = el('div', { className: 'os-node-eta' });
-    displays.forEach(display => {
+    pills.forEach(p => {
         row.appendChild(el('span', {
-            className: 'os-node-eta-pill' + (display.overdue ? ' overdue' : ''),
-            textContent: display.text,
+            className: 'os-node-eta-pill' + (p.overdue ? ' overdue' : ''),
+            textContent: p.text,
         }));
     });
     btn.appendChild(row);
