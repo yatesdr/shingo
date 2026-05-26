@@ -68,14 +68,10 @@ function filterNodes() {
   document.getElementById('node-count').textContent = shown + ' nodes';
 }
 
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closeNodeModal(); closeOccupancyModal(); closeAddNodeModal(); closeNgrpModal(); closeLaneModal(); }
-});
-
-document.addEventListener('DOMContentLoaded', function() {
-  buildHierarchy();
-  initDragAndDrop();
-});
+// Escape-closes the per-page modals; the close* handlers each live in
+// their owning module (nodes-detail.js, nodes-supermarket.js) and
+// register their own Escape handlers there. This file no longer
+// references them across module boundaries.
 
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions

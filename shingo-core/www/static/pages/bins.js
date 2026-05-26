@@ -32,6 +32,12 @@ function filterBins() {
 
 // ===== DETAIL MODAL =====
 function openBinDetail(id) {
+  // Invoked two ways: directly with a numeric id (internal callers like
+  // SSE refresh and post-action reload) and via data-action delegation
+  // on a row, where the first arg is the row element. Normalize to id.
+  if (id && typeof id === 'object' && id.dataset) {
+    id = parseInt(id.dataset.binId, 10);
+  }
   currentBinId = id;
   apiGet('/api/bins/detail?id=' + id)
     .then(function(resp) {

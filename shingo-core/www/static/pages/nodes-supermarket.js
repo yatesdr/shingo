@@ -556,3 +556,12 @@ delegateActions(document.body, {
     updateLaneCounts,
     updateLaneDepths
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
+
+document.addEventListener('DOMContentLoaded', function() {
+  buildHierarchy();
+  initDragAndDrop();
+});
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') { closeAddNodeModal(); closeNgrpModal(); closeLaneModal(); }
+});

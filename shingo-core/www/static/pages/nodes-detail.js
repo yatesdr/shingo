@@ -543,3 +543,7 @@ delegateActions(document.body, {
     showChipDropdown,
     toggleInheritOption
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') { closeNodeModal(); closeOccupancyModal(); }
+});
