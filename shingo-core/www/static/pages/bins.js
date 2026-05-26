@@ -178,7 +178,7 @@ async function renderActions(data) {
   if (b.status === 'available' || b.status === 'staged') {
     var stagedActive = (b.status === 'staged');
     html += '<button class="btn btn-sm' + (stagedActive ? ' btn-primary' : '') +
-      '" data-action="doBinAction:\' + (stagedActive ? 'release' : 'stage') + \'">Staged</button> ';
+      '" data-action="doBinAction:' + (stagedActive ? 'release' : 'stage') + '">Staged</button> ';
   }
   if (b.status !== 'retired') html += '<button class="btn btn-sm btn-danger" data-action="doBinAction:retire" >Retire</button> ';
   html += '</div>';
