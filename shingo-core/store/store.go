@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -29,9 +30,27 @@ type DB struct {
 	*sql.DB
 }
 
+// Timeout bounds for the Postgres driver. Without these, pgx/libpq
+// inherits libpq's "wait forever" defaults — a misconfigured host
+// (typo, stale DNS, firewall) wedges every caller of Open / Ping /
+// Query for the full kernel TCP retransmission timeout, and a slow
+// query stalls a goroutine indefinitely.
+//
+//   connect_timeout: bounds the initial TCP connect attempt.
+//   pool_max_conn_lifetime / statement_timeout (ms): caps each query.
+//
+// The connection-health loop re-probes every 30s, so a short bound is
+// the right shape — failed configs surface as "disconnected" in seconds,
+// not minutes.
+const (
+	connectTimeoutSeconds   = 5
+	statementTimeoutSeconds = 30
+)
+
 func dsn(cfg *config.PostgresConfig) string {
-	return fmt.Sprintf("host=%s port=%d dbname=%s user=%s password=%s sslmode=%s",
-		cfg.Host, cfg.Port, cfg.Database, cfg.User, cfg.Password, cfg.SSLMode)
+	return fmt.Sprintf("host=%s port=%d dbname=%s user=%s password=%s sslmode=%s connect_timeout=%d statement_timeout=%d",
+		cfg.Host, cfg.Port, cfg.Database, cfg.User, cfg.Password, cfg.SSLMode,
+		connectTimeoutSeconds, statementTimeoutSeconds*1000)
 }
 
 // ResetDatabase removes all data so the next Open() starts fresh.
@@ -100,14 +119,29 @@ func Open(cfg *config.DatabaseConfig) (*DB, error) {
 // The old connection is closed after the swap. All holders of *DB
 // see the new connection immediately. Brief overlap during the swap
 // is safe because *sql.DB handles in-flight queries on the old pool.
+//
+// Connectivity probe FIRST, migration second. Pre-fix this path called
+// Open(cfg) which ran migrate() before any ping; a misconfigured host
+// (typo, stale DNS, firewall) wedged the migrate's QueryRow calls
+// inside database/sql's pool wait — connect_timeout in the DSN didn't
+// reach those code paths. Now we PingContext with a bounded deadline
+// against the new pool before touching migrate, so an unreachable host
+// surfaces a fast error and the engine stays on its existing
+// connection.
 func (db *DB) Reconnect(cfg *config.DatabaseConfig) error {
-	newDB, err := Open(cfg)
+	newDB, err := OpenWithoutMigrate(cfg)
 	if err != nil {
 		return err
 	}
-	if err := newDB.Ping(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), (connectTimeoutSeconds+2)*time.Second)
+	defer cancel()
+	if err := newDB.PingContext(ctx); err != nil {
 		newDB.Close()
 		return fmt.Errorf("ping new db: %w", err)
+	}
+	if err := newDB.migrate(); err != nil {
+		newDB.Close()
+		return fmt.Errorf("migrate new db: %w", err)
 	}
 	old := db.DB
 	db.DB = newDB.DB
