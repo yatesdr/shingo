@@ -148,6 +148,144 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 	}
 }
 
+// --- Test: Compound children dispatch sequentially, one robot at a time ---
+//
+// Replays the 2026-05-27 compound #51 production scenario: 5 children
+// (2 unbury + 1 retrieve + 2 restock). fireCompleted fires on BOTH
+// (*, Delivered) and (Delivered, Confirmed), so before the
+// sibling-in-flight guard each child caused two AdvanceCompoundOrder
+// calls — one when the fleet reported FINISHED, another when the edge
+// confirmed receipt. Combined with the redundant advanceCompound call
+// in planning_service.go, three robots dispatched into the same
+// cross-aisle corridor at compound creation.
+//
+// Pinning behavior: the NEXT child must NOT dispatch on a sibling's
+// Delivered event, and MUST dispatch on its Confirmed event. Walked
+// across all 5 children sequentially; if this regresses, dispatch
+// silently re-cascades.
+func TestCompound_SequentialChildDispatch_NoDeliveredCascade(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	// 3 lane slots with target at the deepest → 2 blockers → 2 unbury +
+	// 1 retrieve + 2 restock = 5 children, matching production compound #51.
+	// NumShuffles=2 so the planner can park both blockers concurrently.
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
+		Prefix:      "CASCADE",
+		NumSlots:    3,
+		NumShuffles: 2,
+		TargetSlot:  3,
+		TargetAge:   2 * time.Hour,
+	})
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "cascade-test-1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  sc.Payload.Code,
+		SourceNode:   sc.Grp.Name,
+		DeliveryNode: sc.LineNode.Name,
+		Quantity:     1,
+	})
+
+	parent := testdb.RequireOrder(t, db, "cascade-test-1")
+	if parent.Status != dispatch.StatusReshuffling {
+		t.Fatalf("parent status = %q, want %q", parent.Status, dispatch.StatusReshuffling)
+	}
+
+	children, err := db.ListChildOrders(parent.ID)
+	if err != nil {
+		t.Fatalf("list children: %v", err)
+	}
+	if len(children) != 5 {
+		t.Fatalf("expected 5 children (2 unbury + 1 retrieve + 2 restock), got %d", len(children))
+	}
+
+	// Only the first child should be dispatched at compound creation;
+	// every later child must still be Pending with no VendorOrderID.
+	for i, c := range children {
+		c, err = db.GetOrder(c.ID)
+		if err != nil {
+			t.Fatalf("get child %d: %v", i, err)
+		}
+		if i == 0 {
+			if c.VendorOrderID == "" {
+				t.Fatalf("first child not dispatched at compound creation — status=%s", c.Status)
+			}
+			continue
+		}
+		if c.VendorOrderID != "" {
+			t.Fatalf("child %d (seq %d) dispatched at compound creation — vendor=%s status=%s; should wait for predecessor confirm",
+				c.ID, c.Sequence, c.VendorOrderID, c.Status)
+		}
+		if c.Status != dispatch.StatusPending {
+			t.Fatalf("child %d (seq %d) status = %q at compound creation, want %q",
+				c.ID, c.Sequence, c.Status, dispatch.StatusPending)
+		}
+	}
+
+	// Walk each child through delivered → confirmed sequentially.
+	for i, child := range children {
+		child, err = db.GetOrder(child.ID)
+		if err != nil {
+			t.Fatalf("get child %d: %v", i, err)
+		}
+		if child.VendorOrderID == "" {
+			t.Fatalf("child %d (seq %d) not dispatched at start of iteration — status=%s", child.ID, child.Sequence, child.Status)
+		}
+
+		// FINISHED → StatusDelivered fires the first fireCompleted edge.
+		sim.DriveState(child.VendorOrderID, "RUNNING")
+		sim.DriveState(child.VendorOrderID, "FINISHED")
+
+		// After delivered, the next sibling must NOT yet be dispatched.
+		if i+1 < len(children) {
+			next, err := db.GetOrder(children[i+1].ID)
+			if err != nil {
+				t.Fatalf("get next child after sibling %d delivered: %v", child.Sequence, err)
+			}
+			if next.VendorOrderID != "" {
+				t.Fatalf("child %d (seq %d) dispatched on sibling %d delivered — should wait for confirmed; vendor=%s status=%s",
+					next.ID, next.Sequence, child.Sequence, next.VendorOrderID, next.Status)
+			}
+			if next.Status != dispatch.StatusPending {
+				t.Fatalf("child %d (seq %d) status = %q after sibling delivered, want %q",
+					next.ID, next.Sequence, next.Status, dispatch.StatusPending)
+			}
+		}
+
+		// Edge receipt → StatusConfirmed (terminal) fires the second
+		// fireCompleted edge, which is the one that legitimately advances.
+		d.HandleOrderReceipt(env, &protocol.OrderReceipt{
+			OrderUUID:   child.EdgeUUID,
+			ReceiptType: "confirmed",
+			FinalCount:  1,
+		})
+
+		// After confirmed, the next sibling MUST now be dispatched.
+		if i+1 < len(children) {
+			next, err := db.GetOrder(children[i+1].ID)
+			if err != nil {
+				t.Fatalf("get next child after sibling %d confirmed: %v", child.Sequence, err)
+			}
+			if next.VendorOrderID == "" {
+				t.Fatalf("child %d (seq %d) not dispatched after sibling %d confirmed — status=%s",
+					next.ID, next.Sequence, child.Sequence, next.Status)
+			}
+		}
+	}
+
+	// Parent must terminate at Confirmed after all five children confirmed.
+	parent = testdb.RequireOrder(t, db, "cascade-test-1")
+	if parent.Status != dispatch.StatusConfirmed {
+		t.Errorf("parent status = %q, want %q", parent.Status, dispatch.StatusConfirmed)
+	}
+}
+
 // --- Test: Compound child failure mid-reshuffle — blocker stranding ---
 //
 // Scenario: A 3-step reshuffle is in progress (unbury blocker → retrieve target

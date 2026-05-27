@@ -61,7 +61,12 @@ type PlanningService struct {
 	debug       func(string, ...any)
 	lifecycle   plannerLifecycle
 
-	createCompound  func(parentOrder *orders.Order, plan *ReshufflePlan) error
+	createCompound func(parentOrder *orders.Order, plan *ReshufflePlan) error
+	// advanceCompound: potential dead code as of 2026-05-27. The only call
+	// site (planBuriedReshuffle) was removed when the redundant double-advance
+	// at compound creation was identified as a contributor to the production
+	// reshuffle cascade. Left wired so the deferred advisory-lock follow-up
+	// has a hook if it needs one; remove if no follow-up materializes.
 	advanceCompound func(parentOrderID int64) error
 
 	handlers map[protocol.OrderType]PlanningHandler
@@ -370,13 +375,13 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 		return nil, &planningError{Code: "reshuffle_error", Detail: fmt.Sprintf("cannot create compound order: %v", err), Err: err}
 	}
 	// createCompound already transitioned the parent to Reshuffling via
-	// lifecycle.BeginReshuffle. The previous code re-wrote the same status
-	// here, which would now fail the protocol.IsValidTransition guard
-	// (Reshuffling → Reshuffling is not a legal edge).
+	// lifecycle.BeginReshuffle and dispatched the first child via the
+	// tail AdvanceCompoundOrder call in CreateCompoundChildrenOnly — any
+	// dispatch error from that path is surfaced through the createCompound
+	// error wrap above. Do NOT add a second advanceCompound here: stacking
+	// two advances within milliseconds dispatched a second child before
+	// the first left the dock on the 2026-05-27 production reshuffle.
 	s.dbg("retrieve: compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
-	if err := s.advanceCompound(order.ID); err != nil {
-		return nil, &planningError{Code: "reshuffle_error", Detail: err.Error(), Err: err}
-	}
 	return &PlanningResult{Handled: true}, nil
 }
 

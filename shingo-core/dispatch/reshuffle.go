@@ -310,8 +310,11 @@ func findShuffleSlots(db *store.DB, groupID int64, count int) ([]*nodes.Node, er
 
 	var available []*nodes.Node
 
-	// Pass 1: direct physical children of the group (always accessible)
-	for _, c := range children {
+	// Pass 1: direct physical children of the group (always accessible).
+	// Reverse-iterate so any depth-carrying direct children are visited
+	// deepest-first — matches the lane-FIFO invariant maintained in Pass 2.
+	for i := len(children) - 1; i >= 0; i-- {
+		c := children[i]
 		if !c.Enabled || c.IsSynthetic {
 			continue
 		}
@@ -327,7 +330,13 @@ func findShuffleSlots(db *store.DB, groupID int64, count int) ([]*nodes.Node, er
 		}
 	}
 
-	// Pass 2: any empty accessible slot across all lanes
+	// Pass 2: any empty accessible slot across all lanes.
+	// ListLaneSlots returns slots ORDER BY depth ASC; we reverse-iterate so
+	// the DEEPEST empty slot is taken first. Filling shallow-first violates
+	// the lane FIFO invariant — a bin at depth 1 makes IsSlotAccessible
+	// false for every deeper slot, even ones the plan picked as future
+	// pickup/dropoff destinations. If ListLaneSlots' ORDER BY ever changes,
+	// this reverse-iterate silently breaks.
 	for _, c := range children {
 		if !c.Enabled || c.NodeTypeCode != "LANE" {
 			continue
@@ -336,7 +345,8 @@ func findShuffleSlots(db *store.DB, groupID int64, count int) ([]*nodes.Node, er
 			continue
 		}
 		slots, _ := db.ListLaneSlots(c.ID)
-		for _, slot := range slots {
+		for i := len(slots) - 1; i >= 0; i-- {
+			slot := slots[i]
 			if !slot.Enabled {
 				continue
 			}

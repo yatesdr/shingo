@@ -96,6 +96,27 @@ func (d *Dispatcher) CreateCompoundChildrenOnly(parentOrder *orders.Order, plan 
 
 // AdvanceCompoundOrder dispatches the next pending child order in a compound sequence.
 func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
+	// Sibling-in-flight guard: never dispatch the next child while another
+	// sibling is non-pending and non-terminal (sourcing / acknowledged /
+	// dispatched / in_transit / staged / delivered / faulted). Without this,
+	// fireCompleted firing on BOTH (*, Delivered) and (Delivered, Confirmed)
+	// would advance the next child twice across one sibling's lifecycle —
+	// once before the bin lands and again after edge confirm — and the
+	// redundant createCompound→advanceCompound path used to fire a second
+	// dispatch within milliseconds of compound creation. On 2026-05-27 these
+	// stacked to dispatch three robots into the same cross-aisle corridor.
+	//
+	// This guard is sequential-only — it inspects state at call time without
+	// holding a lock. A pg_advisory_lock(parentOrderID) at top/bottom would
+	// close the two-goroutine race; deferred until the audit query (see
+	// SHINGO_TODO "Reshuffle dispatch cascade") shows it has ever fired.
+	children, _ := d.db.ListChildOrders(parentOrderID)
+	for _, c := range children {
+		if c.Status != StatusPending && !protocol.IsTerminal(c.Status) {
+			return nil
+		}
+	}
+
 	next, err := d.db.GetNextChildOrder(parentOrderID)
 	if err != nil {
 		// No more PENDING children — but "not pending" doesn't mean "done".
