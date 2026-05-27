@@ -483,9 +483,9 @@ function openCycleCount() {
     if (row.style.display !== 'none' && row.dataset.payload) count++;
   });
   document.getElementById('cc-preview-count').textContent = count + ' bins to count';
-  document.getElementById('cc-step1').style.display = '';
-  document.getElementById('cc-step2').style.display = 'none';
-  document.getElementById('cc-step3').style.display = 'none';
+  document.getElementById('cc-step1').classList.remove('hide');
+  document.getElementById('cc-step2').classList.add('hide');
+  document.getElementById('cc-step3').classList.add('hide');
   showModal('cc-modal');
 }
 
@@ -511,8 +511,8 @@ function ccStart() {
   if (ccState.bins.length === 0) { toast('No bins with payloads to count', 'info'); return; }
   ccState.index = 0;
   ccState.results = [];
-  document.getElementById('cc-step1').style.display = 'none';
-  document.getElementById('cc-step2').style.display = '';
+  document.getElementById('cc-step1').classList.add('hide');
+  document.getElementById('cc-step2').classList.remove('hide');
   document.getElementById('cc-total').textContent = ccState.bins.length;
   ccShowBin();
 }
@@ -573,8 +573,8 @@ function ccAdvance() {
 }
 
 function ccSummary() {
-  document.getElementById('cc-step2').style.display = 'none';
-  document.getElementById('cc-step3').style.display = '';
+  document.getElementById('cc-step2').classList.add('hide');
+  document.getElementById('cc-step3').classList.remove('hide');
   var matched = 0, disc = 0, skipped = 0, flagged = 0;
   ccState.results.forEach(function(r) {
     if (r.result === 'match') matched++;

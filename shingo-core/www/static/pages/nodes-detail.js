@@ -21,10 +21,10 @@ export function openNodeModal(el) {
   var typeInfo = document.getElementById('modal-type-info');
   var tiParent = d.parentName || '-';
   document.getElementById('ti-parent').textContent = tiParent;
-  typeInfo.style.display = d.parentId ? '' : 'none';
+  typeInfo.classList.toggle('hide', !d.parentId);
 
   // Inventory
-  inv.style.display = d.synthetic === 'true' ? 'none' : '';
+  inv.classList.toggle('hide', d.synthetic === 'true');
   document.getElementById('inv-count').textContent = d.count;
   if (d.synthetic !== 'true') {
     loadInventory(d.id);
@@ -44,12 +44,16 @@ export function openNodeModal(el) {
 
   // Hide associations for lane slots (inherit from lane), show for direct children of NGRP
   var assocDiv = document.getElementById('modal-associations');
-  if (assocDiv && isLaneSlot) assocDiv.style.display = 'none';
+  if (assocDiv && isLaneSlot) assocDiv.classList.add('hide');
 
-  // Show algorithm dropdowns only for NGRP nodes
+  // Show algorithm dropdowns only for NGRP nodes. Toggle the `hide`
+  // class — `style="display:none"` was swapped for `class="hide"` in
+  // the UI-consistency refactor, but the inline style.display toggle
+  // here wasn't updated, so .hide kept the wrapper invisible for every
+  // node type.
   var algoDiv = document.getElementById('ngrp-algorithms');
   if (algoDiv) {
-    algoDiv.style.display = d.typeCode === 'NGRP' ? '' : 'none';
+    algoDiv.classList.toggle('hide', d.typeCode !== 'NGRP');
     if (d.typeCode === 'NGRP') {
       document.getElementById('nf-retrieve-algo').value = 'FIFO';
       document.getElementById('nf-store-algo').value = 'LKND';
@@ -87,7 +91,7 @@ export function openNodeModal(el) {
 function loadNodeDetail(nodeID, isSynthetic) {
   var assocDiv = document.getElementById('modal-associations');
 
-  if (assocDiv) assocDiv.style.display = 'none';
+  if (assocDiv) assocDiv.classList.add('hide');
 
   apiGet('/api/nodes/detail?id=' + nodeID)
     .then(function(data) {
@@ -103,7 +107,7 @@ function loadNodeDetail(nodeID, isSynthetic) {
         document.getElementById('assoc-stations').textContent = stLabel;
         var btLabel = btMode === 'all' ? 'Any' : btMode === 'specific' ? (bts.length > 0 ? bts.map(function(b) { return b.code; }).join(', ') : 'None') : (effBts && effBts.length > 0 ? effBts.map(function(b) { return b.code; }).join(', ') + ' (inherited)' : 'Any');
         document.getElementById('assoc-bt').textContent = btLabel;
-        if (assocDiv) assocDiv.style.display = '';
+        if (assocDiv) assocDiv.classList.remove('hide');
       }
 
       if (isAuth) {
@@ -211,7 +215,7 @@ function onModeChange(name) {
   var cfg = getPickerConfig(name);
   var mode = document.getElementById(cfg.modeId).value;
   var spec = document.getElementById('cp-' + name + '-specific');
-  spec.style.display = mode === 'specific' ? '' : 'none';
+  spec.classList.toggle('hide', mode !== 'specific');
 }
 
 function toggleInheritOption(selectId, hasParent) {
@@ -289,14 +293,14 @@ function filterChipDropdown(name) { renderChipDropdown(name); }
 
 function showChipDropdown(name) {
   var dd = document.getElementById('cp-' + name + '-dropdown');
-  dd.style.display = '';
+  dd.classList.remove('hide');
   renderChipDropdown(name);
 }
 
 function hideChipDropdown(name) {
   setTimeout(function() {
     var dd = document.getElementById('cp-' + name + '-dropdown');
-    dd.style.display = 'none';
+    dd.classList.add('hide');
   }, 150);
 }
 
@@ -322,7 +326,7 @@ function closeNodeModal() {
 
 function saveAlgorithmProperties() {
   var algoDiv = document.getElementById('ngrp-algorithms');
-  if (!algoDiv || algoDiv.style.display === 'none') return;
+  if (!algoDiv || algoDiv.classList.contains('hide')) return;
   var nodeID = parseInt(document.getElementById('nf-id').value);
   if (!nodeID) return;
   var retrieveAlgo = document.getElementById('nf-retrieve-algo').value;
@@ -364,7 +368,7 @@ function loadInventory(nodeID) {
   currentNodeID = parseInt(nodeID);
   expandedPayloadID = 0;
   var manifestSec = document.getElementById('inv-manifest');
-  if (manifestSec) manifestSec.style.display = 'none';
+  if (manifestSec) manifestSec.classList.add('hide');
   var list = document.getElementById('inv-list');
   var countEl = document.getElementById('inv-count');
   list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
@@ -407,7 +411,7 @@ function expandPayloadManifest(payloadID) {
   expandedPayloadID = payloadID;
   var sec = document.getElementById('inv-manifest');
   document.getElementById('inv-manifest-pid').textContent = payloadID;
-  sec.style.display = '';
+  sec.classList.remove('hide');
   var tbody = document.getElementById('inv-manifest-rows');
   tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Loading...</td></tr>';
   apiGet('/api/payloads/manifest?id=' + payloadID)
@@ -551,7 +555,7 @@ async function handleNodeSave(el, evt) {
 }
 
 function closeManifestExpand() {
-  document.getElementById('inv-manifest').style.display = 'none';
+  document.getElementById('inv-manifest').classList.add('hide');
   expandedPayloadID = 0;
 }
 
