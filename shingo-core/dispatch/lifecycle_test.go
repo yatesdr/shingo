@@ -346,6 +346,9 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 		{"CompleteCompound_ReshufflingToConfirmed", StatusReshuffling,
 			func(o *orders.Order) error { return lc.CompleteCompound(o) },
 			StatusConfirmed},
+		{"ResumeCompound_ReshufflingToQueued", StatusReshuffling,
+			func(o *orders.Order) error { return lc.ResumeCompound(o) },
+			StatusQueued},
 	}
 	for i, c := range cases {
 		c := c
@@ -363,6 +366,33 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 }
 
 // ── Action firing semantics ──────────────────────────────────────────────
+
+// TestActionMap_ReshufflingToQueued_FiresRequeued locks in the §12.2
+// Surface 4 contract: the {Reshuffling, Queued} actionMap entry must
+// fire EmitOrderQueued (so the fulfillment scanner re-runs in-band)
+// and must NOT fire EmitOrderCompleted (which would re-enter the
+// delivered/bin-arrival pipeline for an order that hasn't picked
+// anything up yet).
+func TestActionMap_ReshufflingToQueued_FiresRequeued(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	lc, emitter := newLifecycleForTest(t, db)
+
+	ord := makeOrderAt(t, db, "actionmap-resh-to-queued", StatusReshuffling)
+	if err := lc.ResumeCompound(ord); err != nil {
+		t.Fatalf("ResumeCompound: %v", err)
+	}
+
+	if len(emitter.queued) != 1 {
+		t.Fatalf("EmitOrderQueued calls = %d, want 1", len(emitter.queued))
+	}
+	if emitter.queued[0].orderID != ord.ID {
+		t.Errorf("EmitOrderQueued orderID = %d, want %d", emitter.queued[0].orderID, ord.ID)
+	}
+	if len(emitter.completed) != 0 {
+		t.Errorf("EmitOrderCompleted calls = %d, want 0 (parent has not picked up yet)", len(emitter.completed))
+	}
+}
 
 func TestLifecycle_EmitCancelled_PreviousStatusPopulated(t *testing.T) {
 	t.Parallel()

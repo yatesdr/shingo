@@ -250,6 +250,14 @@ const (
 	OrderTypeMove          OrderType = "move"           // generic move; no manifest semantics
 	OrderTypeComplex       OrderType = "complex"        // multi-step order composed of sub-steps
 	OrderTypeIngest        OrderType = "ingest"         // edge-only: produce node ingests a finished bin
+	// OrderTypeReshuffleRestore is a Core-internal housekeeping order
+	// that wraps the post-pickup restock compound for the complex-order
+	// buried-bin reshuffle "restore blockers" toggle. Never created by
+	// edge; not dispatched to edge; filtered out of the admin orders
+	// list. The synthetic-parent type exists so the restock compound
+	// has a parent row to satisfy AdvanceCompoundOrder, since the
+	// compound machinery keys off ParentOrderID != nil.
+	OrderTypeReshuffleRestore OrderType = "reshuffle_restore"
 )
 
 // StationBroadcast is the wildcard station value that matches all edge instances.
@@ -284,7 +292,12 @@ var validTransitions = map[Status][]Status{
 	// inflight bin claim becomes invalid.
 	// Queued → Skipped is fired by DispatchPreparedComplex when claimComplexBins
 	// finds zero bins at every pickup node — the work was never needed.
-	StatusQueued: {StatusAcknowledged, StatusDispatched, StatusInTransit, StatusSourcing, StatusCancelled, StatusFailed, StatusSkipped},
+	// Queued → Reshuffling supports the complex-order buried-source path:
+	// complex intake creates the parent at Queued, then pivots to
+	// Reshuffling when the resolver returns *BuriedError. (Simple
+	// retrieves take Pending → Reshuffling instead; the parent is still
+	// in pending when planning sees the burial.)
+	StatusQueued: {StatusAcknowledged, StatusDispatched, StatusInTransit, StatusSourcing, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
 
 	// Acknowledged|Dispatched → Sourcing supports PrepareRedirect: the order
 	// is re-resolved against a new delivery node after the vendor leg is
@@ -302,7 +315,13 @@ var validTransitions = map[Status][]Status{
 	// gives up (faulted→failed) or the operator cancels (faulted→cancelled).
 	StatusFaulted: {StatusInTransit, StatusDelivered, StatusFailed, StatusCancelled},
 	StatusDelivered:   {StatusConfirmed, StatusCancelled, StatusFailed},
-	StatusReshuffling: {StatusConfirmed, StatusCancelled, StatusFailed},
+	// Reshuffling → Queued is the complex-order resume edge: after a
+	// compound completes successfully, the complex parent transitions
+	// back to Queued so the fulfillment scanner picks it up and
+	// re-resolves its original pickup step against the now-accessible
+	// slot. Simple-retrieve compounds still terminate at Confirmed —
+	// see dispatch/compound.go AdvanceCompoundOrder routing.
+	StatusReshuffling: {StatusConfirmed, StatusQueued, StatusCancelled, StatusFailed},
 }
 
 // IsTerminal returns true if the status has no outgoing transitions in

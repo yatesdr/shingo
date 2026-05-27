@@ -75,6 +75,18 @@ func (e *Engine) maybeCreateReturnOrder(order *orders.Order, reason string) {
 		return
 	}
 
+	// OrderTypeReshuffleRestore is intentionally excluded from
+	// auto-return: housekeeping orders have no meaningful origin to
+	// return to (the synthetic parent owns no bin claim of its own;
+	// its children carry the restock moves). This skip is currently
+	// dormant because autoReturnEnabled = false short-circuits above.
+	// When auto-return is re-enabled, add test coverage for this
+	// skip (e.g., TestAutoReturn_SkipsReshuffleRestoreParent in
+	// wiring_auto_return_test.go).
+	if order.OrderType == dispatch.OrderTypeReshuffleRestore {
+		return
+	}
+
 	// Don't create return orders for compound/reshuffle children
 	if order.ParentOrderID != nil {
 		return

@@ -2,7 +2,6 @@ package dispatch
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 
@@ -163,13 +162,19 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 		if err == nil && srcGroup.IsSynthetic && srcGroup.NodeTypeCode == "NGRP" {
 			result, err := s.resolver.Resolve(srcGroup, OrderTypeRetrieve, payloadCode, nil)
 			if err != nil {
-				var buriedErr *BuriedError
-				if errors.As(err, &buriedErr) {
+				// Route through the same classifier the complex-
+				// intake path uses. Behavior unchanged on this
+				// surface — buried → planBuriedReshuffle, structural
+				// → terminal planningError, capacity → queue. The
+				// classifier just replaces the two open-coded
+				// errors.As blocks.
+				switch class, payload := classifyResolutionError(err); class {
+				case ResolutionBuried:
+					buriedErr := payload.(*BuriedError)
 					s.dbg("retrieve: bin %d buried in lane %d, planning reshuffle", buriedErr.Bin.ID, buriedErr.LaneID)
 					return s.planBuriedReshuffle(order, buriedErr)
-				}
-				var structErr *StructuralError
-				if errors.As(err, &structErr) {
+				case ResolutionStructural:
+					structErr := payload.(*StructuralError)
 					s.dbg("retrieve: STRUCTURAL failure in group %s: %s",
 						order.SourceNode, structErr.Reason)
 					return nil, &planningError{
@@ -177,9 +182,14 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 						Detail: structErr.Error(),
 						Err:    structErr,
 					}
+				default:
+					// ResolutionCapacity, Transient, and Fatal all
+					// queue here today. The pre-v7 path made the
+					// same call — anything not buried-or-structural
+					// fell through to the queue branch. Preserve.
+					s.dbg("retrieve: no source in group %s for payload=%s, queuing order %d", order.SourceNode, payloadCode, order.ID)
+					return &PlanningResult{Queued: true}, nil
 				}
-				s.dbg("retrieve: no source in group %s for payload=%s, queuing order %d", order.SourceNode, payloadCode, order.ID)
-				return &PlanningResult{Queued: true}, nil
 			}
 			source = result.Bin
 			sourceNode, _ = s.db.GetNode(*source.NodeID)
@@ -417,18 +427,20 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 	if sourceNode.IsSynthetic && sourceNode.NodeTypeCode == "NGRP" && s.resolver != nil {
 		result, rErr := s.resolver.Resolve(sourceNode, OrderTypeRetrieve, payloadCode, nil)
 		if rErr != nil {
-			var buriedErr *BuriedError
-			if errors.As(rErr, &buriedErr) {
+			switch class, payload := classifyResolutionError(rErr); class {
+			case ResolutionBuried:
+				buriedErr := payload.(*BuriedError)
 				s.dbg("move: bin %d buried in lane %d, planning reshuffle", buriedErr.Bin.ID, buriedErr.LaneID)
 				return s.planBuriedReshuffle(order, buriedErr)
-			}
-			var structErr *StructuralError
-			if errors.As(rErr, &structErr) {
-				s.dbg("move: STRUCTURAL failure in group %s: %s (falling through to FIFO)",
+			case ResolutionStructural:
+				structErr := payload.(*StructuralError)
+				s.dbg("move: STRUCTURAL failure in group %s: %s (falling through to queue)",
 					order.SourceNode, structErr.Reason)
+				fallthrough
+			default:
+				s.dbg("move: no source in group %s for payload=%s, queuing order %d", order.SourceNode, payloadCode, order.ID)
+				return &PlanningResult{Queued: true}, nil
 			}
-			s.dbg("move: no source in group %s for payload=%s, queuing order %d", order.SourceNode, payloadCode, order.ID)
-			return &PlanningResult{Queued: true}, nil
 		}
 		if result.Bin != nil {
 			remainingUOP := extractRemainingUOP(env)

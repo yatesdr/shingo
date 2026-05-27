@@ -10,6 +10,8 @@ import (
 
 	"shingo/protocol"
 	"shingocore/fleet"
+	"shingocore/store"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
@@ -62,14 +64,28 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	resolvedSteps, err := d.resolveComplexSteps(p.Steps, payloadCode)
 	var queueReason string
 	if err != nil {
-		if !isCapacityResolutionError(err) {
+		class, payload := classifyResolutionError(err)
+		switch class {
+		case ResolutionBuried:
+			// Route to the reshuffle path: create the parent at
+			// Queued, pivot to Reshuffling, plan + dispatch an
+			// unbury (or unbury+retrieve) compound. When the
+			// compound completes the parent resumes back to Queued
+			// and the fulfillment scanner runs the original first
+			// pickup against the now-accessible slot.
+			d.handleComplexBuriedAtIntake(env, p, payloadCode, payload.(*BuriedError))
+			return
+		case ResolutionCapacity:
+			// Capacity-shaped — preserve the original step shape (NGRP
+			// names intact) so the replay path has the input it needs
+			// to re-attempt.
+			resolvedSteps = stepsAsResolved(p.Steps)
+			queueReason = err.Error()
+		default:
+			// Structural / transient / fatal — terminal at intake.
 			d.sendError(env, p.OrderUUID, "resolution_failed", err.Error())
 			return
 		}
-		// Capacity-shaped — preserve the original step shape (NGRP names
-		// intact) so the replay path has the input it needs to re-attempt.
-		resolvedSteps = stepsAsResolved(p.Steps)
-		queueReason = err.Error()
 	}
 
 	stepsJSON, err := json.Marshal(resolvedSteps)
@@ -145,6 +161,19 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 // scanner's perspective (steps unparseable, bins unavailable, fleet
 // rejects).
 func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
+	// Defense-in-depth: the fulfillment scanner's tryFulfill already
+	// gates on StatusQueued before calling here, so a parent in
+	// Reshuffling (with a compound in flight) won't reach us through
+	// the scanner. Anything that calls this function directly (engine
+	// recovery, future call sites) must still respect the invariant —
+	// proceeding on a non-Queued order would re-dispatch a parent
+	// mid-reshuffle or post-resume races. Return nil so the caller
+	// treats it as a no-op rather than an error.
+	if order.Status != StatusQueued {
+		d.dbg("complex: DispatchPreparedComplex called with status=%s (want queued); skipping", order.Status)
+		return nil
+	}
+
 	var resolvedSteps []resolvedStep
 	if err := json.Unmarshal([]byte(order.StepsJSON), &resolvedSteps); err != nil {
 		d.failOrderInternal(order, "invalid_steps", fmt.Sprintf("parse stored steps: %v", err))
@@ -161,7 +190,17 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// names so subsequent ticks don't redo the work.
 	newSteps, changed, rerr := d.reResolveComplexSteps(resolvedSteps, order.PayloadCode)
 	if rerr != nil {
-		if isCapacityResolutionError(rerr) {
+		class, payload := classifyResolutionError(rerr)
+		switch class {
+		case ResolutionBuried:
+			// Multi-burial scenario: a second-or-later step in the
+			// order hit a burial after the first compound completed.
+			// Same planner the intake path uses.
+			buriedErr := payload.(*BuriedError)
+			d.dbg("complex: order %d buried at replay — bin %d in lane %d", order.ID, buriedErr.Bin.ID, buriedErr.LaneID)
+			d.handleComplexBuriedOnReplay(order, buriedErr)
+			return rerr
+		case ResolutionCapacity:
 			reason := rerr.Error()
 			if order.QueueReason != reason {
 				if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
@@ -170,9 +209,10 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 			}
 			d.dbg("complex: order %d still capacity-blocked at NGRP resolution: %s", order.ID, reason)
 			return rerr
+		default:
+			d.failOrderInternal(order, "invalid_steps", rerr.Error())
+			return rerr
 		}
-		d.failOrderInternal(order, "invalid_steps", rerr.Error())
-		return rerr
 	}
 	if changed {
 		stepsJSON, mErr := json.Marshal(newSteps)
@@ -311,4 +351,257 @@ func (d *Dispatcher) skipOrderInternal(order *orders.Order, code, detail string)
 		log.Printf("dispatch: skip order %d: %v", order.ID, err)
 	}
 	d.emitter.EmitOrderSkipped(order.ID, order.EdgeUUID, order.StationID, code, detail)
+}
+
+// handleComplexBuriedAtIntake creates the complex parent at Queued,
+// acks edge, then plans and dispatches a buried-bin reshuffle
+// compound. Branches on the source group's reshuffle_target_nodes
+// property:
+//
+//   - empty → expose mode (PlanReshuffleUnburyOnly). Parent resumes
+//     and re-runs its original first pickup against the now-
+//     accessible original slot.
+//   - non-empty with at least one empty target → target-node mode
+//     (PlanReshuffleToTarget). Compound moves the target bin to the
+//     first empty configured target; parent re-resolves against the
+//     group on resume and finds it at the target node.
+//   - non-empty with all targets occupied → leave parent Queued with
+//     queue_reason. Scanner replays on bin/order events; once a
+//     target frees the next replay proceeds.
+//
+// Lane contention: if the buried lane is already locked or TryLock
+// races, leave the parent Queued with queue_reason — same disposition
+// as planning_service.planBuriedReshuffle.
+func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *protocol.ComplexOrderRequest, payloadCode string, buried *BuriedError) {
+	stationID := env.Src.Station
+	d.dbg("complex: order %s buried at intake — bin %d in lane %d (slot %s)",
+		p.OrderUUID, buried.Bin.ID, buried.LaneID, buried.Slot.Name)
+
+	// Preserve the original NGRP-bearing step shape so the resume path
+	// (parent → Queued → scanner → reResolveComplexSteps) has the input
+	// it needs to re-resolve once the compound completes.
+	resolvedSteps := stepsAsResolved(p.Steps)
+	stepsJSON, err := json.Marshal(resolvedSteps)
+	if err != nil {
+		d.sendError(env, p.OrderUUID, "internal_error", "failed to marshal steps")
+		return
+	}
+	sourceNode, deliveryNode := extractEndpoints(resolvedSteps)
+
+	order := &orders.Order{
+		EdgeUUID:     p.OrderUUID,
+		StationID:    stationID,
+		OrderType:    OrderTypeComplex,
+		Status:       StatusQueued,
+		Quantity:     p.Quantity,
+		Priority:     p.Priority,
+		PayloadDesc:  p.PayloadDesc,
+		SourceNode:   sourceNode,
+		DeliveryNode: deliveryNode,
+		ProcessNode:  p.ProcessNode,
+		StepsJSON:    string(stepsJSON),
+	}
+	if err := d.db.CreateOrder(order); err != nil {
+		log.Printf("dispatch: create complex parent for buried reshuffle: %v", err)
+		d.sendError(env, p.OrderUUID, "internal_error", err.Error())
+		return
+	}
+	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeComplex, payloadCode, deliveryNode)
+	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode)
+
+	// Resolve the lane's parent group so the planner has the group ID
+	// for shuffle-slot search and the target_nodes property read.
+	lane, err := d.db.GetNode(buried.LaneID)
+	if err != nil || lane == nil || lane.ParentID == nil {
+		d.dbg("complex: buried lane %d lookup failed (%v) — failing parent %d", buried.LaneID, err, order.ID)
+		d.failOrderInternal(order, "reshuffle_error", "cannot determine node group for buried lane")
+		return
+	}
+	groupID := *lane.ParentID
+
+	// Lane-contention: leave the parent Queued for scanner replay.
+	if d.laneLock.IsLocked(buried.LaneID) {
+		reason := fmt.Sprintf("lane %d locked by reshuffle for another order", buried.LaneID)
+		if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+			log.Printf("dispatch: set queue_reason on lane contention: %v", serr)
+		}
+		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+		return
+	}
+
+	// Mode selection: empty target_nodes → expose mode; non-empty →
+	// target-node mode (or queue when all targets occupied).
+	targetNodeNames := ReshuffleTargetNodes(d.db, groupID)
+	var plan *ReshufflePlan
+	if len(targetNodeNames) == 0 {
+		plan, err = PlanReshuffleUnburyOnly(d.db, buried.Bin, buried.Slot, lane, groupID)
+	} else {
+		targetNode, allOccupied, terr := d.pickEmptyReshuffleTarget(groupID, targetNodeNames)
+		if terr != nil {
+			d.failOrderInternal(order, "reshuffle_error", terr.Error())
+			return
+		}
+		if allOccupied {
+			reason := "all reshuffle targets occupied"
+			if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+				log.Printf("dispatch: set queue_reason on targets-occupied: %v", serr)
+			}
+			d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+			return
+		}
+		plan, err = PlanReshuffleToTarget(d.db, buried.Bin, buried.Slot, lane, groupID, targetNode)
+	}
+	if err != nil {
+		d.failOrderInternal(order, "reshuffle_error",
+			fmt.Sprintf("cannot plan reshuffle: %v", err))
+		return
+	}
+
+	// Race-safe lock acquisition.
+	if !d.laneLock.TryLock(buried.LaneID, order.ID) {
+		reason := fmt.Sprintf("lane %d locked by reshuffle for another order", buried.LaneID)
+		if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+			log.Printf("dispatch: set queue_reason on TryLock race: %v", serr)
+		}
+		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+		return
+	}
+
+	if err := d.CreateCompoundOrder(order, plan); err != nil {
+		d.laneLock.Unlock(buried.LaneID)
+		d.failOrderInternal(order, "reshuffle_error",
+			fmt.Sprintf("cannot create compound order: %v", err))
+		return
+	}
+	// Expose-mode only: persist the lane-extension entry NOW so the
+	// listener at AdvanceCompoundOrder terminal can look up the
+	// target bin ID directly instead of re-deriving from lane state.
+	// Target-node mode releases the lane immediately at terminal —
+	// no row needed.
+	if len(targetNodeNames) == 0 {
+		if _, err := d.db.InsertPendingLaneExtension(&store.PendingLaneExtension{
+			ComplexParentID:    order.ID,
+			LaneID:             buried.LaneID,
+			TargetBinID:        buried.Bin.ID,
+			ExpectedFromNodeID: buried.Slot.ID,
+		}); err != nil {
+			log.Printf("dispatch: persist pending_lane_extension at intake for complex %d: %v", order.ID, err)
+			// Non-fatal: the at-terminal arming path will still
+			// run; if the row is missing then, it falls back to
+			// the unconditional unlock. Loss is crash resilience
+			// only.
+		}
+	}
+	d.dbg("complex: compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
+}
+
+// handleComplexBuriedOnReplay handles a burial discovered by the
+// scanner-path re-resolve (after the parent has resumed from a prior
+// reshuffle). Pivots the parent Queued → Reshuffling and dispatches a
+// fresh compound. Same dual-mode logic as the intake path but without
+// the parent-creation step — the order already exists.
+//
+// Multi-burial loop: each successful resume → re-resolve cycle that
+// discovers a new burial gets its own compound. v6's livelock cap was
+// removed in v7 — the lane-lock extension closes the only realistic
+// re-burial vector for expose mode, and sequential legitimate burials
+// in a multi-pickup complex order shouldn't be punished with a
+// terminal fail.
+func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *BuriedError) {
+	lane, err := d.db.GetNode(buried.LaneID)
+	if err != nil || lane == nil || lane.ParentID == nil {
+		d.failOrderInternal(order, "reshuffle_error", "cannot determine node group for buried lane")
+		return
+	}
+	groupID := *lane.ParentID
+
+	if d.laneLock.IsLocked(buried.LaneID) {
+		reason := fmt.Sprintf("lane %d locked by reshuffle for another order", buried.LaneID)
+		if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+			log.Printf("dispatch: set queue_reason on replay lane contention: %v", serr)
+		}
+		return
+	}
+
+	targetNodeNames := ReshuffleTargetNodes(d.db, groupID)
+	var plan *ReshufflePlan
+	if len(targetNodeNames) == 0 {
+		plan, err = PlanReshuffleUnburyOnly(d.db, buried.Bin, buried.Slot, lane, groupID)
+	} else {
+		targetNode, allOccupied, terr := d.pickEmptyReshuffleTarget(groupID, targetNodeNames)
+		if terr != nil {
+			d.failOrderInternal(order, "reshuffle_error", terr.Error())
+			return
+		}
+		if allOccupied {
+			reason := "all reshuffle targets occupied"
+			if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+				log.Printf("dispatch: set queue_reason on replay targets-occupied: %v", serr)
+			}
+			return
+		}
+		plan, err = PlanReshuffleToTarget(d.db, buried.Bin, buried.Slot, lane, groupID, targetNode)
+	}
+	if err != nil {
+		d.failOrderInternal(order, "reshuffle_error",
+			fmt.Sprintf("cannot plan reshuffle: %v", err))
+		return
+	}
+
+	if !d.laneLock.TryLock(buried.LaneID, order.ID) {
+		reason := fmt.Sprintf("lane %d locked by reshuffle for another order", buried.LaneID)
+		if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+			log.Printf("dispatch: set queue_reason on replay TryLock race: %v", serr)
+		}
+		return
+	}
+	if err := d.CreateCompoundOrder(order, plan); err != nil {
+		d.laneLock.Unlock(buried.LaneID)
+		d.failOrderInternal(order, "reshuffle_error",
+			fmt.Sprintf("cannot create compound order on replay: %v", err))
+		return
+	}
+	// Same expose-mode-only persistence as the intake path. See the
+	// comment in handleComplexBuriedAtIntake.
+	if len(targetNodeNames) == 0 {
+		if _, err := d.db.InsertPendingLaneExtension(&store.PendingLaneExtension{
+			ComplexParentID:    order.ID,
+			LaneID:             buried.LaneID,
+			TargetBinID:        buried.Bin.ID,
+			ExpectedFromNodeID: buried.Slot.ID,
+		}); err != nil {
+			log.Printf("dispatch: persist pending_lane_extension at replay for complex %d: %v", order.ID, err)
+		}
+	}
+	d.dbg("complex: replay compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
+}
+
+// pickEmptyReshuffleTarget walks the configured target-node names in
+// order and returns the first one with zero bins. Returns
+// (nil, true, nil) when all configured targets are occupied — the
+// caller queues the parent in that case rather than falling back to
+// expose mode. Validation failures (target name doesn't resolve, or
+// resolves to a synthetic / lane / non-direct-child) return a
+// non-nil error.
+func (d *Dispatcher) pickEmptyReshuffleTarget(groupID int64, names []string) (target *nodes.Node, allOccupied bool, err error) {
+	if len(names) == 0 {
+		return nil, false, nil
+	}
+	for _, name := range names {
+		node, gErr := d.db.GetNodeByDotName(name)
+		if gErr != nil || node == nil {
+			return nil, false, fmt.Errorf("reshuffle target %s not found in group %d", name, groupID)
+		}
+		if node.ParentID == nil || *node.ParentID != groupID {
+			return nil, false, fmt.Errorf("reshuffle target %s is not a direct child of group %d", name, groupID)
+		}
+		if node.IsSynthetic || node.NodeTypeCode == "LANE" {
+			return nil, false, fmt.Errorf("reshuffle target %s must be a non-synthetic, non-lane node", name)
+		}
+		cnt, _ := d.db.CountBinsByNode(node.ID)
+		if cnt == 0 {
+			return node, false, nil
+		}
+	}
+	return nil, true, nil
 }

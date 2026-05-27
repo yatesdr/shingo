@@ -530,6 +530,112 @@ func TestHandleOrderCancel_DuplicateCancelledOrderIgnored(t *testing.T) {
 	}
 }
 
+// TestCancelOrder_NonCompound_NoSpuriousChildCancel locks in the
+// §12.2 Surface 2 invariant: dropping the StatusReshuffling guard in
+// HandleOrderCancel must NOT change the behavior for non-compound
+// orders. The cascade helper (cancelCompoundChildren) is already
+// idempotent when ListChildOrders returns zero rows; this test
+// ensures we don't fire spurious child-cancel events when the parent
+// is a simple retrieve.
+func TestCancelOrder_NonCompound_NoSpuriousChildCancel(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	// A simple retrieve in a non-reshuffling status. Pre-fix this
+	// status would have skipped cancelCompoundChildren entirely; post-
+	// fix we always call it, but the call must no-op because there are
+	// no child rows.
+	order := &orders.Order{EdgeUUID: "uuid-nc-cancel", StationID: "line-1", Status: StatusDispatched}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
+
+	env := testEnvelope()
+	d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: "uuid-nc-cancel", Reason: "no-children"})
+
+	// Exactly one cancelled event — for the parent. Zero spurious
+	// child-cancel events.
+	if len(emitter.cancelled) != 1 {
+		t.Fatalf("cancelled events = %d, want 1 (parent only)", len(emitter.cancelled))
+	}
+	if emitter.cancelled[0].orderID != order.ID {
+		t.Errorf("cancelled event orderID = %d, want parent %d", emitter.cancelled[0].orderID, order.ID)
+	}
+
+	// Sanity: no child rows exist.
+	children, err := db.ListChildOrders(order.ID)
+	if err != nil {
+		t.Fatalf("list children: %v", err)
+	}
+	if len(children) != 0 {
+		t.Errorf("children = %d, want 0 (non-compound order has no children)", len(children))
+	}
+}
+
+// TestCancelOrder_CascadesAfterResume is the regression Step 2.5
+// exists to prevent. Pre-fix the cancel cascade was gated on
+// StatusReshuffling. Once Step 5 lets a complex parent resume from
+// Reshuffling back to Queued (with children still in non-terminal
+// states), a cancel against that Queued parent would have skipped the
+// cascade entirely — leaving children's fleet orders active and bins
+// claimed.
+//
+// This test simulates the post-resume state directly: a complex
+// parent in Queued with one non-terminal child. Cancelling the parent
+// MUST cancel the child.
+func TestCancelOrder_CascadesAfterResume(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	parent := &orders.Order{
+		EdgeUUID:  "uuid-resume-cancel",
+		StationID: "line-1",
+		OrderType: OrderTypeComplex,
+		Status:    StatusQueued, // post-resume state per Step 5
+	}
+	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
+
+	// A still-pending compound child left over from the just-finished
+	// reshuffle. In practice all children would be terminal once the
+	// compound completes; the simulation guards against the case where
+	// a child is in a transient state when cancel races the resume.
+	child := &orders.Order{
+		EdgeUUID:      "uuid-resume-cancel-step-1",
+		StationID:     "line-1",
+		OrderType:     OrderTypeMove,
+		Status:        StatusPending,
+		ParentOrderID: &parent.ID,
+		Sequence:      1,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(child), "create child")
+
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
+
+	env := testEnvelope()
+	d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: "uuid-resume-cancel", Reason: "operator cancel post-resume"})
+
+	// Parent cancelled.
+	parentGot, _ := db.GetOrder(parent.ID)
+	if parentGot.Status != StatusCancelled {
+		t.Errorf("parent status = %q, want %q", parentGot.Status, StatusCancelled)
+	}
+
+	// Child also cancelled — the load-bearing assertion. Pre-fix this
+	// would have stayed Pending because the guard short-circuited the
+	// cascade for non-Reshuffling parents.
+	childGot, _ := db.GetOrder(child.ID)
+	if childGot.Status != StatusCancelled {
+		t.Errorf("child status = %q, want %q (cancel cascade must run for any compound parent)", childGot.Status, StatusCancelled)
+	}
+
+	// At least two cancelled events fired (parent + child). Don't
+	// pin the exact count — implementation may emit additional rows
+	// for other internal bookkeeping.
+	if len(emitter.cancelled) < 2 {
+		t.Errorf("cancelled events = %d, want >= 2 (parent + child)", len(emitter.cancelled))
+	}
+}
+
 func TestHandleOrderReceipt_RejectsWrongStation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

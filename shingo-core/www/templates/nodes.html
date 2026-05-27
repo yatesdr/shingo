@@ -183,6 +183,29 @@
           </select>
         </div>
       </div>
+      <!-- Complex-order buried-reshuffle controls (NGRP only) -->
+      <div class="grid grid-2 text-sm">
+        <div class="form-group">
+          <label>Reshuffle Target Nodes</label>
+          <div id="nf-reshuffle-targets-chips" class="chip-container"></div>
+          <select id="nf-reshuffle-targets-add" class="text-sm" data-action-change="addReshuffleTarget">
+            <option value="">+ Add target node…</option>
+          </select>
+          <div class="text-muted" style="font-size:0.75rem">
+            Empty = expose mode (target stays in lane). Configured = target-node mode (target moves to first empty configured node). Reduces shuffle-slot pool.
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Restore Blockers After Pickup</label>
+          <select id="nf-reshuffle-restore">
+            <option value="off">Off — blockers stay in shuffle slots</option>
+            <option value="on">On — restock blockers to original positions</option>
+          </select>
+          <div class="text-muted" style="font-size:0.75rem">
+            On: lane geometry restored after parent picks up. Off (default): lane stays shallow; direct-child storage retains the blockers.
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Occupant section -->

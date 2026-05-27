@@ -678,14 +678,27 @@ func TestEveryKeyHasOutgoingEdge(t *testing.T) {
 // Per compound.go evidence: parent goes Pending → Reshuffling →
 // {Confirmed | Failed | Cancelled}; children go through their own
 // lifecycle and never hold Reshuffling.
+//
+// Complex-order buried-bin reshuffle scope (v6) adds two edges to
+// support the parent's queued-during-intake shape:
+//   - Queued → Reshuffling: complex parent created at Queued enters
+//     Reshuffling when intake plans a compound for a buried source.
+//   - Reshuffling → Queued: compound completion hands the parent back
+//     to the scanner so its original pickup step can re-resolve.
+//
+// In-flight statuses (Sourcing, InTransit, Delivered, Staged) remain
+// invalid from Reshuffling — the parent never owns a robot.
 func TestReshufflingTransitions(t *testing.T) {
 	t.Parallel()
 	if !IsValidTransition(StatusPending, StatusReshuffling) {
 		t.Error("Pending → Reshuffling must be valid (compound parent entry)")
 	}
-	for _, to := range []Status{StatusConfirmed, StatusFailed, StatusCancelled} {
+	if !IsValidTransition(StatusQueued, StatusReshuffling) {
+		t.Error("Queued → Reshuffling must be valid (complex-order intake reshuffle pivot)")
+	}
+	for _, to := range []Status{StatusConfirmed, StatusFailed, StatusCancelled, StatusQueued} {
 		if !IsValidTransition(StatusReshuffling, to) {
-			t.Errorf("Reshuffling → %s must be valid (compound parent terminal)", to)
+			t.Errorf("Reshuffling → %s must be valid (compound parent terminal or requeue)", to)
 		}
 	}
 	for _, to := range []Status{StatusSourcing, StatusInTransit, StatusDelivered, StatusStaged} {

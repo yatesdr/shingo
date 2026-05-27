@@ -267,6 +267,32 @@ func (db *DB) runVersionedMigrations() error {
 				return schema.ColumnExists(q, "bins", "delta_epoch") &&
 					schema.ColumnExists(q, "inventory_delta_dedup", "epoch")
 			}},
+
+		// v23 (complex-order buried-reshuffle scope, v7) adds the
+		// pending_restocks table. Closes the crash-recovery gap left
+		// by the v6 in-memory restoreRegistry: when the restore-
+		// blockers toggle is on, the planned restock state is
+		// persisted at listener-registration time so a Core restart
+		// can re-register the listener instead of dropping it on the
+		// floor (and leaving blockers in shuffle slots forever).
+		//
+		// One row per registered listener; deleted on listener fire,
+		// parent cancel, parent fail, and stale-row sweep at boot.
+		{23, "add pending_restocks table for crash-safe restore listeners",
+			v23PendingRestocks,
+			func(q schema.Querier) bool { return schema.TableExists(q, "pending_restocks") }},
+
+		// v24 (post-v7 cleanup) adds the pending_lane_extensions table.
+		// Same shape as pending_restocks but for the lane-lock
+		// extension listener in expose mode. Persisting the target bin
+		// ID at scheduling time replaces the v7-era at-fire-time
+		// derivation (walk lane, exclude blockers) — which only worked
+		// because of a contextual invariant (lane locked, no
+		// unrelated bins) that a future lane-lock refactor could
+		// silently break.
+		{24, "add pending_lane_extensions table for crash-safe lane-hold listeners",
+			v24PendingLaneExtensions,
+			func(q schema.Querier) bool { return schema.TableExists(q, "pending_lane_extensions") }},
 	}
 
 	for _, m := range migrations {
@@ -954,6 +980,61 @@ func v14OrderProcessNode(tx *sql.Tx) error {
 // v16OrderQueueReason is Phase 4 of the bin-transit-state project.
 func v16OrderQueueReason(tx *sql.Tx) error {
 	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS queue_reason TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// v23PendingRestocks creates the crash-safe restore-listener registry.
+// The in-memory restoreRegistry would lose its entries on Core
+// restart, leaving toggle-on blockers stranded in shuffle slots. The
+// table is consulted at registration time, fire time, parent-
+// terminal time, and at boot (re-register listeners against still-
+// valid complex parents; delete stale rows).
+//
+// synthetic_parent_id is the OrderTypeReshuffleRestore parent row
+// pre-created at scheduling time (we still create it up-front so the
+// fire-time work is just "wrap the persisted plan as compound
+// children of an existing parent").
+func v23PendingRestocks(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS pending_restocks (
+		id                    BIGSERIAL PRIMARY KEY,
+		complex_parent_id     BIGINT NOT NULL,
+		synthetic_parent_id   BIGINT NOT NULL,
+		target_bin_id         BIGINT NOT NULL,
+		expected_from_node_id BIGINT NOT NULL,
+		restock_plan_json     TEXT NOT NULL,
+		created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		UNIQUE (complex_parent_id)
+	)`)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`CREATE INDEX IF NOT EXISTS pending_restocks_target_bin_idx ON pending_restocks (target_bin_id)`)
+	return err
+}
+
+// v24PendingLaneExtensions creates the persistence table for the
+// lane-lock-extension listener (post-v7 cleanup). Same shape as
+// pending_restocks but tighter — the lane-hold listener doesn't need
+// a synthetic parent or a JSON-encoded plan; just lane ID, target
+// bin ID, and the expected from-node for the race-guard at fire time.
+//
+// One row per active lane-hold listener; deleted on listener fire
+// (bin transit), parent cancel, parent fail, and stale-row sweep at
+// boot.
+func v24PendingLaneExtensions(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS pending_lane_extensions (
+		id                    BIGSERIAL PRIMARY KEY,
+		complex_parent_id     BIGINT NOT NULL,
+		lane_id               BIGINT NOT NULL,
+		target_bin_id         BIGINT NOT NULL,
+		expected_from_node_id BIGINT NOT NULL,
+		created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		UNIQUE (complex_parent_id)
+	)`)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`CREATE INDEX IF NOT EXISTS pending_lane_extensions_target_bin_idx ON pending_lane_extensions (target_bin_id)`)
 	return err
 }
 

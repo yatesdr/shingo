@@ -1,6 +1,14 @@
 package dispatch
 
-import "testing"
+import (
+	"errors"
+	"fmt"
+	"testing"
+
+	"shingocore/dispatch/binresolver"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+)
 
 // Unit tests for resolvePerBinDestinations — the bin flow simulation that
 // computes per-bin final destinations from a step sequence. This function
@@ -156,4 +164,90 @@ func TestResolvePerBinDestinations_MultiplePickupsSameNode(t *testing.T) {
 	// stays at its initial assignment (line) from the claimed map... but actually
 	// it was never dropped, so dest[501] is empty.
 	t.Logf("bin 501 dest = %q (expected empty — overwritten in binAtNode, never dropped by this order)", dest[501])
+}
+
+// makeBuriedError synthesizes a *BuriedError for the classifier tests
+// below. Tests do not exercise the resolver itself — they only need a
+// typed error that wraps the ErrBuried sentinel.
+func makeBuriedError(binID, laneID int64, slotName string) *binresolver.BuriedError {
+	return &binresolver.BuriedError{
+		Bin:    &bins.Bin{ID: binID},
+		Slot:   &nodes.Node{ID: 7, Name: slotName},
+		LaneID: laneID,
+	}
+}
+
+// TestClassifyResolutionError_AllShapes is a table-driven exercise of
+// every error shape in §3's resolver-error taxonomy. Each shape must
+// map to the right ResolutionErrorClass — the load-bearing contract
+// that lets both complex-intake and simple-retrieve route through a
+// single classifier.
+func TestClassifyResolutionError_AllShapes(t *testing.T) {
+	t.Parallel()
+	be := makeBuriedError(6, 27, "Cell_9")
+	se := &binresolver.StructuralError{
+		Group:   "ASRS_Lane_Test",
+		Payload: "P1",
+		Reason:  "group has no enabled child nodes",
+	}
+
+	cases := []struct {
+		name      string
+		err       error
+		wantClass ResolutionErrorClass
+		wantTyped bool // does this class carry a typed payload?
+	}{
+		{"nil", nil, ResolutionOK, false},
+		{"buried direct", be, ResolutionBuried, true},
+		{"buried wrapped", fmt.Errorf("step 0: %w", fmt.Errorf("cannot resolve group X: %w", be)), ResolutionBuried, true},
+		{"structural", se, ResolutionStructural, true},
+		{"structural wrapped", fmt.Errorf("step 1: %w", se), ResolutionStructural, true},
+		{"capacity slot", errors.New("no available slot in node group ASRS"), ResolutionCapacity, false},
+		{"capacity payload", errors.New("no bin of requested payload in node group ASRS"), ResolutionCapacity, false},
+		{"capacity wrapped", fmt.Errorf("step 0: cannot resolve group ASRS: %w", errors.New("no available slot in node group ASRS")), ResolutionCapacity, false},
+		{"transient list children", errors.New("list children of NGRP: connection refused"), ResolutionTransient, false},
+		{"transient get depth", errors.New("get target depth: connection refused"), ResolutionTransient, false},
+		{"fatal unknown", errors.New("something else entirely"), ResolutionFatal, false},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			class, payload := classifyResolutionError(c.err)
+			if class != c.wantClass {
+				t.Errorf("class = %v, want %v (err=%v)", class, c.wantClass, c.err)
+			}
+			if c.wantTyped && payload == nil {
+				t.Errorf("class %v must carry typed payload; got nil", class)
+			}
+			if !c.wantTyped && payload != nil {
+				t.Errorf("class %v should have nil payload; got %T", class, payload)
+			}
+		})
+	}
+}
+
+// TestClassifyResolutionError_ChainWalking replaces the v5-era
+// TestErrorsIs_ErrBuried_ThroughWrapping. Locks in that the
+// classifier walks any number of fmt.Errorf wraps (resolveComplexSteps
+// adds "step N:" and resolveStepNode adds "cannot resolve group X:").
+// The buried payload extracted from the wrapped error must carry the
+// original bin/lane fields.
+func TestClassifyResolutionError_ChainWalking(t *testing.T) {
+	t.Parallel()
+	be := makeBuriedError(6, 27, "Cell_9")
+	wrapped := fmt.Errorf("step 0: %w", fmt.Errorf("cannot resolve group ASRS_Lane_Test: %w", be))
+
+	class, payload := classifyResolutionError(wrapped)
+	if class != ResolutionBuried {
+		t.Fatalf("class = %v, want ResolutionBuried", class)
+	}
+	got, ok := payload.(*binresolver.BuriedError)
+	if !ok {
+		t.Fatalf("payload type = %T, want *BuriedError", payload)
+	}
+	if got.Bin.ID != be.Bin.ID || got.LaneID != be.LaneID {
+		t.Errorf("extracted BuriedError mismatch: got bin=%d lane=%d, want bin=%d lane=%d",
+			got.Bin.ID, got.LaneID, be.Bin.ID, be.LaneID)
+	}
 }

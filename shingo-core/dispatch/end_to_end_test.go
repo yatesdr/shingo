@@ -19,6 +19,7 @@
 package dispatch
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -845,6 +846,121 @@ func TestRetrieveEmpty_BuriedTriggersReshuffle(t *testing.T) {
 	if len(children) > 0 {
 		t.Logf("reshuffle plan has %d steps", len(children))
 	}
+}
+
+// TestComplex_BuriedSourceTriggersReshuffle exercises the full
+// complex-order buried-bin reshuffle path: an intake with an NGRP
+// pickup that resolves to a buried bin should create the parent at
+// Reshuffling, schedule a compound, and arrange for the parent to
+// resume to Queued once the compound completes.
+//
+// Mirrors TestRetrieveEmpty_BuriedTriggersReshuffle but routes
+// through HandleComplexOrderRequest instead of HandleOrderRequest.
+// The test stops short of running the compound to completion (which
+// would require simulating the full fleet pipeline) — it asserts the
+// invariants up to and including the compound being scheduled with
+// the right shape.
+func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, _ = setupTestData(t, db)
+
+	grpType, _ := db.GetNodeTypeByCode("NGRP")
+	lanType, _ := db.GetNodeTypeByCode("LANE")
+
+	bp := &payloads.Payload{Code: "COMPLEX-BURIED-BP"}
+	db.CreatePayload(bp)
+	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
+
+	// NGRP with one buried-target lane + one empty shuffle lane.
+	grp := &nodes.Node{Name: "ASRS_Lane_Test", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
+	db.CreateNode(grp)
+	grp, _ = db.GetNode(grp.ID)
+
+	lane1 := &nodes.Node{Name: "ASRS_Lane_Test-L1", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
+	db.CreateNode(lane1)
+	lane1, _ = db.GetNode(lane1.ID)
+
+	d1, d2, d3 := 1, 2, 3
+	l1s1 := &nodes.Node{Name: "ASRS_Lane_Test-L1-S1", ParentID: &lane1.ID, Enabled: true, Depth: &d1}
+	db.CreateNode(l1s1)
+	l1s2 := &nodes.Node{Name: "ASRS_Lane_Test-L1-S2", ParentID: &lane1.ID, Enabled: true, Depth: &d2}
+	db.CreateNode(l1s2)
+	l1s3 := &nodes.Node{Name: "ASRS_Lane_Test-L1-S3", ParentID: &lane1.ID, Enabled: true, Depth: &d3}
+	db.CreateNode(l1s3)
+
+	// Two blocker bins.
+	for _, slotID := range []int64{l1s1.ID, l1s2.ID} {
+		b := &bins.Bin{BinTypeID: bt.ID, Label: fmt.Sprintf("CB-BLK-%d", slotID), NodeID: &slotID, Status: "available"}
+		db.CreateBin(b)
+		db.SetBinManifest(b.ID, `{"items":[]}`, "OTHER-PAYLOAD", 100)
+		db.ConfirmBinManifest(b.ID, "")
+	}
+
+	// Target bin (the one the complex order wants).
+	targetBin := &bins.Bin{BinTypeID: bt.ID, Label: "CB-TARGET", NodeID: &l1s3.ID, Status: "available"}
+	db.CreateBin(targetBin)
+	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
+	db.ConfirmBinManifest(targetBin.ID, "")
+
+	// Shuffle lane (provides empty slots for unbury).
+	lane2 := &nodes.Node{Name: "ASRS_Lane_Test-L2", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
+	db.CreateNode(lane2)
+	lane2, _ = db.GetNode(lane2.ID)
+	l2s1 := &nodes.Node{Name: "ASRS_Lane_Test-L2-S1", ParentID: &lane2.ID, Enabled: true, Depth: &d1}
+	db.CreateNode(l2s1)
+	l2s2 := &nodes.Node{Name: "ASRS_Lane_Test-L2-S2", ParentID: &lane2.ID, Enabled: true, Depth: &d2}
+	db.CreateNode(l2s2)
+
+	// Dropoff (lineside).
+	dropNode := &nodes.Node{Name: "LINE-DROP", Enabled: true}
+	db.CreateNode(dropNode)
+
+	backend := testdb.NewTrackingBackend()
+	emitter := &mockEmitter{}
+	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock()}
+	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+	env := testEnvelope()
+
+	// Submit complex order: pickup from NGRP, dropoff at lineside.
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "complex-buried-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: grp.Name},
+			{Action: "dropoff", Node: dropNode.Name},
+		},
+	})
+
+	o := testdb.RequireOrder(t, db, "complex-buried-1")
+
+	// Order must NOT have been terminal-failed at intake.
+	if o.Status == StatusFailed {
+		t.Fatalf("complex order terminal-failed at intake — pre-fix behavior (expected Reshuffling)")
+	}
+	// Parent should now be Reshuffling.
+	if o.Status != StatusReshuffling {
+		t.Errorf("parent status = %q, want %q (compound reshuffle should have started)", o.Status, StatusReshuffling)
+	}
+
+	// Compound children should exist.
+	children, _ := db.ListChildOrders(o.ID)
+	if len(children) == 0 {
+		t.Fatal("no compound children created for buried complex order")
+	}
+	// Expose mode (default — no target_nodes configured): unbury only.
+	// Two blockers → two unbury children.
+	if len(children) != 2 {
+		t.Errorf("compound children = %d, want 2 (two blockers, expose mode)", len(children))
+	}
+	for _, c := range children {
+		if c.ParentOrderID == nil || *c.ParentOrderID != o.ID {
+			t.Errorf("child %d ParentOrderID = %v, want %d", c.ID, c.ParentOrderID, o.ID)
+		}
+	}
+
 }
 
 // TestDispatcher_DotNotationBypassesResolver verifies that ordering to a

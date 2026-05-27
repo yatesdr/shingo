@@ -6,11 +6,12 @@ import "shingo/protocol"
 // edge and core agree on the wire shape and Go callers get compile-time
 // distinction from raw strings.
 const (
-	OrderTypeRetrieve      = protocol.OrderTypeRetrieve
-	OrderTypeRetrieveEmpty = protocol.OrderTypeRetrieveEmpty
-	OrderTypeMove          = protocol.OrderTypeMove
-	OrderTypeStore         = protocol.OrderTypeStore
-	OrderTypeComplex       = protocol.OrderTypeComplex
+	OrderTypeRetrieve         = protocol.OrderTypeRetrieve
+	OrderTypeRetrieveEmpty    = protocol.OrderTypeRetrieveEmpty
+	OrderTypeMove             = protocol.OrderTypeMove
+	OrderTypeStore            = protocol.OrderTypeStore
+	OrderTypeComplex          = protocol.OrderTypeComplex
+	OrderTypeReshuffleRestore = protocol.OrderTypeReshuffleRestore
 )
 
 // Order statuses aliased from protocol for local use.

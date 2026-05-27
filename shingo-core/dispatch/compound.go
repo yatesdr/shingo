@@ -16,13 +16,33 @@ import (
 const reshuffleFailDetail = "reshuffle failed: child order failed"
 
 // CreateCompoundOrder creates a parent order with child orders for a reshuffle plan.
-// All children and bin claims are created in a single transaction.
+// All children and bin claims are created in a single transaction. The parent
+// is transitioned into StatusReshuffling via lifecycle.BeginReshuffle, so the
+// caller must pass a parent in a status that has Reshuffling as a legal next
+// state (Pending, Sourcing, Queued). Synthetic restore parents that already
+// hold StatusReshuffling at creation use CreateCompoundChildrenOnly instead.
 func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *ReshufflePlan) error {
 	if err := d.lifecycle.BeginReshuffle(parentOrder,
 		fmt.Sprintf("reshuffling: %d steps to unbury bin %d", len(plan.Steps), plan.TargetBin.ID)); err != nil {
 		log.Printf("dispatch: begin reshuffle order %d: %v", parentOrder.ID, err)
 	}
+	return d.CreateCompoundChildrenOnly(parentOrder, plan)
+}
 
+// CreateCompoundChildrenOnly creates the compound's child orders and
+// advances the first one — same as CreateCompoundOrder MINUS the
+// lifecycle.BeginReshuffle call. Used by the synthetic restore-blockers
+// parent, which is written directly at StatusReshuffling via a
+// MarkReshuffling-style initial write and would log a spurious
+// "illegal transition: reshuffling → reshuffling" warning every time
+// CreateCompoundOrder's BeginReshuffle fired on an already-Reshuffling
+// parent.
+//
+// The split keeps CreateCompoundOrder's call sites unchanged
+// (simple-retrieve and complex-intake parents legitimately need the
+// transition) and gives the restore path a method whose name reads
+// as "wire up the children, parent is already in the right state."
+func (d *Dispatcher) CreateCompoundChildrenOnly(parentOrder *orders.Order, plan *ReshufflePlan) error {
 	var children []store.CompoundChild
 	for _, step := range plan.Steps {
 		child := &orders.Order{
@@ -42,6 +62,23 @@ func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *Reshuf
 		if step.ToNode != nil {
 			child.DeliveryNode = step.ToNode.Name
 		}
+		// Simple-retrieve reshuffles emit a "retrieve" step with no
+		// ToNode and rely on this fallback to land the bin at the
+		// parent retrieve's lineside DeliveryNode.
+		//
+		// Complex-order reshuffles do NOT go through this branch:
+		//   - Expose mode (PlanReshuffleUnburyOnly) emits no retrieve
+		//     step at all — the complex parent resumes and runs its
+		//     own pickup against the now-accessible original slot.
+		//   - Target-node mode (PlanReshuffleToTarget) sets ToNode
+		//     explicitly so DeliveryNode is non-empty when we reach
+		//     this check and the fallback never fires.
+		//
+		// Adding a "retrieve" step to PlanReshuffleUnburyOnly without
+		// a ToNode would silently inherit parentOrder.DeliveryNode,
+		// which for a complex parent is the *last* step's node
+		// (extractEndpoints in complex_steps.go) — wrong destination
+		// for the unbury step's deliverable. Don't.
 		if step.StepType == "retrieve" && child.DeliveryNode == "" {
 			child.DeliveryNode = parentOrder.DeliveryNode
 		}
@@ -111,18 +148,50 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		}
 
 		// All children reached a terminal status with none failed -> compound
-		// order is complete. CompleteCompound handles Reshuffling -> Confirmed
-		// and fires the emitCompleted action for engine wiring to react.
+		// order is complete. Route on parent.OrderType:
+		//   - OrderTypeComplex: a buried-bin reshuffle for a complex parent.
+		//     ResumeCompound transitions Reshuffling → Queued so the scanner
+		//     re-resolves the parent's original pickup step against the
+		//     now-accessible slot. Do NOT call CompleteOrder — the parent
+		//     hasn't finished yet, it's resuming.
+		//   - everything else (simple-retrieve compounds, restock
+		//     compounds for the dual-mode reshuffle): CompleteCompound
+		//     transitions Reshuffling → Confirmed and fires fireCompleted.
+		//
+		// Sequencing dependency on fulfillment.RunOnce being synchronous
+		// — see lifecycle.go's {Reshuffling, Queued} actionMap entry.
+		//
+		// Lane-lock handling (v7 Step 4.5):
+		//   - target-node mode (PlanReshuffleToTarget): unlock immediately
+		//     — the target bin has already moved out of the lane, no
+		//     re-burial risk.
+		//   - expose mode (PlanReshuffleUnburyOnly): TRANSFER the lock
+		//     from the compound parent to the complex parent, register a
+		//     listener that releases on EventBinEnteredTransit for the
+		//     target bin or on parent cancel/fail. Closes the
+		//     post-compound / pre-pickup re-burial window.
+		//   - non-complex parents (simple-retrieve, restore): unlock
+		//     immediately (existing behavior).
 		if parent != nil {
-			if err := d.lifecycle.CompleteCompound(parent); err != nil {
-				log.Printf("dispatch: confirm compound order %d: %v", parentOrderID, err)
+			if parent.OrderType == OrderTypeComplex {
+				if err := d.lifecycle.ResumeCompound(parent); err != nil {
+					log.Printf("dispatch: resume compound order %d: %v", parentOrderID, err)
+				}
+			} else {
+				if err := d.lifecycle.CompleteCompound(parent); err != nil {
+					log.Printf("dispatch: confirm compound order %d: %v", parentOrderID, err)
+				}
+				if err := d.db.CompleteOrder(parentOrderID); err != nil {
+					log.Printf("dispatch: complete compound order %d: %v", parentOrderID, err)
+				}
 			}
 		}
-		if err := d.db.CompleteOrder(parentOrderID); err != nil {
-			log.Printf("dispatch: complete compound order %d: %v", parentOrderID, err)
-		}
 
-		d.unlockLaneForCompound(parentOrderID)
+		if parent != nil && parent.OrderType == OrderTypeComplex && planUsedExposeMode(children) {
+			d.extendLaneLockForExposeMode(parentOrderID, parent, children)
+		} else {
+			d.unlockLaneForCompound(parentOrderID)
+		}
 		return nil
 	}
 
@@ -228,6 +297,38 @@ func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, rea
 	}
 
 	d.unlockLaneForCompound(parent.ID)
+}
+
+// extendLaneLockForExposeMode runs in AdvanceCompoundOrder's terminal
+// block when an expose-mode compound for a complex parent finishes.
+// The lane lock is already held by the complex parent (the intake
+// handler took the lock keyed by the parent's order ID); we arm a
+// listener via d.laneHolds that releases the lock on
+// EventBinEnteredTransit for the target bin. The target bin ID was
+// persisted to pending_lane_extensions at intake time (the row we
+// look up here) — the v7-era derivation by walking the lane and
+// excluding blockers was replaced post-v7 because it coupled the
+// listener to a contextual invariant (lane-locked-so-no-other-bins)
+// that a future lane-lock refactor could silently break.
+//
+// On any failure to find the persisted row, fall back to the
+// unconditional unlock — safer to release than to leave a stuck
+// lane. The missing row indicates either (a) the intake-time
+// persist failed (logged at the call site), or (b) something else
+// already consumed the row.
+func (d *Dispatcher) extendLaneLockForExposeMode(_ int64, complexParent *orders.Order, _ []*orders.Order) {
+	if d.laneLock == nil || d.laneHolds == nil {
+		d.unlockLaneForCompound(complexParent.ID)
+		return
+	}
+	row, err := d.db.GetPendingLaneExtensionByComplexParent(complexParent.ID)
+	if err != nil || row == nil {
+		log.Printf("dispatch: extendLaneLockForExposeMode: no pending_lane_extension for complex %d (%v); releasing lock unconditionally",
+			complexParent.ID, err)
+		d.unlockLaneForCompound(complexParent.ID)
+		return
+	}
+	d.extendLaneLockForComplexParent(complexParent, row.LaneID, row.TargetBinID, row.ExpectedFromNodeID)
 }
 
 // unlockLaneForCompound finds and unlocks the lane associated with a compound order's children.

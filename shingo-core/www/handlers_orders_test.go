@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"shingo/protocol/debuglog"
@@ -364,6 +365,65 @@ func TestSubmitSpotRetrieveSpecific_BinAlreadyClaimed(t *testing.T) {
 	// No new order created for this spot submit (readBackManualOrder never ran).
 	if resp.OrderID != 0 {
 		t.Errorf("expected no new order on 409, got order_id=%d", resp.OrderID)
+	}
+}
+
+// TestReshuffleRestoreParent_ExcludedFromAdminList locks §12.2 Surface 8:
+// a synthetic ReshuffleRestore parent must NOT appear in apiListOrders
+// (or any admin-facing list query). The SQL filter
+// adminListExcludeTypeFilter in store/orders/orders.go enforces this.
+func TestReshuffleRestoreParent_ExcludedFromAdminList(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+
+	// Insert one synthetic restore parent and one normal retrieve so
+	// we can confirm the filter only excludes the synthetic type.
+	syn := &orders.Order{
+		EdgeUUID:  "uuid-syn-www",
+		StationID: "line-1",
+		OrderType: "reshuffle_restore",
+		Status:    "reshuffling",
+	}
+	testutil.MustNoErr(t, db.CreateOrder(syn), "create synthetic")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(syn.ID, "reshuffling", "test"), "set Reshuffling")
+
+	normal := &orders.Order{
+		EdgeUUID:  "uuid-normal-www",
+		StationID: "line-1",
+		OrderType: "retrieve",
+		Status:    "queued",
+	}
+	testutil.MustNoErr(t, db.CreateOrder(normal), "create normal")
+
+	// Hit the API list endpoint (no status filter — returns recent
+	// orders across all statuses, capped at limit). The admin SQL
+	// filter strips synthetic restore parents server-side.
+	req := httptest.NewRequest(http.MethodGet, "/api/orders", nil)
+	rr := httptest.NewRecorder()
+	h.apiListOrders(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("apiListOrders status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var listResp []map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode body: %v; body=%s", err, rr.Body.String())
+	}
+	sawSynthetic := false
+	sawNormal := false
+	for _, o := range listResp {
+		switch o["edge_uuid"] {
+		case "uuid-syn-www":
+			sawSynthetic = true
+		case "uuid-normal-www":
+			sawNormal = true
+		}
+	}
+	if sawSynthetic {
+		t.Error("synthetic ReshuffleRestore parent must be filtered out of admin list")
+	}
+	if !sawNormal {
+		t.Errorf("normal retrieve order should appear in admin list (regression check); body=%s", rr.Body.String())
 	}
 }
 

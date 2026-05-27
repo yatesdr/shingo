@@ -53,6 +53,12 @@ export function openNodeModal(el) {
     if (d.typeCode === 'NGRP') {
       document.getElementById('nf-retrieve-algo').value = 'FIFO';
       document.getElementById('nf-store-algo').value = 'LKND';
+      // Reset reshuffle controls to defaults; loadNodeDetail
+      // overrides from persisted properties below.
+      _reshuffleTargets = [];
+      renderReshuffleTargetChips();
+      var restoreSel = document.getElementById('nf-reshuffle-restore');
+      if (restoreSel) restoreSel.value = 'off';
     }
   }
 
@@ -120,10 +126,75 @@ function loadNodeDetail(nodeID, isSynthetic) {
         } else if (p.key === 'store_algorithm') {
           var sel = document.getElementById('nf-store-algo');
           if (sel) sel.value = p.value;
+        } else if (p.key === 'reshuffle_target_nodes') {
+          try {
+            var arr = JSON.parse(p.value);
+            if (Array.isArray(arr)) {
+              _reshuffleTargets = arr.slice();
+            }
+          } catch (e) { console.warn('reshuffle_target_nodes parse', e); }
+        } else if (p.key === 'reshuffle_restore_blockers') {
+          var rsel = document.getElementById('nf-reshuffle-restore');
+          if (rsel) rsel.value = (p.value === 'on') ? 'on' : 'off';
         }
       });
+
+      // Populate the +Add dropdown with direct children of this NGRP
+      // (excluding lanes and synthetic children, plus any already
+      // selected). Children come from data.children.
+      var children = (data.children || []).filter(function(c) {
+        return !c.is_synthetic && (c.node_type_code !== 'LANE');
+      });
+      _reshuffleTargetCandidates = children.map(function(c) { return c.name; });
+      renderReshuffleTargetChips();
     })
     .catch(function(err) { console.error('loadNodeDetail', err); });
+}
+
+// ── Reshuffle-target chip picker (NGRP only) ────────────────────────────
+var _reshuffleTargets = [];          // selected names, in order
+var _reshuffleTargetCandidates = []; // all direct-child names
+
+function renderReshuffleTargetChips() {
+  var container = document.getElementById('nf-reshuffle-targets-chips');
+  if (!container) return;
+  container.innerHTML = '';
+  _reshuffleTargets.forEach(function(name) {
+    var chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = name;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chip-remove';
+    btn.innerHTML = '&times;';
+    btn.onclick = function() {
+      _reshuffleTargets = _reshuffleTargets.filter(function(n) { return n !== name; });
+      renderReshuffleTargetChips();
+    };
+    chip.appendChild(btn);
+    container.appendChild(chip);
+  });
+  // Re-populate the add-dropdown with names not already selected.
+  var dd = document.getElementById('nf-reshuffle-targets-add');
+  if (!dd) return;
+  dd.innerHTML = '<option value="">+ Add target node…</option>';
+  _reshuffleTargetCandidates.forEach(function(name) {
+    if (_reshuffleTargets.indexOf(name) !== -1) return;
+    var opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    dd.appendChild(opt);
+  });
+}
+
+function addReshuffleTarget() {
+  var dd = document.getElementById('nf-reshuffle-targets-add');
+  if (!dd || !dd.value) return;
+  if (_reshuffleTargets.indexOf(dd.value) === -1) {
+    _reshuffleTargets.push(dd.value);
+    renderReshuffleTargetChips();
+  }
+  dd.value = '';
 }
 
 /* --- Chip Picker --- */
@@ -260,6 +331,13 @@ function saveAlgorithmProperties() {
     .catch(function(err) { console.error('saveAlgorithmProperties retrieve', err); });
   apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'store_algorithm', value: storeAlgo})
     .catch(function(err) { console.error('saveAlgorithmProperties store', err); });
+  // Complex-order buried-reshuffle properties.
+  var targets = JSON.stringify(_reshuffleTargets || []);
+  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'reshuffle_target_nodes', value: targets})
+    .catch(function(err) { console.error('saveAlgorithmProperties reshuffle_target_nodes', err); });
+  var restoreVal = (document.getElementById('nf-reshuffle-restore') || {}).value || 'off';
+  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'reshuffle_restore_blockers', value: restoreVal})
+    .catch(function(err) { console.error('saveAlgorithmProperties reshuffle_restore_blockers', err); });
 }
 
 async function deleteNode() {

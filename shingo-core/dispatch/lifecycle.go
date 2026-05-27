@@ -99,6 +99,25 @@ var actionMap = map[transitionKey][]Action{
 	// unlock the lane and clean up.
 	{from: StatusReshuffling, to: StatusConfirmed}: {fireCompleted},
 
+	// Complex-order resume: a compound that ran a buried-bin reshuffle
+	// for a complex parent transitions the parent back to Queued (not
+	// Confirmed) so the fulfillment scanner picks it up and re-resolves
+	// its original pickup step against the now-accessible slot. The
+	// scanner trigger is wired against EventOrderQueued
+	// (engine/wiring.go:258-262, RunOnce synchronously); without this
+	// emit the parent would sit Queued until the next periodic sweep.
+	//
+	// fireRequeued, NOT fireCompleted: fireCompleted runs the delivered/
+	// bin-arrival handler in engine.handleOrderCompleted, which doesn't
+	// apply to a parent that hasn't yet picked anything up.
+	//
+	// Sequencing dependency: this assumes fulfillment.RunOnce() is
+	// invoked synchronously from the EventOrderQueued subscription. A
+	// future async-scanner refactor that changes that contract would
+	// silently break the in-band resume — see compound.go's
+	// AdvanceCompoundOrder routing for the matching note.
+	{from: StatusReshuffling, to: StatusQueued}: {fireRequeued},
+
 	// Cancel paths from any non-terminal status notify engine wiring
 	// via the EventBus cancellation event.
 	{from: StatusPending, to: StatusCancelled}:      {fireCancelled},
@@ -410,6 +429,25 @@ func (s *LifecycleService) CompleteCompound(ord *orders.Order) error {
 	})
 }
 
+// ResumeCompound transitions Reshuffling → Queued for a complex
+// parent whose buried-bin reshuffle compound finished successfully.
+// The parent then sits at Queued so the fulfillment scanner runs the
+// original complex-order resolve+dispatch against the now-accessible
+// source slot.
+//
+// Distinct method (not parameterized CompleteCompound) because the two
+// have different downstream semantics: CompleteCompound terminates the
+// parent (lane unlock + EmitOrderCompleted); ResumeCompound hands the
+// parent back into the dispatch pipeline. AdvanceCompoundOrder routes
+// by OrderType to pick the right one.
+func (s *LifecycleService) ResumeCompound(ord *orders.Order) error {
+	return s.transition(ord, StatusQueued, Event{
+		Actor:     "system",
+		Reason:    "reshuffle complete; parent requeued for re-resolution",
+		StationID: ord.StationID,
+	})
+}
+
 // MarkPending writes the initial Pending status for a freshly-created
 // order. Entry-point write — no source status, bypasses transition
 // validation. Used only by Create*Order methods at order intake.
@@ -430,6 +468,16 @@ func fireCompleted(s *LifecycleService, ord *orders.Order, ev Event) error {
 
 func fireCancelled(s *LifecycleService, ord *orders.Order, ev Event) error {
 	s.emitter.EmitOrderCancelled(ord.ID, ord.EdgeUUID, ev.StationID, ev.Reason, string(ev.PreviousStatus))
+	return nil
+}
+
+// fireRequeued emits EventOrderQueued so engine wiring runs the
+// fulfillment scanner in-band. Wired into actionMap for
+// {Reshuffling, Queued} — see ResumeCompound. PayloadCode is empty
+// because the requeued parent's payload context is already on the
+// order row; the scanner reads it from there.
+func fireRequeued(s *LifecycleService, ord *orders.Order, ev Event) error {
+	s.emitter.EmitOrderQueued(ord.ID, ord.EdgeUUID, ev.StationID, "")
 	return nil
 }
 

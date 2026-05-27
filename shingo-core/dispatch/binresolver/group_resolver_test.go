@@ -448,3 +448,10 @@ func TestClassifyEmpty_Transient_WhenGroupStructurallyCapable(t *testing.T) {
 		t.Fatalf("capable-but-empty group must not return BuriedError, got: %v", err)
 	}
 }
+
+// Wrap-chain coverage for *BuriedError moved to
+// dispatch.TestClassifyResolutionError_ChainWalking in v7 — see
+// complex_test.go. That test exercises the same wrap shape but
+// through the unified classifyResolutionError() rather than open-
+// coded errors.Is + errors.As, so a change to the detection
+// mechanism trips a single failure point instead of two.

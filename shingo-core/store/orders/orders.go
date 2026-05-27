@@ -39,6 +39,15 @@ type History = domain.OrderHistory
 // reuse the column list.
 const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, skip_auto_confirm`
 
+// adminListExcludeTypeFilter excludes Core-internal housekeeping
+// order types from admin-facing list queries. Today the only excluded
+// type is reshuffle_restore (the synthetic parent for the post-
+// pickup restock compound — never operator-actionable). Embedded into
+// List, ListFiltered, and ListActive so the operator UI doesn't have
+// to render a new order type. If a "show housekeeping orders" toggle
+// is added later, callers can opt into the full query.
+const adminListExcludeTypeFilter = `order_type != 'reshuffle_restore'`
+
 // ScanOrder reads a single orders row.
 // Exported for cross-aggregate readers at the outer store/ level.
 func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
@@ -215,9 +224,9 @@ func List(db *sql.DB, status string, limit int) ([]*Order, error) {
 	var rows *sql.Rows
 	var err error
 	if status != "" {
-		rows, err = db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status=$1 ORDER BY id DESC LIMIT $2`, SelectCols), status, limit)
+		rows, err = db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status=$1 AND %s ORDER BY id DESC LIMIT $2`, SelectCols, adminListExcludeTypeFilter), status, limit)
 	} else {
-		rows, err = db.Query(fmt.Sprintf(`SELECT %s FROM orders ORDER BY id DESC LIMIT $1`, SelectCols), limit)
+		rows, err = db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE %s ORDER BY id DESC LIMIT $1`, SelectCols, adminListExcludeTypeFilter), limit)
 	}
 	if err != nil {
 		return nil, err
@@ -240,7 +249,7 @@ func ListFiltered(db *sql.DB, f Filter) ([]*Order, error) {
 	if f.Limit <= 0 {
 		f.Limit = 100
 	}
-	query := fmt.Sprintf(`SELECT %s FROM orders WHERE 1=1`, SelectCols)
+	query := fmt.Sprintf(`SELECT %s FROM orders WHERE %s`, SelectCols, adminListExcludeTypeFilter)
 	args := []any{}
 	n := 0
 
@@ -281,7 +290,7 @@ func ListFiltered(db *sql.DB, f Filter) ([]*Order, error) {
 
 // ListActive returns all orders in non-terminal statuses.
 func ListActive(db *sql.DB) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN (%s) ORDER BY id DESC`, SelectCols, protocol.TerminalStatusSQLList()))
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN (%s) AND %s ORDER BY id DESC`, SelectCols, protocol.TerminalStatusSQLList(), adminListExcludeTypeFilter))
 	if err != nil {
 		return nil, err
 	}

@@ -12,13 +12,13 @@ import (
 //
 // Pure function — does NOT side-effect sendError on failure. Callers
 // decide how to surface the error (intake may queue on capacity
-// errors via isCapacityResolutionError; the scanner replay path
+// errors via classifyResolutionError; the scanner replay path
 // re-runs resolution per tick).
 //
 // Error shape: "step N: <reason>" — index info preserved so callers
 // don't need to re-format. The wrapped reason from resolveStepNode
 // preserves the original resolver substring so
-// isCapacityResolutionError can match.
+// classifyResolutionError's ResolutionCapacity branch can match.
 func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payloadCode string) ([]resolvedStep, error) {
 	var resolved []resolvedStep
 	for i, step := range steps {
@@ -62,8 +62,8 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 //     subsequent ticks don't redo the resolution work and so claim
 //     proceeds against the locked-in children.
 //   - err: the first resolution error encountered. Caller distinguishes
-//     capacity (queue, retry next tick) from other errors (fail) via
-//     isCapacityResolutionError.
+//     capacity (queue, retry next tick), buried (replay reshuffle), and
+//     other errors (fail) via classifyResolutionError.
 func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode string) (newSteps []resolvedStep, changed bool, err error) {
 	newSteps = make([]resolvedStep, 0, len(steps))
 	for i, step := range steps {

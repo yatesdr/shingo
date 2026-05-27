@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -72,24 +73,83 @@ func allStepSkipsAreEmptyNode(skips []pickupSkip) bool {
 	return true
 }
 
-// isCapacityResolutionError reports whether the resolver returned a
-// "transient capacity" failure — destination NGRP saturated or pickup
-// NGRP empty/no-matching-payload — as opposed to a permanent
-// StructuralError. Round-3 follow-up: these failures used to terminal-
-// fail a complex order at intake; they now queue with the message as
-// queue_reason so the scanner retries when capacity opens.
+// ResolutionErrorClass tags every resolver-error shape with the
+// disposition complex intake (and simple-retrieve planning) should
+// apply. Single classifier replaces the v6-era pair of
+// substring-based + sentinel-based detection helpers — see v7 Step 1.
+type ResolutionErrorClass int
+
+const (
+	// ResolutionOK is the zero value, returned when err == nil.
+	ResolutionOK ResolutionErrorClass = iota
+	// ResolutionCapacity covers the NGRP-saturated and
+	// NGRP-empty shapes ("no available slot in node group N", "no
+	// bin of requested payload in node group N"). Intake queues the
+	// order with queue_reason = err.Error(); the scanner replays.
+	ResolutionCapacity
+	// ResolutionBuried wraps *BuriedError. Intake routes through
+	// the reshuffle planner; simple-retrieve planning calls
+	// planBuriedReshuffle.
+	ResolutionBuried
+	// ResolutionStructural wraps *StructuralError — permanent
+	// configuration failure (group has no enabled children, or no
+	// child accepts the payload). Terminal-fail.
+	ResolutionStructural
+	// ResolutionTransient covers wrapped DB errors that the
+	// resolver surfaces as "list children of N: ...", "get target
+	// depth: ...", etc. We treat them as terminal here rather than
+	// looping on them — see §3 in the scope doc for the rationale.
+	ResolutionTransient
+	// ResolutionFatal covers everything else — unknown shape, treat
+	// as terminal.
+	ResolutionFatal
+)
+
+// classifyResolutionError inspects err and returns the typed class
+// plus the typed-payload pointer when the class carries one
+// (*BuriedError for ResolutionBuried, *StructuralError for
+// ResolutionStructural). The payload is nil for the other classes.
 //
-// Substrings match the resolver's stable error shapes:
-//   - dispatch/binresolver/group_resolver.go:440, 518 (dropoff NGRP full)
-//   - dispatch/binresolver/group_resolver.go:298, 323 (pickup NGRP empty)
-//
-// resolveStepNode wraps the resolver error as "cannot resolve group X:
-// <original>" — the substring survives the wrap.
-func isCapacityResolutionError(err error) bool {
+// Replaces the v6 pair (isCapacityResolutionError + isBuriedResolutionError)
+// with a single decision point so both the complex-intake and the
+// simple-retrieve paths route through the same classifier. Buried
+// detection uses errors.Is against the ErrBuried sentinel so it
+// survives any wrap chain; capacity detection still uses substring
+// match against the resolver's stable error shapes (the resolver
+// returns plain `fmt.Errorf` for those, with no typed sentinel to
+// match — a future cleanup would type those too).
+func classifyResolutionError(err error) (ResolutionErrorClass, any) {
 	if err == nil {
-		return false
+		return ResolutionOK, nil
 	}
+	// Typed sentinel / typed wrapper detection first — they're more
+	// specific than the substring shapes.
+	var buriedErr *BuriedError
+	if errors.Is(err, ErrBuried) {
+		if errors.As(err, &buriedErr) {
+			return ResolutionBuried, buriedErr
+		}
+		// Sentinel matched but typed extraction failed — treat as
+		// fatal rather than crashing.
+		return ResolutionFatal, nil
+	}
+	var structErr *StructuralError
+	if errors.As(err, &structErr) {
+		return ResolutionStructural, structErr
+	}
+	// Capacity-shaped errors (untyped fmt.Errorf strings from the
+	// resolver). resolveStepNode wraps with "cannot resolve group X:
+	// <original>" — the substring survives.
 	msg := err.Error()
-	return strings.Contains(msg, "no available slot in node group") ||
-		strings.Contains(msg, "no bin of requested payload in node group")
+	if strings.Contains(msg, "no available slot in node group") ||
+		strings.Contains(msg, "no bin of requested payload in node group") {
+		return ResolutionCapacity, nil
+	}
+	// DB-layer wraps that aren't structural or capacity.
+	if strings.Contains(msg, "list children of") ||
+		strings.Contains(msg, "get target depth") ||
+		strings.Contains(msg, "list lane slots") {
+		return ResolutionTransient, nil
+	}
+	return ResolutionFatal, nil
 }

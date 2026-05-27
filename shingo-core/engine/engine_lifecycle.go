@@ -53,6 +53,26 @@ func (e *Engine) Start() {
 	// Load active vendor orders into tracker
 	e.loadActiveOrders()
 
+	// Recover pending restore-blockers listeners from the
+	// pending_restocks table (v7). The in-memory restoreRegistry is
+	// volatile; without this a Core restart between unbury completion
+	// and bin pickup would strand blockers in shuffle slots forever.
+	// Errors are logged but non-fatal — fresh-install DBs don't yet
+	// have the table and that's fine on the no-restore-needed path.
+	if err := e.dispatcher.RecoverPendingRestocks(); err != nil {
+		e.logFn("engine: recover pending_restocks: %v", err)
+	}
+
+	// Recover pending lane-lock-extension listeners from the
+	// pending_lane_extensions table (post-v7 cleanup). Same shape as
+	// the restore-blockers recovery above — without it a Core restart
+	// during the post-compound / pre-pickup window would lose the
+	// listener and the lane stays held forever (or worse, becomes
+	// orphaned with no listener to release it).
+	if err := e.dispatcher.RecoverPendingLaneExtensions(); err != nil {
+		e.logFn("engine: recover pending_lane_extensions: %v", err)
+	}
+
 	// Scan for any orders queued before restart
 	go e.fulfillment.RunOnce()
 

@@ -271,6 +271,78 @@ func (e *Engine) wireEventHandlers() {
 		e.handleBlockCompleted(evt.Payload)
 	}, EventBlockCompleted)
 
+	// ── Restore-blockers + lane-lock-extension listeners ──────────────
+	// Both listeners trigger on the same bin-transit and parent-
+	// terminal events:
+	//
+	//   - Restore-blockers (toggle-on path): when the complex parent
+	//     picks up its target, dispatch the synthetic-restock
+	//     compound. Idempotent: ConsumeByBin one-shots.
+	//   - Lane-lock-extension (v7 Step 4.5, expose mode only): when
+	//     the complex parent picks up its target, release the lane
+	//     lock that was held through the post-compound / pre-pickup
+	//     window. Also releases on parent cancel/fail so a never-
+	//     picked-up parent doesn't strand the lock.
+	//
+	// Both no-op when no entry matches the event — safe to wire even
+	// for groups with neither feature in play.
+	//
+	// REFACTOR TARGET: v7 added these two reshuffle-specific subscribers
+	// (restore-blockers cleanup, lane-lock release) on top of the
+	// existing auto-return and audit subscribers. If you're modifying
+	// any of the reshuffle terminal handlers, consider consolidating
+	// them into a single dispatcher.onComplexParentTerminal(event)
+	// subscriber that fans to internal idempotent helpers. Auto-return
+	// and audit stay separate — they aren't reshuffle-coupled. See
+	// "Refactor targets" in complex-order-buried-reshuffle-scope.md §10
+	// for shape and rationale.
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinEnteredTransitEvent]) {
+		if e.dispatcher == nil {
+			return
+		}
+		e.dispatcher.HandleBinEnteredTransit(evt.Payload.BinID, evt.Payload.FromNodeID)
+		e.dispatcher.HandleBinTransitForLaneLock(evt.Payload.BinID, evt.Payload.FromNodeID)
+	}, EventBinEnteredTransit)
+
+	// Parent terminal: drop both listeners so the lock isn't stuck
+	// and the synthetic-restock parent is cancelled. All four terminal
+	// statuses are wired:
+	//
+	//   - Cancelled / Failed: explicit cleanup paths.
+	//   - Skipped: a complex parent that gets skipped at Queued (e.g.,
+	//     claimComplexBins returns no_source_bin because the unburied
+	//     target was moved or anomalied between unbury completion and
+	//     scanner pickup) needs the same cleanup — no pickup happens,
+	//     so the bin-transit listener will never fire.
+	//   - Completed: defensive idempotent sweep. In the normal happy
+	//     path the bin-transit listener already consumed the in-memory
+	//     entry and deleted the DB row before the parent reached
+	//     Confirmed, so this is a no-op. Covers the rare path where
+	//     an admin / recovery action force-confirms a parent past the
+	//     pickup leg.
+	//
+	// Both handlers are safe to call on a parent with no entry —
+	// they no-op when nothing matches.
+	terminal := func(orderID int64) {
+		if e.dispatcher == nil {
+			return
+		}
+		e.dispatcher.HandleComplexParentTerminal(orderID)
+		e.dispatcher.HandleComplexParentTerminalForLaneLock(orderID)
+	}
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
+		terminal(evt.Payload.OrderID)
+	}, EventOrderCancelled)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
+		terminal(evt.Payload.OrderID)
+	}, EventOrderFailed)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderSkippedEvent]) {
+		terminal(evt.Payload.OrderID)
+	}, EventOrderSkipped)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
+		terminal(evt.Payload.OrderID)
+	}, EventOrderCompleted)
+
 	// â”€â”€ Queued order audit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
 		ev := evt.Payload

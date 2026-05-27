@@ -753,6 +753,54 @@ func TestApplyCoreStatusSnapshot_UnknownStatusIsNoop(t *testing.T) {
 	}
 }
 
+// TestApplyCoreStatusSnapshot_Reshuffling exercises the explicit
+// Reshuffling arm added alongside the complex-order buried-reshuffle
+// fix. Pre-fix, the snapshot switch's `default: return nil` silently
+// dropped a Reshuffling status on edge reconciliation (e.g., after an
+// edge restart while a compound was in flight), leaving the edge
+// mirror stuck on a stale status.
+func TestApplyCoreStatusSnapshot_Reshuffling(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-resh", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+
+	if err := mgr.ApplyCoreStatusSnapshot(protocol.OrderStatusSnapshot{
+		OrderUUID: "uuid-resh", Found: true, Status: string(StatusReshuffling),
+	}); err != nil {
+		t.Fatalf("ApplyCoreStatusSnapshot: %v", err)
+	}
+	o, _ := db.GetOrder(oid)
+	if o.Status != StatusReshuffling {
+		t.Errorf("Status: got %q, want reshuffling", o.Status)
+	}
+}
+
+// TestApplyCoreStatusSnapshot_SimpleRetrieveReshuffleSurfaces is the
+// pre-existing-bug regression test that lands alongside the new
+// feature: a simple-retrieve order driven into Reshuffling on the
+// core side must surface on the edge mirror after snapshot
+// reconciliation.
+func TestApplyCoreStatusSnapshot_SimpleRetrieveReshuffleSurfaces(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-simple-resh", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
+
+	if err := mgr.ApplyCoreStatusSnapshot(protocol.OrderStatusSnapshot{
+		OrderUUID: "uuid-simple-resh", Found: true, Status: string(StatusReshuffling),
+	}); err != nil {
+		t.Fatalf("ApplyCoreStatusSnapshot: %v", err)
+	}
+	o, _ := db.GetOrder(oid)
+	if o.Status != StatusReshuffling {
+		t.Errorf("Status: got %q, want reshuffling", o.Status)
+	}
+}
+
 func TestApplyCoreStatusSnapshot_MissingOrder(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)

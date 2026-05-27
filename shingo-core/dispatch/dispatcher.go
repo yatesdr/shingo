@@ -14,31 +14,35 @@ import (
 )
 
 type Dispatcher struct {
-	db            *store.DB
-	backend       fleet.Backend
-	emitter       Emitter
-	resolver      NodeResolver
-	laneLock      *LaneLock
-	stationID     string
-	dispatchTopic string
-	lifecycle     *LifecycleService
-	replies       *ReplySender
-	planner       *PlanningService
-	binManifest   *service.BinManifestService
-	DebugLog      func(string, ...any)
+	db               *store.DB
+	backend          fleet.Backend
+	emitter          Emitter
+	resolver         NodeResolver
+	laneLock         *LaneLock
+	stationID        string
+	dispatchTopic    string
+	lifecycle        *LifecycleService
+	replies          *ReplySender
+	planner          *PlanningService
+	binManifest      *service.BinManifestService
+	restoreListeners *restoreRegistry
+	laneHolds        *laneHoldRegistry
+	DebugLog         func(string, ...any)
 }
 
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {
 	binManifest := service.NewBinManifestService(db)
 	d := &Dispatcher{
-		db:            db,
-		backend:       backend,
-		emitter:       emitter,
-		resolver:      resolver,
-		laneLock:      NewLaneLock(),
-		stationID:     stationID,
-		dispatchTopic: dispatchTopic,
-		binManifest:   binManifest,
+		db:               db,
+		backend:          backend,
+		emitter:          emitter,
+		resolver:         resolver,
+		laneLock:         NewLaneLock(),
+		stationID:        stationID,
+		dispatchTopic:    dispatchTopic,
+		binManifest:      binManifest,
+		restoreListeners: newRestoreRegistry(),
+		laneHolds:        newLaneHoldRegistry(),
 	}
 	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
 	d.replies = newReplySender(db, dispatchTopic, stationID, d.dbg)
@@ -237,12 +241,19 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 		return
 	}
 
-	// If this is a compound parent, cascade cancellation to all children
-	// before cancelling the parent. This ensures in-flight children have
-	// their fleet orders cancelled, bins unclaimed, and the lane lock released.
-	if order.Status == StatusReshuffling {
-		d.cancelCompoundChildren(order, stationID, p.Reason)
-	}
+	// Cascade cancellation to all children before cancelling the parent.
+	// This ensures in-flight children have their fleet orders cancelled,
+	// bins unclaimed, and the lane lock released.
+	//
+	// Pre-fix this was gated on order.Status == StatusReshuffling. The
+	// guard is brittle: once a complex parent resumes from Reshuffling
+	// back to Queued (see lifecycle.ResumeCompound), a cancel against
+	// the Queued parent skipped the cascade and orphaned still-running
+	// children. cancelCompoundChildren is already idempotent for non-
+	// compound orders — ListChildOrders returns an empty slice and the
+	// loop no-ops — so the unconditional call costs one extra SELECT
+	// per cancel of a non-compound order.
+	d.cancelCompoundChildren(order, stationID, p.Reason)
 
 	d.lifecycle.CancelOrder(order, stationID, p.Reason)
 	d.replies.SendCancelled(env, p.OrderUUID, p.Reason)

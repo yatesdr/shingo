@@ -140,6 +140,13 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 		return s.ForceTransition(order.ID, StatusAcknowledged, detail)
 	case StatusQueued:
 		return s.ForceTransition(order.ID, StatusQueued, detail)
+	case StatusReshuffling:
+		// Complex-order reshuffles can sit in Reshuffling for minutes
+		// while the compound runs. Without this arm an edge restart in
+		// that window would leave the edge mirror stuck on a stale
+		// pre-reshuffle status. Same fix lets simple-retrieve
+		// reshuffles surface correctly after edge reconnect.
+		return s.ForceTransition(order.ID, StatusReshuffling, detail)
 	default:
 		return nil
 	}
