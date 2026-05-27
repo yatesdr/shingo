@@ -279,7 +279,7 @@ echo "==> Creating backup at ${BACKUP_PATH}"
 # orders by mtime newest-first; tail -n +4 skips the first 3 and
 # emits everything older. xargs -r is a no-op when input is empty
 # (fresh install, no prior backups).
-ls -1t /tmp/shingo-pre-install-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f
+ls -1t /tmp/shingo-pre-install-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f || true
 
 BACKUP_FILES=()
 for f in "$LEGACY_CONFIG" /etc/shingo/shingocore.yaml; do
