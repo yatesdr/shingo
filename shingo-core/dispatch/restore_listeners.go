@@ -176,11 +176,14 @@ func (d *Dispatcher) scheduleRestoreIfEnabled(
 	}
 	// CreateOrder writes status='pending' via the existing INSERT —
 	// override to Reshuffling so the scanner's ListQueuedOrders
-	// never picks it up.
-	if err := d.db.UpdateOrderStatus(syn.ID, string(StatusReshuffling), "synthetic restore parent"); err != nil {
+	// never picks it up. Goes through MarkReshuffling (the typed
+	// initial-write helper on LifecycleService, mirroring MarkPending)
+	// rather than a direct UpdateOrderStatus call — direct status
+	// writes are forbidden by the lint guard against state-machine
+	// bypass.
+	if err := d.lifecycle.MarkReshuffling(syn, "synthetic restore parent"); err != nil {
 		log.Printf("dispatch: set synthetic restore parent %d to Reshuffling: %v", syn.ID, err)
 	}
-	syn.Status = StatusReshuffling
 
 	entry := &restoreEntry{
 		syntheticParent:  syn,

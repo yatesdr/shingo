@@ -459,6 +459,26 @@ func (s *LifecycleService) MarkPending(ord *orders.Order, reason string) error {
 	return nil
 }
 
+// MarkReshuffling writes Reshuffling as the initial status for a
+// synthetic restore-blockers parent — same entry-point pattern as
+// MarkPending. The synthetic parent is created via CreateOrder
+// (which writes Pending) and immediately moved to Reshuffling so
+// the fulfillment scanner's ListQueuedOrders query never returns
+// it. transition() would reject Pending → Reshuffling on the strict
+// path since the order has no compound children yet; this bypass
+// is the same shape as MarkPending's initial-write rationale.
+//
+// Restricted to the synthetic restore parent path. Real intake
+// flows that need Reshuffling go through BeginReshuffle (from
+// Pending / Sourcing / Queued).
+func (s *LifecycleService) MarkReshuffling(ord *orders.Order, reason string) error {
+	if err := s.db.UpdateOrderStatus(ord.ID, string(StatusReshuffling), reason); err != nil {
+		return fmt.Errorf("mark reshuffling order %d: %w", ord.ID, err)
+	}
+	ord.Status = StatusReshuffling
+	return nil
+}
+
 // ── Action implementations ──────────────────────────────────────────────
 
 func fireCompleted(s *LifecycleService, ord *orders.Order, ev Event) error {
