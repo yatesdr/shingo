@@ -52,19 +52,28 @@ if ! id -u shingo >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin shingo
 fi
 
-# curl is required by alert-on-stop.sh (Teams crash-alert hook). A missing
-# curl made the script silently log "WARN: webhook post failed" instead of
-# anything actionable on Springfield 2026-05-21. Install it loudly so that
-# never happens again. apt-get is the only package manager we support here;
-# if the box runs something else (rpm-family, etc.), warn-and-continue —
-# the service still works, only Teams alerts are degraded.
-if ! command -v curl >/dev/null 2>&1; then
+# Prerequisites:
+#   curl     — alert-on-stop.sh posts crash alerts to Teams via curl. A
+#              missing curl made the script silently log "WARN: webhook
+#              post failed" instead of anything actionable on Springfield
+#              2026-05-21, so we install it loudly here.
+#   sqlite3  — deploy/db-migration.sh shells out to the sqlite3 CLI for
+#              the WAL checkpoint before moving the DB into /var/lib.
+#              Without it the migration fails with "sqlite3: command not
+#              found" partway through (hit on Hopkinsville 2026-05-27).
+# apt-get is the only package manager we support; on anything else,
+# warn-and-continue — the service still works, only Teams alerts and
+# legacy-DB migration are degraded.
+missing=()
+command -v curl    >/dev/null 2>&1 || missing+=(curl)
+command -v sqlite3 >/dev/null 2>&1 || missing+=(sqlite3)
+if [ ${#missing[@]} -gt 0 ]; then
     if command -v apt-get >/dev/null 2>&1; then
-        echo "==> Installing curl (required by alert-on-stop.sh)..."
-        apt-get update -qq && apt-get install -y curl
+        echo "==> Installing prerequisites: ${missing[*]}"
+        apt-get update -qq && apt-get install -y "${missing[@]}"
     else
-        echo "WARNING: curl not installed and apt-get not available."
-        echo "         Teams crash alerts won't work until curl is installed by hand."
+        echo "WARNING: missing prerequisites and apt-get not available: ${missing[*]}"
+        echo "         Teams crash alerts and/or DB migration won't work until installed by hand."
     fi
 fi
 
