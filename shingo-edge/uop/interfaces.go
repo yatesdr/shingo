@@ -78,7 +78,11 @@ type Sink interface {
 	// the original InventoryDeltaSink contract. New emission sites
 	// should not call these; the archtest enforces no direct
 	// RecordBin/RecordBucket calls outside this package.
-	RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason)
+	//
+	// RecordBin's `epoch` argument is the bin's load-lifecycle epoch
+	// (post-epoch fix). Callers that pre-date the epoch addition pass 0
+	// for the pre-migration cohort.
+	RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason, epoch int64)
 	RecordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, partNumber, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason)
 	Flush()
 	FlushFailures() int64

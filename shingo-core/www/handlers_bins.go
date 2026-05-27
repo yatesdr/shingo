@@ -417,7 +417,11 @@ func (h *Handlers) binLoadPayload(b *domain.Bin, params json.RawMessage) error {
 	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
 		return fmt.Errorf("invalid params: %w", err)
 	}
-	if err := h.engine.BinService().LoadPayload(b.ID, p.PayloadCode, p.UOPOverride); err != nil {
+	// Epoch return discarded — admin "Load Payload" lands directly on
+	// Core via the bin detail modal, with no Edge response carrying the
+	// new value. Edge picks the post-bump epoch up on its next
+	// bin-state refresh.
+	if _, err := h.engine.BinService().LoadPayload(b.ID, p.PayloadCode, p.UOPOverride); err != nil {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "loaded", "", p.PayloadCode, "ui")
@@ -427,7 +431,8 @@ func (h *Handlers) binLoadPayload(b *domain.Bin, params json.RawMessage) error {
 
 func (h *Handlers) binClear(b *domain.Bin, _ json.RawMessage) error {
 	oldCode := b.PayloadCode
-	if err := h.engine.BinService().Manifest().ClearForReuse(b.ID); err != nil {
+	// Epoch return discarded — same rationale as binLoad above.
+	if _, err := h.engine.BinService().Manifest().ClearForReuse(b.ID); err != nil {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "cleared", oldCode, "", "ui")

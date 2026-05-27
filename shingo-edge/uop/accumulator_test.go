@@ -58,9 +58,9 @@ func TestInventoryDeltaReporter_BinAccumulationAndFlush(t *testing.T) {
 	db := newReporterTestDB(t)
 	r := New(db, "ALN_001", nil, nil, nil)
 
-	r.RecordBin(42, "PART-A", -3, protocol.ReasonConsumeTick)
-	r.RecordBin(42, "PART-A", -2, protocol.ReasonConsumeTick)
-	r.RecordBin(42, "PART-A", -1, protocol.ReasonConsumeTick)
+	r.RecordBin(42, "PART-A", -3, protocol.ReasonConsumeTick, 1)
+	r.RecordBin(42, "PART-A", -2, protocol.ReasonConsumeTick, 1)
+	r.RecordBin(42, "PART-A", -1, protocol.ReasonConsumeTick, 1)
 	r.Flush()
 
 	deltas := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta)
@@ -140,8 +140,8 @@ func TestInventoryDeltaReporter_ZeroDeltaNoFlush(t *testing.T) {
 	db := newReporterTestDB(t)
 	r := New(db, "ALN_001", nil, nil, nil)
 
-	r.RecordBin(7, "PART-X", 5, protocol.ReasonProduceTick)
-	r.RecordBin(7, "PART-X", -5, protocol.ReasonConsumeTick)
+	r.RecordBin(7, "PART-X", 5, protocol.ReasonProduceTick, 1)
+	r.RecordBin(7, "PART-X", -5, protocol.ReasonConsumeTick, 1)
 	r.Flush()
 
 	deltas := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta)
@@ -167,9 +167,9 @@ func TestInventoryDeltaReporter_ScopeKeysIndependent(t *testing.T) {
 	db := newReporterTestDB(t)
 	r := New(db, "ALN_001", nil, nil, nil)
 
-	r.RecordBin(11, "PART-A", -1, protocol.ReasonConsumeTick)
-	r.RecordBin(22, "PART-B", -2, protocol.ReasonConsumeTick)
-	r.RecordBin(33, "PART-C", -3, protocol.ReasonConsumeTick)
+	r.RecordBin(11, "PART-A", -1, protocol.ReasonConsumeTick, 1)
+	r.RecordBin(22, "PART-B", -2, protocol.ReasonConsumeTick, 1)
+	r.RecordBin(33, "PART-C", -3, protocol.ReasonConsumeTick, 1)
 	r.Flush()
 
 	deltas := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta)
@@ -205,7 +205,7 @@ func TestInventoryDeltaReporter_FailedEnqueueLeavesEntryIntact(t *testing.T) {
 	db := newReporterTestDB(t)
 	r := New(db, "ALN_001", nil, nil, nil)
 
-	r.RecordBin(99, "PART-Z", -7, protocol.ReasonConsumeTick)
+	r.RecordBin(99, "PART-Z", -7, protocol.ReasonConsumeTick, 1)
 
 	// Close the DB so EnqueueOutbox / AllocateInventoryDeltaSeq fail.
 	db.Close()
@@ -243,7 +243,7 @@ func TestInventoryDeltaReporter_ConcurrentRecordsThenFlush(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < perGoroutine; j++ {
-				r.RecordBin(50, "PART-CONC", 1, protocol.ReasonProduceTick)
+				r.RecordBin(50, "PART-CONC", 1, protocol.ReasonProduceTick, 1)
 			}
 		}()
 	}
@@ -272,7 +272,7 @@ func TestInventoryDeltaReporter_StopFlushesPending(t *testing.T) {
 	r.SetInterval(1 * time.Hour) // never auto-flush
 	r.Start()
 
-	r.RecordBin(60, "PART-S", -4, protocol.ReasonConsumeTick)
+	r.RecordBin(60, "PART-S", -4, protocol.ReasonConsumeTick, 1)
 	r.Stop()
 
 	deltas := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta)

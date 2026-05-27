@@ -104,7 +104,7 @@ func TestBinUOPAudit_ClearForReuse_LogsZeroAfter(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-AUDIT-CLEAR", "PART-A", 88)
 
-	testutil.MustNoErr(t, svc.ClearForReuse(bin.ID), "ClearForReuse")
+	if _, err := svc.ClearForReuse(bin.ID); err != nil { t.Fatalf("ClearForReuse" + ": %v", err) }
 
 	rows := loadBinUOPAudit(t, db, bin.ID)
 	if len(rows) != 1 {

@@ -31,7 +31,7 @@ type Bin = domain.Bin
 // Export as BinJoinQuery so cross-aggregate readers at the outer store/
 // level (which need to add their own WHERE clauses) can reuse it.
 const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node_id, b.status, b.claimed_by, b.staged_at, b.staged_expires_at,
-	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.manifest_confirmed,
+	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.delta_epoch, b.manifest_confirmed,
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
 	b.loaded_at, b.anomaly_at, b.created_at, b.updated_at,
 	bt.code, COALESCE(n.name, '')
@@ -74,7 +74,7 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 	var manifest sql.NullString
 	err := row.Scan(&b.ID, &b.BinTypeID, &b.Label, &b.Description, &nodeID, &b.Status, &claimedBy,
 		&b.StagedAt, &b.StagedExpiresAt,
-		&b.PayloadCode, &manifest, &b.UOPRemaining, &b.ManifestConfirmed,
+		&b.PayloadCode, &manifest, &b.UOPRemaining, &b.DeltaEpoch, &b.ManifestConfirmed,
 		&b.Locked, &b.LockedBy, &b.LockedAt, &b.LastCountedAt, &b.LastCountedBy,
 		&b.LoadedAt, &b.AnomalyAt, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName)
 	if err != nil {

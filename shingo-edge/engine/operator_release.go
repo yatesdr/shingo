@@ -322,6 +322,16 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 	// no bin" semantics make the resulting count consistent. The
 	// dual-write removal is a future cleanup item.
 	if e.inventoryDelta != nil {
+		// Epoch resolution: if the resolved bin matches the runtime's
+		// active bin, lift the epoch from runtime; otherwise pass 0
+		// and let Core's stale-epoch warn surface the drift. The
+		// resolved-but-doesn't-match case is rare (Core's bin pointer
+		// changed while the release was being processed) and a hard
+		// drop is preferable to attribution against the wrong epoch.
+		var binEpoch int64
+		if runtime != nil && runtime.ActiveBinID != nil && *runtime.ActiveBinID == resolvedBinID {
+			binEpoch = runtime.ActiveBinEpoch
+		}
 		if _, err := e.inventoryDelta.CaptureToLineside(uop.CaptureEvent{
 			NodeID:           node.ID,
 			StyleID:          toClaim.StyleID,
@@ -330,6 +340,7 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 			Disposition:      disp,
 			BinID:            resolvedBinID,
 			PayloadCode:      order.PayloadCode,
+			BinEpoch:         binEpoch,
 			SuppressBinDelta: isSupply,
 		}); err != nil {
 			return err

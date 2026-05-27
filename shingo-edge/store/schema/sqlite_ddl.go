@@ -189,6 +189,13 @@ CREATE TABLE IF NOT EXISTS process_node_runtime_states (
     process_node_id    INTEGER NOT NULL UNIQUE REFERENCES process_nodes(id) ON DELETE CASCADE,
     active_claim_id    INTEGER REFERENCES style_node_claims(id) ON DELETE SET NULL,
     active_bin_id      INTEGER,
+    -- active_bin_epoch mirrors Core's bins.delta_epoch for the bin
+    -- currently active at this slot. Edge stamps every outgoing
+    -- BinUOPDelta with the value so Core's epoch-aware dedup accepts
+    -- the delta. Populated on LoadBin response, FetchNodeBins refresh,
+    -- and bin-arrival events; survives Edge restart so post-restart
+    -- ticks don't emit at epoch=0 against a bin already at epoch>=1.
+    active_bin_epoch   INTEGER NOT NULL DEFAULT 0,
     remaining_uop_cached INTEGER NOT NULL DEFAULT 0,
     active_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     staged_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
@@ -334,11 +341,16 @@ CREATE INDEX IF NOT EXISTS idx_lineside_pair_state
 -- scope_key:
 --   bin scope    → strconv(BinID)
 --   bucket scope → "<NodeID>|<PairKey>|<StyleID>|<PartNumber>"
+-- epoch labels the bin's load-lifecycle for bins (0 for buckets).
+-- Per-epoch counters mean a new bin load starts seq=1, immune to
+-- prior-epoch counter drift surviving across Edge restarts / DB
+-- restores. Old-epoch rows linger harmlessly.
 CREATE TABLE IF NOT EXISTS inventory_delta_seq (
     scope_kind TEXT NOT NULL,
     scope_key  TEXT NOT NULL,
+    epoch      INTEGER NOT NULL DEFAULT 0,
     next_seq   INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (scope_kind, scope_key)
+    PRIMARY KEY (scope_kind, scope_key, epoch)
 );
 `

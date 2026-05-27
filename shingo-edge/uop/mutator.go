@@ -69,9 +69,11 @@ func (m *Mutator) Start() { m.acc.start() }
 func (m *Mutator) Stop() { m.acc.stop() }
 
 // RecordBin accumulates a signed delta against a specific bin under
-// the given reason. Satisfies engine.InventoryDeltaSink.
-func (m *Mutator) RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason) {
-	m.acc.recordBin(binID, payloadCode, delta, reason)
+// the given reason. Satisfies engine.InventoryDeltaSink. epoch is the
+// bin's load-lifecycle epoch — caller resolves it from the runtime
+// bin-state cache so Core's epoch-aware dedup accepts the delta.
+func (m *Mutator) RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason, epoch int64) {
+	m.acc.recordBin(binID, payloadCode, delta, reason, epoch)
 }
 
 // RecordBucket accumulates a signed delta against a specific lineside

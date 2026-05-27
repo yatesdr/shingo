@@ -50,6 +50,12 @@ type CaptureEvent struct {
 	BinID       int64
 	PayloadCode string
 
+	// BinEpoch is the released bin's load-lifecycle epoch — threaded
+	// through to recordBin so the capture_reduction emission carries
+	// the right generation in the BinUOPDelta envelope. Caller
+	// resolves from the runtime bin-state at release time.
+	BinEpoch int64
+
 	// SuppressBinDelta is true for the supply leg (Order A) of a
 	// two-robot swap. The supply bin is fresh and had nothing pulled
 	// from it; emitting capture_reduction would corrupt the
@@ -100,7 +106,7 @@ func (m *Mutator) CaptureToLineside(ev CaptureEvent) (capturedTotal int, err err
 
 	if capturedTotal > 0 && !ev.SuppressBinDelta {
 		if ev.BinID > 0 {
-			m.acc.recordBin(ev.BinID, ev.PayloadCode, -capturedTotal, protocol.ReasonCaptureReduction)
+			m.acc.recordBin(ev.BinID, ev.PayloadCode, -capturedTotal, protocol.ReasonCaptureReduction, ev.BinEpoch)
 		} else {
 			// Loud diagnostic. The capture path used to silently drop
 			// the capture_reduction here when the caller couldn't

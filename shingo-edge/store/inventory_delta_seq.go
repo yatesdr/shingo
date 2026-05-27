@@ -12,30 +12,34 @@ import (
 //
 // scopeKind ∈ {"bin", "bucket"}; scopeKey is the same stable string
 // the dedup table uses (strconv(BinID) for bins; piped composite for
-// buckets).
+// buckets); epoch labels the bin's load-lifecycle for bins (0 for
+// buckets — see ApplyLinesideBucketDelta on Core).
+//
+// PK is (scope_kind, scope_key, epoch). Per-epoch counters mean a new
+// bin load (epoch bump on Core) starts the seq stream at 1, immune
+// to any prior-epoch counter drift this Edge instance carried.
 //
 // Atomic via UPSERT-and-return: INSERT ... ON CONFLICT
 // DO UPDATE SET next_seq = next_seq + 1 RETURNING next_seq. SQLite
 // serializes the table-level write so concurrent calls advance the
-// counter without races. The returned value is the SequenceID the
-// caller should put on the wire.
+// counter without races.
 //
-// Survives Edge restarts — the row is durable. After a crash the
-// reporter resumes at the next unused id; gaps are acceptable
-// (Core's dedup is monotonic-greater-than, not contiguous).
-func (db *DB) AllocateInventoryDeltaSeq(scopeKind, scopeKey string) (int64, error) {
+// Survives Edge restarts — the row is durable. Old-epoch rows linger
+// after a load-lifecycle bump (cheap: a handful of bytes each), no
+// retention sweep required.
+func (db *DB) AllocateInventoryDeltaSeq(scopeKind, scopeKey string, epoch int64) (int64, error) {
 	var seq int64
 	err := db.QueryRow(`
-		INSERT INTO inventory_delta_seq (scope_kind, scope_key, next_seq, updated_at)
-		VALUES (?, ?, 1, datetime('now'))
-		ON CONFLICT (scope_kind, scope_key)
+		INSERT INTO inventory_delta_seq (scope_kind, scope_key, epoch, next_seq, updated_at)
+		VALUES (?, ?, ?, 1, datetime('now'))
+		ON CONFLICT (scope_kind, scope_key, epoch)
 		DO UPDATE SET next_seq = next_seq + 1, updated_at = datetime('now')
 		RETURNING next_seq`,
-		scopeKind, scopeKey,
+		scopeKind, scopeKey, epoch,
 	).Scan(&seq)
 	if err != nil {
-		return 0, fmt.Errorf("allocate inventory_delta_seq scope=%s/%s: %w",
-			scopeKind, scopeKey, err)
+		return 0, fmt.Errorf("allocate inventory_delta_seq scope=%s/%s epoch=%d: %w",
+			scopeKind, scopeKey, epoch, err)
 	}
 	return seq, nil
 }

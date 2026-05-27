@@ -152,7 +152,11 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 		if uop <= 0 {
 			uop = tmpl.UOPCapacity
 		}
-		if err := s.binManifest.SetForProduction(bin.ID, string(manifestJSON), p.PayloadCode, uop); err != nil {
+		// Epoch return is discarded here — the lifecycle service is
+		// running a Core-internal ingest path with no Edge response to
+		// thread the new epoch through. Edge picks up the new epoch on
+		// its next periodic bin-state refresh.
+		if _, err := s.binManifest.SetForProduction(bin.ID, string(manifestJSON), p.PayloadCode, uop); err != nil {
 			return nil, "", lifecycleErr("internal_error", err.Error(), err)
 		}
 	} else {
@@ -163,7 +167,7 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 		// audit; the resulting timeline gap made forensics confusing
 		// because freshly-loaded bins appeared in bin_uop_audit only
 		// at the first downstream delta — missing the load itself.
-		if err := s.binManifest.SetFromTemplate(bin.ID, p.PayloadCode, 0); err != nil {
+		if _, err := s.binManifest.SetFromTemplate(bin.ID, p.PayloadCode, 0); err != nil {
 			return nil, "", lifecycleErr("internal_error", err.Error(), err)
 		}
 	}

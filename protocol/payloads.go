@@ -637,8 +637,17 @@ type BinUOPDelta struct {
 	Delta       int               `json:"delta"`
 	Reason      BinUOPDeltaReason `json:"reason"`
 	SequenceID  int64             `json:"sequence_id"`
-	WindowStart time.Time         `json:"window_start"`
-	WindowEnd   time.Time         `json:"window_end"`
+	// Epoch is the bin's delta_epoch as known to Edge at emit time. Bumps
+	// on every Core-controlled lifecycle boundary (set_for_production,
+	// clear). The dedup PK on Core is (station, scope_kind, scope_key,
+	// epoch); extending the key with epoch means a stale Edge seq counter
+	// (deploy reset, backup restore, cache loss) can't poison the new
+	// bin life's delta stream. Pre-epoch envelopes deserialize with
+	// Epoch=0, which Core treats as the pre-migration cohort (matches
+	// the backfilled epoch=1 on existing rows after the migration runs).
+	Epoch       int64     `json:"epoch"`
+	WindowStart time.Time `json:"window_start"`
+	WindowEnd   time.Time `json:"window_end"`
 }
 
 // LinesideBucketDelta carries a count change against a specific

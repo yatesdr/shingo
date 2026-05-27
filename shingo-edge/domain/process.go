@@ -97,10 +97,17 @@ type NodeInput struct {
 // No reverse heal — a stale Core value never overwrites Edge's live
 // number.
 type RuntimeState struct {
-	ID                 int64     `json:"id"`
-	ProcessNodeID      int64     `json:"process_node_id"`
-	ActiveClaimID      *int64    `json:"active_claim_id,omitempty"`
-	ActiveBinID        *int64    `json:"active_bin_id,omitempty"`
+	ID                 int64  `json:"id"`
+	ProcessNodeID      int64  `json:"process_node_id"`
+	ActiveClaimID      *int64 `json:"active_claim_id,omitempty"`
+	ActiveBinID        *int64 `json:"active_bin_id,omitempty"`
+	// ActiveBinEpoch mirrors Core's bins.delta_epoch for ActiveBinID.
+	// Edge stamps every outgoing BinUOPDelta with this value so Core's
+	// epoch-aware dedup accepts the delta against the right load
+	// generation. Populated by LoadBin response and FetchNodeBins
+	// refresh; persists across Edge restarts via the column on
+	// process_node_runtime_states.
+	ActiveBinEpoch     int64     `json:"active_bin_epoch"`
 	CachedBinID        *int64    `json:"cached_bin_id,omitempty"`
 	RemainingUOPCached int       `json:"remaining_uop_cached"`
 	ActiveOrderID      *int64    `json:"active_order_id,omitempty"`

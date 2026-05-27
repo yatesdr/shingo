@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS bins (
     payload_code       TEXT NOT NULL DEFAULT '',
     manifest           JSONB,
     uop_remaining      INTEGER NOT NULL DEFAULT 0,
+    delta_epoch        BIGINT NOT NULL DEFAULT 1,
     manifest_confirmed BOOLEAN NOT NULL DEFAULT false,
     locked             BOOLEAN NOT NULL DEFAULT false,
     locked_by          TEXT NOT NULL DEFAULT '',
@@ -418,12 +419,18 @@ CREATE INDEX IF NOT EXISTS idx_lineside_buckets_payload ON lineside_buckets(payl
 -- order-message processing); this gates the count-change application
 -- carried by the envelope. last_seq is the highest SequenceID Core has
 -- applied for the (station, scope_kind, scope_key) tuple.
+-- epoch is the bin's delta_epoch at the time the delta was emitted.
+-- Bins-only column on the wire; bucket-scope deltas carry epoch=0 and
+-- Core treats that as the pre-migration cohort (the bucket scope
+-- relies on the existing qty→0 GC + admin-delete to clear its dedup
+-- rows; see store/inventory/inventory.go).
 CREATE TABLE IF NOT EXISTS inventory_delta_dedup (
     station TEXT NOT NULL,
     scope_kind TEXT NOT NULL,
     scope_key TEXT NOT NULL,
+    epoch BIGINT NOT NULL DEFAULT 0,
     last_seq BIGINT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (station, scope_kind, scope_key)
+    PRIMARY KEY (station, scope_kind, scope_key, epoch)
 );
 `

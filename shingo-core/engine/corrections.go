@@ -71,9 +71,11 @@ func (e *Engine) ApplyCorrection(req ApplyCorrectionRequest) (int64, error) {
 		}
 	}
 
-	// Save updated manifest
+	// Save updated manifest. Epoch return discarded — corrections are a
+	// Core-internal operation; Edge picks up the new epoch on its next
+	// bin-state refresh.
 	manifestJSON, _ := json.Marshal(manifest)
-	if err := e.binManifest.SetForProduction(req.BinID, string(manifestJSON), bin.PayloadCode, bin.UOPRemaining); err != nil {
+	if _, err := e.binManifest.SetForProduction(req.BinID, string(manifestJSON), bin.PayloadCode, bin.UOPRemaining); err != nil {
 		return 0, fmt.Errorf("update bin manifest: %w", err)
 	}
 
@@ -182,10 +184,11 @@ func (e *Engine) ApplyBatchCorrection(req BatchCorrectionRequest) error {
 		return nil // no changes
 	}
 
-	// Save the new manifest on the bin
+	// Save the new manifest on the bin. Epoch return discarded — same
+	// rationale as the single-item correction above.
 	newManifest := bins.Manifest{Items: newItems}
 	manifestJSON, _ := json.Marshal(newManifest)
-	if err := e.binManifest.SetForProduction(req.BinID, string(manifestJSON), bin.PayloadCode, bin.UOPRemaining); err != nil {
+	if _, err := e.binManifest.SetForProduction(req.BinID, string(manifestJSON), bin.PayloadCode, bin.UOPRemaining); err != nil {
 		return fmt.Errorf("update bin manifest: %w", err)
 	}
 

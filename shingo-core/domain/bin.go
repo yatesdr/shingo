@@ -24,6 +24,12 @@ type Bin struct {
 	PayloadCode       string     `json:"payload_code"`
 	Manifest          *string    `json:"manifest,omitempty"`
 	UOPRemaining      int        `json:"uop_remaining"`
+	// DeltaEpoch labels the current load-lifecycle for this bin.
+	// Increments in Core's bin_manifest service on every load boundary
+	// (SetForProduction, ClearForReuseTx). Carried on the wire in
+	// BinUOPDelta so Core's dedup table can scope replay-protection per
+	// load instead of per bin identity — see the v22 migration.
+	DeltaEpoch        int64      `json:"delta_epoch"`
 	ManifestConfirmed bool       `json:"manifest_confirmed"`
 	Locked            bool       `json:"locked"`
 	LockedBy          string     `json:"locked_by"`

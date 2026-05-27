@@ -33,6 +33,13 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		BinTypeCode       string  `json:"bin_type_code,omitempty"`
 		PayloadCode       string  `json:"payload_code,omitempty"`
 		UOPRemaining      int     `json:"uop_remaining"`
+		// DeltaEpoch is the bin's current load-lifecycle epoch.
+		// Edge's startup reconciliation reads it here to repopulate
+		// the bin-state cache after a restart that lost the in-memory
+		// epoch tracking — without this field, Edge would emit its
+		// first post-restart BinUOPDelta with epoch=0 and Core's
+		// stale-epoch guard would log + drop the delta.
+		DeltaEpoch        int64   `json:"delta_epoch"`
 		Manifest          *string `json:"manifest,omitempty"`
 		ManifestConfirmed bool    `json:"manifest_confirmed"`
 		Occupied          bool    `json:"occupied"`
@@ -63,6 +70,7 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		entry.BinTypeCode = bin.BinTypeCode
 		entry.PayloadCode = bin.PayloadCode
 		entry.UOPRemaining = bin.UOPRemaining
+		entry.DeltaEpoch = bin.DeltaEpoch
 		entry.Manifest = bin.Manifest
 		entry.ManifestConfirmed = bin.ManifestConfirmed
 		result = append(result, entry)
@@ -271,7 +279,8 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		uop = totalQty
 	}
 
-	if err := h.engine.BinManifest().SetForProduction(bin.ID, string(manifestJSON), req.PayloadCode, int(uop)); err != nil {
+	newEpoch, err := h.engine.BinManifest().SetForProduction(bin.ID, string(manifestJSON), req.PayloadCode, int(uop))
+	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -279,7 +288,7 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		log.Printf("telemetry: bin-load confirm manifest on bin %d: %v", bin.ID, err)
 	}
 
-	log.Printf("telemetry: bin-load bin=%d at node=%s payload=%s uop=%d", bin.ID, req.NodeName, req.PayloadCode, uop)
+	log.Printf("telemetry: bin-load bin=%d at node=%s payload=%s uop=%d epoch=%d", bin.ID, req.NodeName, req.PayloadCode, uop, newEpoch)
 	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "loaded", "bin_id": bin.ID,
 	}))
@@ -289,6 +298,7 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		"bin_label":     bin.Label,
 		"payload_code":  req.PayloadCode,
 		"uop_remaining": uop,
+		"delta_epoch":   newEpoch,
 	})
 }
 
@@ -318,18 +328,20 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bin := bins[0]
-	if err := h.engine.BinManifest().ClearForReuse(bin.ID); err != nil {
+	newEpoch, err := h.engine.BinManifest().ClearForReuse(bin.ID)
+	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("telemetry: bin-clear bin=%d at node=%s", bin.ID, req.NodeName)
+	log.Printf("telemetry: bin-clear bin=%d at node=%s epoch=%d", bin.ID, req.NodeName, newEpoch)
 	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "cleared", "bin_id": bin.ID,
 	}))
 	h.jsonOK(w, map[string]interface{}{
-		"status":    "ok",
-		"bin_id":    bin.ID,
-		"bin_label": bin.Label,
+		"status":      "ok",
+		"bin_id":      bin.ID,
+		"bin_label":   bin.Label,
+		"delta_epoch": newEpoch,
 	})
 }
 

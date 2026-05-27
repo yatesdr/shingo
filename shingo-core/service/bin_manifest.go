@@ -70,17 +70,26 @@ func readBinUOPInTx(tx *sql.Tx, binID int64) (*int, error) {
 
 // ClearForReuse empties a bin's manifest. The bin becomes visible
 // to FindEmptyCompatibleBin after this call. Owns its transaction.
-func (s *BinManifestService) ClearForReuse(binID int64) error {
+// ClearForReuse begins its own transaction and delegates to
+// ClearForReuseTx. Returns the new delta_epoch so callers that ship
+// the bin's state to Edge (e.g. handlers that return JSON containing
+// the bin's row) can include it in their response. Callers that don't
+// care can ignore the value.
+func (s *BinManifestService) ClearForReuse(binID int64) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	if err := s.ClearForReuseTx(tx, binID, audit.OpClearForReuse, "service/bin_manifest.go:ClearForReuse"); err != nil {
-		return err
+	epoch, err := s.ClearForReuseTx(tx, binID, audit.OpClearForReuse, "service/bin_manifest.go:ClearForReuse")
+	if err != nil {
+		return 0, err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return epoch, nil
 }
 
 // ClearForReuseTx performs the same manifest-clear write as
@@ -93,19 +102,31 @@ func (s *BinManifestService) ClearForReuse(binID int64) error {
 // The op tag and source are caller-supplied so audit consumers can
 // distinguish the trigger (released_capture_empty vs the direct
 // admin clear_for_reuse).
-func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, op, source string) error {
+// ClearForReuseTx ends a bin's current load-lifecycle: clears the
+// manifest, resets uop_remaining to 0, AND bumps delta_epoch so the
+// next set_for_production starts a fresh delta stream. Returns the
+// new delta_epoch.
+//
+// The epoch bump is on this path (not on SetForProduction) so a bin
+// that's released_empty then sits idle still has a clean dedup space
+// for whatever delta arrives next — the SetForProduction would bump
+// a second time, but the (load-side) Edge cache learns the post-clear
+// epoch on the bin-state refresh that follows the clear.
+func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, op, source string) (int64, error) {
 	before, err := readBinUOPInTx(tx, binID)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if _, err := tx.Exec(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0,
-		manifest_confirmed=false, loaded_at=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
-		return fmt.Errorf("clear manifest bin %d: %w", binID, err)
+	var newEpoch int64
+	if err := tx.QueryRow(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0,
+		delta_epoch=delta_epoch+1, manifest_confirmed=false, loaded_at=NULL, updated_at=NOW()
+		WHERE id=$1 RETURNING delta_epoch`, binID).Scan(&newEpoch); err != nil {
+		return 0, fmt.Errorf("clear manifest bin %d: %w", binID, err)
 	}
 	if err := audit.AppendBinUOP(tx, binID, before, 0, op, source, nil, "", ""); err != nil {
-		return err
+		return 0, err
 	}
-	return nil
+	return newEpoch, nil
 }
 
 // (Item 14 D8: SyncUOP deleted — zero production callers. Partial-
@@ -127,14 +148,18 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, op, source
 // uopOverride of 0 falls back to the template's UOPCapacity. Non-zero
 // uopOverride lets callers (produce ingest, partial-fill operator
 // loads) record an actual count rather than the template default.
-func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uopOverride int) error {
+//
+// Returns the new delta_epoch from the underlying SetForProduction
+// call so handlers that ship the bin's row to Edge can include it in
+// their response.
+func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uopOverride int) (int64, error) {
 	p, err := s.db.GetPayloadByCode(payloadCode)
 	if err != nil {
-		return fmt.Errorf("payload template %q: %w", payloadCode, err)
+		return 0, fmt.Errorf("payload template %q: %w", payloadCode, err)
 	}
 	items, err := s.db.ListPayloadManifest(p.ID)
 	if err != nil {
-		return fmt.Errorf("payload manifest: %w", err)
+		return 0, fmt.Errorf("payload manifest: %w", err)
 	}
 
 	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(items))}
@@ -146,7 +171,7 @@ func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uo
 	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
-		return fmt.Errorf("marshal manifest: %w", err)
+		return 0, fmt.Errorf("marshal manifest: %w", err)
 	}
 
 	uop := uopOverride
@@ -157,30 +182,39 @@ func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uo
 	return s.SetForProduction(binID, string(manifestJSON), payloadCode, uop)
 }
 
-// SetForProduction sets a bin's manifest and UOP from a payload template.
-// Used when a produce node finalizes a bin or a manual_swap node loads a bin.
-func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payloadCode string, uop int) error {
+// SetForProduction sets a bin's manifest and UOP from a payload template,
+// AND bumps delta_epoch so the new load gets its own dedup space on Core
+// (and the corresponding Edge seq-allocator entry). Used when a produce
+// node finalizes a bin or a manual_swap node loads a bin. Returns the
+// new delta_epoch so callers can ship it to Edge in the response that
+// triggered the load (typically the BinLoad handler).
+func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payloadCode string, uop int) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
 	before, err := readBinUOPInTx(tx, binID)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if _, err := tx.Exec(`UPDATE bins SET payload_code=$1, manifest=$2, uop_remaining=$3,
-		manifest_confirmed=false, updated_at=NOW() WHERE id=$4`,
-		payloadCode, manifestJSON, uop, binID); err != nil {
-		return fmt.Errorf("set manifest bin %d: %w", binID, err)
+	var newEpoch int64
+	if err := tx.QueryRow(`UPDATE bins SET payload_code=$1, manifest=$2, uop_remaining=$3,
+		delta_epoch=delta_epoch+1, manifest_confirmed=false, updated_at=NOW()
+		WHERE id=$4 RETURNING delta_epoch`,
+		payloadCode, manifestJSON, uop, binID).Scan(&newEpoch); err != nil {
+		return 0, fmt.Errorf("set manifest bin %d: %w", binID, err)
 	}
 	if err := audit.AppendBinUOP(tx, binID, before, uop,
 		audit.OpSetForProduction, "service/bin_manifest.go:SetForProduction",
 		nil, payloadCode, ""); err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return newEpoch, nil
 }
 
 // Confirm marks a bin's manifest as confirmed by an operator or automated process.

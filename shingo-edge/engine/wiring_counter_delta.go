@@ -218,13 +218,14 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	}
 
 	if e.inventoryDelta != nil && delta > 0 {
-		binID, payload := e.binAtNode(runtime, claim)
+		binID, payload, epoch := e.binAtNode(runtime, claim)
 		_ = e.inventoryDelta.Produced(uop.TickEvent{
 			NodeID:       node.ID,
 			StyleID:      claim.StyleID,
 			PairKey:      claim.PairedCoreNode,
 			BinID:        binID,
 			PayloadCode:  payload,
+			BinEpoch:     epoch,
 			BinRemainder: delta, // produce delta carried via BinRemainder for type symmetry
 		})
 	}
@@ -299,7 +300,7 @@ func (e *Engine) emitConsumeTickDeltas(node *processes.Node, runtime *processes.
 	if e.inventoryDelta == nil {
 		return
 	}
-	binID, payload := e.binAtNode(runtime, claim)
+	binID, payload, epoch := e.binAtNode(runtime, claim)
 	_ = e.inventoryDelta.Consumed(uop.TickEvent{
 		NodeID:       node.ID,
 		StyleID:      claim.StyleID,
@@ -307,6 +308,7 @@ func (e *Engine) emitConsumeTickDeltas(node *processes.Node, runtime *processes.
 		CoreNodeName: node.CoreNodeName,
 		BinID:        binID,
 		PayloadCode:  payload,
+		BinEpoch:     epoch,
 		Drains:       drains,
 		BinRemainder: binRemainder,
 	})
@@ -321,7 +323,7 @@ func (e *Engine) emitFallthroughDeltas(node *processes.Node, runtime *processes.
 	if e.inventoryDelta == nil {
 		return
 	}
-	binID, payload := e.binAtNode(runtime, claim)
+	binID, payload, epoch := e.binAtNode(runtime, claim)
 	_ = e.inventoryDelta.Fallthrough(uop.TickEvent{
 		NodeID:       node.ID,
 		StyleID:      claim.StyleID,
@@ -329,6 +331,7 @@ func (e *Engine) emitFallthroughDeltas(node *processes.Node, runtime *processes.
 		CoreNodeName: node.CoreNodeName,
 		BinID:        binID,
 		PayloadCode:  payload,
+		BinEpoch:     epoch,
 		Drains:       drains,
 		BinRemainder: binRemainder,
 	})
@@ -367,9 +370,15 @@ func inSteadyState(runtime *processes.RuntimeState) bool {
 //
 // payload returns the claim's PayloadCode so Core can validate the
 // wire envelope's payload_code against the bin row.
-func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.NodeClaim) (int64, string) {
+// binAtNode resolves the bin attribution for an emitted delta:
+// (binID, payloadCode, epoch). epoch is the bin's load-lifecycle
+// epoch — used to stamp the outgoing BinUOPDelta so Core's
+// epoch-aware dedup accepts it. Returns (0, "", 0) when no bin is
+// at the slot (gap window with active_bin_id nil); caller skips
+// bin delta emission in that case.
+func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.NodeClaim) (int64, string, int64) {
 	if runtime == nil || runtime.ActiveBinID == nil {
-		return 0, ""
+		return 0, "", 0
 	}
 	// Surface gap-window mis-attribution at the emission site: if
 	// ActiveBinID and CachedBinID disagree the runtime cache is lying
@@ -380,7 +389,7 @@ func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.Nod
 		log.Printf("binAtNode: gap-window mismatch — active=%d cached=%d (claim payload=%s)",
 			*runtime.ActiveBinID, *runtime.CachedBinID, claim.PayloadCode)
 	}
-	return *runtime.ActiveBinID, claim.PayloadCode
+	return *runtime.ActiveBinID, claim.PayloadCode, runtime.ActiveBinEpoch
 }
 
 // drainLinesideFirst decrements the active lineside bucket(s) for the

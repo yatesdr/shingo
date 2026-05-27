@@ -156,21 +156,25 @@ func (s *BinService) Unlock(binID int64) error {
 // Compat semantics mirror PayloadBinTypeAdvisoryClause used by FindSourceFIFO
 // / FindEmptyCompatible: payload_bin_types is treated as an allow-list when
 // populated, ignored when empty.
-func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride int) error {
+//
+// Returns the new delta_epoch from SetFromTemplate so handlers shipping
+// the bin row back to Edge can include it on the wire (Edge needs the
+// fresh epoch before its next BinUOPDelta — see protocol/payloads.go).
+func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride int) (int64, error) {
 	if payloadCode == "" {
-		return fmt.Errorf("payload_code is required")
+		return 0, fmt.Errorf("payload_code is required")
 	}
 	p, err := s.db.GetPayloadByCode(payloadCode)
 	if err != nil {
-		return fmt.Errorf("payload template %q not found", payloadCode)
+		return 0, fmt.Errorf("payload template %q not found", payloadCode)
 	}
 	b, err := s.db.GetBin(binID)
 	if err != nil {
-		return fmt.Errorf("bin not found")
+		return 0, fmt.Errorf("bin not found")
 	}
 	compat, err := s.db.ListBinTypesForPayload(p.ID)
 	if err != nil {
-		return fmt.Errorf("check payload bin-type compat: %w", err)
+		return 0, fmt.Errorf("check payload bin-type compat: %w", err)
 	}
 	if len(compat) > 0 {
 		ok := false
@@ -185,7 +189,7 @@ func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride in
 			for i, bt := range compat {
 				codes[i] = bt.Code
 			}
-			return fmt.Errorf("payload %q not compatible with bin type %q (allowed: %v)", payloadCode, b.BinTypeCode, codes)
+			return 0, fmt.Errorf("payload %q not compatible with bin type %q (allowed: %v)", payloadCode, b.BinTypeCode, codes)
 		}
 	}
 	return s.manifest.SetFromTemplate(binID, payloadCode, uopOverride)

@@ -61,6 +61,13 @@ type binDeltaEntry struct {
 	delta       int
 	payloadCode string
 	reason      protocol.BinUOPDeltaReason
+	// epoch is the bin's load-lifecycle epoch (Core-authoritative).
+	// Edge stamps it on every outgoing BinUOPDelta so Core's dedup
+	// PK (station, scope_kind, scope_key, epoch) scopes replay-
+	// protection per load instead of per bin identity. The value
+	// flows in via recordBin's epoch arg — caller is responsible for
+	// passing the bin-state cache's current epoch for the bin.
+	epoch       int64
 	windowStart time.Time
 	windowEnd   time.Time
 
@@ -197,7 +204,16 @@ func (r *accumulator) stop() {
 // state ticks) the audit trail at Core uses the latest reason. A
 // future refinement could split per-reason at the cost of one
 // SequenceID per (bin, reason).
-func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason) {
+// recordBin accumulates a signed delta against a specific bin. epoch is
+// the bin's current load-lifecycle epoch — caller threads it through
+// from the bin-state cache (populated by Core's LoadBin response and
+// the periodic bin-state refresh). A fresh entry stores the epoch on
+// first touch; subsequent calls overwrite epoch when the caller
+// presents a higher value (a lifecycle bump between two ticks rolls
+// the entry's epoch forward so the next flush stamps the new value).
+// Caller may pass 0 for pre-epoch wire compatibility — Core treats
+// that as the pre-migration cohort.
+func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason, epoch int64) {
 	if delta == 0 {
 		return
 	}
@@ -210,6 +226,7 @@ func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reas
 	v, _ := r.bins.LoadOrStore(key, &binDeltaEntry{
 		binID:       binID,
 		payloadCode: payloadCode,
+		epoch:       epoch,
 		windowStart: now,
 	})
 	e := v.(*binDeltaEntry)
@@ -219,6 +236,15 @@ func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reas
 		// First contribution to this window — anchor the start.
 		e.windowStart = now
 		e.payloadCode = payloadCode
+		e.epoch = epoch
+	} else if epoch > e.epoch {
+		// Mid-window lifecycle bump. The accumulator currently coalesces
+		// the older epoch's residual delta into the next flush under
+		// the newer epoch — close enough since Edge's tick attribution
+		// only resolves to "the active bin at tick time" and the older
+		// epoch's deltas at this point are noise (the bin transitioned
+		// to a different load-life before they shipped).
+		e.epoch = epoch
 	}
 	e.delta += delta
 	e.reason = reason
@@ -226,8 +252,8 @@ func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reas
 	e.lastTouched = now
 	e.mu.Unlock()
 
-	r.debugLog.Log("inventory_delta: bin=%d delta=%+d reason=%s payload=%q",
-		binID, delta, reason, payloadCode)
+	r.debugLog.Log("inventory_delta: bin=%d delta=%+d reason=%s payload=%q epoch=%d",
+		binID, delta, reason, payloadCode, epoch)
 }
 
 // recordBucket accumulates a signed delta against a specific lineside
@@ -362,16 +388,19 @@ func (r *accumulator) flushBins() {
 		sDelta := e.delta
 		sPayloadCode := e.payloadCode
 		sReason := e.reason
+		sEpoch := e.epoch
 		sWindowStart := e.windowStart
 		sWindowEnd := e.windowEnd
 		e.mu.Unlock()
 
 		// SEND with no lock held. Concurrent recordBin keeps adding
 		// to e.delta; that's fine — those additions become part of
-		// the next batch.
-		seq, err := r.db.AllocateInventoryDeltaSeq(invDeltaScopeBin, k)
+		// the next batch. Seq is keyed per-(scope_kind, scope_key,
+		// epoch) so a new bin life starts the seq counter fresh
+		// even though scope_key is unchanged.
+		seq, err := r.db.AllocateInventoryDeltaSeq(invDeltaScopeBin, k, sEpoch)
 		if err != nil {
-			log.Printf("uop accumulator: allocate bin seq key=%s: %v", k, err)
+			log.Printf("uop accumulator: allocate bin seq key=%s epoch=%d: %v", k, sEpoch, err)
 			return true
 		}
 		env, encErr := protocol.NewDataEnvelope(
@@ -385,6 +414,7 @@ func (r *accumulator) flushBins() {
 				Delta:       sDelta,
 				Reason:      sReason,
 				SequenceID:  seq,
+				Epoch:       sEpoch,
 				WindowStart: sWindowStart,
 				WindowEnd:   sWindowEnd,
 			},
@@ -431,8 +461,8 @@ func (r *accumulator) flushBins() {
 		}
 		e.mu.Unlock()
 
-		r.debugLog.Log("uop accumulator: flushed bin=%d delta=%+d seq=%d reason=%s",
-			sBinID, sDelta, seq, sReason)
+		r.debugLog.Log("uop accumulator: flushed bin=%d delta=%+d seq=%d epoch=%d reason=%s",
+			sBinID, sDelta, seq, sEpoch, sReason)
 		return true
 	})
 }
@@ -504,8 +534,9 @@ func (r *accumulator) flushBuckets() {
 			return true
 		}
 
-		// SEND.
-		seq, err := r.db.AllocateInventoryDeltaSeq(invDeltaScopeBucket, k)
+		// SEND. Bucket scope stays on epoch=0 — see the matching note
+		// in shingo-core/uop/applier.go's ApplyLinesideBucketDelta.
+		seq, err := r.db.AllocateInventoryDeltaSeq(invDeltaScopeBucket, k, 0)
 		if err != nil {
 			log.Printf("uop accumulator: allocate bucket seq key=%s: %v", k, err)
 			return true

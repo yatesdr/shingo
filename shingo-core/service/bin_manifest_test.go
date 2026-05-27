@@ -82,7 +82,7 @@ func TestBinManifestService_ClearForReuse(t *testing.T) {
 	}
 
 	// Clear the bin
-	testutil.MustNoErr(t, svc.ClearForReuse(bin.ID), "ClearForReuse")
+	if _, err := svc.ClearForReuse(bin.ID); err != nil { t.Fatalf("ClearForReuse" + ": %v", err) }
 
 	// Verify cleared state
 	got, err := db.GetBin(bin.ID)
@@ -121,7 +121,7 @@ func TestBinManifestService_ClearForReuse_MakesVisibleToFindEmpty(t *testing.T) 
 	}
 
 	// Clear the bin
-	testutil.MustNoErr(t, svc.ClearForReuse(bin.ID), "ClearForReuse")
+	if _, err := svc.ClearForReuse(bin.ID); err != nil { t.Fatalf("ClearForReuse" + ": %v", err) }
 
 	// Now FindEmptyCompatibleBin should find it
 	found, err := db.FindEmptyCompatibleBin(sd.Payload.Code, "", 0)
@@ -324,7 +324,7 @@ func TestBinManifestService_SetForProduction(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SFP-1", "", 0)
 
 	manifest := `{"items":[{"catid":"WIDGET","qty":50}]}`
-	testutil.MustNoErr(t, svc.SetForProduction(bin.ID, manifest, "WIDGET-X", 200), "SetForProduction")
+	if _, err := svc.SetForProduction(bin.ID, manifest, "WIDGET-X", 200); err != nil { t.Fatalf("SetForProduction" + ": %v", err) }
 
 	got, _ := db.GetBin(bin.ID)
 	if got.PayloadCode != "WIDGET-X" {
@@ -763,7 +763,7 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-TMPL-1", "INITIAL", 0)
 
 	// Apply the template — uopOverride=0 falls back to template's UOPCapacity.
-	testutil.MustNoErr(t, svc.SetFromTemplate(bin.ID, sd.Payload.Code, 0), "SetFromTemplate")
+	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, 0); err != nil { t.Fatalf("SetFromTemplate" + ": %v", err) }
 
 	got, _ := db.GetBin(bin.ID)
 	if got.PayloadCode != sd.Payload.Code {
@@ -786,7 +786,7 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 	}
 
 	// Override uopOverride.
-	testutil.MustNoErr(t, svc.SetFromTemplate(bin.ID, sd.Payload.Code, 50), "SetFromTemplate override")
+	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, 50); err != nil { t.Fatalf("SetFromTemplate override" + ": %v", err) }
 	got2, _ := db.GetBin(bin.ID)
 	if got2.UOPRemaining != 50 {
 		t.Errorf("UOPRemaining after override = %d, want 50", got2.UOPRemaining)

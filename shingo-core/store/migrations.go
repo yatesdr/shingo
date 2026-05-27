@@ -251,6 +251,22 @@ func (db *DB) runVersionedMigrations() error {
 				return schema.ColumnExists(q, "lineside_buckets", "core_node_name") &&
 					!schema.ColumnExists(q, "lineside_buckets", "node_id")
 			}},
+		// v22 ties dedup state to a bin's load-lifecycle. Pre-fix the
+		// inventory_delta_dedup PK was (station, scope_kind, scope_key),
+		// which made the dedup row outlive any single load of a bin. A
+		// stale Edge seq counter (deploy reset, restore from backup,
+		// cache loss) could then poison the next load's delta stream —
+		// observed in the field as "bin uop_remaining stuck at the load
+		// value while Edge tile counts down independently". Extending
+		// the PK with epoch and bumping bins.delta_epoch at every
+		// lifecycle boundary (SetForProduction, ClearForReuseTx) gives
+		// each load its own dedup space.
+		{22, "bins.delta_epoch + inventory_delta_dedup PK epoch column",
+			v22BinDeltaEpoch,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "bins", "delta_epoch") &&
+					schema.ColumnExists(q, "inventory_delta_dedup", "epoch")
+			}},
 	}
 
 	for _, m := range migrations {
@@ -532,6 +548,67 @@ func v21LinesideBucketsCoreNodeName(tx *sql.Tx) error {
 	//    Idempotent: a fresh DB has no rows to delete.
 	if _, err := tx.Exec(`DELETE FROM inventory_delta_dedup WHERE scope_kind = 'bucket'`); err != nil {
 		return fmt.Errorf("clear bucket dedup rows: %w", err)
+	}
+	return nil
+}
+
+// v22BinDeltaEpoch extends the bin-side delta plumbing with an epoch
+// number tied to the bin's load-lifecycle. Before this, the
+// inventory_delta_dedup PK was (station, scope_kind, scope_key); the
+// dedup row outlived any single load of a bin so a stale Edge seq
+// counter (deploy reset, restore from backup, cache loss) could poison
+// the next load's delta stream — Core silently dropped Edge's deltas
+// as "already-applied replays" against the prior load's last_seq.
+//
+// Two related changes:
+//
+//   1. bins.delta_epoch column, default 1. SetForProduction and
+//      ClearForReuseTx bump it on every Core-controlled lifecycle
+//      transition. The bin's identity persists across loads; epoch
+//      labels each load distinctly.
+//
+//   2. inventory_delta_dedup PK gains an epoch column. Pre-existing
+//      rows are backfilled to epoch=0 so they don't shadow the
+//      post-migration first deltas (which arrive at epoch >= 1).
+//
+// Buckets are untouched here — bucket scope deltas carry epoch=0 on
+// the wire, and Core handles bucket dedup cleanup via the existing
+// qty→0 GC + admin-delete paths (see store/inventory/inventory.go
+// DeleteLinesideBucket). Bucket lifecycle is Edge-observed (qty
+// zeroing), not Core-controlled, which doesn't map cleanly to the
+// epoch-on-load model. If buckets ever exhibit the same drift class,
+// a separate migration can add bucket-side epoch with bucket-life
+// boundaries chosen at that time.
+func v22BinDeltaEpoch(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bins ADD COLUMN IF NOT EXISTS delta_epoch BIGINT NOT NULL DEFAULT 1`); err != nil {
+		return fmt.Errorf("add bins.delta_epoch: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE inventory_delta_dedup ADD COLUMN IF NOT EXISTS epoch BIGINT NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add inventory_delta_dedup.epoch: %w", err)
+	}
+	// PK swap: drop the (station, scope_kind, scope_key) PK and add
+	// the (station, scope_kind, scope_key, epoch) PK. Existing rows
+	// keep their epoch=0 default. Postgres has no atomic "swap PK"
+	// in one statement — drop + add. The pg_constraint check guards
+	// idempotency on re-run.
+	if _, err := tx.Exec(`DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM pg_constraint
+				WHERE conname = 'inventory_delta_dedup_pkey'
+			) THEN
+				ALTER TABLE inventory_delta_dedup DROP CONSTRAINT inventory_delta_dedup_pkey;
+			END IF;
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_constraint con
+				JOIN pg_class rel ON rel.oid = con.conrelid
+				WHERE rel.relname = 'inventory_delta_dedup'
+				  AND con.contype = 'p'
+			) THEN
+				ALTER TABLE inventory_delta_dedup ADD PRIMARY KEY (station, scope_kind, scope_key, epoch);
+			END IF;
+		END $$`); err != nil {
+		return fmt.Errorf("swap inventory_delta_dedup PK to include epoch: %w", err)
 	}
 	return nil
 }

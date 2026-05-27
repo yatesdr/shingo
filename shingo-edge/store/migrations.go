@@ -37,6 +37,22 @@ func hasV5LoaderColumn(db *DB) bool {
 	return hit > 0
 }
 
+// hasLegacyInventoryDeltaSeqPK returns true when inventory_delta_seq
+// exists without the epoch column (and therefore without epoch in its
+// PK). Probe via pragma_table_info — pre-epoch rows have just
+// scope_kind / scope_key / next_seq / updated_at.
+func hasLegacyInventoryDeltaSeqPK(db *DB) bool {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('inventory_delta_seq')`).Scan(&n); err != nil || n == 0 {
+		return false
+	}
+	var hasEpoch int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('inventory_delta_seq') WHERE name='epoch'`).Scan(&hasEpoch); err != nil {
+		return false
+	}
+	return hasEpoch == 0
+}
+
 // legacyDropDDL drops tables that have been removed entirely from the
 // canonical schema. Runs first in migrate() so the rest of the
 // migration logic operates on a clean table set. DROP IF EXISTS is
@@ -146,6 +162,13 @@ func (db *DB) migrate() error {
 	// !=  (release→delivery gap, where cache represents the next bin and
 	// physical reality is the old bin or nothing).
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN cached_bin_id INTEGER")
+
+	// Epoch mirror for active_bin_id (post-epoch fix). Old rows land
+	// at 0 — the pre-migration cohort that lines up with Core's
+	// backfilled inventory_delta_dedup rows. The next bin lifecycle
+	// event on Core writes a non-zero value here via the LoadBin /
+	// FetchNodeBins response path.
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN active_bin_epoch INTEGER NOT NULL DEFAULT 0")
 
 	// Drop zombie nodes table (replaced by process_nodes + core node sync)
 	db.Exec("DROP TABLE IF EXISTS nodes")
@@ -384,6 +407,31 @@ func (db *DB) migrate() error {
 		db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_lineside_active_unique
 			ON node_lineside_bucket(node_id, part_number)
 			WHERE state = 'active'`)
+	}
+
+	// inventory_delta_seq PK extends from (scope_kind, scope_key) to
+	// (scope_kind, scope_key, epoch). SQLite can't ALTER PRIMARY KEY in
+	// place, so add the column and rebuild the table. Old rows land at
+	// epoch=0 — which matches what Core's pre-existing dedup rows were
+	// backfilled to in v22 — so a pre-migration Edge build's seq stream
+	// continues coherently against the existing dedup baseline. The
+	// next bin lifecycle event on Core bumps both sides to epoch>=1
+	// and the new dedup row at the new epoch starts fresh.
+	if hasLegacyInventoryDeltaSeqPK(db) {
+		db.Exec(`CREATE TABLE inventory_delta_seq_new (
+			scope_kind TEXT NOT NULL,
+			scope_key  TEXT NOT NULL,
+			epoch      INTEGER NOT NULL DEFAULT 0,
+			next_seq   INTEGER NOT NULL DEFAULT 1,
+			updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (scope_kind, scope_key, epoch)
+		)`)
+		db.Exec(`INSERT INTO inventory_delta_seq_new
+			(scope_kind, scope_key, epoch, next_seq, updated_at)
+			SELECT scope_kind, scope_key, 0, next_seq, updated_at
+			FROM inventory_delta_seq`)
+		db.Exec(`DROP TABLE inventory_delta_seq`)
+		db.Exec(`ALTER TABLE inventory_delta_seq_new RENAME TO inventory_delta_seq`)
 	}
 
 	return nil

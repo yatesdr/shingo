@@ -310,7 +310,7 @@ func generateNodeCode(db *sql.DB, processID int64, coreNodeName, name string) (s
 func scanRuntime(scanner interface{ Scan(...interface{}) error }) (RuntimeState, error) {
 	var r RuntimeState
 	var updatedAt string
-	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.CachedBinID, &r.RemainingUOPCached,
+	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.ActiveBinEpoch, &r.CachedBinID, &r.RemainingUOPCached,
 		&r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
 	if err != nil {
 		return r, err
@@ -338,7 +338,7 @@ func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 
 // GetRuntime returns the runtime row for a process_node.
 func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
-	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, cached_bin_id, remaining_uop_cached,
+	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, cached_bin_id, remaining_uop_cached,
 		active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID))
 	if err != nil {

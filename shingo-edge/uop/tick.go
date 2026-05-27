@@ -61,6 +61,14 @@ type TickEvent struct {
 	BinID       int64
 	PayloadCode string
 
+	// BinEpoch is the bin's load-lifecycle epoch as resolved against
+	// Core (via FetchNodeBins on tick time, or — once we add a local
+	// bin-state cache — read from there). Threaded through to
+	// recordBin so the outgoing BinUOPDelta carries the right
+	// generation. Zero is the pre-migration / unknown sentinel; Core
+	// applies it against the pre-migration cohort.
+	BinEpoch int64
+
 	// Drains is the per-part lineside-bucket drain map computed by
 	// engine.drainLinesideFirst. Each non-zero entry emits one
 	// consume_drain bucket delta (signed -qty) keyed on the matched
@@ -100,7 +108,7 @@ func (m *Mutator) Consumed(ev TickEvent) error {
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
-		m.acc.recordBin(ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonConsumeTick)
+		m.acc.recordBin(ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonConsumeTick, ev.BinEpoch)
 	}
 	return nil
 }
@@ -119,7 +127,7 @@ func (m *Mutator) Consumed(ev TickEvent) error {
 // (the positive delta, passed via BinRemainder for symmetry) is 0.
 func (m *Mutator) Produced(ev TickEvent) error {
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
-		m.acc.recordBin(ev.BinID, ev.PayloadCode, ev.BinRemainder, protocol.ReasonProduceTick)
+		m.acc.recordBin(ev.BinID, ev.PayloadCode, ev.BinRemainder, protocol.ReasonProduceTick, ev.BinEpoch)
 	}
 	return nil
 }
@@ -149,7 +157,7 @@ func (m *Mutator) Fallthrough(ev TickEvent) error {
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
-		m.acc.recordBin(ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonABFallthrough)
+		m.acc.recordBin(ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonABFallthrough, ev.BinEpoch)
 	}
 	return nil
 }

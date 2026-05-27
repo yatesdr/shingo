@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
@@ -55,7 +56,12 @@ var ErrInventoryDeltaSkipped = errors.New("inventory delta already applied")
 // service (which would create a cycle since service re-exports
 // InventoryDeltaService for backward compat).
 type ManifestClearer interface {
-	ClearForReuseTx(tx *sql.Tx, binID int64, op, source string) error
+	// ClearForReuseTx returns the new delta_epoch the bin advanced to.
+	// The applier discards the value (this path runs inside a delta
+	// apply, not a load/clear handler that ships a response to Edge)
+	// but the signature matches BinManifestService directly to avoid
+	// an adapter layer.
+	ClearForReuseTx(tx *sql.Tx, binID int64, op, source string) (int64, error)
 }
 
 // InventoryDeltaService applies BinUOPDelta and LinesideBucketDelta
@@ -109,7 +115,32 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 	defer tx.Rollback()
 
 	scopeKey := strconv.FormatInt(d.BinID, 10)
-	applied, err := claimDeltaSequence(tx, d.Station, invDeltaScopeBin, scopeKey, d.SequenceID)
+
+	// Stale-epoch guard. If Edge sends a delta with an epoch below the
+	// bin's current delta_epoch (Edge cache is behind a load/clear that
+	// already happened on Core), the dedup row for that older epoch is
+	// either missing or has a higher last_seq than this delta — in
+	// either case the apply would silently drop. Log it loudly here so
+	// "bin stopped counting" is grep-able instead of opaque, then fall
+	// through to the dedup UPSERT (which still drops the delta into
+	// the old epoch's row if present, harmlessly).
+	var currentEpoch int64
+	if err := tx.QueryRow(`SELECT delta_epoch FROM bins WHERE id=$1`, d.BinID).Scan(&currentEpoch); err == nil {
+		if d.Epoch < currentEpoch {
+			log.Printf("WARN: BinUOPDelta stale epoch bin=%d wire_epoch=%d bin_epoch=%d seq=%d — delta dropped; Edge bin-state cache is behind Core (next bin-state refresh will repair)",
+				d.BinID, d.Epoch, currentEpoch, d.SequenceID)
+		} else if d.Epoch > currentEpoch {
+			// Edge ahead of Core is a real anomaly — Core controls
+			// epoch via lifecycle handlers, so Edge shouldn't see a
+			// higher value before Core writes it. Possible cause: a
+			// stale Core read or a corrupt Edge cache; log but still
+			// apply since the new epoch isn't worse than continuing.
+			log.Printf("WARN: BinUOPDelta future epoch bin=%d wire_epoch=%d bin_epoch=%d seq=%d — Edge ahead of Core",
+				d.BinID, d.Epoch, currentEpoch, d.SequenceID)
+		}
+	}
+
+	applied, err := claimDeltaSequence(tx, d.Station, invDeltaScopeBin, scopeKey, d.Epoch, d.SequenceID)
 	if err != nil {
 		return err
 	}
@@ -181,7 +212,15 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 	// directly. Idempotent because dedup at the top of the function
 	// already guarded against replays.
 	if d.Reason == protocol.ReasonCaptureReduction && valueBefore+d.Delta == 0 && s.binManifest != nil {
-		if err := s.binManifest.ClearForReuseTx(tx, d.BinID,
+		// Epoch bump is a side effect — discard the new value here. The
+		// next BinUOPDelta against this bin from Edge will carry epoch=N
+		// from its cache (still showing pre-clear epoch) and Core's
+		// applier will warn + drop until Edge's bin-state refresh picks
+		// up the new epoch. That's the expected loss surface for a
+		// capture-reduction-driven clear; alternative would be to
+		// proactively push the new epoch back to Edge as a side channel,
+		// which the current architecture doesn't have a transport for.
+		if _, err := s.binManifest.ClearForReuseTx(tx, d.BinID,
 			audit.OpReleasedCaptureEmpty,
 			"service/inventory_delta_service.go:ApplyBinUOPDelta"); err != nil {
 			return fmt.Errorf("clear manifest on capture_reduction zero bin=%d: %w", d.BinID, err)
@@ -245,7 +284,12 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(d *protocol.LinesideBuc
 	defer tx.Rollback()
 
 	scopeKey := bucketScopeKey(d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber)
-	applied, err := claimDeltaSequence(tx, d.Station, invDeltaScopeBucket, scopeKey, d.SequenceID)
+	// Buckets stay on epoch=0 — bucket lifecycle is Edge-observed
+	// (qty zeroing) rather than Core-controlled, and DeleteLinesideBucket
+	// already clears the dedup row on the existing lifecycle exit paths.
+	// If buckets ever exhibit the same drift pattern as bins, a follow-up
+	// migration can introduce a bucket-side epoch with Edge-side tracking.
+	applied, err := claimDeltaSequence(tx, d.Station, invDeltaScopeBucket, scopeKey, 0, d.SequenceID)
 	if err != nil {
 		return err
 	}
@@ -302,26 +346,31 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(d *protocol.LinesideBuc
 }
 
 // claimDeltaSequence advances inventory_delta_dedup.last_seq for a
-// scope iff seq > last_seq, atomically inside the caller's transaction.
-// Returns (true, nil) if seq was newly applied, (false, nil) if seq was
-// already applied (replay).
+// scope+epoch iff seq > last_seq, atomically inside the caller's
+// transaction. Returns (true, nil) if seq was newly applied,
+// (false, nil) if seq was already applied (replay).
+//
+// PK is (station, scope_kind, scope_key, epoch). Different epochs for
+// the same scope_key get separate dedup rows — a new bin load (epoch
+// bump on SetForProduction) starts fresh, so a stale Edge seq counter
+// can't shadow the new load's first deltas.
 //
 // UPSERT shape: INSERT ... ON CONFLICT ... DO UPDATE WHERE last_seq <
 // excluded.last_seq. The WHERE on DO UPDATE is what makes this both
 // atomic and replay-safe — the row is touched only when the new seq
 // actually advances state, so RowsAffected==0 cleanly distinguishes
 // replay from new-application.
-func claimDeltaSequence(tx *sql.Tx, station, scopeKind, scopeKey string, seq int64) (bool, error) {
+func claimDeltaSequence(tx *sql.Tx, station, scopeKind, scopeKey string, epoch, seq int64) (bool, error) {
 	res, err := tx.Exec(`
-		INSERT INTO inventory_delta_dedup (station, scope_kind, scope_key, last_seq, updated_at)
-		VALUES ($1, $2, $3, $4, NOW())
-		ON CONFLICT (station, scope_kind, scope_key)
+		INSERT INTO inventory_delta_dedup (station, scope_kind, scope_key, epoch, last_seq, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (station, scope_kind, scope_key, epoch)
 		DO UPDATE SET last_seq = EXCLUDED.last_seq, updated_at = NOW()
 		WHERE inventory_delta_dedup.last_seq < EXCLUDED.last_seq`,
-		station, scopeKind, scopeKey, seq)
+		station, scopeKind, scopeKey, epoch, seq)
 	if err != nil {
-		return false, fmt.Errorf("dedup upsert station=%s scope=%s/%s seq=%d: %w",
-			station, scopeKind, scopeKey, seq, err)
+		return false, fmt.Errorf("dedup upsert station=%s scope=%s/%s epoch=%d seq=%d: %w",
+			station, scopeKind, scopeKey, epoch, seq, err)
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
@@ -355,6 +404,14 @@ type BinUOPRow struct {
 	NodeName     string `json:"node_name"`
 	PayloadCode  string `json:"payload_code"`
 	UOPRemaining int    `json:"uop_remaining"`
+	// DeltaEpoch lets Edge populate its bin-state cache with the
+	// current load's epoch on startup / periodic refresh. Without
+	// this, an Edge restart with bins already on the line would have
+	// no epoch context for its first post-restart BinUOPDelta. Pre-
+	// migration responses don't carry it; deserialization defaults to
+	// 0 and the next bin lifecycle event (set_for_production / clear)
+	// repopulates Edge with the post-bump value.
+	DeltaEpoch int64 `json:"delta_epoch"`
 }
 
 // LinesideBucketRow is one row of the per-bucket authoritative state
@@ -386,7 +443,7 @@ func (s *InventoryDeltaService) ListBinUOPForNodes(nodeNames []string) ([]BinUOP
 		args[i] = name
 		placeholders[i] = "$" + strconv.Itoa(i+1)
 	}
-	q := `SELECT b.id, COALESCE(n.name, ''), b.payload_code, b.uop_remaining
+	q := `SELECT b.id, COALESCE(n.name, ''), b.payload_code, b.uop_remaining, b.delta_epoch
 		FROM bins b
 		LEFT JOIN nodes n ON n.id = b.node_id
 		WHERE n.name IN (` + strings.Join(placeholders, ",") + `)`
@@ -398,7 +455,7 @@ func (s *InventoryDeltaService) ListBinUOPForNodes(nodeNames []string) ([]BinUOP
 	var out []BinUOPRow
 	for rows.Next() {
 		var r BinUOPRow
-		if err := rows.Scan(&r.BinID, &r.NodeName, &r.PayloadCode, &r.UOPRemaining); err != nil {
+		if err := rows.Scan(&r.BinID, &r.NodeName, &r.PayloadCode, &r.UOPRemaining, &r.DeltaEpoch); err != nil {
 			return nil, fmt.Errorf("scan bin uop row: %w", err)
 		}
 		out = append(out, r)

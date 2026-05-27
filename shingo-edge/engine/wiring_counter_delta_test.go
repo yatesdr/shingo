@@ -86,6 +86,7 @@ type fakeBinCall struct {
 	PayloadCode string
 	Delta       int
 	Reason      protocol.BinUOPDeltaReason
+	Epoch       int64
 }
 
 type fakeBucketCall struct {
@@ -98,9 +99,9 @@ type fakeBucketCall struct {
 	Reason      protocol.LinesideBucketDeltaReason
 }
 
-func (s *fakeDeltaSink) RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason) {
+func (s *fakeDeltaSink) RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason, epoch int64) {
 	s.mu.Lock()
-	s.binCalls = append(s.binCalls, fakeBinCall{binID, payloadCode, delta, reason})
+	s.binCalls = append(s.binCalls, fakeBinCall{binID, payloadCode, delta, reason, epoch})
 	s.mu.Unlock()
 }
 
@@ -316,7 +317,7 @@ func (s *fakeDeltaSink) CaptureToLineside(ev uop.CaptureEvent) (int, error) {
 	if capturedTotal > 0 && !ev.SuppressBinDelta {
 		if ev.BinID > 0 {
 			s.mu.Lock()
-			s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -capturedTotal, protocol.ReasonCaptureReduction})
+			s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -capturedTotal, protocol.ReasonCaptureReduction, ev.BinEpoch})
 			s.mu.Unlock()
 		} else {
 			// Mirror the real verb's loud diagnostic when the caller
@@ -346,7 +347,7 @@ func (s *fakeDeltaSink) Consumed(ev uop.TickEvent) error {
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
-		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonConsumeTick})
+		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonConsumeTick, ev.BinEpoch})
 	}
 	s.mu.Unlock()
 	return nil
@@ -355,7 +356,7 @@ func (s *fakeDeltaSink) Consumed(ev uop.TickEvent) error {
 func (s *fakeDeltaSink) Produced(ev uop.TickEvent) error {
 	s.mu.Lock()
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
-		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, ev.BinRemainder, protocol.ReasonProduceTick})
+		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, ev.BinRemainder, protocol.ReasonProduceTick, ev.BinEpoch})
 	}
 	s.mu.Unlock()
 	return nil
@@ -373,7 +374,7 @@ func (s *fakeDeltaSink) Fallthrough(ev uop.TickEvent) error {
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
-		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonABFallthrough})
+		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonABFallthrough, ev.BinEpoch})
 	}
 	s.mu.Unlock()
 	return nil
