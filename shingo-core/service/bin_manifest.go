@@ -307,10 +307,12 @@ func (s *BinManifestService) SyncUOPAndClaim(binID, orderID int64, remainingUOP 
 // and executes it atomically. Used by all dispatch paths that claim bins.
 //
 //   - remainingUOP == nil: plain claim (no manifest change)
-//   - *remainingUOP == 0: clear manifest + claim (fully depleted)
+//   - *remainingUOP <= 0: clear manifest + claim (depleted; <= 0 covers the
+//     SME-lock-permitted overpack washout where the captured count
+//     exceeded the tracked count, landing the bin negative)
 //   - *remainingUOP > 0: sync UOP + claim (partial consumption)
 func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP *int) error {
-	if remainingUOP != nil && *remainingUOP == 0 {
+	if remainingUOP != nil && *remainingUOP <= 0 {
 		return s.ClearAndClaim(binID, orderID)
 	}
 	if remainingUOP != nil {

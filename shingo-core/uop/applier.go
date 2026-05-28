@@ -203,15 +203,18 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 	}
 
 	// Item 6 manifest-clear trigger: when a capture_reduction delta
-	// (the PULL PARTS LINESIDE path) drives uop_remaining to zero,
-	// the bin is empty by operator declaration and must be returned
-	// to the empty-pool. Fires only on capture_reduction — consume
-	// ticks reaching zero are an overpack scenario where the bin
-	// might still physically hold parts; cycle counts to zero are
-	// admin corrections; admin clears go through ClearForReuse
-	// directly. Idempotent because dedup at the top of the function
-	// already guarded against replays.
-	if d.Reason == protocol.ReasonCaptureReduction && valueBefore+d.Delta == 0 && s.binManifest != nil {
+	// (the PULL PARTS LINESIDE path) drives uop_remaining to zero or
+	// below, the bin is empty by operator declaration and must be
+	// returned to the empty-pool. The <= 0 boundary covers the SME-
+	// lock-permitted overpack washout (operator pulled more than the
+	// tracked count showed: bin nominally 308, captured 309 → -1; bin
+	// is physically empty, the negative is correct accounting). Fires
+	// only on capture_reduction — consume ticks reaching zero are an
+	// overpack scenario where the bin might still physically hold
+	// parts; cycle counts to zero are admin corrections; admin clears
+	// go through ClearForReuse directly. Idempotent because dedup at
+	// the top of the function already guarded against replays.
+	if d.Reason == protocol.ReasonCaptureReduction && valueBefore+d.Delta <= 0 && s.binManifest != nil {
 		// Epoch bump is a side effect — discard the new value here. The
 		// next BinUOPDelta against this bin from Edge will carry epoch=N
 		// from its cache (still showing pre-clear epoch) and Core's

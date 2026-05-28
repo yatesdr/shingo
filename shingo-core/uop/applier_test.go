@@ -444,3 +444,211 @@ func TestApplyBinUOPDelta_ConsumeTickToZeroDoesNotFireClearForReuse(t *testing.T
 			audit.OpReleasedCaptureEmpty, auditCount)
 	}
 }
+
+// TestApplyBinUOPDelta_CaptureReductionOverpackToNegativeFiresClear is the
+// bin-18 underflow regression (2026-05-28). Bin at uop=308 receives a
+// capture_reduction of -309 (operator overpacked end-of-bin by one): result
+// lands at -1, manifest must clear (SME-lock washout), and the audit trail
+// must show both the delta row (after_uop=-1) and the clear row (after_uop=0)
+// inside the same transaction. Pre-fix the trigger was gated on == 0 so the
+// -1 result left payload_code stale and the bin sat misrouted at storage.
+func TestApplyBinUOPDelta_CaptureReductionOverpackToNegativeFiresClear(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CAP-NEG-1", "PART-OP", 308)
+	preEpoch := bin.DeltaEpoch
+
+	d := makeBinDelta(bin.ID, "PART-OP", -309, 1, protocol.ReasonCaptureReduction)
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply capture_reduction overpack")
+
+	got, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("read bin: %v", err)
+	}
+	if got.UOPRemaining != 0 {
+		t.Errorf("UOPRemaining = %d, want 0 (clear ran after delta landed at -1)", got.UOPRemaining)
+	}
+	if got.PayloadCode != "" {
+		t.Errorf("PayloadCode = %q, want empty (manifest cleared on overpack)", got.PayloadCode)
+	}
+	if got.Manifest != nil {
+		t.Errorf("Manifest = %v, want nil", got.Manifest)
+	}
+	if got.ManifestConfirmed {
+		t.Error("ManifestConfirmed = true, want false")
+	}
+	if got.DeltaEpoch <= preEpoch {
+		t.Errorf("DeltaEpoch = %d, want > %d (clear must bump epoch)", got.DeltaEpoch, preEpoch)
+	}
+
+	// Audit trail: must contain both the bin_uop_delta row with after_uop=-1
+	// AND the released_capture_empty row with after_uop=0.
+	var deltaCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+		WHERE bin_id=$1 AND op='bin_uop_delta' AND after_uop=-1`, bin.ID).Scan(&deltaCount); err != nil {
+		t.Fatalf("read delta audit: %v", err)
+	}
+	if deltaCount != 1 {
+		t.Errorf("bin_uop_delta audit rows with after_uop=-1 = %d, want 1", deltaCount)
+	}
+	var clearCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+		WHERE bin_id=$1 AND op=$2 AND after_uop=0`,
+		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&clearCount); err != nil {
+		t.Fatalf("read clear audit: %v", err)
+	}
+	if clearCount != 1 {
+		t.Errorf("released_capture_empty audit rows with after_uop=0 = %d, want 1", clearCount)
+	}
+}
+
+// TestApplyBinUOPDelta_CaptureReductionLargerNegativeFiresClear extends the
+// overpack case past -1. A delta landing at -5 must still fire the clear —
+// the <= 0 widening is not bounded by the magnitude of the negative.
+func TestApplyBinUOPDelta_CaptureReductionLargerNegativeFiresClear(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CAP-NEG-5", "PART-OP5", 100)
+
+	d := makeBinDelta(bin.ID, "PART-OP5", -105, 1, protocol.ReasonCaptureReduction)
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply capture_reduction -105")
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 0 || got.PayloadCode != "" {
+		t.Errorf("post-clear state: uop=%d payload=%q, want 0/'' (clear must fire at -5)",
+			got.UOPRemaining, got.PayloadCode)
+	}
+}
+
+// TestApplyBinUOPDelta_ConsumeTickThenCaptureReductionClears is the realistic
+// multi-step sequence (case E2): PLC overshoots and drains the runtime cache
+// past zero (consume_tick must NOT clear), then the operator releases with
+// one more part captured. The capture_reduction lands further negative and
+// must clear, even though the bin was already below zero when the delta
+// arrived.
+func TestApplyBinUOPDelta_ConsumeTickThenCaptureReductionClears(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-OS-CAP", "PART-OSC", 100)
+
+	// PLC overshoot: drains to -10. Must NOT clear.
+	testutil.MustNoErr(t,
+		svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-OSC", -110, 1, protocol.ReasonConsumeTick)),
+		"consume_tick overshoot")
+	mid, _ := db.GetBin(bin.ID)
+	if mid.UOPRemaining != -10 {
+		t.Errorf("after consume_tick: UOPRemaining = %d, want -10", mid.UOPRemaining)
+	}
+	if mid.PayloadCode != "PART-OSC" {
+		t.Errorf("after consume_tick: PayloadCode = %q, want PART-OSC (tick must NOT clear)", mid.PayloadCode)
+	}
+
+	// Operator release with one more part captured: -10 + -1 = -11. Must clear.
+	testutil.MustNoErr(t,
+		svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-OSC", -1, 2, protocol.ReasonCaptureReduction)),
+		"capture_reduction post-overshoot")
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 0 {
+		t.Errorf("after capture: UOPRemaining = %d, want 0 (clear must fire on capture landing at -11)", got.UOPRemaining)
+	}
+	if got.PayloadCode != "" {
+		t.Errorf("after capture: PayloadCode = %q, want empty", got.PayloadCode)
+	}
+}
+
+// TestApplyBinUOPDelta_CaptureReductionFromOneToZeroBoundary pins case F: a
+// capture landing exactly on zero from uop=1 still fires the clear (the
+// boundary the original == 0 condition was written for; the widening to <= 0
+// must not regress this).
+func TestApplyBinUOPDelta_CaptureReductionFromOneToZeroBoundary(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-BNDRY", "PART-BND", 1)
+
+	testutil.MustNoErr(t,
+		svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-BND", -1, 1, protocol.ReasonCaptureReduction)),
+		"capture_reduction boundary")
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 0 || got.PayloadCode != "" {
+		t.Errorf("boundary state: uop=%d payload=%q, want 0/''", got.UOPRemaining, got.PayloadCode)
+	}
+}
+
+// TestApplyBinUOPDelta_CaptureReductionReplayShortCircuits pins G1: replay
+// of a previously-applied SequenceID is skipped by dedup before the trigger
+// condition is evaluated. The first apply fires the clear normally; the
+// replay must not double-write the audit row or further bump the epoch.
+func TestApplyBinUOPDelta_CaptureReductionReplayShortCircuits(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-REPLAY", "PART-RP", 50)
+
+	d := makeBinDelta(bin.ID, "PART-RP", -55, 1, protocol.ReasonCaptureReduction)
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "first apply")
+
+	afterFirst, _ := db.GetBin(bin.ID)
+
+	if err := svc.ApplyBinUOPDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+		t.Errorf("replay error = %v, want uop.ErrInventoryDeltaSkipped", err)
+	}
+
+	afterReplay, _ := db.GetBin(bin.ID)
+	if afterReplay.DeltaEpoch != afterFirst.DeltaEpoch {
+		t.Errorf("DeltaEpoch after replay = %d, want %d (replay must not bump epoch)",
+			afterReplay.DeltaEpoch, afterFirst.DeltaEpoch)
+	}
+
+	var clearCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+		WHERE bin_id=$1 AND op=$2`,
+		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&clearCount); err != nil {
+		t.Fatalf("read clear audit: %v", err)
+	}
+	if clearCount != 1 {
+		t.Errorf("released_capture_empty rows after replay = %d, want 1 (no double-write)", clearCount)
+	}
+}
+
+// TestApplyBinUOPDelta_CaptureReductionZeroOnEmptyBinIsIdempotent pins G2: a
+// fresh-sequence delta=0 capture_reduction against an already-empty bin
+// passes dedup, evaluates 0 + 0 = 0 (the <= 0 branch fires), and ClearForReuse
+// runs idempotently. The redundant audit row is acceptable — the
+// alternative is a clamp on already-clean state, which the SME lock forbids.
+func TestApplyBinUOPDelta_CaptureReductionZeroOnEmptyBinIsIdempotent(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-IDEMP", "", 0)
+	preEpoch := bin.DeltaEpoch
+
+	d := makeBinDelta(bin.ID, "", 0, 1, protocol.ReasonCaptureReduction)
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply capture_reduction=0 on empty bin")
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 0 || got.PayloadCode != "" {
+		t.Errorf("post-state: uop=%d payload=%q, want 0/'' (clear was idempotent)",
+			got.UOPRemaining, got.PayloadCode)
+	}
+	if got.DeltaEpoch <= preEpoch {
+		t.Errorf("DeltaEpoch = %d, want > %d (clear still bumps epoch even when no-op semantically)",
+			got.DeltaEpoch, preEpoch)
+	}
+}

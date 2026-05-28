@@ -285,6 +285,39 @@ func TestBinManifestService_ClaimForDispatch_ZeroClearsManifest(t *testing.T) {
 	}
 }
 
+// TestBinManifestService_ClaimForDispatch_NegativeClearsManifest pins the
+// audit-the-class fix shipped with the bin-18 underflow remediation. The
+// branch is unreachable from today's callers (complex_dispatch passes nil),
+// but a future Edge build that threads RemainingUOP at intake — as the
+// comment at complex_dispatch.go:248-252 anticipates — would inherit the
+// <= 0 semantics. SME-lock washout: a captured count that exceeded the
+// tracked count produces a depleted bin, not a partial one; ClearAndClaim
+// is the right branch.
+func TestBinManifestService_ClaimForDispatch_NegativeClearsManifest(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CD-NEG", "PART-A", 100)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+
+	neg := -1
+	testutil.MustNoErr(t, svc.ClaimForDispatch(bin.ID, order.ID, &neg), "ClaimForDispatch(-1)")
+
+	got, _ := db.GetBin(bin.ID)
+
+	if got.ClaimedBy == nil || *got.ClaimedBy != order.ID {
+		t.Errorf("ClaimedBy = %v, want %d", got.ClaimedBy, order.ID)
+	}
+	if got.PayloadCode != "" {
+		t.Errorf("PayloadCode = %q, want empty (negative remainingUOP must take ClearAndClaim)", got.PayloadCode)
+	}
+	if got.UOPRemaining != 0 {
+		t.Errorf("UOPRemaining = %d, want 0", got.UOPRemaining)
+	}
+}
+
 func TestBinManifestService_ClaimForDispatch_PositiveSyncsUOP(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
