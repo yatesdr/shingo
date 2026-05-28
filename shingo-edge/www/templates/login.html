@@ -8,6 +8,7 @@
             <div class="alert alert-error">{{.Error}}</div>
             {{end}}
             <form method="post" action="/login">
+                {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
                 <div class="form-group">
                     <label>Username</label>
                     <input type="text" name="username" class="form-input" required autofocus>

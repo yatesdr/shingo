@@ -303,7 +303,12 @@ func (h *EventHub) SSEHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		case <-keepalive.C:
-			if _, err := fmt.Fprintf(w, ": keepalive\n\n"); err != nil {
+			// Named heartbeat event carries the build id on the existing
+			// connection — mid-stream version comparison without reconnect.
+			// The bare `: keepalive` comment was stripped by EventSource
+			// and never reached the JS client, so it could not carry the
+			// build id.
+			if _, err := fmt.Fprintf(w, "event: heartbeat\ndata: {\"build\":\"%s\"}\n\n", serverInstance); err != nil {
 				log.Printf("sse: keepalive write error: %v", err)
 				return
 			}

@@ -23,12 +23,14 @@
 import {
     installBackdropClose,
     installHtmxTimestampConversion,
+    installTableSort,
     convertTimestamps,
 } from '/static/shared/utils.js';
 installBackdropClose();
 installHtmxTimestampConversion();
 document.addEventListener('DOMContentLoaded', function() {
     convertTimestamps();
+    installTableSort();
 });
 
 // --- HTML escaping ---

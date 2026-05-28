@@ -263,6 +263,13 @@ func TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 	if !strings.Contains(order.QueueReason, "no available slot in node group") {
 		t.Errorf("queue_reason = %q, want it to contain 'no available slot in node group ...'", order.QueueReason)
 	}
+	// Field-notes Note 8 regression: complex orders historically persisted
+	// payload_code="" because complex_dispatch.go didn't assign PayloadCode
+	// in the order struct literal. Downstream this disabled the payload-
+	// mismatch guard in binresolver and let wrong-family bins be claimed.
+	if order.PayloadCode != bp.Code {
+		t.Errorf("payload_code = %q, want %q (Note 8 regression: complex order PayloadCode must persist)", order.PayloadCode, bp.Code)
+	}
 
 	// Free slotB so a replay can succeed. Delete the occupying bin and
 	// drive DispatchPreparedComplex directly (mimics what the scanner
@@ -943,6 +950,13 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 	// Parent should now be Reshuffling.
 	if o.Status != StatusReshuffling {
 		t.Errorf("parent status = %q, want %q (compound reshuffle should have started)", o.Status, StatusReshuffling)
+	}
+	// Field-notes Note 8 regression: the buried-intake path
+	// (handleComplexBuriedAtIntake) also constructs a complex order
+	// struct literal — it must persist PayloadCode same as the main
+	// path.
+	if o.PayloadCode != bp.Code {
+		t.Errorf("payload_code = %q, want %q (Note 8 regression: buried-intake complex order PayloadCode must persist)", o.PayloadCode, bp.Code)
 	}
 
 	// Compound children should exist.

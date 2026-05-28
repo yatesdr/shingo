@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -494,12 +495,23 @@ func (h *Handlers) adminMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		username, ok := h.sessions.getUser(r)
 		if !ok || username == "" {
+			// Preserve target URL so post-login lands the operator
+			// back on the page they were trying to reach instead of
+			// dumping them on /config. GETs only — POSTs would lose
+			// the body, and re-driving a form submission across the
+			// auth bounce is a separate concern.
+			loginURL := "/login"
+			if r.Method == http.MethodGet {
+				if target := shared.SafeNextPath(r.URL.RequestURI()); target != "" {
+					loginURL = "/login?next=" + url.QueryEscape(target)
+				}
+			}
 			if r.Header.Get("HX-Request") == "true" {
-				w.Header().Set("HX-Redirect", "/login")
+				w.Header().Set("HX-Redirect", loginURL)
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			http.Redirect(w, r, loginURL, http.StatusSeeOther)
 			return
 		}
 		next.ServeHTTP(w, r)

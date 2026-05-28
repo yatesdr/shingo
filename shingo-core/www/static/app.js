@@ -18,8 +18,9 @@
 //   escapeHtml(s)     — last resort for legacy string concatenation.
 //                       Prefer h`` for new code.
 
-import { delegateActions, installBackdropClose } from '/static/shared/utils.js';
+import { delegateActions, installBackdropClose, installTableSort, showRefreshBanner } from '/static/shared/utils.js';
 installBackdropClose();
+document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
 export { delegateActions };
 
 // Debounce: delays execution until `ms` milliseconds after the last call.
@@ -296,20 +297,36 @@ document.addEventListener('DOMContentLoaded', convertTimestamps);
   // restarted; force-reload so the tab picks up the new bundle.
   let seenBuild = null;
 
+  // checkBuild captures the first build id and shows a refresh banner
+  // on any later mismatch. Shared by the 'connected' (once per
+  // reconnect) and 'heartbeat' (every 30s on the existing connection)
+  // handlers — the latter catches Core restarts that a reverse proxy
+  // held the SSE socket open through, where onerror would otherwise
+  // never fire.
+  //
+  // Pre-fix this called location.reload() automatically. The banner
+  // lets the operator pick the moment so mid-action state isn't
+  // nuked on every Core deploy.
+  function checkBuild(e) {
+    var build = '';
+    try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
+    if (!build) return;
+    if (seenBuild === null) {
+      seenBuild = build;
+    } else if (seenBuild !== build) {
+      showRefreshBanner();
+    }
+  }
+
   function connect() {
     es = new EventSource('/events');
 
     es.addEventListener('connected', function(e) {
       reconnectDelay = 1000;
-      var build = '';
-      try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
-      if (!build) return;
-      if (seenBuild === null) {
-        seenBuild = build;
-      } else if (seenBuild !== build) {
-        location.reload();
-      }
+      checkBuild(e);
     });
+
+    es.addEventListener('heartbeat', checkBuild);
 
     es.addEventListener('order-update', function(e) {
       // Page-specific handlers can override via window.onOrderUpdate

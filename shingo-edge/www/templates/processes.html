@@ -95,11 +95,18 @@
 
                 <fieldset class="fieldset-card">
                     <legend class="fieldset-legend">Styles</legend>
+                    {{if and .ProcessStyles (not .ActiveProcess.ActiveStyleID)}}
+                    <div class="alert alert-warn" style="margin:0 0 0.75rem 0; padding:0.5rem 0.75rem; background:var(--warn-bg, #fff3cd); border:1px solid var(--warn-border, #ffe69c); border-radius:4px; font-size:0.9rem;">
+                        <strong>No active style selected.</strong>
+                        Choose one below — production and changeover both require an active style.
+                    </div>
+                    {{end}}
                     <table class="table" style="margin:0 0 0.75rem 0">
                         <thead>
                             <tr>
                                 <th>Name</th>
                                 <th>Description</th>
+                                <th style="width:1%">Status</th>
                                 <th style="width:1%">Actions</th>
                             </tr>
                         </thead>
@@ -109,12 +116,16 @@
                                 <td>{{.Name}}</td>
                                 <td>{{.Description}}</td>
                                 <td style="white-space:nowrap">
+                                    {{if $.ActiveProcess.ActiveStyleID}}{{if eq .ID (deref $.ActiveProcess.ActiveStyleID)}}<span class="badge badge-info">Active</span>{{end}}{{end}}
+                                </td>
+                                <td style="white-space:nowrap">
+                                    {{if $.ActiveProcess.ActiveStyleID}}{{if eq .ID (deref $.ActiveProcess.ActiveStyleID)}}{{else}}<button class="btn btn-sm" data-action="setActiveStyle:{{.ID}}">Set Active</button>{{end}}{{else}}<button class="btn btn-sm btn-primary" data-action="setActiveStyle:{{.ID}}">Set Active</button>{{end}}
                                     <button class="btn btn-sm" data-action="editStyle" data-style="{{json .}}">Edit</button>
                                     <button class="btn btn-sm btn-danger" data-action="deleteStyle:{{.ID}}">Delete</button>
                                 </td>
                             </tr>
                             {{else}}
-                            <tr><td colspan="3" class="empty-cell">No styles defined — add at least one style to complete the process definition.</td></tr>
+                            <tr><td colspan="4" class="empty-cell">No styles defined — add at least one style to complete the process definition.</td></tr>
                             {{end}}
                         </tbody>
                     </table>

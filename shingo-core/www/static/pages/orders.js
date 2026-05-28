@@ -23,6 +23,18 @@ async function terminateOrder(id) {
   orderControlPost('/api/orders/terminate', {order_id: oid});
 }
 
+// cancelOrderFromRow is the operator-facing cancel action surfaced on
+// the orders list table. Backed by the same /api/orders/terminate
+// endpoint as the detail-page button — the verb difference is operator
+// vocabulary, not a separate code path. The row's click handler
+// (openOrderModal) is suppressed implicitly because delegateActions
+// dispatches to the nearest [data-action] ancestor and stops there.
+async function cancelOrderFromRow(id) {
+  var oid = parseInt(id, 10);
+  if (!await uiConfirm('Cancel order #' + oid + '? This will abort any in-flight robot work and release claimed bins.')) return;
+  orderControlPost('/api/orders/terminate', {order_id: oid});
+}
+
 // Force-confirm a delivered order whose bin can't be recovered (moved by
 // something else, or arrival side effects never propagated). Same effect
 // as waiting 5 min for the auto-confirm loop. Goes through the recovery
@@ -537,6 +549,7 @@ delegateActions(document.body, {
     openOrderModal,
     orderControlPost,
     renderOrderModal,
+    cancelOrderFromRow,
     setOrderPriority,
     submitManualOrder,
     switchManualOrderTab,

@@ -159,8 +159,14 @@ func (h *Handlers) handleChangeoverPartial(w http.ResponseWriter, r *http.Reques
 
 	d := h.buildChangeoverViewData(activeProcess)
 
+	var activeProcessID int64
+	if activeProcess != nil {
+		activeProcessID = activeProcess.ID
+	}
+
 	data := map[string]interface{}{
 		"ActiveProcess":    activeProcess,
+		"ActiveProcessID":  activeProcessID,
 		"Styles":           d.Styles,
 		"CurrentStyle":     d.CurrentStyleName,
 		"ActiveChangeover": d.ActiveChangeover,

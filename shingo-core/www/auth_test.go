@@ -198,6 +198,81 @@ func TestHandleLogin_UnknownUserRendersLogin(t *testing.T) {
 	}
 }
 
+// --- requireAuth / ?next= preservation (Field-notes Note 3) ----------------
+
+// TestRequireAuth_RoundTripPreservesNext: GET admin-gated page → login
+// page bounce → POST /login with next field → final redirect lands on
+// the original page. Exercises both the middleware capture and the
+// handler honor in one trip.
+func TestRequireAuth_RoundTripPreservesNext(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlers(t)
+	h.ensureDefaultAdmin()
+
+	// 1) Unauthenticated GET → captures next.
+	guarded := h.requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/inventory", nil)
+	rec := httptest.NewRecorder()
+	guarded.ServeHTTP(rec, req)
+	loc := rec.Header().Get("Location")
+	wantLoc := "/login?next=" + url.QueryEscape("/inventory")
+	if loc != wantLoc {
+		t.Fatalf("first hop: got %q, want %q", loc, wantLoc)
+	}
+
+	// 2) POST /login with next= field → redirect to original target.
+	form := url.Values{}
+	form.Set("username", "admin")
+	form.Set("password", "admin")
+	form.Set("next", "/inventory")
+	loginReq := httptest.NewRequest(http.MethodPost, "/login",
+		strings.NewReader(form.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginRec := httptest.NewRecorder()
+	h.handleLogin(loginRec, loginReq)
+
+	if loginRec.Code != http.StatusSeeOther {
+		t.Fatalf("login status: got %d, want 303", loginRec.Code)
+	}
+	if got := loginRec.Header().Get("Location"); got != "/inventory" {
+		t.Errorf("post-login target: got %q, want /inventory (Note 3 regression)", got)
+	}
+}
+
+// TestHandleLogin_RejectsOffOriginNext pins the open-redirect guard:
+// attacker-supplied next values that point off-origin must be ignored.
+func TestHandleLogin_RejectsOffOriginNext(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlers(t)
+	h.ensureDefaultAdmin()
+
+	cases := []string{
+		"https://evil.example/",
+		"//evil.example/",
+		"http://localhost/",
+		"javascript:alert(1)",
+	}
+	for _, hostile := range cases {
+		t.Run(hostile, func(t *testing.T) {
+			form := url.Values{}
+			form.Set("username", "admin")
+			form.Set("password", "admin")
+			form.Set("next", hostile)
+			req := httptest.NewRequest(http.MethodPost, "/login",
+				strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			h.handleLogin(rec, req)
+
+			if got := rec.Header().Get("Location"); got != "/" {
+				t.Errorf("hostile next %q: got %q, want / (safe fallback)", hostile, got)
+			}
+		})
+	}
+}
+
 // --- handleLogout -----------------------------------------------------------
 
 // TestHandleLogout_ClearsAuthenticatedFlag pins the logout contract: after

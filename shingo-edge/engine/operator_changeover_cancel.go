@@ -27,8 +27,10 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		return err
 	}
 
-	// Abort all in-flight orders linked to this changeover's node tasks.
-	// Core will handle safe resolution (convert loaded robots to store orders).
+	// Abort the orders this changeover created — supply + evac legs per
+	// node task. Sibling orders that happen to be on the same nodes
+	// (manual storage, replenishment, etc.) are owned by other flows
+	// and not the changeover-cancel's business to terminate.
 	nodeTasks, _ := e.db.ListChangeoverNodeTasks(changeover.ID)
 	for _, task := range nodeTasks {
 		for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
@@ -46,7 +48,6 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 				log.Printf("changeover cancel: abort order %s: %v", order.UUID, err)
 			}
 		}
-		// Mark node task as cancelled
 		if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskCancelled); err != nil {
 			log.Printf("changeover: update node task %d state to cancelled: %v", task.ID, err)
 		}

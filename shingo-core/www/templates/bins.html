@@ -93,17 +93,18 @@
   </div>
 
   {{if .Bins}}
-  <table id="bin-table">
+  <div class="table-scroll-y">
+  <table id="bin-table" data-sortable>
     <thead>
       <tr>
         {{if .Authenticated}}<th style="width:30px"><input type="checkbox" data-action-change="toggleAllBins"></th>{{end}}
-        <th>Label</th>
-        <th>Type</th>
-        <th>Location</th>
-        <th>Payload</th>
-        <th>UOP</th>
-        <th>Status</th>
-        <th>Flags</th>
+        <th data-sort>Label</th>
+        <th data-sort>Type</th>
+        <th data-sort>Location</th>
+        <th data-sort>Payload</th>
+        <th data-sort>UOP</th>
+        <th data-sort>Status</th>
+        <th data-sort>Flags</th>
       </tr>
     </thead>
     <tbody>
@@ -121,17 +122,17 @@
           data-contents="{{if .PayloadCode}}{{if .ManifestConfirmed}}{{if gt .UOPRemaining 0}}loaded{{else}}depleted{{end}}{{else}}unconfirmed{{end}}{{else}}empty{{end}}"
           data-action="openBinDetail" data-bin-id="{{.ID}}" data-skip-on-checkbox="1">
         {{if $.Authenticated}}<td data-action="stopPropagation"><input type="checkbox" class="bin-cb" value="{{.ID}}" data-action-change="updateBulkBar"></td>{{end}}
-        <td>
+        <td data-sort-value="{{.Label}}">
           <span class="bin-dot bin-dot-{{if .PayloadCode}}{{if .ManifestConfirmed}}{{if gt .UOPRemaining 0}}loaded{{else}}depleted{{end}}{{else}}unconfirmed{{end}}{{else}}empty{{end}}"></span>
           <strong><code>{{.Label}}</code></strong>
         </td>
         <td>{{.BinTypeCode}}</td>
-        <td>{{if .NodeName}}{{.NodeName}}{{else}}<span class="text-muted">-</span>{{end}}</td>
-        <td>{{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{else}}<span class="text-muted">-</span>{{end}}</td>
-        <td>
+        <td data-sort-value="{{.NodeName}}">{{if .NodeName}}{{.NodeName}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+        <td data-sort-value="{{.PayloadCode}}">{{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{else}}<span class="text-muted">-</span>{{end}}</td>
+        <td data-sort-value="{{.UOPRemaining}}">
           {{if .PayloadCode}}{{.UOPRemaining}}{{else}}<span class="text-muted">-</span>{{end}}
         </td>
-        <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+        <td data-sort-value="{{.Status}}"><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
         <td class="bin-flags">
           {{if .Locked}}<span title="Locked by {{.LockedBy}}">&#128274;</span>{{end}}
           {{if .ClaimedBy}}<span title="Claimed by order #{{deref .ClaimedBy}}">&#128230;</span>{{end}}
@@ -142,6 +143,7 @@
       {{end}}
     </tbody>
   </table>
+  </div>
   {{else}}
   <div class="card">
     <p class="text-muted">No bins registered.{{if .Authenticated}} Use "+ Bin" to create bins.{{end}}</p>

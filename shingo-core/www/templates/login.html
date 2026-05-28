@@ -8,6 +8,7 @@
     </div>
     {{end}}
     <form method="POST" action="/login">
+      <input type="hidden" name="next" value="{{if .Next}}{{.Next}}{{else}}/{{end}}">
       <div class="form-group">
         <label>Username</label>
         <input type="text" name="username" required autofocus>

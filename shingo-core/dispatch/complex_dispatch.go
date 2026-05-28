@@ -103,6 +103,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		Status:       StatusQueued, // status-first queueing — scanner picks it up
 		Quantity:     p.Quantity,
 		Priority:     p.Priority,
+		PayloadCode:  payloadCode,
 		PayloadDesc:  p.PayloadDesc,
 		SourceNode:   sourceNode,
 		DeliveryNode: deliveryNode,
@@ -395,6 +396,7 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 		Status:       StatusQueued,
 		Quantity:     p.Quantity,
 		Priority:     p.Priority,
+		PayloadCode:  payloadCode,
 		PayloadDesc:  p.PayloadDesc,
 		SourceNode:   sourceNode,
 		DeliveryNode: deliveryNode,

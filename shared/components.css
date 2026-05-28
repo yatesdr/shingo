@@ -134,3 +134,30 @@
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 0.75rem;
 }
+
+/* ─── Table scrolling ────────────────────────────────────────────────── */
+
+/* Wrapper that caps a wide-row table at the viewport and scrolls
+ * vertically when content overflows. The cap leaves headroom for the
+ * top nav, page heading, and filter bar; pages with a denser shell can
+ * compose a tighter limit by setting `--table-scroll-max` on the
+ * wrapper itself.
+ *
+ * Pair with a sticky-headered table by giving `<thead>` `position:
+ * sticky; top: 0;` from page CSS — the wrapper is the scrolling
+ * ancestor it needs. */
+.table-scroll-y {
+  max-height: var(--table-scroll-max, calc(100vh - 16rem));
+  overflow-y: auto;
+}
+
+/* ─── Sortable tables ────────────────────────────────────────────────── */
+
+/* Sortable column indicator. Empty by default; populated by
+ * shared/utils.js installTableSort() with ▲ / ▼ on the active column. */
+.sort-indicator {
+  display: inline-block;
+  width: 1ch;
+  font-size: 0.85em;
+  color: var(--accent, currentColor);
+}

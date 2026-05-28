@@ -69,8 +69,89 @@ func TestAdminPages_AdminGate_Redirects(t *testing.T) {
 			if resp.StatusCode != http.StatusSeeOther {
 				t.Errorf("GET %s unauthenticated: got %d, want 303", p, resp.StatusCode)
 			}
-			if loc := resp.Header.Get("Location"); loc != "/login" {
-				t.Errorf("GET %s redirect target: got %q, want /login", p, loc)
+			wantLoc := "/login?next=" + url.QueryEscape(p)
+			if loc := resp.Header.Get("Location"); loc != wantLoc {
+				t.Errorf("GET %s redirect target: got %q, want %q (next= preservation)", p, loc, wantLoc)
+			}
+		})
+	}
+}
+
+// TestAdminGate_LoginRoundTripPreservesNext exercises the Field-notes
+// Note 3 round-trip: hit an admin-gated page logged out → land on
+// /login?next=<path> → POST /login with credentials → final 303 lands
+// on the original target, not /config.
+func TestAdminGate_LoginRoundTripPreservesNext(t *testing.T) {
+	_, router := newAdminPagesRouter(t)
+
+	// Seed a known user.
+	hash, err := auth.HashPassword("rt-pw")
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	testDB.Exec("DELETE FROM admin_users WHERE username = 'roundtripuser'")
+	if _, err := testDB.CreateAdminUser("roundtripuser", hash); err != nil {
+		t.Fatalf("seed admin user: %v", err)
+	}
+
+	// 1) GET admin-gated page while logged out — middleware bounces with
+	//    next= preserved.
+	resp := doRequest(t, router, "GET", "/diagnostics", nil, nil)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("unauthenticated GET: got %d, want 303", resp.StatusCode)
+	}
+	loc := resp.Header.Get("Location")
+	if want := "/login?next=" + url.QueryEscape("/diagnostics"); loc != want {
+		t.Fatalf("redirect location: got %q, want %q", loc, want)
+	}
+
+	// 2) POST /login with the next field carried over from the redirect.
+	form := url.Values{}
+	form.Set("username", "roundtripuser")
+	form.Set("password", "rt-pw")
+	form.Set("next", "/diagnostics")
+	resp = postForm(t, router, "/login", form, nil)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("login POST: got %d, want 303", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Location"); got != "/diagnostics" {
+		t.Errorf("post-login destination: got %q, want %q (Note 3 regression)", got, "/diagnostics")
+	}
+}
+
+// TestLogin_NextOpenRedirectRejected pins the safety guard: an attacker-
+// supplied off-origin next value must not turn the login into an open
+// redirect.
+func TestLogin_NextOpenRedirectRejected(t *testing.T) {
+	_, router := newAdminPagesRouter(t)
+
+	hash, err := auth.HashPassword("safe-pw")
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	testDB.Exec("DELETE FROM admin_users WHERE username = 'safelogin'")
+	if _, err := testDB.CreateAdminUser("safelogin", hash); err != nil {
+		t.Fatalf("seed admin user: %v", err)
+	}
+
+	cases := []string{
+		"https://evil.example/",
+		"//evil.example/",
+		"http://localhost/",
+		"javascript:alert(1)",
+	}
+	for _, hostile := range cases {
+		t.Run(hostile, func(t *testing.T) {
+			form := url.Values{}
+			form.Set("username", "safelogin")
+			form.Set("password", "safe-pw")
+			form.Set("next", hostile)
+			resp := postForm(t, router, "/login", form, nil)
+			if resp.StatusCode != http.StatusSeeOther {
+				t.Fatalf("status: got %d, want 303", resp.StatusCode)
+			}
+			if got := resp.Header.Get("Location"); got != "/config" {
+				t.Errorf("hostile next %q: got %q, want /config (safe fallback)", hostile, got)
 			}
 		})
 	}

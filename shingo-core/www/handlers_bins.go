@@ -212,6 +212,20 @@ func (h *Handlers) handleBinCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Wake the fulfillment scanner — orders queued on missing-bin
+	// (post-06138c6) or on operator-overridden changeover preflight
+	// (Note 7) sleep in `queued` status until EventBinUpdated fires.
+	// Pre-fix, freshly-created bins did not emit this event, so a
+	// matching queued order would not replay until something else
+	// triggered the scanner (a bin move, an order completion). The
+	// emitted payload is intentionally minimal — the scanner doesn't
+	// read it, the audit handler (wiring.go:199-202) does, and we
+	// only know the bin type + node here, not the persisted IDs.
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
+		Action: "created",
+		NodeID: derefInt64(nodeID),
+	}})
+
 	http.Redirect(w, r, "/bins", http.StatusSeeOther)
 }
 

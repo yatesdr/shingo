@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"shingo/protocol/auth"
+	"shingo/shared"
 	"shingoedge/domain"
 )
 
@@ -137,18 +138,32 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	next := shared.SafeNextPath(r.URL.Query().Get("next"))
 	if username, ok := h.sessions.getUser(r); ok && username != "" {
-		http.Redirect(w, r, "/config", http.StatusSeeOther)
+		dest := next
+		if dest == "" {
+			dest = "/config"
+		}
+		http.Redirect(w, r, dest, http.StatusSeeOther)
 		return
 	}
 	h.renderTemplate(w, r, "login.html", map[string]interface{}{
 		"Page": "login",
+		"Next": next,
 	})
 }
 
 func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
+	next := shared.SafeNextPath(r.FormValue("next"))
+	if next == "" {
+		next = shared.SafeNextPath(r.URL.Query().Get("next"))
+	}
+	dest := next
+	if dest == "" {
+		dest = "/config"
+	}
 
 	exists, _ := h.engine.AdminService().Exists()
 	if !exists {
@@ -162,7 +177,7 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.sessions.setUser(w, r, username)
-		http.Redirect(w, r, "/config", http.StatusSeeOther)
+		http.Redirect(w, r, dest, http.StatusSeeOther)
 		return
 	}
 
@@ -171,12 +186,13 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 		h.renderTemplate(w, r, "login.html", map[string]interface{}{
 			"Page":  "login",
 			"Error": "Invalid username or password",
+			"Next":  next,
 		})
 		return
 	}
 
 	h.sessions.setUser(w, r, username)
-	http.Redirect(w, r, "/config", http.StatusSeeOther)
+	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
 func (h *Handlers) handleLogout(w http.ResponseWriter, r *http.Request) {

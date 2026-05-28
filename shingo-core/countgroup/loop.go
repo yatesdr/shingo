@@ -1,6 +1,7 @@
 package countgroup
 
 import (
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -130,64 +131,96 @@ func (r *Runner) groupLoop(g config.CountGroupConfig) {
 			}
 			return
 		case <-timer.C:
-			robots, err := r.poller.GetRobotsInCountGroup(g.Name)
-			if err != nil {
-				// Failure path: hold state; advance fail-safe timer.
-				// Log is collapsed by outageLogger (one open, periodic
-				// summaries at 60s, one close on recovery) — no per-tick
-				// spam. The poll interval also backs off so a recovering
-				// RDS isn't getting hammered by N groups × every-tick.
-				r.outage.Failure(g.Name, r.logFn, "group "+g.Name+" poll", err)
-				currentInterval = nextBackoff(currentInterval, maxBackoff)
-				if !failSafeActive && time.Since(lastSuccess) > r.cfg.FailSafeTimeout {
-					if deb.forceOn() {
-						failSafeActive = true
-						r.emitter.Emit(Transition{
-							Group:             g.Name,
-							Desired:           "on",
-							Robots:            nil,
-							FailSafeTriggered: true,
-							Timestamp:         time.Now(),
-						})
-						r.logFn("countgroup: group %s FAIL-SAFE ON after %s of RDS failure",
-							g.Name, r.cfg.FailSafeTimeout)
+			// Per-tick recover: a panic on this poll skips the tick
+			// (timer.Reset still runs below, loop continues to the next
+			// iteration). Wrapping the whole goroutine instead would
+			// silently kill the group on first panic — UOP-driving
+			// transitions would stop with no auto-restart, hidden
+			// behind a single log line. Per-tick lets a bad poll body
+			// (closed channel, nil map) be visible as recurring log
+			// spam without taking the group offline.
+			func() {
+				defer func() {
+					if rec := recover(); rec != nil {
+						r.logFn("PANIC groupLoop tick (group=%s): %v — skipping tick, loop continues\n%s",
+							g.Name, rec, debug.Stack())
 					}
-				}
-				timer.Reset(currentInterval)
-				continue
-			}
-
-			// Success path: reset fail-safe timer, backoff, and last-non-empty.
-			r.outage.Success(g.Name, r.logFn, "group "+g.Name+" poll")
-			currentInterval = baseInterval
-			lastSuccess = time.Now()
-			failSafeActive = false
-			if len(robots) > 0 {
-				r.recordNonEmpty(g.Name)
-			}
-
-			// Feed every successful poll into the debouncer. Do NOT dedup
-			// by hash here — the off transition requires `off_threshold`
-			// consecutive empty samples, and every empty response has the
-			// same hash. Deduping before the debouncer starves the
-			// counter and the off transition becomes unreachable. The
-			// debouncer itself already returns changed=false for steady
-			// state, which is the correct place to suppress emits.
-			if _, changed := deb.feed(len(robots) > 0); changed {
-				desired := "off"
-				if len(robots) > 0 {
-					desired = "on"
-				}
-				r.emitter.Emit(Transition{
-					Group:             g.Name,
-					Desired:           desired,
-					Robots:            robots,
-					FailSafeTriggered: false,
-					Timestamp:         time.Now(),
-				})
-			}
+				}()
+				r.runTick(g, &deb, &currentInterval, &lastSuccess, &failSafeActive, baseInterval, maxBackoff)
+			}()
 			timer.Reset(currentInterval)
 		}
+	}
+}
+
+// runTick is one poll iteration. Extracted so groupLoop can wrap it in
+// a per-tick defer/recover without the closure needing to capture every
+// state variable explicitly — only the pointer-passed ones are shared
+// across ticks. Returns nothing; mutates state through the pointer
+// arguments. continue-equivalent (failure path) is just a return.
+func (r *Runner) runTick(
+	g config.CountGroupConfig,
+	deb **debouncer,
+	currentInterval *time.Duration,
+	lastSuccess *time.Time,
+	failSafeActive *bool,
+	baseInterval time.Duration,
+	maxBackoff time.Duration,
+) {
+	robots, err := r.poller.GetRobotsInCountGroup(g.Name)
+	if err != nil {
+		// Failure path: hold state; advance fail-safe timer.
+		// Log is collapsed by outageLogger (one open, periodic
+		// summaries at 60s, one close on recovery) — no per-tick
+		// spam. The poll interval also backs off so a recovering
+		// RDS isn't getting hammered by N groups × every-tick.
+		r.outage.Failure(g.Name, r.logFn, "group "+g.Name+" poll", err)
+		*currentInterval = nextBackoff(*currentInterval, maxBackoff)
+		if !*failSafeActive && time.Since(*lastSuccess) > r.cfg.FailSafeTimeout {
+			if (*deb).forceOn() {
+				*failSafeActive = true
+				r.emitter.Emit(Transition{
+					Group:             g.Name,
+					Desired:           "on",
+					Robots:            nil,
+					FailSafeTriggered: true,
+					Timestamp:         time.Now(),
+				})
+				r.logFn("countgroup: group %s FAIL-SAFE ON after %s of RDS failure",
+					g.Name, r.cfg.FailSafeTimeout)
+			}
+		}
+		return
+	}
+
+	// Success path: reset fail-safe timer, backoff, and last-non-empty.
+	r.outage.Success(g.Name, r.logFn, "group "+g.Name+" poll")
+	*currentInterval = baseInterval
+	*lastSuccess = time.Now()
+	*failSafeActive = false
+	if len(robots) > 0 {
+		r.recordNonEmpty(g.Name)
+	}
+
+	// Feed every successful poll into the debouncer. Do NOT dedup
+	// by hash here — the off transition requires `off_threshold`
+	// consecutive empty samples, and every empty response has the
+	// same hash. Deduping before the debouncer starves the
+	// counter and the off transition becomes unreachable. The
+	// debouncer itself already returns changed=false for steady
+	// state, which is the correct place to suppress emits.
+	if _, changed := (*deb).feed(len(robots) > 0); changed {
+		desired := "off"
+		if len(robots) > 0 {
+			desired = "on"
+		}
+		r.emitter.Emit(Transition{
+			Group:             g.Name,
+			Desired:           desired,
+			Robots:            robots,
+			FailSafeTriggered: false,
+			Timestamp:         time.Now(),
+		})
 	}
 }
 

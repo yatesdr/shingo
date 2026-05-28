@@ -198,20 +198,36 @@ export function createSSE(url, handlers) {
     let seenBuild = null;
     let closed = false;
 
+    // checkBuild captures the first build id seen and shows a refresh
+    // banner if any later event reports a different one. Used by both
+    // the 'connected' (fires once per reconnect) and 'heartbeat' (fires
+    // every 30s on the existing connection) handlers — the latter is
+    // what catches Edge restarts that a reverse proxy held the SSE
+    // socket open through, where onerror would otherwise never fire.
+    //
+    // Pre-fix this called location.reload() automatically, which
+    // nuked operator mid-action state every deploy. The banner lets
+    // the operator pick the moment.
+    function checkBuild(e) {
+        let build = '';
+        try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
+        if (!build) return;
+        if (seenBuild === null) {
+            seenBuild = build;
+        } else if (seenBuild !== build) {
+            showRefreshBanner();
+        }
+    }
+
     function connect() {
         es = new EventSource(url);
 
         es.addEventListener('connected', e => {
             reconnectDelay = 1000;
-            let build = '';
-            try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
-            if (!build) return;
-            if (seenBuild === null) {
-                seenBuild = build;
-            } else if (seenBuild !== build) {
-                location.reload();
-            }
+            checkBuild(e);
         });
+
+        es.addEventListener('heartbeat', checkBuild);
 
         for (const eventType in handlers) {
             if (typeof handlers[eventType] !== 'function') continue;
@@ -243,6 +259,42 @@ export function createSSE(url, handlers) {
     window.addEventListener('beforeunload', () => { if (es) es.close(); });
 
     return { close: () => { closed = true; if (es) es.close(); } };
+}
+
+// showRefreshBanner pins a non-modal banner at the top of the viewport
+// telling the operator a new server build is available. Tap reloads;
+// dismiss hides until the next mismatch. Idempotent — repeated calls
+// while the banner is shown are no-ops.
+//
+// Defined as an internal helper used by createSSE's build-mismatch
+// check. Exposed for the Core admin SSE bootstrap (app.js) which has
+// its own checkBuild and needs the same affordance.
+export function showRefreshBanner() {
+    if (document.getElementById('shingo-refresh-banner')) return;
+    const banner = document.createElement('div');
+    banner.id = 'shingo-refresh-banner';
+    banner.setAttribute('role', 'status');
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;'
+        + 'background:#fff3cd;border-bottom:1px solid #ffe69c;color:#664d03;'
+        + 'padding:0.6rem 1rem;display:flex;align-items:center;gap:0.75rem;'
+        + 'justify-content:center;font-size:0.95rem;'
+        + 'box-shadow:0 2px 6px rgba(0,0,0,0.08);';
+    const msg = document.createElement('span');
+    msg.textContent = 'A new version is available.';
+    const reloadBtn = document.createElement('button');
+    reloadBtn.textContent = 'Refresh';
+    reloadBtn.style.cssText = 'padding:0.3rem 0.9rem;background:#0d6efd;color:#fff;'
+        + 'border:none;border-radius:4px;cursor:pointer;font-weight:600;';
+    reloadBtn.addEventListener('click', () => location.reload());
+    const dismissBtn = document.createElement('button');
+    dismissBtn.textContent = 'Dismiss';
+    dismissBtn.style.cssText = 'padding:0.3rem 0.7rem;background:transparent;color:#664d03;'
+        + 'border:1px solid #c9a85e;border-radius:4px;cursor:pointer;';
+    dismissBtn.addEventListener('click', () => banner.remove());
+    banner.appendChild(msg);
+    banner.appendChild(reloadBtn);
+    banner.appendChild(dismissBtn);
+    document.body.appendChild(banner);
 }
 
 // ─── Modals ─────────────────────────────────────────────────────────────
@@ -602,4 +654,104 @@ export function debounce(fn, ms) {
         clearTimeout(timer);
         timer = setTimeout(() => fn.apply(this, args), ms);
     };
+}
+
+// ─── Table sort ─────────────────────────────────────────────────────────
+//
+// installTableSort(root) wires click-to-sort onto any
+// <table data-sortable> under `root` (default: document). Single-column,
+// client-side, no persistence — first click on a header sorts ascending,
+// repeat clicks toggle direction.
+//
+// Markup contract:
+//   <table data-sortable>                      — opt in for the table
+//     <thead>
+//       <tr><th data-sort>Col</th>             — sortable column
+//           <th>Actions</th></tr>               — not sortable (no data-sort)
+//     </thead>
+//     <tbody>
+//       <tr><td>foo</td><td>…</td></tr>
+//       <tr data-no-sort>…</tr>                 — pinned to bottom (e.g.
+//                                                 "no rows" placeholder)
+//     </tbody>
+//   </table>
+//
+// Cell value selection (in order):
+//   1. <td data-sort-value="X">  — explicit override; use for ISO time
+//                                  cells whose visible text is localized.
+//   2. The cell's textContent (trimmed).
+//
+// Comparison uses Intl.Collator with numeric:true so mixed text/number
+// columns ("Order #2", "Order #10") sort intuitively without per-column
+// type hints.
+export function installTableSort(root) {
+    root = root || document;
+    const tables = root.querySelectorAll('table[data-sortable]');
+    for (const table of tables) wireSortableTable(table);
+}
+
+function wireSortableTable(table) {
+    if (table.__tableSortInstalled) return;
+    table.__tableSortInstalled = true;
+
+    const headers = Array.from(table.querySelectorAll('thead th[data-sort]'));
+    let activeIdx = -1;
+    let activeDir = 'asc';
+
+    for (const th of headers) {
+        th.style.cursor = 'pointer';
+        th.style.userSelect = 'none';
+        // Reserve space for the indicator so the header doesn't jump
+        // width when it activates.
+        if (!th.querySelector('.sort-indicator')) {
+            th.appendChild(document.createTextNode(' '));
+            const span = document.createElement('span');
+            span.className = 'sort-indicator';
+            span.setAttribute('aria-hidden', 'true');
+            th.appendChild(span);
+        }
+        th.addEventListener('click', () => {
+            const idx = Array.prototype.indexOf.call(th.parentNode.children, th);
+            if (idx === activeIdx) {
+                activeDir = activeDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                activeIdx = idx;
+                activeDir = 'asc';
+            }
+            for (const h of headers) {
+                const ind = h.querySelector('.sort-indicator');
+                if (ind) ind.textContent = '';
+            }
+            const ai = th.querySelector('.sort-indicator');
+            if (ai) ai.textContent = activeDir === 'asc' ? '▲' : '▼';
+            sortTbodyRows(table, idx, activeDir);
+        });
+    }
+}
+
+function sortTbodyRows(table, columnIndex, dir) {
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    const all = Array.from(tbody.children).filter(n => n.tagName === 'TR');
+    const sortable = [];
+    const fixed = [];
+    for (const r of all) {
+        if (r.hasAttribute('data-no-sort')) fixed.push(r);
+        else sortable.push(r);
+    }
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    const sign = dir === 'desc' ? -1 : 1;
+    sortable.sort((a, b) => sign * collator.compare(
+        cellSortValue(a, columnIndex),
+        cellSortValue(b, columnIndex)
+    ));
+    for (const r of sortable) tbody.appendChild(r);
+    for (const r of fixed) tbody.appendChild(r);
+}
+
+function cellSortValue(row, columnIndex) {
+    const td = row.children[columnIndex];
+    if (!td) return '';
+    if (td.hasAttribute('data-sort-value')) return td.getAttribute('data-sort-value');
+    return (td.textContent || '').trim();
 }

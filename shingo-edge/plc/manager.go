@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -523,8 +524,23 @@ func (m *Manager) pollAllReportingPoints() {
 	}
 
 	for _, rp := range rps {
-		m.pollReportingPoint(rp)
+		m.pollReportingPointSafe(rp)
 	}
+}
+
+// pollReportingPointSafe wraps pollReportingPoint with a recover() so a
+// panic on one reporting point doesn't kill the polling goroutine. Pre-
+// fix a single bad PLC read or downstream emit could take down the
+// entire counter loop with no log of the failure; the loop is started
+// once at edge startup and never restarts.
+func (m *Manager) pollReportingPointSafe(rp counters.ReportingPoint) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("plc pollLoop: panic polling reporting point %d (%s/%s): %v\n%s",
+				rp.ID, rp.PLCName, rp.TagName, r, debug.Stack())
+		}
+	}()
+	m.pollReportingPoint(rp)
 }
 
 func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) {

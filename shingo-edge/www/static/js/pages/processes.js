@@ -190,6 +190,20 @@ async function deleteStyle(id) {
     }
 }
 
+// Discoverability fix for Field-notes Note 6: a new process with
+// styles defined but no active style has no operator-facing path to
+// pick one. apiSetActiveStyle already exists; this wires the per-row
+// "Set Active" button on the Styles table to it.
+async function setActiveStyle(id) {
+    const styleID = parseInt(id, 10);
+    try {
+        await api.put('/api/processes/' + activeProcessID + '/active-style', { style_id: styleID });
+        location.reload();
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
 // ─── Claim editor — state-driven ───────────────────────────────────────
 //
 // CLAIM_FIELD_VISIBILITY: the (role, swap_mode) lookup table that
@@ -1049,6 +1063,7 @@ delegateActions(document.body, {
     saveProcess,
     saveStation,
     saveStyle,
+    setActiveStyle,
     showProcessTab,
     syncPayloadCatalog,
     toggleClaimsAddPayload,

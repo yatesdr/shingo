@@ -18,16 +18,16 @@
 </p>
 
 <div class="card" style="padding:0; margin-bottom:2rem;">
-  <table class="table">
+  <table class="table" data-sortable>
     <thead>
       <tr>
-        <th>Loader</th>
-        <th>Payload</th>
-        <th style="text-align:right;">Threshold</th>
-        <th style="text-align:right;" title="Per-part cycle time (seconds per UOP at the consuming cell). Saved on Apply, used by both formulas.">Cycle (s)</th>
-        <th>Source</th>
-        <th>Confidence</th>
-        <th style="text-align:right;">Safety</th>
+        <th data-sort>Loader</th>
+        <th data-sort>Payload</th>
+        <th data-sort style="text-align:right;">Threshold</th>
+        <th data-sort style="text-align:right;" title="Per-part cycle time (seconds per UOP at the consuming cell). Saved on Apply, used by both formulas.">Cycle (s)</th>
+        <th data-sort>Source</th>
+        <th data-sort>Confidence</th>
+        <th data-sort style="text-align:right;">Safety</th>
         <th style="width:260px;">Edit</th>
       </tr>
     </thead>
@@ -58,7 +58,7 @@
         </td>
       </tr>
       {{else}}
-      <tr><td colspan="8" class="text-muted">No loader thresholds configured. Plant is on legacy bin-count.</td></tr>
+      <tr data-no-sort><td colspan="8" class="text-muted">No loader thresholds configured. Plant is on legacy bin-count.</td></tr>
       {{end}}
     </tbody>
   </table>
@@ -73,17 +73,17 @@
 </p>
 
 <div class="card" style="padding:0; margin-bottom:2rem;">
-  <table class="table">
+  <table class="table" data-sortable>
     <thead>
       <tr>
-        <th>Process</th>
-        <th>Style</th>
-        <th>Node</th>
-        <th>Payload</th>
-        <th style="text-align:right;">Capacity</th>
-        <th style="text-align:right;">Reorder At</th>
-        <th>Source</th>
-        <th>AutoReorder</th>
+        <th data-sort>Process</th>
+        <th data-sort>Style</th>
+        <th data-sort>Node</th>
+        <th data-sort>Payload</th>
+        <th data-sort style="text-align:right;">Capacity</th>
+        <th data-sort style="text-align:right;">Reorder At</th>
+        <th data-sort>Source</th>
+        <th data-sort>AutoReorder</th>
         <th style="width:220px;">Edit</th>
       </tr>
     </thead>
@@ -113,7 +113,7 @@
         </td>
       </tr>
       {{else}}
-      <tr><td colspan="9" class="text-muted">No claims found on active styles.</td></tr>
+      <tr data-no-sort><td colspan="9" class="text-muted">No claims found on active styles.</td></tr>
       {{end}}
     </tbody>
   </table>

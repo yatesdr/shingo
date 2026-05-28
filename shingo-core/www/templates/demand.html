@@ -11,14 +11,14 @@
     </div>
   </div>
 
-  <table class="table" id="demand-table">
+  <table class="table" id="demand-table" data-sortable>
     <thead>
       <tr>
-        <th>Cat-ID</th>
-        <th>Description</th>
-        <th class="col-num">Demand</th>
-        <th class="col-num">Produced</th>
-        <th class="col-num">Remaining</th>
+        <th data-sort>Cat-ID</th>
+        <th data-sort>Description</th>
+        <th class="col-num" data-sort>Demand</th>
+        <th class="col-num" data-sort>Produced</th>
+        <th class="col-num" data-sort>Remaining</th>
         {{if .Authenticated}}<th style="width:1%" class="nowrap">Actions</th>{{end}}
       </tr>
     </thead>
@@ -27,15 +27,15 @@
       <tr data-id="{{.ID}}" data-cat="{{.CatID}}" data-orig-desc="{{.Description}}" data-orig-demand="{{pct .DemandQty}}" data-orig-produced="{{pct .ProducedQty}}">
         <td>{{.CatID}}</td>
         <td>{{.Description}}</td>
-        <td class="cell-demand cell-editable">
+        <td class="cell-demand cell-editable" data-sort-value="{{pct .DemandQty}}">
           <span class="cell-val" {{if $.Authenticated}}data-action="startEdit:demand_qty"{{end}}>{{pct .DemandQty}}</span>
           <input type="text" inputmode="decimal" class="cell-input cell-input-num" name="demand_qty" value="{{pct .DemandQty}}" data-action-blur="stopEdit:demand_qty" data-action-keydown="demandCellKeydown:demand_qty">
         </td>
-        <td class="cell-produced cell-editable">
+        <td class="cell-produced cell-editable" data-sort-value="{{pct .ProducedQty}}">
           <span class="cell-val" {{if $.Authenticated}}data-action="startEdit:produced_qty"{{end}}>{{pct .ProducedQty}}</span>
           <input type="text" inputmode="decimal" class="cell-input cell-input-num" name="produced_qty" value="{{pct .ProducedQty}}" data-action-blur="stopEditProduced" data-action-keydown="demandCellKeydown:produced_qty">
         </td>
-        <td class="cell-remaining">{{pct .Remaining}}</td>
+        <td class="cell-remaining" data-sort-value="{{pct .Remaining}}">{{pct .Remaining}}</td>
         {{if $.Authenticated}}
         <td class="nowrap">
           <button class="icon-btn" data-action="applyRow" title="Save changes"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 2l-7.5 7.5L2.5 6 1 7.5l5 5 9-9z"/></svg></button>
@@ -46,7 +46,7 @@
         {{end}}
       </tr>
       {{else}}
-      <tr id="empty-row"><td colspan="{{if .Authenticated}}6{{else}}5{{end}}" class="text-center" style="color:#888;">No demands configured</td></tr>
+      <tr id="empty-row" data-no-sort><td colspan="{{if .Authenticated}}6{{else}}5{{end}}" class="text-center" style="color:#888;">No demands configured</td></tr>
       {{end}}
     </tbody>
   </table>

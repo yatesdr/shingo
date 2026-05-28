@@ -26,6 +26,11 @@ type SSEEvent struct {
 // param only affects fresh HTML loads.
 var serverInstance = fmt.Sprintf("%x", time.Now().UnixNano())
 
+// sseKeepaliveInterval is the heartbeat tick. Variable rather than
+// const so tests can compress the interval and exercise the heartbeat
+// path without a 30-second wait.
+var sseKeepaliveInterval = 30 * time.Second
+
 type sseClient struct {
 	events chan SSEEvent
 	drops  int // consecutive event drops; eviction trigger.
@@ -170,7 +175,7 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\"}\n\n", serverInstance)
 	flusher.Flush()
 
-	keepalive := time.NewTicker(30 * time.Second)
+	keepalive := time.NewTicker(sseKeepaliveInterval)
 	defer keepalive.Stop()
 
 	for {
@@ -190,7 +195,11 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Type, data)
 			flusher.Flush()
 		case <-keepalive.C:
-			fmt.Fprintf(w, ": keepalive\n\n")
+			// Named heartbeat event carries the build id on the existing
+			// connection — mid-stream version comparison without reconnect.
+			// The bare `: keepalive` comment was stripped by EventSource and
+			// never reached the JS client, so it could not carry the build id.
+			fmt.Fprintf(w, "event: heartbeat\ndata: {\"build\":\"%s\"}\n\n", serverInstance)
 			flusher.Flush()
 		}
 	}

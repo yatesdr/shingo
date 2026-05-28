@@ -89,34 +89,46 @@
 
   <div class="card" style="padding:0.75rem">
     {{if .Orders}}
-    <table class="table-compact" id="orders-table">
+    <table class="table-compact" id="orders-table" data-sortable>
       <thead>
         <tr>
-          <th>ID</th>
-          <th>UUID</th>
-          <th>Station</th>
-          <th>Type</th>
-          <th>Payload</th>
-          <th>Status</th>
-          <th>Robot</th>
-          <th>Created</th>
+          <th data-sort>ID</th>
+          <th data-sort>UUID</th>
+          <th data-sort>Station</th>
+          <th data-sort>Type</th>
+          <th data-sort>Payload</th>
+          <th data-sort>Status</th>
+          <th data-sort>Robot</th>
+          <th data-sort>Created</th>
+          {{if $.Authenticated}}<th>Actions</th>{{end}}
         </tr>
       </thead>
       <tbody>
         {{range .Orders}}
         <tr style="cursor:pointer" data-action="openOrderModal:{{.ID}}">
-          <td><a href="/orders/detail?id={{.ID}}" data-action="stopPropagation">{{.ID}}</a></td>
+          <td data-sort-value="{{.ID}}"><a href="/orders/detail?id={{.ID}}" data-action="stopPropagation">{{.ID}}</a></td>
           <td style="font-family:monospace;font-size:0.75rem">{{.EdgeUUID}}</td>
           <td>{{.StationID}}</td>
           <td>{{.OrderType}}</td>
-          <td>
+          <td data-sort-value="{{.PayloadCode}}">
             {{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{end}}
             {{if .PayloadDesc}}<div class="text-muted" style="font-size:0.8rem">{{.PayloadDesc}}</div>{{end}}
             {{if and (not .PayloadCode) (not .PayloadDesc)}}<span class="text-muted">-</span>{{end}}
           </td>
-          <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+          <td data-sort-value="{{.Status}}"><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
           <td>{{.RobotID}}</td>
-          <td>{{formatTime .CreatedAt}}</td>
+          <td data-sort-value="{{.CreatedAt}}">{{formatTime .CreatedAt}}</td>
+          {{if $.Authenticated}}
+          <td>
+            {{/* Cancel is only valid for non-terminal, non-post-delivery
+                statuses — mirror engine.TerminateOrder's IsPostDelivery
+                || IsTerminal gate so the button is hidden where the
+                handler would refuse it. */}}
+            {{if and (ne .Status "completed") (ne .Status "cancelled") (ne .Status "failed") (ne .Status "delivered") (ne .Status "confirmed")}}
+            <button class="btn btn-danger btn-sm" data-action="cancelOrderFromRow:{{.ID}}">Cancel</button>
+            {{end}}
+          </td>
+          {{end}}
         </tr>
         {{end}}
       </tbody>

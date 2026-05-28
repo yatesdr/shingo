@@ -2,7 +2,9 @@
 <div class="card-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:0.75rem;flex-wrap:wrap">
     <div>
         <strong>Process Changeover</strong>
-        <div style="color:var(--text-muted);font-size:0.9rem">Current style: {{if .CurrentStyle}}<strong>{{.CurrentStyle}}</strong>{{else}}None{{end}}</div>
+        <div style="color:var(--text-muted);font-size:0.9rem">
+            Current style: {{if .CurrentStyle}}<strong>{{.CurrentStyle}}</strong>{{else}}<strong>None</strong> &mdash; <a href="/processes{{if .ActiveProcessID}}?process={{.ActiveProcessID}}{{end}}">set active style on Processes →</a>{{end}}
+        </div>
     </div>
     {{if .ActiveChangeover}}
         {{if eq .ActiveChangeover.State "active"}}

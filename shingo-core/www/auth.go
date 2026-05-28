@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gorilla/sessions"
 
 	"shingo/protocol/auth"
+	"shingo/shared"
 )
 
 const sessionName = "shingocore-session"
@@ -43,7 +45,18 @@ func (h *Handlers) requireAuth(next http.Handler) http.Handler {
 				json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 				return
 			}
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			// Preserve the target URL so post-login lands the user
+			// back on the page they were trying to reach instead of
+			// dumping them on the dashboard. GETs only — POSTs would
+			// lose the body, and re-driving a form submission across
+			// the auth bounce is a separate concern.
+			loginURL := "/login"
+			if r.Method == http.MethodGet {
+				if target := shared.SafeNextPath(r.URL.RequestURI()); target != "" {
+					loginURL = "/login?next=" + url.QueryEscape(target)
+				}
+			}
+			http.Redirect(w, r, loginURL, http.StatusSeeOther)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -80,6 +93,7 @@ func (h *Handlers) ensureDefaultAdmin() {
 func (h *Handlers) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Page": "login",
+		"Next": shared.SafeNextPath(r.URL.Query().Get("next")),
 	}
 	h.render(w, r, "login.html", data)
 }
@@ -92,12 +106,17 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	username := r.FormValue("username")
 	password := r.FormValue("password")
+	next := shared.SafeNextPath(r.FormValue("next"))
+	if next == "" {
+		next = shared.SafeNextPath(r.URL.Query().Get("next"))
+	}
 
 	user, err := h.engine.AdminService().GetUser(username)
 	if err != nil || !auth.CheckPassword(user.PasswordHash, password) {
 		data := map[string]any{
 			"Page":  "login",
 			"Error": "Invalid username or password",
+			"Next":  next,
 		}
 		h.render(w, r, "login.html", data)
 		return
@@ -110,7 +129,11 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 		log.Printf("auth: session save error: %v", err)
 	}
 
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	dest := next
+	if dest == "" {
+		dest = "/"
+	}
+	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
 func (h *Handlers) handleLogout(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,7 @@
   {{end}}
 
   {{if .Payloads}}
+  <div class="table-scroll-y">
   <table>
     <thead>
       <tr>
@@ -49,6 +50,7 @@
       {{end}}
     </tbody>
   </table>
+  </div>
   {{else}}
   <div class="card">
     <p class="text-muted">No payloads defined yet.{{if .Authenticated}} Use "+ Payload" to create one.{{end}}</p>
