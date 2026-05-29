@@ -176,6 +176,57 @@ The original operator tokens used visual names. Rename to semantic:
 
 ## Status indicators
 
+### Signal theme
+
+Badge colors follow a graduated intensity scale called **Signal**. The visual
+weight of the badge increases as the order progresses through its lifecycle,
+so an operator scanning a table of orders can perceive the distribution of
+lifecycle phases without reading labels.
+
+**The gradient:**
+
+```
+EARLY (muted gray)  →  SUBMITTED (steel blue)  →  ACTIVE (saturated per-phase hue)
+→  SUCCESS (vivid green)  →  ATTENTION (amber)  →  FAILURE (red)
+```
+
+**Per-phase hues in the active band:**
+
+Each active phase has its own color so it's distinguishable at a glance:
+
+| Phase | Hue | Why |
+|---|---|---|
+| dispatched | Blue | Robot assigned, mission queued — "assignment blue" |
+| in_transit | Cyan | Robot physically moving — "movement cyan" |
+| staged | Indigo | Bin at destination, awaiting next step — "staging indigo" |
+| reshuffling | Violet | Rearranging bins — "shuffle violet" |
+
+**Light theme palette** (defined in `shared/status-classes.css`):
+
+| Signal | Statuses | Background | Text |
+|---|---|---|---|
+| Early | pending, sourcing, queued | `#eef0f2` | `#4b5563` |
+| Submitted | submitted, acknowledged | `#dbeafe` | `#1e40af` |
+| Active: dispatched | dispatched | `#bfdbfe` | `#1d4ed8` |
+| Active: in_transit | in_transit | `#a5f3fc` | `#0e7490` |
+| Active: staged | staged | `#c7d2fe` | `#4338ca` |
+| Active: reshuffling | reshuffling | `#ddd6fe` | `#6d28d9` |
+| Success | delivered, confirmed | `#bbf7d0` | `#166534` |
+| Neutral terminal | skipped, cancelled | `#e5e7eb` | `#6b7280` |
+| Attention | faulted | `#fde68a` | `#92400e` |
+| Failure | failed | `#fecaca` | `#991b1b` |
+
+**Dark theme** uses deeper backgrounds and brighter text, tuned for
+shop-floor LCDs under fluorescent lighting. See `shared/status-classes.css`
+for exact values.
+
+**Rule: Core and Edge admin surfaces consume `shared/status-classes.css`
+exclusively for order-lifecycle badges.** Core's local `style.css` must not
+redefine `.badge-pending`, `.badge-delivered`, or any other protocol-status
+class. The only badge classes that belong in Core's `style.css` are
+Core-specific non-protocol badges (`.badge-available`, `.badge-claimed`,
+`.badge-robot-*`, etc.).
+
 ### One pattern
 
 One CSS class per protocol status. The class name matches the status string:

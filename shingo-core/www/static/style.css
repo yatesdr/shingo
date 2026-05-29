@@ -51,25 +51,14 @@ nav .nav-sep { width: 1px; height: 1.2rem; background: var(--border); flex-shrin
 }
 .stat[data-tip]:hover::after { opacity: 1; }
 
-/* Status badges */
-.badge { display: inline-block; padding: 0.2em 0.6em; border-radius: 0.25rem; font-size: 0.8rem; font-weight: 600; }
-.badge-pending { background: #fff3cd; color: #856404; }
-.badge-sourcing { background: #fff3cd; color: #856404; }
-.badge-queued { background: #ffe8cc; color: #8a4b08; }
-.badge-dispatched { background: #cfe2ff; color: #084298; }
-.badge-in_transit { background: #e0cffc; color: #3d0a91; }
-.badge-delivered { background: #ffe8cc; color: #7c2d12; }
-.badge-confirmed, .badge-completed { background: #d1e7dd; color: #0f5132; }
-.badge-failed { background: #f8d7da; color: #842029; }
-.badge-cancelled { background: #e2e3e5; color: #41464b; }
-.badge-available, .badge-loaded { background: #d1e7dd; color: #0f5132; }
-.badge-empty { background: #e2e3e5; color: #41464b; }
-.badge-staged { background: #cff4fc; color: #055160; }
-.badge-claimed { background: #ffe8cc; color: #7c2d12; }
-.badge-flagged { background: #fff3cd; color: #856404; }
-.badge-maintenance { background: #fff3cd; color: #664d03; }
-.badge-retired { background: #f8d7da; color: #842029; }
-.badge-reshuffling { background: #e0cffc; color: #3d0a91; }
+/* Order-lifecycle badges are defined in shared/status-classes.css.
+ * Only Core-specific (non-protocol) badge classes belong here. */
+.badge-available, .badge-loaded { background: #bbf7d0; color: #166534; }
+.badge-empty { background: #e5e7eb; color: #6b7280; }
+.badge-claimed { background: #fde68a; color: #92400e; }
+.badge-flagged { background: #fde68a; color: #92400e; }
+.badge-maintenance { background: #fde68a; color: #92400e; }
+.badge-retired { background: #fecaca; color: #991b1b; }
 
 /* Health indicators */
 .health { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 0.4rem; }
@@ -485,18 +474,9 @@ textarea { resize: vertical; min-height: 60px; }
 [data-theme="dark"] .btn-primary:hover { background: #4090e0; }
 [data-theme="dark"] .btn-danger:hover { background: #da3633; }
 
-[data-theme="dark"] .badge-pending,
-[data-theme="dark"] .badge-sourcing { background: #3d2e00; color: #d29922; }
-[data-theme="dark"] .badge-queued { background: #3d2800; color: #e09422; }
-[data-theme="dark"] .badge-dispatched { background: #0c2d6b; color: #58a6ff; }
-[data-theme="dark"] .badge-in_transit { background: #2a1456; color: #bc8cff; }
-[data-theme="dark"] .badge-delivered { background: #431407; color: #fdba74; }
-[data-theme="dark"] .badge-confirmed,
-[data-theme="dark"] .badge-completed { background: #0d3321; color: #3fb950; }
-[data-theme="dark"] .badge-failed { background: #4a1219; color: #f85149; }
-[data-theme="dark"] .badge-cancelled { background: #2d333b; color: #8b949e; }
-[data-theme="dark"] .badge-staged { background: #073b4c; color: #67e8f9; }
-[data-theme="dark"] .badge-claimed { background: #431407; color: #fdba74; }
+/* Dark overrides for Core-specific badges only.
+ * Order-lifecycle dark overrides live in shared/status-classes.css. */
+[data-theme="dark"] .badge-claimed { background: #3d2e00; color: #fbbf24; }
 
 [data-theme="dark"] .robot-ready { background: #0d3321; border-color: #3fb950; color: #3fb950; }
 [data-theme="dark"] .robot-busy { background: #0c2d6b; border-color: #58a6ff; color: #58a6ff; }
@@ -782,21 +762,21 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   font-size:.9rem; box-sizing:border-box; background:var(--bg); color:var(--text);
 }
 .to-status { display:inline-block; padding:2px 8px; border-radius:3px; font-size:.8rem; font-weight:600; }
-.to-status-pending { background:#ffeaa7; color:#856404; }
-.to-status-sourcing { background:#dfe6e9; color:#636e72; }
-.to-status-dispatched { background:#74b9ff; color:#0c3d6b; }
-.to-status-in_transit { background:#a29bfe; color:#2d1f6b; }
-.to-status-delivered { background:#55efc4; color:#00694a; }
-.to-status-confirmed { background:#00b894; color:#fff; }
-.to-status-completed { background:#00cec9; color:#fff; }
-.to-status-failed { background:#fab1a0; color:#831010; }
-.to-status-cancelled { background:#dfe6e9; color:#636e72; }
-.to-status-CREATED { background:#ffeaa7; color:#856404; }
-.to-status-TOBEDISPATCHED { background:#dfe6e9; color:#636e72; }
-.to-status-RUNNING { background:#74b9ff; color:#0c3d6b; }
-.to-status-FINISHED { background:#00cec9; color:#fff; }
-.to-status-FAILED { background:#fab1a0; color:#831010; }
-.to-status-STOPPED { background:#dfe6e9; color:#636e72; }
+.to-status-pending { background:#eef0f2; color:#4b5563; }
+.to-status-sourcing { background:#eef0f2; color:#4b5563; }
+.to-status-dispatched { background:#bfdbfe; color:#1d4ed8; }
+.to-status-in_transit { background:#a5f3fc; color:#0e7490; }
+.to-status-delivered { background:#bbf7d0; color:#166534; }
+.to-status-confirmed { background:#bbf7d0; color:#166534; }
+.to-status-completed { background:#bbf7d0; color:#166534; }
+.to-status-failed { background:#fecaca; color:#991b1b; }
+.to-status-cancelled { background:#e5e7eb; color:#6b7280; }
+.to-status-CREATED { background:#eef0f2; color:#4b5563; }
+.to-status-TOBEDISPATCHED { background:#dbeafe; color:#1e40af; }
+.to-status-RUNNING { background:#bfdbfe; color:#1d4ed8; }
+.to-status-FINISHED { background:#bbf7d0; color:#166534; }
+.to-status-FAILED { background:#fecaca; color:#991b1b; }
+.to-status-STOPPED { background:#e5e7eb; color:#6b7280; }
 .to-actions { white-space:nowrap; }
 .to-actions button { margin-right:.25rem; }
 .to-btn-sm {

@@ -11,6 +11,24 @@
  * emit `<span class="badge badge-{{.Status}}">{{.Status}}</span>`
  * without transformation.
  *
+ * ── Signal theme ────────────────────────────────────────────────────
+ *
+ * Colors follow a graduated intensity scale — the visual weight of the
+ * badge increases as the order progresses through its lifecycle:
+ *
+ *   EARLY (muted gray)     →  SUBMITTED (cool steel blue)
+ *   →  ACTIVE (saturated)  →  SUCCESS (vivid green)
+ *   →  ATTENTION (amber)   →  FAILURE (red)
+ *
+ * Within the ACTIVE band, each phase has its own hue so an operator
+ * scanning a table of 20 orders can distinguish dispatched / in_transit
+ * / staged / reshuffling at a glance without reading the label.
+ *
+ * Light-theme colors are designed for high contrast on white backgrounds.
+ * Dark-theme colors are tuned for shop-floor LCDs under fluorescent
+ * lighting — slightly higher saturation, deeper backgrounds.
+ * ────────────────────────────────────────────────────────────────────
+ *
  * A neutral base .badge style is defined so a status added to the
  * protocol but not yet to this file renders as a readable pill rather
  * than invisible text.
@@ -48,51 +66,83 @@
 
 /* ─── Order lifecycle (protocol.Status) ─────────────────────────────── */
 
-/* Early lifecycle — work has not started moving */
-.badge-pending      { background: #fff3cd; color: #664d03; border-color: #ffe69c; }
-.badge-sourcing     { background: #fff3cd; color: #664d03; border-color: #ffe69c; }
-.badge-queued       { background: #e7e7ff; color: #4a3aa0; border-color: #cfcef6; }
-.badge-submitted    { background: #cfe2ff; color: #084298; border-color: #9ec5fe; }
+/* ── Early lifecycle ──────────────────────────────────────────────────
+ * Order exists but nothing is moving yet. Muted neutral tone — visible
+ * but quiet, clearly "waiting" rather than "active" or "done". */
+.badge-pending      { background: #eef0f2; color: #4b5563; border-color: #d4d8dd; }
+.badge-sourcing     { background: #eef0f2; color: #4b5563; border-color: #d4d8dd; }
+.badge-queued       { background: #eef0f2; color: #4b5563; border-color: #d4d8dd; }
 
-/* Active lifecycle — robots / staging in motion */
-.badge-dispatched   { background: #cfe2ff; color: #084298; border-color: #9ec5fe; }
-.badge-acknowledged { background: #cfe2ff; color: #084298; border-color: #9ec5fe; }
-.badge-in_transit   { background: #d1ecf1; color: #055160; border-color: #aedbe5; }
-.badge-staged       { background: #d1ecf1; color: #055160; border-color: #aedbe5; }
-.badge-reshuffling  { background: #d1ecf1; color: #055160; border-color: #aedbe5; }
+/* ── Submitted / acknowledged ─────────────────────────────────────────
+ * The system has accepted the order. Cool steel blue — slightly more
+ * saturated than early, signaling "the ball is rolling". */
+.badge-submitted    { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+.badge-acknowledged { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
 
-/* Terminal — success */
-.badge-delivered    { background: #d1e7dd; color: #0f5132; border-color: #a3cfbb; }
-.badge-confirmed    { background: #d1e7dd; color: #0f5132; border-color: #a3cfbb; }
-.badge-skipped      { background: #e2e3e5; color: #41464b; border-color: #c4c8cc; }
+/* ── Active lifecycle ─────────────────────────────────────────────────
+ * Robots are moving, bins are being staged. Each phase gets its own hue:
+ *
+ *   dispatched  — blue     (robot assigned, mission queued)
+ *   in_transit  — cyan     (robot physically moving)
+ *   staged      — indigo   (bin at destination, awaiting next step)
+ *   reshuffling — violet   (rearranging bins for the next delivery)
+ *
+ * Distinct hues let operators scan a table and pick out phase at a
+ * glance without reading labels. */
+.badge-dispatched   { background: #bfdbfe; color: #1d4ed8; border-color: #93c5fd; }
+.badge-in_transit   { background: #a5f3fc; color: #0e7490; border-color: #67e8f9; }
+.badge-staged       { background: #c7d2fe; color: #4338ca; border-color: #a5b4fc; }
+.badge-reshuffling  { background: #ddd6fe; color: #6d28d9; border-color: #c4b5fd; }
 
-/* Terminal — failure / human intervention */
-.badge-faulted      { background: #fff3cd; color: #664d03; border-color: #ffe69c; }
-.badge-failed       { background: #f8d7da; color: #842029; border-color: #f1aeb5; }
-.badge-cancelled    { background: #e2e3e5; color: #41464b; border-color: #c4c8cc; }
+/* ── Terminal — success ───────────────────────────────────────────────
+ * Vivid green — unmistakable "done" signal. Stronger saturation than
+ * the old pastel green so delivered/confirmed pop on a crowded table. */
+.badge-delivered    { background: #bbf7d0; color: #166534; border-color: #86efac; }
+.badge-confirmed    { background: #bbf7d0; color: #166534; border-color: #86efac; }
+.badge-skipped      { background: #e5e7eb; color: #6b7280; border-color: #d1d5db; }
 
-/* ─── Dark theme overrides ──────────────────────────────────────────── */
+/* ── Terminal — needs attention ───────────────────────────────────────
+ * Warm amber — the order completed abnormally and a human needs to act.
+ * Visually distinct from the cool active tones so it draws the eye. */
+.badge-faulted      { background: #fde68a; color: #92400e; border-color: #fcd34d; }
 
+/* ── Terminal — failure ───────────────────────────────────────────────
+ * Strong red — something broke. Impossible to miss. */
+.badge-failed       { background: #fecaca; color: #991b1b; border-color: #fca5a5; }
+.badge-cancelled    { background: #e5e7eb; color: #6b7280; border-color: #d1d5db; }
+
+/* ─── Dark theme overrides ────────────────────────────────────────────
+ *
+ * Dark-mode badges use deeper backgrounds and brighter text for
+ * contrast on dark surfaces. Shop-floor LCDs under fluorescent lights
+ * benefit from the higher saturation. */
+
+/* Early lifecycle — dark */
 [data-theme="dark"] .badge-pending,
 [data-theme="dark"] .badge-sourcing,
-[data-theme="dark"] .badge-faulted    { background: #2a2415; color: #d29922; border-color: #3d3119; }
+[data-theme="dark"] .badge-queued      { background: #1e2028; color: #7c8494; border-color: #2d313c; }
 
-[data-theme="dark"] .badge-queued     { background: #1f1b3a; color: #a39bff; border-color: #2e2956; }
+/* Submitted / acknowledged — dark */
 [data-theme="dark"] .badge-submitted,
-[data-theme="dark"] .badge-dispatched,
-[data-theme="dark"] .badge-acknowledged { background: #0d2240; color: #58a6ff; border-color: #1a4070; }
+[data-theme="dark"] .badge-acknowledged { background: #0d2240; color: #60a5fa; border-color: #1a3f6b; }
 
-[data-theme="dark"] .badge-in_transit,
-[data-theme="dark"] .badge-staged,
-[data-theme="dark"] .badge-reshuffling { background: #0a2b32; color: #39d2f5; border-color: #144751; }
+/* Active — dark (each phase keeps its own hue, boosted for contrast) */
+[data-theme="dark"] .badge-dispatched   { background: #1a3550; color: #93c5fd; border-color: #1e4a6e; }
+[data-theme="dark"] .badge-in_transit   { background: #0a2d33; color: #22d3ee; border-color: #0f4450; }
+[data-theme="dark"] .badge-staged       { background: #1e1b4b; color: #a5b4fc; border-color: #2e2a60; }
+[data-theme="dark"] .badge-reshuffling  { background: #2e1065; color: #c4b5fd; border-color: #3b1880; }
 
+/* Success — dark (bright green, high contrast) */
 [data-theme="dark"] .badge-delivered,
-[data-theme="dark"] .badge-confirmed   { background: #14321f; color: #3fb950; border-color: #1f4a2e; }
-
+[data-theme="dark"] .badge-confirmed    { background: #052e16; color: #4ade80; border-color: #14532d; }
 [data-theme="dark"] .badge-skipped,
-[data-theme="dark"] .badge-cancelled   { background: #21262d; color: #8b949e; border-color: #30363d; }
+[data-theme="dark"] .badge-cancelled    { background: #1c1f26; color: #6b7280; border-color: #2d313c; }
 
-[data-theme="dark"] .badge-failed      { background: #2d1519; color: #f85149; border-color: #462026; }
+/* Needs attention — dark */
+[data-theme="dark"] .badge-faulted      { background: #3d2e00; color: #fbbf24; border-color: #5c4400; }
+
+/* Failure — dark */
+[data-theme="dark"] .badge-failed       { background: #450a0a; color: #f87171; border-color: #5c1515; }
 
 /* Dark overrides for non-status semantic badges. */
 [data-theme="dark"] .badge-info  { background: #0a2b32; color: #39d2f5; border-color: #144751; }
