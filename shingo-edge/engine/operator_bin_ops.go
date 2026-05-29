@@ -234,6 +234,11 @@ func (e *Engine) ClearBin(nodeID int64) error {
 	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
 		e.MaybePushUnloader(nodeID)
 	}
+	// Push-driven loader (transitional): the operator cleared the window, so
+	// stage the next empty. Gated inside MaybePushLoader on transitional.
+	if claim.Role == protocol.ClaimRoleProduce {
+		e.MaybePushLoader(nodeID)
+	}
 	return nil
 }
 

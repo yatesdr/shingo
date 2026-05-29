@@ -293,8 +293,10 @@ func TestHandleLoopBelowThreshold_SkipsWhenProjectedUOPCoversThreshold(t *testin
 		ID: 1, Name: "Big Part", Code: "BIG-PART", UOPCapacity: 500,
 	}), "seed catalog")
 
-	// Seed one in-flight retrieve_empty at the loader for BIG-PART.
-	// projectedUOP = 0 + 1*500 = 500 >= threshold 400 → skip.
+	// Seed one in-flight retrieve_empty at the loader for BIG-PART. With
+	// capacity 500 and threshold 400, one in-flight bin already covers the
+	// threshold (desiredBins = ceil(400/500) = 1, inFlight = 1), so
+	// tryCreateL1's in-flight dedup must fire nothing.
 	om := orders.NewManager(db, noOpOrderEmitter{}, "test-station")
 	if _, err := om.CreateRetrieveOrder(
 		&nodeID, true, 1, "SKIP-LOADER", "EMPTY-SUPER", "",
@@ -334,7 +336,7 @@ func TestHandleLoopBelowThreshold_SkipsWhenProjectedUOPCoversThreshold(t *testin
 	skipped := false
 	fired := false
 	for _, line := range logs {
-		if strings.Contains(line, "projectedUOP=500") && strings.Contains(line, "skipping") {
+		if strings.Contains(line, "in-flight") && strings.Contains(line, "skipping") {
 			skipped = true
 		}
 		if strings.Contains(line, "firing") && strings.Contains(line, "L1") {
@@ -342,10 +344,10 @@ func TestHandleLoopBelowThreshold_SkipsWhenProjectedUOPCoversThreshold(t *testin
 		}
 	}
 	if !skipped {
-		t.Errorf("expected projectedUOP=500 skip log; got: %v", logs)
+		t.Errorf("expected in-flight dedup skip log (1 in-flight covers threshold); got: %v", logs)
 	}
 	if fired {
-		t.Errorf("must NOT fire an L1 when projectedUOP already covers threshold; got: %v", logs)
+		t.Errorf("must NOT fire an L1 when in-flight already covers threshold; got: %v", logs)
 	}
 }
 
@@ -439,3 +441,49 @@ func TestHandleLoopBelowThreshold_SkipsOnMissingCatalogCapacity(t *testing.T) {
 
 // sprintf is a thin alias so the log-capture closures read cleanly.
 func sprintf(format string, args ...any) string { return fmt.Sprintf(format, args...) }
+
+// TestHandleLoopBelowThreshold_RoutesToSignaledCoreNode pins the routing fix:
+// when the SAME payload is loaded at two loaders, the L1 must land at the
+// loader the signal names (sig.CoreNodeName), not the alphabetically-first
+// one a payload-only resolution would pick. Before the fix the handler used
+// FindAnyLoaderClaimForPayload(payload) and would have fired at LOADER-A.
+func TestHandleLoopBelowThreshold_RoutesToSignaledCoreNode(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	eng.catalogService = service.NewCatalogService(db)
+
+	_, nodeA, _ := seedActiveManualSwapLoader(t, db, "AAA-PROC", "LOADER-A", "SHARED")
+	_, nodeB, _ := seedActiveManualSwapLoader(t, db, "BBB-PROC", "LOADER-B", "SHARED")
+	testutil.MustNoErr(t, db.UpsertPayloadCatalog(&catalog.CatalogEntry{
+		ID: 1, Name: "Shared", Code: "SHARED", UOPCapacity: 100,
+	}), "seed catalog")
+
+	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
+		PayloadCode:  "SHARED",
+		CurrentUOP:   0,
+		Threshold:    100,
+		CoreNodeName: "LOADER-B",
+		Reason:       "below_threshold",
+	})
+
+	countL1 := func(nodeID int64) int {
+		ords, err := db.ListActiveOrdersByProcessNode(nodeID)
+		if err != nil {
+			t.Fatalf("list orders: %v", err)
+		}
+		n := 0
+		for _, o := range ords {
+			if o.RetrieveEmpty && o.PayloadCode == "SHARED" {
+				n++
+			}
+		}
+		return n
+	}
+	if got := countL1(nodeB); got != 1 {
+		t.Errorf("expected 1 L1 at the signaled loader LOADER-B, got %d", got)
+	}
+	if got := countL1(nodeA); got != 0 {
+		t.Errorf("expected 0 L1 at the non-signaled loader LOADER-A, got %d", got)
+	}
+}

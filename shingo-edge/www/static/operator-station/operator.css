@@ -893,6 +893,44 @@ body {
     margin-bottom: 16px;
 }
 
+/* Manual_swap board mode toggle + preload banner. Preload uses a distinct
+   violet (NOT amber — amber is release/stranded; orange is changeover) so the
+   operator can't confuse "I'm driving manually" with those states. */
+.os-board-modebar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 24px;
+    margin-bottom: 16px;
+    border-radius: var(--os-btn-radius);
+    background: #1c2030;
+    border: 1px solid var(--os-border);
+}
+.os-board-modebar.preload {
+    background: #2a1640;
+    border-color: #7a3fb0;
+}
+.os-board-mode-toggle {
+    font-size: 22px;
+    font-weight: 700;
+    padding: 10px 22px;
+    border-radius: 6px;
+    border: 1px solid #555;
+    background: #2a2f40;
+    color: #cdd;
+    cursor: pointer;
+}
+.os-board-modebar.preload .os-board-mode-toggle {
+    background: #9b4dca;
+    border-color: #c98fe6;
+    color: #fff;
+}
+.os-board-mode-note {
+    font-size: 20px;
+    font-weight: 600;
+    color: #d8b6f0;
+}
+
 .os-board-cards {
     display: grid;
     grid-template-columns: repeat(var(--os-board-cols, 3), 1fr);

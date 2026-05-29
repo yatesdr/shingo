@@ -3,6 +3,7 @@ package service
 import (
 	"strings"
 
+	"shingo/protocol"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
@@ -191,6 +192,21 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 		// Surface any pending release-time error that's been rolled back to
 		// Staged for the operator to retry.
 		nodeView.LastReleaseError = store.LookupLastReleaseError(s.db, runtime)
+		// Multi-process loader-board unions: for a manual_swap node, resolve
+		// the active-style and all-style payload sets across EVERY active
+		// process sharing this CoreNodeName (PayloadsForLoader walks all
+		// processes), so a loader shared by two cells surfaces both cells'
+		// payloads, not just this station's. Plus the transitional flag the
+		// board reads to default into preload mode.
+		if nodeView.ActiveClaim != nil && nodeView.ActiveClaim.SwapMode == protocol.SwapModeManualSwap {
+			if act, all, _, err := processes.PayloadsForLoader(s.db.DB, node.CoreNodeName, nodeView.ActiveClaim.Role); err == nil {
+				nodeView.ActiveStylePayloads = act
+				nodeView.AllStylePayloads = all
+			}
+			if transitional, err := s.db.IsTransitionalLoader(node.CoreNodeName); err == nil {
+				nodeView.TransitionalLoader = transitional
+			}
+		}
 		view.Nodes = append(view.Nodes, nodeView)
 	}
 	return view, nil

@@ -525,6 +525,13 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
 		e.MaybePushUnloader(ctx.node.ID)
 	}
+	// Push-driven loader (transitional): L2 just landed at the market, so the
+	// loader window is confirmed free — stage the next empty. MaybePushLoader
+	// gates internally on transitional, so this is a no-op for ordinary
+	// (threshold/legacy-supplied) loaders.
+	if claim.Role == protocol.ClaimRoleProduce {
+		e.MaybePushLoader(ctx.node.ID)
+	}
 	return true
 }
 

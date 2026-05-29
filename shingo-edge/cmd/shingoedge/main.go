@@ -200,6 +200,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		// the loader-side reasoning that demand triggers fire while we
 		// were unreachable, so a startup pass keeps the queue current.
 		goSafe("engine-SweepPushUnloaders", func() { eng.SweepPushUnloaders() })
+		goSafe("engine-SweepPushLoaders", func() { eng.SweepPushLoaders() })
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeatAck, func(_ *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
 		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
@@ -270,7 +271,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		if s.Role != protocol.ClaimRoleProduce {
 			return
 		}
-		eng.MaybeCreateLoaderEmptyIn(s.PayloadCode)
+		eng.MaybeCreateLoaderEmptyIn(s.CoreNodeName, s.PayloadCode)
 	})
 	// UOP-threshold replenishment: Core observes combined in-loop UOP
 	// (bins + buckets) per payload and signals here when a monitored

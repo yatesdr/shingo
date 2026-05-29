@@ -92,6 +92,10 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(uuid);
+-- idx_orders_source_node is created in migrations.go (after the orders table
+-- is guaranteed current), not here: schema.Apply runs against legacy-shaped
+-- order tables that predate the source_node column, where a canonical index
+-- on it would fail.
 
 CREATE TABLE IF NOT EXISTS order_history (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -266,6 +270,26 @@ CREATE TABLE IF NOT EXISTS loader_payload_thresholds (
     updated_at              TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_by              TEXT    NOT NULL DEFAULT '',
     PRIMARY KEY (core_node_name, payload_code)
+);
+
+-- Transitional bin loaders (operator-driven, manual payload selection):
+--   Membership set keyed by core_node_name alone — the only granularity
+--   that is 1:1 with the physical loader. A loader shared across
+--   processes/styles has multiple style_node_claims and process_nodes rows
+--   but one core node, so a per-claim or per-process flag has no defined
+--   reduction; this set sidesteps that. A loader in this set is wholly
+--   operator-driven: the market-accounting L1 paths (UOP-threshold C-push
+--   and legacy bin-count) are suppressed for it, while empties are staged
+--   opportunistically (MaybePushLoader) and the operator selects the
+--   payload at the board. Edge-only — never plumbed through ClaimSync;
+--   Core's threshold monitor already idles for these loaders (their
+--   thresholds are 0). Delete the row once supermarket space exists and
+--   thresholds are calibrated.
+CREATE TABLE IF NOT EXISTS transitional_loaders (
+    core_node_name TEXT NOT NULL,
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_by     TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (core_node_name)
 );
 
 CREATE TABLE IF NOT EXISTS process_changeovers (

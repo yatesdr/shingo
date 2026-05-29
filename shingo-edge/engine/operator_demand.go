@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"log"
 	"slices"
 
@@ -134,7 +135,18 @@ func (e *Engine) SendClaimSync() {
 		thresholds := map[string]int{}
 		if agg.role == protocol.ClaimRoleProduce {
 			rows, err := e.db.ThresholdsByPayloadForLoader(agg.coreNodeName)
-			if err == nil {
+			if err != nil {
+				// Do NOT silently swallow this: an empty threshold map ships
+				// to Core, which (via omitempty) reads it as "no thresholds"
+				// and demotes this loader from C-push to legacy bin-count
+				// until the next successful sync. It was previously dropped on
+				// the floor with no log. Surface it so the strategy flip is
+				// diagnosable. (A safer fix — skip emitting the resync so Core
+				// keeps its last-known registry — depends on Core's
+				// SyncRegistry merge semantics; deferred to SME review.)
+				log.Printf("claim sync: thresholds for loader %s failed, shipping without (loader falls back to legacy bin-count at Core): %v",
+					agg.coreNodeName, err)
+			} else {
 				for _, p := range payloads {
 					if v, ok := rows[p]; ok && v > 0 {
 						thresholds[p] = v
@@ -183,48 +195,19 @@ type manualSwapNode struct {
 // SwapMode=="manual_swap" across all active processes. If coreNodeName is
 // non-empty, only nodes matching that name are returned.
 func (e *Engine) findManualSwapNodes(coreNodeName string) []manualSwapNode {
-	processList, err := e.db.ListProcesses()
-	if err != nil {
-		log.Printf("findManualSwapNodes: list processes: %v", err)
-		return nil
-	}
-
 	var results []manualSwapNode
-	for _, proc := range processList {
-		if proc.ActiveStyleID == nil {
-			continue
-		}
-		claims, err := e.db.ListStyleNodeClaims(*proc.ActiveStyleID)
-		if err != nil {
-			log.Printf("findManualSwapNodes: list claims for style %d: %v", *proc.ActiveStyleID, err)
-			continue
-		}
-
-		// Fetch nodes once per process, not once per claim (fixes pre-existing N+1).
-		var nodes []processes.Node
-		var nodesFetched bool
-		for _, claim := range claims {
-			if claim.SwapMode != protocol.SwapModeManualSwap {
-				continue
-			}
-			if coreNodeName != "" && claim.CoreNodeName != coreNodeName {
-				continue
-			}
-			if !nodesFetched {
-				nodes, err = e.db.ListProcessNodesByProcess(proc.ID)
-				if err != nil {
-					log.Printf("findManualSwapNodes: list nodes for process %d: %v", proc.ID, err)
-					break
-				}
-				nodesFetched = true
-			}
-			for _, node := range nodes {
-				if node.CoreNodeName != claim.CoreNodeName {
-					continue
-				}
-				results = append(results, manualSwapNode{node: node, claim: claim})
-			}
-		}
+	err := processes.WalkClaims(e.db.DB, processes.WalkOpts{
+		ActiveOnly:   true,
+		SwapMode:     protocol.SwapModeManualSwap,
+		CoreNodeName: coreNodeName,
+		ResolveNode:  true,
+	}, func(ctx processes.WalkCtx) bool {
+		results = append(results, manualSwapNode{node: ctx.Node, claim: ctx.Claim})
+		return false // collect all matches
+	})
+	if err != nil {
+		log.Printf("findManualSwapNodes: %v", err)
+		return nil
 	}
 	return results
 }
@@ -242,16 +225,23 @@ func (e *Engine) FindLoaderForPayload(payloadCode string) *manualSwapNode {
 	if payloadCode == "" {
 		return nil
 	}
-	for _, m := range e.findManualSwapNodes("") {
-		if m.claim.Role != protocol.ClaimRoleProduce {
-			continue
-		}
-		if !slices.Contains(m.claim.AllowedPayloads(), payloadCode) {
-			continue
-		}
-		return &m
+	var found *manualSwapNode
+	err := processes.WalkClaims(e.db.DB, processes.WalkOpts{
+		ActiveOnly:  true,
+		Role:        protocol.ClaimRoleProduce,
+		SwapMode:    protocol.SwapModeManualSwap,
+		PayloadCode: payloadCode,
+		ResolveNode: true,
+	}, func(ctx processes.WalkCtx) bool {
+		m := manualSwapNode{node: ctx.Node, claim: ctx.Claim}
+		found = &m
+		return true // first match
+	})
+	if err != nil {
+		log.Printf("FindLoaderForPayload: %v", err)
+		return nil
 	}
-	return nil
+	return found
 }
 
 // FindAnyLoaderClaimForPayload returns a (node, claim) pair for a
@@ -286,53 +276,55 @@ func (e *Engine) FindAnyLoaderClaimForPayload(payloadCode string) *manualSwapNod
 	if payloadCode == "" {
 		return nil
 	}
-	procList, err := e.db.ListProcesses()
+	var found *manualSwapNode
+	// ActiveOnly omitted (false): walk every style, not just the active one —
+	// a threshold-driven L1 can target a loader bound to an inactive style.
+	err := processes.WalkClaims(e.db.DB, processes.WalkOpts{
+		Role:        protocol.ClaimRoleProduce,
+		SwapMode:    protocol.SwapModeManualSwap,
+		PayloadCode: payloadCode,
+		ResolveNode: true,
+	}, func(ctx processes.WalkCtx) bool {
+		m := manualSwapNode{node: ctx.Node, claim: ctx.Claim}
+		found = &m
+		return true // first match
+	})
 	if err != nil {
-		log.Printf("FindAnyLoaderClaimForPayload: list processes: %v", err)
+		log.Printf("FindAnyLoaderClaimForPayload: %v", err)
 		return nil
 	}
-	for _, proc := range procList {
-		styles, err := e.db.ListStylesByProcess(proc.ID)
-		if err != nil {
-			log.Printf("FindAnyLoaderClaimForPayload: list styles for process %d: %v", proc.ID, err)
-			continue
-		}
-		var nodes []processes.Node
-		var nodesFetched bool
-		for _, st := range styles {
-			claims, err := e.db.ListStyleNodeClaims(st.ID)
-			if err != nil {
-				log.Printf("FindAnyLoaderClaimForPayload: list claims for style %d: %v", st.ID, err)
-				continue
-			}
-			for _, claim := range claims {
-				if claim.SwapMode != protocol.SwapModeManualSwap {
-					continue
-				}
-				if claim.Role != protocol.ClaimRoleProduce {
-					continue
-				}
-				if !slices.Contains(claim.AllowedPayloads(), payloadCode) {
-					continue
-				}
-				if !nodesFetched {
-					nodes, err = e.db.ListProcessNodesByProcess(proc.ID)
-					if err != nil {
-						log.Printf("FindAnyLoaderClaimForPayload: list nodes for process %d: %v", proc.ID, err)
-						break
-					}
-					nodesFetched = true
-				}
-				for _, node := range nodes {
-					if node.CoreNodeName != claim.CoreNodeName {
-						continue
-					}
-					return &manualSwapNode{node: node, claim: claim}
-				}
-			}
-		}
+	return found
+}
+
+// FindLoaderClaimAt resolves the produce manual_swap loader claim for the
+// given (coreNodeName, payloadCode) across every style — the node-targeted
+// counterpart to FindAnyLoaderClaimForPayload. Threshold (C-push) signals
+// carry the authoritative loader CoreNodeName, so they resolve by it: when
+// the same payload is loaded at two loaders, resolving by payload alone would
+// fire the L1 at whichever loader the walk hits first, not the one Core
+// signaled. All-styles (Round-3 Obs 9: an inactive-style loader still
+// receives threshold-driven L1s). Returns nil if no matching claim exists.
+func (e *Engine) FindLoaderClaimAt(coreNodeName, payloadCode string) *manualSwapNode {
+	if coreNodeName == "" || payloadCode == "" {
+		return nil
 	}
-	return nil
+	var found *manualSwapNode
+	err := processes.WalkClaims(e.db.DB, processes.WalkOpts{
+		Role:         protocol.ClaimRoleProduce,
+		SwapMode:     protocol.SwapModeManualSwap,
+		CoreNodeName: coreNodeName,
+		PayloadCode:  payloadCode,
+		ResolveNode:  true,
+	}, func(ctx processes.WalkCtx) bool {
+		m := manualSwapNode{node: ctx.Node, claim: ctx.Claim}
+		found = &m
+		return true
+	})
+	if err != nil {
+		log.Printf("FindLoaderClaimAt: %v", err)
+		return nil
+	}
+	return found
 }
 
 // FindUnloaderForPayload returns the (node, claim) pair for the manual_swap
@@ -344,16 +336,23 @@ func (e *Engine) FindUnloaderForPayload(payloadCode string) *manualSwapNode {
 	if payloadCode == "" {
 		return nil
 	}
-	for _, m := range e.findManualSwapNodes("") {
-		if m.claim.Role != protocol.ClaimRoleConsume {
-			continue
-		}
-		if !slices.Contains(m.claim.AllowedPayloads(), payloadCode) {
-			continue
-		}
-		return &m
+	var found *manualSwapNode
+	err := processes.WalkClaims(e.db.DB, processes.WalkOpts{
+		ActiveOnly:  true,
+		Role:        protocol.ClaimRoleConsume,
+		SwapMode:    protocol.SwapModeManualSwap,
+		PayloadCode: payloadCode,
+		ResolveNode: true,
+	}, func(ctx processes.WalkCtx) bool {
+		m := manualSwapNode{node: ctx.Node, claim: ctx.Claim}
+		found = &m
+		return true // first match
+	})
+	if err != nil {
+		log.Printf("FindUnloaderForPayload: %v", err)
+		return nil
 	}
-	return nil
+	return found
 }
 
 // countLoaderInFlightEmptyIn returns the number of non-terminal
@@ -363,13 +362,13 @@ func (e *Engine) FindUnloaderForPayload(payloadCode string) *manualSwapNode {
 // one — operators get the full demand visible at once rather than one
 // queue per demand signal.
 //
-// Returns -1 on a DB error so callers can fail closed (treat as "already
-// at cap, don't fire more") and avoid piling up if Core is unreachable.
-func (e *Engine) countLoaderInFlightEmptyIn(nodeID int64, payloadCode string) int {
+// Returns an error (not an in-band sentinel) on a DB read failure so
+// tryCreateL1 can fail closed — fire nothing rather than into the dark when
+// the order list is unavailable.
+func (e *Engine) countLoaderInFlightEmptyIn(nodeID int64, payloadCode string) (int, error) {
 	orderList, err := e.db.ListActiveOrdersByProcessNode(nodeID)
 	if err != nil {
-		e.logFn("side-cycle: list active orders for node %d: %v", nodeID, err)
-		return -1
+		return 0, fmt.Errorf("list active orders for node %d: %w", nodeID, err)
 	}
 	n := 0
 	for _, o := range orderList {
@@ -377,7 +376,7 @@ func (e *Engine) countLoaderInFlightEmptyIn(nodeID int64, payloadCode string) in
 			n++
 		}
 	}
-	return n
+	return n, nil
 }
 
 // unloaderHasInFlightFullIn reports whether the unloader at nodeID already
@@ -472,8 +471,8 @@ func (e *Engine) systemBinCountForPayload(payloadCode string) (int, bool) {
 // (planRetrieveEmpty) which finds an unclaimed empty bin matching the bin
 // type. Excludes the loader itself via the excludeNodeID guard (commit
 // 7047c5a) so the loader isn't asked to source from itself.
-func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
-	loader := e.FindLoaderForPayload(payloadCode)
+func (e *Engine) MaybeCreateLoaderEmptyIn(coreNodeName, payloadCode string) {
+	loader := e.findLoaderForDemand(coreNodeName, payloadCode)
 	if loader == nil {
 		return
 	}
@@ -502,6 +501,41 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 	}
 }
 
+// findLoaderForDemand resolves the active-style produce loader for a legacy
+// DemandSignal. It prefers the node Core named (coreNodeName) so a payload
+// loaded at two separate loaders routes to the one the signal is about — the
+// same protection HandleLoopBelowThreshold has on the threshold path. It
+// falls back to payload-first-match when the signal carries no node, OR the
+// named node has no matching active loader, so the most load-bearing path
+// keeps working even if Core's DemandSignal node semantics differ from the
+// assumption (fail-safe pending SME confirmation of those semantics).
+func (e *Engine) findLoaderForDemand(coreNodeName, payloadCode string) *manualSwapNode {
+	if coreNodeName != "" {
+		var found *manualSwapNode
+		err := processes.WalkClaims(e.db.DB, processes.WalkOpts{
+			ActiveOnly:   true,
+			Role:         protocol.ClaimRoleProduce,
+			SwapMode:     protocol.SwapModeManualSwap,
+			CoreNodeName: coreNodeName,
+			PayloadCode:  payloadCode,
+			ResolveNode:  true,
+		}, func(ctx processes.WalkCtx) bool {
+			m := manualSwapNode{node: ctx.Node, claim: ctx.Claim}
+			found = &m
+			return true
+		})
+		if err != nil {
+			log.Printf("findLoaderForDemand: %v", err)
+		}
+		if found != nil {
+			return found
+		}
+		e.debugFn("kanban: demand signal core_node=%s has no active loader for payload=%s — payload-first-match fallback",
+			coreNodeName, payloadCode)
+	}
+	return e.FindLoaderForPayload(payloadCode)
+}
+
 // hasOptInLoaderThreshold returns true when a loader_payload_thresholds
 // row exists for this (loader, payload) with replenish_uop_threshold > 0.
 // Lookup failure returns false — better to over-fire L1 (which the
@@ -513,6 +547,29 @@ func (e *Engine) hasOptInLoaderThreshold(coreNodeName, payloadCode string) bool 
 		return false
 	}
 	return row.ReplenishUOPThreshold > 0
+}
+
+// isTransitionalLoader reports whether the loader at coreNodeName is in the
+// transitional_loaders set — operator-driven, with the market-accounting L1
+// paths (UOP-threshold C-push and legacy bin-count) suppressed in favour of
+// opportunistic empty staging (MaybePushLoader) plus operator payload
+// selection at the board.
+//
+// Fails OPEN (returns false = not transitional) on a DB read error, mirroring
+// hasOptInLoaderThreshold: a transient flicker should let the automatic
+// supply paths run rather than silently strand a loader the operator can't
+// see is suppressed. (Treating an errored read as transitional would instead
+// stop all supply until the DB recovers — the worse outcome.)
+func (e *Engine) isTransitionalLoader(coreNodeName string) bool {
+	if coreNodeName == "" {
+		return false
+	}
+	on, err := e.db.IsTransitionalLoader(coreNodeName)
+	if err != nil {
+		e.logFn("transitional: lookup for %s failed, treating as non-transitional: %v", coreNodeName, err)
+		return false
+	}
+	return on
 }
 
 // HandleLoopBelowThreshold is the Core→Edge LoopBelowThresholdSignal
@@ -550,20 +607,26 @@ func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal
 	if sig == nil || sig.PayloadCode == "" {
 		return
 	}
-	// Round-3 Obs 9 Edge-side: use FindAnyLoaderClaimForPayload so a
-	// loader bound to an INACTIVE style still receives threshold-driven
-	// L1s. Pre-fix FindLoaderForPayload walked proc.ActiveStyleID only,
-	// so a configured threshold for a payload on the inactive style was
-	// silently swallowed at Edge after Core sent the signal. The Item C
-	// planStore capacity gate (shipped in this branch ahead of this
-	// change) is the safety net — if downstream storage is full,
-	// dispatch queues the L1 rather than over-ordering.
-	loader := e.FindAnyLoaderClaimForPayload(sig.PayloadCode)
+	// Resolve the loader by the authoritative CoreNodeName the signal carries
+	// (v6+), NOT by payload alone: when the same payload is loaded at two
+	// loaders (multi-cell plants — the SNF2/SNF3 case this work centres on),
+	// Core signals one binding, but a payload-only first-match can pick the
+	// other and fire the L1 at the wrong window. FindLoaderClaimAt still walks
+	// every style (Round-3 Obs 9: an INACTIVE-style loader must still receive
+	// threshold-driven L1s). Fall back to payload-only resolution only for a
+	// pre-v6 Core that didn't stamp CoreNodeName, logging the degraded path.
+	var loader *manualSwapNode
+	if sig.CoreNodeName != "" {
+		loader = e.FindLoaderClaimAt(sig.CoreNodeName, sig.PayloadCode)
+	} else {
+		e.logFn("loop_threshold: signal for payload=%s has no core_node_name — payload-first-match fallback (pre-v6 Core?)", sig.PayloadCode)
+		loader = e.FindAnyLoaderClaimForPayload(sig.PayloadCode)
+	}
 	if loader == nil {
-		e.debugFn("loop_threshold: no loader for payload=%s — dropping signal", sig.PayloadCode)
+		e.debugFn("loop_threshold: no loader for core_node=%s payload=%s — dropping signal", sig.CoreNodeName, sig.PayloadCode)
 		return
 	}
-	e.logFn("loop_threshold: signal received loader=%s payload=%s current=%d threshold=%d reason=%s",
+	e.debugFn("loop_threshold: signal received loader=%s payload=%s current=%d threshold=%d reason=%s",
 		loader.node.CoreNodeName, sig.PayloadCode, sig.CurrentUOP, sig.Threshold, sig.Reason)
 
 	entry, err := e.catalogService.GetByCode(sig.PayloadCode)
@@ -574,27 +637,27 @@ func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal
 	}
 	capacity := entry.UOPCapacity
 
-	inFlight := e.countLoaderInFlightEmptyIn(loader.node.ID, sig.PayloadCode)
-	if inFlight < 0 {
-		// DB error — fail closed; the next signal will retry.
-		e.logFn("loop_threshold: loader=%s payload=%s in-flight count lookup failed — skipping",
-			loader.node.CoreNodeName, sig.PayloadCode)
+	// Desired total in-flight bins to reach threshold from the CURRENT loop
+	// UOP. tryCreateL1 subtracts what is already in flight and fires the
+	// remainder — the in-flight dedup contract lives there now, not here.
+	gap := sig.Threshold - sig.CurrentUOP
+	if gap <= 0 {
+		e.debugFn("loop_threshold: loader=%s payload=%s currentUOP=%d >= threshold=%d — skipping",
+			loader.node.CoreNodeName, sig.PayloadCode, sig.CurrentUOP, sig.Threshold)
 		return
 	}
+	desiredBins := (gap + capacity - 1) / capacity
 
-	projectedUOP := sig.CurrentUOP + inFlight*capacity
-	if projectedUOP >= sig.Threshold {
-		e.logFn("loop_threshold: loader=%s payload=%s projectedUOP=%d (current=%d + %d*%d) >= threshold=%d — skipping",
-			loader.node.CoreNodeName, sig.PayloadCode, projectedUOP, sig.CurrentUOP, inFlight, capacity, sig.Threshold)
+	created, err := e.tryCreateL1(loader, sig.PayloadCode, L1LoopThreshold, desiredBins)
+	if err != nil {
+		e.logFn("loop_threshold: loader=%s payload=%s — L1 creation failed after %d created: %v",
+			loader.node.CoreNodeName, sig.PayloadCode, created, err)
 		return
 	}
-	gap := sig.Threshold - projectedUOP
-	needed := (gap + capacity - 1) / capacity
-
-	e.logFn("loop_threshold: loader=%s payload=%s firing %d L1 (projectedUOP=%d threshold=%d capacity=%d inFlight=%d)",
-		loader.node.CoreNodeName, sig.PayloadCode, needed, projectedUOP, sig.Threshold, capacity, inFlight)
-
-	e.createLoaderL1Orders(loader, sig.PayloadCode, needed, "loop_threshold")
+	if created > 0 {
+		e.logFn("loop_threshold: loader=%s payload=%s firing %d L1 (currentUOP=%d threshold=%d capacity=%d)",
+			loader.node.CoreNodeName, sig.PayloadCode, created, sig.CurrentUOP, sig.Threshold, capacity)
+	}
 }
 
 // refillLoaderForPayload tops the per-payload empty-in queue at one loader
@@ -663,59 +726,116 @@ func (e *Engine) refillLoaderForPayload(loader *manualSwapNode, payloadCode stri
 			loader.node.Name, currentCount, payloadCode, minStock)
 		return
 	}
-	inFlight := e.countLoaderInFlightEmptyIn(loader.node.ID, payloadCode)
-	if inFlight < 0 {
-		// DB error — fail closed; the next signal will retry.
-		e.logFn("side-cycle: loader %s — in-flight count lookup failed for %s, skipping",
-			loader.node.Name, payloadCode)
+	// Desired total in-loop bins; tryCreateL1 subtracts what is already in
+	// flight (fail-closed) and fires the remainder. The system-count
+	// fail-OPEN above stays here at the caller — only the in-flight guard is
+	// centralized.
+	desired := minStock - currentCount
+	created, err := e.tryCreateL1(loader, payloadCode, L1SideCycle, desired)
+	if err != nil {
+		e.logFn("side-cycle: loader %s payload %s — L1 creation failed after %d created: %v",
+			loader.node.Name, payloadCode, created, err)
 		return
 	}
-	needed := minStock - currentCount - inFlight
-	if needed <= 0 {
-		e.logFn("side-cycle: loader %s — %d in-flight + %d in system >= %d minimum, skipping L1 for %s",
-			loader.node.Name, inFlight, currentCount, minStock, payloadCode)
-		return
+	if created > 0 {
+		e.logFn("side-cycle: loader %s — created %d L1 retrieve_empty for %s (minStock=%d currentCount=%d)",
+			loader.node.Name, created, payloadCode, minStock, currentCount)
 	}
-	e.logFn("side-cycle: loader %s — creating %d L1 retrieve_empty for %s (minStock=%d currentCount=%d inFlight=%d)",
-		loader.node.Name, needed, payloadCode, minStock, currentCount, inFlight)
-
-	e.createLoaderL1Orders(loader, payloadCode, needed, "side-cycle")
 }
 
-// createLoaderL1Orders fires `count` L1 retrieve_empty orders at the
-// loader for the given payload. The caller is responsible for the
-// dedup/math gating that decided `count`. tag prefixes the log lines
-// so the calling path ("side-cycle" for the legacy bin-count refill,
-// "loop_threshold" for the UOP-threshold C-push) is identifiable.
+// L1Source identifies which path is creating a loader empty-in (L1)
+// retrieve_empty order. It is the typed replacement for the old free-text
+// `tag` and also carries the transitional-suppression policy, so adding a
+// source forces a decision about its class rather than defaulting silently.
+type L1Source string
+
+const (
+	L1SideCycle     L1Source = "side-cycle"     // legacy bin-count refill
+	L1LoopThreshold L1Source = "loop_threshold" // UOP-threshold C-push
+	L1LoaderPush    L1Source = "loader_push"    // transitional opportunistic empty staging
+)
+
+// logTag is the stable, greppable prefix this source uses in log lines.
+func (s L1Source) logTag() string { return string(s) }
+
+// suppressedByTransitional reports whether a transitional loader silences
+// this source. Allowlist semantics: only the market-accounting (automatic)
+// sources opt in. L1LoaderPush — the transitional supply path itself — and
+// any future operator-driven source fall through to false, so they are NOT
+// suppressed: the operator is the signal on a transitional loader, and the
+// opportunistic empty staging that feeds them must keep running.
+func (s L1Source) suppressedByTransitional() bool {
+	switch s {
+	case L1SideCycle, L1LoopThreshold:
+		return true
+	default:
+		return false
+	}
+}
+
+// tryCreateL1 is the single chokepoint for creating loader empty-in (L1)
+// retrieve_empty orders. It owns the two gates and the fire loop; the
+// source-specific "how many do we want" math stays at the caller and arrives
+// as count — the desired total in-flight, NOT yet net of what is already in
+// flight.
 //
-// All L1s use autoConfirm=false: the loader operator is an active
-// participant in the side-cycle and must explicitly confirm that the
-// bin has been filled with parts. Auto-confirming here would immediately
-// trigger L2 (handleLoaderEmptyInCompletion → CreateMoveOrder) and send
-// the still-empty bin back to the supermarket. Honoring
-// loader.claim.AutoConfirm or cfg.Web.AutoConfirm at this layer defeats
-// the side-cycle model. Plant test 2026-04-27 reproduced this on plants
-// with global auto-confirm enabled.
+//  1. Transitional gate: if the loader is operator-driven (in the
+//     transitional_loaders set) and source is an automatic market-accounting
+//     path, fire nothing — the operator is the signal. Opportunistic empty
+//     staging is not market-accounting and is not gated here.
+//  2. In-flight dedup (fail CLOSED): count existing non-terminal
+//     retrieve_empty orders for the payload and fire only count-inFlight. A
+//     DB read error returns (0, err) — never fire into the dark. This is THE
+//     dedup contract shared by the side-cycle and C-push paths (previously
+//     two copy-paste guards); do not weaken it.
 //
-// Source group: loader.claim.InboundSource — the supermarket the loader
-// is configured to pull empties from. Without this, Core's
-// planRetrieveEmpty falls back to a global FIFO scan and may pull an
-// empty out of the empty-tote return area instead.
-func (e *Engine) createLoaderL1Orders(loader *manualSwapNode, payloadCode string, count int, tag string) {
+// Returns the number of L1s actually created. On a mid-loop create error it
+// returns the count created so far plus the wrapped error; it does NOT roll
+// back already-dispatched orders (they may be in flight at Core) — the next
+// signal tops up the remainder via the same in-flight recount.
+//
+// All L1s use autoConfirm=false: the loader operator must confirm the bin is
+// filled. Auto-confirming would immediately fire L2 and send the still-empty
+// bin back to the supermarket (reproduced on plants with global auto-confirm,
+// 2026-04-27). Source group is loader.claim.InboundSource so Core's
+// planRetrieveEmpty pulls from the configured empty market, not a global FIFO
+// scan.
+func (e *Engine) tryCreateL1(loader *manualSwapNode, payload string, source L1Source, count int) (int, error) {
+	coreNode := loader.node.CoreNodeName
+	if e.isTransitionalLoader(coreNode) && source.suppressedByTransitional() {
+		e.debugFn("%s: loader=%s payload=%s skipped — transitional, operator-driven",
+			source.logTag(), coreNode, payload)
+		return 0, nil
+	}
+	inFlight, err := e.countLoaderInFlightEmptyIn(loader.node.ID, payload)
+	if err != nil {
+		// Fail closed — do not fire into the dark; the next signal retries.
+		e.logFn("%s: loader=%s payload=%s in-flight count lookup failed — skipping: %v",
+			source.logTag(), coreNode, payload, err)
+		return 0, err
+	}
+	toFire := count - inFlight
+	if toFire <= 0 {
+		e.debugFn("%s: loader=%s payload=%s already has %d in-flight >= %d wanted — skipping",
+			source.logTag(), coreNode, payload, inFlight, count)
+		return 0, nil
+	}
 	nodeID := loader.node.ID
-	for i := 0; i < count; i++ {
+	created := 0
+	for i := 0; i < toFire; i++ {
 		order, err := e.orderMgr.CreateRetrieveOrder(
-			&nodeID, true, 1, loader.node.CoreNodeName, loader.claim.InboundSource, "",
-			"standard", payloadCode, false, true,
+			&nodeID, true, 1, coreNode, loader.claim.InboundSource, "",
+			"standard", payload, false, true,
 		)
 		if err != nil {
-			e.logFn("%s: create L1 order %d/%d for loader %s payload %s: %v",
-				tag, i+1, count, loader.node.Name, payloadCode, err)
-			return
+			return created, fmt.Errorf("%s: create L1 %d/%d loader=%s payload=%s: %w",
+				source.logTag(), i+1, toFire, coreNode, payload, err)
 		}
-		log.Printf("%s: L1 order %d (%d/%d) for loader %s payload %s",
-			tag, order.ID, i+1, count, loader.node.Name, payloadCode)
+		created++
+		e.debugFn("%s: L1 order %d (%d/%d) loader=%s payload=%s",
+			source.logTag(), order.ID, i+1, toFire, coreNode, payload)
 	}
+	return created, nil
 }
 
 // MaybeCreateUnloaderFullIn (U1 of the side-cycle model) is the consumer-side
@@ -738,6 +858,15 @@ func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 	if unloader == nil {
 		return
 	}
+	e.createUnloaderFullIn(*unloader, payloadCode)
+}
+
+// createUnloaderFullIn fires a U1 retrieve_full at an ALREADY-RESOLVED
+// unloader if none is in flight and no full bin is parked at the window.
+// Split out from MaybeCreateUnloaderFullIn so the push/sweep paths — which
+// already hold the resolved node from their own walk — don't re-resolve it
+// per payload via FindUnloaderForPayload (a full claim-tree walk).
+func (e *Engine) createUnloaderFullIn(unloader manualSwapNode, payloadCode string) {
 	if e.unloaderHasInFlightFullIn(unloader.node.ID, payloadCode) {
 		e.logFn("side-cycle: unloader %s already has in-flight full-in for %s, skipping",
 			unloader.node.Name, payloadCode)
@@ -815,7 +944,7 @@ func (e *Engine) MaybePushUnloader(nodeID int64) {
 		// a single bin, but the multi-order queue lets us stage the next
 		// few in Core and dispatch them as the window frees.
 		for _, code := range m.claim.AllowedPayloads() {
-			e.MaybeCreateUnloaderFullIn(code)
+			e.createUnloaderFullIn(m, code)
 		}
 	}
 }
@@ -827,6 +956,10 @@ func (e *Engine) MaybePushUnloader(nodeID int64) {
 // available while it was offline — without this, the window stays empty
 // until the next ClearBin/U2 completion.
 func (e *Engine) SweepPushUnloaders() {
+	if !e.sweepingUnloaders.CompareAndSwap(false, true) {
+		return // a sweep is already running — a re-register storm must not stack them
+	}
+	defer e.sweepingUnloaders.Store(false)
 	matches := e.findManualSwapNodes("")
 	swept := 0
 	for _, m := range matches {
@@ -834,11 +967,112 @@ func (e *Engine) SweepPushUnloaders() {
 			continue
 		}
 		for _, code := range m.claim.AllowedPayloads() {
-			e.MaybeCreateUnloaderFullIn(code)
+			e.createUnloaderFullIn(m, code)
 		}
 		swept++
 	}
 	if swept > 0 {
 		log.Printf("auto-push: startup sweep covered %d unloader claim(s)", swept)
+	}
+}
+
+// loaderInFlightEmptyCount counts non-terminal retrieve_empty orders at the
+// loader regardless of payload tag. MaybePushLoader uses it to keep exactly
+// one empty staged; countLoaderInFlightEmptyIn is the per-payload variant the
+// threshold/legacy paths use.
+func (e *Engine) loaderInFlightEmptyCount(nodeID int64) (int, error) {
+	orderList, err := e.db.ListActiveOrdersByProcessNode(nodeID)
+	if err != nil {
+		return 0, fmt.Errorf("list active orders for node %d: %w", nodeID, err)
+	}
+	n := 0
+	for _, o := range orderList {
+		if o.RetrieveEmpty {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// MaybePushLoader is the loader-side mirror of MaybePushUnloader: the
+// opportunistic empty-staging push for TRANSITIONAL loaders. When a
+// transitional loader's window is free it stages one empty so the operator
+// always has a bin to fill. Non-transitional loaders are no-ops here — their
+// empties come from the threshold/legacy paths (which know the payload and
+// count). Opportunistic, one at a time: maybeStageLoaderEmpty fires only when
+// no empty is already in flight, and Core's CheckDropoffCapacity queues the
+// order if the window is still physically occupied, so it can't slam.
+//
+// Trigger sites mirror the unloader:
+//   - applyManualSwap (L2 arrived at the market — window confirmed free).
+//   - ClearBin (operator cleared the window).
+//   - SweepPushLoaders on Edge startup / registration ack.
+//
+// nodeID names a specific loader (typically the one whose window just freed);
+// pass 0 for an "any transitional loader" sweep — see SweepPushLoaders.
+func (e *Engine) MaybePushLoader(nodeID int64) {
+	for _, m := range e.findManualSwapNodes("") {
+		if nodeID != 0 && m.node.ID != nodeID {
+			continue
+		}
+		if m.claim.Role != protocol.ClaimRoleProduce {
+			continue
+		}
+		if !e.isTransitionalLoader(m.node.CoreNodeName) {
+			continue
+		}
+		e.maybeStageLoaderEmpty(m)
+	}
+}
+
+// maybeStageLoaderEmpty stages one empty at a transitional loader if none is
+// already in flight. The empty is a generic carrier tagged with the loader's
+// representative payload; the operator re-binds the actual payload at load
+// time (the multi-payload LoadBin re-bind). One-at-a-time keeps it
+// opportunistic; L1LoaderPush is exempt from the transitional suppression in
+// tryCreateL1 (it IS the transitional supply path).
+func (e *Engine) maybeStageLoaderEmpty(loader manualSwapNode) {
+	payloads := loader.claim.AllowedPayloads()
+	if len(payloads) == 0 {
+		return // misconfigured loader — nothing to stage against
+	}
+	inFlight, err := e.loaderInFlightEmptyCount(loader.node.ID)
+	if err != nil {
+		e.logFn("loader-push: in-flight lookup at %s failed — skipping: %v", loader.node.CoreNodeName, err)
+		return
+	}
+	if inFlight > 0 {
+		e.debugFn("loader-push: %s already has %d empty in flight — skipping", loader.node.CoreNodeName, inFlight)
+		return
+	}
+	if _, err := e.tryCreateL1(&loader, payloads[0], L1LoaderPush, 1); err != nil {
+		e.logFn("loader-push: stage empty at %s failed: %v", loader.node.CoreNodeName, err)
+	}
+}
+
+// SweepPushLoaders walks every active transitional produce manual_swap loader
+// and stages an empty if its window is free. Intended for Edge startup (after
+// registration ack, mirroring SweepPushUnloaders): catches loaders that were
+// empty when Edge went down so the operator returns to a staged empty rather
+// than an empty window.
+func (e *Engine) SweepPushLoaders() {
+	if !e.sweepingLoaders.CompareAndSwap(false, true) {
+		return // a sweep is already running — a re-register storm must not stack them
+	}
+	defer e.sweepingLoaders.Store(false)
+	matches := e.findManualSwapNodes("")
+	swept := 0
+	for _, m := range matches {
+		if m.claim.Role != protocol.ClaimRoleProduce {
+			continue
+		}
+		if !e.isTransitionalLoader(m.node.CoreNodeName) {
+			continue
+		}
+		e.maybeStageLoaderEmpty(m)
+		swept++
+	}
+	if swept > 0 {
+		log.Printf("loader-push: startup sweep covered %d transitional loader(s)", swept)
 	}
 }

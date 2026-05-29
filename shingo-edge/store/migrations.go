@@ -227,6 +227,11 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE orders ADD COLUMN process_node_id INTEGER REFERENCES process_nodes(id) ON DELETE SET NULL")
 	// Index must come after ALTER in case legacy orders table lacked the column
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_orders_process_node_id ON orders(process_node_id)")
+	// source_node was unindexed, so BuildView's per-node
+	// ListActiveOrdersByProcessNodeOrSource OR-query (process_node_id OR
+	// source_node) table-scanned the orders table on every SSE refresh.
+	// Indexing source_node lets SQLite use an OR-by-union plan instead.
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_orders_source_node ON orders(source_node)")
 
 	// WarLink tag management tracking
 	db.Exec("ALTER TABLE reporting_points ADD COLUMN warlink_managed INTEGER NOT NULL DEFAULT 0")

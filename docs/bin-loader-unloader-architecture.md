@@ -268,3 +268,49 @@ When the operator loads DEF into the bin at SMN_001, the system sets the manifes
 **No bins ever available:** Order stays queued indefinitely. Operator sees QUEUED status, can cancel.
 
 **Future modes:** Hand loading stations and decanter stations could reuse the same infrastructure (demand queue, payload cards, hard rejection) with different cycle behaviors. The mode field accommodates future values like `hand_load` or `decanter`.
+
+## Transitional Preload Mode
+
+A bridge for loaders whose payloads don't all have supermarket slots yet (the
+manual tugger isn't fully eliminated), so UOP-threshold replenishment can't own
+them. Design rationale lives in `transitional-bin-loader-plan-v2.md` at the
+GitHub root; this section is the as-built summary.
+
+**The flag.** A loader is marked transitional by membership in the Edge-only
+`transitional_loaders` table, keyed by `core_node_name` (1:1 with the physical
+loader — a loader shared across processes/styles has many claim rows but one
+core node, so the flag is loader-wide). It is **not** plumbed through ClaimSync;
+Core's threshold monitor already idles for a loader with no configured
+threshold. `isTransitionalLoader(coreNodeName)` reads it, failing open
+(non-transitional) on a DB error.
+
+**What it changes.** For a transitional loader the market-accounting automatic
+L1 paths are suppressed — both legacy bin-count (`refillLoaderForPayload`) and
+UOP-threshold C-push (`HandleLoopBelowThreshold`) short-circuit in the single
+`tryCreateL1` chokepoint (allowlist gate: `L1Source.suppressedByTransitional`).
+Empties instead flow via `MaybePushLoader`, the loader-side mirror of
+`MaybePushUnloader`: when the window is free it opportunistically stages one
+empty (tagged with the loader's representative payload; the operator re-binds at
+load). Triggered on L2/clear completion and a startup sweep.
+
+**The board.** The HMI gains a PRELOAD / ACTIVE-ONLY toggle. ACTIVE-ONLY shows
+only what the running styles need; PRELOAD shows the full covered list and
+enables manual requests (the formalized `canRequestHere` path). The card sets
+come from the multi-process view-model union (`active_style_payloads` /
+`all_style_payloads`), which spans **every** active process sharing the loader —
+so an operator at a loader feeding two cells sees both cells' payloads. A
+transitional loader defaults to PRELOAD (no meaningful active-demand mode);
+PRELOAD is shown with a distinct violet header treatment (not amber/orange,
+which mean release/changeover).
+
+**Routing.** Both automatic L1 paths resolve the loader by the signal's
+`CoreNodeName`, not by first payload match, so a payload loaded at two separate
+loaders routes to the one the signal names.
+
+**Supermarket browse/manipulate panel** (PRELOAD-mode reach into the loader's
+`InboundSource` / `OutboundDestination` markets, with a direction-aware
+server-side move guard) is specified in the plan and **not yet implemented**.
+
+**Deprecation.** Add supermarket space, clear the `transitional_loaders` row,
+calibrate thresholds — the loader returns to C-push automatically. The preload
+board stays available as a manual override.

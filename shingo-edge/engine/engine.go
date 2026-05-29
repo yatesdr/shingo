@@ -108,6 +108,12 @@ type Engine struct {
 	stopChan  chan struct{}
 	startedAt        time.Time
 	subscribersWired atomic.Bool
+	// sweepingUnloaders / sweepingLoaders guard the startup push sweeps
+	// against stacking: registration-ack spawns them as goroutines and a
+	// re-register storm can fire overlapping sweeps that double-create through
+	// the list-then-create dedup gap. One sweep of each kind at a time.
+	sweepingUnloaders atomic.Bool
+	sweepingLoaders   atomic.Bool
 	kafkaConnFn      func() bool
 }
 

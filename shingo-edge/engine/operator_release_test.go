@@ -408,7 +408,7 @@ func TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires(t *testing.T) {
 	loaderNodeID, _ := seedManualSwapClaim(t, db, "L1-CREATE", "produce", "PART-CREATE", "STORAGE-NODE")
 	eng := testEngine(t, db)
 
-	eng.MaybeCreateLoaderEmptyIn("PART-CREATE")
+	eng.MaybeCreateLoaderEmptyIn("", "PART-CREATE")
 
 	loaderOrders, err := db.ListActiveOrdersByProcessNode(loaderNodeID)
 	if err != nil {

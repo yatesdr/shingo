@@ -46,6 +46,17 @@ type StationNodeView struct {
 	// their release didn't take and can click release again to retry.
 	// Empty when no recent release error is pending.
 	LastReleaseError string `json:"last_release_error,omitempty"`
+	// ActiveStylePayloads / AllStylePayloads are the manual_swap loader-board
+	// unions across EVERY active process sharing this node's CoreNodeName (not
+	// just this station's process): active = payloads the running styles need,
+	// all = every covered payload (the preload list). Populated only for
+	// manual_swap nodes. This is what lets an operator at a loader shared by
+	// two cells (SNF2 + SNF3) see both cells' payloads instead of one.
+	ActiveStylePayloads []string `json:"active_style_payloads,omitempty"`
+	AllStylePayloads    []string `json:"all_style_payloads,omitempty"`
+	// TransitionalLoader is true when this loader's core node is in the
+	// transitional_loaders set — operator-driven, board defaults to preload.
+	TransitionalLoader bool `json:"transitional_loader,omitempty"`
 }
 
 // OperatorStationView is the top-level shape rendered by the operator

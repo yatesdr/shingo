@@ -143,40 +143,28 @@ func (e *Engine) ListLoaderThresholds() ([]LoaderThresholdRow, error) {
 // and the recalc-all sweep; both want the full configurable surface,
 // not just bindings on currently-active styles.
 func (e *Engine) listAllLoaderBindings() ([]LoaderClaimPair, error) {
-	procList, err := e.db.ListProcesses()
-	if err != nil {
-		return nil, err
-	}
 	seen := map[string]bool{}
 	var out []LoaderClaimPair
-	for _, p := range procList {
-		styles, err := e.db.ListStylesByProcess(p.ID)
-		if err != nil {
-			continue
-		}
-		for _, s := range styles {
-			claims, err := e.db.ListStyleNodeClaims(s.ID)
-			if err != nil {
+	err := processes.WalkClaims(e.db.DB, processes.WalkOpts{
+		Role:     protocol.ClaimRoleProduce,
+		SwapMode: protocol.SwapModeManualSwap,
+	}, func(ctx processes.WalkCtx) bool {
+		for _, payload := range ctx.Claim.AllowedPayloads() {
+			k := ctx.Claim.CoreNodeName + "|" + payload
+			if seen[k] {
 				continue
 			}
-			for _, c := range claims {
-				if c.Role != protocol.ClaimRoleProduce || c.SwapMode != protocol.SwapModeManualSwap {
-					continue
-				}
-				for _, payload := range c.AllowedPayloads() {
-					k := c.CoreNodeName + "|" + payload
-					if seen[k] {
-						continue
-					}
-					seen[k] = true
-					out = append(out, LoaderClaimPair{
-						CoreNodeName: c.CoreNodeName,
-						PayloadCode:  payload,
-						UOPCapacity:  c.UOPCapacity,
-					})
-				}
-			}
+			seen[k] = true
+			out = append(out, LoaderClaimPair{
+				CoreNodeName: ctx.Claim.CoreNodeName,
+				PayloadCode:  payload,
+				UOPCapacity:  ctx.Claim.UOPCapacity,
+			})
 		}
+		return false
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

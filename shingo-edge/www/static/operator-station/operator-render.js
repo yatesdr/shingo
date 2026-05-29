@@ -1,5 +1,5 @@
 import { el, esc, fillColor, postAction, showToast } from './operator-util.js';
-import { getView, claimedNodes, isReplenishing } from './operator-state.js';
+import { getView, claimedNodes, isReplenishing, getBoardMode, setBoardMode, applyTransitionalDefault } from './operator-state.js';
 import { isActive } from './order-status.js';
 
 const grid = document.getElementById('os-grid');
@@ -235,6 +235,41 @@ export function renderGrid() {
     }
 }
 
+// cardState collapses the per-card state derivation that previously lived in
+// four parallel if/else ladders inside renderPayloadBoard (CSS class, status
+// tag, detail text, and the click action). One precedence computation here;
+// the render site reads the resolved fields. ctx carries the per-card
+// booleans; returns { cls, statusText, statusClass, detail, action, loadNow }.
+// action is role-gated (what a tap does, not merely how the card looks) — a
+// consume and produce card can look identical but dispatch differently.
+function cardState(ctx) {
+    var role = ctx.role;
+    var cls, statusText, statusClass;
+    if (ctx.payloadDelivered)         { cls = 'os-board-delivered';   statusText = 'DELIVERED';  statusClass = 'os-board-tag-delivered'; }
+    else if (ctx.canClearThisPayload) { cls = 'os-board-delivered';   statusText = 'UNLOAD';     statusClass = 'os-board-tag-delivered'; }
+    else if (ctx.payloadInTransit)    { cls = 'os-board-transit';     statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit'; }
+    else if (ctx.hasPayloadDemand)    { cls = 'os-board-queued';      statusText = 'QUEUED';     statusClass = 'os-board-tag-queued'; }
+    else if (ctx.canLoadEmpty)        { cls = 'os-board-queued';      statusText = 'LOAD';       statusClass = 'os-board-tag-queued'; }
+    else if (ctx.canRequestHere)      { cls = 'os-board-requestable'; statusText = 'REQUEST';    statusClass = 'os-board-tag-request'; }
+    else                              { cls = 'os-board-nodemand';    statusText = 'NO DEMAND';  statusClass = 'os-board-tag-nodemand'; }
+
+    var detail;
+    if (ctx.payloadDelivered) detail = 'Tap to ' + (role === 'produce' ? 'load' : 'unload');
+    else if (ctx.canClearThisPayload) detail = 'Loaded bin parked — tap to unload';
+    else if (ctx.binIsEmpty && (ctx.payloadInTransit || ctx.hasPayloadDemand)) detail = 'Empty bin at node — tap to load';
+    else if (ctx.payloadInTransit) detail = 'Robot en route';
+    else if (ctx.hasPayloadDemand) detail = 'Waiting for robot';
+    else if (ctx.canLoadEmpty) detail = 'Empty bin parked — tap to load';
+    else if (ctx.canRequestHere) detail = role === 'produce' ? 'Tap to request empty bin' : 'Tap to request full bin';
+    else detail = 'No kanban signal';
+
+    var canLoad = ((ctx.payloadDelivered && ctx.binIsEmpty) || (ctx.binIsEmpty && ctx.isActive) || ctx.canLoadEmpty) && role !== 'consume';
+    var canUnload = ctx.canClearThisPayload || (ctx.payloadDelivered && role === 'consume');
+    var action = canLoad ? 'load' : (canUnload ? 'unload' : (ctx.canRequestHere ? 'request' : ''));
+
+    return { cls: cls, statusText: statusText, statusClass: statusClass, detail: detail, action: action, loadNow: ctx.loadNow };
+}
+
 function renderPayloadBoard(entry) {
     const claim = entry.active_claim;
     const runtime = entry.runtime || {};
@@ -244,6 +279,10 @@ function renderPayloadBoard(entry) {
     const binLabel = binState && binState.bin_label ? binState.bin_label : 'No bin';
     const binPayload = binState && binState.payload_code ? binState.payload_code : '';
     const roleLabel = claim.role === 'produce' ? 'Loader' : 'Unloader';
+
+    // Board mode: preload defaults ON for a transitional loader (which has no
+    // meaningful active-demand mode), otherwise honors the operator's toggle.
+    var boardMode = applyTransitionalDefault(!!entry.transitional_loader);
 
     var infoBar = el('div', { className: 'os-board-header' });
     infoBar.innerHTML =
@@ -262,9 +301,39 @@ function renderPayloadBoard(entry) {
         '</div>';
     grid.appendChild(infoBar);
 
-    var allowed = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
-        ? claim.allowed_payload_codes
-        : (claim.payload_code ? [claim.payload_code] : []);
+    // Mode toggle + preload banner. Preload uses a distinct violet treatment
+    // (NOT amber — amber is already the release/stranded color, and orange is
+    // changeover) so the operator can't confuse it with those. Built as real
+    // elements rather than folded into the infoBar innerHTML so the styling
+    // actually applies (the infoBar uses hardcoded inline colors).
+    var modeBar = el('div', { className: 'os-board-modebar' + (boardMode === 'preload' ? ' preload' : '') });
+    var toggle = el('button', {
+        className: 'os-board-mode-toggle',
+        textContent: boardMode === 'preload' ? 'PRELOAD MODE — tap for ACTIVE-ONLY' : 'ACTIVE-ONLY — tap for PRELOAD',
+    });
+    toggle.addEventListener('click', function() {
+        setBoardMode(boardMode === 'preload' ? 'active' : 'preload');
+        renderGrid();
+    });
+    modeBar.appendChild(toggle);
+    if (boardMode === 'preload') {
+        modeBar.appendChild(el('span', { className: 'os-board-mode-note',
+            textContent: entry.transitional_loader
+                ? 'Operator-driven loader — manual requests enabled'
+                : 'Manual L1 requests enabled' }));
+    }
+    grid.appendChild(modeBar);
+
+    // Card set by mode: preload shows the full covered list (every style, and
+    // every process sharing this loader); active shows only what the running
+    // styles need. Both come from the multi-process view-model union; fall
+    // back to the single-claim list when those fields aren't present.
+    var modeList = boardMode === 'preload' ? entry.all_style_payloads : entry.active_style_payloads;
+    var allowed = (modeList && modeList.length > 0)
+        ? modeList
+        : ((claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
+            ? claim.allowed_payload_codes
+            : (claim.payload_code ? [claim.payload_code] : []));
 
     var activeOrders = (entry.orders || []).filter(function(o) {
         return isActive(o.status);
@@ -296,11 +365,12 @@ function renderPayloadBoard(entry) {
     var nodeBinIsLoaded = entry.bin_state && entry.bin_state.occupied && !!entry.bin_state.payload_code;
     var canClearLoadedHere = claim.role === 'consume' && nodeBinIsLoaded;
 
-    // BANDAID — pull this manual-request path when proper demand signals
-    // land for manual_swap loaders / unloaders. Without it the board is a
-    // wall of greyed cards with nothing actionable when no kanban has
-    // fired yet. Mirrors operator-modal.js (idleNoDemand).
-    var canRequestHere = !hasBin && !hasDemand;
+    // Manual request is the PRELOAD-mode override only. In active mode a
+    // card with no demand stays greyed (os-board-nodemand) — the kanban
+    // protection the design calls for (no loading without demand). Preload is
+    // the explicit operator override. This formalizes the old unconditional
+    // canRequestHere bandaid by gating it on the mode.
+    var canRequestHere = (boardMode === 'preload') && !hasBin && !hasDemand;
 
     var cardGrid = el('div', { className: 'os-board-cards' });
     var cols = allowed.length <= 3 ? allowed.length : (allowed.length <= 6 ? 3 : 4);
@@ -317,7 +387,10 @@ function renderPayloadBoard(entry) {
         // specific payload_code, the fallback must NOT fire — otherwise every
         // tile renders QUEUED while only one payload is actually in flight.
         var hasPayloadDemand = payloadOrders.length > 0 || (nodeBinIsEmpty && hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
-        var isActive = hasPayloadDemand || loadableHere;
+        // payloadActive (renamed from a local `isActive` that shadowed the
+        // imported isActive(status) helper): demand for this payload, or an
+        // empty is loadable here.
+        var payloadActive = hasPayloadDemand || loadableHere;
         var payloadDelivered = payloadOrders.find(function(o) { return o.status === 'delivered'; });
         var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit' || o.status === 'acknowledged'; });
 
@@ -336,25 +409,24 @@ function renderPayloadBoard(entry) {
         // different bin holds the window.
         var canClearThisPayload = canClearLoadedHere && entry.bin_state.payload_code === code;
 
-        if (payloadDelivered) {
-            card.classList.add('os-board-delivered');
-        } else if (canClearThisPayload) {
-            // Same visual treatment as payloadDelivered — bin is at the node
-            // and the operator's tap completes the cycle, just on the unload
-            // side instead of the load side.
-            card.classList.add('os-board-delivered');
-        } else if (payloadInTransit) {
-            card.classList.add('os-board-transit');
-        } else if (hasPayloadDemand) {
-            card.classList.add('os-board-queued');
-        } else if (canLoadEmpty) {
-            card.classList.add('os-board-queued');
-        } else if (canRequestHere) {
-            card.classList.add('os-board-requestable');
-        } else {
-            card.classList.add('os-board-nodemand');
-        }
-        if (loadNow) card.classList.add('os-board-load-now');
+        // One state derivation (cardState) feeds the class, status tag,
+        // detail, and click action below — replaces four parallel if/else
+        // ladders that had to be kept byte-aligned by hand.
+        var cs = cardState({
+            role: claim.role,
+            payloadDelivered: !!payloadDelivered,
+            payloadInTransit: !!payloadInTransit,
+            hasPayloadDemand: hasPayloadDemand,
+            canClearThisPayload: canClearThisPayload,
+            canLoadEmpty: canLoadEmpty,
+            canRequestHere: canRequestHere,
+            binIsEmpty: nodeBinIsEmpty,
+            isActive: payloadActive,
+            loadNow: loadNow,
+        });
+
+        card.classList.add(cs.cls);
+        if (cs.loadNow) card.classList.add('os-board-load-now');
 
         card.appendChild(el('div', { className: 'os-board-code', textContent: code }));
 
@@ -382,44 +454,9 @@ function renderPayloadBoard(entry) {
             card.appendChild(demandBox);
         }
 
-        var statusText, statusClass;
-        if (payloadDelivered) {
-            statusText = 'DELIVERED'; statusClass = 'os-board-tag-delivered';
-        } else if (canClearThisPayload) {
-            statusText = 'UNLOAD'; statusClass = 'os-board-tag-delivered';
-        } else if (payloadInTransit) {
-            statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit';
-        } else if (hasPayloadDemand) {
-            statusText = 'QUEUED'; statusClass = 'os-board-tag-queued';
-        } else if (canLoadEmpty) {
-            statusText = 'LOAD'; statusClass = 'os-board-tag-queued';
-        } else if (canRequestHere) {
-            statusText = 'REQUEST'; statusClass = 'os-board-tag-request';
-        } else {
-            statusText = 'NO DEMAND'; statusClass = 'os-board-tag-nodemand';
-        }
-        card.appendChild(el('span', { className: 'os-board-tag ' + statusClass, textContent: statusText }));
+        card.appendChild(el('span', { className: 'os-board-tag ' + cs.statusClass, textContent: cs.statusText }));
 
-        var detailText = '';
-        var binIsEmptyForDetail = entry.bin_state && entry.bin_state.occupied && !entry.bin_state.payload_code;
-        if (payloadDelivered) {
-            detailText = 'Tap to ' + (claim.role === 'produce' ? 'load' : 'unload');
-        } else if (canClearThisPayload) {
-            detailText = 'Loaded bin parked — tap to unload';
-        } else if (binIsEmptyForDetail && (payloadInTransit || (hasPayloadDemand && !payloadDelivered))) {
-            detailText = 'Empty bin at node — tap to load';
-        } else if (payloadInTransit) {
-            detailText = 'Robot en route';
-        } else if (hasPayloadDemand) {
-            detailText = 'Waiting for robot';
-        } else if (canLoadEmpty) {
-            detailText = 'Empty bin parked \u2014 tap to load';
-        } else if (canRequestHere) {
-            detailText = claim.role === 'produce' ? 'Tap to request empty bin' : 'Tap to request full bin';
-        } else {
-            detailText = 'No kanban signal';
-        }
-        card.appendChild(el('div', { className: 'os-board-detail', textContent: detailText }));
+        card.appendChild(el('div', { className: 'os-board-detail', textContent: cs.detail }));
 
         if (hasPayloadDemand) {
             var badge = el('span', { className: 'os-board-pos', textContent: String(queuePos) });
@@ -430,46 +467,21 @@ function renderPayloadBoard(entry) {
             queuePos++;
         }
 
-        // Delivered cards interactive only while the bin is still empty —
-        // once payload_code is set the bin is loaded and any further tap
-        // would re-open Load Bin against an already-loaded carrier (server
-        // refuses but the modal would still appear, confusing the operator).
-        // Queued/in-transit cards interactive when an empty bin sits at the
-        // node so operator can load without waiting for the delivery cycle.
-        var hasBinState = !!entry.bin_state;
-        var binOccupied = hasBinState && entry.bin_state.occupied;
-        var binNoPayload = hasBinState && !entry.bin_state.payload_code;
-        var binIsEmpty = binOccupied && binNoPayload;
-        // canLoad must be role-gated: a consume-role (unloader) card has
-        // nothing to load. Pre-fix the Load Bin modal opened on any
-        // payloadDelivered+binIsEmpty card regardless of role — operator saw
-        // "Tap to unload" but got the Load Bin modal because canLoad won
-        // over the canClearThisPayload branch. Now consume-role taps fall
-        // through to the unload branch below.
-        var canLoad = ((payloadDelivered && binIsEmpty) || (binIsEmpty && isActive) || canLoadEmpty)
-                      && claim.role !== 'consume';
-        // canUnload covers both the parked-loaded escape hatch
-        // (canClearThisPayload) AND the standard delivered-U1 case for a
-        // consume manual_swap. ClearBin server-side now confirms the active
-        // delivered U1 (symmetric to LoadBin confirming L1) before clearing
-        // the bin, so a single tap drives the operator's whole-cycle
-        // intent — process bin, signal done — through one endpoint.
-        var canUnload = canClearThisPayload || (payloadDelivered && claim.role === 'consume');
-        if (canLoad) {
+        // Click action: cardState resolved load|unload|request (role-gated);
+        // the binder just dispatches it — no re-derivation from raw flags.
+        if (cs.action === 'load') {
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
                 openLoadBinRef(entry.node.id, [code], claim.uop_capacity || 0);
             });
-        } else if (canUnload) {
-            // Unloader: tap fires apiClearBin. Server clears the manifest
-            // (if any) and confirms the active U1 retrieve_full, which
-            // emits OrderCompleted → handleUnloaderFullInCompletion → U2.
-            // Single-step from the operator's POV.
+        } else if (cs.action === 'unload') {
+            // Unloader: tap fires apiClearBin — server clears the manifest and
+            // confirms the active U1 retrieve_full, emitting U2. Single-step.
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
                 postAction('/api/process-nodes/' + entry.node.id + '/clear-bin', undefined, loadViewRef);
             });
-        } else if (canRequestHere) {
+        } else if (cs.action === 'request') {
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
                 var url = claim.role === 'produce'
