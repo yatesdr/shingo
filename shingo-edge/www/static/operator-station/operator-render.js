@@ -306,22 +306,27 @@ function renderPayloadBoard(entry) {
     // changeover) so the operator can't confuse it with those. Built as real
     // elements rather than folded into the infoBar innerHTML so the styling
     // actually applies (the infoBar uses hardcoded inline colors).
-    var modeBar = el('div', { className: 'os-board-modebar' + (boardMode === 'preload' ? ' preload' : '') });
+    // The button label states what TAPPING does (not the current mode) and
+    // the note states the current mode + why. In ACTIVE-ONLY the button is a
+    // prominent violet call-to-action: when the board is a wall of greyed
+    // "NO DEMAND" cards, this is the operator's way to make them loadable, so
+    // it must read as the obvious next action rather than blend into the bar.
+    var modeBar = el('div', { className: 'os-board-modebar ' + (boardMode === 'preload' ? 'preload' : 'active') });
     var toggle = el('button', {
         className: 'os-board-mode-toggle',
-        textContent: boardMode === 'preload' ? 'PRELOAD MODE — tap for ACTIVE-ONLY' : 'ACTIVE-ONLY — tap for PRELOAD',
+        textContent: boardMode === 'preload' ? 'TAP FOR ACTIVE-ONLY' : 'TAP TO ENABLE MANUAL LOADING',
     });
     toggle.addEventListener('click', function() {
         setBoardMode(boardMode === 'preload' ? 'active' : 'preload');
         renderGrid();
     });
     modeBar.appendChild(toggle);
-    if (boardMode === 'preload') {
-        modeBar.appendChild(el('span', { className: 'os-board-mode-note',
-            textContent: entry.transitional_loader
-                ? 'Operator-driven loader — manual requests enabled'
-                : 'Manual L1 requests enabled' }));
-    }
+    modeBar.appendChild(el('span', { className: 'os-board-mode-note',
+        textContent: boardMode === 'preload'
+            ? (entry.transitional_loader
+                ? 'PRELOAD — operator-driven loader, manual requests enabled'
+                : 'PRELOAD — manual bin requests enabled')
+            : 'ACTIVE-ONLY — cards show live demand only. Tap the button to request bins manually.' }));
     grid.appendChild(modeBar);
 
     // Card set by mode: preload shows the full covered list (every style, and

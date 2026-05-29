@@ -168,6 +168,8 @@ function buildDOM() {
     add('claims-add-payload-group');
     add('claims-add-payload', { tag: 'select', value: 'PL1' });
     add('claims-add-allowed-group', { display: 'none' });
+    add('claims-add-transitional-group', { display: 'none' });
+    add('claims-add-transitional', { tag: 'input', type: 'checkbox' });
     add('claims-allowed-picker');
     add('claims-add-capacity', { tag: 'input', value: '10' });
     add('claims-add-reorder-group');
@@ -336,6 +338,7 @@ function expectedVisibility(role, swap) {
     return {
         'claims-add-payload-group': !isManual,
         'claims-add-allowed-group': isManual,
+        'claims-add-transitional-group': isManual && role === 'produce',
         'claims-add-reorder-group': !isManual,
         'claims-add-lineside-group': role === 'consume' && !isManual,
         'claims-staging-fieldset': !isManual && usesStaging,

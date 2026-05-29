@@ -187,7 +187,14 @@ type NodeClaim struct {
 	// downstream consumption. Default false preserves the kanban-driven model
 	// (DemandSignal-only). See engine/operator_demand.go MaybePushUnloader.
 	AutoPush  bool      `json:"auto_push"`
-	CreatedAt time.Time `json:"created_at"`
+	// TransitionalLoader is a computed, display-only field — NOT a persisted
+	// claim column. It mirrors the loader-wide transitional_loaders set
+	// (Edge-only, keyed by core_node_name) and is populated by the API list
+	// path only for produce manual_swap (bin loader) claims so the Edge
+	// processes claim editor can reflect/toggle it. Every other reader sees
+	// the zero value; they don't consult it.
+	TransitionalLoader bool      `json:"transitional_loader"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 // AllowedPayloads returns the effective set of payload codes this claim
@@ -234,6 +241,12 @@ type NodeClaimInput struct {
 	LinesideSoftThreshold int      `json:"lineside_soft_threshold"`
 	ReuseCompatibleBins   bool     `json:"reuse_compatible_bins"`
 	AutoPush              bool     `json:"auto_push"`
+	// TransitionalLoader toggles the loader-wide transitional_loaders set
+	// (Edge-only, keyed by core_node_name). It is NOT persisted on the claim
+	// row — the upsert handler applies it to the set only for a produce
+	// manual_swap claim. A nil pointer means "field absent, leave the set
+	// untouched" so saves of unrelated claims can't clear a loader's flag.
+	TransitionalLoader    *bool    `json:"transitional_loader,omitempty"`
 }
 
 // NodeTaskInput is the input shape for creating a per-node changeover

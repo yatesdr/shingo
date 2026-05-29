@@ -1,6 +1,7 @@
 package service
 
 import (
+	"shingo/protocol"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -56,9 +57,35 @@ func (s *StyleService) Delete(id int64) error {
 
 // ── Style/node claims ─────────────────────────────────────────────
 
-// ListClaims returns every claim for a style.
+// ListClaims returns every claim for a style. Produce manual_swap (bin
+// loader) claims are enriched with the loader-wide transitional flag (the
+// Edge-only transitional_loaders set, keyed by core_node_name) so the Edge
+// processes claim editor can reflect and toggle it; other claims carry the
+// zero value.
 func (s *StyleService) ListClaims(styleID int64) ([]processes.NodeClaim, error) {
-	return s.db.ListStyleNodeClaims(styleID)
+	claims, err := s.db.ListStyleNodeClaims(styleID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range claims {
+		if claims[i].Role != protocol.ClaimRoleProduce || claims[i].SwapMode != protocol.SwapModeManualSwap {
+			continue
+		}
+		// Fail-open: a lookup error leaves TransitionalLoader false rather
+		// than failing the whole claim list (mirrors isTransitionalLoader).
+		if on, lerr := s.db.IsTransitionalLoader(claims[i].CoreNodeName); lerr == nil {
+			claims[i].TransitionalLoader = on
+		}
+	}
+	return claims, nil
+}
+
+// SetTransitionalLoader marks (on) or clears the loader-wide transitional
+// flag for a bin loader, keyed by core_node_name. updatedBy is recorded on
+// the audit column. The caller is responsible for restricting this to a
+// produce manual_swap claim — the set itself is loader-wide and untyped.
+func (s *StyleService) SetTransitionalLoader(coreNodeName string, on bool, updatedBy string) error {
+	return s.db.SetTransitionalLoader(coreNodeName, on, updatedBy)
 }
 
 // GetClaim returns one claim by id.
