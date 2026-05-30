@@ -17,7 +17,11 @@ import { api, el, formatDuration, timeAgo } from '/static/app.js';
 
   function stateBadgeClass(state) {
     var label = stateLabel(state);
-    return 'badge-' + label;
+    // 'completed' is a display label, not a protocol status — map the
+    // terminal labels onto real badge-<status> classes so they pick up
+    // the Signal palette instead of the unstyled grey fallback.
+    var classMap = { completed: 'badge-confirmed', failed: 'badge-failed', cancelled: 'badge-cancelled' };
+    return classMap[label] || ('badge-' + label);
   }
 
   function formatAbsTime(ts) {
@@ -87,9 +91,9 @@ import { api, el, formatDuration, timeAgo } from '/static/app.js';
     var page = Math.floor(offset / limit) + 1;
     var pages = Math.ceil(total / limit);
     var html = '<span style="color:var(--text-muted)">' + total + ' total</span>';
-    if (page > 1) html += ' <button class="btn btn-sm" data-action="_missionPage:' + (offset - limit) + ')">Prev</button>';
+    if (page > 1) html += ' <button class="btn btn-sm" data-action="_missionPage:' + (offset - limit) + '">Prev</button>';
     html += ' <span>Page ' + page + '/' + pages + '</span>';
-    if (page < pages) html += ' <button class="btn btn-sm" data-action="_missionPage:' + (offset + limit) + ')">Next</button>';
+    if (page < pages) html += ' <button class="btn btn-sm" data-action="_missionPage:' + (offset + limit) + '">Next</button>';
     el.innerHTML = html;
   }
 

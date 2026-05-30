@@ -13,20 +13,27 @@
  *
  * ── Signal theme ────────────────────────────────────────────────────
  *
- * Colors follow a graduated intensity scale — the visual weight of the
- * badge increases as the order progresses through its lifecycle:
+ * Hue encodes WHERE an order is in its lifecycle; every non-alert badge
+ * sits at one calm, low-saturation weight so the two alert states stand
+ * out. The ONLY badges allowed to be loud/saturated are faulted (amber)
+ * and failed (red) — they must out-weigh everything else on a crowded
+ * table. Grey is reserved for cancelled alone.
  *
- *   EARLY (muted gray)     →  SUBMITTED (cool steel blue)
- *   →  ACTIVE (saturated)  →  SUCCESS (vivid green)
- *   →  ATTENTION (amber)   →  FAILURE (red)
+ *   EARLY (3 graduated calm tints:           →  SUBMITTED (steel blue)
+ *     pending slate · sourcing sand · queued periwinkle)
+ *   →  ACTIVE (per-phase hue, calm weight)   →  SUCCESS (green)
+ *   →  ATTENTION (amber, loud) → FAILURE (red, loud) · cancelled (grey)
  *
  * Within the ACTIVE band, each phase has its own hue so an operator
  * scanning a table of 20 orders can distinguish dispatched / in_transit
- * / staged / reshuffling at a glance without reading the label.
+ * / staged / reshuffling at a glance without reading the label — but all
+ * four sit at the same calm weight (no single phase out-shouts the rest).
  *
- * Light-theme colors are designed for high contrast on white backgrounds.
- * Dark-theme colors are tuned for shop-floor LCDs under fluorescent
- * lighting — slightly higher saturation, deeper backgrounds.
+ * Weight rule for anyone adding a status: non-alert light backgrounds
+ * stay light (L≥86) and dark text stays bright (L≥68); only faulted and
+ * failed may go below that. Light colors target high contrast on white;
+ * dark colors are tuned for shop-floor LCDs under fluorescent lighting.
+ * All text-on-pill pairs clear WCAG AA (≥4.5:1) in both themes.
  * ────────────────────────────────────────────────────────────────────
  *
  * A neutral base .badge style is defined so a status added to the
@@ -67,11 +74,13 @@
 /* ─── Order lifecycle (protocol.Status) ─────────────────────────────── */
 
 /* ── Early lifecycle ──────────────────────────────────────────────────
- * Order exists but nothing is moving yet. Muted neutral tone — visible
- * but quiet, clearly "waiting" rather than "active" or "done". */
-.badge-pending      { background: #eef0f2; color: #4b5563; border-color: #d4d8dd; }
-.badge-sourcing     { background: #eef0f2; color: #4b5563; border-color: #d4d8dd; }
-.badge-queued       { background: #eef0f2; color: #4b5563; border-color: #d4d8dd; }
+ * Order exists but nothing is moving yet. Three graduated calm tints —
+ * quiet and clearly "waiting", but each stage distinct: pending is the
+ * coolest slate, sourcing warms to sand ("actively looking for material"),
+ * queued shifts to periwinkle, leading into the submitted steel blue. */
+.badge-pending      { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
+.badge-sourcing     { background: #fef3e2; color: #92660c; border-color: #fce0b8; }
+.badge-queued       { background: #e1e7fd; color: #3b46ad; border-color: #c4cff5; }
 
 /* ── Submitted / acknowledged ─────────────────────────────────────────
  * The system has accepted the order. Cool steel blue — slightly more
@@ -90,16 +99,20 @@
  * Distinct hues let operators scan a table and pick out phase at a
  * glance without reading labels. */
 .badge-dispatched   { background: #bfdbfe; color: #1d4ed8; border-color: #93c5fd; }
-.badge-in_transit   { background: #a5f3fc; color: #0e7490; border-color: #67e8f9; }
-.badge-staged       { background: #c7d2fe; color: #4338ca; border-color: #a5b4fc; }
+.badge-in_transit   { background: #bae6fd; color: #155e75; border-color: #7dd3fc; }
+.badge-staged       { background: #cdd0fb; color: #3730a3; border-color: #a5b4fc; }
 .badge-reshuffling  { background: #ddd6fe; color: #6d28d9; border-color: #c4b5fd; }
 
 /* ── Terminal — success ───────────────────────────────────────────────
- * Vivid green — unmistakable "done" signal. Stronger saturation than
- * the old pastel green so delivered/confirmed pop on a crowded table. */
-.badge-delivered    { background: #bbf7d0; color: #166534; border-color: #86efac; }
-.badge-confirmed    { background: #bbf7d0; color: #166534; border-color: #86efac; }
-.badge-skipped      { background: #e5e7eb; color: #6b7280; border-color: #d1d5db; }
+ * Green — unmistakable "done" signal, held at the same calm weight as the
+ * active band so a finished order doesn't out-pull an in-progress one. */
+.badge-delivered    { background: #c6f6d5; color: #166534; border-color: #9ae8b4; }
+.badge-confirmed    { background: #c6f6d5; color: #166534; border-color: #9ae8b4; }
+
+/* ── Terminal — no-op ─────────────────────────────────────────────────
+ * skipped is a benign "work was never needed" — a muted cool slate-blue,
+ * deliberately NOT the cancelled grey (grey is reserved for cancelled). */
+.badge-skipped      { background: #e0e7f0; color: #51607a; border-color: #c3cede; }
 
 /* ── Terminal — needs attention ───────────────────────────────────────
  * Warm amber — the order completed abnormally and a human needs to act.
@@ -109,7 +122,11 @@
 /* ── Terminal — failure ───────────────────────────────────────────────
  * Strong red — something broke. Impossible to miss. */
 .badge-failed       { background: #fecaca; color: #991b1b; border-color: #fca5a5; }
-.badge-cancelled    { background: #e5e7eb; color: #6b7280; border-color: #d1d5db; }
+
+/* ── Terminal — cancelled ─────────────────────────────────────────────
+ * Operator-initiated stop. The ONE badge allowed to be grey: pure
+ * neutral, intentionally low-signal, sits outside the lifecycle ramp. */
+.badge-cancelled    { background: #e5e7eb; color: #52525b; border-color: #d1d5db; }
 
 /* ─── Dark theme overrides ────────────────────────────────────────────
  *
@@ -117,10 +134,10 @@
  * contrast on dark surfaces. Shop-floor LCDs under fluorescent lights
  * benefit from the higher saturation. */
 
-/* Early lifecycle — dark */
-[data-theme="dark"] .badge-pending,
-[data-theme="dark"] .badge-sourcing,
-[data-theme="dark"] .badge-queued      { background: #1e2028; color: #7c8494; border-color: #2d313c; }
+/* Early lifecycle — dark (three graduated calm tints, matching light) */
+[data-theme="dark"] .badge-pending      { background: #1a1f2b; color: #94a3b8; border-color: #2b323f; }
+[data-theme="dark"] .badge-sourcing     { background: #2b2410; color: #d8a531; border-color: #3f3318; }
+[data-theme="dark"] .badge-queued       { background: #181d39; color: #9fb0ff; border-color: #283058; }
 
 /* Submitted / acknowledged — dark */
 [data-theme="dark"] .badge-submitted,
@@ -128,15 +145,19 @@
 
 /* Active — dark (each phase keeps its own hue, boosted for contrast) */
 [data-theme="dark"] .badge-dispatched   { background: #1a3550; color: #93c5fd; border-color: #1e4a6e; }
-[data-theme="dark"] .badge-in_transit   { background: #0a2d33; color: #22d3ee; border-color: #0f4450; }
+[data-theme="dark"] .badge-in_transit   { background: #0c2a30; color: #7dd3e8; border-color: #0f4450; }
 [data-theme="dark"] .badge-staged       { background: #1e1b4b; color: #a5b4fc; border-color: #2e2a60; }
 [data-theme="dark"] .badge-reshuffling  { background: #2e1065; color: #c4b5fd; border-color: #3b1880; }
 
 /* Success — dark (bright green, high contrast) */
 [data-theme="dark"] .badge-delivered,
 [data-theme="dark"] .badge-confirmed    { background: #052e16; color: #4ade80; border-color: #14532d; }
-[data-theme="dark"] .badge-skipped,
-[data-theme="dark"] .badge-cancelled    { background: #1c1f26; color: #6b7280; border-color: #2d313c; }
+
+/* No-op (skipped) — dark: muted slate-blue, distinct from cancelled grey */
+[data-theme="dark"] .badge-skipped      { background: #1b2230; color: #8593ad; border-color: #2b3445; }
+
+/* Cancelled — dark: the one allowed grey, contrast-corrected */
+[data-theme="dark"] .badge-cancelled    { background: #1c1f26; color: #9ca3af; border-color: #2d313c; }
 
 /* Needs attention — dark */
 [data-theme="dark"] .badge-faulted      { background: #3d2e00; color: #fbbf24; border-color: #5c4400; }

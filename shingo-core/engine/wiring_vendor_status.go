@@ -84,6 +84,22 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		if err := lc.MarkDelivered(order, "fleet"); err != nil {
 			e.logFn("engine: mark delivered order %d: %v", order.ID, err)
 		}
+		// Robot-internal compound children (reshuffle / buried-bin / restock
+		// legs) have no operator at the destination to file a receipt, so
+		// Delivered (non-terminal) would otherwise sit until the 5-minute
+		// reconciliation sweep before the next child could dispatch — an
+		// N-step shuffle would take N×5min. Auto-confirm immediately for any
+		// child order. ParentOrderID != nil is the discriminator: restock
+		// children deliver to a real lane slot, so "destination is a shuffle
+		// slot" and OrderType==Move are both wrong. The Confirmed transition's
+		// fireCompleted re-enters AdvanceCompoundOrder and the sibling-in-flight
+		// guard ensures the next child dispatches exactly once. Idempotent — a
+		// later edge/reconciliation receipt becomes a no-op (CompletedAt set).
+		if order.ParentOrderID != nil {
+			if _, err := lc.ConfirmReceipt(order, order.StationID, "auto_confirm_internal", 0); err != nil {
+				e.logFn("engine: auto-confirm child order %d: %v", order.ID, err)
+			}
+		}
 	case dispatch.StatusAcknowledged:
 		// TODO(dead-code): unreachable with the current seerrds adapter —
 		// fleet.MapState (mappers.go:12) never returns StatusAcknowledged.

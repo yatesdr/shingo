@@ -706,7 +706,7 @@ func TestFindShuffleSlots_ExcludesConfiguredTargets(t *testing.T) {
 
 	// Request 1 shuffle slot — must return one of the non-target
 	// direct children, not the configured target.
-	got, err := findShuffleSlots(db, grp.ID, 1)
+	got, err := findShuffleSlots(db, 0, grp.ID, 1)
 	if err != nil {
 		t.Fatalf("findShuffleSlots(1): %v", err)
 	}
@@ -718,7 +718,7 @@ func TestFindShuffleSlots_ExcludesConfiguredTargets(t *testing.T) {
 	}
 
 	// Request 2 slots — both must be non-target.
-	got2, err := findShuffleSlots(db, grp.ID, 2)
+	got2, err := findShuffleSlots(db, 0, grp.ID, 2)
 	if err != nil {
 		t.Fatalf("findShuffleSlots(2): %v", err)
 	}
@@ -784,7 +784,7 @@ func TestPlanReshuffle_SimpleRetrieve_RespectsTargetNodeExclusion(t *testing.T) 
 	// target were at slot 4, but the actual target is depth 2 with one
 	// blocker at depth 1. To force the documented error, request many
 	// slots directly.
-	_, err = findShuffleSlots(db, grp.ID, 10)
+	_, err = findShuffleSlots(db, 0, grp.ID, 10)
 	if err == nil {
 		t.Errorf("expected error when shuffle demand exceeds pool")
 	} else if !strings.Contains(err.Error(), "need") || !strings.Contains(err.Error(), "shuffle slots") {
@@ -875,12 +875,12 @@ func TestReshuffleTargetNodes_ParsesProperty(t *testing.T) {
 	db := testDB(t)
 	grp, _, _, _, _ := setupNodeGroupWithShuffle(t, db)
 
-	if got := ReshuffleTargetNodes(db, grp.ID); len(got) != 0 {
+	if got := ReshuffleTargetNodes(db, 0, grp.ID); len(got) != 0 {
 		t.Errorf("unset property returned %v, want empty", got)
 	}
 
 	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleTargetNodes, `["A","B","C"]`), "set targets")
-	got := ReshuffleTargetNodes(db, grp.ID)
+	got := ReshuffleTargetNodes(db, 0, grp.ID)
 	want := []string{"A", "B", "C"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -893,8 +893,72 @@ func TestReshuffleTargetNodes_ParsesProperty(t *testing.T) {
 
 	// Malformed JSON → empty (treat as expose mode rather than fail).
 	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleTargetNodes, `not json`), "set malformed")
-	if got := ReshuffleTargetNodes(db, grp.ID); len(got) != 0 {
+	if got := ReshuffleTargetNodes(db, 0, grp.ID); len(got) != 0 {
 		t.Errorf("malformed JSON returned %v, want empty", got)
+	}
+}
+
+// TestReshuffleTargetNodes_LaneOverridesGroup pins the per-lane override:
+// a lane that sets its own reshuffle targets wins; an unset lane inherits the
+// group; laneID=0 reads the group directly (the no-override sentinel).
+func TestReshuffleTargetNodes_LaneOverridesGroup(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	grp, lane, _, _, _ := setupNodeGroupWithShuffle(t, db)
+
+	eq := func(got []string, want ...string) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Group has targets; lane unset → inherit the group's value.
+	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleTargetNodes, `["G1","G2"]`), "group targets")
+	if got := ReshuffleTargetNodes(db, lane.ID, grp.ID); !eq(got, "G1", "G2") {
+		t.Errorf("lane unset → got %v, want group [G1 G2]", got)
+	}
+
+	// Lane sets its own targets → lane wins.
+	testutil.MustNoErr(t, db.SetNodeProperty(lane.ID, PropReshuffleTargetNodes, `["L1"]`), "lane targets")
+	if got := ReshuffleTargetNodes(db, lane.ID, grp.ID); !eq(got, "L1") {
+		t.Errorf("lane override → got %v, want [L1]", got)
+	}
+
+	// laneID=0 → group value (the sentinel the engine call sites that lack a
+	// lane, and the older tests, rely on).
+	if got := ReshuffleTargetNodes(db, 0, grp.ID); !eq(got, "G1", "G2") {
+		t.Errorf("laneID=0 → got %v, want group [G1 G2]", got)
+	}
+}
+
+// TestReshuffleRestoreBlockers_LaneOverridesGroup pins the restore-blockers
+// per-lane override: explicit on/off on the lane wins, unset lane inherits.
+func TestReshuffleRestoreBlockers_LaneOverridesGroup(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	grp, lane, _, _, _ := setupNodeGroupWithShuffle(t, db)
+
+	// Group on, lane unset → inherit on.
+	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleRestoreBlockers, "on"), "group on")
+	if !ReshuffleRestoreBlockersEnabled(db, lane.ID, grp.ID) {
+		t.Error("lane unset + group on → want true")
+	}
+
+	// Lane explicit off → overrides group on.
+	testutil.MustNoErr(t, db.SetNodeProperty(lane.ID, PropReshuffleRestoreBlockers, "off"), "lane off")
+	if ReshuffleRestoreBlockersEnabled(db, lane.ID, grp.ID) {
+		t.Error("lane off → want false even though group on")
+	}
+
+	// laneID=0 → group value.
+	if !ReshuffleRestoreBlockersEnabled(db, 0, grp.ID) {
+		t.Error("laneID=0 + group on → want true")
 	}
 }
 

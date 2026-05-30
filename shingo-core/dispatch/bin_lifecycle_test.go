@@ -537,6 +537,103 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 	}
 }
 
+// TestDispatchPreparedComplex_QueuesOnFullConcreteStorageDropoff pins the #1
+// fix (regression 2b05dce): a complex changeover drop/evac whose final
+// dropoff is a FULL concrete storage slot must queue, not dispatch into the
+// occupied slot. The scanner dropped the capacity gate for every complex
+// order to unstick two-robot supply legs; the gate is restored here, scoped
+// to concrete storage/staging dropoffs.
+func TestDispatchPreparedComplex_QueuesOnFullConcreteStorageDropoff(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	// Concrete storage slot under an NGRP, occupied → CheckDropoffCapacity blocks.
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	if err != nil {
+		t.Fatalf("NGRP node type: %v", err)
+	}
+	grp := &nodes.Node{Name: "DROP-NGRP", Enabled: true, IsSynthetic: true, NodeTypeID: &grpType.ID}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create NGRP")
+	slot := &nodes.Node{Name: "DROP-NGRP-S1", Enabled: true, ParentID: &grp.ID}
+	testutil.MustNoErr(t, db.CreateNode(slot), "create storage slot")
+	occupant := &bins.Bin{BinTypeID: 1, Label: "DROP-OCCUPANT", NodeID: &slot.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(occupant), "occupy slot")
+
+	order := &orders.Order{
+		EdgeUUID:     "uuid-drop-full",
+		StationID:    "line-1",
+		OrderType:    OrderTypeComplex,
+		Status:       StatusQueued,
+		Quantity:     1,
+		SourceNode:   lineNode.Name,
+		DeliveryNode: slot.Name,
+		PayloadCode:  bp.Code,
+		StepsJSON: `[{"action":"wait","node":"` + lineNode.Name + `"},` +
+			`{"action":"pickup","node":"` + lineNode.Name + `"},` +
+			`{"action":"dropoff","node":"` + slot.Name + `"}]`,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusQueued), "test: queued"), "set queued")
+	order, _ = db.GetOrder(order.ID)
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	if err := d.DispatchPreparedComplex(order); err == nil {
+		t.Fatal("expected a queue (non-nil error) on a full concrete storage dropoff, got nil (dispatched)")
+	}
+
+	got, _ := db.GetOrder(order.ID)
+	if got.Status != StatusQueued {
+		t.Errorf("status = %q, want queued — a full storage dropoff must not dispatch", got.Status)
+	}
+	if got.QueueReason == "" {
+		t.Errorf("queue_reason empty, want a dropoff-capacity reason")
+	}
+	if got.VendorOrderID != "" {
+		t.Errorf("VendorOrderID = %q, want empty (not dispatched)", got.VendorOrderID)
+	}
+}
+
+// TestIsConcreteStorageDropoff_RoleGate pins the role classifier that scopes
+// the #1 capacity gate. The two-robot guard is the line-node case: a LINE /
+// production dropoff must classify false so a supply leg is NOT capacity-
+// gated (a sibling evac clears the line; Core can't model that), which is the
+// deadlock 2b05dce removed. NGRP roots classify false too — they're handled
+// by step re-resolution before the gate.
+func TestIsConcreteStorageDropoff_RoleGate(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, _ := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	if err != nil {
+		t.Fatalf("NGRP node type: %v", err)
+	}
+	grp := &nodes.Node{Name: "CLS-NGRP", Enabled: true, IsSynthetic: true, NodeTypeID: &grpType.ID}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create NGRP")
+	slot := &nodes.Node{Name: "CLS-NGRP-S1", Enabled: true, ParentID: &grp.ID}
+	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")
+
+	cases := []struct {
+		name string
+		node string
+		want bool
+	}{
+		{"concrete storage slot (child of NGRP)", slot.Name, true},
+		{"line/production node — two-robot guard", lineNode.Name, false},
+		{"synthetic NGRP root — handled by re-resolution", grp.Name, false},
+		{"empty", "", false},
+		{"missing node", "NO-SUCH-NODE", false},
+	}
+	for _, c := range cases {
+		if got := d.isConcreteStorageDropoff(c.node); got != c.want {
+			t.Errorf("%s: isConcreteStorageDropoff(%q) = %v, want %v", c.name, c.node, got, c.want)
+		}
+	}
+}
+
 // TestHandleOrderRelease_BinIDNilFallbackPrefersClaim is the Phase 3
 // regression test for the bin-transit-state project. The fallback now
 // prefers a claim-based lookup (claimed_by = order.ID) over the node-

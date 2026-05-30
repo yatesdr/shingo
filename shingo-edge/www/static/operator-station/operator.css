@@ -948,6 +948,16 @@ body {
     grid-template-columns: repeat(var(--os-board-cols, 3), 1fr);
     gap: 16px;
     flex: 1;
+    /* Pack rows at the top and size them to content so a single row of cards
+       doesn't balloon to the full flex:1 height (#8). */
+    align-content: start;
+    /* Touch-scroll when cards overflow one page (#11). min-height:0 is
+       essential — a grid/flex child defaults to min-height:auto and won't
+       shrink to allow its own scrollbar, so the ancestor overflow:hidden would
+       just clip the overflowing rows. */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    min-height: 0;
 }
 
 .os-board-card {

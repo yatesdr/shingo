@@ -134,7 +134,7 @@ func (d *Dispatcher) scheduleRestoreIfEnabled(
 	plan *ReshufflePlan,
 	expectedFromNode int64,
 ) {
-	if !ReshuffleRestoreBlockersEnabled(d.db, groupID) {
+	if !ReshuffleRestoreBlockersEnabled(d.db, laneID, groupID) {
 		return
 	}
 	if d.restoreListeners == nil {

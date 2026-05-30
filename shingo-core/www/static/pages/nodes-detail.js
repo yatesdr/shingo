@@ -51,10 +51,15 @@ export function openNodeModal(el) {
   // the UI-consistency refactor, but the inline style.display toggle
   // here wasn't updated, so .hide kept the wrapper invisible for every
   // node type.
+  // Group type codes: NGRP is current; SMKT / SUP are legacy codes still on
+  // un-migrated DBs (matched the same way in nodes-supermarket.js). The
+  // algorithm / ASRS controls apply to any of them — keying only on the exact
+  // 'NGRP' string left the whole section hidden on legacy-coded groups.
+  var isGroupType = d.typeCode === 'NGRP' || d.typeCode === 'SMKT' || d.typeCode === 'SUP';
   var algoDiv = document.getElementById('ngrp-algorithms');
   if (algoDiv) {
-    algoDiv.classList.toggle('hide', d.typeCode !== 'NGRP');
-    if (d.typeCode === 'NGRP') {
+    algoDiv.classList.toggle('hide', !isGroupType);
+    if (isGroupType) {
       document.getElementById('nf-retrieve-algo').value = 'FIFO';
       document.getElementById('nf-store-algo').value = 'LKND';
       // Reset reshuffle controls to defaults; loadNodeDetail
@@ -63,6 +68,12 @@ export function openNodeModal(el) {
       renderReshuffleTargetChips();
       var restoreSel = document.getElementById('nf-reshuffle-restore');
       if (restoreSel) restoreSel.value = 'off';
+      // "Enable ASRS" defaults ON (controls shown); loadNodeDetail flips it
+      // off below if the group has asrs_enabled=off persisted.
+      var asrsBox = document.getElementById('nf-asrs-enabled');
+      if (asrsBox) asrsBox.checked = true;
+      var asrsControls = document.getElementById('nf-asrs-controls');
+      if (asrsControls) asrsControls.classList.remove('hide');
     }
   }
 
@@ -140,6 +151,11 @@ function loadNodeDetail(nodeID, isSynthetic) {
         } else if (p.key === 'reshuffle_restore_blockers') {
           var rsel = document.getElementById('nf-reshuffle-restore');
           if (rsel) rsel.value = (p.value === 'on') ? 'on' : 'off';
+        } else if (p.key === 'asrs_enabled') {
+          var abox = document.getElementById('nf-asrs-enabled');
+          if (abox) abox.checked = (p.value !== 'off');
+          var actrls = document.getElementById('nf-asrs-controls');
+          if (actrls) actrls.classList.toggle('hide', p.value === 'off');
         }
       });
 
@@ -324,11 +340,23 @@ function closeNodeModal() {
   document.getElementById('node-modal').classList.remove('active');
 }
 
+// onAsrsToggle shows/hides the algorithm decision controls when the operator
+// flips the "Enable ASRS" checkbox. The actual persistence happens on save.
+function onAsrsToggle() {
+  var box = document.getElementById('nf-asrs-enabled');
+  var ctrls = document.getElementById('nf-asrs-controls');
+  if (box && ctrls) ctrls.classList.toggle('hide', !box.checked);
+}
+
 function saveAlgorithmProperties() {
   var algoDiv = document.getElementById('ngrp-algorithms');
   if (!algoDiv || algoDiv.classList.contains('hide')) return;
   var nodeID = parseInt(document.getElementById('nf-id').value);
   if (!nodeID) return;
+  // Enable-ASRS flag: 'off' makes the resolver use default algorithms.
+  var asrsBox = document.getElementById('nf-asrs-enabled');
+  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'asrs_enabled', value: (asrsBox && asrsBox.checked) ? 'on' : 'off'})
+    .catch(function(err) { console.error('saveAlgorithmProperties asrs_enabled', err); });
   var retrieveAlgo = document.getElementById('nf-retrieve-algo').value;
   var storeAlgo = document.getElementById('nf-store-algo').value;
   apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'retrieve_algorithm', value: retrieveAlgo})
@@ -601,6 +629,7 @@ function closeOccupancyModal() {
 delegateActions(document.body, {
     addChip,
     addNodeManifestRow,
+    addReshuffleTarget,
     checkOccupancy,
     clearChipPicker,
     closeManifestExpand,
@@ -619,6 +648,7 @@ delegateActions(document.body, {
     makeEditable,
     mnReadVal,
     mnSpan,
+    onAsrsToggle,
     onModeChange,
     openNodeModal,
     populateChipPicker,

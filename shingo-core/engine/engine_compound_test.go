@@ -148,6 +148,84 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 	}
 }
 
+// TestReshuffle_ChildAutoConfirmsWithoutReceipt pins the #3 fix: a
+// robot-internal compound child (ParentOrderID != nil) has no operator at
+// the destination to file a receipt, so on fleet FINISHED the engine now
+// auto-confirms it immediately rather than leaving it Delivered until the
+// 5-minute reconciliation sweep. Without the fix, driving a child to
+// FINISHED leaves it Delivered (non-terminal), the sibling-in-flight guard
+// blocks the next child, and this test fails at child 2 with no
+// VendorOrderID. Crucially it calls NO HandleOrderReceipt — the existing
+// reshuffle tests mask the bug by confirming each child manually.
+func TestReshuffle_ChildAutoConfirmsWithoutReceipt(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
+		Prefix:     "AUTOCONF",
+		NumSlots:   3,
+		TargetSlot: 2,
+		TargetAge:  2 * time.Hour,
+	})
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "autoconf-reshuffle-1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  sc.Payload.Code,
+		SourceNode:   sc.Grp.Name,
+		DeliveryNode: sc.LineNode.Name,
+		Quantity:     1,
+	})
+
+	parent := testdb.RequireOrder(t, db, "autoconf-reshuffle-1")
+	children, err := db.ListChildOrders(parent.ID)
+	if err != nil {
+		t.Fatalf("list children: %v", err)
+	}
+	if len(children) < 3 {
+		t.Fatalf("expected >= 3 children, got %d", len(children))
+	}
+
+	// Drive each child to FINISHED only — NO HandleOrderReceipt. The fix must
+	// auto-confirm each child so the next one dispatches.
+	for i, child := range children {
+		child, err = db.GetOrder(child.ID)
+		if err != nil {
+			t.Fatalf("get child %d: %v", i, err)
+		}
+		if child.VendorOrderID == "" {
+			t.Fatalf("child %d (seq %d) never dispatched — prior sibling did not auto-confirm (status=%s)",
+				child.ID, child.Sequence, child.Status)
+		}
+		sim.DriveState(child.VendorOrderID, "RUNNING")
+		sim.DriveState(child.VendorOrderID, "FINISHED")
+
+		child, err = db.GetOrder(child.ID)
+		if err != nil {
+			t.Fatalf("get child %d after FINISHED: %v", i, err)
+		}
+		if !protocol.IsTerminal(child.Status) {
+			t.Errorf("child %d (seq %d) status=%s after FINISHED — want terminal (auto-confirmed without an operator receipt)",
+				child.ID, child.Sequence, child.Status)
+		}
+	}
+
+	// Target bin reached the line with no operator receipt anywhere.
+	targetBin, err := db.GetBin(sc.TargetBin.ID)
+	if err != nil {
+		t.Fatalf("get target bin: %v", err)
+	}
+	if targetBin.NodeID == nil || *targetBin.NodeID != sc.LineNode.ID {
+		t.Errorf("target bin at node %v, want line node %d (compound did not complete via auto-confirm)",
+			targetBin.NodeID, sc.LineNode.ID)
+	}
+}
+
 // --- Test: Compound children dispatch sequentially, one robot at a time ---
 //
 // Replays the 2026-05-27 compound #51 production scenario: 5 children
@@ -159,10 +237,11 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 // in planning_service.go, three robots dispatched into the same
 // cross-aisle corridor at compound creation.
 //
-// Pinning behavior: the NEXT child must NOT dispatch on a sibling's
-// Delivered event, and MUST dispatch on its Confirmed event. Walked
-// across all 5 children sequentially; if this regresses, dispatch
-// silently re-cascades.
+// Pinning behavior (post-#3): robot-internal children auto-confirm on
+// Delivered, so FINISHED advances the compound by exactly one child. The
+// immediate next child dispatches; the one AFTER it must stay Pending until
+// its own predecessor finishes. Walked across all 5 children; if the
+// double-advance regresses, two robots launch into the corridor at once.
 func TestCompound_SequentialChildDispatch_NoDeliveredCascade(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -228,7 +307,9 @@ func TestCompound_SequentialChildDispatch_NoDeliveredCascade(t *testing.T) {
 		}
 	}
 
-	// Walk each child through delivered → confirmed sequentially.
+	// Walk each child through FINISHED. Since #3 a robot-internal child
+	// auto-confirms on Delivered (no operator receipt), so FINISHED drives it
+	// terminal and advances the compound — by EXACTLY ONE child.
 	for i, child := range children {
 		child, err = db.GetOrder(child.ID)
 		if err != nil {
@@ -238,43 +319,42 @@ func TestCompound_SequentialChildDispatch_NoDeliveredCascade(t *testing.T) {
 			t.Fatalf("child %d (seq %d) not dispatched at start of iteration — status=%s", child.ID, child.Sequence, child.Status)
 		}
 
-		// FINISHED → StatusDelivered fires the first fireCompleted edge.
 		sim.DriveState(child.VendorOrderID, "RUNNING")
 		sim.DriveState(child.VendorOrderID, "FINISHED")
 
-		// After delivered, the next sibling must NOT yet be dispatched.
+		// Auto-confirm: the child must be terminal with no receipt filed.
+		child, err = db.GetOrder(child.ID)
+		if err != nil {
+			t.Fatalf("get child %d after FINISHED: %v", i, err)
+		}
+		if !protocol.IsTerminal(child.Status) {
+			t.Errorf("child %d (seq %d) status=%s after FINISHED — want terminal (auto-confirmed, no receipt)",
+				child.ID, child.Sequence, child.Status)
+		}
+
+		// The immediate next sibling must now be dispatched (one advance).
 		if i+1 < len(children) {
 			next, err := db.GetOrder(children[i+1].ID)
 			if err != nil {
-				t.Fatalf("get next child after sibling %d delivered: %v", child.Sequence, err)
+				t.Fatalf("get next child after sibling %d: %v", child.Sequence, err)
 			}
-			if next.VendorOrderID != "" {
-				t.Fatalf("child %d (seq %d) dispatched on sibling %d delivered — should wait for confirmed; vendor=%s status=%s",
-					next.ID, next.Sequence, child.Sequence, next.VendorOrderID, next.Status)
-			}
-			if next.Status != dispatch.StatusPending {
-				t.Fatalf("child %d (seq %d) status = %q after sibling delivered, want %q",
-					next.ID, next.Sequence, next.Status, dispatch.StatusPending)
+			if next.VendorOrderID == "" {
+				t.Fatalf("child %d (seq %d) not dispatched after sibling %d auto-confirmed — status=%s",
+					next.ID, next.Sequence, child.Sequence, next.Status)
 			}
 		}
 
-		// Edge receipt → StatusConfirmed (terminal) fires the second
-		// fireCompleted edge, which is the one that legitimately advances.
-		d.HandleOrderReceipt(env, &protocol.OrderReceipt{
-			OrderUUID:   child.EdgeUUID,
-			ReceiptType: "confirmed",
-			FinalCount:  1,
-		})
-
-		// After confirmed, the next sibling MUST now be dispatched.
-		if i+1 < len(children) {
-			next, err := db.GetOrder(children[i+1].ID)
+		// Cascade guard (the 2026-05-27 invariant): the child AFTER the next
+		// one must stay Pending while its predecessor is in flight — if the
+		// double-advance regresses, two robots dispatch at once.
+		if i+2 < len(children) {
+			after, err := db.GetOrder(children[i+2].ID)
 			if err != nil {
-				t.Fatalf("get next child after sibling %d confirmed: %v", child.Sequence, err)
+				t.Fatalf("get child seq+2 after sibling %d: %v", child.Sequence, err)
 			}
-			if next.VendorOrderID == "" {
-				t.Fatalf("child %d (seq %d) not dispatched after sibling %d confirmed — status=%s",
-					next.ID, next.Sequence, child.Sequence, next.Status)
+			if after.VendorOrderID != "" {
+				t.Fatalf("cascade: child %d (seq %d) dispatched while sibling %d still in flight — vendor=%s status=%s",
+					after.ID, after.Sequence, children[i+1].Sequence, after.VendorOrderID, after.Status)
 			}
 		}
 	}

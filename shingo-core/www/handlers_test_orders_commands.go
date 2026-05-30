@@ -173,6 +173,54 @@ func (h *Handlers) apiTestCommandStatus(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// apiTestCommandCancel terminates the vendor order behind a still-running
+// test command, reusing the same vendor "terminate" path the manual
+// terminate form uses. Keyed off the command's VendorOrderID — which is
+// empty in the brief window between recording the command and dispatching
+// it to the vendor, so we reject that case rather than fire a no-op
+// terminate.
+func (h *Handlers) apiTestCommandCancel(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	if err != nil {
+		h.jsonError(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	tc, err := h.engine.TestCommandService().Get(id)
+	if err != nil {
+		h.jsonError(w, "command not found", http.StatusNotFound)
+		return
+	}
+	if tc.CompletedAt != nil {
+		h.jsonError(w, "command already completed", http.StatusConflict)
+		return
+	}
+	if tc.VendorOrderID == "" {
+		h.jsonError(w, "command has no vendor order to terminate yet", http.StatusConflict)
+		return
+	}
+
+	commander, ok := h.engine.Fleet().(fleet.VendorCommander)
+	if !ok {
+		h.jsonError(w, "fleet backend does not support vendor commands", http.StatusNotImplemented)
+		return
+	}
+
+	if _, err := commander.ExecuteVendorCommand(fleet.VendorCommand{
+		Type:    "terminate",
+		OrderID: tc.VendorOrderID,
+	}); err != nil {
+		log.Printf("test-commands: terminate id=%d vendor=%s failed: %v", id, tc.VendorOrderID, err)
+		h.jsonError(w, "terminate failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.engine.TestCommandService().UpdateStatus(id, "TERMINATED", "terminated from /test-orders")
+	h.engine.TestCommandService().Complete(id)
+	log.Printf("test-commands: terminated id=%d vendor=%s", id, tc.VendorOrderID)
+	h.jsonOK(w, map[string]any{"id": id, "status": "terminated"})
+}
+
 func (h *Handlers) apiTestCommandsList(w http.ResponseWriter, r *http.Request) {
 	cmds, err := h.engine.TestCommandService().List(50)
 	if err != nil {

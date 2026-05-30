@@ -120,15 +120,15 @@ function renderOrdersTable(orders, containerId, isKafka) {
     html += '<td style="font-size:.8rem;">' + formatTime(o.created_at) + '</td>';
     if (authenticated) {
       html += '<td class="to-actions">';
-      html += '<button class="to-btn-sm" data-action="viewHistory:' + o.id + ')">History</button>';
+      html += '<button class="to-btn-sm" data-action="viewHistory:' + o.id + '">History</button>';
       if (isKafka && isActive) {
-        html += '<button class="to-btn-sm to-btn-danger" data-action="cancelOrder:\' + escapeHtml(o.edge_uuid) + \'">Cancel</button>';
+        html += '<button class="to-btn-sm to-btn-danger" data-action="cancelOrder:' + escapeHtml(o.edge_uuid) + '">Cancel</button>';
       }
       if (isDelivered) {
         html += '<button class="to-btn-sm" data-action="openReceipt:' + escapeHtml(o.edge_uuid) + ':' + !isKafka + '" >Receipt</button>';
       }
       if (o.status === 'staged') {
-        html += '<button class="to-btn-sm" style="border-color:#ff9800;color:#ff9800;" data-action="releaseComplexOrder:\' + escapeHtml(o.edge_uuid) + \'">Release</button>';
+        html += '<button class="to-btn-sm" style="border-color:#ff9800;color:#ff9800;" data-action="releaseComplexOrder:' + escapeHtml(o.edge_uuid) + '">Release</button>';
       }
       html += '</td>';
     }
@@ -161,7 +161,10 @@ async function renderCommandsTable(cmds) {
     if (authenticated) {
       html += '<td class="to-actions">';
       if (!c.CompletedAt) {
-        html += '<button class="to-btn-sm" data-action="refreshCmdStatus:' + c.ID + ')">Refresh</button>';
+        html += '<button class="to-btn-sm" data-action="refreshCmdStatus:' + c.ID + '">Refresh</button>';
+        if (c.VendorOrderID) {
+          html += '<button class="to-btn-sm to-btn-danger" data-action="cancelCommand:' + c.ID + '">Cancel</button>';
+        }
       }
       html += '</td>';
     }
@@ -436,6 +439,17 @@ async function refreshCmdStatus(id) {
   } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
+async function cancelCommand(id) {
+  if (!await uiConfirm('Terminate command #' + id + '?')) return;
+  try {
+    var res = await fetch('/api/test-commands/cancel?id=' + id, { method: 'POST' });
+    var data = await res.json();
+    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
+    toast('Command terminated', 'info');
+    refreshCommands();
+  } catch(e) { toast('Error: ' + e, 'error'); }
+}
+
 // --- History modal ---
 async function viewHistory(orderId) {
   document.getElementById('hist-order-id').textContent = '#' + orderId;
@@ -520,6 +534,7 @@ document.addEventListener('DOMContentLoaded', function() {
 // so binding the map across every event type keeps the page wiring
 // single-source.
 delegateActions(document.body, {
+    cancelCommand,
     cancelOrder,
     formatRoute,
     loadRobots,

@@ -227,10 +227,33 @@ func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 			return nil, fmt.Errorf("destination node %d already has %d bin(s); move or delete existing bin first", toNodeID, existing)
 		}
 	}
-	if err := s.db.MoveBin(b.ID, toNodeID); err != nil {
+	// A manual Move bypasses the arrival paths (ApplyArrival / recovery) that
+	// re-derive staging, so a bin staged at a lineside node would stay staged
+	// after relocating to storage. Mirror the arrival behavior: clear staging
+	// in the same tx when a staged bin lands on a storage slot.
+	clearStaging := b.Status == domain.BinStatusStaged && s.destIsStorageSlot(destNode)
+	if err := s.db.MoveBinClearingStaging(b.ID, toNodeID, clearStaging); err != nil {
 		return nil, err
 	}
 	return &MoveResult{DestNode: destNode}, nil
+}
+
+// destIsStorageSlot reports whether a node is a storage slot — a LANE/NGRP
+// itself or a direct child of one. Mirrors the engine-private
+// engine.isStorageSlot; the staging-clear on Move needs the same
+// classification at the service layer. Keep the two definitions in sync.
+func (s *BinService) destIsStorageSlot(node *nodes.Node) bool {
+	if node.NodeTypeCode == "LANE" || node.NodeTypeCode == "NGRP" {
+		return true
+	}
+	if node.ParentID == nil {
+		return false
+	}
+	parent, err := s.db.GetNode(*node.ParentID)
+	if err != nil {
+		return false
+	}
+	return parent.NodeTypeCode == "LANE" || parent.NodeTypeCode == "NGRP"
 }
 
 // --- Counting -------------------------------------------------------------

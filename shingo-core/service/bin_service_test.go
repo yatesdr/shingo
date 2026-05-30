@@ -496,6 +496,65 @@ func TestBinService_Move_RejectsOccupiedPhysicalDestination(t *testing.T) {
 	}
 }
 
+func TestBinService_Move_ClearsStagingOnMoveToStorage(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	bt := ensureDefaultBinType(t, db)
+
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	if err != nil {
+		t.Fatalf("get NGRP node type: %v", err)
+	}
+	grp := &nodes.Node{Name: "MV-STG-NGRP", Enabled: true, IsSynthetic: true, NodeTypeID: &grpType.ID}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create NGRP")
+	slot := &nodes.Node{Name: "MV-STG-NGRP-S1", Enabled: true, ParentID: &grp.ID}
+	testutil.MustNoErr(t, db.CreateNode(slot), "create storage slot")
+
+	from := &nodes.Node{Name: "MV-STG-FROM", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(from), "create lineside from")
+
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-STG", NodeID: &from.ID, Status: "staged"}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create staged bin")
+
+	svc := newBinSvc(db)
+	if _, err := svc.Move(bin, slot.ID); err != nil {
+		t.Fatalf("Move: %v", err)
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.Status != "available" {
+		t.Errorf("Status = %q, want available (staging cleared on move to storage slot)", got.Status)
+	}
+	if got.NodeID == nil || *got.NodeID != slot.ID {
+		t.Errorf("NodeID = %v, want %d", got.NodeID, slot.ID)
+	}
+}
+
+func TestBinService_Move_KeepsStagingOnMoveToLineside(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	bt := ensureDefaultBinType(t, db)
+
+	// Plain nodes with no NGRP/LANE in their path are lineside, not storage.
+	from := &nodes.Node{Name: "MV-KEEP-FROM", Enabled: true}
+	to := &nodes.Node{Name: "MV-KEEP-TO", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(from), "create from")
+	testutil.MustNoErr(t, db.CreateNode(to), "create to")
+
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-KEEP", NodeID: &from.ID, Status: "staged"}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create staged bin")
+
+	svc := newBinSvc(db)
+	if _, err := svc.Move(bin, to.ID); err != nil {
+		t.Fatalf("Move: %v", err)
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.Status != "staged" {
+		t.Errorf("Status = %q, want staged (move to a non-storage node must not clear staging)", got.Status)
+	}
+}
+
 func TestBinService_Move_RejectsMissingDestination(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

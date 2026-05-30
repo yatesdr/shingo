@@ -68,8 +68,16 @@ func (r *GroupResolver) dbg(format string, args ...any) {
 	}
 }
 
-// getGroupAlgorithm reads a property from the node group, returning defaultVal if unset.
+// getGroupAlgorithm reads an algorithm property from the node group,
+// returning defaultVal if unset. When ASRS is explicitly disabled on the
+// group (asrs_enabled="off"), the configured algorithm is ignored and the
+// default applies — that is what the operator's "Enable ASRS" toggle means
+// at runtime. Unset asrs_enabled (every existing group) leaves behavior
+// unchanged.
 func (r *GroupResolver) getGroupAlgorithm(groupID int64, key, defaultVal string) string {
+	if r.DB.GetNodeProperty(groupID, "asrs_enabled") == "off" {
+		return defaultVal
+	}
 	v := r.DB.GetNodeProperty(groupID, key)
 	if v == "" {
 		return defaultVal

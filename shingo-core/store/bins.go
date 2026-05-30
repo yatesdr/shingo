@@ -42,6 +42,13 @@ func (db *DB) NodeTileStates() (map[int64]bins.NodeTileState, error) { return bi
 // at the destination.
 func (db *DB) MoveBin(binID, toNodeID int64) error { return bins.Move(db.DB, binID, toNodeID) }
 
+// MoveBinClearingStaging moves a bin and, when clearStaging is set, clears a
+// stale staged status in the same transaction (guarded — no-op on a
+// non-staged bin). See bins.MoveAndClearStaging.
+func (db *DB) MoveBinClearingStaging(binID, toNodeID int64, clearStaging bool) error {
+	return bins.MoveAndClearStaging(db.DB, binID, toNodeID, clearStaging)
+}
+
 // ListAvailableBins returns bins with no manifest.
 func (db *DB) ListAvailableBins() ([]*bins.Bin, error) { return bins.ListAvailable(db.DB) }
 

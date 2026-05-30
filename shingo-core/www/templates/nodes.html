@@ -167,6 +167,10 @@
 
     <!-- Algorithm settings (NGRP only) -->
     <div id="ngrp-algorithms" class="hide mb-2">
+      <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-weight:600;cursor:pointer">
+        <input type="checkbox" id="nf-asrs-enabled" data-action-change="onAsrsToggle"> Enable ASRS — algorithm-driven retrieval, storage &amp; reshuffle
+      </label>
+      <div id="nf-asrs-controls">
       <div class="grid grid-2 text-sm">
         <div class="form-group">
           <label>Retrieval Algorithm</label>
@@ -205,6 +209,7 @@
             On: lane geometry restored after parent picks up. Off (default): lane stays shallow; direct-child storage retains the blockers.
           </div>
         </div>
+      </div>
       </div>
     </div>
 

@@ -161,6 +161,30 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 // rather than back to queued, since these are unrecoverable from the
 // scanner's perspective (steps unparseable, bins unavailable, fleet
 // rejects).
+
+// isConcreteStorageDropoff reports whether a delivery node is a concrete
+// (non-synthetic) STORAGE/STAGING slot — a direct child of a LANE or NGRP.
+// This is the role gate for the complex dropoff-capacity check (#1): such a
+// slot must queue-on-full, whereas a LINE/production dropoff must NOT be
+// gated (a two-robot supply leg delivers to a line a sibling evac clears, and
+// gating it deadlocks). Mirrors engine.isStorageSlot's parent-type rule minus
+// the synthetic-root cases — NGRP/LANE dropoffs are handled by step
+// re-resolution / ResolutionCapacity before this point.
+func (d *Dispatcher) isConcreteStorageDropoff(deliveryNode string) bool {
+	if deliveryNode == "" {
+		return false
+	}
+	node, err := d.db.GetNodeByDotName(deliveryNode)
+	if err != nil || node == nil || node.IsSynthetic || node.ParentID == nil {
+		return false
+	}
+	parent, err := d.db.GetNode(*node.ParentID)
+	if err != nil || parent == nil {
+		return false
+	}
+	return parent.NodeTypeCode == "LANE" || parent.NodeTypeCode == "NGRP"
+}
+
 func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// Defense-in-depth: the fulfillment scanner's tryFulfill already
 	// gates on StatusQueued before calling here, so a parent in
@@ -244,6 +268,30 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		}
 	}
 	resolvedSteps = newSteps
+
+	// #1 (regression 2b05dce): restore the dropoff-capacity gate for complex
+	// orders, but ONLY for concrete STORAGE/STAGING dropoffs. The scanner
+	// dropped the gate for every complex order to unstick two-robot SUPPLY
+	// legs — which deliver to a LINE node a sibling EVAC clears, and Core has
+	// no SiblingOrderID to model that — but that also let a changeover
+	// drop/evac to a FULL concrete storage slot dispatch into the occupied
+	// slot. Gate by node role (storage slot = child of LANE/NGRP), NOT by
+	// same-order pickup: gating the line case would re-create the deadlock
+	// 2b05dce fixed. NGRP dropoffs are already covered above by
+	// reResolveComplexSteps / ResolutionCapacity. Stay queued by returning an
+	// error — the scanner keeps the order queued and replays it on the next
+	// slot-vacancy tick (same contract as the claim_failed branch below).
+	if d.isConcreteStorageDropoff(order.DeliveryNode) {
+		if blocked, reason := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
+			if order.QueueReason != reason {
+				if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+					log.Printf("dispatch: set queue_reason for complex order %d: %v", order.ID, serr)
+				}
+			}
+			d.dbg("complex: order %d queued — concrete storage dropoff %s blocked: %s", order.ID, order.DeliveryNode, reason)
+			return fmt.Errorf("dropoff capacity: %s", reason)
+		}
+	}
 
 	// Claim bins at pickup nodes. RemainingUOP is intentionally nil here
 	// — Edge's `CreateComplexOrder` doesn't thread it through at intake,
@@ -433,7 +481,7 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 
 	// Mode selection: empty target_nodes → expose mode; non-empty →
 	// target-node mode (or queue when all targets occupied).
-	targetNodeNames := ReshuffleTargetNodes(d.db, groupID)
+	targetNodeNames := ReshuffleTargetNodes(d.db, lane.ID, groupID)
 	var plan *ReshufflePlan
 	if len(targetNodeNames) == 0 {
 		plan, err = PlanReshuffleUnburyOnly(d.db, buried.Bin, buried.Slot, lane, groupID)
@@ -525,7 +573,7 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 		return
 	}
 
-	targetNodeNames := ReshuffleTargetNodes(d.db, groupID)
+	targetNodeNames := ReshuffleTargetNodes(d.db, lane.ID, groupID)
 	var plan *ReshufflePlan
 	if len(targetNodeNames) == 0 {
 		plan, err = PlanReshuffleUnburyOnly(d.db, buried.Bin, buried.Slot, lane, groupID)

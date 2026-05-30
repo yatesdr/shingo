@@ -306,6 +306,38 @@ func Move(db *sql.DB, binID, toNodeID int64) error {
 	return nil
 }
 
+// MoveAndClearStaging relocates a bin and, when clearStaging is set, drops a
+// stale staged status — both in one transaction. The staging clear is
+// guarded (WHERE status='staged'), so it is a no-op on a non-staged bin and
+// never flips an unrelated status, unlike the unguarded ReleaseStaged.
+//
+// A manual Move bypasses the arrival paths (ApplyArrival / recovery) that
+// re-derive staging, so a bin staged at a lineside node would otherwise stay
+// staged after relocating to a storage slot. Callers pass clearStaging=true
+// only when the bin was staged and the destination is a storage slot.
+func MoveAndClearStaging(db *sql.DB, binID, toNodeID int64, clearStaging bool) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`, toNodeID, binID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("bin %d is already at node %d", binID, toNodeID)
+	}
+
+	if clearStaging {
+		if _, err := tx.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE id=$1 AND status='staged'`, binID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // ListAvailable returns bins with no payload (empty, available for loading).
 //
 // Empty-bin definition: COALESCE(b.payload_code, '') = ''. Same NULL-safe

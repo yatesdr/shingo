@@ -250,6 +250,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 				// Test commands
 				r.Post("/test-commands/submit", h.apiTestCommandSubmit)
+				r.Post("/test-commands/cancel", h.apiTestCommandCancel)
 				r.Get("/test-commands", h.apiTestCommandsList)
 				r.Get("/test-commands/status", h.apiTestCommandStatus)
 

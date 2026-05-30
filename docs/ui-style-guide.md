@@ -178,17 +178,24 @@ The original operator tokens used visual names. Rename to semantic:
 
 ### Signal theme
 
-Badge colors follow a graduated intensity scale called **Signal**. The visual
-weight of the badge increases as the order progresses through its lifecycle,
-so an operator scanning a table of orders can perceive the distribution of
-lifecycle phases without reading labels.
+Badge colors follow a scheme called **Signal**. **Hue** encodes *where* an order
+is in its lifecycle; **weight** is held flat. Every non-alert badge sits at one
+calm, low-saturation weight, so the two alert states — `faulted` (amber) and
+`failed` (red) — are the only loud pills and clearly out-weigh everything else on
+a crowded table. Grey is reserved for `cancelled` alone.
 
-**The gradient:**
+**The lifecycle:**
 
 ```
-EARLY (muted gray)  →  SUBMITTED (steel blue)  →  ACTIVE (saturated per-phase hue)
-→  SUCCESS (vivid green)  →  ATTENTION (amber)  →  FAILURE (red)
+EARLY (3 graduated calm tints:           →  SUBMITTED (steel blue)
+  pending slate · sourcing sand · queued periwinkle)
+→  ACTIVE (per-phase hue, calm weight)   →  SUCCESS (green)
+→  ATTENTION (amber, loud)  →  FAILURE (red, loud)  ·  cancelled (grey)
 ```
+
+**Weight rule** (for anyone adding a status): non-alert light backgrounds stay
+light (L≥86) and dark text stays bright (L≥68); only `faulted` and `failed` may
+go below that. All text-on-pill pairs clear WCAG AA (≥4.5:1) in both themes.
 
 **Per-phase hues in the active band:**
 
@@ -205,16 +212,19 @@ Each active phase has its own color so it's distinguishable at a glance:
 
 | Signal | Statuses | Background | Text |
 |---|---|---|---|
-| Early | pending, sourcing, queued | `#eef0f2` | `#4b5563` |
+| Early: pending | pending | `#f1f5f9` | `#475569` |
+| Early: sourcing | sourcing | `#fef3e2` | `#92660c` |
+| Early: queued | queued | `#e1e7fd` | `#3b46ad` |
 | Submitted | submitted, acknowledged | `#dbeafe` | `#1e40af` |
 | Active: dispatched | dispatched | `#bfdbfe` | `#1d4ed8` |
-| Active: in_transit | in_transit | `#a5f3fc` | `#0e7490` |
-| Active: staged | staged | `#c7d2fe` | `#4338ca` |
+| Active: in_transit | in_transit | `#bae6fd` | `#155e75` |
+| Active: staged | staged | `#cdd0fb` | `#3730a3` |
 | Active: reshuffling | reshuffling | `#ddd6fe` | `#6d28d9` |
-| Success | delivered, confirmed | `#bbf7d0` | `#166534` |
-| Neutral terminal | skipped, cancelled | `#e5e7eb` | `#6b7280` |
-| Attention | faulted | `#fde68a` | `#92400e` |
-| Failure | failed | `#fecaca` | `#991b1b` |
+| Success | delivered, confirmed | `#c6f6d5` | `#166534` |
+| No-op | skipped | `#e0e7f0` | `#51607a` |
+| Attention (loud) | faulted | `#fde68a` | `#92400e` |
+| Failure (loud) | failed | `#fecaca` | `#991b1b` |
+| Cancelled (the one grey) | cancelled | `#e5e7eb` | `#52525b` |
 
 **Dark theme** uses deeper backgrounds and brighter text, tuned for
 shop-floor LCDs under fluorescent lighting. See `shared/status-classes.css`
@@ -237,6 +247,14 @@ One CSS class per protocol status. The class name matches the status string:
 <span class="badge badge-failed">Failed</span>
 ```
 
+**Mission-surface aliases.** `missions.js`, `mission-detail.js`, and
+`rds-explorer.js` render the human labels *Completed* / *Created*, but these are
+**not** protocol statuses — so they must emit a real `badge-<status>` class, not
+`badge-completed`/`badge-created` (which have no CSS rule and fall back to the
+unstyled grey base). The mapping: *completed* → `badge-confirmed` (green),
+*created* → `badge-pending` (slate). Keep the label in the text; use the
+protocol class on the element.
+
 ### One source file
 
 Status classes live in `shared/status-classes.css`, embedded by both Core and
@@ -253,6 +271,12 @@ enum) has a corresponding `.badge-<status>` definition in
 Adding a status to `protocol/status.go` without adding the CSS class fails
 the test in CI. This is the **only** mechanism that prevents drift; do not
 rely on review discipline.
+
+**Blind spot:** the drift test validates CSS-vs-protocol coverage but does
+**not** scan `.js`/`.html` emit sites. A JS-invented class name like
+`badge-completed` escapes CI and silently renders the grey fallback — this is
+exactly what bit the mission surfaces (see *Mission-surface aliases* above).
+Emit sites must use protocol-status class names.
 
 ### Fallback styling
 

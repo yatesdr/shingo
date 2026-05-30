@@ -98,7 +98,7 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 		return nil, err
 	}
 
-	shuffleSlots, err := findShuffleSlots(db, groupID, len(blockers))
+	shuffleSlots, err := findShuffleSlots(db, lane.ID, groupID, len(blockers))
 	if err != nil {
 		return nil, fmt.Errorf("find shuffle slots: %w", err)
 	}
@@ -173,7 +173,7 @@ func PlanReshuffleUnburyOnly(db *store.DB, target *bins.Bin, targetSlot *nodes.N
 		return nil, err
 	}
 
-	shuffleSlots, err := findShuffleSlots(db, groupID, len(blockers))
+	shuffleSlots, err := findShuffleSlots(db, lane.ID, groupID, len(blockers))
 	if err != nil {
 		return nil, fmt.Errorf("find shuffle slots: %w", err)
 	}
@@ -224,7 +224,7 @@ func PlanReshuffleToTarget(db *store.DB, target *bins.Bin, targetSlot *nodes.Nod
 		return nil, err
 	}
 
-	shuffleSlots, err := findShuffleSlots(db, groupID, len(blockers))
+	shuffleSlots, err := findShuffleSlots(db, lane.ID, groupID, len(blockers))
 	if err != nil {
 		return nil, fmt.Errorf("find shuffle slots: %w", err)
 	}
@@ -257,12 +257,20 @@ func PlanReshuffleToTarget(db *store.DB, target *bins.Bin, targetSlot *nodes.Nod
 }
 
 // ReshuffleTargetNodes parses the JSON array stored under the
-// PropReshuffleTargetNodes property on a group. Returns an empty slice
-// when the property is unset or malformed (treat malformed as expose
-// mode rather than failing — the configurator surface validates names
-// before save).
-func ReshuffleTargetNodes(db *store.DB, groupID int64) []string {
-	raw := db.GetNodeProperty(groupID, PropReshuffleTargetNodes)
+// PropReshuffleTargetNodes property. It is a per-LANE override with a
+// group fallback: a lane that sets its own targets wins, otherwise the
+// group's value applies (mirrors the node→parent fallback used for
+// staging_ttl). Pass laneID=0 to read the group value directly. Returns
+// an empty slice when both are unset or malformed (treat malformed as
+// expose mode rather than failing — the configurator validates on save).
+func ReshuffleTargetNodes(db *store.DB, laneID, groupID int64) []string {
+	raw := ""
+	if laneID != 0 {
+		raw = db.GetNodeProperty(laneID, PropReshuffleTargetNodes)
+	}
+	if raw == "" {
+		raw = db.GetNodeProperty(groupID, PropReshuffleTargetNodes)
+	}
 	if raw == "" {
 		return nil
 	}
@@ -279,10 +287,20 @@ func ReshuffleTargetNodes(db *store.DB, groupID int64) []string {
 	return out
 }
 
-// ReshuffleRestoreBlockersEnabled reports whether the per-group
-// restore-blockers toggle is on. Default off — blockers stay in
-// shuffle slots and lane geometry shifts.
-func ReshuffleRestoreBlockersEnabled(db *store.DB, groupID int64) bool {
+// ReshuffleRestoreBlockersEnabled reports whether the restore-blockers
+// toggle is on. Per-LANE override with group fallback: an explicit "on"
+// or "off" on the lane wins; if the lane is unset (inherit) the group's
+// value applies. Default off — blockers stay in shuffle slots and lane
+// geometry shifts. Pass laneID=0 to read the group value directly.
+func ReshuffleRestoreBlockersEnabled(db *store.DB, laneID, groupID int64) bool {
+	if laneID != 0 {
+		switch db.GetNodeProperty(laneID, PropReshuffleRestoreBlockers) {
+		case "on":
+			return true
+		case "off":
+			return false
+		}
+	}
 	return db.GetNodeProperty(groupID, PropReshuffleRestoreBlockers) == "on"
 }
 
@@ -297,14 +315,14 @@ func ReshuffleRestoreBlockersEnabled(db *store.DB, groupID int64) bool {
 // retrieve too) — they share this helper. Document on the admin
 // page that configuring target nodes shrinks the shuffle pool for
 // the whole group.
-func findShuffleSlots(db *store.DB, groupID int64, count int) ([]*nodes.Node, error) {
+func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.Node, error) {
 	children, err := db.ListChildNodes(groupID)
 	if err != nil {
 		return nil, err
 	}
 
 	excluded := make(map[string]bool)
-	for _, name := range ReshuffleTargetNodes(db, groupID) {
+	for _, name := range ReshuffleTargetNodes(db, laneID, groupID) {
 		excluded[name] = true
 	}
 

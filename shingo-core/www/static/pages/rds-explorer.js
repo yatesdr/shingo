@@ -497,7 +497,7 @@ function bbRenderBlocks() {
   for (var i = 0; i < bbBlocks.length; i++) {
     html += '<div class="bb-row"><span class="bb-num">' + (i+1) + '</span><span class="bb-detail">' +
       bbBlocks[i].block.blockId + ' &ndash; ' + bbBlocks[i].label +
-      '</span><button class="bb-rm" data-action="bbRemoveBlock:' + i + ')" title="Remove">&times;</button></div>';
+      '</span><button class="bb-rm" data-action="bbRemoveBlock:' + i + '" title="Remove">&times;</button></div>';
   }
   el.innerHTML = html;
 }
@@ -631,7 +631,7 @@ function showResponse(data) {
   var status = document.getElementById('resp-status');
   var code = data.status_code || 0;
   status.textContent = code ? code + ' ' + httpStatusText(code) : 'Error';
-  status.className = 'badge ' + (code >= 200 && code < 300 ? 'badge-completed' : 'badge-failed');
+  status.className = 'badge ' + (code >= 200 && code < 300 ? 'badge-confirmed' : 'badge-failed');
 
   document.getElementById('resp-time').textContent = data.elapsed_ms + 'ms' + (data.url ? ' | ' + data.method + ' ' + data.url : '');
 

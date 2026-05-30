@@ -280,9 +280,11 @@ function renderPayloadBoard(entry) {
     const binPayload = binState && binState.payload_code ? binState.payload_code : '';
     const roleLabel = claim.role === 'produce' ? 'Loader' : 'Unloader';
 
-    // Board mode: preload defaults ON for a transitional loader (which has no
-    // meaningful active-demand mode), otherwise honors the operator's toggle.
-    var boardMode = applyTransitionalDefault(!!entry.transitional_loader);
+    // Board mode. The PRELOAD mode + its discoverable toggle belong ONLY to a
+    // transitional loader (brought up by the edge process checkbox). A normal
+    // (non-transitional) loader is the pre-refactor ACTIVE board: no toggle, no
+    // mode switching. #8 undoes the refactor that merged the two onto one board.
+    var boardMode = entry.transitional_loader ? applyTransitionalDefault(true) : 'active';
 
     var infoBar = el('div', { className: 'os-board-header' });
     infoBar.innerHTML =
@@ -301,33 +303,32 @@ function renderPayloadBoard(entry) {
         '</div>';
     grid.appendChild(infoBar);
 
-    // Mode toggle + preload banner. Preload uses a distinct violet treatment
-    // (NOT amber — amber is already the release/stranded color, and orange is
-    // changeover) so the operator can't confuse it with those. Built as real
-    // elements rather than folded into the infoBar innerHTML so the styling
-    // actually applies (the infoBar uses hardcoded inline colors).
-    // The button label states what TAPPING does (not the current mode) and
-    // the note states the current mode + why. In ACTIVE-ONLY the button is a
-    // prominent violet call-to-action: when the board is a wall of greyed
-    // "NO DEMAND" cards, this is the operator's way to make them loadable, so
-    // it must read as the obvious next action rather than blend into the bar.
-    var modeBar = el('div', { className: 'os-board-modebar ' + (boardMode === 'preload' ? 'preload' : 'active') });
-    var toggle = el('button', {
-        className: 'os-board-mode-toggle',
-        textContent: boardMode === 'preload' ? 'TAP FOR ACTIVE-ONLY' : 'TAP TO ENABLE MANUAL LOADING',
-    });
-    toggle.addEventListener('click', function() {
-        setBoardMode(boardMode === 'preload' ? 'active' : 'preload');
-        renderGrid();
-    });
-    modeBar.appendChild(toggle);
-    modeBar.appendChild(el('span', { className: 'os-board-mode-note',
-        textContent: boardMode === 'preload'
-            ? (entry.transitional_loader
-                ? 'PRELOAD — operator-driven loader, manual requests enabled'
-                : 'PRELOAD — manual bin requests enabled')
-            : 'ACTIVE-ONLY — cards show live demand only. Tap the button to request bins manually.' }));
-    grid.appendChild(modeBar);
+    // Mode toggle + preload banner — TRANSITIONAL LOADERS ONLY. A transitional
+    // loader (edge process checkbox) is the operator-driven board that may
+    // switch between ACTIVE-ONLY and PRELOAD. A normal loader never shows this;
+    // it stays the pre-refactor active board. Preload uses a distinct violet
+    // treatment (NOT amber/orange — those mean stranded / changeover). The
+    // button label states what TAPPING does; the note states the mode + why.
+    if (entry.transitional_loader) {
+        var modeBar = el('div', { className: 'os-board-modebar ' + (boardMode === 'preload' ? 'preload' : 'active') });
+        var toggle = el('button', {
+            className: 'os-board-mode-toggle',
+            // Label states what TAPPING does, in plain language (no
+            // "operator-driven loader" jargon): from the all-payloads view the
+            // tap narrows to active demand, and vice-versa.
+            textContent: boardMode === 'preload' ? 'SHOW ACTIVE DEMAND ONLY' : 'SHOW ALL PAYLOADS + REQUEST BINS',
+        });
+        toggle.addEventListener('click', function() {
+            setBoardMode(boardMode === 'preload' ? 'active' : 'preload');
+            renderGrid();
+        });
+        modeBar.appendChild(toggle);
+        modeBar.appendChild(el('span', { className: 'os-board-mode-note',
+            textContent: boardMode === 'preload'
+                ? 'Showing every payload for this loader. Tap a card with no demand to request a bin.'
+                : 'Showing only payloads with active demand. Tap the button to show every payload and request bins manually.' }));
+        grid.appendChild(modeBar);
+    }
 
     // Card set by mode: preload shows the full covered list (every style, and
     // every process sharing this loader); active shows only what the running
@@ -370,12 +371,15 @@ function renderPayloadBoard(entry) {
     var nodeBinIsLoaded = entry.bin_state && entry.bin_state.occupied && !!entry.bin_state.payload_code;
     var canClearLoadedHere = claim.role === 'consume' && nodeBinIsLoaded;
 
-    // Manual request is the PRELOAD-mode override only. In active mode a
-    // card with no demand stays greyed (os-board-nodemand) — the kanban
-    // protection the design calls for (no loading without demand). Preload is
-    // the explicit operator override. This formalizes the old unconditional
-    // canRequestHere bandaid by gating it on the mode.
-    var canRequestHere = (boardMode === 'preload') && !hasBin && !hasDemand;
+    // Manual request affordance. On a TRANSITIONAL loader it's the PRELOAD-mode
+    // override only (active mode greys no-demand cards — the kanban protection).
+    // On a normal loader we keep the pre-refactor behavior: the unconditional
+    // bandaid so a board with no kanban demand still has something actionable
+    // (mirrors operator-modal.js idleNoDemand). #8 reverts the refactor that
+    // gated this behind the now-transitional-only PRELOAD toggle.
+    var canRequestHere = entry.transitional_loader
+        ? ((boardMode === 'preload') && !hasBin && !hasDemand)
+        : (!hasBin && !hasDemand);
 
     var cardGrid = el('div', { className: 'os-board-cards' });
     var cols = allowed.length <= 3 ? allowed.length : (allowed.length <= 6 ? 3 : 4);

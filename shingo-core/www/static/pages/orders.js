@@ -273,9 +273,9 @@ var _moNodesLoaded = false;
 var _moActiveTab = 'transport';
 
 function openManualOrderModal() {
-  showModal('mo-order-modal');
+  showModal('manual-order-modal');
   document.getElementById('mo-status').textContent = '';
-  document.getElementById('mo-submit-btn').disabled = false;
+  document.getElementById('manual-order-submit-btn').disabled = false;
   if (!_moNodesLoaded) {
     _moNodesLoaded = true;
     loadManualOrderDropdowns();
@@ -284,14 +284,14 @@ function openManualOrderModal() {
 }
 
 function closeManualOrderModal() {
-  hideModal('mo-order-modal');
+  hideModal('manual-order-modal');
 }
 
 function switchManualOrderTab(name, btn) {
   _moActiveTab = name;
-  document.querySelectorAll('.mo-tab').forEach(function(t) { t.classList.remove('active'); });
-  document.querySelectorAll('.mo-tab-content').forEach(function(c) { c.classList.remove('active'); });
-  document.getElementById('mo-tab-' + name).classList.add('active');
+  document.querySelectorAll('.manual-order-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.manual-order-tab-content').forEach(function(c) { c.classList.remove('active'); });
+  document.getElementById('manual-order-tab-' + name).classList.add('active');
   btn.classList.add('active');
   document.getElementById('mo-status').textContent = '';
   updateManualOrderQuantityVisibility();
@@ -424,7 +424,7 @@ function updateManualOrderQuantityVisibility() {
 
 function submitManualOrder() {
   var status = document.getElementById('mo-status');
-  var btn = document.getElementById('mo-submit-btn');
+  var btn = document.getElementById('manual-order-submit-btn');
   var tab = _moActiveTab;
   var body = {
     priority: parseInt(document.getElementById('mo-priority').value, 10) || 0,

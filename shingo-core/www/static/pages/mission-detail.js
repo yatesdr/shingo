@@ -36,7 +36,12 @@ import { api, el, h } from '/static/app.js';
 
   function stateBadge(state) {
     var label = stateLabel(state);
-    return '<span class="badge badge-' + label + '">' + label + '</span>';
+    // 'completed' / 'created' are display labels, not protocol statuses —
+    // map them onto real badge-<status> classes so they pick up the Signal
+    // palette (green / slate) instead of the unstyled grey fallback.
+    var classMap = { completed: 'badge-confirmed', created: 'badge-pending' };
+    var cls = classMap[label] || ('badge-' + label);
+    return '<span class="badge ' + cls + '">' + label + '</span>';
   }
 
   var stateColors = {

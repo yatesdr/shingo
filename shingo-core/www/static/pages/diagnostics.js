@@ -222,7 +222,7 @@ import { api, delegateActions, el, escapeHtml, formatTime, toast, uiConfirm } fr
         '<td>' + escapeHtml(msg.msg_type || '') + '</td>' +
         '<td>' + escapeHtml(msg.station_id || '') + '</td>' +
         '<td>' + msg.retries + '</td>' +
-        '<td><button class="btn btn-sm" data-action="replayDeadLetter:' + msg.id + ')">Replay</button></td>';
+        '<td><button class="btn btn-sm" data-action="replayDeadLetter:' + msg.id + '">Replay</button></td>';
       recoveryBody.appendChild(tr);
     });
   }
