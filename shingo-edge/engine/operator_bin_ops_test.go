@@ -33,7 +33,7 @@ func TestConfirmUnloaderU1OnClear_HappyPath(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusDelivered)), "set U1 delivered")
 
 	eng := testEngine(t, db)
-	gotID, ok := eng.confirmUnloaderU1OnClear(unloaderNodeID)
+	gotID, ok := eng.confirmUnloaderU1OnClear("U1-CONF-MSWAP-NODE")
 	if !ok {
 		t.Fatalf("confirmUnloaderU1OnClear returned ok=false; want true (delivered U1 should be found)")
 	}
@@ -67,7 +67,7 @@ func TestConfirmUnloaderU1OnClear_IgnoresL1(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusDelivered)), "set L1 delivered")
 
 	eng := testEngine(t, db)
-	_, ok := eng.confirmUnloaderU1OnClear(unloaderNodeID)
+	_, ok := eng.confirmUnloaderU1OnClear("U1-IGN-L1-MSWAP-NODE")
 	if ok {
 		t.Error("confirmUnloaderU1OnClear returned ok=true on an L1 (retrieve_empty=true); want false")
 	}
@@ -95,7 +95,7 @@ func TestConfirmUnloaderU1OnClear_RequiresDelivered(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "set U1 in_transit")
 
 	eng := testEngine(t, db)
-	_, ok := eng.confirmUnloaderU1OnClear(unloaderNodeID)
+	_, ok := eng.confirmUnloaderU1OnClear("U1-NDLV-MSWAP-NODE")
 	if ok {
 		t.Error("confirmUnloaderU1OnClear returned ok=true on an in_transit U1; want false (only delivered confirms)")
 	}

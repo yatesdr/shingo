@@ -311,6 +311,30 @@ func ListActiveByProcessNodeAndType(db *sql.DB, processNodeID int64, orderType p
 	return scanOrders(rows)
 }
 
+// ListDeliveredRetrieveByDeliveryNode returns delivered (non-terminal) retrieve
+// orders matching retrieveEmpty whose delivery_node is the given (core) node
+// name — regardless of which process_node row they're tracked at.
+//
+// The loader/unloader confirm-on-action paths use this. On a loader or unloader
+// shared across styles or cells, one core node has many process_node rows (one
+// per style/process). The side-cycle order (L1 empty-in / U1 full-in) is staged
+// against whichever process_node the demand resolver walked to, which may NOT be
+// the process_node the operator is acting at. A process-node-scoped lookup then
+// misses it, the confirm silently no-ops, LoadBin/ClearBin take the fallback,
+// and the order orphans at `delivered`. Matching by delivery_node (the core
+// node) finds it regardless: a core node is one physical slot, so there is at
+// most one bin — one delivered order — there to confirm.
+func ListDeliveredRetrieveByDeliveryNode(db *sql.DB, deliveryNode string, retrieveEmpty bool) ([]Order, error) {
+	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.delivery_node = ? AND o.order_type = ? AND o.retrieve_empty = ? AND o.status = ?
+		ORDER BY o.created_at`, deliveryNode, protocol.OrderTypeRetrieve, retrieveEmpty, protocol.StatusDelivered)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
 // ListActiveByProcessNode returns non-terminal orders for a process
 // node.
 func ListActiveByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {

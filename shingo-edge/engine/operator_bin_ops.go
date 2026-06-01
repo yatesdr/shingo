@@ -6,7 +6,6 @@ import (
 	"slices"
 
 	"shingo/protocol"
-	edgeorders "shingoedge/orders"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -120,7 +119,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	// `delivered` indefinitely (Core would auto-confirm on its side, but
 	// Edge had no continuous status sync) and L2 was created here directly,
 	// duplicating the side-cycle handler's responsibility.
-	if l1ID, l1Confirmed := e.confirmLoaderL1OnLoad(nodeID, uopCount); l1Confirmed {
+	if l1ID, l1Confirmed := e.confirmLoaderL1OnLoad(node.CoreNodeName, uopCount); l1Confirmed {
 		log.Printf("bin_ops: confirmed L1 order %d on operator load at node %d", l1ID, nodeID)
 		// Belt-and-suspenders: set active_bin_id directly from Core's LoadBin
 		// response. handleLoaderEmptyInCompletion will also try to set it
@@ -189,26 +188,25 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 // Returns (orderID, true) when an L1 was actually confirmed; (0, false)
 // otherwise (no delivered L1 found, or the confirm transition itself failed).
 //
-// Searches active orders for the node rather than trusting
-// runtime.ActiveOrderID. The runtime pointer can drift (a prior fallback
-// path that created an L2 directly will have overwritten it with the move
-// order ID), so a direct query is the only reliable way to find the L1.
-func (e *Engine) confirmLoaderL1OnLoad(nodeID int64, uopCount int64) (int64, bool) {
-	active, err := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, edgeorders.TypeRetrieve)
+// Looks the L1 up by the loader's CORE NODE (delivery_node), NOT by the
+// process_node the operator loaded at. On a loader shared across styles/cells
+// one core node has many process_node rows, and the staged empty may be tracked
+// against a different row than the operator's station — a process-node-scoped
+// query then misses it, LoadBin falls through to its direct-L2 fallback, and the
+// L1 orphans at `delivered` while the full bin still ships (plant 2026-06-01).
+// A core node is one physical slot, so there is at most one delivered empty
+// there to confirm. Querying delivery_node also sidesteps a drifted
+// runtime.ActiveOrderID (a prior fallback overwrites it with the L2 move ID).
+func (e *Engine) confirmLoaderL1OnLoad(coreNodeName string, uopCount int64) (int64, bool) {
+	delivered, err := e.db.ListDeliveredRetrieveByDeliveryNode(coreNodeName, true)
 	if err != nil {
-		log.Printf("bin_ops: list retrieve orders for node %d: %v", nodeID, err)
+		log.Printf("bin_ops: list delivered empties for node %s: %v", coreNodeName, err)
 		return 0, false
 	}
-	var l1ID int64
-	for _, o := range active {
-		if o.RetrieveEmpty && o.Status == protocol.StatusDelivered {
-			l1ID = o.ID
-			break
-		}
-	}
-	if l1ID == 0 {
+	if len(delivered) == 0 {
 		return 0, false
 	}
+	l1ID := delivered[0].ID // oldest delivered empty at this slot
 	if err := e.orderMgr.ConfirmDelivery(l1ID, uopCount); err != nil {
 		log.Printf("bin_ops: confirm L1 %d on load: %v", l1ID, err)
 		return 0, false
@@ -249,8 +247,8 @@ func (e *Engine) ClearBin(nodeID int64) error {
 	// follows is purely physical state — order-lifecycle progression is
 	// owned by the confirm + OrderCompleted event handler.
 	if claim.Role == protocol.ClaimRoleConsume {
-		if u1ID, ok := e.confirmUnloaderU1OnClear(nodeID); ok {
-			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %d", u1ID, nodeID)
+		if u1ID, ok := e.confirmUnloaderU1OnClear(node.CoreNodeName); ok {
+			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %s", u1ID, node.CoreNodeName)
 		}
 	}
 	if err := e.coreClient.ClearBin(node.CoreNodeName); err != nil {
@@ -280,27 +278,22 @@ func (e *Engine) ClearBin(nodeID int64) error {
 // Returns (orderID, true) when a U1 was actually confirmed; (0, false)
 // otherwise (no delivered U1 found, or the confirm transition itself failed).
 //
-// Mirror of confirmLoaderL1OnLoad — the discriminator vs L1 is RetrieveEmpty:
-// L1 = retrieve with RetrieveEmpty=true, U1 = retrieve with RetrieveEmpty=false.
-// Passes 0 for finalCount: an unloader's bin is empty after the operator
-// processes the contents, which matches the inventoryDelta zero-out a few
-// lines below in ClearBin.
-func (e *Engine) confirmUnloaderU1OnClear(nodeID int64) (int64, bool) {
-	active, err := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, edgeorders.TypeRetrieve)
+// Mirror of confirmLoaderL1OnLoad, including the core-node lookup: the
+// discriminator vs L1 is RetrieveEmpty (U1 = retrieve with RetrieveEmpty=false).
+// Looks up by the unloader's CORE NODE so a shared unloader's U1 is found even
+// when it's tracked against a sibling process_node (same orphan-at-delivered bug
+// as the loader side). Passes 0 for finalCount: the bin is empty after the
+// operator processes the contents, matching the inventoryDelta zero-out below.
+func (e *Engine) confirmUnloaderU1OnClear(coreNodeName string) (int64, bool) {
+	delivered, err := e.db.ListDeliveredRetrieveByDeliveryNode(coreNodeName, false)
 	if err != nil {
-		log.Printf("bin_ops: list retrieve orders for node %d: %v", nodeID, err)
+		log.Printf("bin_ops: list delivered full-ins for node %s: %v", coreNodeName, err)
 		return 0, false
 	}
-	var u1ID int64
-	for _, o := range active {
-		if !o.RetrieveEmpty && o.Status == protocol.StatusDelivered {
-			u1ID = o.ID
-			break
-		}
-	}
-	if u1ID == 0 {
+	if len(delivered) == 0 {
 		return 0, false
 	}
+	u1ID := delivered[0].ID // oldest delivered full-in at this slot
 	if err := e.orderMgr.ConfirmDelivery(u1ID, 0); err != nil {
 		log.Printf("bin_ops: confirm U1 %d on clear: %v", u1ID, err)
 		return 0, false

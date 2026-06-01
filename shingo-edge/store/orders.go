@@ -135,6 +135,15 @@ func (db *DB) ListActiveOrdersByProcessNode(processNodeID int64) ([]orders.Order
 	return orders.ListActiveByProcessNode(db.DB, processNodeID)
 }
 
+// ListDeliveredRetrieveByDeliveryNode returns delivered retrieve orders matching
+// retrieveEmpty whose delivery_node is the given core node name, regardless of
+// which process_node row tracks them. The loader/unloader confirm-on-action
+// paths use it so a shared loader/unloader's side-cycle order is found even when
+// it's staged against a sibling process_node. See the orders-package docstring.
+func (db *DB) ListDeliveredRetrieveByDeliveryNode(deliveryNode string, retrieveEmpty bool) ([]orders.Order, error) {
+	return orders.ListDeliveredRetrieveByDeliveryNode(db.DB, deliveryNode, retrieveEmpty)
+}
+
 // ListActiveOrdersByProcessNodeOrSource returns non-terminal orders that
 // are either tracked at the given process node OR source from the given
 // source node name. The station service uses this so a manual_swap
