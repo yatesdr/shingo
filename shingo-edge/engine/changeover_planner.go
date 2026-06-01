@@ -141,7 +141,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			action.Err = fmt.Errorf("cannot build swap steps for node %s (mode %q)", node.Name, diff.FromClaim.SwapMode)
 			return action
 		}
-		assignDispatch(&action, diff.CoreNodeName, disp)
+		assignDispatch(&action, diff.CoreNodeName, diff.FromClaim.PayloadCode, disp)
 		action.NextState = domain.NodeTaskStagingRequested
 		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
 			action.LogTag = "swap_sequential"
@@ -184,7 +184,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			action.Err = fmt.Errorf("cannot build evacuate steps for node %s (mode %q)", node.Name, diff.FromClaim.SwapMode)
 			return action
 		}
-		assignDispatch(&action, diff.CoreNodeName, disp)
+		assignDispatch(&action, diff.CoreNodeName, diff.FromClaim.PayloadCode, disp)
 		action.NextState = domain.NodeTaskStagingRequested
 		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
 			action.LogTag = "evacuate_sequential"
@@ -293,14 +293,16 @@ func planKeepStagedAction(action changeover.NodeAction, fromClaim, toClaim *proc
 		deliverSteps := BuildKeepStagedDeliverSteps(toClaim)
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
 		action.SupplyOrder = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, deliverSteps, false)
-		action.EvacOrder = complexSpec("", toClaim.CoreNodeName, evacSteps, true)
+		// Evac carries the FROM-style payload (the outgoing bin) — see assignDispatch.
+		action.EvacOrder = complexSpecWithPayload("", toClaim.CoreNodeName, evacSteps, true, fromClaim.PayloadCode)
 		action.NextState = domain.NodeTaskStagingRequested
 		action.LogTag = "keep_staged_split"
 	default:
 		combinedSteps := BuildKeepStagedCombinedSteps(fromClaim, toClaim)
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
 		action.SupplyOrder = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, combinedSteps, false)
-		action.EvacOrder = complexSpec("", toClaim.CoreNodeName, evacSteps, true)
+		// Evac carries the FROM-style payload (the outgoing bin) — see assignDispatch.
+		action.EvacOrder = complexSpecWithPayload("", toClaim.CoreNodeName, evacSteps, true, fromClaim.PayloadCode)
 		action.NextState = domain.NodeTaskStagingRequested
 		action.LogTag = "keep_staged_combined"
 	}
@@ -310,12 +312,23 @@ func planKeepStagedAction(action changeover.NodeAction, fromClaim, toClaim *proc
 // assignDispatch wires a ChangeoverDispatch into NodeAction.SupplyOrder/EvacOrder.
 // processNode is the line node both legs belong to (CoreNodeName); empty
 // DeliveryNode for the evac order lets Core resolve from the steps.
-func assignDispatch(action *changeover.NodeAction, processNode string, d ChangeoverDispatch) {
+//
+// evacPayloadCode is the FROM-style payload — the payload of the OUTGOING bin
+// the removal leg must pick up. It MUST be stamped explicitly: the evac leg is
+// otherwise created with an empty payload, which lookupPayloadMeta
+// (orders/manager.go) then backfills with the TARGET (new) style's payload
+// during a changeover. The removal would then filter for the new payload and
+// fail to claim the old bin still at the line (payload mismatch → no_bin →
+// "no bin present at the node"), even though the bin is physically there — and
+// the supply leg proceeds, leaving two bins on the line. Plant incident
+// 2026-06-01 ALN_001. Mirrors the SituationDrop path, which already passes
+// FromClaim.PayloadCode for the same reason.
+func assignDispatch(action *changeover.NodeAction, processNode, evacPayloadCode string, d ChangeoverDispatch) {
 	if d.StepsA != nil {
 		action.SupplyOrder = complexSpec(d.DeliveryNodeA, processNode, d.StepsA, d.AutoConfirmA)
 	}
 	if d.StepsB != nil {
-		action.EvacOrder = complexSpec("", processNode, d.StepsB, d.AutoConfirmB)
+		action.EvacOrder = complexSpecWithPayload("", processNode, d.StepsB, d.AutoConfirmB, evacPayloadCode)
 	}
 }
 

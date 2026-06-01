@@ -54,6 +54,14 @@ func TestPlanNodeAction_Swap(t *testing.T) {
 	if !action.EvacOrder.Complex.AutoConfirm {
 		t.Error("evac order must auto-confirm (robot completes)")
 	}
+	// Regression (plant 2026-06-01 ALN_001): the evac/removal leg must carry the
+	// FROM-style payload (the outgoing bin), not the new/target style. Left empty
+	// it gets backfilled to the target style by lookupPayloadMeta during
+	// changeover, so the removal filters for the new payload and fails to claim
+	// the old bin still at the line ("no bin present at the node").
+	if action.EvacOrder.Complex.PayloadCode != "PART-A" {
+		t.Errorf("evac payload = %q, want PART-A (from-style); a non-from payload reopens the ALN_001 removal failure", action.EvacOrder.Complex.PayloadCode)
+	}
 	if action.NextState != domain.NodeTaskStagingRequested {
 		t.Errorf("NextState = %q, want staging_requested", action.NextState)
 	}
@@ -463,6 +471,9 @@ func TestPlanNodeAction_KeepStagedSplit(t *testing.T) {
 	if action.SupplyOrder == nil || action.EvacOrder == nil {
 		t.Fatal("keep-staged split needs both orders")
 	}
+	if action.EvacOrder.Complex.PayloadCode != "PART-A" {
+		t.Errorf("keep-staged split evac payload = %q, want PART-A (from-style)", action.EvacOrder.Complex.PayloadCode)
+	}
 }
 
 func TestPlanNodeAction_KeepStagedCombined(t *testing.T) {
@@ -482,6 +493,12 @@ func TestPlanNodeAction_KeepStagedCombined(t *testing.T) {
 
 	if action.LogTag != "keep_staged_combined" {
 		t.Errorf("LogTag = %q, want keep_staged_combined", action.LogTag)
+	}
+	if action.EvacOrder == nil || action.EvacOrder.Complex == nil {
+		t.Fatal("keep-staged combined needs an evac order")
+	}
+	if action.EvacOrder.Complex.PayloadCode != "PART-A" {
+		t.Errorf("keep-staged combined evac payload = %q, want PART-A (from-style)", action.EvacOrder.Complex.PayloadCode)
 	}
 }
 
