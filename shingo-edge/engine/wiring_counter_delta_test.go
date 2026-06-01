@@ -47,8 +47,6 @@ type fakeDeltaSink struct {
 	// lifecycle.
 	bindCalls                []fakeBindCall
 	clearActiveCalls         []int64
-	prepareIncomingCalls     []fakePrepareIncomingCall
-	clearCacheCalls          []int64
 	clearActiveAndResetCalls []fakeClearActiveAndResetCall
 	setClaimAndCountCalls    []fakeSetClaimAndCountCall
 	onDeliveredCalls         []fakeOnDeliveredCall
@@ -74,7 +72,6 @@ type fakeDeltaSink struct {
 // satisfies it.
 type writeActiveBinIDer interface {
 	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
-	SetProcessNodeCachedBin(processNodeID int64, cachedBinID *int64, remainingUOP int) error
 	SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error
 	SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error
 	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error
@@ -156,34 +153,6 @@ func (s *fakeDeltaSink) ClearActiveBin(nodeID int64) error {
 	s.mu.Unlock()
 	if db != nil {
 		return db.SetProcessNodeActiveBinID(nodeID, nil)
-	}
-	return nil
-}
-
-type fakePrepareIncomingCall struct {
-	NodeID int64
-	BinID  int64
-	UOP    int
-}
-
-func (s *fakeDeltaSink) PrepareIncoming(nodeID, binID int64, uop int) error {
-	s.mu.Lock()
-	s.prepareIncomingCalls = append(s.prepareIncomingCalls, fakePrepareIncomingCall{nodeID, binID, uop})
-	db := s.db
-	s.mu.Unlock()
-	if db != nil {
-		return db.SetProcessNodeCachedBin(nodeID, &binID, uop)
-	}
-	return nil
-}
-
-func (s *fakeDeltaSink) ClearCache(nodeID int64) error {
-	s.mu.Lock()
-	s.clearCacheCalls = append(s.clearCacheCalls, nodeID)
-	db := s.db
-	s.mu.Unlock()
-	if db != nil {
-		return db.SetProcessNodeCachedBin(nodeID, nil, 0)
 	}
 	return nil
 }

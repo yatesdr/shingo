@@ -1294,8 +1294,8 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	}
 
 	// Complete OrderA. Under the new contract, runtime cache no longer
-	// flips at confirm — only at delivered (cached_bin_id /
-	// active_bin_id / remaining_uop_cached) and at release-click.
+	// flips at confirm — only at delivered (active_bin_id /
+	// active_bin_epoch / remaining_uop_cached) and at release-click.
 	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
 	markOrderTerminal(db, orderA.ID)
 	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &primaryID)

@@ -6,10 +6,10 @@
 //
 // One handler, one rule, no role/mode dispatch. When the destination
 // matches a process_node we own, the runtime cache (active_bin_id,
-// cached_bin_id, remaining_uop_cached) flips to the delivered bin's
-// authoritative UOP from Core. Removal-shaped orders (DeliveryNode is
-// the supermarket) and multi-bin orders (BinID nil at the envelope)
-// no-op out — DeliveryNode == CoreNodeName is the gate.
+// active_bin_epoch, remaining_uop_cached) flips to the delivered bin's
+// authoritative UOP carried on the OrderDelivered envelope. Removal-shaped
+// orders (DeliveryNode is the supermarket) and multi-bin orders (BinID
+// nil at the envelope) no-op out — DeliveryNode == CoreNodeName is the gate.
 //
 // This is the "physics → cache" half of the runtime UOP binding split.
 // Operator-semantic events (StatusConfirmed) no longer touch the cache;

@@ -157,34 +157,9 @@ func (m *Mutator) BindActiveBin(nodeID, binID int64) error {
 // runtime row. Today's caller is handler_bin_picked_up.go:126 (Core
 // BinPickedUp arrival — the bin has physically left the slot, so any
 // subsequent ticks attribute to nothing rather than to the now-gone
-// bin). Does NOT touch count, claim, or cached bin pointer.
+// bin). Does NOT touch count or claim.
 func (m *Mutator) ClearActiveBin(nodeID int64) error {
 	return m.rw.SetProcessNodeActiveBinID(nodeID, nil)
-}
-
-// PrepareIncoming writes the cached bin pointer + count to the
-// incoming supply bin's identity. Today's caller is
-// operator_release.go:358 (operator release click — operator declares
-// the old bin is leaving; cached bin pointer flips to whichever
-// supply bin is en route to this slot, with whatever UOP the order
-// manager resolved). Does NOT touch active_bin_id (still the outgoing
-// bin until pickup) or claim. This is what opens the gap window:
-// after this write, active_bin_id != cached_bin_id until delivery.
-//
-// uop is passed explicitly — do NOT derive from claim.UOPCapacity.
-// SEND PARTIAL BACK preserves the runtime cache value rather than
-// resetting to capacity, and capture/lineside-only paths can pass 0.
-// The caller knows what value belongs on the runtime row.
-func (m *Mutator) PrepareIncoming(nodeID int64, incomingBinID int64, uop int) error {
-	return m.rw.SetProcessNodeCachedBin(nodeID, &incomingBinID, uop)
-}
-
-// ClearCache nulls the cached bin pointer and zeros the count. Today's
-// caller is operator_produce.go:151 (produce-side reset — the produce
-// node finalized a bin and there's no incoming bin identity yet).
-// Does NOT touch active_bin_id or claim.
-func (m *Mutator) ClearCache(nodeID int64) error {
-	return m.rw.SetProcessNodeCachedBin(nodeID, nil, 0)
 }
 
 // ClearActiveAndReset atomically clears active_bin_id and zeros the
@@ -218,15 +193,15 @@ func (m *Mutator) SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) 
 	return m.rw.SetProcessNodeRuntime(nodeID, activeClaimID, uop)
 }
 
-// OnDelivered atomically writes claim + active_bin_id + cached_bin_id
+// OnDelivered atomically writes claim + active_bin_id + active_bin_epoch
 // + count when a bin physically arrives at the slot. Today's caller
-// is wiring_delivered.go:82 (delivery completion handler). Brings
-// active_bin_id = cached_bin_id = binID so the gap window closes and
-// the PLC tick gate resumes cache decrements.
+// is wiring_delivered.go:82 (delivery completion handler). Binds
+// active_bin_id to the delivered bin so PLC ticks attribute to it.
 //
-// uop is passed explicitly — caller resolves from Core's BinByID
-// lookup (or a configured fallback when Core is unreachable;
-// wiring_delivered.go owns the resolution decision today).
+// uop and deltaEpoch are seeded from the OrderDelivered envelope (the
+// bin's authoritative count + load-lifecycle epoch carried by Core at
+// arrival), or a configured fallback when the envelope omits them;
+// wiring_delivered.go owns the resolution decision today.
 //
 // activeClaimID is a pointer so the caller can thread the existing
 // runtime.ActiveClaimID through (or set a fresh claim for the
@@ -276,12 +251,6 @@ func (m *Mutator) AdjustBucket(nodeID int64, coreNodeName, pairKey string, style
 // bin identity (multi-bin order, pre-fix Core build); in that case
 // active_bin_id is nulled to make the absence explicit rather than
 // leaving a stale pointer behind.
-//
-// Note this does NOT also set cached_bin_id; the wrap of
-// SetProcessNodeRuntimeWithBin (claim + active + count, cached
-// untouched) means a follow-up cache write may be needed depending
-// on whether the runtime row's cached pointer was already in
-// agreement. The current call site doesn't write cached separately.
 func (m *Mutator) ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, uop int) error {
 	return m.rw.SetProcessNodeRuntimeWithBin(nodeID, activeClaimID, binID, uop)
 }

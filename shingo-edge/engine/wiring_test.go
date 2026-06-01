@@ -129,18 +129,14 @@ func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (process
 	}
 
 	db.EnsureProcessNodeRuntime(nodeID)
-	// Default seed: a bin is "physically at the slot" so PLC tick tests
-	// emit deltas via binAtNode without each test having to set
-	// active_bin_id explicitly. cached_bin_id is set to the same value
-	// so the PLC tick gate sees steady state (active == cached) and
-	// applies the cache decrement / increment. Delivery-completion tests
-	// that exercise the bin-pointer turnover path overwrite via
-	// SetProcessNodeRuntimeForDeliveredBin; gap-window tests overwrite
-	// just one of the pointers via SetProcessNodeCachedBin /
-	// SetProcessNodeActiveBinID.
+	// Default seed: a bin is "physically at the slot" (active_bin_id set)
+	// so PLC tick tests emit deltas via binAtNode and decrement the cache
+	// without each test having to set active_bin_id explicitly.
+	// Delivery-completion tests that exercise the bin-pointer turnover path
+	// overwrite via SetProcessNodeRuntimeForDeliveredBin; gap tests clear
+	// the pointer via SetProcessNodeActiveBinID.
 	defaultBin := int64(1)
 	db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &defaultBin, cfg.InitialUOP)
-	db.SetProcessNodeCachedBin(nodeID, &defaultBin, cfg.InitialUOP)
 	return processID, nodeID, styleID, claimID
 }
 
@@ -200,10 +196,9 @@ func TestWiring_CounterDelta_ProduceIncrementsUOP(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	// Steady-state seed: bin physically present and matches cache.
+	// Bin physically present at the slot so the produce tick is applied.
 	bin := int64(7)
 	db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bin, 10)
-	db.SetProcessNodeCachedBin(nodeID, &bin, 10)
 
 	eng.handleCounterDelta(CounterDeltaEvent{
 		ProcessID: processID,
@@ -231,11 +226,10 @@ func TestWiring_CounterDelta_EmitsProducedReport(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	// Steady-state seed so the produce tick is applied (mirrors the
+	// Bin physically present so the produce tick is applied (mirrors the
 	// IncrementsUOP test above).
 	bin := int64(7)
 	db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bin, 10)
-	db.SetProcessNodeCachedBin(nodeID, &bin, 10)
 
 	var got []ProducedReportEvent
 	eng.Events.SubscribeTypes(func(evt Event) {
@@ -516,14 +510,11 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 
 	db.EnsureProcessNodeRuntime(nodeAID)
 	db.EnsureProcessNodeRuntime(nodeBID)
-	// Set both active_bin_id and cached_bin_id so the PLC tick gate sees
-	// steady state (active == cached) and applies the cache decrement.
+	// Bind active_bin_id on both so PLC ticks decrement the cache.
 	binA := int64(1)
 	binB := int64(2)
 	db.SetProcessNodeRuntimeWithBin(nodeAID, &claimAID, &binA, 80)
 	db.SetProcessNodeRuntimeWithBin(nodeBID, &claimBID, &binB, 80)
-	db.SetProcessNodeCachedBin(nodeAID, &binA, 80)
-	db.SetProcessNodeCachedBin(nodeBID, &binB, 80)
 
 	// Node A starts as active pull, Node B starts as inactive
 	db.SetActivePull(nodeAID, true)
@@ -736,8 +727,6 @@ func seedABProducePair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID,
 	binB := int64(22)
 	db.SetProcessNodeRuntimeWithBin(nodeAID, &claimAID, &binA, 10)
 	db.SetProcessNodeRuntimeWithBin(nodeBID, &claimBID, &binB, 10)
-	db.SetProcessNodeCachedBin(nodeAID, &binA, 10)
-	db.SetProcessNodeCachedBin(nodeBID, &binB, 10)
 	db.SetActivePull(nodeAID, true)
 	db.SetActivePull(nodeBID, false)
 
@@ -775,8 +764,6 @@ func seedAsymmetricABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeB
 	binB := int64(12)
 	db.SetProcessNodeRuntimeWithBin(nodeAID, &claimAID, &binA, 80)
 	db.SetProcessNodeRuntimeWithBin(nodeBID, &claimBID, &binB, 80)
-	db.SetProcessNodeCachedBin(nodeAID, &binA, 80)
-	db.SetProcessNodeCachedBin(nodeBID, &binB, 80)
 	db.SetActivePull(nodeAID, true)
 	db.SetActivePull(nodeBID, false)
 

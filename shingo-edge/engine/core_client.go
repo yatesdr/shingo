@@ -257,50 +257,6 @@ func (c *CoreClient) BinAtLineside(nodeName string) (*NodeBinInfo, bool, error) 
 	return nil, true, nil
 }
 
-// BinByID is the tri-state lookup used by release-click to bind the
-// runtime cache to the incoming supply bin's authoritative UOP. Returns:
-//
-//   - (uop, true, nil)   — Core confirms the bin exists; uop is the
-//     authoritative count.
-//   - (0, true, nil)     — Core confirms no such bin (404 / not found).
-//   - (0, false, err)    — Core unreachable (network error, non-200,
-//     decode failure). Caller MUST retain the prior cached value rather
-//     than zeroing — same B2-fix rationale as BinAtLineside.
-//
-// Mirrors the BinAtLineside contract so the release-click write at
-// operator_release.go can cleanly distinguish "bin truly empty" from
-// "couldn't reach Core" and apply the no-overwrite policy in the
-// latter case.
-func (c *CoreClient) BinByID(binID int64) (int, bool, error) {
-	if c == nil || c.baseURL == "" {
-		return 0, false, fmt.Errorf("core API not configured")
-	}
-	if binID <= 0 {
-		return 0, false, fmt.Errorf("bin id must be positive")
-	}
-	params := url.Values{}
-	params.Set("id", fmt.Sprintf("%d", binID))
-	resp, err := c.http.Get(c.baseURL + "/api/bins/uop?" + params.Encode())
-	if err != nil {
-		return 0, false, fmt.Errorf("fetch bin %d uop: %w", binID, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, false, fmt.Errorf("fetch bin %d uop: HTTP %d", binID, resp.StatusCode)
-	}
-	var body struct {
-		Found        bool `json:"found"`
-		UOPRemaining int  `json:"uop_remaining"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return 0, false, fmt.Errorf("decode bin %d uop: %w", binID, err)
-	}
-	if !body.Found {
-		return 0, true, nil
-	}
-	return body.UOPRemaining, true, nil
-}
-
 // FetchNodeBins returns bin state for the given core node names.
 // Returns nil (no error) if Core is unavailable or unreachable.
 func (c *CoreClient) FetchNodeBins(nodeNames []string) ([]NodeBinInfo, error) {

@@ -230,11 +230,11 @@ The formula in the design brief is `max(2, ceil(threshold / C))` — the per-bin
 
 1. Explicit `claim.ReorderPoint > 0` gate makes opt-in semantic explicit (the old condition `newRemaining <= ReorderPoint` was unsatisfiable when `ReorderPoint = 0`, but the path still ran every tick).
 2. Diagnostic log line on every evaluation with the gate outcome, so engineers can see *why* nothing fires.
-3. Symmetric log on the produce-side tick path and a debug-level log on the `inSteadyState` skip path.
+3. Symmetric log on the produce-side tick path and a debug-level log when a tick is held during the no-bin gap (see below).
 
-### inSteadyState gap
+### Unbound-slot gap
 
-There's a gap between bin release at the cell and bin delivery to the supermarket during which `newRemaining` doesn't update (the bin's UOP isn't credited until delivery confirmation). The autoreorder evaluation is intentionally suppressed during this window — firing during the gap would over-order, since the in-flight bin will land shortly. The `inSteadyState` gate is the existing mechanism; the v6 addition is a debug log on the skip path.
+There's a gap between physical pickup of the old bin at the cell and delivery of the new bin to the slot during which no bin is bound (`active_bin_id` is nil) and `remaining_uop_cached` doesn't update — the new bin's UOP isn't credited until its `OrderDelivered` envelope binds it. Under the single-pointer hold-and-replay model, the bin portion of each tick during this gap accumulates in `pending_uop_delta` and replays onto the next bin when it binds; the cache value isn't touched while unbound, so autoreorder evaluation naturally doesn't fire against a stale count during the gap — firing then would over-order, since the in-flight bin lands shortly. The v6 addition is a debug log on the held-tick path.
 
 ### Backfill: there isn't one
 

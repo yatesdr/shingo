@@ -108,7 +108,6 @@ type RuntimeState struct {
 	// refresh; persists across Edge restarts via the column on
 	// process_node_runtime_states.
 	ActiveBinEpoch     int64  `json:"active_bin_epoch"`
-	CachedBinID        *int64 `json:"cached_bin_id,omitempty"`
 	RemainingUOPCached int    `json:"remaining_uop_cached"`
 	// PendingUOPDelta holds count changes that arrived while no bin was
 	// bound at this slot (active_bin_id nil — the pickup→delivery gap).

@@ -155,13 +155,15 @@ func (db *DB) migrate() error {
 	// Idempotent — duplicate ALTER ADD COLUMN fails silently in SQLite.
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN active_bin_id INTEGER")
 
-	// Runtime UOP binding: cached_bin_id records which bin remaining_uop_cached
-	// is accounting for. Set at release-click (incoming supply bin) and
-	// re-affirmed at delivery (the actually-arrived bin). PLC tick gates
-	// cache decrement on active_bin_id == cached_bin_id (steady state) vs.
-	// !=  (release→delivery gap, where cache represents the next bin and
-	// physical reality is the old bin or nothing).
-	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN cached_bin_id INTEGER")
+	// Retire the cached_bin_id gap-window second pointer. The old
+	// two-pointer model gated cache writes on active_bin_id == cached_bin_id
+	// (steady state) and suppressed them during the release→delivery gap;
+	// the single-pointer hold-and-replay model (pending_uop_delta below)
+	// replaces it. DROP is a no-op on fresh DBs that never had the column
+	// (this whole migration re-runs every startup and ignores errors) and
+	// removes the column from existing DBs that were upgraded through the
+	// old ADD COLUMN.
+	db.Exec("ALTER TABLE process_node_runtime_states DROP COLUMN cached_bin_id")
 
 	// Epoch mirror for active_bin_id (post-epoch fix). Old rows land
 	// at 0 — the pre-migration cohort that lines up with Core's

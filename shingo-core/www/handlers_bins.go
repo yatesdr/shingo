@@ -629,37 +629,6 @@ func (h *Handlers) apiBinDetail(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, resp)
 }
 
-// apiBinUOP returns a bin's authoritative uop_remaining as a tri-state
-// lookup keyed by bin id. Edge calls this at release-click to bind the
-// runtime cache to the incoming supply bin's count without paying the
-// full bin-detail payload (manifest, audit, recent orders).
-//
-//   - 200 {found: true, uop_remaining: N}  — bin exists.
-//   - 200 {found: false}                   — bin does not exist.
-//   - 5xx                                  — Core unavailable; Edge
-//     retains the prior cached value rather than zeroing.
-//
-// Mirrors the BinAtLineside contract in shingo-edge/engine/core_client.go
-// so callers can tell "confirmed not found" from "couldn't reach Core."
-func (h *Handlers) apiBinUOP(w http.ResponseWriter, r *http.Request) {
-	id, ok := h.parseIDParam(w, r, "id")
-	if !ok {
-		return
-	}
-
-	type binUOPResponse struct {
-		Found        bool `json:"found"`
-		UOPRemaining int  `json:"uop_remaining"`
-	}
-
-	b, err := h.engine.BinService().GetBin(id)
-	if err != nil {
-		h.jsonOK(w, binUOPResponse{Found: false})
-		return
-	}
-	h.jsonOK(w, binUOPResponse{Found: true, UOPRemaining: b.UOPRemaining})
-}
-
 // --- Bulk bin action API ---
 
 func (h *Handlers) apiBulkBinAction(w http.ResponseWriter, r *http.Request) {

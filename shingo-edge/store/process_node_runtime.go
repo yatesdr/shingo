@@ -38,23 +38,12 @@ func (db *DB) SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64)
 	return processes.SetActiveBinID(db.DB, processNodeID, activeBinID)
 }
 
-// SetProcessNodeCachedBin writes cached_bin_id and remaining_uop_cached
-// together. Set at release-click (cache flips to the incoming supply
-// bin's UOP) and re-affirmed at delivery. Doesn't touch active_bin_id —
-// the gap-window contract relies on cached_bin_id (incoming) and
-// active_bin_id (currently-physical) being separately addressable so
-// the PLC tick gate can detect the gap.
-func (db *DB) SetProcessNodeCachedBin(processNodeID int64, cachedBinID *int64, remainingUOP int) error {
-	return processes.SetCachedBin(db.DB, processNodeID, cachedBinID, remainingUOP)
-}
-
 // SetProcessNodeRuntimeForDeliveredBin writes active_claim_id,
-// active_bin_id, active_bin_epoch, cached_bin_id, and remaining_uop_cached
-// atomically when a bin physically arrives at the slot. Brings
-// active_bin_id and cached_bin_id into agreement so the PLC tick gate
-// resumes cache decrements/increments. deltaEpoch is the arrived bin's
-// load-lifecycle epoch (from the OrderDelivered envelope) so subsequent
-// tick deltas carry the right generation.
+// active_bin_id, active_bin_epoch, and remaining_uop_cached atomically
+// when a bin physically arrives at the slot. deltaEpoch is the arrived
+// bin's load-lifecycle epoch (from the OrderDelivered envelope) so
+// subsequent tick deltas carry the right generation; remainingUOP is the
+// bin's authoritative count from the same envelope.
 func (db *DB) SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error {
 	return processes.SetRuntimeForDeliveredBin(db.DB, processNodeID, activeClaimID, binID, deltaEpoch, remainingUOP)
 }

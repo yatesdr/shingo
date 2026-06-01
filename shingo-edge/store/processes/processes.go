@@ -309,7 +309,7 @@ func generateNodeCode(db *sql.DB, processID int64, coreNodeName, name string) (s
 func scanRuntime(scanner interface{ Scan(...interface{}) error }) (RuntimeState, error) {
 	var r RuntimeState
 	var updatedAt string
-	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.ActiveBinEpoch, &r.CachedBinID, &r.RemainingUOPCached,
+	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.ActiveBinEpoch, &r.RemainingUOPCached,
 		&r.PendingUOPDelta, &r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
 	if err != nil {
 		return r, err
@@ -337,7 +337,7 @@ func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 
 // GetRuntime returns the runtime row for a process_node.
 func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
-	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, cached_bin_id, remaining_uop_cached,
+	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, remaining_uop_cached,
 		pending_uop_delta, active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID))
 	if err != nil {
@@ -374,19 +374,19 @@ func SetRuntimeWithBin(db *sql.DB, processNodeID int64, activeClaimID, activeBin
 	return err
 }
 
-// SetRuntimeForDeliveredBin is the four-field write used when a bin
-// physically arrives at the slot: active_claim_id, active_bin_id, and
-// cached_bin_id all become the delivered bin's id, remaining_uop_cached
-// becomes the bin's authoritative uop_remaining. After this write the
-// PLC tick gate sees active_bin_id == cached_bin_id (steady state) and
-// resumes cache decrements/increments. binID must not be nil — this is
-// the delivered-bin handler's atomic write; callers gate on
-// order.DeliveryNode == ctx.node.CoreNodeName before invoking.
+// SetRuntimeForDeliveredBin is the atomic write used when a bin
+// physically arrives at the slot: active_claim_id and active_bin_id
+// become the delivered bin's id, active_bin_epoch becomes the bin's
+// load-lifecycle epoch, and remaining_uop_cached becomes the bin's
+// authoritative uop_remaining (carried on the OrderDelivered envelope).
+// binID must not be nil — this is the delivered-bin handler's atomic
+// write; callers gate on order.DeliveryNode == ctx.node.CoreNodeName
+// before invoking.
 func SetRuntimeForDeliveredBin(db *sql.DB, processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOPCached int) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_claim_id=?, active_bin_id=?, active_bin_epoch=?, cached_bin_id=?, remaining_uop_cached=?, updated_at=datetime('now')
+		active_claim_id=?, active_bin_id=?, active_bin_epoch=?, remaining_uop_cached=?, updated_at=datetime('now')
 		WHERE process_node_id=?`,
-		activeClaimID, binID, deltaEpoch, binID, remainingUOPCached, processNodeID)
+		activeClaimID, binID, deltaEpoch, remainingUOPCached, processNodeID)
 	return err
 }
 
@@ -400,21 +400,6 @@ func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 		active_bin_id=?, updated_at=datetime('now')
 		WHERE process_node_id=?`,
 		activeBinID, processNodeID)
-	return err
-}
-
-// SetCachedBin writes cached_bin_id and remaining_uop_cached together.
-// Used at release-click (cachedBinID = supply leg's bin, value = bin's
-// uop_remaining; or nil/0 when no incoming supply leg) and at delivery
-// (re-affirms with the actually-arrived bin's id and uop). active_bin_id
-// is updated separately — at release-click it stays pointing at the old
-// bin (or nil after pickup); at delivery the caller writes both this
-// row's fields plus active_bin_id via SetRuntimeWithBin.
-func SetCachedBin(db *sql.DB, processNodeID int64, cachedBinID *int64, remainingUOPCached int) error {
-	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		cached_bin_id=?, remaining_uop_cached=?, updated_at=datetime('now')
-		WHERE process_node_id=?`,
-		cachedBinID, remainingUOPCached, processNodeID)
 	return err
 }
 

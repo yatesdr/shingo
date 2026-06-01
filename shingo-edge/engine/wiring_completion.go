@@ -429,8 +429,8 @@ func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
 	log.Printf("side-cycle: L2 (filled-out) order %d for loader %s → %s payload=%q", order.ID, ctx.node.Name, claim.OutboundDestination, loadedPayloadCode)
 	// Runtime cache binding is owned by the delivered handler — L1's
 	// empty bin landing at the loader already wrote active_bin_id /
-	// cached_bin_id / remaining_uop_cached. Confirm only swaps the
-	// active order pointer so the loader UI shows L2 next.
+	// remaining_uop_cached. Confirm only swaps the active order pointer
+	// so the loader UI shows L2 next.
 	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, &order.ID, nil); err != nil {
 		log.Printf("side-cycle: update runtime orders for loader %d: %v", ctx.node.ID, err)
 	}
@@ -484,8 +484,8 @@ func applyUnloaderFullIn(e *Engine, ctx *orderCompletionCtx) bool {
 	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s payload=%q", order.ID, ctx.node.Name, claim.OutboundDestination, ctx.order.PayloadCode)
 	// Runtime cache binding is owned by the delivered handler — U1's
 	// full bin landing at the unloader already wrote active_bin_id /
-	// cached_bin_id / remaining_uop_cached. Confirm only swaps the
-	// active order pointer so the unloader UI shows U2 next.
+	// remaining_uop_cached. Confirm only swaps the active order pointer
+	// so the unloader UI shows U2 next.
 	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, &order.ID, nil); err != nil {
 		log.Printf("side-cycle: update runtime orders for unloader %d: %v", ctx.node.ID, err)
 	}
@@ -558,12 +558,11 @@ func applyProduceIngest(e *Engine, ctx *orderCompletionCtx) bool {
 }
 
 // handleNormalReplenishment handles standard retrieve/complex order completion.
-// Cache binding is owned by:
-//   - operator release-click (incoming supply bin's UOP via SetProcessNodeCachedBin)
-//   - handleNodeOrderDelivered (the actually-arrived bin's UOP)
-//
-// Confirm only does order-pointer bookkeeping for manual_swap nodes and
-// fires the keep-staged hook (currently a no-op).
+// Cache binding is owned by handleNodeOrderDelivered — the delivered
+// bin's authoritative UOP arrives on its OrderDelivered envelope and
+// seeds active_bin_id + remaining_uop_cached. Confirm only does
+// order-pointer bookkeeping for manual_swap nodes and fires the
+// keep-staged hook (currently a no-op).
 func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	if ctx.order.OrderType != orders.TypeRetrieve && ctx.order.OrderType != orders.TypeComplex {
 		return

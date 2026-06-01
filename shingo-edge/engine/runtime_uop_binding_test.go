@@ -99,9 +99,6 @@ func TestRuntimeBinding_ReleaseDoesNotPreloadIncomingBin(t *testing.T) {
 	if rt.RemainingUOPCached != 0 {
 		t.Errorf("cache = %d, want 0 (RELEASE EMPTY finalizes the OLD bin; the incoming 1200 must NOT be pre-loaded)", rt.RemainingUOPCached)
 	}
-	if rt.CachedBinID != nil && *rt.CachedBinID == incomingBin {
-		t.Errorf("CachedBinID = %d — release must not pre-load/stamp the incoming bin", *rt.CachedBinID)
-	}
 	_ = claimID
 }
 

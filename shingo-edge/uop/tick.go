@@ -8,18 +8,19 @@
 //   - Produced: produce_tick (bin only — produce nodes don't drain lineside)
 //   - Fallthrough: consume_drain (bucket) + ab_fallthrough (bin)
 //
-// Verbs do not own the gap-window gate, lineside drain, payloadCode
-// resolution, or cache write. Engine continues to compute drains via
-// drainLinesideFirst, resolves (binID, payloadCode) via binAtNode,
-// gates cache writes on inSteadyState, and runs the auto-reorder /
-// auto-relief threshold checks against the post-tick cache value.
+// Verbs do not own the hold-and-replay handling, lineside drain,
+// payloadCode resolution, or cache write. Engine continues to compute
+// drains via drainLinesideFirst, resolves (binID, payloadCode) via
+// binAtNode, holds ticks in pending_uop_delta when no bin is bound and
+// replays them on bind, and runs the auto-reorder / auto-relief
+// threshold checks against the post-tick cache value.
 //
 // Why this shape: the value-add at the verb boundary is the reason
 // taxonomy lock-in (one verb invocation maps to one set of reasons —
 // no risk of a future caller picking the wrong reason). Folding the
-// gap-window gate and lineside drain into the verb requires more
-// dependency surface (runtimeReader, bucket store drain methods) and
-// belongs in a follow-up that audits the runtime cache write path
+// hold-and-replay handling and lineside drain into the verb requires
+// more dependency surface (runtimeReader, bucket store drain methods)
+// and belongs in a follow-up that audits the runtime cache write path
 // end-to-end.
 package uop
 

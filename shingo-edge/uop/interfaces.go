@@ -22,13 +22,11 @@ type Ticker interface {
 }
 
 // SlotWriter — runtime-row mutations on process_node_runtime_states.
-// Each verb maps 1:1 to an underlying store call so gap-window
-// semantics are visible at the call site.
+// Each verb maps 1:1 to an underlying store call so the slot-lifecycle
+// intent is visible at the call site.
 type SlotWriter interface {
 	BindActiveBin(nodeID, binID int64) error
 	ClearActiveBin(nodeID int64) error
-	PrepareIncoming(nodeID int64, incomingBinID int64, uop int) error
-	ClearCache(nodeID int64) error
 	SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) error
 	ClearActiveAndReset(nodeID int64, activeClaimID *int64) error
 	OnDelivered(nodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, uop int) error

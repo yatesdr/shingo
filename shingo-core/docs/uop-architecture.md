@@ -77,11 +77,9 @@ Engine and other callers route every UOP state mutation through a named verb on 
 |---|---|
 | `BindActiveBin` | `active_bin_id := bin` (L1 retrieve confirm) |
 | `ClearActiveBin` | `active_bin_id := nil` (pickup clear) |
-| `PrepareIncoming` | `cached_bin_id := bin`, `remaining_uop_cached := uop` (release-click cache flip) |
-| `ClearCache` | `cached_bin_id := nil`, `remaining_uop_cached := 0` (produce reset) |
 | `SetClaimAndCount` | `active_claim_id := claim`, `remaining_uop_cached := uop` (no pointer changes) |
 | `ClearActiveAndReset` | `active_claim_id := claim`, `active_bin_id := nil`, `remaining_uop_cached := 0` (atomic Order B completion at supermarket) |
-| `OnDelivered` | All four fields atomic (delivery — closes gap window) |
+| `OnDelivered` | `active_claim_id` + `active_bin_id` + `active_bin_epoch` + `remaining_uop_cached` atomic (delivery binds the arrived bin from its OrderDelivered envelope) |
 | `ManualLoad` | claim + active_bin + count atomic (operator imprint via loader fallback) |
 
 **Capturer** — release-click capture + admin bucket adjust.
@@ -176,7 +174,7 @@ These are SME-locked and treated as ground truth across the codebase.
 
 **Operator-trusted measurements.** SEND PARTIAL BACK count is ground truth — overrides the runtime cache. Produce-ingest count uses the operator-measured runtime value at finalize time, not the template's `UOPCapacity`.
 
-**Gap-window gate.** Between release click and delivery completion, the Edge runtime row has `active_bin_id != cached_bin_id`. PLC ticks during this gap drain lineside as usual and emit deltas against `active_bin_id` (the bin still physically present), but the local cache write is suppressed because the cache represents the *incoming* bin. `inSteadyState(runtime)` is the gate; once delivery sets `active_bin_id := cached_bin_id`, cache decrements resume.
+**Hold-and-replay gap handling.** The Edge runtime row carries a single bin pointer, `active_bin_id`. Release click finalizes the *outgoing* bin per its disposition and does **not** pre-load or stamp the incoming supply bin — the new bin's count and epoch arrive later on its `OrderDelivered` envelope, which binds `active_bin_id`. Between physical pickup of the old bin and delivery of the new one, no bin is bound: PLC ticks during this gap still drain lineside as usual, but the bin portion of each tick is accumulated into `pending_uop_delta` (a durable column) rather than charged to a departed bin or lost. When the next bin binds, the first tick applies `current + pending` and resets the pending pile to zero, replaying the held consumption onto the new bin. The lineside bucket — location-bound at the slot — covers the parts the operator runs during the gap.
 
 ## Release UI dispositions
 
@@ -278,7 +276,7 @@ Pre-flip, this was healed by the reconciler. Post-flip, no heal mechanism exists
 | `shingo-edge/uop/store_iface.go` | Narrow store interfaces (runtimeWriter / bucketStore / nodeStore) |
 | `shingo-edge/uop/archtest_test.go` | CI invariant: no direct RecordBin/RecordBucket outside uop/ |
 | `shingo-edge/engine/wiring_counter_delta.go` | PLC tick path; resolves context + calls Consumed/Produced/Fallthrough |
-| `shingo-edge/engine/operator_release.go` | Release dispositions; calls CaptureToLineside + PrepareIncoming |
+| `shingo-edge/engine/operator_release.go` | Release dispositions; finalizes the outgoing bin and calls CaptureToLineside (does not pre-load the incoming bin) |
 | `shingo-edge/engine/operator_ab_cycling.go` | A/B flip; calls MarkAttributionBoundary before SetActivePull swap |
 | `shingo-edge/engine/handler_bin_picked_up.go` | Edge handler for BinPickedUp envelope; calls OnBinPickedUp + ClearActiveBin |
 | `shingo-core/uop/applier.go` | InventoryDeltaService — apply bin/bucket deltas; manifest-clearing trigger |

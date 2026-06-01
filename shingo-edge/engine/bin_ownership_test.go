@@ -149,7 +149,7 @@ func TestBinOwnership_DeliveryThenTickThenPickup(t *testing.T) {
 	// Phase 1: delivery handler fires (emitOrderCompleted helper now
 	// emits EventOrderDelivered first under the new contract).
 	// handleNodeOrderDelivered → SetProcessNodeRuntimeForDeliveredBin
-	// sets active_bin_id, cached_bin_id, and remaining_uop_cached.
+	// sets active_bin_id, active_bin_epoch, and remaining_uop_cached.
 	emitOrderCompleted(eng, orderID, orderUUID, orders.TypeRetrieve, &nodeID)
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)

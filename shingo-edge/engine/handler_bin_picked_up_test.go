@@ -165,11 +165,11 @@ func TestRegression_PartialBackTicksAttributeToReleasedBin(t *testing.T) {
 // physical step, BEFORE the operator clicks RELEASE. Pre-fix the
 // handler matched runtime.ActiveOrderID == orderA.ID (because
 // applyConsumePlan sets A as active and B as staged), then nulled both
-// the active order pointer and active_bin_id. inSteadyState() returned
-// false for the entire staging window (active_bin_id=nil), so PLC ticks
-// stopped decrementing remaining_uop_cached — the operator's release
-// prompt eventually opened against a cache value frozen at REQUEST
-// MATERIAL time.
+// the active order pointer and active_bin_id. With active_bin_id=nil for
+// the entire staging window, PLC ticks no longer attributed to the
+// at-slot bin and stopped decrementing remaining_uop_cached — the
+// operator's release prompt eventually opened against a cache value
+// frozen at REQUEST MATERIAL time.
 //
 // The fix gates the handler's runtime mutations on Location: a pickup
 // at any node other than this consume node's CoreNodeName is "not our
@@ -190,22 +190,15 @@ func TestRegression_TwoRobotSupplyLegSupermarketPickupDoesNotFreezeCache(t *test
 	orderA, _ := seedTwoRobotPair(t, db, nodeID, "uuid-tr-freeze", protocol.SwapModeTwoRobot)
 
 	// Stamp the runtime to match a real mid-cycle state: old bin
-	// physically in the slot, both pointers steady (active == cached),
-	// cache at 95. SetProcessNodeRuntimeWithBin only writes
-	// active_bin_id; the explicit SetProcessNodeCachedBin call below
-	// pairs cached_bin_id so inSteadyState() returns true.
+	// physically in the slot (active_bin_id set), cache at 95.
 	const oldBinID int64 = 700
 	bid := oldBinID
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 95), "seed active bin")
-	testutil.MustNoErr(t, db.SetProcessNodeCachedBin(nodeID, &bid, 95), "seed cached bin (steady state)")
 
-	// Pre-condition: steady state, cache=95.
+	// Pre-condition: old bin bound at the slot, cache=95.
 	pre, _ := db.GetProcessNodeRuntime(nodeID)
 	if pre.ActiveBinID == nil || *pre.ActiveBinID != oldBinID {
 		t.Fatalf("pre: ActiveBinID = %v, want %d", pre.ActiveBinID, oldBinID)
-	}
-	if pre.CachedBinID == nil || *pre.CachedBinID != oldBinID {
-		t.Fatalf("pre: CachedBinID = %v, want %d", pre.CachedBinID, oldBinID)
 	}
 	if pre.RemainingUOPCached != 95 {
 		t.Fatalf("pre: RemainingUOPCached = %d, want 95", pre.RemainingUOPCached)
@@ -228,8 +221,8 @@ func TestRegression_TwoRobotSupplyLegSupermarketPickupDoesNotFreezeCache(t *test
 
 	// Assertion 1 (the fix): runtime is untouched. active_bin_id still
 	// points at the old bin; active_order_id still points at the supply
-	// order. inSteadyState() stays true, so PLC ticks below will
-	// continue to decrement remaining_uop_cached.
+	// order. The old bin stays bound, so PLC ticks below will continue to
+	// decrement remaining_uop_cached.
 	post, _ := db.GetProcessNodeRuntime(nodeID)
 	if post.ActiveBinID == nil || *post.ActiveBinID != oldBinID {
 		t.Errorf("post-supermarket-pickup ActiveBinID = %v, want %d (must stay — old bin physically still in slot)",
@@ -242,8 +235,7 @@ func TestRegression_TwoRobotSupplyLegSupermarketPickupDoesNotFreezeCache(t *test
 
 	// Assertion 2 (the symptom): a PLC tick after the supermarket pickup
 	// still decrements remaining_uop_cached. Pre-fix the cache would
-	// have stayed at 95 because inSteadyState() returned false from
-	// active_bin_id=nil.
+	// have stayed at 95 because active_bin_id had been nulled.
 	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
 		ProcessID: processID, StyleID: styleID, Delta: 3,
 	}})
@@ -278,7 +270,6 @@ func TestRegression_BinPickedUpAtRemoteLocationIsIgnored(t *testing.T) {
 	const oldBinID int64 = 900
 	bid := oldBinID
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 500), "seed active bin")
-	testutil.MustNoErr(t, db.SetProcessNodeCachedBin(nodeID, &bid, 500), "seed cached bin")
 
 	eng := testEngine(t, db)
 	sink := &fakeDeltaSink{db: db}

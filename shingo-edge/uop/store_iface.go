@@ -11,9 +11,8 @@
 //
 //   - runtimeWriter: process_node_runtime_states pointer/count writes.
 //     Used by BindActiveBin, ClearActiveBin (Phase 3a wedge 2) and
-//     will grow with each slot-lifecycle verb (PrepareIncoming,
-//     ClearCache, SetClaimAndCount, OnDelivered, ManualLoad,
-//     ClearActiveAndReset).
+//     will grow with each slot-lifecycle verb (SetClaimAndCount,
+//     OnDelivered, ManualLoad, ClearActiveAndReset).
 //
 // Future additions (not yet added):
 //   - runtimeReader: GetProcessNodeRuntime for verbs that need cache state.
@@ -35,14 +34,6 @@ type runtimeWriter interface {
 	// ClearActiveBin (pickup clear). Pass nil to clear the pointer.
 	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
 
-	// SetProcessNodeCachedBin writes cached_bin_id + remaining_uop_cached
-	// together. Used by PrepareIncoming (release click — cached flips to
-	// incoming supply bin) and ClearCache (produce reset — both fields
-	// cleared). Does not touch active_bin_id; the gap-window contract
-	// relies on active and cached being separately addressable so the
-	// PLC tick gate (inSteadyState) can detect the gap.
-	SetProcessNodeCachedBin(processNodeID int64, cachedBinID *int64, remainingUOP int) error
-
 	// SetProcessNodeRuntimeWithBin writes active_claim_id, active_bin_id,
 	// and remaining_uop_cached atomically. Used by ClearActiveAndReset
 	// (Order B completion at supermarket — claim preserved, active_bin
@@ -58,11 +49,10 @@ type runtimeWriter interface {
 	SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error
 
 	// SetProcessNodeRuntimeForDeliveredBin atomically writes
-	// active_claim_id, active_bin_id, cached_bin_id, and
+	// active_claim_id, active_bin_id, active_bin_epoch, and
 	// remaining_uop_cached when a bin physically arrives at the slot.
-	// Used by OnDelivered. Brings active and cached pointers into
-	// agreement so the PLC tick gate resumes cache decrements after
-	// the gap window closes.
+	// Used by OnDelivered — the count and epoch are seeded from the
+	// OrderDelivered envelope.
 	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error
 }
 
