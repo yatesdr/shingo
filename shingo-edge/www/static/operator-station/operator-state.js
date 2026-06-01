@@ -5,26 +5,6 @@ let _view = null;
 let _selectedNodeID = null;
 let _lastViewJSON = '';
 
-// Manual_swap loader board mode: 'active' (demand-driven cards) or 'preload'
-// (the full covered-payload list, with manual requests enabled). Session-only
-// — resets to the safe 'active' default on reload. Held here so it survives
-// the setView()/renderAll() cycle that every SSE event runs. _boardModeTouched
-// records an explicit operator toggle so the transitional "default to preload"
-// rule doesn't clobber the operator's choice on the next refresh.
-let _boardMode = 'active';
-let _boardModeTouched = false;
-
-export function getBoardMode() { return _boardMode; }
-export function setBoardMode(mode) { _boardMode = mode; _boardModeTouched = true; }
-
-// applyTransitionalDefault flips the board to preload ONCE for a transitional
-// loader (which has no meaningful active-demand mode), unless the operator has
-// already toggled. Returns the effective mode. Called on each board render.
-export function applyTransitionalDefault(isTransitional) {
-    if (isTransitional && !_boardModeTouched) { _boardMode = 'preload'; }
-    return _boardMode;
-}
-
 export function getView() { return _view; }
 export function setView(v) { _view = v; }
 

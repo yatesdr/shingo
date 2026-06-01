@@ -1,5 +1,5 @@
 import { el, esc, fillColor, postAction, showToast } from './operator-util.js';
-import { getView, claimedNodes, isReplenishing, getBoardMode, setBoardMode, applyTransitionalDefault } from './operator-state.js';
+import { getView, claimedNodes, isReplenishing } from './operator-state.js';
 import { isActive } from './order-status.js';
 
 const grid = document.getElementById('os-grid');
@@ -280,12 +280,6 @@ function renderPayloadBoard(entry) {
     const binPayload = binState && binState.payload_code ? binState.payload_code : '';
     const roleLabel = claim.role === 'produce' ? 'Loader' : 'Unloader';
 
-    // Board mode. The PRELOAD mode + its discoverable toggle belong ONLY to a
-    // transitional loader (brought up by the edge process checkbox). A normal
-    // (non-transitional) loader is the pre-refactor ACTIVE board: no toggle, no
-    // mode switching. #8 undoes the refactor that merged the two onto one board.
-    var boardMode = entry.transitional_loader ? applyTransitionalDefault(true) : 'active';
-
     var infoBar = el('div', { className: 'os-board-header' });
     infoBar.innerHTML =
         '<div>' +
@@ -303,38 +297,17 @@ function renderPayloadBoard(entry) {
         '</div>';
     grid.appendChild(infoBar);
 
-    // Mode toggle + preload banner — TRANSITIONAL LOADERS ONLY. A transitional
-    // loader (edge process checkbox) is the operator-driven board that may
-    // switch between ACTIVE-ONLY and PRELOAD. A normal loader never shows this;
-    // it stays the pre-refactor active board. Preload uses a distinct violet
-    // treatment (NOT amber/orange — those mean stranded / changeover). The
-    // button label states what TAPPING does; the note states the mode + why.
-    if (entry.transitional_loader) {
-        var modeBar = el('div', { className: 'os-board-modebar ' + (boardMode === 'preload' ? 'preload' : 'active') });
-        var toggle = el('button', {
-            className: 'os-board-mode-toggle',
-            // Label states what TAPPING does, in plain language (no
-            // "operator-driven loader" jargon): from the all-payloads view the
-            // tap narrows to active demand, and vice-versa.
-            textContent: boardMode === 'preload' ? 'SHOW ACTIVE DEMAND ONLY' : 'SHOW ALL PAYLOADS + REQUEST BINS',
-        });
-        toggle.addEventListener('click', function() {
-            setBoardMode(boardMode === 'preload' ? 'active' : 'preload');
-            renderGrid();
-        });
-        modeBar.appendChild(toggle);
-        modeBar.appendChild(el('span', { className: 'os-board-mode-note',
-            textContent: boardMode === 'preload'
-                ? 'Showing every payload for this loader. Tap a card with no demand to request a bin.'
-                : 'Showing only payloads with active demand. Tap the button to show every payload and request bins manually.' }));
-        grid.appendChild(modeBar);
-    }
-
-    // Card set by mode: preload shows the full covered list (every style, and
-    // every process sharing this loader); active shows only what the running
-    // styles need. Both come from the multi-process view-model union; fall
-    // back to the single-claim list when those fields aren't present.
-    var modeList = boardMode === 'preload' ? entry.all_style_payloads : entry.active_style_payloads;
+    // Card set. A transitional loader (operator-driven manual board) shows the
+    // FULL covered list — every style and every process sharing this loader —
+    // so the operator can request an empty for any configured payload, even one
+    // with no current demand. A normal (automated kanban) loader shows only what
+    // the running styles need. Both come from the multi-process view-model union;
+    // fall back to the single-claim list when those fields aren't present.
+    //
+    // The PRELOAD/ACTIVE mode toggle that used to gate this (and manual request)
+    // was removed: manual request is now an explicit per-card button, so there's
+    // no hidden mode the operator has to discover to make the board actionable.
+    var modeList = entry.transitional_loader ? entry.all_style_payloads : entry.active_style_payloads;
     var allowed = (modeList && modeList.length > 0)
         ? modeList
         : ((claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
@@ -371,15 +344,22 @@ function renderPayloadBoard(entry) {
     var nodeBinIsLoaded = entry.bin_state && entry.bin_state.occupied && !!entry.bin_state.payload_code;
     var canClearLoadedHere = claim.role === 'consume' && nodeBinIsLoaded;
 
-    // Manual request affordance. On a TRANSITIONAL loader it's the PRELOAD-mode
-    // override only (active mode greys no-demand cards — the kanban protection).
-    // On a normal loader we keep the pre-refactor behavior: the unconditional
-    // bandaid so a board with no kanban demand still has something actionable
-    // (mirrors operator-modal.js idleNoDemand). #8 reverts the refactor that
-    // gated this behind the now-transitional-only PRELOAD toggle.
-    var canRequestHere = entry.transitional_loader
-        ? ((boardMode === 'preload') && !hasBin && !hasDemand)
-        : (!hasBin && !hasDemand);
+    // Manual request affordance.
+    //
+    // Anti-spam: a manual_swap loader has ONE physical bin slot, so at most one
+    // empty may be in flight to it at a time. canRequest is the single guard —
+    // requesting is allowed only when no bin is parked (!hasBin) AND nothing is
+    // already inbound (!hasDemand, which covers any non-terminal order at the
+    // node, including an empty already en route). The instant a request fires,
+    // hasDemand flips true on the next SSE refresh and every request control
+    // greys out, so repeated taps can't queue a stack of bins. The server
+    // enforces the same rule (RequestEmptyBin rejects when an empty is already
+    // in flight) as defense-in-depth against double-tap races and direct callers.
+    var canRequest = !hasBin && !hasDemand;
+    // Transitional loaders surface this as an explicit per-card REQUEST button
+    // (rendered in the card loop); the legacy tap-the-card-to-request path stays
+    // for normal loaders only.
+    var canRequestHere = !entry.transitional_loader && canRequest;
 
     var cardGrid = el('div', { className: 'os-board-cards' });
 
@@ -506,6 +486,34 @@ function renderPayloadBoard(entry) {
                     : '/api/process-nodes/' + entry.node.id + '/request-full';
                 postAction(url, { payload_code: code }, loadViewRef);
             });
+        }
+
+        // Explicit manual-request button — TRANSITIONAL LOADERS ONLY. One button
+        // per payload card so the operator picks which payload's empty to bring,
+        // independent of the card-tap load/unload action. Enabled only when
+        // canRequest (no bin parked, nothing inbound) — the single anti-spam
+        // guard. When a request is already in flight or a bin is present the
+        // button is disabled and states why, so a re-tap can't stack the queue.
+        if (entry.transitional_loader) {
+            var reqLabel = claim.role === 'produce' ? 'REQUEST EMPTY' : 'REQUEST FULL';
+            var disabledReason = hasBin ? 'BIN AT NODE' : (hasDemand ? 'REQUESTED' : '');
+            var reqBtn = el('button', {
+                className: 'os-board-request-btn' + (canRequest ? '' : ' disabled'),
+                textContent: canRequest ? reqLabel : disabledReason,
+            });
+            if (canRequest) {
+                reqBtn.addEventListener('click', function(ev) {
+                    // Stop the tap from also firing the card's load/unload handler.
+                    ev.stopPropagation();
+                    var url = claim.role === 'produce'
+                        ? '/api/process-nodes/' + entry.node.id + '/request-empty'
+                        : '/api/process-nodes/' + entry.node.id + '/request-full';
+                    postAction(url, { payload_code: code }, loadViewRef);
+                });
+            } else {
+                reqBtn.disabled = true;
+            }
+            card.appendChild(reqBtn);
         }
 
         cardGrid.appendChild(card);

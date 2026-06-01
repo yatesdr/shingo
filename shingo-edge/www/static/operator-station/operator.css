@@ -893,54 +893,30 @@ body {
     margin-bottom: 16px;
 }
 
-/* Manual_swap board mode toggle + preload banner. Preload uses a distinct
-   violet (NOT amber — amber is release/stranded; orange is changeover) so the
-   operator can't confuse "I'm driving manually" with those states. */
-.os-board-modebar {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 12px 24px;
-    margin-bottom: 16px;
-    border-radius: var(--os-btn-radius);
-    background: #1c2030;
-    border: 1px solid var(--os-border);
-}
-.os-board-modebar.preload {
-    background: #2a1640;
-    border-color: #7a3fb0;
-}
-.os-board-mode-toggle {
+/* Per-card manual request button (transitional loader). Full-width across the
+   bottom of the card so it's an easy forklift-seat tap target. Violet = manual
+   operator action (NOT amber/orange, which mean stranded / changeover). When
+   the request is blocked (bin parked or one already inbound) it greys out and
+   shows the reason rather than disappearing — the anti-spam state is visible. */
+.os-board-request-btn {
+    margin-top: 12px;
+    width: 100%;
     font-size: 22px;
     font-weight: 700;
-    padding: 10px 22px;
-    border-radius: 6px;
-    border: 1px solid #555;
-    background: #2a2f40;
-    color: #cdd;
+    letter-spacing: 1px;
+    padding: 14px 0;
+    border-radius: 8px;
+    border: 1px solid #c98fe6;
+    background: #9b4dca;
+    color: #fff;
     cursor: pointer;
 }
-.os-board-modebar.preload .os-board-mode-toggle {
-    background: #9b4dca;
-    border-color: #c98fe6;
-    color: #fff;
-}
-/* ACTIVE-ONLY: the toggle is the operator's escape hatch out of an all-greyed
-   "NO DEMAND" board, so it reads as a prominent violet call-to-action (the
-   PRELOAD destination color) rather than blending into the grey bar. The
-   left accent on the bar pulls the eye to it when no cards are actionable. */
-.os-board-modebar.active {
-    border-left: 6px solid #9b4dca;
-}
-.os-board-modebar.active .os-board-mode-toggle {
-    background: #9b4dca;
-    border-color: #c98fe6;
-    color: #fff;
-}
-.os-board-mode-note {
-    font-size: 20px;
-    font-weight: 600;
-    color: #d8b6f0;
+.os-board-request-btn.disabled {
+    background: #23262f;
+    border-color: #3a3f4a;
+    color: #777;
+    cursor: not-allowed;
+    letter-spacing: 0.5px;
 }
 
 .os-board-cards {
@@ -961,6 +937,7 @@ body {
 }
 
 .os-board-card {
+    position: relative;
     border-radius: 14px;
     padding: 32px;
     display: flex;
@@ -1037,6 +1014,12 @@ body {
 .os-board-requestable .os-board-detail { color: #aac; }
 
 .os-board-pos {
+    /* Pinned to the card's top-right corner (out of the flex flow) so it can't
+       be pushed past the card edge by the detail line + request button stacking
+       at the bottom — the overflow the plant saw on load-now cards. */
+    position: absolute;
+    top: 16px;
+    right: 16px;
     width: 50px;
     height: 50px;
     border-radius: 50%;
@@ -1046,7 +1029,6 @@ body {
     font-weight: 700;
     font-size: 22px;
     color: #fff;
-    align-self: flex-end;
 }
 .os-board-pos-delivered { background: #2a5a2a; }
 .os-board-pos-transit { background: #5a5a2a; }

@@ -339,6 +339,24 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 
+	// Anti-spam: a manual_swap loader has ONE physical bin slot, so at most one
+	// empty may be inbound at a time. Reject a second request while a
+	// retrieve_empty is already non-terminal at this node. The board greys its
+	// request button the instant a request fires (hasBin/hasDemand), so this is
+	// belt-and-suspenders for double-tap races and direct API callers — without
+	// it CanAcceptOrders waves manual_swap through (multi-order queue) and the
+	// queue could be stacked with redundant empties. Fail closed on a read
+	// error: better to make the operator retry than to dispatch into the dark.
+	active, err := e.db.ListActiveOrdersByProcessNode(nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("node %s: check in-flight empties: %w", node.Name, err)
+	}
+	for _, o := range active {
+		if o.RetrieveEmpty {
+			return nil, fmt.Errorf("node %s: an empty bin is already inbound", node.Name)
+		}
+	}
+
 	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
 
 	// manual_swap claims (bin loaders/unloaders) require operator confirmation
