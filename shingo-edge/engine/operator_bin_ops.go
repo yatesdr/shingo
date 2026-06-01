@@ -329,14 +329,35 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
 	}
 
-	// Validate payload code against the loader-wide loadable set (same rationale
-	// as LoadBin): a shared loader must accept any cell's demand, and a
-	// transitional loader must stage empties for an upcoming style.
-	if payloadCode == "" {
-		return nil, fmt.Errorf("no payload code specified")
-	}
-	if !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
-		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
+	// Payload handling splits by mode:
+	//
+	//   - manual_swap (bin loader): an empty is a generic carrier, so the
+	//     operator-initiated request is payload-AGNOSTIC. A blank payloadCode is
+	//     the normal case — the order ships untagged, Core's planRetrieveEmpty
+	//     sources any compatible empty, and LoadBin binds the real payload when
+	//     the operator fills it. A non-blank code (direct API caller, or a
+	//     future carrier picker) is still validated against the loadable set.
+	//
+	//     Blank sourcing assumes the loader is SINGLE-CARRIER: planRetrieveEmpty's
+	//     bin-type advisory clause is permissive when the order names no payload,
+	//     so on a loader spanning multiple carrier types it could fetch the wrong
+	//     container. TODO: add a bin_type/carrier field to OrderRequest so a
+	//     multi-carrier loader can request "an empty of carrier X" without naming
+	//     a payload (today payload_code is the only carrier proxy on the wire).
+	//
+	//   - simple / multi-step (press swap) nodes: the empty rides the same robot
+	//     choreography as the part it precedes, so a payload is still required.
+	if claim.SwapMode == protocol.SwapModeManualSwap {
+		if payloadCode != "" && !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
+			return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
+		}
+	} else {
+		if payloadCode == "" {
+			return nil, fmt.Errorf("no payload code specified")
+		}
+		if !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
+			return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
+		}
 	}
 
 	// Anti-spam: a manual_swap loader has ONE physical bin slot, so at most one

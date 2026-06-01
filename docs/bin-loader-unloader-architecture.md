@@ -290,8 +290,14 @@ UOP-threshold C-push (`HandleLoopBelowThreshold`) short-circuit in the single
 `tryCreateL1` chokepoint (allowlist gate: `L1Source.suppressedByTransitional`).
 Empties instead flow via `MaybePushLoader`, the loader-side mirror of
 `MaybePushUnloader`: when the window is free it opportunistically stages one
-empty (tagged with the loader's representative payload; the operator re-binds at
-load). Triggered on L2/clear completion and a startup sweep.
+empty. The staged empty is **payload-agnostic** — a generic carrier with no
+payload tag, since an opportunistic stage has no payload-specific demand behind
+it; the operator binds the real payload at load. Triggered on L2/clear
+completion and a startup sweep. (Single-carrier assumption: a blank order
+sources any compatible empty, which is correct only when the loader uses one
+carrier type — `OrderRequest` carries no bin-type field, so `payload_code` is
+the only carrier proxy on the wire. A multi-carrier loader would need a bin-type
+field added before it could request a generic empty by carrier.)
 
 **The board.** The HMI gains a PRELOAD / ACTIVE-ONLY toggle. ACTIVE-ONLY shows
 only what the running styles need; PRELOAD shows the full covered list and

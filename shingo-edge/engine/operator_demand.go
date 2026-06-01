@@ -1027,14 +1027,19 @@ func (e *Engine) MaybePushLoader(nodeID int64) {
 }
 
 // maybeStageLoaderEmpty stages one empty at a transitional loader if none is
-// already in flight. The empty is a generic carrier tagged with the loader's
-// representative payload; the operator re-binds the actual payload at load
-// time (the multi-payload LoadBin re-bind). One-at-a-time keeps it
-// opportunistic; L1LoaderPush is exempt from the transitional suppression in
-// tryCreateL1 (it IS the transitional supply path).
+// already in flight. The empty is a generic carrier staged payload-AGNOSTIC
+// (blank code) rather than tagged with an arbitrary "representative" payload —
+// there is no payload-specific demand behind an opportunistic stage, so naming
+// one just fabricates a binding the operator routinely overrides at LoadBin.
+// One-at-a-time keeps it opportunistic; L1LoaderPush is exempt from the
+// transitional suppression in tryCreateL1 (it IS the transitional supply path).
+//
+// Single-carrier assumption — see RequestEmptyBin: a blank order sources any
+// compatible empty, which is correct only when the loader uses one carrier type.
 func (e *Engine) maybeStageLoaderEmpty(loader manualSwapNode) {
-	payloads := loader.claim.AllowedPayloads()
-	if len(payloads) == 0 {
+	// Misconfig guard stays: a loader with no allowed payloads isn't set up to
+	// load anything, so there's nothing to stage for — even agnostically.
+	if len(loader.claim.AllowedPayloads()) == 0 {
 		return // misconfigured loader — nothing to stage against
 	}
 	inFlight, err := e.loaderInFlightEmptyCount(loader.node.ID)
@@ -1046,7 +1051,7 @@ func (e *Engine) maybeStageLoaderEmpty(loader manualSwapNode) {
 		e.debugFn("loader-push: %s already has %d empty in flight — skipping", loader.node.CoreNodeName, inFlight)
 		return
 	}
-	if _, err := e.tryCreateL1(&loader, payloads[0], L1LoaderPush, 1); err != nil {
+	if _, err := e.tryCreateL1(&loader, "", L1LoaderPush, 1); err != nil {
 		e.logFn("loader-push: stage empty at %s failed: %v", loader.node.CoreNodeName, err)
 	}
 }

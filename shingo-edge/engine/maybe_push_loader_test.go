@@ -46,12 +46,13 @@ func TestMaybePushLoader_StagesOneEmptyForTransitionalLoaderOnly(t *testing.T) {
 		t.Errorf("must not stage a 2nd empty while one is in flight, got %d", got)
 	}
 
-	// The staged empty is tagged with the loader's representative payload
-	// (operator re-binds the actual payload at load time).
+	// The staged empty is payload-AGNOSTIC: a generic carrier with no payload
+	// tag. The operator binds the real payload at LoadBin; an opportunistic
+	// stage has no payload-specific demand to name.
 	ords, _ := db.ListActiveOrdersByProcessNode(nodeID)
 	for _, o := range ords {
-		if o.RetrieveEmpty && o.PayloadCode != "PART-P" {
-			t.Errorf("expected empty tagged with representative payload PART-P, got %q", o.PayloadCode)
+		if o.RetrieveEmpty && o.PayloadCode != "" {
+			t.Errorf("expected staged empty to be payload-agnostic (blank), got %q", o.PayloadCode)
 		}
 	}
 }

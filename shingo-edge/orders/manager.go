@@ -77,7 +77,14 @@ func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (d
 		m.DebugLog.Log("style-node-claim lookup failed: node=%s err=%v", node.CoreNodeName, err)
 		return "", payloadCode
 	}
-	if payloadCode == "" {
+	// Backfill the payload from the claim only for serial consume/produce
+	// claims, where PayloadCode is the single bound payload. manual_swap (bin
+	// loader/unloader) claims carry no meaningful PayloadCode — the allowed set
+	// governs, and an operator empty request is intentionally payload-AGNOSTIC
+	// (RequestEmptyBin / maybeStageLoaderEmpty ship a blank code so the carrier
+	// is generic and LoadBin binds the real payload). Re-injecting the claim's
+	// payload here would silently re-tag that agnostic empty.
+	if payloadCode == "" && claim.SwapMode != protocol.SwapModeManualSwap {
 		payloadCode = claim.PayloadCode
 	}
 	if entry, err := catalog.GetCatalogByCode(m.db.DB, payloadCode); err == nil && entry.Description != "" {
