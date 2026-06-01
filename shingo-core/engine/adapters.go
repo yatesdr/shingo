@@ -36,7 +36,7 @@ func (e *dispatchEmitter) EmitOrderFailed(orderID int64, edgeUUID, stationID, er
 	e.bus.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
 		OrderID:   orderID,
 		EdgeUUID:  edgeUUID,
-		StationID:  stationID,
+		StationID: stationID,
 		ErrorCode: errorCode,
 		Detail:    detail,
 	}})
@@ -64,8 +64,8 @@ func (e *dispatchEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID,
 
 func (e *dispatchEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID string) {
 	e.bus.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{
-		OrderID:  orderID,
-		EdgeUUID: edgeUUID,
+		OrderID:   orderID,
+		EdgeUUID:  edgeUUID,
 		StationID: stationID,
 	}})
 }
@@ -113,7 +113,6 @@ func (e *pollerEmitter) EmitOrderStatusChanged(orderID int64, vendorOrderID, old
 		Snapshot:      snapshot,
 	}})
 }
-
 
 func (e *pollerEmitter) EmitGraceExpired(orderID int64, vendorOrderID string) {
 	e.bus.Emit(Event{Type: EventGraceExpired, Payload: GraceExpiredEvent{

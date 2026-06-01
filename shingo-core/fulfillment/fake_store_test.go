@@ -20,14 +20,14 @@ import (
 // reaching past it.
 type fakeStore struct {
 	// Seed data.
-	queued       []*orders.Order
-	ordersByID   map[int64]*orders.Order
-	nodesByDot   map[string]*nodes.Node
-	nodesByID    map[int64]*nodes.Node
-	emptyBin     *bins.Bin
-	sourceBin    *bins.Bin
-	inFlightAt   map[string]int
-	binsAtNode   map[int64]int
+	queued     []*orders.Order
+	ordersByID map[int64]*orders.Order
+	nodesByDot map[string]*nodes.Node
+	nodesByID  map[int64]*nodes.Node
+	emptyBin   *bins.Bin
+	sourceBin  *bins.Bin
+	inFlightAt map[string]int
+	binsAtNode map[int64]int
 
 	// Error toggles.
 	errListQueued        error

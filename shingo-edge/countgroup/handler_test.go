@@ -1,4 +1,4 @@
-﻿package countgroup
+package countgroup
 
 import (
 	"context"

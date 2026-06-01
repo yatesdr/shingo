@@ -16,9 +16,9 @@ import (
 // shingo-core/store/orders. The store/orders package re-exports it
 // via `type History = domain.OrderHistory`.
 type OrderHistory struct {
-	ID        int64     `json:"id"`
+	ID        int64           `json:"id"`
 	OrderID   int64           `json:"order_id"`
 	Status    protocol.Status `json:"status"`
-	Detail    string    `json:"detail"`
-	CreatedAt time.Time `json:"created_at"`
+	Detail    string          `json:"detail"`
+	CreatedAt time.Time       `json:"created_at"`
 }

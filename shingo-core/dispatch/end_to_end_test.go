@@ -1320,7 +1320,7 @@ func TestDispatcher_MoveOrder_NGRPSource(t *testing.T) {
 		OrderUUID:    "move-ngrp-1",
 		OrderType:    OrderTypeMove,
 		PayloadCode:  sc.Payload.Code,
-		SourceNode:   sc.Grp.Name,       // NGRP — the bug scenario
+		SourceNode:   sc.Grp.Name, // NGRP — the bug scenario
 		DeliveryNode: sc.LineNode.Name,
 		Quantity:     1.0,
 	})

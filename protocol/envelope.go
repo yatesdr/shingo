@@ -15,15 +15,15 @@ type Address struct {
 
 // Envelope is the universal message wrapper for all ShinGo communication.
 type Envelope struct {
-	Version   int              `json:"v"`
-	Type      string           `json:"type"`
-	ID        string           `json:"id"`
-	Src       Address          `json:"src"`
-	Dst       Address          `json:"dst"`
-	Timestamp time.Time        `json:"ts"`
-	ExpiresAt time.Time        `json:"exp"`
-	CorID     string           `json:"cor,omitempty"`
-	Payload   json.RawMessage  `json:"p"`
+	Version   int             `json:"v"`
+	Type      string          `json:"type"`
+	ID        string          `json:"id"`
+	Src       Address         `json:"src"`
+	Dst       Address         `json:"dst"`
+	Timestamp time.Time       `json:"ts"`
+	ExpiresAt time.Time       `json:"exp"`
+	CorID     string          `json:"cor,omitempty"`
+	Payload   json.RawMessage `json:"p"`
 }
 
 // RawHeader is the minimal decode for routing decisions before full payload decode.

@@ -49,46 +49,47 @@ type Config struct {
 }
 
 type Engine struct {
-	cfg             *config.Config
-	configPath      string
-	db              *store.DB
-	fleet           fleet.Backend
-	msgClient       *messaging.Client
-	dispatcher      *dispatch.Dispatcher
-	tracker         fleet.OrderTracker
-	countGroup      *countgroup.Runner                          // nil if feature disabled / no groups configured
-	countGroupBuild func(countgroup.Emitter) *countgroup.Runner // stored for ReconfigureCountGroups
-	Events          *EventBus
-	logFn           LogFunc
-	debugLog        func(string, ...any)
-	reconciliation  *ReconciliationService
-	recovery        *RecoveryService
-	fulfillment     *fulfillment.Scanner
-	binManifest     *service.BinManifestService
-	binService      *service.BinService
-	orderService    *service.OrderService
-	nodeService     *service.NodeService
-	auditService    *service.AuditService
-	demandService   *service.DemandService
-	payloadService  *service.PayloadService
-	missionService  *service.MissionService
-	testCmdService  *service.TestCommandService
-	cmsTxnService   *service.CMSTransactionService
-	inventoryService *service.InventoryService
-	adminService    *service.AdminService
-	healthService   *service.HealthService
-	tagVerifyService *service.TagVerifyService
+	cfg                   *config.Config
+	configPath            string
+	db                    *store.DB
+	fleet                 fleet.Backend
+	msgClient             *messaging.Client
+	dispatcher            *dispatch.Dispatcher
+	tracker               fleet.OrderTracker
+	countGroup            *countgroup.Runner                          // nil if feature disabled / no groups configured
+	countGroupMu          sync.Mutex                                  // guards the countGroup pointer (ReconfigureCountGroups vs Start/Stop)
+	countGroupBuild       func(countgroup.Emitter) *countgroup.Runner // stored for ReconfigureCountGroups
+	Events                *EventBus
+	logFn                 LogFunc
+	debugLog              func(string, ...any)
+	reconciliation        *ReconciliationService
+	recovery              *RecoveryService
+	fulfillment           *fulfillment.Scanner
+	binManifest           *service.BinManifestService
+	binService            *service.BinService
+	orderService          *service.OrderService
+	nodeService           *service.NodeService
+	auditService          *service.AuditService
+	demandService         *service.DemandService
+	payloadService        *service.PayloadService
+	missionService        *service.MissionService
+	testCmdService        *service.TestCommandService
+	cmsTxnService         *service.CMSTransactionService
+	inventoryService      *service.InventoryService
+	adminService          *service.AdminService
+	healthService         *service.HealthService
+	tagVerifyService      *service.TagVerifyService
 	inventoryDeltaService *service.InventoryDeltaService
-	thresholdMonitor *ThresholdMonitor
-	etaCache        *eta.Cache
-	stopChan        chan struct{}
-	stopOnce        sync.Once
-	sceneSyncing    atomic.Bool
-	fleetConnected  atomic.Bool
-	msgConnected    atomic.Bool
-	dbConnected     atomic.Bool
-	robotsMu        sync.RWMutex
-	robotsCache     map[string]fleet.RobotStatus
+	thresholdMonitor      *ThresholdMonitor
+	etaCache              *eta.Cache
+	stopChan              chan struct{}
+	stopOnce              sync.Once
+	sceneSyncing          atomic.Bool
+	fleetConnected        atomic.Bool
+	msgConnected          atomic.Bool
+	dbConnected           atomic.Bool
+	robotsMu              sync.RWMutex
+	robotsCache           map[string]fleet.RobotStatus
 
 	// preDisconnectAvailability captures per-robot Available state at the
 	// moment a fleet disconnect is detected. autoResumeAfterFleetReconnect

@@ -213,12 +213,12 @@ func (db *DB) runVersionedMigrations() error {
 		{17, "uop bin-as-truth: audit log + delta apply infrastructure", v17UOPBinAsTruth,
 			func(q schema.Querier) bool {
 				return schema.TableExists(q, "bin_uop_audit") &&
-				schema.TableExists(q, "lineside_buckets") &&
-				schema.TableExists(q, "inventory_delta_dedup") &&
-				schema.ColumnExists(q, "bin_uop_audit", "metadata")
-		}},
- 		{18, "add skip_auto_confirm column to orders", v18OrderSkipAutoConfirm,
- 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "skip_auto_confirm") }},
+					schema.TableExists(q, "lineside_buckets") &&
+					schema.TableExists(q, "inventory_delta_dedup") &&
+					schema.ColumnExists(q, "bin_uop_audit", "metadata")
+			}},
+		{18, "add skip_auto_confirm column to orders", v18OrderSkipAutoConfirm,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "skip_auto_confirm") }},
 		{19, "promote retrieve_empty from payload_desc magic string to OrderType", v19PromoteRetrieveEmptyOrderType, nil},
 
 		// v20: UOP-threshold replenishment (C-push).
@@ -432,6 +432,7 @@ func v4DropOrderPayloadID(tx *sql.Tx) error {
 	_, err := tx.Exec(`ALTER TABLE orders DROP COLUMN IF EXISTS payload_id`)
 	return err
 }
+
 // v18OrderSkipAutoConfirm adds skip_auto_confirm to orders so side-cycle
 // L1/U1 orders can opt out of Core's reconciliation auto-confirm sweep.
 func v18OrderSkipAutoConfirm(tx *sql.Tx) error {
@@ -588,14 +589,14 @@ func v21LinesideBucketsCoreNodeName(tx *sql.Tx) error {
 //
 // Two related changes:
 //
-//   1. bins.delta_epoch column, default 1. SetForProduction and
-//      ClearForReuseTx bump it on every Core-controlled lifecycle
-//      transition. The bin's identity persists across loads; epoch
-//      labels each load distinctly.
+//  1. bins.delta_epoch column, default 1. SetForProduction and
+//     ClearForReuseTx bump it on every Core-controlled lifecycle
+//     transition. The bin's identity persists across loads; epoch
+//     labels each load distinctly.
 //
-//   2. inventory_delta_dedup PK gains an epoch column. Pre-existing
-//      rows are backfilled to epoch=0 so they don't shadow the
-//      post-migration first deltas (which arrive at epoch >= 1).
+//  2. inventory_delta_dedup PK gains an epoch column. Pre-existing
+//     rows are backfilled to epoch=0 so they don't shadow the
+//     post-migration first deltas (which arrive at epoch >= 1).
 //
 // Buckets are untouched here — bucket scope deltas carry epoch=0 on
 // the wire, and Core handles bucket dedup cleanup via the existing

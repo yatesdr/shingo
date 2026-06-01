@@ -32,15 +32,15 @@ import (
 // TestScenario_ReleaseIsChangeoverIndependent validates that a release
 // on a non-changeover order during an active changeover:
 //
-//	1. Fires through ReleaseOrderWithLineside normally — no engine-side
-//	   gate consults the changeover state for the release path.
-//	2. The OrderRelease envelope encodes the operator's disposition
-//	   correctly through the wire (matches partial_release_test's
-//	   manifest contract for this wire-shape sanity).
-//	3. A subsequent BinPickedUp on that order does NOT trigger any
-//	   sibling auto-release — the order isn't linked to a
-//	   changeover_node_task as evac, so HandleBinPickedUp's deferred-
-//	   supply branch is a no-op.
+//  1. Fires through ReleaseOrderWithLineside normally — no engine-side
+//     gate consults the changeover state for the release path.
+//  2. The OrderRelease envelope encodes the operator's disposition
+//     correctly through the wire (matches partial_release_test's
+//     manifest contract for this wire-shape sanity).
+//  3. A subsequent BinPickedUp on that order does NOT trigger any
+//     sibling auto-release — the order isn't linked to a
+//     changeover_node_task as evac, so HandleBinPickedUp's deferred-
+//     supply branch is a no-op.
 func TestScenario_ReleaseIsChangeoverIndependent(t *testing.T) {
 	const stationID = "edge.test"
 	edge := edgeharness.NewEdge(t, stationID)

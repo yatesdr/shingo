@@ -357,13 +357,17 @@ func (d *Dispatcher) HandleBinEnteredTransit(binID, fromNodeID int64) {
 	delete(d.restoreListeners.byComplex, entry.complexParentID)
 	d.restoreListeners.mu.Unlock()
 
-	// Delete the persisted row before dispatching the compound — the
-	// listener is "consumed" once we commit to firing.
-	if err := d.db.DeletePendingRestockByComplexParent(entry.complexParentID); err != nil {
-		log.Printf("dispatch: delete pending_restock on fire for complex %d: %v", entry.complexParentID, err)
+	// Dispatch first; only drop the durable recovery row once the restore has
+	// actually been created. If dispatch fails, keep the pending_restocks row so
+	// a Core restart can recover it (RecoverPendingRestocks re-registers) instead
+	// of stranding the displaced bins in shuffle slots with no record.
+	if err := d.dispatchRestoreCompound(entry); err != nil {
+		log.Printf("dispatch: restore compound for complex %d failed; keeping pending_restock for recovery: %v", entry.complexParentID, err)
+		return
 	}
-
-	d.dispatchRestoreCompound(entry)
+	if err := d.db.DeletePendingRestockByComplexParent(entry.complexParentID); err != nil {
+		log.Printf("dispatch: delete pending_restock after restore fired for complex %d: %v", entry.complexParentID, err)
+	}
 }
 
 // HandleComplexParentTerminal is called when a complex parent reaches
@@ -387,10 +391,22 @@ func (d *Dispatcher) HandleComplexParentTerminal(complexParentID int64) {
 		}
 		return
 	}
-	// Cancel the synthetic parent so its row doesn't sit at
-	// Reshuffling forever.
+	// Cancel the synthetic parent so its row doesn't sit at Reshuffling forever.
+	// CancelOrder is best-effort (it only logs on a failed transition), so
+	// re-check the persisted status rather than assume success — only drop the
+	// durable recovery row once the synthetic parent is actually terminal;
+	// otherwise keep it so boot recovery can resolve a still-stuck parent.
 	syn := entry.syntheticParent
 	d.lifecycle.CancelOrder(syn, syn.StationID, "complex parent terminated before pickup")
+	updated, err := d.db.GetOrder(syn.ID)
+	if err != nil {
+		log.Printf("dispatch: re-check synthetic parent %d after cancel for complex %d: %v", syn.ID, complexParentID, err)
+		return
+	}
+	if !protocol.IsTerminal(updated.Status) {
+		log.Printf("dispatch: synthetic parent %d not terminal after cancel (status %s) for complex %d; keeping pending_restock for recovery", syn.ID, updated.Status, complexParentID)
+		return
+	}
 	if err := d.db.DeletePendingRestockByComplexParent(complexParentID); err != nil {
 		log.Printf("dispatch: delete pending_restock on parent terminal for complex %d: %v", complexParentID, err)
 	}
@@ -401,7 +417,7 @@ func (d *Dispatcher) HandleComplexParentTerminal(complexParentID int64) {
 // dispatches it as children of the already-created synthetic parent.
 // Called from HandleBinEnteredTransit when both bin ID and FromNodeID
 // match the pending entry.
-func (d *Dispatcher) dispatchRestoreCompound(entry *restoreEntry) {
+func (d *Dispatcher) dispatchRestoreCompound(entry *restoreEntry) error {
 	// Deepest-first: reverse the blockers (which were captured in
 	// shallowest-first order from the unbury plan). The restore
 	// compound has no single "target bin" — it's an N-bin restock —
@@ -429,7 +445,7 @@ func (d *Dispatcher) dispatchRestoreCompound(entry *restoreEntry) {
 	if len(plan.Steps) == 0 {
 		// Nothing to restock — mark the synthetic parent confirmed.
 		_ = d.lifecycle.CompleteCompound(entry.syntheticParent)
-		return
+		return nil
 	}
 	// CreateCompoundChildrenOnly (not CreateCompoundOrder) — the
 	// synthetic parent is already at StatusReshuffling from the
@@ -438,7 +454,9 @@ func (d *Dispatcher) dispatchRestoreCompound(entry *restoreEntry) {
 	if err := d.CreateCompoundChildrenOnly(entry.syntheticParent, plan); err != nil {
 		log.Printf("dispatch: create restore compound for complex %d: %v",
 			entry.complexParentID, err)
+		return err
 	}
 	d.dbg("complex: restore-blockers fired — %d restock steps for complex %d",
 		len(plan.Steps), entry.complexParentID)
+	return nil
 }

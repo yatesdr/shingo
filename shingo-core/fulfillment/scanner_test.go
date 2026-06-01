@@ -418,4 +418,3 @@ func TestScanner_StartPeriodicSweep_StopHaltsLoop(t *testing.T) {
 			final-afterStop, afterStop, final)
 	}
 }
-

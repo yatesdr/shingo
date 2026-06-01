@@ -15,16 +15,16 @@ package scenarios
 import (
 	"testing"
 
+	"shingo/integration/harness"
 	"shingo/protocol"
 	"shingo/protocol/router"
-	"shingo/integration/harness"
 
-	coreharness "shingocore/testharness"
 	"shingocore/dispatch"
 	coremessaging "shingocore/messaging"
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
 	coreorders "shingocore/store/orders"
+	coreharness "shingocore/testharness"
 
 	edgeharness "shingoedge/testharness"
 )
@@ -51,7 +51,7 @@ import (
 //     - manifest reconstructed as {"items":[{"catid":..,"qty":300}]} (#15)
 //     - payload_code preserved
 //     - claimed_by preserved (release does not unclaim — that comes at
-//       arrival via ApplyArrival)
+//     arrival via ApplyArrival)
 //
 // What this catches that unit tests miss:
 //   - JSON marshal/unmarshal of OrderRelease envelope (a type change
@@ -260,11 +260,11 @@ type noopEmitter struct{}
 
 func (noopEmitter) EmitOrderReceived(_ int64, _, _ string, _ protocol.OrderType, _, _ string) {
 }
-func (noopEmitter) EmitOrderDispatched(_ int64, _, _, _ string)        {}
-func (noopEmitter) EmitOrderFailed(_ int64, _, _, _, _ string)         {}
-func (noopEmitter) EmitOrderSkipped(_ int64, _, _, _, _ string)        {}
-func (noopEmitter) EmitOrderCancelled(_ int64, _, _, _, _ string)      {}
-func (noopEmitter) EmitOrderCompleted(_ int64, _, _ string)            {}
-func (noopEmitter) EmitOrderQueued(_ int64, _, _, _ string)            {}
-func (noopEmitter) EmitOrderFaulted(_ int64, _, _, _ string)           {}
-func (noopEmitter) EmitOrderFaultedRecovered(_ int64, _, _, _ string)  {}
+func (noopEmitter) EmitOrderDispatched(_ int64, _, _, _ string)       {}
+func (noopEmitter) EmitOrderFailed(_ int64, _, _, _, _ string)        {}
+func (noopEmitter) EmitOrderSkipped(_ int64, _, _, _, _ string)       {}
+func (noopEmitter) EmitOrderCancelled(_ int64, _, _, _, _ string)     {}
+func (noopEmitter) EmitOrderCompleted(_ int64, _, _ string)           {}
+func (noopEmitter) EmitOrderQueued(_ int64, _, _, _ string)           {}
+func (noopEmitter) EmitOrderFaulted(_ int64, _, _, _ string)          {}
+func (noopEmitter) EmitOrderFaultedRecovered(_ int64, _, _, _ string) {}

@@ -258,8 +258,8 @@ func TestApiInventoryInvariant_ReportsNegativeBinSum(t *testing.T) {
 func TestCellHelper(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		col string
-		row int
+		col  string
+		row  int
 		want string
 	}{
 		{"A", 1, "A1"},

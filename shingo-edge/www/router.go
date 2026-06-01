@@ -63,12 +63,13 @@ type Handlers struct {
 // To find a handler: grep for the URL path → handler func name → handlers_*.go.
 //
 // Route layout:
-//   /events                — SSE stream (shop floor live updates)
-//   /                      — Public pages (material, orders, production, changeover, operator HMI)
-//   /login, /logout        — Authentication
-//   /config, /processes, …  — Admin-only pages (adminMiddleware)
-//   /api/* (public)        — Shop floor actions (confirm, request, release, changeover, orders)
-//   /api/* (admin)         — Setup mutations (PLCs, processes, styles, stations, config, backups)
+//
+//	/events                — SSE stream (shop floor live updates)
+//	/                      — Public pages (material, orders, production, changeover, operator HMI)
+//	/login, /logout        — Authentication
+//	/config, /processes, …  — Admin-only pages (adminMiddleware)
+//	/api/* (public)        — Shop floor actions (confirm, request, release, changeover, orders)
+//	/api/* (admin)         — Setup mutations (PLCs, processes, styles, stations, config, backups)
 //
 // Auth boundary: h.adminMiddleware. Public = shop floor operator access (no login).
 // Handlers live in handlers_*.go files grouped by domain.

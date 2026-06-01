@@ -1,5 +1,7 @@
 package store
 
+import "log"
+
 // NodeState represents the current state of a node with its bin contents.
 type NodeState struct {
 	NodeID    int64
@@ -8,6 +10,10 @@ type NodeState struct {
 	Enabled   bool
 	Items     []BinItem
 	ItemCount int
+	// ContentsUnknown is set when the node's bins could not be read (a transient
+	// DB error). The node is still included in the snapshot — flagged rather than
+	// silently dropped — so a consumer can tell "no bins" from "couldn't read".
+	ContentsUnknown bool
 }
 
 // BinItem describes a bin at a node for state queries.
@@ -30,6 +36,16 @@ func (db *DB) ListNodeStates() (map[int64]*NodeState, error) {
 	for _, node := range nodes {
 		bins, err := db.ListBinsByNode(node.ID)
 		if err != nil {
+			// Don't drop the node from the snapshot on a transient read error — a
+			// missing node is harder to diagnose than one flagged unreadable.
+			log.Printf("store: list bins for node %d: %v", node.ID, err)
+			states[node.ID] = &NodeState{
+				NodeID:          node.ID,
+				NodeName:        node.Name,
+				Zone:            node.Zone,
+				Enabled:         node.Enabled,
+				ContentsUnknown: true,
+			}
 			continue
 		}
 		items := make([]BinItem, len(bins))

@@ -72,12 +72,12 @@ func testHandlersWithVendorProxy(t *testing.T, baseURL string) (*Handlers, *stor
 	dbgLog, _ := debuglog.New(64, nil)
 
 	h := &Handlers{
-		engine:   eng,
+		engine:        eng,
 		orchestration: eng,
-		sessions: newSessionStore("test-secret"),
-		tmpls:    make(map[string]*template.Template),
-		eventHub: hub,
-		debugLog: dbgLog,
+		sessions:      newSessionStore("test-secret"),
+		tmpls:         make(map[string]*template.Template),
+		eventHub:      hub,
+		debugLog:      dbgLog,
 	}
 	loadTestTemplates(t, h)
 	return h, db

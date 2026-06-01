@@ -20,7 +20,7 @@ type mockEmitter struct {
 	events []string
 }
 
-func (e *mockEmitter) EmitCounterRead(rpID int64, plcName, tagName string, value int64)      {}
+func (e *mockEmitter) EmitCounterRead(rpID int64, plcName, tagName string, value int64) {}
 func (e *mockEmitter) EmitCounterDelta(rpID, processID, styleID, delta, newCount int64, anomaly string) {
 }
 func (e *mockEmitter) EmitCounterAnomaly(snapID, rpID int64, plc, tag string, old, new int64, atype string) {

@@ -93,19 +93,19 @@ func (r *OrderDetailsResponse) UnmarshalJSON(data []byte) error {
 }
 
 type OrderDetail struct {
-	ID            string        `json:"id"`
-	ExternalID    string        `json:"externalId"`
-	Vehicle       string        `json:"vehicle"`
-	Group         string        `json:"group"`
-	State         OrderState    `json:"state"`
-	Complete      bool          `json:"complete"`
-	Priority      int           `json:"priority"`
-	CreateTime    int64         `json:"createTime"`
-	TerminalTime  int64         `json:"terminalTime"`
-	Blocks        []BlockDetail `json:"blocks"`
-	Errors        []OrderMessage `json:"errors"`
-	Warnings      []OrderMessage `json:"warnings"`
-	Notices       []OrderMessage `json:"notices"`
+	ID           string         `json:"id"`
+	ExternalID   string         `json:"externalId"`
+	Vehicle      string         `json:"vehicle"`
+	Group        string         `json:"group"`
+	State        OrderState     `json:"state"`
+	Complete     bool           `json:"complete"`
+	Priority     int            `json:"priority"`
+	CreateTime   int64          `json:"createTime"`
+	TerminalTime int64          `json:"terminalTime"`
+	Blocks       []BlockDetail  `json:"blocks"`
+	Errors       []OrderMessage `json:"errors"`
+	Warnings     []OrderMessage `json:"warnings"`
+	Notices      []OrderMessage `json:"notices"`
 	// Join order fields
 	FromLoc       string     `json:"fromLoc,omitempty"`
 	ToLoc         string     `json:"toLoc,omitempty"`

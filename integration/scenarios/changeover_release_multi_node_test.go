@@ -76,8 +76,8 @@ func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing
 			StyleID: fromStyleID, CoreNodeName: nodeName,
 			Role: "consume", SwapMode: "simple",
 			PayloadCode: "OLD-" + nodeName, UOPCapacity: 100,
-			InboundSource: "SRC-OLD-" + nodeName,
-			OutboundStaging: "OUT-STG-" + nodeName,
+			InboundSource:       "SRC-OLD-" + nodeName,
+			OutboundStaging:     "OUT-STG-" + nodeName,
 			OutboundDestination: "DST-OLD-" + nodeName,
 		}); err != nil {
 			t.Fatalf("upsert from claim %s: %v", nodeName, err)
@@ -86,7 +86,7 @@ func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing
 			StyleID: toStyleID, CoreNodeName: nodeName,
 			Role: "consume", SwapMode: "simple",
 			PayloadCode: "NEW-" + nodeName, UOPCapacity: 200,
-			InboundSource: "SRC-NEW-" + nodeName,
+			InboundSource:  "SRC-NEW-" + nodeName,
 			InboundStaging: "IN-STG-" + nodeName,
 		}); err != nil {
 			t.Fatalf("upsert to claim %s: %v", nodeName, err)

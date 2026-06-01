@@ -7,18 +7,6 @@ import (
 	"shingoedge/store/processes"
 )
 
-// BuildRestoreSteps builds steps to return material from outbound staging back
-// to the production node. Used after changeover-only node evacuation.
-func BuildRestoreSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
-	if claim.OutboundStaging == "" {
-		return nil
-	}
-	return []protocol.ComplexOrderStep{
-		{Action: "pickup", Node: claim.OutboundStaging},
-		{Action: "dropoff", Node: claim.CoreNodeName},
-	}
-}
-
 // ChangeoverSituation classifies what needs to happen at a physical node
 // when transitioning between two styles.
 type ChangeoverSituation string
@@ -412,7 +400,6 @@ func FanOutPressIndexCrossMode(diffs []ChangeoverNodeDiff) []ChangeoverNodeDiff 
 	}
 	return append(diffs, added...)
 }
-
 
 // ApplyReuseCompatibleBinsShortcut rewrites Swap / Evacuate diffs to
 // Unchanged when the from-claim is press-index, the to-claim shares the

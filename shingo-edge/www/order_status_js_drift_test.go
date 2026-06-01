@@ -31,8 +31,8 @@ func TestOrderStatusJSAgreesWithProtocol(t *testing.T) {
 	src := string(body)
 
 	cases := []struct {
-		jsConst      string
-		goProjector  func() string
+		jsConst     string
+		goProjector func() string
 	}{
 		{"TERMINAL_STATUSES", protocol.TerminalStatusSQLList},
 		{"OPERATOR_VISIBLE_STATUSES", protocol.OperatorVisibleStatusSQLList},

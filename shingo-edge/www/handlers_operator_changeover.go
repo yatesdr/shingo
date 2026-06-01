@@ -169,16 +169,16 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 // path during changeover. No HMI surface currently posts to this
 // endpoint. Two reasons it's intentionally kept rather than deleted:
 //
-//   1. Future bulk shortcut. If floor pushes back on per-node click count
-//      for happy-path multi-node changeovers, a "Release All Ready Nodes"
-//      button can repurpose this endpoint with a single confirmation
-//      modal upfront (vs the toast-after-batch pattern we removed).
+//  1. Future bulk shortcut. If floor pushes back on per-node click count
+//     for happy-path multi-node changeovers, a "Release All Ready Nodes"
+//     button can repurpose this endpoint with a single confirmation
+//     modal upfront (vs the toast-after-batch pattern we removed).
 //
-//   2. ReleaseChangeoverWait still has an audit-driven contract worth
-//      preserving — Phase 2's evac-first sequencing + pending-supply
-//      counter — so the engine method stays as a future composition
-//      target. Deleting the HTTP wrapper would force a re-derivation if
-//      either need surfaces.
+//  2. ReleaseChangeoverWait still has an audit-driven contract worth
+//     preserving — Phase 2's evac-first sequencing + pending-supply
+//     counter — so the engine method stays as a future composition
+//     target. Deleting the HTTP wrapper would force a re-derivation if
+//     either need surfaces.
 //
 // If neither condition pans out within a reasonable window, this
 // endpoint + handler + the router registration are safe to remove

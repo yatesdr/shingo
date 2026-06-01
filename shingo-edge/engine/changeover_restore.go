@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"database/sql"
+	"errors"
 	"log"
 
 	"shingoedge/domain"
@@ -23,8 +25,15 @@ func (e *Engine) restoreChangeoverState() {
 	}
 	for _, process := range processes {
 		changeover, err := e.db.GetActiveProcessChangeover(process.ID)
-		if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			continue // no active changeover
+		}
+		if err != nil {
+			// Real DB error (not "no active changeover"): still skip this process,
+			// but log it — startup has no retry, so a masked error here can
+			// silently leave an in-progress changeover un-reconciled after a restart.
+			log.Printf("changeover restore: get active changeover for process %d: %v", process.ID, err)
+			continue
 		}
 		tasks, err := e.db.ListChangeoverNodeTasks(changeover.ID)
 		if err != nil {
@@ -81,13 +90,13 @@ func (e *Engine) reconcileNodeTask(task *processes.NodeTask, toStyleID int64) bo
 						}
 					}
 					if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskStaged); err != nil {
-				log.Printf("changeover: update node task %d to staged: %v", task.ID, err)
-				}
+						log.Printf("changeover: update node task %d to staged: %v", task.ID, err)
+					}
 					advanced = true
 				case "release_requested":
 					if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskReleased); err != nil {
-				log.Printf("changeover: update node task %d to released: %v", task.ID, err)
-				}
+						log.Printf("changeover: update node task %d to released: %v", task.ID, err)
+					}
 					advanced = true
 				}
 			}
@@ -99,7 +108,7 @@ func (e *Engine) reconcileNodeTask(task *processes.NodeTask, toStyleID int64) bo
 		if order, err := e.db.GetOrder(*task.OldMaterialReleaseOrderID); err == nil {
 			if orders.IsTerminal(order.Status) && task.State == domain.NodeTaskEmptyRequested {
 				if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskLineCleared); err != nil {
-				log.Printf("changeover: update node task %d to line_cleared: %v", task.ID, err)
+					log.Printf("changeover: update node task %d to line_cleared: %v", task.ID, err)
 				}
 				advanced = true
 			}

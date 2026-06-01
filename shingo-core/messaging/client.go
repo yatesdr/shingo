@@ -180,11 +180,20 @@ func (c *Client) Subscribe(topic string, handler MessageHandler) error {
 func (c *Client) readLoop(topic string, reader *kafka.Reader, handler MessageHandler) {
 	bo := backoff.New(500*time.Millisecond, 5*time.Second)
 
+	// Capture our stop channel once under the lock. Reconfigure swaps c.stopChan
+	// (under the lock) and closes the old one; selecting on this local instead of
+	// re-reading the field every iteration both removes the data race and makes
+	// this loop exit on ITS stop signal rather than silently following the swap
+	// to the new channel and never stopping.
+	c.mu.RLock()
+	stop := c.stopChan
+	c.mu.RUnlock()
+
 	for {
 		msg, err := reader.ReadMessage(context.Background())
 		if err != nil {
 			select {
-			case <-c.stopChan:
+			case <-stop:
 				return
 			default:
 			}
@@ -195,7 +204,7 @@ func (c *Client) readLoop(topic string, reader *kafka.Reader, handler MessageHan
 
 			timer := time.NewTimer(jittered)
 			select {
-			case <-c.stopChan:
+			case <-stop:
 				timer.Stop()
 				return
 			case <-timer.C:
@@ -276,12 +285,12 @@ func (c *Client) Reconfigure(cfg *config.MessagingConfig) error {
 }
 
 func (c *Client) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.closeOnce.Do(func() {
 		close(c.stopChan)
 	})
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if c.kafka != nil {
 		for _, r := range c.kafka.readers {

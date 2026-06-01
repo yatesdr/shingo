@@ -20,12 +20,12 @@ import (
 // carry binID) and capture_reduction would otherwise be silently
 // dropped at the BinID==0 gate.
 type NodeBinInfo struct {
-	NodeName          string  `json:"node_name"`
-	BinID             int64   `json:"bin_id,omitempty"`
-	BinLabel          string  `json:"bin_label,omitempty"`
-	BinTypeCode       string  `json:"bin_type_code,omitempty"`
-	PayloadCode       string  `json:"payload_code,omitempty"`
-	UOPRemaining      int     `json:"uop_remaining"`
+	NodeName     string `json:"node_name"`
+	BinID        int64  `json:"bin_id,omitempty"`
+	BinLabel     string `json:"bin_label,omitempty"`
+	BinTypeCode  string `json:"bin_type_code,omitempty"`
+	PayloadCode  string `json:"payload_code,omitempty"`
+	UOPRemaining int    `json:"uop_remaining"`
 	// DeltaEpoch is Core's bins.delta_epoch — bumps on every load-
 	// lifecycle boundary (SetForProduction, ClearForReuseTx). Edge
 	// stores it alongside the bin and stamps every outgoing
@@ -147,7 +147,7 @@ type BinUOPRow struct {
 	// DeltaEpoch mirrors Core's bins.delta_epoch — populated on
 	// startup-time reconciliation so Edge can repair a lost bin-state
 	// cache against the current load's epoch instead of starting at 0.
-	DeltaEpoch   int64  `json:"delta_epoch"`
+	DeltaEpoch int64 `json:"delta_epoch"`
 }
 
 // LinesideBucketRow mirrors service.LinesideBucketRow on Core. Edge
@@ -344,7 +344,7 @@ type BinLoadResponse struct {
 	// DeltaEpoch is the new bins.delta_epoch SetForProduction returned.
 	// Edge caches it and stamps subsequent BinUOPDeltas against this
 	// bin with the value, so Core's epoch-aware dedup accepts them.
-	DeltaEpoch   int64  `json:"delta_epoch,omitempty"`
+	DeltaEpoch int64 `json:"delta_epoch,omitempty"`
 }
 
 // LoadBin sets the manifest on the bin at a node via Core's HTTP API.

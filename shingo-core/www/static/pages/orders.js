@@ -260,10 +260,19 @@ function renderOrderModal(data) {
 window.onOrderUpdate = debounce(function(e) {
   try {
     var data = JSON.parse(e.data);
-    if (_orderModalID && data && data.order_id === _orderModalID) {
-      openOrderModal(_orderModalID);
+    if (_orderModalID != null) {
+      // A modal is open. Refresh it when this event is for that order.
+      // order_id arrives as a number in the SSE JSON, but _orderModalID comes
+      // from the data-action colon-arg as a string — normalize both sides.
+      // Do NOT hard-reload while a modal is open: location.reload() would
+      // discard the modal (and any filter/scroll state) and defeat the
+      // targeted refresh below.
+      if (data && Number(data.order_id) === Number(_orderModalID)) {
+        openOrderModal(_orderModalID);
+      }
+      return;
     }
-    // Refresh order list to reflect status changes
+    // No modal open: refresh the order list to reflect status changes.
     location.reload();
   } catch(err) { console.error('onOrderUpdate', err); }
 }, 2000);
@@ -321,10 +330,10 @@ function loadManualOrderDropdowns() {
         html += '</optgroup>';
       }
       // Transport tab
-      document.getElementById('mo-pickup').innerHTML = html;
+      document.getElementById('mo-source').innerHTML = html;
       document.getElementById('mo-delivery').innerHTML = html;
       // Staged tab
-      document.getElementById('mo-staged-pickup').innerHTML = html;
+      document.getElementById('mo-staged-source').innerHTML = html;
       document.getElementById('mo-staged-staging').innerHTML = html;
       document.getElementById('mo-staged-delivery').innerHTML = html;
       // Swap tab

@@ -38,7 +38,7 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		"Page":          "orders",
+		"Page":         "orders",
 		"Orders":       orders,
 		"FilterStatus": status,
 	}
@@ -66,8 +66,8 @@ func (h *Handlers) handleOrderDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		"Page":          "orders",
-		"Order":         order,
+		"Page":    "orders",
+		"Order":   order,
 		"History": history,
 	}
 	h.render(w, r, "orders.html", data)
@@ -131,14 +131,14 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type enrichedOrder struct {
-		Order        *domain.Order             `json:"order"`
-		History      []*domain.OrderHistory    `json:"history,omitempty"`
-		Bin          *domain.Bin               `json:"bin,omitempty"`
-		BinManifest  *domain.Manifest       `json:"bin_manifest,omitempty"`
-		SourceNode   *domain.Node              `json:"source_node,omitempty"`
-		DeliveryNode *domain.Node              `json:"delivery_node,omitempty"`
-		Children     []*domain.Order           `json:"children,omitempty"`
-		Parent       *domain.Order             `json:"parent,omitempty"`
+		Order        *domain.Order            `json:"order"`
+		History      []*domain.OrderHistory   `json:"history,omitempty"`
+		Bin          *domain.Bin              `json:"bin,omitempty"`
+		BinManifest  *domain.Manifest         `json:"bin_manifest,omitempty"`
+		SourceNode   *domain.Node             `json:"source_node,omitempty"`
+		DeliveryNode *domain.Node             `json:"delivery_node,omitempty"`
+		Children     []*domain.Order          `json:"children,omitempty"`
+		Parent       *domain.Order            `json:"parent,omitempty"`
 		VendorDetail *fleet.VendorOrderDetail `json:"vendor_detail,omitempty"`
 		Robot        *fleet.RobotStatus       `json:"robot,omitempty"`
 	}
@@ -202,15 +202,15 @@ func (h *Handlers) apiSetOrderPriority(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OrderType     string `json:"order_type"`
-		SourceNode    string `json:"source_node"`
-		DeliveryNode  string `json:"delivery_node"`
-		StagingNode   string `json:"staging_node"`
-		Priority      int    `json:"priority"`
-		Description   string `json:"description"`
-		PayloadCode string `json:"payload_code"`
-		BinLabel      string `json:"bin_label"`
-		Quantity      int    `json:"quantity"`
+		OrderType    string `json:"order_type"`
+		SourceNode   string `json:"source_node"`
+		DeliveryNode string `json:"delivery_node"`
+		StagingNode  string `json:"staging_node"`
+		Priority     int    `json:"priority"`
+		Description  string `json:"description"`
+		PayloadCode  string `json:"payload_code"`
+		BinLabel     string `json:"bin_label"`
+		Quantity     int    `json:"quantity"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -379,11 +379,11 @@ func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
 	}
 
 	complexReq := &protocol.ComplexOrderRequest{
-		OrderUUID:     orderUUID,
+		OrderUUID:   orderUUID,
 		PayloadCode: payloadCode,
-		PayloadDesc:   desc,
-		Quantity:      1,
-		Priority:      priority,
+		PayloadDesc: desc,
+		Quantity:    1,
+		Priority:    priority,
 		Steps: []protocol.ComplexOrderStep{
 			{Action: "pickup", Node: sourceNode},
 			{Action: "dropoff", Node: stagingNode},
@@ -508,11 +508,11 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 
 	// Store order: pickup from target node
 	storeReq := &protocol.OrderRequest{
-		OrderUUID: storeUUID,
-		OrderType: protocol.OrderTypeStore,
-		Quantity:  1,
-		SourceNode: targetNode,
-		Priority:   priority,
+		OrderUUID:   storeUUID,
+		OrderType:   protocol.OrderTypeStore,
+		Quantity:    1,
+		SourceNode:  targetNode,
+		Priority:    priority,
 		PayloadDesc: desc,
 	}
 	storeEnv, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, storeReq)
@@ -524,13 +524,13 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 
 	// Retrieve order: deliver to target node with payload
 	retrieveReq := &protocol.OrderRequest{
-		OrderUUID:     retrieveUUID,
-		OrderType:     protocol.OrderTypeRetrieve,
-		PayloadCode: payloadCode,
-		Quantity:      1,
-		DeliveryNode:  targetNode,
-		Priority:      priority,
-		PayloadDesc:   desc,
+		OrderUUID:    retrieveUUID,
+		OrderType:    protocol.OrderTypeRetrieve,
+		PayloadCode:  payloadCode,
+		Quantity:     1,
+		DeliveryNode: targetNode,
+		Priority:     priority,
+		PayloadDesc:  desc,
 	}
 	retrieveEnv, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, retrieveReq)
 	if err != nil {

@@ -74,7 +74,7 @@ const (
 //  2. Computes the remaining_uop value for Core from the disposition:
 //     - DispositionCaptureLineside → &0 (mark bin empty)
 //     - DispositionSendPartialBack → &runtime.RemainingUOPCached (partial; falls
-//       back to &0 if runtime UOP is non-positive, e.g. sentinel)
+//     back to &0 if runtime UOP is non-positive, e.g. sentinel)
 //     - "" (empty Mode) → nil (no manifest change)
 //  3. Captures any pulled-to-lineside parts (capture_lineside only) and
 //     deactivates buckets for other styles on this node (always — release

@@ -610,9 +610,9 @@ func TestListDispatchedVendorOrderIDs(t *testing.T) {
 	mk("d1", "dispatched", "rds-1")
 	mk("d2", "in_transit", "rds-2")
 	mk("d3", "staged", "rds-3")
-	mk("done", "confirmed", "rds-done")   // excluded: terminal
-	mk("pending", "pending", "rds-pend")  // excluded: wrong status
-	mk("no-vendor", "dispatched", "")     // excluded: empty vendor_order_id
+	mk("done", "confirmed", "rds-done")  // excluded: terminal
+	mk("pending", "pending", "rds-pend") // excluded: wrong status
+	mk("no-vendor", "dispatched", "")    // excluded: empty vendor_order_id
 
 	ids, err := orders.ListDispatchedVendorOrderIDs(db)
 	if err != nil {

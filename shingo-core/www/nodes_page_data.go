@@ -17,13 +17,21 @@ type nodesPageDataAdapter struct {
 	bs *service.BinService
 }
 
-func (a *nodesPageDataAdapter) ListNodes() ([]*domain.Node, error)                      { return a.ns.ListNodes() }
-func (a *nodesPageDataAdapter) CountBinsByAllNodes() (map[int64]int, error)            { return a.bs.CountBinsByAllNodes() }
-func (a *nodesPageDataAdapter) NodeTileStates() (map[int64]domain.NodeTileState, error) { return a.ns.NodeTileStates() }
-func (a *nodesPageDataAdapter) ListScenePoints() ([]*domain.ScenePoint, error)          { return a.ns.ListScenePoints() }
-func (a *nodesPageDataAdapter) ListBinTypes() ([]*domain.BinType, error)                { return a.bs.ListBinTypes() }
-func (a *nodesPageDataAdapter) ListEdges() ([]domain.RegistryEdge, error)           { return a.ns.ListEdges() }
-func (a *nodesPageDataAdapter) GetSlotDepth(nodeID int64) (int, error)                 { return a.ns.GetSlotDepth(nodeID) }
+func (a *nodesPageDataAdapter) ListNodes() ([]*domain.Node, error) { return a.ns.ListNodes() }
+func (a *nodesPageDataAdapter) CountBinsByAllNodes() (map[int64]int, error) {
+	return a.bs.CountBinsByAllNodes()
+}
+func (a *nodesPageDataAdapter) NodeTileStates() (map[int64]domain.NodeTileState, error) {
+	return a.ns.NodeTileStates()
+}
+func (a *nodesPageDataAdapter) ListScenePoints() ([]*domain.ScenePoint, error) {
+	return a.ns.ListScenePoints()
+}
+func (a *nodesPageDataAdapter) ListBinTypes() ([]*domain.BinType, error)  { return a.bs.ListBinTypes() }
+func (a *nodesPageDataAdapter) ListEdges() ([]domain.RegistryEdge, error) { return a.ns.ListEdges() }
+func (a *nodesPageDataAdapter) GetSlotDepth(nodeID int64) (int, error) {
+	return a.ns.GetSlotDepth(nodeID)
+}
 
 // nodesPageDataStore is the narrow read surface getNodesPageData needs.
 // nodesPageDataAdapter satisfies this; *engine.Engine no longer does

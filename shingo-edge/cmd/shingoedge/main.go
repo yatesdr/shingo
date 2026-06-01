@@ -34,8 +34,8 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/protocol/router"
 	"shingo/protocol/debuglog"
+	"shingo/protocol/router"
 	"shingoedge/backup"
 	"shingoedge/config"
 	"shingoedge/countgroup"
@@ -556,10 +556,10 @@ func main() {
 	reporter := messaging.NewProductionReporter(db, stationID)
 	reporter.DebugLog = messaging.DebugLogFunc(dbg.Func("reporter"))
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		if delta, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
-			reporter.RecordDelta(delta.StyleID, delta.Delta)
+		if pr, ok := evt.Payload.(engine.ProducedReportEvent); ok {
+			reporter.RecordDelta(pr.PayloadCode, pr.Delta)
 		}
-	}, engine.EventCounterDelta)
+	}, engine.EventProducedReport)
 	reporter.Start()
 	defer reporter.Stop()
 

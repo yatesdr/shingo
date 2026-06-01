@@ -25,12 +25,12 @@ import (
 // dropoff would otherwise have a TOCTOU window).
 //
 // Flow:
-//   1. Validate + resolve steps.
-//   2. Create order with status=queued (was: pending + immediate dispatch).
-//   3. Ack to edge.
-//   4. Emit EventOrderQueued — scanner subscribes and runs immediately.
-//      Scanner.tryFulfill calls Dispatcher.DispatchPreparedComplex when
-//      capacity is green; leaves it queued otherwise.
+//  1. Validate + resolve steps.
+//  2. Create order with status=queued (was: pending + immediate dispatch).
+//  3. Ack to edge.
+//  4. Emit EventOrderQueued — scanner subscribes and runs immediately.
+//     Scanner.tryFulfill calls Dispatcher.DispatchPreparedComplex when
+//     capacity is green; leaves it queued otherwise.
 //
 // The latency cost on the happy path is ~milliseconds (event-driven
 // scanner trigger, runs synchronously on the emitter goroutine).

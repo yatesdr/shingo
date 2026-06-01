@@ -35,7 +35,7 @@ import (
 //   - "single_robot": inbound + outbound staging for single-robot swap
 //   - "two_robot":   dual-robot swap with inbound staging
 //   - "two_robot_press_index": dual-robot press-index swap (R1 carries full
-//                    out + replacement in; R2 indexes B→A)
+//     out + replacement in; R2 indexes B→A)
 //   - "manual_swap": operator-driven forklift swap with multi-order queue
 //
 // Routing fields follow a directional convention:

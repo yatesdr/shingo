@@ -219,4 +219,3 @@ func TestApiRepairAnomaly_ReleaseStagedBin_NotStaged(t *testing.T) {
 		t.Errorf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
 }
-

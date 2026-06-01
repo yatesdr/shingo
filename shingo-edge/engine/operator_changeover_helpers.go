@@ -6,7 +6,6 @@ package engine
 import (
 	"fmt"
 
-	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store"
@@ -21,31 +20,6 @@ func findNodeByCoreName(nodes []processes.Node, coreName string) *processes.Node
 		}
 	}
 	return nil
-}
-
-// DEAD CODE — no callers in the package. Preserved during the
-// 2026-05-11 changeover-ops split for archaeology only; safe to delete.
-// Originally intended to tell the operator "this leg is still expected
-// to reach staged on its own; come back in a moment." If you find a
-// use for it, move it out of this dead-code block and document the
-// caller.
-//
-// isPendingOrderStatus reports whether the order is alive but not yet at
-// staged — i.e., it's expected to reach staged on its own and the operator
-// would benefit from being told to wait. Conservative: anything that isn't
-// staged AND isn't past-staged counts as pending. (Note: a "released" order
-// transitions to StatusInTransit per orders.Manager — there's no separate
-// StatusReleased to filter out.)
-func isPendingOrderStatus(s protocol.Status) bool {
-	switch s {
-	case orders.StatusInTransit, orders.StatusDelivered, orders.StatusConfirmed,
-		orders.StatusCancelled, orders.StatusFailed:
-		return false
-	case orders.StatusStaged:
-		return false
-	default:
-		return true
-	}
 }
 
 func isNodeTaskTerminal(task *processes.NodeTask) bool {

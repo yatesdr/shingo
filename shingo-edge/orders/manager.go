@@ -106,7 +106,7 @@ func (m *Manager) enqueueAndAutoSubmit(orderID int64, orderUUID string, env *pro
 		return
 	}
 	if err := m.TransitionOrder(orderID, StatusSubmitted, "auto-submitted at creation"); err != nil {
-		log.Printf("auto-submit order %s: %v", orderUUID, err)
+		log.Printf("auto-submit order %s: %v (enqueued to outbox but status stayed pending; reconciles when Core replies)", orderUUID, err)
 	}
 }
 
@@ -133,17 +133,17 @@ func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 	}
 
 	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
-		OrderUUID:     orderUUID,
-		OrderType:     TypeRetrieve,
-		PayloadDesc:   payloadDesc,
-		PayloadCode:   payloadCode,
-		RetrieveEmpty: retrieveEmpty,
-		Quantity:      quantity,
-		DeliveryNode:  deliveryNode,
-		SourceNode:    sourceNode,
-		StagingNode:   stagingNode,
-		LoadType:      loadType,
- 		SkipAutoConfirm: skipAutoConfirm,
+		OrderUUID:       orderUUID,
+		OrderType:       TypeRetrieve,
+		PayloadDesc:     payloadDesc,
+		PayloadCode:     payloadCode,
+		RetrieveEmpty:   retrieveEmpty,
+		Quantity:        quantity,
+		DeliveryNode:    deliveryNode,
+		SourceNode:      sourceNode,
+		StagingNode:     stagingNode,
+		LoadType:        loadType,
+		SkipAutoConfirm: skipAutoConfirm,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 

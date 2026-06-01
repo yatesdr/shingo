@@ -8,6 +8,7 @@ import (
 	"shingo/protocol"
 	"shingoedge/store/processes"
 )
+
 // SendClaimSync builds a ClaimSync message from all manual_swap claims
 // across **every style** on every process — not just the active one — and
 // sends it to Core. Core uses this to populate its demand registry for

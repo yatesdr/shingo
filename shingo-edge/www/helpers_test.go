@@ -25,9 +25,9 @@ import (
 	"shingoedge/plc"
 	"shingoedge/service"
 	"shingoedge/store"
+	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
-	storeorders "shingoedge/store/orders"
 )
 
 // testDB is the shared SQLite database initialised by TestMain.
@@ -93,30 +93,35 @@ type stubEngine struct {
 	lastReleaseStagedOrdersDisposition *engine.ReleaseDisposition
 }
 
-func (s *stubEngine) AppConfig() *config.Config        { return s.cfg }
-func (s *stubEngine) ConfigPath() string               { return s.cfgPath }
-func (s *stubEngine) CoreAPI() *engine.CoreClient      { return nil }
-func (s *stubEngine) PLCManager() *plc.Manager         { return nil }
-func (s *stubEngine) OrderManager() *orders.Manager    { return s.orderMgr }
-func (s *stubEngine) Reconciliation() *engine.ReconciliationService   { return nil }
-func (s *stubEngine) CoreSync() *engine.CoreSyncService               { return nil }
-func (s *stubEngine) ApplyWarLinkConfig()               {}
-func (s *stubEngine) ReconnectKafka() error             { return nil }
-func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error        { return nil }
-func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo          { return s.core }
-func (s *stubEngine) RequestNodeSync()                  {}
-func (s *stubEngine) RequestCatalogSync()               {}
-func (s *stubEngine) RequestOrderStatusSync() error     { return nil }
-func (s *stubEngine) StartupReconcile() error           { return nil }
-func (s *stubEngine) SendClaimSync()                    {}
-func (s *stubEngine) SyncProcessCounter(int64) error    { return nil }
-func (s *stubEngine) EnsureTagPublished(int64, string, string) {}
+func (s *stubEngine) AppConfig() *config.Config                                           { return s.cfg }
+func (s *stubEngine) ConfigPath() string                                                  { return s.cfgPath }
+func (s *stubEngine) CoreAPI() *engine.CoreClient                                         { return nil }
+func (s *stubEngine) PLCManager() *plc.Manager                                            { return nil }
+func (s *stubEngine) OrderManager() *orders.Manager                                       { return s.orderMgr }
+func (s *stubEngine) Reconciliation() *engine.ReconciliationService                       { return nil }
+func (s *stubEngine) CoreSync() *engine.CoreSyncService                                   { return nil }
+func (s *stubEngine) ApplyWarLinkConfig()                                                 {}
+func (s *stubEngine) ReconnectKafka() error                                               { return nil }
+func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error                           { return nil }
+func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo                             { return s.core }
+func (s *stubEngine) RequestNodeSync()                                                    {}
+func (s *stubEngine) RequestCatalogSync()                                                 {}
+func (s *stubEngine) RequestOrderStatusSync() error                                       { return nil }
+func (s *stubEngine) StartupReconcile() error                                             { return nil }
+func (s *stubEngine) SendClaimSync()                                                      {}
+func (s *stubEngine) SyncProcessCounter(int64) error                                      { return nil }
+func (s *stubEngine) EnsureTagPublished(int64, string, string)                            {}
 func (s *stubEngine) ManageReportingPointTag(int64, string, string, bool, string, string) {}
-func (s *stubEngine) CleanupReportingPointTag(int64, string, string, bool) {}
-func (s *stubEngine) RequestNodeMaterial(int64, int64) (*engine.NodeOrderResult, error) { return nil, nil }
-func (s *stubEngine) ReleaseNodeEmpty(int64) (*storeorders.Order, error)                     { return nil, nil }
-func (s *stubEngine) ReleaseNodePartial(int64, int64) (*storeorders.Order, error)             { return nil, nil }
-func (s *stubEngine) ReleaseNodeWithRemainingUOP(int64, int64, int) (*storeorders.Order, error) { return nil, nil }
+func (s *stubEngine) CleanupReportingPointTag(int64, string, string, bool)                {}
+func (s *stubEngine) RequestNodeMaterial(int64, int64) (*engine.NodeOrderResult, error) {
+	return nil, nil
+}
+func (s *stubEngine) ReleaseNodeEmpty(int64) (*storeorders.Order, error)          { return nil, nil }
+func (s *stubEngine) ReleaseNodePartial(int64, int64) (*storeorders.Order, error) { return nil, nil }
+func (s *stubEngine) ReleaseNodeWithRemainingUOP(int64, int64, int) (*storeorders.Order, error) {
+	return nil, nil
+}
+
 // ReleaseOrderWithLineside stub forwards to orderMgr.ReleaseOrder so
 // existing release-flow tests (TestApiOrders_ReleaseOrder_Success, etc.)
 // still exercise the status-transition + lifecycle-error paths. The
@@ -136,26 +141,34 @@ func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition
 }
 func (s *stubEngine) FinalizeProduceNode(int64) (*engine.NodeOrderResult, error)        { return nil, nil }
 func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem) error { return nil }
-func (s *stubEngine) ClearBin(int64) error                                             { return nil }
-func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)               { return nil, nil }
-func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)                { return nil, nil }
-func (s *stubEngine) PreviewChangeoverPlan(int64, int64) (changeover.Plan, error)            { return changeover.Plan{}, nil }
-func (s *stubEngine) StartProcessChangeover(int64, int64, string, string) (*processes.Changeover, error) { return nil, nil }
-func (s *stubEngine) CompleteProcessProductionCutover(int64) error                      { return nil }
-func (s *stubEngine) CancelProcessChangeover(int64) error                               { return nil }
-func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error               { return nil }
+func (s *stubEngine) ClearBin(int64) error                                              { return nil }
+func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)         { return nil, nil }
+func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)          { return nil, nil }
+func (s *stubEngine) PreviewChangeoverPlan(int64, int64) (changeover.Plan, error) {
+	return changeover.Plan{}, nil
+}
+func (s *stubEngine) StartProcessChangeover(int64, int64, string, string) (*processes.Changeover, error) {
+	return nil, nil
+}
+func (s *stubEngine) CompleteProcessProductionCutover(int64) error        { return nil }
+func (s *stubEngine) CancelProcessChangeover(int64) error                 { return nil }
+func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error { return nil }
 func (s *stubEngine) ReleaseChangeoverWait(_ int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
 	d := disp
 	s.lastReleaseChangeoverWaitDisp = &d
 	return engine.ReleaseChangeoverWaitResult{}, nil
 }
 func (s *stubEngine) SequentialChangeoverCutover(int64, int64, string) error { return nil }
-func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*storeorders.Order, error)     { return nil, nil }
-func (s *stubEngine) EvacuateNode(int64, int64, int64) (*storeorders.Order, error)             { return nil, nil }
-func (s *stubEngine) DeliverNewMaterialForChangeover(int64, int64) (*storeorders.Order, error) { return nil, nil }
-func (s *stubEngine) SwitchNodeToTarget(int64, int64) error                             { return nil }
-func (s *stubEngine) SwitchOperatorStationToTarget(int64, int64) error                   { return nil }
-func (s *stubEngine) FlipABNode(int64) error { return nil }
+func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*storeorders.Order, error) {
+	return nil, nil
+}
+func (s *stubEngine) EvacuateNode(int64, int64, int64) (*storeorders.Order, error) { return nil, nil }
+func (s *stubEngine) DeliverNewMaterialForChangeover(int64, int64) (*storeorders.Order, error) {
+	return nil, nil
+}
+func (s *stubEngine) SwitchNodeToTarget(int64, int64) error            { return nil }
+func (s *stubEngine) SwitchOperatorStationToTarget(int64, int64) error { return nil }
+func (s *stubEngine) FlipABNode(int64) error                           { return nil }
 
 func (s *stubEngine) BackfillBucketsForStation(force bool) (int, error) {
 	s.backfillCalls++

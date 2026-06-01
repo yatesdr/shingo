@@ -271,10 +271,10 @@ func TestOrderStateIsTerminal(t *testing.T) {
 // --- Poller tests ---
 
 type mockPollerEmitter struct {
-	mu          sync.Mutex
-	events      []pollerEvent
-	blockEvents []blockEvent
- 	graceExpired []graceExpiredEvent
+	mu           sync.Mutex
+	events       []pollerEvent
+	blockEvents  []blockEvent
+	graceExpired []graceExpiredEvent
 }
 
 type graceExpiredEvent struct {

@@ -15,15 +15,15 @@
 //
 // Service file layout (one per file, matches core's pattern):
 //
-//   admin_service.go       — admin user CRUD + auth lookup
-//   catalog_service.go     — payload catalog sync from core
-//   changeover_service.go  — process changeover orchestration
-//   counter_service.go     — reporting points + counter snapshots + hourly counts
-//   order_service.go       — order queries (lifecycle stays on orders.Manager)
-//   process_service.go     — process + process_node + runtime CRUD
-//   shift_service.go       — production shift CRUD
-//   station_service.go     — operator station CRUD + cross-aggregate nodes/views
-//   style_service.go       — style + style_node_claim CRUD
+//	admin_service.go       — admin user CRUD + auth lookup
+//	catalog_service.go     — payload catalog sync from core
+//	changeover_service.go  — process changeover orchestration
+//	counter_service.go     — reporting points + counter snapshots + hourly counts
+//	order_service.go       — order queries (lifecycle stays on orders.Manager)
+//	process_service.go     — process + process_node + runtime CRUD
+//	shift_service.go       — production shift CRUD
+//	station_service.go     — operator station CRUD + cross-aggregate nodes/views
+//	style_service.go       — style + style_node_claim CRUD
 //
 // Construction: Each service takes *store.DB. The *store.DB shim
 // methods stay in place to keep test fixtures compiling; Phase 6.4

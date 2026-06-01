@@ -14,21 +14,23 @@ import (
 	"shingocore/store/bins"
 )
 
-func (db *DB) CreateBin(b *bins.Bin) error                     { return bins.Create(db.DB, b) }
-func (db *DB) UpdateBin(b *bins.Bin) error                     { return bins.Update(db.DB, b) }
-func (db *DB) DeleteBin(id int64) error                   { return bins.Delete(db.DB, id) }
-func (db *DB) RetireBin(id int64) error                   { return bins.Retire(db.DB, id) }
-func (db *DB) GetBin(id int64) (*bins.Bin, error)              { return bins.Get(db.DB, id) }
-func (db *DB) GetBinByLabel(label string) (*bins.Bin, error)   { return bins.GetByLabel(db.DB, label) }
-func (db *DB) ListBins() ([]*bins.Bin, error)                  { return bins.List(db.DB) }
-func (db *DB) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) { return bins.ListByNode(db.DB, nodeID) }
+func (db *DB) CreateBin(b *bins.Bin) error                   { return bins.Create(db.DB, b) }
+func (db *DB) UpdateBin(b *bins.Bin) error                   { return bins.Update(db.DB, b) }
+func (db *DB) DeleteBin(id int64) error                      { return bins.Delete(db.DB, id) }
+func (db *DB) RetireBin(id int64) error                      { return bins.Retire(db.DB, id) }
+func (db *DB) GetBin(id int64) (*bins.Bin, error)            { return bins.Get(db.DB, id) }
+func (db *DB) GetBinByLabel(label string) (*bins.Bin, error) { return bins.GetByLabel(db.DB, label) }
+func (db *DB) ListBins() ([]*bins.Bin, error)                { return bins.List(db.DB) }
+func (db *DB) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) {
+	return bins.ListByNode(db.DB, nodeID)
+}
 func (db *DB) ListBinsByClaim(orderID int64) ([]*bins.Bin, error) {
 	return bins.ListByClaim(db.DB, orderID)
 }
 func (db *DB) ListAnomalousTransitBins() ([]*bins.Bin, error) {
 	return bins.ListAnomalousTransitBins(db.DB)
 }
-func (db *DB) CountBinsByNode(nodeID int64) (int, error)  { return bins.CountByNode(db.DB, nodeID) }
+func (db *DB) CountBinsByNode(nodeID int64) (int, error) { return bins.CountByNode(db.DB, nodeID) }
 
 // CountBinsByAllNodes returns a map of node_id -> bin count for all nodes
 // that have bins.
@@ -36,7 +38,9 @@ func (db *DB) CountBinsByAllNodes() (map[int64]int, error) { return bins.CountBy
 
 // NodeTileStates returns per-node tile rendering state for all nodes that
 // have bins.
-func (db *DB) NodeTileStates() (map[int64]bins.NodeTileState, error) { return bins.NodeTileStates(db.DB) }
+func (db *DB) NodeTileStates() (map[int64]bins.NodeTileState, error) {
+	return bins.NodeTileStates(db.DB)
+}
 
 // MoveBin moves a bin to a new node. Returns an error if the bin is already
 // at the destination.

@@ -558,7 +558,7 @@ func TestStagingExpiry_DoesNotExpireActiveClaim(t *testing.T) {
 		OrderType:    dispatch.OrderTypeRetrieve,
 		PayloadCode:  bp.Code,
 		DeliveryNode: lineNode.Name,
-		Status:      dispatch.StatusQueued,
+		Status:       dispatch.StatusQueued,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(secondOrder), "create second order")
 	testutil.MustNoErr(t, db.ClaimBin(bin.ID, secondOrder.ID), "claim bin for second order")

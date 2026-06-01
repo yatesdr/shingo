@@ -75,7 +75,7 @@ func seedReconcilerNode(t *testing.T, db *store.DB, prefix, payloadCode string) 
 		StyleID:      styleID,
 		CoreNodeName: prefix + "-NODE",
 		Role:         "consume",
-		SwapMode: "simple",
+		SwapMode:     "simple",
 		PayloadCode:  payloadCode,
 		UOPCapacity:  100,
 	})

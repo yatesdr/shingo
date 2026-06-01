@@ -312,4 +312,3 @@ func stateDir(configPath string) string {
 	}
 	return filepath.Join(dir, ".shingoedge-backup")
 }
-

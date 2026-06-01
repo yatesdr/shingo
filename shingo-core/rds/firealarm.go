@@ -6,8 +6,8 @@ import (
 
 // fireAlarmResponse is the raw RDS response from GET /isFire.
 type fireAlarmResponse struct {
-	Response         // code, msg, create_on
-	IsFire bool `json:"is_fire"`
+	Response      // code, msg, create_on
+	IsFire   bool `json:"is_fire"`
 }
 
 // fireAlarmRequest is the body for POST /fireOperations.

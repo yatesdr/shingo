@@ -11,9 +11,9 @@ import (
 func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := h.engine.AppConfig()
 	data := map[string]any{
-		"Page":          "config",
+		"Page":   "config",
 		"Config": cfg,
-		"Saved":         r.URL.Query().Get("saved"),
+		"Saved":  r.URL.Query().Get("saved"),
 	}
 	h.render(w, r, "config.html", data)
 }

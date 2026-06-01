@@ -22,8 +22,8 @@ func (h *Handlers) apiLoadBin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		PayloadCode string                       `json:"payload_code"`
-		UOPCount    int64                        `json:"uop_count"`
+		PayloadCode string                        `json:"payload_code"`
+		UOPCount    int64                         `json:"uop_count"`
 		Manifest    []protocol.IngestManifestItem `json:"manifest"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

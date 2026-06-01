@@ -159,7 +159,7 @@ func TestClient_Reconfigure(t *testing.T) {
 	// Subscribe before reconfigure - this will fail since not connected
 	// but tests that the handler gets registered
 	handler := func(topic string, payload []byte) {}
-	
+
 	_ = client.Subscribe("test-topic", handler)
 
 	// Reconfigure with new brokers
@@ -196,7 +196,7 @@ func TestClient_HandlerRegistration(t *testing.T) {
 
 	// Note: actual subscription requires connection
 	// This test verifies handler storage logic
-	
+
 	client.handlers["topic1"] = handler1
 	client.handlers["topic2"] = handler2
 
@@ -213,11 +213,11 @@ func TestClient_EnvelopeEncoding(t *testing.T) {
 		protocol.Address{Role: protocol.RoleEdge, Station: "line-1"},
 		protocol.Address{Role: protocol.RoleCore},
 		&protocol.OrderRequest{
-			OrderUUID:       "test-uuid-123",
-			OrderType:       "retrieve",
-			PayloadCode: "BIN-A",
-			DeliveryNode:    "line-1-station",
-			Quantity:        1.0,
+			OrderUUID:    "test-uuid-123",
+			OrderType:    "retrieve",
+			PayloadCode:  "BIN-A",
+			DeliveryNode: "line-1-station",
+			Quantity:     1.0,
 		},
 	)
 	if err != nil {
@@ -301,7 +301,7 @@ func TestClient_ConcurrentAccess(t *testing.T) {
 
 	// Simulate concurrent operations
 	var wg sync.WaitGroup
-	
+
 	// Multiple goroutines trying to check connection
 	for i := 0; i < 10; i++ {
 		wg.Add(1)

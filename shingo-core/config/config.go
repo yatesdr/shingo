@@ -24,14 +24,14 @@ type Config struct {
 // Empty Groups slice ⇒ feature disabled.
 // All fields are overridable per-deployment via shingocore.yaml.
 type CountGroupsConfig struct {
-	PollInterval       time.Duration       `yaml:"poll_interval"`
-	RDSTimeout         time.Duration       `yaml:"rds_timeout"`
-	OnThreshold        int                 `yaml:"on_threshold"`
-	OffThreshold       int                 `yaml:"off_threshold"`
-	FailSafeTimeout    time.Duration       `yaml:"fail_safe_timeout"`
-	NeverOccupiedWarn  time.Duration       `yaml:"never_occupied_warn"`
-	NeverOccupiedError time.Duration       `yaml:"never_occupied_error"`
-	Groups             []CountGroupConfig  `yaml:"groups"`
+	PollInterval       time.Duration      `yaml:"poll_interval"`
+	RDSTimeout         time.Duration      `yaml:"rds_timeout"`
+	OnThreshold        int                `yaml:"on_threshold"`
+	OffThreshold       int                `yaml:"off_threshold"`
+	FailSafeTimeout    time.Duration      `yaml:"fail_safe_timeout"`
+	NeverOccupiedWarn  time.Duration      `yaml:"never_occupied_warn"`
+	NeverOccupiedError time.Duration      `yaml:"never_occupied_error"`
+	Groups             []CountGroupConfig `yaml:"groups"`
 }
 
 type CountGroupConfig struct {
@@ -125,7 +125,7 @@ func Defaults() *Config {
 			SessionSecret: "change-me-in-production",
 		},
 		Staging: StagingConfig{
-			TTL:                  0,                    // 0 = never auto-unstage; override per node group via staging_ttl property
+			TTL:                  0, // 0 = never auto-unstage; override per node group via staging_ttl property
 			SweepInterval:        5 * time.Minute,
 			AutoConfirmDelivered: 5 * time.Minute, // auto-confirm delivered orders after 5 minutes if no receipt from Edge
 		},

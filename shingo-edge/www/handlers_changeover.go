@@ -10,13 +10,13 @@ import (
 // changeoverNodeView enriches a ChangeoverNodeTask with claim details for display.
 type changeoverNodeView struct {
 	domain.NodeTask
-	ProcessID       int64  `json:"process_id"`
-	Situation       string `json:"situation"`
-	FromPayload     string `json:"from_payload"`
-	ToPayload       string `json:"to_payload"`
-	FromRole        protocol.ClaimRole `json:"from_role"`
-	ToRole          protocol.ClaimRole `json:"to_role"`
-	LastOrderError  string `json:"last_order_error,omitempty"`
+	ProcessID      int64              `json:"process_id"`
+	Situation      string             `json:"situation"`
+	FromPayload    string             `json:"from_payload"`
+	ToPayload      string             `json:"to_payload"`
+	FromRole       protocol.ClaimRole `json:"from_role"`
+	ToRole         protocol.ClaimRole `json:"to_role"`
+	LastOrderError string             `json:"last_order_error,omitempty"`
 }
 
 // changeoverViewData holds the common data loaded for changeover views.
@@ -59,9 +59,9 @@ func (h *Handlers) buildChangeoverViewData(activeProcess *domain.Process) change
 
 		for _, task := range allNodeTasks {
 			view := changeoverNodeView{
-				NodeTask: task,
-				ProcessID:          activeProcess.ID,
-				Situation:          task.Situation,
+				NodeTask:  task,
+				ProcessID: activeProcess.ID,
+				Situation: task.Situation,
 			}
 			if task.FromClaimID != nil {
 				if claim, err := h.engine.StyleService().GetClaim(*task.FromClaimID); err == nil {
@@ -135,20 +135,20 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 
 	anomalies, rpMap := loadAnomalyData(h)
 	data := map[string]interface{}{
-		"Page":               "changeover",
-		"Processes":          processList,
-		"ActiveProcess":      activeProcess,
-		"ActiveProcessID":    activeProcessID,
-		"Styles":             d.Styles,
-		"CurrentStyle":       d.CurrentStyleName,
-		"ActiveChangeover":   d.ActiveChangeover,
-		"StationTasks":       d.StationTasks,
-		"NodeTaskMap":        d.NodeTaskMap,
-		"CentralNodeTasks":   d.CentralNodeTasks,
-		"AllNodesComplete":   d.AllNodesComplete,
-		"ChangeoverHistory":  changeoverHistory,
-		"Anomalies":          anomalies,
-		"ReportingPointMap":  rpMap,
+		"Page":              "changeover",
+		"Processes":         processList,
+		"ActiveProcess":     activeProcess,
+		"ActiveProcessID":   activeProcessID,
+		"Styles":            d.Styles,
+		"CurrentStyle":      d.CurrentStyleName,
+		"ActiveChangeover":  d.ActiveChangeover,
+		"StationTasks":      d.StationTasks,
+		"NodeTaskMap":       d.NodeTaskMap,
+		"CentralNodeTasks":  d.CentralNodeTasks,
+		"AllNodesComplete":  d.AllNodesComplete,
+		"ChangeoverHistory": changeoverHistory,
+		"Anomalies":         anomalies,
+		"ReportingPointMap": rpMap,
 	}
 	h.renderTemplate(w, r, "changeover.html", data)
 }

@@ -17,11 +17,11 @@ import (
 func TestApplyEdge_StateMachine(t *testing.T) {
 	t.Parallel()
 	type step struct {
-		value     int64
-		ok        bool
-		advance   time.Duration
-		wantFire  bool
-		wantPend  bool // true if pendingFall should be non-nil after this step
+		value    int64
+		ok       bool
+		advance  time.Duration
+		wantFire bool
+		wantPend bool // true if pendingFall should be non-nil after this step
 	}
 	cases := []struct {
 		name  string

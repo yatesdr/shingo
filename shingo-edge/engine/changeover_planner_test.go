@@ -186,7 +186,6 @@ func TestBuildChangeoverPlan_AnyNodeWithErrFailsThePlan(t *testing.T) {
 	}
 }
 
-
 // Sequential SWAP emits a single complex order (StepsB nil at plan
 // time) with a mid-sequence cutover wait. The planner reads ActivePull
 // at plan time; with empty snapshot the tie-break convention applies
@@ -631,12 +630,12 @@ func TestPlanNodeAction_PressPosition_EvacuateRoutesToPerPositionBuilder(t *test
 func TestRequiredChangeoverFields_PerMode(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name        string
-		fromMode protocol.SwapMode
-		from        processes.NodeClaim
-		to          processes.NodeClaim
-		wantSubstr  []string // substrings that must appear in formatMissingFields
-		wantOK      bool     // when true, missing list should be empty
+		name       string
+		fromMode   protocol.SwapMode
+		from       processes.NodeClaim
+		to         processes.NodeClaim
+		wantSubstr []string // substrings that must appear in formatMissingFields
+		wantOK     bool     // when true, missing list should be empty
 	}{
 		{
 			name:     "single_robot_complete",

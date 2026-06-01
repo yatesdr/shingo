@@ -50,9 +50,10 @@ func (noopEmitter) EmitOrderReceived(orderID int64, edgeUUID, stationID string, 
 func (noopEmitter) EmitOrderDispatched(orderID int64, vendorOrderID, sourceNode, destNode string) {}
 func (noopEmitter) EmitOrderFailed(orderID int64, edgeUUID, stationID, errorCode, detail string)  {}
 func (noopEmitter) EmitOrderSkipped(orderID int64, edgeUUID, stationID, errorCode, detail string) {}
-func (noopEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string) {}
-func (noopEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID string)                  {}
-func (noopEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)        {}
+func (noopEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string) {
+}
+func (noopEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID string)           {}
+func (noopEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string) {}
 
 func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 	t.Parallel()
@@ -229,5 +230,5 @@ func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
 		t.Fatalf("expected 1 history row after replayed receipt (deduped), got %d", len(history))
 	}
 }
-func (noopEmitter) EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)               {}
-func (noopEmitter) EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID, robotID string)     {}
+func (noopEmitter) EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)           {}
+func (noopEmitter) EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID, robotID string) {}

@@ -56,9 +56,9 @@ func matchAlways(*orderCompletionCtx) bool { return true }
 // Precedence:
 //  1. staged_delivery        — Order A → inbound staging slot
 //  2. order_b_complex        — Order B (old material release), complex
-//                              order type, swap or evacuate situation
+//     order type, swap or evacuate situation
 //  3. order_b_simple         — Order B (old material release), manual
-//                              move or non-swap-evacuate complex
+//     move or non-swap-evacuate complex
 //  4. changeover_release     — Order A → direct (non-staged) delivery
 //  5. loader_empty_in        — L1 confirm fires L2 (filled-out)
 //  6. unloader_full_in       — U1 confirm fires U2 (empty-out)

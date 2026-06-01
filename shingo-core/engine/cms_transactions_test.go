@@ -127,11 +127,11 @@ func TestRecordMovementTransactions_PersistsAndEmits(t *testing.T) {
 	eng.Events.SubscribeTypes(func(evt Event) { captured <- evt }, EventCMSTransaction)
 
 	eng.RecordMovementTransactions(BinUpdatedEvent{
-		BinID:      bin.ID,
-		FromNodeID: srcSlot.ID,
-		ToNodeID:   dstSlot.ID,
+		BinID:       bin.ID,
+		FromNodeID:  srcSlot.ID,
+		ToNodeID:    dstSlot.ID,
 		PayloadCode: bp.Code,
-		Action:     "moved",
+		Action:      "moved",
 	})
 
 	// Two rows expected: one decrement at src boundary, one increment at dst.

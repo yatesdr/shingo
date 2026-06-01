@@ -266,13 +266,13 @@ func (s *fakeDeltaSink) OnBinPickedUp(nodeID *int64) error {
 }
 
 type fakeAdjustBucketCall struct {
-	NodeID                int64
-	CoreNodeName          string
-	PairKey               string
-	StyleID               int64
-	PartNumber            string
-	CurrentQty, NewQty    int
-	Reason                protocol.LinesideBucketDeltaReason
+	NodeID             int64
+	CoreNodeName       string
+	PairKey            string
+	StyleID            int64
+	PartNumber         string
+	CurrentQty, NewQty int
+	Reason             protocol.LinesideBucketDeltaReason
 }
 
 // CaptureToLineside records the call + mirrors the real verb's

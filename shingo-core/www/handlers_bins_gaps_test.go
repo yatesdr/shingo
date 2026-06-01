@@ -311,4 +311,3 @@ func TestApiRequestBinTransport_UnknownDestinationReturns404(t *testing.T) {
 		t.Errorf("status: got %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
 }
-

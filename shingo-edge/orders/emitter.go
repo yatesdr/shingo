@@ -9,5 +9,5 @@ type EventEmitter interface {
 	EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64)
 	EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64)
 	EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string)
- 	EmitOrderFaulted(orderID int64, orderUUID, reason string)
+	EmitOrderFaulted(orderID int64, orderUUID, reason string)
 }

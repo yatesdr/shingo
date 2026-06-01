@@ -18,7 +18,7 @@ func (db *DB) CreateOrder(o *orders.Order) error { return orders.Create(db.DB, o
 // transaction. Declared here (not in the orders sub-package) because
 // CreateCompoundChildren is cross-aggregate.
 type CompoundChild struct {
-	Order        *orders.Order
+	Order *orders.Order
 	BinID int64 // bin to claim for this child
 }
 
@@ -99,8 +99,8 @@ func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
 	return orders.UpdateStepsJSON(db.DB, id, stepsJSON)
 }
 
-func (db *DB) CompleteOrder(id int64) error            { return orders.Complete(db.DB, id) }
-func (db *DB) GetOrder(id int64) (*orders.Order, error)       { return orders.Get(db.DB, id) }
+func (db *DB) CompleteOrder(id int64) error             { return orders.Complete(db.DB, id) }
+func (db *DB) GetOrder(id int64) (*orders.Order, error) { return orders.Get(db.DB, id) }
 func (db *DB) GetOrderByUUID(uuid string) (*orders.Order, error) {
 	return orders.GetByUUID(db.DB, uuid)
 }

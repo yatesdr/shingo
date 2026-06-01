@@ -4,10 +4,10 @@
 // and has a small lifecycle:
 //
 //   - active:   parts currently on the bench, being decremented by
-//               counter ticks before the node's RemainingUOP.
+//     counter ticks before the node's RemainingUOP.
 //   - inactive: stranded from a prior style run; auto-reactivates and
-//               merges into the fresh capture when the same style runs
-//               at this node again.
+//     merges into the fresh capture when the same style runs
+//     at this node again.
 //
 // Buckets with qty == 0 are deleted on Deactivate/Drain; the inactive
 // state always has qty > 0 in practice.
@@ -177,13 +177,23 @@ func Capture(db Execer, nodeID int64, pairKey string, styleID int64, partNumber 
 		return nil, nil
 	}
 
-	// Try update-merge first. This hits the unique index cleanly when an
-	// active bucket already exists for this (node, style, part); for a
-	// stranded inactive bucket we promote and add the qty in one shot.
+	// A bucket is a physical pile of parts at a node; style_id is metadata of the
+	// claim in scope at capture time (see Drain's doc above). The active-
+	// uniqueness index is (node_id, part_number), so merge/promote the single
+	// most-relevant (node, part) bucket regardless of its style and re-stamp the
+	// captured style — rather than gating the merge on style_id, which silently
+	// dropped a cross-style capture (the style-keyed merge missed the active
+	// bucket and the fresh INSERT collided with the (node, part) unique index).
+	// R58-2.
 	res, err := db.Exec(`UPDATE node_lineside_bucket
-		SET qty = qty + ?, state = ?, updated_at = datetime('now')
-		WHERE node_id=? AND style_id=? AND part_number=?`,
-		qty, StateActive, nodeID, styleID, partNumber)
+		SET qty = qty + ?, style_id = ?, state = ?, updated_at = datetime('now')
+		WHERE id = (
+			SELECT id FROM node_lineside_bucket
+			WHERE node_id = ? AND part_number = ?
+			ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END, updated_at DESC
+			LIMIT 1
+		)`,
+		qty, styleID, StateActive, nodeID, partNumber)
 	if err != nil {
 		return nil, fmt.Errorf("lineside: capture merge: %w", err)
 	}
@@ -207,9 +217,9 @@ func Capture(db Execer, nodeID int64, pairKey string, styleID int64, partNumber 
 		return findOne(db, nodeID, styleID, partNumber)
 	}
 	if _, err := db.Exec(`UPDATE node_lineside_bucket
-		SET qty = qty + ?, state = ?, updated_at = datetime('now')
-		WHERE node_id=? AND style_id=? AND part_number=?`,
-		qty, StateActive, nodeID, styleID, partNumber); err != nil {
+		SET qty = qty + ?, style_id = ?, state = ?, updated_at = datetime('now')
+		WHERE node_id = ? AND part_number = ? AND state = ?`,
+		qty, styleID, StateActive, nodeID, partNumber, StateActive); err != nil {
 		return nil, fmt.Errorf("lineside: capture merge retry: %w", err)
 	}
 	return findOne(db, nodeID, styleID, partNumber)

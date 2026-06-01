@@ -341,6 +341,7 @@ func TestOpenCreatesNodeLinesideBucketTable(t *testing.T) {
 // migration must:
 //   - leave the column off on a fresh DB (the canonical DDL no longer has it)
 //   - succeed in dropping it on a dev DB that has the column
+//
 // Both paths end with the same shape: no drop_via_staging column.
 func TestMigration_DropsDropViaStagingColumn(t *testing.T) {
 	t.Parallel()

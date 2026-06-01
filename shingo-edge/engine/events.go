@@ -33,7 +33,7 @@ const (
 
 	// Core node sync events
 	EventCoreNodesUpdated
- 	EventOrderFaulted
+	EventOrderFaulted
 
 	// EventOrderDelivered fires the moment an order transitions to
 	// StatusDelivered — i.e., the bin physically arrived at its
@@ -44,6 +44,13 @@ const (
 	// (Confirmed/Failed/Cancelled) and is reserved for operator-semantic
 	// side-effects (state machine, side-cycle dispatch).
 	EventOrderDelivered
+
+	// EventProducedReport fires once per produce-node tick, carrying the
+	// node's resolved payload code. The production reporter subscribes to
+	// this (rather than the raw EventCounterDelta) so it keys finished-good
+	// counts by the catalog part code (cat_id) Core matches demands on,
+	// instead of the style name. See ProducedReportEvent.
+	EventProducedReport
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -75,6 +82,18 @@ type CounterDeltaEvent struct {
 	Anomaly          string `json:"anomaly"` // "reset" if from a PLC counter reset, "" for normal
 }
 
+// ProducedReportEvent is emitted once per produce-node tick. PayloadCode is
+// the produce node's active-claim payload — the catalog part code (cat_id) —
+// resolved at the tick site where the node, and therefore the part, is
+// unambiguous even for multi-part styles. The production reporter keys
+// counts by this instead of the style name so they match demands.cat_id on
+// Core. Mirrors the per-produce-node inventory delta emitted alongside it.
+type ProducedReportEvent struct {
+	eventbus.PayloadBase
+	PayloadCode string `json:"payload_code"`
+	Delta       int64  `json:"delta"`
+}
+
 // CounterAnomalyEvent is emitted for counter resets or jumps.
 type CounterAnomalyEvent struct {
 	eventbus.PayloadBase
@@ -90,31 +109,31 @@ type CounterAnomalyEvent struct {
 // OrderCreatedEvent is emitted when a new order is placed.
 type OrderCreatedEvent struct {
 	eventbus.PayloadBase
-	OrderID       int64  `json:"order_id"`
-	OrderUUID     string `json:"order_uuid"`
+	OrderID       int64              `json:"order_id"`
+	OrderUUID     string             `json:"order_uuid"`
 	OrderType     protocol.OrderType `json:"order_type"`
-	ProcessNodeID *int64 `json:"process_node_id,omitempty"`
+	ProcessNodeID *int64             `json:"process_node_id,omitempty"`
 }
 
 // OrderStatusChangedEvent is emitted on order state transitions.
 type OrderStatusChangedEvent struct {
 	eventbus.PayloadBase
-	OrderID       int64  `json:"order_id"`
-	OrderUUID     string `json:"order_uuid"`
+	OrderID       int64              `json:"order_id"`
+	OrderUUID     string             `json:"order_uuid"`
 	OrderType     protocol.OrderType `json:"order_type"`
-	OldStatus     string `json:"old_status"`
-	NewStatus     string `json:"new_status"`
-	ETA           string `json:"eta"`
-	ProcessNodeID *int64 `json:"process_node_id,omitempty"`
+	OldStatus     string             `json:"old_status"`
+	NewStatus     string             `json:"new_status"`
+	ETA           string             `json:"eta"`
+	ProcessNodeID *int64             `json:"process_node_id,omitempty"`
 }
 
 // OrderCompletedEvent is emitted when an order reaches terminal state.
 type OrderCompletedEvent struct {
 	eventbus.PayloadBase
-	OrderID       int64  `json:"order_id"`
-	OrderUUID     string `json:"order_uuid"`
+	OrderID       int64              `json:"order_id"`
+	OrderUUID     string             `json:"order_uuid"`
 	OrderType     protocol.OrderType `json:"order_type"`
-	ProcessNodeID *int64 `json:"process_node_id,omitempty"`
+	ProcessNodeID *int64             `json:"process_node_id,omitempty"`
 }
 
 // PLCEvent is emitted for PLC connection state changes.
@@ -162,8 +181,8 @@ type CounterReadErrorEvent struct {
 // OrderFailedEvent is emitted when an order transitions to failed state.
 type OrderFailedEvent struct {
 	eventbus.PayloadBase
-	OrderID   int64  `json:"order_id"`
-	OrderUUID string `json:"order_uuid"`
+	OrderID   int64              `json:"order_id"`
+	OrderUUID string             `json:"order_uuid"`
 	OrderType protocol.OrderType `json:"order_type"`
 	Reason    string             `json:"reason"`
 }

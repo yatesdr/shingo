@@ -243,7 +243,14 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 		return err
 	}
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // no active changeover — nothing to complete
+	}
 	if err != nil {
+		// Real DB error (not the everyday "no active changeover"): keep the same
+		// no-op control flow, but surface it so a changeover left open by a
+		// transient read failure is diagnosable instead of silent.
+		log.Printf("changeover: get active changeover for process %d: %v", processID, err)
 		return nil
 	}
 	if process.ActiveStyleID == nil || *process.ActiveStyleID != changeover.ToStyleID {

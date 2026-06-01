@@ -230,6 +230,18 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 		})
 	}
 
+	// Report finished-good production to Core keyed by this produce node's
+	// payload (the catalog part code demands match on), resolved per node so
+	// multi-part styles attribute to the right part. Independent of the
+	// inventory delta above — the production reporter subscribes to
+	// EventProducedReport. Empty payload = misconfigured node; skip.
+	if delta > 0 && claim.PayloadCode != "" {
+		e.Events.Emit(Event{Type: EventProducedReport, Payload: ProducedReportEvent{
+			PayloadCode: claim.PayloadCode,
+			Delta:       int64(delta),
+		}})
+	}
+
 	// Auto-relief at capacity: finalize the produce node (manifest + swap).
 	//
 	// UOP-threshold replenishment (Phase 1) diagnostic: same logging

@@ -6,10 +6,10 @@ package store
 
 import "shingocore/store/nodes"
 
-func (db *DB) CreateNode(n *nodes.Node) error              { return nodes.Create(db.DB, n) }
-func (db *DB) UpdateNode(n *nodes.Node) error              { return nodes.Update(db.DB, n) }
+func (db *DB) CreateNode(n *nodes.Node) error        { return nodes.Create(db.DB, n) }
+func (db *DB) UpdateNode(n *nodes.Node) error        { return nodes.Update(db.DB, n) }
 func (db *DB) DeleteNode(id int64) error             { return nodes.Delete(db.DB, id) }
-func (db *DB) GetNode(id int64) (*nodes.Node, error)       { return nodes.Get(db.DB, id) }
+func (db *DB) GetNode(id int64) (*nodes.Node, error) { return nodes.Get(db.DB, id) }
 func (db *DB) GetNodeByName(name string) (*nodes.Node, error) {
 	return nodes.GetByName(db.DB, name)
 }

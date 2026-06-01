@@ -26,7 +26,6 @@ func newSessionStore(secret string) *sessions.CookieStore {
 	return s
 }
 
-
 func (h *Handlers) isAuthenticated(r *http.Request) bool {
 	session, err := h.sessions.Get(r, sessionName)
 	if err != nil {

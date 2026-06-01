@@ -48,4 +48,3 @@ func (c *Client) GetScene() (*Scene, error) {
 	}
 	return resp.Scene, nil
 }
-

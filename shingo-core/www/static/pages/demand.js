@@ -115,7 +115,10 @@ async function saveEdit() {
   } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
-async function getRowData(tr) {
+// Synchronous: builds the row's edit payload from its dataset/inputs. Must
+// NOT be async — applyRow / applyAll consume the result directly (d.id, …),
+// so returning a Promise here silently sent PUT /api/demands/undefined.
+function getRowData(tr) {
   return {
     id: parseInt(tr.dataset.id),
     cat_id: tr.dataset.cat,

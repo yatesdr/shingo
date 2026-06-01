@@ -33,16 +33,6 @@ type ProducePlan struct {
 	SimpleOnly bool
 }
 
-// CycleMode returns the mode tag the apply caller surfaces in
-// NodeOrderResult.CycleMode. SwapModeSimple for the ingest-only branch;
-// the dispatch's CycleMode for every other mode.
-func (p *ProducePlan) CycleMode() protocol.SwapMode {
-	if p.SimpleOnly || p.Dispatch == nil {
-		return protocol.SwapModeSimple
-	}
-	return p.Dispatch.CycleMode
-}
-
 // BuildProducePlan validates the (node, runtime, claim) triple and composes
 // the produce-finalization plan for the claim's swap mode. Pure — no DB,
 // fleet, or order-manager calls.

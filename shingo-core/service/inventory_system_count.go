@@ -122,9 +122,9 @@ func (s *InventoryService) SystemBinCount(ctx context.Context, payloads []string
 // "I have N parts of WIDGET-A in the loop" at the type level.
 type PayloadSystemUOP struct {
 	PayloadCode string `json:"payload_code"`
-	BinUOP      int    `json:"bin_uop"`     // SUM(bins.uop_remaining)
-	BucketUOP   int    `json:"bucket_uop"`  // SUM(lineside_buckets.qty)
-	TotalUOP    int    `json:"total_uop"`   // BinUOP + BucketUOP
+	BinUOP      int    `json:"bin_uop"`    // SUM(bins.uop_remaining)
+	BucketUOP   int    `json:"bucket_uop"` // SUM(lineside_buckets.qty)
+	TotalUOP    int    `json:"total_uop"`  // BinUOP + BucketUOP
 }
 
 // SystemUOPForPayloadResult carries per-payload UOP totals.

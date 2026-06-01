@@ -306,6 +306,7 @@ func contains(s, substr string) bool {
 //   - Evac envelope: Disposition.Kind == release_partial, Count == 47
 //     (the operator's chosen partial count flows through).
 //   - Supply envelope: Disposition is nil (manifest left alone).
+//
 // TestReleaseChangeoverWait_SupplyManifestPreserved validates the
 // manifest-preservation contract (the bug fingerprint from order
 // 682 / 2026-05-06: supply leg's manifest was wiped at Core because

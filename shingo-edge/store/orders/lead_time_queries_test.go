@@ -36,11 +36,11 @@ func TestMain(m *testing.M) {
 // orderHistoryRow lets the tests below insert rows in a readable way
 // without repeating positional Exec calls.
 type orderHistoryRow struct {
-	orderID    int64
-	oldStatus  string
-	newStatus  string
-	detail     string
-	createdAt  string
+	orderID   int64
+	oldStatus string
+	newStatus string
+	detail    string
+	createdAt string
 }
 
 // openLeadTimeTestDB builds a minimal in-memory SQLite with just the

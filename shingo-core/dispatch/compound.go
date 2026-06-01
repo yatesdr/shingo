@@ -1,6 +1,8 @@
 package dispatch
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 
@@ -118,8 +120,18 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	}
 
 	next, err := d.db.GetNextChildOrder(parentOrderID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		// A real DB error (connection drop, query/scan failure) is NOT the same
+		// as "no more pending children". Bail without transitioning the parent or
+		// releasing the lane so the next completion/failure event retries —
+		// instead of prematurely completing/failing/resuming the parent (and
+		// unlocking the lane) while child reshuffle steps are still queued, the
+		// 2026-05-27 three-robots-in-one-corridor failure class.
+		log.Printf("dispatch: get next child for compound %d: %v", parentOrderID, err)
+		return err
+	}
 	if err != nil {
-		// No more PENDING children — but "not pending" doesn't mean "done".
+		// sql.ErrNoRows — no more PENDING children. But "not pending" doesn't mean "done".
 		// Children that are dispatched / in_transit / staged / delivered are
 		// in flight. We only confirm or fail the compound parent when every
 		// child has reached a terminal status (confirmed / failed / cancelled).
@@ -266,14 +278,22 @@ func (d *Dispatcher) HandleChildOrderComplete(childOrder *orders.Order) {
 func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) {
 	log.Printf("dispatch: child order %d failed in compound %d, cancelling remaining", childOrderID, parentOrderID)
 
+	// This handler fires once (engine wiring, on the failure event) with no
+	// retry, so an early return on a transient DB error must not leave the lane
+	// locked forever. Release it on every path — unlockLaneForCompound falls
+	// back to an owner-based release when the children can't be read.
+	defer d.unlockLaneForCompound(parentOrderID)
+
 	// Cancel remaining non-terminal children (including in-flight)
 	children, err := d.db.ListChildOrders(parentOrderID)
 	if err != nil {
+		log.Printf("dispatch: list children for failed compound %d: %v", parentOrderID, err)
 		return
 	}
 
 	parent, err := d.db.GetOrder(parentOrderID)
 	if err != nil {
+		log.Printf("dispatch: load parent for failed compound %d: %v", parentOrderID, err)
 		return
 	}
 
@@ -293,9 +313,6 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 		fmt.Sprintf("child order %d failed during reshuffle", childOrderID)); err != nil {
 		log.Printf("dispatch: fail compound parent %d: %v", parentOrderID, err)
 	}
-
-	// Unlock lane
-	d.unlockLaneForCompound(parentOrderID)
 }
 
 // cancelCompoundChildren cancels all non-terminal children of a compound order.
@@ -358,16 +375,19 @@ func (d *Dispatcher) unlockLaneForCompound(parentOrderID int64) {
 		return
 	}
 	children, err := d.db.ListChildOrders(parentOrderID)
-	if err != nil {
-		return
-	}
-	for _, child := range children {
-		if child.SourceNode != "" {
-			sourceNode, err := d.db.GetNodeByDotName(child.SourceNode)
-			if err == nil && sourceNode.ParentID != nil {
-				d.laneLock.Unlock(*sourceNode.ParentID)
-				return
+	if err == nil {
+		for _, child := range children {
+			if child.SourceNode != "" {
+				sourceNode, err := d.db.GetNodeByDotName(child.SourceNode)
+				if err == nil && sourceNode.ParentID != nil {
+					d.laneLock.Unlock(*sourceNode.ParentID)
+					return
+				}
 			}
 		}
 	}
+	// Could not resolve the lane from children (DB error, no children, or no
+	// child carries a source node). Release by owning order so a failed or
+	// unreadable compound can't strand the lane lock forever.
+	d.laneLock.UnlockByOwner(parentOrderID)
 }

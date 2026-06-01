@@ -101,7 +101,10 @@ func (e *Engine) maybeCreateReturnOrder(order *orders.Order, reason string) {
 	// orders. If partial-completion tracking (per-block receipts) is added
 	// later, this assumption breaks and bins may be at intermediate positions.
 	// Revisit this function if that feature is implemented.
-	orderBins, _ := e.db.ListOrderBins(order.ID)
+	orderBins, err := e.db.ListOrderBins(order.ID)
+	if err != nil {
+		e.logFn("engine: auto-return list order bins for order %d: %v (falling back to legacy single-bin path; a multi-bin order may strand bins)", order.ID, err)
+	}
 	if len(orderBins) > 0 {
 		for _, ob := range orderBins {
 			e.createSingleReturnOrder(order, ob.BinID, ob.NodeName, reason)

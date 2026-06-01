@@ -8,10 +8,10 @@
 // introspection methods all in a single file. After 6.0b the split
 // is:
 //
-//   store/schema/sqlite_ddl.go — sqliteDDL constant (canonical state)
-//   store/schema/schema.go     — Apply / TableExists / TableHasColumn
-//   store/migrations.go        — migrate(), legacy-rename and per-table
-//                                rebuild helpers
+//	store/schema/sqlite_ddl.go — sqliteDDL constant (canonical state)
+//	store/schema/schema.go     — Apply / TableExists / TableHasColumn
+//	store/migrations.go        — migrate(), legacy-rename and per-table
+//	                             rebuild helpers
 //
 // All helpers take *sql.DB so they're usable without the outer
 // *store.DB type, keeping the dependency graph one-way:

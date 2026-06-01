@@ -103,11 +103,20 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 		return false, ""
 	}
 	count, err := db.CountBinsByNode(node.ID)
-	if err == nil && count > 0 {
+	if err != nil {
+		// Fail closed: if occupancy can't be read, don't risk dropping onto a
+		// possibly-full node — gate the order so it queues until the check works.
+		return true, fmt.Sprintf("destination %s capacity unknown (bin count failed: %v)", deliveryNode, err)
+	}
+	if count > 0 {
 		return true, fmt.Sprintf("destination %s occupied (%d bin(s))", deliveryNode, count)
 	}
 	inFlight, err := db.CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode, excludeOrderID)
-	if err == nil && inFlight > 0 {
+	if err != nil {
+		// Fail closed on the in-flight read as well.
+		return true, fmt.Sprintf("destination %s capacity unknown (in-flight count failed: %v)", deliveryNode, err)
+	}
+	if inFlight > 0 {
 		return true, fmt.Sprintf("destination %s has %d in-flight order(s) inbound", deliveryNode, inFlight)
 	}
 	return false, ""

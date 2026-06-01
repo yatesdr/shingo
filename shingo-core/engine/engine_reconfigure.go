@@ -38,6 +38,9 @@ func (e *Engine) ReconfigureCountGroups() {
 		return
 	}
 
+	e.countGroupMu.Lock()
+	defer e.countGroupMu.Unlock()
+
 	// Stop the old runner gracefully.
 	if e.countGroup != nil {
 		e.countGroup.Stop()

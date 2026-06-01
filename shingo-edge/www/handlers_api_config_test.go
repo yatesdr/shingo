@@ -419,14 +419,14 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 
 	// --- Upsert (insert) ---
 	body := processes.NodeClaimInput{
-		StyleID:       sid,
-		CoreNodeName:  "node-1",
-		Role:          "consume",
-		SwapMode: "simple",
-		PayloadCode:   "BIN-A",
-		UOPCapacity:   100,
-		ReorderPoint:  10,
-		AutoReorder:   true,
+		StyleID:      sid,
+		CoreNodeName: "node-1",
+		Role:         "consume",
+		SwapMode:     "simple",
+		PayloadCode:  "BIN-A",
+		UOPCapacity:  100,
+		ReorderPoint: 10,
+		AutoReorder:  true,
 	}
 	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
@@ -457,14 +457,14 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 
 	// --- Upsert (update same style_id+core_node_name) ---
 	updateBody := processes.NodeClaimInput{
-		StyleID:       sid,
-		CoreNodeName:  "node-1",
-		Role:          "consume",
-		SwapMode: "simple",
-		PayloadCode:   "BIN-B",
-		UOPCapacity:   200,
-		ReorderPoint:  20,
-		AutoReorder:   true,
+		StyleID:      sid,
+		CoreNodeName: "node-1",
+		Role:         "consume",
+		SwapMode:     "simple",
+		PayloadCode:  "BIN-B",
+		UOPCapacity:  200,
+		ReorderPoint: 20,
+		AutoReorder:  true,
 	}
 	resp = doRequest(t, router, "POST", "/api/style-node-claims", updateBody, cookie)
 	assertStatus(t, resp, http.StatusOK)

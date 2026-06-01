@@ -105,7 +105,6 @@ func setupTestData(t *testing.T, db *store.DB) (storageNode *nodes.Node, lineNod
 	return sd.StorageNode, sd.LineNode, sd.Payload
 }
 
-
 func TestHandleOrderReceipt_DuplicateCompletedOrderIgnored(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -901,11 +900,11 @@ func TestHandleOrderRedirect_NonexistentDestNode(t *testing.T) {
 	_, lineNode, _ := setupTestData(t, db)
 
 	order := &orders.Order{
-		EdgeUUID:     "redir-noexist",
-		StationID:    "edge.line1",
-		Status:       StatusDispatched,
-		SourceNode:   lineNode.Name,
-		DeliveryNode: lineNode.Name,
+		EdgeUUID:      "redir-noexist",
+		StationID:     "edge.line1",
+		Status:        StatusDispatched,
+		SourceNode:    lineNode.Name,
+		DeliveryNode:  lineNode.Name,
 		VendorOrderID: "sg-123-test",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
@@ -943,10 +942,10 @@ func TestHandleOrderRedirect_NoSourceNode(t *testing.T) {
 
 	// Order with no source node set — redirect should fail
 	order := &orders.Order{
-		EdgeUUID:     "redir-nosrc",
-		StationID:    "edge.line1",
-		Status:       StatusDispatched,
-		DeliveryNode: lineNode.Name,
+		EdgeUUID:      "redir-nosrc",
+		StationID:     "edge.line1",
+		Status:        StatusDispatched,
+		DeliveryNode:  lineNode.Name,
 		VendorOrderID: "sg-456-test",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")

@@ -47,25 +47,25 @@ type EdgeHeartbeatAck struct {
 type OrderRequest struct {
 	OrderUUID     string    `json:"order_uuid"`
 	OrderType     OrderType `json:"order_type"`
-	PayloadCode   string `json:"payload_code,omitempty"`
-	PayloadDesc   string `json:"payload_desc,omitempty"`
-	Quantity      int64  `json:"quantity"`
-	DeliveryNode  string `json:"delivery_node,omitempty"`
-	SourceNode    string `json:"source_node,omitempty"`
-	StagingNode   string `json:"staging_node,omitempty"`
-	LoadType      string `json:"load_type,omitempty"`
-	Priority      int    `json:"priority,omitempty"`
-	RetrieveEmpty bool   `json:"retrieve_empty,omitempty"`
+	PayloadCode   string    `json:"payload_code,omitempty"`
+	PayloadDesc   string    `json:"payload_desc,omitempty"`
+	Quantity      int64     `json:"quantity"`
+	DeliveryNode  string    `json:"delivery_node,omitempty"`
+	SourceNode    string    `json:"source_node,omitempty"`
+	StagingNode   string    `json:"staging_node,omitempty"`
+	LoadType      string    `json:"load_type,omitempty"`
+	Priority      int       `json:"priority,omitempty"`
+	RetrieveEmpty bool      `json:"retrieve_empty,omitempty"`
 	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
 	RemainingUOP *int `json:"remaining_uop,omitempty"`
- 	// SkipAutoConfirm prevents Core's reconciliation sweep from auto-confirming
- 	// this order when it is stuck at "delivered". Edge sets this for side-cycle
- 	// orders (L1 loader empty-in, U1 unloader full-in) where a human operator
- 	// must explicitly confirm after performing a physical action (loading or
- 	// unloading the bin). Without this, Core auto-confirms the moment the bin
- 	// arrives, bypassing the operator and immediately triggering the outbound
- 	// leg (L2/U2) while the bin is still empty/full.
- 	SkipAutoConfirm bool `json:"skip_auto_confirm,omitempty"`
+	// SkipAutoConfirm prevents Core's reconciliation sweep from auto-confirming
+	// this order when it is stuck at "delivered". Edge sets this for side-cycle
+	// orders (L1 loader empty-in, U1 unloader full-in) where a human operator
+	// must explicitly confirm after performing a physical action (loading or
+	// unloading the bin). Without this, Core auto-confirms the moment the bin
+	// arrives, bypassing the operator and immediately triggering the outbound
+	// leg (L2/U2) while the bin is still empty/full.
+	SkipAutoConfirm bool `json:"skip_auto_confirm,omitempty"`
 }
 
 // OrderCancel cancels an existing order.
@@ -91,9 +91,9 @@ type OrderRedirect struct {
 type OrderStorageWaybill struct {
 	OrderUUID   string    `json:"order_uuid"`
 	OrderType   OrderType `json:"order_type"`
-	PayloadDesc string `json:"payload_desc,omitempty"`
-	SourceNode  string `json:"source_node"`
-	FinalCount  int64  `json:"final_count"`
+	PayloadDesc string    `json:"payload_desc,omitempty"`
+	SourceNode  string    `json:"source_node"`
+	FinalCount  int64     `json:"final_count"`
 }
 
 // --- Order payloads: Core -> Edge ---
@@ -156,7 +156,7 @@ type OrderDelivered struct {
 // Sent on subject SubjectBinPickedUp. Routed via Core's HandleData.
 // Edge crash during the pickup window is handled by the reconciler:
 // the released bin's count may be biased by a tick or two, accepted
-// per SME (open-items.md Q2'').
+// per SME (open-items.md Q2”).
 type BinPickedUp struct {
 	OrderUUID  string    `json:"order_uuid"`
 	BinID      int64     `json:"bin_id"`
@@ -194,8 +194,8 @@ type OrderCancelled struct {
 // Node can be a concrete node name or a group node name — Core auto-detects
 // and resolves groups via the group resolver.
 type ComplexOrderStep struct {
-	Action string `json:"action"`          // "pickup", "dropoff", "wait"
-	Node   string `json:"node,omitempty"`  // node or group name (Core auto-resolves groups)
+	Action string `json:"action"`         // "pickup", "dropoff", "wait"
+	Node   string `json:"node,omitempty"` // node or group name (Core auto-resolves groups)
 }
 
 // ComplexOrderRequest is a multi-step transport order from edge.
@@ -245,9 +245,9 @@ type ComplexOrderRequest struct {
 type UOPDispositionKind string
 
 const (
-	DispositionPullParts       UOPDispositionKind = "pull_parts"
-	DispositionReleasePartial  UOPDispositionKind = "release_partial"
-	DispositionReleaseEmpty    UOPDispositionKind = "release_empty"
+	DispositionPullParts      UOPDispositionKind = "pull_parts"
+	DispositionReleasePartial UOPDispositionKind = "release_partial"
+	DispositionReleaseEmpty   UOPDispositionKind = "release_empty"
 
 	// DispositionReleaseUnderpack — operator declares the bin is
 	// physically empty even though the system's tracked count is
@@ -426,9 +426,9 @@ type NodeStateRequest struct {
 // NodeStateEntry describes the occupancy state of a single node.
 type NodeStateEntry struct {
 	Name        string `json:"name"`
-	Occupied    bool   `json:"occupied"`     // has at least one bin
-	BinCount    int    `json:"bin_count"`     // number of bins at node
-	Claimed     bool   `json:"claimed"`       // any bin claimed by an active order
+	Occupied    bool   `json:"occupied"`               // has at least one bin
+	BinCount    int    `json:"bin_count"`              // number of bins at node
+	Claimed     bool   `json:"claimed"`                // any bin claimed by an active order
 	PayloadCode string `json:"payload_code,omitempty"` // payload of first bin (if occupied)
 }
 
@@ -527,13 +527,13 @@ type DemandSignal struct {
 //
 // Subject: protocol.SubjectCountGroupCommand.
 type CountGroupCommand struct {
-	CorrelationID    string    `json:"corr_id"`             // for matching the eventual CountGroupAck
-	Group            string    `json:"group"`               // RDS advanced-group name
-	Desired          string    `json:"desired"`             // "on" | "off"
-	Robots           []string  `json:"robots"`              // robot IDs in the zone (for audit)
-	RobotCount       int       `json:"robot_count"`         // len(Robots) — cheap log without decoding the slice
-	FailSafeTriggered bool     `json:"fail_safe_triggered"` // true if this command came from RDS-down fail-safe
-	Timestamp        time.Time `json:"ts"`
+	CorrelationID     string    `json:"corr_id"`             // for matching the eventual CountGroupAck
+	Group             string    `json:"group"`               // RDS advanced-group name
+	Desired           string    `json:"desired"`             // "on" | "off"
+	Robots            []string  `json:"robots"`              // robot IDs in the zone (for audit)
+	RobotCount        int       `json:"robot_count"`         // len(Robots) — cheap log without decoding the slice
+	FailSafeTriggered bool      `json:"fail_safe_triggered"` // true if this command came from RDS-down fail-safe
+	Timestamp         time.Time `json:"ts"`
 }
 
 // CountGroupAck is sent by Edge to Core after a CountGroupCommand has been

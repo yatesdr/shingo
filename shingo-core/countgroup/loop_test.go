@@ -13,11 +13,11 @@ import (
 // fakePoller returns programmed responses in order; on exhaustion it
 // returns the last response forever (or errForever if set).
 type fakePoller struct {
-	mu          sync.Mutex
-	responses   [][]string
-	errors      []error
-	errForever  error
-	calls       int
+	mu         sync.Mutex
+	responses  [][]string
+	errors     []error
+	errForever error
+	calls      int
 }
 
 func (f *fakePoller) GetRobotsInCountGroup(group string) ([]string, error) {

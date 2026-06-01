@@ -80,10 +80,10 @@ func TestWiring_RetrieveCompletion_ProduceResetsToZero(t *testing.T) {
 
 // consumeNodeConfig holds the configurable parameters for seedConsumeNode.
 type consumeNodeConfig struct {
-	Prefix       string // unique prefix for names (e.g. "CONSUME", "DELTA-CON")
-	PayloadCode  string
-	UOPCapacity  int
-	InitialUOP   int
+	Prefix      string // unique prefix for names (e.g. "CONSUME", "DELTA-CON")
+	PayloadCode string
+	UOPCapacity int
+	InitialUOP  int
 }
 
 // seedConsumeNode creates a consume-role process, node, style, claim, and runtime.
@@ -120,7 +120,7 @@ func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (process
 		StyleID:      styleID,
 		CoreNodeName: prefix + "-NODE",
 		Role:         "consume",
-		SwapMode: "simple",
+		SwapMode:     "simple",
 		PayloadCode:  cfg.PayloadCode,
 		UOPCapacity:  cfg.UOPCapacity,
 	})
@@ -214,6 +214,52 @@ func TestWiring_CounterDelta_ProduceIncrementsUOP(t *testing.T) {
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
 	if runtime.RemainingUOPCached != 15 {
 		t.Errorf("RemainingUOP = %d, want 15 (10 + 5 delta)", runtime.RemainingUOPCached)
+	}
+}
+
+// TestWiring_CounterDelta_EmitsProducedReport verifies that a produce-node
+// counter tick emits EventProducedReport keyed by the node's payload code
+// (the cat_id Core matches demands on) — explicitly NOT the style name. This
+// is the signal the production reporter consumes; keying by payload_code is
+// what lands produced counts on the right demand row even when the style is
+// named differently from the part.
+func TestWiring_CounterDelta_EmitsProducedReport(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, styleID, claimID := seedProduceNode(t, db, "")
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Steady-state seed so the produce tick is applied (mirrors the
+	// IncrementsUOP test above).
+	bin := int64(7)
+	db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bin, 10)
+	db.SetProcessNodeCachedBin(nodeID, &bin, 10)
+
+	var got []ProducedReportEvent
+	eng.Events.SubscribeTypes(func(evt Event) {
+		if pr, ok := evt.Payload.(ProducedReportEvent); ok {
+			got = append(got, pr)
+		}
+	}, EventProducedReport)
+
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     5,
+	})
+
+	if len(got) != 1 {
+		t.Fatalf("EventProducedReport count = %d, want 1", len(got))
+	}
+	// seedProduceNode sets PayloadCode "WIDGET-A" and style name "PROD-STYLE".
+	if got[0].PayloadCode != "WIDGET-A" {
+		t.Errorf("PayloadCode = %q, want %q (the claim payload, not the style name PROD-STYLE)",
+			got[0].PayloadCode, "WIDGET-A")
+	}
+	if got[0].Delta != 5 {
+		t.Errorf("Delta = %d, want 5", got[0].Delta)
 	}
 }
 
@@ -443,7 +489,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 		StyleID:        styleID,
 		CoreNodeName:   "AB-NODE-A",
 		Role:           "consume",
-		SwapMode: "simple",
+		SwapMode:       "simple",
 		PayloadCode:    "PART-AB",
 		UOPCapacity:    100,
 		ReorderPoint:   10,
@@ -457,7 +503,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 		StyleID:        styleID,
 		CoreNodeName:   "AB-NODE-B",
 		Role:           "consume",
-		SwapMode: "simple",
+		SwapMode:       "simple",
 		PayloadCode:    "PART-AB",
 		UOPCapacity:    100,
 		ReorderPoint:   10,

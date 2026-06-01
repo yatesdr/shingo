@@ -11,5 +11,4 @@ import (
 	_ "github.com/segmentio/kafka-go"
 	_ "golang.org/x/crypto/bcrypt"
 	_ "gopkg.in/yaml.v3"
-
 )

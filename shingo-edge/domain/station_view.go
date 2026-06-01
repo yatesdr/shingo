@@ -64,12 +64,12 @@ type StationNodeView struct {
 // state with the active/target style, the in-flight Changeover (if
 // any), and the StationNodeView per process node.
 type OperatorStationView struct {
-	Station          Station          `json:"station"`
-	Process          Process          `json:"process"`
-	CurrentStyle     *Style           `json:"current_style,omitempty"`
-	TargetStyle      *Style           `json:"target_style,omitempty"`
-	AvailableStyles  []Style          `json:"available_styles,omitempty"`
-	ActiveChangeover *Changeover      `json:"active_changeover,omitempty"`
-	StationTask      *StationTask     `json:"station_task,omitempty"`
+	Station          Station           `json:"station"`
+	Process          Process           `json:"process"`
+	CurrentStyle     *Style            `json:"current_style,omitempty"`
+	TargetStyle      *Style            `json:"target_style,omitempty"`
+	AvailableStyles  []Style           `json:"available_styles,omitempty"`
+	ActiveChangeover *Changeover       `json:"active_changeover,omitempty"`
+	StationTask      *StationTask      `json:"station_task,omitempty"`
 	Nodes            []StationNodeView `json:"nodes"`
 }

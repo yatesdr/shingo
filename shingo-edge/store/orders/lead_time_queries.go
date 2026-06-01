@@ -140,7 +140,7 @@ func P95MarketToCellSeconds(db *sql.DB, payloadCode string, r DateRange) (float6
 		return 0, nil
 	}
 	// Index for p95 on a sorted slice: ceil(0.95 * n) - 1.
-	idx := int(0.95*float64(len(durations))) // floor; for small n this lands at last idx-1
+	idx := int(0.95 * float64(len(durations))) // floor; for small n this lands at last idx-1
 	if idx >= len(durations) {
 		idx = len(durations) - 1
 	}

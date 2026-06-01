@@ -104,8 +104,8 @@ type Engine struct {
 	// care about delta emission; every call site nil-guards.
 	inventoryDelta InventoryDeltaSink
 
-	Events    *EventBus
-	stopChan  chan struct{}
+	Events           *EventBus
+	stopChan         chan struct{}
 	startedAt        time.Time
 	subscribersWired atomic.Bool
 	// sweepingUnloaders / sweepingLoaders guard the startup push sweeps
@@ -114,7 +114,7 @@ type Engine struct {
 	// the list-then-create dedup gap. One sweep of each kind at a time.
 	sweepingUnloaders atomic.Bool
 	sweepingLoaders   atomic.Bool
-	kafkaConnFn      func() bool
+	kafkaConnFn       func() bool
 }
 
 // Config holds the parameters needed to create an Engine.

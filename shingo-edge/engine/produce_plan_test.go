@@ -43,9 +43,6 @@ func TestBuildProducePlan_SimpleMode(t *testing.T) {
 	if !plan.SimpleOnly {
 		t.Errorf("SimpleOnly = false, want true for simple mode")
 	}
-	if plan.CycleMode() != "simple" {
-		t.Errorf("CycleMode = %q, want simple", plan.CycleMode())
-	}
 	if plan.Dispatch != nil {
 		t.Errorf("simple mode should have no Dispatch; got %+v", plan.Dispatch)
 	}
@@ -64,9 +61,6 @@ func TestBuildProducePlan_Sequential(t *testing.T) {
 	plan, err := BuildProducePlan(node, runtime, claim, false, fixedNow)
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
-	}
-	if plan.CycleMode() != "sequential" {
-		t.Errorf("CycleMode = %q, want sequential", plan.CycleMode())
 	}
 	if plan.SimpleOnly {
 		t.Errorf("sequential should not be SimpleOnly")
@@ -92,9 +86,6 @@ func TestBuildProducePlan_TwoRobotPressIndex_OK(t *testing.T) {
 	plan, err := BuildProducePlan(node, runtime, claim, true, fixedNow)
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
-	}
-	if plan.CycleMode() != "two_robot_press_index" {
-		t.Errorf("CycleMode = %q, want two_robot_press_index", plan.CycleMode())
 	}
 	if plan.Dispatch == nil || plan.Dispatch.StepsA == nil || plan.Dispatch.StepsB == nil {
 		t.Errorf("two_robot_press_index must produce both R1 and R2 steps via Dispatch")

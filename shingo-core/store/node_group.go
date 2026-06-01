@@ -25,10 +25,10 @@ func (db *DB) AddLane(groupID int64, name string) (int64, error) {
 
 // GroupSlotInfo describes a slot in a node group layout.
 type GroupSlotInfo struct {
-	NodeID int64  `json:"node_id"`
-	Name   string `json:"name"`
-	Depth  int    `json:"depth"`
-	Bin         *bins.Bin   `json:"bin,omitempty"`
+	NodeID int64     `json:"node_id"`
+	Name   string    `json:"name"`
+	Depth  int       `json:"depth"`
+	Bin    *bins.Bin `json:"bin,omitempty"`
 }
 
 // GroupLaneInfo describes a lane in a node group layout.
@@ -64,7 +64,7 @@ func (db *DB) GetGroupLayout(groupID int64) (*GroupLayout, error) {
 	// Collect all slot/direct-child node IDs under this group
 	var allNodeIDs []int64
 	laneSlots := make(map[int64][]*nodes.Node) // laneID -> ordered slots
-	slotDepths := make(map[int64]int)    // nodeID -> depth
+	slotDepths := make(map[int64]int)          // nodeID -> depth
 
 	for _, child := range children {
 		if child.NodeTypeCode == "LANE" {

@@ -309,4 +309,3 @@ func TestApplyBatchCorrection_MissingBin(t *testing.T) {
 		t.Errorf("error = %v, want wrap containing %q", err, "get bin")
 	}
 }
-

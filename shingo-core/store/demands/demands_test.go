@@ -1,4 +1,3 @@
-
 //go:build docker
 
 package demands_test
@@ -368,4 +367,3 @@ func TestCoverage_LookupThresholdsByPayload(t *testing.T) {
 		t.Errorf("P-1 monitored binding = %s, want MS-A", hits[0].CoreNodeName)
 	}
 }
-

@@ -100,6 +100,7 @@ func NewTrackingBackend() *MockTrackingBackend {
 	return &MockTrackingBackend{MockBackend: NewSuccessBackend()}
 }
 
-func (m *MockTrackingBackend) InitTracker(emitter fleet.TrackerEmitter, resolver fleet.OrderIDResolver) {}
+func (m *MockTrackingBackend) InitTracker(emitter fleet.TrackerEmitter, resolver fleet.OrderIDResolver) {
+}
 
 func (m *MockTrackingBackend) Tracker() fleet.OrderTracker { return nil }

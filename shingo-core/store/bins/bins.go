@@ -340,11 +340,11 @@ func MoveAndClearStaging(db *sql.DB, binID, toNodeID int64, clearStaging bool) e
 
 // ListAvailable returns bins with no payload (empty, available for loading).
 //
-// Empty-bin definition: COALESCE(b.payload_code, '') = ''. Same NULL-safe
+// Empty-bin definition: COALESCE(b.payload_code, ”) = ”. Same NULL-safe
 // form FindEmptyCompatible uses post-2026-04-27. The previous filter
-// `(manifest IS NULL OR payload_code = '')` was the same bug class as
+// `(manifest IS NULL OR payload_code = ”)` was the same bug class as
 // the FindEmptyCompatible bug fixed in 7c274ac/4337344: a bin with
-// payload_code=NULL evaluates `payload_code = ''` to NULL (falsy in
+// payload_code=NULL evaluates `payload_code = ”` to NULL (falsy in
 // WHERE), but the OR-clause `manifest IS NULL` could rescue it. The
 // COALESCE form is unambiguous about the NULL case.
 //
@@ -406,11 +406,11 @@ func UnclaimByOrder(db *sql.DB, orderID int64) {
 // and the kanban demand re-fires, producing an order spam loop). Pass 0 to
 // disable exclusion. See SHINGO_TODO.md "Same-node retrieve" entry.
 //
-// Empty-bin definition (post-2026-04-27 fix): COALESCE(payload_code, '') = ''.
+// Empty-bin definition (post-2026-04-27 fix): COALESCE(payload_code, ”) = ”.
 // A bin with no payload_code is empty by definition — manifest is a
 // derived/stale field that's unreliable when bins go through arrival
-// transitions. The previous filter `(manifest IS NULL OR payload_code = '')`
-// was brittle around NULL-vs-empty-string (a bin with manifest='' and
+// transitions. The previous filter `(manifest IS NULL OR payload_code = ”)`
+// was brittle around NULL-vs-empty-string (a bin with manifest=” and
 // payload_code=NULL evaluated to `false OR NULL`, treated as falsy in
 // WHERE, silently rejecting genuinely-empty bins). An earlier attempt
 // added `manifest_confirmed = false` but that's too strict — it requires

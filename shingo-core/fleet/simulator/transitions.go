@@ -48,8 +48,6 @@ func (s *SimulatorBackend) DriveState(vendorOrderID, newState string) (oldState,
 	return
 }
 
-
-
 // DriveStateWithRobot transitions a simulated order to a new vendor state with a
 // robot ID, simulating the real fleet backend's behavior where every status event
 // carries the vehicle identifier. The robot ID flows through effectiveRobotID in
@@ -83,6 +81,7 @@ func (s *SimulatorBackend) DriveStateWithRobot(vendorOrderID, newState, robotID 
 
 	return
 }
+
 // DriveFullLifecycle advances a simulated order through the standard
 // CREATED → RUNNING → WAITING → FINISHED lifecycle and returns the
 // sequence of state transitions. Tests iterate over these and emit

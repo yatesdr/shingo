@@ -226,7 +226,7 @@ func TestOperatorStations_MoveStation_Up(t *testing.T) {
 	cookie := authCookie(t, h)
 
 	pid := seedProcess(t, "MoveStationLine")
-	first := seedOperatorStation(t, pid, "OS-MV-1", "First")  // sequence=1
+	first := seedOperatorStation(t, pid, "OS-MV-1", "First")   // sequence=1
 	second := seedOperatorStation(t, pid, "OS-MV-2", "Second") // sequence=2
 
 	body := map[string]string{"direction": "up"}

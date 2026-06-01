@@ -148,11 +148,12 @@ func (cm *cutoverMonitor) evaluateProcess(processID int64, st *cutoverProcessSta
 // true when the caller should fire the cutover.
 //
 // Inputs:
-//   cur — current tag value (only consulted when ok=true)
-//   ok  — false signals an unreadable / stale value (PLC disconnect,
-//         tag missing, unexpected type); resets edge tracking so the
-//         next valid reading becomes a fresh baseline rather than
-//         firing a spurious 1→0 edge against stale state.
+//
+//	cur — current tag value (only consulted when ok=true)
+//	ok  — false signals an unreadable / stale value (PLC disconnect,
+//	      tag missing, unexpected type); resets edge tracking so the
+//	      next valid reading becomes a fresh baseline rather than
+//	      firing a spurious 1→0 edge against stale state.
 //
 // Pure mutation on st; no I/O. Extracted for testability — the
 // state-machine logic is the load-bearing piece of the monitor and

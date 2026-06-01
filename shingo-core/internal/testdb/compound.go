@@ -16,11 +16,11 @@ import (
 type CompoundScenario struct {
 	Grp          *nodes.Node
 	Lane         *nodes.Node
-	Slots        []*nodes.Node   // indexed by depth-1 (Slots[0] = depth 1, front)
+	Slots        []*nodes.Node // indexed by depth-1 (Slots[0] = depth 1, front)
 	ShuffleSlots []*nodes.Node
 	LineNode     *nodes.Node
 	TargetBin    *bins.Bin
-	Blockers     []*bins.Bin    // indexed front-to-back (Blockers[0] = shallowest)
+	Blockers     []*bins.Bin // indexed front-to-back (Blockers[0] = shallowest)
 	Payload      *payloads.Payload
 	BinType      *bins.BinType
 }

@@ -12,10 +12,10 @@ import (
 )
 
 type NodeOrderResult struct {
-	CycleMode     protocol.SwapMode    `json:"cycle_mode"`
-	Order         *storeorders.Order   `json:"order,omitempty"`
-	OrderA        *storeorders.Order   `json:"order_a,omitempty"`
-	OrderB        *storeorders.Order   `json:"order_b,omitempty"`
+	CycleMode protocol.SwapMode  `json:"cycle_mode"`
+	Order     *storeorders.Order `json:"order,omitempty"`
+	OrderA    *storeorders.Order `json:"order_a,omitempty"`
+	OrderB    *storeorders.Order `json:"order_b,omitempty"`
 	// PrimeOrders are additional simple deliveries emitted alongside Order
 	// when a press-index empty-station downgrade prime-filled the paired
 	// positions. Empty for non-press-index requests and for press-index
@@ -540,4 +540,3 @@ func (e *Engine) AbortNodeOrders(nodeID int64) {
 		e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
 	}
 }
-

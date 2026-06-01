@@ -56,7 +56,6 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		return fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 
-
 	if uopCount <= 0 {
 		for _, item := range manifest {
 			uopCount += item.Quantity
@@ -433,6 +432,6 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	}
 	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
 		log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
-		}
+	}
 	return order, nil
 }

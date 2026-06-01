@@ -12,10 +12,12 @@ import (
 // without spinning up the dispatcher harness. Each call returns
 // pre-loaded values; nil/zero values represent "not found" or "empty."
 type fakeCapacityDB struct {
-	node       *nodes.Node
-	getNodeErr error
-	binCount   int
-	inFlight   int
+	node        *nodes.Node
+	getNodeErr  error
+	binCount    int
+	binCountErr error
+	inFlight    int
+	inFlightErr error
 
 	// NGRP support: walk children + per-child counts.
 	children       []*nodes.Node
@@ -30,13 +32,13 @@ func (f *fakeCapacityDB) CountBinsByNode(nodeID int64) (int, error) {
 	if c, ok := f.binsByChild[nodeID]; ok {
 		return c, nil
 	}
-	return f.binCount, nil
+	return f.binCount, f.binCountErr
 }
 func (f *fakeCapacityDB) CountInFlightOrdersByDeliveryNodeExcluding(name string, _ int64) (int, error) {
 	if c, ok := f.inFlightByName[name]; ok {
 		return c, nil
 	}
-	return f.inFlight, nil
+	return f.inFlight, f.inFlightErr
 }
 func (f *fakeCapacityDB) ListChildNodes(int64) ([]*nodes.Node, error) {
 	return f.children, nil
@@ -50,10 +52,10 @@ func (f *fakeCapacityDB) ListChildNodes(int64) ([]*nodes.Node, error) {
 func TestCheckDropoffCapacity(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name         string
-		deliveryNode string
-		db           *fakeCapacityDB
-		wantBlocked  bool
+		name          string
+		deliveryNode  string
+		db            *fakeCapacityDB
+		wantBlocked   bool
 		wantReasonHas string // substring assertion; "" means no reason expected
 	}{
 		{
@@ -67,6 +69,20 @@ func TestCheckDropoffCapacity(t *testing.T) {
 			deliveryNode: "TYPO-NODE",
 			db:           &fakeCapacityDB{getNodeErr: errors.New("not found")},
 			wantBlocked:  false,
+		},
+		{
+			name:          "R06-1: bin-count read error fails closed (blocked)",
+			deliveryNode:  "CONC-NODE",
+			db:            &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "CONC-NODE"}, binCountErr: errors.New("db blip")},
+			wantBlocked:   true,
+			wantReasonHas: "capacity unknown",
+		},
+		{
+			name:          "R06-1: in-flight read error fails closed (blocked)",
+			deliveryNode:  "CONC-NODE",
+			db:            &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "CONC-NODE"}, inFlightErr: errors.New("db blip")},
+			wantBlocked:   true,
+			wantReasonHas: "capacity unknown",
 		},
 		{
 			name:         "synthetic LANE defers to lane planner (not gated here)",
@@ -150,8 +166,8 @@ func TestCheckDropoffCapacity(t *testing.T) {
 			db: &fakeCapacityDB{
 				node: &nodes.Node{ID: 5, Name: "SMG_01", IsSynthetic: true, NodeTypeCode: "NGRP"},
 				children: []*nodes.Node{
-					{ID: 51, Name: "SMG_01_S1", Enabled: true},                 // counts
-					{ID: 52, Name: "SMG_01_S2", Enabled: false},                 // skipped (disabled)
+					{ID: 51, Name: "SMG_01_S1", Enabled: true},                        // counts
+					{ID: 52, Name: "SMG_01_S2", Enabled: false},                       // skipped (disabled)
 					{ID: 53, Name: "SMG_01_NESTED", Enabled: true, IsSynthetic: true}, // skipped (synthetic)
 				},
 				binsByChild: map[int64]int{51: 1},

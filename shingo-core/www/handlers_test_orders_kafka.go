@@ -20,12 +20,12 @@ import (
 
 func (h *Handlers) apiTestOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OrderType       string  `json:"order_type"`
-		SourceNode      string  `json:"source_node"`
-		DeliveryNode    string  `json:"delivery_node"`
-		PayloadCode string  `json:"payload_code"`
-		Quantity        int64   `json:"quantity"`
-		Priority        int     `json:"priority"`
+		OrderType    string `json:"order_type"`
+		SourceNode   string `json:"source_node"`
+		DeliveryNode string `json:"delivery_node"`
+		PayloadCode  string `json:"payload_code"`
+		Quantity     int64  `json:"quantity"`
+		Priority     int    `json:"priority"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -49,14 +49,14 @@ func (h *Handlers) apiTestOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	dst := protocol.Address{Role: protocol.RoleCore, Station: cfg.Messaging.StationID}
 
 	orderReq := &protocol.OrderRequest{
-		OrderUUID:       orderUUID,
-		OrderType:       protocol.OrderType(req.OrderType),
-		PayloadCode: req.PayloadCode,
-		Quantity:        req.Quantity,
-		DeliveryNode:    req.DeliveryNode,
-		SourceNode:      req.SourceNode,
-		Priority:        req.Priority,
-		PayloadDesc:     "test order from shingo core",
+		OrderUUID:    orderUUID,
+		OrderType:    protocol.OrderType(req.OrderType),
+		PayloadCode:  req.PayloadCode,
+		Quantity:     req.Quantity,
+		DeliveryNode: req.DeliveryNode,
+		SourceNode:   req.SourceNode,
+		Priority:     req.Priority,
+		PayloadDesc:  "test order from shingo core",
 	}
 
 	env, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, orderReq)
@@ -135,9 +135,9 @@ func (h *Handlers) apiTestOrderCancel(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiTestOrderReceipt(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OrderUUID   string  `json:"order_uuid"`
-		ReceiptType string  `json:"receipt_type"`
-		FinalCount  int64   `json:"final_count"`
+		OrderUUID   string `json:"order_uuid"`
+		ReceiptType string `json:"receipt_type"`
+		FinalCount  int64  `json:"final_count"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -219,14 +219,14 @@ func (h *Handlers) publishComplex(src, dst protocol.Address, payloadCode string,
 // apiKafkaComplexOrderSubmit builds complex order steps and publishes via Kafka.
 func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		CycleMode    protocol.SwapMode `json:"cycle_mode"`
-		Location     string `json:"location"`
-		InboundStaging       string `json:"inbound_staging"`
-		OutboundStaging      string `json:"outbound_staging"`
-		InboundSource        string `json:"inbound_source"`
-		OutboundDestination  string `json:"outbound_destination"`
-		PayloadCode  string `json:"payload_code"`
-		Priority     int    `json:"priority"`
+		CycleMode           protocol.SwapMode `json:"cycle_mode"`
+		Location            string            `json:"location"`
+		InboundStaging      string            `json:"inbound_staging"`
+		OutboundStaging     string            `json:"outbound_staging"`
+		InboundSource       string            `json:"inbound_source"`
+		OutboundDestination string            `json:"outbound_destination"`
+		PayloadCode         string            `json:"payload_code"`
+		Priority            int               `json:"priority"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return

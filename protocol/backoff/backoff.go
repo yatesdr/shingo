@@ -48,4 +48,3 @@ func (b *Exponential) Base() time.Duration { return b.base }
 
 // Max returns the configured max duration.
 func (b *Exponential) Max() time.Duration { return b.max }
-

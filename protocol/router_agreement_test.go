@@ -203,4 +203,3 @@ func (h *countingHandler) HandleOrderStaged(*protocol.Envelope, *protocol.OrderS
 func (h *countingHandler) HandleOrderSkipped(*protocol.Envelope, *protocol.OrderSkipped) {
 	h.incr("HandleOrderSkipped")
 }
-

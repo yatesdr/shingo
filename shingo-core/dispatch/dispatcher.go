@@ -170,10 +170,10 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 //
 // Callers reach this function with the order in one of three states:
 //   - pending  — direct creation paths (engine.CreateDirectOrder,
-//                www/spot handlers) jump straight from intake to dispatch.
-//                We bridge through queued to satisfy the state machine.
+//     www/spot handlers) jump straight from intake to dispatch.
+//     We bridge through queued to satisfy the state machine.
 //   - sourcing — fulfillment.Scanner moves the order to sourcing once a bin
-//                is found; sourcing → dispatched is a valid edge.
+//     is found; sourcing → dispatched is a valid edge.
 //   - queued   — pre-dispatch holding state for a fully-resolved order.
 //
 // Returns the vendor order ID on success.

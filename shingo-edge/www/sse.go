@@ -95,9 +95,16 @@ func (h *EventHub) register(c *sseClient) {
 
 func (h *EventHub) unregister(c *sseClient) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.clients[c]; !ok {
+		// Already unregistered — e.g. run() evicted a stuck client and then
+		// HandleSSE's deferred unregister also fires when its read sees the
+		// closed channel. close() is not idempotent, so guard it: without this,
+		// the second call panics with "close of closed channel".
+		return
+	}
 	delete(h.clients, c)
 	close(c.events)
-	h.mu.Unlock()
 }
 
 func (h *EventHub) run() {

@@ -151,7 +151,6 @@ func TestReleaseOrderWithLineside_DeactivatesStrandedStyles(t *testing.T) {
 	}
 }
 
-
 // TestComputeReleaseRemainingUOP exercises the disposition → *int routing in
 // isolation so the late-binding contract (empty Mode → nil, capture → &0,
 // partial → &runtime.RemainingUOPCached, partial-with-non-positive-runtime → &0)
@@ -159,11 +158,11 @@ func TestReleaseOrderWithLineside_DeactivatesStrandedStyles(t *testing.T) {
 func TestComputeReleaseRemainingUOP(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name        string
-		mode        ReleaseDispositionMode
-		runtimeUOP  int
-		wantNil     bool
-		wantValue   int
+		name       string
+		mode       ReleaseDispositionMode
+		runtimeUOP int
+		wantNil    bool
+		wantValue  int
 	}{
 		{"empty_mode_returns_nil_for_backward_compat", "", 42, true, 0},
 		{"unknown_mode_returns_nil", "weird_thing", 42, true, 0},
@@ -583,9 +582,9 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 	)
 
 	type setup struct {
-		swapMode protocol.SwapMode // claim.SwapMode
-		role        string // "consume" or "produce"
-		releaseSide string // "single", "supply", "evac" (which order to release)
+		swapMode    protocol.SwapMode // claim.SwapMode
+		role        string            // "consume" or "produce"
+		releaseSide string            // "single", "supply", "evac" (which order to release)
 	}
 	type want struct {
 		runtimeUOP int // expected runtime.RemainingUOPCached after release

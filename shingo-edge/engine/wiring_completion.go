@@ -561,6 +561,7 @@ func applyProduceIngest(e *Engine, ctx *orderCompletionCtx) bool {
 // Cache binding is owned by:
 //   - operator release-click (incoming supply bin's UOP via SetProcessNodeCachedBin)
 //   - handleNodeOrderDelivered (the actually-arrived bin's UOP)
+//
 // Confirm only does order-pointer bookkeeping for manual_swap nodes and
 // fires the keep-staged hook (currently a no-op).
 func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
@@ -783,4 +784,3 @@ func isCapacityBlocked(reason string) bool {
 		strings.Contains(reason, "no available bin at ") ||
 		strings.Contains(reason, "no bin of requested payload in node group")
 }
-

@@ -32,13 +32,13 @@ import (
 type fakeRobotListerFleet struct {
 	*simulator.SimulatorBackend
 
-	mu              sync.Mutex
-	robots          []fleet.RobotStatus
-	setAvailErr     error
-	setAvailCalls   []robotCall
-	retryErr        error
-	retryCalls      []string
-	forceCompleteErr error
+	mu                 sync.Mutex
+	robots             []fleet.RobotStatus
+	setAvailErr        error
+	setAvailCalls      []robotCall
+	retryErr           error
+	retryCalls         []string
+	forceCompleteErr   error
 	forceCompleteCalls []string
 }
 
@@ -112,12 +112,12 @@ func testHandlersWithRobotFleet(t *testing.T) (*Handlers, *store.DB, *fakeRobotL
 	dbgLog, _ := debuglog.New(64, nil)
 
 	h := &Handlers{
-		engine:   eng,
+		engine:        eng,
 		orchestration: eng,
-		sessions: newSessionStore("test-secret"),
-		tmpls:    make(map[string]*template.Template),
-		eventHub: hub,
-		debugLog: dbgLog,
+		sessions:      newSessionStore("test-secret"),
+		tmpls:         make(map[string]*template.Template),
+		eventHub:      hub,
+		debugLog:      dbgLog,
 	}
 	loadTestTemplates(t, h)
 	return h, db, sim

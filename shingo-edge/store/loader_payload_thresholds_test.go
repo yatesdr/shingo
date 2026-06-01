@@ -168,4 +168,3 @@ func TestLoaderPayloadThresholds_OverriddenInputs(t *testing.T) {
 		t.Errorf("overridden_inputs after clear = %q, want empty", got.OverriddenInputs)
 	}
 }
-

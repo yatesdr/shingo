@@ -83,4 +83,3 @@ func (db *DB) DrainLinesideBucket(nodeID int64, partNumber string, delta int) (d
 func (db *DB) SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) error {
 	return lineside.SetForReconcile(db.DB, nodeID, pairKey, styleID, partNumber, qty)
 }
-

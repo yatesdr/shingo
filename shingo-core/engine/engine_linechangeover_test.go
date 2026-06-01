@@ -22,10 +22,10 @@ import (
 // line. But only 2 bins are actually there.
 //
 // Questions this test answers:
-// 1. Do the store orders find only the 2 remaining bins?
-// 2. If 3 store orders are submitted, does the 3rd one fail gracefully
-//    or dispatch a robot with no bin?
-// 3. Are the remaining 2 bins handled cleanly?
+//  1. Do the store orders find only the 2 remaining bins?
+//  2. If 3 store orders are submitted, does the 3rd one fail gracefully
+//     or dispatch a robot with no bin?
+//  3. Are the remaining 2 bins handled cleanly?
 func TestLineChangeover_WithMissingBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

@@ -668,11 +668,11 @@ func TestBinService_RecordCount_WritesAuditRow(t *testing.T) {
 	}
 
 	var (
-		op           string
-		beforeUOP    int
-		afterUOP     int
-		actor        string
-		auditCount   int
+		op         string
+		beforeUOP  int
+		afterUOP   int
+		actor      string
+		auditCount int
 	)
 	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
 		WHERE bin_id=$1 AND op='cycle_count'`, bin.ID).Scan(&auditCount); err != nil {

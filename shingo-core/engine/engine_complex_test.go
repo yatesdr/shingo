@@ -258,7 +258,6 @@ func TestComplexOrder_EmptyPostWaitRelease(t *testing.T) {
 	}
 }
 
-
 // --- Test: Complex order redirect doesn't update StepsJSON (TC-48) ---
 //
 // OBSERVATIONAL TEST: This test always passes. It uses t.Logf (not t.Errorf)
@@ -1069,15 +1068,15 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 		PayloadCode: bp.Code,
 		Quantity:    1,
 		Steps: []protocol.ComplexOrderStep{
-			{Action: "pickup", Node: storageNode.Name},       // 1
-			{Action: "dropoff", Node: inboundStaging.Name},   // 2
-			{Action: "wait", Node: lineNode.Name},            // 3 drive to node + hold
-			{Action: "pickup", Node: lineNode.Name},          // 4
-			{Action: "dropoff", Node: outboundStaging.Name},  // 5
-			{Action: "pickup", Node: inboundStaging.Name},    // 6
-			{Action: "dropoff", Node: lineNode.Name},         // 7
-			{Action: "pickup", Node: outboundStaging.Name},   // 8
-			{Action: "dropoff", Node: outboundDest.Name},     // 9
+			{Action: "pickup", Node: storageNode.Name},      // 1
+			{Action: "dropoff", Node: inboundStaging.Name},  // 2
+			{Action: "wait", Node: lineNode.Name},           // 3 drive to node + hold
+			{Action: "pickup", Node: lineNode.Name},         // 4
+			{Action: "dropoff", Node: outboundStaging.Name}, // 5
+			{Action: "pickup", Node: inboundStaging.Name},   // 6
+			{Action: "dropoff", Node: lineNode.Name},        // 7
+			{Action: "pickup", Node: outboundStaging.Name},  // 8
+			{Action: "dropoff", Node: outboundDest.Name},    // 9
 		},
 	})
 
@@ -1140,9 +1139,9 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 
 	// Verify all 9 block locations and tasks in order
 	wantAll := []struct{ loc, task string }{
-		{storageNode.Name, "JackLoad"},       // 1: pickup new
-		{inboundStaging.Name, "JackUnload"},  // 2: stage new
-		{lineNode.Name, "Wait"},              // 3: drive to node + hold
+		{storageNode.Name, "JackLoad"},      // 1: pickup new
+		{inboundStaging.Name, "JackUnload"}, // 2: stage new
+		{lineNode.Name, "Wait"},             // 3: drive to node + hold
 		// (release)
 		{lineNode.Name, "JackLoad"},          // 4: pickup old from line
 		{outboundStaging.Name, "JackUnload"}, // 5: park old

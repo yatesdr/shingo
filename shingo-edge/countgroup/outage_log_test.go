@@ -148,4 +148,3 @@ func TestOutageLogger_PerSourceIndependence(t *testing.T) {
 		t.Fatalf("expected 2 open lines (one per source), got %d: %v", len(got), got)
 	}
 }
-

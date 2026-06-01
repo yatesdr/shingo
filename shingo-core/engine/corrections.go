@@ -92,9 +92,9 @@ func (e *Engine) ApplyCorrection(req ApplyCorrectionRequest) (int64, error) {
 	}})
 
 	e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-		NodeID:  req.NodeID,
-		Action:  req.CorrectionType,
-		BinID:   req.BinID,
+		NodeID: req.NodeID,
+		Action: req.CorrectionType,
+		BinID:  req.BinID,
 	}})
 
 	return corr.ID, nil

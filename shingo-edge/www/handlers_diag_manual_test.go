@@ -157,10 +157,10 @@ func TestApiSendManualMessage_OrderStorageWaybill_Success(t *testing.T) {
 	_, router := newDiagnosticsManualRouter(t)
 
 	resp := sendManualPayload(t, router, "order.storage_waybill", protocol.OrderStorageWaybill{
-		OrderUUID:   "man-msg-5",
-		OrderType:   "store",
-		SourceNode:  "CELL",
-		FinalCount:  3,
+		OrderUUID:  "man-msg-5",
+		OrderType:  "store",
+		SourceNode: "CELL",
+		FinalCount: 3,
 	})
 	assertStatus(t, resp, http.StatusOK)
 }

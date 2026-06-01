@@ -104,7 +104,9 @@ func TestBinUOPAudit_ClearForReuse_LogsZeroAfter(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-AUDIT-CLEAR", "PART-A", 88)
 
-	if _, err := svc.ClearForReuse(bin.ID); err != nil { t.Fatalf("ClearForReuse" + ": %v", err) }
+	if _, err := svc.ClearForReuse(bin.ID); err != nil {
+		t.Fatalf("ClearForReuse"+": %v", err)
+	}
 
 	rows := loadBinUOPAudit(t, db, bin.ID)
 	if len(rows) != 1 {
@@ -278,9 +280,9 @@ func TestRegression_OverrideAuditPullParts(t *testing.T) {
 	disp := &protocol.UOPDisposition{
 		Kind: protocol.DispositionPullParts,
 		Captures: map[string]int{
-			"PART-A": 9,  // operator overrode label-claimed 12 → counted 9
-			"PART-B": 5,  // matches suggestion — no row
-			"PART-C": 3,  // operator added a part the system didn't list → row
+			"PART-A": 9, // operator overrode label-claimed 12 → counted 9
+			"PART-B": 5, // matches suggestion — no row
+			"PART-C": 3, // operator added a part the system didn't list → row
 		},
 		CapturesSuggested: map[string]int{
 			"PART-A": 12,

@@ -282,7 +282,7 @@ func TestProduceFinalize_RejectsConsumeNode(t *testing.T) {
 		StyleID:      styleID,
 		CoreNodeName: "PRODUCE-NODE",
 		Role:         "consume",
-		SwapMode: "simple",
+		SwapMode:     "simple",
 		PayloadCode:  "WIDGET-A",
 		UOPCapacity:  100,
 	})

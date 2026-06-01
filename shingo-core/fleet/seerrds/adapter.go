@@ -50,18 +50,18 @@ func (a *Adapter) CreateTransportOrder(req fleet.TransportOrderRequest) (fleet.T
 
 	blocks := []rds.Block{
 		{
-			BlockID:    loadBlockID,
-			Location:   req.FromLoc,
-			BinTask:    "JackLoad", // Explicitly use JackLoad for pickup
-			Operation:  "",
-			GoodsID:    req.OrderID + "_goods",
+			BlockID:   loadBlockID,
+			Location:  req.FromLoc,
+			BinTask:   "JackLoad", // Explicitly use JackLoad for pickup
+			Operation: "",
+			GoodsID:   req.OrderID + "_goods",
 		},
 		{
-			BlockID:    unloadBlockID,
-			Location:   req.ToLoc,
-			BinTask:    "JackUnload", // Explicitly use JackUnload for dropoff
-			Operation:  "",
-			GoodsID:    req.OrderID + "_goods",
+			BlockID:   unloadBlockID,
+			Location:  req.ToLoc,
+			BinTask:   "JackUnload", // Explicitly use JackUnload for dropoff
+			Operation: "",
+			GoodsID:   req.OrderID + "_goods",
 		},
 	}
 

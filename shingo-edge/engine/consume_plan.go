@@ -29,9 +29,9 @@ type ConsumePlan struct {
 	// (2) the swap mode would otherwise dispatch a swap but the node was
 	//     telemetry-reported empty so the swap is downgraded to a delivery.
 	// Mutually exclusive with Dispatch.
-	SimpleMove                            bool
-	SimpleSource, SimpleDest              string
-	DowngradedFromSwapMode                protocol.SwapMode // empty unless this is the case-2 downgrade
+	SimpleMove               bool
+	SimpleSource, SimpleDest string
+	DowngradedFromSwapMode   protocol.SwapMode // empty unless this is the case-2 downgrade
 
 	// PrimePairedPositions are additional simple deliveries emitted
 	// alongside SimpleMove for the two_robot_press_index empty-station
@@ -40,7 +40,7 @@ type ConsumePlan struct {
 	// per empty paired position is added so the next swap cycle has bins
 	// to cascade. Each entry produces one CreateMoveOrder. Order tracking
 	// stays on the head node's runtime; primes are not sibling-linked.
-	PrimePairedPositions                  []SimplePrime
+	PrimePairedPositions []SimplePrime
 
 	// Dispatch is the shared swap-mode dispatch for sequential / single_robot
 	// / two_robot / two_robot_press_index. Nil when SimpleMove is true.
@@ -52,22 +52,6 @@ type ConsumePlan struct {
 type SimplePrime struct {
 	Source string
 	Dest   string
-}
-
-// CycleMode returns the mode tag the apply caller surfaces in
-// NodeOrderResult.CycleMode. "simple" for the move branch (including the
-// node-empty downgrade — matches today's behavior at operator_stations.go);
-// the dispatch's CycleMode otherwise.
-//
-// The SwapModeSimple sentinel here is the engine-internal classification
-// tag for "this was a simple delivery, not a swap dispatch." Conceptually
-// distinct from a configured claim SwapMode even though the string value
-// is the same.
-func (p *ConsumePlan) CycleMode() protocol.SwapMode {
-	if p.SimpleMove || p.Dispatch == nil {
-		return protocol.SwapModeSimple
-	}
-	return p.Dispatch.CycleMode
 }
 
 // BuildConsumePlan validates the (node, runtime, claim) triple and

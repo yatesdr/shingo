@@ -73,4 +73,3 @@ func (h *Handlers) apiClearTransitAnomaly(w http.ResponseWriter, r *http.Request
 	}
 	h.jsonSuccess(w)
 }
-

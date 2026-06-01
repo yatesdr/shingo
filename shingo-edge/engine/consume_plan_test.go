@@ -48,9 +48,6 @@ func TestBuildConsumePlan_SimpleMode(t *testing.T) {
 	if !plan.SimpleMove {
 		t.Errorf("SimpleMove = false, want true for simple mode")
 	}
-	if plan.CycleMode() != "simple" {
-		t.Errorf("CycleMode = %q, want simple", plan.CycleMode())
-	}
 	if plan.Dispatch != nil {
 		t.Errorf("simple mode should have no Dispatch; got %+v", plan.Dispatch)
 	}
@@ -174,9 +171,6 @@ func TestBuildConsumePlan_TwoRobot_Occupied(t *testing.T) {
 	}
 	if !plan.Dispatch.RequiresActiveSwapGuard {
 		t.Errorf("two_robot must require swap guard")
-	}
-	if plan.CycleMode() != "two_robot" {
-		t.Errorf("CycleMode = %q, want two_robot", plan.CycleMode())
 	}
 }
 

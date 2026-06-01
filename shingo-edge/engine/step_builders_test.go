@@ -464,15 +464,15 @@ func TestBuildSwapChangeoverSteps_Sequential(t *testing.T) {
 	disp := BuildSwapChangeoverSteps(from, to, "CORE-A" /* inactive */, "CORE-B" /* active */)
 
 	want := []protocol.ComplexOrderStep{
-		{Action: "pickup", Node: "CORE-A"},     // evac old inactive
-		{Action: "dropoff", Node: "DEST"},      // old inactive to destination
-		{Action: "pickup", Node: "MARKET"},     // fetch new inactive
-		{Action: "dropoff", Node: "CORE-A"},    // deliver new inactive
-		{Action: "wait", Node: "CORE-B"},       // cutover gate, parked at active
-		{Action: "pickup", Node: "CORE-B"},     // evac old active (after cutover flip)
-		{Action: "dropoff", Node: "DEST"},      // old active to destination
-		{Action: "pickup", Node: "MARKET"},     // fetch new active
-		{Action: "dropoff", Node: "CORE-B"},    // deliver new active
+		{Action: "pickup", Node: "CORE-A"},  // evac old inactive
+		{Action: "dropoff", Node: "DEST"},   // old inactive to destination
+		{Action: "pickup", Node: "MARKET"},  // fetch new inactive
+		{Action: "dropoff", Node: "CORE-A"}, // deliver new inactive
+		{Action: "wait", Node: "CORE-B"},    // cutover gate, parked at active
+		{Action: "pickup", Node: "CORE-B"},  // evac old active (after cutover flip)
+		{Action: "dropoff", Node: "DEST"},   // old active to destination
+		{Action: "pickup", Node: "MARKET"},  // fetch new active
+		{Action: "dropoff", Node: "CORE-B"}, // deliver new active
 	}
 	if len(disp.StepsA) != len(want) {
 		t.Fatalf("StepsA: expected %d steps, got %d", len(want), len(disp.StepsA))
@@ -528,8 +528,10 @@ func TestBuildSwapChangeoverSteps_Sequential_ActiveOnA_SwapsBFirst(t *testing.T)
 }
 
 // Sequential Evacuate emits backfill steps. Each robot:
-//   pickup(my position) → dropoff(OutboundDestination)
-//   pickup(InboundSource) → wait() → dropoff(my position)
+//
+//	pickup(my position) → dropoff(OutboundDestination)
+//	pickup(InboundSource) → wait() → dropoff(my position)
+//
 // A single tooling-done click releases both bare waits.
 func TestBuildEvacuateChangeoverSteps_Sequential(t *testing.T) {
 	t.Parallel()
@@ -544,11 +546,11 @@ func TestBuildEvacuateChangeoverSteps_Sequential(t *testing.T) {
 	disp := BuildEvacuateChangeoverSteps(from, to, "", "" /* evac doesn't use inactive/active */)
 
 	wantA := []protocol.ComplexOrderStep{
-		{Action: "pickup", Node: "CORE-A"},   // evac old A
-		{Action: "dropoff", Node: "DEST"},    // old A to destination
-		{Action: "pickup", Node: "MARKET"},   // fetch new A (during tooling)
-		{Action: "wait"},                     // bare — tooling-done shared gate
-		{Action: "dropoff", Node: "CORE-A"},  // deliver new A
+		{Action: "pickup", Node: "CORE-A"},  // evac old A
+		{Action: "dropoff", Node: "DEST"},   // old A to destination
+		{Action: "pickup", Node: "MARKET"},  // fetch new A (during tooling)
+		{Action: "wait"},                    // bare — tooling-done shared gate
+		{Action: "dropoff", Node: "CORE-A"}, // deliver new A
 	}
 	if len(disp.StepsA) != len(wantA) {
 		t.Fatalf("StepsA: expected %d steps, got %d", len(wantA), len(disp.StepsA))
@@ -646,10 +648,10 @@ func TestResolveSequentialActivePull(t *testing.T) {
 	claim := &processes.NodeClaim{CoreNodeName: "CORE-A", PairedCoreNode: "CORE-B"}
 
 	tests := []struct {
-		name             string
-		snap             map[string]bool
-		wantInactive     string
-		wantActive       string
+		name         string
+		snap         map[string]bool
+		wantInactive string
+		wantActive   string
 	}{
 		{"active_on_paired", map[string]bool{"CORE-A": false, "CORE-B": true}, "CORE-A", "CORE-B"},
 		{"active_on_core", map[string]bool{"CORE-A": true, "CORE-B": false}, "CORE-B", "CORE-A"},
@@ -890,44 +892,6 @@ func TestBuildReleaseSteps_MissingDestination(t *testing.T) {
 	}
 	if steps[1].Node != "" {
 		t.Errorf("step 1 node: got %q, want empty string (payload-based fallback)", steps[1].Node)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// BuildRestoreSteps — outbound staging → core route
-// ---------------------------------------------------------------------------
-
-func TestBuildRestoreSteps(t *testing.T) {
-	t.Parallel()
-	claim := &processes.NodeClaim{
-		CoreNodeName:    "CORE-NODE",
-		OutboundStaging: "OUT-STAGE",
-	}
-	steps := BuildRestoreSteps(claim)
-
-	if steps == nil {
-		t.Fatal("expected steps, got nil")
-	}
-	if len(steps) != 2 {
-		t.Fatalf("expected 2 steps, got %d", len(steps))
-	}
-	if steps[0] != (protocol.ComplexOrderStep{Action: "pickup", Node: "OUT-STAGE"}) {
-		t.Errorf("step 0: got %+v", steps[0])
-	}
-	if steps[1] != (protocol.ComplexOrderStep{Action: "dropoff", Node: "CORE-NODE"}) {
-		t.Errorf("step 1: got %+v", steps[1])
-	}
-}
-
-func TestBuildRestoreSteps_NoOutboundStaging(t *testing.T) {
-	t.Parallel()
-	claim := &processes.NodeClaim{
-		CoreNodeName: "CORE-NODE",
-		// OutboundStaging empty — nothing to restore
-	}
-	steps := BuildRestoreSteps(claim)
-	if steps != nil {
-		t.Errorf("expected nil when OutboundStaging is empty, got %d steps", len(steps))
 	}
 }
 

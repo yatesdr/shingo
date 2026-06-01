@@ -7,20 +7,20 @@
 //
 // SEND PARTIAL BACK is the motivating flow:
 //
-//   1. Operator clicks RELEASE PARTIAL on a bin that still has UOP
-//      remaining. Edge marks the order in_transit, sets the bin's
-//      manifest to the partial count, and fires the order to the
-//      fleet.
-//   2. The cell keeps cycling — PLC ticks continue against the
-//      released bin's slot until the robot arrives. Each tick
-//      attributes to the released bin (ActiveOrderID still points
-//      at the partial-back order, BinID still points at that bin).
-//   3. Robot arrives, grabs the bin. Core's rds.Poller sees the
-//      pickup-block FINISH and publishes BinPickedUp to Edge.
-//   4. Edge flushes the inventory delta accumulator for the released
-//      bin so any in-flight ticks ship before the active claim
-//      advances. The runtime's ActiveOrderID is then cleared so
-//      subsequent ticks attribute to whatever lands next.
+//  1. Operator clicks RELEASE PARTIAL on a bin that still has UOP
+//     remaining. Edge marks the order in_transit, sets the bin's
+//     manifest to the partial count, and fires the order to the
+//     fleet.
+//  2. The cell keeps cycling — PLC ticks continue against the
+//     released bin's slot until the robot arrives. Each tick
+//     attributes to the released bin (ActiveOrderID still points
+//     at the partial-back order, BinID still points at that bin).
+//  3. Robot arrives, grabs the bin. Core's rds.Poller sees the
+//     pickup-block FINISH and publishes BinPickedUp to Edge.
+//  4. Edge flushes the inventory delta accumulator for the released
+//     bin so any in-flight ticks ship before the active claim
+//     advances. The runtime's ActiveOrderID is then cleared so
+//     subsequent ticks attribute to whatever lands next.
 //
 // SME-accepted small bias: if Edge crashes during the pickup window,
 // a tick or two recorded after the physical pickup but before the

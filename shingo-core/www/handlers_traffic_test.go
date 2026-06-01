@@ -157,7 +157,7 @@ func TestHandleTrafficSave_ReplacesGroups(t *testing.T) {
 	form.Set("group_enabled_0", "on")
 	form.Set("group_name_1", "zone-new-2")
 	// group_enabled_1 omitted → enabled=false
-	form.Set("group_name_2", "")        // blank name → skipped
+	form.Set("group_name_2", "") // blank name → skipped
 	form.Set("group_enabled_2", "on")
 
 	rec := postForm(t, h.handleTrafficSave, "/traffic/save", form)

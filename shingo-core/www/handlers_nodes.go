@@ -94,21 +94,21 @@ func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
 	edgesJSON, _ := json.Marshal(pd.Edges)
 
 	data := map[string]any{
-		"Page":           "nodes",
-		"Nodes":          pd.Nodes,
-		"Counts":         pd.Counts,
-		"TileStates":     pd.TileStates,
-		"Zones":          pd.Zones,
+		"Page":          "nodes",
+		"Nodes":         pd.Nodes,
+		"Counts":        pd.Counts,
+		"TileStates":    pd.TileStates,
+		"Zones":         pd.Zones,
 		"NodeLabels":    pd.NodeLabels,
-		"NodeInfo":       pd.NodeInfo,
-		"MapGroups":      pd.MapGroups,
-		"MapClassOrder":  []string{"ActionPoint", "ChargePoint", "LocationMark"},
-		"BinTypes":       pd.BinTypes,
-		"Edges":          pd.Edges,
-		"ChildCounts":    pd.ChildCounts,
-		"Depths":         pd.Depths,
-		"BinTypesJSON":   string(binTypesJSON),
-		"EdgesJSON":      string(edgesJSON),
+		"NodeInfo":      pd.NodeInfo,
+		"MapGroups":     pd.MapGroups,
+		"MapClassOrder": []string{"ActionPoint", "ChargePoint", "LocationMark"},
+		"BinTypes":      pd.BinTypes,
+		"Edges":         pd.Edges,
+		"ChildCounts":   pd.ChildCounts,
+		"Depths":        pd.Depths,
+		"BinTypesJSON":  string(binTypesJSON),
+		"EdgesJSON":     string(edgesJSON),
 	}
 	h.render(w, r, "nodes.html", data)
 }
@@ -126,9 +126,9 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	node := &domain.Node{
-		Name:     name,
-		Zone:     r.FormValue("zone"),
-		Enabled:  r.FormValue("enabled") == "on",
+		Name:    name,
+		Zone:    r.FormValue("zone"),
+		Enabled: r.FormValue("enabled") == "on",
 	}
 
 	if ntID, err := strconv.ParseInt(r.FormValue("node_type_id"), 10, 64); err == nil && ntID > 0 {
@@ -331,15 +331,15 @@ func (h *Handlers) apiNodeDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.jsonOK(w, map[string]any{
-		"node":                  node,
-		"stations":              stations,
-		"bin_types":             binTypes,
-		"properties":            props,
-		"children":              children,
-		"effective_stations":    effectiveStations,
-		"effective_bin_types":   effectiveBinTypes,
-		"bin_type_mode":         binTypeMode,
-		"station_mode":          stationMode,
+		"node":                node,
+		"stations":            stations,
+		"bin_types":           binTypes,
+		"properties":          props,
+		"children":            children,
+		"effective_stations":  effectiveStations,
+		"effective_bin_types": effectiveBinTypes,
+		"bin_type_mode":       binTypeMode,
+		"station_mode":        stationMode,
 	})
 }
 
@@ -457,9 +457,9 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 		for i := 1; i <= 4; i++ {
 			slotName := fmt.Sprintf("%s-S%d", laneName, i)
 			slot := &domain.Node{
-				Name:     slotName,
-				Zone:     "Production",
-				Enabled:  true,
+				Name:    slotName,
+				Zone:    "Production",
+				Enabled: true,
 			}
 			if err := svc.CreateNode(slot); err != nil {
 				h.jsonError(w, fmt.Sprintf("creating %s: %v", slotName, err), http.StatusInternalServerError)

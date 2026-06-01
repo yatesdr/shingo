@@ -2,6 +2,8 @@ package nodes
 
 import (
 	"database/sql"
+	"errors"
+	"log"
 
 	"shingocore/domain"
 )
@@ -47,7 +49,14 @@ func ListProperties(db *sql.DB, nodeID int64) ([]*Property, error) {
 func GetProperty(db *sql.DB, nodeID int64, key string) string {
 	var value string
 	err := db.QueryRow(`SELECT value FROM node_properties WHERE node_id=$1 AND key=$2`, nodeID, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "" // property not set
+	}
 	if err != nil {
+		// Real read failure (not "unset"): keep the "" convenience contract for
+		// callers, but log it so a DB hiccup can't masquerade silently as an
+		// unconfigured property.
+		log.Printf("nodes: get property %q for node %d: %v", key, nodeID, err)
 		return ""
 	}
 	return value

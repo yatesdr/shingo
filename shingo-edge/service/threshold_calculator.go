@@ -227,4 +227,3 @@ func scoreConfidence(days, samplesL1, samplesL2, samplesRetrieve int) string {
 	}
 	return "LOW"
 }
-

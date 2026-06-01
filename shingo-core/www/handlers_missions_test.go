@@ -288,4 +288,3 @@ func TestApiMissionStats_AcceptsFilters(t *testing.T) {
 	var stats telemetry.Stats
 	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&stats), "decode")
 }
-

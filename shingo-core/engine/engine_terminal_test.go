@@ -239,17 +239,18 @@ func TestFailedOrder_TransfersReturnClaim(t *testing.T) {
 
 // --- TC-38: Cancel delivered order must not create return order / receipt on cancelled order ---
 // Scenario (reproduces production incident from 2026-03-30):
-//   1. Retrieve order dispatched, robot runs and finishes → status = "delivered"
-//   2. Admin cancels the order (before operator confirms receipt) → status = "cancelled"
-//   3. Operator confirms receipt on the already-cancelled order → status = "confirmed"
+//  1. Retrieve order dispatched, robot runs and finishes → status = "delivered"
+//  2. Admin cancels the order (before operator confirms receipt) → status = "cancelled"
+//  3. Operator confirms receipt on the already-cancelled order → status = "confirmed"
 //
 // Two bugs exposed:
-//   Bug A: maybeCreateReturnOrder fires on the cancelled event and creates a return order
-//           that claims the bin, even though the bin was already delivered to lineside.
-//           The return order has SourceNode = warehouse (wrong — bin is physically at lineside).
-//   Bug B: ConfirmReceipt does not guard against cancelled orders. It overwrites status
-//           from "cancelled" back to "confirmed" and calls ApplyBinArrival, moving the bin
-//           in the DB to lineside while it's claimed by the return order.
+//
+//	Bug A: maybeCreateReturnOrder fires on the cancelled event and creates a return order
+//	        that claims the bin, even though the bin was already delivered to lineside.
+//	        The return order has SourceNode = warehouse (wrong — bin is physically at lineside).
+//	Bug B: ConfirmReceipt does not guard against cancelled orders. It overwrites status
+//	        from "cancelled" back to "confirmed" and calls ApplyBinArrival, moving the bin
+//	        in the DB to lineside while it's claimed by the return order.
 //
 // Result: bin is at lineside in DB, claimed by a return order that thinks it's at the
 // warehouse. Return order can't dispatch. Bin is permanently locked. Team can't release
@@ -408,8 +409,8 @@ func TestTerminateOrder_RejectsConfirmedStatus_FullLifecycle(t *testing.T) {
 		}
 	} else {
 		t.Logf("correct: TerminateOrder rejected terminal status %q: %v", order.Status, err)
-		}
 	}
+}
 
 // --- TC-36: Retrieve claim failure — queue instead of fail ---
 // Scenario: Two concurrent retrieve orders compete for the only bin of a payload.

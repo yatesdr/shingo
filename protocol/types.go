@@ -63,7 +63,7 @@ const (
 	SubjectNodeStructureChanged = "node.structure_changed"
 
 	// Kanban demand wiring (Phase 2)
-	SubjectClaimSync   = "claim.sync"    // Edge -> Core: manual_swap claim config
+	SubjectClaimSync    = "claim.sync"    // Edge -> Core: manual_swap claim config
 	SubjectDemandSignal = "demand.signal" // Core -> Edge: kanban demand trigger
 
 	// UOP-threshold replenishment (C-push):
@@ -305,16 +305,16 @@ var validTransitions = map[Status][]Status{
 	StatusAcknowledged: {StatusDispatched, StatusInTransit, StatusSourcing, StatusCancelled, StatusFaulted, StatusFailed},
 	StatusDispatched:   {StatusInTransit, StatusDelivered, StatusSourcing, StatusCancelled, StatusFaulted, StatusFailed},
 
-	StatusInTransit:   {StatusDelivered, StatusStaged, StatusCancelled, StatusFaulted, StatusFailed},
-	StatusStaged:      {StatusInTransit, StatusDelivered, StatusCancelled, StatusFaulted, StatusFailed},
+	StatusInTransit: {StatusDelivered, StatusStaged, StatusCancelled, StatusFaulted, StatusFailed},
+	StatusStaged:    {StatusInTransit, StatusDelivered, StatusCancelled, StatusFaulted, StatusFailed},
 
 	// Faulted is the non-terminal grace-period status entered when the fleet
 	// reports a transient failure (RDS FAILED). Orders stay faulted until
 	// either the fleet recovers (faulted→in_transit), the operator manually
 	// finishes (faulted→delivered), or the grace period expires and Core
 	// gives up (faulted→failed) or the operator cancels (faulted→cancelled).
-	StatusFaulted: {StatusInTransit, StatusDelivered, StatusFailed, StatusCancelled},
-	StatusDelivered:   {StatusConfirmed, StatusCancelled, StatusFailed},
+	StatusFaulted:   {StatusInTransit, StatusDelivered, StatusFailed, StatusCancelled},
+	StatusDelivered: {StatusConfirmed, StatusCancelled, StatusFailed},
 	// Reshuffling → Queued is the complex-order resume edge: after a
 	// compound completes successfully, the complex parent transitions
 	// back to Queued so the fulfillment scanner picks it up and

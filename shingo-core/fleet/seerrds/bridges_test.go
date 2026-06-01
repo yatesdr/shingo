@@ -70,12 +70,12 @@ func TestEmitterBridge_ForwardsArgsAndMapsSnapshot(t *testing.T) {
 	}
 
 	b.EmitOrderStatusChanged(
-		42,                          // orderID
-		"order-88",                  // rdsOrderID
-		string(rds.StateCreated),    // oldStatus
-		string(rds.StateRunning),    // newStatus
-		"AMB-02",                    // robotID
-		"state transitioned",        // detail
+		42,                       // orderID
+		"order-88",               // rdsOrderID
+		string(rds.StateCreated), // oldStatus
+		string(rds.StateRunning), // newStatus
+		"AMB-02",                 // robotID
+		"state transitioned",     // detail
 		detail,
 	)
 

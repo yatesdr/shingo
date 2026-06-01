@@ -1,6 +1,8 @@
 package www
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -10,14 +12,38 @@ import (
 // handleDemand renders the demand page.
 func (h *Handlers) handleDemand(w http.ResponseWriter, r *http.Request) {
 	demands, _ := h.engine.DemandService().List()
+	payloads, _ := h.engine.PayloadService().List()
 	data := map[string]any{
-		"Page":          "demand",
-		"Demands": demands,
+		"Page":     "demand",
+		"Demands":  demands,
+		"Payloads": payloads,
 	}
 	h.render(w, r, "demand.html", data)
 }
 
 // --- Demand API ---
+
+// validateCatID rejects a cat_id that is empty or not a known payload code.
+// The payloads catalog is authoritative: produced counts arrive from the
+// edge keyed by payload code, so a demand must reference a real part for its
+// produced tally to ever advance. Returns false and writes the error
+// response when invalid.
+func (h *Handlers) validateCatID(w http.ResponseWriter, catID string) bool {
+	if catID == "" {
+		h.jsonError(w, "cat_id is required", http.StatusBadRequest)
+		return false
+	}
+	p, err := h.engine.PayloadService().GetByCode(catID)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && p == nil) {
+		h.jsonError(w, "cat_id '"+catID+"' is not a known payload — create it under Payloads first", http.StatusBadRequest)
+		return false
+	}
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	return true
+}
 
 func (h *Handlers) apiListDemands(w http.ResponseWriter, r *http.Request) {
 	demands, err := h.engine.DemandService().List()
@@ -30,15 +56,14 @@ func (h *Handlers) apiListDemands(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateDemand(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		CatID       string  `json:"cat_id"`
-		Description string  `json:"description"`
-		DemandQty   int64   `json:"demand_qty"`
+		CatID       string `json:"cat_id"`
+		Description string `json:"description"`
+		DemandQty   int64  `json:"demand_qty"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
-	if req.CatID == "" {
-		h.jsonError(w, "cat_id is required", http.StatusBadRequest)
+	if !h.validateCatID(w, req.CatID) {
 		return
 	}
 	id, err := h.engine.DemandService().Create(req.CatID, req.Description, req.DemandQty)
@@ -56,12 +81,15 @@ func (h *Handlers) apiUpdateDemand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		CatID       string  `json:"cat_id"`
-		Description string  `json:"description"`
-		DemandQty   int64   `json:"demand_qty"`
-		ProducedQty int64   `json:"produced_qty"`
+		CatID       string `json:"cat_id"`
+		Description string `json:"description"`
+		DemandQty   int64  `json:"demand_qty"`
+		ProducedQty int64  `json:"produced_qty"`
 	}
 	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if !h.validateCatID(w, req.CatID) {
 		return
 	}
 	if err := h.engine.DemandService().Update(id, req.CatID, req.Description, req.DemandQty, req.ProducedQty); err != nil {
@@ -78,8 +106,8 @@ func (h *Handlers) apiApplyDemand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Description string  `json:"description"`
-		DemandQty   int64   `json:"demand_qty"`
+		Description string `json:"description"`
+		DemandQty   int64  `json:"demand_qty"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -107,9 +135,9 @@ func (h *Handlers) apiDeleteDemand(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) apiApplyAllDemands(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Rows []struct {
-			ID          int64   `json:"id"`
-			Description string  `json:"description"`
-			DemandQty   int64   `json:"demand_qty"`
+			ID          int64  `json:"id"`
+			Description string `json:"description"`
+			DemandQty   int64  `json:"demand_qty"`
 		} `json:"rows"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -131,7 +159,7 @@ func (h *Handlers) apiSetDemandProduced(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		ProducedQty int64   `json:"produced_qty"`
+		ProducedQty int64 `json:"produced_qty"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return

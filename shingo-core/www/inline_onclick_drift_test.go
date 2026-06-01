@@ -64,9 +64,10 @@ func TestNoInlineEventHandlersInTemplates(t *testing.T) {
 //
 // Signatures (scoped to lines that build a data-action attribute):
 //   - ')"   a JS string literal that opens with ")" right where the
-//           attribute should close — the stray-paren shape.
+//     attribute should close — the stray-paren shape.
 //   - \'    a backslash-escaped apostrophe used where a real string
-//           delimiter belongs — the literal-quote shape.
+//     delimiter belongs — the literal-quote shape.
+//
 // Note escapeHtml(x)'s parens are code, not string content, and are
 // always followed by " + " rather than the attribute-closing quote, so
 // they do not match.

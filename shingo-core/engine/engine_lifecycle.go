@@ -100,10 +100,12 @@ func (e *Engine) Start() {
 	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered)
 
 	// Start count-group runner if configured (no-op if no groups enabled).
+	e.countGroupMu.Lock()
 	if e.countGroup != nil {
 		e.countGroup.Start()
 		e.logFn("engine: count-group runner started")
 	}
+	e.countGroupMu.Unlock()
 
 	// ETA medians cache — initial refresh + 10-min background refresh.
 	// Errors are logged but non-fatal: a cold-start failure leaves the
@@ -164,9 +166,9 @@ WHERE o.status IN ('in_transit', 'staged')
 	var sent int
 	for rows.Next() {
 		var (
-			id                                                       int64
-			edgeUUID, stationID, sourceNode, deliveryNode, status    string
-			inTransitAt                                              sql.NullTime
+			id                                                    int64
+			edgeUUID, stationID, sourceNode, deliveryNode, status string
+			inTransitAt                                           sql.NullTime
 		)
 		if err := rows.Scan(&id, &edgeUUID, &stationID, &sourceNode, &deliveryNode, &status, &inTransitAt); err != nil {
 			e.logFn("engine: eta backfill scan: %v", err)
@@ -203,9 +205,11 @@ func (e *Engine) Stop() {
 	if e.tracker != nil {
 		e.tracker.Stop()
 	}
+	e.countGroupMu.Lock()
 	if e.countGroup != nil {
 		e.countGroup.Stop()
 	}
+	e.countGroupMu.Unlock()
 	e.logFn("engine: stopped")
 }
 

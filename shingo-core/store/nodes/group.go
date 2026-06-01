@@ -53,9 +53,21 @@ func DeleteGroup(db *sql.DB, grpID int64) error {
 		isSynthetic bool
 	}
 	var descendants []nodeInfo
-	children, _ := ListChildren(db, grpID)
+	// Propagate ListChildren errors: a transient failure here silently yields an
+	// empty descendant set, so DeleteGroup would delete only the group root and
+	// commit successfully — orphaning the physical children (never unparented)
+	// and synthetic descendants (never deleted). That partial outcome is NOT
+	// caught by the transaction below (no statement errors), so it must be
+	// guarded here.
+	children, err := ListChildren(db, grpID)
+	if err != nil {
+		return fmt.Errorf("list children of group %d: %w", grpID, err)
+	}
 	for _, child := range children {
-		grandchildren, _ := ListChildren(db, child.ID)
+		grandchildren, err := ListChildren(db, child.ID)
+		if err != nil {
+			return fmt.Errorf("list children of node %d: %w", child.ID, err)
+		}
 		for _, gc := range grandchildren {
 			descendants = append(descendants, nodeInfo{gc.ID, gc.IsSynthetic})
 		}
@@ -68,22 +80,54 @@ func DeleteGroup(db *sql.DB, grpID int64) error {
 	}
 	defer tx.Rollback()
 
+	// exec runs one statement and returns a labelled error on failure so we roll
+	// back at the first problem. Postgres already aborts the whole transaction on
+	// any statement error (so a partial delete can't commit), but checking each
+	// error surfaces *which* statement failed instead of the generic
+	// "commit unexpectedly resulted in rollback" the bare Commit would return.
+	exec := func(label, query string, args ...any) error {
+		if _, err := tx.Exec(query, args...); err != nil {
+			return fmt.Errorf("%s: %w", label, err)
+		}
+		return nil
+	}
+
 	for _, d := range descendants {
 		if d.isSynthetic {
-			tx.Exec(`DELETE FROM node_properties WHERE node_id=$1`, d.id)
-			tx.Exec(`DELETE FROM node_stations WHERE node_id=$1`, d.id)
-			tx.Exec(`DELETE FROM node_payloads WHERE node_id=$1`, d.id)
-			tx.Exec(`DELETE FROM nodes WHERE id=$1`, d.id)
+			if err := exec("delete synthetic node properties", `DELETE FROM node_properties WHERE node_id=$1`, d.id); err != nil {
+				return err
+			}
+			if err := exec("delete synthetic node stations", `DELETE FROM node_stations WHERE node_id=$1`, d.id); err != nil {
+				return err
+			}
+			if err := exec("delete synthetic node payloads", `DELETE FROM node_payloads WHERE node_id=$1`, d.id); err != nil {
+				return err
+			}
+			if err := exec("delete synthetic node", `DELETE FROM nodes WHERE id=$1`, d.id); err != nil {
+				return err
+			}
 		} else {
-			tx.Exec(`UPDATE nodes SET parent_id=NULL, updated_at=NOW() WHERE id=$1`, d.id)
-			tx.Exec(`DELETE FROM node_properties WHERE node_id=$1 AND key IN ('depth','role')`, d.id)
+			if err := exec("unparent physical node", `UPDATE nodes SET parent_id=NULL, updated_at=NOW() WHERE id=$1`, d.id); err != nil {
+				return err
+			}
+			if err := exec("clear physical node depth/role", `DELETE FROM node_properties WHERE node_id=$1 AND key IN ('depth','role')`, d.id); err != nil {
+				return err
+			}
 		}
 	}
 
-	tx.Exec(`DELETE FROM node_properties WHERE node_id=$1`, grpID)
-	tx.Exec(`DELETE FROM node_stations WHERE node_id=$1`, grpID)
-	tx.Exec(`DELETE FROM node_payloads WHERE node_id=$1`, grpID)
-	tx.Exec(`DELETE FROM nodes WHERE id=$1`, grpID)
+	if err := exec("delete group properties", `DELETE FROM node_properties WHERE node_id=$1`, grpID); err != nil {
+		return err
+	}
+	if err := exec("delete group stations", `DELETE FROM node_stations WHERE node_id=$1`, grpID); err != nil {
+		return err
+	}
+	if err := exec("delete group payloads", `DELETE FROM node_payloads WHERE node_id=$1`, grpID); err != nil {
+		return err
+	}
+	if err := exec("delete group node", `DELETE FROM nodes WHERE id=$1`, grpID); err != nil {
+		return err
+	}
 
 	return tx.Commit()
 }

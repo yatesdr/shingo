@@ -30,7 +30,8 @@ import "strings"
 // string when the tag has no dot (no parent struct) or is empty.
 //
 // Example: "MES_P42_Spot_Nut_Farm_2.Prod_Counter_01" →
-//          "MES_P42_Spot_Nut_Farm_2"
+//
+//	"MES_P42_Spot_Nut_Farm_2"
 func deriveProcessTagPrefix(tagName string) string {
 	if idx := strings.LastIndex(tagName, "."); idx > 0 {
 		return tagName[:idx]
@@ -43,7 +44,8 @@ func deriveProcessTagPrefix(tagName string) string {
 // the input has no parent struct.
 //
 // Example: "MES_P42_Spot_Nut_Farm_2.Prod_Counter_01" →
-//          "MES_P42_Spot_Nut_Farm_2.Changeover_Active"
+//
+//	"MES_P42_Spot_Nut_Farm_2.Changeover_Active"
 func deriveCutoverTag(counterTagName string) string {
 	prefix := deriveProcessTagPrefix(counterTagName)
 	if prefix == "" {

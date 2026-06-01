@@ -53,7 +53,7 @@ type Event struct {
 	Actor          string
 	Reason         string
 	PreviousStatus protocol.Status // populated by transition() before action dispatch
-	StationID      string // for emitter calls that need station context
+	StationID      string          // for emitter calls that need station context
 	RobotID        string
 	ReceiptType    string
 	FinalCount     int64
@@ -87,9 +87,9 @@ var actionMap = map[transitionKey][]Action{
 	// Delivery: fleet-reported. Fires the order-completed event so engine
 	// wiring can apply bin arrival, send the edge update, and run
 	// completion logic in handleOrderCompleted.
-	{from: StatusInTransit, to: StatusDelivered}:   {fireCompleted},
-	{from: StatusStaged, to: StatusDelivered}:      {fireCompleted},
-	{from: StatusDispatched, to: StatusDelivered}:  {fireCompleted},
+	{from: StatusInTransit, to: StatusDelivered}:  {fireCompleted},
+	{from: StatusStaged, to: StatusDelivered}:     {fireCompleted},
+	{from: StatusDispatched, to: StatusDelivered}: {fireCompleted},
 
 	// Confirm: edge confirmed receipt. Fires the order-completed event
 	// (same reaction — the completion handler is idempotent).
@@ -139,7 +139,7 @@ var actionMap = map[transitionKey][]Action{
 	{from: StatusStaged, to: StatusFaulted}:       {fireFaulted},
 
 	// Faulted outgoing: reuse existing events.
-	{from: StatusFaulted, to: StatusInTransit}:  {fireFaultedRecovered},
+	{from: StatusFaulted, to: StatusInTransit}: {fireFaultedRecovered},
 	{from: StatusFaulted, to: StatusDelivered}: {fireCompleted},
 	{from: StatusFaulted, to: StatusFailed}:    {fireFailed},
 	{from: StatusFaulted, to: StatusCancelled}: {fireCancelled},

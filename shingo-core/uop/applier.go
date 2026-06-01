@@ -300,6 +300,25 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(d *protocol.LinesideBuc
 		return ErrInventoryDeltaSkipped
 	}
 
+	// A reduction (negative delta) only makes sense against an existing bucket.
+	// On the first-sight INSERT path GREATEST(delta,0) clamps it to a 0 row,
+	// silently dropping the reduction (R22-1). Surface that case as an error —
+	// symmetric with the existing-row underflow the CHECK below rejects — so the
+	// count can't quietly drift up.
+	if d.Delta < 0 {
+		var exists bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM lineside_buckets
+			WHERE station=$1 AND core_node_name=$2 AND pair_key=$3 AND style_id=$4 AND part_number=$5)`,
+			d.Station, d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber).Scan(&exists); err != nil {
+			return fmt.Errorf("check bucket exists for negative LinesideBucketDelta (core_node_name=%q part=%q): %w",
+				d.CoreNodeName, d.PartNumber, err)
+		}
+		if !exists {
+			return fmt.Errorf("LinesideBucketDelta reduction of %d for non-existent bucket (core_node_name=%q part=%q)",
+				d.Delta, d.CoreNodeName, d.PartNumber)
+		}
+	}
+
 	// UPSERT-and-clamp: ON CONFLICT updates qty; CHECK (qty >= 0) at
 	// the schema level rejects under-zero results. Treat that
 	// constraint violation as a typed error so the handler can log

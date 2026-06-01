@@ -12,15 +12,15 @@ import (
 // tracking, and the active/target style pointers used by the
 // changeover flow.
 type Process struct {
-	ID                  int64     `json:"id"`
-	Name                string    `json:"name"`
-	Description         string    `json:"description"`
-	ActiveStyleID       *int64    `json:"active_style_id"`
-	TargetStyleID       *int64    `json:"target_style_id,omitempty"`
-	ProductionState     string    `json:"production_state"`
-	CounterPLCName      string    `json:"counter_plc_name"`
-	CounterTagName      string    `json:"counter_tag_name"`
-	CounterEnabled      bool      `json:"counter_enabled"`
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	ActiveStyleID   *int64 `json:"active_style_id"`
+	TargetStyleID   *int64 `json:"target_style_id,omitempty"`
+	ProductionState string `json:"production_state"`
+	CounterPLCName  string `json:"counter_plc_name"`
+	CounterTagName  string `json:"counter_tag_name"`
+	CounterEnabled  bool   `json:"counter_enabled"`
 	// AutoCutoverEnabled subscribes to the PLC's Changeover_Active tag
 	// derived from CounterTagName's parent struct. Falling edge (with
 	// 2s debounce) calls CompleteProcessProductionCutover so shingo's
@@ -31,8 +31,8 @@ type Process struct {
 	// the safety net for spurious PLC triggers (PLC restart, fault
 	// recovery): a falling edge with non-terminal tasks is a no-op,
 	// logged.
-	AutoCutoverEnabled  bool      `json:"auto_cutover_enabled"`
-	CreatedAt           time.Time `json:"created_at"`
+	AutoCutoverEnabled bool      `json:"auto_cutover_enabled"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 // Style is a build configuration that a Process can run — typically a
@@ -97,10 +97,10 @@ type NodeInput struct {
 // No reverse heal — a stale Core value never overwrites Edge's live
 // number.
 type RuntimeState struct {
-	ID                 int64  `json:"id"`
-	ProcessNodeID      int64  `json:"process_node_id"`
-	ActiveClaimID      *int64 `json:"active_claim_id,omitempty"`
-	ActiveBinID        *int64 `json:"active_bin_id,omitempty"`
+	ID            int64  `json:"id"`
+	ProcessNodeID int64  `json:"process_node_id"`
+	ActiveClaimID *int64 `json:"active_claim_id,omitempty"`
+	ActiveBinID   *int64 `json:"active_bin_id,omitempty"`
 	// ActiveBinEpoch mirrors Core's bins.delta_epoch for ActiveBinID.
 	// Edge stamps every outgoing BinUOPDelta with this value so Core's
 	// epoch-aware dedup accepts the delta against the right load
@@ -121,13 +121,13 @@ type RuntimeState struct {
 // staging conventions. The active NodeClaim drives material orders
 // when the Process is running this Style.
 type NodeClaim struct {
-	ID                   int64             `json:"id"`
-	StyleID              int64             `json:"style_id"`
-	CoreNodeName         string            `json:"core_node_name"`
-	Role                 protocol.ClaimRole `json:"role"`
-	SwapMode             protocol.SwapMode `json:"swap_mode"`
-	PayloadCode          string    `json:"payload_code"`
-	UOPCapacity          int       `json:"uop_capacity"`
+	ID           int64              `json:"id"`
+	StyleID      int64              `json:"style_id"`
+	CoreNodeName string             `json:"core_node_name"`
+	Role         protocol.ClaimRole `json:"role"`
+	SwapMode     protocol.SwapMode  `json:"swap_mode"`
+	PayloadCode  string             `json:"payload_code"`
+	UOPCapacity  int                `json:"uop_capacity"`
 	// ReorderPoint has role-dependent semantics.
 	//
 	// Consume-role claim: UOP threshold for auto-reorder, "fire at or
@@ -144,29 +144,29 @@ type NodeClaim struct {
 	// shingo-kanban-calculator-design.md) writes its calculated value
 	// into this same column rather than a parallel "loader threshold"
 	// field.
-	ReorderPoint         int       `json:"reorder_point"`
+	ReorderPoint int `json:"reorder_point"`
 	// ReorderPointSource (UOP-threshold replenishment) records how
 	// ReorderPoint was set. 'legacy' = default, never edited (the
 	// silent-inert default); 'manual' = engineer typed a value;
 	// 'calculated' = applied from the unified calculator. Surfaced in
 	// the replenishment UI as a small badge per row.
-	ReorderPointSource   string    `json:"reorder_point_source"`
-	AutoReorder          bool      `json:"auto_reorder"`
-	InboundStaging       string    `json:"inbound_staging"`
-	OutboundStaging      string    `json:"outbound_staging"`
-	InboundSource        string    `json:"inbound_source"`
-	OutboundDestination  string    `json:"outbound_destination"`
-	AllowedPayloadCodes  []string  `json:"allowed_payload_codes"`
-	AutoRequestPayload   string    `json:"auto_request_payload"`
-	KeepStaged           bool      `json:"keep_staged"`
-	EvacuateOnChangeover bool      `json:"evacuate_on_changeover"`
-	PairedCoreNode       string    `json:"paired_core_node"`
+	ReorderPointSource   string   `json:"reorder_point_source"`
+	AutoReorder          bool     `json:"auto_reorder"`
+	InboundStaging       string   `json:"inbound_staging"`
+	OutboundStaging      string   `json:"outbound_staging"`
+	InboundSource        string   `json:"inbound_source"`
+	OutboundDestination  string   `json:"outbound_destination"`
+	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
+	AutoRequestPayload   string   `json:"auto_request_payload"`
+	KeepStaged           bool     `json:"keep_staged"`
+	EvacuateOnChangeover bool     `json:"evacuate_on_changeover"`
+	PairedCoreNode       string   `json:"paired_core_node"`
 	// SecondPairedCoreNode is the optional third (back-most) position for
 	// two_robot_press_index. When set, the layout is C → B → A and R1's
 	// final dropoff goes to C instead of B. Empty = legacy 2-position.
-	SecondPairedCoreNode string    `json:"second_paired_core_node"`
-	AutoConfirm          bool      `json:"auto_confirm"`
-	Sequence             int       `json:"sequence"`
+	SecondPairedCoreNode string `json:"second_paired_core_node"`
+	AutoConfirm          bool   `json:"auto_confirm"`
+	Sequence             int    `json:"sequence"`
 	// LinesideSoftThreshold is the per-claim soft cap for the release
 	// qty-override prompt. Zero means "off" (default). When >0, the HMI
 	// warns — but doesn't block — if the operator enters a qty greater
@@ -186,7 +186,7 @@ type NodeClaim struct {
 	// that should drain the FG supermarket continuously rather than wait for
 	// downstream consumption. Default false preserves the kanban-driven model
 	// (DemandSignal-only). See engine/operator_demand.go MaybePushUnloader.
-	AutoPush  bool      `json:"auto_push"`
+	AutoPush bool `json:"auto_push"`
 	// TransitionalLoader is a computed, display-only field — NOT a persisted
 	// claim column. It mirrors the loader-wide transitional_loaders set
 	// (Edge-only, keyed by core_node_name) and is populated by the API list
@@ -217,36 +217,36 @@ func (c *NodeClaim) AllowedPayloads() []string {
 // NodeClaimInput is the request shape for creating or updating a
 // NodeClaim — the persisted NodeClaim fields minus ID and CreatedAt.
 type NodeClaimInput struct {
-	StyleID               int64             `json:"style_id"`
-	CoreNodeName          string            `json:"core_node_name"`
+	StyleID               int64              `json:"style_id"`
+	CoreNodeName          string             `json:"core_node_name"`
 	Role                  protocol.ClaimRole `json:"role"`
-	SwapMode              protocol.SwapMode `json:"swap_mode"`
-	PayloadCode           string   `json:"payload_code"`
-	UOPCapacity           int      `json:"uop_capacity"`
-	ReorderPoint          int      `json:"reorder_point"`
-	ReorderPointSource    string   `json:"reorder_point_source"`
-	AutoReorder           bool     `json:"auto_reorder"`
-	InboundStaging        string   `json:"inbound_staging"`
-	OutboundStaging       string   `json:"outbound_staging"`
-	InboundSource         string   `json:"inbound_source"`
-	OutboundDestination   string   `json:"outbound_destination"`
-	AllowedPayloadCodes   []string `json:"allowed_payload_codes"`
-	AutoRequestPayload    string   `json:"auto_request_payload"`
-	KeepStaged            bool     `json:"keep_staged"`
-	EvacuateOnChangeover  bool     `json:"evacuate_on_changeover"`
-	PairedCoreNode        string   `json:"paired_core_node"`
-	SecondPairedCoreNode  string   `json:"second_paired_core_node"`
-	AutoConfirm           bool     `json:"auto_confirm"`
-	Sequence              int      `json:"sequence"`
-	LinesideSoftThreshold int      `json:"lineside_soft_threshold"`
-	ReuseCompatibleBins   bool     `json:"reuse_compatible_bins"`
-	AutoPush              bool     `json:"auto_push"`
+	SwapMode              protocol.SwapMode  `json:"swap_mode"`
+	PayloadCode           string             `json:"payload_code"`
+	UOPCapacity           int                `json:"uop_capacity"`
+	ReorderPoint          int                `json:"reorder_point"`
+	ReorderPointSource    string             `json:"reorder_point_source"`
+	AutoReorder           bool               `json:"auto_reorder"`
+	InboundStaging        string             `json:"inbound_staging"`
+	OutboundStaging       string             `json:"outbound_staging"`
+	InboundSource         string             `json:"inbound_source"`
+	OutboundDestination   string             `json:"outbound_destination"`
+	AllowedPayloadCodes   []string           `json:"allowed_payload_codes"`
+	AutoRequestPayload    string             `json:"auto_request_payload"`
+	KeepStaged            bool               `json:"keep_staged"`
+	EvacuateOnChangeover  bool               `json:"evacuate_on_changeover"`
+	PairedCoreNode        string             `json:"paired_core_node"`
+	SecondPairedCoreNode  string             `json:"second_paired_core_node"`
+	AutoConfirm           bool               `json:"auto_confirm"`
+	Sequence              int                `json:"sequence"`
+	LinesideSoftThreshold int                `json:"lineside_soft_threshold"`
+	ReuseCompatibleBins   bool               `json:"reuse_compatible_bins"`
+	AutoPush              bool               `json:"auto_push"`
 	// TransitionalLoader toggles the loader-wide transitional_loaders set
 	// (Edge-only, keyed by core_node_name). It is NOT persisted on the claim
 	// row — the upsert handler applies it to the set only for a produce
 	// manual_swap claim. A nil pointer means "field absent, leave the set
 	// untouched" so saves of unrelated claims can't clear a loader's flag.
-	TransitionalLoader    *bool    `json:"transitional_loader,omitempty"`
+	TransitionalLoader *bool `json:"transitional_loader,omitempty"`
 }
 
 // NodeTaskInput is the input shape for creating a per-node changeover

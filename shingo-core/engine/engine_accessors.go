@@ -17,24 +17,24 @@ import (
 // www/, cmd/, and test packages bind to the method contract rather
 // than the concrete struct layout.
 
-func (e *Engine) DB() *store.DB                             { return e.db }
-func (e *Engine) AppConfig() *config.Config                 { return e.cfg }
-func (e *Engine) ConfigPath() string                        { return e.configPath }
-func (e *Engine) Dispatcher() *dispatch.Dispatcher          { return e.dispatcher }
-func (e *Engine) Tracker() fleet.OrderTracker               { return e.tracker }
-func (e *Engine) Fleet() fleet.Backend                      { return e.fleet }
-func (e *Engine) MsgClient() *messaging.Client              { return e.msgClient }
-func (e *Engine) Reconciliation() *ReconciliationService    { return e.reconciliation }
-func (e *Engine) Recovery() *RecoveryService                { return e.recovery }
-func (e *Engine) BinManifest() *service.BinManifestService         { return e.binManifest }
-func (e *Engine) BinService() *service.BinService                  { return e.binService }
-func (e *Engine) OrderService() *service.OrderService              { return e.orderService }
-func (e *Engine) NodeService() *service.NodeService                { return e.nodeService }
-func (e *Engine) AuditService() *service.AuditService              { return e.auditService }
-func (e *Engine) DemandService() *service.DemandService            { return e.demandService }
-func (e *Engine) PayloadService() *service.PayloadService          { return e.payloadService }
-func (e *Engine) MissionService() *service.MissionService          { return e.missionService }
-func (e *Engine) TestCommandService() *service.TestCommandService  { return e.testCmdService }
+func (e *Engine) DB() *store.DB                                   { return e.db }
+func (e *Engine) AppConfig() *config.Config                       { return e.cfg }
+func (e *Engine) ConfigPath() string                              { return e.configPath }
+func (e *Engine) Dispatcher() *dispatch.Dispatcher                { return e.dispatcher }
+func (e *Engine) Tracker() fleet.OrderTracker                     { return e.tracker }
+func (e *Engine) Fleet() fleet.Backend                            { return e.fleet }
+func (e *Engine) MsgClient() *messaging.Client                    { return e.msgClient }
+func (e *Engine) Reconciliation() *ReconciliationService          { return e.reconciliation }
+func (e *Engine) Recovery() *RecoveryService                      { return e.recovery }
+func (e *Engine) BinManifest() *service.BinManifestService        { return e.binManifest }
+func (e *Engine) BinService() *service.BinService                 { return e.binService }
+func (e *Engine) OrderService() *service.OrderService             { return e.orderService }
+func (e *Engine) NodeService() *service.NodeService               { return e.nodeService }
+func (e *Engine) AuditService() *service.AuditService             { return e.auditService }
+func (e *Engine) DemandService() *service.DemandService           { return e.demandService }
+func (e *Engine) PayloadService() *service.PayloadService         { return e.payloadService }
+func (e *Engine) MissionService() *service.MissionService         { return e.missionService }
+func (e *Engine) TestCommandService() *service.TestCommandService { return e.testCmdService }
 func (e *Engine) CMSTransactionService() *service.CMSTransactionService {
 	return e.cmsTxnService
 }
@@ -45,7 +45,7 @@ func (e *Engine) TagVerifyService() *service.TagVerifyService { return e.tagVeri
 func (e *Engine) InventoryDeltaService() *service.InventoryDeltaService {
 	return e.inventoryDeltaService
 }
-func (e *Engine) EventBus() *EventBus                         { return e.Events }
+func (e *Engine) EventBus() *EventBus { return e.Events }
 
 // SetCountGroupRunner registers a configured Runner built by the
 // composition root. The caller passes the Runner directly — transitions

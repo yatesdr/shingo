@@ -93,7 +93,7 @@ func TestVendorStatus_FailedTerminal(t *testing.T) {
 	db, eng, sim, order, _, _ := dispatchRetrieveOrder(t)
 
 	// Subscribe to capture the failed event.
- 	var faultedEvt *OrderFaultedEvent
+	var faultedEvt *OrderFaultedEvent
 	var mu sync.Mutex
 	eng.Events.SubscribeTypes(func(e Event) {
 		mu.Lock()

@@ -134,8 +134,12 @@ func (s *ReconciliationService) AutoConfirmStuckDeliveredOrders(timeout time.Dur
 	confirmed := 0
 	for _, id := range orderIDs {
 		order, err := s.db.GetOrder(id)
-		if err != nil || order.Status != "delivered" {
+		if err != nil {
+			s.logFn("engine: auto-confirm reload order %d: %v (skipping this pass; periodic loop retries)", id, err)
 			continue
+		}
+		if order.Status != "delivered" {
+			continue // no longer delivered — nothing to confirm
 		}
 		if err := s.confirmDelivered(order); err != nil {
 			s.logFn("engine: auto-confirm order %d: %v", order.ID, err)

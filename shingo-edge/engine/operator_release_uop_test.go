@@ -24,7 +24,7 @@ import (
 //     → Core: ClearAndKeepClaim, bin's payload + manifest cleared, UOP=0.
 //   - DispositionSendPartialBack ("SEND PARTIAL BACK")                     → &runtime.RemainingUOPCached
 //     → Core: SyncUOPAndKeepClaim, manifest preserved, uop_remaining set to
-//       the count Edge tracked at release time.
+//     the count Edge tracked at release time.
 //
 // Combined with TestHandleOrderRelease_RemainingUOPZero/Positive/Nil... on the
 // Core side, this proves the full plant-visible chain: operator click →
@@ -306,9 +306,9 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyOrderForcesNilWire(t *testing.T)
 func TestReleaseOrderWithLineside_PartialBackUsesOperatorCount(t *testing.T) {
 	t.Parallel()
 	const (
-		runtimeUOP        = 60 // PLC counter says 60
-		operatorOverride  = 47 // operator typed 47 (label was wrong, partially overfilled, etc.)
-		capacity          = 1200
+		runtimeUOP       = 60 // PLC counter says 60
+		operatorOverride = 47 // operator typed 47 (label was wrong, partially overfilled, etc.)
+		capacity         = 1200
 	)
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{

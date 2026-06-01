@@ -18,6 +18,7 @@ package telemetry
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 
 	"shingocore/domain"
@@ -204,7 +205,11 @@ func GetStats(db *sql.DB, f Filter) (*Stats, error) {
 		COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms), 0)::BIGINT,
 		COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::BIGINT
 		FROM mission_telemetry%s`, durWhere)
-	db.QueryRow(durQuery, args...).Scan(&s.AvgDurationMS, &s.P50DurationMS, &s.P95DurationMS)
+	if err := db.QueryRow(durQuery, args...).Scan(&s.AvgDurationMS, &s.P50DurationMS, &s.P95DurationMS); err != nil {
+		// Keep returning the stats (the count fields above are valid); just don't
+		// let a failed duration query silently surface as a real "0 ms".
+		log.Printf("telemetry: duration/percentile stats query: %v", err)
+	}
 
 	return s, nil
 }

@@ -229,6 +229,30 @@ func TestInventoryDelta_LinesideBucketDelta_RejectsUnderflow(t *testing.T) {
 	}
 }
 
+// R22-1: a reduction for a not-yet-seen bucket no longer clamps to 0 on the
+// new-row path — it hits the same CHECK (qty >= 0) rejection as an existing-row
+// underflow, so the anomaly surfaces instead of silently drifting the count up.
+func TestInventoryDelta_LinesideBucketDelta_RejectsFirstSightNegative(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	nodeName := sd.LineNode.Name
+
+	// Negative delta for a part with NO existing bucket — must be rejected, not
+	// clamped to a 0 row.
+	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L3|U3", 300, "PART-C", -7, 1, protocol.ReasonConsumeDrain)); err == nil {
+		t.Fatal("expected CHECK violation on a first-sight negative delta, got nil")
+	}
+
+	var rowCount int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM lineside_buckets
+		WHERE core_node_name=$1 AND part_number='PART-C'`, nodeName).Scan(&rowCount)
+	if rowCount != 0 {
+		t.Errorf("bucket row count after rejected first-sight negative = %d, want 0 (must not clamp to a 0 row)", rowCount)
+	}
+}
+
 // TestInventoryDelta_LinesideBucketDelta_DedupesReplay pins the
 // at-most-once contract for the bucket scope.
 func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {

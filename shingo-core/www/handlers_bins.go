@@ -264,9 +264,9 @@ func (h *Handlers) handleBinRetire(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiBinAction(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID     int64            `json:"id"`
-		Action string           `json:"action"`
-		Params json.RawMessage  `json:"params"`
+		ID     int64           `json:"id"`
+		Action string          `json:"action"`
+		Params json.RawMessage `json:"params"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -579,7 +579,7 @@ func derefInt64(p *int64) int64 {
 
 type binDetailResponse struct {
 	Bin          *domain.Bin          `json:"bin"`
-	Manifest     *domain.Manifest  `json:"manifest"`
+	Manifest     *domain.Manifest     `json:"manifest"`
 	Template     *domain.Payload      `json:"template,omitempty"`
 	Audit        []*domain.AuditEntry `json:"audit"`
 	CurrentOrder *domain.Order        `json:"current_order,omitempty"`
@@ -664,9 +664,9 @@ func (h *Handlers) apiBinUOP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiBulkBinAction(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		IDs    []int64          `json:"ids"`
-		Action string           `json:"action"`
-		Params json.RawMessage  `json:"params"`
+		IDs    []int64         `json:"ids"`
+		Action string          `json:"action"`
+		Params json.RawMessage `json:"params"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return

@@ -87,7 +87,7 @@ func TestApiSaveShifts_UpsertAndDelete(t *testing.T) {
 
 	body := []map[string]interface{}{
 		{"shift_number": 1, "name": "Day", "start_time": "06:00", "end_time": "14:00"},
-		{"shift_number": 2, "name": "", "start_time": "", "end_time": ""}, // delete
+		{"shift_number": 2, "name": "", "start_time": "", "end_time": ""},                     // delete
 		{"shift_number": 4, "name": "OutOfRange", "start_time": "00:00", "end_time": "06:00"}, // skipped
 	}
 	resp := doRequest(t, router, "PUT", "/api/shifts", body, nil)

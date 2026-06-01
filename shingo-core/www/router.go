@@ -48,11 +48,12 @@ type Handlers struct {
 // To find a handler: grep for the URL path → handler func name → handlers_*.go.
 //
 // Route layout:
-//   /events                — SSE stream (outside compression middleware)
-//   /                      — Public pages (dashboard, login, nodes, orders, robots, etc.)
-//   /api/* (public)        — Read-only JSON API (nodes, orders, bins, payloads, telemetry)
-//   /api/* (protected)     — Write API (test orders, payloads, bins, nodegroups, fleet, recovery)
-//   /* (protected)         — Admin pages (test-orders, config, diagnostics, CRUD forms)
+//
+//	/events                — SSE stream (outside compression middleware)
+//	/                      — Public pages (dashboard, login, nodes, orders, robots, etc.)
+//	/api/* (public)        — Read-only JSON API (nodes, orders, bins, payloads, telemetry)
+//	/api/* (protected)     — Write API (test orders, payloads, bins, nodegroups, fleet, recovery)
+//	/* (protected)         — Admin pages (test-orders, config, diagnostics, CRUD forms)
 //
 // Auth boundary: h.requireAuth middleware. Public = shop floor read access.
 // Handlers live in handlers_*.go files grouped by domain (bins, nodes, payloads, etc.).

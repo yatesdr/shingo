@@ -15,8 +15,12 @@ func TestCoverage_ListInventory_Empty(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	rows, err := inventory.List(db.DB)
-	if err != nil { t.Fatalf("List (empty): %v", err) }
-	if len(rows) != 0 { t.Errorf("empty DB inventory len = %d, want 0", len(rows)) }
+	if err != nil {
+		t.Fatalf("List (empty): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("empty DB inventory len = %d, want 0", len(rows))
+	}
 }
 
 func TestCoverage_ListInventory(t *testing.T) {
@@ -38,28 +42,66 @@ func TestCoverage_ListInventory(t *testing.T) {
 	binNoManifest := &bins.Bin{BinTypeID: bt.ID, Label: "INV-NO-MAN", NodeID: &nodeB.ID, Status: "available"}
 	bins.Create(db.DB, binNoManifest)
 	rows, err := inventory.List(db.DB)
-	if err != nil { t.Fatalf("List: %v", err) }
-	if len(rows) != 4 { t.Fatalf("inventory row count = %d, want 4", len(rows)) }
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("inventory row count = %d, want 4", len(rows))
+	}
 	byKey := map[string]inventory.Row{}
-	for _, r := range rows { byKey[r.BinLabel+"|"+r.CatID] = r }
+	for _, r := range rows {
+		byKey[r.BinLabel+"|"+r.CatID] = r
+	}
 	r1, ok := byKey["INV-FULL|CAT-1"]
-	if !ok { t.Fatal("expected INV-FULL|CAT-1 row") }
-	if r1.Qty != 4 { t.Errorf("CAT-1 qty = %d, want 4", r1.Qty) }
-	if r1.PayloadCode != "PAY-I" { t.Errorf("CAT-1 payload = %q", r1.PayloadCode) }
-	if r1.NodeName != "INV-NODE-A" { t.Errorf("CAT-1 node = %q, want INV-NODE-A", r1.NodeName) }
-	if r1.Zone != "ZA" { t.Errorf("CAT-1 zone = %q, want ZA", r1.Zone) }
-	if !r1.Confirmed { t.Error("CAT-1 should be confirmed") }
-	if r1.BinType != "INV-BT" { t.Errorf("CAT-1 bin type = %q, want INV-BT", r1.BinType) }
+	if !ok {
+		t.Fatal("expected INV-FULL|CAT-1 row")
+	}
+	if r1.Qty != 4 {
+		t.Errorf("CAT-1 qty = %d, want 4", r1.Qty)
+	}
+	if r1.PayloadCode != "PAY-I" {
+		t.Errorf("CAT-1 payload = %q", r1.PayloadCode)
+	}
+	if r1.NodeName != "INV-NODE-A" {
+		t.Errorf("CAT-1 node = %q, want INV-NODE-A", r1.NodeName)
+	}
+	if r1.Zone != "ZA" {
+		t.Errorf("CAT-1 zone = %q, want ZA", r1.Zone)
+	}
+	if !r1.Confirmed {
+		t.Error("CAT-1 should be confirmed")
+	}
+	if r1.BinType != "INV-BT" {
+		t.Errorf("CAT-1 bin type = %q, want INV-BT", r1.BinType)
+	}
 	r2, ok := byKey["INV-FULL|CAT-2"]
-	if !ok { t.Fatal("expected INV-FULL|CAT-2 row") }
-	if r2.Qty != 6 { t.Errorf("CAT-2 qty = %d, want 6", r2.Qty) }
+	if !ok {
+		t.Fatal("expected INV-FULL|CAT-2 row")
+	}
+	if r2.Qty != 6 {
+		t.Errorf("CAT-2 qty = %d, want 6", r2.Qty)
+	}
 	rE, ok := byKey["INV-EMPTY-ITEMS|"]
-	if !ok { t.Fatal("expected INV-EMPTY-ITEMS with blank cat_id") }
-	if rE.Qty != 0 { t.Errorf("empty-items qty = %d, want 0", rE.Qty) }
-	if rE.PayloadCode != "PAY-I" { t.Errorf("empty-items payload = %q, want PAY-I", rE.PayloadCode) }
+	if !ok {
+		t.Fatal("expected INV-EMPTY-ITEMS with blank cat_id")
+	}
+	if rE.Qty != 0 {
+		t.Errorf("empty-items qty = %d, want 0", rE.Qty)
+	}
+	if rE.PayloadCode != "PAY-I" {
+		t.Errorf("empty-items payload = %q, want PAY-I", rE.PayloadCode)
+	}
 	rN, ok := byKey["INV-NO-MAN|"]
-	if !ok { t.Fatal("expected INV-NO-MAN row") }
-	if rN.Qty != 0 { t.Errorf("no-manifest qty = %d, want 0", rN.Qty) }
-	if rN.PayloadCode != "" { t.Errorf("no-manifest payload = %q, want empty", rN.PayloadCode) }
-	if rN.NodeName != "INV-NODE-B" { t.Errorf("no-manifest node = %q, want INV-NODE-B", rN.NodeName) }
+	if !ok {
+		t.Fatal("expected INV-NO-MAN row")
+	}
+	if rN.Qty != 0 {
+		t.Errorf("no-manifest qty = %d, want 0", rN.Qty)
+	}
+	if rN.PayloadCode != "" {
+		t.Errorf("no-manifest payload = %q, want empty", rN.PayloadCode)
+	}
+	if rN.NodeName != "INV-NODE-B" {
+		t.Errorf("no-manifest node = %q, want INV-NODE-B", rN.NodeName)
+	}
 }

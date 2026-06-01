@@ -55,4 +55,3 @@ func TestPollReportingPointSafe_RecoversFromPanic(t *testing.T) {
 		t.Fatal("expected panicEmitter to trip; pollReportingPoint did not reach EmitCounterReadError")
 	}
 }
-

@@ -230,4 +230,3 @@ func ResolveSwapPair(db *DB, runtime *processes.RuntimeState, task *processes.No
 	}
 	return evacID, supplyID, nil
 }
-

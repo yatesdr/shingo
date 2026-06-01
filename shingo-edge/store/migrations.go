@@ -6,9 +6,9 @@
 //   schema/schema.go         — Apply() + introspection helpers
 //   migrations.go (this file) — legacyDropDDL constant, migrate() entry
 //                              point, per-table rename/rebuild/strip
-//                              helpers, db.tableHasColumn / db.tableExists
-//                              wrappers (kept for migration_test.go's
-//                              existing call sites).
+//                              helpers, db.tableHasColumn wrapper (kept
+//                              for migration_test.go's existing call
+//                              sites).
 //
 // All migrations are idempotent — safe to re-run on an already-migrated
 // DB. New columns are added via ALTER TABLE ... ADD COLUMN (SQLite
@@ -994,10 +994,4 @@ CREATE TABLE IF NOT EXISTS changeover_node_tasks (
 // wrapper.
 func (db *DB) tableHasColumn(tableName, columnName string) (bool, error) {
 	return schema.TableHasColumn(db.DB, tableName, columnName)
-}
-
-// tableExists delegates to schema.TableExists for the same reason
-// as tableHasColumn above.
-func (db *DB) tableExists(tableName string) (bool, error) {
-	return schema.TableExists(db.DB, tableName)
 }

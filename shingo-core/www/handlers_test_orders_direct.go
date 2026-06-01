@@ -95,14 +95,14 @@ func (h *Handlers) apiDirectOrdersList(w http.ResponseWriter, r *http.Request) {
 // apiDirectComplexOrderSubmit creates complex orders directly through the dispatcher (no Kafka).
 func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		CycleMode    protocol.SwapMode `json:"cycle_mode"`
-		Location     string `json:"location"`
-		InboundStaging       string `json:"inbound_staging"`
-		OutboundStaging      string `json:"outbound_staging"`
-		InboundSource        string `json:"inbound_source"`
-		OutboundDestination  string `json:"outbound_destination"`
-		PayloadCode  string `json:"payload_code"`
-		Priority     int    `json:"priority"`
+		CycleMode           protocol.SwapMode `json:"cycle_mode"`
+		Location            string            `json:"location"`
+		InboundStaging      string            `json:"inbound_staging"`
+		OutboundStaging     string            `json:"outbound_staging"`
+		InboundSource       string            `json:"inbound_source"`
+		OutboundDestination string            `json:"outbound_destination"`
+		PayloadCode         string            `json:"payload_code"`
+		Priority            int               `json:"priority"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return

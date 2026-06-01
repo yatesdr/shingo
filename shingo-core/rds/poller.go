@@ -36,8 +36,8 @@ type Poller struct {
 	interval time.Duration
 	DebugLog func(string, ...any)
 
-	mu       sync.Mutex
-	active   map[string]OrderState // rdsOrderID -> last known state
+	mu     sync.Mutex
+	active map[string]OrderState // rdsOrderID -> last known state
 	// blockStates tracks per-block state per active RDS order so we can
 	// fire EmitBlockCompleted on the FIRST transition into FINISHED for
 	// each block. Map: rdsOrderID -> blockID -> last-seen state. Cleared
@@ -49,8 +49,8 @@ type Poller struct {
 	// cycle. Cleared on recovery (FAILED->RUNNING) or terminal transition.
 	faultedDeadline map[string]time.Time
 	graceDuration   time.Duration
-	stopChan    chan struct{}
-	stopOnce    sync.Once
+	stopChan        chan struct{}
+	stopOnce        sync.Once
 }
 
 func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, interval time.Duration, graceDuration ...time.Duration) *Poller {

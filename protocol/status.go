@@ -35,7 +35,7 @@ const (
 	// pickup node (the source was emptied externally — quality hold, manual
 	// removal, etc.), the order moves to Skipped instead of Failed so the
 	// operator-facing surface treats it as a no-op rather than an alarm.
-	StatusSkipped      Status = "skipped"
+	StatusSkipped Status = "skipped"
 )
 
 // IsTerminal reports whether the status has no outgoing transitions.
@@ -188,13 +188,13 @@ func (s Status) IsOperatorVisible() bool { return IsOperatorVisible(s) }
 //     fmt.Sprintf(`... WHERE status NOT IN (%s) ...`, protocol.TerminalStatusSQLList())
 
 var (
-	terminalStatusSQLList            = buildStatusSQLList(IsTerminal)
-	nonTerminalStatusSQLList         = buildStatusSQLList(func(s Status) bool { return !IsTerminal(s) })
-	failureTerminalStatusSQLList     = buildStatusSQLList(IsFailureTerminal)
-	vendorActiveStatusSQLList        = buildStatusSQLList(IsVendorActive)
-	preDispatchStatusSQLList         = buildStatusSQLList(IsPreDispatch)
+	terminalStatusSQLList              = buildStatusSQLList(IsTerminal)
+	nonTerminalStatusSQLList           = buildStatusSQLList(func(s Status) bool { return !IsTerminal(s) })
+	failureTerminalStatusSQLList       = buildStatusSQLList(IsFailureTerminal)
+	vendorActiveStatusSQLList          = buildStatusSQLList(IsVendorActive)
+	preDispatchStatusSQLList           = buildStatusSQLList(IsPreDispatch)
 	runtimeStuckCandidateStatusSQLList = buildStatusSQLList(IsRuntimeStuckCandidate)
-	operatorVisibleStatusSQLList     = buildStatusSQLList(IsOperatorVisible)
+	operatorVisibleStatusSQLList       = buildStatusSQLList(IsOperatorVisible)
 )
 
 // buildStatusSQLList walks every known status, filters by the predicate,

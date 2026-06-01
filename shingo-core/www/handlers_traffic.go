@@ -34,7 +34,10 @@ func (h *Handlers) handleTraffic(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) apiTrafficGroups(w http.ResponseWriter, r *http.Request) {
 	cfg := h.engine.AppConfig()
 	cfg.Lock()
-	groups := cfg.CountGroups.Groups
+	// Copy under the lock: this handler encodes outside the lock, and
+	// handleTrafficDelete filters cfg.CountGroups.Groups in place (Groups[:0]),
+	// so encoding the shared backing array after unlocking is a data race.
+	groups := append([]config.CountGroupConfig(nil), cfg.CountGroups.Groups...)
 	cfg.Unlock()
 	h.jsonOK(w, groups)
 }

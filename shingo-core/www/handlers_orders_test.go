@@ -60,12 +60,12 @@ func testHandlersWithSim(t *testing.T, sim *simulator.SimulatorBackend) (*Handle
 	dbgLog, _ := debuglog.New(64, nil)
 
 	h := &Handlers{
-		engine:   eng,
+		engine:        eng,
 		orchestration: eng,
-		sessions: newSessionStore("test-secret"),
-		tmpls:    make(map[string]*template.Template),
-		eventHub: hub,
-		debugLog: dbgLog,
+		sessions:      newSessionStore("test-secret"),
+		tmpls:         make(map[string]*template.Template),
+		eventHub:      hub,
+		debugLog:      dbgLog,
 	}
 	return h, db
 }
@@ -426,4 +426,3 @@ func TestReshuffleRestoreParent_ExcludedFromAdminList(t *testing.T) {
 		t.Errorf("normal retrieve order should appear in admin list (regression check); body=%s", rr.Body.String())
 	}
 }
-

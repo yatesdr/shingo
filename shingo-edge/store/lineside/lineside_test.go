@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"shingo/protocol/testutil"
 	_ "modernc.org/sqlite"
+	"shingo/protocol/testutil"
 )
 
 // openTestDB creates a fresh SQLite DB, runs just enough of the edge
@@ -129,6 +129,35 @@ func TestCaptureMergesWithExistingActive(t *testing.T) {
 	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket`).Scan(&count)
 	if count != 1 {
 		t.Fatalf("expected 1 row after merge, got %d", count)
+	}
+}
+
+// R58-2: capturing more of a part under a DIFFERENT style while the prior
+// style's bucket is still active must fold into the one physical pile (and
+// re-stamp the style), not silently drop the qty.
+func TestCaptureCrossStyleFoldsNotDrops(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
+		t.Fatalf("Capture style A: %v", err)
+	}
+	// No DeactivateOtherStyles first — style A's bucket is still active.
+	if _, err := Capture(db, 100, "", 20, "P-500", 25); err != nil {
+		t.Fatalf("cross-style Capture style B: %v", err)
+	}
+
+	b, err := GetActive(db, 100, 20, "P-500")
+	if err != nil {
+		t.Fatalf("GetActive style B: %v", err)
+	}
+	if b.Qty != 85 {
+		t.Errorf("cross-style merged qty=%d, want 85 (60+25, none dropped)", b.Qty)
+	}
+
+	var active int
+	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket WHERE node_id=100 AND part_number='P-500' AND state='active'`).Scan(&active)
+	if active != 1 {
+		t.Errorf("active bucket count=%d, want 1 (one physical pile per node+part)", active)
 	}
 }
 

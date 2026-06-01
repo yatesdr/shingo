@@ -9,15 +9,16 @@ import (
 	"shingoedge/store"
 )
 
-// ProductionReporter accumulates production deltas by style name and periodically
-// enqueues production.report messages via the outbox for reliable delivery.
+// ProductionReporter accumulates production deltas by payload code (cat_id)
+// and periodically enqueues production.report messages via the outbox for
+// reliable delivery.
 type ProductionReporter struct {
 	db        *store.DB
 	stationID string
 	interval  time.Duration
 
 	mu          sync.Mutex
-	accumulator map[string]float64 // style name -> count
+	accumulator map[string]float64 // payload code (cat_id) -> count
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -36,20 +37,18 @@ func NewProductionReporter(db *store.DB, stationID string) *ProductionReporter {
 	}
 }
 
-// RecordDelta adds a production delta for a given style.
-// It accumulates the delta keyed by the style's name.
-func (pr *ProductionReporter) RecordDelta(jobStyleID int64, delta int64) {
-	if delta <= 0 {
-		return
-	}
-	style, err := pr.db.GetStyle(jobStyleID)
-	if err != nil || style == nil {
+// RecordDelta adds a production delta for a produced part, keyed by its
+// payload code — the catalog part code (cat_id) Core matches demands on.
+// The payload is resolved at the produce-tick site and delivered via
+// EventProducedReport, so reporting no longer depends on style naming.
+func (pr *ProductionReporter) RecordDelta(payloadCode string, delta int64) {
+	if delta <= 0 || payloadCode == "" {
 		return
 	}
 	pr.mu.Lock()
-	pr.accumulator[style.Name] += float64(delta)
+	pr.accumulator[payloadCode] += float64(delta)
 	pr.mu.Unlock()
-	pr.DebugLog.Log("delta recorded: style=%d delta=%d name=%s", jobStyleID, delta, style.Name)
+	pr.DebugLog.Log("delta recorded: payload=%s delta=%d", payloadCode, delta)
 }
 
 // Start begins the periodic flush loop.

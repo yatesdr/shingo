@@ -236,8 +236,8 @@ func resolvePerBinDestinations(steps []resolvedStep, claimedBins map[string]int6
 
 		case "dropoff":
 			if carrying != 0 {
-				dest[carrying] = step.Node       // update final dest
-				binAtNode[step.Node] = carrying  // bin is now at this node
+				dest[carrying] = step.Node      // update final dest
+				binAtNode[step.Node] = carrying // bin is now at this node
 				carrying = 0
 			}
 			// If robot is empty, this is a pre-position drive (no-op for bin tracking)

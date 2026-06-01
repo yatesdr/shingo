@@ -22,10 +22,10 @@ type fakeStore struct {
 	// Basic lookup tables.
 	nodes            map[int64]*nodes.Node
 	children         map[int64][]*nodes.Node // parentID -> children
-	bins             map[int64][]*bins.Bin  // nodeID -> bins at node
+	bins             map[int64][]*bins.Bin   // nodeID -> bins at node
 	props            map[int64]map[string]string
-	binCounts        map[int64]int    // nodeID -> CountBinsByNode value
-	activeByDelivery map[string]int   // node name -> CountActiveOrdersByDeliveryNode
+	binCounts        map[int64]int  // nodeID -> CountBinsByNode value
+	activeByDelivery map[string]int // node name -> CountActiveOrdersByDeliveryNode
 	laneSlots        map[int64][]*nodes.Node
 	laneBinCounts    map[int64]int
 	effPayloads      map[int64][]*payloads.Payload

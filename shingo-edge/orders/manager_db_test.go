@@ -105,7 +105,7 @@ func seedClaim(t *testing.T, db *store.DB, styleID int64, coreNode, payloadCode 
 		StyleID:      styleID,
 		CoreNodeName: coreNode,
 		Role:         "consume",
-		SwapMode: "simple",
+		SwapMode:     "simple",
 		PayloadCode:  payloadCode,
 	})
 	if err != nil {
@@ -1280,9 +1280,9 @@ func TestCreateComplexOrder_AutoConfirmSplit(t *testing.T) {
 		t.Fatalf("CreateComplexOrderWithAutoConfirm: %v", err)
 	}
 	if !auto.AutoConfirm {
-		t.Errorf("CreateComplexOrderWithAutoConfirm: AutoConfirm=false, want true. "+
-			"Bug 2a regression: evac legs to the supermarket would sit in delivered until "+
-			"manually confirmed, re-opening the FINISHED→CONFIRMED race window where "+
+		t.Errorf("CreateComplexOrderWithAutoConfirm: AutoConfirm=false, want true. " +
+			"Bug 2a regression: evac legs to the supermarket would sit in delivered until " +
+			"manually confirmed, re-opening the FINISHED→CONFIRMED race window where " +
 			"the fulfillment scanner re-claims the bin and the late confirm teleports it back.")
 	}
 }

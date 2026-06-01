@@ -66,17 +66,17 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		orderType = OrderTypeRetrieveEmpty
 	}
 	order := &orders.Order{
-		EdgeUUID:     p.OrderUUID,
-		StationID:    stationID,
-		OrderType:    orderType,
-		Status:       StatusPending,
-		Quantity:     p.Quantity,
-		SourceNode:   p.SourceNode,
-		DeliveryNode: p.DeliveryNode,
-		Priority:     p.Priority,
-		PayloadDesc:  p.PayloadDesc,
-		PayloadCode:  payloadCode,
- 		SkipAutoConfirm: p.SkipAutoConfirm,
+		EdgeUUID:        p.OrderUUID,
+		StationID:       stationID,
+		OrderType:       orderType,
+		Status:          StatusPending,
+		Quantity:        p.Quantity,
+		SourceNode:      p.SourceNode,
+		DeliveryNode:    p.DeliveryNode,
+		Priority:        p.Priority,
+		PayloadDesc:     p.PayloadDesc,
+		PayloadCode:     payloadCode,
+		SkipAutoConfirm: p.SkipAutoConfirm,
 	}
 	if payloadCode != "" {
 		if _, err := s.db.GetPayloadByCode(payloadCode); err != nil {

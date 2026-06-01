@@ -12,31 +12,6 @@ import (
 	"shingocore/store/audit"
 )
 
-// reconstructSinglePayloadManifest builds the manifest JSON for a partial-
-// release sync. The single-payload normalization assumption (one
-// payload_code per bin → consumption distributes evenly across items)
-// makes the manifest fully recoverable from payload_code + uop_remaining:
-//
-//	{"items":[{"catid": payload_code, "qty": uop_remaining}]}
-//
-// Note: ManifestEntry.CatID is the part-catalog identifier; payload_code
-// is the bin's payload type. Equating them here is the normalization
-// assumption — single-payload bins have catid == payload_code at the
-// manifest level. If a future design supports multi-payload-per-bin,
-// this reconstruction is the seam where the assumption breaks.
-func reconstructSinglePayloadManifest(payloadCode string, uop int) (string, error) {
-	payload := map[string]any{
-		"items": []map[string]any{
-			{"catid": payloadCode, "qty": uop},
-		},
-	}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("reconstruct manifest: %w", err)
-	}
-	return string(b), nil
-}
-
 // BinManifestService manages bin manifest lifecycle mutations.
 // All manifest changes flow through this service so that validation,
 // audit logging, and event emission are centralized.
@@ -575,9 +550,9 @@ func (s *BinManifestService) AuditReleaseOverride(binID, orderID int64, disposit
 			return nil
 		}
 		meta, err := json.Marshal(map[string]any{
-			"kind":            string(disposition.Kind),
-			"auto_count":      suggested,
-			"operator_count":  operator,
+			"kind":           string(disposition.Kind),
+			"auto_count":     suggested,
+			"operator_count": operator,
 		})
 		if err != nil {
 			return fmt.Errorf("marshal override metadata bin=%d: %w", binID, err)
@@ -639,4 +614,3 @@ func (s *BinManifestService) AuditReleaseOverride(binID, orderID int64, disposit
 		return nil
 	}
 }
-

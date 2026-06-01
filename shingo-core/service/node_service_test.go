@@ -672,6 +672,33 @@ func TestNodeService_ListNodeStates_IncludesSeededNode(t *testing.T) {
 	}
 }
 
+// R18-1: a transient bin-read error must not silently drop the node from the
+// snapshot — it stays, flagged ContentsUnknown, so a consumer can tell
+// "no bins" from "couldn't read bins".
+func TestNodeService_ListNodeStates_FlagsNodeWhenBinsUnreadable(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewNodeService(db)
+	n := makeNode(t, db, "STATE-UNKNOWN")
+
+	// Break the per-node bin read so ListBinsByNode errors.
+	if _, err := db.DB.Exec(`ALTER TABLE bins RENAME COLUMN node_id TO node_id_x`); err != nil {
+		t.Fatalf("rename bins.node_id: %v", err)
+	}
+
+	states, err := svc.ListNodeStates()
+	if err != nil {
+		t.Fatalf("ListNodeStates: %v", err)
+	}
+	st, ok := states[n.ID]
+	if !ok {
+		t.Fatalf("node %d dropped from ListNodeStates on a bin-read error; want present + flagged", n.ID)
+	}
+	if !st.ContentsUnknown {
+		t.Errorf("node %d ContentsUnknown = false, want true (bins were unreadable)", n.ID)
+	}
+}
+
 func TestNodeService_ListBinsByNode_ReturnsAttachedBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

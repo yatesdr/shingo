@@ -17,7 +17,7 @@
 // database: drop a hand-rolled fake store into the call and inspect
 // the returned transactions.
 //
-// Boundary walking
+// # Boundary walking
 //
 // FindCMSBoundary walks the parent chain from a node looking for the
 // nearest synthetic ancestor whose "log_cms_transactions" property

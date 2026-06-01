@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"shingo/protocol/testutil"
+	"shingocore/store/payloads"
 )
 
 // Characterization tests for handlers_demand.go — pinned before the Stage 1
@@ -45,6 +47,9 @@ func postJSONWithChi(t *testing.T, handler http.HandlerFunc, path string, params
 func TestApiCreateDemand_HappyPath(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
+	// Demands now reference the payloads catalog: the cat_id must be a real
+	// payload code or the handler rejects it.
+	testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PART-1", Description: "first part"}), "seed payload")
 
 	rec := postJSON(t, h.apiCreateDemand, "/api/demand",
 		map[string]any{
@@ -84,11 +89,32 @@ func TestApiCreateDemand_MissingCatID(t *testing.T) {
 	}
 }
 
+// TestApiCreateDemand_RejectsUnknownCatID pins the catalog-validation
+// contract: a cat_id that is not a known payload code is rejected, so a
+// demand can never reference a part the line cannot produce (which is what
+// silently stranded produced counts before the demand→payloads link).
+func TestApiCreateDemand_RejectsUnknownCatID(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlers(t)
+	// No payload with code "GHOST-1" exists in the catalog.
+
+	rec := postJSON(t, h.apiCreateDemand, "/api/demand",
+		map[string]any{"cat_id": "GHOST-1", "description": "phantom", "demand_qty": int64(1)})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not a known payload") {
+		t.Errorf("error body: got %q, want it to mention 'not a known payload'", rec.Body.String())
+	}
+}
+
 // --- apiUpdateDemand --------------------------------------------------------
 
 func TestApiUpdateDemand_HappyPath(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
+	// The update changes cat_id to PART-2-UPD, which must be a real payload.
+	testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PART-2-UPD", Description: "updated part"}), "seed payload")
 	id, err := db.CreateDemand("PART-2", "orig", 5)
 	if err != nil {
 		t.Fatalf("seed demand: %v", err)

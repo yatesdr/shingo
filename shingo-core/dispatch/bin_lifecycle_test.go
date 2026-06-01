@@ -269,12 +269,12 @@ func TestComplexOrder_RemainingUOP_ProcessNodeOnly(t *testing.T) {
 	submitComplexAndDispatch(t, d, db, env, &protocol.ComplexOrderRequest{
 		OrderUUID:   "uuid-complex-pn",
 		PayloadCode: bp.Code,
-		Quantity:     1,
+		Quantity:    1,
 		Steps: []protocol.ComplexOrderStep{
-			{Action: "pickup", Node: processNode.Name},       // outgoing depleted bin
-			{Action: "dropoff", Node: "COMPLEX-STAGING"},     // park old nearby
-			{Action: "pickup", Node: stagingNode.Name},       // grab new from staging
-			{Action: "dropoff", Node: processNode.Name},      // deliver new to line
+			{Action: "pickup", Node: processNode.Name},   // outgoing depleted bin
+			{Action: "dropoff", Node: "COMPLEX-STAGING"}, // park old nearby
+			{Action: "pickup", Node: stagingNode.Name},   // grab new from staging
+			{Action: "dropoff", Node: processNode.Name},  // deliver new to line
 		},
 		RemainingUOP: &zero,
 	})

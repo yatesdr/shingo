@@ -12,18 +12,18 @@ import (
 // JOIN — they ride along with the struct so callers don't have to look
 // them up separately.
 type Bin struct {
-	ID                int64      `json:"id"`
-	BinTypeID         int64      `json:"bin_type_id"`
-	Label             string     `json:"label"`
-	Description       string     `json:"description"`
-	NodeID            *int64     `json:"node_id,omitempty"`
-	Status            BinStatus  `json:"status"`
-	ClaimedBy         *int64     `json:"claimed_by,omitempty"`
-	StagedAt          *time.Time `json:"staged_at,omitempty"`
-	StagedExpiresAt   *time.Time `json:"staged_expires_at,omitempty"`
-	PayloadCode       string     `json:"payload_code"`
-	Manifest          *string    `json:"manifest,omitempty"`
-	UOPRemaining      int        `json:"uop_remaining"`
+	ID              int64      `json:"id"`
+	BinTypeID       int64      `json:"bin_type_id"`
+	Label           string     `json:"label"`
+	Description     string     `json:"description"`
+	NodeID          *int64     `json:"node_id,omitempty"`
+	Status          BinStatus  `json:"status"`
+	ClaimedBy       *int64     `json:"claimed_by,omitempty"`
+	StagedAt        *time.Time `json:"staged_at,omitempty"`
+	StagedExpiresAt *time.Time `json:"staged_expires_at,omitempty"`
+	PayloadCode     string     `json:"payload_code"`
+	Manifest        *string    `json:"manifest,omitempty"`
+	UOPRemaining    int        `json:"uop_remaining"`
 	// DeltaEpoch labels the current load-lifecycle for this bin.
 	// Increments in Core's bin_manifest service on every load boundary
 	// (SetForProduction, ClearForReuseTx). Carried on the wire in

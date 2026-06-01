@@ -40,26 +40,26 @@ type TelemetryEvent struct {
 // Stage 2A.2 relocation. The store/telemetry package re-exports this
 // type via `type Mission = domain.TelemetryMission`.
 type TelemetryMission struct {
-	ID               int64      `json:"id"`
-	OrderID          int64      `json:"order_id"`
-	VendorOrderID    string     `json:"vendor_order_id"`
-	RobotID          string     `json:"robot_id"`
-	StationID        string     `json:"station_id"`
+	ID               int64              `json:"id"`
+	OrderID          int64              `json:"order_id"`
+	VendorOrderID    string             `json:"vendor_order_id"`
+	RobotID          string             `json:"robot_id"`
+	StationID        string             `json:"station_id"`
 	OrderType        protocol.OrderType `json:"order_type"`
-	SourceNode       string     `json:"source_node"`
-	DeliveryNode     string     `json:"delivery_node"`
-	TerminalState    string     `json:"terminal_state"`
-	VendorCreated    *time.Time `json:"vendor_created,omitempty"`
-	VendorCompleted  *time.Time `json:"vendor_completed,omitempty"`
-	CoreCreated      *time.Time `json:"core_created,omitempty"`
-	CoreCompleted    *time.Time `json:"core_completed,omitempty"`
-	DurationMS       int64      `json:"duration_ms"`
-	VendorDurationMS int64      `json:"vendor_duration_ms"`
-	BlocksJSON       string     `json:"blocks_json"`
-	ErrorsJSON       string     `json:"errors_json"`
-	WarningsJSON     string     `json:"warnings_json"`
-	NoticesJSON      string     `json:"notices_json"`
-	CreatedAt        time.Time  `json:"created_at"`
+	SourceNode       string             `json:"source_node"`
+	DeliveryNode     string             `json:"delivery_node"`
+	TerminalState    string             `json:"terminal_state"`
+	VendorCreated    *time.Time         `json:"vendor_created,omitempty"`
+	VendorCompleted  *time.Time         `json:"vendor_completed,omitempty"`
+	CoreCreated      *time.Time         `json:"core_created,omitempty"`
+	CoreCompleted    *time.Time         `json:"core_completed,omitempty"`
+	DurationMS       int64              `json:"duration_ms"`
+	VendorDurationMS int64              `json:"vendor_duration_ms"`
+	BlocksJSON       string             `json:"blocks_json"`
+	ErrorsJSON       string             `json:"errors_json"`
+	WarningsJSON     string             `json:"warnings_json"`
+	NoticesJSON      string             `json:"notices_json"`
+	CreatedAt        time.Time          `json:"created_at"`
 }
 
 // TelemetryFilter is the query DSL for mission-telemetry lookups. Lives

@@ -22,6 +22,7 @@ import (
 // sub-package calls directly.
 //   - New persistence logic: store/<aggregate>/ as a function on *sql.DB.
 //   - New cross-aggregate orchestration: shingocore/service/.
+//
 // The architectural terminus is *store.DB as a connection-lifecycle
 // wrapper with zero application methods. The current path is absorption;
 // switch to a focused sprint if the absorption tripwires (see
@@ -36,8 +37,8 @@ type DB struct {
 // Query for the full kernel TCP retransmission timeout, and a slow
 // query stalls a goroutine indefinitely.
 //
-//   connect_timeout: bounds the initial TCP connect attempt.
-//   pool_max_conn_lifetime / statement_timeout (ms): caps each query.
+//	connect_timeout: bounds the initial TCP connect attempt.
+//	pool_max_conn_lifetime / statement_timeout (ms): caps each query.
 //
 // The connection-health loop re-probes every 30s, so a short bound is
 // the right shape — failed configs surface as "disconnected" in seconds,

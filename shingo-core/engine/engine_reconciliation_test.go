@@ -20,9 +20,9 @@ import (
 //
 // The fix adds FailOrderAtomic / CancelOrderAtomic that wrap status + unclaim
 // in a single transaction. This test verifies:
-//   1. Reconciliation anomalies detect orphaned claims
-//   2. ReleaseOrphanedClaims sweep fixes them
-//   3. FailOrderAtomic prevents the leak in the first place
+//  1. Reconciliation anomalies detect orphaned claims
+//  2. ReleaseOrphanedClaims sweep fixes them
+//  3. FailOrderAtomic prevents the leak in the first place
 func TestOrphanedBinClaim_ReconciliationDetectsAndFixes(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

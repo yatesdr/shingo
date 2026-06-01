@@ -26,9 +26,9 @@ import (
 // Setup: NGRP -> LANE -> 3 slots. Blocker at depth 1 (newer), target at depth 2 (older).
 // FIFO detects buried target as older than any accessible bin -> BuriedError ->
 // planBuriedReshuffle -> compound order with child steps:
-//   1. unbury: move blocker (depth 1) -> shuffle slot
-//   2. retrieve: move target (depth 2) -> line node
-//   3. restock: move blocker from shuffle -> back to depth 1
+//  1. unbury: move blocker (depth 1) -> shuffle slot
+//  2. retrieve: move target (depth 2) -> line node
+//  3. restock: move blocker from shuffle -> back to depth 1
 //
 // Drives each child through the fleet simulator lifecycle, verifying that the
 // compound order advances correctly and the target bin arrives at the line.
@@ -508,11 +508,11 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 // Scenario: An NGRP lane has 3 bins. The target is at depth 3 (deepest),
 // with 2 blockers at depth 1 and 2. FIFO detects the buried target and
 // triggers a reshuffle with 5 steps:
-//   1. Unbury blocker-1 (depth 1) → shuffle-1
-//   2. Unbury blocker-2 (depth 2) → shuffle-2
-//   3. Retrieve target (depth 3) → line node
-//   4. Restock blocker-2 → depth 2 (deepest-first)
-//   5. Restock blocker-1 → depth 1
+//  1. Unbury blocker-1 (depth 1) → shuffle-1
+//  2. Unbury blocker-2 (depth 2) → shuffle-2
+//  3. Retrieve target (depth 3) → line node
+//  4. Restock blocker-2 → depth 2 (deepest-first)
+//  5. Restock blocker-1 → depth 1
 //
 // This is the full two-robot swap pattern. The test verifies:
 // - All 5 children created and dispatched sequentially

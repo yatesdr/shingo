@@ -52,6 +52,13 @@
   </table>
 </div>
 
+<!-- Payload catalog for Cat-ID autocomplete. The server also rejects any
+     cat_id that isn't a known payload code on save, so demands can only
+     reference real parts (and produced counts land on the right row). -->
+<datalist id="payload-codes">
+  {{range .Payloads}}<option value="{{.Code}}">{{.Description}}</option>{{end}}
+</datalist>
+
 <!-- Add Material Modal -->
 <div class="modal-overlay" id="add-modal">
   <div class="modal" style="max-width:400px">
@@ -61,7 +68,7 @@
     </div>
     <div style="margin-bottom:.75rem;">
       <label class="demand-label">Cat-ID</label>
-      <input type="text" id="add-cat-id" class="demand-form-input" placeholder="e.g. ABC-123">
+      <input type="text" id="add-cat-id" class="demand-form-input" list="payload-codes" placeholder="e.g. ABC-123" autocomplete="off">
     </div>
     <div style="margin-bottom:.75rem;">
       <label class="demand-label">Description</label>
@@ -88,7 +95,7 @@
     <input type="hidden" id="edit-id">
     <div style="margin-bottom:.75rem;">
       <label class="demand-label">Cat-ID</label>
-      <input type="text" id="edit-cat-id" class="demand-form-input">
+      <input type="text" id="edit-cat-id" class="demand-form-input" list="payload-codes" autocomplete="off">
     </div>
     <div class="mb-2">
       <label class="demand-label">Description</label>

@@ -252,7 +252,12 @@ async function cancelOrder(uuid) {
 var receiptDirect = false;
 
 function openReceipt(uuid, isDirect) {
-  receiptDirect = !!isDirect;
+  // isDirect arrives as the literal string "true"/"false" from the
+  // data-action="openReceipt:<uuid>:<bool>" colon-arg dispatch. Both strings
+  // are truthy, so !!isDirect was always true and Kafka-order receipts hit
+  // the /direct/ endpoint. Coerce to a real boolean (same fix as
+  // robotSetAvailability / diagnostics).
+  receiptDirect = (isDirect === true || isDirect === 'true');
   document.getElementById('receipt-uuid').value = uuid;
   document.getElementById('receipt-type').value = 'full';
   document.getElementById('receipt-count').value = '1';

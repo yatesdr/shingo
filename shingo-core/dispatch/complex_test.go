@@ -38,15 +38,15 @@ func TestResolvePerBinDestinations_SwapPattern(t *testing.T) {
 	// newBin (101): storage → inStaging → (wait) → inStaging → line (final)
 	// oldBin (102): line → outStaging → (wait) → outStaging → outDest (final)
 	steps := []resolvedStep{
-		{Action: "pickup", Node: "storage"},       // 1: pick newBin
-		{Action: "dropoff", Node: "inStaging"},    // 2: stage newBin
-		{Action: "wait", Node: "line"},            // 3: drive to node + hold (BinTask=Wait)
-		{Action: "pickup", Node: "line"},          // 4: pick oldBin
-		{Action: "dropoff", Node: "outStaging"},   // 5: park oldBin
-		{Action: "pickup", Node: "inStaging"},     // 6: re-pick newBin
-		{Action: "dropoff", Node: "line"},         // 7: deliver newBin (FINAL for newBin)
-		{Action: "pickup", Node: "outStaging"},    // 8: re-pick oldBin
-		{Action: "dropoff", Node: "outDest"},      // 9: deliver oldBin (FINAL for oldBin)
+		{Action: "pickup", Node: "storage"},     // 1: pick newBin
+		{Action: "dropoff", Node: "inStaging"},  // 2: stage newBin
+		{Action: "wait", Node: "line"},          // 3: drive to node + hold (BinTask=Wait)
+		{Action: "pickup", Node: "line"},        // 4: pick oldBin
+		{Action: "dropoff", Node: "outStaging"}, // 5: park oldBin
+		{Action: "pickup", Node: "inStaging"},   // 6: re-pick newBin
+		{Action: "dropoff", Node: "line"},       // 7: deliver newBin (FINAL for newBin)
+		{Action: "pickup", Node: "outStaging"},  // 8: re-pick oldBin
+		{Action: "dropoff", Node: "outDest"},    // 9: deliver oldBin (FINAL for oldBin)
 	}
 	claimed := map[string]int64{
 		"storage": 101, // newBin claimed at step 1
@@ -69,9 +69,9 @@ func TestResolvePerBinDestinations_ReStaging(t *testing.T) {
 	// The dest should update to the final dropoff, not the intermediate staging.
 	steps := []resolvedStep{
 		{Action: "pickup", Node: "storage.A1"},
-		{Action: "dropoff", Node: "staging.S1"},  // intermediate
-		{Action: "pickup", Node: "staging.S1"},    // re-pick
-		{Action: "dropoff", Node: "line.L1"},      // final
+		{Action: "dropoff", Node: "staging.S1"}, // intermediate
+		{Action: "pickup", Node: "staging.S1"},  // re-pick
+		{Action: "dropoff", Node: "line.L1"},    // final
 	}
 	claimed := map[string]int64{"storage.A1": 200}
 
@@ -106,9 +106,9 @@ func TestResolvePerBinDestinations_GhostPickup(t *testing.T) {
 	// but there's nothing to pick up. Algorithm handles this via the binAtNode
 	// lookup — no entry means carrying stays 0.
 	steps := []resolvedStep{
-		{Action: "pickup", Node: "empty.node"},   // nothing here
-		{Action: "dropoff", Node: "line.L1"},     // robot empty, no-op
-		{Action: "pickup", Node: "storage.A1"},   // actual bin
+		{Action: "pickup", Node: "empty.node"}, // nothing here
+		{Action: "dropoff", Node: "line.L1"},   // robot empty, no-op
+		{Action: "pickup", Node: "storage.A1"}, // actual bin
 		{Action: "dropoff", Node: "line.L2"},
 	}
 	claimed := map[string]int64{"storage.A1": 400}
@@ -130,10 +130,10 @@ func TestResolvePerBinDestinations_MultiplePickupsSameNode(t *testing.T) {
 	// Two separate pickups from the same node (different times, after re-stocking).
 	// The second pickup grabs the bin that was most recently dropped there.
 	steps := []resolvedStep{
-		{Action: "pickup", Node: "storage"},       // pick bin A
-		{Action: "dropoff", Node: "line"},         // deliver A to line
-		{Action: "pickup", Node: "line"},          // pick bin B (was at line originally)
-		{Action: "dropoff", Node: "outbound"},     // deliver B to outbound
+		{Action: "pickup", Node: "storage"},   // pick bin A
+		{Action: "dropoff", Node: "line"},     // deliver A to line
+		{Action: "pickup", Node: "line"},      // pick bin B (was at line originally)
+		{Action: "dropoff", Node: "outbound"}, // deliver B to outbound
 	}
 	claimed := map[string]int64{
 		"storage": 500, // bin A

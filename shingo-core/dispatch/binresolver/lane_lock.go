@@ -30,6 +30,20 @@ func (l *LaneLock) Unlock(laneID int64) {
 	delete(l.lanes, laneID)
 }
 
+// UnlockByOwner releases any lane held by the given order, looked up by owner
+// rather than lane id. Used on failure/cleanup paths where the caller knows the
+// owning order but can't resolve the lane id from the order's children (e.g. a
+// DB read failed or the children are gone). Safe no-op if the order holds none.
+func (l *LaneLock) UnlockByOwner(orderID int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for laneID, owner := range l.lanes {
+		if owner == orderID {
+			delete(l.lanes, laneID)
+		}
+	}
+}
+
 // IsLocked returns true if the lane is currently locked.
 func (l *LaneLock) IsLocked(laneID int64) bool {
 	l.mu.Lock()

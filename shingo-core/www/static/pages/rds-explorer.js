@@ -399,8 +399,9 @@ function showTip(key, el, evt) {
   tip._activeKey = key;
   tip.style.display = 'block';
 
-  // Position below the button
-  var rect = e.target.getBoundingClientRect();
+  // Position below the button. delegateActions calls showTip(key, el, evt)
+  // with `el` = the clicked help button; there is no `e` in scope.
+  var rect = el.getBoundingClientRect();
   var tipRect = tip.getBoundingClientRect();
   var left = rect.left - 12;
   var top = rect.bottom + 8;

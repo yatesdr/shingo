@@ -234,7 +234,7 @@ async function renderActions(data) {
   // Retire
   html += '<div class="action-group">';
   var confirmMsg = 'Mark ' + (b.label || ('bin ' + b.id)) + ' as retired? It will be removed from all production nodes and no longer assigned to orders. Bin history will be preserved.';
-  html += '<form method="POST" action="/bins/retire" onsubmit="return await uiConfirm(\'' + confirmMsg.replace(/'/g, "\\'") + '\')">';
+  html += '<form method="POST" action="/bins/retire" data-action-submit="confirmDeleteForm" data-confirm-msg="' + escapeHtml(confirmMsg).replace(/"/g, '&quot;') + '">';
   html += '<input type="hidden" name="id" value="' + b.id + '">';
   html += '<button type="submit" class="btn btn-sm btn-danger">Retire Bin</button>';
   html += '</form></div>';

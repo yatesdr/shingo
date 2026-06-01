@@ -463,12 +463,12 @@ func TestListAvailable(t *testing.T) {
 }
 
 // TestListAvailable_NULLPayloadCode regression-tests that a bin with
-// payload_code=NULL (rather than '') still appears in ListAvailable.
-// Pre-fix the filter was `(b.manifest IS NULL OR b.payload_code = '')`
-// where `payload_code = ''` evaluates to NULL when payload_code is NULL
+// payload_code=NULL (rather than ”) still appears in ListAvailable.
+// Pre-fix the filter was `(b.manifest IS NULL OR b.payload_code = ”)`
+// where `payload_code = ”` evaluates to NULL when payload_code is NULL
 // (falsy in WHERE), so a bin with payload_code=NULL only made it through
 // when manifest was also NULL. Post-fix the filter uses
-// COALESCE(payload_code, '') = '' which handles NULL unambiguously.
+// COALESCE(payload_code, ”) = ” which handles NULL unambiguously.
 //
 // Same bug class as the original FindEmptyCompatible NULL-safety fix
 // (7c274ac / 4337344). Aligned in 2026-04-27 v2.
@@ -842,9 +842,9 @@ func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
 		if got.UOPRemaining != 42 {
 			t.Errorf("UOPRemaining = %d, want 42", got.UOPRemaining)
 		}
-			if got.Manifest == nil {
-				t.Fatal("bins.Manifest is nil, want JSON")
-			}
+		if got.Manifest == nil {
+			t.Fatal("bins.Manifest is nil, want JSON")
+		}
 		var gotParsed, wantParsed interface{}
 		testutil.MustNoErr(t, json.Unmarshal([]byte(*got.Manifest), &gotParsed), "unmarshal got manifest")
 		testutil.MustNoErr(t, json.Unmarshal([]byte(manifestJSON), &wantParsed), "unmarshal want manifest")
@@ -1049,7 +1049,7 @@ func TestFindSourceFIFO_RulesEnforced(t *testing.T) {
 
 // FindSourceFIFO must reject empty payloadCode at the function
 // boundary. After the bin-as-truth refactor, unattached bins store
-// payload_code = '' instead of NULL; without this guard, a caller
+// payload_code = ” instead of NULL; without this guard, a caller
 // passing payloadCode = "" would silently match every unattached bin.
 func TestFindSourceFIFO_RejectsEmptyPayloadCode(t *testing.T) {
 	t.Parallel()
@@ -1072,9 +1072,9 @@ func TestFindSourceFIFO_RejectsEmptyPayloadCode(t *testing.T) {
 }
 
 // The boundary guard alone covers the empty-input path; this covers
-// the inverse — the SQL itself must not collapse '' rows into a non-
+// the inverse — the SQL itself must not collapse ” rows into a non-
 // empty payload search via accidental coercion. An unattached bin
-// (payload_code = '') must not be returned when the caller queries
+// (payload_code = ”) must not be returned when the caller queries
 // for a real payload.
 func TestFindSourceFIFO_DoesNotMatchUnattachedBins(t *testing.T) {
 	t.Parallel()

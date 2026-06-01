@@ -70,9 +70,9 @@ func (m *mockStore) PurgeOldOutbox(olderThan time.Duration) (int, error) {
 
 // mockPublisher implements Publisher for testing.
 type mockPublisher struct {
-	mu        sync.Mutex
-	connected bool
-	published []publishedMsg
+	mu         sync.Mutex
+	connected  bool
+	published  []publishedMsg
 	publishErr error
 }
 

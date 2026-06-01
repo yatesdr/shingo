@@ -27,12 +27,12 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 	names := strings.Split(nodesParam, ",")
 
 	type nodeBinInfo struct {
-		NodeName          string  `json:"node_name"`
-		BinID             int64   `json:"bin_id,omitempty"`
-		BinLabel          string  `json:"bin_label,omitempty"`
-		BinTypeCode       string  `json:"bin_type_code,omitempty"`
-		PayloadCode       string  `json:"payload_code,omitempty"`
-		UOPRemaining      int     `json:"uop_remaining"`
+		NodeName     string `json:"node_name"`
+		BinID        int64  `json:"bin_id,omitempty"`
+		BinLabel     string `json:"bin_label,omitempty"`
+		BinTypeCode  string `json:"bin_type_code,omitempty"`
+		PayloadCode  string `json:"payload_code,omitempty"`
+		UOPRemaining int    `json:"uop_remaining"`
 		// DeltaEpoch is the bin's current load-lifecycle epoch.
 		// Edge's startup reconciliation reads it here to repopulate
 		// the bin-state cache after a restart that lost the in-memory
@@ -375,15 +375,15 @@ func (h *Handlers) buildEMaintReport() map[string]any {
 	entries := make([]map[string]any, 0, len(robots))
 	for _, r := range robots {
 		entry := map[string]any{
-			"vehicle_id":        r.VehicleID,
-			"connected":         r.Connected,
-			"snapshot_at":       now.Format(time.RFC3339),
+			"vehicle_id":  r.VehicleID,
+			"connected":   r.Connected,
+			"snapshot_at": now.Format(time.RFC3339),
 			"position": map[string]any{
 				"x":               r.X,
 				"y":               r.Y,
-				"angle":            r.Angle,
-				"current_station":  r.CurrentStation,
-				"current_map":      r.CurrentMap,
+				"angle":           r.Angle,
+				"current_station": r.CurrentStation,
+				"current_map":     r.CurrentMap,
 			},
 			"odometer": map[string]any{
 				"total_m": r.OdoTotal,
@@ -394,24 +394,24 @@ func (h *Handlers) buildEMaintReport() map[string]any {
 				"total_ms":   r.TotalMs,
 			},
 			"lifts": map[string]any{
-				"total_count":      r.LiftCount,
+				"total_count":       r.LiftCount,
 				"current_height_mm": r.LiftHeight,
-				"error_code":       r.LiftError,
+				"error_code":        r.LiftError,
 			},
 			"battery": map[string]any{
-				"level_pct":  r.BatteryLevel,
-				"charging":   r.Charging,
-				"voltage_v":  r.BatteryV,
-				"current_a":  r.BatteryA,
+				"level_pct": r.BatteryLevel,
+				"charging":  r.Charging,
+				"voltage_v": r.BatteryV,
+				"current_a": r.BatteryA,
 			},
 			"controller": map[string]any{
-				"temp_c":      r.CtrlTemp,
+				"temp_c":       r.CtrlTemp,
 				"humidity_pct": r.CtrlHumi,
-				"voltage_v":   r.CtrlVoltage,
+				"voltage_v":    r.CtrlVoltage,
 			},
 			"safety": map[string]any{
-				"blocked":    r.Blocked,
-				"emergency":  r.Emergency,
+				"blocked":   r.Blocked,
+				"emergency": r.Emergency,
 			},
 			"task": map[string]any{
 				"status":  r.State(),

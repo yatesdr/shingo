@@ -49,7 +49,6 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStati
 	}
 }
 
-
 func buildStationViews(eng ServiceAccess, activeProcess *domain.Process) []domain.OperatorStationView {
 	if activeProcess == nil {
 		return nil
@@ -90,13 +89,13 @@ func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
 
 	anomalies, rpMap := loadAnomalyData(h)
 	data := map[string]interface{}{
-		"Page":            "material",
-		"Processes":       processes,
-		"ActiveProcessID": activeProcessID,
-		"StationViews":    stationViews,
-		"CurrentStyle":    currentStyleName,
-		"TargetStyle":     targetStyleName,
-		"Anomalies":       anomalies,
+		"Page":              "material",
+		"Processes":         processes,
+		"ActiveProcessID":   activeProcessID,
+		"StationViews":      stationViews,
+		"CurrentStyle":      currentStyleName,
+		"TargetStyle":       targetStyleName,
+		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
 	}
 	h.renderTemplate(w, r, "material.html", data)

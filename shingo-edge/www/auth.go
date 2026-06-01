@@ -60,4 +60,3 @@ func (s *sessionStore) clear(w http.ResponseWriter, r *http.Request) {
 	sess.Options.MaxAge = -1
 	sess.Save(r, w)
 }
-

@@ -13,10 +13,10 @@ func TestParseDebugFlag(t *testing.T) {
 	//   []string{}   → bare flag / explicit empty value (all subsystems)
 	//   [a, b]       → only listed subsystems
 	cases := []struct {
-		name     string
-		args     []string
-		filtered []string
-		filter   []string
+		name        string
+		args        []string
+		filtered    []string
+		filter      []string
 		filterEmpty bool // true means filter must be non-nil len-0 slice
 	}{
 		{

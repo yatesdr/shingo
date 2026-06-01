@@ -95,8 +95,8 @@ func (r *GroupResolver) ResolveRetrieve(group *nodes.Node, payloadCode string) (
 // retrieveStrategy controls how a retrieve algorithm scores accessible bins,
 // whether it checks for buried bins, and how it decides between accessible vs buried.
 type retrieveStrategy struct {
-	label       string
-	firstMatch  bool
+	label      string
+	firstMatch bool
 	// skipBuriedIfAccessible skips the buried-bin DB scan when an accessible
 	// bin was found. COST sets this because it only reshuffles when no
 	// accessible bin exists; FIFO clears it because it reshuffles even when
@@ -116,10 +116,10 @@ var retrieveStrategies = map[string]retrieveStrategy{
 		},
 	},
 	RetrieveCOST: {
-		label:                   "COST",
-		firstMatch:              false,
-		skipBuriedIfAccessible:  true,
-		checkBuried:             checkShallowestBuried,
+		label:                  "COST",
+		firstMatch:             false,
+		skipBuriedIfAccessible: true,
+		checkBuried:            checkShallowestBuried,
 		shouldTriggerBuried: func(buried *bins.Bin, buriedTime time.Time, accessible *bins.Bin, accessibleTime time.Time) bool {
 			return accessible == nil
 		},

@@ -118,21 +118,21 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 
 	anomalies, rpMap := loadAnomalyData(h)
 	data := map[string]interface{}{
-		"Page":               "processes",
-		"Processes":          processList,
-		"Styles":             styles,
-		"Stations":           stationList,
-		"CoreNodes":          coreNodes,
-		"PLCNames":           plcNames,
-		"ActiveProcess":      activeProcess,
-		"ActiveProcessID":    activeProcessID,
-		"ProcessStyles":      processStyles,
-		"ProcessStations":    processStations,
-		"ProcessNodes":       processNodes,
-		"StationNodeMap":     stationNodeMap,
-		"ClaimedByStation":   claimedByStation,
-		"Anomalies":          anomalies,
-		"ReportingPointMap":  rpMap,
+		"Page":              "processes",
+		"Processes":         processList,
+		"Styles":            styles,
+		"Stations":          stationList,
+		"CoreNodes":         coreNodes,
+		"PLCNames":          plcNames,
+		"ActiveProcess":     activeProcess,
+		"ActiveProcessID":   activeProcessID,
+		"ProcessStyles":     processStyles,
+		"ProcessStations":   processStations,
+		"ProcessNodes":      processNodes,
+		"StationNodeMap":    stationNodeMap,
+		"ClaimedByStation":  claimedByStation,
+		"Anomalies":         anomalies,
+		"ReportingPointMap": rpMap,
 	}
 	h.renderTemplate(w, r, "processes.html", data)
 }

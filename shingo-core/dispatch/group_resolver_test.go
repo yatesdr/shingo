@@ -425,11 +425,12 @@ func setupNodeGroup3Lane(t *testing.T, db *store.DB) (grp *nodes.Node, lanes []*
 }
 
 // Layout:
-//   Lane 1: depth 1 = BIN-NEW  (WGA, T+2s, accessible)
-//   Lane 2: depth 1 = BIN-MID  (WGA, T+1s, accessible)
-//   Lane 3: depth 1 = BLK-1    (BLK, blocker)
-//           depth 2 = BLK-2    (BLK, blocker)
-//           depth 3 = BIN-OLD  (WGA, T,     buried ← oldest)
+//
+//	Lane 1: depth 1 = BIN-NEW  (WGA, T+2s, accessible)
+//	Lane 2: depth 1 = BIN-MID  (WGA, T+1s, accessible)
+//	Lane 3: depth 1 = BLK-1    (BLK, blocker)
+//	        depth 2 = BLK-2    (BLK, blocker)
+//	        depth 3 = BIN-OLD  (WGA, T,     buried ← oldest)
 //
 // Strict FIFO must return BuriedError for BIN-OLD, not the accessible BIN-MID.
 func TestFIFOSelection_BuriedOlderThanAccessible(t *testing.T) {
@@ -592,11 +593,12 @@ func TestCOSTSelection_FallsToBuriedWhenNoneAccessible(t *testing.T) {
 // can't physically access.
 //
 // Layout:
-//   Lane 1: depth 1 = FULL-BIN (WGA, blocker)
-//           depth 2 = FULL-BIN (WGA, blocker)
-//           depth 3 = EMPTY-BIN (no manifest, buried)
-//   Lane 2: depth 1 = FULL-BIN (WGA, blocker)
-//           depth 3 = EMPTY-BIN (no manifest, buried)
+//
+//	Lane 1: depth 1 = FULL-BIN (WGA, blocker)
+//	        depth 2 = FULL-BIN (WGA, blocker)
+//	        depth 3 = EMPTY-BIN (no manifest, buried)
+//	Lane 2: depth 1 = FULL-BIN (WGA, blocker)
+//	        depth 3 = EMPTY-BIN (no manifest, buried)
 //
 // No accessible empties exist anywhere in the NGRP.
 func TestFindEmptyCompatible_LaneUnawareStarvation(t *testing.T) {

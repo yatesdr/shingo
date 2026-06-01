@@ -12,15 +12,15 @@ import (
 // driven shadow ops; until then these cover every BinManifestService
 // mutation point.
 const (
-	OpSetForProduction         = "set_for_production"
-	OpClearForReuse            = "clear_for_reuse"
-	OpClearAndClaim            = "clear_and_claim"
-	OpSyncUOPAndClaim          = "sync_uop_and_claim"
-	OpSyncUOP                  = "sync_uop"
-	OpReleasedEmpty            = "released_empty"
-	OpReleasedPartial          = "released_partial"
-	OpReleasedEmptyFallback    = "released_empty_fallback"
-	OpReleasedPartialFallback  = "released_partial_fallback"
+	OpSetForProduction        = "set_for_production"
+	OpClearForReuse           = "clear_for_reuse"
+	OpClearAndClaim           = "clear_and_claim"
+	OpSyncUOPAndClaim         = "sync_uop_and_claim"
+	OpSyncUOP                 = "sync_uop"
+	OpReleasedEmpty           = "released_empty"
+	OpReleasedPartial         = "released_partial"
+	OpReleasedEmptyFallback   = "released_empty_fallback"
+	OpReleasedPartialFallback = "released_partial_fallback"
 
 	// OpReleasedCaptureEmpty tags the manifest-clear that fires
 	// inside ApplyBinUOPDelta when a capture_reduction delta drives
@@ -85,7 +85,7 @@ type BinUOPExecer interface {
 // (cycle count, operator clear, manual load).
 //
 // payloadCode and actor are passed verbatim; empty string is acceptable
-// when not applicable. Both columns default to '' at the schema level.
+// when not applicable. Both columns default to ” at the schema level.
 func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int, op, source string, orderID *int64, payloadCode, actor string) error {
 	var before any
 	if beforeUOP != nil {

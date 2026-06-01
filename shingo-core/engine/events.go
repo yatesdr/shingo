@@ -9,7 +9,6 @@ import (
 	"shingocore/store/cms"
 )
 
-
 const (
 	EventOrderReceived EventType = iota + 1
 	EventOrderDispatched
@@ -82,15 +81,15 @@ type OrderStatusChangedEvent struct {
 
 type OrderCompletedEvent struct {
 	eventbus.PayloadBase
-	OrderID  int64
-	EdgeUUID string
+	OrderID   int64
+	EdgeUUID  string
 	StationID string
 }
 
 type OrderFailedEvent struct {
 	eventbus.PayloadBase
-	OrderID  int64
-	EdgeUUID string
+	OrderID   int64
+	EdgeUUID  string
 	StationID string
 	ErrorCode string
 	Detail    string
@@ -228,9 +227,9 @@ type BlockCompletedEvent struct {
 type BinEnteredTransitEvent struct {
 	eventbus.PayloadBase
 	BinID      int64
-	OrderID    int64  // the order whose pickup drove the transition
-	FromNodeID int64  // the node the bin just left (now vacant)
-	StepIndex  int    // position in the order's pickup sequence (0 for single-pickup)
+	OrderID    int64 // the order whose pickup drove the transition
+	FromNodeID int64 // the node the bin just left (now vacant)
+	StepIndex  int   // position in the order's pickup sequence (0 for single-pickup)
 }
 
 // OrderFaultedEvent fires when an order enters the faulted grace-period state.
@@ -253,6 +252,7 @@ type OrderFaultedRecoveredEvent struct {
 	StationID string
 	RobotID   string
 }
+
 // GraceExpiredEvent fires when the poller detects a faulted order whose
 // grace period has elapsed without fleet recovery. The engine handler
 // calls CancelOrder (best-effort) then Fail() for the local terminal transition.

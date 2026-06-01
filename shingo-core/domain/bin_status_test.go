@@ -1,8 +1,8 @@
 package domain
 
 import (
-	"testing"
 	"shingo/protocol/testutil"
+	"testing"
 )
 
 func TestBinStatus_IsTerminal(t *testing.T) {

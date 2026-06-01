@@ -20,7 +20,7 @@ func (h *Handlers) handleFleetExplorer(w http.ResponseWriter, r *http.Request) {
 		baseURL = vp.BaseURL()
 	}
 	data := map[string]any{
-		"Page":          "fleet-explorer",
+		"Page":         "fleet-explorer",
 		"FleetBaseURL": baseURL,
 	}
 	h.render(w, r, "rds_explorer.html", data)

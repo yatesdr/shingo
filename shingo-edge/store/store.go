@@ -15,6 +15,7 @@ import (
 // sub-package calls directly.
 //   - New persistence logic: store/<aggregate>/ as a function on *sql.DB.
 //   - New cross-aggregate orchestration: shingoedge/service/.
+//
 // The architectural terminus is *store.DB as a connection-lifecycle
 // wrapper with zero application methods. The current path is absorption;
 // switch to a focused sprint if the absorption tripwires (see
