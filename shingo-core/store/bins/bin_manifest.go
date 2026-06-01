@@ -26,24 +26,44 @@ func SetManifest(db *sql.DB, binID int64, manifestJSON string, payloadCode strin
 	return err
 }
 
+// loadedAtLayouts are the timestamp layouts resolveLoadedAt accepts, tried
+// in order. Edge's wire contract is RFC3339 UTC (produce_plan.go builds
+// now.UTC().Format(time.RFC3339)), so that's first. The rest cover zoneless
+// inputs that legacy data, admin/manual paths, and tests still produce —
+// Postgres-style "2006-01-02 15:04:05" and the T-separated zoneless form,
+// each with optional fractional seconds. Go's time.Parse reads a zoneless
+// layout as UTC, which is exactly the intent: R20-1 was a zoneless value
+// being re-localized to the session TimeZone and skewing FIFO ordering.
+// Parsing it as UTC here — with the session TZ also pinned to UTC in
+// store.go — closes that gap from both directions instead of rejecting the
+// value and poisoning loaded_at with server time.
+var loadedAtLayouts = []string{
+	time.RFC3339Nano,                      // 2006-01-02T15:04:05[.frac]Z07:00 (subsumes RFC3339)
+	"2006-01-02T15:04:05.999999999",       // T-separated, zoneless -> UTC
+	"2006-01-02 15:04:05.999999999-07:00", // space-separated, with offset
+	"2006-01-02 15:04:05.999999999",       // space-separated, zoneless -> UTC
+}
+
 // resolveLoadedAt converts Edge's producedAt into the instant to store in
-// loaded_at. producedAt is RFC3339 per the wire contract (Edge builds it as
-// now.UTC().Format(time.RFC3339) in produce_plan.go). Empty is the normal
-// "no explicit timestamp" case and falls back to now. A non-empty but
-// unparseable value breaks the contract; we still fall back to now but
-// return an error so the caller surfaces it rather than silently poisoning
-// loaded_at. Returning a time.Time (not a string) lets the driver bind the
-// zone into TIMESTAMPTZ; a zoneless string literal would be re-localized to
-// the session TimeZone and skew FIFO ordering in FindSourceFIFO.
+// loaded_at, always as a definite UTC time.Time. Empty is the normal "no
+// explicit timestamp" case and falls back to now. A non-empty value is
+// matched against loadedAtLayouts; zoneless layouts resolve as UTC so a
+// missing offset is never re-localized to the session TimeZone. Only a value
+// matching no layout falls back to now, returning an error so the caller can
+// surface the broken input rather than silently poisoning loaded_at.
+// Returning a time.Time (not a string) lets the driver bind a definite
+// instant into TIMESTAMPTZ rather than a zoneless literal the session would
+// re-localize and skew FIFO ordering in FindSourceFIFO.
 func resolveLoadedAt(producedAt string, now time.Time) (time.Time, error) {
 	if producedAt == "" {
 		return now, nil
 	}
-	t, err := time.Parse(time.RFC3339, producedAt)
-	if err != nil {
-		return now, fmt.Errorf("unparseable producedAt %q (want RFC3339): %w", producedAt, err)
+	for _, layout := range loadedAtLayouts {
+		if t, err := time.Parse(layout, producedAt); err == nil {
+			return t.UTC(), nil
+		}
 	}
-	return t.UTC(), nil
+	return now, fmt.Errorf("unparseable producedAt %q (want RFC3339 or 2006-01-02 15:04:05)", producedAt)
 }
 
 // ConfirmManifest marks a bin's manifest as confirmed by an operator.
