@@ -362,25 +362,30 @@ function renderPayloadBoard(entry) {
     // flight) as defense-in-depth against double-tap races and direct callers.
     var canRequest = !hasBin && !hasDemand;
 
-    // Payload for the request. An empty bin is payload-agnostic; the code only
-    // tells Core which carrier type to source and tags the order — LoadBin
-    // re-binds the real payload when the operator loads it. Send a sane default:
-    // the claim's tagged payload if it's in the allowed set, else the first
-    // allowed.
-    //
-    // POTENTIAL ISSUE (not a problem today): this assumes a loader uses ONE
-    // carrier type across all its payloads, so any allowed code sources the
-    // right physical empty. If a SHARED loader ever covers payloads with
-    // DIFFERENT carrier types, allowed[0] could fetch the wrong empty — at that
-    // point this single button needs either a carrier picker or an
-    // optional-payload server path that sources a generic empty by carrier.
-    var requestPayload = (claim.payload_code && allowed.indexOf(claim.payload_code) !== -1)
-        ? claim.payload_code
-        : (allowed.length > 0 ? allowed[0] : '');
+    // Payload for the request splits by role:
+    //   - produce (bin loader): an empty bin is a generic carrier, so the
+    //     request is payload-AGNOSTIC — post NO payload_code. Core sources any
+    //     compatible empty and LoadBin binds the real payload when the operator
+    //     fills it. (Replaces the old allowed[0] default, which fabricated a
+    //     payload nobody asked for and could tag/stage the wrong card — see
+    //     RequestEmptyBin. Assumes a single-carrier loader; a multi-carrier
+    //     loader would need a carrier picker here.)
+    //   - consume (unloader): REQUEST FULL pulls a SPECIFIC payload's full bin,
+    //     so it still needs a code. claim.payload_code is blank on manual_swap,
+    //     so fall to the first allowed.
+    var isProduce = claim.role === 'produce';
+    var requestPayload = isProduce
+        ? ''
+        : ((claim.payload_code && allowed.indexOf(claim.payload_code) !== -1)
+            ? claim.payload_code
+            : (allowed.length > 0 ? allowed[0] : ''));
 
-    if (requestPayload) {
+    // Render the bar when the action is expressible: always for a loader (the
+    // empty needs no payload), and for an unloader only when there's a payload
+    // to ask for.
+    if (isProduce || requestPayload) {
         var reqBar = el('div', { className: 'os-board-reqbar' });
-        var reqLabel = claim.role === 'produce' ? 'REQUEST EMPTY' : 'REQUEST FULL';
+        var reqLabel = isProduce ? 'REQUEST EMPTY' : 'REQUEST FULL';
         var reqReason = hasBin ? 'bin at node' : (hasDemand ? 'bin already inbound' : '');
         var reqBtn = el('button', {
             className: 'os-board-request-btn' + (canRequest ? '' : ' disabled'),
@@ -388,10 +393,11 @@ function renderPayloadBoard(entry) {
         });
         if (canRequest) {
             reqBtn.addEventListener('click', function() {
-                var url = claim.role === 'produce'
+                var url = isProduce
                     ? '/api/process-nodes/' + entry.node.id + '/request-empty'
                     : '/api/process-nodes/' + entry.node.id + '/request-full';
-                postAction(url, { payload_code: requestPayload }, loadViewRef);
+                var body = isProduce ? {} : { payload_code: requestPayload };
+                postAction(url, body, loadViewRef);
             });
         } else {
             reqBtn.disabled = true;
@@ -467,6 +473,24 @@ function renderPayloadBoard(entry) {
         if (cs.loadNow) card.classList.add('os-board-load-now');
 
         card.appendChild(el('div', { className: 'os-board-code', textContent: code }));
+
+        // Transitional coverage badge. A transitional board shows the FULL
+        // covered set, so distinguish two classes of card by hue (Signal theme,
+        // calm weight): ACTIVE = a payload one of the running styles needs right
+        // now (live blue); PRELOAD = covered only by an inactive style the
+        // operator may pre-stock for (transitional violet — the same hue the
+        // preload board header carries). Only rendered for transitional loaders;
+        // a normal loader shows active-only cards, so the split would be noise.
+        if (entry.transitional_loader) {
+            var isActiveStylePayload = (entry.active_style_payloads || []).indexOf(code) !== -1;
+            // Card class drives the idle-card tint below (so an idle PRELOAD/ACTIVE
+            // card reads as loadable, not disabled); the span is the badge itself.
+            card.classList.add(isActiveStylePayload ? 'os-board-cov-on-active' : 'os-board-cov-on-preload');
+            card.appendChild(el('span', {
+                className: 'os-board-cov ' + (isActiveStylePayload ? 'os-board-cov-active' : 'os-board-cov-preload'),
+                textContent: isActiveStylePayload ? 'ACTIVE' : 'PRELOAD',
+            }));
+        }
 
         // Demand count — number of outstanding L1 orders for this payload
         // that are still WAITING in the queue (not yet being moved by a

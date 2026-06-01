@@ -1015,6 +1015,46 @@ body {
 .os-board-queued .os-board-detail { color: #9ac; }
 .os-board-requestable .os-board-detail { color: #aac; }
 
+/* Transitional-board coverage badge. Hue per the Signal theme (calm weight):
+   ACTIVE = live/primary blue (a running style needs this payload now); PRELOAD
+   = transitional violet (covered only by an inactive style — pre-stock). Pinned
+   top-left so it clears the queue-position circle pinned top-right. */
+.os-board-cov {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 4px 12px;
+    border-radius: 999px;
+    color: #fff;
+}
+.os-board-cov-active { background: var(--os-blue); }
+.os-board-cov-preload { background: var(--os-purple); }
+
+/* On a transitional board the operator pre-stocks proactively, so an idle
+   card (no current demand → nodemand state) is still loadable. Replace the
+   dimmed "disabled" look with a coverage-hued, full-opacity surface that reads
+   as actionable. Combining both classes (.os-board-nodemand.os-board-cov-on-*)
+   means a card that DOES carry order state (delivered/transit/queued) keeps
+   that state color — only the idle ones pick up the coverage tint. The tinted
+   surfaces follow this file's existing state-tint pattern (hardcoded dark
+   surface + token border). */
+.os-board-nodemand.os-board-cov-on-active {
+    opacity: 1;
+    background: #1a2540;
+    border-color: var(--os-blue);
+}
+.os-board-nodemand.os-board-cov-on-active .os-board-code { color: #cfe0ff; }
+.os-board-nodemand.os-board-cov-on-preload {
+    opacity: 1;
+    background: #241f33;
+    border-color: var(--os-purple);
+}
+.os-board-nodemand.os-board-cov-on-preload .os-board-code { color: #d8cdf0; }
+
 .os-board-pos {
     /* Pinned to the card's top-right corner (out of the flex flow) so it can't
        be pushed past the card edge by the detail line + request button stacking
