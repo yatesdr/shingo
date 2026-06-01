@@ -1017,12 +1017,11 @@ body {
 
 /* Transitional-board coverage badge. Hue per the Signal theme (calm weight):
    ACTIVE = live/primary blue (a running style needs this payload now); PRELOAD
-   = transitional violet (covered only by an inactive style — pre-stock). Pinned
-   top-left so it clears the queue-position circle pinned top-right. */
+   = transitional violet (covered only by an inactive style — pre-stock). In the
+   normal flex flow as the card's first child — its own line above the big
+   payload code, so it can't overlap the code or the queue-position circle. */
 .os-board-cov {
-    position: absolute;
-    top: 16px;
-    left: 16px;
+    align-self: flex-start;
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.06em;

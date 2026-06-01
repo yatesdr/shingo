@@ -314,6 +314,21 @@ function renderPayloadBoard(entry) {
             ? claim.allowed_payload_codes
             : (claim.payload_code ? [claim.payload_code] : []));
 
+    // On a transitional board, group ACTIVE-style payloads ahead of PRELOAD-only
+    // ones so the cards the running style needs sort to the top; within each
+    // group keep alphabetical order. The comparator is fully deterministic
+    // (alphabetical tiebreak) so it doesn't depend on Array.sort stability —
+    // some field kiosks predate V8's stable-sort (Chrome 70).
+    if (entry.transitional_loader) {
+        var activeSet = entry.active_style_payloads || [];
+        allowed = allowed.slice().sort(function(a, b) {
+            var aRank = activeSet.indexOf(a) !== -1 ? 0 : 1;
+            var bRank = activeSet.indexOf(b) !== -1 ? 0 : 1;
+            if (aRank !== bRank) return aRank - bRank;
+            return a < b ? -1 : (a > b ? 1 : 0);
+        });
+    }
+
     var activeOrders = (entry.orders || []).filter(function(o) {
         return isActive(o.status);
     });
@@ -472,8 +487,6 @@ function renderPayloadBoard(entry) {
         card.classList.add(cs.cls);
         if (cs.loadNow) card.classList.add('os-board-load-now');
 
-        card.appendChild(el('div', { className: 'os-board-code', textContent: code }));
-
         // Transitional coverage badge. A transitional board shows the FULL
         // covered set, so distinguish two classes of card by hue (Signal theme,
         // calm weight): ACTIVE = a payload one of the running styles needs right
@@ -481,6 +494,8 @@ function renderPayloadBoard(entry) {
         // operator may pre-stock for (transitional violet — the same hue the
         // preload board header carries). Only rendered for transitional loaders;
         // a normal loader shows active-only cards, so the split would be noise.
+        // Inserted as the card's first child (its own line above the code) so it
+        // never overlaps the big payload code.
         if (entry.transitional_loader) {
             var isActiveStylePayload = (entry.active_style_payloads || []).indexOf(code) !== -1;
             // Card class drives the idle-card tint below (so an idle PRELOAD/ACTIVE
@@ -491,6 +506,8 @@ function renderPayloadBoard(entry) {
                 textContent: isActiveStylePayload ? 'ACTIVE' : 'PRELOAD',
             }));
         }
+
+        card.appendChild(el('div', { className: 'os-board-code', textContent: code }));
 
         // Demand count — number of outstanding L1 orders for this payload
         // that are still WAITING in the queue (not yet being moved by a
