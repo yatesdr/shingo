@@ -107,13 +107,20 @@ type RuntimeState struct {
 	// generation. Populated by LoadBin response and FetchNodeBins
 	// refresh; persists across Edge restarts via the column on
 	// process_node_runtime_states.
-	ActiveBinEpoch     int64     `json:"active_bin_epoch"`
-	CachedBinID        *int64    `json:"cached_bin_id,omitempty"`
-	RemainingUOPCached int       `json:"remaining_uop_cached"`
-	ActiveOrderID      *int64    `json:"active_order_id,omitempty"`
-	StagedOrderID      *int64    `json:"staged_order_id,omitempty"`
-	ActivePull         bool      `json:"active_pull"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ActiveBinEpoch     int64  `json:"active_bin_epoch"`
+	CachedBinID        *int64 `json:"cached_bin_id,omitempty"`
+	RemainingUOPCached int    `json:"remaining_uop_cached"`
+	// PendingUOPDelta holds count changes that arrived while no bin was
+	// bound at this slot (active_bin_id nil — the pickup→delivery gap).
+	// The next tick that finds a bound bin applies (current + pending) and
+	// resets this to 0, so a swap or message-lag window can't lose or
+	// misattribute consumption. Durable (column) so an Edge restart
+	// mid-gap doesn't drop the held count.
+	PendingUOPDelta int64     `json:"pending_uop_delta"`
+	ActiveOrderID   *int64    `json:"active_order_id,omitempty"`
+	StagedOrderID   *int64    `json:"staged_order_id,omitempty"`
+	ActivePull      bool      `json:"active_pull"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // NodeClaim is a per-Style binding to a process Node — declares the

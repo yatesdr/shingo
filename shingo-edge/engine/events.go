@@ -212,4 +212,11 @@ type OrderDeliveredEvent struct {
 	OrderType     protocol.OrderType `json:"order_type"`
 	ProcessNodeID *int64             `json:"process_node_id,omitempty"`
 	BinID         *int64             `json:"bin_id,omitempty"`
+	// BinUOP and BinEpoch are the arrived bin's authoritative count and
+	// load-lifecycle epoch, carried from the OrderDelivered Kafka envelope
+	// (Core's snapshot at delivery). handleNodeOrderDelivered seeds the
+	// runtime cache + active_bin_epoch from these — no HTTP pull. BinUOP
+	// nil = older Core didn't send it; fall back to the role default.
+	BinUOP   *int  `json:"bin_uop,omitempty"`
+	BinEpoch int64 `json:"bin_epoch,omitempty"`
 }

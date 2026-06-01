@@ -310,7 +310,7 @@ func scanRuntime(scanner interface{ Scan(...interface{}) error }) (RuntimeState,
 	var r RuntimeState
 	var updatedAt string
 	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.ActiveBinEpoch, &r.CachedBinID, &r.RemainingUOPCached,
-		&r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
+		&r.PendingUOPDelta, &r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
 	if err != nil {
 		return r, err
 	}
@@ -338,7 +338,7 @@ func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 // GetRuntime returns the runtime row for a process_node.
 func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, cached_bin_id, remaining_uop_cached,
-		active_order_id, staged_order_id, active_pull, updated_at
+		pending_uop_delta, active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID))
 	if err != nil {
 		return nil, err
@@ -382,11 +382,11 @@ func SetRuntimeWithBin(db *sql.DB, processNodeID int64, activeClaimID, activeBin
 // resumes cache decrements/increments. binID must not be nil — this is
 // the delivered-bin handler's atomic write; callers gate on
 // order.DeliveryNode == ctx.node.CoreNodeName before invoking.
-func SetRuntimeForDeliveredBin(db *sql.DB, processNodeID int64, activeClaimID *int64, binID int64, remainingUOPCached int) error {
+func SetRuntimeForDeliveredBin(db *sql.DB, processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOPCached int) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_claim_id=?, active_bin_id=?, cached_bin_id=?, remaining_uop_cached=?, updated_at=datetime('now')
+		active_claim_id=?, active_bin_id=?, active_bin_epoch=?, cached_bin_id=?, remaining_uop_cached=?, updated_at=datetime('now')
 		WHERE process_node_id=?`,
-		activeClaimID, binID, binID, remainingUOPCached, processNodeID)
+		activeClaimID, binID, deltaEpoch, binID, remainingUOPCached, processNodeID)
 	return err
 }
 
@@ -429,6 +429,25 @@ func UpdateRuntimeOrders(db *sql.DB, processNodeID int64, activeOrderID, stagedO
 // UpdateRuntimeUOP writes the cached UOP on a runtime row.
 func UpdateRuntimeUOP(db *sql.DB, processNodeID int64, remainingUOPCached int) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET remaining_uop_cached=?, updated_at=datetime('now') WHERE process_node_id=?`,
+		remainingUOPCached, processNodeID)
+	return err
+}
+
+// AddPendingUOPDelta accumulates count change held while no bin is bound
+// at the slot (hold-and-replay). Signed: consume holds positive magnitude
+// to subtract on bind, produce holds positive to add. Atomic increment.
+func AddPendingUOPDelta(db *sql.DB, processNodeID int64, delta int) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET pending_uop_delta = pending_uop_delta + ?, updated_at=datetime('now') WHERE process_node_id=?`,
+		delta, processNodeID)
+	return err
+}
+
+// SetRuntimeUOPClearPending writes the cached UOP and resets pending to 0
+// in one statement — used when a tick finds a bound bin and has applied
+// (current + pending) to the count, so the held delta is consumed exactly
+// once.
+func SetRuntimeUOPClearPending(db *sql.DB, processNodeID int64, remainingUOPCached int) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET remaining_uop_cached=?, pending_uop_delta=0, updated_at=datetime('now') WHERE process_node_id=?`,
 		remainingUOPCached, processNodeID)
 	return err
 }

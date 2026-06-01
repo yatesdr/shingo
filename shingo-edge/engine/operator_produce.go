@@ -133,24 +133,26 @@ func (e *Engine) dispatchComplexLeg(nodeID int64, quantity int64, steps []protoc
 }
 
 // resetProduceRuntime is the produce-side analog of consume's release
-// click: cache flips to 0 (the next empty bin's UOP is 0 by definition),
-// cached_bin_id flips to nil (the empty bin's id isn't known yet — Core
-// resolves it at the supermarket and we'll learn it at delivery), and
-// the active/staged order pointers stamp the dispatched legs.
-//
-// PLC tick gate: with cached_bin_id=nil and active_bin_id still pointing
-// at the previous filled bin (or nil after pickup), the gap detector
-// keeps PLC ticks from incrementing the cache during the gap. Delivery
-// of the new empty bin sets cached_bin_id=active_bin_id=binID and
-// resumes increments.
+// click: the full bin is finalized and shipped, so the slot is "done" for
+// counting. Under hold-and-replay we clear active_bin_id, which puts the
+// tick path into hold mode — any parts produced before the next empty bin
+// lands accumulate in pending_uop_delta and replay onto the new bin when
+// its OrderDelivered seeds active_bin_id (count 0 for a fresh empty) +
+// epoch. The active/staged order pointers stamp the dispatched legs.
 //
 // Errors are logged only — the order(s) already shipped, so failing
 // here would leave the caller with no actionable recovery.
 func (e *Engine) resetProduceRuntime(nodeID int64, runtime *processes.RuntimeState, activeID, stagedID *int64) {
-	_ = runtime // kept for parity with consume call site shape; cache write doesn't need claim id
 	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.ClearCache(nodeID); err != nil {
-			log.Printf("produce: set runtime cache for node %d: %v", nodeID, err)
+		// Clear the active bin (slot is empty after finalize → ticks hold)
+		// and zero the count (the next empty bin starts at 0). Preserves
+		// the claim so the next delivery binds against it.
+		var claimID *int64
+		if runtime != nil {
+			claimID = runtime.ActiveClaimID
+		}
+		if err := e.inventoryDelta.ClearActiveAndReset(nodeID, claimID); err != nil {
+			log.Printf("produce: clear active bin for node %d: %v", nodeID, err)
 		}
 	}
 	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, activeID, stagedID); err != nil {

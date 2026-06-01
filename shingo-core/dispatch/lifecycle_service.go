@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"time"
 
 	"shingo/protocol"
 	"shingocore/fleet"
@@ -174,11 +173,14 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 	if err := s.binManifest.Confirm(bin.ID, p.ProducedAt); err != nil {
 		log.Printf("dispatch: confirm bin %d manifest: %v", bin.ID, err)
 	}
-	loadedAt := p.ProducedAt
-	if loadedAt == "" {
-		loadedAt = time.Now().UTC().Format("2006-01-02 15:04:05")
+	// loaded_at is resolved and stored by Confirm/ConfirmManifest above
+	// (server time when ProducedAt is empty); log the requested value
+	// rather than recomputing a second, possibly-divergent timestamp.
+	loadedAtLabel := p.ProducedAt
+	if loadedAtLabel == "" {
+		loadedAtLabel = "(server time)"
 	}
-	s.dbg("ingest: set manifest on bin=%d, payload=%s, loaded_at=%s", bin.ID, p.PayloadCode, loadedAt)
+	s.dbg("ingest: set manifest on bin=%d, payload=%s, loaded_at=%s", bin.ID, p.PayloadCode, loadedAtLabel)
 	order := &orders.Order{
 		EdgeUUID:    p.OrderUUID,
 		StationID:   stationID,

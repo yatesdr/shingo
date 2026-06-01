@@ -49,12 +49,14 @@ func (db *DB) SetProcessNodeCachedBin(processNodeID int64, cachedBinID *int64, r
 }
 
 // SetProcessNodeRuntimeForDeliveredBin writes active_claim_id,
-// active_bin_id, cached_bin_id, and remaining_uop_cached atomically
-// when a bin physically arrives at the slot. Brings active_bin_id and
-// cached_bin_id into agreement so the PLC tick gate resumes cache
-// decrements/increments.
-func (db *DB) SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, remainingUOP int) error {
-	return processes.SetRuntimeForDeliveredBin(db.DB, processNodeID, activeClaimID, binID, remainingUOP)
+// active_bin_id, active_bin_epoch, cached_bin_id, and remaining_uop_cached
+// atomically when a bin physically arrives at the slot. Brings
+// active_bin_id and cached_bin_id into agreement so the PLC tick gate
+// resumes cache decrements/increments. deltaEpoch is the arrived bin's
+// load-lifecycle epoch (from the OrderDelivered envelope) so subsequent
+// tick deltas carry the right generation.
+func (db *DB) SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error {
+	return processes.SetRuntimeForDeliveredBin(db.DB, processNodeID, activeClaimID, binID, deltaEpoch, remainingUOP)
 }
 
 // UpdateProcessNodeRuntimeOrders writes the active and staged order
@@ -66,6 +68,19 @@ func (db *DB) UpdateProcessNodeRuntimeOrders(processNodeID int64, activeOrderID,
 // UpdateProcessNodeUOP writes the remaining UOP on a runtime row.
 func (db *DB) UpdateProcessNodeUOP(processNodeID int64, remainingUOP int) error {
 	return processes.UpdateRuntimeUOP(db.DB, processNodeID, remainingUOP)
+}
+
+// AddPendingUOPDelta accumulates a tick count held while no bin is bound
+// at the slot (hold-and-replay gap handling).
+func (db *DB) AddPendingUOPDelta(processNodeID int64, delta int) error {
+	return processes.AddPendingUOPDelta(db.DB, processNodeID, delta)
+}
+
+// SetProcessNodeUOPClearPending writes the cached UOP and zeroes the
+// pending hold-pile in one statement (used when a tick binds the held
+// delta onto a now-present bin).
+func (db *DB) SetProcessNodeUOPClearPending(processNodeID int64, remainingUOP int) error {
+	return processes.SetRuntimeUOPClearPending(db.DB, processNodeID, remainingUOP)
 }
 
 // SetActivePull marks a node as the active pull point for A/B cycling.

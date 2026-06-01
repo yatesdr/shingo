@@ -99,7 +99,10 @@ func RequeueOutbox(db *sql.DB, id int64) error {
 // PurgeOldOutbox deletes sent or dead-lettered outbox rows older than the
 // given duration. Returns the count of deleted rows.
 func PurgeOldOutbox(db *sql.DB, olderThan time.Duration) (int64, error) {
-	cutoff := time.Now().UTC().Add(-olderThan).Format("2006-01-02 15:04:05")
+	// Bind a time.Time, not a formatted string: sent_at/created_at are
+	// TIMESTAMPTZ, and a zoneless literal would be compared in the session
+	// TimeZone, shifting the cutoff by the offset on a non-UTC session.
+	cutoff := time.Now().UTC().Add(-olderThan)
 	res, err := db.Exec(`DELETE FROM outbox WHERE (sent_at IS NOT NULL AND sent_at < $1) OR (retries >= $2 AND created_at < $3)`, cutoff, MaxOutboxRetries, cutoff)
 	if err != nil {
 		return 0, err

@@ -68,11 +68,31 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 			order.ID, order.OrderType)
 	}
 
+	// Snapshot the just-arrived bin's authoritative count + load-lifecycle
+	// epoch onto the envelope so Edge seeds its runtime cache and stamps
+	// outgoing BinUOPDeltas from these — no separate HTTP pull. Read AFTER
+	// applyBinArrivalForOrder above so the bin row reflects the arrival.
+	// Single-bin only; multi-bin (binID nil) uses bucket deltas.
+	var uopRemaining *int
+	var deltaEpoch int64
+	if binID != nil {
+		if bin, binErr := e.db.GetBin(*binID); binErr == nil {
+			u := bin.UOPRemaining
+			uopRemaining = &u
+			deltaEpoch = bin.DeltaEpoch
+		} else {
+			e.logFn("engine: order=%d delivered: bin %d uop/epoch lookup failed: %v (Edge falls back to role default)",
+				order.ID, *binID, binErr)
+		}
+	}
+
 	if err := e.sendToEdge(protocol.TypeOrderDelivered, order.StationID, &protocol.OrderDelivered{
 		OrderUUID:      order.EdgeUUID,
 		DeliveredAt:    time.Now().UTC(),
 		StagedExpireAt: stagedExpireAt,
 		BinID:          binID,
+		UOPRemaining:   uopRemaining,
+		DeltaEpoch:     deltaEpoch,
 	}); err != nil {
 		e.logFn("engine: delivered notification: %v", err)
 	}

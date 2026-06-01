@@ -26,7 +26,7 @@ func (NoOpOrderEmitter) EmitOrderStatusChanged(orderID int64, orderUUID string, 
 func (NoOpOrderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {
 }
 
-func (NoOpOrderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64) {
+func (NoOpOrderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binEpoch int64) {
 }
 
 func (NoOpOrderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {

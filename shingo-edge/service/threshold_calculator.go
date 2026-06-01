@@ -209,20 +209,25 @@ func (s *ThresholdCalculatorService) Calculate(req CalculateRequest) (CalculateR
 // MEDIUM / LOW label. The v6 brief leaves the exact thresholds open;
 // the rule of thumb is:
 //
-//	HIGH   — ≥14 days of window AND ≥20 completed L1 cycles AND
-//	         ≥20 completed retrieves.
+//	HIGH   — ≥14 days of window AND ≥20 of each completed cycle type
+//	         (L1 empties, L2 stores, retrieves).
 //	MEDIUM — ≥7 days AND ≥10 of each.
 //	LOW    — anything below MEDIUM. UI gates the Apply button on
 //	         non-LOW; engineer can still Override on LOW.
+//
+// L2 (store) coverage is scored alongside L1 and retrieves because
+// L2LoadSeconds/L2TransitSeconds feed the L1Threshold formula in
+// CalculateThresholds — a window rich in L1/retrieve data but starved
+// of L2 stores would otherwise be stamped HIGH on unsupported L2 timings.
 //
 // Thresholds are intentionally conservative for the initial roll-out.
 // Springfield is the first plant; we can tune after a calibration
 // session shows how much data the plant actually accumulates.
 func scoreConfidence(days, samplesL1, samplesL2, samplesRetrieve int) string {
-	if days >= 14 && samplesL1 >= 20 && samplesRetrieve >= 20 {
+	if days >= 14 && samplesL1 >= 20 && samplesL2 >= 20 && samplesRetrieve >= 20 {
 		return "HIGH"
 	}
-	if days >= 7 && samplesL1 >= 10 && samplesRetrieve >= 10 {
+	if days >= 7 && samplesL1 >= 10 && samplesL2 >= 10 && samplesRetrieve >= 10 {
 		return "MEDIUM"
 	}
 	return "LOW"

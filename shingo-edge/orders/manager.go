@@ -470,21 +470,21 @@ func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, 
 // HandleDeliveredWithExpiry processes a delivered reply with optional
 // staged expiry. binID captures Core's bin id at delivery so the PLC
 // tick path can attribute deltas to the right bin; nil for multi-bin
-// orders. Post-flip (6d226d1) Edge's runtime cache is authoritative for
-// at-node bin UOP; the OrderDelivered envelope no longer carries a UOP
-// snapshot. The cache is seeded at release click and reaffirmed at
-// delivery from Core's BinByID lookup (with a fallback to capacity if
-// Core is unreachable — see wiring_delivered.go).
-func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64) error {
+// orders. uop+epoch are Core's snapshot of that bin at delivery (from the
+// OrderDelivered envelope) — Edge seeds its runtime cache + active_bin_epoch
+// from them so tick deltas carry the right count baseline and load-lifecycle
+// generation, with no separate HTTP pull. uop nil = older Core didn't send
+// it → Edge falls back to its role default (see wiring_delivered.go).
+func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64) error {
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {
 		return fmt.Errorf("order %s not found: %w", orderUUID, err)
 	}
-	return m.handleDelivered(order, statusDetail, stagedExpireAt, binID)
+	return m.handleDelivered(order, statusDetail, stagedExpireAt, binID, uop, epoch)
 }
 
-func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64) error {
-	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID); err != nil {
+func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64) error {
+	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, uop, epoch); err != nil {
 		return err
 	}
 	if order.AutoConfirm {
@@ -656,7 +656,9 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		}
 		return nil
 	case ReplyDelivered:
-		return m.handleDelivered(order, statusDetail, nil, nil)
+		// Dispatch-reply delivery carries no bin snapshot (that rides the
+		// OrderDelivered envelope); pass nil/0 so Edge uses the role default.
+		return m.handleDelivered(order, statusDetail, nil, nil, nil, 0)
 	case ReplyError:
 		return m.TransitionOrder(order.ID, StatusFailed, statusDetail)
 	case ReplySkipped:

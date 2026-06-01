@@ -75,9 +75,15 @@ type binDeltaEntry struct {
 	// successful flush commit. Read by evictIdle — entries with
 	// delta==0 and lastTouched > 1h ago are removed from the
 	// sync.Map so a long-tail of touched-once bin IDs doesn't grow
-	// forever. Not load-bearing for correctness; any deleted entry
-	// rematerializes on the next recordBin call.
+	// forever. A deleted entry rematerializes on the next recordBin call.
 	lastTouched time.Time
+
+	// evicted is set true (under mu) by evictIdle just before it removes
+	// this entry from the map, and checked by recordBin under the same
+	// lock so a record that raced the eviction retries against a fresh
+	// entry instead of writing a delta into an orphaned object that the
+	// map no longer references (the lost-update window — R68-1).
+	evicted bool
 }
 
 // bucketDeltaEntry is the per-bucket accumulator. Composite key is
@@ -111,6 +117,10 @@ type bucketDeltaEntry struct {
 	windowStart  time.Time
 	windowEnd    time.Time
 	lastTouched  time.Time
+
+	// evicted: see binDeltaEntry.evicted — same lost-update guard
+	// (R68-1) for the bucket eviction path.
+	evicted bool
 }
 
 // accumulator accumulates BinUOPDelta and LinesideBucketDelta count
@@ -149,6 +159,13 @@ type accumulator struct {
 	// now is overridable for tests. Production callers leave it nil
 	// and the accumulator uses time.Now().UTC().
 	now func() time.Time
+
+	// recordHook, if non-nil, is invoked inside recordBin after
+	// LoadOrStore returns the entry but before the entry lock is taken —
+	// precisely the window a concurrent evictIdle can delete the entry.
+	// Test-only seam (nil in production) used to drive the R68-1
+	// lost-update race deterministically.
+	recordHook func()
 
 	debugLog DebugLogFunc
 }
@@ -223,34 +240,50 @@ func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reas
 	key := strconv.FormatInt(binID, 10)
 	now := r.clock()
 
-	v, _ := r.bins.LoadOrStore(key, &binDeltaEntry{
-		binID:       binID,
-		payloadCode: payloadCode,
-		epoch:       epoch,
-		windowStart: now,
-	})
-	e := v.(*binDeltaEntry)
+	for {
+		v, _ := r.bins.LoadOrStore(key, &binDeltaEntry{
+			binID:       binID,
+			payloadCode: payloadCode,
+			epoch:       epoch,
+			windowStart: now,
+		})
+		e := v.(*binDeltaEntry)
 
-	e.mu.Lock()
-	if e.delta == 0 {
-		// First contribution to this window — anchor the start.
-		e.windowStart = now
-		e.payloadCode = payloadCode
-		e.epoch = epoch
-	} else if epoch > e.epoch {
-		// Mid-window lifecycle bump. The accumulator currently coalesces
-		// the older epoch's residual delta into the next flush under
-		// the newer epoch — close enough since Edge's tick attribution
-		// only resolves to "the active bin at tick time" and the older
-		// epoch's deltas at this point are noise (the bin transitioned
-		// to a different load-life before they shipped).
-		e.epoch = epoch
+		if r.recordHook != nil {
+			r.recordHook()
+		}
+
+		e.mu.Lock()
+		if e.evicted {
+			// This entry raced evictIdle and is being removed from the
+			// map; writing our delta into it would lose it. Clear the
+			// stale pointer (no-op if eviction already deleted it) and
+			// retry so LoadOrStore stores a fresh entry. R68-1.
+			e.mu.Unlock()
+			r.bins.CompareAndDelete(key, e)
+			continue
+		}
+		if e.delta == 0 {
+			// First contribution to this window — anchor the start.
+			e.windowStart = now
+			e.payloadCode = payloadCode
+			e.epoch = epoch
+		} else if epoch > e.epoch {
+			// Mid-window lifecycle bump. The accumulator currently coalesces
+			// the older epoch's residual delta into the next flush under
+			// the newer epoch — close enough since Edge's tick attribution
+			// only resolves to "the active bin at tick time" and the older
+			// epoch's deltas at this point are noise (the bin transitioned
+			// to a different load-life before they shipped).
+			e.epoch = epoch
+		}
+		e.delta += delta
+		e.reason = reason
+		e.windowEnd = now
+		e.lastTouched = now
+		e.mu.Unlock()
+		break
 	}
-	e.delta += delta
-	e.reason = reason
-	e.windowEnd = now
-	e.lastTouched = now
-	e.mu.Unlock()
 
 	r.debugLog.Log("inventory_delta: bin=%d delta=%+d reason=%s payload=%q epoch=%d",
 		binID, delta, reason, payloadCode, epoch)
@@ -276,32 +309,41 @@ func (r *accumulator) recordBucket(nodeID int64, coreNodeName, pairKey string, s
 	key := bucketScopeKey(nodeID, pairKey, styleID, partNumber)
 	now := r.clock()
 
-	v, _ := r.buckets.LoadOrStore(key, &bucketDeltaEntry{
-		nodeID:       nodeID,
-		coreNodeName: coreNodeName,
-		pairKey:      pairKey,
-		styleID:      styleID,
-		partNumber:   partNumber,
-		payloadCode:  payloadCode,
-		windowStart:  now,
-	})
-	e := v.(*bucketDeltaEntry)
+	for {
+		v, _ := r.buckets.LoadOrStore(key, &bucketDeltaEntry{
+			nodeID:       nodeID,
+			coreNodeName: coreNodeName,
+			pairKey:      pairKey,
+			styleID:      styleID,
+			partNumber:   partNumber,
+			payloadCode:  payloadCode,
+			windowStart:  now,
+		})
+		e := v.(*bucketDeltaEntry)
 
-	e.mu.Lock()
-	if e.delta == 0 {
-		e.windowStart = now
+		e.mu.Lock()
+		if e.evicted {
+			// Raced evictIdle — retry against a fresh entry. R68-1.
+			e.mu.Unlock()
+			r.buckets.CompareAndDelete(key, e)
+			continue
+		}
+		if e.delta == 0 {
+			e.windowStart = now
+		}
+		// Only overwrite payloadCode with a non-empty value; an unset
+		// caller must not wipe a previously-latched one. This mirrors
+		// Core's UPSERT policy on the apply side.
+		if payloadCode != "" {
+			e.payloadCode = payloadCode
+		}
+		e.delta += delta
+		e.reason = reason
+		e.windowEnd = now
+		e.lastTouched = now
+		e.mu.Unlock()
+		break
 	}
-	// Only overwrite payloadCode with a non-empty value; an unset
-	// caller must not wipe a previously-latched one. This mirrors
-	// Core's UPSERT policy on the apply side.
-	if payloadCode != "" {
-		e.payloadCode = payloadCode
-	}
-	e.delta += delta
-	e.reason = reason
-	e.windowEnd = now
-	e.lastTouched = now
-	e.mu.Unlock()
 
 	r.debugLog.Log("inventory_delta: bucket node=%d part=%q payload=%q delta=%+d reason=%s",
 		nodeID, partNumber, payloadCode, delta, reason)
@@ -612,9 +654,17 @@ func (r *accumulator) evictIdle(maxIdle time.Duration) {
 		e := value.(*binDeltaEntry)
 		e.mu.Lock()
 		idle := e.delta == 0 && !e.lastTouched.IsZero() && e.lastTouched.Before(cutoff)
+		if idle {
+			// Mark before unlocking so a recordBin that acquires the
+			// lock next sees the eviction and retries against a fresh
+			// entry (R68-1). CompareAndDelete only removes this exact
+			// pointer, so a fresh entry a retrying recordBin may have
+			// already stored under the same key is left intact.
+			e.evicted = true
+		}
 		e.mu.Unlock()
 		if idle {
-			r.bins.Delete(key)
+			r.bins.CompareAndDelete(key, e)
 		}
 		return true
 	})
@@ -622,9 +672,12 @@ func (r *accumulator) evictIdle(maxIdle time.Duration) {
 		e := value.(*bucketDeltaEntry)
 		e.mu.Lock()
 		idle := e.delta == 0 && !e.lastTouched.IsZero() && e.lastTouched.Before(cutoff)
+		if idle {
+			e.evicted = true
+		}
 		e.mu.Unlock()
 		if idle {
-			r.buckets.Delete(key)
+			r.buckets.CompareAndDelete(key, e)
 		}
 		return true
 	})

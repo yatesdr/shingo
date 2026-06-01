@@ -201,6 +201,10 @@ CREATE TABLE IF NOT EXISTS process_node_runtime_states (
     -- ticks don't emit at epoch=0 against a bin already at epoch>=1.
     active_bin_epoch   INTEGER NOT NULL DEFAULT 0,
     remaining_uop_cached INTEGER NOT NULL DEFAULT 0,
+    -- pending_uop_delta holds tick counts that arrived while no bin was
+    -- bound (the pickup->delivery gap); the next tick with a bound bin
+    -- applies current+pending and resets it. Durable across restart.
+    pending_uop_delta  INTEGER NOT NULL DEFAULT 0,
     active_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     staged_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     active_pull        INTEGER NOT NULL DEFAULT 1,

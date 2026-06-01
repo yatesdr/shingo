@@ -3,6 +3,7 @@ package orders
 import (
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"shingo/protocol"
@@ -14,6 +15,24 @@ type LifecycleService struct {
 	db      *store.DB
 	emitter EventEmitter
 	debug   DebugLogFunc
+
+	// deliveredSeeds carries the bin's uop+epoch snapshot from the
+	// OrderDelivered envelope into the (generic) applyTransition emit,
+	// keyed by order id. HandleDelivered Stores it immediately before
+	// driving the StatusDelivered transition (same goroutine) and
+	// applyTransition LoadAndDeletes it in the delivered branch. Other
+	// paths to StatusDelivered (force/recovery) find no entry, so Edge
+	// falls back to its role-default seed — the pre-existing behavior.
+	// A sync.Map keeps it zero-value-ready (no constructor change) and
+	// safe if deliveries for different orders ever interleave.
+	deliveredSeeds sync.Map
+}
+
+// deliveredSeed is the bin snapshot Core stamps on the OrderDelivered
+// envelope; nil uop means "not provided" (older Core) → role default.
+type deliveredSeed struct {
+	uop   *int
+	epoch int64
 }
 
 func newLifecycleService(db *store.DB, emitter EventEmitter, debug DebugLogFunc) *LifecycleService {
@@ -77,7 +96,15 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 		if updated != nil {
 			binID = updated.BinID
 		}
-		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID)
+		// Bin snapshot stashed by HandleDelivered (same goroutine);
+		// absent for force/recovery deliveries → Edge role-default seed.
+		var binUOP *int
+		var binEpoch int64
+		if v, ok := s.deliveredSeeds.LoadAndDelete(order.ID); ok {
+			seed := v.(deliveredSeed)
+			binUOP, binEpoch = seed.uop, seed.epoch
+		}
+		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, binUOP, binEpoch)
 	}
 	if IsTerminal(newStatus) {
 		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)
@@ -88,7 +115,7 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 	return nil
 }
 
-func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64) error {
+func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64) error {
 	if stagedExpireAt != nil {
 		if err := s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt); err != nil {
 			log.Printf("lifecycle: update staged_expire_at for order=%d: %v", order.ID, err)
@@ -96,14 +123,17 @@ func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail str
 	}
 	// Capture Core's bin id at delivery so the PLC tick path can
 	// attribute deltas to the right bin. Nil for multi-bin orders /
-	// older Core builds. Post-flip (6d226d1) Edge's runtime cache is
-	// authoritative for at-node bin UOP; the OrderDelivered envelope
-	// no longer carries a UOP snapshot.
+	// older Core builds. uop+epoch are Core's snapshot of that bin at
+	// delivery (from the OrderDelivered envelope) — stashed here for the
+	// delivered emit in applyTransition so Edge seeds its runtime cache
+	// and active_bin_epoch without an HTTP pull.
 	if binID != nil {
 		if err := s.db.UpdateOrderBinID(order.ID, binID); err != nil {
 			log.Printf("update order bin_id: %v", err)
 		}
 	}
+	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, epoch: epoch})
+	defer s.deliveredSeeds.Delete(order.ID)
 	return s.Transition(order.ID, StatusDelivered, statusDetail)
 }
 

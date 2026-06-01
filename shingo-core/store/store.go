@@ -8,7 +8,8 @@ import (
 
 	"shingocore/config"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // DB wraps *sql.DB with application-level query methods.
@@ -54,9 +55,44 @@ func dsn(cfg *config.PostgresConfig) string {
 		connectTimeoutSeconds, statementTimeoutSeconds*1000)
 }
 
+// pgxConnConfig parses the DSN and pins the session TimeZone to UTC.
+//
+// This is load-bearing for correctness, not cosmetics. Every timestamp
+// column in the schema is TIMESTAMPTZ, and Postgres interprets any
+// *zoneless* timestamp literal using the session's TimeZone — which, left
+// unset, inherits the database server's OS timezone (the core VMs are
+// generic Linux, not guaranteed UTC). A zoneless literal written or
+// compared on a non-UTC session is therefore silently shifted by the
+// offset: the class of bug behind bins.ConfirmManifest (R20-1) and
+// messaging.PurgeOldOutbox. Pinning the session to UTC makes that class
+// impossible regardless of which code path builds a literal. It is a
+// per-connection session default, so psql, dashboards, and other clients
+// are unaffected. (Application code should still bind time.Time rather
+// than format zoneless strings; this is defense in depth, not a licence.)
+func pgxConnConfig(cfg *config.PostgresConfig) (*pgx.ConnConfig, error) {
+	connConfig, err := pgx.ParseConfig(dsn(cfg))
+	if err != nil {
+		return nil, err
+	}
+	if connConfig.RuntimeParams == nil {
+		connConfig.RuntimeParams = map[string]string{}
+	}
+	connConfig.RuntimeParams["timezone"] = "UTC"
+	return connConfig, nil
+}
+
+// openPgx opens a *sql.DB backed by pgx with the UTC session pin applied.
+func openPgx(cfg *config.PostgresConfig) (*sql.DB, error) {
+	connConfig, err := pgxConnConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("parse dsn: %w", err)
+	}
+	return sql.OpenDB(stdlib.GetConnector(*connConfig)), nil
+}
+
 // ResetDatabase removes all data so the next Open() starts fresh.
 func ResetDatabase(cfg *config.DatabaseConfig) error {
-	sqlDB, err := sql.Open("pgx", dsn(&cfg.Postgres))
+	sqlDB, err := openPgx(&cfg.Postgres)
 	if err != nil {
 		return fmt.Errorf("connect for reset: %w", err)
 	}
@@ -79,7 +115,7 @@ func ResetDatabase(cfg *config.DatabaseConfig) error {
 // pre-migrated template database and skip per-test migration cost.
 // Lives next to Open so the two paths are obviously paired.
 func OpenWithoutMigrate(cfg *config.DatabaseConfig) (*DB, error) {
-	sqlDB, err := sql.Open("pgx", dsn(&cfg.Postgres))
+	sqlDB, err := openPgx(&cfg.Postgres)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

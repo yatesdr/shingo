@@ -39,6 +39,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	// decrement the first one found as a safety net ("count to lineside storage").
 	var pairedFallbackNode *processes.Node
 	var pairedFallbackRuntime *processes.RuntimeState
+	var pairedFallbackClaim *processes.NodeClaim
 	pairedConsumeHandled := false
 
 	for _, node := range nodes {
@@ -77,6 +78,11 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 					nodeCopy := node
 					pairedFallbackNode = &nodeCopy
 					pairedFallbackRuntime = runtime
+					// Capture the claim that just passed the
+					// claim.StyleID == delta.StyleID guard above so the
+					// fallback emits against the tick's style, not a
+					// re-derived one (R43-1).
+					pairedFallbackClaim = claim
 				}
 				continue
 			}
@@ -101,7 +107,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	// an inactive paired node, decrement it as a safety net. This covers
 	// the "count to lineside storage" case when neither A nor B is active.
 	if !pairedConsumeHandled && pairedFallbackNode != nil && pairedFallbackRuntime != nil {
-		e.handleABFallthrough(delta.ProcessID, pairedFallbackNode, pairedFallbackRuntime, int(delta.Delta))
+		e.handleABFallthrough(delta.ProcessID, pairedFallbackNode, pairedFallbackRuntime, pairedFallbackClaim, int(delta.Delta))
 	}
 }
 
@@ -136,23 +142,38 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// the bin counter.
 	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, delta)
 
-	// Cache decrement is gated on steady state: the cache represents the
-	// bin physically present. During the release→delivery gap the cache
-	// represents the incoming bin which hasn't been consumed yet, so the
-	// decrement is skipped. The Core-side bin delta below still fires —
-	// it attributes to active_bin_id (the old bin still on slot, or
-	// nothing if pickup has happened), keeping Core's manifest honest
-	// for whatever the cell is actually pulling from.
-	steady := inSteadyState(runtime)
+	// Hold-and-replay. The count follows the bin physically at the slot
+	// (active_bin_id). When a bin is bound we apply this tick PLUS any
+	// counts held while the slot was empty (pending_uop_delta), then clear
+	// the hold. When no bin is bound (the pickup→delivery gap), we hold the
+	// bin portion so it lands on the next bin instead of being lost or
+	// charged to a departed bin. The lineside drain emits every tick
+	// regardless — parts leaving the rack are independent of which bin is
+	// at the slot.
+	bound := runtime.ActiveBinID != nil
 	newRemaining := runtime.RemainingUOPCached
-	if steady {
-		newRemaining = runtime.RemainingUOPCached - binRemainder
-		if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
+	binAttributed := binRemainder
+	if bound {
+		binAttributed = binRemainder + int(runtime.PendingUOPDelta)
+		newRemaining = runtime.RemainingUOPCached - binAttributed
+		if runtime.PendingUOPDelta != 0 {
+			if err := e.db.SetProcessNodeUOPClearPending(node.ID, newRemaining); err != nil {
+				log.Printf("update UOP (replay pending) for node %d: %v", node.ID, err)
+			}
+		} else if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
 			log.Printf("update UOP for node %d: %v", node.ID, err)
+		}
+	} else if binRemainder != 0 {
+		if err := e.db.AddPendingUOPDelta(node.ID, binRemainder); err != nil {
+			log.Printf("hold pending UOP for node %d: %v", node.ID, err)
 		}
 	}
 
-	e.emitConsumeTickDeltas(node, runtime, claim, drains, binRemainder)
+	// emitConsumeTickDeltas emits the lineside-drain bucket deltas always,
+	// and a bin delta for binAttributed — which binAtNode skips when no bin
+	// is bound (binID 0), so the held portion isn't double-emitted; it
+	// ships on the bound tick that replays it.
+	e.emitConsumeTickDeltas(node, runtime, claim, drains, binAttributed)
 
 	// Auto-reorder if threshold reached, enabled, and node can accept orders.
 	// During the gap newRemaining is unchanged so the threshold isn't crossed
@@ -169,8 +190,8 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// _state_gap during release window, gate=below_floor when the
 	// remaining count is already at 0, etc.).
 	if claim.AutoReorder {
-		if !steady {
-			e.debugFn("autoreorder eval: claim=%d node=%s gate=insteady_state_gap (release-to-delivery window)",
+		if !bound {
+			e.debugFn("autoreorder eval: claim=%d node=%s gate=no_bin_bound (pickup-to-delivery gap; ticks held)",
 				claim.ID, node.Name)
 		} else if claim.ReorderPoint <= 0 {
 			e.debugFn("autoreorder eval: claim=%d node=%s gate=opt_out (reorder_point=0) — legacy silent-inert path",
@@ -203,21 +224,31 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 // filled. No bucket delta — produce nodes don't drain lineside; they
 // fill bins directly via the PLC.
 func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, delta int) {
-	// Cache increment is gated on steady state, mirroring consume. During
-	// the release→delivery gap the cache represents the incoming empty
-	// bin (cached_bin_id != active_bin_id), so we don't increment it for
-	// parts being produced — those parts are going into whatever bin is
-	// physically present (the old filled bin still on slot, or nothing
-	// post-pickup), which the Core-side bin delta below records.
+	// Hold-and-replay, mirror of consume. Increment the bin physically at
+	// the slot; when none is bound (finalize→new-empty gap) hold the
+	// produced parts in pending and replay onto the next empty bin when it
+	// binds. The finished-good production tally (EventProducedReport below)
+	// is bin-independent and fires every tick regardless.
+	bound := runtime.ActiveBinID != nil
 	newRemaining := runtime.RemainingUOPCached
-	if inSteadyState(runtime) {
-		newRemaining = runtime.RemainingUOPCached + delta
-		if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
+	binAttributed := delta
+	if bound {
+		binAttributed = delta + int(runtime.PendingUOPDelta)
+		newRemaining = runtime.RemainingUOPCached + binAttributed
+		if runtime.PendingUOPDelta != 0 {
+			if err := e.db.SetProcessNodeUOPClearPending(node.ID, newRemaining); err != nil {
+				log.Printf("update UOP (replay pending) for node %d: %v", node.ID, err)
+			}
+		} else if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
 			log.Printf("update UOP for node %d: %v", node.ID, err)
+		}
+	} else if delta != 0 {
+		if err := e.db.AddPendingUOPDelta(node.ID, delta); err != nil {
+			log.Printf("hold pending UOP for node %d: %v", node.ID, err)
 		}
 	}
 
-	if e.inventoryDelta != nil && delta > 0 {
+	if e.inventoryDelta != nil && binAttributed > 0 {
 		binID, payload, epoch := e.binAtNode(runtime, claim)
 		_ = e.inventoryDelta.Produced(uop.TickEvent{
 			NodeID:       node.ID,
@@ -226,7 +257,7 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 			BinID:        binID,
 			PayloadCode:  payload,
 			BinEpoch:     epoch,
-			BinRemainder: delta, // produce delta carried via BinRemainder for type symmetry
+			BinRemainder: binAttributed, // this tick + any replayed held parts
 		})
 	}
 
@@ -248,8 +279,8 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	// shape as the consume side so engineers can see produce-tick
 	// evaluation outcomes alongside consume-tick.
 	if claim.AutoReorder && claim.UOPCapacity > 0 {
-		if !inSteadyState(runtime) {
-			e.debugFn("autoreorder eval (produce): claim=%d node=%s gate=insteady_state_gap",
+		if !bound {
+			e.debugFn("autoreorder eval (produce): claim=%d node=%s gate=no_bin_bound (ticks held)",
 				claim.ID, node.Name)
 		} else if newRemaining < claim.UOPCapacity {
 			e.debugFn("autoreorder eval (produce): claim=%d node=%s remaining=%d capacity=%d gate=below_capacity",
@@ -277,30 +308,44 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 // (B5 fix) singles this path out — it's the case where neither
 // operator action nor active-pull state surfaces a flush trigger, so
 // the periodic flush is the only signal that captures the change.
-func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runtime *processes.RuntimeState, delta int) {
+func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, delta int) {
 	log.Printf("A/B fallthrough: no active-pull node for process %d, decrementing fallback node %s",
 		processID, node.Name)
 
-	// Lineside-first on the fallback node too.
-	claim := findActiveClaim(e.db, node)
+	// claim is the one captured in handleCounterDelta's loop, which
+	// already passed the claim.StyleID == delta.StyleID guard. Do NOT
+	// re-derive via findActiveClaim here: it prefers the process
+	// ActiveStyleID claim, which during a changeover can differ from the
+	// tick's style and mis-attribute the lineside drain and bin delta
+	// (R43-1).
 	var drains map[string]uop.LinesideDrain
 	binRemainder := delta
 	if claim != nil {
 		drains, binRemainder = e.drainLinesideFirst(node.ID, claim, delta)
 	}
 
-	// Signed-bin semantic mirrors handleConsumeTick (see comment there).
-	// Same gap-window gating: during release→delivery, cache stays put
-	// while the lineside drain and Core-side bin delta still fire.
-	if inSteadyState(runtime) {
-		newRemaining := runtime.RemainingUOPCached - binRemainder
-		if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
+	// Hold-and-replay, mirror of handleConsumeTick: decrement the bound
+	// bin (this tick + any held pending), or hold when no bin is bound.
+	bound := runtime.ActiveBinID != nil
+	binAttributed := binRemainder
+	if bound {
+		binAttributed = binRemainder + int(runtime.PendingUOPDelta)
+		newRemaining := runtime.RemainingUOPCached - binAttributed
+		if runtime.PendingUOPDelta != 0 {
+			if err := e.db.SetProcessNodeUOPClearPending(node.ID, newRemaining); err != nil {
+				log.Printf("update UOP (replay pending) for node %d: %v", node.ID, err)
+			}
+		} else if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
 			log.Printf("update UOP for node %d: %v", node.ID, err)
+		}
+	} else if binRemainder != 0 {
+		if err := e.db.AddPendingUOPDelta(node.ID, binRemainder); err != nil {
+			log.Printf("hold pending UOP for node %d: %v", node.ID, err)
 		}
 	}
 
 	if claim != nil {
-		e.emitFallthroughDeltas(node, runtime, claim, drains, binRemainder)
+		e.emitFallthroughDeltas(node, runtime, claim, drains, binAttributed)
 	}
 }
 
@@ -349,24 +394,6 @@ func (e *Engine) emitFallthroughDeltas(node *processes.Node, runtime *processes.
 	})
 }
 
-// inSteadyState reports whether the runtime cache and the physically-
-// present bin describe the same bin. False during the release→delivery
-// gap: cache represents the incoming bin (set at click) but
-// active_bin_id still points at the old bin (or is nil after pickup).
-//
-// PLC ticks during the gap drain lineside and emit Core-side bin deltas
-// against active_bin_id (the old bin physically still consuming, if
-// any), but must NOT decrement the cache — the cache is accounting for
-// the new bin which the cell hasn't touched yet. Once delivery sets
-// active_bin_id := cached_bin_id, the gate flips back to steady state
-// and cache decrements/increments resume.
-func inSteadyState(runtime *processes.RuntimeState) bool {
-	if runtime == nil || runtime.ActiveBinID == nil || runtime.CachedBinID == nil {
-		return false
-	}
-	return *runtime.ActiveBinID == *runtime.CachedBinID
-}
-
 // binAtNode resolves the bin currently associated with a node tick.
 // Returns (0, "") when no bin is tracked at the slot — the caller
 // skips bin delta emission in that case.
@@ -391,15 +418,6 @@ func inSteadyState(runtime *processes.RuntimeState) bool {
 func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.NodeClaim) (int64, string, int64) {
 	if runtime == nil || runtime.ActiveBinID == nil {
 		return 0, "", 0
-	}
-	// Surface gap-window mis-attribution at the emission site: if
-	// ActiveBinID and CachedBinID disagree the runtime cache is lying
-	// (e.g. release/delivery race window). The PLC tick lands on the
-	// active bin regardless, so the operator sees correct counts —
-	// this log just makes the divergence observable in the field.
-	if runtime.CachedBinID != nil && *runtime.CachedBinID != *runtime.ActiveBinID {
-		log.Printf("binAtNode: gap-window mismatch — active=%d cached=%d (claim payload=%s)",
-			*runtime.ActiveBinID, *runtime.CachedBinID, claim.PayloadCode)
 	}
 	return *runtime.ActiveBinID, claim.PayloadCode, runtime.ActiveBinEpoch
 }

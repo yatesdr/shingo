@@ -63,7 +63,7 @@ type runtimeWriter interface {
 	// Used by OnDelivered. Brings active and cached pointers into
 	// agreement so the PLC tick gate resumes cache decrements after
 	// the gap window closes.
-	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, remainingUOP int) error
+	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error
 }
 
 // bucketStore is the read/write surface on lineside_buckets that uop

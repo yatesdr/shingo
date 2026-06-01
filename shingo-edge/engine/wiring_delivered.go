@@ -67,23 +67,22 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if claim == nil {
 		return
 	}
+	// Seed the runtime cache + epoch from the snapshot Core stamped on the
+	// OrderDelivered envelope (taken at the bin's arrival, carried on the
+	// same Kafka message). No HTTP pull — the seed and epoch ride the
+	// delivery event itself, so this works even when Core's HTTP API is
+	// momentarily unreachable. BinUOP nil means an older Core didn't send
+	// a snapshot; fall back to the role default.
 	cacheValue := deliveredFallbackUOP(claim)
-	uop, found, lookupErr := e.coreClient.BinByID(*delivered.BinID)
-	switch {
-	case lookupErr != nil:
-		log.Printf("delivered: bin %d uop lookup failed (Core unreachable): %v — using %s fallback %d",
-			*delivered.BinID, lookupErr, claim.Role, cacheValue)
-	case found:
-		cacheValue = uop
-	default:
-		// 200 + not found — bin doesn't exist at Core. Treat as empty
-		// slot rather than role-default fallback.
-		log.Printf("delivered: bin %d not found at Core — using 0 (empty slot)", *delivered.BinID)
-		cacheValue = 0
+	if delivered.BinUOP != nil {
+		cacheValue = *delivered.BinUOP
+	} else {
+		log.Printf("delivered: bin %d — no uop snapshot on envelope (older Core?), using %s fallback %d",
+			*delivered.BinID, claim.Role, cacheValue)
 	}
 	claimID := claim.ID
 	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.OnDelivered(node.ID, &claimID, *delivered.BinID, cacheValue); err != nil {
+		if err := e.inventoryDelta.OnDelivered(node.ID, &claimID, *delivered.BinID, delivered.BinEpoch, cacheValue); err != nil {
 			log.Printf("delivered: set runtime for node %d bin %d: %v", node.ID, *delivered.BinID, err)
 		}
 	}

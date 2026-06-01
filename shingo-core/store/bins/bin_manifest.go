@@ -3,6 +3,7 @@ package bins
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	"shingocore/domain"
@@ -25,16 +26,36 @@ func SetManifest(db *sql.DB, binID int64, manifestJSON string, payloadCode strin
 	return err
 }
 
-// ConfirmManifest marks a bin's manifest as confirmed by an operator.
-// producedAt is the Edge-side timestamp (RFC3339) of when the operator finalized the bin.
-// If empty, falls back to the current server time.
-func ConfirmManifest(db *sql.DB, binID int64, producedAt string) error {
-	ts := producedAt
-	if ts == "" {
-		ts = time.Now().UTC().Format("2006-01-02 15:04:05")
+// resolveLoadedAt converts Edge's producedAt into the instant to store in
+// loaded_at. producedAt is RFC3339 per the wire contract (Edge builds it as
+// now.UTC().Format(time.RFC3339) in produce_plan.go). Empty is the normal
+// "no explicit timestamp" case and falls back to now. A non-empty but
+// unparseable value breaks the contract; we still fall back to now but
+// return an error so the caller surfaces it rather than silently poisoning
+// loaded_at. Returning a time.Time (not a string) lets the driver bind the
+// zone into TIMESTAMPTZ; a zoneless string literal would be re-localized to
+// the session TimeZone and skew FIFO ordering in FindSourceFIFO.
+func resolveLoadedAt(producedAt string, now time.Time) (time.Time, error) {
+	if producedAt == "" {
+		return now, nil
 	}
-	_, err := db.Exec(`UPDATE bins SET manifest_confirmed=true, loaded_at=$1, updated_at=NOW() WHERE id=$2`,
-		ts, binID)
+	t, err := time.Parse(time.RFC3339, producedAt)
+	if err != nil {
+		return now, fmt.Errorf("unparseable producedAt %q (want RFC3339): %w", producedAt, err)
+	}
+	return t.UTC(), nil
+}
+
+// ConfirmManifest marks a bin's manifest as confirmed by an operator.
+// producedAt is the Edge-side timestamp (RFC3339) of when the operator
+// finalized the bin; empty falls back to server time.
+func ConfirmManifest(db *sql.DB, binID int64, producedAt string) error {
+	loadedAt, err := resolveLoadedAt(producedAt, time.Now().UTC())
+	if err != nil {
+		log.Printf("bins: ConfirmManifest bin %d: %v; using server time", binID, err)
+	}
+	_, err = db.Exec(`UPDATE bins SET manifest_confirmed=true, loaded_at=$1, updated_at=NOW() WHERE id=$2`,
+		loadedAt, binID)
 	return err
 }
 

@@ -77,7 +77,7 @@ type writeActiveBinIDer interface {
 	SetProcessNodeCachedBin(processNodeID int64, cachedBinID *int64, remainingUOP int) error
 	SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error
 	SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error
-	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, remainingUOP int) error
+	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error
 	SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) error
 }
 
@@ -225,16 +225,17 @@ type fakeOnDeliveredCall struct {
 	NodeID  int64
 	ClaimID *int64
 	BinID   int64
+	Epoch   int64
 	UOP     int
 }
 
-func (s *fakeDeltaSink) OnDelivered(nodeID int64, activeClaimID *int64, binID int64, uop int) error {
+func (s *fakeDeltaSink) OnDelivered(nodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, uop int) error {
 	s.mu.Lock()
-	s.onDeliveredCalls = append(s.onDeliveredCalls, fakeOnDeliveredCall{nodeID, activeClaimID, binID, uop})
+	s.onDeliveredCalls = append(s.onDeliveredCalls, fakeOnDeliveredCall{nodeID, activeClaimID, binID, deltaEpoch, uop})
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.SetProcessNodeRuntimeForDeliveredBin(nodeID, activeClaimID, binID, uop)
+		return db.SetProcessNodeRuntimeForDeliveredBin(nodeID, activeClaimID, binID, deltaEpoch, uop)
 	}
 	return nil
 }

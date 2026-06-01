@@ -31,7 +31,7 @@ type SlotWriter interface {
 	ClearCache(nodeID int64) error
 	SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) error
 	ClearActiveAndReset(nodeID int64, activeClaimID *int64) error
-	OnDelivered(nodeID int64, activeClaimID *int64, binID int64, uop int) error
+	OnDelivered(nodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, uop int) error
 	ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, uop int) error
 }
 

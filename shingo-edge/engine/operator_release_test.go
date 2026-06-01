@@ -222,12 +222,14 @@ func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.
 	}
 	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
-	// Runtime UOP zeroes at release — the partial bin is leaving the
-	// slot. The wire-shape RemainingUOP=&runtime preserves the partial
-	// count for Core's manifest, but the slot's local cache zeros.
+	// SEND PARTIAL BACK preserves the bin's count: the partial bin is
+	// returned to the supermarket as-is, so the local cache mirrors the
+	// RemainingUOP we sync to Core (the partial 800) rather than zeroing.
+	// (Under hold-and-replay the cache tracks the physical bin; the next
+	// bin's count arrives on its OrderDelivered envelope.)
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOPCached != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 (release zeroes the slot)",
+	if runtime.RemainingUOPCached != 800 {
+		t.Errorf("RemainingUOP = %d, want 800 (send-partial preserves the partial count)",
 			runtime.RemainingUOPCached)
 	}
 
@@ -631,10 +633,13 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 			want:  want{runtimeUOP: 0},
 		},
 		{
-			name:  "send_partial_back_zeroes",
+			// SEND PARTIAL BACK preserves the partial count locally
+			// (mirrors the RemainingUOP synced to Core); the next bin's
+			// count arrives on its OrderDelivered envelope.
+			name:  "send_partial_back_preserves",
 			setup: setup{swapMode: "", role: "consume", releaseSide: "single"},
 			disp:  DispositionSendPartialBack,
-			want:  want{runtimeUOP: 0},
+			want:  want{runtimeUOP: seededUOP},
 		},
 		{
 			name:  "produce_role_preserves",

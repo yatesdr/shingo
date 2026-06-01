@@ -143,6 +143,20 @@ type OrderDelivered struct {
 	// refinement. Older Core/Edge builds tolerate either side being
 	// nil.
 	BinID *int64 `json:"bin_id,omitempty"`
+
+	// UOPRemaining and DeltaEpoch are the bin's authoritative count and
+	// load-lifecycle epoch as of delivery, snapshotted by Core right
+	// after the bin lands at the destination (handleOrderDelivered, after
+	// applyBinArrivalForOrder). Edge seeds its runtime cache and stamps
+	// outgoing BinUOPDeltas from these — so the seed and the epoch ride
+	// the same Kafka message as the delivery itself, with no separate
+	// HTTP pull. UOPRemaining is a pointer so an older Core that doesn't
+	// send it (nil) is distinguishable from a genuinely-empty bin (0);
+	// Edge falls back to its role default in the nil case. DeltaEpoch 0
+	// is the pre-migration / unknown sentinel. Both are only meaningful
+	// for single-bin orders (BinID != nil).
+	UOPRemaining *int  `json:"uop_remaining,omitempty"`
+	DeltaEpoch   int64 `json:"delta_epoch,omitempty"`
 }
 
 // BinPickedUp notifies Edge that a robot has physically picked up a

@@ -231,8 +231,8 @@ func (m *Mutator) SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) 
 // activeClaimID is a pointer so the caller can thread the existing
 // runtime.ActiveClaimID through (or set a fresh claim for the
 // to-style on changeover).
-func (m *Mutator) OnDelivered(nodeID int64, activeClaimID *int64, binID int64, uop int) error {
-	return m.rw.SetProcessNodeRuntimeForDeliveredBin(nodeID, activeClaimID, binID, uop)
+func (m *Mutator) OnDelivered(nodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, uop int) error {
+	return m.rw.SetProcessNodeRuntimeForDeliveredBin(nodeID, activeClaimID, binID, deltaEpoch, uop)
 }
 
 // AdjustBucket sets a lineside bucket to an exact quantity (not a

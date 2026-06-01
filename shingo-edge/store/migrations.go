@@ -170,6 +170,11 @@ func (db *DB) migrate() error {
 	// FetchNodeBins response path.
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN active_bin_epoch INTEGER NOT NULL DEFAULT 0")
 
+	// Hold-and-replay: pending tick counts accumulated while no bin is
+	// bound at the slot (pickup->delivery gap). Replaces the cached_bin_id
+	// gap-window. Old rows land at 0 (no pending). Idempotent ADD COLUMN.
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN pending_uop_delta INTEGER NOT NULL DEFAULT 0")
+
 	// Drop zombie nodes table (replaced by process_nodes + core node sync)
 	db.Exec("DROP TABLE IF EXISTS nodes")
 
