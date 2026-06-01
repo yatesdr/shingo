@@ -8,7 +8,39 @@ import (
 	"shingo/protocol"
 	edgeorders "shingoedge/orders"
 	"shingoedge/store/orders"
+	"shingoedge/store/processes"
 )
+
+// loadablePayloads returns the payload codes an operator may load or request at
+// this manual_swap node: every payload configured on the physical loader across
+// all styles and all cells sharing it (PayloadsForLoader's `all`). It is
+// deliberately NOT gated by which style is active — a loader responds to what is
+// called for, not to the running style:
+//
+//   - A normal loader fills system demand (UOP-threshold / default replenish)
+//     and doesn't care whether a style is active or inactive; a shared loader
+//     (e.g. SNF2 + SNF3) must accept either cell's payload.
+//   - A transitional loader is operator-driven and stages ahead for upcoming
+//     styles.
+//
+// The active-vs-all distinction is purely a board *display* concern: a
+// transitional board defaults to the active union and toggles to "show all".
+// The server gate only ensures the payload is one this loader is physically
+// configured for — so it's the same `all` union for both loader types.
+//
+// Fails open to this node's active-claim list if the union read errors or comes
+// back empty, so a DB hiccup can't strand the operator with zero loadable cards.
+func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeClaim) []string {
+	_, all, _, err := processes.PayloadsForLoader(e.db.DB, node.CoreNodeName, claim.Role)
+	if err != nil {
+		e.logFn("loader: payload union read for %s failed, using active claim: %v", node.CoreNodeName, err)
+		return claim.AllowedPayloads()
+	}
+	if len(all) == 0 {
+		return claim.AllowedPayloads()
+	}
+	return all
+}
 
 // LoadBin marks a bin at a manual_swap node as loaded with the given manifest.
 // Calls Core's HTTP API directly to set the manifest on the existing bin at
@@ -44,8 +76,10 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		}
 	}
 
-	// Validate payload code against allowed list
-	allowed := claim.AllowedPayloads()
+	// Validate payload code against the loader-wide loadable set (see
+	// loadablePayloads) — the loader fills what the system/operator calls for
+	// across every cell sharing it, not just this node's running style.
+	allowed := e.loadablePayloads(node, claim)
 	if payloadCode == "" && len(allowed) > 0 {
 		payloadCode = allowed[0]
 	}
@@ -295,11 +329,13 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
 	}
 
-	// Validate payload code against allowed list
+	// Validate payload code against the loader-wide loadable set (same rationale
+	// as LoadBin): a shared loader must accept any cell's demand, and a
+	// transitional loader must stage empties for an upcoming style.
 	if payloadCode == "" {
 		return nil, fmt.Errorf("no payload code specified")
 	}
-	if !slices.Contains(claim.AllowedPayloads(), payloadCode) {
+	if !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
 		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 

@@ -382,10 +382,9 @@ function renderPayloadBoard(entry) {
         : (!hasBin && !hasDemand);
 
     var cardGrid = el('div', { className: 'os-board-cards' });
-    var cols = allowed.length <= 3 ? allowed.length : (allowed.length <= 6 ? 3 : 4);
-    cardGrid.style.setProperty('--os-board-cols', cols);
 
     var queuePos = 1;
+    var rendered = 0;
     allowed.forEach(function(code) {
         var payloadOrders = activeOrders.filter(function(o) { return o.payload_code === code; });
         // The "every order lacks payload_code" fallback is the demand-signaling
@@ -433,6 +432,15 @@ function renderPayloadBoard(entry) {
             isActive: payloadActive,
             loadNow: loadNow,
         });
+
+        // Demand-driven board: a normal (non-transitional) loader hides idle
+        // cards so the operator sees only what the system is calling for. The
+        // 'os-board-nodemand' class is cardState's idle fall-through — no order
+        // in flight, no bin action, nothing requestable. A transitional loader
+        // keeps every card (the operator picks proactively from the full set);
+        // unloaders are left untouched here.
+        if (!entry.transitional_loader && claim.role === 'produce' && cs.cls === 'os-board-nodemand') return;
+        rendered++;
 
         card.classList.add(cs.cls);
         if (cs.loadNow) card.classList.add('os-board-load-now');
@@ -503,10 +511,18 @@ function renderPayloadBoard(entry) {
         cardGrid.appendChild(card);
     });
 
-    if (allowed.length === 0) {
+    // Column count tracks the cards actually shown (a demand-driven loader can
+    // render fewer than `allowed`), so the grid doesn't reserve empty columns.
+    var cols = rendered <= 3 ? Math.max(rendered, 1) : (rendered <= 6 ? 3 : 4);
+    cardGrid.style.setProperty('--os-board-cols', cols);
+
+    if (rendered === 0) {
         cardGrid.appendChild(el('div', {
             style: 'color:#666;font-style:italic;padding:24px;text-align:center;grid-column:1/-1',
-            textContent: 'No payloads configured'
+            // allowed empty → nothing configured; allowed non-empty but nothing
+            // rendered → a normal loader with no active demand (all idle cards
+            // filtered). Distinct copy so the operator knows which it is.
+            textContent: allowed.length === 0 ? 'No payloads configured' : 'No active demand'
         }));
     }
 

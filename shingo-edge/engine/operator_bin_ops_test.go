@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
+	"shingoedge/store/processes"
 )
 
 // TestConfirmUnloaderU1OnClear_HappyPath verifies the helper finds the
@@ -161,5 +164,80 @@ func TestClearBin_FiresU2ViaU1Confirm(t *testing.T) {
 	}
 	if !u2Found {
 		t.Errorf("expected U2 move from unloader to STORAGE-NODE after ClearBin; got %+v", all)
+	}
+}
+
+// TestLoadablePayloads_NotGatedByActiveStyle pins that the server gate is the
+// loader-wide union of every configured payload — active OR inactive style — and
+// is identical for normal and transitional loaders. The active-vs-all split is a
+// board display concern, not a load-validation one: a loader responds to what is
+// called for, not to the running style. This is what fixed the plant error
+// (payload "…" not in allowed list for node) — loading a payload that belongs to
+// a style other than the one currently running is no longer rejected.
+func TestLoadablePayloads_NotGatedByActiveStyle(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+
+	// Active style claims PART-A; a second (inactive) style on the same loader
+	// claims PART-B. Loader-wide union = {PART-A, PART-B}.
+	procID, nodeID, _ := seedActiveManualSwapLoader(t, db, "SNF2", "LOADER", "PART-A")
+	inactive, err := db.CreateStyle("INACTIVE", "", procID)
+	if err != nil {
+		t.Fatalf("create inactive style: %v", err)
+	}
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: inactive, CoreNodeName: "LOADER",
+		Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeManualSwap,
+		PayloadCode: "PART-B", AllowedPayloadCodes: []string{"PART-B"},
+		InboundSource: "EMPTY-SUPER", OutboundDestination: "FG-MARKET", UOPCapacity: 100,
+	}); err != nil {
+		t.Fatalf("upsert inactive claim: %v", err)
+	}
+
+	node, _, claim, err := loadActiveNode(db, nodeID)
+	if err != nil {
+		t.Fatalf("loadActiveNode: %v", err)
+	}
+
+	// Normal loader: PART-B (an inactive style's payload) is loadable too — the
+	// gate is the full configured set, not the active style.
+	if got := eng.loadablePayloads(node, claim); !slices.Equal(got, []string{"PART-A", "PART-B"}) {
+		t.Errorf("normal loader: loadablePayloads = %v, want [PART-A PART-B] (not gated by active style)", got)
+	}
+
+	// Transitional flag does not change the server gate — same union.
+	if err := db.SetTransitionalLoader("LOADER", true, "test"); err != nil {
+		t.Fatalf("set transitional: %v", err)
+	}
+	if got := eng.loadablePayloads(node, claim); !slices.Equal(got, []string{"PART-A", "PART-B"}) {
+		t.Errorf("transitional loader: loadablePayloads = %v, want [PART-A PART-B] (same loader-wide union)", got)
+	}
+}
+
+// TestLoadablePayloads_NormalLoaderAcceptsSharedActiveDemand pins that even a
+// NORMAL (non-transitional) loader is not gated to one node's active style: a
+// loader physically shared by two cells (SNF2 → PART-A, SNF3 → PART-B) must
+// accept either cell's active payload, because the system can demand either at
+// any time. Pre-fix, loading at the SNF2 node rejected PART-B ("not in allowed
+// list") even though SNF3's active style legitimately calls for it.
+func TestLoadablePayloads_NormalLoaderAcceptsSharedActiveDemand(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+
+	// Two active processes share LOADER with disjoint active payloads.
+	_, snf2Node, _ := seedActiveManualSwapLoader(t, db, "SNF2", "LOADER", "PART-A")
+	seedActiveManualSwapLoader(t, db, "SNF3", "LOADER", "PART-B")
+
+	node, _, claim, err := loadActiveNode(db, snf2Node)
+	if err != nil {
+		t.Fatalf("loadActiveNode: %v", err)
+	}
+
+	// At SNF2's node, both active payloads are loadable — the loader-wide active
+	// union, not just SNF2's own claim (PART-A).
+	if got := eng.loadablePayloads(node, claim); !slices.Equal(got, []string{"PART-A", "PART-B"}) {
+		t.Errorf("normal shared loader: loadablePayloads = %v, want [PART-A PART-B] (active union across cells)", got)
 	}
 }
