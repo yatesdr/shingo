@@ -57,6 +57,13 @@ type StationNodeView struct {
 	// TransitionalLoader is true when this loader's core node is in the
 	// transitional_loaders set — operator-driven, board defaults to preload.
 	TransitionalLoader bool `json:"transitional_loader,omitempty"`
+	// ActivePayloadLineside maps an active-style payload code to the current
+	// lineside UOP for it — the bin at the consuming node plus parts pulled to
+	// the line (active buckets), summed across ALL active consume nodes for that
+	// payload in this process. Populated only for manual_swap loader nodes; the
+	// transitional board shows it on ACTIVE cards in place of "no demand" so the
+	// operator sees how much the running styles still have lineside.
+	ActivePayloadLineside map[string]int `json:"active_payload_lineside,omitempty"`
 }
 
 // OperatorStationView is the top-level shape rendered by the operator

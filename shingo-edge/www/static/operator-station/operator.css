@@ -1004,6 +1004,10 @@ body {
 .os-board-tag-queued { background: #2a3a6a; color: #8af; }
 .os-board-tag-request { background: #2a3a4a; color: #9ac; }
 .os-board-tag-nodemand { background: #2a2f3a; color: #889; }
+/* Transitional idle-card tags: ACTIVE shows lineside UOP (blue, info), PRELOAD
+   shows a stage hint (violet) — match the coverage badge/tint hues. */
+.os-board-tag-lineside { background: #1a2540; color: #cfe0ff; }
+.os-board-tag-preload { background: #241f33; color: #d8cdf0; }
 
 .os-board-detail {
     font-size: 22px;
@@ -1075,15 +1079,14 @@ body {
 .os-board-pos-transit { background: #5a5a2a; }
 .os-board-pos-queued { background: #3a5a8a; }
 
-/* Load-now cue — an empty bin is parked at the loader and this payload
-   has outstanding demand. The forklift driver picks the bin up and loads
-   it as this payload. Green border + pulse layered on top of the base
-   state class so it stands out from queued/in-transit cards that also
-   have demand. */
+/* Load-now cue — an empty bin is parked at the loader and this payload has
+   outstanding demand: the action moment. Calm STATIC treatment (plant feedback
+   2026-06-01: the pulsing animation + bright green glow were annoying). A clean
+   solid neutral-bright ring reads as "load this now" without the alarm look and
+   without clashing with the blue/violet coverage palette. No animation. */
 .os-board-load-now {
-    border-color: var(--os-green-bright) !important;
-    box-shadow: 0 0 0 4px var(--os-green-bright), 0 0 22px 4px rgba(106, 220, 106, 0.55);
-    animation: os-pulse 1.4s ease-in-out infinite;
+    border-color: #cfd8e6 !important;
+    box-shadow: 0 0 0 3px rgba(207, 216, 230, 0.45);
 }
 
 /* Demand count — outstanding L1 orders queued for this payload. Sized

@@ -475,6 +475,31 @@ function renderPayloadBoard(entry) {
             loadNow: loadNow,
         });
 
+        // Coverage class (ACTIVE = a running style needs this payload now;
+        // PRELOAD = covered only by an inactive style). Drives both the badge
+        // and the transitional idle-card override below.
+        var isActiveStylePayload = entry.transitional_loader &&
+            (entry.active_style_payloads || []).indexOf(code) !== -1;
+
+        // Transitional board: the loader is operator-driven, so "NO DEMAND" /
+        // "No kanban signal" is meaningless noise. On an otherwise-idle card
+        // (nodemand fall-through), show the coverage hue's meaning instead —
+        // ACTIVE cards show the current lineside UOP for the payload (summed
+        // across the active consuming nodes); PRELOAD cards show a stage hint.
+        if (entry.transitional_loader && cs.cls === 'os-board-nodemand') {
+            if (isActiveStylePayload) {
+                var lsMap = entry.active_payload_lineside || {};
+                var lsUOP = lsMap[code] != null ? lsMap[code] : 0;
+                cs.statusText = lsUOP + ' UOP';
+                cs.statusClass = 'os-board-tag-lineside';
+                cs.detail = 'Lineside now';
+            } else {
+                cs.statusText = 'PRELOAD';
+                cs.statusClass = 'os-board-tag-preload';
+                cs.detail = 'Available to stage';
+            }
+        }
+
         // Demand-driven board: a normal (non-transitional) loader hides idle
         // cards so the operator sees only what the system is calling for. The
         // 'os-board-nodemand' class is cardState's idle fall-through — no order
@@ -497,8 +522,8 @@ function renderPayloadBoard(entry) {
         // Inserted as the card's first child (its own line above the code) so it
         // never overlaps the big payload code.
         if (entry.transitional_loader) {
-            var isActiveStylePayload = (entry.active_style_payloads || []).indexOf(code) !== -1;
-            // Card class drives the idle-card tint below (so an idle PRELOAD/ACTIVE
+            // isActiveStylePayload computed above (drives the idle-card override).
+            // Card class drives the idle-card tint (so an idle PRELOAD/ACTIVE
             // card reads as loadable, not disabled); the span is the badge itself.
             card.classList.add(isActiveStylePayload ? 'os-board-cov-on-active' : 'os-board-cov-on-preload');
             card.appendChild(el('span', {

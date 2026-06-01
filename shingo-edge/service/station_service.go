@@ -209,7 +209,81 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 		}
 		view.Nodes = append(view.Nodes, nodeView)
 	}
+
+	// Lineside UOP per active payload, attached to manual_swap loader nodes so
+	// the transitional board can show real numbers on ACTIVE cards instead of a
+	// meaningless "no demand" (the loader is operator-driven). Computed once for
+	// the process's active style; all local Edge data.
+	if lineside := s.activePayloadLineside(process.ID, process.ActiveStyleID); len(lineside) > 0 {
+		for i := range view.Nodes {
+			nv := &view.Nodes[i]
+			if nv.ActiveClaim == nil ||
+				nv.ActiveClaim.SwapMode != protocol.SwapModeManualSwap ||
+				nv.ActiveClaim.Role != protocol.ClaimRoleProduce {
+				continue
+			}
+			m := map[string]int{}
+			for _, p := range nv.ActiveStylePayloads {
+				if v, ok := lineside[p]; ok {
+					m[p] = v
+				}
+			}
+			if len(m) > 0 {
+				nv.ActivePayloadLineside = m
+			}
+		}
+	}
+
 	return view, nil
+}
+
+// activePayloadLineside sums the current lineside UOP per payload across all
+// active-style CONSUME nodes in the process: the bin at each consuming node
+// (RemainingUOPCached) plus parts already pulled to the line (active lineside
+// buckets). "All active, summed" — every active consume claim for a payload
+// contributes, so a loader feeding multiple cells sees the combined lineside.
+// A consume claim with several allowed payloads attributes its node's total to
+// each (rare; the common case is one payload per consume node). All reads are
+// local Edge state — no Core round-trip.
+func (s *StationService) activePayloadLineside(processID int64, activeStyleID *int64) map[string]int {
+	if activeStyleID == nil {
+		return nil
+	}
+	claims, err := s.db.ListStyleNodeClaims(*activeStyleID)
+	if err != nil {
+		return nil
+	}
+	procNodes, err := s.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return nil
+	}
+	nodeByCore := make(map[string]int64, len(procNodes))
+	for _, n := range procNodes {
+		nodeByCore[n.CoreNodeName] = n.ID
+	}
+	out := map[string]int{}
+	for _, c := range claims {
+		if c.Role != protocol.ClaimRoleConsume {
+			continue
+		}
+		nodeID, ok := nodeByCore[c.CoreNodeName]
+		if !ok {
+			continue
+		}
+		total := 0
+		if rt, err := s.db.GetProcessNodeRuntime(nodeID); err == nil && rt != nil {
+			total += rt.RemainingUOPCached
+		}
+		if buckets, err := s.db.ListActiveLinesideBuckets(nodeID); err == nil {
+			for _, b := range buckets {
+				total += b.Qty
+			}
+		}
+		for _, p := range c.AllowedPayloads() {
+			out[p] += total
+		}
+	}
+	return out
 }
 
 // ── Per-station CRUD ────────────────────────────────────────────────
