@@ -893,18 +893,20 @@ body {
     margin-bottom: 16px;
 }
 
-/* Per-card manual request button (transitional loader). Full-width across the
-   bottom of the card so it's an easy forklift-seat tap target. Violet = manual
-   operator action (NOT amber/orange, which mean stranded / changeover). When
-   the request is blocked (bin parked or one already inbound) it greys out and
-   shows the reason rather than disappearing — the anti-spam state is visible. */
+/* Manual request / jumpstart bar — one big button across the top of the loader
+   board (above the cards), sized as a forklift-seat tap target. Violet = manual
+   operator action (NOT amber/orange, which mean stranded / changeover). When the
+   request is blocked (bin parked or one already inbound) it greys out and states
+   why rather than disappearing — the anti-spam state stays visible. */
+.os-board-reqbar {
+    margin-bottom: 16px;
+}
 .os-board-request-btn {
-    margin-top: 12px;
     width: 100%;
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 700;
     letter-spacing: 1px;
-    padding: 14px 0;
+    padding: 18px 0;
     border-radius: 8px;
     border: 1px solid #c98fe6;
     background: #9b4dca;

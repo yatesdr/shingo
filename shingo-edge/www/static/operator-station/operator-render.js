@@ -305,7 +305,7 @@ function renderPayloadBoard(entry) {
     // fall back to the single-claim list when those fields aren't present.
     //
     // The PRELOAD/ACTIVE mode toggle that used to gate this (and manual request)
-    // was removed: manual request is now an explicit per-card button, so there's
+    // was removed: manual request is now a single top-of-board button, so there's
     // no hidden mode the operator has to discover to make the board actionable.
     var modeList = entry.transitional_loader ? entry.all_style_payloads : entry.active_style_payloads;
     var allowed = (modeList && modeList.length > 0)
@@ -344,22 +344,55 @@ function renderPayloadBoard(entry) {
     var nodeBinIsLoaded = entry.bin_state && entry.bin_state.occupied && !!entry.bin_state.payload_code;
     var canClearLoadedHere = claim.role === 'consume' && nodeBinIsLoaded;
 
-    // Manual request affordance.
+    // Manual request / jumpstart button — ALL bin loaders (rendered just below,
+    // above the cards). One button, not per-card: the operator is asking for a
+    // bin to be brought to the node, not picking a payload. Use cases:
+    //   - transitional loader staging an empty proactively;
+    //   - a NORMAL (automated kanban) loader whose queue was cancelled in Core
+    //     and now sits idle with no demand — this is the operator's jumpstart.
     //
-    // Anti-spam: a manual_swap loader has ONE physical bin slot, so at most one
-    // empty may be in flight to it at a time. canRequest is the single guard —
-    // requesting is allowed only when no bin is parked (!hasBin) AND nothing is
-    // already inbound (!hasDemand, which covers any non-terminal order at the
-    // node, including an empty already en route). The instant a request fires,
-    // hasDemand flips true on the next SSE refresh and every request control
-    // greys out, so repeated taps can't queue a stack of bins. The server
-    // enforces the same rule (RequestEmptyBin rejects when an empty is already
-    // in flight) as defense-in-depth against double-tap races and direct callers.
+    // Anti-spam: a manual_swap node has ONE physical bin slot, so at most one bin
+    // may be inbound at a time. canRequest is the single guard — allowed only
+    // when no bin is parked (!hasBin) AND nothing is already inbound (!hasDemand,
+    // which covers any non-terminal order at the node, including a bin en route,
+    // and on a normal loader is exactly the "queue cancelled / idle" state). The
+    // instant a request fires, hasDemand flips true on the next SSE refresh and
+    // the button greys out, so repeated taps can't stack the queue. The server
+    // enforces the same rule (RequestEmptyBin rejects when an empty is already in
+    // flight) as defense-in-depth against double-tap races and direct callers.
     var canRequest = !hasBin && !hasDemand;
-    // Transitional loaders surface this as an explicit per-card REQUEST button
-    // (rendered in the card loop); the legacy tap-the-card-to-request path stays
-    // for normal loaders only.
-    var canRequestHere = !entry.transitional_loader && canRequest;
+
+    // Payload for the request. An empty bin is payload-agnostic; the code only
+    // tells Core which carrier type to source and tags the order — LoadBin
+    // re-binds the real payload when the operator loads it. Send a sane default:
+    // the claim's tagged payload if it's in the allowed set, else the first
+    // allowed. (If a loader ever mixes carrier types across payloads this would
+    // need a picker; today they share a carrier per loader.)
+    var requestPayload = (claim.payload_code && allowed.indexOf(claim.payload_code) !== -1)
+        ? claim.payload_code
+        : (allowed.length > 0 ? allowed[0] : '');
+
+    if (requestPayload) {
+        var reqBar = el('div', { className: 'os-board-reqbar' });
+        var reqLabel = claim.role === 'produce' ? 'REQUEST EMPTY' : 'REQUEST FULL';
+        var reqReason = hasBin ? 'bin at node' : (hasDemand ? 'bin already inbound' : '');
+        var reqBtn = el('button', {
+            className: 'os-board-request-btn' + (canRequest ? '' : ' disabled'),
+            textContent: canRequest ? reqLabel : reqLabel + ' — ' + reqReason,
+        });
+        if (canRequest) {
+            reqBtn.addEventListener('click', function() {
+                var url = claim.role === 'produce'
+                    ? '/api/process-nodes/' + entry.node.id + '/request-empty'
+                    : '/api/process-nodes/' + entry.node.id + '/request-full';
+                postAction(url, { payload_code: requestPayload }, loadViewRef);
+            });
+        } else {
+            reqBtn.disabled = true;
+        }
+        reqBar.appendChild(reqBtn);
+        grid.appendChild(reqBar);
+    }
 
     var cardGrid = el('div', { className: 'os-board-cards' });
 
@@ -407,7 +440,9 @@ function renderPayloadBoard(entry) {
             hasPayloadDemand: hasPayloadDemand,
             canClearThisPayload: canClearThisPayload,
             canLoadEmpty: canLoadEmpty,
-            canRequestHere: canRequestHere,
+            // Request is now a single top-of-board button, not a per-card tap —
+            // cards never resolve a 'request' action.
+            canRequestHere: false,
             binIsEmpty: nodeBinIsEmpty,
             isActive: payloadActive,
             loadNow: loadNow,
@@ -464,8 +499,9 @@ function renderPayloadBoard(entry) {
             queuePos++;
         }
 
-        // Click action: cardState resolved load|unload|request (role-gated);
-        // the binder just dispatches it — no re-derivation from raw flags.
+        // Click action: cardState resolves load|unload (role-gated); the binder
+        // just dispatches it. Request is no longer a card action — it's the
+        // single top-of-board button.
         if (cs.action === 'load') {
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
@@ -478,42 +514,6 @@ function renderPayloadBoard(entry) {
             card.addEventListener('click', function() {
                 postAction('/api/process-nodes/' + entry.node.id + '/clear-bin', undefined, loadViewRef);
             });
-        } else if (cs.action === 'request') {
-            card.style.cursor = 'pointer';
-            card.addEventListener('click', function() {
-                var url = claim.role === 'produce'
-                    ? '/api/process-nodes/' + entry.node.id + '/request-empty'
-                    : '/api/process-nodes/' + entry.node.id + '/request-full';
-                postAction(url, { payload_code: code }, loadViewRef);
-            });
-        }
-
-        // Explicit manual-request button — TRANSITIONAL LOADERS ONLY. One button
-        // per payload card so the operator picks which payload's empty to bring,
-        // independent of the card-tap load/unload action. Enabled only when
-        // canRequest (no bin parked, nothing inbound) — the single anti-spam
-        // guard. When a request is already in flight or a bin is present the
-        // button is disabled and states why, so a re-tap can't stack the queue.
-        if (entry.transitional_loader) {
-            var reqLabel = claim.role === 'produce' ? 'REQUEST EMPTY' : 'REQUEST FULL';
-            var disabledReason = hasBin ? 'BIN AT NODE' : (hasDemand ? 'REQUESTED' : '');
-            var reqBtn = el('button', {
-                className: 'os-board-request-btn' + (canRequest ? '' : ' disabled'),
-                textContent: canRequest ? reqLabel : disabledReason,
-            });
-            if (canRequest) {
-                reqBtn.addEventListener('click', function(ev) {
-                    // Stop the tap from also firing the card's load/unload handler.
-                    ev.stopPropagation();
-                    var url = claim.role === 'produce'
-                        ? '/api/process-nodes/' + entry.node.id + '/request-empty'
-                        : '/api/process-nodes/' + entry.node.id + '/request-full';
-                    postAction(url, { payload_code: code }, loadViewRef);
-                });
-            } else {
-                reqBtn.disabled = true;
-            }
-            card.appendChild(reqBtn);
         }
 
         cardGrid.appendChild(card);
