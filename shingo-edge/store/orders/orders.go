@@ -335,6 +335,24 @@ func ListDeliveredRetrieveByDeliveryNode(db *sql.DB, deliveryNode string, retrie
 	return scanOrders(rows)
 }
 
+// ListActiveByDeliveryNode returns non-terminal orders whose delivery_node
+// matches the given (core) node name, regardless of which process_node row
+// tracks them. The manual_swap side-cycle in-flight / dedup checks use this: a
+// loader or unloader has one core node (one physical slot) but many process_node
+// rows across styles/cells, so a process-node-scoped count misses orders staged
+// against a sibling row — under-counting in-flight empties/fulls and letting the
+// slot be over-committed. See also ListDeliveredRetrieveByDeliveryNode.
+func ListActiveByDeliveryNode(db *sql.DB, deliveryNode string) ([]Order, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.delivery_node = ? AND o.status NOT IN (%s)
+		ORDER BY o.created_at`, protocol.TerminalStatusSQLList()), deliveryNode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
 // ListActiveByProcessNode returns non-terminal orders for a process
 // node.
 func ListActiveByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {

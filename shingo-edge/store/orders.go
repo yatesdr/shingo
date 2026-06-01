@@ -144,6 +144,14 @@ func (db *DB) ListDeliveredRetrieveByDeliveryNode(deliveryNode string, retrieveE
 	return orders.ListDeliveredRetrieveByDeliveryNode(db.DB, deliveryNode, retrieveEmpty)
 }
 
+// ListActiveOrdersByDeliveryNode returns non-terminal orders whose delivery_node
+// is the given core node name, across every process_node row. The manual_swap
+// side-cycle in-flight / dedup checks use it so a shared loader/unloader counts
+// orders at its physical slot regardless of which process_node staged them.
+func (db *DB) ListActiveOrdersByDeliveryNode(deliveryNode string) ([]orders.Order, error) {
+	return orders.ListActiveByDeliveryNode(db.DB, deliveryNode)
+}
+
 // ListActiveOrdersByProcessNodeOrSource returns non-terminal orders that
 // are either tracked at the given process node OR source from the given
 // source node name. The station service uses this so a manual_swap

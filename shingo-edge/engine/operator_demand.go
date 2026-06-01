@@ -357,19 +357,25 @@ func (e *Engine) FindUnloaderForPayload(payloadCode string) *manualSwapNode {
 }
 
 // countLoaderInFlightEmptyIn returns the number of non-terminal
-// retrieve_empty orders the loader at nodeID has for the payload.
+// retrieve_empty orders inbound to the loader's CORE NODE for the payload.
 // MaybeCreateLoaderEmptyIn uses this against ReorderPoint to top up the
 // in-flight queue to (ReorderPoint - currentCount) instead of capping at
 // one — operators get the full demand visible at once rather than one
 // queue per demand signal.
 //
+// Keyed by core node (delivery_node), not process_node: a loader shared across
+// styles/cells has many process_node rows for one physical slot, so a
+// process-node count would miss empties staged against a sibling row and
+// over-fire L1. See [[shingo_manual_swap_core_node_scoping]] / the orders-store
+// docstring.
+//
 // Returns an error (not an in-band sentinel) on a DB read failure so
 // tryCreateL1 can fail closed — fire nothing rather than into the dark when
 // the order list is unavailable.
-func (e *Engine) countLoaderInFlightEmptyIn(nodeID int64, payloadCode string) (int, error) {
-	orderList, err := e.db.ListActiveOrdersByProcessNode(nodeID)
+func (e *Engine) countLoaderInFlightEmptyIn(coreNodeName string, payloadCode string) (int, error) {
+	orderList, err := e.db.ListActiveOrdersByDeliveryNode(coreNodeName)
 	if err != nil {
-		return 0, fmt.Errorf("list active orders for node %d: %w", nodeID, err)
+		return 0, fmt.Errorf("list active orders for node %s: %w", coreNodeName, err)
 	}
 	n := 0
 	for _, o := range orderList {
@@ -380,14 +386,16 @@ func (e *Engine) countLoaderInFlightEmptyIn(nodeID int64, payloadCode string) (i
 	return n, nil
 }
 
-// unloaderHasInFlightFullIn reports whether the unloader at nodeID already
+// unloaderHasInFlightFullIn reports whether the unloader's CORE NODE already
 // has a non-terminal retrieve order (full-bin retrieve) for the payload.
-// Symmetric to loaderHasInFlightEmptyIn — dedupes a flurry of line evac
-// events from queuing a stack of full-in mirror orders at the unloader.
-func (e *Engine) unloaderHasInFlightFullIn(nodeID int64, payloadCode string) bool {
-	orderList, err := e.db.ListActiveOrdersByProcessNode(nodeID)
+// Symmetric to the loader empty-in count — dedupes a flurry of line evac events
+// from queuing a stack of full-in mirror orders at the unloader. Keyed by core
+// node (delivery_node) so a shared unloader's process_node rows don't each
+// under-count; see [[shingo_manual_swap_core_node_scoping]].
+func (e *Engine) unloaderHasInFlightFullIn(coreNodeName string, payloadCode string) bool {
+	orderList, err := e.db.ListActiveOrdersByDeliveryNode(coreNodeName)
 	if err != nil {
-		e.logFn("side-cycle: list active orders for node %d: %v", nodeID, err)
+		e.logFn("side-cycle: list active orders for node %s: %v", coreNodeName, err)
 		return true
 	}
 	for _, o := range orderList {
@@ -808,7 +816,7 @@ func (e *Engine) tryCreateL1(loader *manualSwapNode, payload string, source L1So
 			source.logTag(), coreNode, payload)
 		return 0, nil
 	}
-	inFlight, err := e.countLoaderInFlightEmptyIn(loader.node.ID, payload)
+	inFlight, err := e.countLoaderInFlightEmptyIn(loader.node.CoreNodeName, payload)
 	if err != nil {
 		// Fail closed — do not fire into the dark; the next signal retries.
 		e.logFn("%s: loader=%s payload=%s in-flight count lookup failed — skipping: %v",
@@ -868,7 +876,7 @@ func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 // already hold the resolved node from their own walk — don't re-resolve it
 // per payload via FindUnloaderForPayload (a full claim-tree walk).
 func (e *Engine) createUnloaderFullIn(unloader manualSwapNode, payloadCode string) {
-	if e.unloaderHasInFlightFullIn(unloader.node.ID, payloadCode) {
+	if e.unloaderHasInFlightFullIn(unloader.node.CoreNodeName, payloadCode) {
 		e.logFn("side-cycle: unloader %s already has in-flight full-in for %s, skipping",
 			unloader.node.Name, payloadCode)
 		return
@@ -977,14 +985,16 @@ func (e *Engine) SweepPushUnloaders() {
 	}
 }
 
-// loaderInFlightEmptyCount counts non-terminal retrieve_empty orders at the
-// loader regardless of payload tag. MaybePushLoader uses it to keep exactly
-// one empty staged; countLoaderInFlightEmptyIn is the per-payload variant the
-// threshold/legacy paths use.
-func (e *Engine) loaderInFlightEmptyCount(nodeID int64) (int, error) {
-	orderList, err := e.db.ListActiveOrdersByProcessNode(nodeID)
+// loaderInFlightEmptyCount counts non-terminal retrieve_empty orders inbound to
+// the loader's CORE NODE regardless of payload tag. MaybePushLoader uses it to
+// keep exactly one empty staged; countLoaderInFlightEmptyIn is the per-payload
+// variant the threshold/legacy paths use. Keyed by core node (delivery_node) so
+// a shared loader's sibling process_node rows don't each under-count and stage
+// duplicate empties into one slot; see [[shingo_manual_swap_core_node_scoping]].
+func (e *Engine) loaderInFlightEmptyCount(coreNodeName string) (int, error) {
+	orderList, err := e.db.ListActiveOrdersByDeliveryNode(coreNodeName)
 	if err != nil {
-		return 0, fmt.Errorf("list active orders for node %d: %w", nodeID, err)
+		return 0, fmt.Errorf("list active orders for node %s: %w", coreNodeName, err)
 	}
 	n := 0
 	for _, o := range orderList {
@@ -1042,7 +1052,7 @@ func (e *Engine) maybeStageLoaderEmpty(loader manualSwapNode) {
 	if len(loader.claim.AllowedPayloads()) == 0 {
 		return // misconfigured loader — nothing to stage against
 	}
-	inFlight, err := e.loaderInFlightEmptyCount(loader.node.ID)
+	inFlight, err := e.loaderInFlightEmptyCount(loader.node.CoreNodeName)
 	if err != nil {
 		e.logFn("loader-push: in-flight lookup at %s failed — skipping: %v", loader.node.CoreNodeName, err)
 		return
