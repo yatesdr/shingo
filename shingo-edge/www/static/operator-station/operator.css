@@ -1009,6 +1009,14 @@ body {
 .os-board-tag-lineside { background: #1a2540; color: #cfe0ff; }
 .os-board-tag-preload { background: #241f33; color: #d8cdf0; }
 
+/* Lineside UOP line on transitional ACTIVE cards — the replenishment cue. */
+.os-board-lineside {
+    font-size: 20px;
+    font-weight: 600;
+    color: #9fb6d8;
+    margin-top: 2px;
+}
+
 .os-board-detail {
     font-size: 22px;
     color: #999;

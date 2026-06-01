@@ -248,6 +248,12 @@ function cardState(ctx) {
     if (ctx.payloadDelivered)         { cls = 'os-board-delivered';   statusText = 'DELIVERED';  statusClass = 'os-board-tag-delivered'; }
     else if (ctx.canClearThisPayload) { cls = 'os-board-delivered';   statusText = 'UNLOAD';     statusClass = 'os-board-tag-delivered'; }
     else if (ctx.payloadInTransit)    { cls = 'os-board-transit';     statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit'; }
+    // An empty physically parked at the node is a LOAD action, not a QUEUED one.
+    // QUEUED means "waiting for a robot to bring an empty" (no bin here yet).
+    // Without this, an agnostic (blank-payload) empty parked at the node trips
+    // the all-cards-loadable fallback and every card reads QUEUED — misleading,
+    // since there's one bin loadable as any payload (plant 2026-06-01).
+    else if (ctx.loadNow)             { cls = 'os-board-queued';      statusText = 'LOAD';       statusClass = 'os-board-tag-queued'; }
     else if (ctx.hasPayloadDemand)    { cls = 'os-board-queued';      statusText = 'QUEUED';     statusClass = 'os-board-tag-queued'; }
     else if (ctx.canLoadEmpty)        { cls = 'os-board-queued';      statusText = 'LOAD';       statusClass = 'os-board-tag-queued'; }
     else if (ctx.canRequestHere)      { cls = 'os-board-requestable'; statusText = 'REQUEST';    statusClass = 'os-board-tag-request'; }
@@ -488,11 +494,9 @@ function renderPayloadBoard(entry) {
         // across the active consuming nodes); PRELOAD cards show a stage hint.
         if (entry.transitional_loader && cs.cls === 'os-board-nodemand') {
             if (isActiveStylePayload) {
-                var lsMap = entry.active_payload_lineside || {};
-                var lsUOP = lsMap[code] != null ? lsMap[code] : 0;
-                cs.statusText = lsUOP + ' UOP';
+                cs.statusText = 'ACTIVE';
                 cs.statusClass = 'os-board-tag-lineside';
-                cs.detail = 'Lineside now';
+                cs.detail = ''; // lineside UOP line (below) carries the info
             } else {
                 cs.statusText = 'PRELOAD';
                 cs.statusClass = 'os-board-tag-preload';
@@ -562,7 +566,24 @@ function renderPayloadBoard(entry) {
 
         card.appendChild(el('div', { className: 'os-board-detail', textContent: cs.detail }));
 
-        if (hasPayloadDemand) {
+        // Transitional ACTIVE cards always surface the current lineside UOP for
+        // the payload (summed across the active consuming nodes), regardless of
+        // card state — so it shows even when an empty is parked (LOAD state), not
+        // only on idle cards. The operator's replenishment cue.
+        if (entry.transitional_loader && isActiveStylePayload) {
+            var lsMap = entry.active_payload_lineside || {};
+            var lsUOP = lsMap[code] != null ? lsMap[code] : 0;
+            card.appendChild(el('div', { className: 'os-board-lineside',
+                textContent: 'Lineside ' + lsUOP + ' UOP' }));
+        }
+
+        // Queue-position badge only for REAL per-payload orders. The agnostic
+        // (blank-payload) empty trips the all-cards-loadable fallback, which used
+        // to stamp every card with a meaningless position number — there's one
+        // parked bin, not a queue (plant 2026-06-01). Gating on payloadOrders
+        // (orders actually tagged to this payload) shows numbers only when a
+        // genuine per-payload queue exists, e.g. on a normal kanban loader.
+        if (payloadOrders.length > 0) {
             var badge = el('span', { className: 'os-board-pos', textContent: String(queuePos) });
             if (payloadDelivered) badge.classList.add('os-board-pos-delivered');
             else if (payloadInTransit) badge.classList.add('os-board-pos-transit');
