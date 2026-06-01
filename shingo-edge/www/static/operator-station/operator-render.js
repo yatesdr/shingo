@@ -366,8 +366,14 @@ function renderPayloadBoard(entry) {
     // tells Core which carrier type to source and tags the order — LoadBin
     // re-binds the real payload when the operator loads it. Send a sane default:
     // the claim's tagged payload if it's in the allowed set, else the first
-    // allowed. (If a loader ever mixes carrier types across payloads this would
-    // need a picker; today they share a carrier per loader.)
+    // allowed.
+    //
+    // POTENTIAL ISSUE (not a problem today): this assumes a loader uses ONE
+    // carrier type across all its payloads, so any allowed code sources the
+    // right physical empty. If a SHARED loader ever covers payloads with
+    // DIFFERENT carrier types, allowed[0] could fetch the wrong empty — at that
+    // point this single button needs either a carrier picker or an
+    // optional-payload server path that sources a generic empty by carrier.
     var requestPayload = (claim.payload_code && allowed.indexOf(claim.payload_code) !== -1)
         ? claim.payload_code
         : (allowed.length > 0 ? allowed[0] : '');
