@@ -25,12 +25,12 @@ type Ticker interface {
 // Each verb maps 1:1 to an underlying store call so the slot-lifecycle
 // intent is visible at the call site.
 type SlotWriter interface {
-	BindActiveBin(nodeID, binID int64) error
+	BindActiveBin(nodeID, binID int64, deltaEpoch int64) error
 	ClearActiveBin(nodeID int64) error
 	SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) error
 	ClearActiveAndReset(nodeID int64, activeClaimID *int64) error
 	OnDelivered(nodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, uop int) error
-	ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, uop int) error
+	ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error
 }
 
 // Capturer — operator release-click capture (atomic bin + bucket

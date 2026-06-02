@@ -129,7 +129,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		// authoritative pointer at this exact moment.
 		if loadResp != nil && loadResp.BinID > 0 {
 			if e.inventoryDelta != nil {
-				if err := e.inventoryDelta.BindActiveBin(nodeID, loadResp.BinID); err != nil {
+				if err := e.inventoryDelta.BindActiveBin(nodeID, loadResp.BinID, loadResp.DeltaEpoch); err != nil {
 					log.Printf("bin_ops: bind active bin for node %d: %v", nodeID, err)
 				}
 			}
@@ -154,12 +154,14 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	// of whether any order was tracking it.
 	claimID := claim.ID
 	var activeBinID *int64
+	var deltaEpoch int64
 	if loadResp != nil && loadResp.BinID > 0 {
 		v := loadResp.BinID
 		activeBinID = &v
+		deltaEpoch = loadResp.DeltaEpoch
 	}
 	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.ManualLoad(nodeID, &claimID, activeBinID, int(uopCount)); err != nil {
+		if err := e.inventoryDelta.ManualLoad(nodeID, &claimID, activeBinID, deltaEpoch, int(uopCount)); err != nil {
 			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 		}
 	}

@@ -144,13 +144,16 @@ func (m *Mutator) MarkAttributionBoundary(nodeID int64) error {
 	return nil
 }
 
-// BindActiveBin writes the active bin pointer on a process node's
-// runtime row. Today's caller is operator_bin_ops.go:100 (L1 retrieve
-// confirm — operator confirmed the empty bin physically arrived at
-// the loader). Does NOT touch count, claim, or cached bin pointer —
-// the loader's bin arrival is the only state change at this moment.
-func (m *Mutator) BindActiveBin(nodeID, binID int64) error {
-	return m.rw.SetProcessNodeActiveBinID(nodeID, &binID)
+// BindActiveBin writes the active bin pointer and epoch on a process
+// node's runtime row. Today's caller is operator_bin_ops.go:100 (L1
+// retrieve confirm — operator confirmed the empty bin physically
+// arrived at the loader). Does NOT touch count or claim — the loader's
+// bin arrival is the only state change at this moment. deltaEpoch is
+// the bin's load-lifecycle epoch from Core's LoadBin response; it
+// seeds the active_bin_epoch so subsequent BinUOPDeltas carry the
+// right generation for Core's dedup.
+func (m *Mutator) BindActiveBin(nodeID, binID int64, deltaEpoch int64) error {
+	return m.rw.SetProcessNodeActiveBinIDAndEpoch(nodeID, &binID, deltaEpoch)
 }
 
 // ClearActiveBin clears the active bin pointer on a process node's
@@ -242,8 +245,8 @@ func (m *Mutator) AdjustBucket(nodeID int64, coreNodeName, pairKey string, style
 	return nil
 }
 
-// ManualLoad atomically writes claim + active_bin_id + count when
-// an operator imprints a bin via the loader fallback path. Today's
+// ManualLoad atomically writes claim + active_bin_id + epoch + count
+// when an operator imprints a bin via the loader fallback path. Today's
 // caller is operator_bin_ops.go:128 (the fallback path that takes a
 // uop count from the load form rather than from Core's response).
 //
@@ -251,6 +254,11 @@ func (m *Mutator) AdjustBucket(nodeID int64, coreNodeName, pairKey string, style
 // bin identity (multi-bin order, pre-fix Core build); in that case
 // active_bin_id is nulled to make the absence explicit rather than
 // leaving a stale pointer behind.
-func (m *Mutator) ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, uop int) error {
-	return m.rw.SetProcessNodeRuntimeWithBin(nodeID, activeClaimID, binID, uop)
+//
+// deltaEpoch is the bin's load-lifecycle epoch from Core's LoadBin
+// response (Core bumps it atomically in SetForProduction). It seeds
+// active_bin_epoch so subsequent BinUOPDeltas carry the right
+// generation for Core's epoch-aware dedup.
+func (m *Mutator) ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
+	return m.rw.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, activeClaimID, binID, deltaEpoch, uop)
 }

@@ -38,6 +38,21 @@ func (db *DB) SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64)
 	return processes.SetActiveBinID(db.DB, processNodeID, activeBinID)
 }
 
+// SetProcessNodeActiveBinIDAndEpoch writes the active bin pointer and
+// epoch together. Used by BindActiveBin (loader L1 confirm) where
+// Core's LoadBin response provides the epoch.
+func (db *DB) SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID *int64, deltaEpoch int64) error {
+	return processes.SetActiveBinIDAndEpoch(db.DB, processNodeID, activeBinID, deltaEpoch)
+}
+
+// SetProcessNodeRuntimeWithBinAndEpoch updates active_claim_id,
+// active_bin_id, active_bin_epoch, and remaining_uop_cached atomically.
+// Used by ManualLoad (operator imprint) where Core's LoadBin response
+// provides the epoch.
+func (db *DB) SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error {
+	return processes.SetRuntimeWithBinAndEpoch(db.DB, processNodeID, activeClaimID, activeBinID, deltaEpoch, remainingUOP)
+}
+
 // SetProcessNodeRuntimeForDeliveredBin writes active_claim_id,
 // active_bin_id, active_bin_epoch, and remaining_uop_cached atomically
 // when a bin physically arrives at the slot. deltaEpoch is the arrived

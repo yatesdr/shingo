@@ -30,16 +30,26 @@ import (
 // dependency through at construction so uop/ never imports the store.
 type runtimeWriter interface {
 	// SetProcessNodeActiveBinID writes only the active bin pointer on
-	// a runtime row. Used by BindActiveBin (L1 retrieve confirm) and
-	// ClearActiveBin (pickup clear). Pass nil to clear the pointer.
+	// a runtime row. Used by ClearActiveBin (pickup clear). Pass nil
+	// to clear the pointer.
 	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
+
+	// SetProcessNodeActiveBinIDAndEpoch writes active_bin_id and
+	// active_bin_epoch together. Used by BindActiveBin when the epoch
+	// is known (loader L1 confirm with Core's LoadBin response).
+	SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID *int64, deltaEpoch int64) error
 
 	// SetProcessNodeRuntimeWithBin writes active_claim_id, active_bin_id,
 	// and remaining_uop_cached atomically. Used by ClearActiveAndReset
 	// (Order B completion at supermarket — claim preserved, active_bin
-	// nulled, count zeroed) and ManualLoad (operator imprint — atomic
-	// claim + bin + count write).
+	// nulled, count zeroed).
 	SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error
+
+	// SetProcessNodeRuntimeWithBinAndEpoch writes active_claim_id,
+	// active_bin_id, active_bin_epoch, and remaining_uop_cached
+	// atomically. Used by ManualLoad when the epoch is known (operator
+	// imprint via Core's LoadBin response).
+	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
 
 	// SetProcessNodeRuntime writes active_claim_id + remaining_uop_cached
 	// without touching either bin pointer. Used by SetClaimAndCount —

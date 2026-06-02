@@ -72,7 +72,9 @@ type fakeDeltaSink struct {
 // satisfies it.
 type writeActiveBinIDer interface {
 	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
+	SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID *int64, deltaEpoch int64) error
 	SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error
+	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
 	SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error
 	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error
 	SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) error
@@ -133,15 +135,16 @@ func (s *fakeDeltaSink) MarkAttributionBoundary(nodeID int64) error {
 type fakeBindCall struct {
 	NodeID int64
 	BinID  int64
+	Epoch  int64
 }
 
-func (s *fakeDeltaSink) BindActiveBin(nodeID, binID int64) error {
+func (s *fakeDeltaSink) BindActiveBin(nodeID, binID int64, deltaEpoch int64) error {
 	s.mu.Lock()
-	s.bindCalls = append(s.bindCalls, fakeBindCall{nodeID, binID})
+	s.bindCalls = append(s.bindCalls, fakeBindCall{nodeID, binID, deltaEpoch})
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.SetProcessNodeActiveBinID(nodeID, &binID)
+		return db.SetProcessNodeActiveBinIDAndEpoch(nodeID, &binID, deltaEpoch)
 	}
 	return nil
 }
@@ -213,16 +216,17 @@ type fakeManualLoadCall struct {
 	NodeID  int64
 	ClaimID *int64
 	BinID   *int64
+	Epoch   int64
 	UOP     int
 }
 
-func (s *fakeDeltaSink) ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, uop int) error {
+func (s *fakeDeltaSink) ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
 	s.mu.Lock()
-	s.manualLoadCalls = append(s.manualLoadCalls, fakeManualLoadCall{nodeID, activeClaimID, binID, uop})
+	s.manualLoadCalls = append(s.manualLoadCalls, fakeManualLoadCall{nodeID, activeClaimID, binID, deltaEpoch, uop})
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.SetProcessNodeRuntimeWithBin(nodeID, activeClaimID, binID, uop)
+		return db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, activeClaimID, binID, deltaEpoch, uop)
 	}
 	return nil
 }

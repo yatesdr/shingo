@@ -374,6 +374,19 @@ func SetRuntimeWithBin(db *sql.DB, processNodeID int64, activeClaimID, activeBin
 	return err
 }
 
+// SetRuntimeWithBinAndEpoch updates active_claim_id, active_bin_id,
+// active_bin_epoch, and remaining_uop_cached atomically. Same as
+// SetRuntimeWithBin but also writes the epoch — used by ManualLoad
+// (operator imprint) where the epoch comes from Core's LoadBin response
+// rather than the OrderDelivered envelope.
+func SetRuntimeWithBinAndEpoch(db *sql.DB, processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOPCached int) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		active_claim_id=?, active_bin_id=?, active_bin_epoch=?, remaining_uop_cached=?, updated_at=datetime('now')
+		WHERE process_node_id=?`,
+		activeClaimID, activeBinID, deltaEpoch, remainingUOPCached, processNodeID)
+	return err
+}
+
 // SetRuntimeForDeliveredBin is the atomic write used when a bin
 // physically arrives at the slot: active_claim_id and active_bin_id
 // become the delivered bin's id, active_bin_epoch becomes the bin's
@@ -400,6 +413,19 @@ func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 		active_bin_id=?, updated_at=datetime('now')
 		WHERE process_node_id=?`,
 		activeBinID, processNodeID)
+	return err
+}
+
+// SetActiveBinIDAndEpoch writes active_bin_id and active_bin_epoch
+// together without touching claim or count. Used by BindActiveBin
+// (L1 retrieve confirm at a loader) where Core's LoadBin response
+// provides the epoch but the count was already set by the delivery
+// handler.
+func SetActiveBinIDAndEpoch(db *sql.DB, processNodeID int64, activeBinID *int64, deltaEpoch int64) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		active_bin_id=?, active_bin_epoch=?, updated_at=datetime('now')
+		WHERE process_node_id=?`,
+		activeBinID, deltaEpoch, processNodeID)
 	return err
 }
 
