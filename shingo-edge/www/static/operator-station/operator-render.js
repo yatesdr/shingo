@@ -246,13 +246,22 @@ function cardState(ctx) {
     var role = ctx.role;
     var cls, statusText, statusClass;
     if (ctx.payloadDelivered)         { cls = 'os-board-delivered';   statusText = 'DELIVERED';  statusClass = 'os-board-tag-delivered'; }
-    else if (ctx.canClearThisPayload) { cls = 'os-board-delivered';   statusText = 'UNLOAD';     statusClass = 'os-board-tag-delivered'; }
+    else if (ctx.canClearThisPayload) { cls = 'os-board-delivered';   statusText = 'SWAP';       statusClass = 'os-board-tag-delivered'; }
+    // Empty bin parked at an UNLOADER (consume). The previous full has been
+    // pulled/consumed; the operator confirms the swap (clear-bin), which sends
+    // the empty back and pulls the next full. This is NOT a LOAD — an empty at
+    // a consumer is never something to fill (that's the loader's job). Without
+    // this branch the empty trips the produce-oriented canLoadEmpty fallback
+    // below and renders a dead "LOAD" card with no action (plant 2026-06-02).
+    else if (ctx.canSwapEmpty)        { cls = 'os-board-delivered';   statusText = 'SWAP';       statusClass = 'os-board-tag-delivered'; }
     else if (ctx.payloadInTransit)    { cls = 'os-board-transit';     statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit'; }
     // An empty physically parked at the node is a LOAD action, not a QUEUED one.
     // QUEUED means "waiting for a robot to bring an empty" (no bin here yet).
     // Without this, an agnostic (blank-payload) empty parked at the node trips
     // the all-cards-loadable fallback and every card reads QUEUED — misleading,
     // since there's one bin loadable as any payload (plant 2026-06-01).
+    // canLoadEmpty is produce-only in practice: a consume empty parked is caught
+    // by canSwapEmpty above, which precedes this branch.
     else if (ctx.loadNow)             { cls = 'os-board-queued';      statusText = 'LOAD';       statusClass = 'os-board-tag-queued'; }
     else if (ctx.hasPayloadDemand)    { cls = 'os-board-queued';      statusText = 'QUEUED';     statusClass = 'os-board-tag-queued'; }
     else if (ctx.canLoadEmpty)        { cls = 'os-board-queued';      statusText = 'LOAD';       statusClass = 'os-board-tag-queued'; }
@@ -261,7 +270,8 @@ function cardState(ctx) {
 
     var detail;
     if (ctx.payloadDelivered) detail = 'Tap to ' + (role === 'produce' ? 'load' : 'unload');
-    else if (ctx.canClearThisPayload) detail = 'Loaded bin parked — tap to unload';
+    else if (ctx.canClearThisPayload) detail = 'Loaded bin parked — tap to swap';
+    else if (ctx.canSwapEmpty) detail = 'Empty bin parked — tap to swap';
     else if (ctx.binIsEmpty && (ctx.payloadInTransit || ctx.hasPayloadDemand)) detail = 'Empty bin at node — tap to load';
     else if (ctx.payloadInTransit) detail = 'Robot en route';
     else if (ctx.hasPayloadDemand) detail = 'Waiting for robot';
@@ -270,10 +280,39 @@ function cardState(ctx) {
     else detail = 'No kanban signal';
 
     var canLoad = ((ctx.payloadDelivered && ctx.binIsEmpty) || (ctx.binIsEmpty && ctx.isActive) || ctx.canLoadEmpty) && role !== 'consume';
-    var canUnload = ctx.canClearThisPayload || (ctx.payloadDelivered && role === 'consume');
+    var canUnload = ctx.canClearThisPayload || ctx.canSwapEmpty || (ctx.payloadDelivered && role === 'consume');
     var action = canLoad ? 'load' : (canUnload ? 'unload' : (ctx.canRequestHere ? 'request' : ''));
 
     return { cls: cls, statusText: statusText, statusClass: statusClass, detail: detail, action: action, loadNow: ctx.loadNow };
+}
+
+// confirmUnloadSwap gates the unloader swap behind an explicit operator
+// confirmation. The swap (clear-bin) is irreversible mid-shift — it confirms
+// the inbound full was received, sends the empty back, and pulls the next full
+// — so the operator must declare the full pulled / bin empty before it fires.
+// Reuses the os-co-picker overlay styling already used by the changeover/cutover
+// confirmations so the look is consistent.
+function confirmUnloadSwap(nodeID) {
+    const overlay = el('div', { className: 'os-co-picker-overlay' });
+    const panel = el('div', { className: 'os-co-picker' });
+    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Full pulled, empty filled?' }));
+    panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+        textContent: 'Confirms the bin is unloaded. The empty returns to the supermarket and the next full is requested.' }));
+
+    const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'CONFIRM SWAP' });
+    confirm.addEventListener('click', function() {
+        overlay.remove();
+        postAction('/api/process-nodes/' + nodeID + '/clear-bin', undefined, loadViewRef);
+    });
+    panel.appendChild(confirm);
+
+    const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
+    cancel.addEventListener('click', () => overlay.remove());
+    panel.appendChild(cancel);
+
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
 }
 
 function renderPayloadBoard(entry) {
@@ -364,6 +403,16 @@ function renderPayloadBoard(entry) {
     // parked bin's payload_code, which is checked per-card below.
     var nodeBinIsLoaded = entry.bin_state && entry.bin_state.occupied && !!entry.bin_state.payload_code;
     var canClearLoadedHere = claim.role === 'consume' && nodeBinIsLoaded;
+
+    // Empty-bin swap (unloader): an empty carrier is parked at a consume node —
+    // the previous full was pulled/consumed (often drained to zero by PLC, so it
+    // reads EMPTY with a blank payload_code). The operator's swap-confirm fires
+    // clear-bin, which confirms the inbound U1, sends the empty back, and pulls
+    // the next full. Payload-agnostic (clear-bin takes no payload), so on a
+    // multi-payload unloader every allowed card surfaces it — harmless, the
+    // action is identical whichever the operator taps. canClearLoadedHere covers
+    // the still-loaded case; this covers the post-drain empty (plant 2026-06-02).
+    var canSwapEmptyHere = claim.role === 'consume' && nodeBinIsEmpty;
 
     // Manual request / jumpstart button — ALL bin loaders (rendered just below,
     // above the cards). One button, not per-card: the operator is asking for a
@@ -472,6 +521,7 @@ function renderPayloadBoard(entry) {
             payloadInTransit: !!payloadInTransit,
             hasPayloadDemand: hasPayloadDemand,
             canClearThisPayload: canClearThisPayload,
+            canSwapEmpty: canSwapEmptyHere,
             canLoadEmpty: canLoadEmpty,
             // Request is now a single top-of-board button, not a per-card tap —
             // cards never resolve a 'request' action.
@@ -601,11 +651,14 @@ function renderPayloadBoard(entry) {
                 openLoadBinRef(entry.node.id, [code], claim.uop_capacity || 0);
             });
         } else if (cs.action === 'unload') {
-            // Unloader: tap fires apiClearBin — server clears the manifest and
-            // confirms the active U1 retrieve_full, emitting U2. Single-step.
+            // Unloader swap: tap opens a confirm, then fires apiClearBin — server
+            // confirms the active U1 retrieve_full, clears the manifest, emits U2
+            // (empty back to supermarket), and pulls the next full. The confirm
+            // guards an irreversible swap on a live line (operator declares the
+            // full pulled / bin empty); requested by the plant 2026-06-02.
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
-                postAction('/api/process-nodes/' + entry.node.id + '/clear-bin', undefined, loadViewRef);
+                confirmUnloadSwap(entry.node.id);
             });
         }
 

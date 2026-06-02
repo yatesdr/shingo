@@ -99,9 +99,27 @@ export function openReleasePrompt(url, entry) {
     renderReleasePromptStep1();
 }
 
+// isProduceRelease reports whether the release is happening on a produce
+// (loader / press) node. The entire lineside-disposition prompt is consume
+// framing — "anything pulled to lineside?", RELEASE PARTIAL / RELEASE EMPTY,
+// "bin returning to supermarket". A produce node is pushing a FULL bin OUT, so
+// that wording is backwards and the questions are meaningless: the engine
+// short-circuits produce role to a plain release (operator_release.go ~189),
+// discarding the disposition entirely. Render a simple "release the full bin"
+// confirm instead.
+function isProduceRelease(state) {
+    const claim = state && state.entry && state.entry.active_claim;
+    return !!(claim && claim.role === 'produce');
+}
+
 function renderReleasePromptStep1() {
     const state = releasePromptState;
     if (!state) return;
+
+    if (isProduceRelease(state)) {
+        renderReleasePromptProduce();
+        return;
+    }
 
     let html = '';
     html += '<div class="modal-header">';
@@ -170,6 +188,38 @@ function renderReleasePromptStep1() {
             ' title="Bin is physically empty, but the system still shows UOP remaining. Records the gap as missing inventory.">' +
             'BIN EMPTY (UNDER COUNT)</button>';
     }
+    html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
+    html += '</div>';
+
+    nodeModalContent.innerHTML = html;
+    nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
+        btn.addEventListener('click', handleReleasePromptAction);
+    });
+    nodeModal.classList.add('active');
+}
+
+// renderReleasePromptProduce is the produce-node release: a single confirm to
+// push the finished FULL bin out. No lineside chips, no partial/empty/underpack
+// (all consume-only). release-submit carries a capture_lineside disposition with
+// nothing pulled — the engine ignores the disposition for produce role but uses
+// capture_lineside as the trigger to fire the downstream unloader's full-in
+// side-cycle (operator_release.go ~179), which the old send_partial_back path
+// (chosen whenever remaining_uop>0) silently suppressed.
+function renderReleasePromptProduce() {
+    let html = '';
+    html += '<div class="modal-header">';
+    html += '<div class="modal-node-name">Release</div>';
+    html += '<div class="modal-payload">Send the full bin out?</div>';
+    html += '</div>';
+
+    html += '<div class="os-release-prompt">';
+    html += '<div class="os-release-primary-label" style="padding:12px 0">';
+    html += 'The finished bin is released to its outbound destination and the next empty is brought in.';
+    html += '</div>';
+    html += '</div>';
+
+    html += '<div class="modal-actions">';
+    html += '<button type="button" class="os-action-btn request" data-action="release-submit-produce">RELEASE FULL</button>';
     html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
     html += '</div>';
 
@@ -342,6 +392,26 @@ async function handleReleasePromptAction(evt) {
     //                              shape as RELEASE EMPTY (manifest clear);
     //                              distinct audit op so forensics can trend
     //                              missing-inventory patterns separately.
+    // Produce release: confirm-only. capture_lineside with no buckets — engine
+    // discards the disposition for produce role but uses capture_lineside to
+    // fire the downstream unloader full-in side-cycle.
+    if (action === 'release-submit-produce') {
+        const view = getView();
+        const stationName = (view && view.station && view.station.name) ? String(view.station.name).trim() : '';
+        const calledBy = stationName || 'operator';
+        const body = {
+            disposition: 'capture_lineside',
+            qty_by_part: {},
+            qty_by_part_suggested: {},
+            called_by: calledBy,
+        };
+        closeReleasePrompt();
+        evt.currentTarget.disabled = true;
+        const ok = await postAction(state.url, body, loadViewRef);
+        if (ok && closeModalRef) closeModalRef();
+        return;
+    }
+
     if (action === 'release-submit' || action === 'release-submit-parts' || action === 'release-submit-underpack') {
         const url = state.url;
         const view = getView();
