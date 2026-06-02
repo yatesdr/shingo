@@ -24,20 +24,20 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 	for i, step := range steps {
 		switch step.Action {
 		case "pickup", "dropoff":
-			nodeName, err := d.resolveStepNode(step, payloadCode)
+			nodeName, group, err := d.resolveStepNode(step, payloadCode)
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
-			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName})
+			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName, Group: group})
 		case "wait":
 			// Wait may optionally include a node (drive-to-and-hold).
 			// If present, resolve it; otherwise it's a bare wait (split point only).
 			if step.Node != "" {
-				nodeName, err := d.resolveStepNode(step, payloadCode)
+				nodeName, group, err := d.resolveStepNode(step, payloadCode)
 				if err != nil {
 					return nil, fmt.Errorf("step %d: %w", i, err)
 				}
-				resolved = append(resolved, resolvedStep{Action: "wait", Node: nodeName})
+				resolved = append(resolved, resolvedStep{Action: "wait", Node: nodeName, Group: group})
 			} else {
 				resolved = append(resolved, resolvedStep{Action: "wait"})
 			}
@@ -86,14 +86,14 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 		}
 		// Step still references an NGRP; re-attempt resolution.
 		ps := protocol.ComplexOrderStep{Action: step.Action, Node: step.Node}
-		newName, resolveErr := d.resolveStepNode(ps, payloadCode)
+		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode)
 		if resolveErr != nil {
 			return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
 		}
 		if newName != step.Node {
 			changed = true
 		}
-		newSteps = append(newSteps, resolvedStep{Action: step.Action, Node: newName})
+		newSteps = append(newSteps, resolvedStep{Action: step.Action, Node: newName, Group: group})
 	}
 	return newSteps, changed, nil
 }
@@ -116,11 +116,11 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 // group (NGRP), it is automatically resolved via the group resolver. If the
 // node is concrete, it is returned directly. If no node is provided, the
 // global fallback resolves via payload code.
-func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode string) (string, error) {
+func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode string) (string, string, error) {
 	if step.Node != "" {
 		node, err := d.db.GetNodeByDotName(step.Node)
 		if err != nil {
-			return "", fmt.Errorf("node %q not found", step.Node)
+			return "", "", fmt.Errorf("node %q not found", step.Node)
 		}
 		// Auto-detect group nodes and resolve to a concrete slot.
 		// Pickup steps are always resolved as OrderTypeRetrieve — complex orders
@@ -134,11 +134,11 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			}
 			result, err := d.resolver.Resolve(node, orderType, payloadCode, nil)
 			if err != nil {
-				return "", fmt.Errorf("cannot resolve group %s: %w", step.Node, err)
+				return "", "", fmt.Errorf("cannot resolve group %s: %w", step.Node, err)
 			}
-			return result.Node.Name, nil
+			return result.Node.Name, step.Node, nil
 		}
-		return node.Name, nil
+		return node.Name, "", nil
 	}
 	// Global fallback: when Edge sends no node, resolve using the payload
 	// code — same approach simple orders use via FindSourceBinFIFO (retrieve)
@@ -150,27 +150,27 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			// (we are picking the source), so no node to exclude. Pass 0.
 			bin, err := d.db.FindSourceBinFIFO(payloadCode, 0)
 			if err != nil {
-				return "", fmt.Errorf("no source bin for payload %q: %w", payloadCode, err)
+				return "", "", fmt.Errorf("no source bin for payload %q: %w", payloadCode, err)
 			}
 			node, err := d.db.GetNode(*bin.NodeID)
 			if err != nil {
-				return "", fmt.Errorf("resolve node for source bin %d: %w", bin.ID, err)
+				return "", "", fmt.Errorf("resolve node for source bin %d: %w", bin.ID, err)
 			}
 			d.dbg("resolveStepNode: global fallback pickup → %s (bin %d)", node.Name, bin.ID)
-			return node.Name, nil
+			return node.Name, "", nil
 		case "dropoff":
 			// Global fallback with no source context — pass 0 to
 			// disable the source-exclusion. Same shape as the
 			// FindSourceBinFIFO call above.
 			node, err := d.db.FindStorageDestination(payloadCode, 0)
 			if err != nil {
-				return "", fmt.Errorf("no storage destination for payload %q: %w", payloadCode, err)
+				return "", "", fmt.Errorf("no storage destination for payload %q: %w", payloadCode, err)
 			}
 			d.dbg("resolveStepNode: global fallback dropoff → %s", node.Name)
-			return node.Name, nil
+			return node.Name, "", nil
 		}
 	}
-	return "", fmt.Errorf("step requires either node or payload_code for resolution")
+	return "", "", fmt.Errorf("step requires either node or payload_code for resolution")
 }
 
 // extractEndpoints returns the pickup (first actionable) and delivery (last actionable) nodes.

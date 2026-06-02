@@ -10,6 +10,11 @@ import (
 type resolvedStep struct {
 	Action string `json:"action"`
 	Node   string `json:"node,omitempty"`
+	// Group is the originating NGRP name when Node was resolved from a node
+	// group. Retained so a store drop-off that loses the dispatch-time slot
+	// claim can revert Node->Group and be re-resolved to a free slot on the
+	// next scanner tick. Empty for concrete (non-group) nodes.
+	Group string `json:"group,omitempty"`
 }
 
 // claimedBin records which bin was claimed at which pickup step.

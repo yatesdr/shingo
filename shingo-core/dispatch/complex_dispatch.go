@@ -293,6 +293,54 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		}
 	}
 
+	// Claim each storage drop-off slot atomically — the store dual of the bin
+	// claim, and the single sync point that stops two orders released
+	// near-simultaneously from dispatching a bin into the same slot (the
+	// Hopkinsville #115/#117 race). The CAS admits exactly one winner per slot;
+	// reserve-at-dispatch by design, so a queued order holds no slot. On a lost
+	// claim we revert the step to its NGRP origin so the next scanner tick
+	// re-resolves to a free slot (selection skips claimed slots) and requeue; a
+	// fixed concrete drop-off with no NGRP origin stays queued until the slot
+	// frees. Claimed slots are released on terminal by UnclaimOrderSlots, riding
+	// the same cleanup hooks as the bin claim. ClaimSlot is owner-idempotent, so
+	// slots already held by this order survive a requeue/replay without
+	// livelock. Only STORAGE/STAGING slots are claimed — LINE/production
+	// drop-offs must not be (a two-robot supply leg delivers to a line a sibling
+	// evac clears; gating it would deadlock), same role gate as the capacity
+	// check above.
+	for i := range resolvedSteps {
+		s := resolvedSteps[i]
+		if s.Action != "dropoff" || s.Node == "" || !d.isConcreteStorageDropoff(s.Node) {
+			continue
+		}
+		node, nerr := d.db.GetNodeByDotName(s.Node)
+		if nerr != nil || node == nil {
+			continue // claim/dispatch path below surfaces a clearer error
+		}
+		if cerr := d.db.ClaimSlot(node.ID, order.ID); cerr != nil {
+			reason := fmt.Sprintf("drop-off slot %s claimed by another order", s.Node)
+			if resolvedSteps[i].Group != "" {
+				// Revert to the NGRP so reResolveComplexSteps re-picks a free
+				// slot on the next tick; persist so the choice isn't redone blind.
+				resolvedSteps[i].Node = resolvedSteps[i].Group
+				if j, mErr := json.Marshal(resolvedSteps); mErr == nil {
+					if uErr := d.db.UpdateOrderStepsJSON(order.ID, string(j)); uErr != nil {
+						log.Printf("dispatch: update steps_json after slot-claim loss for order %d: %v", order.ID, uErr)
+					} else {
+						order.StepsJSON = string(j)
+					}
+				}
+			}
+			if order.QueueReason != reason {
+				if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+					log.Printf("dispatch: set queue_reason slot-claim for order %d: %v", order.ID, serr)
+				}
+			}
+			d.dbg("complex: order %d held — %s", order.ID, reason)
+			return fmt.Errorf("slot claim: %s", reason)
+		}
+	}
+
 	// Claim bins at pickup nodes. RemainingUOP is intentionally nil here
 	// — Edge's `CreateComplexOrder` doesn't thread it through at intake,
 	// and the operator's release-time RemainingUOP arrives via

@@ -76,11 +76,15 @@ func ScanNodes(rows *sql.Rows) ([]*Node, error) {
 // so two orders dispatched against the same empty supermarket slot cannot both
 // win: the loser gets a non-nil error and re-resolves to another slot (same
 // contract as the bin claim_failed path). The NOT EXISTS guard refuses a slot
-// that already physically holds a bin. Returns an error when the slot is
-// already claimed, occupied, or does not exist.
+// that already physically holds a bin. Returns an error when the slot is held
+// by a DIFFERENT order, occupied, or does not exist.
+//
+// Owner-idempotent: a re-claim by the SAME order succeeds (claimed_by=$1), so a
+// dispatch attempt that requeues and replays does not livelock against slots it
+// already holds.
 func ClaimSlot(db *sql.DB, nodeID, orderID int64) error {
 	res, err := db.Exec(`UPDATE nodes SET claimed_by=$1, updated_at=NOW()
-		WHERE id=$2 AND claimed_by IS NULL
+		WHERE id=$2 AND (claimed_by IS NULL OR claimed_by=$1)
 		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = $2)`, orderID, nodeID)
 	if err != nil {
 		return err
