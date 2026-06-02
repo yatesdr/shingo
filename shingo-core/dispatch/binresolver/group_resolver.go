@@ -412,6 +412,9 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 
 			candidates = append(candidates, storageCandidate{node: slot, hasMatch: hasMatch, count: count})
 		} else if !child.IsSynthetic {
+			if child.ClaimedBy != nil {
+				continue // slot already claimed by another order's dispatch
+			}
 			count, err := r.DB.CountBinsByNode(child.ID)
 			if err != nil {
 				r.dbg("LKND: CountBinsByNode node=%s: %v", child.Name, err)
@@ -503,6 +506,9 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 	for _, child := range children {
 		if !child.Enabled || child.IsSynthetic {
 			continue
+		}
+		if child.ClaimedBy != nil {
+			continue // slot already claimed by another order's dispatch
 		}
 
 		// Skip nodes with bin type restrictions that don't match

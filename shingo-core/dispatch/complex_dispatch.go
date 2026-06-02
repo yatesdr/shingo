@@ -649,7 +649,7 @@ func (d *Dispatcher) pickEmptyReshuffleTarget(groupID int64, names []string) (ta
 			return nil, false, fmt.Errorf("reshuffle target %s must be a non-synthetic, non-lane node", name)
 		}
 		cnt, _ := d.db.CountBinsByNode(node.ID)
-		if cnt == 0 {
+		if cnt == 0 && node.ClaimedBy == nil {
 			return node, false, nil
 		}
 	}

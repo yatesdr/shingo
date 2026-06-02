@@ -28,7 +28,7 @@ type Node = domain.Node
 
 // SelectCols and FromClause are exported so cross-aggregate readers
 // at the outer store/ level can compose their own WHERE clauses.
-const SelectCols = `n.id, n.name, n.is_synthetic, n.zone, n.enabled, n.depth, n.created_at, n.updated_at, n.node_type_id, n.parent_id, COALESCE(nt.code, ''), COALESCE(nt.name, ''), COALESCE(pn.name, '')`
+const SelectCols = `n.id, n.name, n.is_synthetic, n.zone, n.enabled, n.depth, n.created_at, n.updated_at, n.node_type_id, n.parent_id, COALESCE(nt.code, ''), COALESCE(nt.name, ''), COALESCE(pn.name, ''), n.claimed_by`
 const FromClause = `FROM nodes n LEFT JOIN node_types nt ON nt.id = n.node_type_id LEFT JOIN nodes pn ON pn.id = n.parent_id`
 
 // ScanNode reads a single nodes row (with joined node_type and parent name).
@@ -36,9 +36,9 @@ const FromClause = `FROM nodes n LEFT JOIN node_types nt ON nt.id = n.node_type_
 func ScanNode(row interface{ Scan(...any) error }) (*Node, error) {
 	var n Node
 	var depth sql.NullInt32
-	var nodeTypeID, parentID sql.NullInt64
+	var nodeTypeID, parentID, claimedBy sql.NullInt64
 	err := row.Scan(&n.ID, &n.Name, &n.IsSynthetic, &n.Zone, &n.Enabled, &depth, &n.CreatedAt, &n.UpdatedAt,
-		&nodeTypeID, &parentID, &n.NodeTypeCode, &n.NodeTypeName, &n.ParentName)
+		&nodeTypeID, &parentID, &n.NodeTypeCode, &n.NodeTypeName, &n.ParentName, &claimedBy)
 	if err != nil {
 		return nil, err
 	}
@@ -51,6 +51,9 @@ func ScanNode(row interface{ Scan(...any) error }) (*Node, error) {
 	}
 	if parentID.Valid {
 		n.ParentID = &parentID.Int64
+	}
+	if claimedBy.Valid {
+		n.ClaimedBy = &claimedBy.Int64
 	}
 	return &n, nil
 }

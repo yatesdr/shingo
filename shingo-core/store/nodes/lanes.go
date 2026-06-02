@@ -65,6 +65,7 @@ func FindStoreSlotInLane(db *sql.DB, laneID int64) (*Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s
 		WHERE n.parent_id = $1
 		  AND n.is_synthetic = false
+		  AND n.claimed_by IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)
 		  AND NOT EXISTS (
 			SELECT 1 FROM orders o

@@ -33,6 +33,12 @@ type Node struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 	NodeTypeID  *int64    `json:"node_type_id,omitempty"`
 	ParentID    *int64    `json:"parent_id,omitempty"`
+	// ClaimedBy is the order that has atomically claimed this node as a
+	// destination slot (the store dual of bins.claimed_by); nil when
+	// unclaimed. Slot selection skips claimed slots; the dispatch-time CAS
+	// (ClaimSlot) is the authority that prevents two orders dispatching into
+	// the same slot.
+	ClaimedBy *int64 `json:"claimed_by,omitempty"`
 	// Joined fields
 	NodeTypeCode string `json:"node_type_code,omitempty"`
 	NodeTypeName string `json:"node_type_name,omitempty"`
