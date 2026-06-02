@@ -380,5 +380,22 @@ func ReleaseOrphanedClaims(db *sql.DB) (int, error) {
 		return 0, err
 	}
 	n, _ := result.RowsAffected()
-	return int(n), nil
+
+	// Store dual: release destination-slot claims (nodes.claimed_by) held by
+	// terminal orders. Catches any slot claim that leaked past the atomic
+	// terminal transitions (FailOrderAtomic/SkipOrderAtomic/CancelOrderAtomic),
+	// same as the bin sweep above.
+	slotRes, err := db.Exec(fmt.Sprintf(`
+		UPDATE nodes
+		SET claimed_by = NULL, updated_at = NOW()
+		WHERE claimed_by IS NOT NULL
+		  AND claimed_by IN (
+		    SELECT id FROM orders
+		    WHERE status IN (%s)
+		  )`, protocol.TerminalStatusSQLList()))
+	if err != nil {
+		return int(n), err
+	}
+	sn, _ := slotRes.RowsAffected()
+	return int(n + sn), nil
 }

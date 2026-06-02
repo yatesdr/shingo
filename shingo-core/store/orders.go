@@ -202,6 +202,11 @@ func (db *DB) FailOrderAtomic(orderID int64, detail string) error {
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
 		return err
 	}
+	// Release this order's destination-slot claims too (store dual of the bin
+	// release above); ReleaseOrphanedClaims is the defense-in-depth backstop.
+	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
 		return err
 	}
@@ -234,6 +239,11 @@ func (db *DB) SkipOrderAtomic(orderID int64, detail string) error {
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
 		return err
 	}
+	// Release this order's destination-slot claims too (store dual of the bin
+	// release above); ReleaseOrphanedClaims is the defense-in-depth backstop.
+	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
 		return err
 	}
@@ -263,6 +273,11 @@ func (db *DB) CancelOrderAtomic(orderID int64, detail string) error {
 		return err
 	}
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
+		return err
+	}
+	// Release this order's destination-slot claims too (store dual of the bin
+	// release above); ReleaseOrphanedClaims is the defense-in-depth backstop.
+	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
