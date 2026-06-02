@@ -293,6 +293,17 @@ func (db *DB) runVersionedMigrations() error {
 		{24, "add pending_lane_extensions table for crash-safe lane-hold listeners",
 			v24PendingLaneExtensions,
 			func(q schema.Querier) bool { return schema.TableExists(q, "pending_lane_extensions") }},
+
+		// v25 adds nodes.claimed_by — the store dual of bins.claimed_by — so a
+		// destination slot can be atomically claimed at dispatch (Hopkinsville
+		// #115/#117: two complex orders dispatching into the same supermarket
+		// slot). MUST be a real versioned migration, not folded into the v6
+		// legacy block: every node read selects n.claimed_by, so a DB missing the
+		// column fails ALL node queries (no nodes on Core/Edge). The verify gate
+		// makes the self-heal re-run it on any DB where the column is absent.
+		{25, "add nodes.claimed_by slot claim (store dual of bins.claimed_by)",
+			v25SlotClaiming,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "nodes", "claimed_by") }},
 	}
 
 	for _, m := range migrations {
@@ -682,9 +693,6 @@ func v6LegacyConsolidation(tx *sql.Tx) error {
 	if err := migrateBinsCommandCenter(tx); err != nil {
 		return fmt.Errorf("bins command center: %w", err)
 	}
-	if err := migrateSlotClaiming(tx); err != nil {
-		return fmt.Errorf("slot claiming: %w", err)
-	}
 	return nil
 }
 
@@ -767,7 +775,7 @@ func migrateDeliveryNodeIndex(tx *sql.Tx) error {
 	return err
 }
 
-// migrateSlotClaiming adds the store dual of bins.claimed_by: a per-node
+// v25SlotClaiming adds the store dual of bins.claimed_by: a per-node
 // destination claim so two orders can't be dispatched into the same slot.
 // Before this, slot selection relied on a non-atomic check keyed on
 // orders.delivery_node, which (a) two near-simultaneous releases could both
@@ -776,12 +784,14 @@ func migrateDeliveryNodeIndex(tx *sql.Tx) error {
 // atomic CAS on the actual destination node, wherever it sits in the route.
 // Mirrors migrateBinClaiming. The partial index keeps "is this slot claimed"
 // lookups cheap without indexing the unclaimed majority.
-func migrateSlotClaiming(tx *sql.Tx) error {
+func v25SlotClaiming(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS claimed_by BIGINT REFERENCES orders(id)`); err != nil {
-		return err
+		return fmt.Errorf("add nodes.claimed_by: %w", err)
 	}
-	_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_nodes_claimed_by ON nodes(claimed_by) WHERE claimed_by IS NOT NULL`)
-	return err
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_nodes_claimed_by ON nodes(claimed_by) WHERE claimed_by IS NOT NULL`); err != nil {
+		return fmt.Errorf("create idx_nodes_claimed_by: %w", err)
+	}
+	return nil
 }
 
 func migrateBinsCommandCenter(tx *sql.Tx) error {
