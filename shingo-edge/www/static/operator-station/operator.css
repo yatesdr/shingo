@@ -923,7 +923,15 @@ body {
 
 .os-board-cards {
     display: grid;
-    grid-template-columns: repeat(var(--os-board-cols, 3), 1fr);
+    /* Cap each column so a board with only 1–2 cards (e.g. a single-payload
+       unloader) renders normal-sized tiles instead of stretching one card
+       across the whole screen. minmax(0, …) lets the tracks shrink below the
+       cap on narrow 7"/10" kiosks so the row never overflows; justify-content
+       centers the capped row on wide screens. Multi-card loaders are unchanged
+       on a wide display (tracks hit the cap and pack) and still fit narrow ones
+       (tracks shrink). (plant 2026-06-02 — lone unloader card filled screen.) */
+    grid-template-columns: repeat(var(--os-board-cols, 3), minmax(0, 480px));
+    justify-content: center;
     gap: 16px;
     flex: 1;
     /* Pack rows at the top and size them to content so a single row of cards
