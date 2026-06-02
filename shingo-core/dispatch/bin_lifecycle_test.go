@@ -148,6 +148,14 @@ func TestPartialConsumption_SyncsUOP(t *testing.T) {
 // retrieve_empty orders race for two available bins, each order claims a
 // different bin with no double-claims. This tests concurrent claim distribution
 // rather than the ghost-bin TOCTOU (which ClearAndClaim's atomic SQL prevents).
+//
+// The Find→Claim pair is intentionally non-atomic, so two goroutines can Find
+// the SAME bin before either Claims. Production tolerates that via
+// claimFirstAvailable, which retries the remaining candidates when a claim
+// loses the claimed_by guard; this test models the same retry so the outcome
+// is deterministic (the loser re-Finds — the winner's bin is now claimed and
+// skipped — and takes the other empty). Without the retry the test was flaky
+// under -race, asserting 2 claims but occasionally getting 1 on a collision.
 func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -183,20 +191,30 @@ func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0)
-			if err != nil {
-				errors[idx] = err
-				return
-			}
 			orderID := order1.ID
 			if idx == 1 {
 				orderID = order2.ID
 			}
-			if err := db.ClaimBin(found.ID, orderID); err != nil {
-				errors[idx] = err
+			// Retry on a lost claim race, mirroring production's
+			// claimFirstAvailable. Bounded so a genuine "no empties left"
+			// condition terminates rather than spinning; with two bins and
+			// two goroutines each loses at most once before claiming the other.
+			for attempt := 0; attempt < 4; attempt++ {
+				found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0)
+				if err != nil || found == nil {
+					if err != nil {
+						errors[idx] = err
+					}
+					return
+				}
+				if cerr := db.ClaimBin(found.ID, orderID); cerr != nil {
+					// Another order claimed this bin between our Find and
+					// Claim — re-Find (it's now excluded) and try the next.
+					continue
+				}
+				results[idx] = found.ID
 				return
 			}
-			results[idx] = found.ID
 		}(i)
 	}
 	wg.Wait()
