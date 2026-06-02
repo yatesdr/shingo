@@ -682,6 +682,9 @@ func v6LegacyConsolidation(tx *sql.Tx) error {
 	if err := migrateBinsCommandCenter(tx); err != nil {
 		return fmt.Errorf("bins command center: %w", err)
 	}
+	if err := migrateSlotClaiming(tx); err != nil {
+		return fmt.Errorf("slot claiming: %w", err)
+	}
 	return nil
 }
 
@@ -761,6 +764,23 @@ func migrateBinClaiming(tx *sql.Tx) error {
 
 func migrateDeliveryNodeIndex(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node)`)
+	return err
+}
+
+// migrateSlotClaiming adds the store dual of bins.claimed_by: a per-node
+// destination claim so two orders can't be dispatched into the same slot.
+// Before this, slot selection relied on a non-atomic check keyed on
+// orders.delivery_node, which (a) two near-simultaneous releases could both
+// pass and (b) never saw a multi-leg order's intermediate drop-off (its
+// delivery_node is the final leg). The node-level claim closes both: it's an
+// atomic CAS on the actual destination node, wherever it sits in the route.
+// Mirrors migrateBinClaiming. The partial index keeps "is this slot claimed"
+// lookups cheap without indexing the unclaimed majority.
+func migrateSlotClaiming(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS claimed_by BIGINT REFERENCES orders(id)`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_nodes_claimed_by ON nodes(claimed_by) WHERE claimed_by IS NOT NULL`)
 	return err
 }
 

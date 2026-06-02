@@ -26,6 +26,18 @@ func (db *DB) SetNodeParent(nodeID, parentID int64) error {
 }
 func (db *DB) ClearNodeParent(nodeID int64) error { return nodes.ClearParent(db.DB, nodeID) }
 
+// ClaimSlot atomically claims a destination slot for an order (store dual of
+// ClaimBin). Returns an error if the slot is already claimed, occupied, or
+// missing, so the dispatch path can detect a lost claim race and re-resolve.
+func (db *DB) ClaimSlot(nodeID, orderID int64) error { return nodes.ClaimSlot(db.DB, nodeID, orderID) }
+
+// UnclaimSlot releases a single slot claim.
+func (db *DB) UnclaimSlot(nodeID int64) error { return nodes.UnclaimSlot(db.DB, nodeID) }
+
+// UnclaimOrderSlots releases all slot claims held by an order. Mirrors
+// UnclaimOrderBins and is called from the same terminal cleanup hooks.
+func (db *DB) UnclaimOrderSlots(orderID int64) { nodes.UnclaimOrderSlots(db.DB, orderID) }
+
 // ReparentNode moves a node into a new parent (or removes it from a parent).
 // When adopting into a lane, it sets the depth based on position. When
 // orphaning, it clears depth and role properties.

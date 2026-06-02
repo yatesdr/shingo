@@ -68,6 +68,42 @@ func ScanNodes(rows *sql.Rows) ([]*Node, error) {
 	return nodes, rows.Err()
 }
 
+// ClaimSlot atomically claims a destination slot for an order — the store
+// dual of bins.Claim. A slot can be claimed by at most one order at a time,
+// so two orders dispatched against the same empty supermarket slot cannot both
+// win: the loser gets a non-nil error and re-resolves to another slot (same
+// contract as the bin claim_failed path). The NOT EXISTS guard refuses a slot
+// that already physically holds a bin. Returns an error when the slot is
+// already claimed, occupied, or does not exist.
+func ClaimSlot(db *sql.DB, nodeID, orderID int64) error {
+	res, err := db.Exec(`UPDATE nodes SET claimed_by=$1, updated_at=NOW()
+		WHERE id=$2 AND claimed_by IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = $2)`, orderID, nodeID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("slot %d is already claimed, occupied, or does not exist", nodeID)
+	}
+	return nil
+}
+
+// UnclaimSlot releases a single slot's claim. Mirrors bins.Unclaim.
+func UnclaimSlot(db *sql.DB, nodeID int64) error {
+	_, err := db.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, nodeID)
+	return err
+}
+
+// UnclaimOrderSlots releases all slots claimed by a specific order. Mirrors
+// bins.UnclaimByOrder — it must be called from the same terminal/cleanup hooks
+// so a terminated order never strands a slot claim (the bin-claim path had a
+// leaked-claim failure mode under partial failure, fixed by reconciliation;
+// the slot claim inherits that by riding the same hooks).
+func UnclaimOrderSlots(db *sql.DB, orderID int64) {
+	db.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID)
+}
+
 // Create inserts a new node and sets n.ID on success.
 func Create(db *sql.DB, n *Node) error {
 	// Defense-in-depth: callers should pass an already-trimmed name
