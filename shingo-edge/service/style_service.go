@@ -2,6 +2,7 @@ package service
 
 import (
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -53,6 +54,21 @@ func (s *StyleService) Update(id int64, name, description string, processID int6
 // Delete removes a style row by id.
 func (s *StyleService) Delete(id int64) error {
 	return s.db.DeleteStyle(id)
+}
+
+// Clone duplicates an existing style (same process) along with every
+// style_node_claim row. The new style starts inactive; the caller sets it
+// active separately. Operators use this to scaffold a per-payload variant of
+// a style that shares robot choreography.
+func (s *StyleService) Clone(srcID int64, name, description string) (int64, error) {
+	return s.db.CloneStyle(srcID, name, description)
+}
+
+// GenerateVariants scaffolds a family of styles from one base style, each a
+// clone of the base with its per-claim payload overrides applied, in a single
+// atomic batch. Returns the new style ids in variant order.
+func (s *StyleService) GenerateVariants(baseID int64, variants []domain.StyleVariant) ([]int64, error) {
+	return s.db.GenerateStyles(baseID, variants)
 }
 
 // ── Style/node claims ─────────────────────────────────────────────

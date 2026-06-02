@@ -91,6 +91,74 @@ func (h *Handlers) apiDeleteStyle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+// apiCloneStyle scaffolds one new style from an existing one, copying its
+// node-claim choreography verbatim. The operator edits the per-payload fields
+// on the result afterward (in the Node Claims compare grid). The clone starts
+// inactive — it never triggers a changeover.
+func (h *Handlers) apiCloneStyle(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid ID")
+		return
+	}
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	newID, err := h.engine.StyleService().Clone(id, strings.TrimSpace(req.Name), strings.TrimSpace(req.Description))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.requestBackup("style-cloned")
+	// Cloned claims must reach Core's demand_registry just like edits do.
+	h.requestClaimSync()
+	writeJSON(w, map[string]int64{"id": newID})
+}
+
+// apiGenerateStyles scaffolds a whole family of styles from one base style in
+// a single atomic batch — each variant is a clone of the base with its
+// per-claim payload overrides applied. The {id} path param is the base style.
+// Used by the "Generate variants" action to stand up a press's part-number
+// styles (which share node layout and swap choreography) in one shot.
+func (h *Handlers) apiGenerateStyles(w http.ResponseWriter, r *http.Request) {
+	baseID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid base style ID")
+		return
+	}
+	var req struct {
+		Variants []domain.StyleVariant `json:"variants"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(req.Variants) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one variant is required")
+		return
+	}
+	ids, err := h.engine.StyleService().GenerateVariants(baseID, req.Variants)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.requestBackup("styles-generated")
+	// One sync for the whole batch — requestClaimSync coalesces, and
+	// SendClaimSync emits a full snapshot, so a single request covers every
+	// new style's claims.
+	h.requestClaimSync()
+	writeJSON(w, map[string][]int64{"ids": ids})
+}
+
 // --- Style Node Claims ---
 
 func (h *Handlers) apiListStyleNodeClaims(w http.ResponseWriter, r *http.Request) {

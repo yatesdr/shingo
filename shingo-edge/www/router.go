@@ -353,6 +353,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Post("/styles", h.apiCreateStyle)
 				r.Put("/styles/{id}", h.apiUpdateStyle)
 				r.Delete("/styles/{id}", h.apiDeleteStyle)
+				r.Post("/styles/{id}/clone", h.apiCloneStyle)
+				r.Post("/styles/{id}/generate", h.apiGenerateStyles)
 				r.Get("/styles/{id}/node-claims", h.apiListStyleNodeClaims)
 				r.Post("/style-node-claims", h.apiUpsertStyleNodeClaim)
 				r.Delete("/style-node-claims/{id}", h.apiDeleteStyleNodeClaim)

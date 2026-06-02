@@ -5,7 +5,10 @@ package store
 // are part of the process domain cluster.) This file preserves the
 // *store.DB method surface so external callers do not need to change.
 
-import "shingoedge/store/processes"
+import (
+	"shingoedge/domain"
+	"shingoedge/store/processes"
+)
 
 // ListStyles returns all styles ordered by name.
 func (db *DB) ListStyles() ([]processes.Style, error) {
@@ -40,4 +43,16 @@ func (db *DB) UpdateStyle(id int64, name, description string, processID int64) e
 // DeleteStyle removes a style row by id.
 func (db *DB) DeleteStyle(id int64) error {
 	return processes.DeleteStyle(db.DB, id)
+}
+
+// CloneStyle creates a new style in src's process, copying all of src's
+// style_node_claims verbatim. Returns the new style id.
+func (db *DB) CloneStyle(srcID int64, name, description string) (int64, error) {
+	return processes.CloneStyle(db.DB, srcID, name, description)
+}
+
+// GenerateStyles scaffolds a family of styles from one base style, each a
+// clone of base with per-claim payload overrides applied, in one transaction.
+func (db *DB) GenerateStyles(baseID int64, variants []domain.StyleVariant) ([]int64, error) {
+	return processes.GenerateStyles(db.DB, baseID, variants)
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store/catalog"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -1464,3 +1465,129 @@ func TestStyleNodeClaims_Delete(t *testing.T) {
 // service/changeover_service_test.go in Phase 6.4a after the
 // (db *DB).CreateChangeover method was retired in favor of
 // ChangeoverService.Create.
+
+// ============================================================================
+// styles.go — CloneStyle / GenerateStyles
+// ============================================================================
+
+func TestCloneStyle_CopiesClaimsVerbatim(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	pid, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
+
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: baseID, CoreNodeName: "IN", Role: "consume", PayloadCode: "RAW-1", UOPCapacity: 100,
+	}); err != nil {
+		t.Fatalf("seed consume claim: %v", err)
+	}
+	// Press-index produce claim exercises the choreography fields that must
+	// survive the copy (paired node + outbound destination).
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: baseID, CoreNodeName: "OUT_L", Role: "produce", SwapMode: "two_robot_press_index",
+		PayloadCode: "FIN-1L", UOPCapacity: 40, PairedCoreNode: "OUT_L_B", OutboundDestination: "SMN",
+	}); err != nil {
+		t.Fatalf("seed produce claim: %v", err)
+	}
+
+	newID, err := db.CloneStyle(baseID, "CLONE", "cloned")
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	if newID == baseID {
+		t.Fatal("clone returned the base style id")
+	}
+	cl, _ := db.GetStyle(newID)
+	if cl == nil || cl.ProcessID != pid {
+		t.Fatalf("clone process_id mismatch: %+v want %d", cl, pid)
+	}
+
+	claims, _ := db.ListStyleNodeClaims(newID)
+	if len(claims) != 2 {
+		t.Fatalf("clone claim count = %d, want 2", len(claims))
+	}
+	for _, c := range claims {
+		if c.StyleID != newID {
+			t.Errorf("copied claim has style_id %d, want new %d", c.StyleID, newID)
+		}
+	}
+	out, err := db.GetStyleNodeClaimByNode(newID, "OUT_L")
+	if err != nil {
+		t.Fatalf("get cloned OUT_L: %v", err)
+	}
+	if out.SwapMode != "two_robot_press_index" || out.PairedCoreNode != "OUT_L_B" || out.OutboundDestination != "SMN" {
+		t.Errorf("press-index choreography not copied verbatim: %+v", out)
+	}
+	if out.PayloadCode != "FIN-1L" || out.UOPCapacity != 40 {
+		t.Errorf("payload/capacity not copied: %+v", out)
+	}
+}
+
+func TestGenerateStyles_BatchAppliesPerNodeOverrides(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	_, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
+	for _, n := range []string{"OUT_L", "OUT_R"} {
+		if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+			StyleID: baseID, CoreNodeName: n, Role: "produce", PayloadCode: "BASE-" + n, UOPCapacity: 1,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", n, err)
+		}
+	}
+
+	variants := []domain.StyleVariant{
+		{Name: "2001-DOOR", Overrides: []domain.ClaimOverride{ // L/R mirror pair
+			{CoreNodeName: "OUT_L", PayloadCode: "2001-L", UOPCapacity: 40, AllowedPayloadCodes: []string{"2001-L"}},
+			{CoreNodeName: "OUT_R", PayloadCode: "2001-R", UOPCapacity: 40},
+		}},
+		{Name: "2002-HOOD", Overrides: []domain.ClaimOverride{ // two-out: same payload both nodes
+			{CoreNodeName: "OUT_L", PayloadCode: "2002", UOPCapacity: 60},
+			{CoreNodeName: "OUT_R", PayloadCode: "2002", UOPCapacity: 60},
+		}},
+	}
+	ids, err := db.GenerateStyles(baseID, variants)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("returned %d ids, want 2", len(ids))
+	}
+
+	l, _ := db.GetStyleNodeClaimByNode(ids[0], "OUT_L")
+	if l.PayloadCode != "2001-L" || l.UOPCapacity != 40 {
+		t.Errorf("2001 OUT_L override not applied: %+v", l)
+	}
+	if len(l.AllowedPayloadCodes) != 1 || l.AllowedPayloadCodes[0] != "2001-L" {
+		t.Errorf("2001 OUT_L allowed codes = %v", l.AllowedPayloadCodes)
+	}
+	r, _ := db.GetStyleNodeClaimByNode(ids[0], "OUT_R")
+	if r.PayloadCode != "2001-R" {
+		t.Errorf("2001 OUT_R override not applied: %+v", r)
+	}
+	// Base style must be untouched by generation.
+	bl, _ := db.GetStyleNodeClaimByNode(baseID, "OUT_L")
+	if bl.PayloadCode != "BASE-OUT_L" {
+		t.Errorf("base style mutated by generate: %+v", bl)
+	}
+}
+
+func TestGenerateStyles_DuplicateNameRollsBackBatch(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	pid, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
+
+	// Second variant collides with the existing "BASE" (UNIQUE(process_id,
+	// name)); the whole batch must roll back, leaving OK-1 uncreated.
+	variants := []domain.StyleVariant{
+		{Name: "OK-1"},
+		{Name: "BASE"},
+	}
+	if _, err := db.GenerateStyles(baseID, variants); err == nil {
+		t.Fatal("expected duplicate-name error, got nil")
+	}
+	styles, _ := db.ListStylesByProcess(pid)
+	for _, s := range styles {
+		if s.Name == "OK-1" {
+			t.Fatal("OK-1 leaked despite a rolled-back batch — generation is not atomic")
+		}
+	}
+}

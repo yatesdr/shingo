@@ -46,6 +46,32 @@ type Style struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// StyleVariant describes one style to scaffold by cloning a base style
+// (copying its node-claim choreography verbatim) and then overriding only
+// the per-payload fields on selected claims. Used by GenerateStyles to
+// stamp out a family of near-identical styles — e.g. the 8 part numbers a
+// press runs, which share node layout, swap mode, staging, and pairing and
+// differ only in which payload each produce node carries.
+type StyleVariant struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Overrides   []ClaimOverride `json:"overrides"`
+}
+
+// ClaimOverride sets the per-payload fields on one cloned claim, matched by
+// CoreNodeName. Every other claim field (role, swap_mode, staging, pairing,
+// flags) is inherited from the base clone and never touched here, so the
+// override can't break a swap-mode invariant the base already satisfied.
+// For manual_swap claims PayloadCode is empty and AllowedPayloadCodes holds
+// the switchable set; for every other mode PayloadCode is the binding and
+// AllowedPayloadCodes is usually just that one code.
+type ClaimOverride struct {
+	CoreNodeName        string   `json:"core_node_name"`
+	PayloadCode         string   `json:"payload_code"`
+	UOPCapacity         int      `json:"uop_capacity"`
+	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
+}
+
 // Node is a process node — one slot in a Process at which material
 // is consumed or produced. ProcessNodeID in other tables refers to
 // this row's ID. Joined fields (StationName, ProcessName) ride along
