@@ -81,10 +81,25 @@ function switchTab(name) {
 
 function renderOverview(data) {
   var b = data.bin;
+  // In transit, the bin sits at the synthetic _TRANSIT node and its own
+  // payload can read blank — show the carrying order's cargo + route instead
+  // so the modal reads like a tracking line, not a blank carrier.
+  var inTransit = b.node_name === '_TRANSIT';
+  var ord = data.current_order;
   var html = '<div class="bd-fields">';
-  html += bdField('Location', b.node_name || '<span class="text-muted">unassigned</span>');
+  if (inTransit && ord && ord.source_node) {
+    html += bdField('Location', esc(ord.source_node) + ' → ' + esc(ord.delivery_node) +
+      ' <span class="text-muted" style="font-size:0.85em">(in transit)</span>');
+  } else {
+    html += bdField('Location', b.node_name || '<span class="text-muted">unassigned</span>');
+  }
   html += bdField('Status', '<span class="badge badge-' + esc(b.status) + '">' + esc(b.status) + '</span>');
-  html += bdField('Payload', b.payload_code ? '<code>' + esc(b.payload_code) + '</code>' : '<span class="text-muted">empty</span>');
+  var payloadDisplay = b.payload_code
+    ? '<code>' + esc(b.payload_code) + '</code>'
+    : (inTransit && ord && ord.payload_code
+        ? '<code>' + esc(ord.payload_code) + '</code> <span class="text-muted" style="font-size:0.85em">(in transit)</span>'
+        : '<span class="text-muted">empty</span>');
+  html += bdField('Payload', payloadDisplay);
   html += bdField('UOP Remaining', b.payload_code ? b.uop_remaining + uopBar(b.uop_remaining, data.template) : '<span class="text-muted">-</span>');
   html += bdField('Manifest', b.manifest_confirmed ? '<span style="color:var(--success)">Confirmed</span>' :
     (b.payload_code ? '<span style="color:var(--warning)">Unconfirmed</span>' : '<span class="text-muted">-</span>'));

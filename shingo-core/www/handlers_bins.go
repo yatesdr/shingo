@@ -100,6 +100,21 @@ func (h *Handlers) handleBinTypeDelete(w http.ResponseWriter, r *http.Request) {
 
 // --- Page handler ---
 
+// binRow decorates a bin for the bins-page table with transit-aware display
+// fields. A bin in flight sits at the synthetic _TRANSIT node for the duration
+// of the move, and its own payload_code can read blank there — but the order
+// carrying it still knows the cargo and the route. Surface those so the row
+// reads like a tracking line ("PART-1234 · SMN_001 → P400") instead of a bare
+// "_TRANSIT" with an empty payload; operators need to see what's on the carrier
+// and where it's headed (plant 2026-06-02).
+type binRow struct {
+	*domain.Bin
+	InTransit      bool
+	TransitPayload string
+	TransitSource  string
+	TransitDest    string
+}
+
 func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 	svc := h.engine.BinService()
 	bins, err := svc.ListBins()
@@ -129,6 +144,24 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 		log.Printf("bins page: check bin notes: %v", err)
 	}
 
+	// Decorate in-transit bins with their carrying order's cargo + route so the
+	// table shows what's on the carrier and where it's headed instead of a bare
+	// "_TRANSIT" row. Only the handful of bins actually in flight take the extra
+	// order lookup; everything else passes through untouched.
+	rows := make([]binRow, len(bins))
+	for i, b := range bins {
+		row := binRow{Bin: b}
+		if b.NodeName == domain.TransitNodeName && b.ClaimedBy != nil {
+			row.InTransit = true
+			if o, err := h.engine.OrderService().GetOrder(*b.ClaimedBy); err == nil && o != nil {
+				row.TransitPayload = o.PayloadCode
+				row.TransitSource = o.SourceNode
+				row.TransitDest = o.DeliveryNode
+			}
+		}
+		rows[i] = row
+	}
+
 	// Per-payload bin-type allow-list (keyed by payload code). Empty list = unrestricted,
 	// matching the advisory semantics used by FindSourceFIFO / FindEmptyCompatible.
 	payloadBinTypeIDs := make(map[string][]int64, len(payloads))
@@ -153,7 +186,7 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]any{
 		"Page":                "bins",
-		"Bins":                bins,
+		"Bins":                rows,
 		"BinTypes":            binTypes,
 		"Nodes":               nodes,
 		"Payloads":            payloads,

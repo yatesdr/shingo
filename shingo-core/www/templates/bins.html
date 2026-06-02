@@ -113,8 +113,8 @@
           data-label="{{.Label}}"
           data-type="{{.BinTypeCode}}"
           data-status="{{.Status}}"
-          data-node="{{.NodeName}}"
-          data-payload="{{.PayloadCode}}"
+          data-node="{{if .InTransit}}{{.TransitSource}} → {{.TransitDest}}{{else}}{{.NodeName}}{{end}}"
+          data-payload="{{if .PayloadCode}}{{.PayloadCode}}{{else}}{{.TransitPayload}}{{end}}"
           data-uop="{{.UOPRemaining}}"
           data-locked="{{if .Locked}}1{{else}}0{{end}}"
           data-claimed="{{if .ClaimedBy}}1{{else}}0{{end}}"
@@ -127,8 +127,15 @@
           <strong><code>{{.Label}}</code></strong>
         </td>
         <td>{{.BinTypeCode}}</td>
-        <td data-sort-value="{{.NodeName}}">{{if .NodeName}}{{.NodeName}}{{else}}<span class="text-muted">-</span>{{end}}</td>
-        <td data-sort-value="{{.PayloadCode}}">{{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{else}}<span class="text-muted">-</span>{{end}}</td>
+        <td data-sort-value="{{if .InTransit}}{{.TransitSource}} → {{.TransitDest}}{{else}}{{.NodeName}}{{end}}">
+          {{if .InTransit}}<span title="In transit">{{if .TransitSource}}{{.TransitSource}} &rarr; {{.TransitDest}}{{else}}in transit{{end}}</span>
+          {{else if .NodeName}}{{.NodeName}}{{else}}<span class="text-muted">-</span>{{end}}
+        </td>
+        <td data-sort-value="{{if .PayloadCode}}{{.PayloadCode}}{{else}}{{.TransitPayload}}{{end}}">
+          {{if .PayloadCode}}<code>{{.PayloadCode}}</code>
+          {{else if .TransitPayload}}<code>{{.TransitPayload}}</code> <span class="text-muted" style="font-size:0.85em">(in transit)</span>
+          {{else}}<span class="text-muted">-</span>{{end}}
+        </td>
         <td data-sort-value="{{.UOPRemaining}}">
           {{if .PayloadCode}}{{.UOPRemaining}}{{else}}<span class="text-muted">-</span>{{end}}
         </td>
