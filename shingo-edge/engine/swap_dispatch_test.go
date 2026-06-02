@@ -46,6 +46,54 @@ func TestBuildSwapDispatch_Simple(t *testing.T) {
 	}
 }
 
+// TestBuildSwapDispatch_ProduceMarksInboundEmpty pins the produce-node fix:
+// the inbound-source pickup (fetch a fresh carrier from the supermarket) must
+// be flagged Empty so Core sources an empty to fill — and ONLY that leg. The
+// CoreNode pickup that removes the produced full must stay full. Covers the
+// multi-step modes that emit complex orders (press-index here).
+func TestBuildSwapDispatch_ProduceMarksInboundEmpty(t *testing.T) {
+	t.Parallel()
+	d, err := BuildSwapDispatch(dispatchNode(), dispatchClaim("two_robot_press_index"))
+	if err != nil {
+		t.Fatalf("BuildSwapDispatch: %v", err)
+	}
+	inboundEmpty := 0
+	for _, steps := range [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB} {
+		for _, s := range steps {
+			if !s.Empty {
+				continue
+			}
+			if s.Action == "pickup" && s.Node == "INBOUND-SRC" {
+				inboundEmpty++
+			} else {
+				t.Errorf("non-inbound step flagged empty: %+v (only the InboundSource pickup should be empty)", s)
+			}
+		}
+	}
+	if inboundEmpty != 1 {
+		t.Errorf("InboundSource pickup empty-flag count = %d, want exactly 1", inboundEmpty)
+	}
+}
+
+// TestBuildSwapDispatch_ConsumeLeavesFullRetrieve is the dual: a consume node's
+// inbound pickup fetches a FULL (to consume), so no leg may be flagged empty.
+func TestBuildSwapDispatch_ConsumeLeavesFullRetrieve(t *testing.T) {
+	t.Parallel()
+	claim := dispatchClaim("two_robot_press_index")
+	claim.Role = protocol.ClaimRoleConsume
+	d, err := BuildSwapDispatch(dispatchNode(), claim)
+	if err != nil {
+		t.Fatalf("BuildSwapDispatch: %v", err)
+	}
+	for _, steps := range [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB} {
+		for _, s := range steps {
+			if s.Empty {
+				t.Errorf("consume claim must not flag any empty leg; got %+v", s)
+			}
+		}
+	}
+}
+
 func TestBuildSwapDispatch_Sequential(t *testing.T) {
 	t.Parallel()
 	d, err := BuildSwapDispatch(dispatchNode(), dispatchClaim("sequential"))

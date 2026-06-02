@@ -94,7 +94,26 @@ func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep,
 		if s.Node == processNode {
 			stepUOP = remainingUOP
 		}
-		picked, rejects, raced := claimFirstAvailable(bins, payloadCode, func(b *binsstore.Bin) error {
+
+		// Empty pickup leg (produce node's "bring an empty to fill"): claim an
+		// EMPTY carrier, not a payload-matching full. BinUnavailableReason
+		// accepts BOTH an empty (PayloadCode=="") and a matching full, so
+		// without this filter claimFirstAvailable could grab whichever is first
+		// in node order — and a full of the part delivered to a produce node is
+		// exactly the bug. Filter to empties and drop the payload context.
+		candidates := bins
+		claimPayload := payloadCode
+		if s.Empty {
+			candidates = emptyBinsOnly(bins)
+			claimPayload = ""
+			if len(candidates) == 0 {
+				reason := "no empty carrier at node for empty pickup leg"
+				d.dbg("complex: order %d pickup step %d at %s — %s", order.ID, i, s.Node, reason)
+				stepSkips = append(stepSkips, pickupSkip{i, s.Node, reason})
+				continue
+			}
+		}
+		picked, rejects, raced := claimFirstAvailable(candidates, claimPayload, func(b *binsstore.Bin) error {
 			return d.binManifest.ClaimForDispatch(b.ID, order.ID, stepUOP)
 		})
 		if raced {
@@ -199,6 +218,21 @@ func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep,
 			order.ID, len(claimed), claimed[0].binID)
 	}
 	return nil
+}
+
+// emptyBinsOnly returns the candidates that are empty carriers (no bound
+// payload) — the set eligible for a produce node's empty pickup leg. A
+// single-carrier loader has one bin type, so any empty is interchangeable;
+// carrier-type matching for multi-carrier loaders is a known follow-up (the
+// same limitation the edge RequestEmptyBin path already TODOs).
+func emptyBinsOnly(candidates []*binsstore.Bin) []*binsstore.Bin {
+	out := make([]*binsstore.Bin, 0, len(candidates))
+	for _, b := range candidates {
+		if b.PayloadCode == "" {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // resolvePerBinDestinations simulates the step sequence to determine where each

@@ -210,6 +210,15 @@ type OrderCancelled struct {
 type ComplexOrderStep struct {
 	Action string `json:"action"`         // "pickup", "dropoff", "wait"
 	Node   string `json:"node,omitempty"` // node or group name (Core auto-resolves groups)
+	// Empty marks a pickup leg that must fetch an EMPTY carrier rather than a
+	// payload-matching full — the produce-node "bring an empty to fill" leg
+	// (the store dual of a consume node's full retrieve). When true on a
+	// pickup, Core resolves an NGRP source to a slot holding an empty bin and
+	// claims an empty carrier, instead of the default full-retrieve semantics.
+	// Pickup-only; ignored on dropoff/wait. Backward-compatible: absent/false
+	// preserves the prior always-full behavior, so an older Core that ignores
+	// the field behaves exactly as today.
+	Empty bool `json:"empty,omitempty"`
 }
 
 // ComplexOrderRequest is a multi-step transport order from edge.

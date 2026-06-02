@@ -28,7 +28,7 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
-			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName, Group: group})
+			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName, Group: group, Empty: step.Empty})
 		case "wait":
 			// Wait may optionally include a node (drive-to-and-hold).
 			// If present, resolve it; otherwise it's a bare wait (split point only).
@@ -84,8 +84,9 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 			newSteps = append(newSteps, step)
 			continue
 		}
-		// Step still references an NGRP; re-attempt resolution.
-		ps := protocol.ComplexOrderStep{Action: step.Action, Node: step.Node}
+		// Step still references an NGRP; re-attempt resolution. Carry Empty so
+		// the produce empty-leg distinction survives replay re-resolution.
+		ps := protocol.ComplexOrderStep{Action: step.Action, Node: step.Node, Empty: step.Empty}
 		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode)
 		if resolveErr != nil {
 			return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
@@ -93,7 +94,7 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 		if newName != step.Node {
 			changed = true
 		}
-		newSteps = append(newSteps, resolvedStep{Action: step.Action, Node: newName, Group: group})
+		newSteps = append(newSteps, resolvedStep{Action: step.Action, Node: newName, Group: group, Empty: step.Empty})
 	}
 	return newSteps, changed, nil
 }
@@ -107,7 +108,7 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 	out := make([]resolvedStep, 0, len(steps))
 	for _, s := range steps {
-		out = append(out, resolvedStep{Action: s.Action, Node: s.Node})
+		out = append(out, resolvedStep{Action: s.Action, Node: s.Node, Empty: s.Empty})
 	}
 	return out
 }
@@ -123,11 +124,29 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			return "", "", fmt.Errorf("node %q not found", step.Node)
 		}
 		// Auto-detect group nodes and resolve to a concrete slot.
-		// Pickup steps are always resolved as OrderTypeRetrieve — complex orders
-		// don't currently model retrieve_empty sub-steps (retrieve_empty arises
-		// only as a top-level changeover concept on shingo-edge). If that changes,
-		// step.Action would need to carry the empty-vs-full distinction.
 		if node.IsSynthetic && node.NodeTypeCode == "NGRP" && d.resolver != nil {
+			// Empty pickup leg (produce node's "bring an empty to fill"):
+			// resolve to a slot holding an EMPTY compatible carrier, not a
+			// payload-matching full. Mirrors planRetrieveEmpty's source-group
+			// branch, which also bypasses the full-retrieve resolver for
+			// empties. (Pre-fix every complex pickup resolved as
+			// OrderTypeRetrieve — a full — which delivered a full to produce
+			// nodes; step.Empty now carries the distinction the old comment
+			// here said it would need.)
+			if step.Action == "pickup" && step.Empty {
+				bin, err := d.db.FindEmptyCompatibleBinInGroup(payloadCode, node.ID, 0)
+				if err != nil {
+					return "", "", fmt.Errorf("cannot resolve empty in group %s: %w", step.Node, err)
+				}
+				if bin == nil || bin.NodeID == nil {
+					return "", "", fmt.Errorf("no empty carrier in group %s", step.Node)
+				}
+				slot, err := d.db.GetNode(*bin.NodeID)
+				if err != nil || slot == nil {
+					return "", "", fmt.Errorf("resolve node for empty bin %d in group %s: %w", bin.ID, step.Node, err)
+				}
+				return slot.Name, step.Node, nil
+			}
 			orderType := OrderTypeRetrieve
 			if step.Action == "dropoff" {
 				orderType = OrderTypeStore
@@ -148,6 +167,23 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 		case "pickup":
 			// Global fallback resolver: no order-level destination context here
 			// (we are picking the source), so no node to exclude. Pass 0.
+			// Empty leg sources an empty carrier (FindEmptyCompatibleBin),
+			// matching the NGRP empty branch above; otherwise a full (FIFO).
+			if step.Empty {
+				bin, err := d.db.FindEmptyCompatibleBin(payloadCode, "", 0)
+				if err != nil {
+					return "", "", fmt.Errorf("no empty carrier for payload %q: %w", payloadCode, err)
+				}
+				if bin == nil || bin.NodeID == nil {
+					return "", "", fmt.Errorf("no empty carrier for payload %q", payloadCode)
+				}
+				node, err := d.db.GetNode(*bin.NodeID)
+				if err != nil || node == nil {
+					return "", "", fmt.Errorf("resolve node for empty bin %d: %w", bin.ID, err)
+				}
+				d.dbg("resolveStepNode: global fallback empty pickup → %s (bin %d)", node.Name, bin.ID)
+				return node.Name, "", nil
+			}
 			bin, err := d.db.FindSourceBinFIFO(payloadCode, 0)
 			if err != nil {
 				return "", "", fmt.Errorf("no source bin for payload %q: %w", payloadCode, err)

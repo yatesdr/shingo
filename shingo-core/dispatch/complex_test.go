@@ -251,3 +251,31 @@ func TestClassifyResolutionError_ChainWalking(t *testing.T) {
 			got.Bin.ID, got.LaneID, be.Bin.ID, be.LaneID)
 	}
 }
+
+// TestEmptyBinsOnly pins the empty-carrier filter used by claimComplexBins on a
+// produce node's empty pickup leg. BinUnavailableReason accepts both an empty
+// and a payload-matching full, so the claim path must pre-filter to empties —
+// otherwise a full of the part could be claimed and delivered to the press.
+func TestEmptyBinsOnly(t *testing.T) {
+	t.Parallel()
+	full := &bins.Bin{ID: 1, Label: "FULL", PayloadCode: "PART-A"}
+	empty1 := &bins.Bin{ID: 2, Label: "EMPTY-1", PayloadCode: ""}
+	empty2 := &bins.Bin{ID: 3, Label: "EMPTY-2", PayloadCode: ""}
+
+	got := emptyBinsOnly([]*bins.Bin{full, empty1, full, empty2})
+	if len(got) != 2 {
+		t.Fatalf("emptyBinsOnly returned %d bins, want 2 (the empties)", len(got))
+	}
+	for _, b := range got {
+		if b.PayloadCode != "" {
+			t.Errorf("emptyBinsOnly returned a payload-bearing bin %d (%s)", b.ID, b.Label)
+		}
+	}
+
+	if n := len(emptyBinsOnly([]*bins.Bin{full})); n != 0 {
+		t.Errorf("emptyBinsOnly([full]) returned %d, want 0", n)
+	}
+	if n := len(emptyBinsOnly(nil)); n != 0 {
+		t.Errorf("emptyBinsOnly(nil) returned %d, want 0", n)
+	}
+}

@@ -50,7 +50,38 @@ type SwapDispatch struct {
 // Per-mode field validation matches the inline switches in
 // FinalizeProduceNode and requestNodeFromClaim verbatim, so error
 // messages stay diff-stable across the refactor.
+//
+// After building the per-mode steps, a produce claim's inbound-source pickup
+// (the "fetch a fresh bin from the supermarket" leg) is marked Empty so Core
+// sources and claims an EMPTY carrier to fill — the store dual of a consume
+// node's full retrieve, and the same intent the simple-retrieve path already
+// carries via RetrieveEmpty (changeover_planner). Without it the complex-order
+// path delivers a full bin to the press.
 func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapDispatch, error) {
+	disp, err := buildSwapDispatch(node, claim)
+	if err != nil || disp == nil {
+		return disp, err
+	}
+	if claim.Role == protocol.ClaimRoleProduce && claim.InboundSource != "" {
+		markInboundEmpty(disp.StepsA, claim.InboundSource)
+		markInboundEmpty(disp.StepsB, claim.InboundSource)
+	}
+	return disp, nil
+}
+
+// markInboundEmpty flags every pickup at inboundSource as an empty leg. The
+// inbound-source pickup is the only leg that fetches a fresh carrier from the
+// supermarket; the other pickups move bins already in the swap, so they keep
+// their contents and must not be flagged.
+func markInboundEmpty(steps []protocol.ComplexOrderStep, inboundSource string) {
+	for i := range steps {
+		if steps[i].Action == "pickup" && steps[i].Node == inboundSource {
+			steps[i].Empty = true
+		}
+	}
+}
+
+func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapDispatch, error) {
 	switch claim.SwapMode {
 	case protocol.SwapModeSequential:
 		return &SwapDispatch{

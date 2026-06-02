@@ -13,8 +13,13 @@ type resolvedStep struct {
 	// Group is the originating NGRP name when Node was resolved from a node
 	// group. Retained so a store drop-off that loses the dispatch-time slot
 	// claim can revert Node->Group and be re-resolved to a free slot on the
-	// next scanner tick. Empty for concrete (non-group) nodes.
+	// next scanner tick. Empty (the field) for concrete (non-group) nodes.
 	Group string `json:"group,omitempty"`
+	// Empty mirrors protocol.ComplexOrderStep.Empty: a pickup leg that must
+	// fetch an EMPTY carrier (produce "bring an empty to fill") rather than a
+	// payload-matching full. Threaded through resolution + claim so the
+	// distinction survives steps_json persistence and scanner replay.
+	Empty bool `json:"empty,omitempty"`
 }
 
 // claimedBin records which bin was claimed at which pickup step.
