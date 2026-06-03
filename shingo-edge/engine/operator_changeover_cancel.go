@@ -53,7 +53,13 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		}
 	}
 
-	// Clear runtime order references for affected nodes
+	// Clear runtime order references AND reconcile the active-bin pointer for
+	// each affected node. The abort may have evac'd (or partially moved) the
+	// old bin, and the operator may have manually swapped material — so the
+	// cached active_bin_id can no longer be trusted. Left stale, consume ticks
+	// keep draining a bin that has left the slot (Springfield 2026-06-02:
+	// aborted RH→LH at ALN_003 drained bin 18 in the supermarket until a manual
+	// cycle_count). Re-resolve each node against Core's physical bin-at-node.
 	for _, task := range nodeTasks {
 		runtime, err := e.db.GetProcessNodeRuntime(task.ProcessNodeID)
 		if err != nil || runtime == nil {
@@ -62,6 +68,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		if err := e.db.UpdateProcessNodeRuntimeOrders(task.ProcessNodeID, nil, nil); err != nil {
 			log.Printf("changeover: update runtime orders for node %d: %v", task.ProcessNodeID, err)
 		}
+		e.reconcileActiveBinAfterCancel(task.ProcessNodeID, runtime.ActiveClaimID)
 	}
 
 	if err := e.db.UpdateProcessChangeoverState(changeover.ID, domain.ChangeoverCancelled); err != nil {
@@ -82,4 +89,50 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	}
 
 	return nil
+}
+
+// reconcileActiveBinAfterCancel re-binds a node's active-bin pointer to the bin
+// physically at its slot after a changeover cancel, so a stale pointer (old bin
+// evac'd/moved, or operator material swap) can't keep absorbing consume ticks.
+// The companion handler_bin_picked_up fix clears the pointer when a clean
+// pickup event names the active bin; this covers the rest — an evac whose bin
+// departed without a slot pickup event reaching Edge, and the manual-swap case
+// where physical reality diverged from Edge's cache.
+//
+// Re-resolve from Core's physical bin-at-node (BinAtLineside tri-state):
+//   - bin present    → rebind to it with Core's authoritative count + epoch so
+//                      ticks land on the real bin.
+//   - confirmed empty → clear the pointer + zero the cache so ticks are held
+//                      until the next delivery instead of charging a ghost.
+//   - Core unverified → retain the prior value (a transient blip must not zero
+//                      a live lineside).
+//
+// Best-effort and defensive: every error is logged, never returned — a
+// reconcile failure must not block the cancel. The claim pointer is threaded
+// through unchanged; the cancel has already reverted the process to the
+// from-style, and the active claim was never flipped (cutover never ran).
+func (e *Engine) reconcileActiveBinAfterCancel(processNodeID int64, activeClaimID *int64) {
+	if e.coreClient == nil {
+		return // no Core client wired (e.g. test contexts) — nothing to reconcile against
+	}
+	node, err := e.db.GetProcessNode(processNodeID)
+	if err != nil || node == nil {
+		return
+	}
+	bin, known, err := e.coreClient.BinAtLineside(node.CoreNodeName)
+	if err != nil || !known {
+		log.Printf("changeover cancel: active-bin reconcile skipped for node %s (core unverified): %v",
+			node.Name, err)
+		return
+	}
+	if bin != nil {
+		binID := bin.BinID
+		if err := e.db.SetProcessNodeRuntimeWithBinAndEpoch(processNodeID, activeClaimID, &binID, bin.DeltaEpoch, bin.UOPRemaining); err != nil {
+			log.Printf("changeover cancel: rebind active bin %d for node %s: %v", bin.BinID, node.Name, err)
+		}
+		return
+	}
+	if err := e.db.SetProcessNodeRuntimeWithBin(processNodeID, activeClaimID, nil, 0); err != nil {
+		log.Printf("changeover cancel: clear active bin for node %s: %v", node.Name, err)
+	}
 }
