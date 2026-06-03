@@ -121,6 +121,7 @@
                                 <td style="white-space:nowrap">
                                     {{if $.ActiveProcess.ActiveStyleID}}{{if eq .ID (deref $.ActiveProcess.ActiveStyleID)}}{{else}}<button class="btn btn-sm" data-action="setActiveStyle:{{.ID}}">Set Active</button>{{end}}{{else}}<button class="btn btn-sm btn-primary" data-action="setActiveStyle:{{.ID}}">Set Active</button>{{end}}
                                     <button class="btn btn-sm" data-action="editStyle" data-style="{{json .}}">Edit</button>
+                                    <button class="btn btn-sm" data-action="openCloneStyleModal" data-style="{{json .}}">Clone</button>
                                     <button class="btn btn-sm btn-danger" data-action="deleteStyle:{{.ID}}">Delete</button>
                                 </td>
                             </tr>
@@ -129,7 +130,10 @@
                             {{end}}
                         </tbody>
                     </table>
-                    <button class="btn" data-action="openCreateStyleModal">Add Style</button>
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+                        <button class="btn" data-action="openCreateStyleModal">Add Style</button>
+                        {{if .ProcessStyles}}<button class="btn" data-action="openGenerateModal">Generate Variants</button>{{end}}
+                    </div>
                 </fieldset>
 
                 <div class="flex-end">
@@ -274,6 +278,61 @@ window.claimedByStation = {{json .ClaimedByStation}};
         <div class="modal-footer">
             <button class="btn" data-action="closeStyleModal">Cancel</button>
             <button class="btn btn-primary" data-action="saveStyle">Save Style</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="clone-style-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <span>Clone Style</span>
+            <button class="btn btn-sm" data-action="closeCloneStyleModal">&times;</button>
+        </div>
+        <div class="card-body">
+            <div style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+                Creates a new style in this process with the same node claims as
+                <strong id="clone-style-src-name"></strong>. Set payload codes on the
+                new style afterward (Node Claims &rarr; Compare all).
+            </div>
+            <div class="form-group">
+                <label>New style name</label>
+                <input type="text" id="clone-style-name" class="form-input">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <input type="text" id="clone-style-description" class="form-input">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" data-action="closeCloneStyleModal">Cancel</button>
+            <button class="btn btn-primary" data-action="cloneStyle">Clone</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="generate-modal">
+    <div class="modal" style="max-width:880px">
+        <div class="modal-header">
+            <span>Generate Variants</span>
+            <button class="btn btn-sm" data-action="closeGenerateModal">&times;</button>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label>Base style</label>
+                <select id="generate-base" class="form-input" style="max-width:24rem" data-action-change="onGenerateBaseChanged">
+                    {{range .ProcessStyles}}<option value="{{.ID}}" {{if $.ActiveProcess.ActiveStyleID}}{{if eq .ID (deref $.ActiveProcess.ActiveStyleID)}}selected{{end}}{{end}}>{{.Name}}</option>{{end}}
+                </select>
+                <div class="field-help--inline">Each new style copies this style's node layout and swap choreography; you set only the payload per produce node below. Capacity auto-fills from the payload catalog.</div>
+            </div>
+            <div id="generate-grid-wrap" style="overflow-x:auto;margin:0.5rem 0"></div>
+            <div style="display:flex;gap:0.5rem;align-items:center">
+                <button class="btn btn-sm" type="button" data-action="addGenerateRow">+ Add variant</button>
+                <button class="btn btn-sm" type="button" data-action="syncPayloadCatalog" title="Sync payload catalog from core">Sync Catalog</button>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" data-action="closeGenerateModal">Cancel</button>
+            <button class="btn btn-primary" data-action="generateStyles">Generate</button>
         </div>
     </div>
 </div>

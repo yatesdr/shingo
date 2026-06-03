@@ -204,6 +204,182 @@ async function setActiveStyle(id) {
     }
 }
 
+// ─── Clone style ────────────────────────────────────────────────────────
+// Scaffold one new style from an existing one (claims copied verbatim);
+// payloads get set afterward in the Node Claims compare grid.
+
+var _cloneSrcStyleID = 0;
+
+function openCloneStyleModal() {
+    // Invoked via data-action with data-style="{{json .}}" on the clicked row.
+    var style = {};
+    try { style = JSON.parse(this.dataset.style || '{}') || {}; }
+    catch (e) { style = {}; }
+    _cloneSrcStyleID = style.id || 0;
+    document.getElementById('clone-style-src-name').textContent = style.name || '';
+    document.getElementById('clone-style-name').value = (style.name || '') + ' (copy)';
+    document.getElementById('clone-style-description').value = style.description || '';
+    showModal('clone-style-modal');
+}
+
+function closeCloneStyleModal() {
+    hideModal('clone-style-modal');
+    _cloneSrcStyleID = 0;
+}
+
+async function cloneStyle() {
+    var name = document.getElementById('clone-style-name').value.trim();
+    if (!name) { toast('Enter a name for the cloned style', 'warning'); return; }
+    if (!_cloneSrcStyleID) { toast('No source style selected', 'error'); return; }
+    try {
+        await api.post('/api/styles/' + _cloneSrcStyleID + '/clone', {
+            name: name,
+            description: document.getElementById('clone-style-description').value.trim()
+        });
+        closeCloneStyleModal();
+        toast('Style cloned — set payloads in Node Claims → Compare all', 'success');
+        location.reload();
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
+// ─── Generate variants ──────────────────────────────────────────────────
+// Stamp out a family of styles from one base: the base's produce claims
+// become grid columns, each variant row is a name + a payload per column.
+// Capacity and allowed-codes derive from the chosen payload, so a variant
+// is one value per produce node. POSTs the whole batch atomically.
+
+var _generateColumns = [];   // [{coreNodeName, swapMode, payloadCode}]
+var _generateRowSeq = 0;
+
+async function openGenerateModal() {
+    await loadPayloadCatalog();
+    await buildGenerateColumns();
+    _generateRowSeq = 0;
+    renderGenerateGrid();
+    addGenerateRow();
+    showModal('generate-modal');
+}
+
+function closeGenerateModal() {
+    hideModal('generate-modal');
+}
+
+async function onGenerateBaseChanged() {
+    await buildGenerateColumns();
+    renderGenerateGrid();   // rebuilds the table+tbody, clearing prior rows
+    addGenerateRow();
+}
+
+// buildGenerateColumns fetches the selected base style's claims and keeps the
+// produce ones as columns (falling back to every claim if the base has no
+// produce claims). Each column carries the base payload as the cell default,
+// so an untouched cell inherits the base.
+async function buildGenerateColumns() {
+    var baseID = parseInt(document.getElementById('generate-base').value, 10) || 0;
+    _generateColumns = [];
+    if (!baseID) return;
+    try {
+        var claims = await api.get('/api/styles/' + baseID + '/node-claims');
+        if (!Array.isArray(claims)) claims = [];
+        var produce = claims.filter(function(c) { return c.role === 'produce'; });
+        var cols = produce.length ? produce : claims;
+        _generateColumns = cols.map(function(c) {
+            return { coreNodeName: c.core_node_name, swapMode: c.swap_mode, payloadCode: c.payload_code || '' };
+        });
+    } catch (e) {
+        toast('Error loading base claims: ' + e, 'error');
+    }
+}
+
+function renderGenerateGrid() {
+    var wrap = document.getElementById('generate-grid-wrap');
+    if (_generateColumns.length === 0) {
+        wrap.innerHTML = '<div style="color:var(--text-muted);font-style:italic;padding:0.5rem 0">Base style has no node claims to set payloads on. Add claims to the base first.</div>';
+        return;
+    }
+    var head = '<th>New style name</th>';
+    _generateColumns.forEach(function(col) {
+        head += '<th class="mono" style="font-size:0.8rem">' + escapeHtml(col.coreNodeName) + '</th>';
+    });
+    head += '<th style="width:1%"></th>';
+    wrap.innerHTML =
+        '<table class="table" style="margin:0"><thead><tr>' + head + '</tr></thead>' +
+        '<tbody id="generate-grid-tbody"></tbody></table>';
+}
+
+function payloadOptionsHTML(selected) {
+    var html = '<option value="">-- payload --</option>';
+    _payloadCatalog.forEach(function(p) {
+        var sel = p.code === selected ? ' selected' : '';
+        html += '<option value="' + escapeHtml(p.code) + '"' + sel + '>' +
+            escapeHtml(p.code + (p.uop_capacity ? ' (' + p.uop_capacity + ')' : '')) + '</option>';
+    });
+    return html;
+}
+
+function addGenerateRow() {
+    var tbody = document.getElementById('generate-grid-tbody');
+    if (!tbody) return;
+    var rid = 'gen-row-' + (_generateRowSeq++);
+    var tr = document.createElement('tr');
+    tr.id = rid;
+    var cells = '<td><input type="text" class="form-input gen-name" placeholder="e.g. 2001-DOOR" style="min-width:10rem"></td>';
+    _generateColumns.forEach(function(col) {
+        cells += '<td><select class="form-input gen-payload" data-node="' + escapeHtml(col.coreNodeName) +
+            '" data-swap="' + escapeHtml(col.swapMode) + '">' + payloadOptionsHTML(col.payloadCode) + '</select></td>';
+    });
+    cells += '<td><button class="btn btn-sm btn-danger" type="button" data-action="removeGenerateRow:' + rid + '">&times;</button></td>';
+    tr.innerHTML = cells;
+    tbody.appendChild(tr);
+}
+
+function removeGenerateRow(rid) {
+    var tr = document.getElementById(rid);
+    if (tr) tr.remove();
+}
+
+function capacityForPayload(code) {
+    var hit = _payloadCatalog.find(function(p) { return p.code === code; });
+    return hit ? (hit.uop_capacity || 0) : 0;
+}
+
+async function generateStyles() {
+    var baseID = parseInt(document.getElementById('generate-base').value, 10) || 0;
+    if (!baseID) { toast('Pick a base style', 'warning'); return; }
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#generate-grid-tbody tr'));
+    var variants = [];
+    rows.forEach(function(row) {
+        var name = row.querySelector('.gen-name').value.trim();
+        if (!name) return;   // skip blank rows
+        var overrides = [];
+        row.querySelectorAll('.gen-payload').forEach(function(sel) {
+            var code = sel.value;
+            if (!code) return;   // leave this node's claim at the base payload
+            var isManual = sel.dataset.swap === 'manual_swap';
+            overrides.push({
+                core_node_name: sel.dataset.node,
+                // manual_swap stores '' in payload_code and drives off the
+                // allowed set; every other mode binds payload_code directly.
+                payload_code: isManual ? '' : code,
+                uop_capacity: capacityForPayload(code),
+                allowed_payload_codes: [code]
+            });
+        });
+        variants.push({ name: name, description: '', overrides: overrides });
+    });
+    if (variants.length === 0) { toast('Enter at least one variant name', 'warning'); return; }
+    try {
+        var res = await api.post('/api/styles/' + baseID + '/generate', { variants: variants });
+        closeGenerateModal();
+        toast('Generated ' + (res && res.ids ? res.ids.length : variants.length) + ' styles', 'success');
+        location.reload();
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
 // ─── Claim editor — state-driven ───────────────────────────────────────
 //
 // CLAIM_FIELD_VISIBILITY: the (role, swap_mode) lookup table that
@@ -1040,10 +1216,14 @@ if (activeProcessID) initClaimsTab();
 // so binding the map across every event type keeps the page wiring
 // single-source.
 delegateActions(document.body, {
+    addGenerateRow,
     autoFillClaimsCapacity,
     buildAllowedPayloadPicker,
     claimFieldVisibility,
+    cloneStyle,
     closeClaimModal,
+    closeCloneStyleModal,
+    closeGenerateModal,
     closeProcessModal,
     closeStationModal,
     closeStyleModal,
@@ -1056,6 +1236,7 @@ delegateActions(document.body, {
     editStation,
     editStyle,
     ensureClaimsListDelegation,
+    generateStyles,
     getPickedNodes,
     getSelectedAllowedPayloads,
     initClaimsTab,
@@ -1063,12 +1244,16 @@ delegateActions(document.body, {
     loadPayloadCatalog,
     moveStation,
     onClaimsStyleChanged,
+    onGenerateBaseChanged,
     openClaimModal,
+    openCloneStyleModal,
     openCreateProcessModal,
     openCreateStationModal,
     openCreateStyleModal,
+    openGenerateModal,
     readClaimStateFromForm,
     removeClaim,
+    removeGenerateRow,
     renderClaimForm,
     renderClaimRow,
     resetNodePicker,
