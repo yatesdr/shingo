@@ -380,6 +380,213 @@ async function generateStyles() {
     }
 }
 
+// ─── Node Claims: compare-all matrix ────────────────────────────────────
+// "Compare all" pivots the per-style claim list into a matrix — rows = core
+// nodes, columns = styles — so the payload (or capacity / reorder / lineside)
+// can be set across the whole family in one place. Each cell edit writes that
+// single claim through the same upsert the per-style editor uses; structural
+// fields (staging, pairing, flags) stay in the one-style editor, reachable by
+// clicking a style heading. Edits existing claims only — a missing cell is "—".
+
+var _compareMode = false;
+var _compareField = 'payload';
+var _compareStyles = [];     // [{id, name, active}]
+var _compareClaims = {};     // styleID -> { coreNode -> claim }
+
+function compareStylesFromSelector() {
+    var sel = document.getElementById('claims-style-selector');
+    var out = [];
+    if (!sel) return out;
+    Array.prototype.forEach.call(sel.options, function(o) {
+        var id = parseInt(o.value, 10);
+        if (!id) return;
+        out.push({ id: id, name: o.textContent.replace(/\s*\(active\)\s*$/, ''), active: /\(active\)/.test(o.textContent) });
+    });
+    return out;
+}
+
+function onCompareViewChanged() {
+    var checked = document.querySelector('input[name="claims-view"]:checked');
+    _compareMode = !!checked && checked.value === 'all';
+    applyCompareMode();
+}
+
+function onCompareFieldChanged() {
+    var sel = document.getElementById('compare-field');
+    _compareField = sel ? sel.value : 'payload';
+    if (_compareMode) renderCompareMatrix();
+}
+
+function applyCompareMode() {
+    var one = !_compareMode;
+    var ids = {
+        'claims-list': !one,            // hidden when comparing
+        'claims-compare-list': one,
+        'compare-field-wrap': one,
+        'compare-help': one,
+    };
+    Object.keys(ids).forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.hidden = ids[id];
+    });
+    var singleWrap = document.getElementById('claims-single-style-wrap');
+    if (singleWrap) singleWrap.style.display = one ? '' : 'none';
+    var addBtn = document.getElementById('claims-add-claim-btn');
+    if (addBtn) addBtn.style.display = one ? '' : 'none';
+    if (_compareMode) renderCompareMatrix();
+}
+
+async function renderCompareMatrix() {
+    var wrap = document.getElementById('claims-compare-list');
+    if (!wrap) return;
+    wrap.innerHTML = '<div style="color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+    await loadPayloadCatalog();
+    _compareStyles = compareStylesFromSelector();
+    if (_compareStyles.length === 0) { wrap.innerHTML = '<div class="empty-cell">No styles to compare.</div>'; return; }
+    _compareClaims = {};
+    await Promise.all(_compareStyles.map(function(s) {
+        return api.get('/api/styles/' + s.id + '/node-claims').then(function(claims) {
+            var byNode = {};
+            (Array.isArray(claims) ? claims : []).forEach(function(c) { byNode[c.core_node_name] = c; });
+            _compareClaims[s.id] = byNode;
+        }).catch(function() { _compareClaims[s.id] = {}; });
+    }));
+
+    // Node row order: union across styles, ordered by sequence on first sight.
+    var nodeOrder = [], seen = {};
+    _compareStyles.forEach(function(s) {
+        var byNode = _compareClaims[s.id] || {};
+        Object.keys(byNode).sort(function(a, b) { return (byNode[a].sequence || 0) - (byNode[b].sequence || 0); }).forEach(function(n) {
+            if (!seen[n]) { seen[n] = true; nodeOrder.push(n); }
+        });
+    });
+    if (nodeOrder.length === 0) { wrap.innerHTML = '<div class="empty-cell">No node claims on these styles yet.</div>'; return; }
+
+    var thead = '<th>Node</th>';
+    _compareStyles.forEach(function(s) {
+        thead += '<th><button class="btn btn-sm compare-style-jump" data-style="' + s.id + '" title="Open this style\'s full claim editor">' +
+            escapeHtml(s.name) + (s.active ? ' ●' : '') + '</button></th>';
+    });
+    var body = '';
+    nodeOrder.forEach(function(node) {
+        var row = '<td class="mono" style="font-size:0.8rem;white-space:nowrap">' + escapeHtml(node) + '</td>';
+        _compareStyles.forEach(function(s) {
+            row += '<td>' + compareCellHTML(s.id, node, (_compareClaims[s.id] || {})[node]) + '</td>';
+        });
+        body += '<tr>' + row + '</tr>';
+    });
+    wrap.innerHTML = '<div style="overflow-x:auto"><table class="table" style="margin:0"><thead><tr>' + thead + '</tr></thead><tbody>' + body + '</tbody></table></div>';
+    ensureCompareDelegation(wrap);
+}
+
+function compareCellHTML(styleID, node, c) {
+    if (!c) return '<span style="color:var(--text-muted)">—</span>';
+    var attrs = 'data-style="' + styleID + '" data-node="' + escapeHtml(node) + '"';
+    if (_compareField === 'payload') {
+        var primary = c.swap_mode === 'manual_swap'
+            ? ((c.allowed_payload_codes && c.allowed_payload_codes[0]) || '')
+            : (c.payload_code || '');
+        return '<select class="form-input compare-cell" ' + attrs + ' data-kind="payload" style="min-width:9rem">' + payloadOptionsHTML(primary) + '</select>';
+    }
+    var val = c[_compareField] || 0;
+    return '<input type="number" class="form-input compare-cell" ' + attrs + ' data-kind="num" value="' + val + '" min="0" style="max-width:6rem">';
+}
+
+function ensureCompareDelegation(wrap) {
+    if (!wrap || wrap.dataset.delegated === '1') return;
+    wrap.dataset.delegated = '1';
+    wrap.addEventListener('change', function(e) {
+        var cell = e.target.closest && e.target.closest('.compare-cell');
+        if (cell && wrap.contains(cell)) saveCompareCell(cell);
+    });
+    wrap.addEventListener('click', function(e) {
+        var jump = e.target.closest && e.target.closest('.compare-style-jump');
+        if (jump && wrap.contains(jump)) jumpToStyleEditor(parseInt(jump.dataset.style, 10));
+    });
+}
+
+// claimToBody maps a fetched claim to the upsert POST body, mirroring
+// saveClaim's claimBody so a compare-grid edit preserves every field it does
+// not touch (staging, pairing, flags). transitional_loader is omitted so the
+// *bool "absent = leave untouched" contract holds.
+function claimToBody(c) {
+    return {
+        style_id: c.style_id,
+        core_node_name: c.core_node_name,
+        role: c.role,
+        swap_mode: c.swap_mode,
+        payload_code: c.payload_code || '',
+        allowed_payload_codes: c.allowed_payload_codes || [],
+        uop_capacity: c.uop_capacity || 0,
+        reorder_point: c.reorder_point || 0,
+        lineside_soft_threshold: c.lineside_soft_threshold || 0,
+        auto_reorder: true,
+        inbound_staging: c.inbound_staging || '',
+        outbound_staging: c.outbound_staging || '',
+        inbound_source: c.inbound_source || '',
+        outbound_destination: c.outbound_destination || '',
+        auto_request_payload: c.auto_request_payload || '',
+        keep_staged: false,
+        evacuate_on_changeover: !!c.evacuate_on_changeover,
+        reuse_compatible_bins: !!c.reuse_compatible_bins,
+        auto_push: !!c.auto_push,
+        paired_core_node: c.paired_core_node || '',
+        second_paired_core_node: c.second_paired_core_node || '',
+        auto_confirm: !!c.auto_confirm
+    };
+}
+
+async function saveCompareCell(el) {
+    var styleID = parseInt(el.dataset.style, 10);
+    var node = el.dataset.node;
+    var claim = (_compareClaims[styleID] || {})[node];
+    if (!claim) { toast('No claim for that cell', 'error'); return; }
+    var body = claimToBody(claim);
+    if (el.dataset.kind === 'payload') {
+        var code = el.value;
+        if (body.swap_mode === 'manual_swap') {
+            body.payload_code = '';
+            body.allowed_payload_codes = code ? [code] : [];
+        } else {
+            body.payload_code = code;
+            body.allowed_payload_codes = code ? [code] : [];
+            body.uop_capacity = capacityForPayload(code);
+        }
+    } else {
+        body[_compareField] = parseInt(el.value, 10) || 0;
+    }
+    try {
+        await api.post('/api/style-node-claims', body);
+        // Keep the local cache in step so a follow-up edit on the same cell
+        // builds on the saved value rather than the stale fetch.
+        claim.payload_code = body.payload_code;
+        claim.allowed_payload_codes = body.allowed_payload_codes;
+        claim.uop_capacity = body.uop_capacity;
+        claim.reorder_point = body.reorder_point;
+        claim.lineside_soft_threshold = body.lineside_soft_threshold;
+        flashSaved(el);
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
+function flashSaved(el) {
+    var prev = el.style.backgroundColor;
+    el.style.backgroundColor = 'var(--ok-bg, #d6f5d6)';
+    setTimeout(function() { el.style.backgroundColor = prev; }, 500);
+}
+
+function jumpToStyleEditor(styleID) {
+    if (!styleID) return;
+    var sel = document.getElementById('claims-style-selector');
+    if (sel) sel.value = String(styleID);
+    onClaimsStyleChanged();             // sets _claimsStyleID + loads that style's claims
+    var oneRadio = document.querySelector('input[name="claims-view"][value="one"]');
+    if (oneRadio) oneRadio.checked = true;
+    _compareMode = false;
+    applyCompareMode();
+}
+
 // ─── Claim editor — state-driven ───────────────────────────────────────
 //
 // CLAIM_FIELD_VISIBILITY: the (role, swap_mode) lookup table that
@@ -1244,6 +1451,8 @@ delegateActions(document.body, {
     loadPayloadCatalog,
     moveStation,
     onClaimsStyleChanged,
+    onCompareFieldChanged,
+    onCompareViewChanged,
     onGenerateBaseChanged,
     openClaimModal,
     openCloneStyleModal,
