@@ -1,0 +1,44 @@
+{{define "content"}}
+<div class="board-page">
+<div class="board-header">
+  <h2 class="board-title">AMR TASK BOARD</h2>
+  <div class="board-header-right">
+    <span class="board-connection" id="board-connection" title="SSE connection status"></span>
+    <div class="board-filters">
+      <select id="filter-station" title="Filter by station">
+        <option value="all">All Stations</option>
+      </select>
+      <select id="filter-status" title="Filter by order status">
+        <option value="all">All Statuses</option>
+        <option value="in_transit">In Transit</option>
+        <option value="staged">Staged</option>
+        <option value="dispatched">Dispatched</option>
+        <option value="blocked">Blocked</option>
+        <option value="acknowledged">Acknowledged</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="board-table-wrap">
+  <table class="board-table">
+    <thead>
+      <tr>
+        <th>Robot</th>
+        <th>Source</th>
+        <th>Payload</th>
+        <th>Current</th>
+        <th>Destination</th>
+        <th>Status</th>
+        <th>ETA</th>
+      </tr>
+    </thead>
+    <tbody id="board-body"></tbody>
+  </table>
+</div>
+
+<div class="board-empty" id="board-empty" style="display:none">No active orders</div>
+</div>
+
+<script type="module" src="/static/pages/board.js?v={{cacheBust}}"></script>
+{{end}}

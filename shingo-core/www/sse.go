@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"shingocore/dispatch/eta"
 	"shingocore/engine"
 )
 
@@ -121,7 +122,17 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
 		ev := evt.Payload.(engine.OrderStatusChangedEvent)
-		h.Broadcast("order-update", sseJSON(map[string]any{"type": "status_changed", "order_id": ev.OrderID, "new_status": ev.NewStatus}))
+		payload := map[string]any{"type": "status_changed", "order_id": ev.OrderID, "new_status": ev.NewStatus}
+		h.Broadcast("order-update", sseJSON(payload))
+		if ev.NewStatus == "in_transit" {
+			go func(orderID int64) {
+				if order, err := eng.DB().GetOrder(orderID); err == nil && order != nil && string(order.Status) == "in_transit" {
+					if etaStr := eta.Stamp(eng.EtaCache(), order.SourceNode, order.DeliveryNode); etaStr != "" {
+						h.Broadcast("order-update", sseJSON(map[string]any{"type": "eta_update", "order_id": orderID, "eta": etaStr}))
+					}
+				}
+			}(ev.OrderID)
+		}
 	}, engine.EventOrderStatusChanged)
 
 	// Mission telemetry live updates (separate event name from order-update)
@@ -167,6 +178,11 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		ev := evt.Payload.(engine.OrderCancelledEvent)
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "cancelled", "order_id": ev.OrderID, "reason": ev.Reason}))
 	}, engine.EventOrderCancelled)
+
+	eng.Events.SubscribeTypes(func(evt engine.Event) {
+		ev := evt.Payload.(engine.OrderSkippedEvent)
+		h.Broadcast("order-update", sseJSON(map[string]any{"type": "skipped", "order_id": ev.OrderID, "detail": ev.Detail}))
+	}, engine.EventOrderSkipped)
 
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
 		ev := evt.Payload.(engine.OrderQueuedEvent)

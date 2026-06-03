@@ -4,6 +4,7 @@ import (
 	"shingocore/config"
 	"shingocore/countgroup"
 	"shingocore/dispatch"
+	"shingocore/dispatch/eta"
 	"shingocore/fleet"
 	"shingocore/messaging"
 	"shingocore/service"
@@ -46,6 +47,7 @@ func (e *Engine) InventoryDeltaService() *service.InventoryDeltaService {
 	return e.inventoryDeltaService
 }
 func (e *Engine) EventBus() *EventBus { return e.Events }
+func (e *Engine) EtaCache() *eta.Cache { return e.etaCache }
 
 // SetCountGroupRunner registers a configured Runner built by the
 // composition root. The caller passes the Runner directly — transitions

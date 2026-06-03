@@ -3,6 +3,7 @@ package www
 import (
 	"shingocore/config"
 	"shingocore/dispatch"
+	"shingocore/dispatch/eta"
 	"shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/messaging"
@@ -68,6 +69,9 @@ type ServiceAccess interface {
 	GetCachedRobotStatus(vehicleID string) (fleet.RobotStatus, bool)
 	GetAllCachedRobots() []fleet.RobotStatus
 	GetNodeOccupancy() ([]engine.OccupancyEntry, error)
+	EtaCache() *eta.Cache
+	GetActiveOrdersWithRobotLocation() ([]engine.BoardOrder, error)
+	GetActiveOrderWithRobotLocation(orderID int64) (*engine.BoardOrder, error)
 }
 
 // EngineOrchestration is the wide interface for handlers that drive

@@ -119,6 +119,8 @@ func (db *DB) ListOrdersFiltered(f orders.Filter) ([]*orders.Order, error) {
 
 func (db *DB) ListActiveOrders() ([]*orders.Order, error) { return orders.ListActive(db.DB) }
 
+func (db *DB) ListActiveBoardOrders() ([]*orders.Order, error) { return orders.ListActiveBoard(db.DB) }
+
 func (db *DB) ListOrderHistory(orderID int64) ([]*orders.History, error) {
 	return orders.ListHistory(db.DB, orderID)
 }
