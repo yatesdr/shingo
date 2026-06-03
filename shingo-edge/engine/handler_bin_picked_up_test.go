@@ -249,6 +249,79 @@ func TestRegression_TwoRobotSupplyLegSupermarketPickupDoesNotFreezeCache(t *test
 	_ = styleID
 }
 
+// TestRegression_AbortedEvacPickupClearsActiveBinByIdentity pins the
+// Springfield 2026-06-02 fix. A bin leaving the slot must clear the node's
+// active-bin pointer based on BIN IDENTITY, not on the active-ORDER ref. In a
+// two-robot swap the evac leg carries the old bin out but usually isn't the
+// runtime's ActiveOrderID, and a changeover abort (cancelProcessChangeover)
+// nulls the order ref entirely — so the old gating (ActiveOrderID == order.ID)
+// left active_bin_id dangling and PLC consume ticks kept charging a bin that had
+// physically departed (bin 18 / ALN_003, draining in the supermarket). After
+// pickup of the active bin at the slot, active_bin_id must be nil so the next
+// ticks are HELD (pending), not charged to the departed bin.
+func TestRegression_AbortedEvacPickupClearsActiveBinByIdentity(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix:      "ABORT-EVAC",
+		PayloadCode: "PART-AE",
+		UOPCapacity: 120,
+		InitialUOP:  60,
+	})
+
+	const oldBinID int64 = 1818
+	bid := oldBinID
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 60), "seed active bin")
+	// Post-changeover-cancel state: the active-ORDER ref was nulled by
+	// cancelProcessChangeover, but the active-BIN pointer still points at the
+	// old bin.
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, nil), "null active order (cancel)")
+
+	// The evac order that carries the old bin out, tied to this node.
+	const evacUUID = "uuid-abort-evac"
+	evacID, err := db.CreateOrder(evacUUID, orders.TypeRetrieve,
+		&nodeID, false, 1, "ABORT-EVAC-NODE", "", "", "", false, "PART-AE")
+	if err != nil {
+		t.Fatalf("create evac order: %v", err)
+	}
+	_ = db.UpdateOrderBinID(evacID, &bid)
+
+	pre, _ := db.GetProcessNodeRuntime(nodeID)
+	if pre.ActiveBinID == nil || *pre.ActiveBinID != oldBinID {
+		t.Fatalf("pre: ActiveBinID = %v, want %d", pre.ActiveBinID, oldBinID)
+	}
+	if pre.ActiveOrderID != nil {
+		t.Fatalf("pre: ActiveOrderID = %v, want nil (cancel nulled it)", pre.ActiveOrderID)
+	}
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+	sink := &fakeDeltaSink{db: db}
+	eng.SetInventoryDeltaSink(sink)
+
+	// Evac robot picks up the old bin AT the node's slot.
+	eng.HandleBinPickedUp(evacUUID, oldBinID, "ABORT-EVAC-NODE")
+
+	// Fix: active_bin_id cleared because the bin that left IS the active bin,
+	// even though ActiveOrderID didn't match (it was nil).
+	post, _ := db.GetProcessNodeRuntime(nodeID)
+	if post.ActiveBinID != nil {
+		t.Errorf("post-pickup ActiveBinID = %v, want nil (departed bin must unbind by identity through an abort)",
+			post.ActiveBinID)
+	}
+
+	// Symptom guard: a PLC tick now must be HELD, not charged to the departed
+	// bin — RemainingUOPCached stays at 60. Pre-fix it would have drained.
+	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
+		ProcessID: processID, StyleID: styleID, Delta: 5,
+	}})
+	after, _ := db.GetProcessNodeRuntime(nodeID)
+	if after.RemainingUOPCached != 60 {
+		t.Errorf("post-tick RemainingUOPCached = %d, want 60 (ticks held while no bin bound; pre-fix would charge the departed bin)",
+			after.RemainingUOPCached)
+	}
+}
+
 // TestRegression_BinPickedUpAtRemoteLocationIsIgnored is the broader
 // invariant: regardless of swap mode, a BinPickedUp event whose
 // Location does not match the consume node's CoreNodeName must not

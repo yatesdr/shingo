@@ -191,21 +191,33 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 		if err != nil || runtime == nil {
 			return
 		}
-		// Only clear if the active order is still the one we just
-		// picked up — guards against a race where the next bin's
+		// Clear the active-ORDER ref only if the active order is still the
+		// one we just picked up — guards against a race where the next bin's
 		// delivery already advanced the slot.
 		if runtime.ActiveOrderID != nil && *runtime.ActiveOrderID == order.ID {
 			if err := e.db.UpdateProcessNodeRuntimeOrders(*order.ProcessNodeID, nil, runtime.StagedOrderID); err != nil {
 				e.logFn("bin_picked_up: clear active order node=%d: %v", *order.ProcessNodeID, err)
 			}
-			// Bin physically left the slot — clear the bin pointer so
-			// PLC ticks during the gap before the next delivery don't
-			// attribute to a bin that's no longer here. Symmetric with
-			// the order-pointer clear above; same race guard applies.
-			if e.inventoryDelta != nil {
-				if err := e.inventoryDelta.ClearActiveBin(*order.ProcessNodeID); err != nil {
-					e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
-				}
+		}
+
+		// Clear the active-BIN pointer whenever the bin that just physically
+		// left the slot is the one bound as active — gated on BIN IDENTITY,
+		// independent of the active-order ref above. Two ways the old gating
+		// (ActiveOrderID == order.ID) missed a departed bin, both of which let
+		// PLC consume ticks keep charging a bin that was gone:
+		//   1. Two-robot swap: the EVAC leg carries the old bin out, but the
+		//      evac is usually the staged (not active) order, so its pickup
+		//      never matched ActiveOrderID.
+		//   2. Changeover abort (cancelProcessChangeover) nulls the active-order
+		//      ref *before* the evac's pickup event lands, permanently disarming
+		//      the clear.
+		// Springfield 2026-06-02: ALN_003 RH→LH changeover aborted mid-swap;
+		// bin 18 (RH) departed but active_bin_id stayed = 18, so consume ticks
+		// drained bin 18 while it sat in the supermarket. Tracking the pointer
+		// by physical bin identity makes it follow reality through aborts.
+		if e.inventoryDelta != nil && runtime.ActiveBinID != nil && *runtime.ActiveBinID == binID {
+			if err := e.inventoryDelta.ClearActiveBin(*order.ProcessNodeID); err != nil {
+				e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
 			}
 		}
 	}
