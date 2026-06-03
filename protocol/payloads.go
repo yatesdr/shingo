@@ -240,6 +240,13 @@ type ComplexOrderRequest struct {
 	Priority    int                `json:"priority,omitempty"`
 	ProcessNode string             `json:"process_node,omitempty"`
 	Steps       []ComplexOrderStep `json:"steps"`
+	// SiblingOrderUUID is the edge UUID of the paired leg in a two-robot
+	// swap (supply ↔ evac). Set on the removal/evac leg — created second, so
+	// it knows the supply leg's UUID; empty for non-swap orders and the
+	// first-created leg. Core links both order rows on ingest (the other leg
+	// already exists), so the dispatch hold can see the pairing at intake,
+	// before the removal leg's synchronous dispatch claims the line bin.
+	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
 	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
 	RemainingUOP *int `json:"remaining_uop,omitempty"`
 }

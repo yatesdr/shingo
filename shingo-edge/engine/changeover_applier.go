@@ -37,7 +37,7 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 
 	var supplyID, evacID *int64
 	if action.SupplyOrder != nil {
-		id, err := e.createPlannedOrder(nodeID, action.SupplyOrder)
+		id, err := e.createPlannedOrder(nodeID, action.SupplyOrder, "")
 		if err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): create supply order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
@@ -48,8 +48,15 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 		}
 		supplyID = &id
 	}
+	// Evac leg carries the supply leg's UUID so Core can pair them at intake.
+	supplyUUID := ""
+	if supplyID != nil {
+		if so, gerr := e.db.GetOrder(*supplyID); gerr == nil && so != nil {
+			supplyUUID = so.UUID
+		}
+	}
 	if action.EvacOrder != nil {
-		id, err := e.createPlannedOrder(nodeID, action.EvacOrder)
+		id, err := e.createPlannedOrder(nodeID, action.EvacOrder, supplyUUID)
 		if err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): create evac order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
@@ -106,18 +113,18 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	logChangeoverAction(action, supplyID, evacID)
 }
 
-func (e *Engine) createPlannedOrder(nodeID int64, spec *changeover.OrderSpec) (int64, error) {
+func (e *Engine) createPlannedOrder(nodeID int64, spec *changeover.OrderSpec, siblingUUID string) (int64, error) {
 	switch {
 	case spec.Complex != nil:
-		return e.createComplexFromSpec(nodeID, spec.Complex)
+		return e.createComplexFromSpec(nodeID, spec.Complex, siblingUUID)
 	case spec.Retrieve != nil:
 		return e.createRetrieveFromSpec(nodeID, spec.Retrieve)
 	}
 	return 0, nil
 }
 
-func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderSpec) (int64, error) {
-	o, err := e.orderMgr.CreateComplexOrderWithPayload(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps, c.AutoConfirm, c.PayloadCode)
+func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderSpec, siblingUUID string) (int64, error) {
+	o, err := e.orderMgr.CreateComplexOrderSibling(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps, c.AutoConfirm, c.PayloadCode, siblingUUID)
 	if err != nil {
 		return 0, err
 	}

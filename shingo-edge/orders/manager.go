@@ -305,7 +305,7 @@ func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, s
 // order has no distinct line node — Core falls back to source-node
 // behavior.
 func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, false, "")
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, false, "", "")
 }
 
 // CreateComplexOrderWithAutoConfirm creates an auto-confirm complex order.
@@ -316,14 +316,23 @@ func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliv
 // scanner can re-claim a delivered bin and the late confirm clobbers state
 // (the SMN_001 / SMN_002 teleport bug, plant-test 2026-04-27).
 func (m *Manager) CreateComplexOrderWithAutoConfirm(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, true, "")
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, true, "", "")
 }
 
 func (m *Manager) CreateComplexOrderWithPayload(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode string) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode)
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, "")
 }
 
-func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadOverride string) (*orders.Order, error) {
+// CreateComplexOrderSibling creates a complex order and records the
+// two-robot swap sibling UUID on the outbound ComplexOrderRequest, so Core
+// can pair the legs at intake — before the removal leg's synchronous
+// dispatch claims the line bin. siblingUUID is the *other* leg's edge UUID,
+// or "" for non-swap / first-created legs.
+func (m *Manager) CreateComplexOrderSibling(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode, siblingUUID string) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, siblingUUID)
+}
+
+func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadOverride, siblingUUID string) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	stepsJSON, err := json.Marshal(steps)
@@ -345,12 +354,13 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 	}
 
 	env, envErr := m.sender.build(protocol.TypeComplexOrderRequest, &protocol.ComplexOrderRequest{
-		OrderUUID:   orderUUID,
-		PayloadCode: payloadCode,
-		PayloadDesc: payloadDesc,
-		Quantity:    quantity,
-		ProcessNode: processNodeName,
-		Steps:       steps,
+		OrderUUID:        orderUUID,
+		PayloadCode:      payloadCode,
+		PayloadDesc:      payloadDesc,
+		Quantity:         quantity,
+		ProcessNode:      processNodeName,
+		Steps:            steps,
+		SiblingOrderUUID: siblingUUID,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 

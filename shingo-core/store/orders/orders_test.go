@@ -34,6 +34,55 @@ func newPendingOrder(uuid string) *domain.Order {
 	}
 }
 
+// TestLinkSiblingsByEdgeUUID pins the two-robot swap pairing write: a single
+// idempotent UPDATE sets sibling_order_uuid on both legs (each pointing at
+// the other), keyed on edge_uuid so it is independent of which leg's
+// ComplexOrderRequest landed first and of Core's own ids. Task 0 of the
+// ALN_003 swap-starvation fix. Asserts the column via raw SQL because the
+// write side ships ahead of the read (no domain field yet).
+func TestLinkSiblingsByEdgeUUID(t *testing.T) {
+	t.Parallel()
+	d := testdb.Open(t)
+	db := d.DB
+
+	supply := newPendingOrder("uuid-supply")
+	evac := newPendingOrder("uuid-evac")
+	other := newPendingOrder("uuid-other")
+	testutil.MustNoErr(t, orders.Create(db, supply), "create supply")
+	testutil.MustNoErr(t, orders.Create(db, evac), "create evac")
+	testutil.MustNoErr(t, orders.Create(db, other), "create other")
+
+	sib := func(edgeUUID string) string {
+		var s string
+		testutil.MustNoErr(t, db.QueryRow(
+			`SELECT sibling_order_uuid FROM orders WHERE edge_uuid=$1`, edgeUUID).Scan(&s),
+			"select sibling for "+edgeUUID)
+		return s
+	}
+
+	n, err := orders.LinkSiblingsByEdgeUUID(db, "uuid-supply", "uuid-evac")
+	testutil.MustNoErr(t, err, "link")
+	if n != 2 {
+		t.Fatalf("rows updated = %d, want 2", n)
+	}
+	if got := sib("uuid-supply"); got != "uuid-evac" {
+		t.Errorf("supply.sibling_order_uuid = %q, want uuid-evac", got)
+	}
+	if got := sib("uuid-evac"); got != "uuid-supply" {
+		t.Errorf("evac.sibling_order_uuid = %q, want uuid-supply", got)
+	}
+	if got := sib("uuid-other"); got != "" {
+		t.Errorf("unrelated order touched: sibling_order_uuid = %q, want empty", got)
+	}
+
+	// Idempotent: re-linking yields the same result.
+	n2, err := orders.LinkSiblingsByEdgeUUID(db, "uuid-supply", "uuid-evac")
+	testutil.MustNoErr(t, err, "relink")
+	if n2 != 2 || sib("uuid-supply") != "uuid-evac" {
+		t.Errorf("relink not idempotent: n=%d supply=%q", n2, sib("uuid-supply"))
+	}
+}
+
 // -------- Order CRUD lifecycle ---------------------------------------------
 
 func TestOrderCRUD(t *testing.T) {

@@ -304,6 +304,15 @@ func (db *DB) runVersionedMigrations() error {
 		{25, "add nodes.claimed_by slot claim (store dual of bins.claimed_by)",
 			v25SlotClaiming,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "nodes", "claimed_by") }},
+
+		// v26 adds orders.sibling_order_uuid — the Core mirror of Edge's
+		// orders.sibling_order_id. Edge sends TypeOrderSiblingLink after a
+		// two-robot swap pair is created so Core can model the pair (the two
+		// legs arrive as independent ComplexOrderRequests). Stored as the
+		// edge UUID, not a resolved id FK, so arrival order doesn't matter.
+		{26, "add sibling_order_uuid column to orders",
+			v26OrderSiblingUUID,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "sibling_order_uuid") }},
 	}
 
 	for _, m := range migrations {
@@ -792,6 +801,11 @@ func v25SlotClaiming(tx *sql.Tx) error {
 		return fmt.Errorf("create idx_nodes_claimed_by: %w", err)
 	}
 	return nil
+}
+
+func v26OrderSiblingUUID(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS sibling_order_uuid TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
 func migrateBinsCommandCenter(tx *sql.Tx) error {

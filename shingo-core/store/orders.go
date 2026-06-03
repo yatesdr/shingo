@@ -83,6 +83,12 @@ func (db *DB) SetOrderQueueReason(id int64, reason string) error {
 	return orders.SetQueueReason(db.DB, id, reason)
 }
 
+// LinkOrderSiblingsByEdgeUUID records a two-robot swap pairing keyed on
+// edge UUID — see orders.LinkSiblingsByEdgeUUID. Returns rows updated.
+func (db *DB) LinkOrderSiblingsByEdgeUUID(uuidA, uuidB string) (int64, error) {
+	return orders.LinkSiblingsByEdgeUUID(db.DB, uuidA, uuidB)
+}
+
 func (db *DB) UpdateOrderVendor(id int64, vendorOrderID, vendorState, robotID string) error {
 	return orders.UpdateVendor(db.DB, id, vendorOrderID, vendorState, robotID)
 }

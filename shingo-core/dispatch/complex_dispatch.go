@@ -126,6 +126,18 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		}
 		log.Printf("dispatch: complex order %d queued at intake — %s", order.ID, queueReason)
 	}
+
+	// Two-robot swap pairing: the removal (evac) leg carries its supply
+	// sibling's UUID. Link both rows now — before EmitOrderQueued triggers
+	// the synchronous scanner — so the dispatch hold sees the pairing at the
+	// removal leg's intake, ahead of the line-bin claim. The sibling row
+	// already exists (supply is created first). Best-effort: a link failure
+	// degrades to "no hold", it never blocks intake.
+	if p.SiblingOrderUUID != "" {
+		if _, err := d.db.LinkOrderSiblingsByEdgeUUID(order.EdgeUUID, p.SiblingOrderUUID); err != nil {
+			log.Printf("dispatch: link complex order %d sibling %s: %v", order.ID, p.SiblingOrderUUID, err)
+		}
+	}
 	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeComplex, payloadCode, deliveryNode)
 
 	// Ack to edge before triggering the scanner so the edge's order-table

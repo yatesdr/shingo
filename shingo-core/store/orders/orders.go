@@ -156,6 +156,23 @@ func SetQueueReason(db *sql.DB, id int64, reason string) error {
 	return err
 }
 
+// LinkSiblingsByEdgeUUID records a two-robot swap pairing (supply ↔ evac)
+// on Core, setting each order's sibling_order_uuid to the other. Keyed on
+// edge_uuid because the link arrives (TypeOrderSiblingLink) carrying the
+// two edge UUIDs — independent of Core's own ids and of which leg's
+// ComplexOrderRequest landed first. One statement sets both directions;
+// idempotent. Returns the number of order rows updated (0, 1, or 2).
+func LinkSiblingsByEdgeUUID(db *sql.DB, uuidA, uuidB string) (int64, error) {
+	res, err := db.Exec(`UPDATE orders SET
+		sibling_order_uuid = CASE edge_uuid WHEN $1 THEN $2 WHEN $2 THEN $1 END,
+		updated_at = NOW()
+		WHERE edge_uuid IN ($1, $2)`, uuidA, uuidB)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // UpdateVendor stores vendor-side identifiers on an order.
 func UpdateVendor(db *sql.DB, id int64, vendorOrderID, vendorState, robotID string) error {
 	_, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=NOW() WHERE id=$4`,

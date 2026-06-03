@@ -150,6 +150,31 @@ func decodeOnlyOutboxPayload(t *testing.T, db *store.DB, msgType string, target 
 // PR 3.1 — Order creation family.
 // ═══════════════════════════════════════════════════════════════════════
 
+// TestCreateComplexOrderSibling_CarriesSiblingUUID verifies the removal leg
+// of a two-robot swap ships its supply sibling's UUID on the
+// ComplexOrderRequest, so Core can pair the legs at intake — the wire half
+// of the ALN_003 swap-starvation fix (task 0).
+func TestCreateComplexOrderSibling_CarriesSiblingUUID(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, &capturingEmitter{}, "edge.station")
+
+	const supplyUUID = "supply-uuid-abc123"
+	evac, err := mgr.CreateComplexOrderSibling(nil, 1, "AMR Supermarket", "ALN_003",
+		[]protocol.ComplexOrderStep{{Action: "pickup", Node: "ALN_003"}, {Action: "dropoff", Node: "AMR Supermarket"}},
+		true, "", supplyUUID)
+	testutil.MustNoErr(t, err, "create evac leg")
+
+	var req protocol.ComplexOrderRequest
+	decodeOnlyOutboxPayload(t, db, protocol.TypeComplexOrderRequest, &req)
+	if req.OrderUUID != evac.UUID {
+		t.Errorf("OrderUUID: got %s, want %s", req.OrderUUID, evac.UUID)
+	}
+	if req.SiblingOrderUUID != supplyUUID {
+		t.Errorf("SiblingOrderUUID: got %q, want %q", req.SiblingOrderUUID, supplyUUID)
+	}
+}
+
 func TestCreateRetrieveOrder_HappyPath(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)
