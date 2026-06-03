@@ -138,6 +138,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Get("/missions", h.handleMissions)
 		r.Get("/missions/{orderID}", h.handleMissionDetail)
 		r.Get("/traffic", h.handleTraffic)
+		r.Get("/board", h.handleBoard)
 
 		// ── API routes ─────────────────────────────────────────
 		r.Route("/api", func(r chi.Router) {
@@ -165,6 +166,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 			// Robots
 			r.Get("/robots", h.apiRobotsStatus)
+
+			// Board
+			r.Get("/board/orders", h.handleBoardOrders)
 
 			// Payloads & manifest
 			r.Get("/payloads/templates", h.apiListPayloads)

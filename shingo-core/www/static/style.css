@@ -1002,3 +1002,283 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   color: var(--text-muted);
   margin-bottom: 0.35rem;
 }
+
+/* ── AMR Task Board ─────────────────────────────────── */
+
+.board-page {
+  background: #0a0f1a;
+  min-height: calc(100vh - 6rem);
+}
+
+[data-theme="light"] .board-page {
+  background: #f8fafc;
+}
+
+[data-theme="light"] .board-title {
+  color: #1e293b;
+}
+
+[data-theme="light"] .board-connection.board-connected {
+  background: #22c55e;
+  box-shadow: 0 0 4px #22c55e;
+}
+
+[data-theme="light"] .board-connection.board-disconnected {
+  background: #ef4444;
+  box-shadow: 0 0 4px #ef4444;
+}
+
+[data-theme="light"] .board-filters select {
+  border-color: #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+}
+[data-theme="light"] .board-filters select option {
+  background: #ffffff;
+  color: #334155;
+}
+
+[data-theme="light"] .board-table {
+  border-bottom-color: #e2e8f0;
+}
+
+[data-theme="light"] .board-table thead th {
+  color: #64748b;
+  border-bottom-color: #e2e8f0;
+}
+
+[data-theme="light"] .board-table tbody tr {
+  border-bottom-color: #f1f5f9;
+}
+
+[data-theme="light"] .board-table tbody tr:hover:not(.status-flash-green):not(.status-flash-red) {
+  background: #f1f5f9;
+}
+
+[data-theme="light"] .board-cell {
+  color: #1e293b;
+}
+
+[data-theme="light"] .board-robot {
+  color: #0f172a;
+}
+
+[data-theme="light"] .board-current {
+  color: #64748b;
+}
+
+[data-theme="light"] .board-status.status-in_transit {
+  color: #1e293b;
+}
+
+[data-theme="light"] .board-status.status-dispatched {
+  color: #1e40af;
+}
+
+[data-theme="light"] .board-status.status-staged {
+  color: #0f766e;
+}
+
+[data-theme="light"] .board-status.status-delivered,
+[data-theme="light"] .board-status.status-completed,
+[data-theme="light"] .board-status.status-confirmed {
+  color: #166534;
+}
+
+[data-theme="light"] .board-payload {
+  color: #4f46e5;
+}
+
+[data-theme="light"] .board-empty {
+  color: #94a3b8;
+}
+
+.board-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.board-title {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 0.15rem;
+  margin: 0;
+}
+
+.board-header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.board-connection {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  display: inline-block;
+}
+.board-connection.board-connected {
+  background: #22c55e;
+  box-shadow: 0 0 4px #22c55e;
+  animation: board-pulse 2s ease-in-out infinite;
+}
+.board-connection.board-disconnected {
+  background: #ef4444;
+  box-shadow: 0 0 4px #ef4444;
+}
+
+@keyframes board-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.board-filters {
+  display: flex;
+  gap: 0.5rem;
+}
+.board-filters select {
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.08);
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+.board-filters select option {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+.board-table-wrap {
+  overflow-x: auto;
+}
+
+.board-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+  font-size: 0.9rem;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.board-table thead th {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08rem;
+  color: #94a3b8;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  white-space: nowrap;
+}
+
+.board-table tbody tr {
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  transition: opacity 0.3s ease;
+}
+
+.board-table tbody tr:hover:not(.status-flash-green):not(.status-flash-red) {
+  background: rgba(255,255,255,0.03);
+}
+
+.board-cell {
+  padding: 0.6rem 0.75rem;
+  white-space: nowrap;
+  color: #e2e8f0;
+}
+
+.board-robot {
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.board-payload {
+  color: #a5b4fc;
+}
+
+.board-current {
+  color: #94a3b8;
+}
+
+.board-status {
+  font-weight: 500;
+}
+.board-status.status-dispatched {
+  color: #93c5fd;
+}
+.board-status.status-acknowledged {
+  color: #94a3b8;
+}
+.board-status.status-in_transit {
+  color: #f8fafc;
+}
+.board-status.status-staged {
+  color: #5eead4;
+}
+.board-status.status-blocked {
+  color: #f87171;
+}
+.board-status.status-failed,
+.board-status.status-cancelled {
+  color: #f87171;
+}
+.board-status.status-delivered,
+.board-status.status-completed,
+.board-status.status-confirmed {
+  color: #86efac;
+}
+
+.board-eta {
+  color: #94a3b8;
+}
+
+.board-empty {
+  text-align: center;
+  padding: 4rem 1rem;
+  color: #64748b;
+  font-size: 1.1rem;
+  letter-spacing: 0.05rem;
+}
+
+/* Flash animations */
+
+.status-blocked {
+  animation: flash-purple 1.5s ease-in-out infinite;
+}
+@keyframes flash-purple {
+  0%, 100% { background-color: transparent; }
+  50% { background-color: rgba(168, 85, 247, 0.25); }
+}
+
+.status-staged {
+  animation: flash-teal 1.5s ease-in-out infinite;
+}
+@keyframes flash-teal {
+  0%, 100% { background-color: transparent; }
+  50% { background-color: rgba(20, 184, 166, 0.25); }
+}
+
+.status-flash-green {
+  animation: flash-green 3s ease-out forwards;
+}
+@keyframes flash-green {
+  0% { background-color: rgba(34, 197, 94, 0.35); opacity: 1; }
+  70% { background-color: rgba(34, 197, 94, 0.15); opacity: 1; }
+  100% { background-color: transparent; opacity: 0; }
+}
+
+.status-flash-red {
+  animation: flash-red 3s ease-out forwards;
+}
+@keyframes flash-red {
+  0% { background-color: rgba(239, 68, 68, 0.35); opacity: 1; }
+  70% { background-color: rgba(239, 68, 68, 0.15); opacity: 1; }
+  100% { background-color: transparent; opacity: 0; }
+}

@@ -298,6 +298,19 @@ func ListActive(db *sql.DB) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
+// ListActiveBoard returns active non-terminal orders with an assigned robot,
+// ordered oldest-first for the task board display.
+func ListActiveBoard(db *sql.DB) ([]*Order, error) {
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT %s FROM orders WHERE status NOT IN (%s) AND robot_id != '' AND %s ORDER BY created_at ASC`,
+		SelectCols, protocol.TerminalStatusSQLList(), adminListExcludeTypeFilter))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanOrders(rows)
+}
+
 // ListHistory returns the audit log entries for an order, oldest first.
 func ListHistory(db *sql.DB, orderID int64) ([]*History, error) {
 	rows, err := db.Query(`SELECT id, order_id, status, detail, created_at FROM order_history WHERE order_id=$1 ORDER BY id`, orderID)
