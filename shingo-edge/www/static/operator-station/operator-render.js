@@ -588,30 +588,6 @@ function renderPayloadBoard(entry) {
 
         card.appendChild(el('div', { className: 'os-board-code', textContent: code }));
 
-        // Demand count — number of outstanding L1 orders for this payload
-        // that are still WAITING in the queue (not yet being moved by a
-        // robot). Orders past in_transit/acknowledged/delivered have left
-        // the queue and are tracked by the status badge below; counting
-        // them here inflates "BINS QUEUED" with orders that are already
-        // en route or arrived (plant 2026-05-11 confusion: SMN_001 card
-        // showed bins as queued that were actually staged at the line).
-        //
-        // Filter explicitly by status so the count matches operator
-        // expectation ("how many more are waiting to start moving").
-        var queuedOrders = payloadOrders.filter(function(o) {
-            return o.status !== 'delivered'
-                && o.status !== 'acknowledged'
-                && o.status !== 'in_transit';
-        });
-        if (queuedOrders.length > 0) {
-            var demandBox = el('div', { className: 'os-board-demand' });
-            demandBox.appendChild(el('div', { className: 'os-board-demand-num',
-                textContent: String(queuedOrders.length) }));
-            demandBox.appendChild(el('div', { className: 'os-board-demand-label',
-                textContent: queuedOrders.length === 1 ? 'BIN QUEUED' : 'BINS QUEUED' }));
-            card.appendChild(demandBox);
-        }
-
         card.appendChild(el('span', { className: 'os-board-tag ' + cs.statusClass, textContent: cs.statusText }));
 
         card.appendChild(el('div', { className: 'os-board-detail', textContent: cs.detail }));

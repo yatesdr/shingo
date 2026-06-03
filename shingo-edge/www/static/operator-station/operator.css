@@ -1107,32 +1107,6 @@ body {
     box-shadow: 0 0 0 3px rgba(207, 216, 230, 0.45);
 }
 
-/* Demand count — outstanding L1 orders queued for this payload. Sized
-   so a forklift driver can read it from the seat. Lives on every
-   queued/in-transit/delivered card with non-zero demand. */
-.os-board-demand {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-top: 4px;
-    align-self: flex-start;
-}
-.os-board-demand-num {
-    font-size: 44px;
-    font-weight: 800;
-    color: #fff;
-    line-height: 1;
-}
-.os-board-demand-label {
-    font-size: 14px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    color: #aab;
-    text-transform: uppercase;
-}
-.os-board-load-now .os-board-demand-num { color: #6f6; }
-.os-board-load-now .os-board-demand-label { color: #9d9; }
-
 /* Bin-loader board mode runs on a 22"+ HMI for a forklift driver. Scale
    the shared header / footer chrome up so it's legible from the seat. */
 body.os-board-mode-active {
