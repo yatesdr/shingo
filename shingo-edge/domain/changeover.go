@@ -29,6 +29,15 @@ type Changeover struct {
 	ProcessName   string `json:"process_name"`
 	FromStyleName string `json:"from_style_name"`
 	ToStyleName   string `json:"to_style_name"`
+
+	// AwaitingStock is a transient, non-persisted advisory set only on the
+	// StartProcessChangeover response: the required payload codes that had
+	// zero available supermarket bins at start time. The changeover still
+	// starts — these supply legs park as "Awaiting Stock" and dispatch
+	// automatically once the operator loads + manifest-confirms the bins.
+	// Not stored and not re-emitted on refresh; the live per-order "Awaiting
+	// Stock" status is the durable signal. Empty/omitted when fully stocked.
+	AwaitingStock []string `json:"awaiting_stock,omitempty"`
 }
 
 // StationTask is the per-operator-station leg of a Changeover. The

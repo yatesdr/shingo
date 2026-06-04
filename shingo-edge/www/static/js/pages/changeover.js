@@ -66,11 +66,15 @@ async function startProcessChangeover() {
         return;
     }
     try {
-        await api.post('/api/processes/' + processID + '/changeover/start', {
+        var co = await api.post('/api/processes/' + processID + '/changeover/start', {
             to_style_id: toStyleID,
             called_by: '',
             notes: ''
         });
+        if (co && co.awaiting_stock && co.awaiting_stock.length) {
+            toast('Changeover started — awaiting stock for: ' + co.awaiting_stock.join(', ') +
+                '. These supply orders will dispatch automatically once the bins are loaded and manifest-confirmed.', 'warning');
+        }
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
         toast('Error: ' + e, 'error');

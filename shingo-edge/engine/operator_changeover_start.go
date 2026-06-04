@@ -22,13 +22,25 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// planning so planning-side side effects (DB writes, robot aborts)
 	// don't fire on a doomed start. preflightChecker is wired in tests
 	// that don't care about the gate; nil-skip there.
+	var awaitingStock []string
 	if e.preflightChecker != nil && e.coreClient != nil && e.coreClient.Available() {
 		missing, perr := e.preflightChecker.PreflightInventoryCheck(context.Background(), toStyleID)
 		if perr != nil {
 			return nil, fmt.Errorf("changeover preflight: %w", perr)
 		}
 		if len(missing) > 0 {
-			return nil, fmt.Errorf("changeover refused: missing bins for payloads %v", missing)
+			// Non-blocking advisory (was a HARD REFUSAL before 2026-06-04).
+			// Core queues an unsourceable supply retrieve (5eb0a3a) and holds
+			// a two-robot swap's removal leg until its supply sibling claims a
+			// bin (0d95521), so a changeover started without stock parks its
+			// supply legs as "Awaiting Stock" and self-heals once the operator
+			// loads + manifest-confirms the material. Refusing here instead
+			// dead-ended the operator with idle robots and no course of action
+			// (Springfield NF SPOT 3, 2026-06-03). Surface the missing list as
+			// advisory and let the changeover proceed.
+			awaitingStock = missing
+			e.logFn("changeover: process %d → style %d starting with %d payload(s) not yet in stock; supply legs will queue as Awaiting Stock until loaded: %v",
+				processID, toStyleID, len(missing), missing)
 		}
 	}
 	plan, err := e.planChangeover(processID, toStyleID)
@@ -63,7 +75,15 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	orderPlan := BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes))
 	e.applyChangeoverPlan(changeover, orderPlan)
 
-	return e.db.GetActiveProcessChangeover(processID)
+	final, err := e.db.GetActiveProcessChangeover(processID)
+	if err != nil {
+		return nil, err
+	}
+	// Transient advisory — not persisted. Lets the HMI tell the operator
+	// which bins to load; the live per-order "Awaiting Stock" status is the
+	// durable signal once orders exist.
+	final.AwaitingStock = awaitingStock
+	return final, nil
 }
 
 // binEmptyAtCoreNode returns a closure that reports whether the physical
