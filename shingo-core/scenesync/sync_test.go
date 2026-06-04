@@ -18,6 +18,9 @@ type fakeStore struct {
 	// scene_points keyed by area_name + "/" + instance_name.
 	points map[string]*scene.Point
 
+	// scene_edges keyed by area_name + "/" + instance_name.
+	edges map[string]*scene.Edge
+
 	// nodes keyed by ID.
 	nodes  map[int64]*nodes.Node
 	nextID int64
@@ -37,6 +40,7 @@ type fakeStore struct {
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		points:    map[string]*scene.Point{},
+		edges:     map[string]*scene.Edge{},
 		nodes:     map[int64]*nodes.Node{},
 		nodeTypes: map[string]*nodes.NodeType{},
 	}
@@ -66,6 +70,27 @@ func (f *fakeStore) UpsertScenePoint(sp *scene.Point) error {
 	// recorded state.
 	cp := *sp
 	f.points[f.key(sp.AreaName, sp.InstanceName)] = &cp
+	return nil
+}
+
+func (f *fakeStore) DeleteSceneEdgesByArea(areaName string) error {
+	if f.errDelete != nil {
+		return f.errDelete
+	}
+	for k, se := range f.edges {
+		if se.AreaName == areaName {
+			delete(f.edges, k)
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) UpsertSceneEdge(se *scene.Edge) error {
+	if f.errUpsert != nil {
+		return f.errUpsert
+	}
+	cp := *se
+	f.edges[f.key(se.AreaName, se.InstanceName)] = &cp
 	return nil
 }
 

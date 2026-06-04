@@ -17,10 +17,12 @@
 // a faint travel-node network so the robots read clearly against it; action /
 // charge / park points draw as distinct outlined shapes rather than filled blobs.
 //
-// Routes follow the aisles. The scene carries only point positions (no edge
-// data), so we derive a travel graph by linking nearby LocationMark/
-// GeneralLocation nodes, then draw each robot→destination route as the lit
-// shortest path along that graph instead of a straight line across open floor.
+// Routes follow the aisles. The travel network is the scene's real
+// connectivity — drivable path segments (SEER advanced curves) served by
+// /api/map/edges — and each robot→destination route is the lit shortest path
+// along it. Nothing is derived from point proximity (a derived graph invented
+// links through walls); with no synced edges the network is simply empty and
+// routes fall back to a straight robot→destination hint line.
 
 (function () {
   var body = document.body;
@@ -40,6 +42,7 @@
 
   // ── state ──────────────────────────────────────────────────────────
   var points = [];          // scene points (static layout)
+  var sceneEdges = [];      // real drivable segments from /api/map/edges
   var nodeIndex = {};       // lowercased node name -> {x, y} (world space)
   var robots = {};          // vehicle_id -> normalized robot
   var orders = [];          // scoped active orders
@@ -114,6 +117,11 @@
       var r = robots[k];
       if (isFinite(r.x) && isFinite(r.y)) { wx.push(r.x); wy.push(r.y); }
     });
+    // Orphan graph vertices (edge endpoints with no synced point) can sit
+    // outside the points' bounding box — include them so lines aren't clipped.
+    tnodes.forEach(function (t) {
+      if (t.orphan) { wx.push(t.x); wy.push(t.y); }
+    });
     if (!wx.length) { view = null; return; }
     var minWx = Math.min.apply(null, wx), maxWx = Math.max.apply(null, wx);
     var minWy = Math.min.apply(null, wy), maxWy = Math.max.apply(null, wy);
@@ -149,93 +157,53 @@
     return nodeIndex[String(name).toLowerCase()] || null;
   }
 
-  // ── travel graph (derived — the scene carries no edge data) ─────────
-  // Robots drive a fixed network of waypoints, but the scene API only gives us
-  // point positions. We reconstruct the aisle graph from the travel nodes
-  // (LocationMark / GeneralLocation) in two steps:
-  //
-  //   1. Candidate links: each node to its neighbours within an adaptive
-  //      distance threshold (× the median nearest-neighbour gap).
-  //   2. Relative-neighbourhood prune: drop a candidate edge A–C whenever some
-  //      node B is closer to BOTH A and C than they are to each other. That
-  //      removes every "hypotenuse" — the diagonal shortcut across a corner or
-  //      the long skip past an intermediate waypoint — so a route is forced to
-  //      step node-to-node along the aisle instead of cutting across open floor.
-  //
-  // Routes are then the shortest path on this pruned graph.
-  var CAND_K = 4;           // nearest-neighbour candidates per node
-  var GRAPH_K = 6;          // safety cap on kept links per node (RNG is already sparse)
-  var tnodes = [];          // [{x, y}] world coords of travel nodes
+  // ── travel graph (the scene's real connectivity) ────────────────────
+  // The graph is exactly the drivable path segments synced from the fleet
+  // (SEER advanced curves, GET /api/map/edges). Vertices key by endpoint
+  // instance name so curves meeting at a point share a vertex; endpoints with
+  // a name but no synced scene point are flagged as orphans — "missing"
+  // points that still join the network via the curve's own coordinates.
+  // Deliberately NO proximity-derived fallback: a guessed graph draws
+  // plausible-but-wrong aisles (through walls); honest emptiness is better.
+  var tnodes = [];          // [{x, y, orphan}] world coords of graph vertices
   var tadj = [];            // adjacency: tadj[i] = [{n, w}]
   var routeCache = {};      // "s:d" -> array of tnode indices (cleared on rebuild)
-  var graphScale = 0;       // median nearest-neighbour gap (world units); also
-                            // the local scale that drives marker/label sizing
+  var graphScale = 0;       // median edge length (world units); also the local
+                            // scale that drives marker/label sizing
 
   function isTravel(cls) { return cls === 'LocationMark' || cls === 'GeneralLocation'; }
 
   function buildGraph() {
     tnodes = []; tadj = []; routeCache = {}; graphScale = 0;
-    points.forEach(function (p) {
-      if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
-      if (isTravel(classOf(p))) tnodes.push({ x: p.pos_x, y: p.pos_y });
+    var byKey = {}, lens = [];
+    function vertex(name, x, y) {
+      var k = name ? String(name).toLowerCase() : '@' + x + ',' + y;
+      if (byKey[k] === undefined) {
+        byKey[k] = tnodes.length;
+        var orphan = !!name && !nodeIndex[String(name).toLowerCase()];
+        tnodes.push({ x: x, y: y, orphan: orphan });
+      }
+      return byKey[k];
+    }
+    function addEdge(a, b, w) {
+      tadj[a] = tadj[a] || [];
+      if (!tadj[a].some(function (e) { return e.n === b; })) tadj[a].push({ n: b, w: w });
+    }
+    sceneEdges.forEach(function (e) {
+      if (!isFinite(e.from_x) || !isFinite(e.from_y) || !isFinite(e.to_x) || !isFinite(e.to_y)) return;
+      var a = vertex(e.from_name, e.from_x, e.from_y);
+      var b = vertex(e.to_name, e.to_x, e.to_y);
+      if (a === b) return;
+      var w = Math.sqrt(dist2(tnodes[a], tnodes[b]));
+      if (!(w > 0)) return;
+      lens.push(w);
+      // Curves are stored directed; for display routing robots drive them
+      // either way, so the graph is undirected.
+      addEdge(a, b, w); addEdge(b, a, w);
     });
-    var n = tnodes.length;
-    if (n < 2) return;
-    // Step 1: each node's K nearest neighbours as candidates. No global
-    // distance threshold — corridor waypoints can sit many times further apart
-    // than dense-cell waypoints, and a single threshold (tried first) left the
-    // corridor fragmented while the cells were over-linked. A generous absolute
-    // cap (fraction of the plant footprint) still prevents cross-plant links.
-    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (var e = 0; e < n; e++) {
-      if (tnodes[e].x < minX) minX = tnodes[e].x;
-      if (tnodes[e].x > maxX) maxX = tnodes[e].x;
-      if (tnodes[e].y < minY) minY = tnodes[e].y;
-      if (tnodes[e].y > maxY) maxY = tnodes[e].y;
-    }
-    var cap2 = Math.pow(Math.max(maxX - minX, maxY - minY) * 0.35, 2);
-    var cand = [];
-    for (var a = 0; a < n; a++) {
-      var list = [];
-      for (var b = 0; b < n; b++) {
-        if (a === b) continue;
-        var dd = dist2(tnodes[a], tnodes[b]);
-        if (dd <= cap2) list.push({ n: b, d2: dd });
-      }
-      list.sort(function (p, q) { return p.d2 - q.d2; });
-      cand[a] = list.slice(0, CAND_K);
-    }
-    // Median nearest-neighbour gap = the floor's local scale. Sizing uses it so
-    // markers fit the dense cells robots live in, not the whole plant extent.
-    var nn = [];
-    for (var m = 0; m < n; m++) if (cand[m].length) nn.push(Math.sqrt(cand[m][0].d2));
-    nn.sort(function (a, b) { return a - b; });
-    graphScale = nn[Math.floor(nn.length / 2)] || 0;
-    // Step 2: relative-neighbourhood prune, blockers drawn from the candidate
-    // pools of both endpoints (the blocker is always a near node).
-    for (var u = 0; u < n; u++) {
-      var keep = [], cu = cand[u];
-      for (var c = 0; c < cu.length; c++) {
-        var v = cu[c].n, duv2 = cu[c].d2, blocked = false;
-        var pool = cu.concat(cand[v] || []);
-        for (var k = 0; k < pool.length; k++) {
-          var w = pool[k].n;
-          if (w === u || w === v) continue;
-          if (dist2(tnodes[u], tnodes[w]) < duv2 && dist2(tnodes[w], tnodes[v]) < duv2) { blocked = true; break; }
-        }
-        if (!blocked) keep.push({ n: v, w: Math.sqrt(duv2) });
-      }
-      tadj[u] = keep.slice(0, GRAPH_K);
-    }
-    // Symmetrize: kNN candidacy isn't mutual, but the aisle network is
-    // undirected — every kept edge must exist in both directions or Dijkstra
-    // sees one-way aisles.
-    for (var s = 0; s < n; s++) {
-      tadj[s].forEach(function (ed) {
-        var back = (tadj[ed.n] || []).some(function (r2) { return r2.n === s; });
-        if (!back) tadj[ed.n].push({ n: s, w: ed.w });
-      });
-    }
+    for (var i = 0; i < tnodes.length; i++) if (!tadj[i]) tadj[i] = [];
+    lens.sort(function (a, b) { return a - b; });
+    graphScale = lens[Math.floor(lens.length / 2)] || 0;
   }
 
   function dist2(p, q) { var dx = p.x - q.x, dy = p.y - q.y; return dx * dx + dy * dy; }
@@ -417,6 +385,13 @@
       if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
       drawNode(svg, p, nodeR);
     });
+    // Edge endpoints that never synced as scene points ("missing" nodes)
+    // still join the travel network — draw them so no line ends float.
+    tnodes.forEach(function (t) {
+      if (!t.orphan) return;
+      var os = proj(t.x, t.y);
+      svg.appendChild(svgEl('circle', { cx: os[0], cy: os[1], r: nodeR * 0.6, class: 'map-node-travel' }));
+    });
 
     // routes: robot -> destination, lit along the aisle network when possible.
     orders.forEach(function (o) {
@@ -481,14 +456,17 @@
     // robots parked on top of each other reads as a vertical list of names.
     var placed = [];
     robotList.forEach(function (r) {
+      var ord = orderByRobot[r.id];
+      // Idle robots carry no name chip — parked clusters stay calm. Names
+      // show when a robot is working, faulted, paused, or offline.
+      if (r.state === 'ready' && !ord) return;
       var s = proj(r.x, r.y);
       var lx = s[0], ly = s[1] - robotR * 2.0;
       var guard = 0;
       while (guard++ < 16 && placed.some(function (p) {
-        return Math.abs(p.x - lx) < fontS * 4.0 && Math.abs(p.y - ly) < fontS * 1.25;
+        return Math.abs(p.x - lx) < fontS * 5.2 && Math.abs(p.y - ly) < fontS * 1.25;
       })) { ly += fontS * 1.35; }
       placed.push({ x: lx, y: ly });
-      var ord = orderByRobot[r.id];
       var color = ord ? (STATUS_COLOR[ord.status] || STATE_COLOR[r.state]) : (STATE_COLOR[r.state] || '#888');
       var halfW = (r.id.length * fontS * 0.62) / 2 + fontS * 0.55;
       var chipH = fontS * 1.3;
@@ -586,6 +564,18 @@
     });
   }
 
+  function loadEdges() {
+    return fetch('/api/map/edges').then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (data) {
+      sceneEdges = data || [];
+      // Rebuild — the graph is the edge list. Order with loadPoints is
+      // unimportant; buildGraph reads both (points only for orphan flags).
+      buildGraph();
+    });
+  }
+
   function loadRobots() {
     return fetch('/api/robots').then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -651,7 +641,7 @@
       reconnectDelay = 2000;
       checkBuild(e);
       // Refresh everything on (re)connect — covers data missed while down.
-      Promise.all([loadPoints().catch(noop), loadRobots().catch(noop), loadOrders().catch(noop)])
+      Promise.all([loadPoints().catch(noop), loadEdges().catch(noop), loadRobots().catch(noop), loadOrders().catch(noop)])
         .then(scheduleRender);
     });
     es.addEventListener('robot-update', onRobotUpdate);
@@ -668,7 +658,7 @@
   function init() {
     renderLegend();
     // Initial paint from REST so the board isn't blank before the first SSE tick.
-    Promise.all([loadPoints().catch(noop), loadRobots().catch(noop), loadOrders().catch(noop)])
+    Promise.all([loadPoints().catch(noop), loadEdges().catch(noop), loadRobots().catch(noop), loadOrders().catch(noop)])
       .then(scheduleRender);
     connect();
   }

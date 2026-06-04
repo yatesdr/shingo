@@ -96,3 +96,62 @@ func DeleteByArea(db *sql.DB, areaName string) error {
 	_, err := db.Exec(`DELETE FROM scene_points WHERE area_name=$1`, areaName)
 	return err
 }
+
+// ── scene edges (drivable path segments, synced from advanced curves) ──
+
+// Edge is the scene-edge entity; the struct lives in shingocore/domain
+// (mirroring the scene.Point = domain.ScenePoint alias above).
+type Edge = domain.SceneEdge
+
+const edgeCols = `id, area_name, instance_name, class_name, from_name, to_name, from_x, from_y, to_x, to_y, synced_at`
+
+func scanEdge(row interface{ Scan(...any) error }) (*Edge, error) {
+	var se Edge
+	err := row.Scan(&se.ID, &se.AreaName, &se.InstanceName, &se.ClassName,
+		&se.FromName, &se.ToName,
+		&se.FromX, &se.FromY, &se.ToX, &se.ToY,
+		&se.SyncedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &se, nil
+}
+
+// UpsertEdge inserts or updates a scene edge keyed by (area_name, instance_name).
+func UpsertEdge(db *sql.DB, se *Edge) error {
+	_, err := db.Exec(`INSERT INTO scene_edges (area_name, instance_name, class_name, from_name, to_name, from_x, from_y, to_x, to_y, synced_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+		ON CONFLICT (area_name, instance_name) DO UPDATE SET
+			class_name=EXCLUDED.class_name, from_name=EXCLUDED.from_name,
+			to_name=EXCLUDED.to_name,
+			from_x=EXCLUDED.from_x, from_y=EXCLUDED.from_y,
+			to_x=EXCLUDED.to_x, to_y=EXCLUDED.to_y,
+			synced_at=EXCLUDED.synced_at`,
+		se.AreaName, se.InstanceName, se.ClassName, se.FromName, se.ToName,
+		se.FromX, se.FromY, se.ToX, se.ToY)
+	return err
+}
+
+// ListEdges returns every scene edge, ordered by area + instance.
+func ListEdges(db *sql.DB) ([]*Edge, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM scene_edges ORDER BY area_name, instance_name`, edgeCols))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var edges []*Edge
+	for rows.Next() {
+		se, err := scanEdge(rows)
+		if err != nil {
+			return nil, err
+		}
+		edges = append(edges, se)
+	}
+	return edges, rows.Err()
+}
+
+// DeleteEdgesByArea removes every scene edge in a given area.
+func DeleteEdgesByArea(db *sql.DB, areaName string) error {
+	_, err := db.Exec(`DELETE FROM scene_edges WHERE area_name=$1`, areaName)
+	return err
+}

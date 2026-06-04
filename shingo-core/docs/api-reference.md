@@ -18,6 +18,7 @@ No authentication required. Read-only.
 | `GET` | `/api/nodes/detail?id=<ID>` | Single node detail |
 | `GET` | `/api/nodestate` | Node state cache |
 | `GET` | `/api/map/points` | Fleet scene map points |
+| `GET` | `/api/map/edges` | Fleet scene path segments (advanced curves) between map points |
 
 #### GET /api/nodes
 

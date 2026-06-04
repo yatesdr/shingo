@@ -159,6 +159,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/nodes/bin-types", h.apiGetNodeBinTypes)
 			r.Get("/nodestate", h.apiNodeState)
 			r.Get("/map/points", h.apiScenePoints)
+			r.Get("/map/edges", h.apiSceneEdges)
 
 			// Orders & missions
 			r.Get("/orders", h.apiListOrders)

@@ -26,6 +26,8 @@ import (
 type Store interface {
 	DeleteScenePointsByArea(areaName string) error
 	UpsertScenePoint(sp *scene.Point) error
+	DeleteSceneEdgesByArea(areaName string) error
+	UpsertSceneEdge(se *scene.Edge) error
 	GetNodeTypeByCode(code string) (*nodes.NodeType, error)
 	GetNodeByName(name string) (*nodes.Node, error)
 	CreateNode(n *nodes.Node) error
@@ -50,6 +52,9 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea) (int, map[str
 	for _, area := range areas {
 		if err := db.DeleteScenePointsByArea(area.Name); err != nil {
 			log("scenesync: delete points for area %s: %v", area.Name, err)
+		}
+		if err := db.DeleteSceneEdgesByArea(area.Name); err != nil {
+			log("scenesync: delete edges for area %s: %v", area.Name, err)
 		}
 		for _, ap := range area.AdvancedPoints {
 			sp := &scene.Point{
@@ -86,6 +91,24 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea) (int, map[str
 				log("scenesync: upsert point %s: %v", bin.InstanceName, err)
 			}
 			total++
+		}
+		// Drivable path segments (advanced curves) — the scene's real
+		// connectivity, consumed by the robot-map travel network.
+		for _, ed := range area.Edges {
+			se := &scene.Edge{
+				AreaName:     area.Name,
+				InstanceName: ed.InstanceName,
+				ClassName:    ed.ClassName,
+				FromName:     ed.FromName,
+				ToName:       ed.ToName,
+				FromX:        ed.FromX,
+				FromY:        ed.FromY,
+				ToX:          ed.ToX,
+				ToY:          ed.ToY,
+			}
+			if err := db.UpsertSceneEdge(se); err != nil {
+				log("scenesync: upsert edge %s: %v", ed.InstanceName, err)
+			}
 		}
 	}
 	return total, locationSet

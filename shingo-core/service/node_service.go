@@ -203,6 +203,13 @@ func (s *NodeService) ListScenePointsByClass(className string) ([]*scene.Point, 
 	return s.db.ListScenePointsByClass(className)
 }
 
+// ListSceneEdges returns the drivable path segments synced from the
+// fleet scene (advanced curves). The robot-map dashboard renders these
+// as its travel network and routes robots along them.
+func (s *NodeService) ListSceneEdges() ([]*scene.Edge, error) {
+	return s.db.ListSceneEdges()
+}
+
 // ListCorrectionsByNode returns the most recent correction entries
 // filed against a single node, capped at limit rows. Absorbed from
 // engine_db_methods.go as part of the Phase 3a closeout (PR 3a.6).

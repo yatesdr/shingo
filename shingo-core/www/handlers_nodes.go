@@ -84,6 +84,19 @@ func (h *Handlers) apiScenePoints(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, points)
 }
 
+// apiSceneEdges returns the drivable path segments (advanced curves)
+// synced from the fleet scene. Consumed by the robot-map dashboard to
+// draw the travel network and route robots along real aisles instead of
+// proximity-derived links.
+func (h *Handlers) apiSceneEdges(w http.ResponseWriter, r *http.Request) {
+	edges, err := h.engine.NodeService().ListSceneEdges()
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, edges)
+}
+
 func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
 	pd, err := getNodesPageData(&nodesPageDataAdapter{ns: h.engine.NodeService(), bs: h.engine.BinService()})
 	if err != nil {

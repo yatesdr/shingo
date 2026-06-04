@@ -44,6 +44,26 @@ type AdvancedPoint struct {
 	Property     []SceneProperty `json:"property,omitempty"`
 }
 
+// CurveEnd is one endpoint of an advanced curve: the advanced point it
+// attaches to (by instance name) plus its raw position.
+type CurveEnd struct {
+	InstanceName string `json:"instanceName"`
+	Pos          Pos3D  `json:"pos"`
+}
+
+// AdvancedCurve is a drivable path segment between two advanced points
+// (className e.g. "StraightPath", "BezierPath", "DegenerateBezier"; the
+// instance name is conventionally "<from>-<to>"). Control points and
+// vendor properties beyond the endpoints are not modeled — shingo only
+// needs the connectivity and endpoint coordinates.
+type AdvancedCurve struct {
+	ClassName    string          `json:"className"`
+	InstanceName string          `json:"instanceName"`
+	StartPos     CurveEnd        `json:"startPos"`
+	EndPos       CurveEnd        `json:"endPos"`
+	Property     []SceneProperty `json:"property,omitempty"`
+}
+
 type BinLocation struct {
 	ClassName    string          `json:"className"`
 	InstanceName string          `json:"instanceName"`
@@ -67,7 +87,7 @@ type SceneMap struct {
 type LogicalMap struct {
 	AdvancedPoints   []AdvancedPoint    `json:"advancedPoints,omitempty"`
 	BinLocationsList []BinLocationGroup `json:"binLocationsList,omitempty"`
-	AdvancedCurves   []any              `json:"advancedCurves,omitempty"`
+	AdvancedCurves   []AdvancedCurve    `json:"advancedCurves,omitempty"`
 	AdvancedBlocks   []any              `json:"advancedBlocks,omitempty"`
 	AdvancedAreaList []any              `json:"advancedAreaList,omitempty"`
 }

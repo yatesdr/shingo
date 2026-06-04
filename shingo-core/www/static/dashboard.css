@@ -149,7 +149,7 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 .map-grid { stroke: rgba(255, 255, 255, 0.03); }
 .map-bracket { stroke: rgba(120, 160, 210, 0.35); stroke-linecap: round; }
 
-/* Travel network: the derived aisle graph and its receded waypoint dots. */
+/* Travel network: the scene's synced path segments and receded waypoint dots. */
 .map-aisle { stroke: #1f2935; stroke-linecap: round; }
 .map-node-travel { fill: #323c4a; }
 /* Order source/destination highlight ring (status-colored in JS). */

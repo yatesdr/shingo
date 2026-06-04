@@ -213,6 +213,22 @@ CREATE TABLE IF NOT EXISTS scene_points (
 CREATE INDEX IF NOT EXISTS idx_scene_points_class ON scene_points(class_name);
 CREATE INDEX IF NOT EXISTS idx_scene_points_area ON scene_points(area_name);
 
+CREATE TABLE IF NOT EXISTS scene_edges (
+    id            BIGSERIAL PRIMARY KEY,
+    area_name     TEXT NOT NULL,
+    instance_name TEXT NOT NULL,
+    class_name    TEXT NOT NULL DEFAULT '',
+    from_name     TEXT NOT NULL DEFAULT '',
+    to_name       TEXT NOT NULL DEFAULT '',
+    from_x        DOUBLE PRECISION NOT NULL DEFAULT 0,
+    from_y        DOUBLE PRECISION NOT NULL DEFAULT 0,
+    to_x          DOUBLE PRECISION NOT NULL DEFAULT 0,
+    to_y          DOUBLE PRECISION NOT NULL DEFAULT 0,
+    synced_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(area_name, instance_name)
+);
+CREATE INDEX IF NOT EXISTS idx_scene_edges_area ON scene_edges(area_name);
+
 CREATE TABLE IF NOT EXISTS edge_registry (
     id              BIGSERIAL PRIMARY KEY,
     station_id      TEXT NOT NULL UNIQUE,

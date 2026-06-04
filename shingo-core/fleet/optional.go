@@ -132,11 +132,28 @@ type OccupancyDetail struct {
 	Status   int
 }
 
-// SceneArea represents a named area in the fleet scene containing points and locations.
+// SceneArea represents a named area in the fleet scene containing points,
+// locations, and the drivable path segments connecting them.
 type SceneArea struct {
 	Name           string
 	AdvancedPoints []ScenePoint
 	BinLocations   []ScenePoint
+	Edges          []SceneEdge
+}
+
+// SceneEdge is a vendor-neutral drivable path segment between two scene
+// points (SEER "advanced curves"). Endpoints carry both the point instance
+// name and raw coordinates so consumers can use the segment even when an
+// endpoint wasn't synced as a point.
+type SceneEdge struct {
+	ClassName    string
+	InstanceName string
+	FromName     string
+	ToName       string
+	FromX        float64
+	FromY        float64
+	ToX          float64
+	ToY          float64
 }
 
 // ScenePoint is a vendor-neutral point in the fleet scene.

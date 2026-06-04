@@ -271,6 +271,24 @@ func (a *Adapter) GetSceneAreas() ([]fleet.SceneArea, error) {
 				})
 			}
 		}
+		// Advanced curves are the drivable path segments between advanced
+		// points — the scene's real connectivity. Skip degenerate entries
+		// with no endpoint names (nothing to join them to).
+		for _, c := range rdsArea.LogicalMap.AdvancedCurves {
+			if c.StartPos.InstanceName == "" && c.EndPos.InstanceName == "" {
+				continue
+			}
+			fa.Edges = append(fa.Edges, fleet.SceneEdge{
+				ClassName:    c.ClassName,
+				InstanceName: c.InstanceName,
+				FromName:     c.StartPos.InstanceName,
+				ToName:       c.EndPos.InstanceName,
+				FromX:        c.StartPos.Pos.X,
+				FromY:        c.StartPos.Pos.Y,
+				ToX:          c.EndPos.Pos.X,
+				ToY:          c.EndPos.Pos.Y,
+			})
+		}
 		areas[i] = fa
 	}
 	return areas, nil

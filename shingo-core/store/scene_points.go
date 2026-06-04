@@ -25,3 +25,15 @@ func (db *DB) ListScenePointsByArea(areaName string) ([]*scene.Point, error) {
 func (db *DB) DeleteScenePointsByArea(areaName string) error {
 	return scene.DeleteByArea(db.DB, areaName)
 }
+
+func (db *DB) UpsertSceneEdge(se *scene.Edge) error {
+	return scene.UpsertEdge(db.DB, se)
+}
+
+func (db *DB) ListSceneEdges() ([]*scene.Edge, error) {
+	return scene.ListEdges(db.DB)
+}
+
+func (db *DB) DeleteSceneEdgesByArea(areaName string) error {
+	return scene.DeleteEdgesByArea(db.DB, areaName)
+}
