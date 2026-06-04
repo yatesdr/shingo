@@ -132,6 +132,12 @@ func (db *DB) ListActiveOrders() ([]*orders.Order, error) { return orders.ListAc
 
 func (db *DB) ListActiveBoardOrders() ([]*orders.Order, error) { return orders.ListActiveBoard(db.DB) }
 
+// ListActiveBoardOrdersFiltered scopes the board to a set of station IDs.
+// Empty stations = plant-wide (same as ListActiveBoardOrders).
+func (db *DB) ListActiveBoardOrdersFiltered(stations []string) ([]*orders.Order, error) {
+	return orders.ListActiveBoardFiltered(db.DB, stations)
+}
+
 func (db *DB) ListOrderHistory(orderID int64) ([]*orders.History, error) {
 	return orders.ListHistory(db.DB, orderID)
 }

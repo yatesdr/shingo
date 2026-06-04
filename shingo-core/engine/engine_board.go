@@ -22,7 +22,15 @@ type BoardOrder struct {
 }
 
 func (e *Engine) GetActiveOrdersWithRobotLocation() ([]BoardOrder, error) {
-	dbOrders, err := e.db.ListActiveBoardOrders()
+	return e.GetActiveOrdersWithRobotLocationFiltered(nil)
+}
+
+// GetActiveOrdersWithRobotLocationFiltered is the board query scoped to a set
+// of station IDs — the server-side "area" filter a dashboard applies. An
+// empty/nil stations slice returns the plant-wide board. Robot-cache and ETA
+// enrichment are identical to the unscoped path.
+func (e *Engine) GetActiveOrdersWithRobotLocationFiltered(stations []string) ([]BoardOrder, error) {
+	dbOrders, err := e.db.ListActiveBoardOrdersFiltered(stations)
 	if err != nil {
 		return nil, fmt.Errorf("board: list active orders: %w", err)
 	}
@@ -64,14 +72,14 @@ func (e *Engine) GetActiveOrderWithRobotLocation(orderID int64) (*BoardOrder, er
 	}
 
 	bo := &BoardOrder{
-		OrderID:        o.ID,
-		RobotID:        o.RobotID,
-		SourceNode:     o.SourceNode,
-		PayloadCode:    o.PayloadCode,
-		DeliveryNode:   o.DeliveryNode,
-		Status:         string(o.Status),
-		StationID:      o.StationID,
-		CreatedAt:      o.CreatedAt.Format(time.RFC3339),
+		OrderID:      o.ID,
+		RobotID:      o.RobotID,
+		SourceNode:   o.SourceNode,
+		PayloadCode:  o.PayloadCode,
+		DeliveryNode: o.DeliveryNode,
+		Status:       string(o.Status),
+		StationID:    o.StationID,
+		CreatedAt:    o.CreatedAt.Format(time.RFC3339),
 	}
 	if rs, ok := e.GetCachedRobotStatus(o.RobotID); ok {
 		bo.CurrentStation = rs.CurrentStation

@@ -46,8 +46,9 @@ func (e *Engine) TagVerifyService() *service.TagVerifyService { return e.tagVeri
 func (e *Engine) InventoryDeltaService() *service.InventoryDeltaService {
 	return e.inventoryDeltaService
 }
-func (e *Engine) EventBus() *EventBus { return e.Events }
-func (e *Engine) EtaCache() *eta.Cache { return e.etaCache }
+func (e *Engine) DashboardService() *service.DashboardService { return e.dashboardService }
+func (e *Engine) EventBus() *EventBus                         { return e.Events }
+func (e *Engine) EtaCache() *eta.Cache                        { return e.etaCache }
 
 // SetCountGroupRunner registers a configured Runner built by the
 // composition root. The caller passes the Runner directly — transitions

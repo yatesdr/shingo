@@ -80,6 +80,7 @@ type Engine struct {
 	healthService         *service.HealthService
 	tagVerifyService      *service.TagVerifyService
 	inventoryDeltaService *service.InventoryDeltaService
+	dashboardService      *service.DashboardService
 	thresholdMonitor      *ThresholdMonitor
 	etaCache              *eta.Cache
 	stopChan              chan struct{}
@@ -163,6 +164,7 @@ func New(c Config) *Engine {
 	e.healthService = service.NewHealthService(e.db)
 	e.tagVerifyService = service.NewTagVerifyService(e.db)
 	e.inventoryDeltaService = service.NewInventoryDeltaService(e.db, e.binManifest)
+	e.dashboardService = service.NewDashboardService(e.db)
 	e.thresholdMonitor = NewThresholdMonitor(e)
 	e.etaCache = eta.NewCache(e.db.DB)
 	return e

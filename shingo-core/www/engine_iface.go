@@ -60,6 +60,7 @@ type ServiceAccess interface {
 	InventoryDeltaService() *service.InventoryDeltaService
 	AdminService() *service.AdminService
 	HealthService() *service.HealthService
+	DashboardService() *service.DashboardService
 
 	// ── Read-only state queries ────────────────────────────────────
 	// These look like orchestration verbs but are pure reads with no
@@ -71,6 +72,7 @@ type ServiceAccess interface {
 	GetNodeOccupancy() ([]engine.OccupancyEntry, error)
 	EtaCache() *eta.Cache
 	GetActiveOrdersWithRobotLocation() ([]engine.BoardOrder, error)
+	GetActiveOrdersWithRobotLocationFiltered(stations []string) ([]engine.BoardOrder, error)
 	GetActiveOrderWithRobotLocation(orderID int64) (*engine.BoardOrder, error)
 }
 

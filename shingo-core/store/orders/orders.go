@@ -335,6 +335,33 @@ func ListActiveBoard(db *sql.DB) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
+// ListActiveBoardFiltered is ListActiveBoard scoped to a set of station IDs —
+// the server-side "area" filter for a dashboard. An empty/nil stations slice
+// means no scoping (plant-wide), identical to ListActiveBoard. The IN list is
+// built with positional placeholders rather than a SQL array type to stay
+// portable across the database/sql + pgx stdlib path the rest of this package
+// uses.
+func ListActiveBoardFiltered(db *sql.DB, stations []string) ([]*Order, error) {
+	if len(stations) == 0 {
+		return ListActiveBoard(db)
+	}
+	placeholders := make([]string, len(stations))
+	args := make([]any, len(stations))
+	for i, s := range stations {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = s
+	}
+	query := fmt.Sprintf(
+		`SELECT %s FROM orders WHERE status NOT IN (%s) AND robot_id != '' AND %s AND station_id IN (%s) ORDER BY created_at ASC`,
+		SelectCols, protocol.TerminalStatusSQLList(), adminListExcludeTypeFilter, strings.Join(placeholders, ","))
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanOrders(rows)
+}
+
 // ListHistory returns the audit log entries for an order, oldest first.
 func ListHistory(db *sql.DB, orderID int64) ([]*History, error) {
 	rows, err := db.Query(`SELECT id, order_id, status, detail, created_at FROM order_history WHERE order_id=$1 ORDER BY id`, orderID)

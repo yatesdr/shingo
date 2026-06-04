@@ -313,6 +313,15 @@ func (db *DB) runVersionedMigrations() error {
 		{26, "add sibling_order_uuid column to orders",
 			v26OrderSiblingUUID,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "sibling_order_uuid") }},
+
+		// v27 adds the dashboards table — saved floor-display definitions
+		// for the dashboard platform (task board + future kinds). A
+		// dashboard is a named, station-scoped view of Core's live data,
+		// served chromeless at /dashboard/{id}. Pure presentation config;
+		// it owns no operational state, so there is no data to backfill.
+		{27, "add dashboards table for the floor display platform",
+			v27Dashboards,
+			func(q schema.Querier) bool { return schema.TableExists(q, "dashboards") }},
 	}
 
 	for _, m := range migrations {
@@ -805,6 +814,27 @@ func v25SlotClaiming(tx *sql.Tx) error {
 
 func v26OrderSiblingUUID(tx *sql.Tx) error {
 	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS sibling_order_uuid TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// v27Dashboards creates the dashboards table backing the floor display
+// platform. Mirrors the baseline DDL in schema/postgres_ddl.go. A dashboard
+// is a saved, station-scoped view of Core's live data (task board today,
+// other kinds later) rendered chromeless for wall monitors. Idempotent
+// CREATE ... IF NOT EXISTS so fresh DBs (which got the table from the
+// baseline) and upgraded DBs both converge.
+func v27Dashboards(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS dashboards (
+		id            BIGSERIAL PRIMARY KEY,
+		name          TEXT NOT NULL,
+		kind          TEXT NOT NULL DEFAULT 'task-board',
+		stations_json TEXT NOT NULL DEFAULT '[]',
+		config_json   TEXT NOT NULL DEFAULT '{}',
+		enabled       BOOLEAN NOT NULL DEFAULT true,
+		sort_order    INTEGER NOT NULL DEFAULT 0,
+		created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`)
 	return err
 }
 

@@ -434,4 +434,23 @@ CREATE TABLE IF NOT EXISTS inventory_delta_dedup (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (station, scope_kind, scope_key, epoch)
 );
+
+-- dashboards: floor-facing display definitions for the dashboard platform.
+-- A dashboard is a saved, named view of Core's live data, scoped to a set
+-- of stations ("area"). Rendered chromeless at /dashboard/{id} for a wall
+-- monitor; managed via the /dashboards admin page. Pure presentation — it
+-- owns no operational data beyond its own definition. kind selects the
+-- renderer (v1 = task-board); stations_json is the area filter; config_json
+-- carries per-kind options.
+CREATE TABLE IF NOT EXISTS dashboards (
+    id            BIGSERIAL PRIMARY KEY,
+    name          TEXT NOT NULL,
+    kind          TEXT NOT NULL DEFAULT 'task-board',
+    stations_json TEXT NOT NULL DEFAULT '[]',
+    config_json   TEXT NOT NULL DEFAULT '{}',
+    enabled       BOOLEAN NOT NULL DEFAULT true,
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `
