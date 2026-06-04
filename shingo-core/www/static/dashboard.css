@@ -137,34 +137,65 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 /* ── robot-map kind ───────────────────────────────────────────────── */
 .map-main { padding: 0; position: relative; }
 .map-svg-wrap { position: absolute; inset: 0; }
-.map-svg { width: 100%; height: 100%; display: block; background: var(--dash-bg); }
+.map-svg { width: 100%; height: 100%; display: block; background: #070a0f; }
 
 /* Sizes (radius, stroke, font) are set in user units by dashboard-map.js so
- * they scale with the map; CSS here owns only colors/opacity. Node fill is set
- * per-class in JS; this is the fallback. */
-/* Node fill is the per-class color set as an SVG attribute in JS. Do NOT set
- * `fill` here — a CSS fill property overrides the presentation attribute, which
- * made every node render grey. */
-.map-node { opacity: 0.95; }
-.map-node-hot { stroke: #ffffff; opacity: 1; }
-.map-route { opacity: 0.8; stroke-linecap: round; }
-/* Light outline so overlapping robot triangles stay individually visible. */
-.map-robot { stroke: rgba(255, 255, 255, 0.55); }
+ * they scale with the map; CSS here owns colors, opacity, and animation.
+ * Per-shape fills/strokes are set as SVG attributes in JS — do NOT set `fill`
+ * on those classes, a CSS fill overrides the presentation attribute. */
+
+/* Backdrop: faint grid + corner brackets frame the floor. Grid stroke-width is
+ * set in JS user units — a CSS width would not scale with the map. */
+.map-grid { stroke: rgba(255, 255, 255, 0.03); }
+.map-bracket { stroke: rgba(120, 160, 210, 0.35); stroke-linecap: round; }
+
+/* Travel network: the derived aisle graph and its receded waypoint dots. */
+.map-aisle { stroke: #1f2935; stroke-linecap: round; }
+.map-node-travel { fill: #323c4a; }
+/* Order source/destination highlight ring (status-colored in JS). */
+.map-node-hot { opacity: 0.95; }
+
+/* Routes follow the aisles: a dim base line with a flowing dashed overlay so
+ * direction of travel reads without clutter. The flow polyline carries a JS-set
+ * pathLength that normalizes dash units to robot size, so this fixed pattern
+ * (period 2) renders consistently on any map scale and the -2 offset loops
+ * seamlessly. */
+.map-route-base { opacity: 0.3; stroke-linecap: round; stroke-linejoin: round; }
+.map-route-flow {
+  opacity: 0.95;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 0.55 1.45;
+  animation: map-flow 0.9s linear infinite;
+}
+@keyframes map-flow { to { stroke-dashoffset: -2; } }
+
+/* Robots are the hero: a soft pulsing halo, a bright chevron with heading, and
+ * a dark core dot. The chevron stroke darkens against the halo for contrast. */
+.map-robot-halo { opacity: 0.16; animation: map-halo 2.6s ease-in-out infinite; }
+@keyframes map-halo { 0%, 100% { opacity: 0.13; } 50% { opacity: 0.27; } }
+.map-robot { stroke: #070a0f; }
+.map-robot-core { fill: #070a0f; }
+
+/* Name chips: dark pill, status-colored hairline border, monospace label. */
+.map-chip { fill: rgba(7, 10, 15, 0.9); stroke-opacity: 0.7; }
 .map-robot-label {
-  fill: var(--dash-text);
+  fill: #dbe4ee;
   text-anchor: middle;
-  font-weight: 600;
+  font-weight: 500;
+  letter-spacing: 0.04em;
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-  paint-order: stroke;
-  stroke: rgba(13, 17, 23, 0.92);
-  stroke-width: 3px;
 }
 .map-node-label {
   fill: var(--dash-muted);
   text-anchor: middle;
   paint-order: stroke;
-  stroke: rgba(13, 17, 23, 0.9);
+  stroke: rgba(7, 10, 15, 0.9);
   stroke-width: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-route-flow, .map-robot-halo { animation: none; }
 }
 
 .map-legend { display: flex; gap: 0.9rem; font-size: 0.95rem; color: var(--dash-muted); }
