@@ -148,14 +148,16 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 .map-node { opacity: 0.95; }
 .map-node-hot { stroke: #ffffff; opacity: 1; }
 .map-route { opacity: 0.8; stroke-linecap: round; }
-.map-robot { stroke: #0b0e14; paint-order: stroke; }
+/* Light outline so overlapping robot triangles stay individually visible. */
+.map-robot { stroke: rgba(255, 255, 255, 0.55); }
 .map-robot-label {
   fill: var(--dash-text);
   text-anchor: middle;
+  font-weight: 600;
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
   paint-order: stroke;
-  stroke: rgba(13, 17, 23, 0.9);
-  stroke-width: 4px;
+  stroke: rgba(13, 17, 23, 0.92);
+  stroke-width: 3px;
 }
 .map-node-label {
   fill: var(--dash-muted);
