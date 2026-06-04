@@ -170,12 +170,17 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 }
 @keyframes map-flow { to { stroke-dashoffset: -2; } }
 
-/* Robots are the hero: a soft pulsing halo, a bright chevron with heading, and
- * a dark core dot. The chevron stroke darkens against the halo for contrast. */
+/* Robots are the hero: a soft halo (pulsing only while working — parked
+ * clusters stay calm), a bright chevron with heading, and a dark core dot.
+ * The chevron stroke is LIGHT: stacked same-color chevrons separate against
+ * each other; a dark stroke piled overlapping robots into a black blob. */
 .map-robot-halo { opacity: 0.16; animation: map-halo 2.6s ease-in-out infinite; }
+.map-halo-static { animation: none; opacity: 0.10; }
 @keyframes map-halo { 0%, 100% { opacity: 0.13; } 50% { opacity: 0.27; } }
-.map-robot { stroke: #070a0f; }
+.map-robot { stroke: rgba(255, 255, 255, 0.55); }
 .map-robot-core { fill: #070a0f; }
+/* Hairline tying a de-collided name chip back to its robot. */
+.map-chip-leader { stroke: rgba(255, 255, 255, 0.18); }
 
 /* Name chips: dark pill, status-colored hairline border, monospace label. */
 .map-chip { fill: rgba(7, 10, 15, 0.9); stroke-opacity: 0.7; }

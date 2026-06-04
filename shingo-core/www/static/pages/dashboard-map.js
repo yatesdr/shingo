@@ -163,48 +163,54 @@
   //      step node-to-node along the aisle instead of cutting across open floor.
   //
   // Routes are then the shortest path on this pruned graph.
-  var GRAPH_K = 6;          // safety cap on links per node (RNG is already sparse)
-  var GRAPH_THRESH = 2.2;   // × median nearest-neighbour distance (candidate gather)
+  var CAND_K = 4;           // nearest-neighbour candidates per node
+  var GRAPH_K = 6;          // safety cap on kept links per node (RNG is already sparse)
   var tnodes = [];          // [{x, y}] world coords of travel nodes
   var tadj = [];            // adjacency: tadj[i] = [{n, w}]
   var routeCache = {};      // "s:d" -> array of tnode indices (cleared on rebuild)
+  var graphScale = 0;       // median nearest-neighbour gap (world units); also
+                            // the local scale that drives marker/label sizing
 
   function isTravel(cls) { return cls === 'LocationMark' || cls === 'GeneralLocation'; }
 
   function buildGraph() {
-    tnodes = []; tadj = []; routeCache = {};
+    tnodes = []; tadj = []; routeCache = {}; graphScale = 0;
     points.forEach(function (p) {
       if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
       if (isTravel(classOf(p))) tnodes.push({ x: p.pos_x, y: p.pos_y });
     });
     var n = tnodes.length;
     if (n < 2) return;
-    // nearest-neighbour distance per node -> median sets the link threshold.
-    var nn = [];
-    for (var i = 0; i < n; i++) {
-      var best = Infinity;
-      for (var j = 0; j < n; j++) {
-        if (i === j) continue;
-        var d = dist2(tnodes[i], tnodes[j]);
-        if (d < best) best = d;
-      }
-      nn.push(Math.sqrt(best));
+    // Step 1: each node's K nearest neighbours as candidates. No global
+    // distance threshold — corridor waypoints can sit many times further apart
+    // than dense-cell waypoints, and a single threshold (tried first) left the
+    // corridor fragmented while the cells were over-linked. A generous absolute
+    // cap (fraction of the plant footprint) still prevents cross-plant links.
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (var e = 0; e < n; e++) {
+      if (tnodes[e].x < minX) minX = tnodes[e].x;
+      if (tnodes[e].x > maxX) maxX = tnodes[e].x;
+      if (tnodes[e].y < minY) minY = tnodes[e].y;
+      if (tnodes[e].y > maxY) maxY = tnodes[e].y;
     }
-    var sorted = nn.slice().sort(function (a, b) { return a - b; });
-    var median = sorted[Math.floor(sorted.length / 2)] || 1;
-    var thresh2 = Math.pow(median * GRAPH_THRESH, 2);
-    // Step 1: candidate neighbours within threshold, nearest first.
+    var cap2 = Math.pow(Math.max(maxX - minX, maxY - minY) * 0.35, 2);
     var cand = [];
     for (var a = 0; a < n; a++) {
       var list = [];
       for (var b = 0; b < n; b++) {
         if (a === b) continue;
         var dd = dist2(tnodes[a], tnodes[b]);
-        if (dd <= thresh2) list.push({ n: b, d2: dd });
+        if (dd <= cap2) list.push({ n: b, d2: dd });
       }
       list.sort(function (p, q) { return p.d2 - q.d2; });
-      cand[a] = list;
+      cand[a] = list.slice(0, CAND_K);
     }
+    // Median nearest-neighbour gap = the floor's local scale. Sizing uses it so
+    // markers fit the dense cells robots live in, not the whole plant extent.
+    var nn = [];
+    for (var m = 0; m < n; m++) if (cand[m].length) nn.push(Math.sqrt(cand[m][0].d2));
+    nn.sort(function (a, b) { return a - b; });
+    graphScale = nn[Math.floor(nn.length / 2)] || 0;
     // Step 2: relative-neighbourhood prune, blockers drawn from the candidate
     // pools of both endpoints (the blocker is always a near node).
     for (var u = 0; u < n; u++) {
@@ -220,6 +226,15 @@
         if (!blocked) keep.push({ n: v, w: Math.sqrt(duv2) });
       }
       tadj[u] = keep.slice(0, GRAPH_K);
+    }
+    // Symmetrize: kNN candidacy isn't mutual, but the aisle network is
+    // undirected — every kept edge must exist in both directions or Dijkstra
+    // sees one-way aisles.
+    for (var s = 0; s < n; s++) {
+      tadj[s].forEach(function (ed) {
+        var back = (tadj[ed.n] || []).some(function (r2) { return r2.n === s; });
+        if (!back) tadj[ed.n].push({ n: s, w: ed.w });
+      });
     }
   }
 
@@ -362,9 +377,15 @@
     if (empty) empty.style.display = 'none';
 
     var unit = Math.max(view.w, view.h);
-    var nodeR = unit * 0.006;
-    var robotR = unit * 0.016;
-    var fontS = unit * 0.013;
+    // Local-scale sizing: proportion markers to the median waypoint gap
+    // (clamped against plant extent) so robots fit the dense cells they
+    // cluster in instead of dominating them. Sizing off the full plant extent
+    // made everything huge on a floor that is two tight cells + a long
+    // corridor.
+    var base = graphScale || unit * 0.03;
+    var robotR = Math.max(unit * 0.004, Math.min(unit * 0.010, base * 0.9));
+    var nodeR = Math.max(unit * 0.0018, Math.min(unit * 0.006, base * 0.3));
+    var fontS = Math.max(unit * 0.006, Math.min(unit * 0.0085, base * 0.8));
 
     var svg = svgEl('svg', {
       class: 'map-svg',
@@ -441,7 +462,13 @@
       var s = proj(r.x, r.y);
       var ord = orderByRobot[r.id];
       var color = ord ? (STATUS_COLOR[ord.status] || STATE_COLOR[r.state]) : (STATE_COLOR[r.state] || '#888');
-      svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 1.7, class: 'map-robot-halo', fill: color }));
+      // Halo pulses only for robots doing something; parked clusters stay calm
+      // so stacked idle halos don't merge into one glowing blob.
+      var moving = r.state === 'busy' || !!ord;
+      svg.appendChild(svgEl('circle', {
+        cx: s[0], cy: s[1], r: robotR * 1.35,
+        class: 'map-robot-halo' + (moving ? '' : ' map-halo-static'), fill: color
+      }));
       // Fleet Angle is radians (confirmed live); SVG rotate wants degrees.
       var rot = -(r.angle * 180 / Math.PI) + (rotate90 ? 90 : 0);
       var g = svgEl('g', { transform: 'translate(' + s[0] + ',' + s[1] + ') rotate(' + rot + ')' });
@@ -463,14 +490,22 @@
       placed.push({ x: lx, y: ly });
       var ord = orderByRobot[r.id];
       var color = ord ? (STATUS_COLOR[ord.status] || STATE_COLOR[r.state]) : (STATE_COLOR[r.state] || '#888');
-      var halfW = (r.id.length * fontS * 0.62) / 2 + fontS * 0.9;
-      var chipH = fontS * 1.5;
+      var halfW = (r.id.length * fontS * 0.62) / 2 + fontS * 0.55;
+      var chipH = fontS * 1.3;
+      // Leader line ties a displaced chip back to its robot so a stacked
+      // cluster of names stays attributable.
+      if (Math.abs(ly - s[1]) > robotR * 2.6) {
+        svg.appendChild(svgEl('line', {
+          x1: s[0], y1: s[1], x2: lx, y2: ly - chipH * 0.7,
+          class: 'map-chip-leader', 'stroke-width': fontS * 0.06
+        }));
+      }
       svg.appendChild(svgEl('rect', {
-        x: lx - halfW, y: ly - chipH * 0.78, width: halfW * 2, height: chipH, rx: fontS * 0.3,
-        class: 'map-chip', stroke: color, 'stroke-width': fontS * 0.07
+        x: lx - halfW, y: ly - chipH * 0.75, width: halfW * 2, height: chipH, rx: fontS * 0.25,
+        class: 'map-chip', stroke: color, 'stroke-width': fontS * 0.06
       }));
-      svg.appendChild(svgEl('circle', { cx: lx - halfW + fontS * 0.55, cy: ly - chipH * 0.05, r: fontS * 0.22, fill: color }));
-      var label = svgEl('text', { x: lx + fontS * 0.4, y: ly, class: 'map-robot-label', 'font-size': fontS });
+      svg.appendChild(svgEl('circle', { cx: lx - halfW + fontS * 0.5, cy: ly - chipH * 0.1, r: fontS * 0.2, fill: color }));
+      var label = svgEl('text', { x: lx + fontS * 0.35, y: ly, class: 'map-robot-label', 'font-size': fontS });
       label.textContent = r.id;
       svg.appendChild(label);
     });
@@ -512,14 +547,32 @@
     return d.innerHTML;
   }
 
+  // Class legend mirrors the actual node encoding: travel dots recede, typed
+  // waypoints are outlined shapes. Unknown classes fall back to palette dots.
+  function legendSwatch(color, shape, label) {
+    var style = 'background:' + color;
+    if (shape === 'ring') style = 'background:transparent;border:2px solid ' + color;
+    if (shape === 'square') style = 'background:transparent;border:2px solid ' + color + ';border-radius:3px';
+    return '<span class="map-legend-item"><span class="map-legend-dot" style="' + style + '"></span>' +
+      escapeText(label) + '</span>';
+  }
+
   function renderClassLegend() {
     var el = document.getElementById('map-class-legend');
     if (!el) return;
-    var names = Object.keys(classColors);
-    el.innerHTML = names.map(function (n) {
-      return '<span class="map-legend-item"><span class="map-legend-dot" style="background:' +
-        classColors[n] + '"></span>' + escapeText(prettyClass(n)) + '</span>';
-    }).join('');
+    var have = {};
+    points.forEach(function (p) { have[classOf(p)] = true; });
+    var items = [];
+    if (have.LocationMark || have.GeneralLocation) items.push(legendSwatch('#323c4a', 'dot', 'Travel node'));
+    if (have.ActionPoint) items.push(legendSwatch('#587aa6', 'ring', 'Action point'));
+    if (have.ChargePoint) items.push(legendSwatch('#2f8f48', 'ring', 'Charge point'));
+    if (have.ParkPoint) items.push(legendSwatch('#b0723a', 'square', 'Park point'));
+    Object.keys(have).sort().forEach(function (n) {
+      if (n === 'LocationMark' || n === 'GeneralLocation' || n === 'ActionPoint' ||
+          n === 'ChargePoint' || n === 'ParkPoint') return;
+      items.push(legendSwatch(classColors[n] || '#67748f', 'dot', prettyClass(n)));
+    });
+    el.innerHTML = items.join('');
   }
 
   // ── data loads ─────────────────────────────────────────────────────
