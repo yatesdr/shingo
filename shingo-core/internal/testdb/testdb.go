@@ -354,7 +354,7 @@ func SetupStandardData(t *testing.T, db *store.DB) *StandardData {
 	if err := db.CreateNode(lineNode); err != nil {
 		t.Fatalf("create line node: %v", err)
 	}
-	bp := &payloads.Payload{Code: "PART-A", Description: "Steel bracket tote"}
+	bp := &payloads.Payload{Code: "PART-A", Description: "Steel bracket tote", UOPCapacity: 1000}
 	if err := db.CreatePayload(bp); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}

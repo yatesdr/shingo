@@ -555,22 +555,22 @@ func (h *Handlers) binRecordCount(b *domain.Bin, params json.RawMessage) error {
 	}
 	h.emitBinUpdate(b, "counted", "")
 
+	// Broadcast the corrected UOP to every Edge station. Only the station
+	// whose operator screen currently has this bin active applies it — Edge
+	// guards on active_bin_id and no-ops everywhere else. This mirrors the
+	// broadcast pattern already used for SubjectNodeStructureChanged: a
+	// node-scoped change Core shouldn't try to pre-resolve to one station.
+	// (The first cut used GetEffectiveStations, which returns nil for
+	// "all"-mode nodes and so silently propagated to nobody.)
 	if b.NodeID != nil {
-		stations, err := h.orchestration.NodeService().GetEffectiveStations(*b.NodeID)
-		if err == nil {
-			for _, stationID := range stations {
-				if err := h.orchestration.SendDataToEdge(protocol.SubjectUOPAdjustment, stationID, &protocol.UOPAdjustment{
-					BinID:        b.ID,
-					CoreNodeName: b.NodeName,
-					NewRemaining: p.ActualUOP,
-					Actor:        actor,
-					AdjustedAt:   time.Now().UTC(),
-				}); err != nil {
-					log.Printf("uop_adjustment: propagate bin %d to station %s: %v", b.ID, stationID, err)
-				}
-			}
-		} else {
-			log.Printf("uop_adjustment: resolve stations for bin %d node %d: %v", b.ID, *b.NodeID, err)
+		if err := h.orchestration.SendDataToEdge(protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
+			BinID:        b.ID,
+			CoreNodeName: b.NodeName,
+			NewRemaining: res.Actual,
+			Actor:        actor,
+			AdjustedAt:   time.Now().UTC(),
+		}); err != nil {
+			log.Printf("uop_adjustment: broadcast bin %d (node %s): %v", b.ID, b.NodeName, err)
 		}
 	}
 

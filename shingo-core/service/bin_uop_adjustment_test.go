@@ -13,13 +13,13 @@ import (
 func TestBinService_RecordCount_RejectsAboveCapacity(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	testdb.SetupStandardData(t, db)
+	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
 	p := &payloads.Payload{Code: "CAP-TEST", Description: "capacity test", UOPCapacity: 1200}
 	testutil.MustNoErr(t, db.CreatePayload(p), "create payload")
 
-	bin := createTestBin(t, db, testdb.SetupStandardData(t, db).StorageNode.ID, "BS-CAP-HI", "CAP-TEST", 500)
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-CAP-HI", "CAP-TEST", 500)
 	_, err := svc.RecordCount(bin, 1201, "admin")
 	if err == nil {
 		t.Fatal("expected error for actualUOP > UOPCapacity, got nil")
@@ -29,13 +29,13 @@ func TestBinService_RecordCount_RejectsAboveCapacity(t *testing.T) {
 func TestBinService_RecordCount_RejectsNegative(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	testdb.SetupStandardData(t, db)
+	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
 	p := &payloads.Payload{Code: "CAP-NEG", Description: "capacity test", UOPCapacity: 1200}
 	testutil.MustNoErr(t, db.CreatePayload(p), "create payload")
 
-	bin := createTestBin(t, db, testdb.SetupStandardData(t, db).StorageNode.ID, "BS-CAP-NEG", "CAP-NEG", 500)
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-CAP-NEG", "CAP-NEG", 500)
 	_, err := svc.RecordCount(bin, -1, "admin")
 	if err == nil {
 		t.Fatal("expected error for actualUOP < 0, got nil")
