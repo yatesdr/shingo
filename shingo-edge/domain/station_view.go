@@ -64,6 +64,11 @@ type StationNodeView struct {
 	// transitional board shows it on ACTIVE cards in place of "no demand" so the
 	// operator sees how much the running styles still have lineside.
 	ActivePayloadLineside map[string]int `json:"active_payload_lineside,omitempty"`
+	// StarvedPayloads marks active-style payloads whose lineside UOP has
+	// dropped into the danger zone (service.linesideStarved). The operator
+	// board renders these cards red so the operator preloads before the line
+	// runs dry. Populated only for manual_swap loader nodes.
+	StarvedPayloads map[string]bool `json:"starved_payloads,omitempty"`
 }
 
 // OperatorStationView is the top-level shape rendered by the operator

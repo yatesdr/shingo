@@ -599,8 +599,17 @@ function renderPayloadBoard(entry) {
         if (entry.transitional_loader && isActiveStylePayload) {
             var lsMap = entry.active_payload_lineside || {};
             var lsUOP = lsMap[code] != null ? lsMap[code] : 0;
-            card.appendChild(el('div', { className: 'os-board-lineside',
-                textContent: 'Lineside ' + lsUOP + ' UOP' }));
+            // Starvation cue (task 2): when lineside has dropped into the
+            // danger zone (Core computed starved_payloads), red the card so
+            // the operator preloads before the line runs dry.
+            var starved = (entry.starved_payloads || {})[code] === true;
+            card.appendChild(el('div', {
+                className: 'os-board-lineside' + (starved ? ' os-board-lineside--starved' : ''),
+                textContent: 'Lineside ' + lsUOP + ' UOP' + (starved ? ' — PRELOAD' : ''),
+            }));
+            if (starved) {
+                card.classList.add('os-board-card--starved');
+            }
         }
 
         // Queue-position badge only for REAL per-payload orders. The agnostic

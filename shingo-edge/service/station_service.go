@@ -223,18 +223,39 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 				continue
 			}
 			m := map[string]int{}
+			starved := map[string]bool{}
 			for _, p := range nv.ActiveStylePayloads {
 				if v, ok := lineside[p]; ok {
 					m[p] = v
+					if nv.ActiveClaim != nil && linesideStarved(nv.ActiveClaim.UOPCapacity, v) {
+						starved[p] = true
+					}
 				}
 			}
 			if len(m) > 0 {
 				nv.ActivePayloadLineside = m
 			}
+			if len(starved) > 0 {
+				nv.StarvedPayloads = starved
+			}
 		}
 	}
 
 	return view, nil
+}
+
+// linesideStarved reports whether a manual_swap loader's lineside stock for a
+// payload has dropped into the operator-preload danger zone. v1 is a simple
+// floor: below a quarter of a full bin (capacityUOP). This is the single
+// danger-tier function — time-to-empty escalation slots in here later
+// (SHINGO_TODO "Starvation alert time-to-empty escalation") without touching
+// the view assembly or the render path. Returns false when capacity is
+// unknown (no floor to compare against).
+func linesideStarved(capacityUOP, linesideUOP int) bool {
+	if capacityUOP <= 0 {
+		return false
+	}
+	return linesideUOP < capacityUOP/4
 }
 
 // activePayloadLineside sums the current lineside UOP per payload across EVERY

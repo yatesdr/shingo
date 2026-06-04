@@ -1027,6 +1027,25 @@ body {
     margin-top: 2px;
 }
 
+/* Starvation danger (task 2): active-style lineside dropped below the preload
+   floor — red the card so the operator restocks before the line runs dry. */
+.os-board-card--starved {
+    border: 2px solid #e0484d;
+    background: #2a1518;
+    box-shadow: 0 0 0 2px rgba(224, 72, 77, 0.55);
+    animation: os-starved-pulse 1.6s ease-in-out infinite;
+}
+
+.os-board-lineside--starved {
+    color: #ff6b70;
+    font-weight: 800;
+}
+
+@keyframes os-starved-pulse {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(224, 72, 77, 0.30); }
+    50%      { box-shadow: 0 0 0 4px rgba(224, 72, 77, 0.70); }
+}
+
 .os-board-detail {
     font-size: 22px;
     color: #999;
