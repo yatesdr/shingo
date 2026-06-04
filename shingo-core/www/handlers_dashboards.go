@@ -15,6 +15,7 @@ import (
 // template here (and a matching branch in dashboard.js). v1 ships one kind.
 var dashboardTemplates = map[string]string{
 	"task-board": "dashboard-display.html",
+	"robot-map":  "dashboard-map.html",
 }
 
 // handleDashboardDisplay renders a dashboard's chromeless kiosk page —

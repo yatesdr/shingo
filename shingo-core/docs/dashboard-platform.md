@@ -95,10 +95,40 @@ work and belongs in the query.
 
 ---
 
+## Implemented kinds
+
+### `task-board`
+
+The live order table (see Architecture above). Data: `/api/board/orders?dashboard=<id>`.
+
+### `robot-map`
+
+A spatial plant view: scene nodes laid out by their world coordinates, live robot
+positions, and this dashboard's active orders color-coded by status. All data is
+already public — **no backend was added** for this kind:
+
+- **Layout** — `GET /api/map/points` (`scene_points`: `pos_x` / `pos_y` / `dir` / `label`).
+- **Live robots** — the `robot-update` SSE feed, seeded once by `GET /api/robots`.
+  The renderer normalizes both shapes (SSE lowercase tags vs the REST struct's Go
+  field names) and derives robot `state` to match the SSE coloring.
+- **Active orders** — the scoped board API. A robot working one of this dashboard's
+  orders takes the order's **status color**; otherwise it shows its own **state color**.
+
+Rendering is SVG with world coords mapped into the `viewBox` (Y negated so the plant
+isn't mirrored). Three things are **best-effort and want a rig check**: robot `X/Y`
+are assumed to share the scene-point coordinate frame; destination highlighting and
+route lines depend on an order's node name resolving to a scene point
+(`point_name` / `label` / `instance_name`); and heading orientation (`rotate(-angle)`)
+may need a sign/offset tweak against real fleet data. Robot color-by-status is robust
+regardless — it joins on `robot_id`. Area-scoping the *geometry* (vs. only the order
+highlights) is a future option via the `?area=` filter `/api/map/points` already supports.
+
+---
+
 ## Extending: adding a dashboard kind
 
-The platform is kind-agnostic. To add a kind (worked example: a **robot map** —
-nodes + live robot positions with active orders highlighted/color-coded):
+The platform is kind-agnostic. The **robot-map** kind above was added exactly this
+way — no schema, nav, or service change:
 
 1. **Pick the data.** It already exists on Core's public surface — node geometry
    from `GET /api/map/points` (`scene_points`), live robot X/Y/heading from the
@@ -154,9 +184,11 @@ the variation. That's the platform's whole reason for existing.
 | `www/handlers_dashboards.go`                  | display + admin + CRUD/read API        |
 | `www/handlers_board.go`                       | `?dashboard=` scoping                  |
 | `www/router.go`                               | routes + `renderBare`                  |
-| `www/templates/dashboard-display.html`        | chromeless kiosk page                  |
+| `www/templates/dashboard-display.html`        | chromeless kiosk page (task-board)     |
+| `www/templates/dashboard-map.html`            | chromeless kiosk page (robot-map)      |
 | `www/templates/dashboards.html`               | admin page                             |
-| `www/static/pages/dashboard.js`              | display renderer                       |
+| `www/static/pages/dashboard.js`              | task-board renderer                    |
+| `www/static/pages/dashboard-map.js`          | robot-map renderer (SVG)               |
 | `www/static/pages/dashboards.js`             | admin CRUD                             |
-| `www/static/dashboard.css`                    | kiosk styling                          |
+| `www/static/dashboard.css`                    | kiosk styling (both kinds)             |
 | `www/templates/layout.html`                   | nav: Task Board tab → Dashboards (Admin) |

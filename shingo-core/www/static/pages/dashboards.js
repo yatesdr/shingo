@@ -10,7 +10,10 @@ import { el, apiGet, apiPost, apiPut, apiDelete, toast, uiConfirm } from '/stati
 
 // Known dashboard kinds. Adding a kind here (plus its renderer template +
 // dashboard.js branch) is all the front-end needs to host a new display type.
-const KINDS = [{ value: 'task-board', label: 'Task Board' }];
+const KINDS = [
+  { value: 'task-board', label: 'Task Board' },
+  { value: 'robot-map', label: 'Robot Map' }
+];
 
 function kindLabel(k) {
   var m = KINDS.find(function (x) { return x.value === k; });

@@ -53,6 +53,20 @@ func TestTemplatesParse(t *testing.T) {
 		t.Errorf("display output missing baked-in config; got:\n%s", out)
 	}
 
+	// Robot-map display: same chromeless (renderBare) path, different kind.
+	mp, ok := tmpls["dashboard-map.html"]
+	if !ok {
+		t.Fatal("dashboard-map.html not parsed")
+	}
+	buf.Reset()
+	dm := &dashboards.Dashboard{ID: 9, Name: "Plant Map", Kind: "robot-map"}
+	if err := mp.ExecuteTemplate(&buf, "dashboard-map.html", map[string]any{"Dashboard": dm}); err != nil {
+		t.Fatalf("execute dashboard-map.html: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Plant Map") || !strings.Contains(buf.String(), `data-dashboard-kind="robot-map"`) {
+		t.Errorf("map output missing baked-in config; got:\n%s", buf.String())
+	}
+
 	// Admin page: executed through the shared layout chrome.
 	adm, ok := tmpls["dashboards.html"]
 	if !ok {
