@@ -1,0 +1,135 @@
+/* dashboard.css — chromeless floor-display (kiosk) styling for the dashboard
+ * platform. Self-contained: a wall monitor loads only this file (plus shared
+ * tokens), never the admin style.css, so the palette is pinned here rather
+ * than inherited from the admin theme toggle. Dark by design — easier on a
+ * floor monitor and reads as a "board". Fonts are sized up for across-the-aisle
+ * legibility. Status color-coding is the at-a-glance signal operators manage by.
+ */
+
+:root {
+  --dash-bg: #0d1117;
+  --dash-surface: #161b22;
+  --dash-surface-2: #1c2230;
+  --dash-text: #e6edf3;
+  --dash-muted: #8b949e;
+  --dash-border: #30363d;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--dash-bg);
+  color: var(--dash-text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.dash-kiosk {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ── Header ───────────────────────────────────────────────────────── */
+.dash-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1.4rem;
+  background: var(--dash-surface);
+  border-bottom: 2px solid var(--dash-border);
+}
+.dash-title {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.dash-meta {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  font-size: 1.4rem;
+  color: var(--dash-muted);
+}
+.dash-clock { font-variant-numeric: tabular-nums; }
+
+/* Live-connection dot. Green pulsing = connected, red = dropped. */
+.dash-conn {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  background: var(--dash-muted);
+  display: inline-block;
+}
+.dash-conn-ok { background: #2ea043; box-shadow: 0 0 0 0 rgba(46, 160, 67, 0.6); animation: dash-pulse 2s infinite; }
+.dash-conn-down { background: #f85149; }
+@keyframes dash-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0.6); }
+  70% { box-shadow: 0 0 0 0.6rem rgba(46, 160, 67, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0); }
+}
+
+/* ── Body / table ─────────────────────────────────────────────────── */
+#dash-main { flex: 1; padding: 0.5rem 1rem 1rem; overflow: auto; }
+
+.board-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 1.5rem;
+}
+.board-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--dash-surface-2);
+  color: var(--dash-muted);
+  text-align: left;
+  text-transform: uppercase;
+  font-size: 1rem;
+  letter-spacing: 0.05em;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 2px solid var(--dash-border);
+}
+.board-table tbody td {
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--dash-border);
+}
+.board-table tbody tr { border-left: 6px solid transparent; }
+.r-robot { font-weight: 700; }
+.r-payload { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }
+.r-eta { font-variant-numeric: tabular-nums; color: var(--dash-muted); }
+
+.r-status {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 1.05rem;
+}
+
+/* ── Status color-coding (left border on the row + status cell text) ──
+ * The single most important "manage by sight" signal: blocked = red,
+ * moving = blue, waiting = amber, done-ish = green. Add a new status here
+ * and in dashboard.js statusLabel(). */
+tr.st-in_transit   { border-left-color: #2f81f7; } .st-in_transit   .r-status, td.st-in_transit   { color: #6cb0ff; }
+tr.st-staged       { border-left-color: #d29922; } .st-staged       .r-status, td.st-staged       { color: #e3b341; }
+tr.st-dispatched   { border-left-color: #1f6feb; } .st-dispatched   .r-status, td.st-dispatched   { color: #79c0ff; }
+tr.st-acknowledged { border-left-color: #8b949e; } .st-acknowledged .r-status, td.st-acknowledged { color: #b1bac4; }
+tr.st-queued       { border-left-color: #a371f7; } .st-queued       .r-status, td.st-queued       { color: #d2a8ff; }
+tr.st-pending      { border-left-color: #8b949e; } .st-pending      .r-status, td.st-pending      { color: #b1bac4; }
+tr.st-blocked      { border-left-color: #f85149; background: rgba(248, 81, 73, 0.08); } .st-blocked .r-status, td.st-blocked { color: #ff7b72; }
+tr.st-delivered    { border-left-color: #2ea043; } .st-delivered    .r-status, td.st-delivered    { color: #56d364; }
+
+/* New-row flash when an order first appears on this board. */
+tr.row-new { animation: row-flash 1.4s ease-out; }
+@keyframes row-flash {
+  0% { background: rgba(46, 160, 67, 0.35); }
+  100% { background: transparent; }
+}
+
+.board-empty {
+  text-align: center;
+  color: var(--dash-muted);
+  font-size: 1.6rem;
+  padding: 3rem 1rem;
+}

@@ -1,0 +1,28 @@
+{{define "content"}}
+<div class="flex flex-between mb-2">
+  <h1>Dashboards</h1>
+  <button class="btn btn-primary" id="dash-new">+ New Dashboard</button>
+</div>
+
+<p class="muted mb-2">
+  Saved floor displays. Each renders chromeless at <code>/dashboard/&lt;id&gt;</code> —
+  open that link full-screen on a wall monitor. Scope a board to a plant area by
+  listing its station IDs; leave the area empty to show the whole plant.
+</p>
+
+<table class="table" id="dash-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Kind</th>
+      <th>Area (stations)</th>
+      <th>Enabled</th>
+      <th>Display</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody id="dash-tbody"></tbody>
+</table>
+
+<script type="module" src="/static/pages/dashboards.js?v={{cacheBust}}"></script>
+{{end}}

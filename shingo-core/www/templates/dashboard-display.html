@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Dashboard.Name}} — Shingo Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/dashboard.css?v={{cacheBust}}">
+</head>
+<body class="dash-kiosk"
+      data-dashboard-id="{{.Dashboard.ID}}"
+      data-dashboard-kind="{{.Dashboard.Kind}}">
+
+  <header class="dash-header">
+    <h1 class="dash-title">{{.Dashboard.Name}}</h1>
+    <div class="dash-meta">
+      <span class="dash-clock" id="dash-clock"></span>
+      <span class="dash-conn" id="dash-conn" title="Live connection"></span>
+    </div>
+  </header>
+
+  <main id="dash-main">
+    <!-- task-board renderer target. A future kind renders into #dash-main
+         under its own branch in dashboard.js. -->
+    <table class="board-table" id="board-table">
+      <thead>
+        <tr>
+          <th>Robot</th>
+          <th>Source</th>
+          <th>Payload</th>
+          <th>Current</th>
+          <th>Destination</th>
+          <th>Status</th>
+          <th>ETA</th>
+        </tr>
+      </thead>
+      <tbody id="board-body"></tbody>
+    </table>
+    <div class="board-empty" id="board-empty" style="display:none">No active orders</div>
+  </main>
+
+  <script type="module" src="/static/pages/dashboard.js?v={{cacheBust}}"></script>
+</body>
+</html>

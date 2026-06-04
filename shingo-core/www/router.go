@@ -138,7 +138,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Get("/missions", h.handleMissions)
 		r.Get("/missions/{orderID}", h.handleMissionDetail)
 		r.Get("/traffic", h.handleTraffic)
-		r.Get("/board", h.handleBoard)
+		// Dashboard platform: chromeless per-instance display for wall
+		// monitors (public, no nav). The old /board tab is superseded —
+		// redirect bookmarks to the management page.
+		r.Get("/dashboard/{id}", h.handleDashboardDisplay)
+		r.Get("/board", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/dashboards", http.StatusMovedPermanently)
+		})
 
 		// ── API routes ─────────────────────────────────────────
 		r.Route("/api", func(r chi.Router) {
@@ -169,6 +175,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 			// Board
 			r.Get("/board/orders", h.handleBoardOrders)
+
+			// Dashboards (read) — public so a wall display (or a future
+			// standalone display host) can fetch definitions without auth.
+			r.Get("/dashboards", h.apiListDashboards)
+			r.Get("/dashboards/{id}", h.apiGetDashboard)
 
 			// Payloads & manifest
 			r.Get("/payloads/templates", h.apiListPayloads)
@@ -319,6 +330,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Put("/demands/{id}/produced", h.apiSetDemandProduced)
 				r.Post("/demands/{id}/clear", h.apiClearDemandProduced)
 				r.Post("/demands/clear-all", h.apiClearAllProduced)
+
+				// Dashboards (write) — management CRUD behind auth. Reads
+				// live in the public API group above.
+				r.Post("/dashboards", h.apiCreateDashboard)
+				r.Put("/dashboards/{id}", h.apiUpdateDashboard)
+				r.Delete("/dashboards/{id}", h.apiDeleteDashboard)
 			})
 		})
 
@@ -334,6 +351,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/config", h.handleConfig)
 			r.Post("/config/save", h.handleConfigSave)
 			r.Get("/fleet-explorer", h.handleFleetExplorer)
+			r.Get("/dashboards", h.handleDashboardsAdmin)
 
 			// Traffic (count group CRUD)
 			r.Post("/traffic/save", h.handleTrafficSave)
@@ -380,6 +398,24 @@ func (h *Handlers) render(w http.ResponseWriter, r *http.Request, name string, d
 	}
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		log.Printf("render %s: %v", name, err)
+		http.Error(w, "template error", http.StatusInternalServerError)
+	}
+}
+
+// renderBare renders a standalone (chromeless) page by executing the
+// template named by its own file rather than the shared "layout". Used for
+// kiosk/display surfaces — the dashboard displays — that must not carry the
+// admin nav. The template is a full <!DOCTYPE> document with no
+// {{define "content"}} wrapper.
+func (h *Handlers) renderBare(w http.ResponseWriter, name string, data map[string]any) {
+	tmpl, ok := h.tmpls[name]
+	if !ok {
+		log.Printf("renderBare: template %q not found", name)
+		http.Error(w, "template not found", http.StatusInternalServerError)
+		return
+	}
+	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
+		log.Printf("renderBare %s: %v", name, err)
 		http.Error(w, "template error", http.StatusInternalServerError)
 	}
 }
