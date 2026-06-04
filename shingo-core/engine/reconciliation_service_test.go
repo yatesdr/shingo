@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -125,6 +126,57 @@ func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 	}
 	if summary.Status != "degraded" && summary.Status != "critical" {
 		t.Errorf("status = %q, want degraded or critical", summary.Status)
+	}
+}
+
+// ── AbandonStuckOrders — TTL sweep ──────────────────────────────────
+
+// TestAbandonStuckOrders pins the stuck-order TTL sweep: orders stuck in
+// queued (held) or staged past the timeout are abandoned; fresh ones are
+// left alone (ALN_003 swap-starvation follow-up, task 3). Uses a fake
+// abandonOrder callback — production wires it to LifecycleService.CancelOrder.
+func TestAbandonStuckOrders(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	svc := newReconService(t, db)
+
+	mk := func(uuid string, status protocol.Status) *orders.Order {
+		o := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: "complex", Status: status, SourceNode: "ALN_003", DeliveryNode: "SMN_001"}
+		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
+		return o
+	}
+	stuckHeld := mk("stuck-held", "queued")     // a held swap removal leg
+	stuckStaged := mk("stuck-staged", "staged") // a robot parked at staging
+	fresh := mk("fresh-queued", "queued")       // just queued — must survive
+
+	// Age the two stuck ones past the 1h TTL; leave `fresh` at NOW().
+	for _, id := range []int64{stuckHeld.ID, stuckStaged.ID} {
+		if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, id); err != nil {
+			t.Fatalf("backdate %d: %v", id, err)
+		}
+	}
+
+	var abandoned []int64
+	svc.abandonOrder = func(o *orders.Order, reason string) error {
+		abandoned = append(abandoned, o.ID)
+		return nil
+	}
+
+	n, err := svc.AbandonStuckOrders(time.Hour)
+	testutil.MustNoErr(t, err, "AbandonStuckOrders")
+	if n != 2 {
+		t.Errorf("abandoned count = %d, want 2", n)
+	}
+	got := map[int64]bool{}
+	for _, id := range abandoned {
+		got[id] = true
+	}
+	if !got[stuckHeld.ID] || !got[stuckStaged.ID] {
+		t.Errorf("stuck orders not abandoned: held=%v staged=%v", got[stuckHeld.ID], got[stuckStaged.ID])
+	}
+	if got[fresh.ID] {
+		t.Error("fresh queued order should not be abandoned")
 	}
 }
 
@@ -582,7 +634,7 @@ func TestReconciliationService_Loop_StopsOnSignal(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		// 1-second tick — but we close stop immediately so it shouldn't fire.
-		svc.Loop(stop, 1*time.Second, 0)
+		svc.Loop(stop, 1*time.Second, 0, 0)
 		close(done)
 	}()
 	close(stop)

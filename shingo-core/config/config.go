@@ -52,6 +52,10 @@ type StagingConfig struct {
 	TTL                  time.Duration `yaml:"ttl"`                    // default 0 (permanent)
 	SweepInterval        time.Duration `yaml:"sweep_interval"`         // default 5m
 	AutoConfirmDelivered time.Duration `yaml:"auto_confirm_delivered"` // 0 = disabled
+	// AbandonStuck cancels orders stuck non-terminal (queued/held or staged)
+	// past this age — a held swap removal leg whose supply never arrives, or
+	// a robot parked at a staging node. Cascades to the two-robot sibling.
+	AbandonStuck time.Duration `yaml:"abandon_stuck"` // default 1h; 0 = disabled
 }
 
 type DatabaseConfig struct {
@@ -128,6 +132,7 @@ func Defaults() *Config {
 			TTL:                  0, // 0 = never auto-unstage; override per node group via staging_ttl property
 			SweepInterval:        5 * time.Minute,
 			AutoConfirmDelivered: 5 * time.Minute, // auto-confirm delivered orders after 5 minutes if no receipt from Edge
+			AbandonStuck:         time.Hour,       // cancel orders stuck queued/staged for 1h (ties up robots, clutters the board)
 		},
 		Messaging: MessagingConfig{
 			Kafka: KafkaConfig{

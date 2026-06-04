@@ -97,7 +97,7 @@ func (e *Engine) Start() {
 	go e.stagedBinSweepLoop()
 
 	// Start periodic reconciliation logging and auto-confirm
-	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered)
+	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered, e.cfg.Staging.AbandonStuck)
 
 	// Start count-group runner if configured (no-op if no groups enabled).
 	e.countGroupMu.Lock()

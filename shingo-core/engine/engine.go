@@ -134,6 +134,19 @@ func New(c Config) *Engine {
 		_, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.StationID, "auto_confirm_timeout", 0)
 		return err
 	}
+	// abandonOrder cancels a stuck order via the standard teardown and
+	// cascades to its two-robot sibling so a swap tears down as a unit
+	// (CancelOrder is idempotent if the sibling is already terminal).
+	e.reconciliation.abandonOrder = func(order *orders.Order, reason string) error {
+		lc := e.dispatcher.Lifecycle()
+		lc.CancelOrder(order, order.StationID, reason)
+		if sibUUID, serr := e.db.OrderSiblingUUID(order.ID); serr == nil && sibUUID != "" {
+			if sib, gerr := e.db.GetOrderByUUID(sibUUID); gerr == nil && sib != nil {
+				lc.CancelOrder(sib, sib.StationID, reason)
+			}
+		}
+		return nil
+	}
 	e.recovery = newRecoveryService(e)
 	e.binManifest = service.NewBinManifestService(e.db)
 	e.binService = service.NewBinService(e.db, e.binManifest)

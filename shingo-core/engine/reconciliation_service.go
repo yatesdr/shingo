@@ -26,6 +26,10 @@ type ReconciliationService struct {
 	db               ReconciliationStore
 	logFn            LogFunc
 	confirmDelivered func(order *orders.Order) error
+	// abandonOrder cancels a stuck order (and cascades to its two-robot
+	// sibling). Late-bound to dispatch.LifecycleService.CancelOrder in
+	// engine.New, same wiring rationale as confirmDelivered above.
+	abandonOrder func(order *orders.Order, reason string) error
 }
 
 func newReconciliationService(db ReconciliationStore, logFn LogFunc) *ReconciliationService {
@@ -52,7 +56,7 @@ func (s *ReconciliationService) ListDeadLetterOutbox(limit int) ([]*messaging.Ou
 	return s.db.ListDeadLetterOutbox(limit)
 }
 
-func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfirmTimeout time.Duration) {
+func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfirmTimeout, abandonTimeout time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
@@ -84,6 +88,13 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 					s.logFn("engine: auto-confirm delivered error: %v", err)
 				} else if n > 0 {
 					s.logFn("engine: auto-confirmed %d stuck delivered orders", n)
+				}
+			}
+			if abandonTimeout > 0 {
+				if n, err := s.AbandonStuckOrders(abandonTimeout); err != nil {
+					s.logFn("engine: abandon stuck orders error: %v", err)
+				} else if n > 0 {
+					s.logFn("engine: abandoned %d stuck orders", n)
 				}
 			}
 		}
@@ -152,4 +163,70 @@ func (s *ReconciliationService) AutoConfirmStuckDeliveredOrders(timeout time.Dur
 	}
 
 	return confirmed, nil
+}
+
+// AbandonStuckOrders cancels non-terminal orders that have sat without
+// progress past the timeout — a held two-robot swap removal leg whose
+// supply never arrives, or a robot parked at a staging node. Without it a
+// stuck swap ties up a robot and clutters the board until an operator
+// intervenes (ALN_003 swap-starvation, 2026-06-03). Cancelling reuses the
+// standard teardown (fleet cancel, bin unclaim, auto-return, Edge notify)
+// and cascades to the swap sibling. Returns the count abandoned.
+func (s *ReconciliationService) AbandonStuckOrders(timeout time.Duration) (int, error) {
+	if timeout <= 0 {
+		return 0, nil
+	}
+
+	rows, err := s.db.Query(`
+		SELECT id
+		FROM orders
+		WHERE status IN ('queued', 'staged')
+		  AND updated_at < NOW() - ($1 * INTERVAL '1 second')
+		ORDER BY updated_at ASC
+		LIMIT 100`, int(timeout.Seconds()))
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var orderIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return 0, err
+		}
+		orderIDs = append(orderIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	if s.abandonOrder == nil {
+		s.logFn("engine: abandon-stuck skipped (%d candidate orders): abandonOrder callback not wired", len(orderIDs))
+		return 0, nil
+	}
+
+	abandoned := 0
+	for _, id := range orderIDs {
+		order, err := s.db.GetOrder(id)
+		if err != nil {
+			s.logFn("engine: abandon-stuck reload order %d: %v (skipping this pass; periodic loop retries)", id, err)
+			continue
+		}
+		// A sibling cancel from an earlier iteration this pass may already
+		// have moved this one terminal — skip if no longer queued/staged.
+		if order.Status != "queued" && order.Status != "staged" {
+			continue
+		}
+		reason := fmt.Sprintf("abandoned: stuck in %s past %s", order.Status, timeout)
+		if err := s.abandonOrder(order, reason); err != nil {
+			s.logFn("engine: abandon stuck order %d: %v", order.ID, err)
+			continue
+		}
+		s.logFn("engine: abandoned stuck order %d (uuid=%s status=%s)", order.ID, order.EdgeUUID, order.Status)
+		s.db.RecordRecoveryAction("abandon_stuck_order", "order", order.ID, reason, "system")
+		abandoned++
+	}
+
+	return abandoned, nil
 }
