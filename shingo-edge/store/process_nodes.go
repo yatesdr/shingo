@@ -27,6 +27,12 @@ func (db *DB) GetProcessNode(id int64) (*processes.Node, error) {
 	return processes.GetNode(db.DB, id)
 }
 
+// GetProcessNodeByCoreNodeName returns one process_node row by its
+// core_node_name. Used by the UOP adjustment handler.
+func (db *DB) GetProcessNodeByCoreNodeName(coreNodeName string) (*processes.Node, error) {
+	return processes.GetNodeByCoreNodeName(db.DB, coreNodeName)
+}
+
 // CreateProcessNode inserts a process_node row, generating the code
 // and sequence number when not supplied.
 func (db *DB) CreateProcessNode(in processes.NodeInput) (int64, error) {

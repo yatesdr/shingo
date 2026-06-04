@@ -277,6 +277,20 @@ type CountResult struct {
 // silent for cycle counts even though they're a primary
 // operator-vs-system divergence signal SCO uses to spot drift.
 func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*CountResult, error) {
+	if b.PayloadCode == "" {
+		return nil, fmt.Errorf("cannot validate UOP capacity — bin %d has no payload", b.ID)
+	}
+	pl, err := s.db.GetPayloadByCode(b.PayloadCode)
+	if err != nil {
+		return nil, fmt.Errorf("lookup payload %q: %w", b.PayloadCode, err)
+	}
+	if pl.UOPCapacity <= 0 {
+		return nil, fmt.Errorf("cannot validate UOP capacity — payload %q has no UOP capacity set", b.PayloadCode)
+	}
+	if actualUOP < 0 || actualUOP > pl.UOPCapacity {
+		return nil, fmt.Errorf("actual UOP must be between 0 and %d", pl.UOPCapacity)
+	}
+
 	expected := b.UOPRemaining
 
 	tx, err := s.db.Begin()

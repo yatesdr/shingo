@@ -43,6 +43,7 @@ type Bin struct {
 	// Joined fields
 	BinTypeCode string `json:"bin_type_code"`
 	NodeName    string `json:"node_name"`
+	UOPCapacity int    `json:"uop_capacity,omitempty"` // JOIN from payloads.uop_capacity
 }
 
 // ManifestEntry is a single line in a bin's manifest — one CatID /

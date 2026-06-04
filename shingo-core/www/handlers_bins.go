@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"shingocore/domain"
 	"shingocore/engine"
+	"shingo/protocol"
 )
 
 // --- Bin Type form handlers (unchanged) ---
@@ -552,6 +554,26 @@ func (h *Handlers) binRecordCount(b *domain.Bin, params json.RawMessage) error {
 			actor)
 	}
 	h.emitBinUpdate(b, "counted", "")
+
+	if b.NodeID != nil {
+		stations, err := h.orchestration.NodeService().GetEffectiveStations(*b.NodeID)
+		if err == nil {
+			for _, stationID := range stations {
+				if err := h.orchestration.SendDataToEdge(protocol.SubjectUOPAdjustment, stationID, &protocol.UOPAdjustment{
+					BinID:        b.ID,
+					CoreNodeName: b.NodeName,
+					NewRemaining: p.ActualUOP,
+					Actor:        actor,
+					AdjustedAt:   time.Now().UTC(),
+				}); err != nil {
+					log.Printf("uop_adjustment: propagate bin %d to station %s: %v", b.ID, stationID, err)
+				}
+			}
+		} else {
+			log.Printf("uop_adjustment: resolve stations for bin %d node %d: %v", b.ID, *b.NodeID, err)
+		}
+	}
+
 	return nil
 }
 

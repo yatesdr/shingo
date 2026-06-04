@@ -116,6 +116,7 @@
           data-node="{{if .InTransit}}{{.TransitSource}} → {{.TransitDest}}{{else}}{{.NodeName}}{{end}}"
           data-payload="{{if .PayloadCode}}{{.PayloadCode}}{{else}}{{.TransitPayload}}{{end}}"
           data-uop="{{.UOPRemaining}}"
+          data-uop-capacity="{{.UOPCapacity}}"
           data-locked="{{if .Locked}}1{{else}}0{{end}}"
           data-claimed="{{if .ClaimedBy}}1{{else}}0{{end}}"
           data-confirmed="{{if .ManifestConfirmed}}1{{else}}0{{end}}"
@@ -316,6 +317,7 @@
         <div class="form-group">
           <label>Actual UOP Count</label>
           <input type="number" id="cc-actual" min="0" style="width:120px">
+          <small id="cc-capacity-hint" class="text-muted" style="display:block"></small>
         </div>
         <div class="form-group">
           <label>Counter</label>

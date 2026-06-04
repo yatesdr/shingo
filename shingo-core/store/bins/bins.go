@@ -34,10 +34,11 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.delta_epoch, b.manifest_confirmed,
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
 	b.loaded_at, b.anomaly_at, b.created_at, b.updated_at,
-	bt.code, COALESCE(n.name, '')
+	bt.code, COALESCE(n.name, ''), COALESCE(p.uop_capacity, 0)
 	FROM bins b
 	JOIN bin_types bt ON bt.id = b.bin_type_id
-	LEFT JOIN nodes n ON n.id = b.node_id`
+	LEFT JOIN nodes n ON n.id = b.node_id
+	LEFT JOIN payloads p ON p.code = b.payload_code`
 
 // PayloadBinTypeAdvisoryClause enforces payload_bin_types as an advisory
 // allow-list: when the table has rules for the payload, only matching bin
@@ -76,7 +77,7 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.StagedAt, &b.StagedExpiresAt,
 		&b.PayloadCode, &manifest, &b.UOPRemaining, &b.DeltaEpoch, &b.ManifestConfirmed,
 		&b.Locked, &b.LockedBy, &b.LockedAt, &b.LastCountedAt, &b.LastCountedBy,
-		&b.LoadedAt, &b.AnomalyAt, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName)
+		&b.LoadedAt, &b.AnomalyAt, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity)
 	if err != nil {
 		return nil, err
 	}

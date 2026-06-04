@@ -298,6 +298,14 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			bp.OrderUUID, bp.BinID, bp.Location)
 		eng.HandleBinPickedUp(bp.OrderUUID, bp.BinID, bp.Location)
 	})
+	// UOP adjustment from Core Bins record-count action. Admin sets
+	// the absolute UOP value; Edge writes it directly to the runtime
+	// cache and emits EventUOPAdjusted for SSE operator screen refresh.
+	router.RegisterSubject(subjectRouter, protocol.SubjectUOPAdjustment, func(_ *protocol.Envelope, adj *protocol.UOPAdjustment) {
+		log.Printf("edge_handler: uop_adjustment: node=%s bin=%d new=%d actor=%s",
+			adj.CoreNodeName, adj.BinID, adj.NewRemaining, adj.Actor)
+		eng.HandleUOPAdjustment(*adj)
+	})
 	// SubjectCountGroupCommand may be skipped above when cgHandler is nil
 	// (countgroup is an optional feature). The boot-time coverage assertion
 	// below is gated on the same condition so a non-countgroup edge doesn't

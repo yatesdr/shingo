@@ -1591,3 +1591,36 @@ func TestGenerateStyles_DuplicateNameRollsBackBatch(t *testing.T) {
 		}
 	}
 }
+
+func TestGetProcessNodeByCoreNodeName(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
+
+	id, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID:         pid,
+		OperatorStationID: &sid,
+		CoreNodeName:      "ALN_001",
+		Enabled:           true,
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	got, err := db.GetProcessNodeByCoreNodeName("ALN_001")
+	if err != nil {
+		t.Fatalf("GetProcessNodeByCoreNodeName(ALN_001): %v", err)
+	}
+	if got.ID != id {
+		t.Errorf("ID = %d, want %d", got.ID, id)
+	}
+	if got.CoreNodeName != "ALN_001" {
+		t.Errorf("CoreNodeName = %q, want %q", got.CoreNodeName, "ALN_001")
+	}
+
+	_, err = db.GetProcessNodeByCoreNodeName("NOEXIST")
+	if err == nil {
+		t.Fatal("expected error for unknown core_node_name, got nil")
+	}
+}

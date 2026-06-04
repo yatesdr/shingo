@@ -51,6 +51,13 @@ const (
 	// counts by the catalog part code (cat_id) Core matches demands on,
 	// instead of the style name. See ProducedReportEvent.
 	EventProducedReport
+
+	// EventUOPAdjusted fires when an admin-originated UOP adjustment
+	// arrives from Core. Handled by the SSE broadcaster as a
+	// counter-update event so the operator screen refreshes its view.
+	// NOT subscribed in wiring.go — avoids triggering PLC
+	// counter processing that EventCounterDelta would cause.
+	EventUOPAdjusted
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -219,4 +226,16 @@ type OrderDeliveredEvent struct {
 	// nil = older Core didn't send it; fall back to the role default.
 	BinUOP   *int  `json:"bin_uop,omitempty"`
 	BinEpoch int64 `json:"bin_epoch,omitempty"`
+}
+
+// UOPAdjustedEvent is emitted when Core sends an admin-originated UOP
+// adjustment. The SSE broadcaster maps this to the "counter-update" SSE
+// type so the operator screen auto-refreshes.
+type UOPAdjustedEvent struct {
+	eventbus.PayloadBase
+	ProcessNodeID int64  `json:"process_node_id"`
+	CoreNodeName  string `json:"core_node_name"`
+	BinID         int64  `json:"bin_id"`
+	NewRemaining  int    `json:"new_remaining"`
+	Actor         string `json:"actor"`
 }

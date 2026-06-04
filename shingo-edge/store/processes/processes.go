@@ -212,6 +212,17 @@ func GetNode(db *sql.DB, id int64) (*Node, error) {
 	return &n, nil
 }
 
+// GetNodeByCoreNodeName returns one process_node row by its
+// core_node_name. Used by the UOP adjustment handler to resolve the
+// target Edge node from a Core-originated adjustment envelope.
+func GetNodeByCoreNodeName(db *sql.DB, coreNodeName string) (*Node, error) {
+	n, err := scanNode(db.QueryRow(`SELECT `+nodeSelect+` `+nodeJoin+` WHERE n.core_node_name=?`, coreNodeName))
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
 // CreateNode inserts a process_node row, generating the code and
 // sequence number when not supplied.
 func CreateNode(db *sql.DB, in NodeInput) (int64, error) {

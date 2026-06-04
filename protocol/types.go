@@ -99,7 +99,8 @@ const (
 	// the released bin until the robot actually grabs it. BinPickedUp
 	// is the signal that the released-bin's accumulator should flush
 	// and the active claim should advance.
-	SubjectBinPickedUp = "transit.bin_picked_up"
+	SubjectBinPickedUp   = "transit.bin_picked_up"
+	SubjectUOPAdjustment = "inventory.uop_adjustment" // Core -> Edge
 )
 
 // AllTypes returns every envelope Type constant in this package. Used by
@@ -180,6 +181,7 @@ func EdgeInboundSubjects() []string {
 		SubjectLoopBelowThreshold,
 		SubjectCountGroupCommand,
 		SubjectBinPickedUp,
+		SubjectUOPAdjustment,
 	}
 }
 

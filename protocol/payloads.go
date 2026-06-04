@@ -750,3 +750,22 @@ type LoopBelowThresholdSignal struct {
 	CoreNodeName string `json:"core_node_name"`
 	Reason       string `json:"reason"`
 }
+
+// UOPAdjustment carries an absolute UOP value set by an admin via Core's
+// Bins record-count action. Core validates the value is within [0,
+// payload.UOPCapacity] before propagating. Edge writes the value
+// directly to process_node_runtime_states.remaining_uop_cached and
+// emits EventUOPAdjusted so the operator screen refreshes via the
+// existing counter-update SSE channel. PLC ticks accumulate from the
+// new value with no accumulator involvement.
+//
+// CoreNodeName allows Edge to look up the target process node without
+// scanning — it is the canonical cross-system identifier carried on
+// every other protocol envelope.
+type UOPAdjustment struct {
+	BinID        int64     `json:"bin_id"`
+	CoreNodeName string    `json:"core_node_name"`
+	NewRemaining int       `json:"new_remaining"`
+	Actor        string    `json:"actor"`
+	AdjustedAt   time.Time `json:"adjusted_at"`
+}

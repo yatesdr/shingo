@@ -519,7 +519,8 @@ function ccStart() {
         label: row.dataset.label,
         node: row.dataset.node,
         payload: row.dataset.payload,
-        uop: parseInt(row.dataset.uop) || 0
+        uop: parseInt(row.dataset.uop) || 0,
+        uopCapacity: parseInt(row.dataset.uopCapacity) || 0
       });
     }
   });
@@ -542,6 +543,15 @@ function ccShowBin() {
     '<div class="text-muted">' + esc(bin.node || 'unassigned') + ' &middot; ' + esc(bin.payload) + '</div>' +
     '<div style="margin-top:0.5rem">Expected UOP: <strong>' + bin.uop + '</strong></div>';
   document.getElementById('cc-actual').value = bin.uop;
+  document.getElementById('cc-actual').max = bin.uopCapacity || '';
+  var hint = document.getElementById('cc-capacity-hint');
+  if (bin.uopCapacity > 0) {
+    hint.textContent = 'Max: ' + bin.uopCapacity;
+    hint.style.display = 'block';
+  } else {
+    hint.textContent = '';
+    hint.style.display = 'none';
+  }
   document.getElementById('cc-actual').focus();
 }
 
@@ -557,6 +567,10 @@ function ccConfirm() {
 function ccDiscrepancy() {
   var bin = ccState.bins[ccState.index];
   var actual = parseInt(document.getElementById('cc-actual').value) || 0;
+  if (bin.uopCapacity > 0) {
+    actual = Math.max(0, Math.min(actual, bin.uopCapacity));
+    document.getElementById('cc-actual').value = actual;
+  }
   var actor = document.getElementById('cc-actor').value.trim() || 'cycle_count';
   apiPost('/api/bins/action', { id: bin.id, action: 'record_count', params: { actual_uop: actual, actor: actor } })
     .catch(function(e) { console.error('ccDiscrepancy record_count', bin.id, e); });
