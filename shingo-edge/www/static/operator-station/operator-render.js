@@ -199,6 +199,10 @@ function headerBtn(label, cls, onClick) {
 
 export function renderGrid() {
     const nodes = claimedNodes();
+
+    const cardGrid = grid.querySelector('.os-board-cards');
+    const savedScrollTop = cardGrid ? cardGrid.scrollTop : 0;
+
     grid.innerHTML = '';
 
     if (nodes.length === 0) {
@@ -221,6 +225,8 @@ export function renderGrid() {
         grid.style.removeProperty('--os-cols');
         grid.style.removeProperty('--os-rows');
         renderPayloadBoard(manualSwapNodes[0]);
+        const restored = grid.querySelector('.os-board-cards');
+        if (restored) restored.scrollTop = savedScrollTop;
         return;
     }
 
