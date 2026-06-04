@@ -24,6 +24,12 @@ func NewDashboardService(db *store.DB) *DashboardService {
 // DefaultKind is the renderer assigned when an input omits kind.
 const DefaultKind = "task-board"
 
+// DashboardInput is the create/update request shape, re-exported so www
+// handlers can decode requests through the service layer rather than importing
+// the store package directly (the www-no-direct-store depguard guardrail). It
+// is a type alias — identical to store/dashboards.Input.
+type DashboardInput = dashboards.Input
+
 // List returns all dashboards, ordered for display.
 func (s *DashboardService) List() ([]dashboards.Dashboard, error) {
 	return dashboards.List(s.db.DB)

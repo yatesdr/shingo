@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"shingocore/store/dashboards"
+	"shingocore/service"
 )
 
 // dashboardTemplates maps a dashboard kind to the chromeless template that
@@ -83,7 +83,7 @@ func (h *Handlers) apiGetDashboard(w http.ResponseWriter, r *http.Request) {
 // apiCreateDashboard inserts a dashboard (auth-gated). Validation failures
 // (empty name, bad config JSON) surface as 400.
 func (h *Handlers) apiCreateDashboard(w http.ResponseWriter, r *http.Request) {
-	var in dashboards.Input
+	var in service.DashboardInput
 	if !h.parseJSON(w, r, &in) {
 		return
 	}
@@ -102,7 +102,7 @@ func (h *Handlers) apiUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	var in dashboards.Input
+	var in service.DashboardInput
 	if !h.parseJSON(w, r, &in) {
 		return
 	}
