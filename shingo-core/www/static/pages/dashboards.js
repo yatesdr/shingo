@@ -65,13 +65,35 @@ function rowFor(d) {
 
 function copyLink(path) {
   var url = location.origin + path;
+  function done() { toast('Link copied: ' + url, 'success'); }
+  function show() { toast(url, 'info', { sticky: true }); }
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(url)
-      .then(function () { toast('Link copied: ' + url, 'success'); })
-      .catch(function () { toast(url, 'info', { sticky: true }); });
+      .then(done)
+      .catch(function () { if (legacyCopy(url)) { done(); } else { show(); } });
+  } else if (legacyCopy(url)) {
+    done();
   } else {
-    toast(url, 'info', { sticky: true });
+    show();
   }
+}
+
+// navigator.clipboard only exists in secure contexts (HTTPS / localhost).
+// Admin pages are typically served over plain HTTP on the plant LAN, where
+// the legacy textarea + execCommand path is the only way to actually copy —
+// without it, "Copy link" silently degraded to a toast showing the URL.
+function legacyCopy(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  var ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  ta.remove();
+  return ok;
 }
 
 function removeDashboard(d) {
