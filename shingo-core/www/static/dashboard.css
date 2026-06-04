@@ -137,6 +137,14 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 /* ── robot-map kind ───────────────────────────────────────────────── */
 .map-main { padding: 0; position: relative; }
 .map-svg-wrap { position: absolute; inset: 0; }
+/* Subtle vignette gives the floor depth without touching the SVG. */
+.map-svg-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 62%, rgba(0, 0, 0, 0.35) 100%);
+}
 .map-svg { width: 100%; height: 100%; display: block; background: #070a0f; }
 
 /* Sizes (radius, stroke, font) are set in user units by dashboard-map.js so
@@ -149,9 +157,10 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 .map-grid { stroke: rgba(255, 255, 255, 0.03); }
 .map-bracket { stroke: rgba(120, 160, 210, 0.35); stroke-linecap: round; }
 
-/* Travel network: the scene's synced path segments and receded waypoint dots. */
-.map-aisle { stroke: #1f2935; stroke-linecap: round; }
-.map-node-travel { fill: #323c4a; }
+/* Travel network: the scene's synced path segments and receded waypoint dots.
+ * Lines carry the structure, so they sit a step brighter than the dots. */
+.map-aisle { stroke: #243245; stroke-linecap: round; }
+.map-node-travel { fill: #2c3542; }
 /* Order source/destination highlight ring (status-colored in JS). */
 .map-node-hot { opacity: 0.95; }
 
@@ -170,12 +179,11 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 }
 @keyframes map-flow { to { stroke-dashoffset: -2; } }
 
-/* Robots are the hero: a soft halo (pulsing only while working — parked
- * clusters stay calm), a bright chevron with heading, and a dark core dot.
- * The chevron stroke is LIGHT: stacked same-color chevrons separate against
- * each other; a dark stroke piled overlapping robots into a black blob. */
+/* Robots: moving = chevron with heading + pulsing halo; parked = compact
+ * disc, no halo (heading is noise when docked, and haloless discs keep
+ * charge rows tidy). The glyph stroke is LIGHT: stacked same-color glyphs
+ * separate against each other; a dark stroke piled overlaps into a blob. */
 .map-robot-halo { opacity: 0.16; animation: map-halo 2.6s ease-in-out infinite; }
-.map-halo-static { animation: none; opacity: 0.10; }
 @keyframes map-halo { 0%, 100% { opacity: 0.13; } 50% { opacity: 0.27; } }
 .map-robot { stroke: rgba(255, 255, 255, 0.55); }
 .map-robot-core { fill: #070a0f; }
@@ -206,6 +214,9 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 .map-legend { display: flex; gap: 0.9rem; font-size: 0.95rem; color: var(--dash-muted); }
 .map-legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }
 .map-legend-dot { width: 0.7rem; height: 0.7rem; border-radius: 50%; display: inline-block; }
+/* Live fleet counts in the header legend; empty buckets recede. */
+.map-legend-count { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--dash-text); margin-left: 0.1rem; }
+.map-legend-zero { opacity: 0.4; }
 
 /* Node-class legend — bottom-left overlay on the map, populated from the
  * scene's distinct class_name values. */

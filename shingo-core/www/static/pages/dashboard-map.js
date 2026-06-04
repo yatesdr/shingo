@@ -72,17 +72,41 @@
     if (el) el.className = 'dash-conn ' + (ok ? 'dash-conn-ok' : 'dash-conn-down');
   }
 
+  // Bucket a robot into one of the header-legend categories so the legend can
+  // double as a live fleet summary. Paused/offline robots are uncounted.
+  function robotBucket(r) {
+    var ord = orderByRobot[r.id];
+    if (ord) {
+      if (ord.status === 'blocked') return 'blocked';
+      if (ord.status === 'staged' || ord.status === 'queued' ||
+          ord.status === 'acknowledged' || ord.status === 'pending') return 'staged';
+      if (ord.status === 'delivered') return 'idle';
+      return 'in_transit';
+    }
+    if (r.state === 'busy') return 'in_transit';
+    if (r.state === 'error') return 'error';
+    if (r.state === 'ready') return 'idle';
+    return null;
+  }
+
   function renderLegend() {
     var el = document.getElementById('map-legend');
     if (!el) return;
+    var counts = { in_transit: 0, staged: 0, blocked: 0, idle: 0, error: 0 };
+    Object.keys(robots).forEach(function (k) {
+      var b = robotBucket(robots[k]);
+      if (b) counts[b]++;
+    });
     var items = [
-      ['In transit', STATUS_COLOR.in_transit], ['Staged', STATUS_COLOR.staged],
-      ['Blocked', STATUS_COLOR.blocked], ['Idle robot', STATE_COLOR.ready],
-      ['Error', STATE_COLOR.error]
+      ['in_transit', 'In transit', STATUS_COLOR.in_transit], ['staged', 'Staged', STATUS_COLOR.staged],
+      ['blocked', 'Blocked', STATUS_COLOR.blocked], ['idle', 'Idle', STATE_COLOR.ready],
+      ['error', 'Error', STATE_COLOR.error]
     ];
     el.innerHTML = items.map(function (it) {
-      return '<span class="map-legend-item"><span class="map-legend-dot" style="background:' +
-        it[1] + '"></span>' + it[0] + '</span>';
+      var n = counts[it[0]];
+      return '<span class="map-legend-item' + (n ? '' : ' map-legend-zero') +
+        '"><span class="map-legend-dot" style="background:' + it[2] + '"></span>' + it[1] +
+        '<span class="map-legend-count">' + n + '</span></span>';
     }).join('');
   }
 
@@ -287,6 +311,15 @@
       (-s * 0.42) + ',0 ' + (-s * 0.85) + ',' + (-s * 0.72);
   }
 
+  // Compact lightning bolt centered on (cx, cy), sized to sit inside a
+  // charge-point ring.
+  function boltPoints(cx, cy, s) {
+    var p = [[0.12, -0.6], [-0.38, 0.08], [-0.06, 0.08], [-0.12, 0.6], [0.38, -0.08], [0.06, -0.08]];
+    return p.map(function (q) {
+      return (cx + q[0] * s * 1.8) + ',' + (cy + q[1] * s * 1.8);
+    }).join(' ');
+  }
+
   // ── render (coalesced via rAF) ─────────────────────────────────────
   var dirty = false;
   function scheduleRender() {
@@ -305,14 +338,21 @@
       // The numerous travel waypoints recede to a faint dot network.
       svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.6, class: 'map-node-travel' }));
     } else if (cls === 'ActionPoint') {
+      // An action point IS a node on the network — draw it as the standard
+      // node dot with an outline ring around it, not a detached filled donut
+      // floating beside the web.
+      svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.55, class: 'map-node-travel' }));
       svg.appendChild(svgEl('circle', {
         cx: s[0], cy: s[1], r: nodeR * 1.5, class: 'map-node-action',
-        fill: 'none', stroke: '#587aa6', 'stroke-width': nodeR * 0.45
+        fill: 'none', stroke: '#587aa6', 'stroke-width': nodeR * 0.4
       }));
     } else if (cls === 'ChargePoint') {
       svg.appendChild(svgEl('circle', {
         cx: s[0], cy: s[1], r: nodeR * 1.3, class: 'map-node-charge',
         fill: 'none', stroke: '#2f8f48', 'stroke-width': nodeR * 0.45
+      }));
+      svg.appendChild(svgEl('polygon', {
+        points: boltPoints(s[0], s[1], nodeR), fill: '#2f8f48', 'fill-opacity': 0.9
       }));
     } else if (cls === 'ParkPoint') {
       var sq = nodeR * 1.2;
@@ -437,19 +477,30 @@
       var s = proj(r.x, r.y);
       var ord = orderByRobot[r.id];
       var color = ord ? (STATUS_COLOR[ord.status] || STATE_COLOR[r.state]) : (STATE_COLOR[r.state] || '#888');
-      // Halo pulses only for robots doing something; parked clusters stay calm
-      // so stacked idle halos don't merge into one glowing blob.
       var moving = r.state === 'busy' || !!ord;
-      svg.appendChild(svgEl('circle', {
-        cx: s[0], cy: s[1], r: robotR * 1.35,
-        class: 'map-robot-halo' + (moving ? '' : ' map-halo-static'), fill: color
-      }));
-      // Fleet Angle is radians (confirmed live); SVG rotate wants degrees.
-      var rot = -(r.angle * 180 / Math.PI) + (rotate90 ? 90 : 0);
-      var g = svgEl('g', { transform: 'translate(' + s[0] + ',' + s[1] + ') rotate(' + rot + ')' });
-      g.appendChild(svgEl('polygon', { points: chevronPoints(robotR), class: 'map-robot', fill: color, 'stroke-width': robotR * 0.16 }));
-      svg.appendChild(g);
-      svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 0.22, class: 'map-robot-core' }));
+      var alert = r.state === 'error';
+      // Halo only where it carries signal: motion or a fault. Parked robots
+      // get none, so a charge row reads as a tidy strip of docked units.
+      if (moving || alert) {
+        svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 1.35, class: 'map-robot-halo', fill: color }));
+      }
+      if (moving) {
+        // In motion the chevron shows heading. Fleet Angle is radians
+        // (confirmed live); SVG rotate wants degrees.
+        var rot = -(r.angle * 180 / Math.PI) + (rotate90 ? 90 : 0);
+        var g = svgEl('g', { transform: 'translate(' + s[0] + ',' + s[1] + ') rotate(' + rot + ')' });
+        g.appendChild(svgEl('polygon', { points: chevronPoints(robotR), class: 'map-robot', fill: color, 'stroke-width': robotR * 0.16 }));
+        svg.appendChild(g);
+        svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 0.22, class: 'map-robot-core' }));
+      } else {
+        // Parked/stopped: heading is noise — a compact disc reads as a docked
+        // unit and overlapping chevrons stop sawtoothing the cluster.
+        svg.appendChild(svgEl('circle', {
+          cx: s[0], cy: s[1], r: robotR * 0.62, class: 'map-robot',
+          fill: color, 'stroke-width': robotR * 0.14
+        }));
+        svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 0.2, class: 'map-robot-core' }));
+      }
     });
 
     // Second pass: name chips with greedy downward de-collision, so a cluster of
