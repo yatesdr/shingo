@@ -19,6 +19,7 @@ No authentication required. Read-only.
 | `GET` | `/api/nodestate` | Node state cache |
 | `GET` | `/api/map/points` | Fleet scene map points |
 | `GET` | `/api/map/edges` | Fleet scene path segments (advanced curves) between map points |
+| `GET` | `/api/stations` | Selectable station IDs for dashboard area scoping (from orders + edge registry) |
 
 #### GET /api/nodes
 

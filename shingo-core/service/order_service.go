@@ -99,6 +99,14 @@ func (s *OrderService) GetOrder(id int64) (*orders.Order, error) {
 	return s.db.GetOrder(id)
 }
 
+// ListOrderStations returns the distinct station IDs seen on orders — the
+// selectable values for a dashboard's area scope. The board filter matches
+// station_id exactly, so only these values (plus registered-edge composites)
+// can ever scope a board to something non-empty.
+func (s *OrderService) ListOrderStations() ([]string, error) {
+	return s.db.ListOrderStations()
+}
+
 // GetOrderByUUID loads an order by its edge UUID. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.3a).

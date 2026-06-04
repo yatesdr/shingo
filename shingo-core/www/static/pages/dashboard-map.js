@@ -92,11 +92,15 @@
       return 'in_transit';
     }
     if (r.state === 'error') return 'error';
-    if (r.state === 'busy' || isMoving(r)) return 'in_transit';
+    if (r.state === 'busy') return 'in_transit';
     if (r.state === 'ready') {
-      var dock = dockOf(r);
-      if (dock === 'charge') return 'charging';
-      if (dock === 'park') return 'parked';
+      // A moving idle robot stays in the Idle bucket (green chevron on the
+      // map) — In transit is reserved for robots actually working.
+      if (!isMoving(r)) {
+        var dock = dockOf(r);
+        if (dock && dock.kind === 'charge') return 'charging';
+        if (dock && dock.kind === 'park') return 'parked';
+      }
       return 'idle';
     }
     return null;
@@ -151,7 +155,7 @@
   // would render as idle if we trusted flags alone. If the robot physically
   // displaced more than a jitter threshold between updates, it's moving;
   // the state lingers briefly so turn pauses don't flicker disc/chevron.
-  var MOVE_LINGER_MS = 3000;
+  var MOVE_LINGER_MS = 5000; // bridges brief stops (turns, order-cancel pauses) without flickering to a disc
   function mergeRobot(rb) {
     var prev = robots[rb.id];
     rb.lastMoveAt = prev ? (prev.lastMoveAt || 0) : 0;
@@ -170,23 +174,30 @@
   // dead-on their bay point, so proximity within half a typical edge length
   // is the test; an explicit charging flag (REST payload) wins outright.
   function dockOf(r) {
-    if (r.charging) return 'charge';
+    if (r.charging) return { kind: 'charge', x: r.x, y: r.y };
     if (!bays.length || !(graphScale > 0)) return null;
     var lim = Math.pow(graphScale * 0.5, 2);
     for (var i = 0; i < bays.length; i++) {
       var dx = bays[i].x - r.x, dy = bays[i].y - r.y;
-      if (dx * dx + dy * dy <= lim) return bays[i].kind;
+      if (dx * dx + dy * dy <= lim) return bays[i];
     }
     return null;
   }
 
-  // Effective robot color: order status > fault > motion > bay hue > state.
+  // Effective robot color: order status > fault > bay hue > state.
+  // Color carries STATUS, shape carries MOTION. An idle robot driving itself
+  // (e.g. returning to park after a cancel) is a green chevron — transit blue
+  // means it's actually on an order / busy. Bay hues only apply while
+  // stationary, so a robot passing a charger doesn't flash amber.
   function robotColor(r, ord, moving) {
     if (ord) return STATUS_COLOR[ord.status] || STATE_COLOR[r.state] || '#888';
     if (r.state === 'error' || r.state === 'offline') return STATE_COLOR[r.state];
-    if (moving) return STATE_COLOR.busy;
-    var dock = dockOf(r);
-    if (dock) return DOCK_COLOR[dock];
+    // Bay hue only for READY robots at rest — a paused robot on a park bay
+    // stays grey; its pause is the signal, not the bay.
+    if (!moving && r.state === 'ready') {
+      var dock = dockOf(r);
+      if (dock) return DOCK_COLOR[dock.kind];
+    }
     return STATE_COLOR[r.state] || '#888';
   }
 
@@ -571,12 +582,24 @@
         svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 0.22, class: 'map-robot-core' }));
       } else {
         // Parked/stopped: heading is noise — a compact disc reads as a docked
-        // unit and overlapping chevrons stop sawtoothing the cluster.
+        // unit. A ready robot docked on a bay snaps to the bay center and
+        // fills the ring's inner edge: the reported pose sits a few cm off
+        // the bay point, which left a crescent of background between disc
+        // and ring instead of a filled socket.
+        var cx = s[0], cy = s[1], dr = robotR * 0.62;
+        if (r.state === 'ready') {
+          var dock = dockOf(r);
+          if (dock) {
+            var bs = proj(dock.x, dock.y);
+            cx = bs[0]; cy = bs[1];
+            dr = nodeR * (dock.kind === 'charge' ? 1.05 : 0.88);
+          }
+        }
         svg.appendChild(svgEl('circle', {
-          cx: s[0], cy: s[1], r: robotR * 0.62, class: 'map-robot',
+          cx: cx, cy: cy, r: dr, class: 'map-robot',
           fill: color, 'stroke-width': robotR * 0.14
         }));
-        svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 0.2, class: 'map-robot-core' }));
+        svg.appendChild(svgEl('circle', { cx: cx, cy: cy, r: dr * 0.3, class: 'map-robot-core' }));
       }
     });
 
@@ -585,9 +608,10 @@
     var placed = [];
     robotList.forEach(function (r) {
       var ord = orderByRobot[r.id];
-      // Idle robots carry no name chip — parked clusters stay calm. Names
-      // show when a robot is moving, working, faulted, paused, or offline.
-      if (r.state === 'ready' && !ord && !isMoving(r)) return;
+      // Name chips only where they carry signal: on an order, physically
+      // moving, or faulted. Stationary paused/offline robots keep their grey
+      // disc but no tag — the cluster stays calm.
+      if (!ord && r.state !== 'error' && !isMoving(r)) return;
       var s = proj(r.x, r.y);
       var lx = s[0], ly = s[1] - robotR * 2.0;
       var guard = 0;

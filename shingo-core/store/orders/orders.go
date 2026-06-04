@@ -335,6 +335,27 @@ func ListActiveBoard(db *sql.DB) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
+// ListDistinctStations returns the distinct station IDs seen on orders,
+// sorted. These are the values a dashboard's station scope can actually
+// match — the board filter below is an exact station_id comparison, so
+// offering anything else in a picker would silently empty the board.
+func ListDistinctStations(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT DISTINCT station_id FROM orders WHERE station_id != '' ORDER BY station_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // ListActiveBoardFiltered is ListActiveBoard scoped to a set of station IDs —
 // the server-side "area" filter for a dashboard. An empty/nil stations slice
 // means no scoping (plant-wide), identical to ListActiveBoard. The IN list is

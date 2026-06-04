@@ -97,11 +97,49 @@ function openModal(d) {
   var kindSelect = el('select', { className: 'form-input' },
     KINDS.map(function (k) { return el('option', { value: k.value }, k.label); }));
   if (d) kindSelect.value = d.kind;
-  var stationsInput = el('input', {
-    className: 'form-input', type: 'text',
-    value: (d && d.stations) ? d.stations.join(', ') : '',
-    placeholder: 'e.g. ALN_001, ALN_002 — leave empty for whole plant'
-  });
+
+  // Area picker — selectable station IDs from /api/stations instead of a
+  // free-text field. The board filter is an exact station_id match, so a
+  // typed name that matches nothing silently scopes the board to empty.
+  // Values already saved on the dashboard but absent from the live list are
+  // shown flagged, so stale entries can be unchecked rather than lingering
+  // invisibly.
+  var selected = new Set((d && d.stations) ? d.stations : []);
+  var pickerBox = el('div', {
+    className: 'form-input',
+    style: { maxHeight: '180px', overflowY: 'auto', padding: '0.4rem 0.6rem' }
+  }, el('span', { className: 'muted' }, 'Loading stations…'));
+
+  apiGet('/api/stations')
+    .then(function (list) { renderPicker(list || []); })
+    .catch(function () { renderPicker([]); });
+
+  function renderPicker(available) {
+    pickerBox.innerHTML = '';
+    var all = available.slice();
+    selected.forEach(function (s) { if (all.indexOf(s) === -1) all.push(s); });
+    all.sort();
+    if (!all.length) {
+      pickerBox.appendChild(el('span', { className: 'muted' },
+        'No stations seen yet — leave empty for whole plant.'));
+      return;
+    }
+    all.forEach(function (s) {
+      var cb = el('input', { type: 'checkbox' });
+      cb.checked = selected.has(s);
+      cb.addEventListener('change', function () {
+        if (cb.checked) { selected.add(s); } else { selected.delete(s); }
+      });
+      var parts = [cb, ' ' + s];
+      if (available.indexOf(s) === -1) {
+        parts.push(el('span', { className: 'muted' }, ' — not a known station; uncheck to drop'));
+      }
+      pickerBox.appendChild(el('label', {
+        style: { display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.15rem 0', fontWeight: '400' }
+      }, parts));
+    });
+  }
+
   var enabledInput = el('input', { type: 'checkbox' });
   enabledInput.checked = d ? !!d.enabled : true;
 
@@ -110,7 +148,7 @@ function openModal(d) {
       el('h2', {}, isEdit ? 'Edit Dashboard' : 'New Dashboard'),
       field('Name', nameInput),
       field('Kind', kindSelect),
-      field('Area — station IDs (comma-separated)', stationsInput),
+      field('Area — stations (none selected = whole plant)', pickerBox),
       el('label', { style: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' } },
         [enabledInput, 'Enabled']),
       el('div', { style: { display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' } }, [
@@ -130,7 +168,7 @@ function openModal(d) {
     var payload = {
       name: name,
       kind: kindSelect.value,
-      stations: stationsInput.value.split(/[,\n]/).map(function (s) { return s.trim(); }).filter(Boolean),
+      stations: Array.from(selected),
       enabled: enabledInput.checked
     };
     var req = isEdit

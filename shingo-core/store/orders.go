@@ -138,6 +138,11 @@ func (db *DB) ListActiveBoardOrdersFiltered(stations []string) ([]*orders.Order,
 	return orders.ListActiveBoardFiltered(db.DB, stations)
 }
 
+// ListOrderStations returns the distinct station IDs seen on orders.
+func (db *DB) ListOrderStations() ([]string, error) {
+	return orders.ListDistinctStations(db.DB)
+}
+
 func (db *DB) ListOrderHistory(orderID int64) ([]*orders.History, error) {
 	return orders.ListHistory(db.DB, orderID)
 }

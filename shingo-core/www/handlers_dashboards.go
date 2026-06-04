@@ -2,6 +2,7 @@ package www
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -125,4 +126,43 @@ func (h *Handlers) apiDeleteDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.jsonSuccess(w)
+}
+
+// apiStations returns the selectable station IDs for dashboard area scoping.
+// The board filter matches orders.station_id exactly, so the list is built
+// from values that can actually match: the distinct stations seen on orders,
+// plus registered edges (station ID, and station.line composites for each
+// registered line — so a fresh line is offerable before its first order).
+// The dashboards admin renders these as checkboxes instead of a free-text
+// field, where a typo silently scoped a board to nothing.
+func (h *Handlers) apiStations(w http.ResponseWriter, r *http.Request) {
+	set := map[string]bool{}
+	fromOrders, oErr := h.engine.OrderService().ListOrderStations()
+	for _, s := range fromOrders {
+		if s != "" {
+			set[s] = true
+		}
+	}
+	edges, eErr := h.engine.NodeService().ListEdges()
+	for _, e := range edges {
+		if e.StationID == "" {
+			continue
+		}
+		if len(e.LineIDs) == 0 {
+			set[e.StationID] = true
+		}
+		for _, ln := range e.LineIDs {
+			set[e.StationID+"."+ln] = true
+		}
+	}
+	if oErr != nil && eErr != nil {
+		h.jsonError(w, oErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	out := make([]string, 0, len(set))
+	for s := range set {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	h.jsonOK(w, out)
 }

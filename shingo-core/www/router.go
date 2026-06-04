@@ -160,6 +160,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/nodestate", h.apiNodeState)
 			r.Get("/map/points", h.apiScenePoints)
 			r.Get("/map/edges", h.apiSceneEdges)
+			r.Get("/stations", h.apiStations)
 
 			// Orders & missions
 			r.Get("/orders", h.apiListOrders)
