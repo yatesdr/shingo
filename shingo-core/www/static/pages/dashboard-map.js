@@ -91,8 +91,8 @@
       if (ord.status === 'delivered') return 'idle';
       return 'in_transit';
     }
-    if (r.state === 'busy') return 'in_transit';
     if (r.state === 'error') return 'error';
+    if (r.state === 'busy' || isMoving(r)) return 'in_transit';
     if (r.state === 'ready') {
       var dock = dockOf(r);
       if (dock === 'charge') return 'charging';
@@ -146,6 +146,26 @@
     };
   }
 
+  // Motion detection from position deltas. The fleet's Busy flag (SEER
+  // ProcBusiness) stays false for direct/manual moves, so a driving robot
+  // would render as idle if we trusted flags alone. If the robot physically
+  // displaced more than a jitter threshold between updates, it's moving;
+  // the state lingers briefly so turn pauses don't flicker disc/chevron.
+  var MOVE_LINGER_MS = 3000;
+  function mergeRobot(rb) {
+    var prev = robots[rb.id];
+    rb.lastMoveAt = prev ? (prev.lastMoveAt || 0) : 0;
+    if (prev && isFinite(prev.x) && isFinite(rb.x)) {
+      var eps = (graphScale > 0) ? Math.max(graphScale * 0.02, 0.05) : 0.05;
+      var dx = rb.x - prev.x, dy = rb.y - prev.y;
+      if (dx * dx + dy * dy > eps * eps) rb.lastMoveAt = Date.now();
+    }
+    robots[rb.id] = rb;
+  }
+  function isMoving(r) {
+    return (Date.now() - (r.lastMoveAt || 0)) < MOVE_LINGER_MS;
+  }
+
   // Which bay (charge/park point) a robot is docked on, if any. Robots park
   // dead-on their bay point, so proximity within half a typical edge length
   // is the test; an explicit charging flag (REST payload) wins outright.
@@ -160,10 +180,11 @@
     return null;
   }
 
-  // Effective robot color: order status > fault > bay hue > state.
-  function robotColor(r, ord) {
+  // Effective robot color: order status > fault > motion > bay hue > state.
+  function robotColor(r, ord, moving) {
     if (ord) return STATUS_COLOR[ord.status] || STATE_COLOR[r.state] || '#888';
     if (r.state === 'error' || r.state === 'offline') return STATE_COLOR[r.state];
+    if (moving) return STATE_COLOR.busy;
     var dock = dockOf(r);
     if (dock) return DOCK_COLOR[dock];
     return STATE_COLOR[r.state] || '#888';
@@ -532,8 +553,8 @@
     robotList.forEach(function (r) {
       var s = proj(r.x, r.y);
       var ord = orderByRobot[r.id];
-      var color = robotColor(r, ord);
-      var moving = r.state === 'busy' || !!ord;
+      var moving = r.state === 'busy' || !!ord || isMoving(r);
+      var color = robotColor(r, ord, moving);
       var alert = r.state === 'error';
       // Halo only where it carries signal: motion or a fault. Parked robots
       // get none, so a charge row reads as a tidy strip of docked units.
@@ -565,8 +586,8 @@
     robotList.forEach(function (r) {
       var ord = orderByRobot[r.id];
       // Idle robots carry no name chip — parked clusters stay calm. Names
-      // show when a robot is working, faulted, paused, or offline.
-      if (r.state === 'ready' && !ord) return;
+      // show when a robot is moving, working, faulted, paused, or offline.
+      if (r.state === 'ready' && !ord && !isMoving(r)) return;
       var s = proj(r.x, r.y);
       var lx = s[0], ly = s[1] - robotR * 2.0;
       var guard = 0;
@@ -574,7 +595,7 @@
         return Math.abs(p.x - lx) < fontS * 5.2 && Math.abs(p.y - ly) < fontS * 1.25;
       })) { ly += fontS * 1.35; }
       placed.push({ x: lx, y: ly });
-      var color = robotColor(r, ord);
+      var color = robotColor(r, ord, r.state === 'busy' || !!ord || isMoving(r));
       var halfW = (r.id.length * fontS * 0.62) / 2 + fontS * 0.55;
       var chipH = fontS * 1.3;
       // Leader line ties a displaced chip back to its robot so a stacked
@@ -691,7 +712,7 @@
     }).then(function (data) {
       (data || []).forEach(function (raw) {
         var rb = normRobot(raw);
-        if (rb.id) robots[rb.id] = rb;
+        if (rb.id) mergeRobot(rb);
       });
     });
   }
@@ -736,7 +757,7 @@
     if (!Array.isArray(list)) list = [list];
     list.forEach(function (raw) {
       var rb = normRobot(raw);
-      if (rb.id) robots[rb.id] = rb;
+      if (rb.id) mergeRobot(rb);
     });
     scheduleRender();
   }
