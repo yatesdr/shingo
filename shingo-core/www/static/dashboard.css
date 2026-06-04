@@ -154,6 +154,13 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   stroke: rgba(13, 17, 23, 0.9);
   stroke-width: 4px;
 }
+.map-node-label {
+  fill: var(--dash-muted);
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: rgba(13, 17, 23, 0.9);
+  stroke-width: 3px;
+}
 
 .map-legend { display: flex; gap: 0.9rem; font-size: 0.95rem; color: var(--dash-muted); }
 .map-legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }

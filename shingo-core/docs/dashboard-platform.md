@@ -114,13 +114,18 @@ already public — **no backend was added** for this kind:
 - **Active orders** — the scoped board API. A robot working one of this dashboard's
   orders takes the order's **status color**; otherwise it shows its own **state color**.
 
-Rendering is SVG with world coords mapped into the `viewBox` (Y negated so the plant
-isn't mirrored). Three things are **best-effort and want a rig check**: robot `X/Y`
-are assumed to share the scene-point coordinate frame; destination highlighting and
-route lines depend on an order's node name resolving to a scene point
-(`point_name` / `label` / `instance_name`); and heading orientation (`rotate(-angle)`)
-may need a sign/offset tweak against real fleet data. Robot color-by-status is robust
-regardless — it joins on `robot_id`. Area-scoping the *geometry* (vs. only the order
+Rendering is SVG with world coords mapped into the `viewBox`; the plant's long axis
+is auto-oriented to fill a landscape monitor. Nodes are colored and sized by their
+scene `class_name` — confirmed live as `ActionPoint`, `ChargePoint`, `ParkPoint`,
+`LocationMark` (travel nodes), `GeneralLocation` — with action points enlarged and
+named and the numerous travel nodes kept small (a background path network).
+Verified against live Hopkinsville data:
+robots share the scene-point coordinate frame (so node/robot alignment is correct),
+and the fleet `Angle` is **radians** (converted to degrees for the heading marker).
+The one remaining best-effort path is destination highlighting / route lines, which
+depend on an order's node name resolving to a scene point
+(`point_name` / `label` / `instance_name`); robot color-by-status is robust
+regardless (it joins on `robot_id`). Area-scoping the *geometry* (vs. only the order
 highlights) is a future option via the `?area=` filter `/api/map/points` already supports.
 
 ---

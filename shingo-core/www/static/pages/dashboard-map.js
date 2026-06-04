@@ -162,6 +162,14 @@
     return n.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2')
       .replace(/\b\w/g, function (c) { return c.toUpperCase(); });
   }
+  // Size emphasis by class: operational waypoints (action/charge/park) read
+  // larger; the numerous travel nodes (LocationMark) stay small so they read as
+  // a background path network rather than drowning the waypoints.
+  function classScale(cls) {
+    if (cls === 'ActionPoint') return 1.8;
+    if (cls === 'ChargePoint' || cls === 'ParkPoint') return 1.2;
+    return 0.8; // LocationMark / GeneralLocation
+  }
 
   function svgEl(name, attrs) {
     var e = document.createElementNS(SVGNS, name);
@@ -210,14 +218,29 @@
     points.forEach(function (p) {
       if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
       var s = proj(p.pos_x, p.pos_y);
+      var cls = classOf(p);
       var hot = hotNodes[String(p.point_name || '').toLowerCase()] ||
         hotNodes[String(p.label || '').toLowerCase()] ||
         hotNodes[String(p.instance_name || '').toLowerCase()];
+      var rad = hot ? nodeR * 2.4 : nodeR * classScale(cls);
       svg.appendChild(svgEl('circle', {
-        cx: s[0], cy: s[1], r: hot ? nodeR * 2.4 : nodeR,
+        cx: s[0], cy: s[1], r: rad,
         class: 'map-node' + (hot ? ' map-node-hot' : ''),
-        fill: hot ? (STATUS_COLOR[hot] || '#fff') : (classColors[classOf(p)] || '#67748f')
+        fill: hot ? (STATUS_COLOR[hot] || '#fff') : (classColors[cls] || '#67748f')
       }));
+      // Name the operational waypoints (action points); travel nodes are too
+      // numerous to label.
+      if (cls === 'ActionPoint') {
+        var nm = p.label || p.point_name || p.instance_name;
+        if (nm) {
+          var tl = svgEl('text', {
+            x: s[0], y: s[1] - rad - fontS * 0.25,
+            class: 'map-node-label', 'font-size': fontS * 0.7
+          });
+          tl.textContent = nm;
+          svg.appendChild(tl);
+        }
+      }
     });
 
     // routes: robot -> destination, when both are placeable
@@ -241,7 +264,9 @@
       var s = proj(r.x, r.y);
       var ord = orderByRobot[r.id];
       var color = ord ? (STATUS_COLOR[ord.status] || STATE_COLOR[r.state]) : (STATE_COLOR[r.state] || '#888');
-      var rot = -r.angle + (rotate90 ? 90 : 0); // compose heading with the map rotation
+      // Fleet Angle is radians (confirmed against live data); SVG rotate wants
+      // degrees. Negate (world Y-up vs screen Y-down) and add the map rotation.
+      var rot = -(r.angle * 180 / Math.PI) + (rotate90 ? 90 : 0);
       var g = svgEl('g', { transform: 'translate(' + s[0] + ',' + s[1] + ') rotate(' + rot + ')' });
       g.appendChild(svgEl('polygon', { points: triPoints(robotR), class: 'map-robot', fill: color, 'stroke-width': robotR * 0.14 }));
       svg.appendChild(g);
