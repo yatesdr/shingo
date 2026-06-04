@@ -31,18 +31,26 @@
 
   // ── status / state palettes (kept in sync with dashboard.css) ──────
   var STATUS_COLOR = {
-    in_transit: '#4f9bff', staged: '#e3b341', dispatched: '#3a7fd0',
+    in_transit: '#4f9bff', staged: '#9aa8fa', dispatched: '#3a7fd0',
     blocked: '#c66bff', acknowledged: '#8b949e', queued: '#a371f7',
     pending: '#8b949e', delivered: '#3fb950'
   };
   var STATE_COLOR = {
-    ready: '#3fb950', busy: '#4f9bff', paused: '#e3b341',
+    ready: '#3fb950', busy: '#4f9bff', paused: '#8b949e',
     error: '#f85149', offline: '#6e7681'
   };
+  // Bays as sockets: a robot docked on a charge/park point takes the bay's
+  // hue, so an occupied ring reads as a filled socket and an empty ring as an
+  // available bay. Staged rides the indigo/blue family per the Signal scheme
+  // in docs/ui-style-guide.md; amber belongs to charging.
+  var DOCK_COLOR = { charge: '#e3b341', park: '#d98c4a' };
+  var CHARGE_RING = '#c9a227';
+  var PARK_RING = '#b0723a';
 
   // ── state ──────────────────────────────────────────────────────────
   var points = [];          // scene points (static layout)
   var sceneEdges = [];      // real drivable segments from /api/map/edges
+  var bays = [];            // charge/park points, for dock detection
   var nodeIndex = {};       // lowercased node name -> {x, y} (world space)
   var robots = {};          // vehicle_id -> normalized robot
   var orders = [];          // scoped active orders
@@ -85,22 +93,28 @@
     }
     if (r.state === 'busy') return 'in_transit';
     if (r.state === 'error') return 'error';
-    if (r.state === 'ready') return 'idle';
+    if (r.state === 'ready') {
+      var dock = dockOf(r);
+      if (dock === 'charge') return 'charging';
+      if (dock === 'park') return 'parked';
+      return 'idle';
+    }
     return null;
   }
 
   function renderLegend() {
     var el = document.getElementById('map-legend');
     if (!el) return;
-    var counts = { in_transit: 0, staged: 0, blocked: 0, idle: 0, error: 0 };
+    var counts = { in_transit: 0, staged: 0, blocked: 0, charging: 0, parked: 0, idle: 0, error: 0 };
     Object.keys(robots).forEach(function (k) {
       var b = robotBucket(robots[k]);
       if (b) counts[b]++;
     });
     var items = [
       ['in_transit', 'In transit', STATUS_COLOR.in_transit], ['staged', 'Staged', STATUS_COLOR.staged],
-      ['blocked', 'Blocked', STATUS_COLOR.blocked], ['idle', 'Idle', STATE_COLOR.ready],
-      ['error', 'Error', STATE_COLOR.error]
+      ['blocked', 'Blocked', STATUS_COLOR.blocked],
+      ['charging', 'Charging', DOCK_COLOR.charge], ['parked', 'Parked', DOCK_COLOR.park],
+      ['idle', 'Idle', STATE_COLOR.ready], ['error', 'Error', STATE_COLOR.error]
     ];
     el.innerHTML = items.map(function (it) {
       var n = counts[it[0]];
@@ -127,8 +141,32 @@
       x: x, y: y,
       angle: a || 0,
       state: r.state || deriveState(r),
+      charging: !!((r.charging !== undefined) ? r.charging : r.Charging),
       station: r.station || r.CurrentStation || ''
     };
+  }
+
+  // Which bay (charge/park point) a robot is docked on, if any. Robots park
+  // dead-on their bay point, so proximity within half a typical edge length
+  // is the test; an explicit charging flag (REST payload) wins outright.
+  function dockOf(r) {
+    if (r.charging) return 'charge';
+    if (!bays.length || !(graphScale > 0)) return null;
+    var lim = Math.pow(graphScale * 0.5, 2);
+    for (var i = 0; i < bays.length; i++) {
+      var dx = bays[i].x - r.x, dy = bays[i].y - r.y;
+      if (dx * dx + dy * dy <= lim) return bays[i].kind;
+    }
+    return null;
+  }
+
+  // Effective robot color: order status > fault > bay hue > state.
+  function robotColor(r, ord) {
+    if (ord) return STATUS_COLOR[ord.status] || STATE_COLOR[r.state] || '#888';
+    if (r.state === 'error' || r.state === 'offline') return STATE_COLOR[r.state];
+    var dock = dockOf(r);
+    if (dock) return DOCK_COLOR[dock];
+    return STATE_COLOR[r.state] || '#888';
   }
 
   // ── coordinate framing: screen = (x, -y) ───────────────────────────
@@ -166,12 +204,17 @@
 
   function buildNodeIndex() {
     nodeIndex = {};
+    bays = [];
     points.forEach(function (p) {
       if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
       var world = { x: p.pos_x, y: p.pos_y };
       [p.point_name, p.label, p.instance_name].forEach(function (n) {
         if (n) nodeIndex[String(n).toLowerCase()] = world;
       });
+      var cls = classOf(p);
+      if (cls === 'ChargePoint' || cls === 'ParkPoint') {
+        bays.push({ x: p.pos_x, y: p.pos_y, kind: cls === 'ChargePoint' ? 'charge' : 'park' });
+      }
     });
     buildClassColors();
     buildGraph();
@@ -361,17 +404,17 @@
     } else if (cls === 'ChargePoint') {
       svg.appendChild(svgEl('circle', {
         cx: s[0], cy: s[1], r: nodeR * 1.3, class: 'map-node-charge',
-        fill: 'none', stroke: '#2f8f48', 'stroke-width': nodeR * 0.45
+        fill: 'none', stroke: CHARGE_RING, 'stroke-width': nodeR * 0.45
       }));
       svg.appendChild(svgEl('polygon', {
-        points: boltPoints(s[0], s[1], nodeR), fill: '#2f8f48', 'fill-opacity': 0.75
+        points: boltPoints(s[0], s[1], nodeR), fill: CHARGE_RING, 'fill-opacity': 0.75
       }));
     } else if (cls === 'ParkPoint') {
       // Ring like the other waypoint types — color differentiates. (Squares
       // merged into a striped strip when park bays sat a glyph-width apart.)
       svg.appendChild(svgEl('circle', {
         cx: s[0], cy: s[1], r: nodeR * 1.1, class: 'map-node-park',
-        fill: 'none', stroke: '#b0723a', 'stroke-width': nodeR * 0.4
+        fill: 'none', stroke: PARK_RING, 'stroke-width': nodeR * 0.4
       }));
     } else {
       svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.9, fill: classColors[cls] || '#67748f', 'fill-opacity': 0.7 }));
@@ -489,7 +532,7 @@
     robotList.forEach(function (r) {
       var s = proj(r.x, r.y);
       var ord = orderByRobot[r.id];
-      var color = ord ? (STATUS_COLOR[ord.status] || STATE_COLOR[r.state]) : (STATE_COLOR[r.state] || '#888');
+      var color = robotColor(r, ord);
       var moving = r.state === 'busy' || !!ord;
       var alert = r.state === 'error';
       // Halo only where it carries signal: motion or a fault. Parked robots
@@ -531,7 +574,7 @@
         return Math.abs(p.x - lx) < fontS * 5.2 && Math.abs(p.y - ly) < fontS * 1.25;
       })) { ly += fontS * 1.35; }
       placed.push({ x: lx, y: ly });
-      var color = ord ? (STATUS_COLOR[ord.status] || STATE_COLOR[r.state]) : (STATE_COLOR[r.state] || '#888');
+      var color = robotColor(r, ord);
       var halfW = (r.id.length * fontS * 0.62) / 2 + fontS * 0.55;
       var chipH = fontS * 1.3;
       // Leader line ties a displaced chip back to its robot so a stacked
@@ -608,7 +651,7 @@
     var items = [];
     if (have.LocationMark || have.GeneralLocation) items.push(legendSwatch('#323c4a', 'dot', 'Travel node'));
     if (have.ActionPoint) items.push(legendSwatch('#587aa6', 'ring', 'Action point'));
-    if (have.ChargePoint) items.push(legendSwatch('#2f8f48', 'ring', 'Charge point'));
+    if (have.ChargePoint) items.push(legendSwatch(CHARGE_RING, 'ring', 'Charge point'));
     if (have.ParkPoint) items.push(legendSwatch('#b0723a', 'ring', 'Park point'));
     Object.keys(have).sort().forEach(function (n) {
       if (n === 'LocationMark' || n === 'GeneralLocation' || n === 'ActionPoint' ||
