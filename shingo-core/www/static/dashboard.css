@@ -140,20 +140,39 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 .map-svg { width: 100%; height: 100%; display: block; background: var(--dash-bg); }
 
 /* Sizes (radius, stroke, font) are set in user units by dashboard-map.js so
- * they scale with the map; CSS here owns only colors/opacity. */
-.map-node { fill: #3a4250; }
-.map-node-hot { stroke: #ffffff; stroke-width: 0; }
-.map-route { opacity: 0.75; stroke-linecap: round; }
-.map-robot { stroke: #0d1117; stroke-width: 0; }
+ * they scale with the map; CSS here owns only colors/opacity. Node fill is set
+ * per-class in JS; this is the fallback. */
+.map-node { fill: #67748f; opacity: 0.9; }
+.map-node-hot { stroke: #ffffff; opacity: 1; }
+.map-route { opacity: 0.8; stroke-linecap: round; }
+.map-robot { stroke: #0b0e14; paint-order: stroke; }
 .map-robot-label {
   fill: var(--dash-text);
   text-anchor: middle;
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
   paint-order: stroke;
-  stroke: rgba(13, 17, 23, 0.85);
-  stroke-width: 3px;
+  stroke: rgba(13, 17, 23, 0.9);
+  stroke-width: 4px;
 }
 
 .map-legend { display: flex; gap: 0.9rem; font-size: 0.95rem; color: var(--dash-muted); }
 .map-legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }
 .map-legend-dot { width: 0.7rem; height: 0.7rem; border-radius: 50%; display: inline-block; }
+
+/* Node-class legend — bottom-left overlay on the map, populated from the
+ * scene's distinct class_name values. */
+.map-class-legend {
+  position: absolute;
+  left: 0.9rem;
+  bottom: 0.9rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  max-width: 60%;
+  padding: 0.5rem 0.8rem;
+  background: rgba(22, 27, 34, 0.85);
+  border: 1px solid var(--dash-border);
+  border-radius: 8px;
+  font-size: 1rem;
+  color: var(--dash-muted);
+}

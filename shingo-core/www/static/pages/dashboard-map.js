@@ -41,6 +41,16 @@
   var orderByRobot = {};    // robot_id -> order
   var hotNodes = {};        // lowercased node name -> status (highlight)
   var view = null;          // {minX, minY, w, h} screen-space bounding box
+  var rotate90 = false;     // orient the plant's long axis along screen X
+
+  // proj maps world (x, y) to screen coords. Y is negated (world up -> screen
+  // down). When the plant footprint is taller than wide, the whole map rotates
+  // 90° CW so its long axis fills a landscape monitor instead of being
+  // letterboxed into a thin central strip.
+  function proj(x, y) {
+    if (rotate90) return [y, x]; // 90° CW of the (x, -y) base image
+    return [x, -y];
+  }
 
   // ── header chrome ──────────────────────────────────────────────────
   function tickClock() {
@@ -91,19 +101,29 @@
 
   // ── coordinate framing: screen = (x, -y) ───────────────────────────
   function computeView() {
-    var xs = [], ys = [];
+    var wx = [], wy = [];
     points.forEach(function (p) {
-      if (isFinite(p.pos_x) && isFinite(p.pos_y)) { xs.push(p.pos_x); ys.push(-p.pos_y); }
+      if (isFinite(p.pos_x) && isFinite(p.pos_y)) { wx.push(p.pos_x); wy.push(p.pos_y); }
     });
     Object.keys(robots).forEach(function (k) {
       var r = robots[k];
-      if (isFinite(r.x) && isFinite(r.y)) { xs.push(r.x); ys.push(-r.y); }
+      if (isFinite(r.x) && isFinite(r.y)) { wx.push(r.x); wy.push(r.y); }
     });
-    if (!xs.length) { view = null; return; }
-    var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
-    var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+    if (!wx.length) { view = null; return; }
+    var minWx = Math.min.apply(null, wx), maxWx = Math.max.apply(null, wx);
+    var minWy = Math.min.apply(null, wy), maxWy = Math.max.apply(null, wy);
+    // Orient the plant's long axis horizontally so a tall footprint fills a
+    // wide screen instead of being squeezed into a thin central column.
+    rotate90 = (maxWy - minWy) > (maxWx - minWx);
+    var sx = [], sy = [];
+    for (var i = 0; i < wx.length; i++) {
+      var s = proj(wx[i], wy[i]);
+      sx.push(s[0]); sy.push(s[1]);
+    }
+    var minX = Math.min.apply(null, sx), maxX = Math.max.apply(null, sx);
+    var minY = Math.min.apply(null, sy), maxY = Math.max.apply(null, sy);
     var w = Math.max(maxX - minX, 1), h = Math.max(maxY - minY, 1);
-    var pad = Math.max(w, h) * 0.06;
+    var pad = Math.max(w, h) * 0.04;
     view = { minX: minX - pad, minY: minY - pad, w: w + 2 * pad, h: h + 2 * pad };
   }
 
@@ -111,15 +131,36 @@
     nodeIndex = {};
     points.forEach(function (p) {
       if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
-      var screen = { x: p.pos_x, y: -p.pos_y };
+      var world = { x: p.pos_x, y: p.pos_y };
       [p.point_name, p.label, p.instance_name].forEach(function (n) {
-        if (n) nodeIndex[String(n).toLowerCase()] = screen;
+        if (n) nodeIndex[String(n).toLowerCase()] = world;
       });
     });
+    buildClassColors();
   }
   function findNode(name) {
     if (!name) return null;
     return nodeIndex[String(name).toLowerCase()] || null;
+  }
+
+  // ── node classes (e.g. advanced/action points vs bin locations) ────
+  // Color nodes by their scene ClassName so the layout reads as typed
+  // locations, not anonymous dots. Built dynamically: whatever class_name
+  // values the scene carries get a stable color from the palette + a legend
+  // entry, so this works without hard-coding the fleet's class strings.
+  var CLASS_PALETTE = ['#6cb0ff', '#56d364', '#e3b341', '#d2a8ff', '#ff9b72', '#79c0ff', '#f0883e'];
+  var classColors = {};
+  function classOf(p) { return String(p.class_name || 'node'); }
+  function buildClassColors() {
+    var names = {};
+    points.forEach(function (p) { names[classOf(p)] = true; });
+    var sorted = Object.keys(names).sort();
+    classColors = {};
+    sorted.forEach(function (n, i) { classColors[n] = CLASS_PALETTE[i % CLASS_PALETTE.length]; });
+  }
+  function prettyClass(n) {
+    return n.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/\b\w/g, function (c) { return c.toUpperCase(); });
   }
 
   function svgEl(name, attrs) {
@@ -154,9 +195,9 @@
     if (empty) empty.style.display = 'none';
 
     var unit = Math.max(view.w, view.h);
-    var nodeR = unit * 0.004;
-    var robotR = unit * 0.012;
-    var fontS = unit * 0.014;
+    var nodeR = unit * 0.005;
+    var robotR = unit * 0.016;
+    var fontS = unit * 0.018;
 
     var svg = svgEl('svg', {
       class: 'map-svg',
@@ -164,16 +205,18 @@
       preserveAspectRatio: 'xMidYMid meet'
     });
 
-    // nodes (highlighted if they're a source/destination of a scoped order)
+    // nodes — colored by scene class so location types are distinguishable;
+    // larger + status-colored when they're a source/destination of a scoped order.
     points.forEach(function (p) {
       if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
+      var s = proj(p.pos_x, p.pos_y);
       var hot = hotNodes[String(p.point_name || '').toLowerCase()] ||
         hotNodes[String(p.label || '').toLowerCase()] ||
         hotNodes[String(p.instance_name || '').toLowerCase()];
       svg.appendChild(svgEl('circle', {
-        cx: p.pos_x, cy: -p.pos_y, r: hot ? nodeR * 2.2 : nodeR,
+        cx: s[0], cy: s[1], r: hot ? nodeR * 2.4 : nodeR,
         class: 'map-node' + (hot ? ' map-node-hot' : ''),
-        fill: hot ? (STATUS_COLOR[hot] || '#fff') : null
+        fill: hot ? (STATUS_COLOR[hot] || '#fff') : (classColors[classOf(p)] || '#67748f')
       }));
     });
 
@@ -183,10 +226,11 @@
       if (!r || !isFinite(r.x) || !isFinite(r.y)) return;
       var dest = findNode(o.delivery_node);
       if (!dest) return;
+      var rs = proj(r.x, r.y), ds = proj(dest.x, dest.y);
       svg.appendChild(svgEl('line', {
-        x1: r.x, y1: -r.y, x2: dest.x, y2: dest.y,
+        x1: rs[0], y1: rs[1], x2: ds[0], y2: ds[1],
         class: 'map-route', stroke: STATUS_COLOR[o.status] || '#888',
-        'stroke-width': robotR * 0.35
+        'stroke-width': robotR * 0.3
       }));
     });
 
@@ -194,13 +238,15 @@
     Object.keys(robots).forEach(function (k) {
       var r = robots[k];
       if (!isFinite(r.x) || !isFinite(r.y)) return;
+      var s = proj(r.x, r.y);
       var ord = orderByRobot[r.id];
       var color = ord ? (STATUS_COLOR[ord.status] || STATE_COLOR[r.state]) : (STATE_COLOR[r.state] || '#888');
-      var g = svgEl('g', { transform: 'translate(' + r.x + ',' + (-r.y) + ') rotate(' + (-r.angle) + ')' });
-      g.appendChild(svgEl('polygon', { points: triPoints(robotR), class: 'map-robot', fill: color }));
+      var rot = -r.angle + (rotate90 ? 90 : 0); // compose heading with the map rotation
+      var g = svgEl('g', { transform: 'translate(' + s[0] + ',' + s[1] + ') rotate(' + rot + ')' });
+      g.appendChild(svgEl('polygon', { points: triPoints(robotR), class: 'map-robot', fill: color, 'stroke-width': robotR * 0.14 }));
       svg.appendChild(g);
       var label = svgEl('text', {
-        x: r.x, y: -r.y - robotR * 1.5, class: 'map-robot-label', 'font-size': fontS
+        x: s[0], y: s[1] - robotR * 1.5, class: 'map-robot-label', 'font-size': fontS
       });
       label.textContent = r.id;
       svg.appendChild(label);
@@ -208,6 +254,23 @@
 
     host.innerHTML = '';
     host.appendChild(svg);
+    renderClassLegend();
+  }
+
+  function escapeText(s) {
+    var d = document.createElement('span');
+    d.textContent = (s === null || s === undefined) ? '' : s;
+    return d.innerHTML;
+  }
+
+  function renderClassLegend() {
+    var el = document.getElementById('map-class-legend');
+    if (!el) return;
+    var names = Object.keys(classColors);
+    el.innerHTML = names.map(function (n) {
+      return '<span class="map-legend-item"><span class="map-legend-dot" style="background:' +
+        classColors[n] + '"></span>' + escapeText(prettyClass(n)) + '</span>';
+    }).join('');
   }
 
   // ── data loads ─────────────────────────────────────────────────────
