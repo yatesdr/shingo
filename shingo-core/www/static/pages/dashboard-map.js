@@ -316,7 +316,7 @@
   function boltPoints(cx, cy, s) {
     var p = [[0.12, -0.6], [-0.38, 0.08], [-0.06, 0.08], [-0.12, 0.6], [0.38, -0.08], [0.06, -0.08]];
     return p.map(function (q) {
-      return (cx + q[0] * s * 1.8) + ',' + (cy + q[1] * s * 1.8);
+      return (cx + q[0] * s * 1.4) + ',' + (cy + q[1] * s * 1.4);
     }).join(' ');
   }
 
@@ -329,8 +329,20 @@
   }
 
   function drawNode(svg, p, nodeR) {
-    var s = proj(p.pos_x, p.pos_y);
+    var wx = p.pos_x, wy = p.pos_y;
     var cls = classOf(p);
+    // Action points snap onto the nearest network vertex when their scene
+    // coordinate sits a hair off the curve endpoint they serve — otherwise
+    // the ring floats beside its node with its own dot, which reads sloppy.
+    // Half a typical edge length is close enough to mean "same node".
+    if (cls === 'ActionPoint' && graphScale > 0 && tnodes.length) {
+      var ni = nearestTNode(wx, wy);
+      if (ni >= 0) {
+        var nd = Math.sqrt(dist2(tnodes[ni], { x: wx, y: wy }));
+        if (nd > 0 && nd <= graphScale * 0.5) { wx = tnodes[ni].x; wy = tnodes[ni].y; }
+      }
+    }
+    var s = proj(wx, wy);
     var hot = hotNodes[String(p.point_name || '').toLowerCase()] ||
       hotNodes[String(p.label || '').toLowerCase()] ||
       hotNodes[String(p.instance_name || '').toLowerCase()];
@@ -352,13 +364,14 @@
         fill: 'none', stroke: '#2f8f48', 'stroke-width': nodeR * 0.45
       }));
       svg.appendChild(svgEl('polygon', {
-        points: boltPoints(s[0], s[1], nodeR), fill: '#2f8f48', 'fill-opacity': 0.9
+        points: boltPoints(s[0], s[1], nodeR), fill: '#2f8f48', 'fill-opacity': 0.75
       }));
     } else if (cls === 'ParkPoint') {
-      var sq = nodeR * 1.2;
-      svg.appendChild(svgEl('rect', {
-        x: s[0] - sq, y: s[1] - sq, width: sq * 2, height: sq * 2, rx: nodeR * 0.4,
-        class: 'map-node-park', fill: 'none', stroke: '#b0723a', 'stroke-width': nodeR * 0.45
+      // Ring like the other waypoint types — color differentiates. (Squares
+      // merged into a striped strip when park bays sat a glyph-width apart.)
+      svg.appendChild(svgEl('circle', {
+        cx: s[0], cy: s[1], r: nodeR * 1.1, class: 'map-node-park',
+        fill: 'none', stroke: '#b0723a', 'stroke-width': nodeR * 0.4
       }));
     } else {
       svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.9, fill: classColors[cls] || '#67748f', 'fill-opacity': 0.7 }));
@@ -542,6 +555,7 @@
     host.innerHTML = '';
     host.appendChild(svg);
     renderClassLegend();
+    renderLegend(); // live fleet counts track every robot/order tick
   }
 
   // Faint grid + corner brackets — gives the floor a frame so the scene reads
@@ -595,7 +609,7 @@
     if (have.LocationMark || have.GeneralLocation) items.push(legendSwatch('#323c4a', 'dot', 'Travel node'));
     if (have.ActionPoint) items.push(legendSwatch('#587aa6', 'ring', 'Action point'));
     if (have.ChargePoint) items.push(legendSwatch('#2f8f48', 'ring', 'Charge point'));
-    if (have.ParkPoint) items.push(legendSwatch('#b0723a', 'square', 'Park point'));
+    if (have.ParkPoint) items.push(legendSwatch('#b0723a', 'ring', 'Park point'));
     Object.keys(have).sort().forEach(function (n) {
       if (n === 'LocationMark' || n === 'GeneralLocation' || n === 'ActionPoint' ||
           n === 'ChargePoint' || n === 'ParkPoint') return;
