@@ -43,3 +43,47 @@ bin-picker change gets its own review/tests.
 Pointers: `shingo-core/dispatch/complex_dispatch.go` (hold + future
 exclusion), `shingo-core/store/orders/orders.go:SiblingUUID`,
 `aln003-swap-starvation-incident-2026-06-03.md` (fix plan, #4).
+
+---
+
+## Starvation alert time-to-empty escalation
+
+**Status:** open follow-up. Filed 2026-06-03 from the ALN_003 starvation red
+card (task 2), which ships **floor-based** first.
+
+**Context.** The operator starvation red card v1 fires when an active
+style's lineside UOP drops below a fixed floor (`capacity/4` for transitional
+loaders; the reorder point for auto loaders). Simple and predictable, but a
+fixed floor doesn't account for *how fast* the line is consuming.
+
+**Proposed.** Escalate the danger tier on **time-to-empty**: red when there
+is < N minutes of parts left at the current consume rate, not just < X
+parts. Far more actionable for an operator ("~4 min left"). The consume
+rate already exists — PLC counter deltas feed `threshold_calculator`; reuse
+that. Keep the v1 floor as the fallback when no rate is available (cold
+start). The card's danger computation is deliberately a single function
+(see task 2) so this slots in without touching the render path.
+
+---
+
+## Swap sibling cancel cascade on manual cancel
+
+**Status:** open follow-up. Filed 2026-06-03.
+
+**Context.** Cancelling one leg of a two-robot swap should cancel the other.
+This already happens for the two paths that matter most: changeover
+`AbortNodeOrders` (both legs share the line node) and the stuck-order TTL
+(`AbandonStuckOrders` cascades to the sibling, task 3). But a **manual
+single-leg cancel** (`HandleOrderCancel`) does *not* cascade — cancel just
+the supply leg and the held removal leg (task 1) waits for the 1h TTL
+instead of clearing immediately.
+
+**Proposed.** In `HandleOrderCancel` / `LifecycleService.CancelOrder`, when
+the order has a `sibling_order_uuid`, cancel the sibling too (idempotent;
+mirror the engine `abandonOrder` cascade). Also consider: when the supply
+sibling is already terminal, `swapRemovalLegHeld` could release the hold (or
+cancel) rather than hold until the TTL.
+
+Pointers: `shingo-core/dispatch/dispatcher.go:HandleOrderCancel`,
+`shingo-core/dispatch/lifecycle.go:CancelOrder`,
+`shingo-core/dispatch/complex_dispatch.go:swapRemovalLegHeld`.
