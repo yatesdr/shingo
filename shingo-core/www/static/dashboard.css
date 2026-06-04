@@ -117,7 +117,7 @@ tr.st-dispatched   { border-left-color: #1f6feb; } .st-dispatched   .r-status, t
 tr.st-acknowledged { border-left-color: #8b949e; } .st-acknowledged .r-status, td.st-acknowledged { color: #b1bac4; }
 tr.st-queued       { border-left-color: #a371f7; } .st-queued       .r-status, td.st-queued       { color: #d2a8ff; }
 tr.st-pending      { border-left-color: #8b949e; } .st-pending      .r-status, td.st-pending      { color: #b1bac4; }
-tr.st-blocked      { border-left-color: #f85149; background: rgba(248, 81, 73, 0.08); } .st-blocked .r-status, td.st-blocked { color: #ff7b72; }
+tr.st-blocked      { border-left-color: #bf5af2; background: rgba(191, 90, 242, 0.10); } .st-blocked .r-status, td.st-blocked { color: #d6a8ff; }
 tr.st-delivered    { border-left-color: #2ea043; } .st-delivered    .r-status, td.st-delivered    { color: #56d364; }
 
 /* New-row flash when an order first appears on this board. */
@@ -142,7 +142,10 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 /* Sizes (radius, stroke, font) are set in user units by dashboard-map.js so
  * they scale with the map; CSS here owns only colors/opacity. Node fill is set
  * per-class in JS; this is the fallback. */
-.map-node { fill: #67748f; opacity: 0.9; }
+/* Node fill is the per-class color set as an SVG attribute in JS. Do NOT set
+ * `fill` here — a CSS fill property overrides the presentation attribute, which
+ * made every node render grey. */
+.map-node { opacity: 0.95; }
 .map-node-hot { stroke: #ffffff; opacity: 1; }
 .map-route { opacity: 0.8; stroke-linecap: round; }
 .map-robot { stroke: #0b0e14; paint-order: stroke; }

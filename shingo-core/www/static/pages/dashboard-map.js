@@ -25,7 +25,7 @@
   // ── status / state palettes (kept in sync with dashboard.css) ──────
   var STATUS_COLOR = {
     in_transit: '#2f81f7', staged: '#d29922', dispatched: '#1f6feb',
-    blocked: '#f85149', acknowledged: '#8b949e', queued: '#a371f7',
+    blocked: '#bf5af2', acknowledged: '#8b949e', queued: '#a371f7',
     pending: '#8b949e', delivered: '#2ea043'
   };
   var STATE_COLOR = {
