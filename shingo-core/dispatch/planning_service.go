@@ -511,6 +511,27 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 	if err != nil {
 		return nil, &planningError{Code: "node_error", Detail: err.Error(), Err: err}
 	}
+	// If the destination is still a synthetic NGRP, resolve a concrete child
+	// slot now. This happens when intake (CreateInboundOrder) deferred
+	// resolution because the group was full: the order was created against the
+	// group and queued by the CheckDropoffCapacity gate above, and by the time
+	// it dispatches a slot has freed. Mirrors the synthetic-source resolution
+	// earlier in this method. CheckDropoffCapacity already queued the all-full
+	// case, so a resolver failure here is a TOCTOU race — re-queue and let the
+	// scanner retry rather than failing the order.
+	if destNode.IsSynthetic && destNode.NodeTypeCode == "NGRP" && s.resolver != nil {
+		result, rErr := s.resolver.Resolve(destNode, OrderTypeStore, payloadCode, nil)
+		if rErr != nil {
+			s.dbg("move: dest group %s unresolved at dispatch (%v), queuing order %d", order.DeliveryNode, rErr, order.ID)
+			return &PlanningResult{Queued: true}, nil
+		}
+		s.dbg("move: dest NGRP %s resolved -> %s for order %d", order.DeliveryNode, result.Node.Name, order.ID)
+		destNode = result.Node
+		order.DeliveryNode = destNode.Name
+		if err := s.db.UpdateOrderDeliveryNode(order.ID, destNode.Name); err != nil {
+			log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
+		}
+	}
 	// Guard: source and destination must differ. A same-node move is physically
 	// impossible and would waste a fleet transport order.
 	if sourceNode.ID == destNode.ID {

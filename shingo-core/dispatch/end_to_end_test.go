@@ -186,6 +186,100 @@ func TestDispatcher_StoreOrder_FullLifecycle(t *testing.T) {
 	}
 }
 
+// TestDispatcher_MoveOrder_QueuesOnSaturatedNGRP pins the loader/unloader
+// outbound fix. When a manual_swap loader finishes its cycle, the L2
+// "filled bin → outbound supermarket" move targets a node group. If every
+// slot in that group is full, intake (CreateInboundOrder) used to eagerly
+// resolve the group and hard-fail with "cannot resolve synthetic node ...:
+// no available slot in node group X" — surfacing as a red error toast on the
+// Market Bin Loader HMI (plant SNF2 / SMN_001 / AMR Supermarket #1427). The
+// order was never created at Core, so nothing retried when a slot freed.
+//
+// With the fix, a capacity-shaped resolution failure no longer fails the
+// operator's action: the order is created against the group and parked in
+// `queued` by CheckDropoffCapacity; the scanner replays it when a slot opens
+// (planMove resolves a concrete child at dispatch time). Mirrors the
+// complex-order contract pinned by TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP.
+func TestDispatcher_MoveOrder_QueuesOnSaturatedNGRP(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	syntheticType, err := db.GetNodeTypeByCode("NGRP")
+	if err != nil {
+		t.Fatalf("get NGRP type: %v", err)
+	}
+
+	// NGRP supermarket with both child slots occupied (saturated).
+	supermarket := &nodes.Node{Name: "AMR-SUPERMARKET-SAT", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(supermarket), "create supermarket")
+	slotA := &nodes.Node{Name: "AMR-SAT-A", Enabled: true}
+	slotB := &nodes.Node{Name: "AMR-SAT-B", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(slotA), "create slotA")
+	testutil.MustNoErr(t, db.CreateNode(slotB), "create slotB")
+	testutil.MustNoErr(t, db.SetNodeParent(slotA.ID, supermarket.ID), "parent slotA")
+	testutil.MustNoErr(t, db.SetNodeParent(slotB.ID, supermarket.ID), "parent slotB")
+	occA := &bins.Bin{BinTypeID: 1, Label: "AMR-OCC-A", NodeID: &slotA.ID, Status: "available"}
+	occB := &bins.Bin{BinTypeID: 1, Label: "AMR-OCC-B", NodeID: &slotB.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(occA), "create occA")
+	testutil.MustNoErr(t, db.CreateBin(occB), "create occB")
+
+	// The loader's filled bin to ship out (move source).
+	_ = testdb.CreateBinAtNode(t, db, bp.Code, lineNode.ID, "L2-SRC-BIN")
+
+	backend := testdb.NewTrackingBackend()
+	d, emitter := newTestDispatcher(t, db, backend)
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "l2-sat-1",
+		OrderType:    OrderTypeMove,
+		PayloadCode:  bp.Code,
+		SourceNode:   lineNode.Name,
+		DeliveryNode: supermarket.Name,
+		Quantity:     1.0,
+	})
+
+	// The operator's action must NOT fail: no sendError (no HMI toast), the
+	// order exists, and it is queued with a reason.
+	if len(emitter.failed) > 0 {
+		t.Fatalf("move to saturated NGRP should not hit the failed path (the HMI error toast); got: %+v", emitter.failed)
+	}
+	order, err := db.GetOrderByUUID("l2-sat-1")
+	if err != nil {
+		t.Fatalf("get order: %v — a full outbound group must create the order as queued, not reject it at intake", err)
+	}
+	if order.Status != StatusQueued {
+		t.Errorf("status = %q, want %q (full outbound group must queue, not fail the operator)", order.Status, StatusQueued)
+	}
+	if order.QueueReason == "" {
+		t.Error("queue_reason empty; expected a reason so the operator sees why the move is waiting")
+	}
+
+	// Free a slot and re-submit: with capacity now available, intake resolves
+	// the group to the open child and the move dispatches cleanly (no toast,
+	// no queue). Confirms the gate only holds while the group is actually full.
+	testutil.MustNoErr(t, db.DeleteBin(occB.ID), "delete occB to free slotB")
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "l2-sat-2",
+		OrderType:    OrderTypeMove,
+		PayloadCode:  bp.Code,
+		SourceNode:   lineNode.Name,
+		DeliveryNode: supermarket.Name,
+		Quantity:     1.0,
+	})
+	order2, err := db.GetOrderByUUID("l2-sat-2")
+	if err != nil {
+		t.Fatalf("get order2: %v", err)
+	}
+	if order2.Status == StatusQueued {
+		t.Errorf("order2 status = %q, want it to dispatch once a slot is free", order2.Status)
+	}
+	if order2.DeliveryNode != slotB.Name {
+		t.Errorf("order2 delivery_node = %q, want %q (resolved to the freed child slot)", order2.DeliveryNode, slotB.Name)
+	}
+}
+
 // TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP pins the
 // Round-3 follow-up to Item C. Two-robot swap pairs construct each
 // leg as a complex order with multi-step pickup/dropoff. Pre-fix,

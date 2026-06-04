@@ -90,10 +90,23 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		if destNode.IsSynthetic && s.resolver != nil {
 			result, err := s.resolver.Resolve(destNode, OrderTypeStore, payloadCode, nil)
 			if err != nil {
-				return nil, "", lifecycleErr("resolution_failed", fmt.Sprintf("cannot resolve synthetic node %s: %v", p.DeliveryNode, err), err)
+				// A full group (ResolutionCapacity — "no available slot in node
+				// group X") must NOT fail the operator's action. Leave the
+				// synthetic destination on the order and create it: planMove
+				// resolves a concrete child at dispatch time, and
+				// CheckDropoffCapacity parks it in `queued` until a slot frees —
+				// the same queue-don't-fail contract every other dropoff path
+				// already honors. Structural/transient failures (no enabled
+				// children, DB error) still hard-fail so a real misconfiguration
+				// surfaces to the operator instead of queueing forever.
+				if class, _ := classifyResolutionError(err); class != ResolutionCapacity {
+					return nil, "", lifecycleErr("resolution_failed", fmt.Sprintf("cannot resolve synthetic node %s: %v", p.DeliveryNode, err), err)
+				}
+				s.dbg("intake: synthetic %s full — creating order against group so it queues: %v", p.DeliveryNode, err)
+			} else {
+				s.dbg("resolved synthetic %s -> %s", p.DeliveryNode, result.Node.Name)
+				order.DeliveryNode = result.Node.Name
 			}
-			s.dbg("resolved synthetic %s -> %s", p.DeliveryNode, result.Node.Name)
-			order.DeliveryNode = result.Node.Name
 		}
 	}
 	if err := s.db.CreateOrder(order); err != nil {
