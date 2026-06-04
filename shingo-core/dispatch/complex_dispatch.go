@@ -197,6 +197,45 @@ func (d *Dispatcher) isConcreteStorageDropoff(deliveryNode string) bool {
 	return parent.NodeTypeCode == "LANE" || parent.NodeTypeCode == "NGRP"
 }
 
+// swapRemovalLegHeld reports whether `order` is the removal (evac) leg of a
+// two-robot swap whose supply sibling has not yet claimed a replacement
+// bin. While true the removal leg must not claim/pull the line bin — the
+// line keeps its current bin until a replacement is secured (ALN_003
+// swap-starvation, 2026-06-03). Returns (false, "") for non-swap orders,
+// supply legs, and removal legs whose supply sibling already holds a claim.
+// Fail-open on lookup errors: never freeze a robot on a transient failure.
+func (d *Dispatcher) swapRemovalLegHeld(order *orders.Order) (bool, string) {
+	sibUUID, err := d.db.OrderSiblingUUID(order.ID)
+	if err != nil {
+		log.Printf("dispatch: swap-hold sibling lookup for order %d: %v", order.ID, err)
+		return false, ""
+	}
+	if sibUUID == "" {
+		return false, "" // not a swap leg
+	}
+	// The removal leg delivers AWAY from its line node; the supply leg
+	// delivers TO the line (DeliveryNode == ProcessNode). Only the removal
+	// leg is gated; an empty ProcessNode (no distinct line node) is not.
+	if order.ProcessNode == "" || order.DeliveryNode == order.ProcessNode {
+		return false, ""
+	}
+	sib, err := d.db.GetOrderByUUID(sibUUID)
+	if err != nil || sib == nil {
+		// Supply row should exist (created first, linked at intake); hold
+		// rather than strand the line if it is somehow missing.
+		return true, "swap: awaiting supply sibling"
+	}
+	claimed, err := d.db.ListBinsByClaim(sib.ID)
+	if err != nil {
+		log.Printf("dispatch: swap-hold claim check for order %d sib %d: %v", order.ID, sib.ID, err)
+		return false, ""
+	}
+	if len(claimed) > 0 {
+		return false, "" // supply secured a replacement — release the hold
+	}
+	return true, "swap: holding removal leg until supply sibling claims a bin"
+}
+
 func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// Defense-in-depth: the fulfillment scanner's tryFulfill already
 	// gates on StatusQueued before calling here, so a parent in
@@ -280,6 +319,24 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		}
 	}
 	resolvedSteps = newSteps
+
+	// Two-robot swap removal-leg hold: don't let the removal (evac) leg
+	// claim/pull the line bin until the supply sibling has secured a
+	// replacement bin. Stops a swap from stranding the line when the
+	// supermarket is empty (ALN_003 swap-starvation, 2026-06-03). Stay
+	// queued — the scanner replays on EventBinUpdated when the supply leg
+	// claims, clearing the gate. The sibling pointer is set at intake (the
+	// removal leg carries it on its ComplexOrderRequest), so it is present
+	// here even on the synchronous intake-dispatch path.
+	if held, reason := d.swapRemovalLegHeld(order); held {
+		if order.QueueReason != reason {
+			if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+				log.Printf("dispatch: set queue_reason swap-hold for order %d: %v", order.ID, serr)
+			}
+		}
+		d.dbg("complex: order %d held — %s", order.ID, reason)
+		return fmt.Errorf("swap removal hold: %s", reason)
+	}
 
 	// #1 (regression 2b05dce): restore the dropoff-capacity gate for complex
 	// orders, but ONLY for concrete STORAGE/STAGING dropoffs. The scanner

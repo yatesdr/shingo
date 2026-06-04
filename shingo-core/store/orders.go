@@ -89,6 +89,11 @@ func (db *DB) LinkOrderSiblingsByEdgeUUID(uuidA, uuidB string) (int64, error) {
 	return orders.LinkSiblingsByEdgeUUID(db.DB, uuidA, uuidB)
 }
 
+// OrderSiblingUUID returns the order's two-robot swap sibling edge UUID, or "".
+func (db *DB) OrderSiblingUUID(id int64) (string, error) {
+	return orders.SiblingUUID(db.DB, id)
+}
+
 func (db *DB) UpdateOrderVendor(id int64, vendorOrderID, vendorState, robotID string) error {
 	return orders.UpdateVendor(db.DB, id, vendorOrderID, vendorState, robotID)
 }

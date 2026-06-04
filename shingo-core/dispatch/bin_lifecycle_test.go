@@ -17,6 +17,82 @@ import (
 	"shingocore/store/payloads"
 )
 
+// TestSwapRemovalLegHeld_UntilSupplyClaims pins the two-robot swap dispatch
+// hold: the removal (evac) leg must not claim the line bin while its supply
+// sibling holds no replacement bin, so the line keeps its current bin when
+// the supermarket is empty (ALN_003 swap-starvation, 2026-06-03). Once the
+// supply leg claims a bin, the hold clears.
+func TestSwapRemovalLegHeld_UntilSupplyClaims(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	superNode := &nodes.Node{Name: "SWAP-SUPER", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(superNode), "create super node")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// Supply leg: delivers TO the line (DeliveryNode == ProcessNode). Left
+	// queued — no source bin staged in the supermarket.
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "swap-supply", PayloadCode: bp.Code, Quantity: 1, ProcessNode: lineNode.Name,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: superNode.Name},
+			{Action: "dropoff", Node: lineNode.Name},
+		},
+	})
+	supply, err := db.GetOrderByUUID("swap-supply")
+	testutil.MustNoErr(t, err, "get supply leg")
+
+	// The line bin the removal leg would pull — present, so only the hold
+	// stops the claim.
+	lineBin := &bins.Bin{BinTypeID: 1, Label: "SWAP-LINE-BIN", NodeID: &lineNode.ID, Status: "staged"}
+	testutil.MustNoErr(t, db.CreateBin(lineBin), "create line bin")
+	testutil.MustNoErr(t, db.SetBinManifest(lineBin.ID, `{"items":[{"catid":"PART-A","qty":40}]}`, bp.Code, 40), "set manifest")
+	testutil.MustNoErr(t, db.ConfirmBinManifest(lineBin.ID, ""), "confirm manifest")
+
+	// Removal leg: pickup@line -> dropoff@super (DeliveryNode != ProcessNode),
+	// carrying the supply sibling's UUID so Core pairs them at intake.
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "swap-removal", PayloadCode: bp.Code, Quantity: 1, ProcessNode: lineNode.Name,
+		SiblingOrderUUID: "swap-supply",
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "wait", Node: lineNode.Name},
+			{Action: "pickup", Node: lineNode.Name},
+			{Action: "dropoff", Node: superNode.Name},
+		},
+	})
+	removal, err := db.GetOrderByUUID("swap-removal")
+	testutil.MustNoErr(t, err, "get removal leg")
+
+	// Gate fires: supply has no claimed bin.
+	if held, _ := d.swapRemovalLegHeld(removal); !held {
+		t.Fatal("removal leg should be held while supply sibling has no claimed bin")
+	}
+	// DispatchPreparedComplex must stay queued without claiming the line bin.
+	if derr := d.DispatchPreparedComplex(removal); derr == nil {
+		t.Fatal("DispatchPreparedComplex should return the hold error")
+	}
+	removal, _ = db.GetOrderByUUID("swap-removal")
+	if removal.Status != StatusQueued {
+		t.Errorf("removal status = %q, want queued", removal.Status)
+	}
+	if removal.BinID != nil {
+		t.Errorf("removal claimed bin %d while held — the line bin must stay put", *removal.BinID)
+	}
+
+	// Supply secures a replacement bin (claimed_by supply) → the hold clears.
+	superBin := &bins.Bin{BinTypeID: 1, Label: "SWAP-SUPER-BIN", NodeID: &superNode.ID, Status: "staged"}
+	testutil.MustNoErr(t, db.CreateBin(superBin), "create super bin")
+	if _, err := db.DB.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, supply.ID, superBin.ID); err != nil {
+		t.Fatalf("claim super bin for supply: %v", err)
+	}
+	removal, _ = db.GetOrderByUUID("swap-removal")
+	if held, _ := d.swapRemovalLegHeld(removal); held {
+		t.Error("removal leg should no longer be held once supply has a claimed bin")
+	}
+}
+
 // TestFullDepletion_ClearsManifest verifies that when a move order carries
 // remaining_uop=0 (fully depleted bin), the manifest is atomically cleared
 // and the bin is claimed in a single operation.

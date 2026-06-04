@@ -173,6 +173,13 @@ func LinkSiblingsByEdgeUUID(db *sql.DB, uuidA, uuidB string) (int64, error) {
 	return res.RowsAffected()
 }
 
+// SiblingUUID returns the order's two-robot swap sibling edge UUID, or "".
+func SiblingUUID(db *sql.DB, id int64) (string, error) {
+	var s string
+	err := db.QueryRow(`SELECT sibling_order_uuid FROM orders WHERE id=$1`, id).Scan(&s)
+	return s, err
+}
+
 // UpdateVendor stores vendor-side identifiers on an order.
 func UpdateVendor(db *sql.DB, id int64, vendorOrderID, vendorState, robotID string) error {
 	_, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=NOW() WHERE id=$4`,
