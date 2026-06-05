@@ -12,6 +12,14 @@
 
 version: "2"
 
+# gofmt is a formatter in golangci-lint v2 (not a linter); it must live here,
+# not under linters.enable, or config load fails with "gofmt is a formatter".
+# `golangci-lint run` reports unformatted files as issues, keeping the gofmt
+# CI gate.
+formatters:
+  enable:
+    - gofmt
+
 linters:
   # PR 1 is scoped to the depguard guardrail only. Start from zero and
   # enable depguard explicitly, so pre-existing errcheck/staticcheck/unused
@@ -22,8 +30,23 @@ linters:
   enable:
     - depguard
     - forbidigo
+    - govet
+    - staticcheck
+    - unused
 
   settings:
+    staticcheck:
+      # golangci-lint v2 folds stylecheck (ST) and quickfix (QF) into the
+      # staticcheck linter and enables both by default. Scope staticcheck to its
+      # bug (SA) and simplification (S) checks and defer the pre-existing ST/QF
+      # style backlog (~37 findings under golangci-lint's default, ~282 under a
+      # raw `staticcheck` run with every check enabled), per this file's "enable
+      # explicitly; don't block on pre-existing findings" philosophy. A follow-up
+      # PR can enable ST/QF and clear that backlog as tracked work.
+      checks:
+        - all
+        - -ST1*
+        - -QF1*
     forbidigo:
       # State-machine bypass guard (Stage 10 follow-up). Direct calls to
       # the order-status atomic writes must go through
