@@ -111,6 +111,42 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	}
 }
 
+// applyHoldAndReplay applies one UOP tick to a process node's cached counter
+// using the hold-and-replay rule shared verbatim by the consume, produce, and
+// A/B-fallthrough ticks (previously three near-identical copies).
+//
+// When a bin is bound (active_bin_id set) it charges the bin this tick PLUS any
+// counts held while the slot was empty (pending_uop_delta), writes the new
+// cached value, and clears the hold. When no bin is bound (the pickup→delivery
+// gap) it holds `input` in pending so the count lands on the next bin instead
+// of being lost or charged to a departed bin.
+//
+// sign is +1 for produce (fill) and -1 for consume / fallthrough (drain).
+// Returns whether a bin was bound, binAttributed (the amount charged to the bin
+// this tick, including any replayed pending), and newRemaining (the resulting
+// cached counter — unchanged from the prior cached value when no bin is bound).
+func (e *Engine) applyHoldAndReplay(node *processes.Node, runtime *processes.RuntimeState, input, sign int) (bound bool, binAttributed, newRemaining int) {
+	bound = runtime.ActiveBinID != nil
+	newRemaining = runtime.RemainingUOPCached
+	binAttributed = input
+	if bound {
+		binAttributed = input + int(runtime.PendingUOPDelta)
+		newRemaining = runtime.RemainingUOPCached + sign*binAttributed
+		if runtime.PendingUOPDelta != 0 {
+			if err := e.db.SetProcessNodeUOPClearPending(node.ID, newRemaining); err != nil {
+				log.Printf("update UOP (replay pending) for node %d: %v", node.ID, err)
+			}
+		} else if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
+			log.Printf("update UOP for node %d: %v", node.ID, err)
+		}
+	} else if input != 0 {
+		if err := e.db.AddPendingUOPDelta(node.ID, input); err != nil {
+			log.Printf("hold pending UOP for node %d: %v", node.ID, err)
+		}
+	}
+	return bound, binAttributed, newRemaining
+}
+
 // handleConsumeTick applies a delta to one active-pull consume node:
 // drain lineside first, decrement node UOP, then trigger auto-reorder
 // if the threshold is crossed and the node accepts orders. Caller is
@@ -150,24 +186,7 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// charged to a departed bin. The lineside drain emits every tick
 	// regardless — parts leaving the rack are independent of which bin is
 	// at the slot.
-	bound := runtime.ActiveBinID != nil
-	newRemaining := runtime.RemainingUOPCached
-	binAttributed := binRemainder
-	if bound {
-		binAttributed = binRemainder + int(runtime.PendingUOPDelta)
-		newRemaining = runtime.RemainingUOPCached - binAttributed
-		if runtime.PendingUOPDelta != 0 {
-			if err := e.db.SetProcessNodeUOPClearPending(node.ID, newRemaining); err != nil {
-				log.Printf("update UOP (replay pending) for node %d: %v", node.ID, err)
-			}
-		} else if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
-			log.Printf("update UOP for node %d: %v", node.ID, err)
-		}
-	} else if binRemainder != 0 {
-		if err := e.db.AddPendingUOPDelta(node.ID, binRemainder); err != nil {
-			log.Printf("hold pending UOP for node %d: %v", node.ID, err)
-		}
-	}
+	bound, binAttributed, newRemaining := e.applyHoldAndReplay(node, runtime, binRemainder, -1)
 
 	// emitConsumeTickDeltas emits the lineside-drain bucket deltas always,
 	// and a bin delta for binAttributed — which binAtNode skips when no bin
@@ -229,24 +248,7 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	// produced parts in pending and replay onto the next empty bin when it
 	// binds. The finished-good production tally (EventProducedReport below)
 	// is bin-independent and fires every tick regardless.
-	bound := runtime.ActiveBinID != nil
-	newRemaining := runtime.RemainingUOPCached
-	binAttributed := delta
-	if bound {
-		binAttributed = delta + int(runtime.PendingUOPDelta)
-		newRemaining = runtime.RemainingUOPCached + binAttributed
-		if runtime.PendingUOPDelta != 0 {
-			if err := e.db.SetProcessNodeUOPClearPending(node.ID, newRemaining); err != nil {
-				log.Printf("update UOP (replay pending) for node %d: %v", node.ID, err)
-			}
-		} else if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
-			log.Printf("update UOP for node %d: %v", node.ID, err)
-		}
-	} else if delta != 0 {
-		if err := e.db.AddPendingUOPDelta(node.ID, delta); err != nil {
-			log.Printf("hold pending UOP for node %d: %v", node.ID, err)
-		}
-	}
+	bound, binAttributed, newRemaining := e.applyHoldAndReplay(node, runtime, delta, +1)
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
 		binID, payload, epoch := e.binAtNode(runtime, claim)
@@ -326,23 +328,7 @@ func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runt
 
 	// Hold-and-replay, mirror of handleConsumeTick: decrement the bound
 	// bin (this tick + any held pending), or hold when no bin is bound.
-	bound := runtime.ActiveBinID != nil
-	binAttributed := binRemainder
-	if bound {
-		binAttributed = binRemainder + int(runtime.PendingUOPDelta)
-		newRemaining := runtime.RemainingUOPCached - binAttributed
-		if runtime.PendingUOPDelta != 0 {
-			if err := e.db.SetProcessNodeUOPClearPending(node.ID, newRemaining); err != nil {
-				log.Printf("update UOP (replay pending) for node %d: %v", node.ID, err)
-			}
-		} else if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
-			log.Printf("update UOP for node %d: %v", node.ID, err)
-		}
-	} else if binRemainder != 0 {
-		if err := e.db.AddPendingUOPDelta(node.ID, binRemainder); err != nil {
-			log.Printf("hold pending UOP for node %d: %v", node.ID, err)
-		}
-	}
+	_, binAttributed, _ := e.applyHoldAndReplay(node, runtime, binRemainder, -1)
 
 	if claim != nil {
 		e.emitFallthroughDeltas(node, runtime, claim, drains, binAttributed)
@@ -394,9 +380,12 @@ func (e *Engine) emitFallthroughDeltas(node *processes.Node, runtime *processes.
 	})
 }
 
-// binAtNode resolves the bin currently associated with a node tick.
-// Returns (0, "") when no bin is tracked at the slot — the caller
-// skips bin delta emission in that case.
+// binAtNode resolves the bin attribution for an emitted delta:
+// (binID, payloadCode, epoch). epoch is the bin's load-lifecycle
+// epoch — used to stamp the outgoing BinUOPDelta so Core's
+// epoch-aware dedup accepts it. Returns (0, "", 0) when no bin is
+// at the slot (gap window with active_bin_id nil); caller skips
+// bin delta emission in that case.
 //
 // runtime.ActiveBinID is the canonical "bin physically at this slot"
 // pointer. Set on delivery completion (when the bin arrives at the
@@ -409,12 +398,6 @@ func (e *Engine) emitFallthroughDeltas(node *processes.Node, runtime *processes.
 //
 // payload returns the claim's PayloadCode so Core can validate the
 // wire envelope's payload_code against the bin row.
-// binAtNode resolves the bin attribution for an emitted delta:
-// (binID, payloadCode, epoch). epoch is the bin's load-lifecycle
-// epoch — used to stamp the outgoing BinUOPDelta so Core's
-// epoch-aware dedup accepts it. Returns (0, "", 0) when no bin is
-// at the slot (gap window with active_bin_id nil); caller skips
-// bin delta emission in that case.
 func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.NodeClaim) (int64, string, int64) {
 	if runtime == nil || runtime.ActiveBinID == nil {
 		return 0, "", 0

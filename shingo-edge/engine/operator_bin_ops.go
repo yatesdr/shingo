@@ -365,14 +365,14 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// button the instant a request fires, so this is belt-and-suspenders for
 	// double-tap races and direct API callers. Fail closed on a read error:
 	// better to make the operator retry than to dispatch into the dark.
-	active, err := e.db.ListActiveOrdersByDeliveryNode(node.CoreNodeName)
+	inFlightEmpties, err := e.countActiveOrdersAtNode(node.CoreNodeName, func(o orders.Order) bool {
+		return o.RetrieveEmpty
+	})
 	if err != nil {
 		return nil, fmt.Errorf("node %s: check in-flight empties: %w", node.Name, err)
 	}
-	for _, o := range active {
-		if o.RetrieveEmpty {
-			return nil, fmt.Errorf("node %s: an empty bin is already inbound", node.Name)
-		}
+	if inFlightEmpties > 0 {
+		return nil, fmt.Errorf("node %s: an empty bin is already inbound", node.Name)
 	}
 
 	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
