@@ -229,6 +229,12 @@ func TestDispatcher_MoveOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
+	// The freed-slot re-submit below relies on planMove resolving the synthetic
+	// dest NGRP to a concrete child. That gate is `s.resolver != nil`, but
+	// newTestDispatcher wires resolver=nil — leaving the delivery node stuck at
+	// the group name. Wire a real resolver, mirroring TestDispatcher_MoveOrder_NGRPSource.
+	resolver := &DefaultResolver{DB: db, LaneLock: d.LaneLock(), DebugLog: d.dbg}
+	d = NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 	env := testEnvelope()
 
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
