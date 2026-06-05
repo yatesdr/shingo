@@ -2,7 +2,8 @@ package domain
 
 import (
 	"database/sql/driver"
-	"fmt"
+
+	"shingo/protocol"
 )
 
 // ChangeoverState is the typed state for a process_changeovers row.
@@ -27,24 +28,12 @@ func (s ChangeoverState) String() string { return string(s) }
 // the empty ChangeoverState. Does NOT validate against known constants —
 // historical rows from retired states must still load.
 func (s *ChangeoverState) Scan(v any) error {
-	if v == nil {
-		*s = ""
-		return nil
-	}
-	switch x := v.(type) {
-	case string:
-		*s = ChangeoverState(x)
-	case []byte:
-		*s = ChangeoverState(x)
-	default:
-		return fmt.Errorf("domain.ChangeoverState.Scan: cannot scan %T", v)
-	}
-	return nil
+	return protocol.ScanEnumNamed(s, v, "domain.ChangeoverState.Scan")
 }
 
 // Value implements driver.Valuer for writing to a database column.
 func (s ChangeoverState) Value() (driver.Value, error) {
-	return string(s), nil
+	return protocol.ValueEnum(s)
 }
 
 // IsTerminal reports whether the changeover has reached a finalized state.

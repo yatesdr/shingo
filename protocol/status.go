@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"database/sql/driver"
-	"fmt"
 	"sort"
 	"strings"
 )
@@ -61,24 +60,12 @@ func (s Status) String() string {
 // from retired statuses must still load. Validation belongs at write time
 // via DB CHECK constraints (deferred work) or at the LifecycleService.
 func (s *Status) Scan(v any) error {
-	if v == nil {
-		*s = ""
-		return nil
-	}
-	switch x := v.(type) {
-	case string:
-		*s = Status(x)
-	case []byte:
-		*s = Status(x)
-	default:
-		return fmt.Errorf("protocol.Status.Scan: cannot scan %T", v)
-	}
-	return nil
+	return ScanEnumNamed(s, v, "protocol.Status.Scan")
 }
 
 // Value implements driver.Valuer for writing to a database column.
 func (s Status) Value() (driver.Value, error) {
-	return string(s), nil
+	return ValueEnum(s)
 }
 
 // AllStatuses returns every status defined in this module, used by

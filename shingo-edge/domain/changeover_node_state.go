@@ -2,7 +2,8 @@ package domain
 
 import (
 	"database/sql/driver"
-	"fmt"
+
+	"shingo/protocol"
 )
 
 // NodeTaskState is the typed state for a changeover_node_task row. Wraps
@@ -60,24 +61,12 @@ func (s NodeTaskState) String() string { return string(s) }
 // Does NOT validate the value against known constants — historical rows
 // from retired states must still load. Same approach as protocol.Status.
 func (s *NodeTaskState) Scan(v any) error {
-	if v == nil {
-		*s = ""
-		return nil
-	}
-	switch x := v.(type) {
-	case string:
-		*s = NodeTaskState(x)
-	case []byte:
-		*s = NodeTaskState(x)
-	default:
-		return fmt.Errorf("domain.NodeTaskState.Scan: cannot scan %T", v)
-	}
-	return nil
+	return protocol.ScanEnumNamed(s, v, "domain.NodeTaskState.Scan")
 }
 
 // Value implements driver.Valuer for writing to a database column.
 func (s NodeTaskState) Value() (driver.Value, error) {
-	return string(s), nil
+	return protocol.ValueEnum(s)
 }
 
 // IsTerminal reports whether the state represents a clean completion —

@@ -2,7 +2,8 @@ package domain
 
 import (
 	"database/sql/driver"
-	"fmt"
+
+	"shingo/protocol"
 )
 
 // BinStatus is the typed canonical bin status. Wraps string so it serializes
@@ -88,24 +89,12 @@ func (s BinStatus) String() string { return string(s) }
 // empty BinStatus. Does not validate against AllBinStatuses() — historical
 // rows from retired statuses must still load.
 func (s *BinStatus) Scan(v any) error {
-	if v == nil {
-		*s = ""
-		return nil
-	}
-	switch x := v.(type) {
-	case string:
-		*s = BinStatus(x)
-	case []byte:
-		*s = BinStatus(x)
-	default:
-		return fmt.Errorf("domain.BinStatus.Scan: cannot scan %T", v)
-	}
-	return nil
+	return protocol.ScanEnumNamed(s, v, "domain.BinStatus.Scan")
 }
 
 // Value implements driver.Valuer.
 func (s BinStatus) Value() (driver.Value, error) {
-	return string(s), nil
+	return protocol.ValueEnum(s)
 }
 
 // AllBinStatuses returns every canonical bin status defined in this

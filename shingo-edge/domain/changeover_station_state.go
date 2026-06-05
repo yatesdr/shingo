@@ -2,7 +2,8 @@ package domain
 
 import (
 	"database/sql/driver"
-	"fmt"
+
+	"shingo/protocol"
 )
 
 // StationTaskState is the typed state for a changeover_station_task row.
@@ -27,22 +28,10 @@ func (s StationTaskState) String() string { return string(s) }
 // the empty StationTaskState. Does NOT validate against known constants —
 // historical rows from retired states must still load.
 func (s *StationTaskState) Scan(v any) error {
-	if v == nil {
-		*s = ""
-		return nil
-	}
-	switch x := v.(type) {
-	case string:
-		*s = StationTaskState(x)
-	case []byte:
-		*s = StationTaskState(x)
-	default:
-		return fmt.Errorf("domain.StationTaskState.Scan: cannot scan %T", v)
-	}
-	return nil
+	return protocol.ScanEnumNamed(s, v, "domain.StationTaskState.Scan")
 }
 
 // Value implements driver.Valuer for writing to a database column.
 func (s StationTaskState) Value() (driver.Value, error) {
-	return string(s), nil
+	return protocol.ValueEnum(s)
 }
