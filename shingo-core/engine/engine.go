@@ -24,6 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"shingo/protocol/types"
 	"shingocore/config"
 	"shingocore/countgroup"
 	"shingocore/dispatch"
@@ -36,7 +37,7 @@ import (
 	"shingocore/store/orders"
 )
 
-type LogFunc func(format string, args ...any)
+type LogFunc = types.DebugLogFunc
 
 type Config struct {
 	AppConfig  *config.Config
@@ -45,7 +46,7 @@ type Config struct {
 	Fleet      fleet.Backend
 	MsgClient  *messaging.Client
 	LogFunc    LogFunc
-	DebugLog   func(string, ...any)
+	DebugLog   types.DebugLogFunc
 }
 
 type Engine struct {
@@ -61,7 +62,7 @@ type Engine struct {
 	countGroupBuild       func(countgroup.Emitter) *countgroup.Runner // stored for ReconfigureCountGroups
 	Events                *EventBus
 	logFn                 LogFunc
-	debugLog              func(string, ...any)
+	debugLog              types.DebugLogFunc
 	reconciliation        *ReconciliationService
 	recovery              *RecoveryService
 	fulfillment           *fulfillment.Scanner

@@ -37,7 +37,7 @@ import (
 // ── Types & struct ──────────────────────────────────────────────────
 
 // LogFunc is the logging callback signature.
-type LogFunc func(format string, args ...any)
+type LogFunc = types.DebugLogFunc
 
 // DebugLogFunc is a nil-safe debug logging function.
 type DebugLogFunc = types.DebugLogFunc
@@ -132,14 +132,14 @@ type Config struct {
 func New(c Config) *Engine {
 	logFn := c.LogFunc
 	if logFn == nil {
-		logFn = func(string, ...interface{}) {}
+		logFn = func(string, ...any) {}
 	}
 	var debugFn DebugLogFunc
 	if c.DebugLogger != nil {
 		debugFn = DebugLogFunc(c.DebugLogger.Func("engine"))
 	}
 	if debugFn == nil {
-		debugFn = func(string, ...interface{}) {}
+		debugFn = func(string, ...any) {}
 	}
 	e := &Engine{
 		cfg:         c.AppConfig,
