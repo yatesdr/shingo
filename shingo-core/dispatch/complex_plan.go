@@ -3,6 +3,7 @@ package dispatch
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
 	"shingocore/store/bins"
 )
@@ -95,7 +96,7 @@ func BuildComplexPlan(steps []resolvedStep, binsByNode map[string][]*bins.Bin, p
 	plan.SourceNode, plan.DeliveryNode = extractEndpoints(steps)
 
 	for i, s := range steps {
-		if s.Action != "pickup" {
+		if s.Action != protocol.ActionPickup {
 			continue
 		}
 		candidates, ok := binsByNode[s.Node]
@@ -107,7 +108,26 @@ func BuildComplexPlan(steps []resolvedStep, binsByNode map[string][]*bins.Bin, p
 			})
 			continue
 		}
-		claim, reject := selectClaim(candidates, payloadCode)
+		// Empty pickup leg (produce node's "bring an empty to fill"): claim an
+		// EMPTY carrier, not a payload-matching full — mirrors claimComplexBins
+		// (complex_claims.go) so the plan is a faithful model of the live claim
+		// path. Without this the planner would pick a payload-matching full at
+		// an empty leg and the shadow comparison would flag a spurious mismatch
+		// on every refill order.
+		claimPayload := payloadCode
+		if s.Empty {
+			candidates = emptyBinsOnly(candidates)
+			claimPayload = ""
+			if len(candidates) == 0 {
+				plan.Skips = append(plan.Skips, pickupSkip{
+					stepIndex: i,
+					nodeName:  s.Node,
+					reason:    "no empty carrier at node for empty pickup leg",
+				})
+				continue
+			}
+		}
+		claim, reject := selectClaim(candidates, claimPayload)
 		if claim == nil {
 			plan.Skips = append(plan.Skips, pickupSkip{
 				stepIndex: i,

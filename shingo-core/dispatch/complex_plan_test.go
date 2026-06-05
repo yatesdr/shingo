@@ -124,6 +124,90 @@ func TestBuildComplexPlan_NoBinsAtNode(t *testing.T) {
 	}
 }
 
+func TestBuildComplexPlan_EmptyLegClaimsEmptyCarrier(t *testing.T) {
+	t.Parallel()
+	// A produce node's empty pickup leg (step.Empty) must claim an EMPTY
+	// carrier, never a payload-matching full — mirroring claimComplexBins. The
+	// full bin is listed FIRST, so only the empty filter keeps selectClaim from
+	// grabbing it. Without this the planner diverges from the live claim path on
+	// every refill order and the shadow comparison goes spuriously noisy.
+	steps := []resolvedStep{
+		{Action: "pickup", Node: "press.P1", Empty: true},
+		{Action: "dropoff", Node: "press.P1"},
+	}
+	candidates := map[string][]*bins.Bin{
+		"press.P1": {availBin(400, "FULL", "PART-X"), availBin(401, "EMPTY", "")},
+	}
+
+	plan := BuildComplexPlan(steps, candidates, "PART-X", "press.P1")
+
+	if len(plan.BinClaims) != 1 {
+		t.Fatalf("BinClaims = %+v, want one entry", plan.BinClaims)
+	}
+	if plan.BinClaims[0].BinID != 401 {
+		t.Errorf("empty leg claimed bin %d, want the empty carrier 401 (not the full 400)", plan.BinClaims[0].BinID)
+	}
+}
+
+func TestBuildComplexPlan_EmptyLegNoCarrierSkips(t *testing.T) {
+	t.Parallel()
+	// Empty leg with only a full present: the plan skips with the same reason
+	// string claimComplexBins emits, not a misleading "no bins at node".
+	steps := []resolvedStep{
+		{Action: "pickup", Node: "press.P1", Empty: true},
+		{Action: "dropoff", Node: "press.P1"},
+	}
+	candidates := map[string][]*bins.Bin{
+		"press.P1": {availBin(400, "FULL", "PART-X")},
+	}
+
+	plan := BuildComplexPlan(steps, candidates, "PART-X", "press.P1")
+
+	if len(plan.BinClaims) != 0 {
+		t.Errorf("BinClaims = %+v, want empty (no empty carrier to claim)", plan.BinClaims)
+	}
+	if len(plan.Skips) != 1 || plan.Skips[0].reason != "no empty carrier at node for empty pickup leg" {
+		t.Errorf("Skips = %+v, want one entry with the empty-leg reason", plan.Skips)
+	}
+}
+
+func TestComplexPlan_primaryBinID(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		claims      []PlannedBinClaim
+		processNode string
+		want        int64
+	}{
+		{
+			name:        "process-node match returns that bin",
+			claims:      []PlannedBinClaim{{NodeName: "storage.A1", BinID: 100}, {NodeName: "line.L1", BinID: 200}},
+			processNode: "line.L1",
+			want:        200,
+		},
+		{
+			name:        "no process-node match returns the first claim",
+			claims:      []PlannedBinClaim{{NodeName: "storage.A1", BinID: 100}, {NodeName: "storage.A2", BinID: 200}},
+			processNode: "line.L1",
+			want:        100,
+		},
+		{
+			name:        "no claims returns 0",
+			claims:      nil,
+			processNode: "line.L1",
+			want:        0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &ComplexPlan{BinClaims: tt.claims}
+			if got := p.primaryBinID(tt.processNode); got != tt.want {
+				t.Errorf("primaryBinID(%q) = %d, want %d", tt.processNode, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildComplexPlan_AllCandidatesRejected(t *testing.T) {
 	t.Parallel()
 	// One bin available but claimed by another order, one with the wrong
