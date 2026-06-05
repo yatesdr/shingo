@@ -194,7 +194,7 @@ func (d *Dispatcher) isConcreteStorageDropoff(deliveryNode string) bool {
 	if err != nil || parent == nil {
 		return false
 	}
-	return parent.NodeTypeCode == "LANE" || parent.NodeTypeCode == "NGRP"
+	return parent.NodeTypeCode == protocol.NodeClassLANE || parent.NodeTypeCode == protocol.NodeClassNGRP
 }
 
 // swapRemovalLegHeld reports whether `order` is the removal (evac) leg of a
@@ -379,7 +379,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// check above.
 	for i := range resolvedSteps {
 		s := resolvedSteps[i]
-		if s.Action != "dropoff" || s.Node == "" || !d.isConcreteStorageDropoff(s.Node) {
+		if s.Action != protocol.ActionDropoff || s.Node == "" || !d.isConcreteStorageDropoff(s.Node) {
 			continue
 		}
 		node, nerr := d.db.GetNodeByDotName(s.Node)
@@ -415,6 +415,10 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// and the operator's release-time RemainingUOP arrives via
 	// HandleOrderRelease. If a future Edge starts sending RemainingUOP at
 	// intake we'd persist it on the order row to recover here.
+	// Shadow check: snapshot the pre-claim candidate bins so the pure planner
+	// (shadowComparePlan, below) sees exactly what the live loop is about to
+	// claim from. Read-only; must precede the claim.
+	shadowBins := d.snapshotPickupBins(resolvedSteps)
 	if err := d.claimComplexBins(order, resolvedSteps, order.PayloadCode, nil); err != nil {
 		// Three terminal outcomes, distinguished by planningError.Code:
 		//   - claim_failed: transient race loss. Don't fail the order;
@@ -444,6 +448,11 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		d.failOrderInternal(order, "no_bin", err.Error())
 		return err
 	}
+
+	// Shadow check: now that the live loop has claimed (err == nil), compare the
+	// pure planner's decisions against what it persisted. Log-only, no cutover.
+	// See complex_shadow.go.
+	d.shadowComparePlan(order, resolvedSteps, shadowBins)
 
 	preWait, hasWait := splitAtWait(resolvedSteps)
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
@@ -660,6 +669,21 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 		}
 	}
 	d.dbg("complex: compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
+
+	// Arm restore-blockers via scheduleRestoreIfEnabled (default-off per group).
+	// The "expected from-node" the listener watches for depends on the reshuffle
+	// mode: in expose mode the parent picks the bin up from its original lane
+	// slot (buried.Slot.ID); in target-node mode it picks up from the target
+	// node. Identify the mode by scanning the plan for a retrieve step
+	// (protocol.StepRetrieve) — present in target-node mode, absent in expose
+	// mode — and take its ToNode when found.
+	expectedFromNode := buried.Slot.ID
+	for _, s := range plan.Steps {
+		if s.StepType == protocol.StepRetrieve && s.ToNode != nil {
+			expectedFromNode = s.ToNode.ID
+		}
+	}
+	d.scheduleRestoreIfEnabled(order, groupID, buried.LaneID, plan, expectedFromNode)
 }
 
 // handleComplexBuriedOnReplay handles a burial discovered by the
@@ -741,6 +765,21 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 		}
 	}
 	d.dbg("complex: replay compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
+
+	// Arm restore-blockers via scheduleRestoreIfEnabled (default-off per group).
+	// The "expected from-node" the listener watches for depends on the reshuffle
+	// mode: in expose mode the parent picks the bin up from its original lane
+	// slot (buried.Slot.ID); in target-node mode it picks up from the target
+	// node. Identify the mode by scanning the plan for a retrieve step
+	// (protocol.StepRetrieve) — present in target-node mode, absent in expose
+	// mode — and take its ToNode when found.
+	expectedFromNode := buried.Slot.ID
+	for _, s := range plan.Steps {
+		if s.StepType == protocol.StepRetrieve && s.ToNode != nil {
+			expectedFromNode = s.ToNode.ID
+		}
+	}
+	d.scheduleRestoreIfEnabled(order, groupID, buried.LaneID, plan, expectedFromNode)
 }
 
 // pickEmptyReshuffleTarget walks the configured target-node names in
@@ -762,7 +801,7 @@ func (d *Dispatcher) pickEmptyReshuffleTarget(groupID int64, names []string) (ta
 		if node.ParentID == nil || *node.ParentID != groupID {
 			return nil, false, fmt.Errorf("reshuffle target %s is not a direct child of group %d", name, groupID)
 		}
-		if node.IsSynthetic || node.NodeTypeCode == "LANE" {
+		if node.IsSynthetic || node.NodeTypeCode == protocol.NodeClassLANE {
 			return nil, false, fmt.Errorf("reshuffle target %s must be a non-synthetic, non-lane node", name)
 		}
 		cnt, _ := d.db.CountBinsByNode(node.ID)
