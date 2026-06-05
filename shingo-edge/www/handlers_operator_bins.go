@@ -108,7 +108,7 @@ func (h *Handlers) apiNodeChildren(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) apiPayloadManifest(w http.ResponseWriter, r *http.Request) {
 	code := chi.URLParam(r, "code")
 	if code == "" {
-		writeJSON(w, map[string]interface{}{"uop_capacity": 0, "items": []struct{}{}})
+		writeJSON(w, map[string]any{"uop_capacity": 0, "items": []struct{}{}})
 		return
 	}
 	result, _ := h.engine.CoreAPI().FetchPayloadManifest(code)

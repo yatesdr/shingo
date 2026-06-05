@@ -157,7 +157,7 @@ func TestOperatorStations_CreateStation_InvalidJSON(t *testing.T) {
 
 	// Syntactically valid JSON, but process_id is the wrong type so it
 	// fails to decode into OperatorStationInput{ProcessID int64}.
-	body := map[string]interface{}{"process_id": "not-a-number"}
+	body := map[string]any{"process_id": "not-a-number"}
 	resp := doRequest(t, router, "POST", "/api/operator-stations", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -402,7 +402,7 @@ func TestOperatorStations_SetStationClaimedNodes_Success(t *testing.T) {
 	pid := seedProcess(t, "SetClaimedNodesLine")
 	sid := seedOperatorStation(t, pid, "OS-SCN-1", "SetClaimedStation")
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"nodes": []string{"set-node-a", "set-node-b", "set-node-c"},
 	}
 	resp := doRequest(t, router, "PUT", "/api/operator-stations/"+itoa(sid)+"/claimed-nodes", body, cookie)
@@ -423,7 +423,7 @@ func TestOperatorStations_SetStationClaimedNodes_InvalidID(t *testing.T) {
 	h, router := newOperatorStationsRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]interface{}{"nodes": []string{"x"}}
+	body := map[string]any{"nodes": []string{"x"}}
 	resp := doRequest(t, router, "PUT", "/api/operator-stations/bad/claimed-nodes", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "invalid station id")
@@ -537,7 +537,7 @@ func TestOperatorStations_CreateProcessNode_InvalidJSON(t *testing.T) {
 	cookie := authCookie(t, h)
 
 	// process_id must be an integer; sending a string triggers a decode error.
-	body := map[string]interface{}{"process_id": "nope"}
+	body := map[string]any{"process_id": "nope"}
 	resp := doRequest(t, router, "POST", "/api/process-nodes", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -682,7 +682,7 @@ func TestOperatorStations_ReleaseNodePartial_InvalidJSON(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
 	// qty must be int64; sending a string triggers a decode error.
-	body := map[string]interface{}{"qty": "nope"}
+	body := map[string]any{"qty": "nope"}
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-partial", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -690,7 +690,7 @@ func TestOperatorStations_ReleaseNodePartial_InvalidJSON(t *testing.T) {
 func TestOperatorStations_ReleaseStagedOrders_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
-	body := map[string]interface{}{"called_by": "test-station"}
+	body := map[string]any{"called_by": "test-station"}
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
@@ -699,7 +699,7 @@ func TestOperatorStations_ReleaseStagedOrders_Success(t *testing.T) {
 func TestOperatorStations_ReleaseStagedOrders_InvalidID(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
-	body := map[string]interface{}{"called_by": "test-station"}
+	body := map[string]any{"called_by": "test-station"}
 	resp := doRequest(t, router, "POST", "/api/process-nodes/bad/release-staged", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "invalid node id")
@@ -711,7 +711,7 @@ func TestOperatorStations_ReleaseStagedOrders_InvalidID(t *testing.T) {
 func TestOperatorStations_ReleaseStagedOrders_AcceptsQtyByPart(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"qty_by_part": map[string]int{"PART-A": 5, "PART-B": 2},
 		"called_by":   "test-station",
 	}
@@ -726,7 +726,7 @@ func TestOperatorStations_ReleaseStagedOrders_BadBody(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
 	// qty_by_part must be a map; sending an int triggers a decode error.
-	body := map[string]interface{}{"qty_by_part": 123, "called_by": "test-station"}
+	body := map[string]any{"qty_by_part": 123, "called_by": "test-station"}
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -751,7 +751,7 @@ func TestOperatorStations_FinalizeProduceNode_Success(t *testing.T) {
 func TestOperatorStations_LoadBin_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"payload_code": "BIN-X",
 		"uop_count":    10,
 	}
@@ -764,7 +764,7 @@ func TestOperatorStations_LoadBin_InvalidJSON(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
 	// uop_count must be int64; sending a string triggers a decode error.
-	body := map[string]interface{}{"uop_count": "nope"}
+	body := map[string]any{"uop_count": "nope"}
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/load-bin", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -816,7 +816,7 @@ func TestOperatorStations_FlipABNode_InvalidID(t *testing.T) {
 func TestOperatorStations_PreviewChangeover_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
-	body := map[string]interface{}{"to_style_id": 1}
+	body := map[string]any{"to_style_id": 1}
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/preview", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 }
@@ -832,7 +832,7 @@ func TestOperatorStations_PreviewChangeover_InvalidID(t *testing.T) {
 func TestOperatorStations_StartChangeover_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"to_style_id": 1,
 		"called_by":   "tester",
 		"notes":       "unit-test",
@@ -861,7 +861,7 @@ func TestOperatorStations_CancelChangeover_AsRedirect(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
 	nextStyle := int64(7)
-	body := map[string]interface{}{"next_style_id": nextStyle}
+	body := map[string]any{"next_style_id": nextStyle}
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/cancel", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "action", "redirected")
@@ -870,7 +870,7 @@ func TestOperatorStations_CancelChangeover_AsRedirect(t *testing.T) {
 func TestOperatorStations_ReleaseChangeoverWait_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
-	body := map[string]interface{}{"called_by": "test-station"}
+	body := map[string]any{"called_by": "test-station"}
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
@@ -884,7 +884,7 @@ func TestOperatorStations_ReleaseChangeoverWait_Success(t *testing.T) {
 func TestOperatorStations_ReleaseChangeoverWait_ThreadsCalledBy(t *testing.T) {
 	h, router := newOperatorStationsRouter(t)
 
-	body := map[string]interface{}{"called_by": "stephen-station-7"}
+	body := map[string]any{"called_by": "stephen-station-7"}
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 

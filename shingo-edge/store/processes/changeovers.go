@@ -47,7 +47,7 @@ const changeoverSelect = `c.id, c.process_id, c.from_style_id, c.to_style_id, c.
 		c.started_at, COALESCE(c.completed_at, ''), COALESCE(c.triggered_by, ''), c.updated_at,
 		COALESCE(p.name, ''), COALESCE(fs.name, ''), COALESCE(ts.name, '')`
 
-func scanChangeover(scanner interface{ Scan(...interface{}) error }) (Changeover, error) {
+func scanChangeover(scanner interface{ Scan(...any) error }) (Changeover, error) {
 	var c Changeover
 	var startedAt, completedAt, updatedAt string
 	err := scanner.Scan(&c.ID, &c.ProcessID, &c.FromStyleID, &c.ToStyleID, &c.State, &c.CalledBy, &c.Notes,
@@ -187,7 +187,7 @@ func GetChangeoverStationTaskByStation(db *sql.DB, changeoverID, stationID int64
 
 // --- node tasks ---
 
-func scanNodeTask(scanner interface{ Scan(...interface{}) error }) (NodeTask, error) {
+func scanNodeTask(scanner interface{ Scan(...any) error }) (NodeTask, error) {
 	var t NodeTask
 	var updatedAt string
 	if err := scanner.Scan(&t.ID, &t.ProcessChangeoverID, &t.ProcessNodeID,
@@ -201,7 +201,7 @@ func scanNodeTask(scanner interface{ Scan(...interface{}) error }) (NodeTask, er
 	return t, nil
 }
 
-func listNodeTasksQuery(db *sql.DB, changeoverID int64, extraWhere string, extraArgs ...interface{}) ([]NodeTask, error) {
+func listNodeTasksQuery(db *sql.DB, changeoverID int64, extraWhere string, extraArgs ...any) ([]NodeTask, error) {
 	query := `SELECT t.id, t.process_changeover_id, t.process_node_id,
 		t.from_claim_id, t.to_claim_id, t.situation, t.state,
 		t.next_material_order_id, t.old_material_release_order_id,
@@ -210,7 +210,7 @@ func listNodeTasksQuery(db *sql.DB, changeoverID int64, extraWhere string, extra
 		FROM changeover_node_tasks t
 		LEFT JOIN process_nodes n ON n.id = t.process_node_id
 		WHERE t.process_changeover_id=?`
-	args := []interface{}{changeoverID}
+	args := []any{changeoverID}
 	if extraWhere != "" {
 		query += " AND " + extraWhere
 		args = append(args, extraArgs...)

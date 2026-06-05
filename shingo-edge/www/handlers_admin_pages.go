@@ -30,7 +30,7 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	shiftsJSON, _ := json.Marshal(shiftList)
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":              "config",
 		"PLCStatus":         plcStatus,
 		"PLCStatuses":       plcStatuses,
@@ -84,7 +84,7 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	for _, s := range processStations {
 		stationNameMap[s.ID] = s.Name
 	}
-	claimedByStation := map[string]interface{}{}
+	claimedByStation := map[string]any{}
 	for _, n := range processNodes {
 		if n.OperatorStationID == nil {
 			continue
@@ -110,14 +110,14 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		stationNodeMap[sid] = append(stationNodeMap[sid], n.CoreNodeName)
-		claimedByStation[n.CoreNodeName] = map[string]interface{}{
+		claimedByStation[n.CoreNodeName] = map[string]any{
 			"id":   sid,
 			"name": stationNameMap[sid],
 		}
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":              "processes",
 		"Processes":         processList,
 		"Styles":            styles,
@@ -147,7 +147,7 @@ func (h *Handlers) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, dest, http.StatusSeeOther)
 		return
 	}
-	h.renderTemplate(w, r, "login.html", map[string]interface{}{
+	h.renderTemplate(w, r, "login.html", map[string]any{
 		"Page": "login",
 		"Next": next,
 	})
@@ -183,7 +183,7 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.engine.AdminService().Get(username)
 	if err != nil || !auth.CheckPassword(user.PasswordHash, password) {
-		h.renderTemplate(w, r, "login.html", map[string]interface{}{
+		h.renderTemplate(w, r, "login.html", map[string]any{
 			"Page":  "login",
 			"Error": "Invalid username or password",
 			"Next":  next,

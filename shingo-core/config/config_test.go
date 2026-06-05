@@ -189,8 +189,11 @@ func TestLockUnlock_Reentrancy(t *testing.T) {
 		t.Fatal("second goroutine never released Lock")
 	}
 
-	// Final sanity: we should be able to Lock/Unlock cleanly again.
-	c.Lock()
+	// Final sanity: the lock is free again (no deadlock) — TryLock must succeed
+	// immediately. An empty Lock/Unlock would instead hang silently if it didn't.
+	if !c.TryLock() {
+		t.Fatal("Config lock not acquirable after the concurrent release — deadlock")
+	}
 	c.Unlock()
 }
 

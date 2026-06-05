@@ -2,7 +2,6 @@ package www
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -120,7 +119,7 @@ func (h *Handlers) apiFleetProxy(w http.ResponseWriter, r *http.Request) {
 func flattenHeaders(h http.Header) map[string]string {
 	flat := make(map[string]string, len(h))
 	for k, v := range h {
-		flat[k] = fmt.Sprintf("%s", strings.Join(v, ", "))
+		flat[k] = strings.Join(v, ", ")
 	}
 	return flat
 }

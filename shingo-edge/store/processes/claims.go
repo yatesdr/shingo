@@ -61,7 +61,7 @@ const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, created_at`
 
-func scanNodeClaim(scanner interface{ Scan(...interface{}) error }) (NodeClaim, error) {
+func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
 	var createdAt, allowedJSON string
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,

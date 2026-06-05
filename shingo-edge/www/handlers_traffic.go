@@ -17,9 +17,9 @@ func (h *Handlers) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	anomalies, rpMap := loadAnomalyData(h)
 
 	cfg.Lock()
-	bindings := make([]map[string]interface{}, 0, len(cfg.CountGroups.Bindings))
+	bindings := make([]map[string]any, 0, len(cfg.CountGroups.Bindings))
 	for name, b := range cfg.CountGroups.Bindings {
-		bindings = append(bindings, map[string]interface{}{
+		bindings = append(bindings, map[string]any{
 			"Name":       name,
 			"PLC":        b.PLC,
 			"RequestTag": b.RequestTag,
@@ -29,7 +29,7 @@ func (h *Handlers) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	heartbeatPLC := cfg.CountGroups.HeartbeatPLC
 	cfg.Unlock()
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":              "traffic",
 		"Bindings":          bindings,
 		"HeartbeatTag":      heartbeatTag,

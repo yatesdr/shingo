@@ -3,6 +3,7 @@ package plc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,10 +15,10 @@ import (
 // --- SSE event payload types (from WarLink) ---
 
 type sseValueChange struct {
-	PLC   string      `json:"plc"`
-	Tag   string      `json:"tag"`
-	Value interface{} `json:"value"`
-	Type  string      `json:"type"`
+	PLC   string `json:"plc"`
+	Tag   string `json:"tag"`
+	Value any    `json:"value"`
+	Type  string `json:"type"`
 }
 
 type sseStatusChange struct {
@@ -264,7 +265,7 @@ func (m *Manager) handleSSEStatusChange(data string) {
 	} else if normalized != "Connected" && oldStatus == "Connected" {
 		var emitErr error
 		if status.Error != "" {
-			emitErr = fmt.Errorf("%s", status.Error)
+			emitErr = errors.New(status.Error)
 		}
 		m.emitter.EmitPLCDisconnected(status.PLC, emitErr)
 		m.emitter.EmitPLCHealthAlert(status.PLC, status.Error)

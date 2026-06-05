@@ -24,18 +24,6 @@ import (
 	"shingoedge/store/processes"
 )
 
-// captureLogs builds a logFn that appends formatted lines to *out. Returns
-// the function so tests can swap it in via eng.logFn = captureLogs(&out).
-//
-// Kept for the few legacy paths still on e.logFn. New release-path
-// breadcrumbs route through e.logRelease (debug-log ring buffer); use
-// captureReleaseLogs for those.
-func captureLogs(out *[]string) func(string, ...interface{}) {
-	return func(format string, args ...interface{}) {
-		*out = append(*out, fmt.Sprintf(format, args...))
-	}
-}
-
 // captureReleaseLogs wires an in-memory debuglog into eng and returns a
 // closure that pulls every "release" subsystem entry as a formatted line.
 // Drop-in replacement for the eng.logFn = captureLogs(&logs) pattern now

@@ -53,7 +53,7 @@ func TestApiBackup_NilService_ReturnsNotImplemented(t *testing.T) {
 		name   string
 		method string
 		path   string
-		body   interface{}
+		body   any
 	}{
 		{"status", "GET", "/api/backups/status", nil},
 		{"list", "GET", "/api/backups", nil},
@@ -79,7 +79,7 @@ func TestApiUpdateBackupConfig_DisabledDefaults(t *testing.T) {
 
 	// Disabled path skips the required-fields validation; interval can still
 	// be supplied for schedule bookkeeping.
-	body := map[string]interface{}{
+	body := map[string]any{
 		"enabled":           false,
 		"schedule_interval": "2h",
 		"keep_hourly":       4,
@@ -113,7 +113,7 @@ func TestApiUpdateBackupConfig_DisabledDefaults(t *testing.T) {
 func TestApiUpdateBackupConfig_EnabledTrimsAndPersists(t *testing.T) {
 	h, router := newOrdersBackupRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"enabled":                  true,
 		"schedule_interval":        "30m",
 		"keep_hourly":              1,
@@ -161,7 +161,7 @@ func TestApiUpdateBackupConfig_EnabledTrimsAndPersists(t *testing.T) {
 func TestApiUpdateBackupConfig_EnabledRequiresEndpoint(t *testing.T) {
 	_, router := newOrdersBackupRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"enabled":           true,
 		"schedule_interval": "1h",
 		"endpoint":          "", // missing required field
@@ -176,7 +176,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresEndpoint(t *testing.T) {
 func TestApiUpdateBackupConfig_EnabledRequiresBucket(t *testing.T) {
 	_, router := newOrdersBackupRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"enabled":           true,
 		"schedule_interval": "1h",
 		"endpoint":          "https://example.com",
@@ -193,9 +193,9 @@ func TestApiUpdateBackupConfig_EnabledRequiresAccessAndSecret(t *testing.T) {
 
 	cases := []struct {
 		name string
-		body map[string]interface{}
+		body map[string]any
 	}{
-		{"missing access_key", map[string]interface{}{
+		{"missing access_key", map[string]any{
 			"enabled":           true,
 			"schedule_interval": "1h",
 			"endpoint":          "e",
@@ -203,7 +203,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresAccessAndSecret(t *testing.T) {
 			"access_key":        "",
 			"secret_key":        "s",
 		}},
-		{"missing secret_key", map[string]interface{}{
+		{"missing secret_key", map[string]any{
 			"enabled":           true,
 			"schedule_interval": "1h",
 			"endpoint":          "e",
@@ -223,7 +223,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresAccessAndSecret(t *testing.T) {
 func TestApiUpdateBackupConfig_InvalidScheduleInterval(t *testing.T) {
 	_, router := newOrdersBackupRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"enabled":           false,
 		"schedule_interval": "not-a-duration",
 	}
@@ -236,7 +236,7 @@ func TestApiUpdateBackupConfig_EnabledZeroInterval(t *testing.T) {
 
 	// When ScheduleInterval string is empty, the handler defaults to 1h —
 	// so to hit the "interval <= 0" branch we must pass "0s" explicitly.
-	body := map[string]interface{}{
+	body := map[string]any{
 		"enabled":           true,
 		"schedule_interval": "0s",
 		"endpoint":          "e",
@@ -252,7 +252,7 @@ func TestApiUpdateBackupConfig_InvalidJSON(t *testing.T) {
 	_, router := newOrdersBackupRouter(t)
 
 	// enabled must be bool; sending a string breaks the outer decode.
-	body := map[string]interface{}{"enabled": "yes"}
+	body := map[string]any{"enabled": "yes"}
 	resp := doRequest(t, router, "PUT", "/api/backups/config", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }

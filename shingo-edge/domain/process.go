@@ -133,8 +133,8 @@ type RuntimeState struct {
 	// generation. Populated by LoadBin response and FetchNodeBins
 	// refresh; persists across Edge restarts via the column on
 	// process_node_runtime_states.
-	ActiveBinEpoch     int64  `json:"active_bin_epoch"`
-	RemainingUOPCached int    `json:"remaining_uop_cached"`
+	ActiveBinEpoch     int64 `json:"active_bin_epoch"`
+	RemainingUOPCached int   `json:"remaining_uop_cached"`
 	// PendingUOPDelta holds count changes that arrived while no bin was
 	// bound at this slot (active_bin_id nil — the pickup→delivery gap).
 	// The next tick that finds a bound bin applies (current + pending) and

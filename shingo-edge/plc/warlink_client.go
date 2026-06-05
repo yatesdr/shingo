@@ -29,13 +29,13 @@ type WarlinkClient interface {
 	// ReadTagValue reads the current value of a single PLC tag.
 	// Returns the value as decoded JSON (typically int, float64, bool, or string).
 	// Tag must exist on the PLC; returns 404 otherwise.
-	ReadTagValue(ctx context.Context, plcName, tagName string) (interface{}, error)
+	ReadTagValue(ctx context.Context, plcName, tagName string) (any, error)
 
 	// WriteTagValue writes a value to a PLC tag.
 	// Tag must be marked writable: true in WarLink config; returns 403 otherwise.
 	// PLC must be connected; returns 503 otherwise.
 	// Integer values auto-convert to the tag's data type (DINT recommended).
-	WriteTagValue(ctx context.Context, plcName, tagName string, value interface{}) error
+	WriteTagValue(ctx context.Context, plcName, tagName string, value any) error
 
 	// OpenEventStream opens a long-lived SSE connection for real-time updates.
 	// The caller is responsible for closing the returned ReadCloser.
@@ -54,23 +54,23 @@ type WarlinkPLC struct {
 
 // WarlinkTag is a single tag value returned by the WarLink tags endpoint.
 type WarlinkTag struct {
-	PLC   string      `json:"plc"`
-	Name  string      `json:"name"`
-	Type  string      `json:"type"`
-	Value interface{} `json:"value"`
-	Error string      `json:"error"`
+	PLC   string `json:"plc"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value any    `json:"value"`
+	Error string `json:"error"`
 }
 
 // WarlinkTagInfo describes a tag from the WarLink all-tags endpoint,
 // including tags that are not yet enabled for REST publishing.
 type WarlinkTagInfo struct {
-	Name       string      `json:"name"`
-	Type       string      `json:"type"`
-	Configured bool        `json:"configured"`
-	Enabled    bool        `json:"enabled"`
-	Writable   bool        `json:"writable,omitempty"`
-	NoREST     bool        `json:"no_rest,omitempty"`
-	Value      interface{} `json:"value,omitempty"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Configured bool   `json:"configured"`
+	Enabled    bool   `json:"enabled"`
+	Writable   bool   `json:"writable,omitempty"`
+	NoREST     bool   `json:"no_rest,omitempty"`
+	Value      any    `json:"value,omitempty"`
 }
 
 // httpWarlinkClient is the production implementation that talks to WarLink over HTTP.
@@ -150,7 +150,7 @@ func (c *httpWarlinkClient) ListAllTags(ctx context.Context, plcName string) ([]
 }
 
 func (c *httpWarlinkClient) SetTagPublishing(ctx context.Context, plcName, tagName string, enabled bool) error {
-	payload := map[string]interface{}{"enabled": enabled}
+	payload := map[string]any{"enabled": enabled}
 	if enabled {
 		payload["no_rest"] = false
 	}
@@ -174,7 +174,7 @@ func (c *httpWarlinkClient) SetTagPublishing(ctx context.Context, plcName, tagNa
 
 // ReadTagValue calls GET /<plc>/tags/<tag> and returns the decoded value.
 // Per Derek's WarLink REST API: response is {"plc","name","value","type","timestamp"}.
-func (c *httpWarlinkClient) ReadTagValue(ctx context.Context, plcName, tagName string) (interface{}, error) {
+func (c *httpWarlinkClient) ReadTagValue(ctx context.Context, plcName, tagName string) (any, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET",
 		c.baseURL+"/"+url.PathEscape(plcName)+"/tags/"+url.PathEscape(tagName), nil)
 	if err != nil {
@@ -189,7 +189,7 @@ func (c *httpWarlinkClient) ReadTagValue(ctx context.Context, plcName, tagName s
 		return nil, fmt.Errorf("WarLink GET %s/%s returned %d", plcName, tagName, resp.StatusCode)
 	}
 	var body struct {
-		Value interface{} `json:"value"`
+		Value any `json:"value"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, fmt.Errorf("decode tag value %s/%s: %w", plcName, tagName, err)
@@ -205,8 +205,8 @@ func (c *httpWarlinkClient) ReadTagValue(ctx context.Context, plcName, tagName s
 //   - 404 PLC or tag not found
 //   - 500 write failed/timeout
 //   - 503 PLC not connected
-func (c *httpWarlinkClient) WriteTagValue(ctx context.Context, plcName, tagName string, value interface{}) error {
-	payload := map[string]interface{}{
+func (c *httpWarlinkClient) WriteTagValue(ctx context.Context, plcName, tagName string, value any) error {
+	payload := map[string]any{
 		"plc":   plcName, // must equal the PLC in the URL path or WarLink returns 400
 		"tag":   tagName,
 		"value": value,

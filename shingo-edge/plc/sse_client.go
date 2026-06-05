@@ -59,11 +59,7 @@ func (s *SSEReader) Next() (SSERawEvent, error) {
 		value := ""
 		if idx := strings.Index(line, ":"); idx >= 0 {
 			field = line[:idx]
-			value = line[idx+1:]
-			// Strip single leading space from value per SSE spec
-			if strings.HasPrefix(value, " ") {
-				value = value[1:]
-			}
+			value = strings.TrimPrefix(line[idx+1:], " ")
 		}
 
 		switch field {

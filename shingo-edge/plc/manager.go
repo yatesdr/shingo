@@ -3,6 +3,7 @@ package plc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"runtime/debug"
@@ -27,7 +28,7 @@ type TagInfo struct {
 type TagValue struct {
 	Name    string
 	TypeStr string
-	Value   interface{}
+	Value   any
 	Error   string
 }
 
@@ -278,7 +279,7 @@ func (m *Manager) warlinkPollTick() {
 		} else if effectiveStatus != "Connected" && oldStatus == "Connected" {
 			var emitErr error
 			if effectiveErr != "" {
-				emitErr = fmt.Errorf("%s", effectiveErr)
+				emitErr = errors.New(effectiveErr)
 			}
 			m.DebugLog.Log("plc disconnected: %s err=%v", p.Name, emitErr)
 			m.emitter.EmitPLCDisconnected(p.Name, emitErr)
@@ -432,7 +433,7 @@ func (m *Manager) IsConnected(name string) bool {
 }
 
 // ReadTag reads a single tag from the WarLink cache.
-func (m *Manager) ReadTag(plcName, tagName string) (interface{}, error) {
+func (m *Manager) ReadTag(plcName, tagName string) (any, error) {
 	m.mu.RLock()
 	mp, ok := m.plcs[plcName]
 	m.mu.RUnlock()
@@ -623,7 +624,7 @@ func isConnectionLevelTagError(err string) bool {
 		strings.Contains(lower, "session") && strings.Contains(lower, "closed")
 }
 
-func toInt64(v interface{}) (int64, bool) {
+func toInt64(v any) (int64, bool) {
 	switch n := v.(type) {
 	case int64:
 		return n, true

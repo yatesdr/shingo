@@ -2,7 +2,6 @@ package harness
 
 import (
 	"fmt"
-	"time"
 
 	"shingo/protocol/outbox"
 )
@@ -67,10 +66,3 @@ func pumpAll(edgeStore outbox.Store, edgePub outbox.Publisher,
 	panic(fmt.Errorf("pumpAll: did not settle after %d iterations (likely a reply loop bug; total delivered=%d)",
 		maxIter, total))
 }
-
-// purgeOldStub satisfies the outbox.Store.PurgeOldOutbox method on test
-// fixtures that don't care about it. Tests don't run long enough to
-// exercise purge logic. Concrete *store.DB implementations of the
-// interface are used directly; this helper is for any future test
-// fixture that needs to satisfy the interface partially.
-func purgeOldStub(_ time.Duration) (int, error) { return 0, nil }

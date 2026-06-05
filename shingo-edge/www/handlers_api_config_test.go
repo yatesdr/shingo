@@ -99,7 +99,7 @@ func TestApiConfig_CreateProcess(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"name":             "TestLine",
 		"description":      "A test line",
 		"production_state": "active_production",
@@ -127,7 +127,7 @@ func TestApiConfig_CreateProcess_MissingName(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]interface{}{"description": "no name"}
+	body := map[string]any{"description": "no name"}
 	resp := doRequest(t, router, "POST", "/api/processes", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "name is required")
@@ -139,7 +139,7 @@ func TestApiConfig_UpdateProcess(t *testing.T) {
 
 	pid := seedProcess(t, "ToUpdate")
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"name":        "Updated",
 		"description": "updated desc",
 	}
@@ -181,7 +181,7 @@ func TestApiConfig_SetActiveStyle(t *testing.T) {
 	pid := seedProcess(t, "ActiveStyleLine")
 	sid := seedStyle(t, "ActiveStyle", pid)
 
-	body := map[string]interface{}{"style_id": sid}
+	body := map[string]any{"style_id": sid}
 	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/active-style", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
@@ -238,7 +238,7 @@ func TestApiConfig_StylesCRUD(t *testing.T) {
 	decodeJSON(t, resp, &styles)
 
 	// --- Create ---
-	body := map[string]interface{}{
+	body := map[string]any{
 		"name":        "Red Widget",
 		"description": "A red one",
 		"process_id":  pid,
@@ -279,7 +279,7 @@ func TestApiConfig_StylesCRUD(t *testing.T) {
 	}
 
 	// --- Update ---
-	updateBody := map[string]interface{}{
+	updateBody := map[string]any{
 		"name":        "Blue Widget",
 		"description": "Updated",
 		"process_id":  pid,
@@ -308,7 +308,7 @@ func TestApiConfig_CreateStyle_MissingProcessID(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]interface{}{"name": "Orphan"}
+	body := map[string]any{"name": "Orphan"}
 	resp := doRequest(t, router, "POST", "/api/styles", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "process_id is required")
@@ -321,7 +321,7 @@ func TestApiConfig_UpdateStyle_MissingProcessID(t *testing.T) {
 	pid := seedProcess(t, "StyleUpdateLine")
 	sid := seedStyle(t, "NeedsPID", pid)
 
-	body := map[string]interface{}{"name": "X"}
+	body := map[string]any{"name": "X"}
 	resp := doRequest(t, router, "PUT", "/api/styles/"+itoa(sid), body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "process_id is required")
@@ -340,7 +340,7 @@ func TestApiConfig_ReportingPointsCRUD(t *testing.T) {
 	sid := seedStyle(t, "RPStyle", pid)
 
 	// --- Create ---
-	body := map[string]interface{}{
+	body := map[string]any{
 		"plc_name": "plc-rp",
 		"tag_name": "tag-rp",
 		"style_id": sid,
@@ -379,7 +379,7 @@ func TestApiConfig_ReportingPointsCRUD(t *testing.T) {
 	}
 
 	// --- Update ---
-	updateBody := map[string]interface{}{
+	updateBody := map[string]any{
 		"plc_name": "plc-updated",
 		"tag_name": "tag-updated",
 		"style_id": sid,
@@ -579,7 +579,7 @@ func TestApiConfig_TestCoreAPI_EmptyURL(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/config/core-api/test", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 
-	var result map[string]interface{}
+	var result map[string]any
 	decodeJSON(t, resp, &result)
 	if result["connected"] != false {
 		t.Errorf("empty URL should not be connected, got %v", result["connected"])
@@ -639,7 +639,7 @@ func TestApiConfig_UpdateMessaging(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"kafka_brokers": []string{"broker1:9092", "broker2:9092"},
 	}
 	resp := doRequest(t, router, "PUT", "/api/config/messaging", body, cookie)
@@ -671,7 +671,7 @@ func TestApiConfig_UpdateWarLink(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"host":      "warlink.test",
 		"port":      9090,
 		"enabled":   true,
@@ -687,7 +687,7 @@ func TestApiConfig_UpdateWarLink_InvalidMode(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]interface{}{"mode": "invalid"}
+	body := map[string]any{"mode": "invalid"}
 	resp := doRequest(t, router, "PUT", "/api/config/warlink", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", `mode must be "poll" or "sse"`)
@@ -697,7 +697,7 @@ func TestApiConfig_UpdateWarLink_InvalidPollRate(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]interface{}{"poll_rate": "not-a-duration"}
+	body := map[string]any{"poll_rate": "not-a-duration"}
 	resp := doRequest(t, router, "PUT", "/api/config/warlink", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 }

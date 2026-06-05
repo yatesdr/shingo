@@ -40,7 +40,7 @@ const (
 
 const bucketCols = `id, node_id, pair_key, style_id, part_number, qty, state, created_at, updated_at`
 
-func scanBucket(scanner interface{ Scan(...interface{}) error }) (Bucket, error) {
+func scanBucket(scanner interface{ Scan(...any) error }) (Bucket, error) {
 	var b Bucket
 	var createdAt, updatedAt string
 	if err := scanner.Scan(&b.ID, &b.NodeID, &b.PairKey, &b.StyleID, &b.PartNumber,
@@ -358,9 +358,9 @@ func SetForReconcile(db Execer, nodeID int64, pairKey string, styleID int64, par
 // Every mutating function accepts this so callers can wrap a sequence
 // of captures + deactivations in a transaction.
 type Execer interface {
-	Exec(query string, args ...interface{}) (sql.Result, error)
-	Query(query string, args ...interface{}) (*sql.Rows, error)
-	QueryRow(query string, args ...interface{}) *sql.Row
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // findOne is the internal single-row fetch used after Capture. Takes

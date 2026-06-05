@@ -94,7 +94,7 @@ func TestDispatcherInterface_SatisfiedByRealDispatcher(t *testing.T) {
 	if rt == nil {
 		t.Fatal("reflect.TypeOf(d) = nil; expected *dispatch.Dispatcher")
 	}
-	if rt.Kind() != reflect.Ptr {
+	if rt.Kind() != reflect.Pointer {
 		t.Fatalf("type kind = %v, want Ptr", rt.Kind())
 	}
 	if rt.Elem().Name() != "Dispatcher" {

@@ -85,7 +85,7 @@ func TestApiSaveShifts_UpsertAndDelete(t *testing.T) {
 	// Seed a shift that we'll delete via empty start/end times.
 	testutil.MustNoErr(t, testDB.UpsertShift(2, "ToBeDeleted", "14:00", "22:00"), "seed shift")
 
-	body := []map[string]interface{}{
+	body := []map[string]any{
 		{"shift_number": 1, "name": "Day", "start_time": "06:00", "end_time": "14:00"},
 		{"shift_number": 2, "name": "", "start_time": "", "end_time": ""},                     // delete
 		{"shift_number": 4, "name": "OutOfRange", "start_time": "00:00", "end_time": "06:00"}, // skipped

@@ -40,7 +40,7 @@ const stationSelect = `s.id, s.process_id, s.code, s.name, s.note, s.area_label,
 const stationJoin = `FROM operator_stations s
 	LEFT JOIN processes p ON p.id = s.process_id`
 
-func scanStation(scanner interface{ Scan(...interface{}) error }) (Station, error) {
+func scanStation(scanner interface{ Scan(...any) error }) (Station, error) {
 	var s Station
 	var lastSeen, createdAt, updatedAt string
 	err := scanner.Scan(

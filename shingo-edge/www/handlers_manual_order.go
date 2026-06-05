@@ -29,7 +29,7 @@ func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
 	nodesJSON, _ := json.Marshal(edgeNodeList)
 	coreNodesJSON, _ := json.Marshal(coreNodeNames)
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":              "manual-order",
 		"ProcessNodes":      processNodes,
 		"CoreNodes":         coreNodeNames,

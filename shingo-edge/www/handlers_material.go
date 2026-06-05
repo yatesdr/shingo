@@ -88,7 +88,7 @@ func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":              "material",
 		"Processes":         processes,
 		"ActiveProcessID":   activeProcessID,
@@ -108,7 +108,7 @@ func (h *Handlers) handleMaterialPartial(w http.ResponseWriter, r *http.Request)
 	stationViews := buildStationViews(h.engine, activeProcess)
 	enrichViewBinState(h.engine.CoreAPI(), stationViews)
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"StationViews": stationViews,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

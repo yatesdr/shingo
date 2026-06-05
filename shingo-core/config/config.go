@@ -184,3 +184,8 @@ func (c *Config) Save(path string) error {
 
 func (c *Config) Lock()   { c.mu.Lock() }
 func (c *Config) Unlock() { c.mu.Unlock() }
+
+// TryLock attempts to acquire the write lock without blocking, reporting
+// whether it succeeded. Companion to Lock/Unlock; lets callers assert the lock
+// is free without risking a hang on a deadlock.
+func (c *Config) TryLock() bool { return c.mu.TryLock() }

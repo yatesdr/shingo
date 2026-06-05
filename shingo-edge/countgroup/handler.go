@@ -32,8 +32,8 @@ type AckSender func(ack *protocol.CountGroupAck) error
 // Taking an interface here rather than a concrete Manager keeps the
 // package independent of plc's public surface and makes testing trivial.
 type TagReadWriter interface {
-	ReadTagValue(ctx context.Context, plcName, tagName string) (interface{}, error)
-	WriteTagValue(ctx context.Context, plcName, tagName string, value interface{}) error
+	ReadTagValue(ctx context.Context, plcName, tagName string) (any, error)
+	WriteTagValue(ctx context.Context, plcName, tagName string, value any) error
 }
 
 // Handler processes CountGroupCommand messages from core. Safe for
@@ -190,7 +190,7 @@ func (h *Handler) sendAck(cmd *protocol.CountGroupCommand, outcome protocol.AckO
 // isZero reports whether a WarLink-returned tag value is the integer 0.
 // WarLink may return the value as int, int64, float64, or json.Number
 // depending on decode path; we defensive-coerce.
-func isZero(v interface{}) bool {
+func isZero(v any) bool {
 	switch x := v.(type) {
 	case nil:
 		return true

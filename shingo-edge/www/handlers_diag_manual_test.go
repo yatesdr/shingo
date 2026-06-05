@@ -60,13 +60,13 @@ func TestApiReplayOutbox_InvalidID(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 // sendManualPayload wraps the top-level {type, payload} shape and POSTs it.
-func sendManualPayload(t *testing.T, router *chi.Mux, msgType string, payload interface{}) *http.Response {
+func sendManualPayload(t *testing.T, router *chi.Mux, msgType string, payload any) *http.Response {
 	t.Helper()
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
-	body := map[string]interface{}{
+	body := map[string]any{
 		"type":    msgType,
 		"payload": json.RawMessage(payloadBytes),
 	}
@@ -76,7 +76,7 @@ func sendManualPayload(t *testing.T, router *chi.Mux, msgType string, payload in
 func TestApiSendManualMessage_EdgeRegister_Success(t *testing.T) {
 	_, router := newDiagnosticsManualRouter(t)
 
-	resp := sendManualPayload(t, router, "edge.register", map[string]interface{}{
+	resp := sendManualPayload(t, router, "edge.register", map[string]any{
 		"version":  "test",
 		"line_ids": []string{"line-1"},
 	})
@@ -87,7 +87,7 @@ func TestApiSendManualMessage_EdgeRegister_Success(t *testing.T) {
 func TestApiSendManualMessage_EdgeHeartbeat_Success(t *testing.T) {
 	_, router := newDiagnosticsManualRouter(t)
 
-	resp := sendManualPayload(t, router, "edge.heartbeat", map[string]interface{}{
+	resp := sendManualPayload(t, router, "edge.heartbeat", map[string]any{
 		"uptime": 60,
 	})
 	assertStatus(t, resp, http.StatusOK)
@@ -96,7 +96,7 @@ func TestApiSendManualMessage_EdgeHeartbeat_Success(t *testing.T) {
 func TestApiSendManualMessage_ProductionReport_Success(t *testing.T) {
 	_, router := newDiagnosticsManualRouter(t)
 
-	resp := sendManualPayload(t, router, "production.report", map[string]interface{}{
+	resp := sendManualPayload(t, router, "production.report", map[string]any{
 		"entries": []protocol.ProductionReportEntry{},
 	})
 	assertStatus(t, resp, http.StatusOK)
@@ -106,7 +106,7 @@ func TestApiSendManualMessage_NodeListRequest_Success(t *testing.T) {
 	_, router := newDiagnosticsManualRouter(t)
 
 	// node.list_request ignores the payload entirely.
-	resp := sendManualPayload(t, router, "node.list_request", map[string]interface{}{})
+	resp := sendManualPayload(t, router, "node.list_request", map[string]any{})
 	assertStatus(t, resp, http.StatusOK)
 }
 
@@ -167,7 +167,7 @@ func TestApiSendManualMessage_OrderStorageWaybill_Success(t *testing.T) {
 
 func TestApiSendManualMessage_UnknownType(t *testing.T) {
 	_, router := newDiagnosticsManualRouter(t)
-	resp := sendManualPayload(t, router, "does.not.exist", map[string]interface{}{})
+	resp := sendManualPayload(t, router, "does.not.exist", map[string]any{})
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "unknown message type: does.not.exist")
 }
@@ -176,7 +176,7 @@ func TestApiSendManualMessage_InvalidOuterJSON(t *testing.T) {
 	_, router := newDiagnosticsManualRouter(t)
 
 	// type must be a string; sending an int breaks decoding the outer struct.
-	body := map[string]interface{}{"type": 42}
+	body := map[string]any{"type": 42}
 	resp := doRequest(t, router, "POST", "/api/manual-message", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -186,7 +186,7 @@ func TestApiSendManualMessage_InvalidInnerPayload(t *testing.T) {
 
 	// production.report requires entries to unmarshal as []ProductionReportEntry.
 	// Sending a string should trigger the inner "invalid payload" branch.
-	body := map[string]interface{}{
+	body := map[string]any{
 		"type":    "production.report",
 		"payload": json.RawMessage([]byte(`{"entries":"not-an-array"}`)),
 	}

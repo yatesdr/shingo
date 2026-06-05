@@ -20,16 +20,6 @@ import (
 // bin_uop_audit row through the JSON shape so a future column rename
 // surfaces here, not at a dashboard.
 
-func newAuditRouter(t *testing.T) (*Handlers, *chi.Mux) {
-	t.Helper()
-	h, _ := testHandlers(t)
-	r := chi.NewRouter()
-	r.Get("/api/audit/bin/{id}", h.apiAuditBinTimeline)
-	r.Get("/api/audit/operator/{name}", h.apiAuditOperatorActivity)
-	r.Get("/api/audit/station/{station}", h.apiAuditStationOverrides)
-	return h, r
-}
-
 // TestApiAuditBinTimeline pins the per-bin endpoint: every audit row
 // for a given bin id, newest first.
 func TestApiAuditBinTimeline(t *testing.T) {

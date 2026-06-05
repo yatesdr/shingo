@@ -204,7 +204,7 @@ func TestPartialConsumption_SyncsUOP(t *testing.T) {
 		t.Error("Manifest should be preserved after partial consumption")
 	} else {
 		// Postgres JSONB normalizes whitespace/key order, so compare decoded values
-		var gotJSON, wantJSON interface{}
+		var gotJSON, wantJSON any
 		json.Unmarshal([]byte(*got.Manifest), &gotJSON)
 		json.Unmarshal([]byte(manifest), &wantJSON)
 		gotBytes, _ := json.Marshal(gotJSON)

@@ -39,7 +39,7 @@ type CatalogEntry struct {
 
 const catalogSelectCols = `id, name, code, description, uop_capacity, cycle_seconds, updated_at`
 
-func scanCatalogEntry(scanner interface{ Scan(...interface{}) error }) (*CatalogEntry, error) {
+func scanCatalogEntry(scanner interface{ Scan(...any) error }) (*CatalogEntry, error) {
 	e := &CatalogEntry{}
 	var updatedAt string
 	if err := scanner.Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &e.CycleSeconds, &updatedAt); err != nil {

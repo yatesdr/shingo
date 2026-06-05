@@ -40,7 +40,7 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 
 	anomalies, rpMap := loadAnomalyData(h)
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":              "orders",
 		"Processes":         processes,
 		"ActiveProcessID":   activeProcessID,
@@ -66,7 +66,7 @@ func (h *Handlers) handleOrdersPartial(w http.ResponseWriter, r *http.Request) {
 	} else {
 		activeOrders, _ = h.engine.OrderService().ListActive()
 	}
-	data := map[string]interface{}{
+	data := map[string]any{
 		"ActiveOrders": activeOrders,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

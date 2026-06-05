@@ -15,7 +15,7 @@ import "context"
 //
 // Named ReadTagValue (not ReadTag) to avoid collision with the cache-based
 // ReadTag(plcName, tagName) on this same type.
-func (m *Manager) ReadTagValue(ctx context.Context, plcName, tagName string) (interface{}, error) {
+func (m *Manager) ReadTagValue(ctx context.Context, plcName, tagName string) (any, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.wl == nil {
@@ -28,7 +28,7 @@ func (m *Manager) ReadTagValue(ctx context.Context, plcName, tagName string) (in
 // Tag must be marked writable: true in WarLink config (HTTP 403 otherwise).
 // PLC must be connected (HTTP 503 otherwise). Integer values auto-convert
 // to the tag's data type.
-func (m *Manager) WriteTagValue(ctx context.Context, plcName, tagName string, value interface{}) error {
+func (m *Manager) WriteTagValue(ctx context.Context, plcName, tagName string, value any) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.wl == nil {

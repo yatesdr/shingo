@@ -34,7 +34,7 @@ type (
 
 // --- processes ---
 
-func scanProcess(scanner interface{ Scan(...interface{}) error }) (Process, error) {
+func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 	var p Process
 	var createdAt string
 	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.AutoCutoverEnabled, &createdAt); err != nil {
@@ -141,7 +141,7 @@ const nodeJoin = `FROM process_nodes n
 	LEFT JOIN operator_stations s ON s.id = n.operator_station_id
 	LEFT JOIN processes p ON p.id = n.process_id`
 
-func scanNode(scanner interface{ Scan(...interface{}) error }) (Node, error) {
+func scanNode(scanner interface{ Scan(...any) error }) (Node, error) {
 	var n Node
 	var createdAt, updatedAt string
 	var stationID sql.NullInt64
@@ -317,7 +317,7 @@ func generateNodeCode(db *sql.DB, processID int64, coreNodeName, name string) (s
 
 // --- process node runtime states ---
 
-func scanRuntime(scanner interface{ Scan(...interface{}) error }) (RuntimeState, error) {
+func scanRuntime(scanner interface{ Scan(...any) error }) (RuntimeState, error) {
 	var r RuntimeState
 	var updatedAt string
 	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.ActiveBinEpoch, &r.RemainingUOPCached,
@@ -479,7 +479,7 @@ func SetRuntimeUOPClearPending(db *sql.DB, processNodeID int64, remainingUOPCach
 // path can wrap its two writes in a single transaction (Item 5);
 // callers without a tx pass *sql.DB and get autocommit behavior.
 type activePullExecer interface {
-	Exec(query string, args ...interface{}) (sql.Result, error)
+	Exec(query string, args ...any) (sql.Result, error)
 }
 
 // SetActivePull marks a node as the active pull point for A/B cycling.

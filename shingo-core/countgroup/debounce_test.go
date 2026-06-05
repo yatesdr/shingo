@@ -2,26 +2,6 @@ package countgroup
 
 import "testing"
 
-// feedAll feeds a sequence of samples into a debouncer and returns
-// the emit log: [(state-after, changed)]. Useful for table-driven tests.
-func feedAll(d *debouncer, samples []bool) []struct {
-	s       state
-	changed bool
-} {
-	out := make([]struct {
-		s       state
-		changed bool
-	}, len(samples))
-	for i, v := range samples {
-		s, c := d.feed(v)
-		out[i] = struct {
-			s       state
-			changed bool
-		}{s, c}
-	}
-	return out
-}
-
 func TestDebounceColdStartHoldsUntilOnThresholdHit(t *testing.T) {
 	t.Parallel()
 	// 2-of-3 on, 3-of-3 off. First occupied sample must NOT emit —

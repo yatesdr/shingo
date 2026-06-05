@@ -137,13 +137,13 @@ func (h *Handlers) apiTelemetryUOPState(w http.ResponseWriter, r *http.Request) 
 func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Request) {
 	code := chi.URLParam(r, "code")
 	if code == "" {
-		h.jsonOK(w, map[string]interface{}{"uop_capacity": 0, "items": []struct{}{}})
+		h.jsonOK(w, map[string]any{"uop_capacity": 0, "items": []struct{}{}})
 		return
 	}
 	payloads := h.engine.PayloadService()
 	payload, err := payloads.GetByCode(code)
 	if err != nil {
-		h.jsonOK(w, map[string]interface{}{"uop_capacity": 0, "items": []struct{}{}})
+		h.jsonOK(w, map[string]any{"uop_capacity": 0, "items": []struct{}{}})
 		return
 	}
 	type manifestItem struct {
@@ -168,7 +168,7 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 	items, err := payloads.ListManifest(payload.ID)
 	if err != nil || len(items) == 0 {
 		// No manifest template — return a single entry with the payload code as part number
-		h.jsonOK(w, map[string]interface{}{
+		h.jsonOK(w, map[string]any{
 			"uop_capacity":  payload.UOPCapacity,
 			"bin_type_code": binTypeCode,
 			"items": []manifestItem{
@@ -185,7 +185,7 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 			Description: item.Description,
 		}
 	}
-	h.jsonOK(w, map[string]interface{}{
+	h.jsonOK(w, map[string]any{
 		"uop_capacity":  payload.UOPCapacity,
 		"bin_type_code": binTypeCode,
 		"items":         result,
@@ -292,7 +292,7 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "loaded", "bin_id": bin.ID,
 	}))
-	h.jsonOK(w, map[string]interface{}{
+	h.jsonOK(w, map[string]any{
 		"status":        "ok",
 		"bin_id":        bin.ID,
 		"bin_label":     bin.Label,
@@ -337,7 +337,7 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "cleared", "bin_id": bin.ID,
 	}))
-	h.jsonOK(w, map[string]interface{}{
+	h.jsonOK(w, map[string]any{
 		"status":      "ok",
 		"bin_id":      bin.ID,
 		"bin_label":   bin.Label,

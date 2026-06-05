@@ -29,14 +29,14 @@ func (m *mockWarlinkClient) SetTagPublishing(ctx context.Context, plcName, tagNa
 	return nil
 }
 
-func (m *mockWarlinkClient) ReadTagValue(ctx context.Context, plcName, tagName string) (interface{}, error) {
+func (m *mockWarlinkClient) ReadTagValue(ctx context.Context, plcName, tagName string) (any, error) {
 	if t, ok := m.tags[plcName][tagName]; ok {
 		return t.Value, nil
 	}
 	return nil, nil
 }
 
-func (m *mockWarlinkClient) WriteTagValue(ctx context.Context, plcName, tagName string, value interface{}) error {
+func (m *mockWarlinkClient) WriteTagValue(ctx context.Context, plcName, tagName string, value any) error {
 	return nil
 }
 

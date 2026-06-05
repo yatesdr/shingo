@@ -9,10 +9,9 @@
 //   orderCompletionCtx + Claim() / ToClaim()     – cascade-scope cache for expensive lookups
 //   handleNodeOrderCompleted                     – table-driven dispatcher
 //   match* / apply* per cascade row              – the table rows (see completion_table.go)
-//   handleComplexOrderBCompletion                – internal helper called from applyOrderBCompletion
-//   handleKeepStagedOrderBCompletion             – shelved no-op (rewire seam preserved)
+//   handleKeepStagedOrderBCompletion             – intentionally disabled no-op (rewire seam preserved)
 //   handleNormalReplenishment                    – terminal-row handler (void; adapted via applyNormalReplenishmentTerminal)
-//   maybePreStage                                – shelved no-op called from handleNormalReplenishment
+//   maybePreStage                                – intentionally disabled no-op (called from handleNormalReplenishment)
 //   handleOrphanedTaskOrderCompleted             – non-success terminal path (cancelled / failed)
 //   handleNodeOrderFailed                        – EventOrderFailed counterpart (lives here because
 //                                                  it reads the same node-task context the completion
@@ -300,9 +299,10 @@ func applyOrderBSimple(e *Engine, ctx *orderCompletionCtx) bool {
 	return true
 }
 
-// handleKeepStagedOrderBCompletion is a short-circuited no-op preserved
-// as the one-line rewire seam for the shelved KeepStaged path. Called
-// from applyOrderBComplex when the from-claim has KeepStaged=true.
+// Intentionally disabled — handleKeepStagedOrderBCompletion is a short-
+// circuited no-op preserved as the one-line rewire seam for the shelved
+// KeepStaged path. Called from applyOrderBComplex when the from-claim has
+// KeepStaged=true.
 //
 // Returning false makes applyOrderBComplex fall through to the standard
 // "released" path, which is the desired behaviour until KeepStaged is
@@ -589,7 +589,7 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	e.maybePreStage(ctx.node, claim)
 }
 
-// maybePreStage is a short-circuited no-op.
+// Intentionally disabled — maybePreStage is a short-circuited no-op.
 //
 // KeepStaged is shelved pending a future rewire. The function signature
 // is preserved for call sites; schema column, planner branches, and

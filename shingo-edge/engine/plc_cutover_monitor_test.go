@@ -118,7 +118,7 @@ func TestApplyEdge_StateMachine(t *testing.T) {
 func TestPLCTagInt64(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		in   interface{}
+		in   any
 		want int64
 		ok   bool
 	}{

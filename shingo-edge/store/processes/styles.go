@@ -24,7 +24,7 @@ import (
 // call site, and the outer store/ re-export.
 type Style = domain.Style
 
-func scanStyle(scanner interface{ Scan(...interface{}) error }) (Style, error) {
+func scanStyle(scanner interface{ Scan(...any) error }) (Style, error) {
 	var s Style
 	var createdAt string
 	if err := scanner.Scan(&s.ID, &s.Name, &s.Description, &s.ProcessID, &createdAt); err != nil {

@@ -371,7 +371,7 @@ func (e *Engine) UpdateCellReorder(in CellReorderInput) error {
 	}
 	current, err := e.db.GetStyleNodeClaim(in.ClaimID)
 	if err != nil || current == nil {
-		return fmt.Errorf("cell reorder: claim %d not found: %v", in.ClaimID, err)
+		return fmt.Errorf("cell reorder: claim %d not found: %w", in.ClaimID, err)
 	}
 	source := in.Source
 	if source == "" {

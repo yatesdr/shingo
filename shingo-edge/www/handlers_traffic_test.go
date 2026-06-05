@@ -154,7 +154,7 @@ func TestApiTrafficSaveHeartbeat_InvalidJSON(t *testing.T) {
 	h, router := newTrafficRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]interface{}{"heartbeat_tag": 42} // int into string
+	body := map[string]any{"heartbeat_tag": 42} // int into string
 	resp := doRequest(t, router, "PUT", "/api/traffic/heartbeat", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -237,7 +237,7 @@ func TestApiTrafficAddBinding_InvalidJSON(t *testing.T) {
 	h, router := newTrafficRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]interface{}{"name": 123}
+	body := map[string]any{"name": 123}
 	resp := doRequest(t, router, "POST", "/api/traffic/bindings", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -286,7 +286,7 @@ func TestApiTrafficDeleteBinding_InvalidJSON(t *testing.T) {
 	h, router := newTrafficRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]interface{}{"name": 99}
+	body := map[string]any{"name": 99}
 	resp := doRequest(t, router, "POST", "/api/traffic/bindings/delete", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 }

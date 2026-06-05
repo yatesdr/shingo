@@ -127,7 +127,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 	return out, rows.Err()
 }
 
-func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error {
+func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	var stagedExpireAt sql.NullString
 	var binID, siblingID sql.NullInt64
 	var createdAt, updatedAt string

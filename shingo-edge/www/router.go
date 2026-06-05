@@ -134,7 +134,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
 				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
 		},
-		"json": func(v interface{}) template.JS {
+		"json": func(v any) template.JS {
 			b, _ := json.Marshal(v)
 			return template.JS(b)
 		},
@@ -521,8 +521,8 @@ func (h *Handlers) adminMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (h *Handlers) renderTemplate(w http.ResponseWriter, r *http.Request, name string, data interface{}) {
-	if m, ok := data.(map[string]interface{}); ok {
+func (h *Handlers) renderTemplate(w http.ResponseWriter, r *http.Request, name string, data any) {
+	if m, ok := data.(map[string]any); ok {
 		_, isAuth := h.sessions.getUser(r)
 		m["Authenticated"] = isAuth
 	}

@@ -230,7 +230,7 @@ func TestClient_EnvelopeEncoding(t *testing.T) {
 	}
 
 	// Verify JSON structure
-	var decoded map[string]interface{}
+	var decoded map[string]any
 	testutil.MustNoErr(t, json.Unmarshal(data, &decoded), "decode envelope")
 
 	if decoded["type"] != "order.request" {
@@ -262,7 +262,7 @@ func TestClient_DataEnvelope(t *testing.T) {
 		t.Fatalf("encode envelope: %v", err)
 	}
 
-	var decoded map[string]interface{}
+	var decoded map[string]any
 	testutil.MustNoErr(t, json.Unmarshal(data, &decoded), "decode envelope")
 
 	if decoded["type"] != "data" {

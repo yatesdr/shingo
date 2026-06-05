@@ -191,11 +191,11 @@ func applyEdge(st *cutoverProcessState, cur int64, ok bool, now time.Time) bool 
 	return fire
 }
 
-// plcTagInt64 coerces a WarLink tag value (interface{}) to int64.
+// plcTagInt64 coerces a WarLink tag value (any) to int64.
 // WarLink delivers numeric tag values as float64 over JSON; PLC
 // integer types come through that path. Falls back to int / int32 /
 // int64 / float32 for completeness.
-func plcTagInt64(v interface{}) (int64, bool) {
+func plcTagInt64(v any) (int64, bool) {
 	switch n := v.(type) {
 	case int:
 		return int64(n), true

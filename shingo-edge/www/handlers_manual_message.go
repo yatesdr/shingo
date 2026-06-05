@@ -38,7 +38,7 @@ func (h *Handlers) handleManualMessage(w http.ResponseWriter, r *http.Request) {
 	coreNodesJSON, _ := json.Marshal(coreNodeNames)
 	lineIDsJSON, _ := json.Marshal([]string{cfg.LineID})
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":              "manual-message",
 		"StationID":         cfg.StationID(),
 		"LineIDs":           []string{cfg.LineID},
@@ -174,7 +174,7 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Return envelope metadata for the UI preview
-	writeJSON(w, map[string]interface{}{
+	writeJSON(w, map[string]any{
 		"status":    "ok",
 		"msg_id":    env.ID,
 		"timestamp": env.Timestamp.Format(time.RFC3339),

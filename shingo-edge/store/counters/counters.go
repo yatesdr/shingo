@@ -156,7 +156,7 @@ func HourlyTotals(db *sql.DB, processID int64, countDate string) (map[int]int64,
 
 // --- reporting points ---
 
-func scanReportingPoint(rp *ReportingPoint, scanner interface{ Scan(...interface{}) error }) error {
+func scanReportingPoint(rp *ReportingPoint, scanner interface{ Scan(...any) error }) error {
 	var lastPollAt sql.NullString
 	if err := scanner.Scan(&rp.ID, &rp.PLCName, &rp.TagName, &rp.StyleID, &rp.LastCount, &lastPollAt, &rp.Enabled, &rp.WarlinkManaged); err != nil {
 		return err

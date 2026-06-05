@@ -107,7 +107,7 @@ func mustInitDebugLog(fileFilter []string) *debuglog.Logger {
 		log.Fatalf("debug log: %v", err)
 	}
 	if dbg.FileEnabled() {
-		if fileFilter != nil && len(fileFilter) > 0 {
+		if len(fileFilter) > 0 {
 			log.Printf("shingocore: debug log enabled (file: shingo-debug.log, subsystems: %s)", strings.Join(fileFilter, ","))
 		} else {
 			log.Printf("shingocore: debug log enabled (file: shingo-debug.log, all subsystems)")

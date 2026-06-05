@@ -68,8 +68,6 @@ func scanLoaderPayloadThreshold(row interface{ Scan(...any) error }) (LoaderPayl
 	return t, err
 }
 
-var _ = time.Time{}
-
 // ListLoaderPayloadThresholds returns every threshold row.
 func (db *DB) ListLoaderPayloadThresholds() ([]LoaderPayloadThreshold, error) {
 	rows, err := db.Query(`SELECT ` + loaderThresholdSelectCols + ` FROM loader_payload_thresholds ORDER BY core_node_name, payload_code`)

@@ -70,7 +70,7 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 func TestApiOrders_CreateRetrieveOrder_Success(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"payload_code":  "BIN-RET-1",
 		"quantity":      1,
 		"delivery_node": "LINE-A",
@@ -110,7 +110,7 @@ func TestApiOrders_CreateRetrieveOrder_ResolvesDeliveryFromNode(t *testing.T) {
 	pid := seedProcess(t, "RetResolveLine")
 	nodeID := seedProcessNode(t, pid, 0, "core-node-ret-x")
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"process_node_id": nodeID,
 		"payload_code":    "BIN-RET-RES",
 		"quantity":        1,
@@ -131,7 +131,7 @@ func TestApiOrders_CreateRetrieveOrder_ResolvesDeliveryFromNode(t *testing.T) {
 func TestApiOrders_CreateRetrieveOrder_BatchSuccess(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"payload_code":  "BIN-BATCH",
 		"delivery_node": "LINE-B",
 		"count":         3,
@@ -169,7 +169,7 @@ func TestApiOrders_CreateRetrieveOrder_BatchSuccess(t *testing.T) {
 func TestApiOrders_CreateRetrieveOrder_BatchExceedsMax(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"payload_code":  "BIN-TOO-MANY",
 		"delivery_node": "LINE-X",
 		"count":         MaxBatchRetrieveCount + 1,
@@ -183,7 +183,7 @@ func TestApiOrders_CreateRetrieveOrder_BatchMissingFields(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
 	// count > 1 but no payload_code or delivery_node → rejected.
-	body := map[string]interface{}{"count": 2}
+	body := map[string]any{"count": 2}
 	resp := doRequest(t, router, "POST", "/api/orders/retrieve", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "payload_code and delivery_node required for batch")
@@ -192,7 +192,7 @@ func TestApiOrders_CreateRetrieveOrder_BatchMissingFields(t *testing.T) {
 func TestApiOrders_CreateStoreOrder_Success(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"quantity":    7,
 		"source_node": "CELL-1",
 	}
@@ -228,7 +228,7 @@ func TestApiOrders_CreateStoreOrder_Success(t *testing.T) {
 func TestApiOrders_CreateMoveOrder_Success(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"quantity":      4,
 		"source_node":   "SRC-A",
 		"delivery_node": "DST-A",
@@ -256,7 +256,7 @@ func TestApiOrders_CreateMoveOrder_Success(t *testing.T) {
 func TestApiOrders_CreateComplexOrder_Success(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"quantity": 2,
 		"steps": []protocol.ComplexOrderStep{
 			{Action: "pickup", Node: "NODE-A"},
@@ -283,7 +283,7 @@ func TestApiOrders_CreateComplexOrder_Success(t *testing.T) {
 func TestApiOrders_CreateComplexOrder_MissingSteps(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	body := map[string]interface{}{"quantity": 1}
+	body := map[string]any{"quantity": 1}
 	resp := doRequest(t, router, "POST", "/api/orders/complex", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "steps are required")
@@ -292,7 +292,7 @@ func TestApiOrders_CreateComplexOrder_MissingSteps(t *testing.T) {
 func TestApiOrders_CreateIngestOrder_Success(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"payload_code": "BIN-INGEST",
 		"bin_label":    "BIN-0001",
 		"source_node":  "PRODUCE-1",
@@ -318,7 +318,7 @@ func TestApiOrders_CreateIngestOrder_Success(t *testing.T) {
 func TestApiOrders_CreateIngestOrder_MissingPayloadCode(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"bin_label":   "BIN-X",
 		"source_node": "CELL-1",
 		"quantity":    1,
@@ -331,7 +331,7 @@ func TestApiOrders_CreateIngestOrder_MissingPayloadCode(t *testing.T) {
 func TestApiOrders_CreateIngestOrder_MissingBinLabel(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"payload_code": "BIN-Y",
 		"source_node":  "CELL-1",
 		"quantity":     1,
@@ -362,7 +362,7 @@ func TestApiOrders_CreateOrder_InvalidJSON(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			body := map[string]interface{}{"quantity": "not-a-number"}
+			body := map[string]any{"quantity": "not-a-number"}
 			resp := doRequest(t, router, "POST", tc.path, body, nil)
 			assertStatus(t, resp, http.StatusBadRequest)
 		})
@@ -413,7 +413,7 @@ func TestApiOrders_ConfirmDelivery_InvalidJSON(t *testing.T) {
 
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusDelivered)
 
-	body := map[string]interface{}{"final_count": "nope"}
+	body := map[string]any{"final_count": "nope"}
 	resp := doRequest(t, router, "POST", "/api/confirm-delivery/"+itoa(orderID), body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -447,7 +447,7 @@ func TestApiOrders_ReleaseOrder_Success(t *testing.T) {
 
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"called_by": "test-station",
 	}
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", body, nil)
@@ -492,7 +492,7 @@ func TestApiOrders_ReleaseOrder_WrongStatus(t *testing.T) {
 	// surfaced as an API error.
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusConfirmed)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"called_by": "test-station",
 	}
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", body, nil)
@@ -510,7 +510,7 @@ func TestApiOrders_ReleaseOrder_UnknownDispositionFallsBackToNoOp(t *testing.T) 
 	h, router := newApiOrdersRouter(t)
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"disposition": "send_partial_bak", // deliberate typo
 		"called_by":   "stephen-station-7",
 	}
@@ -538,7 +538,7 @@ func TestApiOrders_ReleaseOrder_CaptureLinesideDispositionFlows(t *testing.T) {
 	h, router := newApiOrdersRouter(t)
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"disposition": "capture_lineside",
 		"qty_by_part": map[string]int{"PART-A": 5},
 		"called_by":   "stephen-station-7",
@@ -567,7 +567,7 @@ func TestApiOrders_ReleaseOrder_SendPartialBackDispositionFlows(t *testing.T) {
 	h, router := newApiOrdersRouter(t)
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"disposition": "send_partial_back",
 		"called_by":   "stephen-station-7",
 	}
@@ -722,7 +722,7 @@ func TestApiOrders_SetOrderCount_InvalidJSON(t *testing.T) {
 
 	orderID := seedOrder(t, orders.TypeStore, orders.StatusPending)
 
-	body := map[string]interface{}{"final_count": "not-a-number"}
+	body := map[string]any{"final_count": "not-a-number"}
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/count", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -781,7 +781,7 @@ func TestApiOrders_RedirectOrder_InvalidJSON(t *testing.T) {
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusSubmitted)
 
 	// delivery_node must be a string; sending an int triggers a decode error.
-	body := map[string]interface{}{"delivery_node": 42}
+	body := map[string]any{"delivery_node": 42}
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/redirect", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -807,7 +807,7 @@ func TestApiOrders_RedirectOrder_AlreadyTerminal(t *testing.T) {
 func TestApiOrders_DecodeHelper_StringInsteadOfInt(t *testing.T) {
 	// Sanity: {"quantity":"x"} is syntactically valid JSON — it fails at
 	// decode-time, not marshal-time.
-	b, err := json.Marshal(map[string]interface{}{"quantity": "x"})
+	b, err := json.Marshal(map[string]any{"quantity": "x"})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

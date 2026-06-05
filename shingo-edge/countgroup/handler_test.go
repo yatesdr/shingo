@@ -17,7 +17,7 @@ import (
 type fakePLC struct {
 	mu sync.Mutex
 
-	tags   map[string]map[string]interface{}
+	tags   map[string]map[string]any
 	writes []writeCall
 
 	// Optional error injection.
@@ -27,18 +27,18 @@ type fakePLC struct {
 
 type writeCall struct {
 	PLC, Tag string
-	Value    interface{}
+	Value    any
 }
 
 func newFakePLC() *fakePLC {
-	return &fakePLC{tags: make(map[string]map[string]interface{})}
+	return &fakePLC{tags: make(map[string]map[string]any)}
 }
 
-func (f *fakePLC) setTag(plcName, tag string, v interface{}) {
+func (f *fakePLC) setTag(plcName, tag string, v any) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.tags[plcName] == nil {
-		f.tags[plcName] = make(map[string]interface{})
+		f.tags[plcName] = make(map[string]any)
 	}
 	f.tags[plcName][tag] = v
 }
@@ -55,7 +55,7 @@ func (f *fakePLC) writesFor(plcName, tag string) []writeCall {
 	return out
 }
 
-func (f *fakePLC) ReadTagValue(ctx context.Context, plcName, tagName string) (interface{}, error) {
+func (f *fakePLC) ReadTagValue(ctx context.Context, plcName, tagName string) (any, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.readErr != nil {
@@ -67,7 +67,7 @@ func (f *fakePLC) ReadTagValue(ctx context.Context, plcName, tagName string) (in
 	return nil, nil
 }
 
-func (f *fakePLC) WriteTagValue(ctx context.Context, plcName, tagName string, value interface{}) error {
+func (f *fakePLC) WriteTagValue(ctx context.Context, plcName, tagName string, value any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.writes = append(f.writes, writeCall{PLC: plcName, Tag: tagName, Value: value})
@@ -75,7 +75,7 @@ func (f *fakePLC) WriteTagValue(ctx context.Context, plcName, tagName string, va
 		return f.writeErr
 	}
 	if f.tags[plcName] == nil {
-		f.tags[plcName] = make(map[string]interface{})
+		f.tags[plcName] = make(map[string]any)
 	}
 	f.tags[plcName][tagName] = value
 	return nil
@@ -209,11 +209,12 @@ func TestStartedGuardSuppressesHeartbeat(t *testing.T) {
 	}
 
 	h.MarkStarted()
-	// Poll until at least one heartbeat write appears.
+	// Poll until at least one heartbeat write appears — Eventually fails the
+	// test if none does, so this is the positive assertion. (A trailing
+	// re-fetch into `writes` used to sit here unused — SA4006 dead store.)
 	testutil.Eventually(t, 2*time.Second, func() bool {
 		return len(p.writesFor("PLC1", "Heartbeat")) > 0
 	})
-	writes = p.writesFor("PLC1", "Heartbeat")
 }
 
 func TestAckTimeoutSendsTimeoutAckAndAbandons(t *testing.T) {

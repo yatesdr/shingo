@@ -14,8 +14,8 @@ import (
 
 // SSEEvent is the typed envelope sent to SSE clients.
 type SSEEvent struct {
-	Type string      `json:"type"`
-	Data interface{} `json:"data"`
+	Type string `json:"type"`
+	Data any    `json:"data"`
 }
 
 // serverInstance is a per-process identifier emitted on every SSE
@@ -268,11 +268,11 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			}
 		case engine.EventPLCConnected:
 			if p, ok := evt.Payload.(engine.PLCEvent); ok {
-				sseEvt = SSEEvent{Type: "plc-status", Data: map[string]interface{}{"plcName": p.PLCName, "connected": true}}
+				sseEvt = SSEEvent{Type: "plc-status", Data: map[string]any{"plcName": p.PLCName, "connected": true}}
 			}
 		case engine.EventPLCDisconnected:
 			if p, ok := evt.Payload.(engine.PLCEvent); ok {
-				sseEvt = SSEEvent{Type: "plc-status", Data: map[string]interface{}{"plcName": p.PLCName, "connected": false, "error": p.Error}}
+				sseEvt = SSEEvent{Type: "plc-status", Data: map[string]any{"plcName": p.PLCName, "connected": false, "error": p.Error}}
 			}
 		case engine.EventWarLinkConnected, engine.EventWarLinkDisconnected:
 			if p, ok := evt.Payload.(engine.WarLinkEvent); ok {

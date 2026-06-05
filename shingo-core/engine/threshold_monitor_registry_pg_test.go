@@ -132,7 +132,3 @@ func countLoopBelowThresholdSignals(msgs []*messaging.OutboxMessage, stationID s
 	}
 	return n
 }
-
-// outbox helper reused from wiring_kanban_test.go — both files are in
-// the same package so we don't need to redefine it.
-var _ = outboxSummary

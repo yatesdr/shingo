@@ -89,8 +89,8 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 		// releaseUnlessTerminal's terminal-skip branch). Production sets
 		// this in engine.New; this fixture mirrors that contract so tests
 		// don't nil-pointer panic on log calls.
-		logFn:   func(string, ...interface{}) {},
-		debugFn: func(string, ...interface{}) {},
+		logFn:   func(string, ...any) {},
+		debugFn: func(string, ...any) {},
 	}
 	eng.hourlyTracker = NewHourlyTracker(db, "")
 	eng.stationService = service.NewStationService(db)

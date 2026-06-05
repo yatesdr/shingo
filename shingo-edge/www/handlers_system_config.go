@@ -47,23 +47,23 @@ func (h *Handlers) apiTestCoreAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.CoreAPI == "" {
-		writeJSON(w, map[string]interface{}{"connected": false, "error": "no URL"})
+		writeJSON(w, map[string]any{"connected": false, "error": "no URL"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", req.CoreAPI+"/api/health", nil)
 	if err != nil {
-		writeJSON(w, map[string]interface{}{"connected": false, "error": err.Error()})
+		writeJSON(w, map[string]any{"connected": false, "error": err.Error()})
 		return
 	}
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
-		writeJSON(w, map[string]interface{}{"connected": false, "error": err.Error()})
+		writeJSON(w, map[string]any{"connected": false, "error": err.Error()})
 		return
 	}
 	resp.Body.Close()
-	writeJSON(w, map[string]interface{}{"connected": resp.StatusCode < 500})
+	writeJSON(w, map[string]any{"connected": resp.StatusCode < 500})
 }
 
 // --- Config Admin ---
@@ -127,11 +127,11 @@ func (h *Handlers) apiTestKafka(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := net.DialTimeout("tcp", req.Broker, 5*time.Second)
 	if err != nil {
-		writeJSON(w, map[string]interface{}{"connected": false, "error": err.Error()})
+		writeJSON(w, map[string]any{"connected": false, "error": err.Error()})
 		return
 	}
 	conn.Close()
-	writeJSON(w, map[string]interface{}{"connected": true})
+	writeJSON(w, map[string]any{"connected": true})
 }
 
 func (h *Handlers) apiUpdateAutoConfirm(w http.ResponseWriter, r *http.Request) {

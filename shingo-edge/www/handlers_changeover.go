@@ -134,7 +134,7 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":              "changeover",
 		"Processes":         processList,
 		"ActiveProcess":     activeProcess,
@@ -164,7 +164,7 @@ func (h *Handlers) handleChangeoverPartial(w http.ResponseWriter, r *http.Reques
 		activeProcessID = activeProcess.ID
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"ActiveProcess":    activeProcess,
 		"ActiveProcessID":  activeProcessID,
 		"Styles":           d.Styles,

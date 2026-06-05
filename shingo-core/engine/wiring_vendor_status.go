@@ -101,10 +101,9 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 			}
 		}
 	case dispatch.StatusAcknowledged:
-		// TODO(dead-code): unreachable with the current seerrds adapter —
-		// fleet.MapState (mappers.go:12) never returns StatusAcknowledged.
-		// Kept defensive in case a future fleet adapter reports a distinct
-		// ACK phase. Verify before the next refactor.
+		// Defensive: fleet.MapState never returns StatusAcknowledged today,
+		// but handle for completeness in case a future fleet adapter reports
+		// a distinct ACK phase.
 		if err := lc.Acknowledge(order, "fleet"); err != nil {
 			e.logFn("engine: acknowledge order %d: %v", order.ID, err)
 		}

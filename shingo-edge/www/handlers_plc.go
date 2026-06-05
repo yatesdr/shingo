@@ -47,7 +47,7 @@ func (h *Handlers) apiWarLinkStatus(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = "sse"
 	}
-	writeJSON(w, map[string]interface{}{
+	writeJSON(w, map[string]any{
 		"connected": mgr.IsWarLinkConnected(),
 		"host":      cfg.WarLink.Host,
 		"port":      cfg.WarLink.Port,
@@ -145,7 +145,7 @@ func (h *Handlers) apiReadTag(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"value": val})
+	writeJSON(w, map[string]any{"value": val})
 }
 
 // --- Reporting Points Admin ---

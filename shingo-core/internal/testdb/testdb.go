@@ -40,7 +40,6 @@ var (
 	containerHost string
 	containerPort int
 	containerErr  error
-	pgContainer   *postgres.PostgresContainer
 )
 
 // templateState gates one-time template-DB construction. setupTemplate runs
@@ -124,7 +123,6 @@ func startContainer() {
 		host, hostErr := container.Host(ctx)
 		port, portErr := container.MappedPort(ctx, "5432")
 		if hostErr == nil && portErr == nil && host != "" && port.Int() != 0 {
-			pgContainer = container
 			containerHost = host
 			containerPort = port.Int()
 			return
@@ -158,7 +156,7 @@ func setupTemplate() {
 		// partial template was left from a prior in-process attempt
 		// (shouldn't happen with sync.Once, but cheap to defend).
 		if dropErr := dropTemplate(); dropErr != nil {
-			templateErr = fmt.Errorf("template build failed (%v); cleanup also failed (%v)", err, dropErr)
+			templateErr = fmt.Errorf("template build failed (%w); cleanup also failed (%w)", err, dropErr)
 			return
 		}
 		if err2 := buildTemplate(); err2 != nil {

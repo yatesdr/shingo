@@ -52,7 +52,12 @@ func (h *Heartbeater) Start() {
 	go h.loop()
 }
 
-// Stop halts the heartbeat loop.
+// Stop halts the heartbeat loop. Deliberately NOT called on any shutdown path:
+// the heartbeater is a process-lifetime component (main.go starts it and does
+// not defer Stop — the Kafka client close tears the goroutine down at exit).
+// Investigated as a possible missing-shutdown-call bug and resolved as
+// intentional, not a defect. Kept as a real method for a future graceful-
+// shutdown path that needs to stop heartbeats before process exit.
 func (h *Heartbeater) Stop() {
 	h.stopOnce.Do(func() { close(h.stopCh) })
 }

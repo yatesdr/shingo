@@ -329,7 +329,7 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // doRequest is a test helper that executes an HTTP request against a router
 // and returns the response. Caller supplies method, path, optional JSON body,
 // and optional cookie.
-func doRequest(t *testing.T, router *chi.Mux, method, path string, body interface{}, cookie *http.Cookie) *http.Response {
+func doRequest(t *testing.T, router *chi.Mux, method, path string, body any, cookie *http.Cookie) *http.Response {
 	t.Helper()
 	var bodyReader io.Reader
 	if body != nil {
@@ -375,7 +375,7 @@ func authCookie(t *testing.T, h *Handlers) *http.Cookie {
 }
 
 // decodeJSON decodes the response body into v.
-func decodeJSON(t *testing.T, resp *http.Response, v interface{}) {
+func decodeJSON(t *testing.T, resp *http.Response, v any) {
 	t.Helper()
 	defer resp.Body.Close()
 	testutil.MustNoErr(t, json.NewDecoder(resp.Body).Decode(v), "decode response body")
@@ -391,10 +391,10 @@ func assertStatus(t *testing.T, resp *http.Response, want int) {
 
 // assertJSONPath asserts that a value exists at the given dot-separated path
 // in the JSON response body. Example: assertJSONPath(t, resp, "status", "ok")
-func assertJSONPath(t *testing.T, resp *http.Response, path string, want interface{}) {
+func assertJSONPath(t *testing.T, resp *http.Response, path string, want any) {
 	t.Helper()
 	defer resp.Body.Close()
-	var raw map[string]interface{}
+	var raw map[string]any
 	testutil.MustNoErr(t, json.NewDecoder(resp.Body).Decode(&raw), "decode json for path assertion")
 	// For single-level paths only (all our handlers use flat JSON)
 	got, ok := raw[path]

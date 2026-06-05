@@ -467,15 +467,10 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
-// ListQueued returns all orders in "queued" status, oldest first (FIFO).
-// ListQueued returns all orders in "queued" status. Ordered by priority
-// (highest first) then creation time (FIFO within a priority class) —
-// the priority stub for Phase 4 of bin-transit-state. orders.priority
-// is INTEGER NOT NULL DEFAULT 0, so unset orders fall to FIFO naturally.
-//
-// Future-work hooks (NOT shipped): preemption of in-flight low-priority
-// orders for high-priority new arrivals, fairness across stations,
-// per-station priority caps. Today this is just a sort key.
+// ListQueued returns all orders in "queued" status, ordered by priority
+// DESC (highest first) then created_at ASC (FIFO within a priority class).
+// orders.priority is INTEGER NOT NULL DEFAULT 0, so unset orders fall to
+// FIFO naturally.
 func ListQueued(db *sql.DB) ([]*Order, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status = 'queued' ORDER BY priority DESC, created_at ASC`, SelectCols))
 	if err != nil {

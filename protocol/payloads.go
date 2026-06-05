@@ -251,27 +251,18 @@ type ComplexOrderRequest struct {
 	RemainingUOP *int `json:"remaining_uop,omitempty"`
 }
 
-// UOPDispositionKind names the operator's release-time intent. Phase 0c of
-// the UOP bin-as-truth refactor introduces this enum to replace the
-// nil/0/N pointer overload on RemainingUOP. Values map 1:1 to the three
-// release buttons in the operator UI per the SME process map (see
-// shingo-uop-plan-bin-as-truth.md §2.5):
+// UOPDispositionKind names the operator's release-time intent. Values map
+// 1:1 to the release buttons in the operator UI:
 //
-//   - DispositionPullParts (button: PULL PARTS LINESIDE, RELEASE) — operator
-//     pulled some parts to lineside; bin reduced by sum of captures, lineside
-//     buckets increased. NOT the same as "bin is empty" — Phase 1's delta-
-//     based handler will treat this as a partial decrement, not a wipe.
-//   - DispositionReleasePartial (button: RELEASE PARTIAL) — operator declares
-//     the bin still holds Count parts; bin returns to supermarket as-is with
-//     manifest preserved.
-//   - DispositionReleaseEmpty (button: RELEASE EMPTY) — bin physically empty;
-//     manifest cleared.
+//   - DispositionPullParts      — operator pulled some parts to lineside;
+//     bin reduced by sum of captures, lineside buckets increased.
+//   - DispositionReleasePartial — operator declares the bin still holds Count
+//     parts; bin returns to supermarket as-is with manifest preserved.
+//   - DispositionReleaseEmpty   — bin physically empty; manifest cleared.
 //
-// Wire transition: both this enum and the legacy RemainingUOP pointer ship
-// for one release. Edge populates whichever it knows about; Core prefers the
-// enum when present and falls back to RemainingUOP otherwise. The pointer
-// is removed in Phase 4 cleanup once every Edge in the field is on the new
-// shape.
+// Both this enum and the legacy RemainingUOP pointer ship on the wire. Edge
+// populates whichever it knows about; Core prefers the enum when present and
+// falls back to RemainingUOP otherwise.
 type UOPDispositionKind string
 
 const (
@@ -298,9 +289,7 @@ const (
 // value); for the other kinds Count is ignored.
 //
 // Captures is meaningful only when Kind == DispositionPullParts. The map
-// is keyed by part number with the per-part captured quantity. Phase 1
-// will route this through LinesideBucketDelta (capture_fill); for Phase 0c
-// the field rides on the wire but Core does not yet act on it.
+// is keyed by part number with the per-part captured quantity.
 //
 // CountSuggested and CapturesSuggested carry the values the system would
 // have shipped without operator intervention — the snapshot from the
@@ -327,11 +316,10 @@ type UOPDisposition struct {
 //   - 0   = clear manifest (bin is empty, e.g. NOTHING PULLED disposition)
 //   - >0  = sync UOP, preserve manifest (bin returns as partial, e.g. SEND PARTIAL BACK)
 //
-// Disposition (new shape, Phase 0c) carries the same intent as a typed enum,
-// disambiguating the capture_lineside overload that today serves both
-// "operator pulled parts" and "bin is empty" via the same on-wire value.
-// Phase 0c lands the field; Phase 1 wires Edge to populate it and Core to
-// prefer it. Both shapes are accepted on the wire for one release.
+// Disposition carries the same intent as a typed enum, disambiguating the
+// capture_lineside overload that serves both "operator pulled parts" and
+// "bin is empty" via the same on-wire value. Both shapes are accepted on
+// the wire.
 //
 // Routing on Core mirrors ClaimForDispatch but operates on the already-claimed
 // bin via BinManifestService.SyncOrClearForReleased. See docs on that method.

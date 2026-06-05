@@ -74,7 +74,7 @@ func (h *Handlers) handleReplenishment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":       "replenishment",
 		"LoaderRows": loaderRows,
 		"ClaimRows":  claimRows,

@@ -1,7 +1,5 @@
 package simulator
 
-import "sync"
-
 // OrderView is a read-only snapshot of a simulated order for test assertions.
 type OrderView struct {
 	VendorOrderID string
@@ -141,6 +139,3 @@ func (s *SimulatorBackend) FindOrderByLocation(location string) []*OrderView {
 	}
 	return results
 }
-
-// Compile-time check: SimulatorBackend must not expose internal state as pointers.
-var _ = sync.RWMutex{} // referenced by receiver type

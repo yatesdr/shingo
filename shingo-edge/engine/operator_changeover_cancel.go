@@ -101,11 +101,11 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 //
 // Re-resolve from Core's physical bin-at-node (BinAtLineside tri-state):
 //   - bin present    → rebind to it with Core's authoritative count + epoch so
-//                      ticks land on the real bin.
+//     ticks land on the real bin.
 //   - confirmed empty → clear the pointer + zero the cache so ticks are held
-//                      until the next delivery instead of charging a ghost.
+//     until the next delivery instead of charging a ghost.
 //   - Core unverified → retain the prior value (a transient blip must not zero
-//                      a live lineside).
+//     a live lineside).
 //
 // Best-effort and defensive: every error is logged, never returned — a
 // reconcile failure must not block the cancel. The claim pointer is threaded

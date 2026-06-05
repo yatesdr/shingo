@@ -23,7 +23,7 @@ func (h *Handlers) handleOperatorStationDisplay(w http.ResponseWriter, r *http.R
 		return
 	}
 	_ = h.engine.StationService().Touch(id, "online")
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":    "operator-display",
 		"Station": station,
 	}

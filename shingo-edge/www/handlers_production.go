@@ -93,7 +93,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		stylesJSON = []byte("[]")
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":              "production",
 		"Processes":         processes,
 		"ActiveProcessID":   activeProcessID,

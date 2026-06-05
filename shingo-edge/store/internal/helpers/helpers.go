@@ -28,7 +28,7 @@ const TimeLayout = "2006-01-02 15:04:05"
 // requiring callers to import database/sql just for the interface.
 type RowScanner interface {
 	Next() bool
-	Scan(...interface{}) error
+	Scan(...any) error
 	Err() error
 }
 

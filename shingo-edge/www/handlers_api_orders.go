@@ -93,7 +93,7 @@ func (h *Handlers) createRetrieveBatch(w http.ResponseWriter, payloadCode, deliv
 		results = append(results, result{OrderID: order.ID, UUID: order.UUID})
 		created++
 	}
-	writeJSON(w, map[string]interface{}{
+	writeJSON(w, map[string]any{
 		"requested": count,
 		"created":   created,
 		"orders":    results,

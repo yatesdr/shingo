@@ -68,7 +68,7 @@ func (h *Handlers) handleLinesideBuckets(w http.ResponseWriter, r *http.Request)
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Page":              "lineside-buckets",
 		"Rows":              rows,
 		"Anomalies":         anomalies,

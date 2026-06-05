@@ -17,7 +17,7 @@ type captureLogger struct {
 	lines []string
 }
 
-func (c *captureLogger) Log(format string, args ...interface{}) {
+func (c *captureLogger) Log(format string, args ...any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.lines = append(c.lines, fmt.Sprintf(format, args...))

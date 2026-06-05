@@ -169,11 +169,11 @@ func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 	// Pre-release manifest had qty=100; post-fix the manifest should NOT
 	// still reflect that. Read the raw JSON to be doubly explicit.
 	if got.Manifest != nil {
-		var raw map[string]interface{}
+		var raw map[string]any
 		if err := json.Unmarshal([]byte(*got.Manifest), &raw); err == nil {
-			items, _ := raw["items"].([]interface{})
+			items, _ := raw["items"].([]any)
 			if len(items) > 0 {
-				if first, ok := items[0].(map[string]interface{}); ok {
+				if first, ok := items[0].(map[string]any); ok {
 					if q, ok := first["qty"].(float64); ok && int(q) == 100 {
 						t.Errorf("manifest still carries pre-release qty=100; reconstruction did not fire")
 					}

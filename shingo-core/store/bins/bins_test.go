@@ -845,7 +845,7 @@ func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
 		if got.Manifest == nil {
 			t.Fatal("bins.Manifest is nil, want JSON")
 		}
-		var gotParsed, wantParsed interface{}
+		var gotParsed, wantParsed any
 		testutil.MustNoErr(t, json.Unmarshal([]byte(*got.Manifest), &gotParsed), "unmarshal got manifest")
 		testutil.MustNoErr(t, json.Unmarshal([]byte(manifestJSON), &wantParsed), "unmarshal want manifest")
 		gotBytes, _ := json.Marshal(gotParsed)
