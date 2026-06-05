@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -67,7 +68,7 @@ func (db *DB) GetGroupLayout(groupID int64) (*GroupLayout, error) {
 	slotDepths := make(map[int64]int)          // nodeID -> depth
 
 	for _, child := range children {
-		if child.NodeTypeCode == "LANE" {
+		if child.NodeTypeCode == protocol.NodeClassLANE {
 			slots, _ := nodes.ListLaneSlots(db.DB, child.ID)
 			laneSlots[child.ID] = slots
 			for _, slot := range slots {
@@ -115,7 +116,7 @@ func (db *DB) GetGroupLayout(groupID int64) (*GroupLayout, error) {
 	// Assemble layout from pre-fetched data
 	layout := &GroupLayout{}
 	for _, child := range children {
-		if child.NodeTypeCode == "LANE" {
+		if child.NodeTypeCode == protocol.NodeClassLANE {
 			slots := laneSlots[child.ID]
 			var si []GroupSlotInfo
 			for _, slot := range slots {

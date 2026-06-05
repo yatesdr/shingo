@@ -75,7 +75,7 @@ func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 // their contents and must not be flagged.
 func markInboundEmpty(steps []protocol.ComplexOrderStep, inboundSource string) {
 	for i := range steps {
-		if steps[i].Action == "pickup" && steps[i].Node == inboundSource {
+		if steps[i].Action == protocol.ActionPickup && steps[i].Node == inboundSource {
 			steps[i].Empty = true
 		}
 	}

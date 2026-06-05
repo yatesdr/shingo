@@ -430,7 +430,7 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// gets set on order completion in wiring_completion). Press-index and
 	// two_robot share the same R1+R2 release choreography, so both modes
 	// are valid here.
-	if claim.SwapMode != protocol.SwapModeTwoRobot && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+	if !claim.SwapMode.IsTwoRobot() {
 		return fmt.Errorf("node %s: release-staged requires a two-robot swap mode, got %q", node.Name, claim.SwapMode)
 	}
 

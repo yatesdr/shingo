@@ -248,7 +248,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		if order.SourceNode != "" {
 			// Try NGRP resolution first
 			sourceNode, pErr := s.db.GetNodeByDotName(order.SourceNode)
-			if pErr == nil && sourceNode.IsSynthetic && sourceNode.NodeTypeCode == "NGRP" && s.resolver != nil {
+			if pErr == nil && sourceNode.IsSynthetic && sourceNode.NodeTypeCode == protocol.NodeClassNGRP && s.resolver != nil {
 				result, rErr := s.resolver.Resolve(sourceNode, dispatch.OrderTypeRetrieve, payloadCode, nil)
 				if rErr != nil {
 					var structErr *dispatch.StructuralError

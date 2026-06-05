@@ -62,12 +62,6 @@ type PlanningService struct {
 	lifecycle   plannerLifecycle
 
 	createCompound func(parentOrder *orders.Order, plan *ReshufflePlan) error
-	// advanceCompound: potential dead code as of 2026-05-27. The only call
-	// site (planBuriedReshuffle) was removed when the redundant double-advance
-	// at compound creation was identified as a contributor to the production
-	// reshuffle cascade. Left wired so the deferred advisory-lock follow-up
-	// has a hook if it needs one; remove if no follow-up materializes.
-	advanceCompound func(parentOrderID int64) error
 
 	handlers map[protocol.OrderType]PlanningHandler
 
@@ -77,17 +71,16 @@ type PlanningService struct {
 	postFindHook func()
 }
 
-func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock, binManifest *service.BinManifestService, lifecycle plannerLifecycle, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan) error, advanceCompound func(int64) error) *PlanningService {
+func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock, binManifest *service.BinManifestService, lifecycle plannerLifecycle, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan) error) *PlanningService {
 	s := &PlanningService{
-		db:              db,
-		resolver:        resolver,
-		laneLock:        laneLock,
-		binManifest:     binManifest,
-		debug:           debug,
-		lifecycle:       lifecycle,
-		createCompound:  createCompound,
-		advanceCompound: advanceCompound,
-		handlers:        make(map[protocol.OrderType]PlanningHandler),
+		db:             db,
+		resolver:       resolver,
+		laneLock:       laneLock,
+		binManifest:    binManifest,
+		debug:          debug,
+		lifecycle:      lifecycle,
+		createCompound: createCompound,
+		handlers:       make(map[protocol.OrderType]PlanningHandler),
 	}
 	s.Register(OrderTypeRetrieve, s.planRetrieve)
 	s.Register(OrderTypeRetrieveEmpty, s.planRetrieveEmpty)
@@ -164,7 +157,7 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 		// a shadow — the shadow form panicked on `sourceNode.Name` below
 		// once unloader auto-push lit up the NGRP retrieve path.
 		srcGroup, err := s.db.GetNodeByDotName(order.SourceNode)
-		if err == nil && srcGroup.IsSynthetic && srcGroup.NodeTypeCode == "NGRP" {
+		if err == nil && srcGroup.IsSynthetic && srcGroup.NodeTypeCode == protocol.NodeClassNGRP {
 			result, err := s.resolver.Resolve(srcGroup, OrderTypeRetrieve, payloadCode, nil)
 			if err != nil {
 				// Route through the same classifier the complex-
@@ -291,7 +284,7 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	// rejects empties (PayloadCode == "" != payloadCode).
 	if order.SourceNode != "" {
 		sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
-		if err == nil && sourceNode != nil && sourceNode.IsSynthetic && sourceNode.NodeTypeCode == "NGRP" {
+		if err == nil && sourceNode != nil && sourceNode.IsSynthetic && sourceNode.NodeTypeCode == protocol.NodeClassNGRP {
 			groupBin, gerr := s.db.FindEmptyCompatibleBinInGroup(payloadCode, sourceNode.ID, excludeNodeID)
 			if gerr != nil {
 				s.dbg("retrieve_empty: no empty in group %s for payload=%s, queuing order %d",
@@ -319,7 +312,7 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 			slot, slotErr := s.db.GetNode(*bin.NodeID)
 			if slotErr == nil && slot.ParentID != nil {
 				lane, laneErr := s.db.GetNode(*slot.ParentID)
-				if laneErr == nil && lane.NodeTypeCode == "LANE" {
+				if laneErr == nil && lane.NodeTypeCode == protocol.NodeClassLANE {
 					s.dbg("retrieve_empty: bin %d is buried at slot %s in lane %s, triggering reshuffle",
 						bin.ID, slot.Name, lane.Name)
 					return s.planBuriedReshuffle(order, &BuriedError{Bin: bin, Slot: slot, LaneID: lane.ID})
@@ -429,7 +422,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 	//
 	// We reuse OrderTypeRetrieve semantics: finding the best bin in an NGRP
 	// for a move-from-supermarket is the same operation as a retrieve.
-	if sourceNode.IsSynthetic && sourceNode.NodeTypeCode == "NGRP" && s.resolver != nil {
+	if sourceNode.IsSynthetic && sourceNode.NodeTypeCode == protocol.NodeClassNGRP && s.resolver != nil {
 		result, rErr := s.resolver.Resolve(sourceNode, OrderTypeRetrieve, payloadCode, nil)
 		if rErr != nil {
 			switch class, payload := classifyResolutionError(rErr); class {
@@ -519,7 +512,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 	// earlier in this method. CheckDropoffCapacity already queued the all-full
 	// case, so a resolver failure here is a TOCTOU race — re-queue and let the
 	// scanner retry rather than failing the order.
-	if destNode.IsSynthetic && destNode.NodeTypeCode == "NGRP" && s.resolver != nil {
+	if destNode.IsSynthetic && destNode.NodeTypeCode == protocol.NodeClassNGRP && s.resolver != nil {
 		result, rErr := s.resolver.Resolve(destNode, OrderTypeStore, payloadCode, nil)
 		if rErr != nil {
 			s.dbg("move: dest group %s unresolved at dispatch (%v), queuing order %d", order.DeliveryNode, rErr, order.ID)

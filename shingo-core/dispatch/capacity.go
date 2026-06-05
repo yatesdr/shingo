@@ -30,6 +30,7 @@ package dispatch
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingocore/store/nodes"
 )
 
@@ -93,7 +94,7 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 		return false, ""
 	}
 	if node.IsSynthetic {
-		if node.NodeTypeCode == "NGRP" {
+		if node.NodeTypeCode == protocol.NodeClassNGRP {
 			return checkNGRPCapacity(db, node, deliveryNode, excludeOrderID)
 		}
 		// LANE / _TRANSIT / future synthetic types — defer to whoever

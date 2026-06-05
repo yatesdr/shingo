@@ -127,7 +127,7 @@ func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, 
 	rows, err := e.db.ListOrderBins(orderID)
 	if err == nil && len(rows) > 0 {
 		for _, ob := range rows {
-			if ob.Action != "pickup" {
+			if ob.Action != protocol.ActionPickup {
 				continue
 			}
 			if strings.TrimSpace(ob.NodeName) != locationTrimmed {

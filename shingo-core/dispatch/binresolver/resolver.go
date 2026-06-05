@@ -51,7 +51,7 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, orderType protocol.
 	}
 
 	// Delegate to group resolver for NGRP nodes
-	if syntheticNode.NodeTypeCode == "NGRP" {
+	if syntheticNode.NodeTypeCode == protocol.NodeClassNGRP {
 		gr := &GroupResolver{DB: r.DB, LaneLock: r.LaneLock, DebugLog: r.DebugLog}
 		switch orderType {
 		// OrderTypeRetrieveEmpty currently flows through FindEmptyCompatibleBin in

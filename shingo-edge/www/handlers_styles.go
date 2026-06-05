@@ -218,7 +218,7 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 			// Empty ParentNodeType means an older Core that hasn't
 			// been upgraded yet — skip the check rather than false-
 			// reject on a missing field so rolling upgrades work.
-			if info.ParentNodeType != "" && info.ParentNodeType != "LANE" {
+			if info.ParentNodeType != "" && info.ParentNodeType != protocol.NodeClassLANE {
 				writeError(w, http.StatusBadRequest, fmt.Sprintf(
 					"consume claims require a LANE-parented storage slot; %s is parented by %s",
 					in.CoreNodeName, info.ParentNodeType))

@@ -81,7 +81,7 @@ func (d *Dispatcher) CreateCompoundChildrenOnly(parentOrder *orders.Order, plan 
 		// which for a complex parent is the *last* step's node
 		// (extractEndpoints in complex_steps.go) — wrong destination
 		// for the unbury step's deliverable. Don't.
-		if step.StepType == "retrieve" && child.DeliveryNode == "" {
+		if step.StepType == protocol.StepRetrieve && child.DeliveryNode == "" {
 			child.DeliveryNode = parentOrder.DeliveryNode
 		}
 

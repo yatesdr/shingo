@@ -104,7 +104,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		// concept; sequential and per-position skip that gate too.
 		if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
 			switch diff.FromClaim.SwapMode {
-			case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex:
+			case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex: // .IsTwoRobot()
 				if diff.ToClaim.InboundStaging == "" {
 					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
 				}
@@ -156,7 +156,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		}
 		if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
 			switch diff.FromClaim.SwapMode {
-			case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex:
+			case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex: // .IsTwoRobot()
 				if diff.ToClaim.InboundStaging == "" {
 					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
 				}
@@ -289,7 +289,7 @@ func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.
 // planKeepStagedAction mirrors createKeepStagedChangeoverOrders.
 func planKeepStagedAction(action changeover.NodeAction, fromClaim, toClaim *processes.NodeClaim) changeover.NodeAction {
 	switch fromClaim.SwapMode {
-	case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex:
+	case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex: // .IsTwoRobot()
 		deliverSteps := BuildKeepStagedDeliverSteps(toClaim)
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
 		action.SupplyOrder = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, deliverSteps, false)

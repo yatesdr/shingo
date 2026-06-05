@@ -3,7 +3,6 @@ package store
 import (
 	"fmt"
 
-	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -110,7 +109,7 @@ func LookupLastReleaseError(db *DB, runtime *processes.RuntimeState) string {
 // Non-two-robot claims always return false — their single staged order
 // is released via the per-order /api/orders/{id}/release endpoint.
 func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.RuntimeState, task *processes.NodeTask) bool {
-	if claim == nil || (claim.SwapMode != protocol.SwapModeTwoRobot && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex) {
+	if claim == nil || !claim.SwapMode.IsTwoRobot() {
 		return false
 	}
 	evacOrderID := resolveEvacOrderID(db, runtime, task)

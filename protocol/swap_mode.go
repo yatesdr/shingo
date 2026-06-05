@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"database/sql/driver"
-	"fmt"
 )
 
 // SwapMode is the typed canonical changeover/dispatch swap mode for a
@@ -25,28 +24,27 @@ const (
 // String satisfies fmt.Stringer.
 func (m SwapMode) String() string { return string(m) }
 
+// IsTwoRobot reports whether this mode requires two-robot coordination
+// (paired supply/removal legs with sibling linking). Centralised here so
+// new two-robot variants only need to be added in one place.
+//
+// Note: the edge-local "press_position" marker deliberately returns false —
+// per-position claims fan out to the single-position builder, not the
+// two-robot coordination path. See edge/engine/changeover.go:95-105.
+func (m SwapMode) IsTwoRobot() bool {
+	return m == SwapModeTwoRobot || m == SwapModeTwoRobotPressIndex
+}
+
 // Scan implements sql.Scanner for reading from a database column.
 // Mirrors protocol.Status — accepts string or []byte; NULL becomes empty.
 // No validation against AllSwapModes(); historical rows must still load.
 func (m *SwapMode) Scan(v any) error {
-	if v == nil {
-		*m = ""
-		return nil
-	}
-	switch x := v.(type) {
-	case string:
-		*m = SwapMode(x)
-	case []byte:
-		*m = SwapMode(x)
-	default:
-		return fmt.Errorf("protocol.SwapMode.Scan: cannot scan %T", v)
-	}
-	return nil
+	return ScanEnumNamed(m, v, "protocol.SwapMode.Scan")
 }
 
 // Value implements driver.Valuer for writing to a database column.
 func (m SwapMode) Value() (driver.Value, error) {
-	return string(m), nil
+	return ValueEnum(m)
 }
 
 // AllSwapModes returns every defined swap mode, used by table-driven

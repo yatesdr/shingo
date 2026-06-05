@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xuri/excelize/v2"
+	"shingo/protocol"
 )
 
 // InventoryInvariant is the Item 13 plant-wide running totals shape.
@@ -106,7 +107,7 @@ func (h *Handlers) apiBucketDelete(w http.ResponseWriter, r *http.Request) {
 
 	actor := h.getUsername(r)
 	if actor == "" {
-		actor = "ui"
+		actor = protocol.AuditActorUI
 	}
 	if as := h.engine.AuditService(); as != nil {
 		as.Append("lineside_bucket", req.ID, "deleted", "active", "deleted", actor)

@@ -138,7 +138,7 @@ func (d *Dispatcher) patchRedirectSegments(segment []resolvedStep, order *orders
 		return
 	}
 	for i := len(segment) - 1; i >= 0; i-- {
-		if segment[i].Action == "dropoff" {
+		if segment[i].Action == protocol.ActionDropoff {
 			if segment[i].Node != order.DeliveryNode {
 				d.dbg("complex release: patching segment dropoff %s -> %s (redirect)", segment[i].Node, order.DeliveryNode)
 				segment[i].Node = order.DeliveryNode

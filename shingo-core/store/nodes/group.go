@@ -4,13 +4,14 @@ import (
 	"database/sql"
 	"fmt"
 
+	"shingo/protocol"
 	"shingocore/store/internal/helpers"
 )
 
 // CreateGroup creates an empty NGRP node with the given name.
 // Lanes and direct children are added separately via AddLane and reparenting.
 func CreateGroup(db *sql.DB, name string) (int64, error) {
-	grpType, err := GetTypeByCode(db, "NGRP")
+	grpType, err := GetTypeByCode(db, protocol.NodeClassNGRP)
 	if err != nil {
 		return 0, fmt.Errorf("NGRP node type not found")
 	}
@@ -28,7 +29,7 @@ func AddLane(db *sql.DB, groupID int64, name string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("node group not found: %w", err)
 	}
-	lanType, err := GetTypeByCode(db, "LANE")
+	lanType, err := GetTypeByCode(db, protocol.NodeClassLANE)
 	if err != nil {
 		return 0, fmt.Errorf("LANE node type not found")
 	}

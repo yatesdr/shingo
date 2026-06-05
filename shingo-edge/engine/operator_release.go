@@ -423,7 +423,7 @@ func (e *Engine) isSupplyOrderInTwoRobotSwap(order *storeorders.Order, node *pro
 	if order == nil || node == nil || claim == nil {
 		return false
 	}
-	if claim.SwapMode != protocol.SwapModeTwoRobot && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+	if !claim.SwapMode.IsTwoRobot() {
 		return false
 	}
 	if order.SiblingOrderID == nil {

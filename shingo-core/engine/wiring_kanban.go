@@ -78,7 +78,7 @@ func (e *Engine) isStorageSlot(nodeID int64) bool {
 	if err != nil {
 		return false
 	}
-	if node.NodeTypeCode == "LANE" || node.NodeTypeCode == "NGRP" {
+	if node.NodeTypeCode == protocol.NodeClassLANE || node.NodeTypeCode == protocol.NodeClassNGRP {
 		return true
 	}
 	if node.ParentID == nil {
@@ -88,7 +88,7 @@ func (e *Engine) isStorageSlot(nodeID int64) bool {
 	if err != nil {
 		return false
 	}
-	return parent.NodeTypeCode == "LANE" || parent.NodeTypeCode == "NGRP"
+	return parent.NodeTypeCode == protocol.NodeClassLANE || parent.NodeTypeCode == protocol.NodeClassNGRP
 }
 
 // sendDemandSignals looks up the demand registry for the given payload code and role,

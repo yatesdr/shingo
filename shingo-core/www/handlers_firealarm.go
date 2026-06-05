@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 )
 
@@ -63,7 +64,7 @@ func (h *Handlers) apiFireAlarmTrigger(w http.ResponseWriter, r *http.Request) {
 
 	actor := h.getUsername(r)
 	if actor == "" {
-		actor = "ui"
+		actor = protocol.AuditActorUI
 	}
 
 	if err := fc.SetFireAlarm(req.On, req.AutoResume); err != nil {

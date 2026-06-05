@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	binsstore "shingocore/store/bins"
 	"shingocore/store/orders"
 )
@@ -63,7 +64,7 @@ func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep,
 	)
 
 	for i, s := range steps {
-		if s.Action != "pickup" {
+		if s.Action != protocol.ActionPickup {
 			continue
 		}
 		pickupSteps++
@@ -206,7 +207,7 @@ func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep,
 
 		for _, c := range claimed {
 			destNode := destinations[c.binID]
-			if err := d.db.InsertOrderBin(order.ID, c.binID, c.stepIndex, "pickup", c.nodeName, destNode); err != nil {
+			if err := d.db.InsertOrderBin(order.ID, c.binID, c.stepIndex, protocol.ActionPickup, c.nodeName, destNode); err != nil {
 				log.Printf("dispatch: insert order_bin for order %d bin %d: %v", order.ID, c.binID, err)
 			}
 		}
@@ -261,14 +262,14 @@ func resolvePerBinDestinations(steps []resolvedStep, claimedBins map[string]int6
 
 	for _, step := range steps {
 		switch step.Action {
-		case "pickup":
+		case protocol.ActionPickup:
 			if binID, ok := binAtNode[step.Node]; ok {
 				carrying = binID
 				delete(binAtNode, step.Node) // bin leaves this node
 			}
 			// If no bin at this node, robot picks up nothing (ghost/pre-position)
 
-		case "dropoff":
+		case protocol.ActionDropoff:
 			if carrying != 0 {
 				dest[carrying] = step.Node      // update final dest
 				binAtNode[step.Node] = carrying // bin is now at this node
@@ -276,7 +277,7 @@ func resolvePerBinDestinations(steps []resolvedStep, claimedBins map[string]int6
 			}
 			// If robot is empty, this is a pre-position drive (no-op for bin tracking)
 
-		case "wait":
+		case protocol.ActionWait:
 			// No bin movement
 		}
 	}

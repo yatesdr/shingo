@@ -46,7 +46,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	}
 	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
 	d.replies = newReplySender(db, dispatchTopic, stationID, d.dbg)
-	d.planner = newPlanningService(db, resolver, d.laneLock, binManifest, d.lifecycle, d.dbg, d.CreateCompoundOrder, d.AdvanceCompoundOrder)
+	d.planner = newPlanningService(db, resolver, d.laneLock, binManifest, d.lifecycle, d.dbg, d.CreateCompoundOrder)
 	return d
 }
 

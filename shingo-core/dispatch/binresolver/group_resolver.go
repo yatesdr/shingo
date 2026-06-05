@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -138,7 +139,7 @@ func checkOldestBuried(r *GroupResolver, children []*nodes.Node, payloadCode str
 	var bestTime time.Time
 
 	for _, child := range children {
-		if !child.Enabled || child.NodeTypeCode != "LANE" {
+		if !child.Enabled || child.NodeTypeCode != protocol.NodeClassLANE {
 			continue
 		}
 		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
@@ -162,7 +163,7 @@ func checkOldestBuried(r *GroupResolver, children []*nodes.Node, payloadCode str
 // checkShallowestBuried scans lanes for the shallowest buried bin (cheapest to unblock).
 func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode string) (*bins.Bin, *nodes.Node, int64) {
 	for _, child := range children {
-		if !child.Enabled || child.NodeTypeCode != "LANE" {
+		if !child.Enabled || child.NodeTypeCode != protocol.NodeClassLANE {
 			continue
 		}
 		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
@@ -194,7 +195,7 @@ func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s 
 			continue
 		}
 
-		if child.NodeTypeCode == "LANE" {
+		if child.NodeTypeCode == protocol.NodeClassLANE {
 			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
 				continue
 			}
@@ -356,7 +357,7 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 			continue
 		}
 
-		if child.NodeTypeCode == "LANE" {
+		if child.NodeTypeCode == protocol.NodeClassLANE {
 			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
 				continue
 			}
@@ -463,7 +464,7 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 
 	// First pass: try lanes (deepest empty slot)
 	for _, child := range children {
-		if !child.Enabled || child.NodeTypeCode != "LANE" {
+		if !child.Enabled || child.NodeTypeCode != protocol.NodeClassLANE {
 			continue
 		}
 		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {

@@ -40,11 +40,11 @@ func IsTerminalState(vendorState string) bool {
 // on vendor-specific vocabulary.
 func BinTaskForAction(action string) string {
 	switch action {
-	case "pickup":
+	case protocol.ActionPickup:
 		return "JackLoad"
-	case "dropoff":
+	case protocol.ActionDropoff:
 		return "JackUnload"
-	case "wait":
+	case protocol.ActionWait:
 		return "Wait"
 	default:
 		return ""

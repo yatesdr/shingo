@@ -147,7 +147,7 @@ func (d *Dispatcher) scheduleRestoreIfEnabled(
 	// steps so the restock compound can move them back.
 	var blockers []restoreBlocker
 	for _, s := range plan.Steps {
-		if s.StepType != "unbury" {
+		if s.StepType != protocol.StepUnbury {
 			continue
 		}
 		blockers = append(blockers, restoreBlocker{
@@ -435,7 +435,7 @@ func (d *Dispatcher) dispatchRestoreCompound(entry *restoreEntry) error {
 		b := entry.blockers[i]
 		plan.Steps = append(plan.Steps, ReshuffleStep{
 			Sequence: seq,
-			StepType: "restock",
+			StepType: protocol.StepRestock,
 			BinID:    b.bin.ID,
 			FromNode: b.shuffle,
 			ToNode:   b.original,

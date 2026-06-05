@@ -2,6 +2,8 @@ package www
 
 import (
 	"net/http"
+
+	"shingo/protocol"
 )
 
 func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +117,7 @@ func (h *Handlers) apiRepairAnomaly(w http.ResponseWriter, r *http.Request) {
 
 	actor := h.getUsername(r)
 	if actor == "" {
-		actor = "ui"
+		actor = protocol.AuditActorUI
 	}
 
 	switch req.Action {

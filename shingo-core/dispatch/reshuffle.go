@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"shingo/protocol"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -28,7 +29,7 @@ const (
 // ReshuffleStep describes a single move in a reshuffle plan.
 type ReshuffleStep struct {
 	Sequence int
-	StepType string // "unbury", "retrieve", "restock"
+	StepType protocol.StepType // "unbury", "retrieve", "restock"
 	BinID    int64
 	FromNode *nodes.Node
 	ToNode   *nodes.Node
@@ -116,7 +117,7 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 	for i, b := range blockers {
 		plan.Steps = append(plan.Steps, ReshuffleStep{
 			Sequence: seq,
-			StepType: "unbury",
+			StepType: protocol.StepUnbury,
 			BinID:    b.bin.ID,
 			FromNode: b.slot,
 			ToNode:   shuffleSlots[i],
@@ -127,7 +128,7 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 	// Step 2: Retrieve the target (this is the actual order delivery)
 	plan.Steps = append(plan.Steps, ReshuffleStep{
 		Sequence: seq,
-		StepType: "retrieve",
+		StepType: protocol.StepRetrieve,
 		BinID:    target.ID,
 		FromNode: targetSlot,
 	})
@@ -137,7 +138,7 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 	for i := len(blockers) - 1; i >= 0; i-- {
 		plan.Steps = append(plan.Steps, ReshuffleStep{
 			Sequence: seq,
-			StepType: "restock",
+			StepType: protocol.StepRestock,
 			BinID:    blockers[i].bin.ID,
 			FromNode: shuffleSlots[i],
 			ToNode:   blockers[i].slot,
@@ -187,7 +188,7 @@ func PlanReshuffleUnburyOnly(db *store.DB, target *bins.Bin, targetSlot *nodes.N
 	for i, b := range blockers {
 		plan.Steps = append(plan.Steps, ReshuffleStep{
 			Sequence: i + 1,
-			StepType: "unbury",
+			StepType: protocol.StepUnbury,
 			BinID:    b.bin.ID,
 			FromNode: b.slot,
 			ToNode:   shuffleSlots[i],
@@ -239,7 +240,7 @@ func PlanReshuffleToTarget(db *store.DB, target *bins.Bin, targetSlot *nodes.Nod
 	for i, b := range blockers {
 		plan.Steps = append(plan.Steps, ReshuffleStep{
 			Sequence: seq,
-			StepType: "unbury",
+			StepType: protocol.StepUnbury,
 			BinID:    b.bin.ID,
 			FromNode: b.slot,
 			ToNode:   shuffleSlots[i],
@@ -248,7 +249,7 @@ func PlanReshuffleToTarget(db *store.DB, target *bins.Bin, targetSlot *nodes.Nod
 	}
 	plan.Steps = append(plan.Steps, ReshuffleStep{
 		Sequence: seq,
-		StepType: "retrieve",
+		StepType: protocol.StepRetrieve,
 		BinID:    target.ID,
 		FromNode: targetSlot,
 		ToNode:   targetNode,
@@ -356,7 +357,7 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 	// pickup/dropoff destinations. If ListLaneSlots' ORDER BY ever changes,
 	// this reverse-iterate silently breaks.
 	for _, c := range children {
-		if !c.Enabled || c.NodeTypeCode != "LANE" {
+		if !c.Enabled || c.NodeTypeCode != protocol.NodeClassLANE {
 			continue
 		}
 		if excluded[c.Name] {

@@ -227,7 +227,7 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 			if n.ParentID == nil {
 				infos = append(infos, protocol.NodeInfo{Name: n.Name, NodeType: n.NodeTypeCode})
 			} else if !n.IsSynthetic {
-				if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == "NGRP" {
+				if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == protocol.NodeClassNGRP {
 					infos = append(infos, protocol.NodeInfo{
 						Name:           parent.Name + "." + n.Name,
 						NodeType:       n.NodeTypeCode,
@@ -364,7 +364,7 @@ func (s *CoreDataService) HandleClaimSync(env *protocol.Envelope, sync *protocol
 	for _, c := range sync.Claims {
 		if c.Role == protocol.ClaimRoleConsume {
 			if node, err := s.db.GetNodeByDotName(c.CoreNodeName); err == nil && node != nil && node.ParentID != nil {
-				if parent, err := s.db.GetNode(*node.ParentID); err == nil && parent != nil && parent.NodeTypeCode != "LANE" {
+				if parent, err := s.db.GetNode(*node.ParentID); err == nil && parent != nil && parent.NodeTypeCode != protocol.NodeClassLANE {
 					log.Printf("core_handler: consume claim from %s targets %s (parent node_type=%s, not LANE) — demand signals will be suppressed by wiring_kanban", stationID, c.CoreNodeName, parent.NodeTypeCode)
 				}
 			}

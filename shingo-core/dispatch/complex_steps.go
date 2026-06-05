@@ -23,13 +23,13 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 	var resolved []resolvedStep
 	for i, step := range steps {
 		switch step.Action {
-		case "pickup", "dropoff":
+		case protocol.ActionPickup, protocol.ActionDropoff:
 			nodeName, group, err := d.resolveStepNode(step, payloadCode)
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
 			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName, Group: group, Empty: step.Empty})
-		case "wait":
+		case protocol.ActionWait:
 			// Wait may optionally include a node (drive-to-and-hold).
 			// If present, resolve it; otherwise it's a bare wait (split point only).
 			if step.Node != "" {
@@ -37,9 +37,9 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 				if err != nil {
 					return nil, fmt.Errorf("step %d: %w", i, err)
 				}
-				resolved = append(resolved, resolvedStep{Action: "wait", Node: nodeName, Group: group})
+				resolved = append(resolved, resolvedStep{Action: protocol.ActionWait, Node: nodeName, Group: group})
 			} else {
-				resolved = append(resolved, resolvedStep{Action: "wait"})
+				resolved = append(resolved, resolvedStep{Action: protocol.ActionWait})
 			}
 		default:
 			return nil, fmt.Errorf("step %d: unknown step action: %s", i, step.Action)
@@ -79,7 +79,7 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 			newSteps = append(newSteps, step)
 			continue
 		}
-		if !(node.IsSynthetic && node.NodeTypeCode == "NGRP") {
+		if !(node.IsSynthetic && node.NodeTypeCode == protocol.NodeClassNGRP) {
 			// Already a concrete node — no re-resolution needed.
 			newSteps = append(newSteps, step)
 			continue
@@ -124,7 +124,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			return "", "", fmt.Errorf("node %q not found", step.Node)
 		}
 		// Auto-detect group nodes and resolve to a concrete slot.
-		if node.IsSynthetic && node.NodeTypeCode == "NGRP" && d.resolver != nil {
+		if node.IsSynthetic && node.NodeTypeCode == protocol.NodeClassNGRP && d.resolver != nil {
 			// Empty pickup leg (produce node's "bring an empty to fill"):
 			// resolve to a slot holding an EMPTY compatible carrier, not a
 			// payload-matching full. Mirrors planRetrieveEmpty's source-group
@@ -133,7 +133,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			// OrderTypeRetrieve — a full — which delivered a full to produce
 			// nodes; step.Empty now carries the distinction the old comment
 			// here said it would need.)
-			if step.Action == "pickup" && step.Empty {
+			if step.Action == protocol.ActionPickup && step.Empty {
 				bin, err := d.db.FindEmptyCompatibleBinInGroup(payloadCode, node.ID, 0)
 				if err != nil {
 					return "", "", fmt.Errorf("cannot resolve empty in group %s: %w", step.Node, err)
@@ -148,7 +148,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 				return slot.Name, step.Node, nil
 			}
 			orderType := OrderTypeRetrieve
-			if step.Action == "dropoff" {
+			if step.Action == protocol.ActionDropoff {
 				orderType = OrderTypeStore
 			}
 			result, err := d.resolver.Resolve(node, orderType, payloadCode, nil)
@@ -164,7 +164,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 	// and FindStorageDestination (store).
 	if payloadCode != "" {
 		switch step.Action {
-		case "pickup":
+		case protocol.ActionPickup:
 			// Global fallback resolver: no order-level destination context here
 			// (we are picking the source), so no node to exclude. Pass 0.
 			// Empty leg sources an empty carrier (FindEmptyCompatibleBin),
@@ -194,7 +194,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			}
 			d.dbg("resolveStepNode: global fallback pickup → %s (bin %d)", node.Name, bin.ID)
 			return node.Name, "", nil
-		case "dropoff":
+		case protocol.ActionDropoff:
 			// Global fallback with no source context — pass 0 to
 			// disable the source-exclusion. Same shape as the
 			// FindSourceBinFIFO call above.
@@ -212,7 +212,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 // extractEndpoints returns the pickup (first actionable) and delivery (last actionable) nodes.
 func extractEndpoints(steps []resolvedStep) (pickup, delivery string) {
 	for _, s := range steps {
-		if s.Action == "pickup" || s.Action == "dropoff" {
+		if s.Action == protocol.ActionPickup || s.Action == protocol.ActionDropoff {
 			if pickup == "" {
 				pickup = s.Node
 			}
@@ -229,7 +229,7 @@ func extractEndpoints(steps []resolvedStep) (pickup, delivery string) {
 // is excluded from preWait (no block emitted).
 func splitAtWait(steps []resolvedStep) (preWait []resolvedStep, hasWait bool) {
 	for i, s := range steps {
-		if s.Action == "wait" {
+		if s.Action == protocol.ActionWait {
 			if s.Node != "" {
 				// Wait-with-node: include it (becomes a Wait block), split after.
 				return steps[:i+1], true
@@ -261,7 +261,7 @@ func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, 
 	startIdx := 0
 	found := false
 	for i, s := range steps {
-		if s.Action == "wait" {
+		if s.Action == protocol.ActionWait {
 			waitsSeen++
 			if waitsSeen == waitIndex+1 {
 				startIdx = i + 1
@@ -283,7 +283,7 @@ func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, 
 	// (BinTask=Wait). Bare waits (no node) produce no block.
 	blockOffset = 0
 	for i := 0; i < startIdx; i++ {
-		if steps[i].Action != "wait" || steps[i].Node != "" {
+		if steps[i].Action != protocol.ActionWait || steps[i].Node != "" {
 			blockOffset++
 		}
 	}
@@ -293,7 +293,7 @@ func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, 
 	// the split happens after it. A bare wait ends the segment before it.
 	endIdx := len(steps)
 	for i := startIdx; i < len(steps); i++ {
-		if steps[i].Action == "wait" {
+		if steps[i].Action == protocol.ActionWait {
 			if steps[i].Node != "" {
 				// Wait-with-node: include it in segment, split after.
 				endIdx = i + 1
@@ -316,7 +316,7 @@ func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, 
 func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int) []fleet.OrderBlock {
 	var blocks []fleet.OrderBlock
 	for i, s := range steps {
-		if s.Action == "wait" && s.Node == "" {
+		if s.Action == protocol.ActionWait && s.Node == "" {
 			// Bare wait (no node) is a split point only — not an RDS block.
 			continue
 		}

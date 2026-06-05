@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/audit"
@@ -243,7 +244,7 @@ func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 // engine.isStorageSlot; the staging-clear on Move needs the same
 // classification at the service layer. Keep the two definitions in sync.
 func (s *BinService) destIsStorageSlot(node *nodes.Node) bool {
-	if node.NodeTypeCode == "LANE" || node.NodeTypeCode == "NGRP" {
+	if node.NodeTypeCode == protocol.NodeClassLANE || node.NodeTypeCode == protocol.NodeClassNGRP {
 		return true
 	}
 	if node.ParentID == nil {
@@ -253,7 +254,7 @@ func (s *BinService) destIsStorageSlot(node *nodes.Node) bool {
 	if err != nil {
 		return false
 	}
-	return parent.NodeTypeCode == "LANE" || parent.NodeTypeCode == "NGRP"
+	return parent.NodeTypeCode == protocol.NodeClassLANE || parent.NodeTypeCode == protocol.NodeClassNGRP
 }
 
 // --- Counting -------------------------------------------------------------

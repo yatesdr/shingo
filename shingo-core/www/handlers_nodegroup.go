@@ -97,11 +97,11 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 			h.jsonError(w, "parent not found", http.StatusNotFound)
 			return
 		}
-		if parent.NodeTypeCode != "LANE" && parent.NodeTypeCode != "NGRP" {
+		if parent.NodeTypeCode != protocol.NodeClassLANE && parent.NodeTypeCode != protocol.NodeClassNGRP {
 			h.jsonError(w, "parent must be a lane or node group", http.StatusBadRequest)
 			return
 		}
-		parentIsGroup = parent.NodeTypeCode == "NGRP"
+		parentIsGroup = parent.NodeTypeCode == protocol.NodeClassNGRP
 	}
 
 	// --- Reparent guard: check for orders that would break ---
@@ -109,7 +109,7 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 	// reparent below. Acceptable for rare, operator-initiated actions.
 	if node.ParentID != nil {
 		oldParent, gpErr := nodes.GetNode(*node.ParentID)
-		if gpErr == nil && oldParent.NodeTypeCode == "NGRP" {
+		if gpErr == nil && oldParent.NodeTypeCode == protocol.NodeClassNGRP {
 			blocked, bErr := h.engine.OrderService().ListActiveBySourceRef(
 				[]string{oldParent.Name})
 			if bErr != nil {
@@ -198,7 +198,7 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 		oldWasNGRP := false
 		if node.ParentID != nil {
 			if op, e := nodes.GetNode(*node.ParentID); e == nil {
-				oldWasNGRP = op.NodeTypeCode == "NGRP"
+				oldWasNGRP = op.NodeTypeCode == protocol.NodeClassNGRP
 			}
 		}
 		if oldWasNGRP || parentIsGroup {
@@ -249,7 +249,7 @@ func (h *Handlers) apiReorderLaneSlots(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "lane not found", http.StatusNotFound)
 		return
 	}
-	if lane.NodeTypeCode != "LANE" {
+	if lane.NodeTypeCode != protocol.NodeClassLANE {
 		h.jsonError(w, "node is not a lane", http.StatusBadRequest)
 		return
 	}
@@ -296,7 +296,7 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 
 	// Guard: only NGRP names can appear as source_node references.
 	// LANEs and other types don't need the order check.
-	if group.NodeTypeCode == "NGRP" {
+	if group.NodeTypeCode == protocol.NodeClassNGRP {
 		blocked, bErr := h.engine.OrderService().ListActiveBySourceRef([]string{group.Name})
 		if bErr != nil {
 			h.jsonError(w, "failed to check active orders: "+bErr.Error(),
@@ -348,7 +348,7 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 	}})
 
 	// Notify Edge of group deletion
-	if group.NodeTypeCode == "NGRP" {
+	if group.NodeTypeCode == protocol.NodeClassNGRP {
 		h.orchestration.SendDataToEdge(
 			protocol.SubjectNodeStructureChanged,
 			protocol.StationBroadcast,
