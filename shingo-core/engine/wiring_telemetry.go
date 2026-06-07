@@ -84,10 +84,23 @@ func (e *Engine) finalizeMissionTelemetry(ev OrderStatusChangedEvent) {
 		CoreCreated:   &order.CreatedAt,
 		CoreCompleted: &now,
 		DurationMS:    now.Sub(order.CreatedAt).Milliseconds(),
-		BlocksJSON:    "[]",
-		ErrorsJSON:    "[]",
-		WarningsJSON:  "[]",
-		NoticesJSON:   "[]",
+		BlocksJSON:      "[]",
+		ErrorsJSON:      "[]",
+		WarningsJSON:    "[]",
+		NoticesJSON:     "[]",
+		RobotAlarmsJSON: "[]",
+	}
+
+	// Snapshot the robot's active alarms at terminal time (Q-026). For a FAILED
+	// mission the causal fault (blocked / battery / hardware) is still active on
+	// the robot, so this is the signal the failure Pareto classifies first. The
+	// cache is ≤2s stale (the robot poll cadence), current enough at failure.
+	if ev.RobotID != "" {
+		if rs, ok := e.GetCachedRobotStatus(ev.RobotID); ok && len(rs.Alarms) > 0 {
+			if data, err := json.Marshal(rs.Alarms); err == nil {
+				mt.RobotAlarmsJSON = string(data)
+			}
+		}
 	}
 
 	if ev.Snapshot != nil {

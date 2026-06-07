@@ -105,6 +105,16 @@ type RobotStatus struct {
 	Version        string
 	TaskStatus     int
 	Suspended      bool
+	Alarms         []RobotAlarm
+}
+
+// RobotAlarm is a vendor-neutral active robot alarm (Q-026). JSON tags match
+// domain.PrimaryFailureReason's seerRobotAlarm so a marshaled []RobotAlarm
+// feeds the failure classifier directly when snapshotted onto a mission.
+type RobotAlarm struct {
+	Code     int    `json:"code"`
+	Severity string `json:"severity"` // fatal | error | warning | notice
+	Desc     string `json:"desc"`
 }
 
 // State returns a computed state string for the robot: offline, error, busy, paused, or ready.

@@ -54,6 +54,29 @@ type RbkReport struct {
 	Jack                JackReport  `json:"jack"`
 	Voltage             float64     `json:"voltage"`
 	Current             float64     `json:"current"`
+	Alarms              RbkAlarms   `json:"alarms"`
+}
+
+// RbkAlarms is the robot's active-alarm snapshot (SEER rbk_report.alarms,
+// verified live 2026-06-07). Severity is the array an alarm sits in:
+// fatals > errors > warnings > notices. The flat top-level rbk_report.errors/
+// warnings/… arrays carry a duplicate dynamic "<code>":<ts> key and are
+// ignored in favor of this clean nested shape.
+type RbkAlarms struct {
+	Fatals   []RbkAlarm `json:"fatals"`
+	Errors   []RbkAlarm `json:"errors"`
+	Warnings []RbkAlarm `json:"warnings"`
+	Notices  []RbkAlarm `json:"notices"`
+}
+
+// RbkAlarm is one SEER alarm: a 5xxxx robot code with a human desc. times is
+// the repeat count; timestamp is unix seconds.
+type RbkAlarm struct {
+	Code      int    `json:"code"`
+	Desc      string `json:"desc"`
+	Times     int    `json:"times"`
+	Timestamp int64  `json:"timestamp"`
+	DateTime  string `json:"dateTime"`
 }
 type JackReport struct {
 	JackLoadTimes int     `json:"jack_load_times"`

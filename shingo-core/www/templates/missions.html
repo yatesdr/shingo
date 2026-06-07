@@ -1,47 +1,110 @@
 {{define "content"}}
-<h2>Mission Telemetry</h2>
+<div class="missions-dash">
 
-<div class="card mb-2">
-  <div class="flex gap-2 flex-wrap" style="align-items:end">
-    <label title="Show missions completed on or after this date">Since <input type="date" id="filter-since"></label>
-    <label title="Show missions completed on or before this date">Until <input type="date" id="filter-until"></label>
-    <label title="Filter by edge station ID (exact match)">Station <input type="text" id="filter-station" placeholder="all" style="width:10rem"></label>
-    <label title="Filter by robot vehicle ID (exact match)">Robot <input type="text" id="filter-robot" placeholder="all" style="width:8rem"></label>
-    <div id="state-filters" class="flex gap-05">
-      <button class="btn btn-sm state-btn active" data-state="" title="Show all terminal states">All</button>
-      <button class="btn btn-sm state-btn" data-state="FINISHED" title="Missions that finished successfully">Completed</button>
-      <button class="btn btn-sm state-btn" data-state="FAILED" title="Missions that failed (robot error, unreachable, etc.)">Failed</button>
-      <button class="btn btn-sm state-btn" data-state="STOPPED" title="Missions manually cancelled">Cancelled</button>
-    </div>
-    <button class="btn btn-sm btn-primary" id="btn-apply" title="Apply date, station, and robot filters">Apply</button>
+  <!-- Sticky global filter bar (plan §2 / §3.H): the single filter that
+       drives the hero and the list. Replaces the old table-internal bar. -->
+  <div class="filter-bar ops-filter-bar">
+    <h1 class="ops-title">Mission Telemetry</h1>
+    <label class="text-muted-sm">Since <input type="date" id="m-since" title="Show missions completed on or after this date"></label>
+    <label class="text-muted-sm">Until <input type="date" id="m-until" title="Show missions completed on or before this date"></label>
+    <select id="m-station" title="Station"><option value="">All stations</option></select>
+    <select id="m-robot" title="Robot"><option value="">All robots</option></select>
+    <button class="btn btn-sm" id="m-refresh" title="Refresh">&#x21bb;</button>
+    <span class="live-pill" id="m-live" title="Live SSE connection">&#9675; offline</span>
   </div>
+
+  <!-- A: Hero strip (§3.A). Tiles: success / volume / avg / in flight / alerts -->
+  <section class="mb-4">
+    <div id="m-alerts"></div>
+    <div class="grid-kpi" id="m-kpi-grid"><div class="dash-empty">Loading KPIs&hellip;</div></div>
+  </section>
+
+  <!-- B: Mission trends (§3.B). Local 24h/7d/30d toggle, 2×2 Chart.js grid. -->
+  <section class="card" id="m-trends">
+    <div class="section-head">
+      <h2>Trends</h2>
+      <div class="range-toggle" id="m-trend-toggle"></div>
+    </div>
+    <div class="grid grid-2" id="m-trend-grid"><div class="dash-empty">Loading trends&hellip;</div></div>
+  </section>
+
+  <!-- C: Live ops (always live, SSE) (§3.C). -->
+  <section class="card" id="m-live-ops">
+    <div class="section-head"><h2>Live ops</h2><span id="m-sys-pills" class="text-muted-sm"></span></div>
+    <div id="m-inflight"><div class="dash-empty">Loading live ops&hellip;</div></div>
+  </section>
+
+  <!-- D: Cells (§3.D, Phase E). Per-cell production rhythm — a pulsing primary
+       Process dot plus satellite sub-Process dots, live on cell-heartbeat.
+       Empty until cells are configured at /admin/cells. -->
+  <section class="card" id="m-cells">
+    <div class="section-head"><h2>Cells</h2><span class="text-muted-sm" id="m-cells-note"></span></div>
+    <div class="cell-grid" id="m-cells-grid"><div class="dash-empty">Loading cells&hellip;</div></div>
+  </section>
+
+  <!-- E: Parts (§3.E). Produced / cycle time / consumption. -->
+  <section class="card" id="m-parts">
+    <div class="section-head"><h2>Parts</h2></div>
+    <div class="grid grid-3">
+      <div><div class="chart-caption">Produced (qty · missions)</div><div class="bar-list" id="m-parts-produced"></div></div>
+      <div><div class="chart-caption" title="Payload-level cycle time attributed to each part (§3.E.2 caveat)">Cycle time (avg)</div><div class="bar-list" id="m-parts-cycle"></div></div>
+      <div><div class="chart-caption">Consumption (UoP)</div><div class="bar-list" id="m-parts-consume"></div></div>
+    </div>
+  </section>
+
+  <!-- F: Breakdowns (§3.F). By robot and by route. -->
+  <section class="card" id="m-breakdowns">
+    <div class="section-head"><h2>Breakdowns</h2></div>
+    <div class="grid grid-2">
+      <div><div class="chart-caption">By robot (top 10 by volume)</div><div class="bar-list" id="m-bd-robot"></div></div>
+      <div><div class="chart-caption">By route (top 10 by volume)</div><div class="bar-list" id="m-bd-route"></div></div>
+    </div>
+  </section>
+
+  <!-- G: Failure Pareto (§3.G). Classified failure reasons + 80% line. -->
+  <section class="card" id="m-failures">
+    <div class="section-head">
+      <h2>Failure Pareto</h2>
+      <span class="text-muted-sm">Red = robot/hardware fault (from robot alarms) · blue = orchestration/other</span>
+    </div>
+    <div class="chart-box" style="height:240px"><canvas id="m-pareto-canvas"></canvas></div>
+  </section>
+
+  <!-- H: Mission list (preserved, §3.H). -->
+  <section class="card">
+    <div class="section-head">
+      <h2>Missions</h2>
+      <div class="flex gap-1" style="align-items:center">
+        <div id="m-state-filters" class="flex gap-05">
+          <button class="btn btn-sm state-btn is-active" data-state="" title="All terminal states">All</button>
+          <button class="btn btn-sm state-btn" data-state="FINISHED" title="Finished successfully">Completed</button>
+          <button class="btn btn-sm state-btn" data-state="FAILED" title="Failed">Failed</button>
+          <button class="btn btn-sm state-btn" data-state="STOPPED" title="Cancelled / stopped">Cancelled</button>
+        </div>
+        <button class="btn btn-sm" id="m-csv" title="Export the current view to CSV">CSV</button>
+      </div>
+    </div>
+    <table class="table-compact w-full">
+      <thead>
+        <tr>
+          <th title="Shingo order ID">Order</th>
+          <th title="Robot vehicle ID assigned to this mission">Robot</th>
+          <th title="Edge station that requested this order">Station</th>
+          <th title="Source node to delivery node">Route</th>
+          <th title="Terminal state of the mission">State</th>
+          <th title="Total mission duration (core created to completed)">Duration</th>
+          <th title="Time since mission completed">Completed</th>
+        </tr>
+      </thead>
+      <tbody id="mission-list"></tbody>
+    </table>
+    <div id="pagination" class="flex-center gap-1" style="margin-top:.5rem"></div>
+    <div class="text-sm text-muted" style="margin-top:.25rem">Click any row to view full mission details</div>
+  </section>
 </div>
 
-<div class="grid-4 mb-2" id="stats-row">
-  <div class="card" title="Total number of completed missions matching the current filters"><div class="stat-value" id="stat-total">-</div><div class="stat-label">Total Missions</div></div>
-  <div class="card" title="Average mission duration (core created to core completed)"><div class="stat-value" id="stat-avg">-</div><div class="stat-label">Avg Duration</div></div>
-  <div class="card" title="95th percentile duration — 95% of missions complete faster than this"><div class="stat-value" id="stat-p95">-</div><div class="stat-label">P95 Duration</div></div>
-  <div class="card" title="Percentage of missions that completed successfully vs. failed or cancelled"><div class="stat-value" id="stat-rate">-</div><div class="stat-label">Success Rate</div></div>
-</div>
-
-<div class="card">
-  <table class="table-compact w-full">
-    <thead>
-      <tr>
-        <th title="Shingo order ID">Order</th>
-        <th title="Robot vehicle ID assigned to this mission">Robot</th>
-        <th title="Edge station that requested this order">Station</th>
-        <th title="Source node to delivery node">Route</th>
-        <th title="Terminal state of the mission">State</th>
-        <th title="Total mission duration (core created to completed)">Duration</th>
-        <th title="Time since mission completed">Completed</th>
-      </tr>
-    </thead>
-    <tbody id="mission-list"></tbody>
-  </table>
-  <div id="pagination" class="flex-center gap-1" style="margin-top:.5rem"></div>
-  <div class="text-sm text-muted" style="margin-top:.25rem">Click any row to view full mission details</div>
-</div>
-
+<!-- Chart.js UMD + zoom plugin (vendored) for the trends grid + drill modal. -->
+<script src="/static/vendor/chart.umd.min.js?v={{cacheBust}}"></script>
+<script src="/static/vendor/chartjs-plugin-zoom.min.js?v={{cacheBust}}"></script>
 <script type="module" src="/static/pages/missions.js?v={{cacheBust}}"></script>
 {{end}}

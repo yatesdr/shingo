@@ -34,6 +34,7 @@ type (
 	Mission = domain.TelemetryMission
 	Filter  = domain.TelemetryFilter
 	Stats   = domain.TelemetryStats
+	StatsV2 = domain.TelemetryStatsV2
 )
 
 // InsertEvent writes a mission-event row.
@@ -79,25 +80,32 @@ func ListEvents(db *sql.DB, orderID int64) ([]*Event, error) {
 
 // UpsertMission inserts or updates a mission_telemetry summary row.
 func UpsertMission(db *sql.DB, t *Mission) error {
+	// robot_alarms_json (Q-026) is a JSONB column; coalesce the zero value to
+	// an empty array so callers that don't set it still produce valid JSON.
+	robotAlarms := t.RobotAlarmsJSON
+	if robotAlarms == "" {
+		robotAlarms = "[]"
+	}
 	_, err := db.Exec(`INSERT INTO mission_telemetry
 		(order_id, vendor_order_id, robot_id, station_id, order_type,
 		 source_node, delivery_node, terminal_state,
 		 vendor_created, vendor_completed, core_created, core_completed,
 		 duration_ms, vendor_duration_ms,
-		 blocks_json, errors_json, warnings_json, notices_json)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		 blocks_json, errors_json, warnings_json, notices_json, robot_alarms_json)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		ON CONFLICT (order_id) DO UPDATE SET
 		 robot_id=EXCLUDED.robot_id, terminal_state=EXCLUDED.terminal_state,
 		 vendor_created=EXCLUDED.vendor_created, vendor_completed=EXCLUDED.vendor_completed,
 		 core_completed=EXCLUDED.core_completed,
 		 duration_ms=EXCLUDED.duration_ms, vendor_duration_ms=EXCLUDED.vendor_duration_ms,
 		 blocks_json=EXCLUDED.blocks_json, errors_json=EXCLUDED.errors_json,
-		 warnings_json=EXCLUDED.warnings_json, notices_json=EXCLUDED.notices_json`,
+		 warnings_json=EXCLUDED.warnings_json, notices_json=EXCLUDED.notices_json,
+		 robot_alarms_json=EXCLUDED.robot_alarms_json`,
 		t.OrderID, t.VendorOrderID, t.RobotID, t.StationID, t.OrderType,
 		t.SourceNode, t.DeliveryNode, t.TerminalState,
 		t.VendorCreated, t.VendorCompleted, t.CoreCreated, t.CoreCompleted,
 		t.DurationMS, t.VendorDurationMS,
-		t.BlocksJSON, t.ErrorsJSON, t.WarningsJSON, t.NoticesJSON)
+		t.BlocksJSON, t.ErrorsJSON, t.WarningsJSON, t.NoticesJSON, robotAlarms)
 	if err != nil {
 		return fmt.Errorf("upsert mission telemetry: %w", err)
 	}
@@ -212,6 +220,107 @@ func GetStats(db *sql.DB, f Filter) (*Stats, error) {
 	}
 
 	return s, nil
+}
+
+// GetStatsV2 computes the corrected mission stats for the dashboards (plan
+// §3.A / §8 #5). Confirmed / hard-failed / skipped come straight from
+// terminal_state; the ambiguous STOPPED/cancelled rows are reclassified into
+// operator-cancel vs system-stop by joining each to its terminal
+// order_history detail (classifyStops). success_rate is
+// Confirmed/(Confirmed+Failed); cancelled and skipped are excluded.
+func GetStatsV2(db *sql.DB, f Filter) (*StatsV2, error) {
+	where, args := buildWhere(f)
+	s := &StatsV2{}
+
+	countQuery := fmt.Sprintf(`SELECT
+		COUNT(*),
+		COUNT(*) FILTER (WHERE terminal_state IN ('FINISHED','delivered','confirmed')),
+		COUNT(*) FILTER (WHERE terminal_state IN ('FAILED','failed')),
+		COUNT(*) FILTER (WHERE terminal_state IN ('SKIPPED','skipped')),
+		COUNT(*) FILTER (WHERE terminal_state IN ('STOPPED','stopped','cancelled','canceled'))
+		FROM mission_telemetry%s`, where)
+	var hardFailed, stoppedCancelled int64
+	if err := db.QueryRow(countQuery, args...).Scan(
+		&s.Total, &s.Confirmed, &hardFailed, &s.Skipped, &stoppedCancelled,
+	); err != nil {
+		return nil, err
+	}
+
+	s.Failed = hardFailed
+	if stoppedCancelled > 0 {
+		systemStops, operatorCancels, err := classifyStops(db, where, args)
+		if err != nil {
+			// Non-fatal: fall back to counting STOPPED/cancelled as cancelled
+			// (legacy behavior) rather than failing the whole stats call.
+			log.Printf("telemetry: stop classification: %v", err)
+			s.Cancelled = stoppedCancelled
+		} else {
+			s.Failed += systemStops
+			s.Cancelled = operatorCancels
+		}
+	}
+
+	if denom := s.Confirmed + s.Failed; denom > 0 {
+		s.SuccessRate = float64(s.Confirmed) / float64(denom) * 100
+	}
+
+	durWhere := where
+	if durWhere == "" {
+		durWhere = " WHERE duration_ms > 0"
+	} else {
+		durWhere += " AND duration_ms > 0"
+	}
+	durQuery := fmt.Sprintf(`SELECT
+		COALESCE(AVG(duration_ms), 0)::BIGINT,
+		COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms), 0)::BIGINT,
+		COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::BIGINT
+		FROM mission_telemetry%s`, durWhere)
+	if err := db.QueryRow(durQuery, args...).Scan(&s.AvgDurationMS, &s.P50DurationMS, &s.P95DurationMS); err != nil {
+		log.Printf("telemetry: v2 duration/percentile stats query: %v", err)
+	}
+
+	return s, nil
+}
+
+// classifyStops pulls the terminal order_history detail for every
+// STOPPED/cancelled mission in the window and splits them into
+// system-initiated stops (counted as failures) vs operator cancels, in Go
+// via domain.ClassifyTermination. The LEFT JOIN LATERAL yields exactly one
+// row per mission (detail '' when no history exists), so the two returned
+// counts always sum to the STOPPED/cancelled total.
+func classifyStops(db *sql.DB, where string, args []any) (systemStops, operatorCancels int64, err error) {
+	stopCond := "terminal_state IN ('STOPPED','stopped','cancelled','canceled')"
+	stopWhere := where
+	if stopWhere == "" {
+		stopWhere = " WHERE " + stopCond
+	} else {
+		stopWhere += " AND " + stopCond
+	}
+	q := fmt.Sprintf(`SELECT mt.terminal_state, COALESCE(oh.detail, '')
+		FROM mission_telemetry mt
+		LEFT JOIN LATERAL (
+			SELECT detail FROM order_history oh
+			WHERE oh.order_id = mt.order_id
+			ORDER BY oh.created_at DESC, oh.id DESC
+			LIMIT 1
+		) oh ON TRUE%s`, stopWhere)
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ts, detail string
+		if err := rows.Scan(&ts, &detail); err != nil {
+			return 0, 0, err
+		}
+		if domain.ClassifyTermination(ts, detail) == domain.OutcomeFailed {
+			systemStops++
+		} else {
+			operatorCancels++
+		}
+	}
+	return systemStops, operatorCancels, rows.Err()
 }
 
 func buildWhere(f Filter) (string, []any) {

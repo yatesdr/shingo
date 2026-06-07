@@ -115,5 +115,27 @@ func mapRobotStatus(r rds.RobotStatus) fleet.RobotStatus {
 		Version:        r.BasicInfo.Version,
 		TaskStatus:     r.RbkReport.TaskStatus,
 		Suspended:      false, // Phase 2: parse from undispatchable_reason
+		Alarms:         mapRobotAlarms(r.RbkReport.Alarms),
 	}
+}
+
+// mapRobotAlarms flattens the SEER rbk_report.alarms severity buckets into one
+// vendor-neutral list, tagging each with its severity (Q-026). Order is
+// fatal→error→warning→notice so the most severe lead the slice.
+func mapRobotAlarms(a rds.RbkAlarms) []fleet.RobotAlarm {
+	n := len(a.Fatals) + len(a.Errors) + len(a.Warnings) + len(a.Notices)
+	if n == 0 {
+		return nil
+	}
+	out := make([]fleet.RobotAlarm, 0, n)
+	add := func(severity string, alarms []rds.RbkAlarm) {
+		for _, al := range alarms {
+			out = append(out, fleet.RobotAlarm{Code: al.Code, Severity: severity, Desc: al.Desc})
+		}
+	}
+	add("fatal", a.Fatals)
+	add("error", a.Errors)
+	add("warning", a.Warnings)
+	add("notice", a.Notices)
+	return out
 }

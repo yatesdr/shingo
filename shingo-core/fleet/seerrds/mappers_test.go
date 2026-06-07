@@ -1,6 +1,7 @@
 package seerrds
 
 import (
+	"reflect"
 	"testing"
 
 	"shingo/protocol"
@@ -282,13 +283,36 @@ func TestMapRobotStatus_DisconnectedZeroStatus(t *testing.T) {
 	}
 }
 
+// TestMapRobotAlarms pins the Q-026 severity flattening: the four SEER
+// rbk_report.alarms buckets collapse into one list, each tagged with its
+// severity, fatal→error→warning→notice so the most severe lead.
+func TestMapRobotAlarms(t *testing.T) {
+	t.Parallel()
+	got := mapRobotAlarms(rds.RbkAlarms{
+		Errors:   []rds.RbkAlarm{{Code: 52200, Desc: "robot is blocked"}},
+		Fatals:   []rds.RbkAlarm{{Code: 50401, Desc: "battery too low"}},
+		Warnings: []rds.RbkAlarm{{Code: 54211, Desc: "low battery"}},
+	})
+	want := []fleet.RobotAlarm{
+		{Code: 50401, Severity: "fatal", Desc: "battery too low"},
+		{Code: 52200, Severity: "error", Desc: "robot is blocked"},
+		{Code: 54211, Severity: "warning", Desc: "low battery"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("mapRobotAlarms = %+v, want %+v", got, want)
+	}
+	if mapRobotAlarms(rds.RbkAlarms{}) != nil {
+		t.Error("empty alarms should map to nil, not an empty slice")
+	}
+}
+
 // TestMapRobotStatus_Zero verifies that a zero rds.RobotStatus produces a
 // fully-zero fleet.RobotStatus (no panics, no surprise defaults).
 func TestMapRobotStatus_Zero(t *testing.T) {
 	t.Parallel()
 	got := mapRobotStatus(rds.RobotStatus{})
 	var want fleet.RobotStatus
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("mapRobotStatus(zero) = %+v, want zero value", got)
 	}
 }
