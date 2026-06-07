@@ -79,6 +79,12 @@ function openEditPayloadModal(btn) {
   document.getElementById('pl-edit-uop').value = d.uop || '0';
   document.getElementById('pl-edit-notes').value = d.notes || '';
   document.getElementById('ple-manifest-rows').innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
+  // Clear any stale bin-type selection synchronously so the modal opens with
+  // nothing selected (matches the create modal); the async fetch below sets the
+  // real selection, and a fetch failure then leaves it cleared rather than a
+  // bogus option[0]. Fixes "bin type resets to 0 on edit".
+  var pleBinTypes = document.getElementById('ple-bin-types');
+  for (var bi = 0; bi < pleBinTypes.options.length; bi++) pleBinTypes.options[bi].selected = false;
   showModal('pl-edit-modal');
 
   fetch('/api/payloads/templates/manifest?id=' + plId)
@@ -169,6 +175,7 @@ delegateActions(document.body, {
     getSelectedBinTypes,
     openCreatePayloadModal,
     openEditPayloadModal,
+    removeParentElement,
     submitPLCreate,
     submitPLEdit
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

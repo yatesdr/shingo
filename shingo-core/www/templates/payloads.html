@@ -16,7 +16,7 @@
     <thead>
       <tr>
         <th>ID</th>
-        <th>Code</th>
+        <th>Payload Code</th>
         <th>UOP</th>
         <th>Bin Types</th>
         <th>Notes</th>
@@ -69,7 +69,7 @@
     <form id="pl-create-form" method="POST" action="/payloads/create" data-action-submit="submitPLCreate">
       <div class="grid grid-2">
         <div class="form-group">
-          <label>Code <span class="tooltip-trigger" title="Unique identifier used in orders">?</span></label>
+          <label>Payload Code <span class="tooltip-trigger" title="Unique identifier used in orders">?</span></label>
           <input type="text" name="code" id="plc-code" required placeholder="e.g. BRK-ROTOR-KIT">
         </div>
         <div class="form-group">
@@ -113,7 +113,7 @@
       <input type="hidden" name="id" id="pl-edit-id">
       <div class="grid grid-2">
         <div class="form-group">
-          <label>Code</label>
+          <label>Payload Code</label>
           <input type="text" name="code" id="pl-edit-code" required>
         </div>
         <div class="form-group">
