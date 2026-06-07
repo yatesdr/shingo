@@ -790,4 +790,19 @@ type UOPAdjustment struct {
 	// NewRemaining (which is ignored when Released). Reuses this Core→Edge
 	// channel rather than a separate subject. Older Edges ignore the field.
 	Released bool `json:"released,omitempty"`
+	// Bound, when true, means the bin was MOVED onto CoreNodeName in Core (admin
+	// Move mirroring a physical relocation the robot-delivery path never recorded
+	// — manual fork-truck recovery, a failed delivery that left the bin
+	// unregistered). Edge binds that node's runtime to the bin: active_bin_id =
+	// BinID, active_bin_epoch = Epoch, remaining_uop_cached = NewRemaining — so
+	// its PLC ticks resume counting the arrived bin. The dual of Released; Core
+	// sets exactly one of the two per message. Core's Move guarantees the
+	// destination held no other bin, so Edge binds ahead of its active-bin guard
+	// and overwrites any stale pointer. Older Edges ignore the field.
+	Bound bool `json:"bound,omitempty"`
+	// Epoch carries the moved bin's delta_epoch for the Bound path so the
+	// destination seeds active_bin_epoch correctly and subsequent BinUOPDeltas
+	// carry the right generation for Core's epoch-aware dedup. Meaningful only
+	// when Bound; zero on the Released / legacy-adjustment paths.
+	Epoch int64 `json:"epoch,omitempty"`
 }

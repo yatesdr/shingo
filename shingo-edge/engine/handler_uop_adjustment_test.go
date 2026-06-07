@@ -170,3 +170,110 @@ func TestHandleUOPAdjustment_ReleasedClearsActiveBin(t *testing.T) {
 		t.Error("expected EventUOPAdjusted (screen refresh) on release")
 	}
 }
+
+// TestHandleUOPAdjustment_BoundSetsActiveBin pins the move-bind path: a Bound
+// adjustment (Core moved the bin ONTO this node) must bind the node's
+// active_bin_id, epoch, and cached UOP so its PLC ticks resume counting the
+// arrived bin — even when the destination was previously blank.
+func TestHandleUOPAdjustment_BoundSetsActiveBin(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID:         pid,
+		OperatorStationID: &sid,
+		CoreNodeName:      "ALN_004",
+		Enabled:           true,
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if _, err = db.EnsureProcessNodeRuntime(nodeID); err != nil {
+		t.Fatalf("ensure runtime: %v", err)
+	}
+	// Destination starts blank — no active bin (the fork-truck-recovered node).
+
+	eng := testEngine(t, db)
+	var received bool
+	eng.Events.SubscribeTypes(func(evt Event) {
+		if _, ok := evt.Payload.(UOPAdjustedEvent); ok {
+			received = true
+		}
+	}, EventUOPAdjusted)
+
+	binID := int64(77)
+	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+		BinID:        binID,
+		CoreNodeName: "ALN_004",
+		NewRemaining: 640,
+		Epoch:        9,
+		Bound:        true,
+		Actor:        "admin",
+	})
+
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	if err != nil {
+		t.Fatalf("get runtime: %v", err)
+	}
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != binID {
+		t.Errorf("ActiveBinID = %v, want %d (bin moved in → bound)", rt.ActiveBinID, binID)
+	}
+	if rt.RemainingUOPCached != 640 {
+		t.Errorf("RemainingUOPCached = %d, want 640", rt.RemainingUOPCached)
+	}
+	if rt.ActiveBinEpoch != 9 {
+		t.Errorf("ActiveBinEpoch = %d, want 9", rt.ActiveBinEpoch)
+	}
+	if !received {
+		t.Error("expected EventUOPAdjusted (screen refresh) on bind")
+	}
+}
+
+// TestHandleUOPAdjustment_BoundOverwritesStaleBin pins the unconditional-bind
+// decision: Core's Move guarantees the destination held no other bin, so a
+// Bound adjustment overwrites any stale active_bin_id rather than bailing the
+// way the count-update / release paths do on a bin mismatch.
+func TestHandleUOPAdjustment_BoundOverwritesStaleBin(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID:         pid,
+		OperatorStationID: &sid,
+		CoreNodeName:      "ALN_005",
+		Enabled:           true,
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if _, err = db.EnsureProcessNodeRuntime(nodeID); err != nil {
+		t.Fatalf("ensure runtime: %v", err)
+	}
+	staleBinID := int64(11)
+	db.UpdateProcessNodeUOP(nodeID, 100)
+	db.SetProcessNodeRuntimeWithBin(nodeID, nil, &staleBinID, 100)
+
+	eng := testEngine(t, db)
+	movedBinID := int64(22)
+	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+		BinID:        movedBinID,
+		CoreNodeName: "ALN_005",
+		NewRemaining: 480,
+		Epoch:        3,
+		Bound:        true,
+		Actor:        "admin",
+	})
+
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	if err != nil {
+		t.Fatalf("get runtime: %v", err)
+	}
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != movedBinID {
+		t.Errorf("ActiveBinID = %v, want %d (bind overwrites stale pointer)", rt.ActiveBinID, movedBinID)
+	}
+	if rt.RemainingUOPCached != 480 {
+		t.Errorf("RemainingUOPCached = %d, want 480", rt.RemainingUOPCached)
+	}
+}
