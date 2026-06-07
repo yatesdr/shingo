@@ -73,20 +73,46 @@ type storageCandidate struct {
 	node     *nodes.Node
 	hasMatch bool
 	count    int
+	depth    int // lane/slot depth; higher = further back. Packs deepest-first.
 }
 
-// bestStorageCandidate picks the best slot: prefer consolidation, then emptiest.
+// bestStorageCandidate picks the best slot. Precedence:
+//  1. consolidate with a matching payload (hasMatch),
+//  2. pack to the back — prefer the deeper lane/slot (higher depth),
+//  3. then the emptiest lane (lowest count) as a final tiebreak.
+//
+// Depth packing applies under LKND too: LKND vs DPTH differ only in which lane
+// wins, never in whether the deepest slot is preferred. Before, LKND dropped
+// bins in the emptiest lane regardless of depth, which read on the floor as
+// "picks the most-open spot instead of packing to the back."
 func bestStorageCandidate(candidates []storageCandidate) *nodes.Node {
 	if len(candidates) == 0 {
 		return nil
 	}
 	best := candidates[0]
 	for _, c := range candidates[1:] {
-		if c.hasMatch && !best.hasMatch {
-			best = c
-		} else if c.hasMatch == best.hasMatch && c.count < best.count {
+		if candidateBetter(c, best) {
 			best = c
 		}
 	}
 	return best.node
+}
+
+func candidateBetter(c, best storageCandidate) bool {
+	if c.hasMatch != best.hasMatch {
+		return c.hasMatch // consolidation wins
+	}
+	if c.depth != best.depth {
+		return c.depth > best.depth // deeper (further back) wins — pack to the back
+	}
+	return c.count < best.count // emptiest as a final tiebreak
+}
+
+// nodeDepth returns a node's configured depth, treating unset (nil) as 0
+// (front-most), so depth-ordered lanes pack ahead of undepthed ones.
+func nodeDepth(n *nodes.Node) int {
+	if n != nil && n.Depth != nil {
+		return *n.Depth
+	}
+	return 0
 }

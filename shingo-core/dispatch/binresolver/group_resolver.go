@@ -411,7 +411,7 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 				}
 			}
 
-			candidates = append(candidates, storageCandidate{node: slot, hasMatch: hasMatch, count: count})
+			candidates = append(candidates, storageCandidate{node: slot, hasMatch: hasMatch, count: count, depth: nodeDepth(child)})
 		} else if !child.IsSynthetic {
 			if child.ClaimedBy != nil {
 				continue // slot already claimed by another order's dispatch
@@ -444,7 +444,7 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 				}
 			}
 
-			candidates = append(candidates, storageCandidate{node: child, hasMatch: hasMatch, count: count})
+			candidates = append(candidates, storageCandidate{node: child, hasMatch: hasMatch, count: count, depth: nodeDepth(child)})
 		}
 	}
 

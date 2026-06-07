@@ -282,6 +282,38 @@ func TestLKND_EmptiestWhenNoMatch(t *testing.T) {
 	}
 }
 
+// LKND packs to the back: among equal-consolidation lanes it prefers the
+// deeper (further-back) lane — even when that lane is NOT the emptiest. This
+// is the "packing happens even on LKND" rule: depth wins ahead of the
+// emptiest-lane tiebreak. (Lanes with no configured depth stay at 0, so the
+// old emptiest-first behavior is preserved for them — see EmptiestWhenNoMatch.)
+func TestLKND_PacksDeepestLaneAheadOfEmptiest(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	group := ngrpNode(1, "grp")
+	front := laneChild(10, "front")
+	back := laneChild(11, "back")
+	d1, d5 := 1, 5
+	front.Depth = &d1
+	back.Depth = &d5
+	f.children[group.ID] = []*nodes.Node{front, back}
+	f.storeSlot[front.ID] = slotInLane(100, "front-slot")
+	f.storeSlot[back.ID] = slotInLane(101, "back-slot")
+	// front is emptier than back — old LKND would pick front. Depth packing
+	// overrides: the deeper (back) lane wins despite holding more bins.
+	f.laneBinCounts[front.ID] = 0
+	f.laneBinCounts[back.ID] = 2
+
+	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	got, err := gr.ResolveStore(group, "P1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Node.Name != "back-slot" {
+		t.Fatalf("LKND should pack the deeper lane (back-slot); got %s", got.Node.Name)
+	}
+}
+
 // LKND skips lanes whose effective payload set excludes the request.
 func TestLKND_SkipsLaneWithPayloadMismatch(t *testing.T) {
 	t.Parallel()
