@@ -161,6 +161,12 @@ func (db *DB) CountActiveOrdersByDeliveryNode(nodeName string) (int, error) {
 	return orders.CountActiveByDeliveryNode(db.DB, nodeName)
 }
 
+// CountActiveOrders returns the number of non-terminal orders (dashboard
+// "in flight" KPI).
+func (db *DB) CountActiveOrders() (int, error) {
+	return orders.CountActive(db.DB)
+}
+
 // ListDispatchedVendorOrderIDs returns vendor order IDs for all non-terminal
 // orders.
 func (db *DB) ListDispatchedVendorOrderIDs() ([]string, error) {

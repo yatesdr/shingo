@@ -121,6 +121,13 @@ func (s *OrderService) ListActiveOrders() ([]*orders.Order, error) {
 	return s.db.ListActiveOrders()
 }
 
+// CountActiveOrders returns the count of non-terminal orders — the dashboard
+// "in flight" KPI (plan §3.A / §15.A). Cheaper than ListActiveOrders when
+// only the number is needed.
+func (s *OrderService) CountActiveOrders() (int, error) {
+	return s.db.CountActiveOrders()
+}
+
 // ListOrders returns orders filtered by status (empty string = all),
 // capped at limit rows. Absorbed from engine_db_methods.go as part of
 // the www-handler service migration (PR 3a.3a).

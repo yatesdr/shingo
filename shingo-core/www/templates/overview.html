@@ -1,0 +1,67 @@
+{{define "content"}}
+<div class="ops-overview">
+
+  <!-- Sticky global filter bar (plan §2 / §15). Drives every section. -->
+  <div class="filter-bar ops-filter-bar">
+    <h1 class="ops-title">Operations Overview</h1>
+    <select id="ops-range" title="Snapshot window">
+      <option value="today">Today</option>
+      <option value="7d">Last 7 days</option>
+      <option value="30d">Last 30 days</option>
+    </select>
+    <select id="ops-station" title="Station"><option value="">All stations</option></select>
+    <select id="ops-robot" title="Robot"><option value="">All robots</option></select>
+    <button class="btn btn-sm" id="ops-refresh" title="Refresh">&#x21bb;</button>
+    <span class="live-pill" id="ops-live" title="Live SSE connection">&#9675; offline</span>
+    <span class="demo-badge" id="ops-demo-badge" style="display:none">DEMO MODE &mdash; synthetic data</span>
+  </div>
+
+  <!-- A: Hero KPIs + conditional alerts banner (§15.A) -->
+  <section id="ops-hero" class="mb-4">
+    <div id="ops-alerts"></div>
+    <div class="grid-kpi" id="ops-kpi-grid">
+      <div class="dash-empty">Loading KPIs&hellip;</div>
+    </div>
+  </section>
+
+  <!-- B: Mission trends (§15.B) -->
+  <section class="card" id="ops-trends">
+    <div class="section-head">
+      <h2>Mission Trends</h2>
+      <div class="range-toggle" id="ops-trend-toggle"></div>
+    </div>
+    <div class="grid grid-2" id="ops-trend-grid">
+      <div class="dash-empty">Loading trends&hellip;</div>
+    </div>
+  </section>
+
+  <!-- C: Robot fleet — three-layer utilization framing (§15.C) -->
+  <section class="card" id="ops-fleet">
+    <div class="section-head">
+      <h2>Robot Fleet</h2>
+      <button class="view-detail" id="ops-fleet-detail" data-action="openDrill:fleet_load">View detail &rarr;</button>
+    </div>
+    <div id="ops-fleet-body">
+      <div class="dash-empty">Loading fleet&hellip;</div>
+    </div>
+  </section>
+
+  <!-- D: Plant footprint — under-management metrics (§15.D) -->
+  <section class="card" id="ops-footprint">
+    <div class="section-head">
+      <h2>Plant Footprint</h2>
+      <button class="view-detail" id="ops-footprint-detail" data-action="openDrill:footprint">View detail &rarr;</button>
+    </div>
+    <div id="ops-footprint-body">
+      <div class="dash-empty">Loading footprint&hellip;</div>
+    </div>
+  </section>
+
+</div>
+
+<!-- Chart.js UMD + zoom plugin, vendored for air-gapped deploys (§6). Plain
+     <script> tags set window.Chart before the deferred page module runs. -->
+<script src="/static/vendor/chart.umd.min.js?v={{cacheBust}}"></script>
+<script src="/static/vendor/chartjs-plugin-zoom.min.js?v={{cacheBust}}"></script>
+<script type="module" src="/static/pages/overview.js?v={{cacheBust}}"></script>
+{{end}}

@@ -322,6 +322,16 @@ func ListActive(db *sql.DB) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
+// CountActive returns the number of orders in non-terminal statuses, using
+// the same WHERE clause as ListActive so the count matches the list exactly.
+// Backs the dashboard "in flight" KPI (plan §3.A / §15.A).
+func CountActive(db *sql.DB) (int, error) {
+	var n int
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE status NOT IN (%s) AND %s`,
+		protocol.TerminalStatusSQLList(), adminListExcludeTypeFilter)).Scan(&n)
+	return n, err
+}
+
 // ListActiveBoard returns active non-terminal orders with an assigned robot,
 // ordered oldest-first for the task board display.
 func ListActiveBoard(db *sql.DB) ([]*Order, error) {
