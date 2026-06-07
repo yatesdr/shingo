@@ -613,9 +613,19 @@ let _backdropInstalled = false;
 export function installBackdropClose() {
     if (_backdropInstalled) return;
     _backdropInstalled = true;
+    // Track where the pointer was pressed. A click whose target is the overlay
+    // can be the tail of a text-selection drag that STARTED inside the modal
+    // (e.g. selecting text in an input) and released on the backdrop — the
+    // browser retargets that click to the common ancestor (the overlay), which
+    // would otherwise dismiss the modal mid-selection. Only treat it as a
+    // backdrop dismiss when the press ALSO began on the overlay itself.
+    let downTarget = null;
+    const recordDown = (evt) => { downTarget = evt.target; };
+    document.addEventListener('mousedown', recordDown, true);
+    document.addEventListener('touchstart', recordDown, true);
     document.addEventListener('click', (evt) => {
         const t = evt.target;
-        if (t && t instanceof Element && t.hasAttribute('data-backdrop-close')) {
+        if (t && t instanceof Element && t.hasAttribute('data-backdrop-close') && downTarget === t) {
             t.classList.remove('active');
         }
     });
