@@ -885,7 +885,7 @@ func v27Dashboards(tx *sql.Tx) error {
 // event log (inventory refactor §16 PR 2). Adds node_id / station / detail
 // JSONB and a (op, applied_at DESC) index for op-filtered timelines such as
 // the footprint loaded/unloaded velocity query (§16 PR 1). Additive only —
-// existing rows get NULL node_id/detail and '' station. ADD COLUMN IF NOT
+// existing rows get NULL node_id/detail and ” station. ADD COLUMN IF NOT
 // EXISTS is apply-once-idempotent.
 func v28BinUOPAuditEnrich(tx *sql.Tx) error {
 	stmts := []string{

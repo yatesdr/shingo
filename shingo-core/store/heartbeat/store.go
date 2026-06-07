@@ -67,7 +67,7 @@ func ListEvents(db *sql.DB, cellID string, since, until time.Time) ([]PartEvent,
 }
 
 // GetTarget returns the configured target cycle for a cell/payload, falling
-// back to the cell-level default (payload_code='') and then (0, false).
+// back to the cell-level default (payload_code=”) and then (0, false).
 func GetTarget(db *sql.DB, cellID, payloadCode string) (time.Duration, bool) {
 	var ms int64
 	err := db.QueryRow(`SELECT target_cycle_ms FROM cell_targets WHERE cell_id=$1 AND payload_code=$2`,

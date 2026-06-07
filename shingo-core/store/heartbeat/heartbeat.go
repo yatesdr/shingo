@@ -29,11 +29,11 @@ type PartEvent struct {
 // Cell live-state buckets (plan §12). Derived from time-since-last-part vs the
 // target cycle.
 const (
-	StateRunning   = "running"   // within 1.2× target
-	StateSlowed    = "slowed"    // 1.2–3× target
+	StateRunning   = "running"    // within 1.2× target
+	StateSlowed    = "slowed"     // 1.2–3× target
 	StateMicroStop = "micro-stop" // 3–30× target
-	StateStopped   = "stopped"   // > 30× target
-	StateNoData    = "no-data"   // no events in window
+	StateStopped   = "stopped"    // > 30× target
+	StateNoData    = "no-data"    // no events in window
 )
 
 // Thresholds are the state-boundary multipliers of the target cycle

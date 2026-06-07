@@ -107,7 +107,7 @@ type BinUOPContext struct {
 // when not applicable. Both columns default to ” at the schema level.
 //
 // ctx carries the §16 enrichment fields (node_id/station/detail); pass
-// audit.BinUOPContext{} when none apply (existing rows get NULL/'' there).
+// audit.BinUOPContext{} when none apply (existing rows get NULL/” there).
 func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int, op, source string, orderID *int64, payloadCode, actor string, ctx BinUOPContext) error {
 	var before any
 	if beforeUOP != nil {

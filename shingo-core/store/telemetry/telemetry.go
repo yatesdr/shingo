@@ -286,7 +286,7 @@ func GetStatsV2(db *sql.DB, f Filter) (*StatsV2, error) {
 // STOPPED/cancelled mission in the window and splits them into
 // system-initiated stops (counted as failures) vs operator cancels, in Go
 // via domain.ClassifyTermination. The LEFT JOIN LATERAL yields exactly one
-// row per mission (detail '' when no history exists), so the two returned
+// row per mission (detail ” when no history exists), so the two returned
 // counts always sum to the STOPPED/cancelled total.
 func classifyStops(db *sql.DB, where string, args []any) (systemStops, operatorCancels int64, err error) {
 	stopCond := "terminal_state IN ('STOPPED','stopped','cancelled','canceled')"

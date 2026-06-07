@@ -114,12 +114,12 @@ type TelemetryStats struct {
 // /api/missions/stats so existing consumers (current missions.js) keep
 // seeing the old number until they migrate.
 type TelemetryStatsV2 struct {
-	Total         int64   `json:"total"`         // all terminal rows in the window
-	Confirmed     int64   `json:"confirmed"`     // FINISHED / delivered / confirmed
-	Failed        int64   `json:"failed"`        // hard failures + system-initiated stops
-	Cancelled     int64   `json:"cancelled"`     // operator-initiated cancels only
-	Skipped       int64   `json:"skipped"`       // excluded from everything; reported for visibility
-	SuccessRate   float64 `json:"success_rate"`  // Confirmed/(Confirmed+Failed)*100, 0 when denom 0
+	Total         int64   `json:"total"`        // all terminal rows in the window
+	Confirmed     int64   `json:"confirmed"`    // FINISHED / delivered / confirmed
+	Failed        int64   `json:"failed"`       // hard failures + system-initiated stops
+	Cancelled     int64   `json:"cancelled"`    // operator-initiated cancels only
+	Skipped       int64   `json:"skipped"`      // excluded from everything; reported for visibility
+	SuccessRate   float64 `json:"success_rate"` // Confirmed/(Confirmed+Failed)*100, 0 when denom 0
 	AvgDurationMS int64   `json:"avg_duration_ms"`
 	P50DurationMS int64   `json:"p50_duration_ms"`
 	P95DurationMS int64   `json:"p95_duration_ms"`
@@ -174,12 +174,12 @@ type FailureReason struct {
 // groups on them.
 const (
 	FailEmergency   = "Emergency stop"
-	FailMotor       = "Motor fault"     // 5213x GVDD/FET/VDD motor faults (Q-026)
-	FailBattery     = "Battery"         // 524xx/525xx connect/disconnect/low/temp
-	FailHardware    = "Hardware fault"  // PGV/fork-encoder/fork-pick — mechanical, distinct from blocked
-	FailComms       = "Comms"           // laser data invalid / network
-	FailPathPlan    = "Path planning"   // path-plan / charger faults
-	FailBlocked     = "Robot blocked"   // out-of-path / slipping / skid
+	FailMotor       = "Motor fault"    // 5213x GVDD/FET/VDD motor faults (Q-026)
+	FailBattery     = "Battery"        // 524xx/525xx connect/disconnect/low/temp
+	FailHardware    = "Hardware fault" // PGV/fork-encoder/fork-pick — mechanical, distinct from blocked
+	FailComms       = "Comms"          // laser data invalid / network
+	FailPathPlan    = "Path planning"  // path-plan / charger faults
+	FailBlocked     = "Robot blocked"  // out-of-path / slipping / skid
 	FailSourceEmpty = "Source bin empty"
 	FailManifest    = "Manifest mismatch"
 	FailTimeout     = "Timeout"
