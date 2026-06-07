@@ -530,6 +530,25 @@ func (h *Handlers) binMove(b *domain.Bin, params json.RawMessage) error {
 		FromNodeID:  derefInt64(b.NodeID),
 		ToNodeID:    p.NodeID,
 	}})
+
+	// Tell Edge to release the bin from its OLD node's runtime so that node
+	// stops attributing PLC consumption to a bin that has moved away (the
+	// "moved bin keeps counting down" bug). Reuses the UOP-adjustment Core→Edge
+	// channel with Released=true; the Edge handler's active-bin guard ensures
+	// only the node still pointing at this bin clears it. Broadcast like
+	// binRecordCount — Core shouldn't pre-resolve a node-scoped change to one
+	// station. (b.NodeName is still the OLD node here; Move() doesn't mutate b.)
+	if b.NodeName != "" {
+		if err := h.orchestration.SendDataToEdge(protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
+			BinID:        b.ID,
+			CoreNodeName: b.NodeName,
+			Released:     true,
+			Actor:        protocol.AuditActorUI,
+			AdjustedAt:   time.Now().UTC(),
+		}); err != nil {
+			log.Printf("bin_move: release-from-edge broadcast bin %d (old node %s): %v", b.ID, b.NodeName, err)
+		}
+	}
 	return nil
 }
 

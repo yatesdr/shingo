@@ -784,4 +784,10 @@ type UOPAdjustment struct {
 	NewRemaining int       `json:"new_remaining"`
 	Actor        string    `json:"actor"`
 	AdjustedAt   time.Time `json:"adjusted_at"`
+	// Released, when true, means the bin was MOVED off CoreNodeName in Core
+	// (admin Move). Edge clears that node's active_bin_id so its PLC ticks stop
+	// attributing consumption to a bin that has left, instead of applying
+	// NewRemaining (which is ignored when Released). Reuses this Core→Edge
+	// channel rather than a separate subject. Older Edges ignore the field.
+	Released bool `json:"released,omitempty"`
 }
