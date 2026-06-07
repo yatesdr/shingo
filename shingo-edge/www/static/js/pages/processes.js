@@ -143,10 +143,10 @@ function closeStyleModal() {
 }
 
 function editStyle() {
-    // Invoked via data-action="editStyle" with data-style="{{json .}}"
+    // Invoked via data-action="editStyle" with data-style-json="{{json .}}"
     // on the clicked button. Parse the style JSON off the element.
     var style = {};
-    try { style = JSON.parse(this.dataset.style || '{}') || {}; }
+    try { style = JSON.parse(this.dataset.styleJson || '{}') || {}; }
     catch (e) { style = {}; }
     resetStyleForm();
     document.getElementById('style-id').value = style.id;
@@ -211,9 +211,9 @@ async function setActiveStyle(id) {
 var _cloneSrcStyleID = 0;
 
 function openCloneStyleModal() {
-    // Invoked via data-action with data-style="{{json .}}" on the clicked row.
+    // Invoked via data-action with data-style-json="{{json .}}" on the clicked row.
     var style = {};
-    try { style = JSON.parse(this.dataset.style || '{}') || {}; }
+    try { style = JSON.parse(this.dataset.styleJson || '{}') || {}; }
     catch (e) { style = {}; }
     _cloneSrcStyleID = style.id || 0;
     document.getElementById('clone-style-src-name').textContent = style.name || '';

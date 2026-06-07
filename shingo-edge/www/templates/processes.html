@@ -120,8 +120,8 @@
                                 </td>
                                 <td style="white-space:nowrap">
                                     {{if $.ActiveProcess.ActiveStyleID}}{{if eq .ID (deref $.ActiveProcess.ActiveStyleID)}}{{else}}<button class="btn btn-sm" data-action="setActiveStyle:{{.ID}}">Set Active</button>{{end}}{{else}}<button class="btn btn-sm btn-primary" data-action="setActiveStyle:{{.ID}}">Set Active</button>{{end}}
-                                    <button class="btn btn-sm" data-action="editStyle" data-style="{{json .}}">Edit</button>
-                                    <button class="btn btn-sm" data-action="openCloneStyleModal" data-style="{{json .}}">Clone</button>
+                                    <button class="btn btn-sm" data-action="editStyle" data-style-json="{{json .}}">Edit</button>
+                                    <button class="btn btn-sm" data-action="openCloneStyleModal" data-style-json="{{json .}}">Clone</button>
                                     <button class="btn btn-sm btn-danger" data-action="deleteStyle:{{.ID}}">Delete</button>
                                 </td>
                             </tr>
