@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"shingo/protocol"
 
 	"shingocore/domain"
 	"shingocore/store/audit"
+	"shingocore/store/bins"
 )
 
 // BinManifestService manages bin manifest lifecycle mutations.
@@ -98,7 +100,7 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, op, source
 		WHERE id=$1 RETURNING delta_epoch`, binID).Scan(&newEpoch); err != nil {
 		return 0, fmt.Errorf("clear manifest bin %d: %w", binID, err)
 	}
-	if err := audit.AppendBinUOP(tx, binID, before, 0, op, source, nil, "", ""); err != nil {
+	if err := audit.AppendBinUOP(tx, binID, before, 0, op, source, nil, "", "", audit.BinUOPContext{}); err != nil {
 		return 0, err
 	}
 	return newEpoch, nil
@@ -183,7 +185,7 @@ func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payload
 	}
 	if err := audit.AppendBinUOP(tx, binID, before, uop,
 		audit.OpSetForProduction, "service/bin_manifest.go:SetForProduction",
-		nil, payloadCode, ""); err != nil {
+		nil, payloadCode, "", audit.BinUOPContext{}); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -192,12 +194,35 @@ func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payload
 	return newEpoch, nil
 }
 
-// Confirm marks a bin's manifest as confirmed by an operator or automated process.
+// Confirm marks a bin's manifest as confirmed by an operator or automated
+// process. Writes a same-tx manifest_confirmed bin_uop_audit row so the
+// confirm is no longer a silent mutation (§16 PR 3); detail carries loaded_at.
+// after_uop is the bin's unchanged uop_remaining (confirm records a lifecycle
+// event, not a count change).
 func (s *BinManifestService) Confirm(binID int64, producedAt string) error {
-	if err := s.db.ConfirmBinManifest(binID, producedAt); err != nil {
-		return fmt.Errorf("confirm manifest bin %d: %w", binID, err)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
 	}
-	return nil
+	defer tx.Rollback()
+
+	before, err := readBinUOPInTx(tx, binID)
+	if err != nil {
+		return err
+	}
+	loadedAt, uop, payloadCode, err := bins.ConfirmManifestTx(tx, binID, producedAt)
+	if err != nil {
+		return err
+	}
+	detail, _ := json.Marshal(struct {
+		LoadedAt time.Time `json:"loaded_at"`
+	}{loadedAt})
+	if err := audit.AppendBinUOP(tx, binID, before, uop,
+		audit.OpManifestConfirmed, "service/bin_manifest.go:Confirm",
+		nil, payloadCode, "", audit.BinUOPContext{Detail: detail}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Unconfirm clears a bin's manifest confirmation flag. Absorbed from
@@ -239,7 +264,7 @@ func (s *BinManifestService) ClearAndClaim(binID, orderID int64) error {
 	}
 	if err := audit.AppendBinUOP(tx, binID, before, 0,
 		audit.OpClearAndClaim, "service/bin_manifest.go:ClearAndClaim",
-		&orderID, "", ""); err != nil {
+		&orderID, "", "", audit.BinUOPContext{}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -272,7 +297,7 @@ func (s *BinManifestService) SyncUOPAndClaim(binID, orderID int64, remainingUOP 
 	}
 	if err := audit.AppendBinUOP(tx, binID, before, remainingUOP,
 		audit.OpSyncUOPAndClaim, "service/bin_manifest.go:SyncUOPAndClaim",
-		&orderID, "", ""); err != nil {
+		&orderID, "", "", audit.BinUOPContext{}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -432,7 +457,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		}
 		if err := audit.AppendBinUOP(tx, binID, before, 0,
 			op, sourceLabel,
-			&orderID, "", actor); err != nil {
+			&orderID, "", actor, audit.BinUOPContext{}); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -489,7 +514,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	}
 	if err := audit.AppendBinUOP(tx, binID, before, *remainingUOP,
 		op, sourceLabel,
-		&orderID, "", actor); err != nil {
+		&orderID, "", actor, audit.BinUOPContext{}); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

@@ -2,6 +2,7 @@ package audit
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 )
 
@@ -21,6 +22,13 @@ const (
 	OpReleasedPartial         = "released_partial"
 	OpReleasedEmptyFallback   = "released_empty_fallback"
 	OpReleasedPartialFallback = "released_partial_fallback"
+
+	// OpManifestConfirmed tags the operator/automated confirm step that sets
+	// bins.manifest_confirmed + loaded_at. Previously a silent mutation with
+	// no audit row (the invisible-event bug, §16 PR 3). detail JSONB carries
+	// {"loaded_at": …}; after_uop = the bin's uop at confirm time (no count
+	// change — it records the lifecycle event, not a UOP write).
+	OpManifestConfirmed = "manifest_confirmed"
 
 	// OpReleasedCaptureEmpty tags the manifest-clear that fires
 	// inside ApplyBinUOPDelta when a capture_reduction delta drives
@@ -72,6 +80,17 @@ type BinUOPExecer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
+// BinUOPContext carries the §16-enrichment fields for a bin_uop_audit row:
+// the node the bin was at, its station, and a freeform JSON detail blob.
+// Grouped into a struct (rather than three more positional params on an
+// already-wide signature) so callers that don't populate them pass the zero
+// value, audit.BinUOPContext{}. Inventory refactor §16 PR 2.
+type BinUOPContext struct {
+	NodeID  *int64
+	Station string
+	Detail  json.RawMessage
+}
+
 // AppendBinUOP records a single write to bins.uop_remaining. Called from
 // inside the same transaction as the bin update; the caller is
 // responsible for ordering (read-old → update → audit → commit) so the
@@ -86,7 +105,10 @@ type BinUOPExecer interface {
 //
 // payloadCode and actor are passed verbatim; empty string is acceptable
 // when not applicable. Both columns default to ” at the schema level.
-func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int, op, source string, orderID *int64, payloadCode, actor string) error {
+//
+// ctx carries the §16 enrichment fields (node_id/station/detail); pass
+// audit.BinUOPContext{} when none apply (existing rows get NULL/'' there).
+func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int, op, source string, orderID *int64, payloadCode, actor string, ctx BinUOPContext) error {
 	var before any
 	if beforeUOP != nil {
 		before = *beforeUOP
@@ -95,10 +117,18 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 	if orderID != nil {
 		ord = *orderID
 	}
+	var node any
+	if ctx.NodeID != nil {
+		node = *ctx.NodeID
+	}
+	var detail any
+	if len(ctx.Detail) > 0 {
+		detail = []byte(ctx.Detail)
+	}
 	if _, err := execer.Exec(`INSERT INTO bin_uop_audit
-		(bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		binID, before, afterUOP, op, source, ord, payloadCode, actor); err != nil {
+		(bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, node_id, station, detail)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		binID, before, afterUOP, op, source, ord, payloadCode, actor, node, ctx.Station, detail); err != nil {
 		return fmt.Errorf("append bin_uop_audit bin=%d op=%q: %w", binID, op, err)
 	}
 	return nil

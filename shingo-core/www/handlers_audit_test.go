@@ -34,7 +34,7 @@ func TestApiAuditBinTimeline(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		v := i * 5
 		if err := audit.AppendBinUOP(db.DB, bin.ID, &v, v+1,
-			audit.OpReleasedPartial, "test", nil, sd.Payload.Code, "OPERATOR-AB"); err != nil {
+			audit.OpReleasedPartial, "test", nil, sd.Payload.Code, "OPERATOR-AB", audit.BinUOPContext{}); err != nil {
 			t.Fatalf("seed audit %d: %v", i, err)
 		}
 	}
@@ -85,7 +85,7 @@ func TestApiAuditOperatorActivity(t *testing.T) {
 
 	v := 10
 	if err := audit.AppendBinUOP(db.DB, bin.ID, &v, 8,
-		audit.OpReleasedPartial, "test", nil, "", "OP-OPER-1"); err != nil {
+		audit.OpReleasedPartial, "test", nil, "", "OP-OPER-1", audit.BinUOPContext{}); err != nil {
 		t.Fatalf("seed audit: %v", err)
 	}
 
@@ -128,7 +128,7 @@ func TestApiAuditStationOverrides(t *testing.T) {
 	}
 	v2 := 7
 	if err := audit.AppendBinUOP(db.DB, bin.ID, &v2, 6,
-		audit.OpReleasedPartial, "test", nil, sd.Payload.Code, "STATION-X"); err != nil {
+		audit.OpReleasedPartial, "test", nil, sd.Payload.Code, "STATION-X", audit.BinUOPContext{}); err != nil {
 		t.Fatalf("seed regular: %v", err)
 	}
 
