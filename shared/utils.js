@@ -755,3 +755,266 @@ function cellSortValue(row, columnIndex) {
     if (td.hasAttribute('data-sort-value')) return td.getAttribute('data-sort-value');
     return (td.textContent || '').trim();
 }
+
+// ─── Dashboard primitives (mission-telemetry plan §6) ─────────────────────
+//
+// Four additions take the micro-framework from "good for page-scoped
+// scripts" to "good for cross-page shared components driven by live event
+// streams": reconcileList (keyed list diffing), createStore (observable for
+// the global filter bar), and onSSE (single-connection multi-subscriber SSE
+// bus). The fourth piece — the static/components/ directory — lives in Core.
+
+// reconcileList — keyed create-or-update-or-remove for SSE-driven lists.
+//
+// Manages ALL direct children of `container` as a keyed set. For each item
+// (in order) it looks up the existing node by key, creates one via
+// create(item, key) if absent or updates it via update(node, item, key) if
+// present, and reorders nodes to match `items`. Nodes whose key is absent
+// from `items` are removed, and destroy(node, key) is called first so the
+// node can release resources it owns — Chart.js instances, intervals,
+// animation loops, onSSE unsubscribes. The destroy callback is mandatory
+// for any item that owns such resources.
+//
+//   reconcileList(grid, robots, {
+//     key:     r => r.vehicle_id,
+//     create:  r => createRobotTile(r),
+//     update:  (node, r) => updateRobotTile(node, r),
+//     destroy: node => { if (node.__chart) node.__chart.destroy(); },
+//     nodeKey: node => node.dataset.name,   // optional: adopt server DOM
+//   });
+//
+// `nodeKey` (optional) lets the first reconcile adopt server-rendered
+// children in place instead of rebuilding them (avoids a flash on pages
+// whose initial list is template-rendered, e.g. /robots).
+//
+// NOT for the /heartbeat plant-rhythm strip — that is a streaming animation
+// over a fixed pre-allocated ring buffer, not a keyed list (see §13).
+//
+// Assumes every direct child of `container` is a managed list item; give it
+// a dedicated container, not one that also holds headers or other chrome.
+export function reconcileList(container, items, opts) {
+    if (!container || !opts) return;
+    const key = opts.key;
+    const create = opts.create;
+    const update = opts.update;
+    const destroy = opts.destroy;
+    let map = container.__reconcileMap;
+    if (!map) {
+        map = new Map();
+        container.__reconcileMap = map;
+        if (typeof opts.nodeKey === 'function') {
+            const kids = Array.prototype.slice.call(container.children);
+            for (let i = 0; i < kids.length; i++) {
+                const k = opts.nodeKey(kids[i]);
+                if (k !== null && k !== undefined) map.set(String(k), kids[i]);
+            }
+        }
+    }
+    const seen = new Set();
+    let prev = null;
+    const list = items || [];
+    for (let i = 0; i < list.length; i++) {
+        const item = list[i];
+        const k = String(key(item));
+        if (seen.has(k)) continue; // defensive de-dupe on duplicate keys
+        seen.add(k);
+        let node = map.get(k);
+        if (!node) {
+            node = create(item, k);
+            if (!node) continue;
+            map.set(k, node);
+        } else if (update) {
+            update(node, item, k);
+        }
+        const ref = prev ? prev.nextSibling : container.firstChild;
+        if (node !== ref) container.insertBefore(node, ref);
+        prev = node;
+    }
+    map.forEach((node, k) => {
+        if (seen.has(k)) return;
+        map.delete(k);
+        if (destroy) {
+            try { destroy(node, k); } catch (e) { console.error('reconcileList destroy', e); }
+        }
+        if (node.parentNode) node.parentNode.removeChild(node);
+    });
+}
+
+// createStore — minimal observable backing the global filter bar.
+//
+//   const store = createStore({ range: 'today', station: '', robot: '' });
+//   const off = store.subscribe(s => rerender(s));   // returns unsubscribe
+//   store.set({ station: 'STN-A' });                 // shallow-merge + notify
+//   store.get();                                     // current snapshot
+//
+// set() shallow-merges the patch and notifies every subscriber with the new
+// state. subscribe() returns an unsubscribe fn; sections MUST call it on
+// teardown/re-render or the subscriber set grows on every filter change
+// (slow leak). Wrap re-fetching subscribers in debounce() so one filter
+// toggle doesn't fire N simultaneous HTTP requests.
+export function createStore(initial) {
+    let state = Object.assign({}, initial || {});
+    const subs = new Set();
+    return {
+        get() { return state; },
+        set(patch) {
+            state = Object.assign({}, state, patch);
+            const snapshot = state;
+            Array.prototype.forEach.call(Array.from(subs), (fn) => {
+                try { fn(snapshot); } catch (e) { console.error('store subscriber', e); }
+            });
+        },
+        subscribe(fn) {
+            subs.add(fn);
+            return () => { subs.delete(fn); };
+        },
+    };
+}
+
+// onSSE — single-connection, multi-subscriber SSE event bus.
+//
+//   const off = onSSE('robot-update', data => { ... });   // returns unsubscribe
+//   off();
+//
+// Today's app.js dispatches each SSE type to a single window.onXxx global,
+// so two sections that both need 'order-update' silently clobber each other.
+// This bus keeps a Map<type, Set<handler>> and fans out to every subscriber,
+// over ONE EventSource per tab regardless of how many sections subscribe.
+//
+// The connection is topic-filtered: it requests /events?topics=<subscribed
+// types> so the server (AddClientFiltered) never streams event types nobody
+// on this tab asked for — keeping a /missions tab off the per-pulse
+// cell-heartbeat firehose and a kiosk off admin-only events. Subscribing a
+// new type after connect transparently reopens with the widened topic set
+// (coalesced onto a microtask so a burst of page-load subscribes is one
+// reopen).
+//
+// On every (re)connect the bus dispatches a synthetic 'connected' event, so
+// sections can re-fetch their snapshot and close the gap of events missed
+// while disconnected (§13). Build-id mismatch shows the shared refresh
+// banner. handler receives (parsedJSON, rawEvent).
+//
+// NOTE: coexists with app.js's legacy auto-connecting IIFE during the
+// transition; a chrome page using onSSE has two EventSources until the IIFE
+// is retired. See slice-implementation-questions Q-002.
+const _busHandlers = new Map(); // type -> Set<fn>
+let _busES = null;
+let _busTopics = null;          // topics the live ES was opened with
+let _busSeenBuild = null;
+let _busReconnectDelay = 1000;
+let _busClosed = false;
+let _busSyncScheduled = false;
+
+function _busDesiredTopics() {
+    // 'connected'/'disconnected' are synthetic (connected is the server's
+    // on-connect frame; disconnected is emitted locally on error) — never
+    // requested as a topic filter.
+    const out = [];
+    _busHandlers.forEach((_set, type) => {
+        if (type !== 'connected' && type !== 'disconnected') out.push(type);
+    });
+    return out.sort().join(',');
+}
+
+function _busDispatch(type, ev) {
+    const set = _busHandlers.get(type);
+    if (!set || set.size === 0) return;
+    let parsed = null;
+    if (ev && typeof ev.data === 'string' && ev.data.length) {
+        try { parsed = JSON.parse(ev.data); }
+        catch (err) { console.error('onSSE parse ' + type, err); return; }
+    }
+    Array.prototype.forEach.call(Array.from(set), (fn) => {
+        try { fn(parsed, ev); } catch (err) { console.error('onSSE handler ' + type, err); }
+    });
+}
+
+let _busReloadOnBuild = false;
+
+// setSSEReloadOnBuild switches the bus's build-id-mismatch behavior from the
+// dismissible refresh banner (admin pages) to an immediate location.reload()
+// (kiosk pages — no operator to dismiss; the right move is to adopt the new
+// Core build). Applies to mismatches seen on both the connected and heartbeat
+// frames, so a kiosk reloads even when a proxy holds the SSE socket open
+// through a Core restart. Idempotent.
+export function setSSEReloadOnBuild(on) { _busReloadOnBuild = !!on; }
+
+function _busCheckBuild(e) {
+    let build = '';
+    try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
+    if (!build) return;
+    if (_busSeenBuild === null) { _busSeenBuild = build; return; }
+    if (_busSeenBuild === build) return;
+    if (_busReloadOnBuild) {
+        if (typeof location !== 'undefined') location.reload();
+    } else {
+        showRefreshBanner();
+    }
+}
+
+function _busConnect() {
+    const topics = _busDesiredTopics();
+    _busTopics = topics;
+    const url = topics ? ('/events?topics=' + encodeURIComponent(topics)) : '/events';
+    const es = new EventSource(url);
+    _busES = es;
+    es.addEventListener('connected', (e) => {
+        _busReconnectDelay = 1000;
+        _busCheckBuild(e);
+        _busDispatch('connected', e);
+    });
+    es.addEventListener('heartbeat', _busCheckBuild);
+    _busHandlers.forEach((_set, type) => {
+        if (type === 'connected') return;
+        es.addEventListener(type, (ev) => _busDispatch(type, ev));
+    });
+    es.onerror = () => {
+        if (_busClosed) return;
+        es.close();
+        if (_busES === es) _busES = null;
+        // Synthetic 'disconnected' so subscribers can show an offline state
+        // (the bus auto-reconnects below; a later 'connected' re-fires).
+        _busDispatch('disconnected', null);
+        const delay = _busReconnectDelay;
+        _busReconnectDelay = Math.min(_busReconnectDelay * 2, 10000);
+        setTimeout(() => { if (!_busClosed && !_busES) _busConnect(); }, delay);
+    };
+}
+
+function _busSync() {
+    if (_busSyncScheduled) return;
+    _busSyncScheduled = true;
+    Promise.resolve().then(() => {
+        _busSyncScheduled = false;
+        if (_busClosed) return;
+        if (_busHandlers.size === 0) return;          // nothing to listen for yet
+        if (_busES && _busDesiredTopics() === _busTopics) return; // already correct
+        if (_busES) { _busES.close(); _busES = null; }
+        _busConnect();
+    });
+}
+
+export function onSSE(type, handler) {
+    if (typeof handler !== 'function') return () => {};
+    let set = _busHandlers.get(type);
+    if (!set) { set = new Set(); _busHandlers.set(type, set); }
+    set.add(handler);
+    _busSync();
+    return function off() {
+        const s = _busHandlers.get(type);
+        if (!s) return;
+        s.delete(handler);
+        if (s.size === 0) _busHandlers.delete(type);
+        // Intentionally does not narrow topics / reconnect on unsubscribe —
+        // a slightly-wider topic set is harmless and avoids teardown churn.
+    };
+}
+
+// closeSSEBus — tear down the shared EventSource (page unload / tests).
+export function closeSSEBus() {
+    _busClosed = true;
+    if (_busES) { _busES.close(); _busES = null; }
+}
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => { if (_busES) _busES.close(); });
+}

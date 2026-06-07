@@ -15,6 +15,8 @@
 // Adding a new dashboard kind: branch on `kind` in init() and render into
 // #dash-main; register the kind's renderer template in handlers_dashboards.go.
 
+import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+
 (function () {
   var body = document.body;
   var dashboardId = body.getAttribute('data-dashboard-id');
@@ -109,49 +111,21 @@
     reloadTimer = setTimeout(load, 250);
   }
 
-  // ── SSE: change-ping + connection state + build auto-reload ─────────
-  var es = null;
-  var reconnectDelay = 2000;
-  var MAX_DELAY = 30000;
-  var seenBuild = null;
-
-  function checkBuild(e) {
-    var build = '';
-    try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
-    if (!build) return;
-    if (seenBuild === null) seenBuild = build;
-    else if (seenBuild !== build) location.reload(); // kiosk: adopt new build
-  }
-
-  function connect() {
-    if (es) { es.close(); es = null; }
-    es = new EventSource('/events');
-
-    es.addEventListener('connected', function (e) {
-      setConnected(true);
-      reconnectDelay = 2000;
-      checkBuild(e);
-      load();
-    });
-    es.addEventListener('order-update', scheduleReload);
-    es.addEventListener('heartbeat', function (e) {
-      setConnected(true);
-      checkBuild(e);
-    });
-    es.onerror = function () {
-      setConnected(false);
-      if (es) { es.close(); es = null; }
-      setTimeout(connect, reconnectDelay);
-      reconnectDelay = Math.min(reconnectDelay * 2, MAX_DELAY);
-    };
-  }
-
+  // ── SSE via the shared onSSE bus (Q-020): ONE EventSource per tab. The bus
+  // owns connection, reconnect/backoff, and build-id detection;
+  // setSSEReloadOnBuild(true) makes a build change reload the kiosk (no
+  // operator to dismiss a refresh banner — adopt the new Core build). The
+  // bus's synthetic 'connected' re-fires on every (re)connect (refetch the
+  // scoped list) and 'disconnected' drives the offline dot.
   function init() {
     if (kind !== 'task-board') {
       console.warn('dashboard: unsupported kind:', kind);
       return;
     }
-    connect();
+    setSSEReloadOnBuild(true);
+    onSSE('connected', function () { setConnected(true); load(); });
+    onSSE('disconnected', function () { setConnected(false); });
+    onSSE('order-update', scheduleReload);
   }
 
   if (document.readyState === 'loading') {

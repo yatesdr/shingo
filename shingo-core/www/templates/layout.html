@@ -19,6 +19,7 @@
     <div class="container flex-center" style="gap:1.5rem;">
       <a href="/" class="brand">Shingo Core</a>
       <a href="/"{{if eq .Page "dashboard"}} class="active"{{end}}>Dashboard</a>
+      <a href="/overview"{{if eq .Page "overview"}} class="active"{{end}}>Overview</a>
       <a href="/orders"{{if eq .Page "orders"}} class="active"{{end}}>Orders</a>
       <a href="/missions"{{if eq .Page "missions"}} class="active"{{end}}>Missions</a>
       <a href="/robots"{{if eq .Page "robots"}} class="active"{{end}}>Robots</a>
@@ -35,12 +36,13 @@
       </div>
       {{if .Authenticated}}
       <div class="nav-dropdown">
-        <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "demand") (eq .Page "test-orders") (eq .Page "fleet-explorer") (eq .Page "logs") (eq .Page "config") (eq .Page "dashboards")}} active{{end}}">Admin</a>
+        <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "demand") (eq .Page "test-orders") (eq .Page "fleet-explorer") (eq .Page "logs") (eq .Page "config") (eq .Page "dashboards") (eq .Page "cells")}} active{{end}}">Admin</a>
         <div class="nav-dropdown-menu">
           <a href="/demand"{{if eq .Page "demand"}} class="active"{{end}}>Demand</a>
           <a href="/test-orders"{{if eq .Page "test-orders"}} class="active"{{end}}>Test Orders</a>
           <a href="/fleet-explorer"{{if eq .Page "fleet-explorer"}} class="active"{{end}}>Fleet Explorer</a>
           <a href="/dashboards"{{if eq .Page "dashboards"}} class="active"{{end}}>Dashboards</a>
+          <a href="/admin/cells"{{if eq .Page "cells"}} class="active"{{end}}>Cells</a>
           <a href="/diagnostics"{{if eq .Page "logs"}} class="active"{{end}}>Logs</a>
           <a href="/config"{{if eq .Page "config"}} class="active"{{end}}>Config</a>
         </div>

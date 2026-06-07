@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,8 +27,14 @@ type SSEEvent struct {
 }
 
 type EventHub struct {
-	mu        sync.RWMutex
-	clients   map[chan SSEEvent]struct{}
+	mu sync.RWMutex
+	// clients maps each subscriber channel to its topic filter: a set of
+	// event names the client wants. A nil set means "all events" (the
+	// legacy, unfiltered behavior). Topic filtering lets the dashboard SSE
+	// bus (shared/utils.js onSSE) request only the event types a tab
+	// subscribed to via /events?topics=… so a /missions admin tab never
+	// receives the per-pulse cell-heartbeat firehose (plan §6).
+	clients   map[chan SSEEvent]map[string]bool
 	broadcast chan SSEEvent
 	stopChan  chan struct{}
 	stopOnce  sync.Once
@@ -35,7 +42,7 @@ type EventHub struct {
 
 func NewEventHub() *EventHub {
 	return &EventHub{
-		clients:   make(map[chan SSEEvent]struct{}),
+		clients:   make(map[chan SSEEvent]map[string]bool),
 		broadcast: make(chan SSEEvent, 256),
 		stopChan:  make(chan struct{}),
 	}
@@ -56,7 +63,10 @@ func (h *EventHub) run() {
 			return
 		case evt := <-h.broadcast:
 			h.mu.RLock()
-			for ch := range h.clients {
+			for ch, topics := range h.clients {
+				if topics != nil && !topics[evt.Event] {
+					continue // client filtered this event type out
+				}
 				select {
 				case ch <- evt:
 				default:
@@ -76,10 +86,30 @@ func (h *EventHub) Broadcast(event, data string) {
 	}
 }
 
+// AddClient registers an unfiltered subscriber that receives every event.
 func (h *EventHub) AddClient() chan SSEEvent {
+	return h.AddClientFiltered(nil)
+}
+
+// AddClientFiltered registers a subscriber that receives only the named
+// event types. An empty/nil topics slice means "all events" (same as
+// AddClient). Blank entries are ignored. The always-on connected/heartbeat
+// frames are written directly by SSEHandler and are never filtered here.
+func (h *EventHub) AddClientFiltered(topics []string) chan SSEEvent {
 	ch := make(chan SSEEvent, 64)
+	var set map[string]bool
+	for _, t := range topics {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if set == nil {
+			set = make(map[string]bool, len(topics))
+		}
+		set[t] = true
+	}
 	h.mu.Lock()
-	h.clients[ch] = struct{}{}
+	h.clients[ch] = set
 	h.mu.Unlock()
 	return ch
 }
@@ -280,6 +310,21 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		}
 		h.Broadcast("robot-update", sseJSON(out))
 	}, engine.EventRobotsUpdated)
+
+	// Production heartbeat (Phase E): each projected tick pulses the Cells D
+	// section and the /heartbeat kiosk. station + process_id let the client
+	// match the tick to a cell_config row; ts is server time so a long-running
+	// kiosk renders "X ago" without clock drift.
+	eng.Events.SubscribeTypes(func(evt engine.Event) {
+		ev := evt.Payload.(engine.CellTickEvent)
+		h.Broadcast("cell-heartbeat", sseJSON(map[string]any{
+			"station":     ev.Station,
+			"process_id":  ev.ProcessID,
+			"style_id":    ev.StyleID,
+			"recorded_at": ev.RecordedAt.UTC().Format(time.RFC3339Nano),
+			"ts":          time.Now().UTC().Format(time.RFC3339Nano),
+		}))
+	}, engine.EventCellTick)
 }
 
 // SSEHandler serves the SSE endpoint.
@@ -295,12 +340,21 @@ func (h *EventHub) SSEHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	ch := h.AddClient()
+	// Optional ?topics=a,b,c narrows this client to the listed event types
+	// (plan §6 SSE bus). Absent → unfiltered, matching legacy behavior.
+	var ch chan SSEEvent
+	if topicsParam := r.URL.Query().Get("topics"); topicsParam != "" {
+		ch = h.AddClientFiltered(strings.Split(topicsParam, ","))
+	} else {
+		ch = h.AddClient()
+	}
 	defer h.RemoveClient(ch)
 
 	// Send connected event with the per-process build id so reconnects
-	// after a core restart trigger a hard-reload on the client.
-	if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\"}\n\n", serverInstance); err != nil {
+	// after a core restart trigger a hard-reload on the client. ts is server
+	// time — the /heartbeat kiosk (§13) syncs its clock offset from it so
+	// "X ago" timers don't drift over a 72h soak.
+	if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\",\"ts\":\"%s\"}\n\n", serverInstance, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return
 	}
 	flusher.Flush()
@@ -324,7 +378,7 @@ func (h *EventHub) SSEHandler(w http.ResponseWriter, r *http.Request) {
 			// The bare `: keepalive` comment was stripped by EventSource
 			// and never reached the JS client, so it could not carry the
 			// build id.
-			if _, err := fmt.Fprintf(w, "event: heartbeat\ndata: {\"build\":\"%s\"}\n\n", serverInstance); err != nil {
+			if _, err := fmt.Fprintf(w, "event: heartbeat\ndata: {\"build\":\"%s\",\"ts\":\"%s\"}\n\n", serverInstance, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 				log.Printf("sse: keepalive write error: %v", err)
 				return
 			}

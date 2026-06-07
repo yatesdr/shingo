@@ -24,6 +24,8 @@
 // links through walls); with no synced edges the network is simply empty and
 // routes fall back to a straight robot→destination hint line.
 
+import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+
 (function () {
   var body = document.body;
   var dashboardId = body.getAttribute('data-dashboard-id');
@@ -764,21 +766,13 @@
   }
   function noop() {}
 
-  // ── SSE ────────────────────────────────────────────────────────────
-  var es = null, reconnectDelay = 2000, MAX_DELAY = 30000, seenBuild = null;
+  // ── SSE via the shared onSSE bus (Q-020): ONE EventSource per tab. The bus
+  // owns connection, reconnect/backoff, and build-id detection;
+  // setSSEReloadOnBuild(true) reloads the kiosk on a build change.
 
-  function checkBuild(e) {
-    var build = '';
-    try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
-    if (!build) return;
-    if (seenBuild === null) seenBuild = build;
-    else if (seenBuild !== build) location.reload();
-  }
-
-  function onRobotUpdate(e) {
-    var list;
-    try { list = JSON.parse(e.data); } catch (_) { return; }
-    if (!Array.isArray(list)) list = [list];
+  // robot-update handler — receives the already-parsed payload from the bus.
+  function onRobotUpdate(list) {
+    if (!Array.isArray(list)) list = list ? [list] : [];
     list.forEach(function (raw) {
       var rb = normRobot(raw);
       if (rb.id) mergeRobot(rb);
@@ -786,34 +780,22 @@
     scheduleRender();
   }
 
-  function connect() {
-    if (es) { es.close(); es = null; }
-    es = new EventSource('/events');
-    es.addEventListener('connected', function (e) {
-      setConnected(true);
-      reconnectDelay = 2000;
-      checkBuild(e);
-      // Refresh everything on (re)connect — covers data missed while down.
-      Promise.all([loadPoints().catch(noop), loadEdges().catch(noop), loadRobots().catch(noop), loadOrders().catch(noop)])
-        .then(scheduleRender);
-    });
-    es.addEventListener('robot-update', onRobotUpdate);
-    es.addEventListener('order-update', scheduleOrderReload);
-    es.addEventListener('heartbeat', function (e) { setConnected(true); checkBuild(e); });
-    es.onerror = function () {
-      setConnected(false);
-      if (es) { es.close(); es = null; }
-      setTimeout(connect, reconnectDelay);
-      reconnectDelay = Math.min(reconnectDelay * 2, MAX_DELAY);
-    };
+  function refreshAll() {
+    Promise.all([loadPoints().catch(noop), loadEdges().catch(noop), loadRobots().catch(noop), loadOrders().catch(noop)])
+      .then(scheduleRender);
   }
 
   function init() {
     renderLegend();
     // Initial paint from REST so the board isn't blank before the first SSE tick.
-    Promise.all([loadPoints().catch(noop), loadEdges().catch(noop), loadRobots().catch(noop), loadOrders().catch(noop)])
-      .then(scheduleRender);
-    connect();
+    refreshAll();
+    setSSEReloadOnBuild(true);
+    // 'connected' re-fires on every (re)connect — refetch covers data missed
+    // while down. 'disconnected' drives the offline dot.
+    onSSE('connected', function () { setConnected(true); refreshAll(); });
+    onSSE('disconnected', function () { setConnected(false); });
+    onSSE('robot-update', onRobotUpdate);
+    onSSE('order-update', scheduleOrderReload);
   }
 
   if (document.readyState === 'loading') {

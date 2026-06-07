@@ -1282,3 +1282,65 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   70% { background-color: rgba(239, 68, 68, 0.15); opacity: 1; }
   100% { background-color: transparent; opacity: 0; }
 }
+
+/* ── Production cells (Phase E, §3.D) + drill ─────────────────────────────── */
+.cell-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+.cell-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-muted);
+  border-radius: 0.5rem;
+  padding: 0.75rem 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.cell-tile:hover { box-shadow: 0 0 0 1px var(--primary); }
+.cell-tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.cell-tile--running { border-left-color: var(--success); }
+.cell-tile--slowed { border-left-color: var(--info); }
+.cell-tile--micro-stop { border-left-color: var(--warning); }
+.cell-tile--stopped { border-left-color: var(--danger); }
+.cell-tile--no-data { border-left-color: var(--text-muted); }
+.cell-tile__head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.cell-tile__name { font-weight: 600; }
+.cell-tile__badge { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 0.85rem; }
+.cell-tile__dots { display: flex; align-items: center; gap: 0.4rem; margin: 0.6rem 0 0.4rem; min-height: 1rem; }
+.cell-dot { display: inline-block; border-radius: 50%; background: var(--text-muted); }
+.cell-dot--primary { width: 0.85rem; height: 0.85rem; }
+.cell-dot--sub { width: 0.55rem; height: 0.55rem; }
+.cell-dot--running { background: var(--success); }
+.cell-dot--slowed { background: var(--info); }
+.cell-dot--micro-stop { background: var(--warning); }
+.cell-dot--stopped { background: var(--danger); }
+.cell-dot--no-data { background: var(--text-muted); opacity: 0.5; }
+
+/* Cell drill — per-Process pulse strips. */
+.cell-drill__window { margin-bottom: 0.75rem; }
+.cell-drill__proc { padding: 0.6rem 0; border-top: 1px solid var(--border); }
+.cell-drill__proc--primary .cell-drill__proc-label { font-weight: 700; }
+.cell-drill__proc-label { font-variant-numeric: tabular-nums; }
+.cell-drill__strip {
+  position: relative;
+  height: 1.5rem;
+  margin: 0.4rem 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  overflow: hidden;
+}
+.cell-drill__pulse {
+  position: absolute;
+  top: 0.25rem;
+  width: 3px;
+  height: 1rem;
+  margin-left: -1px;
+  background: var(--primary);
+  border-radius: 1px;
+}
+.cell-drill__nodata { position: absolute; left: 0.5rem; top: 0.25rem; }
+.cell-drill__stats { display: flex; flex-wrap: wrap; gap: 0.9rem; }
+.cell-drill__stat-label { color: var(--text-muted); }

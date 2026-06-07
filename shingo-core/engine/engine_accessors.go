@@ -47,6 +47,9 @@ func (e *Engine) InventoryDeltaService() *service.InventoryDeltaService {
 	return e.inventoryDeltaService
 }
 func (e *Engine) DashboardService() *service.DashboardService { return e.dashboardService }
+func (e *Engine) FootprintService() *service.FootprintService { return e.footprintService }
+func (e *Engine) PartsService() *service.PartsService         { return e.partsService }
+func (e *Engine) HeartbeatService() *service.HeartbeatService { return e.heartbeatService }
 func (e *Engine) EventBus() *EventBus                         { return e.Events }
 func (e *Engine) EtaCache() *eta.Cache                        { return e.etaCache }
 

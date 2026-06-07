@@ -1,4 +1,5 @@
 import { api, delegateActions, el, escapeHtml, formatTime, toast, uiConfirm } from '/static/app.js';
+import { onSSE } from '/static/shared/utils.js';
 
 (function() {
   // Tab switching
@@ -53,7 +54,7 @@ import { api, delegateActions, el, escapeHtml, formatTime, toast, uiConfirm } fr
   var filterEl = document.getElementById('log-filter');
   var maxRows = 1000;
 
-  window.debugAppendRow = function(entry) {
+  function debugAppendRow(entry) {
     var tr = document.createElement('tr');
     tr.className = 'debug-row';
     tr.setAttribute('data-subsystem', entry.subsystem || '');
@@ -139,7 +140,7 @@ import { api, delegateActions, el, escapeHtml, formatTime, toast, uiConfirm } fr
       });
   }
 
-  window.cmsAppendRows = function(txns) {
+  function cmsAppendRows(txns) {
     if (!txns) return;
     txns.forEach(function(t) {
       var tr = makeCMSRow(t);
@@ -376,10 +377,16 @@ import { api, delegateActions, el, escapeHtml, formatTime, toast, uiConfirm } fr
       });
   };
 
-  // SSE callback — wired from app.js es.addEventListener('fire-alarm', ...)
-  window.onFireAlarmUpdate = function(data) {
+  // SSE callbacks — subscribed on the shared onSSE bus (shared/utils.js),
+  // which delivers the parsed payload. Replaces the retired app.js IIFE's
+  // window-global dispatch for these three event types (Q-002). debugAppendRow
+  // and cmsAppendRows are hoisted function declarations defined above.
+  function onFireAlarmUpdate(data) {
     updateFireAlarmUI(data.is_fire, null);
-  };
+  }
+  onSSE('debug-log', debugAppendRow);
+  onSSE('cms-transaction', cmsAppendRows);
+  onSSE('fire-alarm', onFireAlarmUpdate);
 
   // ── E-Maint Robot Telemetry ──────────────────────────────
   var emaintBody = document.getElementById('emaint-body');

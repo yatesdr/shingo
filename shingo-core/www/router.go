@@ -126,6 +126,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 		// ── Public pages ───────────────────────────────────────
 		r.Get("/", h.handleDashboard)
+		r.Get("/overview", h.handleOverview)
 		r.Get("/login", h.handleLoginPage)
 		r.Post("/login", h.handleLogin)
 		r.Get("/logout", h.handleLogout)
@@ -142,6 +143,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		// monitors (public, no nav). The old /board tab is superseded —
 		// redirect bookmarks to the management page.
 		r.Get("/dashboard/{id}", h.handleDashboardDisplay)
+		// Production-heartbeat kiosk (Phase F): chromeless wall display of cell
+		// rhythm. Public, no nav — open full-screen on a floor monitor.
+		r.Get("/heartbeat", h.handleHeartbeatKiosk)
 		r.Get("/board", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/dashboards", http.StatusMovedPermanently)
 		})
@@ -161,6 +165,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/map/points", h.apiScenePoints)
 			r.Get("/map/edges", h.apiSceneEdges)
 			r.Get("/stations", h.apiStations)
+			r.Get("/plant/timezone", h.apiPlantTimezone)
 
 			// Orders & missions
 			r.Get("/orders", h.apiListOrders)
@@ -170,10 +175,31 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/dispatch/anomalies", h.apiListTransitAnomalies)
 			r.Get("/missions", h.apiListMissions)
 			r.Get("/missions/stats", h.apiMissionStats)
+			r.Get("/missions/stats/v2", h.apiMissionStatsV2)
+			r.Get("/missions/active", h.apiMissionsActive)
+			r.Get("/missions/alerts", h.apiMissionsAlerts)
+			r.Get("/missions/timeseries", h.apiMissionTimeseries)
+			r.Get("/missions/breakdown", h.apiMissionBreakdown)
+			r.Get("/missions/failures", h.apiMissionFailures)
 			r.Get("/missions/{orderID}", h.apiGetMission)
 
 			// Robots
 			r.Get("/robots", h.apiRobotsStatus)
+			r.Get("/robots/fleet", h.apiRobotsFleet)
+
+			// Operations Overview (plant footprint)
+			r.Get("/footprint", h.apiFootprint)
+
+			// Cells — production heartbeat (slice 5, §12) + cell config (Phase E)
+			r.Get("/cells", h.apiCellsList)
+			r.Get("/cells/{id}/heartbeat", h.apiCellHeartbeat)
+			r.Get("/cells/{id}/stops", h.apiCellStops)
+			r.Get("/cells/{id}/state", h.apiCellState)
+
+			// Parts (produced / cycle time / consumption)
+			r.Get("/parts/produced", h.apiPartsProduced)
+			r.Get("/parts/cycle-time", h.apiPartsCycleTime)
+			r.Get("/parts/consumption", h.apiPartsConsumption)
 
 			// Board
 			r.Get("/board/orders", h.handleBoardOrders)
@@ -239,6 +265,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 				// Inventory export
 				r.Get("/inventory/export", h.apiInventoryExport)
+
+				// Cells — production-cell config (Phase E, Q-025)
+				r.Get("/cells/processes", h.apiCellProcesses)
+				r.Post("/cells", h.apiCellUpsert)
+				r.Delete("/cells/{id}", h.apiCellDelete)
 
 				// Node management
 				r.Post("/nodes/generate-test", h.apiGenerateTestNodes)
@@ -354,6 +385,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Post("/config/save", h.handleConfigSave)
 			r.Get("/fleet-explorer", h.handleFleetExplorer)
 			r.Get("/dashboards", h.handleDashboardsAdmin)
+			r.Get("/admin/cells", h.handleCellsAdmin)
 
 			// Traffic (count group CRUD)
 			r.Post("/traffic/save", h.handleTrafficSave)

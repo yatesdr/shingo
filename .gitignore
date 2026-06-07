@@ -58,6 +58,11 @@ go.work.sum
 
 # Vendor (dependencies fetched by go mod)
 vendor/
+# …except the web-asset vendor dir: Chart.js + plugins are committed and
+# //go:embed-ed into the binary for air-gapped plant deploys (no CDN). See
+# plan-mission-telemetry-v1 §6.
+!shingo-core/www/static/vendor/
+!shingo-core/www/static/vendor/**
 
 # API reference docs (scraped, not source)
 seer-docs/

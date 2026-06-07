@@ -1,4 +1,5 @@
 import { api, apiGet, apiPost, debounce, delegateActions, el, escapeHtml, h, hideModal, showModal, timeAgo, toast, uiConfirm, uiPrompt } from '/static/app.js';
+import { onSSE } from '/static/shared/utils.js';
 
 // ===== STATE =====
 var currentBinId = null;
@@ -633,12 +634,14 @@ function ccSummary() {
 }
 
 // ===== SSE =====
-window.onBinUpdate = debounce(function(e) {
-  var data = JSON.parse(e.data);
+// Subscribed on the shared onSSE bus (shared/utils.js); the handler receives
+// the parsed payload. Replaces the retired app.js IIFE window.onBinUpdate
+// dispatch (Q-002).
+onSSE('bin-update', debounce(function(data) {
   if (currentBinId && currentBinId === data.bin_id) {
     openBinDetail(currentBinId);
   }
-}, 500);
+}, 500));
 
 // ===== HELPERS =====
 function esc(s) { return escapeHtml(s); }

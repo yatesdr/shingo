@@ -1,4 +1,5 @@
 import { api, apiGet, apiPost, debounce, delegateActions, escapeHtml, formatTime, h, hideModal, showModal, toggleVisibility, uiConfirm } from '/static/app.js';
+import { onSSE } from '/static/shared/utils.js';
 
 function orderControlPost(url, body) {
   var msg = document.getElementById('order-status-msg');
@@ -256,26 +257,26 @@ function renderOrderModal(data) {
   document.getElementById('order-modal-content').innerHTML = out;
 }
 
-// SSE auto-refresh for open modal
-window.onOrderUpdate = debounce(function(e) {
-  try {
-    var data = JSON.parse(e.data);
-    if (_orderModalID != null) {
-      // A modal is open. Refresh it when this event is for that order.
-      // order_id arrives as a number in the SSE JSON, but _orderModalID comes
-      // from the data-action colon-arg as a string — normalize both sides.
-      // Do NOT hard-reload while a modal is open: location.reload() would
-      // discard the modal (and any filter/scroll state) and defeat the
-      // targeted refresh below.
-      if (data && Number(data.order_id) === Number(_orderModalID)) {
-        openOrderModal(_orderModalID);
-      }
-      return;
+// SSE auto-refresh for open modal — subscribed on the shared onSSE bus.
+// The handler receives the already-parsed payload (the bus does JSON.parse,
+// reconnect, and build-id detection); replaces the retired app.js IIFE's
+// window.onOrderUpdate dispatch (Q-002).
+onSSE('order-update', debounce(function(data) {
+  if (_orderModalID != null) {
+    // A modal is open. Refresh it when this event is for that order.
+    // order_id arrives as a number in the SSE JSON, but _orderModalID comes
+    // from the data-action colon-arg as a string — normalize both sides.
+    // Do NOT hard-reload while a modal is open: location.reload() would
+    // discard the modal (and any filter/scroll state) and defeat the
+    // targeted refresh below.
+    if (data && Number(data.order_id) === Number(_orderModalID)) {
+      openOrderModal(_orderModalID);
     }
-    // No modal open: refresh the order list to reflect status changes.
-    location.reload();
-  } catch(err) { console.error('onOrderUpdate', err); }
-}, 2000);
+    return;
+  }
+  // No modal open: refresh the order list to reflect status changes.
+  location.reload();
+}, 2000));
 
 // --- Manual order modal ---
 var _moNodesLoaded = false;

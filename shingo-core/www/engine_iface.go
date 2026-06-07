@@ -61,6 +61,9 @@ type ServiceAccess interface {
 	AdminService() *service.AdminService
 	HealthService() *service.HealthService
 	DashboardService() *service.DashboardService
+	FootprintService() *service.FootprintService
+	PartsService() *service.PartsService
+	HeartbeatService() *service.HeartbeatService
 
 	// ── Read-only state queries ────────────────────────────────────
 	// These look like orchestration verbs but are pure reads with no

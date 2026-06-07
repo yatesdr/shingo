@@ -1,4 +1,5 @@
 import { api, el, h } from '/static/app.js';
+import { onSSE } from '/static/shared/utils.js';
 
 (function() {
   var orderID = document.getElementById('mission-order-id').textContent;
@@ -275,15 +276,14 @@ import { api, el, h } from '/static/app.js';
     tbody.innerHTML = html;
   }
 
-  // SSE live updates for active missions
-  window.onMissionEvent = function(e) {
-    try {
-      var data = JSON.parse(e.data);
-      if (String(data.order_id) === String(orderID)) {
-        loadMission(); // Reload full data on any event for this mission
-      }
-    } catch(err) { console.error('onMissionEvent', err); }
-  };
+  // SSE live updates for active missions — subscribed on the shared onSSE bus
+  // (shared/utils.js); the handler receives the parsed payload. Replaces the
+  // retired app.js IIFE window.onMissionEvent dispatch (Q-002).
+  onSSE('mission-event', function(data) {
+    if (data && String(data.order_id) === String(orderID)) {
+      loadMission(); // Reload full data on any event for this mission
+    }
+  });
 
   loadMission();
 })();

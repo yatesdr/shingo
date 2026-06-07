@@ -1,4 +1,5 @@
 import { api, delegateActions, escapeHtml, formatTime, h, hideModal, showModal, toast, uiConfirm } from '/static/app.js';
+import { onSSE } from '/static/shared/utils.js';
 
 var authenticated = document.getElementById('page-data').dataset.authenticated === 'true';
 
@@ -506,18 +507,16 @@ function showToast(msg, type) {
 }
 
 // --- SSE ---
-// Routes through the shared EventSource opened in app.js. Setting
-// window.onOrderUpdate replaces app.js's no-op default handler.
-window.onOrderUpdate = function(e) {
+// Subscribed on the shared onSSE bus (shared/utils.js); the handler receives
+// the parsed payload (the bus does JSON.parse + reconnect). Replaces the
+// retired app.js IIFE window.onOrderUpdate dispatch (Q-002).
+onSSE('order-update', function(data) {
   refreshKafkaOrders();
   refreshDirectOrders();
-  try {
-    var data = JSON.parse(e.data);
-    if (data.type === 'failed') {
-      showToast('Order #' + (data.order_id || '?') + ' failed: ' + (data.detail || 'unknown error'), 'error');
-    }
-  } catch(ex) { console.error('onOrderUpdate', ex); }
-};
+  if (data && data.type === 'failed') {
+    showToast('Order #' + (data.order_id || '?') + ' failed: ' + (data.detail || 'unknown error'), 'error');
+  }
+});
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', function() {

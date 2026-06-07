@@ -18,7 +18,7 @@
 //   escapeHtml(s)     — last resort for legacy string concatenation.
 //                       Prefer h`` for new code.
 
-import { delegateActions, installBackdropClose, installTableSort, showRefreshBanner } from '/static/shared/utils.js';
+import { delegateActions, installBackdropClose, installTableSort, onSSE } from '/static/shared/utils.js';
 installBackdropClose();
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
 export { delegateActions };
@@ -288,133 +288,34 @@ export function convertTimestamps() {
 }
 document.addEventListener('DOMContentLoaded', convertTimestamps);
 
-// SSE connection for live updates
-(function() {
-  let es;
-  let reconnectDelay = 1000;
-  // Build id seen on the first 'connected' event after page load.
-  // If a later reconnect reports a different id the core has been
-  // restarted; force-reload so the tab picks up the new bundle.
-  let seenBuild = null;
-
-  // checkBuild captures the first build id and shows a refresh banner
-  // on any later mismatch. Shared by the 'connected' (once per
-  // reconnect) and 'heartbeat' (every 30s on the existing connection)
-  // handlers — the latter catches Core restarts that a reverse proxy
-  // held the SSE socket open through, where onerror would otherwise
-  // never fire.
-  //
-  // Pre-fix this called location.reload() automatically. The banner
-  // lets the operator pick the moment so mid-action state isn't
-  // nuked on every Core deploy.
-  function checkBuild(e) {
-    var build = '';
-    try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
-    if (!build) return;
-    if (seenBuild === null) {
-      seenBuild = build;
-    } else if (seenBuild !== build) {
-      showRefreshBanner();
-    }
+// ─── Nav chrome: live health pills ──────────────────────────────────────
+//
+// The shared onSSE bus (shared/utils.js) maintains ONE EventSource per tab,
+// handles reconnect/backoff, and shows the build-id refresh banner on a Core
+// redeploy — so this file no longer opens its own EventSource. app.js loads on
+// every page, so subscribing here keeps the nav health pills live everywhere
+// (and, because the bus opens its connection on the first subscription, keeps
+// build-id detection running on every page too). Page-specific events
+// (order-update, bin-update, robot-update, mission-event, cms-transaction,
+// debug-log, fire-alarm) are subscribed via onSSE in their own page modules.
+// This replaces the legacy auto-connecting SSE IIFE (Q-002) so each tab holds
+// a single EventSource. inventory-update / node-update had no page consumers
+// and are simply no longer subscribed.
+onSSE('system-status', function(data) {
+  if (!data) return;
+  if (data.fleet !== undefined) {
+    var fleetEl = document.getElementById('fleet-status');
+    if (fleetEl) fleetEl.className = 'health ' + (data.fleet === 'connected' ? 'health-ok' : 'health-fail');
   }
-
-  function connect() {
-    es = new EventSource('/events');
-
-    es.addEventListener('connected', function(e) {
-      reconnectDelay = 1000;
-      checkBuild(e);
-    });
-
-    es.addEventListener('heartbeat', checkBuild);
-
-    es.addEventListener('order-update', function(e) {
-      // Page-specific handlers can override via window.onOrderUpdate
-      if (typeof window.onOrderUpdate === 'function') window.onOrderUpdate(e);
-    });
-
-    es.addEventListener('inventory-update', function(e) {
-      if (typeof window.onInventoryUpdate === 'function') window.onInventoryUpdate(e);
-    });
-
-    es.addEventListener('node-update', function(e) {
-      if (typeof window.onNodeUpdate === 'function') window.onNodeUpdate(e);
-    });
-
-    es.addEventListener('bin-update', function(e) {
-      if (typeof window.onBinUpdate === 'function') window.onBinUpdate(e);
-    });
-
-    es.addEventListener('mission-event', function(e) {
-      if (typeof window.onMissionEvent === 'function') window.onMissionEvent(e);
-    });
-
-    es.addEventListener('system-status', function(e) {
-      const data = JSON.parse(e.data);
-      if (data.fleet !== undefined) {
-        const el = document.getElementById('fleet-status');
-        if (el) {
-          el.className = 'health ' + (data.fleet === 'connected' ? 'health-ok' : 'health-fail');
-        }
-      }
-      if (data.messaging !== undefined) {
-        const el = document.getElementById('msg-status');
-        if (el) {
-          el.className = 'health ' + (data.messaging === 'connected' ? 'health-ok' : 'health-fail');
-        }
-      }
-      if (data.redis !== undefined) {
-        const el = document.getElementById('redis-status');
-        if (el) {
-          el.className = 'health ' + (data.redis === 'connected' ? 'health-ok' : 'health-fail');
-        }
-      }
-    });
-
-    es.addEventListener('robot-update', function(e) {
-      // Page-specific handler installed by pages/robots.js as
-      // window.onRobotUpdate. The grid rebuild lives there so it runs in the
-      // scope where openRobotModal / filterRobots / currentRobotVehicle exist
-      // (matching the onOrderUpdate / onNodeUpdate delegation pattern above).
-      if (typeof window.onRobotUpdate === 'function') window.onRobotUpdate(e);
-    });
-
-    es.addEventListener('cms-transaction', function(e) {
-      if (typeof window.cmsAppendRows === 'function') {
-        var txns = JSON.parse(e.data);
-        window.cmsAppendRows(txns);
-      }
-    });
-
-    es.addEventListener('debug-log', function(e) {
-      if (typeof window.debugAppendRow === 'function') {
-        var entry = JSON.parse(e.data);
-        window.debugAppendRow(entry);
-      }
-    });
-
-    es.addEventListener('fire-alarm', function(e) {
-      if (typeof window.onFireAlarmUpdate === 'function') {
-        var data = JSON.parse(e.data);
-        window.onFireAlarmUpdate(data);
-      }
-    });
-
-    es.onerror = function() {
-      es.close();
-      setTimeout(connect, reconnectDelay);
-      reconnectDelay = Math.min(reconnectDelay * 2, 10000);
-    };
+  if (data.messaging !== undefined) {
+    var msgEl = document.getElementById('msg-status');
+    if (msgEl) msgEl.className = 'health ' + (data.messaging === 'connected' ? 'health-ok' : 'health-fail');
   }
-
-  // Close SSE connection when navigating away so the browser
-  // releases the HTTP/1.1 connection slot immediately.
-  window.addEventListener('beforeunload', function() {
-    if (es) es.close();
-  });
-
-  connect();
-})();
+  if (data.redis !== undefined) {
+    var redisEl = document.getElementById('redis-status');
+    if (redisEl) redisEl.className = 'health ' + (data.redis === 'connected' ? 'health-ok' : 'health-fail');
+  }
+});
 
 // ─── Auto-dispatching delegated click handler ─────────────────────────
 //

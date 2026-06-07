@@ -35,6 +35,14 @@
   --warning: #ffc107;
   --info: #0dcaf0;
 
+  /* Dashboard / charts (mission-telemetry plan §4). These reference the
+   * semantic tokens above, so they resolve per-theme without a dark-mode
+   * override. --kpi-up / --kpi-down are aliases for delta arrows so they
+   * can be retuned without a find-replace across the dashboards. */
+  --chart-grid: color-mix(in srgb, var(--text-muted) 25%, transparent);
+  --kpi-up: var(--success);
+  --kpi-down: var(--danger);
+
   /* Geometry */
   --radius: 6px;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);

@@ -1,4 +1,6 @@
 import { api, debounce, delegateActions, el, hideModal, showModal, uiConfirm } from '/static/app.js';
+import { reconcileList, onSSE } from '/static/shared/utils.js';
+import { createRobotTile, updateRobotTile } from '/static/components/RobotTile.js';
 
 var currentRobotVehicle = '';
 
@@ -103,107 +105,40 @@ delegateActions(document.body, {
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
 
 // ─── live robot-grid rebuild ──────────────────────────
-// app.js wires the SSE 'robot-update' event and forwards it here via
-// window.onRobotUpdate. The rebuild lives in this module so it runs in the
+// Subscribed on the shared onSSE bus (shared/utils.js) for 'robot-update'
+// (Q-002 — replaces app.js's retired window.onRobotUpdate dispatch). The
+// rebuild lives in this module so it runs in the
 // scope where openRobotModal / filterRobots / currentRobotVehicle exist —
 // SSE-created tiles use data-action="openRobotModal" (matching the server
 // template) so delegateActions handles their clicks. Debounced to 2s, same
 // as the handler that previously lived inline in app.js.
-window.onRobotUpdate = debounce(function(e) {
-  var robots = JSON.parse(e.data);
+// Migrated onto the shared reconcileList primitive + RobotTile component
+// (plan §3.C / §6). reconcileList adopts the server-rendered tiles by
+// data-name (nodeKey) so the first SSE frame updates them in place instead of
+// rebuilding the grid. createRobotTile/updateRobotTile preserve the exact
+// markup + dataset the openRobotModal handler depends on.
+onSSE('robot-update', debounce(function(robots) {
+  // `robots` is the parsed SSE payload (the shared bus does JSON.parse).
   var grid = document.getElementById('robot-grid');
   if (!grid) return;
 
-  var seen = {};
-  robots.forEach(function(r) {
-    seen[r.vehicle_id] = true;
-    var tile = grid.querySelector('[data-name="' + r.vehicle_id + '"]');
-    if (!tile) {
-      // Create new tile
-      tile = document.createElement('div');
-      tile.className = 'robot-tile robot-' + r.state;
-      tile.setAttribute('data-action', 'openRobotModal');
-      tile.innerHTML =
-        '<div class="robot-name">' + r.vehicle_id +
-        (r.charging ? '<span class="robot-charging" title="Charging">&#9889;</span>' : '') +
-        '</div>' +
-        '<div class="robot-battery" title="Battery: ' + r.battery + '%">' +
-        '<div class="robot-battery-fill" style="width:' + r.battery + '%"></div>' +
-        '</div>';
-      grid.appendChild(tile);
-    } else {
-      // Update tile class
-      tile.className = 'robot-tile robot-' + r.state;
-      // Update battery bar
-      var fill = tile.querySelector('.robot-battery-fill');
-      if (fill) fill.style.width = r.battery + '%';
-      var batDiv = tile.querySelector('.robot-battery');
-      if (batDiv) batDiv.title = 'Battery: ' + r.battery + '%';
-      // Update charging indicator
-      var nameDiv = tile.querySelector('.robot-name');
-      if (nameDiv) {
-        var chgSpan = nameDiv.querySelector('.robot-charging');
-        if (r.charging && !chgSpan) {
-          chgSpan = document.createElement('span');
-          chgSpan.className = 'robot-charging';
-          chgSpan.title = 'Charging';
-          chgSpan.innerHTML = '&#9889;';
-          nameDiv.appendChild(chgSpan);
-        } else if (!r.charging && chgSpan) {
-          chgSpan.remove();
-        }
+  reconcileList(grid, robots, {
+    key: function(r) { return r.vehicle_id; },
+    create: function(r) { return createRobotTile(r); },
+    update: function(node, r) {
+      updateRobotTile(node, r);
+      // Keep an open detail modal in sync with live updates.
+      if (currentRobotVehicle === r.vehicle_id) {
+        var modal = document.getElementById('robot-modal');
+        if (modal && modal.classList.contains('active')) openRobotModal(node);
       }
-    }
-    // Update data attributes
-    tile.dataset.name = r.vehicle_id;
-    tile.dataset.state = r.state;
-    tile.dataset.ip = r.ip || '';
-    tile.dataset.model = r.model || '';
-    tile.dataset.map = r.map || '';
-    tile.dataset.battery = r.battery;
-    tile.dataset.charging = r.charging;
-    tile.dataset.station = r.station || '';
-    tile.dataset.lastStation = r.last_station || '';
-    tile.dataset.available = r.available;
-    tile.dataset.connected = r.connected;
-    tile.dataset.blocked = r.blocked;
-    tile.dataset.emergency = r.emergency;
-    tile.dataset.processing = r.processing;
-    tile.dataset.error = r.error;
-    tile.dataset.x = r.x.toFixed(1);
-    tile.dataset.y = r.y.toFixed(1);
-    tile.dataset.angle = r.angle.toFixed(1);
-
-    // Update modal if open for this robot
-    if (currentRobotVehicle === r.vehicle_id) {
-      var modal = document.getElementById('robot-modal');
-      if (modal && modal.classList.contains('active')) {
-        openRobotModal(tile);
-      }
-    }
+    },
+    nodeKey: function(node) { return node.dataset.name; },
   });
 
-  // Remove stale tiles
-  var tiles = grid.querySelectorAll('.robot-tile');
-  tiles.forEach(function(tile) {
-    if (!seen[tile.dataset.name]) {
-      tile.remove();
-    }
-  });
-
-  // Update robot count
   var countEl = document.getElementById('robot-count');
-  if (countEl) {
-    countEl.textContent = robots.length + ' robots';
-  }
+  if (countEl) countEl.textContent = robots.length + ' robots';
+  grid.style.display = robots.length === 0 ? 'none' : '';
 
-  // Show/hide empty state
-  if (robots.length === 0 && !grid.children.length) {
-    grid.style.display = 'none';
-  } else {
-    grid.style.display = '';
-  }
-
-  // Reapply filter
   filterRobots();
-}, 2000);
+}, 2000));
