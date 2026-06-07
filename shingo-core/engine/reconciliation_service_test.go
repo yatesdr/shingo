@@ -132,8 +132,10 @@ func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 // ── AbandonStuckOrders — TTL sweep ──────────────────────────────────
 
 // TestAbandonStuckOrders pins the stuck-order TTL sweep: orders stuck in
-// queued (held) or staged past the timeout are abandoned; fresh ones are
-// left alone (ALN_003 swap-starvation follow-up, task 3). Uses a fake
+// queued (held), staged, or handed-to-fleet-but-never-moving
+// (sourcing/dispatched) past the timeout are abandoned; fresh orders and
+// actively-moving (in_transit) ones are left alone (ALN_003 swap-starvation
+// follow-up + the 2026-06-05/07 long-weekend dispatched-drain). Uses a fake
 // abandonOrder callback — production wires it to LifecycleService.CancelOrder.
 func TestAbandonStuckOrders(t *testing.T) {
 	t.Parallel()
@@ -146,12 +148,17 @@ func TestAbandonStuckOrders(t *testing.T) {
 		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
 		return o
 	}
-	stuckHeld := mk("stuck-held", "queued")     // a held swap removal leg
-	stuckStaged := mk("stuck-staged", "staged") // a robot parked at staging
-	fresh := mk("fresh-queued", "queued")       // just queued — must survive
+	stuckHeld := mk("stuck-held", "queued")                 // a held swap removal leg
+	stuckStaged := mk("stuck-staged", "staged")             // a robot parked at staging
+	stuckSourcing := mk("stuck-sourcing", "sourcing")       // handed off, never moved
+	stuckDispatched := mk("stuck-dispatched", "dispatched") // dispatched Fri, dwelled all weekend (06-05/07)
+	fresh := mk("fresh-queued", "queued")                   // just queued — must survive
+	moving := mk("moving-intransit", "in_transit")          // actively moving — must survive even when aged
 
-	// Age the two stuck ones past the 1h TTL; leave `fresh` at NOW().
-	for _, id := range []int64{stuckHeld.ID, stuckStaged.ID} {
+	// Age the stuck ones AND the in_transit one past the 1h TTL; leave
+	// `fresh` at NOW(). The aged in_transit proves status (not just age)
+	// gates the sweep — an actively moving robot is never abandoned.
+	for _, id := range []int64{stuckHeld.ID, stuckStaged.ID, stuckSourcing.ID, stuckDispatched.ID, moving.ID} {
 		if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, id); err != nil {
 			t.Fatalf("backdate %d: %v", id, err)
 		}
@@ -165,18 +172,22 @@ func TestAbandonStuckOrders(t *testing.T) {
 
 	n, err := svc.AbandonStuckOrders(time.Hour)
 	testutil.MustNoErr(t, err, "AbandonStuckOrders")
-	if n != 2 {
-		t.Errorf("abandoned count = %d, want 2", n)
+	if n != 4 {
+		t.Errorf("abandoned count = %d, want 4", n)
 	}
 	got := map[int64]bool{}
 	for _, id := range abandoned {
 		got[id] = true
 	}
-	if !got[stuckHeld.ID] || !got[stuckStaged.ID] {
-		t.Errorf("stuck orders not abandoned: held=%v staged=%v", got[stuckHeld.ID], got[stuckStaged.ID])
+	if !got[stuckHeld.ID] || !got[stuckStaged.ID] || !got[stuckSourcing.ID] || !got[stuckDispatched.ID] {
+		t.Errorf("stuck orders not abandoned: held=%v staged=%v sourcing=%v dispatched=%v",
+			got[stuckHeld.ID], got[stuckStaged.ID], got[stuckSourcing.ID], got[stuckDispatched.ID])
 	}
 	if got[fresh.ID] {
 		t.Error("fresh queued order should not be abandoned")
+	}
+	if got[moving.ID] {
+		t.Error("aged in_transit order should NOT be abandoned (actively moving robot)")
 	}
 }
 

@@ -166,12 +166,19 @@ func (s *ReconciliationService) AutoConfirmStuckDeliveredOrders(timeout time.Dur
 }
 
 // AbandonStuckOrders cancels non-terminal orders that have sat without
-// progress past the timeout — a held two-robot swap removal leg whose
-// supply never arrives, or a robot parked at a staging node. Without it a
-// stuck swap ties up a robot and clutters the board until an operator
-// intervenes (ALN_003 swap-starvation, 2026-06-03). Cancelling reuses the
-// standard teardown (fleet cancel, bin unclaim, auto-return, Edge notify)
-// and cascades to the swap sibling. Returns the count abandoned.
+// progress past the timeout: a held two-robot swap removal leg whose
+// supply never arrives (queued), a robot parked at a staging node
+// (staged), or a leg handed to the fleet that never started moving
+// (sourcing/dispatched). The last is the long-weekend drain — orders
+// dispatched Friday whose robots dwelled all weekend, drained, and
+// faulted on transport when finally moved (2026-06-05/07) sit at
+// `dispatched`/vendor CREATED, which the original queued/staged-only sweep
+// missed. in_transit is intentionally excluded: that's an actively moving
+// robot, not a stuck one. Without this a stuck swap ties up a robot and
+// clutters the board until an operator intervenes (ALN_003 swap-starvation,
+// 2026-06-03). Cancelling reuses the standard teardown (fleet cancel, bin
+// unclaim, auto-return, Edge notify) and cascades to the swap sibling.
+// Returns the count abandoned.
 func (s *ReconciliationService) AbandonStuckOrders(timeout time.Duration) (int, error) {
 	if timeout <= 0 {
 		return 0, nil
@@ -180,7 +187,7 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout time.Duration) (int, 
 	rows, err := s.db.Query(`
 		SELECT id
 		FROM orders
-		WHERE status IN ('queued', 'staged')
+		WHERE status IN ('queued', 'staged', 'sourcing', 'dispatched')
 		  AND updated_at < NOW() - ($1 * INTERVAL '1 second')
 		ORDER BY updated_at ASC
 		LIMIT 100`, int(timeout.Seconds()))
@@ -214,8 +221,12 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout time.Duration) (int, 
 			continue
 		}
 		// A sibling cancel from an earlier iteration this pass may already
-		// have moved this one terminal — skip if no longer queued/staged.
-		if order.Status != "queued" && order.Status != "staged" {
+		// have moved this one terminal — skip if no longer in an
+		// abandonable (stuck non-terminal) state.
+		switch order.Status {
+		case "queued", "staged", "sourcing", "dispatched":
+			// still stuck — abandon below
+		default:
 			continue
 		}
 		reason := fmt.Sprintf("abandoned: stuck in %s past %s", order.Status, timeout)

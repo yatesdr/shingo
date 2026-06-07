@@ -52,9 +52,11 @@ type StagingConfig struct {
 	TTL                  time.Duration `yaml:"ttl"`                    // default 0 (permanent)
 	SweepInterval        time.Duration `yaml:"sweep_interval"`         // default 5m
 	AutoConfirmDelivered time.Duration `yaml:"auto_confirm_delivered"` // 0 = disabled
-	// AbandonStuck cancels orders stuck non-terminal (queued/held or staged)
-	// past this age — a held swap removal leg whose supply never arrives, or
-	// a robot parked at a staging node. Cascades to the two-robot sibling.
+	// AbandonStuck cancels orders stuck non-terminal past this age — a held
+	// swap removal leg whose supply never arrives (queued), a robot parked at
+	// a staging node (staged), or a leg handed to the fleet that never started
+	// moving (sourcing/dispatched; the long-weekend drain case). in_transit is
+	// excluded (actively moving). Cascades to the two-robot sibling.
 	AbandonStuck time.Duration `yaml:"abandon_stuck"` // default 1h; 0 = disabled
 }
 
