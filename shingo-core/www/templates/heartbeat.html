@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Production Heartbeat — Shingo</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/shared/tokens.css?v={{cacheBust}}">
+  <link rel="stylesheet" href="/static/shared/components.css?v={{cacheBust}}">
+  <link rel="stylesheet" href="/static/style.css?v={{cacheBust}}">
+  <style>
+    /* Kiosk chrome — big, wall-readable, dark. */
+    body.hb-kiosk { margin: 0; background: var(--bg-dark, #0b0e13); color: var(--text); font-size: 18px; }
+    .hb-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); }
+    .hb-title { font-size: 1.6rem; font-weight: 700; margin: 0; }
+    .hb-meta { display: flex; align-items: center; gap: 1.25rem; font-variant-numeric: tabular-nums; }
+    .hb-clock { font-size: 1.4rem; }
+    .hb-conn { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--text-muted); }
+    .hb-conn::before { content: ""; width: 0.7rem; height: 0.7rem; border-radius: 50%; background: var(--text-muted); }
+    .hb-conn.is-live { color: var(--success); }
+    .hb-conn.is-live::before { background: var(--success); }
+    /* Rhythm strip — a single <canvas> drawn by one rAF loop over a ring
+       buffer; never a node-per-fire (§13 leak vector). */
+    .hb-rhythm { padding: 0.75rem 1.5rem; }
+    .hb-rhythm canvas { width: 100%; height: 72px; display: block; }
+    .hb-rhythm-label { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.3rem; }
+    /* Big cell grid — reuses .cell-tile from style.css, scaled up. */
+    .hb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; padding: 1rem 1.5rem 2rem; }
+    .hb-grid .cell-tile { padding: 1.1rem 1.25rem; }
+    .hb-grid .cell-tile__name { font-size: 1.25rem; }
+    .hb-grid .cell-tile__badge { font-size: 1.05rem; }
+    .hb-grid .cell-dot--primary { width: 1.3rem; height: 1.3rem; }
+    .hb-grid .cell-dot--sub { width: 0.85rem; height: 0.85rem; }
+    .hb-empty { padding: 3rem 1.5rem; color: var(--text-muted); font-size: 1.2rem; text-align: center; }
+  </style>
+</head>
+<body class="hb-kiosk">
+  <header class="hb-header">
+    <h1 class="hb-title">Production Heartbeat</h1>
+    <div class="hb-meta">
+      <span class="hb-clock" id="hb-clock"></span>
+      <span class="hb-conn" id="hb-conn" title="Live connection">offline</span>
+    </div>
+  </header>
+
+  <section class="hb-rhythm">
+    <div class="hb-rhythm-label">Last 60s — every Process fire across all cells</div>
+    <canvas id="hb-rhythm-canvas"></canvas>
+  </section>
+
+  <main class="hb-grid" id="hb-grid">
+    <div class="hb-empty" id="hb-empty">Loading cells&hellip;</div>
+  </main>
+
+  <script type="module" src="/static/pages/heartbeat.js?v={{cacheBust}}"></script>
+</body>
+</html>

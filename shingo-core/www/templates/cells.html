@@ -1,0 +1,29 @@
+{{define "content"}}
+<div class="flex flex-between mb-2">
+  <h1>Production Cells</h1>
+  <button class="btn btn-primary" id="cell-new">+ New Cell</button>
+</div>
+
+<p class="muted mb-2">
+  A cell groups the production <strong>Processes</strong> on a station into one
+  named unit for the <a href="/missions">Missions</a> Cells view and the
+  <a href="/heartbeat" target="_blank">heartbeat kiosk</a>. Pick the primary
+  Process plus any sub-Processes that feed it. Processes come from the live
+  production-tick stream, so configure a station after it has started ticking.
+</p>
+
+<table class="table" id="cell-table">
+  <thead>
+    <tr>
+      <th>Cell</th>
+      <th>Station</th>
+      <th>Primary</th>
+      <th>Sub-processes</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody id="cell-tbody"></tbody>
+</table>
+
+<script type="module" src="/static/pages/cells.js?v={{cacheBust}}"></script>
+{{end}}

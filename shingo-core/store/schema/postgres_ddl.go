@@ -469,4 +469,51 @@ CREATE TABLE IF NOT EXISTS dashboards (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ── Production heartbeat (slice 5, plan §12) ──────────────────────────────
+-- cell_part_events: one row per PLC counter tick projected from production.tick.
+-- Partitioned monthly by recorded_at; the partition manager
+-- (store/heartbeat) creates the current+next month partitions at boot and
+-- drops partitions older than the retention window nightly. No PRIMARY KEY on
+-- the parent: a partitioned table's PK would have to include recorded_at, and
+-- dedup happens upstream in production_tick_dedup, so the table is an
+-- append-only projection. cell_id = CounterSnapshot.Station (the cell identity
+-- the /api/cells endpoints key on). payload_code is carried for forward-compat
+-- but the production.tick payload does not populate it today (Q-024).
+CREATE TABLE IF NOT EXISTS cell_part_events (
+    id               BIGSERIAL,
+    cell_id          TEXT NOT NULL,
+    payload_code     TEXT NOT NULL DEFAULT '',
+    recorded_at      TIMESTAMPTZ NOT NULL,
+    edge_snapshot_id BIGINT NOT NULL,
+    count_value      BIGINT NOT NULL DEFAULT 0,
+    delta            BIGINT NOT NULL DEFAULT 0,
+    anomaly          TEXT NOT NULL DEFAULT '',
+    process_id       BIGINT NOT NULL DEFAULT 0,
+    style_id         BIGINT NOT NULL DEFAULT 0
+) PARTITION BY RANGE (recorded_at);
+CREATE INDEX IF NOT EXISTS idx_cell_part_events_cell_time ON cell_part_events (cell_id, recorded_at);
+
+-- production_tick_dedup: idempotency guard for production.tick. Composite PK on
+-- (station, edge_snapshot_id) — Edge-local snapshot IDs collide across stations,
+-- so the bare ID is not globally unique (plan §8 #22). Checked BEFORE the async
+-- projection so a redelivered tick never double-projects.
+CREATE TABLE IF NOT EXISTS production_tick_dedup (
+    station          TEXT NOT NULL,
+    edge_snapshot_id BIGINT NOT NULL,
+    applied_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (station, edge_snapshot_id)
+);
+
+-- cell_targets: admin-editable target cycle time per cell/payload, used by the
+-- live-state and loss-accounting math (plan §12). Falls back to a rolling
+-- estimate when no row exists.
+CREATE TABLE IF NOT EXISTS cell_targets (
+    cell_id         TEXT NOT NULL,
+    payload_code    TEXT NOT NULL DEFAULT '',
+    target_cycle_ms BIGINT NOT NULL DEFAULT 0,
+    owner           TEXT NOT NULL DEFAULT '',
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (cell_id, payload_code)
+);
 `

@@ -27,6 +27,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // embed the IANA tz database so PLANT_TIMEZONE (Q-004)
+	// resolves on any host regardless of OS tzdata — air-gapped single-binary
+	// deploys (Proxmox VMs) can't rely on system zoneinfo being present.
 
 	"shingo/protocol"
 	"shingo/protocol/debuglog"
@@ -308,6 +311,18 @@ func main() {
 	router.RegisterSubject(subjectRouter, protocol.SubjectCountGroupAck, coreDataService.HandleCountGroupAck)
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinUOPDelta, coreDataService.HandleBinUOPDelta)
 	router.RegisterSubject(subjectRouter, protocol.SubjectLinesideBucketDelta, coreDataService.HandleLinesideBucketDelta)
+	router.RegisterSubject(subjectRouter, protocol.SubjectProductionTick, coreDataService.HandleProductionTick)
+	// Fan projected ticks out to the engine event bus so the SSE layer can
+	// rebroadcast them as cell-heartbeat (Phase E). Set before the projection
+	// worker starts so it reads the emitter race-free.
+	coreDataService.SetCellTickEmitter(func(station string, processID, styleID int64, recordedAt time.Time) {
+		eng.Events.Emit(engine.Event{Type: engine.EventCellTick, Payload: engine.CellTickEvent{
+			Station: station, ProcessID: processID, StyleID: styleID, RecordedAt: recordedAt,
+		}})
+	})
+	// Launch the async cell_part_events projection worker + partition manager
+	// (plan §12). Must follow registration; the handler only enqueues.
+	coreDataService.StartHeartbeatProjection()
 	for _, s := range protocol.CoreInboundSubjects() {
 		if !subjectRouter.Has(s) {
 			log.Fatalf("shingocore: subject router missing handler for %s — composition root is incomplete", s)

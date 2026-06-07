@@ -41,6 +41,11 @@ const (
 	EventOrderFaulted
 	EventOrderFaultedRecovered
 	EventGraceExpired
+	// EventCellTick — emitted after CoreDataService projects a production.tick
+	// into cell_part_events (Phase E). SetupEngineListeners rebroadcasts it as
+	// the SSE `cell-heartbeat` so the /missions Cells D section and the
+	// /heartbeat kiosk pulse live without polling.
+	EventCellTick
 )
 
 // --- Event payloads ---
@@ -137,6 +142,17 @@ type BinUpdatedEvent struct {
 	ToNodeID    int64
 	Actor       string
 	Detail      string
+}
+
+// CellTickEvent carries one projected production tick to the SSE layer
+// (Phase E). Station is cell_part_events.cell_id; the frontend matches it plus
+// ProcessID against its cell_config to know which cell/dot to pulse.
+type CellTickEvent struct {
+	eventbus.PayloadBase
+	Station    string
+	ProcessID  int64
+	StyleID    int64
+	RecordedAt time.Time
 }
 
 // LinesideBucketAppliedEvent is the engine event the UOP-threshold

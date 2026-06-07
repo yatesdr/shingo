@@ -149,6 +149,17 @@ type migration struct {
 // so PostgreSQL itself enforces apply-once idempotency, not a Go-side
 // schema.ColumnExists check that can lie under connection-pool /
 // search_path edge cases.
+// latestMigrationVersion is the highest migration version, captured from the
+// migration list when it is built in runVersionedMigrations.
+var latestMigrationVersion int
+
+// LatestMigrationVersion returns the highest schema migration version this
+// build defines. It is derived from the migration list (not a hand-maintained
+// constant), so it can never drift from the migrations themselves. Populated
+// when migrations are built/run; callers that compare against a live DB run
+// migrations first.
+func LatestMigrationVersion() int { return latestMigrationVersion }
+
 func (db *DB) runVersionedMigrations() error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY,
@@ -322,6 +333,38 @@ func (db *DB) runVersionedMigrations() error {
 		{27, "add dashboards table for the floor display platform",
 			v27Dashboards,
 			func(q schema.Querier) bool { return schema.TableExists(q, "dashboards") }},
+
+		// v28 promotes bin_uop_audit to the first-class inventory event log
+		// (inventory refactor §16 PR 2): node_id / station / detail JSONB +
+		// a (op, applied_at) index for op-filtered timelines (the footprint
+		// velocity query, §16 PR 1). Additive — existing rows get NULLs.
+		{28, "enrich bin_uop_audit with node_id/station/detail + (op, applied_at) index",
+			v28BinUOPAuditEnrich,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_uop_audit", "node_id") }},
+
+		// v29 adds the per-mission robot-alarm snapshot column for the
+		// failure-Pareto enrichment (Q-026). Additive; populated when a mission
+		// ends FAILED (write side is the remaining Q-026 ingestion).
+		{29, "add mission_telemetry.robot_alarms_json for the failure-Pareto robot-alarm snapshot (Q-026)",
+			v29MissionRobotAlarms,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "mission_telemetry", "robot_alarms_json") }},
+
+		// v30 adds cell_config — the operator-defined grouping of production
+		// Processes into named cells for the /missions Cells D section and the
+		// /heartbeat kiosk (Phase E, Q-025). A cell groups one primary Process
+		// plus optional sub-Processes; process ids match cell_part_events.process_id
+		// (the Process grain the PLC counters tick at — NOT process nodes, which
+		// are the bin path). No seed data: plant cells are configured via
+		// /admin/cells after deploy.
+		{30, "add cell_config for operator-defined production-cell grouping (Q-025, Phase E)",
+			v30CellConfig,
+			func(q schema.Querier) bool { return schema.TableExists(q, "cell_config") }},
+	}
+
+	// Record the head version for LatestMigrationVersion, derived from the list
+	// itself — adding a migration above updates it with no separate bookkeeping.
+	if n := len(migrations); n > 0 {
+		latestMigrationVersion = migrations[n-1].version
 	}
 
 	for _, m := range migrations {
@@ -836,6 +879,67 @@ func v27Dashboards(tx *sql.Tx) error {
 		updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`)
 	return err
+}
+
+// v28BinUOPAuditEnrich promotes bin_uop_audit to the first-class inventory
+// event log (inventory refactor §16 PR 2). Adds node_id / station / detail
+// JSONB and a (op, applied_at DESC) index for op-filtered timelines such as
+// the footprint loaded/unloaded velocity query (§16 PR 1). Additive only —
+// existing rows get NULL node_id/detail and '' station. ADD COLUMN IF NOT
+// EXISTS is apply-once-idempotent.
+func v28BinUOPAuditEnrich(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE bin_uop_audit ADD COLUMN IF NOT EXISTS node_id BIGINT`,
+		`ALTER TABLE bin_uop_audit ADD COLUMN IF NOT EXISTS station TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE bin_uop_audit ADD COLUMN IF NOT EXISTS detail JSONB`,
+		`CREATE INDEX IF NOT EXISTS idx_bin_uop_audit_op_time ON bin_uop_audit(op, applied_at DESC)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v28 bin_uop_audit enrich: %w", err)
+		}
+	}
+	return nil
+}
+
+// v29MissionRobotAlarms adds the per-mission robot-alarm snapshot column
+// (Q-026). When a mission ends FAILED, the active robot_alarm_log codes in its
+// window are snapshotted here as a JSON array of {code,severity,desc,…} so the
+// failure Pareto can classify the real hardware fault. Additive; existing rows
+// get NULL.
+func v29MissionRobotAlarms(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE mission_telemetry ADD COLUMN IF NOT EXISTS robot_alarms_json JSONB`); err != nil {
+		return fmt.Errorf("v29 mission_telemetry.robot_alarms_json: %w", err)
+	}
+	return nil
+}
+
+// v30CellConfig creates cell_config — the operator-defined grouping of
+// production Processes into named cells (Phase E, Q-025). cell_id is the
+// operator-chosen key (e.g. "SNF2"); station ties the cell to its
+// cell_part_events stream (cell_part_events.cell_id = station). primary and
+// sub process ids match cell_part_events.process_id (the Process grain). The
+// sub list is JSONB rather than BIGINT[] because the pgx/database-sql path has
+// no array scanner and the codebase's array idiom is JSONB (cf. *_json
+// columns). No seed data — cells are configured per plant via /admin/cells.
+func v30CellConfig(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS cell_config (
+			cell_id            TEXT PRIMARY KEY,
+			station            TEXT NOT NULL,
+			primary_process_id BIGINT NOT NULL,
+			sub_process_ids    JSONB NOT NULL DEFAULT '[]'::jsonb,
+			display_name       TEXT NOT NULL DEFAULT '',
+			updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS cell_config_station_idx ON cell_config (station)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v30 cell_config: %w", err)
+		}
+	}
+	return nil
 }
 
 func migrateBinsCommandCenter(tx *sql.Tx) error {

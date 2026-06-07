@@ -668,6 +668,34 @@ type BinUOPDelta struct {
 	WindowEnd   time.Time `json:"window_end"`
 }
 
+// CounterSnapshot is the production.tick payload (plan §12): one PLC counter
+// tick observed at an Edge reporting point, captured upstream of the
+// inventory hold-and-replay/accumulator logic so per-tick timing survives bin
+// swaps. Sent on SubjectProductionTick. Core dedups on
+// (Station, EdgeSnapshotID) — never bare EdgeSnapshotID, since Edge-local
+// SQLite autoincrements collide across stations (§8 #22, Round-3 Obs 8).
+//
+// RecordedAt MUST be stamped in Go with millisecond precision
+// (time.Now().UTC()) at insert time, NOT pulled from SQLite's
+// datetime('now') default, whose second granularity injects ~5%
+// quantization noise on 22.5s cycle math (§8 #21).
+//
+// Anomaly carries "" or "jump"; Edge emits even for "jump" ticks (the
+// heartbeat needs to know the cell physically fired even when inventory
+// attribution is operator-gated) and downstream decides whether jumps count
+// toward MTBF/cycle math (§8 #20).
+type CounterSnapshot struct {
+	Station          string    `json:"station"`            // envelope source, from Edge identity
+	ReportingPointID int64     `json:"reporting_point_id"` // Edge-local; provenance only, not a Core join key
+	EdgeSnapshotID   int64     `json:"edge_snapshot_id"`   // counter_snapshots.id — composite with Station for dedup
+	ProcessID        int64     `json:"process_id"`         // enriched at emit time from rp.ProcessID
+	StyleID          int64     `json:"style_id"`           // enriched at emit time from rp.StyleID
+	CountValue       int64     `json:"count_value"`        // absolute counter value (rollover detection on Core)
+	Delta            int64     `json:"delta"`              // count change (typically 1)
+	Anomaly          string    `json:"anomaly"`            // "" or "jump"
+	RecordedAt       time.Time `json:"recorded_at"`        // Edge wall-clock at insert, ms precision (NOT SQLite default)
+}
+
 // LinesideBucketDelta carries a count change against a specific
 // lineside bucket. Sent on subject SubjectLinesideBucketDelta. Core
 // routes on subject, dedups against

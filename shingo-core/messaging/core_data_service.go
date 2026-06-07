@@ -10,8 +10,12 @@ import (
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/demands"
+	"shingocore/store/heartbeat"
 	"shingocore/store/nodes"
 )
+
+// heartbeatRetentionDays is the cell_part_events retention window (plan §12).
+const heartbeatRetentionDays = 90
 
 type coreDataResponder interface {
 	dbg(format string, args ...any)
@@ -35,6 +39,16 @@ type CoreDataService struct {
 	inventoryDelta   *service.InventoryDeltaService
 	resp             coreDataResponder
 	thresholdMonitor ThresholdMonitor
+	// tickCh buffers production.tick projections for the async worker started
+	// by StartHeartbeatProjection. HandleProductionTick only enqueues
+	// (non-blocking), so a slow/locked cell_part_events table can never
+	// back-pressure the inventory hot path (plan §12).
+	tickCh chan heartbeat.PartEvent
+	// cellTickEmitter, if set, fires after a tick is projected so the
+	// composition root can fan it out — the SSE cell-heartbeat broadcast
+	// (Phase E). Optional; nil in tests and headless runs. Set once before
+	// StartHeartbeatProjection, so the worker reads it race-free.
+	cellTickEmitter func(station string, processID, styleID int64, recordedAt time.Time)
 }
 
 // SetThresholdMonitor wires the engine's threshold-monitor for
@@ -43,6 +57,14 @@ type CoreDataService struct {
 // path can skip it.
 func (s *CoreDataService) SetThresholdMonitor(tm ThresholdMonitor) {
 	s.thresholdMonitor = tm
+}
+
+// SetCellTickEmitter wires a callback invoked after each production.tick is
+// projected into cell_part_events (Phase E). The composition root points it at
+// the engine event bus, which SetupEngineListeners rebroadcasts as the SSE
+// cell-heartbeat. Optional; may be nil. Set before StartHeartbeatProjection.
+func (s *CoreDataService) SetCellTickEmitter(fn func(station string, processID, styleID int64, recordedAt time.Time)) {
+	s.cellTickEmitter = fn
 }
 
 // NewCoreDataService constructs a CoreDataService. The TagVerifyService is
@@ -59,7 +81,108 @@ func NewCoreDataService(db *store.DB, resp coreDataResponder) *CoreDataService {
 		tagVerify:      service.NewTagVerifyService(db),
 		inventoryDelta: service.NewInventoryDeltaService(db, service.NewBinManifestService(db)),
 		resp:           resp,
+		tickCh:         make(chan heartbeat.PartEvent, 4096),
 	}
+}
+
+// StartHeartbeatProjection launches the async cell_part_events projection
+// worker and the monthly-partition manager (plan §12). Call once at the
+// composition root after subject registration. The projection is decoupled
+// from inventory: HandleProductionTick only enqueues; this worker does the
+// INSERT, so a slow/locked projection table never back-pressures the delta
+// hot path. Goroutines live for the process lifetime (daemon model).
+func (s *CoreDataService) StartHeartbeatProjection() {
+	if err := s.db.EnsureHeartbeatPartitions(time.Now().UTC()); err != nil {
+		log.Printf("core_handler: ensure heartbeat partitions at boot: %v", err)
+	}
+	go func() {
+		for e := range s.tickCh {
+			if err := s.db.InsertCellPartEvent(e); err != nil {
+				log.Printf("core_handler: project cell_part_event cell=%s edge_id=%d: %v", e.CellID, e.EdgeSnapshotID, err)
+				continue
+			}
+			if s.cellTickEmitter != nil {
+				s.cellTickEmitter(e.CellID, e.ProcessID, e.StyleID, e.RecordedAt)
+			}
+		}
+	}()
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for range t.C {
+			now := time.Now().UTC()
+			if err := s.db.EnsureHeartbeatPartitions(now); err != nil {
+				log.Printf("core_handler: ensure heartbeat partitions: %v", err)
+			}
+			if dropped, err := s.db.DropOldHeartbeatPartitions(heartbeatRetentionDays, now); err != nil {
+				log.Printf("core_handler: drop old heartbeat partitions: %v", err)
+			} else if dropped > 0 {
+				log.Printf("core_handler: dropped %d expired heartbeat partition(s)", dropped)
+			}
+		}
+	}()
+}
+
+// HandleProductionTick projects an Edge production.tick (one PLC counter
+// observation) into cell_part_events for the heartbeat dashboards (plan §12).
+// Dedup on (station, edge_snapshot_id) is synchronous and runs first (§8 #22);
+// the projection is enqueued non-blocking so it can never back-pressure the
+// inventory hot path. Emits even for anomaly=="jump" (§8 #20). Because dedup
+// commits before the (best-effort) projection, projection is at-most-once — an
+// acceptable trade for a dashboard that is not an inventory truth source; a
+// dropped/failed projection is logged, not retried.
+func (s *CoreDataService) HandleProductionTick(env *protocol.Envelope, snap *protocol.CounterSnapshot) {
+	station := snap.Station
+	if station == "" {
+		station = env.Src.Station
+	}
+	isNew, err := s.db.TryProductionTickDedup(station, snap.EdgeSnapshotID)
+	if err != nil {
+		log.Printf("core_handler: production.tick dedup station=%s edge_id=%d: %v", station, snap.EdgeSnapshotID, err)
+		return
+	}
+	if !isNew {
+		s.resp.dbg("production.tick replay station=%s edge_id=%d — already projected", station, snap.EdgeSnapshotID)
+		return
+	}
+	ev := heartbeat.PartEvent{
+		CellID:         station,
+		RecordedAt:     snap.RecordedAt,
+		EdgeSnapshotID: snap.EdgeSnapshotID,
+		CountValue:     snap.CountValue,
+		Delta:          snap.Delta,
+		Anomaly:        snap.Anomaly,
+		ProcessID:      snap.ProcessID,
+		StyleID:        snap.StyleID,
+	}
+	select {
+	case s.tickCh <- ev:
+	default:
+		log.Printf("core_handler: production.tick projection queue full, dropped station=%s edge_id=%d", station, snap.EdgeSnapshotID)
+	}
+
+	// §14 production.report retirement — BLOCKED, see Q-024. The gate
+	// (isProductionTick) is ready and tested, and this isNew branch is the
+	// correct, dedup-guarded placement for the IncrementProduced/LogProduction
+	// calls (§14 risk #4). But IncrementProduced needs cat_id = payload_code,
+	// and production.tick is emitted UPSTREAM of payload attribution
+	// (plc/manager.go enqueueProductionTick has only style/process; payload is
+	// attributed later in the engine wiring, where the old production_reporter
+	// gets it). So cat_id is not resolvable from the tick today. Until the team
+	// decides the cat_id source, production.report stays the sole writer —
+	// HandleProductionReport is intentionally left active.
+	if isProductionTick(snap) {
+		s.resp.dbg("production.tick is a production event station=%s style=%d delta=%d (produced-count wiring blocked on cat_id source, Q-024)",
+			station, snap.StyleID, snap.Delta)
+	}
+}
+
+// isProductionTick reports whether a tick should increment the produced
+// counter per §14's filter (Delta > 0, a real style, not an unconfirmed jump).
+// Mirrors Edge's old EmitCounterDelta production guard. Ready for the §14
+// retirement once the cat_id source is resolved (Q-024).
+func isProductionTick(snap *protocol.CounterSnapshot) bool {
+	return snap.Delta > 0 && snap.StyleID != 0 && snap.Anomaly != "jump"
 }
 
 // HandleBinUOPDelta routes a Phase 1 inventory delta envelope to the
@@ -98,6 +221,50 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 	// to its in-memory cache.
 	if s.thresholdMonitor != nil && d.PayloadCode != "" {
 		s.thresholdMonitor.OnBinUOPDelta(d.PayloadCode, d.Delta)
+	}
+
+	// §14 (Session-4 reframe): production counting retires onto bin_uop_delta.
+	// We are on the APPLIED branch — ApplyBinUOPDelta returned nil, meaning the
+	// delta passed its inventory_delta_dedup gate and was newly applied. A
+	// Kafka redelivery returns ErrInventoryDeltaSkipped above, so the counter
+	// is never double-bumped (§14 risk #4). NOT same-tx with the inventory
+	// write (that lives in the uop package; counting here keeps demands
+	// decoupled from inventory truth) — idempotent via the dedup gate, matching
+	// the durability of the retired production.report path.
+	//
+	// BOTH produce and consume ticks are production, keyed by payload_code: a
+	// produce tick makes the part; a consume tick draws the sub down as it's
+	// produced into a downstream FG/WIP. Count the magnitude (consume delta is
+	// negative). IncrementProduced is UPDATE-only, so untracked cat_ids no-op.
+	if isProductionReason(d.Reason) && d.PayloadCode != "" && d.Delta != 0 {
+		qty := int64(d.Delta)
+		if qty < 0 {
+			qty = -qty
+		}
+		s.resp.dbg("production via bin_uop_delta: payload=%s station=%s qty=%d reason=%s",
+			d.PayloadCode, d.Station, qty, d.Reason)
+		if err := s.db.IncrementProduced(d.PayloadCode, qty); err != nil {
+			log.Printf("core_handler: increment produced payload=%s qty=%d: %v", d.PayloadCode, qty, err)
+		}
+		if err := s.db.LogProduction(d.PayloadCode, d.Station, qty); err != nil {
+			log.Printf("core_handler: log production payload=%s: %v", d.PayloadCode, err)
+		}
+	}
+}
+
+// isProductionReason reports whether a bin_uop_delta reason represents a part
+// being produced for the demand counter (§14). Both directions count, keyed by
+// payload_code: produce_tick (a part is made), consume_tick and its A/B-cycling
+// variant ab_fallthrough (a sub is consumed as it's produced into a downstream
+// FG/WIP). Excludes capture_reduction (operator pull-to-lineside on release)
+// and operator_correction (manual count fix) — material moves / corrections,
+// not production throughput.
+func isProductionReason(reason protocol.BinUOPDeltaReason) bool {
+	switch reason {
+	case protocol.ReasonProduceTick, protocol.ReasonConsumeTick, protocol.ReasonABFallthrough:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -242,19 +409,21 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 }
 
 func (s *CoreDataService) HandleProductionReport(env *protocol.Envelope, rpt *protocol.ProductionReport) {
-	log.Printf("core_handler: production report from %s: %d entries", rpt.StationID, len(rpt.Reports))
+	log.Printf("core_handler: production report from %s: %d entries (PARALLEL-RUN: writes disabled; new path is HandleBinUOPDelta, §14)", rpt.StationID, len(rpt.Reports))
 	accepted := 0
 	for _, entry := range rpt.Reports {
 		if entry.CatID == "" || entry.Count <= 0 {
 			continue
 		}
-		if err := s.db.IncrementProduced(entry.CatID, entry.Count); err != nil {
-			log.Printf("core_handler: increment produced %s: %v", entry.CatID, err)
-			continue
-		}
-		if err := s.db.LogProduction(entry.CatID, rpt.StationID, entry.Count); err != nil {
-			log.Printf("core_handler: log production %s: %v", entry.CatID, err)
-		}
+		// §14 parallel-run (risk #3): the new bin_uop_delta path is now the
+		// SOLE writer of produced_qty / production_log. IncrementProduced is
+		// NOT idempotent, so we must NOT also write here — double-writing would
+		// silently double the counter and the parity check would pass on both
+		// being wrong. Keep the handler + ack live and LOG what this path WOULD
+		// have written so Stephen can compare LOGS (not counter values) for a
+		// week before the production_reporter deletion lands (Q-024-FOLLOWUP).
+		log.Printf("core_handler: [production.report parallel-run] would write cat_id=%s station=%s count=%d",
+			entry.CatID, rpt.StationID, entry.Count)
 		accepted++
 	}
 

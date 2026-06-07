@@ -5,6 +5,8 @@ package testdb
 import (
 	"testing"
 	"time"
+
+	"shingocore/store"
 )
 
 // TestTemplateDB_HasAllSchema validates that the template database actually
@@ -12,24 +14,20 @@ import (
 // template build, this test fails fast and loud instead of letting opaque
 // "table does not exist" errors propagate across the rest of the suite.
 //
-// The check is intentionally narrow: schema_migrations max version must
-// match the highest version listed in store/migrations.go's
-// runVersionedMigrations(), and a handful of core tables that EVERY test
-// transitively expects must be present. New migrations require bumping
-// the version constant below.
+// The expected version is derived from the migration list itself
+// (store.LatestMigrationVersion), so it stays exact without per-migration
+// maintenance: the applied max in the template must equal the highest
+// migration the build defines. A mismatch means the template skipped a
+// migration (a stale template build).
 func TestTemplateDB_HasAllSchema(t *testing.T) {
-	// Highest migration version this template build must reach. Bump
-	// when a new versioned migration lands in store/migrations.go.
-	const expectedMigrationVersion = 20
-
 	db := Open(t)
 
 	var maxVersion int
 	if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&maxVersion); err != nil {
 		t.Fatalf("query schema_migrations: %v", err)
 	}
-	if maxVersion < expectedMigrationVersion {
-		t.Errorf("template schema_migrations max version = %d, want >= %d (template build is missing migrations)", maxVersion, expectedMigrationVersion)
+	if want := store.LatestMigrationVersion(); maxVersion != want {
+		t.Errorf("template schema_migrations max version = %d, want %d (template build skipped a migration)", maxVersion, want)
 	}
 
 	// Core tables every test depends on. Not exhaustive — failure here
@@ -59,9 +57,9 @@ func TestTemplateDB_HasAllSchema(t *testing.T) {
 }
 
 // TestTemplateDB_CloneIsFast asserts that cloning a fresh test DB from the
-// template stays under 500ms — the wave-2 plan trigger #2 threshold. A
-// regression past this bound indicates either schema bloat in the template
-// or a Postgres lock-serialization problem under concurrency.
+// template stays under 500ms. A regression past this bound indicates either
+// schema bloat in the template or a Postgres lock-serialization problem under
+// concurrency.
 //
 // The first Open(t) in this test pays template setup cost (migrations on
 // the template DB) and so is excluded from the measurement. The second

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/types"
 	"shingoedge/config"
 	"shingoedge/store"
@@ -592,8 +593,65 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) {
 	if rp.StyleID == 0 {
 		return // no style linked
 	}
+
+	// production.tick (plan §12): publish the raw per-tick counter observation
+	// to Core UPSTREAM of the engine's inventory hold-and-replay + accumulator
+	// coalescing, so per-tick timing survives bin swaps — the property
+	// inventory.bin_uop_delta destroys when it lumps held ticks onto the next
+	// bound bin across a finalize/swap gap (§8 #13). Independent of the
+	// inventory EmitCounterDelta below; the production-cell heartbeat dashboards
+	// consume this and the inventory subsystem is unchanged. Emit even when
+	// anomaly == "jump" — the heartbeat must know the cell physically fired even
+	// while inventory attribution is operator-gated (§8 #20); the no-op and
+	// reset cases were already filtered by the early returns above.
+	if delta > 0 && anomaly != "reset" {
+		m.enqueueProductionTick(rp, snapID, newCount, delta, anomaly)
+	}
+
 	if anomaly != "jump" && delta > 0 {
 		m.emitter.EmitCounterDelta(rp.ID, rp.ProcessID, rp.StyleID, delta, newCount, anomaly)
+	}
+}
+
+// enqueueProductionTick builds a production.tick envelope (plan §12) from the
+// counter snapshot just recorded by pollReportingPoint and enqueues it on the
+// outbox for delivery to Core. RecordedAt is stamped here in Go with
+// millisecond-capable precision (time.Now().UTC()), NOT read back from SQLite's
+// second-granularity datetime('now') default, so 22.5s cycle math on the
+// dashboard doesn't pick up ~5% quantization noise (§8 #21). Dedup is Core-side
+// on (Station, EdgeSnapshotID) — never bare EdgeSnapshotID, since Edge-local
+// snapshot ids collide across stations (§8 #22). Best-effort: any failure is
+// logged and swallowed so the counter poll loop is never broken by an outbox
+// problem.
+func (m *Manager) enqueueProductionTick(rp counters.ReportingPoint, snapID, newCount, delta int64, anomaly string) {
+	station := m.cfg.StationID()
+	env, err := protocol.NewDataEnvelope(
+		protocol.SubjectProductionTick,
+		protocol.Address{Role: protocol.RoleEdge, Station: station},
+		protocol.Address{Role: protocol.RoleCore},
+		&protocol.CounterSnapshot{
+			Station:          station,
+			ReportingPointID: rp.ID,
+			EdgeSnapshotID:   snapID,
+			ProcessID:        rp.ProcessID,
+			StyleID:          rp.StyleID,
+			CountValue:       newCount,
+			Delta:            delta,
+			Anomaly:          anomaly,
+			RecordedAt:       time.Now().UTC(),
+		},
+	)
+	if err != nil {
+		log.Printf("production.tick: build envelope rp=%d: %v", rp.ID, err)
+		return
+	}
+	data, err := env.Encode()
+	if err != nil {
+		log.Printf("production.tick: encode envelope rp=%d: %v", rp.ID, err)
+		return
+	}
+	if _, err := m.db.EnqueueOutbox(data, protocol.SubjectProductionTick); err != nil {
+		log.Printf("production.tick: enqueue outbox rp=%d: %v", rp.ID, err)
 	}
 }
 

@@ -92,6 +92,23 @@ const (
 	SubjectBinUOPDelta         = "inventory.bin_uop_delta"
 	SubjectLinesideBucketDelta = "inventory.lineside_bucket_delta"
 
+	// ProductionTick — Edge → Core per-PLC-counter-tick heartbeat for the
+	// production-cell dashboards (plan §12). A new envelope SUBJECT on the
+	// existing shingo.orders Kafka topic (NOT a new topic, NOT a new
+	// consumer group — §8 #23), following the SubjectBinUOPDelta precedent.
+	// Carries protocol.CounterSnapshot. Emitted right after Edge's
+	// InsertCounterSnapshot, UPSTREAM of applyHoldAndReplay/accumulator
+	// coalescing, so per-tick timing is preserved across bin swaps (the
+	// property bin_uop_delta destroys, §8 #13). Core dedups on
+	// (station, edge_snapshot_id) and projects async to cell_part_events.
+	//
+	// NOTE: not yet in CoreInboundSubjects() — that entry + the
+	// HandleProductionTick registration at the composition root land
+	// together with the Core handler (see slice-implementation-questions
+	// SLICE 5 NOTES). Adding it here without a handler would trip the
+	// boot-time coverage assertion.
+	SubjectProductionTick = "production.tick"
+
 	// BinPickedUp — Core notifies Edge when a bin is physically picked
 	// up by a robot. Used by the SEND PARTIAL BACK flow: the operator
 	// releases a partial bin and the cell keeps cycling; ticks during
@@ -151,6 +168,7 @@ func CoreInboundSubjects() []string {
 		SubjectCountGroupAck,
 		SubjectBinUOPDelta,
 		SubjectLinesideBucketDelta,
+		SubjectProductionTick,
 	}
 }
 
