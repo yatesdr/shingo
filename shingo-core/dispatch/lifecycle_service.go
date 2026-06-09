@@ -138,14 +138,65 @@ func (s *LifecycleService) CreateStorageWaybillOrder(stationID string, p *protoc
 	return order, nil
 }
 
+// resolveIngestBin finds the bin an ingest should manifest.
+//
+// Two callers, two ways to identify the bin:
+//   - Manual / HTTP ingest carries a real BinLabel (an operator scanned the
+//     tote), so we look it up by name directly.
+//   - Headless produce-finalize (Edge operator_produce.go) ships a BLANK label
+//     plus the SourceNode. Edge knows the contents (payload + UOP) but tracks the
+//     active bin by id, not label (loaded_bin_label was retired), so it can't
+//     name the tote — it tells Core which node it's parked at and lets Core
+//     resolve identity from location. That's the same look-by-node/group Core
+//     already uses for consume (FindEmptyCompatible*); the ingest was the lone
+//     path still demanding a label. This completes the "bin label resolved by
+//     core from node contents" contract Edge has documented since 2026-04-30.
+func (s *LifecycleService) resolveIngestBin(p *protocol.OrderIngestRequest) (*bins.Bin, *lifecycleError) {
+	if p.BinLabel != "" {
+		bin, err := s.db.GetBinByLabel(p.BinLabel)
+		if err != nil {
+			return nil, lifecycleErr("bin_error", fmt.Sprintf("bin %q not found", p.BinLabel), err)
+		}
+		return bin, nil
+	}
+	if p.SourceNode == "" {
+		return nil, lifecycleErr("bin_error", "ingest carries neither bin_label nor source_node",
+			errors.New("ingest: no bin identity"))
+	}
+	node, err := s.db.GetNodeByDotName(p.SourceNode)
+	if err != nil || node == nil {
+		return nil, lifecycleErr("invalid_node", fmt.Sprintf("ingest source node %q not found", p.SourceNode), err)
+	}
+	atNode, err := s.db.ListBinsByNode(node.ID)
+	if err != nil {
+		return nil, lifecycleErr("bin_error", fmt.Sprintf("list bins at node %q failed", p.SourceNode), err)
+	}
+	if len(atNode) == 0 {
+		return nil, lifecycleErr("bin_error", fmt.Sprintf("no bin parked at node %q to ingest", p.SourceNode),
+			errors.New("ingest: empty node"))
+	}
+	// A node can transiently hold the outgoing full and an incoming empty
+	// mid-swap; manifest the one whose payload Edge just reported. Fall back to
+	// the only/first bin (the freshly-filled produce bin carries no core-side
+	// payload until this very ingest sets it, so the match misses on purpose).
+	if p.PayloadCode != "" {
+		for _, b := range atNode {
+			if b.PayloadCode == p.PayloadCode {
+				return b, nil
+			}
+		}
+	}
+	return atNode[0], nil
+}
+
 func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.OrderIngestRequest) (*orders.Order, string, *lifecycleError) {
 	tmpl, err := s.db.GetPayloadByCode(p.PayloadCode)
 	if err != nil {
 		return nil, "", lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", p.PayloadCode), err)
 	}
-	bin, err := s.db.GetBinByLabel(p.BinLabel)
-	if err != nil {
-		return nil, "", lifecycleErr("bin_error", fmt.Sprintf("bin %q not found", p.BinLabel), err)
+	bin, binErr := s.resolveIngestBin(p)
+	if binErr != nil {
+		return nil, "", binErr
 	}
 	if len(p.Manifest) > 0 {
 		manifest := bins.Manifest{Items: make([]bins.ManifestEntry, len(p.Manifest))}
@@ -194,6 +245,18 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 		loadedAtLabel = "(server time)"
 	}
 	s.dbg("ingest: set manifest on bin=%d, payload=%s, loaded_at=%s", bin.ID, p.PayloadCode, loadedAtLabel)
+
+	// Swap-mode produce ships ManifestOnly: the bin's count is now recorded, and
+	// the swap is already carrying that bin to the supermarket. Minting a store
+	// order here would fight the swap for the (claimed) bin, and the routeless
+	// order would let FindStorageDestination relocate it onto some other node
+	// (incl. another press output). Stop at the manifest; simple-mode produce
+	// (no swap) falls through to the real store move.
+	if p.ManifestOnly {
+		s.dbg("ingest: manifest-only bin=%d at %s — swap carries the move, no store order", bin.ID, p.SourceNode)
+		return nil, p.PayloadCode, nil
+	}
+
 	order := &orders.Order{
 		EdgeUUID:    p.OrderUUID,
 		StationID:   stationID,

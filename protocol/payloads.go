@@ -353,6 +353,10 @@ type OrderIngestRequest struct {
 	Quantity    int64                `json:"quantity"`
 	Manifest    []IngestManifestItem `json:"manifest,omitempty"`
 	ProducedAt  string               `json:"produced_at,omitempty"` // RFC3339 timestamp from Edge at cell completion
+	// ManifestOnly: record the bin's count and stop — do NOT mint a store
+	// transport order. Set by swap-mode produce, where the swap already carries
+	// the bin. Simple-mode produce leaves it false so the ingest still stores.
+	ManifestOnly bool `json:"manifest_only,omitempty"`
 }
 
 // IngestManifestItem describes a single item in an ingest manifest.

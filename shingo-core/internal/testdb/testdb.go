@@ -344,7 +344,20 @@ type StandardData struct {
 // one payload (PART-A), and one bin type (DEFAULT).
 func SetupStandardData(t *testing.T, db *store.DB) *StandardData {
 	t.Helper()
-	storageNode := &nodes.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
+	// STORAGE-A1 must be a STOR node: FindStorageDestination only consolidates
+	// onto / falls back to STOR-typed nodes, so an untyped storage fixture is
+	// invisible to the finder. STOR is a plant-config type (seed_core's
+	// ensureNodeType) that migrations don't ship (only LANE/NGRP) and tests
+	// don't plant-seed, so create it if absent. LINE1-IN stays untyped — a line
+	// node is not a storage destination.
+	storType, err := db.GetNodeTypeByCode("STOR")
+	if err != nil {
+		storType = &nodes.NodeType{Code: "STOR", Name: "Storage Slot", IsSynthetic: false}
+		if err := db.CreateNodeType(storType); err != nil {
+			t.Fatalf("create STOR node type: %v", err)
+		}
+	}
+	storageNode := &nodes.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true, NodeTypeID: &storType.ID}
 	if err := db.CreateNode(storageNode); err != nil {
 		t.Fatalf("create storage node: %v", err)
 	}

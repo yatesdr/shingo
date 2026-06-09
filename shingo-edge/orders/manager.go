@@ -372,7 +372,7 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 
 // CreateIngestOrder creates a new ingest order for originating a payload on a bin at a produce station.
 // producedAt is an RFC3339 timestamp from the Edge capturing the moment the operator finalized the bin.
-func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, autoConfirm bool, producedAt string) (*orders.Order, error) {
+func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, autoConfirm bool, producedAt string, manifestOnly bool) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeIngest,
@@ -383,13 +383,14 @@ func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel,
 	}
 
 	env, envErr := m.sender.build(protocol.TypeOrderIngest, &protocol.OrderIngestRequest{
-		OrderUUID:   orderUUID,
-		PayloadCode: payloadCode,
-		BinLabel:    binLabel,
-		SourceNode:  sourceNode,
-		Quantity:    quantity,
-		Manifest:    manifest,
-		ProducedAt:  producedAt,
+		OrderUUID:    orderUUID,
+		PayloadCode:  payloadCode,
+		BinLabel:     binLabel,
+		SourceNode:   sourceNode,
+		Quantity:     quantity,
+		Manifest:     manifest,
+		ProducedAt:   producedAt,
+		ManifestOnly: manifestOnly,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 

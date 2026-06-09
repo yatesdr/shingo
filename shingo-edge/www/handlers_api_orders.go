@@ -233,6 +233,7 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 		req.Quantity, req.Manifest,
 		h.engine.AppConfig().Web.AutoConfirm,
 		producedAt,
+		false, // manual/HTTP ingest stays a full store (operator scanned a real bin)
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

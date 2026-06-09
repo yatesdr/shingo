@@ -62,8 +62,10 @@ func (db *DB) FindStorageDestination(payloadCode string, excludeNodeID int64) (*
 		SELECT %s %s WHERE n.id = (
 			SELECT sn.id
 			FROM nodes sn
+			JOIN node_types snt ON snt.id = sn.node_type_id
 			JOIN bins match_b ON match_b.node_id = sn.id AND match_b.payload_code = $1
 			WHERE sn.enabled = true AND sn.is_synthetic = false
+			  AND snt.code = 'STOR'
 			  AND ($2 = 0 OR sn.id != $2)
 			  AND sn.claimed_by IS NULL
 			ORDER BY sn.name
@@ -80,8 +82,10 @@ func (db *DB) FindStorageDestination(payloadCode string, excludeNodeID int64) (*
 		SELECT %s %s WHERE n.id = (
 			SELECT sn.id
 			FROM nodes sn
+			JOIN node_types snt ON snt.id = sn.node_type_id
 			LEFT JOIN bins sb ON sb.node_id = sn.id
 			WHERE sn.enabled = true AND sn.is_synthetic = false
+			  AND snt.code = 'STOR'
 			  AND sn.claimed_by IS NULL
 			GROUP BY sn.id
 			HAVING COUNT(sb.id) = 0

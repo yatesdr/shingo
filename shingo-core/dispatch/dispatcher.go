@@ -344,6 +344,11 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 		d.replies.SendError(env, p.OrderUUID, lifecycleErr.Code, lifecycleErr.Detail)
 		return
 	}
+	if order == nil {
+		// Manifest-only ingest (swap-mode produce): the bin's count is recorded
+		// and the swap moves it — nothing to plan or dispatch.
+		return
+	}
 
 	result, planErr := d.planner.Plan(order, env, payloadCode)
 	if planErr != nil {

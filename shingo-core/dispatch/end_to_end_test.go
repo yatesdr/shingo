@@ -404,10 +404,10 @@ func TestDispatcher_StoreOrder_ConsolidationSkipsSource(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
-	// Only the source has a PART-A bin. Without the skip-source fix,
-	// FindStorageDestination's consolidation branch returns LINE1-IN
-	// (alphabetically first with a matching bin); with the fix, the
-	// consolidation branch returns no match, the empty fallback picks
+	// Only the source (LINE1-IN) has a PART-A bin, and as an untyped line
+	// node it is not a storage candidate — so the consolidation branch finds
+	// no STOR node holding the payload and returns no match (the source is
+	// also skip-source-excluded). The empty fallback picks the STOR node
 	// STORAGE-A1, and the order dispatches successfully.
 	testdb.CreateBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-CONS-LINE")
 
@@ -456,9 +456,10 @@ func TestDispatcher_StoreOrder_QueuesOnOccupiedDestination(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
-	// Both candidate physical destinations have bins of the same payload.
-	// FindStorageDestination's consolidation branch picks one of them;
-	// the gate must see "occupied" and queue.
+	// Both nodes hold a bin of the same payload, but only the STOR node
+	// (STORAGE-A1) is a storage candidate — the untyped line node is not.
+	// FindStorageDestination's consolidation branch picks STORAGE-A1; the
+	// gate must see it "occupied" and queue.
 	testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-OCC-STO")
 	testdb.CreateBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-OCC-LINE")
 

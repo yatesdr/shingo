@@ -118,6 +118,7 @@ func (e *Engine) dispatchProduceIngest(nodeID int64, node *processes.Node, claim
 		plan.Manifest,
 		plan.AutoConfirmIngest,
 		plan.ProducedAtRFC3339,
+		!plan.SimpleOnly, // swap modes: manifest only — the swap carries the bin, no store order
 	)
 }
 

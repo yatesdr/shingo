@@ -386,7 +386,7 @@ func TestCreateIngestOrder_QueuesIngestEnvelope(t *testing.T) {
 	manifest := []protocol.IngestManifestItem{{PartNumber: "P1", Quantity: 2}}
 	producedAt := time.Now().UTC().Format(time.RFC3339)
 
-	order, err := mgr.CreateIngestOrder(nil, "PL-X", "BIN-1", "SRC-I", 10, manifest, true, producedAt)
+	order, err := mgr.CreateIngestOrder(nil, "PL-X", "BIN-1", "SRC-I", 10, manifest, true, producedAt, false)
 	if err != nil {
 		t.Fatalf("CreateIngestOrder: %v", err)
 	}
