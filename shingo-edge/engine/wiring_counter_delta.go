@@ -215,12 +215,18 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 		} else if claim.ReorderPoint <= 0 {
 			e.debugFn("autoreorder eval: claim=%d node=%s gate=opt_out (reorder_point=0) — legacy silent-inert path",
 				claim.ID, node.Name)
-		} else if newRemaining <= 0 {
-			e.debugFn("autoreorder eval: claim=%d node=%s remaining=%d threshold=%d gate=at_floor (nothing left to reorder)",
-				claim.ID, node.Name, newRemaining, claim.ReorderPoint)
 		} else if newRemaining <= claim.ReorderPoint {
+			// UOP-threshold = a LEVEL trigger: reorder whenever the count is at or
+			// below the threshold, INCLUDING <= 0. Previously a `newRemaining <= 0`
+			// branch short-circuited to a no-op "at_floor" gate, so a node that
+			// overshot the (0, ReorderPoint] window — e.g. a batched/large consume
+			// flush, routine in the sim — drained to empty/negative and NEVER
+			// reordered → starved. A threshold is a level, not an edge; being below
+			// it (even far below) is exactly when you must restock. No double-order
+			// risk: CanAcceptOrders returns false while an active/staged reorder is
+			// in flight, so at most one order fires until it completes.
 			canAccept, reason := e.CanAcceptOrders(node.ID)
-			e.logFn("autoreorder eval: claim=%d node=%s remaining=%d threshold=%d canAccept=%v reason=%s gate=consume_tick",
+			e.logFn("autoreorder eval: claim=%d node=%s remaining=%d threshold=%d canAccept=%v reason=%s gate=below_threshold",
 				claim.ID, node.Name, newRemaining, claim.ReorderPoint, canAccept, reason)
 			if canAccept {
 				if _, err := e.RequestNodeMaterial(node.ID, 1); err != nil {
