@@ -10,29 +10,14 @@
     <select id="m-station" title="Station"><option value="">All stations</option></select>
     <select id="m-robot" title="Robot"><option value="">All robots</option></select>
     <button class="btn btn-sm" id="m-refresh" title="Refresh">&#x21bb;</button>
+    <span id="m-sys-pills" class="text-muted-sm" title="Fleet / messaging / database health"></span>
     <span class="live-pill" id="m-live" title="Live SSE connection">&#9675; offline</span>
   </div>
 
-  <!-- A: Hero strip (§3.A). Tiles: success / volume / avg / in flight / alerts -->
-  <section class="mb-4">
-    <div id="m-alerts"></div>
-    <div class="grid-kpi" id="m-kpi-grid"><div class="dash-empty">Loading KPIs&hellip;</div></div>
-  </section>
-
-  <!-- B: Mission trends (§3.B). Local 24h/7d/30d toggle, 2×2 Chart.js grid. -->
-  <section class="card" id="m-trends">
-    <div class="section-head">
-      <h2>Trends</h2>
-      <div class="range-toggle" id="m-trend-toggle"></div>
-    </div>
-    <div class="grid grid-2" id="m-trend-grid"><div class="dash-empty">Loading trends&hellip;</div></div>
-  </section>
-
-  <!-- C: Live ops (always live, SSE) (§3.C). -->
-  <section class="card" id="m-live-ops">
-    <div class="section-head"><h2>Live ops</h2><span id="m-sys-pills" class="text-muted-sm"></span></div>
-    <div id="m-inflight"><div class="dash-empty">Loading live ops&hellip;</div></div>
-  </section>
+  <!-- Wave 2 (Q-035): the Hero KPI strip, Trends, and Live ops sections were
+       removed here — they duplicated Overview. Overview is the glanceable
+       snapshot; Missions is the analytical drill page (table + breakdowns +
+       Pareto + cells + parts). Sys-health pills relocated to the filter bar. -->
 
   <!-- D: Cells (§3.D, Phase E). Per-cell production rhythm — a pulsing primary
        Process dot plus satellite sub-Process dots, live on cell-heartbeat.
@@ -42,15 +27,8 @@
     <div class="cell-grid" id="m-cells-grid"><div class="dash-empty">Loading cells&hellip;</div></div>
   </section>
 
-  <!-- E: Parts (§3.E). Produced / cycle time / consumption. -->
-  <section class="card" id="m-parts">
-    <div class="section-head"><h2>Parts</h2></div>
-    <div class="grid grid-3">
-      <div><div class="chart-caption">Produced (qty · missions)</div><div class="bar-list" id="m-parts-produced"></div></div>
-      <div><div class="chart-caption" title="Payload-level cycle time attributed to each part (§3.E.2 caveat)">Cycle time (avg)</div><div class="bar-list" id="m-parts-cycle"></div></div>
-      <div><div class="chart-caption">Consumption (UoP)</div><div class="bar-list" id="m-parts-consume"></div></div>
-    </div>
-  </section>
+  <!-- Parts moved to the Inventory page in wave 2 (Q-035) — part-number is an
+       inventory grain, not mission telemetry. -->
 
   <!-- F: Breakdowns (§3.F). By robot and by route. -->
   <section class="card" id="m-breakdowns">

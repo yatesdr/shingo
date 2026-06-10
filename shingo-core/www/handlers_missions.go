@@ -173,11 +173,40 @@ func (h *Handlers) apiMissionFailures(w http.ResponseWriter, r *http.Request) {
 // apiMissionsActive returns the live count of non-terminal orders — the
 // hero "in flight" KPI (plan §3.A / §15.A). Cheap count; the page also
 // refreshes it on SSE order-update.
+// apiMissionsActive returns the in-flight order count for the Overview tile
+// (item 10). station_id/robot_id make it respect the global filter; without
+// them it stays on the fast unfiltered count. The active set is small
+// (currently-executing orders), so listing + filtering in-process is cheap —
+// no bespoke filtered-count query needed.
 func (h *Handlers) apiMissionsActive(w http.ResponseWriter, r *http.Request) {
-	n, err := h.engine.OrderService().CountActiveOrders()
+	station := r.URL.Query().Get("station_id")
+	robot := r.URL.Query().Get("robot_id")
+
+	if station == "" && robot == "" {
+		n, err := h.engine.OrderService().CountActiveOrders()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]int{"count": n})
+		return
+	}
+
+	active, err := h.engine.OrderService().ListActiveOrders()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	n := 0
+	for _, o := range active {
+		if station != "" && o.StationID != station {
+			continue
+		}
+		if robot != "" && o.RobotID != robot {
+			continue
+		}
+		n++
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int{"count": n})

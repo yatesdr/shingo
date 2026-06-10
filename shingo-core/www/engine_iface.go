@@ -39,6 +39,7 @@ type ServiceAccess interface {
 	Fleet() fleet.Backend
 	Tracker() fleet.OrderTracker
 	MsgClient() *messaging.Client
+	RequestEdgeReregister(station string) error // Q-034: ask edge(s) to re-send their catalog
 	EventBus() *engine.EventBus
 	Reconciliation() *engine.ReconciliationService
 	Recovery() *engine.RecoveryService

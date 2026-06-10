@@ -372,6 +372,9 @@ func (db *DB) runVersionedMigrations() error {
 		{32, "add downtime_events for persisted downtime start/end events (G9)",
 			v32DowntimeEvents,
 			func(q schema.Querier) bool { return schema.TableExists(q, "downtime_events") }},
+		{33, "add edge_cells for the auto-derived cell catalog (Q-034)",
+			v33EdgeCells,
+			func(q schema.Querier) bool { return schema.TableExists(q, "edge_cells") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -990,6 +993,33 @@ func v32DowntimeEvents(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v32 downtime_events: %w", err)
+		}
+	}
+	return nil
+}
+
+// v33EdgeCells creates the auto-derived cell catalog (Q-034). One row per
+// (station, cell_label) — a cell is a PLC the edge reported. bindings is the
+// JSONB array of its process tuples. last_seen + stale track reconciliation:
+// upserts refresh last_seen and clear stale; cells absent from a newer catalog
+// are marked stale rather than deleted (the scenesync ghost lesson — keep
+// history visible).
+func v33EdgeCells(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS edge_cells (
+			station     TEXT        NOT NULL,
+			cell_label  TEXT        NOT NULL,
+			bindings    JSONB       NOT NULL DEFAULT '[]'::jsonb,
+			first_seen  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			last_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			stale       BOOLEAN     NOT NULL DEFAULT FALSE,
+			PRIMARY KEY (station, cell_label)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_edge_cells_station ON edge_cells (station)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v33 edge_cells: %w", err)
 		}
 	}
 	return nil

@@ -125,6 +125,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 
 		// ── Public pages ───────────────────────────────────────
+		// Wave 2 (Q-035): "/" is now the Operations Overview (the snapshot page).
+		// SB's call (2026-06-10): the original Dashboard (active-orders /
+		// system-health) landing stays the home page; Overview lives in the
+		// Dashboards dropdown at /overview.
 		r.Get("/", h.handleDashboard)
 		r.Get("/overview", h.handleOverview)
 		r.Get("/login", h.handleLoginPage)
@@ -149,6 +153,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Get("/board", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/dashboards", http.StatusMovedPermanently)
 		})
+		// Dashboards-dropdown links resolve to the first enabled board of a kind.
+		r.Get("/board/{kind}", h.handleBoardKindRedirect)
 
 		// ── API routes ─────────────────────────────────────────
 		r.Route("/api", func(r chi.Router) {
@@ -197,6 +203,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 			// Cells — production heartbeat (slice 5, §12) + cell config (Phase E)
 			r.Get("/cells", h.apiCellsList)
+			r.Get("/cells/catalog", h.apiCellsCatalog) // Q-034 auto-derived catalog
+
 			r.Get("/cells/{id}/heartbeat", h.apiCellHeartbeat)
 			r.Get("/cells/{id}/stops", h.apiCellStops)
 			r.Get("/cells/{id}/state", h.apiCellState)
@@ -213,6 +221,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			// standalone display host) can fetch definitions without auth.
 			r.Get("/dashboards", h.apiListDashboards)
 			r.Get("/dashboards/{id}", h.apiGetDashboard)
+			r.Get("/dashboards/{id}/cells", h.apiDashboardCells) // refactor #4: per-dashboard heartbeat cells
 
 			// Payloads & manifest
 			r.Get("/payloads/templates", h.apiListPayloads)
@@ -275,6 +284,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Get("/cells/processes", h.apiCellProcesses)
 				r.Post("/cells", h.apiCellUpsert)
 				r.Delete("/cells/{id}", h.apiCellDelete)
+
+				// Edges — ask edge(s) to re-send their registration + catalog (Q-034)
+				r.Post("/edges/reregister", h.apiEdgeReregister)
 
 				// Node management
 				r.Post("/nodes/generate-test", h.apiGenerateTestNodes)

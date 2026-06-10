@@ -1,4 +1,5 @@
-import { api, delegateActions, uiConfirm } from '/static/app.js';
+import { api, delegateActions, formatDuration, uiConfirm } from '/static/app.js';
+import { renderBarList } from '/static/components/BarList.js';
 
 var allRows = [];
 var filteredRows = [];
@@ -8,6 +9,7 @@ var sortAsc = true;
 (function() {
   loadInventory();
   loadBuckets();
+  loadProduction();
 })();
 
 async function loadInventory() {
@@ -27,6 +29,7 @@ async function loadInventory() {
     allRows = data || [];
     populateFilterDropdowns();
     applyFilters();
+    renderPartRollup(allRows);
     loading.style.display = 'none';
     tableWrap.style.display = 'block';
     if (exportBtn) exportBtn.disabled = false;
@@ -165,6 +168,103 @@ function esc(s) {
 
 function exportInventory() {
   window.location.href = '/api/inventory/export';
+}
+
+// P3.2/P3.3 — part-number rollup + three-way bin lifecycle, composed
+// client-side from the bin rows already loaded (no new endpoint). One
+// physical bin can surface as several rows (the manifest-items LATERAL in
+// inventorySQL), so dedupe by bin_id first; uop_remaining and payload_code
+// are per-bin columns, identical across a bin's rows. Plant-wide: this is
+// the headline, decoupled from the detail-table filters below.
+function renderPartRollup(rows) {
+  var bins = {};
+  for (var i = 0; i < (rows || []).length; i++) {
+    var r = rows[i];
+    if (r.bin_id && !bins[r.bin_id]) {
+      bins[r.bin_id] = { payload: r.payload_code || '', cat: r.cat_id || '', uop: r.uop_remaining || 0 };
+    }
+  }
+
+  // Three-way lifecycle (P3.3, Q-032 tail): stocked (UoP>0) / in-production
+  // but empty (manifest present, UoP=0 — the refill signal) / idle (no
+  // manifest). On-hand rollup (P3.2) counts only bins actually holding
+  // material (UoP>0) — depleted-but-assigned bins live in the in-production
+  // bucket, not the on-hand stock line.
+  var stocked = 0, prodEmpty = 0, idle = 0;
+  var byPart = {};
+  Object.keys(bins).forEach(function(id) {
+    var b = bins[id];
+    if (b.uop > 0) {
+      stocked++;
+      if (b.payload) {
+        if (!byPart[b.payload]) byPart[b.payload] = { part: b.payload, cat: b.cat, uop: 0, bins: 0 };
+        byPart[b.payload].uop += b.uop;
+        byPart[b.payload].bins += 1;
+        if (!byPart[b.payload].cat && b.cat) byPart[b.payload].cat = b.cat;
+      }
+    } else if (b.payload) {
+      prodEmpty++;
+    } else {
+      idle++;
+    }
+  });
+
+  var lc = document.getElementById('inv-lifecycle');
+  if (lc) {
+    // Dots match the bins-table vocabulary (green stocked / amber refill /
+    // muted idle). No health-warn class exists, so amber is inline.
+    lc.innerHTML =
+      '<span class="health health-ok"></span>' + stocked + ' stocked' +
+      ' &nbsp; <span class="health" style="background:var(--warning)"></span>' + prodEmpty + ' in-production (empty)' +
+      ' &nbsp; <span class="health" style="background:var(--text-muted)"></span>' + idle + ' idle';
+  }
+
+  var parts = Object.keys(byPart).map(function(k) { return byPart[k]; });
+  parts.sort(function(a, b) { return b.uop - a.uop; });
+  var body = document.getElementById('inv-rollup-body');
+  if (!body) return;
+  if (!parts.length) {
+    body.innerHTML = '<tr><td colspan="4" class="dash-empty">No on-hand inventory.</td></tr>';
+    return;
+  }
+  var html = '';
+  for (var j = 0; j < parts.length; j++) {
+    var p = parts[j];
+    html += '<tr>';
+    html += '<td><code>' + esc(p.part) + '</code></td>';
+    html += '<td><code>' + esc(p.cat) + '</code></td>';
+    html += '<td style="text-align:right">' + p.uop + '</td>';
+    html += '<td style="text-align:right">' + p.bins + '</td>';
+    html += '</tr>';
+  }
+  body.innerHTML = html;
+}
+
+// Production cluster — produced / cycle time / consumption, folded from the
+// old Missions Parts section (P3.1 → P3.2). Plant-wide, recent window (top 10),
+// same /api/parts/* endpoints the Missions page used.
+async function loadProduction() {
+  try {
+    var pr = await (await fetch('/api/parts/produced?top=10')).json();
+    renderBarList(document.getElementById('inv-parts-produced'), (pr && pr.rows) || [], {
+      label: function(r) { return r.part_number; }, raw: function(r) { return r.qty; },
+      value: function(r) { return r.qty + ' · ' + r.missions; }, color: 'var(--info)',
+    });
+  } catch (e) { /* leave empty */ }
+  try {
+    var cy = await (await fetch('/api/parts/cycle-time?top=10')).json();
+    renderBarList(document.getElementById('inv-parts-cycle'), (cy && cy.rows) || [], {
+      label: function(r) { return r.part_number; }, raw: function(r) { return r.avg_duration_ms; },
+      value: function(r) { return formatDuration(r.avg_duration_ms); }, color: 'var(--text-muted)',
+    });
+  } catch (e) { /* leave empty */ }
+  try {
+    var co = await (await fetch('/api/parts/consumption?top=10')).json();
+    renderBarList(document.getElementById('inv-parts-consume'), (co && co.rows) || [], {
+      label: function(r) { return r.part_number; }, raw: function(r) { return r.uop; },
+      value: function(r) { return r.uop + ' UoP'; }, color: 'var(--info)',
+    });
+  } catch (e) { /* leave empty */ }
 }
 
 async function loadBuckets() {

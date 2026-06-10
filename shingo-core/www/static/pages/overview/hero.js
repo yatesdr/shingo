@@ -97,7 +97,12 @@ export function createHeroSection(store) {
     }
 
     function refreshActive() {
-        apiGet('/api/missions/active')
+        // Item 10: in-flight respects the global station/robot filter. Read it
+        // live from the store so the SSE-driven refresh (no args) and the
+        // filter-driven refresh both scope correctly. Sub-label stays "live".
+        const st = store.get();
+        const q = qs({ station_id: st.station, robot_id: st.robot });
+        apiGet('/api/missions/active' + (q ? '?' + q : ''))
             .then((d) => updateKpiTile(tiles.inflight, { label: 'In flight', drill: 'in_flight', value: (d && typeof d.count === 'number') ? d.count : '—', sub: 'live' }))
             .catch(() => updateKpiTile(tiles.inflight, { label: 'In flight', drill: 'in_flight', value: '—', sub: 'live' }));
     }

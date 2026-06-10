@@ -2,6 +2,7 @@ package www
 
 import (
 	"net/http"
+	"strings"
 )
 
 func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -53,4 +54,18 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Recon":        recon,
 	}
 	h.render(w, r, "dashboard.html", data)
+}
+
+// apiEdgeReregister asks one edge (?station=) or every edge (omitted) to
+// re-send its registration, refreshing the cell catalog on demand (Q-034) — the
+// Dashboard "Re-sync edges" button. The round-trip is the existing
+// edge.register_request over Kafka; the edge answers in a second or two with a
+// fresh catalog that HandleEdgeRegister upserts. Auth-gated (it drives the fleet).
+func (h *Handlers) apiEdgeReregister(w http.ResponseWriter, r *http.Request) {
+	station := strings.TrimSpace(r.URL.Query().Get("station"))
+	if err := h.engine.RequestEdgeReregister(station); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
 }

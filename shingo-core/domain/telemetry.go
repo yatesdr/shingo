@@ -461,6 +461,30 @@ func ClassifyTermination(terminalState, detail string) string {
 	}
 }
 
+// SystemStopReason derives a categorical failure reason from a terminal
+// order_history detail for system-initiated stops (grace timeouts, abandons,
+// structural faults) that carry no robot_alarms/blocks/errors signal — the case
+// where PrimaryFailureReason falls through to FailOther. Returns "" when the
+// detail names no known system-stop category, so callers keep the generic Other
+// bucket. Mirrors the failure keywords in ClassifyTermination (Q-013 Pareto
+// fold-in). "grace" is checked before "timeout" because a grace-timeout detail
+// usually contains both and "Grace timeout" is the more specific bucket.
+func SystemStopReason(detail string) string {
+	d := strings.ToLower(detail)
+	switch {
+	case strings.Contains(d, "grace"):
+		return "Grace timeout"
+	case strings.Contains(d, "abandon"):
+		return "Abandoned"
+	case strings.Contains(d, "structural"):
+		return "Structural fault"
+	case strings.Contains(d, "timeout"):
+		return "Timeout"
+	default:
+		return ""
+	}
+}
+
 // Cancel-origin buckets for the v2 stats split (Q-030). Only meaningful for
 // rows ClassifyTermination placed in the cancelled bucket.
 const (

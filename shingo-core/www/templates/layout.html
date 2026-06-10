@@ -36,13 +36,11 @@
       </div>
       {{if .Authenticated}}
       <div class="nav-dropdown">
-        <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "demand") (eq .Page "test-orders") (eq .Page "fleet-explorer") (eq .Page "logs") (eq .Page "config") (eq .Page "dashboards") (eq .Page "cells")}} active{{end}}">Admin</a>
+        <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "demand") (eq .Page "test-orders") (eq .Page "fleet-explorer") (eq .Page "logs") (eq .Page "config")}} active{{end}}">Admin</a>
         <div class="nav-dropdown-menu">
           <a href="/demand"{{if eq .Page "demand"}} class="active"{{end}}>Demand</a>
           <a href="/test-orders"{{if eq .Page "test-orders"}} class="active"{{end}}>Test Orders</a>
           <a href="/fleet-explorer"{{if eq .Page "fleet-explorer"}} class="active"{{end}}>Fleet Explorer</a>
-          <a href="/dashboards"{{if eq .Page "dashboards"}} class="active"{{end}}>Dashboards</a>
-          <a href="/admin/cells"{{if eq .Page "cells"}} class="active"{{end}}>Cells</a>
           <a href="/diagnostics"{{if eq .Page "logs"}} class="active"{{end}}>Logs</a>
           <a href="/config"{{if eq .Page "config"}} class="active"{{end}}>Config</a>
         </div>

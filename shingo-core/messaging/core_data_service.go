@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -326,6 +327,23 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	if err := s.db.RegisterEdge(p.StationID, p.Hostname, p.Version, p.LineIDs); err != nil {
 		log.Printf("core_handler: register edge %s: %v", p.StationID, err)
 		return
+	}
+
+	// Q-034: persist the auto-derived cell catalog so heartbeats populate
+	// without manual setup. Additive — an old edge sends no catalog (len 0) and
+	// we leave edge_cells untouched. Non-fatal: registration succeeds regardless.
+	if len(p.Catalog) > 0 {
+		cells := make([]store.EdgeCell, 0, len(p.Catalog))
+		for _, e := range p.Catalog {
+			bindings, err := json.Marshal(e.Processes)
+			if err != nil {
+				continue
+			}
+			cells = append(cells, store.EdgeCell{CellLabel: e.CellLabel, Bindings: bindings})
+		}
+		if err := s.db.UpsertEdgeCells(p.StationID, cells); err != nil {
+			log.Printf("core_handler: upsert edge_cells for %s: %v", p.StationID, err)
+		}
 	}
 
 	s.resp.replyData(env, protocol.SubjectEdgeRegistered,

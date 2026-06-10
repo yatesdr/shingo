@@ -1,17 +1,14 @@
-// Mission Telemetry (/missions) — slice 1: hero strip + global filter bar +
-// preserved list (plan §2, §3.A, §3.H). The analytical sections B–G land in
-// slices 2–4 below the hero; this slice establishes the global filter store
-// driving both the hero and the list, and removes the old table-internal
-// filter bar. Reuses the slice-0 KpiTile component + stats-v2/active/alerts
-// endpoints.
+// Mission Telemetry (/missions) — the analytical DRILL page (wave 2, Q-035).
+// The hero KPI strip, Trends, and Live ops moved to Overview (the snapshot
+// page); Missions keeps the working sections: filter bar, cells, parts,
+// breakdowns, Failure Pareto, and the mission table + CSV. A global filter
+// store (Since/Until + station/robot + state) drives the data sections.
 
 import { apiGet, el, formatDuration, timeAgo, toast } from '/static/app.js';
 import { createStore, onSSE, debounce } from '/static/shared/utils.js';
-import { KpiTile, updateKpiTile } from '/static/components/KpiTile.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
 import { renderBarList } from '/static/components/BarList.js';
-import { createTrendsSection } from '/static/pages/overview/trends.js';
 import { makeChart, chartColors, installChartThemeHook } from '/static/components/charts.js';
 
 const filters = createStore({ since: '', until: '', station: '', robot: '', state: '' });
@@ -19,81 +16,6 @@ const filters = createStore({ since: '', until: '', station: '', robot: '', stat
 let offset = 0;
 const LIMIT = 50;
 let lastMissions = []; // for CSV export
-const tiles = {};
-
-// ─── hero ───────────────────────────────────────────────────────────────
-function buildHero() {
-    const grid = document.getElementById('m-kpi-grid');
-    if (!grid) return;
-    grid.innerHTML = '';
-    const specs = [
-        { id: 'success', label: 'Success rate' },
-        { id: 'volume', label: 'Volume' },
-        { id: 'avg', label: 'Avg duration' },
-        { id: 'inflight', label: 'In flight' },
-        // Alerts is clickable → filters the list to failures (§3.A drill).
-        { id: 'alerts', label: 'Alerts', drill: 'alerts' },
-    ];
-    for (const s of specs) { const t = KpiTile(s); tiles[s.id] = t; grid.appendChild(t); }
-    // Alerts tile → filter list to failed missions.
-    tiles.alerts.addEventListener('click', () => {
-        setState('FAILED');
-        document.querySelector('.missions-dash section.card')?.scrollIntoView({ behavior: 'smooth' });
-    });
-}
-
-function refreshHero(state) {
-    const cur = filterQS(state, {});
-    const prevWin = prevWindow(state);
-    Promise.all([
-        apiGet('/api/missions/stats/v2?' + cur).catch(() => null),
-        prevWin ? apiGet('/api/missions/stats/v2?' + prevWin).catch(() => null) : Promise.resolve(null),
-    ]).then(([s, prev]) => {
-        if (!s) return;
-        const denom = (s.confirmed || 0) + (s.failed || 0);
-        updateKpiTile(tiles.success, {
-            label: 'Success rate',
-            value: denom > 0 ? s.success_rate.toFixed(1) + '%' : '—',
-            sub: denom > 0 ? s.confirmed + ' of ' + denom : 'no completed missions',
-            delta: (prev && (prev.confirmed + prev.failed) > 0) ? ptDelta(s.success_rate - prev.success_rate) : null,
-        });
-        // Volume headlines total throughput; confirmed is the sub-stat (it
-        // belongs to the success-rate tile). Delta tracks the headline (total).
-        updateKpiTile(tiles.volume, { label: 'Volume', value: s.total, sub: s.confirmed + ' confirmed', delta: prev ? countDelta(s.total - prev.total) : null });
-        updateKpiTile(tiles.avg, {
-            // Headline execution time (assignment→terminal, what the robot spent);
-            // lead time (created→terminal) is the sub-stat (Q-031).
-            label: 'Avg duration',
-            value: (s.total > 0 && s.avg_execution_ms > 0) ? formatDuration(s.avg_execution_ms) : '—',
-            sub: s.avg_duration_ms > 0 ? 'Lead ' + formatDuration(s.avg_duration_ms) : '',
-        });
-    });
-    refreshActive();
-    refreshAlerts();
-}
-
-function refreshActive() {
-    apiGet('/api/missions/active')
-        .then((d) => updateKpiTile(tiles.inflight, { label: 'In flight', value: (d && typeof d.count === 'number') ? d.count : '—', sub: 'live' }))
-        .catch(() => {});
-}
-
-function refreshAlerts() {
-    apiGet('/api/missions/alerts').then((a) => {
-        const total = a ? a.total : 0;
-        updateKpiTile(tiles.alerts, { label: 'Alerts', drill: 'alerts', value: total || 0, sub: total ? 'click to filter' : 'all clear', tone: total ? 'bad' : undefined });
-        const holder = document.getElementById('m-alerts');
-        if (!holder) return;
-        if (!total) { holder.innerHTML = ''; return; }
-        const parts = [];
-        if (a.robots_blocked) parts.push(a.robots_blocked + ' blocked');
-        if (a.robots_emergency) parts.push(a.robots_emergency + ' emergency');
-        if (a.robots_error) parts.push(a.robots_error + ' in error');
-        if (a.stuck_missions) parts.push(a.stuck_missions + ' stuck');
-        holder.innerHTML = '<div class="alerts-banner" role="status"><span class="alerts-banner__count">⚠ ' + total + ' alert' + (total > 1 ? 's' : '') + '</span><span>' + parts.join(' · ') + '</span></div>';
-    }).catch(() => {});
-}
-
 // ─── list ───────────────────────────────────────────────────────────────
 function refreshList(state) {
     const qs = filterQS(state, { limit: LIMIT, offset });
@@ -151,20 +73,13 @@ function setState(s) {
     filters.set({ state: s });
 }
 
-let trendsSection = null;
 let paretoChart = null;
 
 function refresh(state) {
     offset = 0;
-    refreshHero(state);
-    if (trendsSection) trendsSection.refresh(state);
-    refreshParts(state);
     refreshBreakdowns(state);
     refreshFailures(state);
     refreshList(state);
-    // Live ops is filter-independent ("right now"); refreshed here for the
-    // first paint and then driven by SSE.
-    refreshLiveOps();
     refreshCells();
 }
 
@@ -229,30 +144,8 @@ function onCellHeartbeat(data) {
     });
 }
 
-// ─── Section C: live ops (always live, §3.C) ────────────────────────────────
-function refreshLiveOps() {
-    apiGet('/api/board/orders').then((data) => {
-        const orders = Array.isArray(data) ? data : (data && (data.orders || data.board)) || [];
-        const holder = document.getElementById('m-inflight');
-        if (!holder) return;
-        if (!orders.length) { holder.innerHTML = '<div class="dash-empty">No missions in flight.</div>'; return; }
-        holder.innerHTML = '';
-        for (const o of orders.slice(0, 20)) {
-            const id = o.order_id || o.id || o.ID;
-            const robot = o.robot_id || o.robot || o.RobotID || '—';
-            const src = o.source_node || o.source || o.SourceNode || '?';
-            const dst = o.delivery_node || o.delivery || o.DeliveryNode || '?';
-            const status = o.status || o.Status || '';
-            const row = el('div', { className: 'bar-row', style: { gridTemplateColumns: 'auto auto 1fr auto' } });
-            row.appendChild(el('span', { className: 'fleet-row__name' }, '#' + id));
-            row.appendChild(el('span', { className: 'badge' }, String(status)));
-            row.appendChild(el('span', {}, robot + '  ' + src + ' → ' + dst));
-            row.appendChild(el('span', { className: 'bar-row__value' }, o.created_at ? timeAgo(o.created_at) : ''));
-            holder.appendChild(row);
-        }
-    }).catch(() => { const h2 = document.getElementById('m-inflight'); if (h2) h2.innerHTML = '<div class="dash-empty">Live ops unavailable.</div>'; });
-}
-
+// Sys-health pills (fleet/messaging/database) relocated to the filter bar in
+// wave 2 — Live ops itself moved to Overview. Driven by the system-status SSE.
 function updateSysPills(data) {
     const el2 = document.getElementById('m-sys-pills');
     if (!el2) return;
@@ -322,22 +215,6 @@ function renderPareto(reasons) {
 function refreshAll(state) { refresh(state); }
 const onFilterChange = debounce(refresh, 150);
 
-// §3.E parts: produced / cycle time / consumption. Part isn't a global
-// filter facet (the missions query has no part filter), so rows are
-// informational for now (Q-014).
-function refreshParts(state) {
-    const base = filterQS(state, { top: '10' });
-    apiGet('/api/parts/produced?' + base).then((d) => renderBarList(document.getElementById('m-parts-produced'), (d && d.rows) || [], {
-        label: (r) => r.part_number, raw: (r) => r.qty, value: (r) => r.qty + ' · ' + r.missions, color: 'var(--info)',
-    })).catch(() => {});
-    apiGet('/api/parts/cycle-time?' + base).then((d) => renderBarList(document.getElementById('m-parts-cycle'), (d && d.rows) || [], {
-        label: (r) => r.part_number, raw: (r) => r.avg_duration_ms, value: (r) => formatDuration(r.avg_duration_ms), color: 'var(--text-muted)',
-    })).catch(() => {});
-    apiGet('/api/parts/consumption?' + base).then((d) => renderBarList(document.getElementById('m-parts-consume'), (d && d.rows) || [], {
-        label: (r) => r.part_number, raw: (r) => r.uop, value: (r) => r.uop + ' UoP', color: 'var(--info)',
-    })).catch(() => {});
-}
-
 // §3.F breakdowns: top robots and routes. Robot rows are clickable → add the
 // robot to the global filter; route isn't a filter facet so route rows are
 // informational (Q-012).
@@ -394,19 +271,15 @@ async function loadFilterOptions() {
 
 // ─── boot ───────────────────────────────────────────────────────────────
 function init() {
-    buildHero();
-    installChartThemeHook();
-    trendsSection = createTrendsSection(filters, { toggleId: 'm-trend-toggle', gridId: 'm-trend-grid' });
-    trendsSection.mount();
+    installChartThemeHook(); // for the Failure Pareto chart
     initFilterBar();
     loadFilterOptions();
     updateSysPills(null);
     filters.subscribe(onFilterChange);
 
+    // Drill page: no live KPI/list refresh. Only the connection pill, the
+    // relocated sys-health pills, and the live cell-heartbeat stay live.
     onSSE('connected', () => { const p = document.getElementById('m-live'); if (p) { p.classList.add('is-live'); p.innerHTML = '&#9679; live'; } });
-    const live = debounce(() => { refreshActive(); refreshAlerts(); refreshLiveOps(); }, 1500);
-    onSSE('order-update', live);
-    onSSE('robot-update', live);
     onSSE('system-status', (data) => updateSysPills(data));
     onSSE('cell-heartbeat', onCellHeartbeat);
 
@@ -427,25 +300,6 @@ function filterQS(state, extra) {
     return p.toString();
 }
 
-// prevWindow returns the previous equal-length window's stats query, or null
-// when an explicit date range isn't set (no delta without bounds).
-function prevWindow(state) {
-    if (!state.since || !state.until) return null;
-    const s = new Date(state.since), u = new Date(state.until);
-    if (isNaN(s.getTime()) || isNaN(u.getTime())) return null;
-    const days = Math.round((u - s) / 86400000) + 1;
-    const prevU = new Date(s); prevU.setDate(prevU.getDate() - 1);
-    const prevS = new Date(prevU); prevS.setDate(prevS.getDate() - (days - 1));
-    const p = new URLSearchParams();
-    p.set('since', ymd(prevS)); p.set('until', ymd(prevU));
-    if (state.station) p.set('station_id', state.station);
-    if (state.robot) p.set('robot_id', state.robot);
-    return p.toString();
-}
-
-function ptDelta(diff) { if (!diff) return { dir: 'flat', text: '0pt' }; const up = diff > 0; return { dir: up ? 'up' : 'down', text: Math.abs(diff).toFixed(1) + 'pt', good: up }; }
-function countDelta(diff) { if (!diff) return { dir: 'flat', text: '0' }; const up = diff > 0; return { dir: up ? 'up' : 'down', text: '' + Math.abs(diff), good: up }; }
-function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 function formatAbsTime(ts) { return ts ? new Date(ts).toLocaleString() : ''; }
 function csvCell(v) { if (v === null || v === undefined) return ''; const s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
 

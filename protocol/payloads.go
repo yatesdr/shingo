@@ -14,12 +14,34 @@ type Data struct {
 
 // --- Edge lifecycle data schemas ---
 
+// CellProcessBinding is one reporting point inside a cell-catalog entry — the
+// (process, style, PLC tag) tuple an edge scores. Part of the Q-034 cell
+// catalog; additive only.
+type CellProcessBinding struct {
+	ProcessID int64  `json:"process_id"`
+	StyleID   int64  `json:"style_id"`
+	PLCName   string `json:"plc_name"`
+	TagName   string `json:"tag_name"`
+}
+
+// CellCatalogEntry groups an edge's reporting points by PLC into a "cell" Core
+// can offer in the cell picker (Q-034). CellLabel is the grouping PLCName.
+type CellCatalogEntry struct {
+	CellLabel string               `json:"cell_label"`
+	Processes []CellProcessBinding `json:"processes"`
+}
+
 // EdgeRegister is sent by an edge on startup.
+//
+// Catalog is an ADDITIVE Q-034 field (omitempty): an old core unmarshals and
+// ignores it, an old edge simply omits it — absent catalog means "no catalog",
+// not an error. No envelope/version bump (see version-skew-research.md).
 type EdgeRegister struct {
-	StationID string   `json:"station_id"`
-	Hostname  string   `json:"hostname"`
-	Version   string   `json:"version"`
-	LineIDs   []string `json:"line_ids"`
+	StationID string             `json:"station_id"`
+	Hostname  string             `json:"hostname"`
+	Version   string             `json:"version"`
+	LineIDs   []string           `json:"line_ids"`
+	Catalog   []CellCatalogEntry `json:"catalog,omitempty"`
 }
 
 // EdgeHeartbeat is sent periodically by an edge.

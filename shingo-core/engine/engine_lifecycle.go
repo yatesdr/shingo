@@ -73,6 +73,15 @@ func (e *Engine) Start() {
 		e.logFn("engine: recover pending_lane_extensions: %v", err)
 	}
 
+	// Seed one full-plant dashboard per type if a type has none yet (refactor
+	// #5), so the hub + floor kiosk are useful out of the box. Idempotent +
+	// non-fatal; never clobbers operator-created boards.
+	if n, err := e.dashboardService.SeedDefaultDashboards(); err != nil {
+		e.logFn("engine: seed default dashboards: %v", err)
+	} else if n > 0 {
+		e.logFn("engine: seeded %d default full-plant dashboard(s)", n)
+	}
+
 	// Scan for any orders queued before restart
 	go e.fulfillment.RunOnce()
 
