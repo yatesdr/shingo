@@ -1,4 +1,4 @@
-import { api, el, h } from '/static/app.js';
+import { api, debounce, el, h } from '/static/app.js';
 import { onSSE } from '/static/shared/utils.js';
 
 (function() {
@@ -284,6 +284,16 @@ import { onSSE } from '/static/shared/utils.js';
       loadMission(); // Reload full data on any event for this mission
     }
   });
+
+  // Lifecycle status transitions (sourcing→dispatched→in_transit→staged→delivered→
+  // confirmed) are broadcast as 'order-update' (status_changed/dispatched/completed/…),
+  // NOT 'mission-event' (telemetry only) — so the timeline went stale until a hard
+  // refresh. Reload on those too, debounced so a burst of transitions coalesces.
+  onSSE('order-update', debounce(function(data) {
+    if (data && String(data.order_id) === String(orderID)) {
+      loadMission();
+    }
+  }, 200));
 
   loadMission();
 })();
