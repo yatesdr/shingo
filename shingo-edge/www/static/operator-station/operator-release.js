@@ -173,18 +173,17 @@ function renderReleasePromptStep1() {
             ' data-action="release-submit"' +
             ' title="' + esc(submitTitle) + '">' +
             submitLabel + '</button>';
-    } else {
-        if (remainingUOP > 0) {
-            html += '<button type="button" class="os-action-btn release-empty"' +
-                ' data-action="release-underpack-confirm"' +
-                ' title="Bin is physically empty, but the system still shows UOP remaining. Records the gap as missing inventory.">' +
-                'BIN EMPTY (UNDER COUNT)</button>';
-        } else {
-            html += '<button type="button" class="os-action-btn release-empty"' +
-                ' data-action="release-submit"' +
-                ' title="No parts pulled to lineside. Bin is empty — manifest cleared.">' +
-                'RELEASE EMPTY</button>';
-        }
+    } else if (remainingUOP <= 0) {
+        html += '<button type="button" class="os-action-btn release-empty"' +
+            ' data-action="release-submit"' +
+            ' title="No parts pulled to lineside. Bin is empty — manifest cleared.">' +
+            'RELEASE EMPTY</button>';
+    }
+    if (remainingUOP > 0) {
+        html += '<button type="button" class="os-action-btn release-empty"' +
+            ' data-action="release-underpack-confirm"' +
+            ' title="Bin is physically empty, but the system still shows UOP remaining. Records the gap as missing inventory.">' +
+            'BIN EMPTY (UNDER COUNT)</button>';
     }
     html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
     html += '</div>';
