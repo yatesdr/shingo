@@ -19,6 +19,7 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 		Code:        r.FormValue("code"),
 		Description: r.FormValue("description"),
 		UOPCapacity: uop,
+		RobotGroup:  r.FormValue("robot_group"),
 	}
 
 	if err := h.engine.PayloadService().Create(p); err != nil {
@@ -50,6 +51,7 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 	p.Code = r.FormValue("code")
 	p.Description = r.FormValue("description")
 	p.UOPCapacity, _ = strconv.Atoi(r.FormValue("uop_capacity"))
+	p.RobotGroup = r.FormValue("robot_group")
 
 	if err := h.engine.PayloadService().Update(p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -79,6 +81,7 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		Code        string  `json:"code"`
 		Description string  `json:"description"`
 		UOPCapacity int     `json:"uop_capacity"`
+		RobotGroup  string  `json:"robot_group"`
 		BinTypeIDs  []int64 `json:"bin_type_ids"`
 		Manifest    []struct {
 			PartNumber string `json:"part_number"`
@@ -93,6 +96,7 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		Code:        req.Code,
 		Description: req.Description,
 		UOPCapacity: req.UOPCapacity,
+		RobotGroup:  req.RobotGroup,
 	}
 	if err := h.engine.PayloadService().Create(p); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -128,6 +132,7 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		Code        string  `json:"code"`
 		Description string  `json:"description"`
 		UOPCapacity int     `json:"uop_capacity"`
+		RobotGroup  string  `json:"robot_group"`
 		BinTypeIDs  []int64 `json:"bin_type_ids"`
 		Manifest    []struct {
 			PartNumber string `json:"part_number"`
@@ -147,6 +152,7 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	p.Code = req.Code
 	p.Description = req.Description
 	p.UOPCapacity = req.UOPCapacity
+	p.RobotGroup = req.RobotGroup
 
 	if err := h.engine.PayloadService().Update(p); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)

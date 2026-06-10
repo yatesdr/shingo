@@ -13,6 +13,17 @@ type OccupancyEntry struct {
 	Discrepancy   string `json:"discrepancy"`
 }
 
+// RobotGroups returns the fleet's configured robot-dispatch groups for the
+// payload-editor picker. Returns errFleetUnsupported when the backend exposes
+// no scene (e.g. the simulator), so the handler can degrade to free-text.
+func (e *Engine) RobotGroups() ([]fleet.RobotGroup, error) {
+	rl, ok := e.fleet.(fleet.RobotGroupLister)
+	if !ok {
+		return nil, errFleetUnsupported("robot groups")
+	}
+	return rl.GetRobotGroups()
+}
+
 // GetNodeOccupancy compares fleet bin occupancy against ShinGo node records.
 func (e *Engine) GetNodeOccupancy() ([]OccupancyEntry, error) {
 	np, ok := e.fleet.(fleet.NodeOccupancyProvider)

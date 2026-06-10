@@ -73,6 +73,7 @@ type ServiceAccess interface {
 	GetCachedRobotStatus(vehicleID string) (fleet.RobotStatus, bool)
 	GetAllCachedRobots() []fleet.RobotStatus
 	GetNodeOccupancy() ([]engine.OccupancyEntry, error)
+	RobotGroups() ([]fleet.RobotGroup, error)
 	EtaCache() *eta.Cache
 	GetActiveOrdersWithRobotLocation() ([]engine.BoardOrder, error)
 	GetActiveOrdersWithRobotLocationFiltered(stations []string) ([]engine.BoardOrder, error)

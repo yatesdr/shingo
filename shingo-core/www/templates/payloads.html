@@ -18,6 +18,7 @@
         <th>ID</th>
         <th>Payload Code</th>
         <th>UOP</th>
+        <th>Robot Group</th>
         <th>Bin Types</th>
         <th>Notes</th>
         <th>Compatible Nodes</th>
@@ -30,6 +31,7 @@
         <td>{{.ID}}</td>
         <td><code>{{.Code}}</code></td>
         <td>{{.UOPCapacity}}</td>
+        <td class="text-muted" style="font-size:0.8rem">{{if .RobotGroup}}{{.RobotGroup}}{{else}}<span class="text-muted">-</span>{{end}}</td>
         <td class="text-muted" style="font-size:0.8rem">{{with index $.PayloadBinTypes .ID}}{{range $i, $bt := .}}{{if $i}}, {{end}}{{$bt}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
         <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
         <td class="text-muted" style="font-size:0.8rem">{{with index $.CompatNodes .ID}}{{range $i, $n := .}}{{if $i}}, {{end}}{{$n}}{{end}}{{else}}All{{end}}</td>
@@ -39,7 +41,8 @@
             data-id="{{.ID}}"
             data-code="{{.Code}}"
             data-notes="{{.Description}}"
-            data-uop="{{.UOPCapacity}}">Edit</button>
+            data-uop="{{.UOPCapacity}}"
+            data-robot-group="{{.RobotGroup}}">Edit</button>
           <form method="POST" action="/payloads/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete this payload?">
             <input type="hidden" name="id" value="{{.ID}}">
             <button type="submit" class="btn btn-danger btn-sm">Delete</button>
@@ -59,6 +62,9 @@
 </div>
 
 {{if .Authenticated}}
+<!-- Robot-group suggestions, populated from the live fleet scene. Empty if RDS
+     is unreachable — the field stays free-text and a saved value is never lost. -->
+<datalist id="robot-groups-list"></datalist>
 <!-- Create Payload Modal -->
 <div id="pl-create-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:560px">
@@ -76,6 +82,10 @@
           <label>UOP Capacity <span class="tooltip-trigger" title="Units of Production per fully loaded cart">?</span></label>
           <input type="number" name="uop_capacity" id="plc-uop" value="0" min="0">
         </div>
+      </div>
+      <div class="form-group mb-1">
+        <label>Robot Group <span class="tooltip-trigger" title="SEER robot-dispatch group for this payload's moves (e.g. a 1500kg group). Blank = vendor default. Suggestions come from the live fleet scene.">?</span></label>
+        <input type="text" name="robot_group" id="plc-robot-group" list="robot-groups-list" placeholder="(vendor default)" autocomplete="off">
       </div>
       <div class="form-group mb-1">
         <label>Bin Types <span class="tooltip-trigger" title="Which bin types can hold this payload">?</span></label>
@@ -120,6 +130,10 @@
           <label>UOP Capacity</label>
           <input type="number" name="uop_capacity" id="pl-edit-uop" min="0">
         </div>
+      </div>
+      <div class="form-group mb-1">
+        <label>Robot Group <span class="tooltip-trigger" title="SEER robot-dispatch group for this payload's moves. Blank = vendor default. Suggestions come from the live fleet scene.">?</span></label>
+        <input type="text" name="robot_group" id="pl-edit-robot-group" list="robot-groups-list" placeholder="(vendor default)" autocomplete="off">
       </div>
       <div class="form-group mb-1">
         <label>Bin Types</label>

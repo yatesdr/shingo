@@ -19,6 +19,21 @@ type SceneSyncer interface {
 	GetSceneAreas() ([]SceneArea, error)
 }
 
+// RobotGroup is a vendor-neutral named robot-dispatch group from the scene
+// (e.g. a "1500kg" group). A payload's robot_group is picked from this list.
+type RobotGroup struct {
+	Name string `json:"name"`
+	Desc string `json:"desc,omitempty"`
+}
+
+// RobotGroupLister exposes the fleet's configured robot-dispatch groups so the
+// payload editor can offer them as a picker. Web handlers type-assert Backend
+// to this interface; backends without it (e.g. the simulator) degrade to
+// free-text entry.
+type RobotGroupLister interface {
+	GetRobotGroups() ([]RobotGroup, error)
+}
+
 // VendorProxy exposes the vendor API base URL for raw proxy requests.
 type VendorProxy interface {
 	BaseURL() string

@@ -296,6 +296,23 @@ func (a *Adapter) GetSceneAreas() ([]fleet.SceneArea, error) {
 	return areas, nil
 }
 
+// --- fleet.RobotGroupLister ---
+
+// GetRobotGroups returns the scene's named robot-dispatch groups (the picker
+// source for a payload's robot_group). An RDS error propagates so the caller
+// can degrade gracefully rather than show a stale list.
+func (a *Adapter) GetRobotGroups() ([]fleet.RobotGroup, error) {
+	scene, err := a.client.GetScene()
+	if err != nil {
+		return nil, err
+	}
+	groups := make([]fleet.RobotGroup, 0, len(scene.RobotGroups))
+	for _, g := range scene.RobotGroups {
+		groups = append(groups, fleet.RobotGroup{Name: g.Name, Desc: g.Desc})
+	}
+	return groups, nil
+}
+
 // --- fleet.FireAlarmController ---
 
 func (a *Adapter) GetFireAlarmStatus() (*fleet.FireAlarmStatus, error) {

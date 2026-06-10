@@ -34,13 +34,39 @@ function getSelectedBinTypes(selectId) {
 }
 
 /* --- Payload modals --- */
+// loadRobotGroups fills the shared <datalist> with robot-group suggestions from
+// the live fleet scene. Best-effort: on an RDS outage or the sim backend
+// (available:false) the datalist is simply left empty — the input stays
+// free-text and the server-rendered saved value (pre-filled on edit) is
+// submitted regardless, so a configured robot_group is never lost.
+function loadRobotGroups() {
+  var dl = document.getElementById('robot-groups-list');
+  if (!dl) return;
+  fetch('/api/fleet/robot-groups')
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+      var data = (resp && resp.data) || resp || {};
+      var groups = data.groups || [];
+      dl.innerHTML = '';
+      groups.forEach(function(g) {
+        var opt = document.createElement('option');
+        opt.value = g.name;
+        if (g.desc) opt.label = g.desc;
+        dl.appendChild(opt);
+      });
+    })
+    .catch(function() { /* no suggestions; free-text entry still works */ });
+}
+
 function openCreatePayloadModal() {
   document.getElementById('plc-code').value = '';
   document.getElementById('plc-uop').value = '0';
   document.getElementById('plc-notes').value = '';
+  document.getElementById('plc-robot-group').value = '';
   document.getElementById('plc-manifest-rows').innerHTML = '';
   var sel = document.getElementById('plc-bin-types');
   for (var i = 0; i < sel.options.length; i++) sel.options[i].selected = false;
+  loadRobotGroups();
   showModal('pl-create-modal');
 }
 function closePLCreateModal() {
@@ -53,6 +79,7 @@ function submitPLCreate(el, evt) {
     code: document.getElementById('plc-code').value,
     description: document.getElementById('plc-notes').value,
     uop_capacity: parseInt(document.getElementById('plc-uop').value) || 0,
+    robot_group: document.getElementById('plc-robot-group').value.trim(),
     bin_type_ids: getSelectedBinTypes('plc-bin-types'),
     manifest: collectManifestRows('plc-manifest-rows')
   };
@@ -78,6 +105,9 @@ function openEditPayloadModal(btn) {
   document.getElementById('pl-edit-code').value = d.code;
   document.getElementById('pl-edit-uop').value = d.uop || '0';
   document.getElementById('pl-edit-notes').value = d.notes || '';
+  // Pre-fill from the saved value (server-rendered data attribute), NOT from
+  // RDS — so editing works and the group is preserved even if RDS is down.
+  document.getElementById('pl-edit-robot-group').value = d.robotGroup || '';
   document.getElementById('ple-manifest-rows').innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
   // Clear any stale bin-type selection synchronously so the modal opens with
   // nothing selected (matches the create modal); the async fetch below sets the
@@ -85,6 +115,7 @@ function openEditPayloadModal(btn) {
   // bogus option[0]. Fixes "bin type resets to 0 on edit".
   var pleBinTypes = document.getElementById('ple-bin-types');
   for (var bi = 0; bi < pleBinTypes.options.length; bi++) pleBinTypes.options[bi].selected = false;
+  loadRobotGroups();
   showModal('pl-edit-modal');
 
   fetch('/api/payloads/templates/manifest?id=' + plId)
@@ -135,6 +166,7 @@ function submitPLEdit(el, evt) {
     code: document.getElementById('pl-edit-code').value,
     description: document.getElementById('pl-edit-notes').value,
     uop_capacity: parseInt(document.getElementById('pl-edit-uop').value) || 0,
+    robot_group: document.getElementById('pl-edit-robot-group').value.trim(),
     bin_type_ids: getSelectedBinTypes('ple-bin-types'),
     manifest: collectManifestRows('ple-manifest-rows')
   };

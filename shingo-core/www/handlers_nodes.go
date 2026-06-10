@@ -292,6 +292,20 @@ func (h *Handlers) apiNodeOccupancy(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, results)
 }
 
+// apiRobotGroups lists the fleet's robot-dispatch groups for the payload-editor
+// picker. Degrades gracefully on purpose: an RDS outage or a backend with no
+// scene (e.g. the simulator) returns available=false + an empty list at 200, so
+// the payload form falls back to free-text — the saved robot_group lives in
+// Postgres and must never be lost just because the picker couldn't load.
+func (h *Handlers) apiRobotGroups(w http.ResponseWriter, r *http.Request) {
+	groups, err := h.engine.RobotGroups()
+	if err != nil {
+		h.jsonOK(w, map[string]any{"available": false, "groups": []fleet.RobotGroup{}})
+		return
+	}
+	h.jsonOK(w, map[string]any{"available": true, "groups": groups})
+}
+
 // apiNodeDetail returns extended node info (stations, payloads, properties, children).
 func (h *Handlers) apiNodeDetail(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
