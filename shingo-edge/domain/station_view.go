@@ -57,6 +57,12 @@ type StationNodeView struct {
 	// TransitionalLoader is true when this loader's core node is in the
 	// transitional_loaders set — operator-driven, board defaults to preload.
 	TransitionalLoader bool `json:"transitional_loader,omitempty"`
+	// HomeLocationLoader is true when this loader's core node is in the
+	// home_location_loaders set — the dedicated-position LAYOUT. The board then
+	// renders one card per home (position × its payload) across the station's
+	// loader nodes, instead of one window with a card per payload. Orthogonal to
+	// TransitionalLoader (this is layout; that is type).
+	HomeLocationLoader bool `json:"home_location_loader,omitempty"`
 	// ActivePayloadLineside maps an active-style payload code to the current
 	// lineside UOP for it — the bin at the consuming node plus parts pulled to
 	// the line (active buckets), summed across ALL active consume nodes for that

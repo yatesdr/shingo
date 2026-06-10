@@ -279,6 +279,11 @@ type NodeClaimInput struct {
 	// manual_swap claim. A nil pointer means "field absent, leave the set
 	// untouched" so saves of unrelated claims can't clear a loader's flag.
 	TransitionalLoader *bool `json:"transitional_loader,omitempty"`
+	// HomeLocationLoader toggles the loader-wide home_location_loaders set
+	// (Edge-only, keyed by core_node_name) — the dedicated-position LAYOUT.
+	// Same rules as TransitionalLoader: applied only for a produce manual_swap
+	// claim; a nil pointer leaves the set untouched.
+	HomeLocationLoader *bool `json:"home_location_loader,omitempty"`
 }
 
 // NodeTaskInput is the input shape for creating a per-node changeover

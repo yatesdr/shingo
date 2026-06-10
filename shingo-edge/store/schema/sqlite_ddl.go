@@ -296,6 +296,17 @@ CREATE TABLE IF NOT EXISTS transitional_loaders (
     PRIMARY KEY (core_node_name)
 );
 
+-- home_location_loaders — membership set marking a bin loader's layout as
+-- "home location" (each payload its own dedicated node) vs the default single
+-- window. Orthogonal to transitional_loaders (type vs layout). See
+-- store/home_location_loaders.go.
+CREATE TABLE IF NOT EXISTS home_location_loaders (
+    core_node_name TEXT NOT NULL,
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_by     TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (core_node_name)
+);
+
 CREATE TABLE IF NOT EXISTS process_changeovers (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id      INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,

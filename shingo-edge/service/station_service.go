@@ -206,6 +206,9 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 			if transitional, err := s.db.IsTransitionalLoader(node.CoreNodeName); err == nil {
 				nodeView.TransitionalLoader = transitional
 			}
+			if homeLoc, err := s.db.IsHomeLocationLoader(node.CoreNodeName); err == nil {
+				nodeView.HomeLocationLoader = homeLoc
+			}
 		}
 		view.Nodes = append(view.Nodes, nodeView)
 	}

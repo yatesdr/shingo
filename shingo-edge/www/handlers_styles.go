@@ -266,6 +266,16 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 			log.Printf("WARNING api apiUpsertStyleNodeClaim: set transitional loader %s: %v", in.CoreNodeName, err)
 		}
 	}
+	// Home-location layout flag — same loader-wide / produce-manual_swap / nil-safe
+	// rules as the transitional flag above, applied to the home_location_loaders set.
+	if in.HomeLocationLoader != nil &&
+		in.Role == protocol.ClaimRoleProduce &&
+		in.SwapMode == protocol.SwapModeManualSwap {
+		username, _ := h.sessions.getUser(r)
+		if err := h.engine.StyleService().SetHomeLocationLoader(in.CoreNodeName, *in.HomeLocationLoader, username); err != nil {
+			log.Printf("WARNING api apiUpsertStyleNodeClaim: set home-location loader %s: %v", in.CoreNodeName, err)
+		}
+	}
 	h.requestBackup("style-node-claim-updated")
 	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "node-claim-updated"}})
 	// Push the refreshed claim set to Core so demand_registry stays in sync

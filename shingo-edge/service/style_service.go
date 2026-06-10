@@ -104,6 +104,10 @@ func (s *StyleService) SetTransitionalLoader(coreNodeName string, on bool, updat
 	return s.db.SetTransitionalLoader(coreNodeName, on, updatedBy)
 }
 
+func (s *StyleService) SetHomeLocationLoader(coreNodeName string, on bool, updatedBy string) error {
+	return s.db.SetHomeLocationLoader(coreNodeName, on, updatedBy)
+}
+
 // GetClaim returns one claim by id.
 func (s *StyleService) GetClaim(id int64) (*processes.NodeClaim, error) {
 	return s.db.GetStyleNodeClaim(id)
