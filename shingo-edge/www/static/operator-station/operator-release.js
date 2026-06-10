@@ -183,7 +183,7 @@ function renderReleasePromptStep1() {
             ' data-action="release-submit"' +
             ' title="' + esc(submitTitle) + '">RELEASE EMPTY</button>';
     }
-    if (isChangeover && remainingUOP > 0) {
+    if (remainingUOP > 0) {
         html += '<button type="button" class="os-action-btn release-empty"' +
             ' data-action="release-underpack-confirm"' +
             ' title="Bin is physically empty, but the system still shows UOP remaining. Records the gap as missing inventory.">' +
