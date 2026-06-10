@@ -376,13 +376,12 @@ async function handleReleasePromptAction(evt) {
         return;
     }
 
-    //   release-submit            "RELEASE PARTIAL" / "RELEASE EMPTY"
-    //                              → send_partial_back when the bin still has UOP
-    //                                (preserve manifest); capture_lineside empty
-    //                                when the bin is already empty (operator
-    //                                confirms zero, manifest cleared). Label is
-    //                                chosen at render time from remaining_uop so
-    //                                the operator sees what they're submitting.
+    //   release-submit            "RELEASE PARTIAL" / "RELEASE EMPTY" (changeover)
+    //                              or "RELEASE EMPTY" (material request, only
+    //                              rendered when remainingUOP <= 0).
+    //                              → send_partial_back when changeover AND bin
+    //                                still has UOP (preserve manifest);
+    //                                capture_lineside otherwise (manifest cleared).
     //   release-submit-parts      "PULL PARTS LINESIDE, RELEASE" → capture_lineside, picked buckets.
     //   release-submit-underpack  "DECLARE EMPTY" (after confirmation) →
     //                              release_underpack disposition. Same wire
