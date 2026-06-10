@@ -235,3 +235,43 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   font-size: 1rem;
   color: var(--dash-muted);
 }
+
+/* ── Responsive: tablets (≤1024px) ─────────────────────────────────── */
+@media (max-width: 1024px) {
+  .dash-header { padding: 0.5rem 1rem; }
+  .dash-title { font-size: 1.5rem; }
+  .dash-meta { gap: 0.8rem; font-size: 1.1rem; }
+  #dash-main { padding: 0.4rem 0.6rem 0.8rem; }
+  .board-table { font-size: 1.15rem; }
+  .board-table thead th { font-size: 0.85rem; padding: 0.45rem 0.6rem; }
+  .board-table tbody td { padding: 0.5rem 0.6rem; }
+  .r-status { font-size: 0.9rem; }
+  .board-empty { font-size: 1.2rem; padding: 2rem 0.8rem; }
+}
+
+/* ── Responsive: small tablets (≤768px) ─────────────────────────────── */
+@media (max-width: 768px) {
+  .dash-header { padding: 0.4rem 0.8rem; }
+  .dash-title { font-size: 1.2rem; }
+  .dash-meta { gap: 0.6rem; font-size: 0.95rem; }
+  .board-table { font-size: 0.95rem; }
+  .board-table thead th { font-size: 0.75rem; padding: 0.35rem 0.5rem; }
+  .board-table tbody td { padding: 0.4rem 0.5rem; }
+  .r-status { font-size: 0.8rem; }
+  .board-empty { font-size: 1rem; padding: 1.5rem 0.6rem; }
+  .map-class-legend { max-width: 80%; font-size: 0.85rem; }
+}
+
+/* ── Responsive: 7" screens (≤480px) ─────────────────────────────────── */
+@media (max-width: 480px) {
+  .dash-header { flex-direction: column; gap: 0.3rem; padding: 0.3rem 0.6rem; }
+  .dash-title { font-size: 1rem; }
+  .dash-meta { gap: 0.4rem; font-size: 0.8rem; justify-content: center; }
+  #dash-main { padding: 0.3rem 0.4rem 0.6rem; }
+  .board-table { font-size: 0.8rem; }
+  .board-table thead th { font-size: 0.65rem; padding: 0.25rem 0.35rem; letter-spacing: 0.03em; }
+  .board-table tbody td { padding: 0.3rem 0.35rem; }
+  .r-status { font-size: 0.7rem; }
+  .board-empty { font-size: 0.85rem; padding: 1rem 0.5rem; }
+  .map-class-legend { max-width: 95%; font-size: 0.75rem; left: 0.4rem; bottom: 0.4rem; }
+}

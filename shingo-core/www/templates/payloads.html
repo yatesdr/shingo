@@ -12,29 +12,31 @@
 
   {{if .Payloads}}
   <div class="table-scroll-y">
-  <table>
+  <table data-sortable>
     <thead>
       <tr>
-        <th>ID</th>
-        <th>Payload Code</th>
-        <th>UOP</th>
-        <th>Robot Group</th>
-        <th>Bin Types</th>
-        <th>Notes</th>
-        <th>Compatible Nodes</th>
+        <th data-sort>ID</th>
+        <th data-sort>Payload Code</th>
+        <th data-sort>UOP</th>
+        <th data-sort>Robot Group</th>
+        <th data-sort>Bin Types</th>
+        <th data-sort>Notes</th>
+        <th data-sort>Compatible Nodes</th>
+        <th data-sort>Created</th>
         {{if .Authenticated}}<th>Actions</th>{{end}}
       </tr>
     </thead>
     <tbody>
       {{range .Payloads}}
       <tr>
-        <td>{{.ID}}</td>
-        <td><code>{{.Code}}</code></td>
-        <td>{{.UOPCapacity}}</td>
-        <td class="text-muted" style="font-size:0.8rem">{{if .RobotGroup}}{{.RobotGroup}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+        <td data-sort-value="{{.ID}}">{{.ID}}</td>
+        <td data-sort-value="{{.Code}}"><code>{{.Code}}</code></td>
+        <td data-sort-value="{{.UOPCapacity}}">{{.UOPCapacity}}</td>
+        <td data-sort-value class="text-muted" style="font-size:0.8rem">{{if .RobotGroup}}{{.RobotGroup}}{{else}}<span class="text-muted">-</span>{{end}}</td>
         <td class="text-muted" style="font-size:0.8rem">{{with index $.PayloadBinTypes .ID}}{{range $i, $bt := .}}{{if $i}}, {{end}}{{$bt}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
         <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
         <td class="text-muted" style="font-size:0.8rem">{{with index $.CompatNodes .ID}}{{range $i, $n := .}}{{if $i}}, {{end}}{{$n}}{{end}}{{else}}All{{end}}</td>
+        <td data-sort-value="{{.CreatedAt.Format "2006-01-02T15:04:05"}}" style="white-space:nowrap">{{formatTime .CreatedAt}}</td>
         {{if $.Authenticated}}
         <td>
           <button class="btn btn-sm" data-action="openEditPayloadModal"
