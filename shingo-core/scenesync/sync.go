@@ -28,6 +28,7 @@ type Store interface {
 	UpsertScenePoint(sp *scene.Point) error
 	DeleteSceneEdgesByArea(areaName string) error
 	UpsertSceneEdge(se *scene.Edge) error
+	ListSceneAreas() ([]string, error)
 	GetNodeTypeByCode(code string) (*nodes.NodeType, error)
 	GetNodeByName(name string) (*nodes.Node, error)
 	CreateNode(n *nodes.Node) error
@@ -48,8 +49,10 @@ type NodeChangeFn func(nodeID int64, nodeName, action string)
 // location instanceName → areaName.
 func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea) (int, map[string]string) {
 	locationSet := make(map[string]string)
+	fetched := make(map[string]bool, len(areas))
 	total := 0
 	for _, area := range areas {
+		fetched[area.Name] = true
 		if err := db.DeleteScenePointsByArea(area.Name); err != nil {
 			log("scenesync: delete points for area %s: %v", area.Name, err)
 		}
@@ -109,6 +112,31 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea) (int, map[str
 			if err := db.UpsertSceneEdge(se); err != nil {
 				log("scenesync: upsert edge %s: %v", ed.InstanceName, err)
 			}
+		}
+	}
+
+	// Full reconcile: sweep any stored area no longer in the fleet payload.
+	// Per-area delete (above) only refreshes areas the fleet still reports, so
+	// areas deleted from RDS (old commissioning/test areas) lingered forever as
+	// ghost points/edges on the Robot Map. Skip when the fetch came back empty —
+	// that's far likelier a transient fleet hiccup than a real "all areas
+	// removed", and we don't want to wipe the whole scene on a blip.
+	if len(areas) > 0 {
+		stored, err := db.ListSceneAreas()
+		if err != nil {
+			log("scenesync: reconcile: list stored areas: %v", err)
+		}
+		for _, name := range stored {
+			if fetched[name] {
+				continue
+			}
+			if err := db.DeleteScenePointsByArea(name); err != nil {
+				log("scenesync: reconcile: delete points for stale area %s: %v", name, err)
+			}
+			if err := db.DeleteSceneEdgesByArea(name); err != nil {
+				log("scenesync: reconcile: delete edges for stale area %s: %v", name, err)
+			}
+			log("scenesync: reconcile: swept stale scene area %q (absent from fleet payload)", name)
 		}
 	}
 	return total, locationSet

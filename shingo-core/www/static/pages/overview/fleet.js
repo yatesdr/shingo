@@ -18,10 +18,10 @@ export function createFleetSection(store) {
         if (!body) return;
         body.innerHTML = h`
             <div class="grid grid-4 fleet-kpis" id="fl-kpis">
-              ${kpiCell('fl-size', 'In fleet')}
-              ${kpiCell('fl-online', 'Online')}
-              ${kpiCell('fl-missions', 'Missions (window)')}
-              ${kpiCell('fl-util', 'Fleet utilization')}
+              <div class="card" style="margin:0"><div class="kpi-label">In fleet</div><div class="stat-value" id="fl-size">—</div></div>
+              <div class="card" style="margin:0"><div class="kpi-label">Online</div><div class="stat-value" id="fl-online">—</div></div>
+              <div class="card" style="margin:0"><div class="kpi-label">Missions (window)</div><div class="stat-value" id="fl-missions">—</div></div>
+              <div class="card" style="margin:0"><div class="kpi-label">Fleet utilization</div><div class="stat-value" id="fl-util">—</div></div>
             </div>
             <div class="fleet-load-box">
               <div class="flex flex-between" style="align-items:flex-start">
@@ -132,9 +132,6 @@ export function createFleetSection(store) {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
-function kpiCell(id, label) {
-    return '<div class="card" style="margin:0"><div class="kpi-label">' + label + '</div><div class="stat-value" id="' + id + '">—</div></div>';
-}
 function setText(id, v) { const e = document.getElementById(id); if (e) e.textContent = v; }
 function fmtHour(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? '' : String(d.getHours()).padStart(2, '0') + ':00'; }
 

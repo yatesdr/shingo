@@ -39,6 +39,12 @@ func TestClassifyTermination(t *testing.T) {
 		{"cancelled", "cancelled by admin", OutcomeCancelled},
 		{"STOPPED", "", OutcomeCancelled},
 		{"canceled", "some unrecognised reason", OutcomeCancelled},
+		// "aborted by" is an operator cancel (Q-030) — previously only the default.
+		{"STOPPED", "aborted by operator", OutcomeCancelled},
+		// Attribution wins over a failure-ish word in the same detail.
+		{"cancelled", "aborted by operator (timeout while staging)", OutcomeCancelled},
+		// "fleet order stopped" (RDS-origin) stays a cancel — no failure pattern.
+		{"STOPPED", "fleet order stopped", OutcomeCancelled},
 
 		// Anything else.
 		{"weird-state", "", OutcomeOther},
@@ -47,6 +53,30 @@ func TestClassifyTermination(t *testing.T) {
 	for _, c := range cases {
 		if got := ClassifyTermination(c.state, c.detail); got != c.want {
 			t.Errorf("ClassifyTermination(%q, %q) = %q, want %q", c.state, c.detail, got, c.want)
+		}
+	}
+}
+
+// TestClassifyCancelOrigin pins the Q-030 cancel-origin split: shingo-origin
+// (actor-attributed cancel/abort), RDS-origin ("fleet order stopped"), and the
+// unclassified fallback that keeps unknown detail strings visible.
+func TestClassifyCancelOrigin(t *testing.T) {
+	cases := []struct {
+		detail string
+		want   string
+	}{
+		{"cancelled by admin", CancelOriginShingo},
+		{"canceled by jdoe", CancelOriginShingo},
+		{"aborted by operator", CancelOriginShingo},
+		{"Cancelled By Operator", CancelOriginShingo}, // case-insensitive
+		{"fleet order stopped", CancelOriginRDS},
+		{"FLEET ORDER STOPPED", CancelOriginRDS},
+		{"", CancelOriginUnclassified},
+		{"some reason we've never seen", CancelOriginUnclassified},
+	}
+	for _, c := range cases {
+		if got := ClassifyCancelOrigin(c.detail); got != c.want {
+			t.Errorf("ClassifyCancelOrigin(%q) = %q, want %q", c.detail, got, c.want)
 		}
 	}
 }

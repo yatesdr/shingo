@@ -9,6 +9,7 @@ import { makeChart, installChartThemeHook, chartColors } from '/static/component
 
 export function createFootprintSection(store) {
     let chart = null;
+    let binsChart = null;
 
     function mount() {
         installChartThemeHook();
@@ -17,14 +18,19 @@ export function createFootprintSection(store) {
         body.innerHTML = h`
             <div class="footprint-nums">
               <div class="footprint-num card" style="margin:0">
-                <div class="v" id="fp-cells">—</div><div class="k">Cells managed</div>
+                <div class="v" id="fp-cells">—</div><div class="k">Lines</div>
                 <div id="fp-cells-spark" class="kpi-spark"></div>
               </div>
               <div class="footprint-num card" style="margin:0">
+                <div class="v" id="fp-processes">—</div><div class="k">Processes managed</div>
+              </div>
+              <div class="footprint-num card" style="margin:0">
                 <div class="v" id="fp-bins">—</div><div class="k">Bins managed</div>
-                <div id="fp-bins-spark" class="kpi-spark"></div>
+                <div class="footprint-split" id="fp-bins-split" style="font-size:0.78rem;color:var(--text-muted);margin-top:2px"></div>
               </div>
             </div>
+            <div class="chart-caption" style="margin-top:1rem">Bins managed — full vs empty (last 30d)</div>
+            <div class="chart-box" style="height:180px"><canvas id="fp-bins-canvas"></canvas></div>
             <div class="chart-caption" style="margin-top:1rem">Bins loaded / unloaded per day (last 30d)</div>
             <div class="chart-box" style="height:180px"><canvas id="fp-canvas"></canvas></div>`;
     }
@@ -39,11 +45,41 @@ export function createFootprintSection(store) {
 
     function render(fp) {
         if (!fp) return;
-        setText('fp-cells', fp.cells_managed);
-        setText('fp-bins', fp.bins_managed);
+        setText('fp-cells', fp.cells_managed); // edge/line registrations (Q-034: not physical cells yet)
+        setText('fp-processes', fp.processes_managed);
+        setText('fp-bins', fp.bins_managed); // total stays the headline
+        setText('fp-bins-split', binSplitText(fp));
         spark('fp-cells-spark', fp.cells_spark, 'var(--success)');
-        spark('fp-bins-spark', fp.bins_spark, 'var(--info)');
+        renderBinsChart(fp.bins_series || []);
         renderChart(fp.load_series || []);
+    }
+
+    // renderBinsChart draws the reconstructed full-vs-empty occupancy as a
+    // stacked area (full + empty = total bins managed) over the last 30 days.
+    function renderBinsChart(series) {
+        const canvas = document.getElementById('fp-bins-canvas');
+        if (!canvas) return;
+        if (binsChart) { try { binsChart.destroy(); } catch (_) {} binsChart = null; }
+        // Only draw once there's a day with bins; otherwise the reconstruction
+        // log doesn't reach back far enough yet.
+        if (!series.length || !series.some((b) => b.total > 0)) {
+            const box = canvas.parentElement;
+            if (box) box.innerHTML = '<div class="dash-empty">No bin history in range yet (fills in as the uop log grows).</div>';
+            return;
+        }
+        const c = chartColors();
+        const labels = series.map((b) => fmtDay(b.day));
+        binsChart = makeChart(canvas, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Full', data: series.map((b) => b.full), borderColor: c.info, backgroundColor: withAlpha(c.info, 0.45), fill: true, stack: 'bins', tension: 0.2, pointRadius: 0 },
+                    { label: 'Empty', data: series.map((b) => b.empty), borderColor: c.text, backgroundColor: withAlpha(c.text, 0.18), fill: true, stack: 'bins', tension: 0.2, pointRadius: 0 },
+                ],
+            },
+            options: { scales: { y: { min: 0, stacked: true, ticks: { precision: 0 } } }, plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
+        });
     }
 
     function renderChart(series) {
@@ -79,5 +115,21 @@ function spark(id, data, color) {
     if (!el) return;
     el.textContent = '';
     if (Array.isArray(data) && data.length >= 2) el.appendChild(Sparkline(data, { color, width: 160, height: 18 }));
+}
+// binSplitText renders the current full/empty split (Q-032) under the Bins-
+// managed headline. full = uop_remaining > 0; full + empty = total.
+function binSplitText(fp) {
+    return (fp.bins_full || 0) + ' full · ' + (fp.bins_empty || 0) + ' empty';
+}
+// withAlpha turns a CSS color into a translucent fill for the stacked area.
+// Handles hex; falls back to color-mix for var()/named colors.
+function withAlpha(color, a) {
+    if (color && color[0] === '#') {
+        let hex = color.slice(1);
+        if (hex.length === 3) hex = hex.split('').map((x) => x + x).join('');
+        const n = parseInt(hex, 16);
+        return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+    }
+    return 'color-mix(in srgb, ' + color + ' ' + Math.round(a * 100) + '%, transparent)';
 }
 function fmtDay(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? '' : (d.getMonth() + 1) + '/' + d.getDate(); }

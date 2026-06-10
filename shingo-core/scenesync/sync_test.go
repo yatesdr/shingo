@@ -34,6 +34,7 @@ type fakeStore struct {
 	errCreate     error
 	errUpdate     error
 	errList       error
+	errListAreas  error
 	errDeleteNode error
 }
 
@@ -92,6 +93,24 @@ func (f *fakeStore) UpsertSceneEdge(se *scene.Edge) error {
 	cp := *se
 	f.edges[f.key(se.AreaName, se.InstanceName)] = &cp
 	return nil
+}
+
+func (f *fakeStore) ListSceneAreas() ([]string, error) {
+	if f.errListAreas != nil {
+		return nil, f.errListAreas
+	}
+	set := map[string]bool{}
+	for _, sp := range f.points {
+		set[sp.AreaName] = true
+	}
+	for _, se := range f.edges {
+		set[se.AreaName] = true
+	}
+	out := make([]string, 0, len(set))
+	for a := range set {
+		out = append(out, a)
+	}
+	return out, nil
 }
 
 func (f *fakeStore) GetNodeTypeByCode(code string) (*nodes.NodeType, error) {
@@ -291,6 +310,56 @@ func TestSyncScenePoints_ErrorsLoggedNotFatal(t *testing.T) {
 	}
 	if len(rec.lines) == 0 {
 		t.Errorf("expected at least one log line for upsert error")
+	}
+}
+
+func TestSyncScenePoints_ReconcilesStaleAreas(t *testing.T) {
+	t.Parallel()
+	db := newFakeStore()
+	// Pre-seed an area the fleet no longer reports (removed from RDS), with both
+	// a point and an edge — these are the ghost map marks the reconcile sweeps.
+	_ = db.UpsertScenePoint(&scene.Point{AreaName: "GhostArea", InstanceName: "ghost-pt"})
+	_ = db.UpsertSceneEdge(&scene.Edge{AreaName: "GhostArea", InstanceName: "ghost-edge"})
+
+	// The fleet now reports only RealArea.
+	areas := []fleet.SceneArea{
+		{
+			Name:           "RealArea",
+			AdvancedPoints: []fleet.ScenePoint{{InstanceName: "ap1", ClassName: "AP"}},
+			Edges:          []fleet.SceneEdge{{InstanceName: "e1"}},
+		},
+	}
+	_, _ = SyncScenePoints(db, noopLog, areas)
+
+	if _, ok := db.points["GhostArea/ghost-pt"]; ok {
+		t.Errorf("stale area point not swept (ghost would persist on the Robot Map)")
+	}
+	if _, ok := db.edges["GhostArea/ghost-edge"]; ok {
+		t.Errorf("stale area edge not swept")
+	}
+	if _, ok := db.points["RealArea/ap1"]; !ok {
+		t.Errorf("real area point missing after sync")
+	}
+	if _, ok := db.edges["RealArea/e1"]; !ok {
+		t.Errorf("real area edge missing after sync")
+	}
+}
+
+func TestSyncScenePoints_EmptyPayloadDoesNotSweep(t *testing.T) {
+	t.Parallel()
+	db := newFakeStore()
+	// An empty fetch is far likelier a transient fleet hiccup than "every area
+	// was removed" — the reconcile must NOT wipe the scene in that case.
+	_ = db.UpsertScenePoint(&scene.Point{AreaName: "AreaA", InstanceName: "keep-pt"})
+	_ = db.UpsertSceneEdge(&scene.Edge{AreaName: "AreaA", InstanceName: "keep-edge"})
+
+	_, _ = SyncScenePoints(db, noopLog, nil)
+
+	if _, ok := db.points["AreaA/keep-pt"]; !ok {
+		t.Errorf("empty payload wrongly swept existing scene point")
+	}
+	if _, ok := db.edges["AreaA/keep-edge"]; !ok {
+		t.Errorf("empty payload wrongly swept existing scene edge")
 	}
 }
 

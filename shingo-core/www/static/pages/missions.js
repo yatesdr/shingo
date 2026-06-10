@@ -57,11 +57,15 @@ function refreshHero(state) {
             sub: denom > 0 ? s.confirmed + ' of ' + denom : 'no completed missions',
             delta: (prev && (prev.confirmed + prev.failed) > 0) ? ptDelta(s.success_rate - prev.success_rate) : null,
         });
-        updateKpiTile(tiles.volume, { label: 'Volume', value: s.confirmed, sub: s.total + ' total', delta: prev ? countDelta(s.confirmed - prev.confirmed) : null });
+        // Volume headlines total throughput; confirmed is the sub-stat (it
+        // belongs to the success-rate tile). Delta tracks the headline (total).
+        updateKpiTile(tiles.volume, { label: 'Volume', value: s.total, sub: s.confirmed + ' confirmed', delta: prev ? countDelta(s.total - prev.total) : null });
         updateKpiTile(tiles.avg, {
+            // Headline execution time (assignment→terminal, what the robot spent);
+            // lead time (created→terminal) is the sub-stat (Q-031).
             label: 'Avg duration',
-            value: (s.total > 0 && s.avg_duration_ms > 0) ? formatDuration(s.avg_duration_ms) : '—',
-            sub: s.p95_duration_ms > 0 ? 'P95 ' + formatDuration(s.p95_duration_ms) : '',
+            value: (s.total > 0 && s.avg_execution_ms > 0) ? formatDuration(s.avg_execution_ms) : '—',
+            sub: s.avg_duration_ms > 0 ? 'Lead ' + formatDuration(s.avg_duration_ms) : '',
         });
     });
     refreshActive();
@@ -262,7 +266,15 @@ function updateSysPills(data) {
 function refreshFailures(state) {
     apiGet('/api/missions/failures?' + filterQS(state, {}))
         .then((d) => renderPareto((d && d.reasons) || []))
-        .catch(() => {});
+        .catch(() => {
+            // Surface a dead endpoint instead of silently leaving a blank card —
+            // a 500 here used to read as "No failures" (worded distinctly from
+            // renderPareto's empty state so the two aren't confused).
+            const box = document.querySelector('#m-failures .chart-box');
+            if (!box) return;
+            if (paretoChart) { try { paretoChart.destroy(); } catch (_) {} paretoChart = null; }
+            box.innerHTML = '<div class="dash-empty">Failure data unavailable.</div>';
+        });
 }
 
 function renderPareto(reasons) {

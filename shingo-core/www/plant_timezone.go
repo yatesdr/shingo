@@ -29,6 +29,16 @@ func loadPlantLocation() *time.Location {
 	return loc
 }
 
+// plantDayStart truncates t to midnight in the plant timezone. parseMissionFilter
+// normalizes its date filters to UTC, so truncating in the raw (UTC) location
+// lands on the wrong calendar day for a non-UTC plant — e.g. "today 23:59
+// plant-local" (≈05:00Z) truncates to tomorrow's UTC midnight. Always reduce in
+// plantLocation so the resulting day matches the plant's calendar.
+func plantDayStart(t time.Time) time.Time {
+	t = t.In(plantLocation)
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, plantLocation)
+}
+
 // apiPlantTimezone returns the configured plant timezone so the frontend can
 // label date ranges ("Today (CST)") and, eventually, defer window math to the
 // server.

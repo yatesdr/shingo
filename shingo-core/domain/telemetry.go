@@ -114,15 +114,24 @@ type TelemetryStats struct {
 // /api/missions/stats so existing consumers (current missions.js) keep
 // seeing the old number until they migrate.
 type TelemetryStatsV2 struct {
-	Total         int64   `json:"total"`        // all terminal rows in the window
-	Confirmed     int64   `json:"confirmed"`    // FINISHED / delivered / confirmed
-	Failed        int64   `json:"failed"`       // hard failures + system-initiated stops
-	Cancelled     int64   `json:"cancelled"`    // operator-initiated cancels only
-	Skipped       int64   `json:"skipped"`      // excluded from everything; reported for visibility
-	SuccessRate   float64 `json:"success_rate"` // Confirmed/(Confirmed+Failed)*100, 0 when denom 0
-	AvgDurationMS int64   `json:"avg_duration_ms"`
-	P50DurationMS int64   `json:"p50_duration_ms"`
-	P95DurationMS int64   `json:"p95_duration_ms"`
+	Total     int64 `json:"total"`     // all terminal rows in the window
+	Confirmed int64 `json:"confirmed"` // FINISHED / delivered / confirmed
+	Failed    int64 `json:"failed"`    // hard failures + system-initiated stops
+	Cancelled int64 `json:"cancelled"` // all cancels (shingo + rds + unclassified)
+	// Cancelled origin split (Q-030); sum to Cancelled. Shown as the Cancelled
+	// tile sub-stat so an anonymous "fleet order stopped" wedge is visible.
+	CancelledShingo   int64   `json:"cancelled_shingo"`   // "cancelled by …" / "aborted by …"
+	CancelledRDS      int64   `json:"cancelled_rds"`      // "fleet order stopped" (vendor-side)
+	UnclassifiedStops int64   `json:"unclassified_stops"` // cancel detail matched no pattern
+	Skipped           int64   `json:"skipped"`            // excluded from everything; reported for visibility
+	SuccessRate       float64 `json:"success_rate"`       // Confirmed/(Confirmed+Failed)*100, 0 when denom 0
+	// AvgExecutionMS is assignment→terminal (what the robot actually spent);
+	// AvgDurationMS is created→terminal (lead time, includes queue/sourcing). The
+	// Avg Duration tile headlines execution and shows lead as the sub-stat (Q-031).
+	AvgExecutionMS int64 `json:"avg_execution_ms"`
+	AvgDurationMS  int64 `json:"avg_duration_ms"`
+	P50DurationMS  int64 `json:"p50_duration_ms"`
+	P95DurationMS  int64 `json:"p95_duration_ms"`
 }
 
 // TelemetryBucket is one time-bucket of mission metrics for the trend charts
@@ -435,6 +444,13 @@ func ClassifyTermination(terminalState, detail string) string {
 		return OutcomeSkipped
 	case "stopped", "cancelled", "canceled":
 		d := strings.ToLower(detail)
+		// Actor-attributed cancels are deliberate cancels (Q-030), even if the
+		// detail also mentions a failure-ish word — attribution wins. "aborted by"
+		// was previously only caught by the conservative default.
+		if strings.Contains(d, "cancelled by") || strings.Contains(d, "canceled by") ||
+			strings.Contains(d, "aborted by") {
+			return OutcomeCancelled
+		}
 		if strings.Contains(d, "grace") || strings.Contains(d, "timeout") ||
 			strings.Contains(d, "structural") || strings.Contains(d, "abandon") {
 			return OutcomeFailed
@@ -442,5 +458,31 @@ func ClassifyTermination(terminalState, detail string) string {
 		return OutcomeCancelled
 	default:
 		return OutcomeOther
+	}
+}
+
+// Cancel-origin buckets for the v2 stats split (Q-030). Only meaningful for
+// rows ClassifyTermination placed in the cancelled bucket.
+const (
+	CancelOriginShingo       = "shingo"       // deliberate cancel via shingo: "cancelled by …" / "aborted by …"
+	CancelOriginRDS          = "rds"          // vendor-side stop, unattributed: "fleet order stopped"
+	CancelOriginUnclassified = "unclassified" // detail matched no known pattern — surfaced so unknowns don't hide
+)
+
+// ClassifyCancelOrigin splits a cancelled mission's terminal detail by origin
+// (Q-030). The decision was to keep these as cancels (not reclassify the RDS
+// stops as failures) but show shingo-origin vs RDS-origin separately, with an
+// unclassified count so unknown detail strings stay visible rather than
+// silently defaulting.
+func ClassifyCancelOrigin(detail string) string {
+	d := strings.ToLower(detail)
+	switch {
+	case strings.Contains(d, "cancelled by") || strings.Contains(d, "canceled by") ||
+		strings.Contains(d, "aborted by"):
+		return CancelOriginShingo
+	case strings.Contains(d, "fleet order stopped"):
+		return CancelOriginRDS
+	default:
+		return CancelOriginUnclassified
 	}
 }

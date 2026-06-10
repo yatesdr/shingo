@@ -155,3 +155,25 @@ func DeleteEdgesByArea(db *sql.DB, areaName string) error {
 	_, err := db.Exec(`DELETE FROM scene_edges WHERE area_name=$1`, areaName)
 	return err
 }
+
+// ListAreas returns the distinct area names stored across scene points and
+// edges. Scene sync reconciles this set against the fleet's current areas:
+// any stored area no longer in the fleet payload is stale and gets swept
+// (areas deleted from RDS used to linger forever as ghost points on the map).
+func ListAreas(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT area_name FROM scene_points
+		UNION SELECT area_name FROM scene_edges ORDER BY area_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var areas []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, err
+		}
+		areas = append(areas, a)
+	}
+	return areas, rows.Err()
+}

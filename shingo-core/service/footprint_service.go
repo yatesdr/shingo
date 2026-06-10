@@ -1,6 +1,8 @@
 package service
 
 import (
+	"time"
+
 	"shingocore/store"
 	"shingocore/store/footprint"
 )
@@ -18,7 +20,8 @@ func NewFootprintService(db *store.DB) *FootprintService {
 	return &FootprintService{db: db}
 }
 
-// Get returns the plant-footprint summary.
-func (s *FootprintService) Get() (*footprint.Footprint, error) {
-	return s.db.GetFootprint()
+// Get returns the plant-footprint summary. loc is the plant timezone used to
+// key the daily load/unload velocity buckets.
+func (s *FootprintService) Get(loc *time.Location) (*footprint.Footprint, error) {
+	return s.db.GetFootprint(loc)
 }

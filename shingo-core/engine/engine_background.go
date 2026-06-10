@@ -43,6 +43,12 @@ func (e *Engine) robotRefreshLoop() {
 			// Update robot position cache (used for telemetry snapshots)
 			e.robotsMu.Lock()
 			for _, r := range robots {
+				// The fleet (SEER RDS) occasionally lists an unprovisioned slot
+				// with no vehicle id; don't cache a keyless ghost — it renders as
+				// a nameless fleet row and inflates the count for every consumer.
+				if r.VehicleID == "" {
+					continue
+				}
 				e.robotsCache[r.VehicleID] = r
 			}
 			e.robotsMu.Unlock()

@@ -7,6 +7,11 @@
 import { apiGet } from '/static/app.js';
 import { makeChart, installChartThemeHook, bucketLabel, chartColors } from '/static/components/charts.js';
 
+// Minimum completed+failed missions for a bucket's success rate to be plotted.
+// Below this, the rate is pure 100/0 noise (a 1-mission bucket is always 0% or
+// 100%), so we render a gap instead (B4; Q-005 small-denominator fix).
+const MIN_RATE_DENOM = 3;
+
 export function createTrendsSection(store, opts) {
     opts = opts || {};
     const toggleId = opts.toggleId || 'ops-trend-toggle';
@@ -71,7 +76,9 @@ export function createTrendsSection(store, opts) {
 
         charts.push(buildChart(grid, 'success_rate', 'Success rate (%)', {
             type: 'line',
-            data: { labels, datasets: [{ data: points.map((p) => round1(p.success_rate)), borderColor: c.success, backgroundColor: c.success, tension: 0.3, pointRadius: 0, fill: false }] },
+            // Plot a gap (null) for thin buckets so 100/0 noise doesn't read as
+            // real swings; spanGaps:false breaks the line across the gap.
+            data: { labels, datasets: [{ data: points.map((p) => ((p.confirmed + p.failed) >= MIN_RATE_DENOM ? round1(p.success_rate) : null)), borderColor: c.success, backgroundColor: c.success, tension: 0.3, pointRadius: 0, fill: false, spanGaps: false }] },
             options: { scales: { y: { min: 0, max: 100 } } },
         }));
 

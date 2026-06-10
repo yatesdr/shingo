@@ -29,7 +29,10 @@ func GetFailures(db *sql.DB, f Filter) ([]FailureReason, error) {
 	// robot_alarms_json (Q-026) is the priority signal; it's NULL until the
 	// alarm-snapshot ingestion lands (write side), in which case the classifier
 	// falls through to blocks/errors. ::text feeds the string-based classifier.
-	q := fmt.Sprintf(`SELECT order_id, COALESCE(robot_alarms_json::text,''), COALESCE(blocks_json,''), COALESCE(errors_json,'')
+	// All three are JSONB; COALESCE against the '' text literal raises 22P02
+	// unless we cast to text first (robot_alarms_json already does). This is
+	// why /api/missions/failures 500'd on every call.
+	q := fmt.Sprintf(`SELECT order_id, COALESCE(robot_alarms_json::text,''), COALESCE(blocks_json::text,''), COALESCE(errors_json::text,'')
 		FROM mission_telemetry%s`, where)
 	rows, err := db.Query(q, args...)
 	if err != nil {

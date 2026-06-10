@@ -28,8 +28,11 @@ func GetRobotMissionAggs(db *sql.DB, f Filter) ([]RobotMissionAgg, error) {
 	} else {
 		where += " AND " + cond
 	}
-	q := fmt.Sprintf(`SELECT robot_id, COUNT(*), COALESCE(SUM(duration_ms), 0)
-		FROM mission_telemetry%s GROUP BY robot_id`, where)
+	// busy_ms is execution time (assignment→terminal), not lead time — the robot
+	// wasn't busy while the order sat in a queue (Q-031). SUM skips missions that
+	// never reached a robot (NULL execution).
+	q := fmt.Sprintf(`SELECT robot_id, COUNT(*), COALESCE(SUM(%s), 0)::BIGINT
+		FROM mission_telemetry mt%s GROUP BY robot_id`, executionMSExpr("mt"), where)
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -55,24 +58,31 @@ type HourConcurrency struct {
 }
 
 // GetHourlyConcurrency returns 24 hourly concurrency points for the calendar
-// day starting at dayStart. A robot counts toward an hour if any of its
-// missions' [core_created, core_completed] interval overlaps that hour. An
-// optional stationID scopes to one station's missions ("" = all).
+// day starting at dayStart. A robot counts toward an hour if its *execution*
+// interval [assignment, completion] overlaps that hour — execution time
+// (Q-031), so a robot isn't counted busy while its order merely queued or after
+// it delivered (awaiting confirm). Both endpoints come from order_history (same
+// clock). The CTE computes them once per mission. An optional stationID scopes
+// to one station's missions ("" = all).
 func GetHourlyConcurrency(db *sql.DB, dayStart time.Time, stationID string) ([]HourConcurrency, error) {
 	args := []any{dayStart}
 	stationCond := ""
 	if stationID != "" {
-		stationCond = " AND mt.station_id = $2"
+		stationCond = " AND exec.station_id = $2"
 		args = append(args, stationID)
 	}
-	q := fmt.Sprintf(`SELECT gs AS hour, COUNT(DISTINCT mt.robot_id) AS concurrency
+	q := fmt.Sprintf(`WITH exec AS (
+			SELECT mt.robot_id, mt.station_id, %s AS started, %s AS ended
+			FROM mission_telemetry mt
+			WHERE mt.robot_id <> ''
+		)
+		SELECT gs AS hour, COUNT(DISTINCT exec.robot_id) AS concurrency
 		FROM generate_series($1::timestamptz, $1::timestamptz + interval '23 hours', interval '1 hour') gs
-		LEFT JOIN mission_telemetry mt
-		  ON mt.robot_id <> ''
-		  AND mt.core_created IS NOT NULL AND mt.core_completed IS NOT NULL
-		  AND mt.core_created < gs + interval '1 hour'
-		  AND mt.core_completed >= gs%s
-		GROUP BY gs ORDER BY gs`, stationCond)
+		LEFT JOIN exec
+		  ON exec.started IS NOT NULL AND exec.ended IS NOT NULL
+		  AND exec.started < gs + interval '1 hour'
+		  AND exec.ended >= gs%s
+		GROUP BY gs ORDER BY gs`, assignmentExpr("mt"), completionExpr("mt"), stationCond)
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
