@@ -614,6 +614,7 @@ function claimFieldVisibility(role, swap) {
         // Transitional flag is a produce-side (bin loader) concept; a
         // consume manual_swap (unloader) has no transitional mode.
         'claims-add-transitional-group':      isManual && role === 'produce',
+        'claims-add-home-location-group':     isManual && role === 'produce',
         'claims-add-reorder-group':           !isManual,
         'claims-add-lineside-group':          role === 'consume' && !isManual,
         // Staging fieldset is hidden by manual_swap (no staging concept),
@@ -808,6 +809,7 @@ function readClaimStateFromForm() {
         reuseCompatibleBins: get('claims-add-reuse-bins').checked,
         autoPush: get('claims-add-auto-push').checked,
         transitionalLoader: get('claims-add-transitional').checked,
+        homeLocationLoader: get('claims-add-home-location').checked,
         pairedCoreNode: get('claims-add-paired-node').value,
         secondPairedCoreNode: get('claims-add-second-paired-node').value,
         autoConfirm: get('claims-add-auto-confirm').checked,
@@ -836,6 +838,7 @@ function writeClaimStateToForm(state) {
     get('claims-add-reuse-bins').checked = !!state.reuseCompatibleBins;
     get('claims-add-auto-push').checked = !!state.autoPush;
     get('claims-add-transitional').checked = !!state.transitionalLoader;
+    get('claims-add-home-location').checked = !!state.homeLocationLoader;
     get('claims-add-paired-node').value = state.pairedCoreNode || '';
     get('claims-add-second-paired-node').value = state.secondPairedCoreNode || '';
     get('claims-add-auto-confirm').checked = !!state.autoConfirm;
@@ -1030,6 +1033,7 @@ function defaultClaimState() {
         reuseCompatibleBins: false,
         autoPush: false,
         transitionalLoader: false,
+        homeLocationLoader: false,
         pairedCoreNode: '',
         secondPairedCoreNode: '',
         autoConfirm: false,
@@ -1082,6 +1086,7 @@ function editClaim(claim) {
         reuseCompatibleBins: !!claim.reuse_compatible_bins,
         autoPush: !!claim.auto_push,
         transitionalLoader: !!claim.transitional_loader,
+        homeLocationLoader: !!claim.home_location_loader,
         pairedCoreNode: claim.paired_core_node || '',
         secondPairedCoreNode: claim.second_paired_core_node || '',
         autoConfirm: !!claim.auto_confirm,
@@ -1162,6 +1167,7 @@ async function saveClaim() {
     // unrelated claim can never clear a loader's flag.
     if (state.swapMode === 'manual_swap' && state.role === 'produce') {
         claimBody.transitional_loader = state.transitionalLoader;
+        claimBody.home_location_loader = state.homeLocationLoader;
     }
 
     // NGRP expansion: if the picked node is a group AND we're creating

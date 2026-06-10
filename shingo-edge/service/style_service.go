@@ -92,6 +92,9 @@ func (s *StyleService) ListClaims(styleID int64) ([]processes.NodeClaim, error) 
 		if on, lerr := s.db.IsTransitionalLoader(claims[i].CoreNodeName); lerr == nil {
 			claims[i].TransitionalLoader = on
 		}
+		if on, lerr := s.db.IsHomeLocationLoader(claims[i].CoreNodeName); lerr == nil {
+			claims[i].HomeLocationLoader = on
+		}
 	}
 	return claims, nil
 }

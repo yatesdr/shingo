@@ -992,6 +992,15 @@ body {
     font-weight: 700;
     color: #fff;
 }
+/* Home-location board: the physical position + bin-state label atop each card. */
+.os-board-home {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    color: #8fb3da;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+}
 .os-board-nodemand .os-board-code {
     color: #99a;
 }

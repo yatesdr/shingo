@@ -170,6 +170,8 @@ function buildDOM() {
     add('claims-add-allowed-group', { display: 'none' });
     add('claims-add-transitional-group', { display: 'none' });
     add('claims-add-transitional', { tag: 'input', type: 'checkbox' });
+    add('claims-add-home-location-group', { display: 'none' });
+    add('claims-add-home-location', { tag: 'input', type: 'checkbox' });
     add('claims-allowed-picker');
     add('claims-add-capacity', { tag: 'input', value: '10' });
     add('claims-add-reorder-group');

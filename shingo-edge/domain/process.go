@@ -225,7 +225,11 @@ type NodeClaim struct {
 	// path only for produce manual_swap (bin loader) claims so the Edge
 	// processes claim editor can reflect/toggle it. Every other reader sees
 	// the zero value; they don't consult it.
-	TransitionalLoader bool      `json:"transitional_loader"`
+	TransitionalLoader bool `json:"transitional_loader"`
+	// HomeLocationLoader is the same kind of computed, display-only field for the
+	// home_location_loaders set (the LAYOUT axis) — populated by the API list path
+	// for produce manual_swap claims so the editor can reflect/toggle it.
+	HomeLocationLoader bool      `json:"home_location_loader"`
 	CreatedAt          time.Time `json:"created_at"`
 }
 
