@@ -614,7 +614,10 @@ function claimFieldVisibility(role, swap) {
         // Transitional flag is a produce-side (bin loader) concept; a
         // consume manual_swap (unloader) has no transitional mode.
         'claims-add-transitional-group':      isManual && role === 'produce',
-        'claims-add-home-location-group':     isManual && role === 'produce',
+        // Home-location is a LAYOUT axis (dedicated per-payload node vs one shared
+        // window), orthogonal to role per the home_location_loaders data model — it
+        // applies to consume unloaders (dedicated finished-goods exits) too.
+        'claims-add-home-location-group':     isManual,
         'claims-add-reorder-group':           !isManual,
         'claims-add-lineside-group':          role === 'consume' && !isManual,
         // Staging fieldset is hidden by manual_swap (no staging concept),

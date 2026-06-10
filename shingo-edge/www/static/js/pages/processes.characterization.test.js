@@ -341,6 +341,7 @@ function expectedVisibility(role, swap) {
         'claims-add-payload-group': !isManual,
         'claims-add-allowed-group': isManual,
         'claims-add-transitional-group': isManual && role === 'produce',
+        'claims-add-home-location-group': isManual,
         'claims-add-reorder-group': !isManual,
         'claims-add-lineside-group': role === 'consume' && !isManual,
         'claims-staging-fieldset': !isManual && usesStaging,

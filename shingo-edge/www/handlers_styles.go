@@ -266,10 +266,11 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 			log.Printf("WARNING api apiUpsertStyleNodeClaim: set transitional loader %s: %v", in.CoreNodeName, err)
 		}
 	}
-	// Home-location layout flag — same loader-wide / produce-manual_swap / nil-safe
-	// rules as the transitional flag above, applied to the home_location_loaders set.
+	// Home-location LAYOUT flag — loader-wide / nil-safe like the transitional flag
+	// above, but role-NEUTRAL: it's a layout axis (dedicated per-payload node vs one
+	// shared window), orthogonal to role per the home_location_loaders data model, so
+	// a consume manual_swap (unloader) carries it too. Any manual_swap claim qualifies.
 	if in.HomeLocationLoader != nil &&
-		in.Role == protocol.ClaimRoleProduce &&
 		in.SwapMode == protocol.SwapModeManualSwap {
 		username, _ := h.sessions.getUser(r)
 		if err := h.engine.StyleService().SetHomeLocationLoader(in.CoreNodeName, *in.HomeLocationLoader, username); err != nil {

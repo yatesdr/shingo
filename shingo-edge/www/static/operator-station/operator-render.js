@@ -617,9 +617,15 @@ function renderPayloadBoard(entry) {
 // bin state + actions and carries a home label. keepIdle keeps every physical
 // home on screen even with no current demand.
 function renderHomeLocationBoard(nodes) {
+    // Home-location is a role-neutral layout: produce loaders OR consume unloaders
+    // (dedicated finished-goods exits). Title reflects whichever this station is.
+    var roles = {};
+    nodes.forEach(function(n) { if (n.active_claim) roles[n.active_claim.role] = true; });
+    var title = (roles.produce && roles.consume) ? 'Stations'
+        : roles.consume ? 'Unloader' : 'Bin Loader';
     var header = el('div', { className: 'os-board-header' });
     header.innerHTML =
-        '<div><div style="font-size:42px;font-weight:700;color:#fff">Bin Loader — Home Locations</div>' +
+        '<div><div style="font-size:42px;font-weight:700;color:#fff">' + title + ' — Home Locations</div>' +
         '<div style="font-size:20px;color:#aab;margin-top:6px">' + nodes.length + ' dedicated position' + (nodes.length === 1 ? '' : 's') + '</div></div>';
     grid.appendChild(header);
 
