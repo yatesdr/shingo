@@ -68,6 +68,7 @@ func (a *Adapter) CreateTransportOrder(req fleet.TransportOrderRequest) (fleet.T
 	rdsReq := &rds.SetOrderRequest{
 		ID:         req.OrderID,
 		ExternalID: req.ExternalID,
+		Group:      req.RobotGroup, // SEER robot-dispatch group; "" omitted → vendor default assignment
 		Blocks:     blocks,
 		Complete:   true, // Complete order after both blocks
 		Priority:   req.Priority,
@@ -114,6 +115,7 @@ func (a *Adapter) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.Transpo
 	rdsReq := &rds.SetOrderRequest{
 		ID:         req.OrderID,
 		ExternalID: req.ExternalID,
+		Group:      req.RobotGroup, // SEER robot-dispatch group; "" omitted → vendor default assignment
 		Blocks:     blocks,
 		Complete:   false,
 		Priority:   req.Priority,

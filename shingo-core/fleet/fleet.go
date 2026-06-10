@@ -51,6 +51,7 @@ type TransportOrderRequest struct {
 	FromLoc    string // Source vendor location
 	ToLoc      string // Destination vendor location
 	Priority   int
+	RobotGroup string // SEER robot-dispatch group for this move (→ rds.SetOrderRequest.Group); "" = vendor default
 }
 
 // TransportOrderResult contains the result of a successful order creation.
@@ -71,4 +72,5 @@ type StagedOrderRequest struct {
 	ExternalID string
 	Blocks     []OrderBlock
 	Priority   int
+	RobotGroup string // SEER robot-dispatch group (→ rds.SetOrderRequest.Group); "" = vendor default
 }

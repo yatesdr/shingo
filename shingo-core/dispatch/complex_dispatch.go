@@ -472,6 +472,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
 		Priority:   order.Priority,
+		RobotGroup: d.robotGroupForPayload(order.PayloadCode),
 	}
 	d.dbg("complex: creating staged order %s with %d initial blocks (hasWait=%v)", vendorOrderID, len(blocks), hasWait)
 	if _, err := d.backend.CreateStagedOrder(req); err != nil {

@@ -128,6 +128,22 @@ func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope
 	_ = vendorOrderID
 }
 
+// robotGroupForPayload resolves the SEER robot-dispatch group configured on the
+// order's payload template (→ rds.SetOrderRequest.Group). An empty code, an
+// unknown payload, or a lookup error degrades to "" (the vendor's default robot
+// assignment) — a robot-group lookup must never block material flow.
+func (d *Dispatcher) robotGroupForPayload(payloadCode string) string {
+	if payloadCode == "" {
+		return ""
+	}
+	p, err := d.db.GetPayloadByCode(payloadCode)
+	if err != nil || p == nil {
+		d.dbg("robot group: payload %q lookup failed (%v) — using vendor default", payloadCode, err)
+		return ""
+	}
+	return p.RobotGroup
+}
+
 // dispatchToFleetCore contains the shared fleet dispatch sequence: generate
 // vendor order ID, create transport order, update vendor state, transition
 // lifecycle, emit event. Both dispatchToFleet (Kafka/envelope path) and
@@ -141,6 +157,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		FromLoc:    sourceNode.Name,
 		ToLoc:      destNode.Name,
 		Priority:   order.Priority,
+		RobotGroup: d.robotGroupForPayload(order.PayloadCode),
 	}
 
 	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s to=%s priority=%d",
