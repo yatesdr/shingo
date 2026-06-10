@@ -214,10 +214,23 @@ func BuildSequentialRemovalSteps(claim *processes.NodeClaim) []protocol.ComplexO
 //  1. pickup(InboundSource)    — pick new from source
 //  2. dropoff(CoreNodeName)    — deliver to line
 func BuildSequentialBackfillSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
-	return []protocol.ComplexOrderStep{
+	steps := []protocol.ComplexOrderStep{
 		buildStep("pickup", claim.InboundSource),      // 1
 		{Action: "dropoff", Node: claim.CoreNodeName}, // 2
 	}
+	// Produce/consume are duals: a consume backfill pulls a payload-matched FULL bin
+	// from the market; a produce backfill pulls a fresh EMPTY carrier (the store dual).
+	// The pickup defaults to a full retrieve, so without this a PRODUCE node's backfill
+	// hunts a full payload bin in the empty pool and the dispatch fails ("no bin of
+	// requested payload in <inbound group>"), stranding produce-side A/B (sequential)
+	// after its first removal. Flag the inbound pickup Empty for produce — the same
+	// thing BuildSwapDispatch does via markInboundEmpty for the other modes' StepsA/B.
+	// This leg is auto-created by the wiring (handleSequentialBackfill) and never passes
+	// through BuildSwapDispatch, so it's flagged here at the source instead.
+	if claim.Role == protocol.ClaimRoleProduce && claim.InboundSource != "" {
+		markInboundEmpty(steps, claim.InboundSource)
+	}
+	return steps
 }
 
 // ──────────────────────────────────────────────────────────────────────────
