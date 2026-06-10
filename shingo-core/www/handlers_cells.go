@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"shingo/shared/clock"
 )
 
 // Production-heartbeat read endpoints (plan §12 slice 5). Cell id = station.
@@ -14,7 +16,7 @@ import (
 // (the run/stop strip span).
 
 func parseCellWindow(r *http.Request) (since, until time.Time) {
-	now := time.Now().UTC()
+	now := clock.Now().UTC()
 	since, until = now.Add(-8*time.Hour), now
 	if t, ok := parseTimeParam(r.URL.Query().Get("since")); ok {
 		since = t
@@ -74,7 +76,7 @@ func (h *Handlers) apiCellStops(w http.ResponseWriter, r *http.Request) {
 // whole-stream state (Phase B behavior). Called on SSE updates.
 func (h *Handlers) apiCellState(w http.ResponseWriter, r *http.Request) {
 	cellID := chi.URLParam(r, "id")
-	state, err := h.engine.HeartbeatService().ResolveCellState(cellID, time.Now().UTC())
+	state, err := h.engine.HeartbeatService().ResolveCellState(cellID, clock.Now().UTC())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

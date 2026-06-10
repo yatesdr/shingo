@@ -13,6 +13,7 @@ package bins
 import (
 	"database/sql"
 	"fmt"
+	"shingo/shared/clock"
 	"strings"
 	"time"
 
@@ -119,8 +120,8 @@ func Create(db *sql.DB, b *Bin) error {
 // Update writes the mutable columns on a bin (bin_type_id, label, description,
 // node_id, status).
 func Update(db *sql.DB, b *Bin) error {
-	_, err := db.Exec(`UPDATE bins SET bin_type_id=$1, label=$2, description=$3, node_id=$4, status=$5, updated_at=NOW() WHERE id=$6`,
-		b.BinTypeID, b.Label, b.Description, helpers.NullableInt64(b.NodeID), b.Status, b.ID)
+	_, err := db.Exec(`UPDATE bins SET bin_type_id=$1, label=$2, description=$3, node_id=$4, status=$5, updated_at=$7 WHERE id=$6`,
+		b.BinTypeID, b.Label, b.Description, helpers.NullableInt64(b.NodeID), b.Status, b.ID, clock.Now().UTC())
 	return err
 }
 
@@ -150,7 +151,7 @@ func Delete(db *sql.DB, id int64) error {
 // Idempotent: a second call on an already-retired bin is a successful
 // no-op (the row stays status='retired', node_id=NULL).
 func Retire(db *sql.DB, id int64) error {
-	_, err := db.Exec(`UPDATE bins SET status='retired', node_id=NULL, updated_at=NOW() WHERE id=$1`, id)
+	_, err := db.Exec(`UPDATE bins SET status='retired', node_id=NULL, updated_at=$2 WHERE id=$1`, id, clock.Now().UTC())
 	return err
 }
 
@@ -296,7 +297,7 @@ func NodeTileStates(db *sql.DB) (map[int64]NodeTileState, error) {
 // Move moves a bin to a new node. Returns an error if the bin is already
 // at the destination (same-node move is physically impossible).
 func Move(db *sql.DB, binID, toNodeID int64) error {
-	res, err := db.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`, toNodeID, binID)
+	res, err := db.Exec(`UPDATE bins SET node_id=$1, updated_at=$3 WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`, toNodeID, binID, clock.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -323,7 +324,7 @@ func MoveAndClearStaging(db *sql.DB, binID, toNodeID int64, clearStaging bool) e
 	}
 	defer tx.Rollback()
 
-	res, err := tx.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`, toNodeID, binID)
+	res, err := tx.Exec(`UPDATE bins SET node_id=$1, updated_at=$3 WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`, toNodeID, binID, clock.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -332,7 +333,7 @@ func MoveAndClearStaging(db *sql.DB, binID, toNodeID int64, clearStaging bool) e
 	}
 
 	if clearStaging {
-		if _, err := tx.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE id=$1 AND status='staged'`, binID); err != nil {
+		if _, err := tx.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=$2 WHERE id=$1 AND status='staged'`, binID, clock.Now().UTC()); err != nil {
 			return err
 		}
 	}
@@ -375,7 +376,7 @@ func ListAvailable(db *sql.DB) ([]*Bin, error) {
 // Claim marks a bin as claimed by an order to prevent double-dispatch.
 // Fails if the bin is locked or already claimed by another order.
 func Claim(db *sql.DB, binID, orderID int64) error {
-	res, err := db.Exec(`UPDATE bins SET claimed_by=$1, updated_at=NOW() WHERE id=$2 AND locked=false AND claimed_by IS NULL`, orderID, binID)
+	res, err := db.Exec(`UPDATE bins SET claimed_by=$1, updated_at=$3 WHERE id=$2 AND locked=false AND claimed_by IS NULL`, orderID, binID, clock.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -388,13 +389,13 @@ func Claim(db *sql.DB, binID, orderID int64) error {
 
 // Unclaim releases a bin from an order claim.
 func Unclaim(db *sql.DB, binID int64) error {
-	_, err := db.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, binID)
+	_, err := db.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=$2 WHERE id=$1`, binID, clock.Now().UTC())
 	return err
 }
 
 // UnclaimByOrder releases all bins claimed by a specific order.
 func UnclaimByOrder(db *sql.DB, orderID int64) {
-	db.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID)
+	db.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=$2 WHERE claimed_by=$1`, orderID, clock.Now().UTC())
 }
 
 // FindEmptyCompatible finds an unclaimed, available bin with no manifest that is
@@ -506,28 +507,28 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 
 // UpdateStatus sets the status on a bin.
 func UpdateStatus(db *sql.DB, binID int64, status domain.BinStatus) error {
-	_, err := db.Exec(`UPDATE bins SET status=$1, updated_at=NOW() WHERE id=$2`, status, binID)
+	_, err := db.Exec(`UPDATE bins SET status=$1, updated_at=$3 WHERE id=$2`, status, binID, clock.Now().UTC())
 	return err
 }
 
 // Stage marks a bin as staged with expiry tracking.
 // If expiresAt is nil, the bin is staged permanently (no auto-release).
 func Stage(db *sql.DB, binID int64, expiresAt *time.Time) error {
-	_, err := db.Exec(`UPDATE bins SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW() WHERE id=$2`,
-		helpers.NullableTime(expiresAt), binID)
+	_, err := db.Exec(`UPDATE bins SET status='staged', staged_at=$3, staged_expires_at=$1, updated_at=$3 WHERE id=$2`,
+		helpers.NullableTime(expiresAt), binID, clock.Now().UTC())
 	return err
 }
 
 // ReleaseStaged clears the staged status on a single bin, setting it back to available.
 func ReleaseStaged(db *sql.DB, binID int64) error {
-	_, err := db.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE id=$1`, binID)
+	_, err := db.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=$2 WHERE id=$1`, binID, clock.Now().UTC())
 	return err
 }
 
 // ReleaseExpiredStaged releases staged bins whose expiry has passed.
 // Returns the number of bins released.
 func ReleaseExpiredStaged(db *sql.DB) (int, error) {
-	result, err := db.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE status='staged' AND claimed_by IS NULL AND staged_expires_at IS NOT NULL AND staged_expires_at < NOW()`)
+	result, err := db.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=$1 WHERE status='staged' AND claimed_by IS NULL AND staged_expires_at IS NOT NULL AND staged_expires_at < $1`, clock.Now().UTC())
 	if err != nil {
 		return 0, err
 	}
@@ -537,8 +538,8 @@ func ReleaseExpiredStaged(db *sql.DB) (int, error) {
 
 // Lock prevents automated claiming/movement of a bin.
 func Lock(db *sql.DB, binID int64, actor string) error {
-	res, err := db.Exec(`UPDATE bins SET locked=true, locked_by=$1, locked_at=NOW(), updated_at=NOW() WHERE id=$2 AND locked=false`,
-		actor, binID)
+	res, err := db.Exec(`UPDATE bins SET locked=true, locked_by=$1, locked_at=$3, updated_at=$3 WHERE id=$2 AND locked=false`,
+		actor, binID, clock.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("lock bin: %w", err)
 	}
@@ -551,7 +552,7 @@ func Lock(db *sql.DB, binID int64, actor string) error {
 
 // Unlock clears the lock on a bin.
 func Unlock(db *sql.DB, binID int64) error {
-	_, err := db.Exec(`UPDATE bins SET locked=false, locked_by='', locked_at=NULL, updated_at=NOW() WHERE id=$1`, binID)
+	_, err := db.Exec(`UPDATE bins SET locked=false, locked_by='', locked_at=NULL, updated_at=$2 WHERE id=$1`, binID, clock.Now().UTC())
 	return err
 }
 
@@ -563,8 +564,8 @@ func Unlock(db *sql.DB, binID int64) error {
 // for the design rationale.
 func MoveToTransit(db *sql.DB, binID, transitNodeID int64) error {
 	_, err := db.Exec(
-		`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`,
-		transitNodeID, binID)
+		`UPDATE bins SET node_id=$1, updated_at=$3 WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`,
+		transitNodeID, binID, clock.Now().UTC())
 	return err
 }
 
@@ -572,13 +573,13 @@ func MoveToTransit(db *sql.DB, binID, transitNodeID int64) error {
 // just bump the timestamp, since the anomaly state is "still unresolved"
 // rather than "happened at exactly this moment."
 func MarkAnomaly(db *sql.DB, binID int64) error {
-	_, err := db.Exec(`UPDATE bins SET anomaly_at=NOW(), updated_at=NOW() WHERE id=$1`, binID)
+	_, err := db.Exec(`UPDATE bins SET anomaly_at=$2, updated_at=$2 WHERE id=$1`, binID, clock.Now().UTC())
 	return err
 }
 
 // ClearAnomaly clears bins.anomaly_at.
 func ClearAnomaly(db *sql.DB, binID int64) error {
-	_, err := db.Exec(`UPDATE bins SET anomaly_at=NULL, updated_at=NOW() WHERE id=$1`, binID)
+	_, err := db.Exec(`UPDATE bins SET anomaly_at=NULL, updated_at=$2 WHERE id=$1`, binID, clock.Now().UTC())
 	return err
 }
 
@@ -588,8 +589,8 @@ func ClearAnomaly(db *sql.DB, binID int64) error {
 // empty.
 func RecoverToNode(db *sql.DB, binID, toNodeID int64) error {
 	_, err := db.Exec(
-		`UPDATE bins SET node_id=$1, anomaly_at=NULL, updated_at=NOW() WHERE id=$2`,
-		toNodeID, binID)
+		`UPDATE bins SET node_id=$1, anomaly_at=NULL, updated_at=$3 WHERE id=$2`,
+		toNodeID, binID, clock.Now().UTC())
 	return err
 }
 
@@ -599,8 +600,8 @@ func RecoverToNode(db *sql.DB, binID, toNodeID int64) error {
 // counts now write a bin_uop_audit row (OpCycleCount) — see
 // BinService.RecordCount.
 func RecordCount(db RecordCountExecer, binID int64, actualUOP int, actor string) error {
-	_, err := db.Exec(`UPDATE bins SET uop_remaining=$1, last_counted_at=NOW(), last_counted_by=$2, updated_at=NOW() WHERE id=$3`,
-		actualUOP, actor, binID)
+	_, err := db.Exec(`UPDATE bins SET uop_remaining=$1, last_counted_at=$4, last_counted_by=$2, updated_at=$4 WHERE id=$3`,
+		actualUOP, actor, binID, clock.Now().UTC())
 	return err
 }
 
@@ -614,7 +615,7 @@ type RecordCountExecer interface {
 
 // UnconfirmManifest resets the manifest confirmation flag.
 func UnconfirmManifest(db *sql.DB, binID int64) error {
-	_, err := db.Exec(`UPDATE bins SET manifest_confirmed=false, updated_at=NOW() WHERE id=$1`, binID)
+	_, err := db.Exec(`UPDATE bins SET manifest_confirmed=false, updated_at=$2 WHERE id=$1`, binID, clock.Now().UTC())
 	return err
 }
 

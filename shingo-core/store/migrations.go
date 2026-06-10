@@ -362,6 +362,16 @@ func (db *DB) runVersionedMigrations() error {
 		{31, "add payloads.robot_group for SEER robot-dispatch group selection",
 			v31PayloadRobotGroup,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "payloads", "robot_group") }},
+
+		// v32 adds downtime_events + downtime_event_dedup for persisted downtime
+		// start/end events (G9). Partitioned monthly by started_at (same pattern
+		// as cell_part_events). Replaces derived-only gap analysis with explicit
+		// persisted events for OEE availability dashboards. (Authored as v31 on the
+		// sim branch; renumbered to v32 when local-dev-env rebased onto main, which
+		// carries payloads.robot_group as v31.)
+		{32, "add downtime_events for persisted downtime start/end events (G9)",
+			v32DowntimeEvents,
+			func(q schema.Querier) bool { return schema.TableExists(q, "downtime_events") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -951,6 +961,38 @@ func v30CellConfig(tx *sql.Tx) error {
 func v31PayloadRobotGroup(tx *sql.Tx) error {
 	_, err := tx.Exec(`ALTER TABLE payloads ADD COLUMN IF NOT EXISTS robot_group TEXT NOT NULL DEFAULT ''`)
 	return err
+}
+
+// v32DowntimeEvents creates downtime_events (partitioned monthly by started_at)
+// and downtime_event_dedup for the G9 persisted-downtime pipeline. Same shape
+// as cell_part_events: append-only event log + small dedup guard. Index on
+// (station, started_at) mirrors the heartbeat query pattern.
+func v32DowntimeEvents(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS downtime_events (
+			id              BIGSERIAL,
+			station         TEXT    NOT NULL,
+			plc_name        TEXT    NOT NULL,
+			reason          TEXT    NOT NULL DEFAULT '',
+			started_at      TIMESTAMPTZ NOT NULL,
+			ended_at        TIMESTAMPTZ,
+			duration_ms     BIGINT  NOT NULL DEFAULT 0,
+			edge_event_id   BIGINT  NOT NULL DEFAULT 0
+		) PARTITION BY RANGE (started_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_downtime_events_station_time ON downtime_events (station, started_at)`,
+		`CREATE TABLE IF NOT EXISTS downtime_event_dedup (
+			station         TEXT    NOT NULL,
+			edge_event_id   BIGINT NOT NULL,
+			applied_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (station, edge_event_id)
+		)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v32 downtime_events: %w", err)
+		}
+	}
+	return nil
 }
 
 func migrateBinsCommandCenter(tx *sql.Tx) error {

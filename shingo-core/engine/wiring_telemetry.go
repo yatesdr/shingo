@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"shingo/shared/clock"
 	"shingocore/store/telemetry"
 )
 
@@ -71,7 +72,7 @@ func (e *Engine) finalizeMissionTelemetry(ev OrderStatusChangedEvent) {
 		return
 	}
 
-	now := time.Now().UTC()
+	now := clock.Now().UTC()
 	mt := &telemetry.Mission{
 		OrderID:         ev.OrderID,
 		VendorOrderID:   ev.VendorOrderID,

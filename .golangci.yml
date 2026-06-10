@@ -110,6 +110,7 @@ linters:
             - pkg: "shingocore/store/cms"
             - pkg: "shingocore/store/demands"
             - pkg: "shingocore/store/diagnostics"
+            - pkg: "shingocore/store/downtime"
             - pkg: "shingocore/store/inventory"
             - pkg: "shingocore/store/messaging"
             - pkg: "shingocore/store/nodes"

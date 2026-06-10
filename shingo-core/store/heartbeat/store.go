@@ -95,6 +95,21 @@ func EnsurePartitions(db *sql.DB, ref time.Time) error {
 	return nil
 }
 
+// EnsurePartitionsRange creates partitions for every month in [start, end].
+// Used by sim startup to pre-create the full fast-forward window so INSERTs
+// never fail during catch-up. Idempotent.
+func EnsurePartitionsRange(db *sql.DB, start, end time.Time) error {
+	m := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.UTC)
+	endMonth := time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, time.UTC)
+	for !m.After(endMonth) {
+		if err := createMonthPartition(db, m); err != nil {
+			return err
+		}
+		m = m.AddDate(0, 1, 0)
+	}
+	return nil
+}
+
 func createMonthPartition(db *sql.DB, m time.Time) error {
 	start := time.Date(m.Year(), m.Month(), 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)

@@ -1,0 +1,92 @@
+# shingoedge.dev.yaml — LOCAL DEV / SIMULATION ONLY. NOT FOR PRODUCTION.
+# Loaded by a shingoedge built with -tags sim; refuses to start without
+# SHINGO_ALLOW_SIM=1 (T0.3). warlink.enabled:false on purpose — sim mode starts
+# the poll loop explicitly against the fake WarLink (T1.3). Station = devplant.line1.
+namespace: devplant
+line_id: line1
+database_path: /data/shingoedge.db
+core_api: http://core:8083
+
+warlink:
+  enabled: false                    # sim starts the poller explicitly (T1.3); HMI apply is ignored in sim (F2)
+  mode: poll
+
+web:
+  host: 0.0.0.0
+  port: 8081
+  session_secret: dev-only-not-a-real-secret
+
+messaging:
+  kafka:
+    brokers:
+      - kafka:9092
+  dispatch_topic: shingo.dispatch
+  orders_topic: shingo.orders
+  outbox_drain_interval: 5s
+
+sim:
+  enabled: true
+  seed: 1
+  speed: 10.0                       # running clock: 10× wall. Change live in the dev top-strip / POST /api/sim/speed. Must match core.
+  # epoch: 2026-05-11T00:00:00Z     # FAST-FORWARD HISTORY: must MATCH shingocore.dev.yaml sim.epoch (set ~30d ago).
+  # anchor_wall: 2026-06-10T00:00:00Z  # SHARED wall anchor — must MATCH shingocore.dev.yaml sim.anchor_wall EXACTLY
+                                    # (the run-start wall time). Keeps core+edge fast-forward clocks in lockstep so
+                                    # cross-process messages don't expire and stall the swap loop. Rebuild after editing.
+  # plc_name/tag_name MUST exactly match the reporting_points the seed tool
+  # creates. This list is the source of truth for those names.
+  # Rate parity (P0): welds tick 10s (6/min). PRESS-1 ticks 5s (12/min) because it
+  # feeds TWO PANEL-LH consumers (WELD-1 + WELD-3 @ 6/min each); a single 6/min press
+  # would starve them. Verify with `make dev-rates` (the fill/starve helper).
+  processes:
+    - plc_name: PRESS-1
+      tag_name: PRESS-1_COUNTER
+      tick_interval: 5s
+      uop_per_tick: 1
+    - plc_name: PRESS-2
+      tag_name: PRESS-2_COUNTER
+      tick_interval: 10s
+      uop_per_tick: 1
+    - plc_name: WELD-1
+      tag_name: WELD-1_COUNTER
+      tick_interval: 10s
+      uop_per_tick: 1
+    - plc_name: WELD-2
+      tag_name: WELD-2_COUNTER
+      tick_interval: 10s
+      uop_per_tick: 1
+    - plc_name: WELD-3
+      tag_name: WELD-3_COUNTER
+      tick_interval: 10s
+      uop_per_tick: 1
+  operators:
+    enabled: true
+    loader_auto_load: 5s
+    unloader_auto_clear: 8s
+    changeover_auto_cutover: true
+    cutover_delay: 10s
+  # Downtime model v1 (G9, §3.1): clustered random outages.
+  # Per-machine 85% availability via exponential TBF + bounded MTTR.
+  # Produces realistic clustering (good weeks / bad weeks) for OEE.
+  downtime:
+    enabled: true                     # ON for long-run/OEE realism (85% avail, clustered outages)
+    machines:
+      - plc_name: PRESS-1
+        availability: 0.85
+        min_mttr: 5m
+        max_mttr: 30m
+      - plc_name: PRESS-2
+        availability: 0.85
+        min_mttr: 5m
+        max_mttr: 30m
+      - plc_name: WELD-1
+        availability: 0.85
+        min_mttr: 5m
+        max_mttr: 30m
+      - plc_name: WELD-2
+        availability: 0.85
+        min_mttr: 5m
+        max_mttr: 30m
+      - plc_name: WELD-3
+        availability: 0.85
+        min_mttr: 5m
+        max_mttr: 30m

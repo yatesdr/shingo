@@ -25,6 +25,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/debuglog"
 	"shingo/protocol/types"
+	"shingo/shared/clock"
 	"shingoedge/config"
 	"shingoedge/orders"
 	"shingoedge/plc"
@@ -68,6 +69,9 @@ type Engine struct {
 
 	plcMgr   *plc.Manager
 	orderMgr *orders.Manager
+	// warlinkClient is the injected WarLink client (sim fake) carried from
+	// Config.Warlink to the NewManager call in Start(). Nil → real HTTP client.
+	warlinkClient plc.WarlinkClient
 
 	hourlyTracker  *HourlyTracker
 	reconciliation *ReconciliationService
@@ -124,6 +128,10 @@ type Config struct {
 	DB          *store.DB
 	LogFunc     LogFunc
 	DebugLogger *debuglog.Logger
+	// Warlink, when non-nil, is injected into the PLC manager in place of the
+	// default HTTP client (D3). Sim mode sets this to the fake WarLink client
+	// (T3.1); production leaves it nil so NewManager builds the real client.
+	Warlink plc.WarlinkClient
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────────
@@ -142,14 +150,15 @@ func New(c Config) *Engine {
 		debugFn = func(string, ...any) {}
 	}
 	e := &Engine{
-		cfg:         c.AppConfig,
-		configPath:  c.ConfigPath,
-		db:          c.DB,
-		logFn:       logFn,
-		debugFn:     debugFn,
-		debugLogger: c.DebugLogger,
-		Events:      NewEventBus(),
-		stopChan:    make(chan struct{}),
+		cfg:           c.AppConfig,
+		configPath:    c.ConfigPath,
+		db:            c.DB,
+		logFn:         logFn,
+		debugFn:       debugFn,
+		debugLogger:   c.DebugLogger,
+		warlinkClient: c.Warlink,
+		Events:        NewEventBus(),
+		stopChan:      make(chan struct{}),
 	}
 	e.coreClient = NewCoreClient(c.AppConfig.CoreAPI)
 	e.reconciliation = newReconciliationService(e.db)
@@ -183,7 +192,7 @@ func (e *Engine) Start() {
 	orderEmit := &orderEmitter{bus: e.Events}
 
 	// Create managers
-	e.plcMgr = plc.NewManager(e.db, e.cfg, plcEmit)
+	e.plcMgr = plc.NewManager(e.db, e.cfg, plcEmit, e.warlinkClient)
 	e.orderMgr = orders.NewManager(e.db, orderEmit, e.cfg.StationID())
 
 	// Wire debug logging to subsystems
@@ -297,6 +306,13 @@ func (e *Engine) Stop() {
 // Always stops first to handle mode switches (poll→sse or sse→poll) cleanly.
 // Rebuilds the WarLink HTTP client in case host/port changed.
 func (e *Engine) ApplyWarLinkConfig() {
+	// In sim mode the PLC manager holds an injected fake WarLink client; a
+	// single visit to the HMI PLC-settings page would otherwise swap it for a
+	// real HTTP client and silently kill the production sim (bug F2). Ignore.
+	if e.cfg.Sim.Enabled {
+		e.logFn("[sim] ignoring WarLink config apply — keeping the injected sim client")
+		return
+	}
 	e.plcMgr.StopWarLinkPoller()
 	e.plcMgr.ReplaceClient(plc.NewWarlinkClient(
 		fmt.Sprintf("http://%s:%d/api", e.cfg.WarLink.Host, e.cfg.WarLink.Port),
@@ -320,6 +336,9 @@ func (e *Engine) ConfigPath() string { return e.configPath }
 
 // PLCManager returns the PLC manager.
 func (e *Engine) PLCManager() *plc.Manager { return e.plcMgr }
+
+// WarlinkClient returns the injected Warlink client (real or sim fake).
+func (e *Engine) WarlinkClient() plc.WarlinkClient { return e.warlinkClient }
 
 // OrderManager returns the order manager.
 func (e *Engine) OrderManager() *orders.Manager          { return e.orderMgr }
@@ -355,7 +374,7 @@ func (e *Engine) SetCoreNodes(nodes []protocol.NodeInfo) {
 
 	e.Events.Emit(Event{
 		Type:      EventCoreNodesUpdated,
-		Timestamp: time.Now(),
+		Timestamp: clock.Now(),
 		Payload:   CoreNodesUpdatedEvent{Nodes: nodes},
 	})
 }

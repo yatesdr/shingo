@@ -505,6 +505,9 @@ func main() {
 	defer dbg.Close()
 
 	cfg := mustLoadConfig(flags.configPath, flags.port)
+	if cfg.Sim.Enabled {
+		simGuard() // sim_enabled.go (sim build) / sim_disabled.go (!sim build)
+	}
 
 	// ── Database ────────────────────────────────────────────────────────
 	db := mustOpenDatabase(cfg.DatabasePath)
@@ -517,9 +520,22 @@ func main() {
 		DB:          db,
 		LogFunc:     log.Printf,
 		DebugLogger: dbg,
+		// Sim mode injects the fake WarLink client (nil otherwise → real HTTP
+		// client). sim_enabled.go / sim_disabled.go (T3.1).
+		Warlink: simWarlinkClient(cfg),
 	})
 	eng.Start()
 	defer eng.Stop()
+
+	// Sim-only startup (poller + readiness gate + sim operator). engine.Start()
+	// left the WarLink poller stopped because the dev config sets
+	// warlink.enabled=false; sim mode starts it explicitly against the
+	// injected fake (blocker S1). The wlClient is passed to wire the
+	// readiness gate (G3).
+	if cfg.Sim.Enabled {
+		wlClient := eng.WarlinkClient()        // returns the injected fake
+		startSimSubsystems(eng, cfg, wlClient) // sim_enabled.go / sim_disabled.go (no-op)
+	}
 
 	// ── Backup service ─────────────────────────────────────────────────
 	backupSvc := backup.NewService(db, cfg, flags.configPath, "dev", log.Printf)

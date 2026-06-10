@@ -30,7 +30,7 @@ func TestPollReportingPointSafe_RecoversFromPanic(t *testing.T) {
 	t.Parallel()
 	cfg := config.Defaults()
 	emitter := &panicEmitter{}
-	mgr := NewManager(nil, cfg, emitter)
+	mgr := NewManager(nil, cfg, emitter, nil)
 
 	// Seed a connected PLC so IsConnected returns true and we reach the
 	// ReadTag → emit path. ReadTag returns an error because no tag is

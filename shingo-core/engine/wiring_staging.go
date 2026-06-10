@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"shingo/shared/clock"
 	"shingocore/store/nodes"
 )
 
@@ -61,6 +62,6 @@ func (e *Engine) resolveStagingExpiry(node *nodes.Node) *time.Time {
 		return nil
 	}
 
-	t := time.Now().Add(ttl)
+	t := clock.Now().Add(ttl)
 	return &t
 }

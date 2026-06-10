@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"shingo/shared/clock"
 )
 
 // Address identifies a message source or destination.
@@ -43,7 +44,7 @@ func NewEnvelope(msgType string, src, dst Address, payload any) (*Envelope, erro
 		return nil, err
 	}
 
-	now := time.Now().UTC()
+	now := clock.Now().UTC()
 	exp := now.Add(DefaultTTLFor(msgType))
 
 	return &Envelope{
@@ -80,7 +81,7 @@ func NewDataEnvelope(subject string, src, dst Address, body any) (*Envelope, err
 		return nil, err
 	}
 
-	now := time.Now().UTC()
+	now := clock.Now().UTC()
 	exp := now.Add(DataTTLFor(subject))
 
 	return &Envelope{

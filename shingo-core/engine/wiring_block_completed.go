@@ -36,9 +36,9 @@ package engine
 
 import (
 	"strings"
-	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 	"shingocore/store/orders"
 )
 
@@ -84,7 +84,7 @@ func (e *Engine) handlePickupBlockCompleted(ev BlockCompletedEvent) {
 			OrderUUID:  order.EdgeUUID,
 			BinID:      binID,
 			Location:   ev.Location,
-			PickedUpAt: time.Now().UTC(),
+			PickedUpAt: clock.Now().UTC(),
 		}); err != nil {
 			e.logFn("transit: send BinPickedUp bin %d order %d: %v", binID, ev.OrderID, err)
 		}

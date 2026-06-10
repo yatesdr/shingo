@@ -25,7 +25,7 @@ func TestRace_HandleSSEValueChangeMapInsert(t *testing.T) {
 	}
 	cfg := config.Defaults()
 	emitter := &mockEmitter{}
-	mgr := NewManager(nil, cfg, emitter)
+	mgr := NewManager(nil, cfg, emitter, nil)
 
 	const goroutines = 32
 	const iterations = 100
@@ -67,7 +67,7 @@ func TestRace_HandleSSEStatusChangeCrossLockDomain(t *testing.T) {
 	}
 	cfg := config.Defaults()
 	emitter := &mockEmitter{}
-	mgr := NewManager(nil, cfg, emitter)
+	mgr := NewManager(nil, cfg, emitter, nil)
 
 	const plcName = "race-status-plc"
 
@@ -118,7 +118,7 @@ func TestRace_HandleSSEHealthCrossLockDomain(t *testing.T) {
 	}
 	cfg := config.Defaults()
 	emitter := &mockEmitter{}
-	mgr := NewManager(nil, cfg, emitter)
+	mgr := NewManager(nil, cfg, emitter, nil)
 
 	const plcName = "race-health-plc"
 

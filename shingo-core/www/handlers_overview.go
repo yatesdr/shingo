@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"shingo/shared/clock"
 )
 
 // handleOverview renders the Operations Overview exec dashboard (plan §15).
@@ -88,7 +90,7 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 
 	// Fleet Load: hourly concurrency for the viewed day (the filter's Until
 	// day, else today).
-	day := time.Now()
+	day := clock.Now()
 	if f.Until != nil {
 		day = *f.Until
 	}

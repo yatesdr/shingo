@@ -155,6 +155,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 			// ── Public API (read-only, no auth) ────────────────
 
+			// Dev sim control (live speed toggle). Sim builds only — a
+			// no-op stub in production (sim_routes_stub.go).
+			h.registerSimRoutes(r)
+
 			// Nodes
 			r.Get("/nodes", h.apiListNodes)
 			r.Get("/nodes/inventory", h.apiNodePayloads)

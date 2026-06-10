@@ -37,6 +37,7 @@ import (
 	"shingocore/config"
 	"shingocore/countgroup"
 	"shingocore/engine"
+	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
 	"shingocore/messaging"
 	"shingocore/messaging/middleware"
@@ -214,19 +215,35 @@ func main() {
 	defer dbg.Close()
 
 	cfg := mustLoadConfig(flags.configPath)
+	if cfg.Sim.Enabled {
+		simGuard() // sim_enabled.go (sim build) / sim_disabled.go (!sim build)
+	}
 	maybeResetDB(flags.resetDB, cfg)
 
 	// ── Database ────────────────────────────────────────────────────────
 	db := mustOpenDatabase(cfg)
 	defer db.Close()
 
-	// ── Fleet backend (Seer RDS adapter) ────────────────────────────────
-	fleetAdapter := seerrds.New(seerrds.Config{
-		BaseURL:      cfg.RDS.BaseURL,
-		Timeout:      cfg.RDS.Timeout,
-		PollInterval: cfg.RDS.PollInterval,
-		DebugLog:     dbg.Func("rds"),
-	})
+	// ── Fleet backend ───────────────────────────────────────────────────
+	// Sim mode swaps the SEER RDS adapter for the in-memory simulator
+	// (newSimBackend lives in sim_enabled.go; the !sim build returns an
+	// error and is never reached because simGuard already fatals above).
+	// Production builds always use the seerrds adapter.
+	var fleetAdapter fleet.TrackingBackend
+	if cfg.Sim.Enabled {
+		sb, err := newSimBackend(context.Background(), cfg)
+		if err != nil {
+			log.Fatalf("shingocore: sim fleet backend: %v", err)
+		}
+		fleetAdapter = sb
+	} else {
+		fleetAdapter = seerrds.New(seerrds.Config{
+			BaseURL:      cfg.RDS.BaseURL,
+			Timeout:      cfg.RDS.Timeout,
+			PollInterval: cfg.RDS.PollInterval,
+			DebugLog:     dbg.Func("rds"),
+		})
+	}
 	if err := fleetAdapter.Ping(); err == nil {
 		log.Printf("shingocore: fleet backend connected (%s)", fleetAdapter.Name())
 	} else {
@@ -261,7 +278,8 @@ func main() {
 	// fleet adapter so one slow response can't back up N poll cycles.
 	// Always register the builder so the Traffic UI can add groups at
 	// runtime. Runner.Start() is a no-op if no groups are enabled.
-	{
+	// Skipped entirely in sim mode — there is no RDS to poll (brief T1.1).
+	if !cfg.Sim.Enabled {
 		cgTimeout := cfg.CountGroups.RDSTimeout
 		if cgTimeout <= 0 {
 			cgTimeout = 400 * time.Millisecond
@@ -312,6 +330,7 @@ func main() {
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinUOPDelta, coreDataService.HandleBinUOPDelta)
 	router.RegisterSubject(subjectRouter, protocol.SubjectLinesideBucketDelta, coreDataService.HandleLinesideBucketDelta)
 	router.RegisterSubject(subjectRouter, protocol.SubjectProductionTick, coreDataService.HandleProductionTick)
+	router.RegisterSubject(subjectRouter, protocol.SubjectDowntimeEvent, coreDataService.HandleDowntimeEvent)
 	// Fan projected ticks out to the engine event bus so the SSE layer can
 	// rebroadcast them as cell-heartbeat (Phase E). Set before the projection
 	// worker starts so it reads the emitter race-free.
@@ -323,6 +342,7 @@ func main() {
 	// Launch the async cell_part_events projection worker + partition manager
 	// (plan §12). Must follow registration; the handler only enqueues.
 	coreDataService.StartHeartbeatProjection()
+	coreDataService.StartDowntimeProjection()
 	for _, s := range protocol.CoreInboundSubjects() {
 		if !subjectRouter.Has(s) {
 			log.Fatalf("shingocore: subject router missing handler for %s — composition root is incomplete", s)

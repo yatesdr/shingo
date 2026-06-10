@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"shingo/shared/clock"
 	"shingocore/domain"
 )
 
@@ -203,11 +204,11 @@ func (h *Handlers) apiMissionsAlerts(w http.ResponseWriter, r *http.Request) {
 	// Stuck threshold = 2× the recent (7-day) P95 mission duration, with a
 	// 30-minute fallback before any window has data (cold start, §8 #19).
 	thresholdMS := int64(30 * 60 * 1000)
-	since := time.Now().AddDate(0, 0, -7)
+	since := clock.Now().AddDate(0, 0, -7)
 	if st, err := h.engine.MissionService().StatsV2(domain.TelemetryFilter{Since: &since}); err == nil && st.P95DurationMS > 0 {
 		thresholdMS = 2 * st.P95DurationMS
 	}
-	cutoff := time.Now().Add(-time.Duration(thresholdMS) * time.Millisecond)
+	cutoff := clock.Now().Add(-time.Duration(thresholdMS) * time.Millisecond)
 
 	var stuck int
 	stuckItems := make([]map[string]any, 0, 10)

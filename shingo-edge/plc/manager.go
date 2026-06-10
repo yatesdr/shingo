@@ -14,6 +14,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/types"
+	"shingo/shared/clock"
 	"shingoedge/config"
 	"shingoedge/store"
 	"shingoedge/store/counters"
@@ -80,13 +81,19 @@ type Manager struct {
 	sseCancel context.CancelFunc
 }
 
-// NewManager creates a PLC manager.
-func NewManager(db *store.DB, cfg *config.Config, emitter EventEmitter) *Manager {
+// NewManager creates a PLC manager. If wl is nil the default WarLink HTTP
+// client is built from config (production behavior); sim mode injects a fake
+// WarlinkClient here so the real poll pipeline runs against it (D3). The
+// ReplaceClient path remains for runtime HMI reconfiguration only.
+func NewManager(db *store.DB, cfg *config.Config, emitter EventEmitter, wl WarlinkClient) *Manager {
+	if wl == nil {
+		wl = NewWarlinkClient(fmt.Sprintf("http://%s:%d/api", cfg.WarLink.Host, cfg.WarLink.Port))
+	}
 	return &Manager{
 		db:      db,
 		cfg:     cfg,
 		emitter: emitter,
-		wl:      NewWarlinkClient(fmt.Sprintf("http://%s:%d/api", cfg.WarLink.Host, cfg.WarLink.Port)),
+		wl:      wl,
 		plcs:    make(map[string]*ManagedPLC),
 
 		stopChan: make(chan struct{}),
@@ -638,7 +645,7 @@ func (m *Manager) enqueueProductionTick(rp counters.ReportingPoint, snapID, newC
 			CountValue:       newCount,
 			Delta:            delta,
 			Anomaly:          anomaly,
-			RecordedAt:       time.Now().UTC(),
+			RecordedAt:       clock.Now().UTC(),
 		},
 	)
 	if err != nil {

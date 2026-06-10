@@ -255,6 +255,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 			// ── Public API (shop floor actions, no auth) ────────
 
+			// Dev sim control (live speed toggle). Sim builds only — a
+			// no-op stub in production (sim_routes_stub.go).
+			h.registerSimRoutes(r)
+
 			// Delivery confirmation & anomalies
 			r.Post("/confirm-delivery/{orderID}", h.apiConfirmDelivery)
 			r.Post("/confirm-anomaly/{snapshotID}", h.apiConfirmAnomaly)

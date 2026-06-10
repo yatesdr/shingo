@@ -1,0 +1,37 @@
+# Dockerfile.dev — builds the three -tags sim binaries for the local dev stack.
+# LOCAL DEV / SIMULATION ONLY. Not for production.
+#
+# Layer-cache friendly (the N150 target rebuilds in minutes): the module graph
+# is copied and downloaded as its own layer before the source, so editing code
+# doesn't re-run `go mod download`.
+FROM golang:1.25-alpine AS build
+RUN apk add --no-cache git
+WORKDIR /src
+
+# 1) dependency layer — module graph only.
+# go.work.sum is gitignored (not in clones) and the shared module has no
+# external deps (no go.sum), so both are optional: the trailing-* glob copies
+# them when present and is skipped when absent (go work sync regenerates
+# go.work.sum in-container as needed). The other modules always have a go.sum.
+COPY go.work go.work.sum* ./
+COPY protocol/go.mod protocol/go.sum ./protocol/
+COPY shared/go.mod shared/go.sum* ./shared/
+COPY shingo-core/go.mod shingo-core/go.sum ./shingo-core/
+COPY shingo-edge/go.mod shingo-edge/go.sum ./shingo-edge/
+COPY integration/go.mod integration/go.sum ./integration/
+RUN go work sync \
+ && (cd shingo-core && go mod download) \
+ && (cd shingo-edge && go mod download)
+
+# 2) source + build (CGO off → static binaries that run on alpine)
+COPY . .
+RUN CGO_ENABLED=0 go build -tags sim -o /out/shingocore ./shingo-core/cmd/shingocore \
+ && CGO_ENABLED=0 go build -tags sim -o /out/seeddev    ./shingo-core/cmd/seeddev \
+ && CGO_ENABLED=0 go build -tags sim -o /out/shingoedge ./shingo-edge/cmd/shingoedge
+
+FROM alpine:3.19
+RUN apk add --no-cache ca-certificates tzdata
+COPY --from=build /out/shingocore /out/shingoedge /out/seeddev /usr/local/bin/
+# Dev config baked in; rebuild after editing (or mount over /etc/shingo to iterate).
+COPY shingo-core/shingocore.dev.yaml /etc/shingo/shingocore.dev.yaml
+COPY shingo-edge/shingoedge.dev.yaml /etc/shingo/shingoedge.dev.yaml

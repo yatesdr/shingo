@@ -61,6 +61,7 @@
   </nav>
   <script src="/static/theme.js"></script>
   <script type="module" src="/static/app.js?v={{cacheBust}}"></script>
+  {{if simMode}}<script src="/static/sim-speed-strip.js?v={{cacheBust}}"></script>{{end}}
   <main class="container" style="padding-top:1.5rem;padding-bottom:2rem;">
     {{block "content" .}}{{end}}
   </main>

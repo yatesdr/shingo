@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"shingo/shared/clock"
 	"shingocore/domain"
 )
 
@@ -21,8 +22,8 @@ type Manifest = domain.Manifest
 
 // SetManifest populates a bin's contents from a payload template.
 func SetManifest(db *sql.DB, binID int64, manifestJSON string, payloadCode string, uopRemaining int) error {
-	_, err := db.Exec(`UPDATE bins SET payload_code=$1, manifest=$2, uop_remaining=$3, manifest_confirmed=false, updated_at=NOW() WHERE id=$4`,
-		payloadCode, manifestJSON, uopRemaining, binID)
+	_, err := db.Exec(`UPDATE bins SET payload_code=$1, manifest=$2, uop_remaining=$3, manifest_confirmed=false, updated_at=$5 WHERE id=$4`,
+		payloadCode, manifestJSON, uopRemaining, binID, clock.Now().UTC())
 	return err
 }
 
@@ -70,12 +71,12 @@ func resolveLoadedAt(producedAt string, now time.Time) (time.Time, error) {
 // producedAt is the Edge-side timestamp (RFC3339) of when the operator
 // finalized the bin; empty falls back to server time.
 func ConfirmManifest(db *sql.DB, binID int64, producedAt string) error {
-	loadedAt, err := resolveLoadedAt(producedAt, time.Now().UTC())
+	loadedAt, err := resolveLoadedAt(producedAt, clock.Now().UTC())
 	if err != nil {
 		log.Printf("bins: ConfirmManifest bin %d: %v; using server time", binID, err)
 	}
-	_, err = db.Exec(`UPDATE bins SET manifest_confirmed=true, loaded_at=$1, updated_at=NOW() WHERE id=$2`,
-		loadedAt, binID)
+	_, err = db.Exec(`UPDATE bins SET manifest_confirmed=true, loaded_at=$1, updated_at=$3 WHERE id=$2`,
+		loadedAt, binID, clock.Now().UTC())
 	return err
 }
 
@@ -86,12 +87,12 @@ func ConfirmManifest(db *sql.DB, binID int64, producedAt string) error {
 // so producedAt parsing matches ConfirmManifest.
 func ConfirmManifestTx(tx *sql.Tx, binID int64, producedAt string) (loadedAt time.Time, uop int, payloadCode string, err error) {
 	var perr error
-	loadedAt, perr = resolveLoadedAt(producedAt, time.Now().UTC())
+	loadedAt, perr = resolveLoadedAt(producedAt, clock.Now().UTC())
 	if perr != nil {
 		log.Printf("bins: ConfirmManifestTx bin %d: %v; using server time", binID, perr)
 	}
-	if err = tx.QueryRow(`UPDATE bins SET manifest_confirmed=true, loaded_at=$1, updated_at=NOW()
-		WHERE id=$2 RETURNING uop_remaining, payload_code`, loadedAt, binID).Scan(&uop, &payloadCode); err != nil {
+	if err = tx.QueryRow(`UPDATE bins SET manifest_confirmed=true, loaded_at=$1, updated_at=$3
+		WHERE id=$2 RETURNING uop_remaining, payload_code`, loadedAt, binID, clock.Now().UTC()).Scan(&uop, &payloadCode); err != nil {
 		err = fmt.Errorf("confirm manifest bin %d: %w", binID, err)
 	}
 	return loadedAt, uop, payloadCode, err
@@ -99,8 +100,8 @@ func ConfirmManifestTx(tx *sql.Tx, binID int64, producedAt string) (loadedAt tim
 
 // ClearManifest empties a bin's manifest (bin is now empty).
 func ClearManifest(db *sql.DB, binID int64) error {
-	_, err := db.Exec(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0, manifest_confirmed=false, loaded_at=NULL, updated_at=NOW() WHERE id=$1`,
-		binID)
+	_, err := db.Exec(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0, manifest_confirmed=false, loaded_at=NULL, updated_at=$2 WHERE id=$1`,
+		binID, clock.Now().UTC())
 	return err
 }
 
