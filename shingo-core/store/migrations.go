@@ -359,6 +359,9 @@ func (db *DB) runVersionedMigrations() error {
 		{30, "add cell_config for operator-defined production-cell grouping (Q-025, Phase E)",
 			v30CellConfig,
 			func(q schema.Querier) bool { return schema.TableExists(q, "cell_config") }},
+		{31, "add payloads.robot_group for SEER robot-dispatch group selection",
+			v31PayloadRobotGroup,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "payloads", "robot_group") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -940,6 +943,14 @@ func v30CellConfig(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// v31PayloadRobotGroup adds payloads.robot_group — the SEER robot-dispatch group
+// the dispatcher stamps onto SetOrderRequest.Group for moves of this payload.
+// Default ” = unset = SEER's own default robot assignment (backward-compatible).
+func v31PayloadRobotGroup(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE payloads ADD COLUMN IF NOT EXISTS robot_group TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
 func migrateBinsCommandCenter(tx *sql.Tx) error {

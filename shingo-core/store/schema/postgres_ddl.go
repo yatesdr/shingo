@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS payloads (
     code         TEXT NOT NULL UNIQUE,
     description  TEXT NOT NULL DEFAULT '',
     uop_capacity INTEGER NOT NULL DEFAULT 0,
+    robot_group  TEXT NOT NULL DEFAULT '',
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
