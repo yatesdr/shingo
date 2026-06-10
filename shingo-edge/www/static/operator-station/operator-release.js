@@ -174,20 +174,17 @@ function renderReleasePromptStep1() {
             ' title="' + esc(submitTitle) + '">' +
             submitLabel + '</button>';
     } else {
-        const emptyDisabled = remainingUOP > 0;
-        const submitTitle = emptyDisabled
-            ? 'Account for remaining parts with PULL PARTS LINESIDE before releasing.'
-            : 'No parts pulled to lineside. Bin is empty — manifest cleared.';
-        html += '<button type="button" class="os-action-btn release-empty"' +
-            (emptyDisabled ? ' disabled' : '') +
-            ' data-action="release-submit"' +
-            ' title="' + esc(submitTitle) + '">RELEASE EMPTY</button>';
-    }
-    if (remainingUOP > 0) {
-        html += '<button type="button" class="os-action-btn release-empty"' +
-            ' data-action="release-underpack-confirm"' +
-            ' title="Bin is physically empty, but the system still shows UOP remaining. Records the gap as missing inventory.">' +
-            'BIN EMPTY (UNDER COUNT)</button>';
+        if (remainingUOP > 0) {
+            html += '<button type="button" class="os-action-btn release-empty"' +
+                ' data-action="release-underpack-confirm"' +
+                ' title="Bin is physically empty, but the system still shows UOP remaining. Records the gap as missing inventory.">' +
+                'BIN EMPTY (UNDER COUNT)</button>';
+        } else {
+            html += '<button type="button" class="os-action-btn release-empty"' +
+                ' data-action="release-submit"' +
+                ' title="No parts pulled to lineside. Bin is empty — manifest cleared.">' +
+                'RELEASE EMPTY</button>';
+        }
     }
     html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
     html += '</div>';
