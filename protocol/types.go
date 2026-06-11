@@ -109,6 +109,14 @@ const (
 	// boot-time coverage assertion.
 	SubjectProductionTick = "production.tick"
 
+	// SubjectDowntimeEvent — Edge → Core persisted downtime event (G9).
+	// Carries DowntimeEvent. Emitted by the sim's downtime model on
+	// readiness-gate state transitions (running→down and down→running).
+	// Core projects into downtime_events for OEE availability dashboards.
+	// Replaces the old derived-only approach (gaps in cell_part_events
+	// computed at query time) with explicit persisted start/end pairs.
+	SubjectDowntimeEvent = "production.downtime"
+
 	// BinPickedUp — Core notifies Edge when a bin is physically picked
 	// up by a robot. Used by the SEND PARTIAL BACK flow: the operator
 	// releases a partial bin and the cell keeps cycling; ticks during
@@ -169,6 +177,7 @@ func CoreInboundSubjects() []string {
 		SubjectBinUOPDelta,
 		SubjectLinesideBucketDelta,
 		SubjectProductionTick,
+		SubjectDowntimeEvent,
 	}
 }
 

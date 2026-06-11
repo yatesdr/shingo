@@ -1,0 +1,107 @@
+name: shingo-dev
+# LOCAL DEV / SIMULATION ONLY. Not for production.
+# Ports publish on loopback by default; set SHINGO_BIND=0.0.0.0 (or a tailnet IP)
+# for LAN access. Postgres/Kafka stay loopback-only unconditionally. The N150
+# target reaches the UIs over Tailscale (tailscale serve / SSH tunnel).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shingocore
+      POSTGRES_PASSWORD: shingocore
+      POSTGRES_DB: shingocore
+    ports:
+      - "127.0.0.1:5432:5432"
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shingocore -d shingocore"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  kafka:
+    image: apache/kafka:3.8.0   # KRaft, no Zookeeper (Q1)
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: "1"
+      CLUSTER_ID: "5L6g3nShTeMCtKabcdX86A"
+    ports:
+      - "127.0.0.1:9092:9092"
+    mem_limit: 768m
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  core:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: ["shingocore", "--config", "/etc/shingo/shingocore.dev.yaml"]
+    environment:
+      SHINGO_ALLOW_SIM: "1"
+    ports:
+      - "${SHINGO_BIND:-127.0.0.1}:8083:8083"
+    mem_limit: 256m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  edge:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: ["shingoedge", "--config", "/etc/shingo/shingoedge.dev.yaml"]
+    environment:
+      SHINGO_ALLOW_SIM: "1"
+    ports:
+      - "${SHINGO_BIND:-127.0.0.1}:8081:8081"
+    volumes:
+      - edge-data:/data
+    mem_limit: 256m
+    depends_on:
+      kafka:
+        condition: service_healthy
+      core:
+        condition: service_started
+
+  # Seed runs as its own service (profile: tools) — it needs BOTH Postgres
+  # (network) AND the edge SQLite volume (mount); `compose exec core seeddev`
+  # cannot reach edge's SQLite (brief F4). Started by `make dev-seed` (Phase 4).
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    profiles: ["tools"]
+    command: ["seeddev", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--plant", "/plants/demo.yaml", "--yes"]
+    environment:
+      SHINGO_ALLOW_SIM: "1"
+    volumes:
+      - edge-data:/data
+      - ./plants:/plants:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # edge must have booted + migrated /data/shingoedge.db before seedEdge
+      # INSERTs into it (raw SQL assumes the tables exist).
+      edge:
+        condition: service_started
+
+volumes:
+  edge-data:

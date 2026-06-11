@@ -55,6 +55,7 @@ func (h *Handlers) parseJSON(w http.ResponseWriter, r *http.Request, dst any) bo
 
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
+		"simMode":   simModeEnabled, // dev speed top-strip gate; false in prod builds
 		"cacheBust": func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
 		"timeAgo": func(t time.Time) string {
 			if t.IsZero() {

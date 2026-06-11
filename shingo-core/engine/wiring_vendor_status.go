@@ -206,13 +206,20 @@ func (e *Engine) handleGraceExpired(ev GraceExpiredEvent) {
 		return
 	}
 
-	// Best-effort cancel at the fleet vendor. RDS may be unreachable; we
-	// proceed with the local terminal transition regardless.
-	if err := e.fleet.CancelOrder(order.VendorOrderID); err != nil {
-		e.logFn("engine: terminate order %d (RDS %s): %v — proceeding with local fail", order.ID, order.VendorOrderID, err)
-	}
-
+	// Fail locally FIRST so grace_timeout is the recorded terminal cause. If we
+	// cancelled at the vendor first, the status poller could observe the
+	// resulting RDS STOP and flip the order to cancelled "fleet order stopped"
+	// before this Fail lands — mislabeling a shingo-initiated timeout failure as
+	// an unattributed vendor cancel (Q-030 grace-expiry race). Once the order is
+	// locally terminal, the poller's cancel echo no-ops on CancelOrder's
+	// terminality guard (lifecycle.go).
 	if err := e.dispatcher.Lifecycle().Fail(order, order.StationID, "grace_timeout", "grace period expired without fleet recovery"); err != nil {
 		e.logFn("engine: grace-expiry fail order %d: %v", order.ID, err)
+	}
+
+	// Best-effort stop at the fleet vendor (the order is already locally
+	// terminal). RDS may be unreachable; the local fail above stands regardless.
+	if err := e.fleet.CancelOrder(order.VendorOrderID); err != nil {
+		e.logFn("engine: terminate order %d (RDS %s): %v", order.ID, order.VendorOrderID, err)
 	}
 }

@@ -12,7 +12,8 @@ import { el, apiGet, apiPost, apiPut, apiDelete, toast, uiConfirm } from '/stati
 // dashboard.js branch) is all the front-end needs to host a new display type.
 const KINDS = [
   { value: 'task-board', label: 'Task Board' },
-  { value: 'robot-map', label: 'Robot Map' }
+  { value: 'robot-map', label: 'Robot Map' },
+  { value: 'heartbeat', label: 'Heartbeat' }
 ];
 
 function kindLabel(k) {

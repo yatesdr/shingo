@@ -174,6 +174,17 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		return db.CountActiveOrders()
 	})
 	hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
+	// Q-034: attach the PLC-grouped cell catalog to every register so Core can
+	// auto-derive cells (no manual cell setup). Read errors degrade to no
+	// catalog — registration must still succeed.
+	hb.CatalogFn = func() []protocol.CellCatalogEntry {
+		pts, err := db.ListReportingPoints()
+		if err != nil {
+			log.Printf("heartbeat: cell catalog load failed: %v", err)
+			return nil
+		}
+		return messaging.BuildCellCatalog(pts)
+	}
 
 	// ── Subject router (Data sub-dispatch) ─────────────────────────────
 	// Every protocol.SubjectX is registered against the closure that
@@ -505,6 +516,9 @@ func main() {
 	defer dbg.Close()
 
 	cfg := mustLoadConfig(flags.configPath, flags.port)
+	if cfg.Sim.Enabled {
+		simGuard() // sim_enabled.go (sim build) / sim_disabled.go (!sim build)
+	}
 
 	// ── Database ────────────────────────────────────────────────────────
 	db := mustOpenDatabase(cfg.DatabasePath)
@@ -517,9 +531,22 @@ func main() {
 		DB:          db,
 		LogFunc:     log.Printf,
 		DebugLogger: dbg,
+		// Sim mode injects the fake WarLink client (nil otherwise → real HTTP
+		// client). sim_enabled.go / sim_disabled.go (T3.1).
+		Warlink: simWarlinkClient(cfg),
 	})
 	eng.Start()
 	defer eng.Stop()
+
+	// Sim-only startup (poller + readiness gate + sim operator). engine.Start()
+	// left the WarLink poller stopped because the dev config sets
+	// warlink.enabled=false; sim mode starts it explicitly against the
+	// injected fake (blocker S1). The wlClient is passed to wire the
+	// readiness gate (G3).
+	if cfg.Sim.Enabled {
+		wlClient := eng.WarlinkClient()        // returns the injected fake
+		startSimSubsystems(eng, cfg, wlClient) // sim_enabled.go / sim_disabled.go (no-op)
+	}
 
 	// ── Backup service ─────────────────────────────────────────────────
 	backupSvc := backup.NewService(db, cfg, flags.configPath, "dev", log.Printf)

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 	"shingocore/store/orders"
 )
 
@@ -88,7 +89,7 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 
 	if err := e.sendToEdge(protocol.TypeOrderDelivered, order.StationID, &protocol.OrderDelivered{
 		OrderUUID:      order.EdgeUUID,
-		DeliveredAt:    time.Now().UTC(),
+		DeliveredAt:    clock.Now().UTC(),
 		StagedExpireAt: stagedExpireAt,
 		BinID:          binID,
 		UOPRemaining:   uopRemaining,

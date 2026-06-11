@@ -903,10 +903,6 @@ export function createStore(initial) {
 // sections can re-fetch their snapshot and close the gap of events missed
 // while disconnected (§13). Build-id mismatch shows the shared refresh
 // banner. handler receives (parsedJSON, rawEvent).
-//
-// NOTE: coexists with app.js's legacy auto-connecting IIFE during the
-// transition; a chrome page using onSSE has two EventSources until the IIFE
-// is retired. See slice-implementation-questions Q-002.
 const _busHandlers = new Map(); // type -> Set<fn>
 let _busES = null;
 let _busTopics = null;          // topics the live ES was opened with

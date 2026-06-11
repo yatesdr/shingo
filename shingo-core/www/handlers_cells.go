@@ -3,10 +3,13 @@ package www
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"shingo/shared/clock"
 )
 
 // Production-heartbeat read endpoints (plan §12 slice 5). Cell id = station.
@@ -14,7 +17,7 @@ import (
 // (the run/stop strip span).
 
 func parseCellWindow(r *http.Request) (since, until time.Time) {
-	now := time.Now().UTC()
+	now := clock.Now().UTC()
 	since, until = now.Add(-8*time.Hour), now
 	if t, ok := parseTimeParam(r.URL.Query().Get("since")); ok {
 		since = t
@@ -74,7 +77,7 @@ func (h *Handlers) apiCellStops(w http.ResponseWriter, r *http.Request) {
 // whole-stream state (Phase B behavior). Called on SSE updates.
 func (h *Handlers) apiCellState(w http.ResponseWriter, r *http.Request) {
 	cellID := chi.URLParam(r, "id")
-	state, err := h.engine.HeartbeatService().ResolveCellState(cellID, time.Now().UTC())
+	state, err := h.engine.HeartbeatService().ResolveCellState(cellID, clock.Now().UTC())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -87,13 +90,32 @@ func (h *Handlers) apiCellState(w http.ResponseWriter, r *http.Request) {
 // page lists cell_config rows and provides create/edit/delete with a live
 // Process picker (Phase E, Q-025).
 func (h *Handlers) handleCellsAdmin(w http.ResponseWriter, r *http.Request) {
-	h.render(w, r, "cells.html", map[string]any{"Page": "cells"})
+	// Retired (refactor #4): cells auto-derive from the edge catalog and are
+	// curated per-dashboard in the heartbeat board's setup, not on a separate
+	// global page. Redirect old links to the dashboard hub.
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 // handleHeartbeatKiosk renders the chromeless /heartbeat wall display (Phase F)
 // — a grid of cell tiles plus a live rhythm strip, fed by cell-heartbeat SSE.
 // Public (no nav); meant to run full-screen on a floor monitor.
 func (h *Handlers) handleHeartbeatKiosk(w http.ResponseWriter, r *http.Request) {
+	// Wave 2 (Q-035): prefer a configured heartbeat board so wall displays land
+	// on the scoped view; fall back to the unscoped kiosk so existing displays
+	// don't break. First enabled heartbeat board by sort order wins.
+	if boards, err := h.engine.DashboardService().List(); err == nil {
+		best := -1
+		for i := range boards {
+			d := boards[i]
+			if d.Kind == "heartbeat" && d.Enabled && (best < 0 || d.SortOrder < boards[best].SortOrder) {
+				best = i
+			}
+		}
+		if best >= 0 {
+			http.Redirect(w, r, "/dashboard/"+strconv.FormatInt(boards[best].ID, 10), http.StatusFound)
+			return
+		}
+	}
 	h.renderBare(w, "heartbeat.html", map[string]any{})
 }
 
@@ -102,6 +124,20 @@ func (h *Handlers) handleHeartbeatKiosk(w http.ResponseWriter, r *http.Request) 
 // Cells D section and the /heartbeat kiosk consume it.
 func (h *Handlers) apiCellsList(w http.ResponseWriter, r *http.Request) {
 	cells, err := h.engine.HeartbeatService().ListCells()
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, cells)
+}
+
+// GET /api/cells/catalog?station= — the auto-derived cell catalog (Q-034): the
+// PLC-grouped cells an edge reported at registration. station="" returns every
+// station's. This is the universe a heartbeat dashboard's setup picks from; no
+// manual config needed for it to exist.
+func (h *Handlers) apiCellsCatalog(w http.ResponseWriter, r *http.Request) {
+	station := strings.TrimSpace(r.URL.Query().Get("station"))
+	cells, err := h.engine.HeartbeatService().CellCatalog(station)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -11,6 +11,7 @@ import { createFleetRow, updateFleetRow } from '/static/components/RobotTile.js'
 
 export function createFleetSection(store) {
     let chart = null;
+    let curRange = 'today'; // item 3 tail: drives the single-day chart's "(last day of range)" caption
 
     function mount() {
         installChartThemeHook();
@@ -18,10 +19,10 @@ export function createFleetSection(store) {
         if (!body) return;
         body.innerHTML = h`
             <div class="grid grid-4 fleet-kpis" id="fl-kpis">
-              ${kpiCell('fl-size', 'In fleet')}
-              ${kpiCell('fl-online', 'Online')}
-              ${kpiCell('fl-missions', 'Missions (window)')}
-              ${kpiCell('fl-util', 'Fleet utilization')}
+              <div class="card" style="margin:0"><div class="kpi-label">In fleet</div><div class="stat-value" id="fl-size">—</div></div>
+              <div class="card" style="margin:0"><div class="kpi-label">Online</div><div class="stat-value" id="fl-online">—</div></div>
+              <div class="card" style="margin:0"><div class="kpi-label">Missions (window)</div><div class="stat-value" id="fl-missions">—</div></div>
+              <div class="card" style="margin:0"><div class="kpi-label">Fleet utilization</div><div class="stat-value" id="fl-util">—</div></div>
             </div>
             <div class="fleet-load-box">
               <div class="flex flex-between" style="align-items:flex-start">
@@ -31,6 +32,7 @@ export function createFleetSection(store) {
                 </div>
                 <span class="ceiling-pill" id="fl-ceiling" style="display:none">ceiling reached</span>
               </div>
+              <div class="chart-caption" id="fl-day" style="margin-top:0.35rem"></div>
               <div class="chart-box" style="height:200px;margin-top:0.5rem"><canvas id="fl-canvas"></canvas></div>
               <div class="fleet-summary" id="fl-summary"></div>
             </div>
@@ -38,6 +40,7 @@ export function createFleetSection(store) {
     }
 
     function refresh(state) {
+        curRange = state.range;
         const p = new URLSearchParams();
         const win = windowFor(state.range);
         p.set('since', win.since); p.set('until', win.until);
@@ -85,12 +88,23 @@ export function createFleetSection(store) {
         if (!canvas) return;
         if (chart) { try { chart.destroy(); } catch (_) {} chart = null; }
         if (!load.length) {
+            const dayLabel = document.getElementById('fl-day');
+            if (dayLabel) dayLabel.textContent = '';
             const box = canvas.parentElement;
             if (box) box.innerHTML = '<div class="dash-empty">No fleet activity for this day.</div>';
             return;
         }
         const c = chartColors();
         const labels = load.map((h2) => fmtHour(h2.hour));
+        // Item 3 tail: the concurrency series is a single day even on 7d/30d.
+        // Label which day it is so the chart isn't mistaken for the whole range.
+        const dayLabel = document.getElementById('fl-day');
+        if (dayLabel) {
+            const d0 = load[0] && load[0].hour ? new Date(load[0].hour) : null;
+            const day = d0 && !isNaN(d0.getTime()) ? ymd(d0) : '';
+            const windowed = (curRange === '7d' || curRange === '30d');
+            dayLabel.textContent = 'Fleet load — ' + (day || 'latest day') + (windowed ? ' (last day of range)' : '');
+        }
         const ceiling = Math.max(size, 1);
         const datasets = [{
             label: 'Robots used', data: load.map((h2) => h2.concurrency),
@@ -132,9 +146,6 @@ export function createFleetSection(store) {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
-function kpiCell(id, label) {
-    return '<div class="card" style="margin:0"><div class="kpi-label">' + label + '</div><div class="stat-value" id="' + id + '">—</div></div>';
-}
 function setText(id, v) { const e = document.getElementById(id); if (e) e.textContent = v; }
 function fmtHour(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? '' : String(d.getHours()).padStart(2, '0') + ':00'; }
 

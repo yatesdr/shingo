@@ -13,6 +13,11 @@ import (
 // ActiveOrderCountFunc returns the number of active (non-terminal) orders.
 type ActiveOrderCountFunc func() int
 
+// CellCatalogFunc returns the edge's cell catalog (PLC-grouped reporting points)
+// to attach to the registration payload (Q-034). Nil or a nil return means "no
+// catalog" — an old/absent catalog is not an error.
+type CellCatalogFunc func() []protocol.CellCatalogEntry
+
 // Heartbeater sends edge.register on startup and edge.heartbeat periodically.
 type Heartbeater struct {
 	sender       *DataSender
@@ -25,6 +30,10 @@ type Heartbeater struct {
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
+
+	// CatalogFn, when set, supplies the Q-034 cell catalog included on every
+	// register (startup + reconnect). Set post-construction, like DebugLog.
+	CatalogFn CellCatalogFunc
 
 	DebugLog DebugLogFunc
 }
@@ -70,6 +79,10 @@ func (h *Heartbeater) SendRegister() {
 
 func (h *Heartbeater) sendRegister() {
 	hostname, _ := os.Hostname()
+	var catalog []protocol.CellCatalogEntry
+	if h.CatalogFn != nil {
+		catalog = h.CatalogFn()
+	}
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectEdgeRegister,
 		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
@@ -79,6 +92,7 @@ func (h *Heartbeater) sendRegister() {
 			Hostname:  hostname,
 			Version:   h.version,
 			LineIDs:   h.lineIDs,
+			Catalog:   catalog,
 		},
 	)
 	if err != nil {

@@ -10,6 +10,43 @@
     </div>
   </div>
 
+  <!-- P3.2/P3.3 (Q-035 + Q-032 tail): part-number is the headline inventory
+       grain. On-hand UoP + bins-holding per payload, a three-way bin lifecycle
+       split (stocked / in-production-empty / idle), and the Production cluster
+       (produced / cycle / consumption) folded from the old Missions Parts
+       section. Bin-level detail stays beneath. Rollup + lifecycle are
+       plant-wide — independent of the detail-table filters below. -->
+  <section class="card mb-2" id="inv-parts">
+    <div class="section-head">
+      <h2>Inventory by Part</h2>
+      <span class="text-muted-sm" id="inv-lifecycle" title="Bin lifecycle across the plant"></span>
+    </div>
+    <table class="table-compact w-full" id="inv-rollup-table">
+      <thead>
+        <tr>
+          <th>Part (payload)</th>
+          <th>Cat-ID</th>
+          <th style="text-align:right">On-hand UoP</th>
+          <th style="text-align:right">Bins holding</th>
+        </tr>
+      </thead>
+      <tbody id="inv-rollup-body"><tr><td colspan="4" class="dash-empty">Loading&hellip;</td></tr></tbody>
+    </table>
+  </section>
+
+  <section class="card mb-2" id="inv-production">
+    <div class="section-head">
+      <h2>Production</h2>
+      <span class="text-muted-sm">Plant-wide &middot; recent window</span>
+    </div>
+    <div class="grid grid-3">
+      <div><div class="chart-caption">Produced (qty &middot; missions)</div><div class="bar-list" id="inv-parts-produced"></div></div>
+      <div><div class="chart-caption" title="Payload-level cycle time attributed to each part">Cycle time (avg)</div><div class="bar-list" id="inv-parts-cycle"></div></div>
+      <div><div class="chart-caption">Consumption (UoP)</div><div class="bar-list" id="inv-parts-consume"></div></div>
+    </div>
+  </section>
+
+  <h2 class="mb-1">Bins</h2>
   <div class="filter-bar mb-1">
     <input type="text" id="inv-search" placeholder="Search..." data-action-input="applyFilters">
     <select id="inv-zone" data-action-change="applyFilters"><option value="">All Zones</option></select>

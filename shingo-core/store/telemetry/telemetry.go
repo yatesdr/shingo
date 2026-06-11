@@ -248,15 +248,18 @@ func GetStatsV2(db *sql.DB, f Filter) (*StatsV2, error) {
 
 	s.Failed = hardFailed
 	if stoppedCancelled > 0 {
-		systemStops, operatorCancels, err := classifyStops(db, where, args)
+		b, err := classifyStops(db, where, args)
 		if err != nil {
 			// Non-fatal: fall back to counting STOPPED/cancelled as cancelled
 			// (legacy behavior) rather than failing the whole stats call.
 			log.Printf("telemetry: stop classification: %v", err)
 			s.Cancelled = stoppedCancelled
 		} else {
-			s.Failed += systemStops
-			s.Cancelled = operatorCancels
+			s.Failed += b.systemStops
+			s.CancelledShingo = b.cancelShingo
+			s.CancelledRDS = b.cancelRDS
+			s.UnclassifiedStops = b.cancelUnclassified
+			s.Cancelled = b.cancelShingo + b.cancelRDS + b.cancelUnclassified
 		}
 	}
 
@@ -264,31 +267,42 @@ func GetStatsV2(db *sql.DB, f Filter) (*StatsV2, error) {
 		s.SuccessRate = float64(s.Confirmed) / float64(denom) * 100
 	}
 
-	durWhere := where
-	if durWhere == "" {
-		durWhere = " WHERE duration_ms > 0"
-	} else {
-		durWhere += " AND duration_ms > 0"
-	}
+	// AvgDuration/P50/P95 stay lead time (created→terminal); AvgExecution is the
+	// assignment→completion figure the tile headlines (Q-031). Filter each metric
+	// INDEPENDENTLY — lead on duration_ms>0, execution on exec_ms>0 — so a
+	// nonpositive lead (e.g. the dev sim's clock-drifted durations) doesn't
+	// suppress the execution average, and vice-versa. exec_ms is computed once
+	// per row in the derived table.
 	durQuery := fmt.Sprintf(`SELECT
-		COALESCE(AVG(duration_ms), 0)::BIGINT,
-		COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms), 0)::BIGINT,
-		COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::BIGINT
-		FROM mission_telemetry%s`, durWhere)
-	if err := db.QueryRow(durQuery, args...).Scan(&s.AvgDurationMS, &s.P50DurationMS, &s.P95DurationMS); err != nil {
+		COALESCE(AVG(duration_ms) FILTER (WHERE duration_ms > 0), 0)::BIGINT,
+		COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms > 0), 0)::BIGINT,
+		COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms > 0), 0)::BIGINT,
+		COALESCE(AVG(exec_ms) FILTER (WHERE exec_ms > 0), 0)::BIGINT
+		FROM (SELECT duration_ms, %s AS exec_ms FROM mission_telemetry mt%s) q`,
+		executionMSExpr("mt"), where)
+	if err := db.QueryRow(durQuery, args...).Scan(&s.AvgDurationMS, &s.P50DurationMS, &s.P95DurationMS, &s.AvgExecutionMS); err != nil {
 		log.Printf("telemetry: v2 duration/percentile stats query: %v", err)
 	}
 
 	return s, nil
 }
 
+// stopBreakdown splits the STOPPED/cancelled bucket: system-initiated stops
+// (counted as failures) and cancels by origin (Q-030). systemStops + the three
+// cancel counts always sum to the STOPPED/cancelled total.
+type stopBreakdown struct {
+	systemStops        int64 // grace/timeout/structural/abandon → failures
+	cancelShingo       int64 // "cancelled by …" / "aborted by …"
+	cancelRDS          int64 // "fleet order stopped"
+	cancelUnclassified int64 // detail matched no pattern
+}
+
 // classifyStops pulls the terminal order_history detail for every
-// STOPPED/cancelled mission in the window and splits them into
-// system-initiated stops (counted as failures) vs operator cancels, in Go
-// via domain.ClassifyTermination. The LEFT JOIN LATERAL yields exactly one
-// row per mission (detail ” when no history exists), so the two returned
-// counts always sum to the STOPPED/cancelled total.
-func classifyStops(db *sql.DB, where string, args []any) (systemStops, operatorCancels int64, err error) {
+// STOPPED/cancelled mission in the window and classifies each in Go via
+// domain.ClassifyTermination (failure vs cancel) then domain.ClassifyCancelOrigin
+// (shingo vs rds vs unclassified). The LEFT JOIN LATERAL yields exactly one row
+// per mission (detail ” when no history exists).
+func classifyStops(db *sql.DB, where string, args []any) (stopBreakdown, error) {
 	stopCond := "terminal_state IN ('STOPPED','stopped','cancelled','canceled')"
 	stopWhere := where
 	if stopWhere == "" {
@@ -306,21 +320,29 @@ func classifyStops(db *sql.DB, where string, args []any) (systemStops, operatorC
 		) oh ON TRUE%s`, stopWhere)
 	rows, err := db.Query(q, args...)
 	if err != nil {
-		return 0, 0, err
+		return stopBreakdown{}, err
 	}
 	defer rows.Close()
+	var b stopBreakdown
 	for rows.Next() {
 		var ts, detail string
 		if err := rows.Scan(&ts, &detail); err != nil {
-			return 0, 0, err
+			return stopBreakdown{}, err
 		}
 		if domain.ClassifyTermination(ts, detail) == domain.OutcomeFailed {
-			systemStops++
-		} else {
-			operatorCancels++
+			b.systemStops++
+			continue
+		}
+		switch domain.ClassifyCancelOrigin(detail) {
+		case domain.CancelOriginShingo:
+			b.cancelShingo++
+		case domain.CancelOriginRDS:
+			b.cancelRDS++
+		default:
+			b.cancelUnclassified++
 		}
 	}
-	return systemStops, operatorCancels, rows.Err()
+	return b, rows.Err()
 }
 
 func buildWhere(f Filter) (string, []any) {

@@ -36,9 +36,9 @@ package engine
 
 import (
 	"strings"
-	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 	"shingocore/store/orders"
 )
 
@@ -84,7 +84,7 @@ func (e *Engine) handlePickupBlockCompleted(ev BlockCompletedEvent) {
 			OrderUUID:  order.EdgeUUID,
 			BinID:      binID,
 			Location:   ev.Location,
-			PickedUpAt: time.Now().UTC(),
+			PickedUpAt: clock.Now().UTC(),
 		}); err != nil {
 			e.logFn("transit: send BinPickedUp bin %d order %d: %v", binID, ev.OrderID, err)
 		}
@@ -234,6 +234,31 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 			ToNodeID: destNode.ID,
 			NodeID:   destNode.ID,
 		}})
+
+		// Bind the arrived bin onto the Edge runtime if this dropoff node is an
+		// Edge line node. A MULTI-BIN swap (single_robot carries the new bin IN and
+		// the old bin OUT in one order) drops the new bin here as an INTERMEDIATE
+		// dropoff, and the whole-order OrderDelivered then lands at the market — so
+		// handleNodeOrderDelivered (single-bin only; no-ops on BinID==nil) never
+		// binds it and the line node sits unbound (active_bin_id=NULL → "no bin /
+		// starved", its PLC ticks attributed to nothing). Reuse the
+		// UOPAdjustment{Bound} channel the admin-Move fix added (75643f9): the Edge
+		// binds ONLY the process node it owns and no-ops for supermarket / staging /
+		// synthetic dests, so it is safe to fire on every intermediate dropoff.
+		// Single-bin swaps (two_robot / simple) bind via handleNodeOrderDelivered and
+		// have no junction rows, so resolveDropoffBin returns false for them above —
+		// they never reach here. In production this is a dormant correctness add: it
+		// only fires for multi-bin swaps, which previously left the at-node bin
+		// unbound the same way the manual-Move path did before 75643f9.
+		if err := e.SendDataToEdge(protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
+			BinID:        binID,
+			CoreNodeName: destNode.Name,
+			NewRemaining: updated.UOPRemaining,
+			Epoch:        updated.DeltaEpoch,
+			Bound:        true,
+		}); err != nil {
+			e.logFn("transit: bind-to-edge broadcast bin %d -> %s: %v", binID, destNode.Name, err)
+		}
 	}
 }
 

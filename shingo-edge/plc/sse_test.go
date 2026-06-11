@@ -137,7 +137,7 @@ func TestSSE_RESTBootstrapAndValueChange(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter)
+	m := NewManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -193,7 +193,7 @@ func TestSSE_StatusChange(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter)
+	m := NewManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -254,7 +254,7 @@ func TestSSE_HealthEvent(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter)
+	m := NewManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -300,7 +300,7 @@ func TestSSE_StopCancellation(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter)
+	m := NewManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -357,7 +357,7 @@ func TestSSE_Reconnection(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter)
+	m := NewManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -394,7 +394,7 @@ func TestSSE_PollModeDefault(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "" // default = poll
 
-	m := NewManager(nil, cfg, emitter)
+	m := NewManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -442,7 +442,7 @@ func TestSSE_ValueChangeCreatesUnknownPLC(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter)
+	m := NewManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 

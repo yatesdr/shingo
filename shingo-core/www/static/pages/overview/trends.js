@@ -1,44 +1,31 @@
 // Overview Section B — Mission trends (plan §15.B). A 2×2 Chart.js grid:
-// throughput, success rate, P50/P95 duration, cancellation rate. The
-// 24h/7d/30d toggle is LOCAL to this section (§3.B) — execs want the trend
-// story regardless of the global snapshot window; station/robot still scope
-// from the global store. One /api/missions/timeseries fetch powers all four.
+// throughput, success rate, P50/P95 duration, cancellation rate. Driven
+// entirely by the global ops filter (Today/7d/30d + station/robot) — wave 2
+// removed the section-local range toggle (Q-035), so Overview has one range
+// control. Today buckets hourly; 7d/30d bucket by DAY so the x-axis is readable
+// (hourly labels repeated 08:00…08:00 across days were unreadable). One
+// /api/missions/timeseries fetch powers all four.
 
 import { apiGet } from '/static/app.js';
 import { makeChart, installChartThemeHook, bucketLabel, chartColors } from '/static/components/charts.js';
 
+// Minimum completed+failed missions for a bucket's success rate to be plotted.
+// Below this, the rate is pure 100/0 noise (a 1-mission bucket is always 0% or
+// 100%), so we render a gap instead (B4; Q-005 small-denominator fix).
+const MIN_RATE_DENOM = 3;
+
 export function createTrendsSection(store, opts) {
     opts = opts || {};
-    const toggleId = opts.toggleId || 'ops-trend-toggle';
     const gridId = opts.gridId || 'ops-trend-grid';
-    let localRange = '7d';
     let charts = [];
-    let lastState = null;
 
     function mount() {
         installChartThemeHook();
-        const toggle = document.getElementById(toggleId);
-        if (toggle) {
-            toggle.innerHTML = '';
-            for (const r of ['24h', '7d', '30d']) {
-                const b = document.createElement('button');
-                b.textContent = r;
-                b.dataset.range = r;
-                if (r === localRange) b.classList.add('is-active');
-                b.addEventListener('click', () => {
-                    if (localRange === r) return;
-                    localRange = r;
-                    toggle.querySelectorAll('button').forEach((x) => x.classList.toggle('is-active', x.dataset.range === r));
-                    if (lastState) refresh(lastState);
-                });
-                toggle.appendChild(b);
-            }
-        }
+        // No local toggle anymore — the global ops filter drives the range.
     }
 
     function refresh(state) {
-        lastState = state;
-        const win = windowFor(localRange);
+        const win = windowFor(state.range || 'today');
         const p = new URLSearchParams({ bucket: win.bucket, since: win.since, until: win.until });
         if (state.station) p.set('station_id', state.station);
         if (state.robot) p.set('robot_id', state.robot);
@@ -71,7 +58,9 @@ export function createTrendsSection(store, opts) {
 
         charts.push(buildChart(grid, 'success_rate', 'Success rate (%)', {
             type: 'line',
-            data: { labels, datasets: [{ data: points.map((p) => round1(p.success_rate)), borderColor: c.success, backgroundColor: c.success, tension: 0.3, pointRadius: 0, fill: false }] },
+            // Plot a gap (null) for thin buckets so 100/0 noise doesn't read as
+            // real swings; spanGaps:false breaks the line across the gap.
+            data: { labels, datasets: [{ data: points.map((p) => ((p.confirmed + p.failed) >= MIN_RATE_DENOM ? round1(p.success_rate) : null)), borderColor: c.success, backgroundColor: c.success, tension: 0.3, pointRadius: 0, fill: false, spanGaps: false }] },
             options: { scales: { y: { min: 0, max: 100 } } },
         }));
 
@@ -119,9 +108,8 @@ function ymd(d) {
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
-// windowFor maps the local toggle to a date window + bucket granularity.
-// Date-bound filters can't express a true rolling 24h (§8 #17) — 24h covers
-// yesterday+today at hourly granularity.
+// windowFor maps the global ops range (today/7d/30d) to a date window + bucket
+// granularity. 7d/30d bucket by DAY (readable axis); Today buckets hourly.
 function windowFor(range) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     if (range === '30d') {
@@ -130,10 +118,10 @@ function windowFor(range) {
     }
     if (range === '7d') {
         const since = new Date(today); since.setDate(since.getDate() - 6);
-        return { since: ymd(since), until: ymd(today), bucket: 'hour' };
+        return { since: ymd(since), until: ymd(today), bucket: 'day' };
     }
-    const since = new Date(today); since.setDate(since.getDate() - 1); // 24h
-    return { since: ymd(since), until: ymd(today), bucket: 'hour' };
+    // 'today' — hourly across the current day.
+    return { since: ymd(today), until: ymd(today), bucket: 'hour' };
 }
 
 function round1(v) { return Math.round((v || 0) * 10) / 10; }

@@ -40,6 +40,19 @@ func (e *Engine) SendDataToEdge(subject string, stationID string, payload any) e
 	return nil
 }
 
+// RequestEdgeReregister asks an edge (or every edge, when station is "") to
+// re-send its registration — which now carries the cell catalog (Q-034). Same
+// data-channel message core already fires when it detects an unregistered edge;
+// this exposes it as an on-demand action (the Dashboard "re-sync edges" button)
+// so a catalog change is picked up without waiting for a reconnect.
+func (e *Engine) RequestEdgeReregister(station string) error {
+	if station == "" {
+		station = protocol.StationBroadcast
+	}
+	return e.SendDataToEdge(protocol.SubjectEdgeRegisterRequest, station,
+		&protocol.EdgeRegisterRequest{StationID: station, Reason: "manual re-sync (dashboard)"})
+}
+
 // RunFulfillmentScan runs one pass of the fulfillment scanner and returns the
 // number of orders processed. For testing.
 func (e *Engine) RunFulfillmentScan() int {

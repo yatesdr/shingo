@@ -517,4 +517,27 @@ CREATE TABLE IF NOT EXISTS cell_targets (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (cell_id, payload_code)
 );
+
+-- downtime_events: persisted downtime start/end events from the sim's
+-- clustered-random downtime model (G9). Replaces derived-only gap analysis
+-- from cell_part_events with explicit start/end pairs for OEE availability.
+-- Partitioned monthly by started_at (same pattern as cell_part_events).
+-- Dedup on (station, edge_event_id) via downtime_event_dedup.
+CREATE TABLE IF NOT EXISTS downtime_events (
+    id              BIGSERIAL,
+    station         TEXT    NOT NULL,
+    plc_name        TEXT    NOT NULL,
+    reason          TEXT    NOT NULL DEFAULT '',
+    started_at      TIMESTAMPTZ NOT NULL,
+    ended_at        TIMESTAMPTZ,
+    duration_ms     BIGINT  NOT NULL DEFAULT 0,
+    edge_event_id   BIGINT  NOT NULL DEFAULT 0
+) PARTITION BY RANGE (started_at);
+
+CREATE TABLE IF NOT EXISTS downtime_event_dedup (
+    station         TEXT    NOT NULL,
+    edge_event_id   BIGINT NOT NULL,
+    applied_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (station, edge_event_id)
+);
 `

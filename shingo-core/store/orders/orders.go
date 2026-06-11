@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
 )
@@ -129,7 +130,7 @@ func UpdateStatus(db *sql.DB, id int64, status, detail string) error {
 	if status == "failed" || status == "cancelled" {
 		errDetail = detail
 	}
-	if _, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=NOW() WHERE id=$3`, status, errDetail, id); err != nil {
+	if _, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$4 WHERE id=$3`, status, errDetail, id, clock.Now().UTC()); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, $2, $3)`, id, status, detail); err != nil {
@@ -141,8 +142,8 @@ func UpdateStatus(db *sql.DB, id int64, status, detail string) error {
 // UpdateWaitIndex increments the wait_index for a complex order after
 // releasing one wait segment.
 func UpdateWaitIndex(db *sql.DB, id int64, waitIndex int) error {
-	_, err := db.Exec(`UPDATE orders SET wait_index=$1, updated_at=NOW() WHERE id=$2`,
-		waitIndex, id)
+	_, err := db.Exec(`UPDATE orders SET wait_index=$1, updated_at=$3 WHERE id=$2`,
+		waitIndex, id, clock.Now().UTC())
 	return err
 }
 
@@ -151,8 +152,8 @@ func UpdateWaitIndex(db *sql.DB, id int64, waitIndex int) error {
 // Phase 4 of bin-transit-state — exposed via order-status responses so
 // ops can see *why* an order is queued instead of guessing.
 func SetQueueReason(db *sql.DB, id int64, reason string) error {
-	_, err := db.Exec(`UPDATE orders SET queue_reason=$1, updated_at=NOW() WHERE id=$2`,
-		reason, id)
+	_, err := db.Exec(`UPDATE orders SET queue_reason=$1, updated_at=$3 WHERE id=$2`,
+		reason, id, clock.Now().UTC())
 	return err
 }
 
@@ -165,8 +166,8 @@ func SetQueueReason(db *sql.DB, id int64, reason string) error {
 func LinkSiblingsByEdgeUUID(db *sql.DB, uuidA, uuidB string) (int64, error) {
 	res, err := db.Exec(`UPDATE orders SET
 		sibling_order_uuid = CASE edge_uuid WHEN $1 THEN $2 WHEN $2 THEN $1 END,
-		updated_at = NOW()
-		WHERE edge_uuid IN ($1, $2)`, uuidA, uuidB)
+		updated_at = $3
+		WHERE edge_uuid IN ($1, $2)`, uuidA, uuidB, clock.Now().UTC())
 	if err != nil {
 		return 0, err
 	}
@@ -182,22 +183,22 @@ func SiblingUUID(db *sql.DB, id int64) (string, error) {
 
 // UpdateVendor stores vendor-side identifiers on an order.
 func UpdateVendor(db *sql.DB, id int64, vendorOrderID, vendorState, robotID string) error {
-	_, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=NOW() WHERE id=$4`,
-		vendorOrderID, vendorState, robotID, id)
+	_, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5 WHERE id=$4`,
+		vendorOrderID, vendorState, robotID, id, clock.Now().UTC())
 	return err
 }
 
 // UpdateSourceNode rewrites the source_node field.
 func UpdateSourceNode(db *sql.DB, id int64, sourceNode string) error {
-	_, err := db.Exec(`UPDATE orders SET source_node=$1, updated_at=NOW() WHERE id=$2`,
-		sourceNode, id)
+	_, err := db.Exec(`UPDATE orders SET source_node=$1, updated_at=$3 WHERE id=$2`,
+		sourceNode, id, clock.Now().UTC())
 	return err
 }
 
 // UpdateDeliveryNode rewrites the delivery_node field.
 func UpdateDeliveryNode(db *sql.DB, id int64, deliveryNode string) error {
-	_, err := db.Exec(`UPDATE orders SET delivery_node=$1, updated_at=NOW() WHERE id=$2`,
-		deliveryNode, id)
+	_, err := db.Exec(`UPDATE orders SET delivery_node=$1, updated_at=$3 WHERE id=$2`,
+		deliveryNode, id, clock.Now().UTC())
 	return err
 }
 
@@ -206,8 +207,8 @@ func UpdateDeliveryNode(db *sql.DB, id int64, deliveryNode string) error {
 // and the scanner needs to lock the new concrete-child names ahead of
 // claim. Round-3 follow-up.
 func UpdateStepsJSON(db *sql.DB, id int64, stepsJSON string) error {
-	_, err := db.Exec(`UPDATE orders SET steps_json=$1, updated_at=NOW() WHERE id=$2`,
-		stepsJSON, id)
+	_, err := db.Exec(`UPDATE orders SET steps_json=$1, updated_at=$3 WHERE id=$2`,
+		stepsJSON, id, clock.Now().UTC())
 	return err
 }
 
@@ -219,7 +220,7 @@ func Complete(db *sql.DB, id int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE orders SET completed_at=NOW(), updated_at=NOW() WHERE id=$1`, id); err != nil {
+	if _, err := tx.Exec(`UPDATE orders SET completed_at=$2, updated_at=$2 WHERE id=$1`, id, clock.Now().UTC()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -413,8 +414,8 @@ func ListHistory(db *sql.DB, orderID int64) ([]*History, error) {
 
 // UpdatePriority rewrites the priority field.
 func UpdatePriority(db *sql.DB, id int64, priority int) error {
-	_, err := db.Exec(`UPDATE orders SET priority=$1, updated_at=NOW() WHERE id=$2`,
-		priority, id)
+	_, err := db.Exec(`UPDATE orders SET priority=$1, updated_at=$3 WHERE id=$2`,
+		priority, id, clock.Now().UTC())
 	return err
 }
 
@@ -492,7 +493,7 @@ func ListQueued(db *sql.DB) ([]*Order, error) {
 
 // UpdatePayloadCode sets the payload_code on an order.
 func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
-	_, err := db.Exec(`UPDATE orders SET payload_code = $1, updated_at = NOW() WHERE id = $2`, payloadCode, orderID)
+	_, err := db.Exec(`UPDATE orders SET payload_code = $1, updated_at = $3 WHERE id = $2`, payloadCode, orderID, clock.Now().UTC())
 	return err
 }
 
@@ -521,7 +522,7 @@ func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, exclu
 
 // UpdateRobotID rewrites just the robot_id field.
 func UpdateRobotID(db *sql.DB, id int64, robotID string) error {
-	_, err := db.Exec(`UPDATE orders SET robot_id=$1, updated_at=NOW() WHERE id=$2`, robotID, id)
+	_, err := db.Exec(`UPDATE orders SET robot_id=$1, updated_at=$3 WHERE id=$2`, robotID, id, clock.Now().UTC())
 	return err
 }
 
@@ -529,7 +530,7 @@ func UpdateRobotID(db *sql.DB, id int64, robotID string) error {
 // (Junction-style write against the orders table; bins-aggregate readers
 // live at outer store/ as composition.)
 func UpdateBinID(db *sql.DB, orderID, binID int64) error {
-	_, err := db.Exec(`UPDATE orders SET bin_id=$1, updated_at=NOW() WHERE id=$2`, binID, orderID)
+	_, err := db.Exec(`UPDATE orders SET bin_id=$1, updated_at=$3 WHERE id=$2`, binID, orderID, clock.Now().UTC())
 	return err
 }
 

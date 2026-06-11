@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"shingo/shared/clock"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -47,8 +48,9 @@ func (s *ChangeoverService) Create(processID int64, fromStyleID *int64, toStyleI
 	}
 	defer tx.Rollback()
 
-	res, err := tx.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, called_by, notes)
-		VALUES (?, ?, ?, 'active', ?, ?)`, processID, fromStyleID, toStyleID, calledBy, notes)
+	now := clock.Now().UTC().Format("2006-01-02 15:04:05")
+	res, err := tx.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, called_by, notes, started_at)
+		VALUES (?, ?, ?, 'active', ?, ?, ?)`, processID, fromStyleID, toStyleID, calledBy, notes, now)
 	if err != nil {
 		return 0, err
 	}

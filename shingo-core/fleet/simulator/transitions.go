@@ -34,6 +34,7 @@ func (s *SimulatorBackend) DriveState(vendorOrderID, newState string) (oldState,
 	oldState = order.state
 	order.state = newState
 	mappedStatus = mapStateInternal(newState)
+	s.stampTerminalLocked(order, newState)
 	emitter = s.emitter
 	resolver = s.resolver
 	s.mu.Unlock()
@@ -68,6 +69,7 @@ func (s *SimulatorBackend) DriveStateWithRobot(vendorOrderID, newState, robotID 
 	oldState = order.state
 	order.state = newState
 	mappedStatus = mapStateInternal(newState)
+	s.stampTerminalLocked(order, newState)
 	emitter = s.emitter
 	resolver = s.resolver
 	s.mu.Unlock()

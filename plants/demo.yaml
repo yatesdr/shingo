@@ -1,0 +1,414 @@
+# demo.yaml v3 — press-driven plant, real swap modes (G3).
+# LOCAL DEV / SIMULATION ONLY. NOT FOR PRODUCTION.
+#
+# Consumed by cmd/seeddev (loaded + validated via shingo-core/plantspec).
+# Exercises every production swap mode the real plants use, driven headlessly by
+# the sim fleet + auto-operator. See docs/dev-env/sim-plant-design.md for the
+# swap-mode ↔ staging/pairing contract this spec is built against.
+#
+# NODE NAMING — docs/node-naming-standards.md ({TYPE}_{NNN}, underscores):
+#   PLN press line | ALN assembly/weld line | SLN staging lane | SMN supermarket slot
+#   UTN utility/return-bank slot | PLK pick/decant | FGN finished-goods exit
+#   SYN_… NGRP group | Lane_NN lane. PLC/process/style names + bin labels are
+#   separate namespaces (left readable).
+#
+# SWAP MODES EXERCISED (one per cell):
+#   PRESS-1  two_robot_press_index  front PLN_001 + paired back PLN_002 (in-line index, no staging)
+#   PRESS-2  sequential / A/B       PLN_003 (active) + PLN_004 (parked)  — two bins rotate, no staging
+#   WELD-1   two_robot              consume + produce, inbound staging only
+#   WELD-2   single_robot           consume + produce, DISTINCT inbound + outbound staging
+#   WELD-3   two_robot consume + A/B produce (ALN_007 active + ALN_008 parked)
+#   LOADER / UNLOADERs  manual_swap (operator/sim LOAD/CLEAR; no staging)
+#
+#   A/B (sequential) rotation is PLC-automated in real plants (FlipABNode on bin-full);
+#   the sim must simulate that PLC bit. See the build log + sim_operator for the sim flip.
+#
+# MATERIAL FLOW (rate parity TUNED 2026-06-10; verify with `make dev-rates`):
+#   PANEL-LH: PRESS-1 (12/min, 2× tick) → WELD-1 + WELD-3 (6+6)   ← press runs 2× to feed two cells
+#   PANEL-RH: PRESS-2 (6) → WELD-2 (6)
+#   BRKT:     LOADER (C-push) → WELD-2 (6)
+#   ASSY-X:   WELD-1 + WELD-3 (6+6) → UNLOADER-A (drain)
+#   ASSY-Y:   WELD-2 (6) → UNLOADER-B (drain)
+# Tick rates live in shingoedge.dev.yaml (sim.processes[].tick_interval); A/B pairs
+# (PRESS-2, WELD-3 produce) share ONE counter so they count 1×, not 2×.
+#
+# KEY DESIGN: each weld cell is ONE process with MULTIPLE claims (consume + produce);
+# a counter tick fans to all its nodes, dispatching per claim.Role. A/B pairs share one
+# process+style; active_pull arbitrates which bin counts/fills.
+namespace: devplant
+line_id: line1
+
+bin_types: [STANDARD]
+
+payloads:
+  - {code: PANEL-LH, uop_capacity: 30, bin_type: STANDARD}
+  - {code: PANEL-RH, uop_capacity: 30, bin_type: STANDARD}
+  - {code: BRKT,     uop_capacity: 20, bin_type: STANDARD}
+  - {code: ASSY-X,   uop_capacity: 20, bin_type: STANDARD}
+  - {code: ASSY-Y,   uop_capacity: 20, bin_type: STANDARD}
+
+# Storage — deep multi-slot lanes (ASRS). depth 1 = lane mouth (accessible), higher =
+# buried. retrieve=FIFO + store=LKND: payloads self-segregate into lanes, FIFO reshuffles
+# to the oldest buried bin once a lane mouth is refilled. Empty carriers live in
+# SYN_MT_Return, never in supermarket lanes. Oversized so the loop can't lock on space.
+zones:
+  - name: SYN_SM_Stamp
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      # Lane_01 = PANEL-LH source (seeded full); Lane_02/03 = PANEL-RH source (full)
+      - {name: Lane_01, slots: [{name: SMN_001, depth: 1}, {name: SMN_002, depth: 2}, {name: SMN_003, depth: 3}]}
+      - {name: Lane_02, slots: [{name: SMN_004, depth: 1}, {name: SMN_005, depth: 2}, {name: SMN_006, depth: 3}]}
+      - {name: Lane_03, slots: [{name: SMN_007, depth: 1}, {name: SMN_008, depth: 2}, {name: SMN_009, depth: 3}]}
+      # Lane_04/05 = open (presses store full panels here; LKND overflow)
+      - {name: Lane_04, slots: [{name: SMN_010, depth: 1}, {name: SMN_011, depth: 2}, {name: SMN_012, depth: 3}]}
+      - {name: Lane_05, slots: [{name: SMN_013, depth: 1}, {name: SMN_014, depth: 2}, {name: SMN_015, depth: 3}]}
+  - name: SYN_SM_Comp
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      - {name: Lane_06, slots: [{name: SMN_016, depth: 1}, {name: SMN_017, depth: 2}, {name: SMN_018, depth: 3}]}
+      - {name: Lane_07, slots: [{name: SMN_019, depth: 1}, {name: SMN_020, depth: 2}, {name: SMN_021, depth: 3}]}
+  - name: SYN_SM_FG
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      - {name: Lane_08, slots: [{name: SMN_022, depth: 1}, {name: SMN_023, depth: 2}, {name: SMN_024, depth: 3}]}
+      - {name: Lane_09, slots: [{name: SMN_025, depth: 1}, {name: SMN_026, depth: 2}, {name: SMN_027, depth: 3}]}
+      - {name: Lane_10, slots: [{name: SMN_028, depth: 1}, {name: SMN_029, depth: 2}, {name: SMN_030, depth: 3}]}
+      - {name: Lane_11, slots: [{name: SMN_031, depth: 1}, {name: SMN_032, depth: 2}, {name: SMN_033, depth: 3}]}
+  - name: SYN_MT_Return
+    retrieve_algorithm: FIFO
+    store_algorithm: DPTH
+    lanes:
+      - {name: Lane_12, slots: [{name: UTN_001, depth: 1}, {name: UTN_002, depth: 2}, {name: UTN_003, depth: 3}, {name: UTN_004, depth: 4}]}
+      - {name: Lane_13, slots: [{name: UTN_005, depth: 1}, {name: UTN_006, depth: 2}, {name: UTN_007, depth: 3}, {name: UTN_008, depth: 4}]}
+      - {name: Lane_14, slots: [{name: UTN_009, depth: 1}, {name: UTN_010, depth: 2}, {name: UTN_011, depth: 3}, {name: UTN_012, depth: 4}]}
+      - {name: Lane_15, slots: [{name: UTN_013, depth: 1}, {name: UTN_014, depth: 2}, {name: UTN_015, depth: 3}, {name: UTN_016, depth: 4}]}
+      - {name: Lane_16, slots: [{name: UTN_017, depth: 1}, {name: UTN_018, depth: 2}, {name: UTN_019, depth: 3}, {name: UTN_020, depth: 4}]}
+      - {name: Lane_17, slots: [{name: UTN_021, depth: 1}, {name: UTN_022, depth: 2}, {name: UTN_023, depth: 3}, {name: UTN_024, depth: 4}]}
+      - {name: Lane_18, slots: [{name: UTN_025, depth: 1}, {name: UTN_026, depth: 2}, {name: UTN_027, depth: 3}, {name: UTN_028, depth: 4}]}
+      - {name: Lane_19, slots: [{name: UTN_029, depth: 1}, {name: UTN_030, depth: 2}, {name: UTN_031, depth: 3}, {name: UTN_032, depth: 4}]}
+      - {name: Lane_20, slots: [{name: UTN_033, depth: 1}, {name: UTN_034, depth: 2}, {name: UTN_035, depth: 3}, {name: UTN_036, depth: 4}]}
+      - {name: Lane_21, slots: [{name: UTN_037, depth: 1}, {name: UTN_038, depth: 2}, {name: UTN_039, depth: 3}, {name: UTN_040, depth: 4}]}
+      - {name: Lane_22, slots: [{name: UTN_041, depth: 1}, {name: UTN_042, depth: 2}, {name: UTN_043, depth: 3}, {name: UTN_044, depth: 4}]}
+      - {name: Lane_23, slots: [{name: UTN_045, depth: 1}, {name: UTN_046, depth: 2}, {name: UTN_047, depth: 3}, {name: UTN_048, depth: 4}]}
+
+stations:
+  # ── PRESS-1: two_robot_press_index (front + paired back, no staging) ──
+  - {name: PLN_001, kind: press}     # PRESS-1 front (produce PANEL-LH)
+  - {name: PLN_002, kind: press}     # PRESS-1 back / paired position (no own claim)
+  # ── PRESS-2: A/B sequential (two bins rotate, no staging) ──
+  - {name: PLN_003, kind: press}     # PRESS-2 A (active)  produce PANEL-RH
+  - {name: PLN_004, kind: press}     # PRESS-2 B (parked)  produce PANEL-RH
+  # ── WELD-1: two_robot (inbound staging only) ──
+  - {name: ALN_001, kind: weld}      # WELD-1 consume PANEL-LH
+  - {name: ALN_002, kind: weld}      # WELD-1 produce ASSY-X
+  - {name: SLN_001, kind: staging}   # WELD-1 ALN_001 inbound stage
+  - {name: SLN_002, kind: staging}   # WELD-1 ALN_002 inbound stage
+  # ── WELD-2: single_robot (DISTINCT inbound + outbound staging per node) ──
+  - {name: ALN_003, kind: weld}      # WELD-2 consume PANEL-RH
+  - {name: ALN_004, kind: weld}      # WELD-2 consume BRKT
+  - {name: ALN_005, kind: weld}      # WELD-2 produce ASSY-Y
+  - {name: SLN_003, kind: staging}   # WELD-2 ALN_003 inbound
+  - {name: SLN_004, kind: staging}   # WELD-2 ALN_003 outbound
+  - {name: SLN_005, kind: staging}   # WELD-2 ALN_004 inbound
+  - {name: SLN_006, kind: staging}   # WELD-2 ALN_004 outbound
+  - {name: SLN_007, kind: staging}   # WELD-2 ALN_005 inbound
+  - {name: SLN_008, kind: staging}   # WELD-2 ALN_005 outbound
+  # ── WELD-3: two_robot consume + A/B produce ──
+  - {name: ALN_006, kind: weld}      # WELD-3 consume PANEL-LH (two_robot)
+  - {name: ALN_007, kind: weld}      # WELD-3 produce ASSY-X  A (active, A/B)
+  - {name: ALN_008, kind: weld}      # WELD-3 produce ASSY-X  B (parked, A/B)
+  - {name: SLN_009, kind: staging}   # WELD-3 ALN_006 inbound stage
+  # ── Loader + unloaders (manual_swap) ──
+  - {name: PLK_001, kind: loader}    # component loader (BRKT)
+  - {name: FGN_001, kind: unloader}  # ASSY-X finished-goods exit
+  - {name: FGN_002, kind: unloader}  # ASSY-Y finished-goods exit
+
+# Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
+# (incl. A/B parked sides + press-index back) seeded with EMPTY active carriers. Consume
+# nodes seeded above reorder so flow establishes before the first reorder. Empties pool in
+# SYN_MT_Return. Bin LABELS are a separate namespace from node names.
+bins:
+  # --- SYN_SM_Stamp source: Lane_01 full (3 LH), Lane_02+03 full (6 RH) ---
+  - {name: BIN-LH-01, slot: SMN_001, payload: PANEL-LH, uop: 30}   # mouth
+  - {name: BIN-LH-02, slot: SMN_002, payload: PANEL-LH, uop: 30}   # buried (depth 2)
+  - {name: BIN-LH-03, slot: SMN_003, payload: PANEL-LH, uop: 30, age_s: 3600}  # buried (depth 3) + OLDEST → FIFO must reshuffle to it (ASRS test)
+  - {name: BIN-RH-01, slot: SMN_004, payload: PANEL-RH, uop: 30}
+  - {name: BIN-RH-02, slot: SMN_005, payload: PANEL-RH, uop: 30}
+  - {name: BIN-RH-03, slot: SMN_006, payload: PANEL-RH, uop: 30}
+  - {name: BIN-RH-04, slot: SMN_007, payload: PANEL-RH, uop: 30}
+  - {name: BIN-RH-05, slot: SMN_008, payload: PANEL-RH, uop: 30}
+  - {name: BIN-RH-06, slot: SMN_009, payload: PANEL-RH, uop: 30}
+  # --- SYN_SM_Comp source: Lane_06 full (3 BRKT) ---
+  - {name: BIN-BRKT-01, slot: SMN_016, payload: BRKT, uop: 20}
+  - {name: BIN-BRKT-02, slot: SMN_017, payload: BRKT, uop: 20}
+  - {name: BIN-BRKT-03, slot: SMN_018, payload: BRKT, uop: 20}
+  # --- Active produce bins (empty → fill → swap) ---
+  - {name: BIN-ACT-P1F, slot: PLN_001}   # PRESS-1 front (filling)
+  - {name: BIN-ACT-P1B, slot: PLN_002}   # PRESS-1 back (staged empty, indexes to front)
+  - {name: BIN-ACT-P2A, slot: PLN_003}   # PRESS-2 A active (filling)
+  - {name: BIN-ACT-P2B, slot: PLN_004}   # PRESS-2 B parked (ready)
+  - {name: BIN-ACT-W1,  slot: ALN_002}   # WELD-1 ASSY-X output
+  - {name: BIN-ACT-W2,  slot: ALN_005}   # WELD-2 ASSY-Y output
+  - {name: BIN-ACT-W3A, slot: ALN_007}   # WELD-3 ASSY-X output A active
+  - {name: BIN-ACT-W3B, slot: ALN_008}   # WELD-3 ASSY-X output B parked
+  # --- Active consume bins (seeded above reorder) ---
+  - {name: BIN-ACT-W1-LH,   slot: ALN_001, payload: PANEL-LH, uop: 15}
+  - {name: BIN-ACT-W2-RH,   slot: ALN_003, payload: PANEL-RH, uop: 15}
+  - {name: BIN-ACT-W2-BRKT, slot: ALN_004, payload: BRKT, uop: 12}
+  - {name: BIN-ACT-W3-LH,   slot: ALN_006, payload: PANEL-LH, uop: 15}
+  # --- Empty carriers in SYN_MT_Return (prime the pump) ---
+  - {name: BIN-MT-01, slot: UTN_001}
+  - {name: BIN-MT-02, slot: UTN_002}
+  - {name: BIN-MT-03, slot: UTN_003}
+  - {name: BIN-MT-04, slot: UTN_004}
+  - {name: BIN-MT-05, slot: UTN_005}
+  - {name: BIN-MT-06, slot: UTN_006}
+  - {name: BIN-MT-07, slot: UTN_007}
+  - {name: BIN-MT-08, slot: UTN_008}
+  - {name: BIN-MT-09, slot: UTN_009}
+  - {name: BIN-MT-10, slot: UTN_010}
+  - {name: BIN-MT-11, slot: UTN_011}
+  - {name: BIN-MT-12, slot: UTN_012}
+  - {name: BIN-MT-13, slot: UTN_013}
+  - {name: BIN-MT-14, slot: UTN_014}
+  - {name: BIN-MT-15, slot: UTN_015}
+  - {name: BIN-MT-16, slot: UTN_016}
+  - {name: BIN-MT-17, slot: UTN_017}
+  - {name: BIN-MT-18, slot: UTN_018}
+  - {name: BIN-MT-19, slot: UTN_019}
+  - {name: BIN-MT-20, slot: UTN_020}
+  - {name: BIN-MT-21, slot: UTN_021}
+  - {name: BIN-MT-22, slot: UTN_022}
+  - {name: BIN-MT-23, slot: UTN_023}
+  - {name: BIN-MT-24, slot: UTN_024}
+  - {name: BIN-MT-25, slot: UTN_025}
+  - {name: BIN-MT-26, slot: UTN_026}
+  - {name: BIN-MT-27, slot: UTN_027}
+  - {name: BIN-MT-28, slot: UTN_028}
+  - {name: BIN-MT-29, slot: UTN_029}
+  - {name: BIN-MT-30, slot: UTN_030}
+  - {name: BIN-MT-31, slot: UTN_031}
+  - {name: BIN-MT-32, slot: UTN_032}
+  - {name: BIN-MT-33, slot: UTN_033}
+  - {name: BIN-MT-34, slot: UTN_034}
+  - {name: BIN-MT-35, slot: UTN_035}
+  - {name: BIN-MT-36, slot: UTN_036}
+
+processes:
+  - {name: PRESS-1, active_style: PRESS-1-RUN}        # two_robot_press_index
+  - {name: PRESS-2, active_style: PRESS-2-RUN}        # A/B sequential
+  - {name: WELD-1, active_style: WELD-1-RUN}          # two_robot
+  - {name: WELD-2, active_style: WELD-2-RUN}          # single_robot
+  - {name: WELD-3, active_style: WELD-3-RUN}          # two_robot consume + A/B produce
+  - {name: LOADER-COMP, active_style: LOADER-COMP-RUN}
+  - {name: UNLOADER-A, active_style: UNLOADER-A-RUN}
+  - {name: UNLOADER-B, active_style: UNLOADER-B-RUN}
+
+styles:
+  - {name: PRESS-1-RUN, process: PRESS-1, payload: PANEL-LH}
+  - {name: PRESS-2-RUN, process: PRESS-2, payload: PANEL-RH}
+  - {name: WELD-1-RUN, process: WELD-1, payload: ASSY-X}
+  - {name: WELD-2-RUN, process: WELD-2, payload: ASSY-Y}
+  - {name: WELD-3-RUN, process: WELD-3, payload: ASSY-X}
+  - {name: LOADER-COMP-RUN, process: LOADER-COMP, payload: BRKT}
+  - {name: UNLOADER-A-RUN, process: UNLOADER-A, payload: ASSY-X}
+  - {name: UNLOADER-B-RUN, process: UNLOADER-B, payload: ASSY-Y}
+
+operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, LOADER-COMP-OPS, UNLOADER-A-OPS, UNLOADER-B-OPS]
+
+claims:
+  # ── PRESS-1 (two_robot_press_index): one claim on the front node, paired back ──
+  - core_node: PLN_001
+    style: PRESS-1-RUN
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-LH
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_002
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_Stamp
+
+  # ── PRESS-2 (A/B sequential): two paired claims, A active / B parked ──
+  - core_node: PLN_003
+    style: PRESS-2-RUN
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-RH
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_004
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_Stamp
+  - core_node: PLN_004
+    style: PRESS-2-RUN
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-RH
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_003
+    active_pull: false
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_Stamp
+
+  # ── WELD-1 (two_robot): inbound staging only ──
+  - core_node: ALN_001
+    style: WELD-1-RUN
+    role: consume
+    swap_mode: two_robot
+    payload: PANEL-LH
+    uop_capacity: 30
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SYN_SM_Stamp
+    outbound_destination: SYN_MT_Return
+    inbound_staging: SLN_001
+  - core_node: ALN_002
+    style: WELD-1-RUN
+    role: produce
+    swap_mode: two_robot
+    payload: ASSY-X
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_FG
+    inbound_staging: SLN_002
+
+  # ── WELD-2 (single_robot): DISTINCT inbound + outbound staging per node ──
+  - core_node: ALN_003
+    style: WELD-2-RUN
+    role: consume
+    swap_mode: single_robot
+    payload: PANEL-RH
+    uop_capacity: 30
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SYN_SM_Stamp
+    outbound_destination: SYN_MT_Return
+    inbound_staging: SLN_003
+    outbound_staging: SLN_004
+  - core_node: ALN_004
+    style: WELD-2-RUN
+    role: consume
+    swap_mode: single_robot
+    payload: BRKT
+    uop_capacity: 20
+    reorder_point: 5
+    auto_reorder: true
+    inbound_source: SYN_SM_Comp
+    outbound_destination: SYN_MT_Return
+    inbound_staging: SLN_005
+    outbound_staging: SLN_006
+  - core_node: ALN_005
+    style: WELD-2-RUN
+    role: produce
+    swap_mode: single_robot
+    payload: ASSY-Y
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_FG
+    inbound_staging: SLN_007
+    outbound_staging: SLN_008
+
+  # ── WELD-3 (two_robot consume + A/B produce) ──
+  - core_node: ALN_006
+    style: WELD-3-RUN
+    role: consume
+    swap_mode: two_robot
+    payload: PANEL-LH
+    uop_capacity: 30
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SYN_SM_Stamp
+    outbound_destination: SYN_MT_Return
+    inbound_staging: SLN_009
+  - core_node: ALN_007
+    style: WELD-3-RUN
+    role: produce
+    swap_mode: sequential
+    payload: ASSY-X
+    uop_capacity: 20
+    auto_reorder: true
+    paired_core_node: ALN_008
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_FG
+  - core_node: ALN_008
+    style: WELD-3-RUN
+    role: produce
+    swap_mode: sequential
+    payload: ASSY-X
+    uop_capacity: 20
+    auto_reorder: true
+    paired_core_node: ALN_007
+    active_pull: false
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_FG
+
+  # ── LOADER-COMP (manual_swap) ──
+  - core_node: PLK_001
+    style: LOADER-COMP-RUN
+    role: produce
+    swap_mode: manual_swap
+    payload: BRKT
+    uop_capacity: 20
+    reorder_point: 2
+    auto_reorder: true
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_Comp
+
+  # ── UNLOADER-A (manual_swap: pull full ASSY-X, return empty) ──
+  - core_node: FGN_001
+    style: UNLOADER-A-RUN
+    role: consume
+    swap_mode: manual_swap
+    payload: ASSY-X
+    uop_capacity: 20
+    reorder_point: 0
+    auto_reorder: false
+    inbound_source: SYN_SM_FG
+    outbound_destination: SYN_MT_Return
+    auto_push: true
+
+  # ── UNLOADER-B (manual_swap: pull full ASSY-Y, return empty) ──
+  - core_node: FGN_002
+    style: UNLOADER-B-RUN
+    role: consume
+    swap_mode: manual_swap
+    payload: ASSY-Y
+    uop_capacity: 20
+    reorder_point: 0
+    auto_reorder: false
+    inbound_source: SYN_SM_FG
+    outbound_destination: SYN_MT_Return
+    auto_push: true
+
+# Demand registry. LOADER-COMP C-push on BRKT; unloaders informational.
+demands:
+  - {payload: BRKT, node: PLK_001, replenish_uop_threshold: 10}
+  - {payload: ASSY-X, node: FGN_001, replenish_uop_threshold: 0}
+  - {payload: ASSY-Y, node: FGN_002, replenish_uop_threshold: 0}
+
+# Reporting points: one PLC counter per counting process (manual_swap excluded).
+# plc_name/tag_name MUST match sim.processes in shingoedge.dev.yaml. The tick fans
+# to all nodes of the active (process, style); for A/B it follows active_pull.
+reporting_points:
+  - {plc_name: PRESS-1, tag_name: PRESS-1_COUNTER, node: PLN_001, style: PRESS-1-RUN}
+  - {plc_name: PRESS-2, tag_name: PRESS-2_COUNTER, node: PLN_003, style: PRESS-2-RUN}
+  - {plc_name: WELD-1, tag_name: WELD-1_COUNTER, node: ALN_001, style: WELD-1-RUN}
+  - {plc_name: WELD-2, tag_name: WELD-2_COUNTER, node: ALN_003, style: WELD-2-RUN}
+  - {plc_name: WELD-3, tag_name: WELD-3_COUNTER, node: ALN_006, style: WELD-3-RUN}
+
+cell_configs:
+  - {process: PRESS-1, station: PRESS-1-OPS}
+  - {process: PRESS-2, station: PRESS-2-OPS}
+  - {process: WELD-1, station: WELD-1-OPS}
+  - {process: WELD-2, station: WELD-2-OPS}
+  - {process: WELD-3, station: WELD-3-OPS}
+  - {process: LOADER-COMP, station: LOADER-COMP-OPS}
+  - {process: UNLOADER-A, station: UNLOADER-A-OPS}
+  - {process: UNLOADER-B, station: UNLOADER-B-OPS}

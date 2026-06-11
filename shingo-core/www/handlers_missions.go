@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"shingo/shared/clock"
 	"shingocore/domain"
 )
 
@@ -172,11 +173,40 @@ func (h *Handlers) apiMissionFailures(w http.ResponseWriter, r *http.Request) {
 // apiMissionsActive returns the live count of non-terminal orders — the
 // hero "in flight" KPI (plan §3.A / §15.A). Cheap count; the page also
 // refreshes it on SSE order-update.
+// apiMissionsActive returns the in-flight order count for the Overview tile
+// (item 10). station_id/robot_id make it respect the global filter; without
+// them it stays on the fast unfiltered count. The active set is small
+// (currently-executing orders), so listing + filtering in-process is cheap —
+// no bespoke filtered-count query needed.
 func (h *Handlers) apiMissionsActive(w http.ResponseWriter, r *http.Request) {
-	n, err := h.engine.OrderService().CountActiveOrders()
+	station := r.URL.Query().Get("station_id")
+	robot := r.URL.Query().Get("robot_id")
+
+	if station == "" && robot == "" {
+		n, err := h.engine.OrderService().CountActiveOrders()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]int{"count": n})
+		return
+	}
+
+	active, err := h.engine.OrderService().ListActiveOrders()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	n := 0
+	for _, o := range active {
+		if station != "" && o.StationID != station {
+			continue
+		}
+		if robot != "" && o.RobotID != robot {
+			continue
+		}
+		n++
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int{"count": n})
@@ -203,11 +233,11 @@ func (h *Handlers) apiMissionsAlerts(w http.ResponseWriter, r *http.Request) {
 	// Stuck threshold = 2× the recent (7-day) P95 mission duration, with a
 	// 30-minute fallback before any window has data (cold start, §8 #19).
 	thresholdMS := int64(30 * 60 * 1000)
-	since := time.Now().AddDate(0, 0, -7)
+	since := clock.Now().AddDate(0, 0, -7)
 	if st, err := h.engine.MissionService().StatsV2(domain.TelemetryFilter{Since: &since}); err == nil && st.P95DurationMS > 0 {
 		thresholdMS = 2 * st.P95DurationMS
 	}
-	cutoff := time.Now().Add(-time.Duration(thresholdMS) * time.Millisecond)
+	cutoff := clock.Now().Add(-time.Duration(thresholdMS) * time.Millisecond)
 
 	var stuck int
 	stuckItems := make([]map[string]any, 0, 10)

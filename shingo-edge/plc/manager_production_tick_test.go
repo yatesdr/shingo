@@ -29,7 +29,7 @@ func TestProductionTick_PreservesPerTickAcrossBinSwapGap(t *testing.T) {
 	db := testdb.Open(t)
 	cfg := config.Defaults()
 	cfg.Messaging.StationID = "STN-TEST"
-	mgr := NewManager(db, cfg, &mockEmitter{})
+	mgr := NewManager(db, cfg, &mockEmitter{}, nil)
 
 	rp := counters.ReportingPoint{
 		ID: 1, PLCName: "logix", TagName: "Cell_A_Count",

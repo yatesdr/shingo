@@ -39,6 +39,12 @@ func TestClassifyTermination(t *testing.T) {
 		{"cancelled", "cancelled by admin", OutcomeCancelled},
 		{"STOPPED", "", OutcomeCancelled},
 		{"canceled", "some unrecognised reason", OutcomeCancelled},
+		// "aborted by" is an operator cancel (Q-030) — previously only the default.
+		{"STOPPED", "aborted by operator", OutcomeCancelled},
+		// Attribution wins over a failure-ish word in the same detail.
+		{"cancelled", "aborted by operator (timeout while staging)", OutcomeCancelled},
+		// "fleet order stopped" (RDS-origin) stays a cancel — no failure pattern.
+		{"STOPPED", "fleet order stopped", OutcomeCancelled},
 
 		// Anything else.
 		{"weird-state", "", OutcomeOther},
@@ -47,6 +53,60 @@ func TestClassifyTermination(t *testing.T) {
 	for _, c := range cases {
 		if got := ClassifyTermination(c.state, c.detail); got != c.want {
 			t.Errorf("ClassifyTermination(%q, %q) = %q, want %q", c.state, c.detail, got, c.want)
+		}
+	}
+}
+
+// TestSystemStopReason pins the Q-013 Pareto fold-in: when a system-initiated
+// stop carries no robot_alarms/blocks/errors signal, GetFailures derives the
+// reason from the terminal detail. Categories mirror ClassifyTermination's
+// failure keywords; "grace" wins over "timeout" when both appear; an
+// unrecognised detail returns "" so the caller keeps the generic Other bucket.
+func TestSystemStopReason(t *testing.T) {
+	cases := []struct {
+		detail string
+		want   string
+	}{
+		{"grace period expired", "Grace timeout"},
+		{"abandoned: stuck queued past TTL", "Abandoned"},
+		{"structural: no path to source", "Structural fault"},
+		{"heartbeat timeout — marked stale", "Timeout"},
+		{"GRACE", "Grace timeout"}, // case-insensitive
+		// "grace" wins when both grace and timeout are present.
+		{"grace timeout while staging", "Grace timeout"},
+		// Operator cancels / unrecognised details name no category → "" (the
+		// caller leaves them in Other; these never reach here as failures anyway).
+		{"cancelled by operator jdoe", ""},
+		{"fleet order stopped", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := SystemStopReason(c.detail); got != c.want {
+			t.Errorf("SystemStopReason(%q) = %q, want %q", c.detail, got, c.want)
+		}
+	}
+}
+
+// TestClassifyCancelOrigin pins the Q-030 cancel-origin split: shingo-origin
+// (actor-attributed cancel/abort), RDS-origin ("fleet order stopped"), and the
+// unclassified fallback that keeps unknown detail strings visible.
+func TestClassifyCancelOrigin(t *testing.T) {
+	cases := []struct {
+		detail string
+		want   string
+	}{
+		{"cancelled by admin", CancelOriginShingo},
+		{"canceled by jdoe", CancelOriginShingo},
+		{"aborted by operator", CancelOriginShingo},
+		{"Cancelled By Operator", CancelOriginShingo}, // case-insensitive
+		{"fleet order stopped", CancelOriginRDS},
+		{"FLEET ORDER STOPPED", CancelOriginRDS},
+		{"", CancelOriginUnclassified},
+		{"some reason we've never seen", CancelOriginUnclassified},
+	}
+	for _, c := range cases {
+		if got := ClassifyCancelOrigin(c.detail); got != c.want {
+			t.Errorf("ClassifyCancelOrigin(%q) = %q, want %q", c.detail, got, c.want)
 		}
 	}
 }

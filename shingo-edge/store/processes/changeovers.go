@@ -21,8 +21,8 @@ package processes
 
 import (
 	"database/sql"
-	"time"
 
+	"shingo/shared/clock"
 	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
@@ -120,14 +120,15 @@ func UpdateChangeoverState(db *sql.DB, id int64, state domain.ChangeoverState) e
 func UpdateChangeoverStateWithTrigger(db *sql.DB, id int64, state domain.ChangeoverState, triggeredBy string) error {
 	completedAt := sql.NullString{}
 	if state.IsTerminal() {
-		completedAt = sql.NullString{Valid: true, String: time.Now().UTC().Format(helpers.TimeLayout)}
+		completedAt = sql.NullString{Valid: true, String: clock.Now().UTC().Format(helpers.TimeLayout)}
 	}
+	now := clock.Now().UTC().Format(helpers.TimeLayout)
 	_, err := db.Exec(`UPDATE process_changeovers SET state=?,
 		completed_at=CASE WHEN ? != '' THEN ? ELSE completed_at END,
 		triggered_by=CASE WHEN ? != '' THEN ? ELSE triggered_by END,
-		updated_at=datetime('now') WHERE id=?`,
+		updated_at=? WHERE id=?`,
 		state, completedAt.String, completedAt.String,
-		triggeredBy, triggeredBy, id)
+		triggeredBy, triggeredBy, now, id)
 	return err
 }
 
@@ -162,8 +163,8 @@ func ListChangeoverStationTasks(db *sql.DB, changeoverID int64) ([]StationTask, 
 
 // UpdateChangeoverStationTaskState writes the state on a station task.
 func UpdateChangeoverStationTaskState(db *sql.DB, id int64, state domain.StationTaskState) error {
-	_, err := db.Exec(`UPDATE changeover_station_tasks SET state=?, updated_at=datetime('now') WHERE id=?`,
-		state, id)
+	_, err := db.Exec(`UPDATE changeover_station_tasks SET state=?, updated_at=? WHERE id=?`,
+		state, clock.Now().UTC().Format(helpers.TimeLayout), id)
 	return err
 }
 
@@ -327,7 +328,7 @@ func GetChangeoverNodeTaskByEvacOrderID(db *sql.DB, orderID int64) (*NodeTask, e
 
 // UpdateChangeoverNodeTaskState writes the state on a node task.
 func UpdateChangeoverNodeTaskState(db *sql.DB, id int64, state domain.NodeTaskState) error {
-	_, err := db.Exec(`UPDATE changeover_node_tasks SET state=?, updated_at=datetime('now') WHERE id=?`, state, id)
+	_, err := db.Exec(`UPDATE changeover_node_tasks SET state=?, updated_at=? WHERE id=?`, state, clock.Now().UTC().Format(helpers.TimeLayout), id)
 	return err
 }
 
@@ -335,7 +336,7 @@ func UpdateChangeoverNodeTaskState(db *sql.DB, id int64, state domain.NodeTaskSt
 // a node task. Pass the empty string to clear it (e.g. when the next
 // state-advancing operator action makes the chip stale).
 func SetChangeoverNodeTaskSkipNote(db *sql.DB, id int64, note string) error {
-	_, err := db.Exec(`UPDATE changeover_node_tasks SET skip_note=?, updated_at=datetime('now') WHERE id=?`, note, id)
+	_, err := db.Exec(`UPDATE changeover_node_tasks SET skip_note=?, updated_at=? WHERE id=?`, note, clock.Now().UTC().Format(helpers.TimeLayout), id)
 	return err
 }
 
@@ -344,7 +345,7 @@ func SetChangeoverNodeTaskSkipNote(db *sql.DB, id int64, note string) error {
 // passed.
 func LinkChangeoverNodeOrders(db *sql.DB, id int64, nextOrderID, oldOrderID *int64) error {
 	_, err := db.Exec(`UPDATE changeover_node_tasks SET next_material_order_id=COALESCE(?, next_material_order_id),
-		old_material_release_order_id=COALESCE(?, old_material_release_order_id), updated_at=datetime('now')
-		WHERE id=?`, nextOrderID, oldOrderID, id)
+		old_material_release_order_id=COALESCE(?, old_material_release_order_id), updated_at=?
+		WHERE id=?`, nextOrderID, oldOrderID, clock.Now().UTC().Format(helpers.TimeLayout), id)
 	return err
 }

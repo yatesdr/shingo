@@ -1,0 +1,61 @@
+# shingocore.dev.yaml — LOCAL DEV / SIMULATION ONLY. NOT FOR PRODUCTION.
+# Loaded by a shingocore built with -tags sim; the binary refuses to start
+# unless SHINGO_ALLOW_SIM=1 (T0.3). Hosts are docker-compose service names;
+# loopback enforcement lives in docker-compose.dev.yml port mappings (T0.4).
+database:
+  postgres:
+    host: postgres
+    port: 5432
+    database: shingocore
+    user: shingocore
+    password: shingocore
+    sslmode: disable
+
+web:
+  host: 0.0.0.0                      # bind inside container; compose maps to 127.0.0.1
+  port: 8083
+  session_secret: dev-only-not-a-real-secret
+
+messaging:
+  kafka:
+    brokers:
+      - kafka:9092
+    group_id: shingocore
+  orders_topic: shingo.orders
+  dispatch_topic: shingo.dispatch
+  outbox_drain_interval: 5s
+  station_id: core
+
+# rds / count_groups / fire_alarm intentionally omitted — sim mode skips the RDS
+# adapter and the count-group runner (T1.1). Defaults apply for anything else.
+
+# Staging / reconciliation cadence. The sim has no human operator to confirm a
+# produce/consume delivery, so `delivered` orders rely on the reconciliation
+# sweep to auto-confirm them (delivered→confirmed = terminal). The PRODUCTION
+# defaults (sweep_interval 5m, auto_confirm_delivered 5m) leave a produce relief's
+# resupply leg (AutoConfirmA=false) sitting `delivered` — hence non-terminal — for
+# up to 5 wall-minutes; meanwhile CanAcceptOrders reports "active order in progress"
+# and blocks the next relief, so the output bin overfills past capacity and the
+# cell stalls (the sim-plant-design.md §5 contract). Drive both short here so a
+# delivery confirms within ~2s and the swap loop self-clears headlessly. Loaders/
+# unloaders carry skip_auto_confirm and stay sim-operator-driven (CLEAR), so a
+# short auto_confirm does not race them. AbandonStuck stays at its 1h default.
+staging:
+  sweep_interval: 2s            # wall-clock ticker for the reconciliation + staged-bin sweeps
+  auto_confirm_delivered: 2s    # sim-clock age after which a stuck `delivered` order is confirmed
+
+sim:
+  enabled: true
+  seed: 1                           # fixed for reproducible dev runs (0 = derive+log)
+  speed: 10.0                       # time multiplier (running clock): 10× wall. Change live in the dev top-strip / POST /api/sim/speed. Set sim.epoch for fast-forward.
+  # epoch: 2026-05-11T00:00:00Z     # FAST-FORWARD HISTORY: uncomment (set ~30d ago) + raise speed.
+                                    # The clock starts in the past and catches up to wall-now, then runs 1× live —
+                                    # generating ~a month of real dashboard history in a few hours.
+  # anchor_wall: 2026-06-10T00:00:00Z  # SHARED wall anchor — set to the RUN-START wall time, IDENTICAL in core+edge.
+                                    # Keeps the two fast-forward clocks in lockstep (sim-now = epoch + speed×(now−anchor));
+                                    # without it core/edge drift by boot-skew × speed and cross-process messages expire,
+                                    # stalling the swap loop. Both epoch AND anchor_wall MUST match edge. Rebuild after
+                                    # editing (configs are baked into the image): docker compose build core edge.
+  transit_time: 5s
+  jitter_pct: 0.2
+  fail_rate: 0.0

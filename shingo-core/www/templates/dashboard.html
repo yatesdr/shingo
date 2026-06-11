@@ -1,6 +1,19 @@
 {{define "content"}}
 <div data-sse="dashboard">
-  <h1 class="mb-2">Dashboard</h1>
+  <div class="flex flex-between mb-2">
+    <h1>Dashboard</h1>
+    {{if .Authenticated}}<button class="btn btn-sm" id="resync-edges" title="Ask every edge to re-send its registration + cell catalog (over Kafka)">&#x21bb; Re-sync edges</button>{{end}}
+  </div>
+
+  <!-- Dashboard hub (refactor #3): see + make + open any dashboard here, in-core.
+       Replaces the standalone /dashboards Manage table. -->
+  <section class="card mb-2" id="dash-hub">
+    <div class="section-head">
+      <h2>Dashboards</h2>
+      {{if .Authenticated}}<button class="btn btn-sm btn-primary" id="dash-new">+ New dashboard</button>{{end}}
+    </div>
+    <div class="dash-card-grid" id="dash-cards"><div class="dash-empty">Loading dashboards&hellip;</div></div>
+  </section>
 
   <div class="grid grid-6 mb-1">
     <div class="card stat" data-tip="Orders currently being processed — includes pending, dispatched, in-transit, and awaiting confirmation.">
@@ -91,4 +104,5 @@
   </div>
   {{end}}
 </div>
+<script type="module" src="/static/pages/dashboard-landing.js?v={{cacheBust}}"></script>
 {{end}}

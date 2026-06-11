@@ -19,8 +19,11 @@ package simulator
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 	"shingocore/fleet"
 )
 
@@ -32,6 +35,10 @@ type simulatedOrder struct {
 	priority      int
 	complete      bool // false for staged orders until ReleaseOrder
 	blocks        []simulatedBlock
+	// terminalAt is when the order first entered a terminal state
+	// (FINISHED/STOPPED/FAILED); zero until then. The driver's eviction
+	// sweep (T2.3) deletes terminal orders older than a retention window.
+	terminalAt time.Time
 }
 
 type simulatedBlock struct {
@@ -48,7 +55,9 @@ type SimulatorBackend struct {
 	mu       sync.RWMutex
 	orders   map[string]*simulatedOrder // vendorOrderID → order
 	orderSeq []string                   // creation order
+	seq      atomic.Int64               // monotonic order-ID source (F1: IDs are never reused, so eviction is safe)
 	opts     Options
+	clk      clock.Clock           // stamps terminalAt + (via driver) times transitions
 	emitter  fleet.TrackerEmitter  // set by InitTracker
 	resolver fleet.OrderIDResolver // set by InitTracker
 }
@@ -57,11 +66,61 @@ type SimulatorBackend struct {
 func New(opts ...Option) *SimulatorBackend {
 	s := &SimulatorBackend{
 		orders: make(map[string]*simulatedOrder),
+		clk:    clock.Real(),
 	}
 	for _, o := range opts {
 		o(&s.opts)
 	}
+	if s.opts.clk != nil {
+		s.clk = s.opts.clk
+	}
 	return s
+}
+
+// isEvictableTerminal reports whether a vendor state is terminal for eviction
+// purposes. Note this intentionally includes FAILED, unlike the public
+// IsTerminalState (which the dispatch state machine keys on and which omits
+// FAILED) — a failed sim order is just as dead and should be reaped.
+func isEvictableTerminal(vendorState string) bool {
+	switch vendorState {
+	case "FINISHED", "STOPPED", "FAILED":
+		return true
+	}
+	return false
+}
+
+// stampTerminalLocked records when an order first becomes terminal. Caller must
+// hold s.mu. Idempotent — only the first terminal transition is stamped.
+func (s *SimulatorBackend) stampTerminalLocked(o *simulatedOrder, newState string) {
+	if isEvictableTerminal(newState) && o.terminalAt.IsZero() {
+		o.terminalAt = s.clk.Now()
+	}
+}
+
+// EvictTerminalBefore removes every order that entered a terminal state before
+// the cutoff and returns the count removed. Called by the driver's tick (T2.3)
+// so the in-memory order map doesn't grow without bound during long soaks.
+// Safe only because IDs come from the monotonic counter (F1): a deleted ID can
+// never be re-minted, so a future order can't collide with an evicted one.
+func (s *SimulatorBackend) EvictTerminalBefore(cutoff time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.orderSeq[:0:0] // new backing array; don't alias the old slice
+	evicted := 0
+	for _, id := range s.orderSeq {
+		o, ok := s.orders[id]
+		if !ok {
+			continue
+		}
+		if !o.terminalAt.IsZero() && o.terminalAt.Before(cutoff) {
+			delete(s.orders, id)
+			evicted++
+			continue
+		}
+		kept = append(kept, id)
+	}
+	s.orderSeq = kept
+	return evicted
 }
 
 // --- fleet.Backend implementation ---
@@ -78,7 +137,7 @@ func (s *SimulatorBackend) CreateTransportOrder(req fleet.TransportOrderRequest)
 
 	vendorID := req.OrderID
 	if vendorID == "" {
-		vendorID = fmt.Sprintf("sim-%d", len(s.orders)+1)
+		vendorID = fmt.Sprintf("sim-%d", s.seq.Add(1))
 	}
 
 	order := &simulatedOrder{
@@ -109,7 +168,7 @@ func (s *SimulatorBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (flee
 
 	vendorID := req.OrderID
 	if vendorID == "" {
-		vendorID = fmt.Sprintf("sim-%d", len(s.orders)+1)
+		vendorID = fmt.Sprintf("sim-%d", s.seq.Add(1))
 	}
 
 	order := &simulatedOrder{
@@ -162,6 +221,7 @@ func (s *SimulatorBackend) CancelOrder(vendorOrderID string) error {
 		return fmt.Errorf("simulator: order %s not found", vendorOrderID)
 	}
 	order.state = "STOPPED"
+	s.stampTerminalLocked(order, "STOPPED")
 	return nil
 }
 

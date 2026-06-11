@@ -63,6 +63,52 @@ func (s *DashboardService) Delete(id int64) error {
 	return dashboards.Delete(s.db.DB, id)
 }
 
+// HeartbeatKind is the board renderer for the production-heartbeat kiosk.
+const HeartbeatKind = "heartbeat"
+
+// defaultDashboardSeeds is the one-full-plant-board-per-type set seeded out of
+// the box (refactor #5). Each is whole-plant (empty station scope); the plant
+// heartbeat shows every auto-derived catalog cell, the flight board / robot map
+// the whole fleet. Operators drill down from these to make scoped "mini" boards.
+var defaultDashboardSeeds = []struct{ kind, name string }{
+	{HeartbeatKind, "Plant Heartbeat"},
+	{"task-board", "Plant Flight Board"},
+	{"robot-map", "Plant Robot Map"},
+}
+
+// SeedDefaultDashboards creates one full-plant dashboard per known type for any
+// type that has no dashboard yet (refactor #5), so the hub and the floor kiosk
+// are useful out of the box. Idempotent and per-kind: a type that already has
+// any board (seeded or operator-created) is skipped, so it never clobbers
+// curation and is safe on every startup. Returns the number created.
+func (s *DashboardService) SeedDefaultDashboards() (int, error) {
+	boards, err := dashboards.List(s.db.DB)
+	if err != nil {
+		return 0, err
+	}
+	haveKind := make(map[string]bool, len(boards))
+	for _, d := range boards {
+		haveKind[d.Kind] = true
+	}
+	seeded := 0
+	for i, seed := range defaultDashboardSeeds {
+		if haveKind[seed.kind] {
+			continue
+		}
+		if _, err := s.Create(dashboards.Input{
+			Name:      seed.name,
+			Kind:      seed.kind,
+			Stations:  nil, // whole plant
+			Enabled:   true,
+			SortOrder: i,
+		}); err != nil {
+			return seeded, err
+		}
+		seeded++
+	}
+	return seeded, nil
+}
+
 // normalizeDashboard trims and defaults the input. Name is required; kind
 // defaults to DefaultKind. Station entries are trimmed, de-duplicated, and
 // empties dropped so the stored area filter is clean.

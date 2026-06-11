@@ -35,9 +35,22 @@ const cellIndex = new Map();  // cell_id -> stable index (rhythm color)
 let cellList = [];
 const cellStateTimers = {};
 
+// When rendered as a saved heartbeat board (/dashboard/<id>) the body carries
+// data-dashboard-id; read that board's resolved cells (station scope + the
+// board's own cell overrides applied server-side, refactor #4). The bare
+// /heartbeat kiosk has no id → the global cell list, plant-wide. data-stations
+// is the legacy client-side scope, kept as a fallback for the bare kiosk.
+const SCOPE_STATIONS = (document.body.dataset.stations || '').split(',').map((s) => s.trim()).filter(Boolean);
+const DASH_ID = (document.body.dataset.dashboardId || '').trim();
+
 function loadCells() {
-    fetch('/api/cells').then((r) => r.json()).then((list) => {
-        cellList = list || [];
+    const url = DASH_ID ? '/api/dashboards/' + encodeURIComponent(DASH_ID) + '/cells' : '/api/cells';
+    fetch(url).then((r) => r.json()).then((list) => {
+        // Board endpoint already scoped + applied overrides; the bare kiosk still
+        // honors any data-stations client scope.
+        cellList = DASH_ID
+            ? (list || [])
+            : (list || []).filter((c) => !SCOPE_STATIONS.length || SCOPE_STATIONS.includes(c.station));
         const grid = document.getElementById('hb-grid');
         const empty = document.getElementById('hb-empty');
         if (!grid) return;
@@ -45,7 +58,10 @@ function loadCells() {
         cellTiles.clear();
         cellIndex.clear();
         if (!cellList.length) {
-            grid.appendChild(el('div', 'hb-empty', 'No cells configured. Set them up at /admin/cells.'));
+            // P4.4: a freshly-seeded board has no cells yet — render guidance,
+            // not a dead end. (SCOPE_STATIONS may also be empty here, which is
+            // fine: an unscoped board shows every cell once any exist.)
+            grid.appendChild(el('div', 'hb-empty', '0 cells configured. Set up cells at /admin/cells, then scope this board in Manage.'));
             return;
         }
         cellList.forEach((c, i) => {
@@ -71,7 +87,11 @@ function refreshCellState(cellID) {
 // fires so the strip isn't blank on first paint (live cell-heartbeat events
 // stream in on top). Only fires within the strip window end up drawn.
 function seedRhythm(cellID, cellIdx) {
-    const since = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    // serverNow(), not Date.now(): the stored fires are stamped in server (sim)
+    // time, which under fast-forward runs days behind wall — a wall-now window
+    // would back-date past all of them and seed nothing. syncClock has already
+    // run from the SSE 'connected' ts before loadCells() reaches here.
+    const since = new Date(serverNow() - 2 * 60 * 1000).toISOString();
     fetch('/api/cells/' + encodeURIComponent(cellID) + '/heartbeat?since=' + encodeURIComponent(since))
         .then((r) => r.json())
         .then((data) => {

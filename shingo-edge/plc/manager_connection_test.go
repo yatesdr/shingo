@@ -48,7 +48,7 @@ func TestWarlinkPollTreatsConnectionLevelTagErrorsAsDisconnected(t *testing.T) {
 	t.Parallel()
 	cfg := config.Defaults()
 	emitter := &mockEmitter{}
-	mgr := NewManager(nil, cfg, emitter)
+	mgr := NewManager(nil, cfg, emitter, nil)
 	mgr.wl = &mockWarlinkClient{
 		plcs: []WarlinkPLC{{Name: "logix_L7", Status: "Connected"}},
 		tags: map[string]map[string]WarlinkTag{

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"shingo/shared/clock"
 )
 
 // Address identifies a message source or destination.
@@ -43,8 +44,12 @@ func NewEnvelope(msgType string, src, dst Address, payload any) (*Envelope, erro
 		return nil, err
 	}
 
-	now := time.Now().UTC()
-	exp := now.Add(DefaultTTLFor(msgType))
+	now := clock.Now().UTC()
+	// Scale the TTL into the stamping clock domain so the expiry window is a
+	// constant REAL-time budget even under fast-forward (clock.ScaleTTL is a
+	// no-op in production / at 1×). Without this, lifecycle messages expire in
+	// the pipeline at high speed and strand orders. See clock.ScaleTTL.
+	exp := now.Add(clock.ScaleTTL(DefaultTTLFor(msgType)))
 
 	return &Envelope{
 		Version:   Version,
@@ -80,8 +85,12 @@ func NewDataEnvelope(subject string, src, dst Address, body any) (*Envelope, err
 		return nil, err
 	}
 
-	now := time.Now().UTC()
-	exp := now.Add(DataTTLFor(subject))
+	now := clock.Now().UTC()
+	// Scale into the stamping clock domain (no-op in production / at 1×) so the
+	// expiry window is a constant real-time budget under fast-forward — see
+	// clock.ScaleTTL. Telemetry deltas (bin_uop_delta) that expire are lost
+	// production counts, so data envelopes get the same treatment.
+	exp := now.Add(clock.ScaleTTL(DataTTLFor(subject)))
 
 	return &Envelope{
 		Version:   Version,

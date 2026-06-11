@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"shingo/protocol/eventbus"
+	"shingo/shared/clock"
 	"shingocore/dispatch/eta"
 	"shingocore/engine"
 )
@@ -139,19 +141,27 @@ func sseJSON(v any) string {
 }
 
 // SetupEngineListeners wires engine events to SSE broadcasts.
+//
+// Payload-carrying handlers use eventbus.SubscribeTyped, which binds the
+// concrete event struct at the call site: the compiler checks the closure
+// against that payload type, and a mis-emitted payload is skipped with a
+// logged warning instead of the panic the bare evt.Payload.(T) assertion
+// used to raise. The six fleet/messaging/database system-status handlers
+// stay on plain SubscribeTypes — they broadcast a constant and never read a
+// payload, so there is no type to bind.
 func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.OrderReceivedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderReceivedEvent]) {
+		ev := evt.Payload
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "received", "order_id": ev.OrderID}))
 	}, engine.EventOrderReceived)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.OrderDispatchedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderDispatchedEvent]) {
+		ev := evt.Payload
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "dispatched", "order_id": ev.OrderID, "vendor_order_id": ev.VendorOrderID}))
 	}, engine.EventOrderDispatched)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.OrderStatusChangedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderStatusChangedEvent]) {
+		ev := evt.Payload
 		payload := map[string]any{"type": "status_changed", "order_id": ev.OrderID, "new_status": ev.NewStatus}
 		h.Broadcast("order-update", sseJSON(payload))
 		if ev.NewStatus == "in_transit" {
@@ -166,8 +176,8 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 	}, engine.EventOrderStatusChanged)
 
 	// Mission telemetry live updates (separate event name from order-update)
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.OrderStatusChangedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderStatusChangedEvent]) {
+		ev := evt.Payload
 		data := map[string]any{
 			"order_id":        ev.OrderID,
 			"vendor_order_id": ev.VendorOrderID,
@@ -194,43 +204,43 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		h.Broadcast("mission-event", sseJSON(data))
 	}, engine.EventOrderStatusChanged)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.OrderCompletedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderCompletedEvent]) {
+		ev := evt.Payload
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "completed", "order_id": ev.OrderID}))
 	}, engine.EventOrderCompleted)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.OrderFailedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderFailedEvent]) {
+		ev := evt.Payload
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "failed", "order_id": ev.OrderID, "detail": ev.Detail}))
 	}, engine.EventOrderFailed)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.OrderCancelledEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderCancelledEvent]) {
+		ev := evt.Payload
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "cancelled", "order_id": ev.OrderID, "reason": ev.Reason}))
 	}, engine.EventOrderCancelled)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.OrderSkippedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderSkippedEvent]) {
+		ev := evt.Payload
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "skipped", "order_id": ev.OrderID, "detail": ev.Detail}))
 	}, engine.EventOrderSkipped)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.OrderQueuedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderQueuedEvent]) {
+		ev := evt.Payload
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "queued", "order_id": ev.OrderID, "payload_code": ev.PayloadCode}))
 	}, engine.EventOrderQueued)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.BinUpdatedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.BinUpdatedEvent]) {
+		ev := evt.Payload
 		h.Broadcast("bin-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": ev.Action, "bin_id": ev.BinID, "actor": ev.Actor, "detail": ev.Detail}))
 	}, engine.EventBinUpdated)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.CorrectionAppliedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.CorrectionAppliedEvent]) {
+		ev := evt.Payload
 		h.Broadcast("inventory-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": "correction", "type": ev.CorrectionType}))
 	}, engine.EventCorrectionApplied)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.NodeUpdatedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.NodeUpdatedEvent]) {
+		ev := evt.Payload
 		h.Broadcast("node-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": ev.Action}))
 	}, engine.EventNodeUpdated)
 
@@ -258,13 +268,13 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		h.Broadcast("system-status", `{"database":"disconnected"}`)
 	}, engine.EventDBDisconnected)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.CMSTransactionEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.CMSTransactionEvent]) {
+		ev := evt.Payload
 		h.Broadcast("cms-transaction", sseJSON(ev.Transactions))
 	}, engine.EventCMSTransaction)
 
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.RobotsUpdatedEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.RobotsUpdatedEvent]) {
+		ev := evt.Payload
 		type robotJSON struct {
 			VehicleID      string  `json:"vehicle_id"`
 			State          string  `json:"state"`
@@ -315,14 +325,19 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 	// section and the /heartbeat kiosk. station + process_id let the client
 	// match the tick to a cell_config row; ts is server time so a long-running
 	// kiosk renders "X ago" without clock drift.
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.CellTickEvent)
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.CellTickEvent]) {
+		ev := evt.Payload
 		h.Broadcast("cell-heartbeat", sseJSON(map[string]any{
 			"station":     ev.Station,
 			"process_id":  ev.ProcessID,
 			"style_id":    ev.StyleID,
 			"recorded_at": ev.RecordedAt.UTC().Format(time.RFC3339Nano),
-			"ts":          time.Now().UTC().Format(time.RFC3339Nano),
+			// ts is the SIM clock, not wall — the kiosk syncs serverNow() to it and
+			// windows fires by recorded_at (also sim-stamped). Under fast-forward the
+			// sim clock runs days behind wall; a wall ts would put serverNow() ahead of
+			// every back-dated fire, so the 60s strip window would always read empty
+			// ("No data"). clock.Now() == time.Now() in production, so live is unchanged.
+			"ts": clock.Now().UTC().Format(time.RFC3339Nano),
 		}))
 	}, engine.EventCellTick)
 }
@@ -351,10 +366,11 @@ func (h *EventHub) SSEHandler(w http.ResponseWriter, r *http.Request) {
 	defer h.RemoveClient(ch)
 
 	// Send connected event with the per-process build id so reconnects
-	// after a core restart trigger a hard-reload on the client. ts is server
-	// time — the /heartbeat kiosk (§13) syncs its clock offset from it so
-	// "X ago" timers don't drift over a 72h soak.
-	if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\",\"ts\":\"%s\"}\n\n", serverInstance, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+	// after a core restart trigger a hard-reload on the client. ts is the SIM
+	// clock — the /heartbeat kiosk (§13) syncs its clock offset from it so its
+	// 60s strip window aligns with the (sim-stamped) fires under fast-forward,
+	// and "X ago" timers don't drift over a 72h soak. clock.Now()==time.Now() in prod.
+	if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\",\"ts\":\"%s\"}\n\n", serverInstance, clock.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return
 	}
 	flusher.Flush()
@@ -378,7 +394,7 @@ func (h *EventHub) SSEHandler(w http.ResponseWriter, r *http.Request) {
 			// The bare `: keepalive` comment was stripped by EventSource
 			// and never reached the JS client, so it could not carry the
 			// build id.
-			if _, err := fmt.Fprintf(w, "event: heartbeat\ndata: {\"build\":\"%s\",\"ts\":\"%s\"}\n\n", serverInstance, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			if _, err := fmt.Fprintf(w, "event: heartbeat\ndata: {\"build\":\"%s\",\"ts\":\"%s\"}\n\n", serverInstance, clock.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 				log.Printf("sse: keepalive write error: %v", err)
 				return
 			}

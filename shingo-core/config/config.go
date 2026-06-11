@@ -18,6 +18,7 @@ type Config struct {
 	Staging     StagingConfig     `yaml:"staging"`
 	CountGroups CountGroupsConfig `yaml:"count_groups"`
 	FireAlarm   FireAlarmConfig   `yaml:"fire_alarm"`
+	Sim         SimConfig         `yaml:"sim"`
 }
 
 // CountGroupsConfig configures the advanced-zone polling feature.
@@ -42,6 +43,37 @@ type CountGroupConfig struct {
 type FireAlarmConfig struct {
 	Enabled           bool `yaml:"enabled"`             // feature gate; false = hidden from UI
 	AutoResumeDefault bool `yaml:"auto_resume_default"` // default checkbox state for auto-resume on clear
+}
+
+// SimConfig configures the local-dev fleet simulator (core side). Sim code is
+// behind //go:build sim AND requires SHINGO_ALLOW_SIM=1 at runtime; this struct
+// only carries the knobs. See implementation-brief.md / docs/dev-env-api-gaps.md.
+type SimConfig struct {
+	Enabled     bool          `yaml:"enabled"`
+	Seed        int64         `yaml:"seed"`         // PRNG seed; 0 = derive from time and log it
+	Speed       float64       `yaml:"speed"`        // time multiplier: 2.0 = twice as fast. Default 1.0
+	MaxSpeed    float64       `yaml:"max_speed"`    // effective-speed cap; <=0 → default (15×). The integration sim can only process the real choreography so fast; past this the clock would outrun it and wedge, so requests are clamped here (honest readout shows asked-vs-running). Set very high to effectively uncap.
+	Epoch       time.Time     `yaml:"epoch"`        // sim clock start (fast-forward origin). Zero = wall-now
+	AnchorWall  time.Time     `yaml:"anchor_wall"`  // SHARED wall anchor for fast-forward sync: sim-now = epoch + speed×(wallNow−anchor). Set IDENTICALLY in core+edge to the run-start wall time so the two clocks stay in lockstep (no cross-process drift). Zero = per-process boot anchor (drifts — only safe single-process).
+	TransitTime time.Duration `yaml:"transit_time"` // base per-block transit; default 5s
+	JitterPct   float64       `yaml:"jitter_pct"`   // ± fraction applied to transit; default 0.2
+	FailRate    float64       `yaml:"fail_rate"`    // 0.0–1.0 per-transition fault probability; default 0
+
+	// Finite-fleet model (G16). Defaults preserve the legacy infinite-fleet
+	// behaviour (one synthetic robot per active order, flat transit), so a
+	// config that sets none of these runs exactly as before.
+	FleetSize  int           `yaml:"fleet_size"`  // 0 = infinite fleet (default); >0 = finite robot pool, orders queue for a free robot
+	TransitMin time.Duration `yaml:"transit_min"` // min per-move transit; 0 falls back to transit_time ± jitter
+	TransitMax time.Duration `yaml:"transit_max"` // max per-move transit (uniform draw with transit_min); must exceed transit_min to take effect
+}
+
+// Scaled divides a duration by the speed multiplier (G4). Zero or negative
+// speed is treated as 1.0 (no scaling).
+func (s SimConfig) Scaled(d time.Duration) time.Duration {
+	if s.Speed <= 0 {
+		return d
+	}
+	return time.Duration(float64(d) / s.Speed)
 }
 
 type StagingConfig struct {
@@ -155,6 +187,12 @@ func Defaults() *Config {
 			FailSafeTimeout:    5 * time.Second,
 			NeverOccupiedWarn:  5 * time.Minute,
 			NeverOccupiedError: 30 * time.Minute,
+		},
+		Sim: SimConfig{
+			// Enabled false by default; Seed 0 = derive+log. Sane sim timings so a
+			// dev YAML can flip enabled:true without specifying every knob.
+			TransitTime: 5 * time.Second,
+			JitterPct:   0.2,
 		},
 	}
 }

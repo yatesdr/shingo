@@ -14,12 +14,34 @@ type Data struct {
 
 // --- Edge lifecycle data schemas ---
 
+// CellProcessBinding is one reporting point inside a cell-catalog entry — the
+// (process, style, PLC tag) tuple an edge scores. Part of the Q-034 cell
+// catalog; additive only.
+type CellProcessBinding struct {
+	ProcessID int64  `json:"process_id"`
+	StyleID   int64  `json:"style_id"`
+	PLCName   string `json:"plc_name"`
+	TagName   string `json:"tag_name"`
+}
+
+// CellCatalogEntry groups an edge's reporting points by PLC into a "cell" Core
+// can offer in the cell picker (Q-034). CellLabel is the grouping PLCName.
+type CellCatalogEntry struct {
+	CellLabel string               `json:"cell_label"`
+	Processes []CellProcessBinding `json:"processes"`
+}
+
 // EdgeRegister is sent by an edge on startup.
+//
+// Catalog is an ADDITIVE Q-034 field (omitempty): an old core unmarshals and
+// ignores it, an old edge simply omits it — absent catalog means "no catalog",
+// not an error. No envelope/version bump (see version-skew-research.md).
 type EdgeRegister struct {
-	StationID string   `json:"station_id"`
-	Hostname  string   `json:"hostname"`
-	Version   string   `json:"version"`
-	LineIDs   []string `json:"line_ids"`
+	StationID string             `json:"station_id"`
+	Hostname  string             `json:"hostname"`
+	Version   string             `json:"version"`
+	LineIDs   []string           `json:"line_ids"`
+	Catalog   []CellCatalogEntry `json:"catalog,omitempty"`
 }
 
 // EdgeHeartbeat is sent periodically by an edge.
@@ -698,6 +720,24 @@ type CounterSnapshot struct {
 	Delta            int64     `json:"delta"`              // count change (typically 1)
 	Anomaly          string    `json:"anomaly"`            // "" or "jump"
 	RecordedAt       time.Time `json:"recorded_at"`        // Edge wall-clock at insert, ms precision (NOT SQLite default)
+}
+
+// DowntimeEvent carries a persisted downtime start or end event (G9).
+// Emitted by the sim's downtime model on readiness-gate transitions and
+// projected into core's downtime_events table for OEE availability.
+// Two events per outage: one "down" (started) and one "up" (ended).
+// The end event carries duration_ms for convenience; the start event
+// sets duration_ms = 0 and ended_at to the zero value.
+// Core deduplicates on (station, edge_event_id).
+type DowntimeEvent struct {
+	Station     string    `json:"station"`       // envelope source (Edge identity)
+	PLCName     string    `json:"plc_name"`      // the machine that went down
+	Reason      string    `json:"reason"`        // "breakdown" (sim); extensible for real plant
+	IsDown      bool      `json:"is_down"`       // true = machine went down, false = machine came back up
+	StartedAt   time.Time `json:"started_at"`    // when the downtime began
+	EndedAt     time.Time `json:"ended_at"`      // when it ended (zero for start events)
+	DurationMS  int64     `json:"duration_ms"`   // 0 for start events; repair duration for end events
+	EdgeEventID int64     `json:"edge_event_id"` // monotonic counter for dedup (Edge-local)
 }
 
 // LinesideBucketDelta carries a count change against a specific

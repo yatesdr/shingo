@@ -52,6 +52,10 @@ func (db *DB) EnsureHeartbeatPartitions(ref time.Time) error {
 	return heartbeat.EnsurePartitions(db.DB, ref)
 }
 
+func (db *DB) EnsureHeartbeatPartitionsRange(start, end time.Time) error {
+	return heartbeat.EnsurePartitionsRange(db.DB, start, end)
+}
+
 func (db *DB) DropOldHeartbeatPartitions(keepDays int, now time.Time) (int, error) {
 	return heartbeat.DropOldPartitions(db.DB, keepDays, now)
 }

@@ -1,6 +1,10 @@
 package protocol
 
-import "time"
+import (
+	"time"
+
+	"shingo/shared/clock"
+)
 
 // Default TTLs by message type.
 var defaultTTLs = map[string]time.Duration{
@@ -62,18 +66,23 @@ func DefaultTTLFor(msgType string) time.Duration {
 	return FallbackTTL
 }
 
-// IsExpired returns true if the envelope has passed its expiry time.
+// IsExpired returns true if the envelope has passed its expiry time. It uses the
+// injected clock (clock.Now) rather than time.Now so that under sim fast-forward —
+// where envelopes are stamped in back-dated sim time — the consumer compares like
+// for like. In production clock.Now() IS time.Now(), so behavior is unchanged.
+// (NewEnvelope already stamps exp from the sim clock; this is the missing dual.)
 func IsExpired(env *Envelope) bool {
 	if env.ExpiresAt.IsZero() {
 		return false
 	}
-	return time.Now().UTC().After(env.ExpiresAt)
+	return clock.Now().UTC().After(env.ExpiresAt)
 }
 
-// IsExpiredHeader checks expiry using only the raw header.
+// IsExpiredHeader checks expiry using only the raw header. Same sim-clock rationale
+// as IsExpired.
 func IsExpiredHeader(hdr *RawHeader) bool {
 	if hdr.ExpiresAt.IsZero() {
 		return false
 	}
-	return time.Now().UTC().After(hdr.ExpiresAt)
+	return clock.Now().UTC().After(hdr.ExpiresAt)
 }

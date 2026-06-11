@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"shingo/shared/clock"
 	"shingocore/store/messaging"
 	"shingocore/store/orders"
 	"shingocore/store/reconciliation"
@@ -108,15 +109,21 @@ func (s *ReconciliationService) AutoConfirmStuckDeliveredOrders(timeout time.Dur
 		return 0, nil
 	}
 
+	// Compare against the injectable clock, NOT the DB's wall NOW(): order
+	// updated_at is stamped with clock.Now() (sim-time in sim — orders/orders.go),
+	// so a wall-NOW() comparison never fires once the sim clock outruns wall time
+	// (10× → immediately), silently stranding every delivery at 'delivered'. In
+	// production clock.Now() == time.Now(), so behaviour is unchanged there.
+	cutoff := clock.Now().UTC().Add(-timeout)
 	rows, err := s.db.Query(`
 		SELECT id
 		FROM orders
 		WHERE status = 'delivered'
 		  AND completed_at IS NULL
-		  AND updated_at < NOW() - ($1 * INTERVAL '1 second')
+		  AND updated_at < $1
 		  AND NOT skip_auto_confirm
 		ORDER BY updated_at ASC
-		LIMIT 100`, int(timeout.Seconds()))
+		LIMIT 100`, cutoff)
 	if err != nil {
 		return 0, err
 	}
@@ -184,13 +191,16 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout time.Duration) (int, 
 		return 0, nil
 	}
 
+	// Sim-clock cutoff, same rationale as AutoConfirmStuckDeliveredOrders — order
+	// updated_at is clock.Now()-stamped, so a wall-NOW() comparison never fires in sim.
+	cutoff := clock.Now().UTC().Add(-timeout)
 	rows, err := s.db.Query(`
 		SELECT id
 		FROM orders
 		WHERE status IN ('queued', 'staged', 'sourcing', 'dispatched')
-		  AND updated_at < NOW() - ($1 * INTERVAL '1 second')
+		  AND updated_at < $1
 		ORDER BY updated_at ASC
-		LIMIT 100`, int(timeout.Seconds()))
+		LIMIT 100`, cutoff)
 	if err != nil {
 		return 0, err
 	}

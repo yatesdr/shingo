@@ -37,3 +37,7 @@ func (db *DB) ListSceneEdges() ([]*scene.Edge, error) {
 func (db *DB) DeleteSceneEdgesByArea(areaName string) error {
 	return scene.DeleteEdgesByArea(db.DB, areaName)
 }
+
+func (db *DB) ListSceneAreas() ([]string, error) {
+	return scene.ListAreas(db.DB)
+}

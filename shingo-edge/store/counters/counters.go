@@ -165,26 +165,23 @@ func scanReportingPoint(rp *ReportingPoint, scanner interface{ Scan(...any) erro
 	return nil
 }
 
-func scanReportingPoints(rows *sql.Rows) ([]ReportingPoint, error) {
-	var rps []ReportingPoint
-	for rows.Next() {
-		var rp ReportingPoint
-		if err := scanReportingPoint(&rp, rows); err != nil {
-			return nil, err
-		}
-		rps = append(rps, rp)
-	}
-	return rps, rows.Err()
-}
-
 // ListReportingPoints returns every reporting_point row.
 func ListReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
-	rows, err := db.Query(`SELECT id, plc_name, tag_name, style_id, last_count, last_poll_at, enabled, warlink_managed FROM reporting_points ORDER BY plc_name, tag_name`)
+	// Join styles to resolve process_id (same as ListEnabledReportingPoints).
+	// Without it ProcessID stays 0, and the Q-034 cell catalog (BuildCellCatalog,
+	// fed by this list) reports every cell with process_id=0 — so the auto-derived
+	// heartbeat tiles query process_id=0, match no cell_part_events (keyed by the
+	// real process_id) and render "No data" despite live production. The whole
+	// no-manual-setup auto-populate path depends on this resolving.
+	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.enabled, rp.warlink_managed, COALESCE(js.process_id, 0)
+		FROM reporting_points rp
+		LEFT JOIN styles js ON js.id = rp.style_id
+		ORDER BY rp.plc_name, rp.tag_name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanReportingPoints(rows)
+	return scanReportingPointsWithLine(rows)
 }
 
 // ListEnabledReportingPoints returns every enabled reporting_point,

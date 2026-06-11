@@ -34,9 +34,9 @@
     .hb-empty { padding: 3rem 1.5rem; color: var(--text-muted); font-size: 1.2rem; text-align: center; }
   </style>
 </head>
-<body class="hb-kiosk">
+<body class="hb-kiosk"{{if .Dashboard}} data-dashboard-id="{{.Dashboard.ID}}" data-stations="{{range $i, $s := .Dashboard.Stations}}{{if $i}},{{end}}{{$s}}{{end}}"{{end}}>
   <header class="hb-header">
-    <h1 class="hb-title">Production Heartbeat</h1>
+    <h1 class="hb-title">{{if .Dashboard}}{{.Dashboard.Name}}{{else}}Production Heartbeat{{end}}</h1>
     <div class="hb-meta">
       <span class="hb-clock" id="hb-clock"></span>
       <span class="hb-conn" id="hb-conn" title="Live connection">offline</span>

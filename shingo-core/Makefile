@@ -27,11 +27,22 @@ run:
 test:
 	go test -v ./...
 
+# Reap any testcontainers (and their anonymous volumes) left behind by the
+# docker-tagged tests. The testdb harness shares one postgres:16-alpine per
+# test process and doesn't store the handle to Terminate it, and Ryuk (the
+# testcontainers auto-reaper) is off in our runs — so without this, every
+# `test-all`/`cover` leaks one container + its ~80MB data volume per package.
+# -v removes the anonymous volumes along with the containers.
+clean-testcontainers:
+	@ids=$$(docker ps -aq --filter label=org.testcontainers=true 2>/dev/null) ; \
+	  [ -z "$$ids" ] || docker rm -fv $$ids >/dev/null 2>&1 || true
+
 # Run the full suite, including the //go:build docker-tagged tests
 # that require a live Postgres via testdb / testcontainers. Use this
 # locally before pushing, and in CI where Docker Desktop is available.
+# Always reaps its testcontainers afterward, then preserves the test exit code.
 test-all:
-	go test -v -tags=docker ./...
+	go test -v -tags=docker ./... ; rc=$$? ; $(MAKE) -s clean-testcontainers ; test $$rc -eq 0
 
 # Run the bins-store EXPLAIN-plan regression harness. Tagged
 # //go:build explain so it stays out of the default and docker test
@@ -45,7 +56,7 @@ test-explain:
 # Requires Docker (for //go:build docker tests) and runs sequentially
 # (-p 1) to avoid container contention.
 cover:
-	go test -tags=docker -count=1 -p 1 -coverprofile=build/coverage ./...
+	go test -tags=docker -count=1 -p 1 -coverprofile=build/coverage ./... ; rc=$$? ; $(MAKE) -s clean-testcontainers ; test $$rc -eq 0
 	go run scripts/cover_summary.go build/coverage
 
 # Linux builds

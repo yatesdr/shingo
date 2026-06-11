@@ -28,6 +28,7 @@ type Config struct {
 	Counter     CounterConfig     `yaml:"counter"`
 	Backup      BackupConfig      `yaml:"backup"`
 	CountGroups CountGroupsConfig `yaml:"count_groups"`
+	Sim         SimConfig         `yaml:"sim"`
 }
 
 // CountGroupsConfig holds the edge side of the advanced-zone light feature.
@@ -113,6 +114,91 @@ type BackupS3Config struct {
 	InsecureSkipTLSVerify bool   `yaml:"insecure_skip_tls_verify" json:"insecure_skip_tls_verify"`
 }
 
+// SimConfig configures the local-dev production/operator simulation (edge side).
+// Sim code is behind //go:build sim AND requires SHINGO_ALLOW_SIM=1 at runtime;
+// this struct only carries the knobs. See implementation-brief.md.
+type SimConfig struct {
+	Enabled    bool               `yaml:"enabled"`
+	Seed       int64              `yaml:"seed"`        // PRNG seed; 0 = derive from time and log it
+	Speed      float64            `yaml:"speed"`       // time multiplier: 2.0 = twice as fast. Default 1.0
+	MaxSpeed   float64            `yaml:"max_speed"`   // effective-speed cap; <=0 → default (15×). Past this the clock outruns the real choreography and the loop wedges, so requests are clamped. Must match core. Set very high to effectively uncap.
+	Epoch      time.Time          `yaml:"epoch"`       // sim clock start (fast-forward origin). Zero = wall-now
+	AnchorWall time.Time          `yaml:"anchor_wall"` // SHARED wall anchor for fast-forward sync: sim-now = epoch + speed×(wallNow−anchor). Set IDENTICALLY in core+edge to the run-start wall time so the two clocks stay in lockstep (no cross-process drift). Zero = per-process boot anchor (drifts).
+	Calendar   SimCalendarConfig  `yaml:"calendar"`
+	Downtime   SimDowntimeConfig  `yaml:"downtime"`
+	Processes  []SimProcessConfig `yaml:"processes"`
+	Operators  SimOperatorsConfig `yaml:"operators"`
+}
+
+// SimCalendarConfig defines the production calendar for the sim (G14).
+// When enabled, the readiness gate also checks shift boundaries — cells
+// don't cycle during breaks, between shifts, or on weekends.
+type SimCalendarConfig struct {
+	Enabled bool             `yaml:"enabled"` // default false (backward-compatible)
+	Shifts  []SimShiftConfig `yaml:"shifts"`  // ordered by start time; default 3×8h
+	Weekend []time.Weekday   `yaml:"weekend"` // days with no production; default [Saturday, Sunday]
+}
+
+// SimShiftConfig defines one shift in the production calendar.
+type SimShiftConfig struct {
+	Start string           `yaml:"start"`  // "HH:MM" 24h, e.g. "06:00"
+	End   string           `yaml:"end"`    // "HH:MM" 24h, e.g. "14:00"
+	Break []SimBreakConfig `yaml:"breaks"` // breaks within this shift
+}
+
+// SimBreakConfig defines a break within a shift.
+type SimBreakConfig struct {
+	Start string `yaml:"start"` // "HH:MM" 24h
+	End   string `yaml:"end"`   // "HH:MM" 24h
+}
+
+// SimDowntimeConfig configures the clustered-random downtime model (G9, §3.1).
+// Per-machine 85% uptime via exponential TBF + bounded-random MTTR draws.
+// Disabled by default (backward-compatible).
+type SimDowntimeConfig struct {
+	Enabled  bool                       `yaml:"enabled"`  // default false
+	Machines []SimDowntimeMachineConfig `yaml:"machines"` // per-machine knobs; empty = disabled
+}
+
+// SimDowntimeMachineConfig defines downtime parameters for one machine (PLC).
+// Availability = MTBF / (MTBF + MTTR). With MTTR = random[min, max], the
+// TBF is derived to hit the target availability.
+type SimDowntimeMachineConfig struct {
+	PLCName      string  `yaml:"plc_name"`
+	Availability float64 `yaml:"availability"` // target availability (0-1), default 0.85
+	MinMTTR      string  `yaml:"min_mttr"`     // minimum repair time, e.g. "5m"
+	MaxMTTR      string  `yaml:"max_mttr"`     // maximum repair time, e.g. "30m"
+}
+
+// Scaled divides a duration by the speed multiplier. Zero or negative speed is
+// treated as 1.0 (no scaling). Used to scale tick intervals, operator delays,
+// transit times, etc. consistently across the sim.
+func (s SimConfig) Scaled(d time.Duration) time.Duration {
+	if s.Speed <= 0 {
+		return d
+	}
+	return time.Duration(float64(d) / s.Speed)
+}
+
+// SimProcessConfig describes one fake PLC counter the fake WarLink advances.
+// PLCName/TagName must exactly match a reporting_points row the seed tool creates.
+type SimProcessConfig struct {
+	PLCName      string        `yaml:"plc_name"`
+	TagName      string        `yaml:"tag_name"`
+	TickInterval time.Duration `yaml:"tick_interval"` // default 3s (applied at consumption)
+	UOPPerTick   int64         `yaml:"uop_per_tick"`  // default 1 (applied at consumption)
+}
+
+// SimOperatorsConfig configures the auto-operator (loader auto-LOAD, unloader
+// auto-CLEAR, changeover auto-cutover). Global enable only; per-node override is v2 (Q6).
+type SimOperatorsConfig struct {
+	Enabled               bool          `yaml:"enabled"`
+	LoaderAutoLoad        time.Duration `yaml:"loader_auto_load"`        // default 5s
+	UnloaderAutoClear     time.Duration `yaml:"unloader_auto_clear"`     // default 8s
+	ChangeoverAutoCutover bool          `yaml:"changeover_auto_cutover"` // default true (T3.2)
+	CutoverDelay          time.Duration `yaml:"cutover_delay"`           // default 10s
+}
+
 // Defaults returns a Config with sane defaults.
 func Defaults() *Config {
 	return &Config{
@@ -164,6 +250,17 @@ func Defaults() *Config {
 				"off": 2,
 			},
 			Bindings: map[string]Binding{},
+		},
+		Sim: SimConfig{
+			// Enabled false by default. Sim operator timings default here so a dev
+			// YAML can enable sim without spelling out every knob; per-process
+			// TickInterval/UOPPerTick default at consumption (fake WarLink).
+			Operators: SimOperatorsConfig{
+				LoaderAutoLoad:        5 * time.Second,
+				UnloaderAutoClear:     8 * time.Second,
+				ChangeoverAutoCutover: true,
+				CutoverDelay:          10 * time.Second,
+			},
 		},
 	}
 }

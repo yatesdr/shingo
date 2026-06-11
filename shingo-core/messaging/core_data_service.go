@@ -1,15 +1,18 @@
 package messaging
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/demands"
+	"shingocore/store/downtime"
 	"shingocore/store/heartbeat"
 	"shingocore/store/nodes"
 )
@@ -44,6 +47,9 @@ type CoreDataService struct {
 	// (non-blocking), so a slow/locked cell_part_events table can never
 	// back-pressure the inventory hot path (plan §12).
 	tickCh chan heartbeat.PartEvent
+	// downtimeCh buffers downtime event projections for the async worker
+	// started by StartDowntimeProjection (G9). Mirrors tickCh pattern.
+	downtimeCh chan downtime.DowntimeEvent
 	// cellTickEmitter, if set, fires after a tick is projected so the
 	// composition root can fan it out — the SSE cell-heartbeat broadcast
 	// (Phase E). Optional; nil in tests and headless runs. Set once before
@@ -82,6 +88,7 @@ func NewCoreDataService(db *store.DB, resp coreDataResponder) *CoreDataService {
 		inventoryDelta: service.NewInventoryDeltaService(db, service.NewBinManifestService(db)),
 		resp:           resp,
 		tickCh:         make(chan heartbeat.PartEvent, 4096),
+		downtimeCh:     make(chan downtime.DowntimeEvent, 1024),
 	}
 }
 
@@ -92,7 +99,7 @@ func NewCoreDataService(db *store.DB, resp coreDataResponder) *CoreDataService {
 // INSERT, so a slow/locked projection table never back-pressures the delta
 // hot path. Goroutines live for the process lifetime (daemon model).
 func (s *CoreDataService) StartHeartbeatProjection() {
-	if err := s.db.EnsureHeartbeatPartitions(time.Now().UTC()); err != nil {
+	if err := s.db.EnsureHeartbeatPartitions(clock.Now().UTC()); err != nil {
 		log.Printf("core_handler: ensure heartbeat partitions at boot: %v", err)
 	}
 	go func() {
@@ -110,7 +117,7 @@ func (s *CoreDataService) StartHeartbeatProjection() {
 		t := time.NewTicker(24 * time.Hour)
 		defer t.Stop()
 		for range t.C {
-			now := time.Now().UTC()
+			now := clock.Now().UTC()
 			if err := s.db.EnsureHeartbeatPartitions(now); err != nil {
 				log.Printf("core_handler: ensure heartbeat partitions: %v", err)
 			}
@@ -322,6 +329,23 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 		return
 	}
 
+	// Q-034: persist the auto-derived cell catalog so heartbeats populate
+	// without manual setup. Additive — an old edge sends no catalog (len 0) and
+	// we leave edge_cells untouched. Non-fatal: registration succeeds regardless.
+	if len(p.Catalog) > 0 {
+		cells := make([]store.EdgeCell, 0, len(p.Catalog))
+		for _, e := range p.Catalog {
+			bindings, err := json.Marshal(e.Processes)
+			if err != nil {
+				continue
+			}
+			cells = append(cells, store.EdgeCell{CellLabel: e.CellLabel, Bindings: bindings})
+		}
+		if err := s.db.UpsertEdgeCells(p.StationID, cells); err != nil {
+			log.Printf("core_handler: upsert edge_cells for %s: %v", p.StationID, err)
+		}
+	}
+
 	s.resp.replyData(env, protocol.SubjectEdgeRegistered,
 		&protocol.EdgeRegistered{StationID: p.StationID, Message: "registered"})
 	s.resp.dbg("reply published: subject=edge.registered station=%s", p.StationID)
@@ -335,7 +359,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	}
 
 	s.resp.replyData(env, protocol.SubjectEdgeHeartbeatAck,
-		&protocol.EdgeHeartbeatAck{StationID: p.StationID, ServerTS: time.Now().UTC()})
+		&protocol.EdgeHeartbeatAck{StationID: p.StationID, ServerTS: clock.Now().UTC()})
 
 	if isNew {
 		log.Printf("core_handler: unregistered edge %s detected via heartbeat, requesting registration", p.StationID)
@@ -566,5 +590,57 @@ func (s *CoreDataService) HandleClaimSync(env *protocol.Envelope, sync *protocol
 	// instead of waiting out the debounce window.
 	if s.thresholdMonitor != nil && len(changes) > 0 {
 		s.thresholdMonitor.OnRegistryChanges(changes)
+	}
+}
+
+// StartDowntimeProjection launches the async downtime_events projection worker
+// and partition manager (G9). Call once at the composition root after subject
+// registration. Mirrors StartHeartbeatProjection: HandleDowntimeEvent enqueues,
+// this worker does the INSERT.
+func (s *CoreDataService) StartDowntimeProjection() {
+	if err := s.db.EnsureDowntimePartitions(clock.Now().UTC()); err != nil {
+		log.Printf("core_handler: ensure downtime partitions at boot: %v", err)
+	}
+	go func() {
+		for e := range s.downtimeCh {
+			if err := s.db.InsertDowntimeEvent(e); err != nil {
+				log.Printf("core_handler: project downtime_event station=%s plc=%s edge_id=%d: %v", e.Station, e.PLCName, e.EdgeEventID, err)
+			}
+		}
+	}()
+}
+
+// HandleDowntimeEvent projects an Edge downtime event into downtime_events
+// for OEE availability dashboards (G9). Dedup on (station, edge_event_id)
+// is synchronous and runs first; the projection is enqueued non-blocking so
+// it can never back-pressure the Kafka consumer. Best-effort: a dropped
+// projection is logged, not retried.
+func (s *CoreDataService) HandleDowntimeEvent(env *protocol.Envelope, d *protocol.DowntimeEvent) {
+	station := d.Station
+	if station == "" {
+		station = env.Src.Station
+	}
+	isNew, err := s.db.TryDowntimeEventDedup(station, d.EdgeEventID)
+	if err != nil {
+		log.Printf("core_handler: downtime event dedup station=%s edge_id=%d: %v", station, d.EdgeEventID, err)
+		return
+	}
+	if !isNew {
+		s.resp.dbg("downtime event replay station=%s edge_id=%d — already projected", station, d.EdgeEventID)
+		return
+	}
+	ev := downtime.DowntimeEvent{
+		Station:     station,
+		PLCName:     d.PLCName,
+		Reason:      d.Reason,
+		StartedAt:   d.StartedAt,
+		EndedAt:     d.EndedAt,
+		DurationMS:  d.DurationMS,
+		EdgeEventID: d.EdgeEventID,
+	}
+	select {
+	case s.downtimeCh <- ev:
+	default:
+		log.Printf("core_handler: downtime event projection queue full, dropped station=%s plc=%s edge_id=%d", station, d.PLCName, d.EdgeEventID)
 	}
 }

@@ -1,0 +1,13 @@
+{{define "content"}}
+<div class="flex flex-between mb-1">
+  <h1>{{if .Dashboard}}{{.Dashboard.Name}}{{end}}</h1>
+  <div class="flex-center gap-1">
+    <a class="btn btn-sm" href="/" title="Back to the dashboard hub">&larr; Dashboards</a>
+    {{if .Dashboard}}<a class="btn btn-sm btn-primary" href="/dashboard/{{.Dashboard.ID}}?kiosk=1" target="_blank" rel="noopener" title="Open chromeless for a wall monitor">&#x26F6; Fullscreen</a>{{end}}
+  </div>
+</div>
+{{if .Dashboard}}
+<iframe src="/dashboard/{{.Dashboard.ID}}?kiosk=1" title="{{.Dashboard.Name}}"
+        style="width:100%;height:calc(100vh - 170px);border:1px solid var(--border);border-radius:0.5rem;background:var(--surface);"></iframe>
+{{end}}
+{{end}}

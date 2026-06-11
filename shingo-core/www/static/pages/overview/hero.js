@@ -76,25 +76,33 @@ export function createHeroSection(store) {
         });
 
         updateKpiTile(tiles.avg, {
+            // Headline execution time (assignment→terminal, what the robot spent);
+            // lead time (created→terminal) is the sub-stat (Q-031). Lower is
+            // better → a drop is "good". Delta tracks the headline (execution).
             label: 'Avg duration', drill: 'avg_duration',
-            value: (cur.total > 0 && cur.avg_duration_ms > 0) ? formatDuration(cur.avg_duration_ms) : '—',
-            sub: cur.p50_duration_ms > 0 ? 'P50 ' + formatDuration(cur.p50_duration_ms) : '',
-            // Lower is better → a drop is "good".
-            delta: (prev && prev.avg_duration_ms > 0 && cur.avg_duration_ms > 0)
-                ? durationDelta(cur.avg_duration_ms - prev.avg_duration_ms)
+            value: (cur.total > 0 && cur.avg_execution_ms > 0) ? formatDuration(cur.avg_execution_ms) : '—',
+            sub: cur.avg_duration_ms > 0 ? 'Lead ' + formatDuration(cur.avg_duration_ms) : '',
+            delta: (prev && prev.avg_execution_ms > 0 && cur.avg_execution_ms > 0)
+                ? durationDelta(cur.avg_execution_ms - prev.avg_execution_ms)
                 : null,
         });
 
         updateKpiTile(tiles.cancelled, {
             label: 'Cancelled', drill: 'cancelled',
             value: cur.cancelled,
+            sub: cancelOriginSub(cur), // Q-030 origin split (RDS / shingo / unclassified)
             // Neutral metric per §15.A — show movement but no good/bad color.
             delta: prev ? { dir: deltaDir(cur.cancelled - prev.cancelled), text: '' + Math.abs(cur.cancelled - prev.cancelled) } : null,
         });
     }
 
     function refreshActive() {
-        apiGet('/api/missions/active')
+        // Item 10: in-flight respects the global station/robot filter. Read it
+        // live from the store so the SSE-driven refresh (no args) and the
+        // filter-driven refresh both scope correctly. Sub-label stays "live".
+        const st = store.get();
+        const q = qs({ station_id: st.station, robot_id: st.robot });
+        apiGet('/api/missions/active' + (q ? '?' + q : ''))
             .then((d) => updateKpiTile(tiles.inflight, { label: 'In flight', drill: 'in_flight', value: (d && typeof d.count === 'number') ? d.count : '—', sub: 'live' }))
             .catch(() => updateKpiTile(tiles.inflight, { label: 'In flight', drill: 'in_flight', value: '—', sub: 'live' }));
     }
@@ -124,6 +132,18 @@ export function createHeroSection(store) {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
+
+// cancelOriginSub renders the Q-030 cancel-origin split as the Cancelled tile
+// sub-stat. RDS-origin ("fleet order stopped") is the anonymous vendor wedge
+// and leads; shingo-origin and any unclassified follow. Empty when no cancels.
+function cancelOriginSub(s) {
+    const parts = [];
+    if (s.cancelled_rds) parts.push(s.cancelled_rds + ' RDS');
+    if (s.cancelled_shingo) parts.push(s.cancelled_shingo + ' shingo');
+    if (s.unclassified_stops) parts.push(s.unclassified_stops + ' unclassified');
+    return parts.join(' · ');
+}
+
 function ymd(d) {
     return d.getFullYear() + '-' +
         String(d.getMonth() + 1).padStart(2, '0') + '-' +

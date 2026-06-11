@@ -32,16 +32,26 @@ func GetTimeseries(db *sql.DB, f Filter, bucket string) ([]Bucket, error) {
 	args = append(args, bucket)
 	bucketParam := len(args) // date_trunc placeholder index (last arg)
 
-	query := fmt.Sprintf(`SELECT
-		date_trunc($%d, core_completed) AS b,
+	// P50/P95 are execution time (assignment→terminal), confirmed missions only
+	// (Q-031): the spiky percentile trend came from including queue wait plus
+	// cancelled/abandoned rows whose duration ran for hours. exec_ms is computed
+	// once per row in the subquery. Throughput counts still cover every row.
+	query := fmt.Sprintf(`SELECT b,
 		COUNT(*),
-		COUNT(*) FILTER (WHERE terminal_state IN ('FINISHED','delivered','confirmed')),
-		COUNT(*) FILTER (WHERE terminal_state IN ('FAILED','failed')),
-		COUNT(*) FILTER (WHERE terminal_state IN ('STOPPED','stopped','cancelled','canceled')),
-		COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms > 0), 0)::BIGINT,
-		COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms > 0), 0)::BIGINT
-		FROM mission_telemetry%s
-		GROUP BY b ORDER BY b`, bucketParam, where)
+		COUNT(*) FILTER (WHERE is_confirmed),
+		COUNT(*) FILTER (WHERE is_failed),
+		COUNT(*) FILTER (WHERE is_cancelled),
+		COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY exec_ms) FILTER (WHERE is_confirmed AND exec_ms > 0), 0)::BIGINT,
+		COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY exec_ms) FILTER (WHERE is_confirmed AND exec_ms > 0), 0)::BIGINT
+		FROM (
+			SELECT date_trunc($%d, core_completed) AS b,
+				%s AS exec_ms,
+				terminal_state IN ('FINISHED','delivered','confirmed') AS is_confirmed,
+				terminal_state IN ('FAILED','failed') AS is_failed,
+				terminal_state IN ('STOPPED','stopped','cancelled','canceled') AS is_cancelled
+			FROM mission_telemetry mt%s
+		) q
+		GROUP BY b ORDER BY b`, bucketParam, executionMSExpr("mt"), where)
 
 	rows, err := db.Query(query, args...)
 	if err != nil {

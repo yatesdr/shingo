@@ -12,25 +12,42 @@ import (
 type FailureReason = domain.FailureReason
 
 // GetFailures classifies failed missions in the window into categorical
-// reasons for the §3.G failure Pareto. It pulls the failed rows (mission
-// counts are low-thousands/month, so this is fine) and classifies each in Go
-// via domain.PrimaryFailureReason, returning the top-10 reasons by count with
-// up to 5 sample order IDs each. Only terminal_state FAILED is folded in;
-// operator cancels are not failures, and system-stop reclassification (which
-// needs the order_history join) is left to a follow-up (Q-013).
+// reasons for the §3.G failure Pareto. It folds in BOTH hard FAILED missions
+// and system-initiated stops — STOPPED/cancelled missions whose terminal
+// order_history detail classifies as a failure (grace timeouts, abandons,
+// structural faults) per domain.ClassifyTermination (Q-013). Operator and RDS
+// cancels stay excluded. Each row is classified in Go via
+// domain.PrimaryFailureReason (robot_alarms → errors → blocks); when those give
+// nothing — the usual system-stop case — the reason is derived from the
+// terminal detail via domain.SystemStopReason. Returns the top-10 reasons by
+// count with up to 5 sample order IDs each. Mission counts are
+// low-thousands/month, so pulling + classifying in Go is fine.
 func GetFailures(db *sql.DB, f Filter) ([]FailureReason, error) {
 	where, args := buildWhere(f)
-	cond := "terminal_state IN ('FAILED','failed')"
+	// Pull hard failures AND the stop/cancel bucket; the latter is reclassified
+	// in Go so only the system-stop subset counts as a failure.
+	cond := "terminal_state IN ('FAILED','failed','STOPPED','stopped','cancelled','canceled')"
 	if where == "" {
 		where = " WHERE " + cond
 	} else {
 		where += " AND " + cond
 	}
-	// robot_alarms_json (Q-026) is the priority signal; it's NULL until the
-	// alarm-snapshot ingestion lands (write side), in which case the classifier
-	// falls through to blocks/errors. ::text feeds the string-based classifier.
-	q := fmt.Sprintf(`SELECT order_id, COALESCE(robot_alarms_json::text,''), COALESCE(blocks_json,''), COALESCE(errors_json,'')
-		FROM mission_telemetry%s`, where)
+	// LEFT JOIN LATERAL → the terminal order_history detail (one row per
+	// mission, '' when no history), the same shape classifyStops uses. The three
+	// signal columns (robot_alarms_json is the Q-026 priority source, NULL until
+	// the alarm-snapshot ingestion lands) feed PrimaryFailureReason. All are
+	// JSONB; ::text before COALESCE-against-'' dodges the 22P02 that 500'd
+	// /api/missions/failures historically.
+	q := fmt.Sprintf(`SELECT mt.order_id, mt.terminal_state,
+			COALESCE(mt.robot_alarms_json::text,''), COALESCE(mt.blocks_json::text,''), COALESCE(mt.errors_json::text,''),
+			COALESCE(oh.detail,'')
+		FROM mission_telemetry mt
+		LEFT JOIN LATERAL (
+			SELECT detail FROM order_history oh
+			WHERE oh.order_id = mt.order_id
+			ORDER BY oh.created_at DESC, oh.id DESC
+			LIMIT 1
+		) oh ON TRUE%s`, where)
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -41,11 +58,22 @@ func GetFailures(db *sql.DB, f Filter) ([]FailureReason, error) {
 	samples := map[string][]int64{}
 	for rows.Next() {
 		var orderID int64
-		var robotAlarms, blocks, errors string
-		if err := rows.Scan(&orderID, &robotAlarms, &blocks, &errors); err != nil {
+		var ts, robotAlarms, blocks, errors, detail string
+		if err := rows.Scan(&orderID, &ts, &robotAlarms, &blocks, &errors, &detail); err != nil {
 			return nil, err
 		}
+		// Hard FAILED always counts; a stop/cancel counts only when
+		// ClassifyTermination places it in the failed bucket (grace/timeout/
+		// structural/abandon). Operator + RDS cancels fall out here.
+		if domain.ClassifyTermination(ts, detail) != domain.OutcomeFailed {
+			continue
+		}
 		reason := domain.PrimaryFailureReason(robotAlarms, blocks, errors)
+		if reason == domain.FailOther {
+			if d := domain.SystemStopReason(detail); d != "" {
+				reason = d
+			}
+		}
 		counts[reason]++
 		if len(samples[reason]) < 5 {
 			samples[reason] = append(samples[reason], orderID)

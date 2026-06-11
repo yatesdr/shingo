@@ -71,6 +71,26 @@ const (
 	OpOperatorOverrideReleasePartial = "operator_override_release_partial"
 )
 
+// ReleaseFamilyOps is the canonical set of ops that retire a bin's manifest —
+// every "unload" in footprint/velocity terms (the bin was emptied, reset, or
+// released). Kept here beside the op constants so consumers reference one
+// source of truth and the set can't silently drift: when a new release variant
+// is added, append it here and every consumer (e.g. the footprint load/unload
+// chart) picks it up. Q-036 was exactly this drift — live unloads write
+// released_capture_empty / released_underpack, which a hardcoded 3-op filter
+// missed, flat-lining the velocity chart. Intentionally excludes
+// clear_and_claim (a clear that immediately re-assigns the bin — a re-purpose,
+// not an unload).
+var ReleaseFamilyOps = []string{
+	OpClearForReuse,
+	OpReleasedEmpty,
+	OpReleasedPartial,
+	OpReleasedEmptyFallback,
+	OpReleasedPartialFallback,
+	OpReleasedCaptureEmpty,
+	OpReleasedUnderpack,
+}
+
 // BinUOPExecer is the minimal interface satisfied by *sql.Tx and *sql.DB.
 // AppendBinUOP takes it so the audit insert participates in the caller's
 // transaction when one exists, falling back to the connection pool when

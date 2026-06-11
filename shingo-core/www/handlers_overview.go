@@ -4,7 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
-	"time"
+
+	"shingo/shared/clock"
 )
 
 // handleOverview renders the Operations Overview exec dashboard (plan §15).
@@ -21,7 +22,7 @@ func (h *Handlers) handleOverview(w http.ResponseWriter, r *http.Request) {
 // under management plus the 30-day load/unload velocity series. Plant-wide —
 // ignores station/robot filters (it's a growth narrative, not a snapshot).
 func (h *Handlers) apiFootprint(w http.ResponseWriter, r *http.Request) {
-	fp, err := h.engine.FootprintService().Get()
+	fp, err := h.engine.FootprintService().Get(plantLocation)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -44,19 +45,34 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 		byID[a.RobotID] = agg{a.Missions, a.BusyMS}
 	}
 
-	// Utilization window length. parseMissionFilter sets Until to end-of-day,
-	// so a single-day "today" filter yields ~24h. Falls back to 24h.
+	// Utilization window length = elapsed time, not the nominal range. The
+	// filter's Until is end-of-day, so a mid-shift "today" view would otherwise
+	// divide busy time by a full 24h at 9am and read absurdly low. Clamp the
+	// window end to min(now, until) so the denominator is the time that has
+	// actually elapsed (Q-033 phase 1; shift-awareness deferred). Falls back to
+	// 24h when the filter has no explicit range.
 	windowMS := int64(24 * 60 * 60 * 1000)
 	if f.Since != nil && f.Until != nil {
-		if d := f.Until.Sub(*f.Since).Milliseconds(); d > 0 {
+		end := *f.Until
+		if now := clock.Now(); now.Before(end) {
+			end = now
+		}
+		if d := end.Sub(*f.Since).Milliseconds(); d > 0 {
 			windowMS = d
 		}
 	}
 
 	robots := h.engine.GetAllCachedRobots()
 	rows := make([]map[string]any, 0, len(robots))
-	var online, missionsTotal int64
+	var online, missionsTotal, size int64
 	for _, rb := range robots {
+		// Skip ghost cache entries with no vehicle_id: they render as a nameless
+		// offline row and inflate the fleet size (Springfield showed 8 for 7 real
+		// robots). size/online are counted from real robots only.
+		if rb.VehicleID == "" {
+			continue
+		}
+		size++
 		a := byID[rb.VehicleID]
 		missionsTotal += a.missions
 		if rb.Connected {
@@ -87,13 +103,32 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Fleet Load: hourly concurrency for the viewed day (the filter's Until
-	// day, else today).
-	day := time.Now()
+	// day, else today). Truncate the day in the plant timezone:
+	// parseMissionFilter normalizes Until to UTC, so truncating in its own
+	// (UTC) location rolled "today 23:59 plant-local" into tomorrow's UTC day —
+	// charting an all-future, all-zero series (0% util, "No peak in window").
+	day := clock.Now()
 	if f.Until != nil {
 		day = *f.Until
 	}
-	dayStart := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location())
+	dayStart := plantDayStart(day)
 	conc, _ := h.engine.MissionService().HourlyConcurrency(dayStart, f.StationID)
+
+	// Clamp the series to elapsed hours (min(now, until)). A "today" view at 9am
+	// otherwise averages in ~15 future zero-hours (deflating avg load / fleet
+	// util) and a stray future bucket could read as the peak. Comparison is on
+	// the absolute instant, so the bucket/cutoff display locations don't matter.
+	cutoff := clock.Now()
+	if f.Until != nil && f.Until.Before(cutoff) {
+		cutoff = *f.Until
+	}
+	kept := conc[:0]
+	for _, c := range conc {
+		if !c.Hour.After(cutoff) {
+			kept = append(kept, c)
+		}
+	}
+	conc = kept
 
 	var peak, sum int64
 	peakHour := ""
@@ -101,14 +136,14 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 		sum += c.Concurrency
 		if c.Concurrency > peak {
 			peak = c.Concurrency
-			peakHour = c.Hour.Format("15:04")
+			peakHour = c.Hour.In(plantLocation).Format("15:04") // plant-local, not UTC
 		}
 	}
 	avgLoad := 0.0
 	if len(conc) > 0 {
 		avgLoad = float64(sum) / float64(len(conc))
 	}
-	size := int64(len(robots))
+	// size is the count of real (non-blank) robots, accumulated above.
 	utilPct := 0.0
 	if size > 0 {
 		utilPct = avgLoad / float64(size) * 100
