@@ -39,38 +39,19 @@ func newSimBackend(ctx context.Context, cfg *config.Config) (fleet.TrackingBacke
 		seed = time.Now().UnixNano()
 		log.Printf("[sim] no sim.seed set; derived seed %d (set sim.seed to reproduce this run)", seed)
 	}
-	// Build the sim clock. Always a SimClock so the dev speed toggle can change
-	// the multiplier live via SetSpeed (the re-pacing tickers pick it up). With
-	// sim.epoch set it fast-forwards from that epoch and clamps at the present;
-	// otherwise it's a running clock that sustains cfg.Sim.Speed × real time
-	// (orders/transit actually speed up — no clamp). clock.SetDefault wires the
-	// global now-provider so every clock.Now() uses sim time.
-	// Cap the effective speed so over-cranking the dev top-strip degrades to the
-	// sustainable rate instead of wedging the loop — the integration sim can't run
-	// faster than the real Core+Edge+Kafka+DB choreography processes, and a clock
-	// that outruns it makes sim-time timeouts misfire. Default 15×; must match edge.
-	maxSpeed := cfg.Sim.MaxSpeed
-	if maxSpeed <= 0 {
-		maxSpeed = 15
-	}
-	var clk *clock.SimClock
-	switch {
-	case cfg.Sim.Epoch.IsZero():
-		clk = clock.NewRunningClock(cfg.Sim.Speed)
-		clk.SetMaxSpeed(maxSpeed)
+	// Build the sim clock via the shared builder so Core and Edge construct it
+	// IDENTICALLY — they must agree on epoch/anchor/cap or their fast-forward clocks
+	// drift apart (clock.BuildSimClock owns that logic + the default 15× cap). Always
+	// a SimClock so the dev speed toggle (POST /api/sim/speed) re-paces live;
+	// SetDefault wires clock.Now() to sim time.
+	clk, mode := clock.BuildSimClock(cfg.Sim.Epoch, cfg.Sim.AnchorWall, cfg.Sim.Speed, cfg.Sim.MaxSpeed)
+	switch mode {
+	case clock.SimRunning:
 		log.Printf("[sim] live clock: running %.1f× wall (set sim.epoch for fast-forward; change live via POST /api/sim/speed)", clk.Speed())
-	case !cfg.Sim.AnchorWall.IsZero():
-		// Fast-forward SYNCED to a shared wall anchor: Core and Edge given the same
-		// (epoch, anchor_wall, speed) compute identical sim-now, so the two clocks
-		// stay in lockstep and cross-process message expiry stays correct. The cap is
-		// baked in by NewSimClockAnchored — NOT via SetMaxSpeed, which re-anchors to
-		// per-process wall-now and would reintroduce the drift this avoids.
-		clk = clock.NewSimClockAnchored(cfg.Sim.Epoch, cfg.Sim.AnchorWall, cfg.Sim.Speed, maxSpeed)
+	case clock.SimSyncedFastForward:
 		log.Printf("[sim] fast-forward clock (synced): epoch=%s anchor=%s speed=%.0f× (Core/Edge in lockstep)",
 			cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339), clk.Speed())
-	default:
-		clk = clock.NewSimClock(cfg.Sim.Epoch, cfg.Sim.Speed)
-		clk.SetMaxSpeed(maxSpeed)
+	case clock.SimUnsyncedFastForward:
 		log.Printf("[sim] fast-forward clock (UNSYNCED — set sim.anchor_wall in BOTH core+edge to stop clock drift): epoch=%s speed=%.0f×",
 			cfg.Sim.Epoch.Format(time.RFC3339), clk.Speed())
 	}

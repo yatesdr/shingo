@@ -104,6 +104,54 @@ func NewRunningClock(speed float64) *SimClock {
 	}
 }
 
+// DefaultSimMaxSpeed caps the effective sim multiplier. The integration sim (real
+// Core+Edge+Kafka+DBs) can only process the choreography so fast; a clock that
+// outruns it makes sim-time timeouts (release/abandon) misfire and the loop wedges.
+// Core and Edge MUST cap at the SAME value or their fast-forward clocks drift —
+// sharing this const through BuildSimClock is what guarantees they can't diverge.
+const DefaultSimMaxSpeed = 15.0
+
+// SimMode is which kind of clock BuildSimClock constructed, returned so the caller
+// can log a binary-appropriate banner without re-deriving (and re-risking) the
+// construction switch.
+type SimMode int
+
+const (
+	SimRunning             SimMode = iota // live: no epoch → runs speed× wall, never clamps
+	SimSyncedFastForward                  // epoch + shared anchor → Core/Edge in lockstep
+	SimUnsyncedFastForward                // epoch, no shared anchor → drifts vs the other binary
+)
+
+// BuildSimClock constructs the sim clock from the (epoch, anchorWall, speed,
+// maxSpeed) quartet IDENTICALLY for every binary. Core and Edge call this with the
+// same sim config, so they cannot diverge in how they cap or anchor — divergence is
+// silent cross-process clock drift (the exact failure NewSimClockAnchored exists to
+// prevent; see docs/dev-env/sim.md). maxSpeed <= 0 defaults to DefaultSimMaxSpeed.
+// Returns the clock and the mode it built.
+//
+// The cap is applied per-mode and that distinction is load-bearing: a synced
+// fast-forward bakes it into NewSimClockAnchored, NOT via SetMaxSpeed (which
+// re-anchors to the per-process wall-now and reintroduces the very drift the shared
+// anchor avoids); the other two modes have no shared anchor to preserve, so they
+// SetMaxSpeed after construction.
+func BuildSimClock(epoch, anchorWall time.Time, speed, maxSpeed float64) (*SimClock, SimMode) {
+	if maxSpeed <= 0 {
+		maxSpeed = DefaultSimMaxSpeed
+	}
+	switch {
+	case epoch.IsZero():
+		clk := NewRunningClock(speed)
+		clk.SetMaxSpeed(maxSpeed)
+		return clk, SimRunning
+	case !anchorWall.IsZero():
+		return NewSimClockAnchored(epoch, anchorWall, speed, maxSpeed), SimSyncedFastForward
+	default:
+		clk := NewSimClock(epoch, speed)
+		clk.SetMaxSpeed(maxSpeed)
+		return clk, SimUnsyncedFastForward
+	}
+}
+
 // Now returns the current simulated time.
 func (s *SimClock) Now() time.Time {
 	s.mu.Lock()

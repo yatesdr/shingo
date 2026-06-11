@@ -150,6 +150,69 @@ func TestSimClockSetSpeed(t *testing.T) {
 	}
 }
 
+// TestBuildSimClock_Modes pins the construction switch: empty epoch → running
+// (no clamp), epoch+anchor → synced fast-forward, epoch alone → unsynced.
+func TestBuildSimClock_Modes(t *testing.T) {
+	epoch := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	anchor := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+
+	if clk, mode := BuildSimClock(time.Time{}, time.Time{}, 5, 15); mode != SimRunning || clk.clampToWall {
+		t.Errorf("empty epoch: mode=%v clampToWall=%v, want SimRunning + no clamp", mode, clk.clampToWall)
+	}
+	if clk, mode := BuildSimClock(epoch, anchor, 5, 15); mode != SimSyncedFastForward || !clk.clampToWall {
+		t.Errorf("epoch+anchor: mode=%v clampToWall=%v, want SimSyncedFastForward + clamp", mode, clk.clampToWall)
+	}
+	if clk, mode := BuildSimClock(epoch, time.Time{}, 5, 15); mode != SimUnsyncedFastForward || !clk.clampToWall {
+		t.Errorf("epoch alone: mode=%v clampToWall=%v, want SimUnsyncedFastForward + clamp", mode, clk.clampToWall)
+	}
+}
+
+// TestBuildSimClock_MaxSpeedDefault: maxSpeed<=0 falls back to DefaultSimMaxSpeed
+// and the cap is actually enforced across all three modes.
+func TestBuildSimClock_MaxSpeedDefault(t *testing.T) {
+	epoch := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	anchor := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name          string
+		epoch, anchor time.Time
+	}{
+		{"running", time.Time{}, time.Time{}},
+		{"synced", epoch, anchor},
+		{"unsynced", epoch, time.Time{}},
+	} {
+		clk, _ := BuildSimClock(tc.epoch, tc.anchor, 50, 0) // request 50×, maxSpeed unset
+		if clk.Speed() != DefaultSimMaxSpeed {
+			t.Errorf("%s: effective speed=%v, want capped to DefaultSimMaxSpeed=%v", tc.name, clk.Speed(), DefaultSimMaxSpeed)
+		}
+		if clk.RequestedSpeed() != 50 {
+			t.Errorf("%s: requested=%v, want 50 (pre-cap)", tc.name, clk.RequestedSpeed())
+		}
+	}
+}
+
+// TestBuildSimClock_TwoBinariesAgree is the regression guard for the Core/Edge
+// drift bug, AT THE BUILDER LEVEL: two BuildSimClock calls with the SAME config
+// (as separately-built Core and Edge make) must report identical sim time at the
+// same wall instant. This is what makes deduping the two binaries' bootstrap safe.
+func TestBuildSimClock_TwoBinariesAgree(t *testing.T) {
+	epoch := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	anchor := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+
+	core, _ := BuildSimClock(epoch, anchor, 50, 0) // maxSpeed default 15
+	edge, _ := BuildSimClock(epoch, anchor, 50, 0)
+
+	wall := anchor.Add(60 * time.Second)
+	core.wallFn = func() time.Time { return wall }
+	edge.wallFn = func() time.Time { return wall }
+
+	if !core.Now().Equal(edge.Now()) {
+		t.Fatalf("builder produced drifting clocks: core=%v edge=%v", core.Now(), edge.Now())
+	}
+	if want := epoch.Add(900 * time.Second); !core.Now().Equal(want) { // 60s × 15
+		t.Errorf("Now=%v want=%v (epoch + 15×60s)", core.Now(), want)
+	}
+}
+
 // TestSimClockAnchored_TwoProcessesAgree is the regression test for the Core/Edge
 // fast-forward clock-drift bug: two anchored clocks with the SAME (epoch, anchor,
 // speed, maxSpeed) must report identical sim time at the same wall instant, even

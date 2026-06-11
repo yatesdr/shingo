@@ -43,34 +43,19 @@ func simWarlinkClient(cfg *config.Config) plc.WarlinkClient {
 		return nil
 	}
 	log.Printf("[sim] injecting fake WarLink client (%d sim process(es))", len(cfg.Sim.Processes))
-	// Always a SimClock so the dev speed toggle can change the multiplier live
-	// via SetSpeed. With sim.epoch set it fast-forwards; otherwise it's a running
-	// clock that sustains cfg.Sim.Speed × real time (no clamp). Saved to the
-	// package var so startSimSubsystems shares the SAME clock with the downtime
-	// model + operator.
-	// Cap effective speed (must match core's max_speed) so over-cranking degrades
-	// to the sustainable rate instead of wedging — see core sim_enabled.go.
-	maxSpeed := cfg.Sim.MaxSpeed
-	if maxSpeed <= 0 {
-		maxSpeed = 15
-	}
-	var clk *clock.SimClock
-	switch {
-	case cfg.Sim.Epoch.IsZero():
-		clk = clock.NewRunningClock(cfg.Sim.Speed)
-		clk.SetMaxSpeed(maxSpeed)
+	// Build the sim clock via the shared builder so Core and Edge construct it
+	// IDENTICALLY — divergence in epoch/anchor/cap is silent clock drift across the
+	// Kafka seam (clock.BuildSimClock owns the logic + the 15× cap that MUST match
+	// core). SetDefault wires clock.Now() to sim time; simClock is shared with the
+	// downtime model + operator.
+	clk, mode := clock.BuildSimClock(cfg.Sim.Epoch, cfg.Sim.AnchorWall, cfg.Sim.Speed, cfg.Sim.MaxSpeed)
+	switch mode {
+	case clock.SimRunning:
 		log.Printf("[sim] live clock: running %.1f× wall (change live via POST /api/sim/speed)", clk.Speed())
-	case !cfg.Sim.AnchorWall.IsZero():
-		// Fast-forward SYNCED to a shared wall anchor — must match core's epoch +
-		// anchor_wall + speed so the two clocks compute identical sim-now and don't
-		// drift (cross-process expiry stays correct). Cap baked in by the constructor,
-		// NOT SetMaxSpeed (which re-anchors per-process and would reintroduce drift).
-		clk = clock.NewSimClockAnchored(cfg.Sim.Epoch, cfg.Sim.AnchorWall, cfg.Sim.Speed, maxSpeed)
+	case clock.SimSyncedFastForward:
 		log.Printf("[sim] fast-forward clock (synced): epoch=%s anchor=%s speed=%.0f× (must match core)",
 			cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339), clk.Speed())
-	default:
-		clk = clock.NewSimClock(cfg.Sim.Epoch, cfg.Sim.Speed)
-		clk.SetMaxSpeed(maxSpeed)
+	case clock.SimUnsyncedFastForward:
 		log.Printf("[sim] fast-forward clock (UNSYNCED — set sim.anchor_wall in BOTH core+edge to stop clock drift): epoch=%s speed=%.0f×",
 			cfg.Sim.Epoch.Format(time.RFC3339), clk.Speed())
 	}
