@@ -635,6 +635,14 @@ body {
     margin-top: 12px;
 }
 
+.os-release-row {
+    display: flex;
+    gap: 8px;
+}
+.os-release-row > .os-action-btn {
+    flex: 1;
+}
+
 .modal--touch .modal-divider {
     height: 1px;
     background: var(--os-border);
@@ -1184,4 +1192,5 @@ body.os-board-mode-active #os-footer { font-size: 22px; }
     .os-keypad-actions button { padding: 10px 0; font-size: 15px; }
     .os-release-qty-display { font-size: 26px; padding: 10px; }
     .os-release-part-btn { font-size: 13px; padding: 8px; min-height: 38px; }
+    .os-release-row { flex-direction: column; }
 }
