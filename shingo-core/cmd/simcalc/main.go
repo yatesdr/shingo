@@ -50,6 +50,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"shingo/protocol"
 	"shingocore/plantspec"
 )
 
@@ -449,18 +450,18 @@ func sizeFromTransit(plant *plantspec.Plant, rate map[string]float64, transit st
 // small and fall into the util headroom. Crossing counts track the long legs of the
 // step builders in engine/material_orders.go.
 func fleetMovesPerSwap(mode string) (crossings float64, robots int) {
-	switch mode {
-	case "simple":
+	switch protocol.SwapMode(mode) {
+	case protocol.SwapModeSimple:
 		return 1, 1 // one floor crossing (old out / new in folded)
-	case "sequential":
+	case protocol.SwapModeSequential:
 		return 2, 1 // removal (node→market) + backfill (source→node), one robot, serialized
-	case "single_robot":
+	case protocol.SwapModeSingleRobot:
 		return 2, 1 // fetch in (source→…→node) + ship out (node→…→market); staging hops are short
-	case "two_robot":
+	case protocol.SwapModeTwoRobot:
 		return 2, 2 // supply robot crosses in, removal robot crosses out — one long leg each
-	case "two_robot_press_index":
+	case protocol.SwapModeTwoRobotPressIndex:
 		return 2, 2 // output→market + source→back; the back→front index hop is short
-	case "manual_swap":
+	case protocol.SwapModeManualSwap:
 		return 1, 1 // one loaded crossing per push (loader→market) / pull (line→market)
 	default:
 		return 1, 1
@@ -483,9 +484,9 @@ func runFleet(plant *plantspec.Plant, rate map[string]float64, transit string, u
 
 	type frow struct {
 		proc, role, payload, mode string
-		swaps, moves               float64
-		robots                     int
-		load                       float64
+		swaps, moves              float64
+		robots                    int
+		load                      float64
 	}
 	var rows []frow
 	var offered, peak float64

@@ -165,18 +165,6 @@ func scanReportingPoint(rp *ReportingPoint, scanner interface{ Scan(...any) erro
 	return nil
 }
 
-func scanReportingPoints(rows *sql.Rows) ([]ReportingPoint, error) {
-	var rps []ReportingPoint
-	for rows.Next() {
-		var rp ReportingPoint
-		if err := scanReportingPoint(&rp, rows); err != nil {
-			return nil, err
-		}
-		rps = append(rps, rp)
-	}
-	return rps, rows.Err()
-}
-
 // ListReportingPoints returns every reporting_point row.
 func ListReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
 	// Join styles to resolve process_id (same as ListEnabledReportingPoints).
