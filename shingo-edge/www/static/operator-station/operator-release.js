@@ -127,14 +127,10 @@ function renderReleasePromptStep1() {
     html += '<div class="modal-payload">Anything pulled to lineside during the swap?</div>';
     html += '</div>';
 
-    if (state.payloads.length === 0) {
+    const hasPayloads = state.payloads.length > 0;
+    if (!hasPayloads) {
         html += '<div class="os-release-prompt"><div style="color:#999;padding:12px 0;font-size:14px">No allowed payloads on this node.</div></div>';
     } else {
-        // Primary group: the chip grid and the PULL PARTS button visually
-        // belong together — the chips show what's about to be captured and
-        // the button submits it. Highlighted so the operator's eye lands
-        // here first; the partial/empty escape hatch and CANCEL sit below
-        // in a quieter row.
         html += '<div class="os-release-primary">';
         html += '<div class="os-release-primary-label">Anything pulled to lineside? Tap a part to edit qty.</div>';
         html += '<div class="os-release-part-grid">';
@@ -146,8 +142,6 @@ function renderReleasePromptStep1() {
                 esc(code) + ' (' + qty + ')</button>';
         });
         html += '</div>';
-        html += '<button type="button" class="os-action-btn request"' +
-            ' data-action="release-submit-parts">PULL PARTS LINESIDE, RELEASE</button>';
         html += '</div>';
     }
 
@@ -163,29 +157,55 @@ function renderReleasePromptStep1() {
         html += '</div>';
     }
 
-    html += '<div class="modal-actions">';
+    var pullPartsBtn = '<button type="button" class="os-action-btn request"' +
+        ' data-action="release-submit-parts">PULL PARTS LINESIDE, RELEASE</button>';
+
+    var row1RightBtn = '';
     if (isChangeover) {
         const submitLabel = remainingUOP > 0 ? 'RELEASE PARTIAL' : 'RELEASE EMPTY';
         const submitTitle = remainingUOP > 0
             ? 'No parts pulled to lineside. Bin returns to the supermarket with its current UOP intact.'
             : 'No parts pulled to lineside. Bin is empty — manifest cleared.';
-        html += '<button type="button" class="os-action-btn release-empty"' +
+        row1RightBtn = '<button type="button" class="os-action-btn release-empty"' +
             ' data-action="release-submit"' +
             ' title="' + esc(submitTitle) + '">' +
             submitLabel + '</button>';
     } else if (remainingUOP <= 0) {
-        html += '<button type="button" class="os-action-btn release-empty"' +
+        row1RightBtn = '<button type="button" class="os-action-btn release-empty"' +
             ' data-action="release-submit"' +
             ' title="No parts pulled to lineside. Bin is empty — manifest cleared.">' +
             'RELEASE EMPTY</button>';
-    }
-    if (remainingUOP > 0) {
-        html += '<button type="button" class="os-action-btn release-empty"' +
+    } else {
+        row1RightBtn = '<button type="button" class="os-action-btn release-empty"' +
             ' data-action="release-underpack-confirm"' +
             ' title="Bin is physically empty, but the system still shows UOP remaining. Records the gap as missing inventory.">' +
             'BIN EMPTY (UNDER COUNT)</button>';
     }
-    html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
+
+    html += '<div class="modal-actions">';
+    if (hasPayloads) {
+        html += '<div class="os-release-row">';
+        html += pullPartsBtn;
+        html += row1RightBtn;
+        html += '</div>';
+    } else if (row1RightBtn) {
+        html += '<div class="os-release-row">';
+        html += row1RightBtn;
+        html += '</div>';
+    }
+    if (isChangeover && remainingUOP > 0) {
+        html += '<div class="os-release-row">';
+        html += '<button type="button" class="os-action-btn release-empty"' +
+            ' data-action="release-underpack-confirm"' +
+            ' title="Bin is physically empty, but the system still shows UOP remaining. Records the gap as missing inventory.">' +
+            'BIN EMPTY (UNDER COUNT)</button>';
+        html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
+        html += '</div>';
+    } else {
+        html += '<div class="os-release-row">';
+        html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
+        html += '</div>';
+    }
     html += '</div>';
 
     nodeModalContent.innerHTML = html;
