@@ -87,7 +87,11 @@ function refreshCellState(cellID) {
 // fires so the strip isn't blank on first paint (live cell-heartbeat events
 // stream in on top). Only fires within the strip window end up drawn.
 function seedRhythm(cellID, cellIdx) {
-    const since = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    // serverNow(), not Date.now(): the stored fires are stamped in server (sim)
+    // time, which under fast-forward runs days behind wall — a wall-now window
+    // would back-date past all of them and seed nothing. syncClock has already
+    // run from the SSE 'connected' ts before loadCells() reaches here.
+    const since = new Date(serverNow() - 2 * 60 * 1000).toISOString();
     fetch('/api/cells/' + encodeURIComponent(cellID) + '/heartbeat?since=' + encodeURIComponent(since))
         .then((r) => r.json())
         .then((data) => {

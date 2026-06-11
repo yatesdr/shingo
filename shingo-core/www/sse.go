@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"shingo/shared/clock"
 	"shingocore/dispatch/eta"
 	"shingocore/engine"
 )
@@ -322,7 +323,12 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			"process_id":  ev.ProcessID,
 			"style_id":    ev.StyleID,
 			"recorded_at": ev.RecordedAt.UTC().Format(time.RFC3339Nano),
-			"ts":          time.Now().UTC().Format(time.RFC3339Nano),
+			// ts is the SIM clock, not wall — the kiosk syncs serverNow() to it and
+			// windows fires by recorded_at (also sim-stamped). Under fast-forward the
+			// sim clock runs days behind wall; a wall ts would put serverNow() ahead of
+			// every back-dated fire, so the 60s strip window would always read empty
+			// ("No data"). clock.Now() == time.Now() in production, so live is unchanged.
+			"ts": clock.Now().UTC().Format(time.RFC3339Nano),
 		}))
 	}, engine.EventCellTick)
 }
@@ -351,10 +357,11 @@ func (h *EventHub) SSEHandler(w http.ResponseWriter, r *http.Request) {
 	defer h.RemoveClient(ch)
 
 	// Send connected event with the per-process build id so reconnects
-	// after a core restart trigger a hard-reload on the client. ts is server
-	// time — the /heartbeat kiosk (§13) syncs its clock offset from it so
-	// "X ago" timers don't drift over a 72h soak.
-	if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\",\"ts\":\"%s\"}\n\n", serverInstance, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+	// after a core restart trigger a hard-reload on the client. ts is the SIM
+	// clock — the /heartbeat kiosk (§13) syncs its clock offset from it so its
+	// 60s strip window aligns with the (sim-stamped) fires under fast-forward,
+	// and "X ago" timers don't drift over a 72h soak. clock.Now()==time.Now() in prod.
+	if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\",\"ts\":\"%s\"}\n\n", serverInstance, clock.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return
 	}
 	flusher.Flush()
@@ -378,7 +385,7 @@ func (h *EventHub) SSEHandler(w http.ResponseWriter, r *http.Request) {
 			// The bare `: keepalive` comment was stripped by EventSource
 			// and never reached the JS client, so it could not carry the
 			// build id.
-			if _, err := fmt.Fprintf(w, "event: heartbeat\ndata: {\"build\":\"%s\",\"ts\":\"%s\"}\n\n", serverInstance, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			if _, err := fmt.Fprintf(w, "event: heartbeat\ndata: {\"build\":\"%s\",\"ts\":\"%s\"}\n\n", serverInstance, clock.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 				log.Printf("sse: keepalive write error: %v", err)
 				return
 			}
