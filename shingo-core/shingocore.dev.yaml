@@ -29,6 +29,21 @@ messaging:
 # rds / count_groups / fire_alarm intentionally omitted — sim mode skips the RDS
 # adapter and the count-group runner (T1.1). Defaults apply for anything else.
 
+# Staging / reconciliation cadence. The sim has no human operator to confirm a
+# produce/consume delivery, so `delivered` orders rely on the reconciliation
+# sweep to auto-confirm them (delivered→confirmed = terminal). The PRODUCTION
+# defaults (sweep_interval 5m, auto_confirm_delivered 5m) leave a produce relief's
+# resupply leg (AutoConfirmA=false) sitting `delivered` — hence non-terminal — for
+# up to 5 wall-minutes; meanwhile CanAcceptOrders reports "active order in progress"
+# and blocks the next relief, so the output bin overfills past capacity and the
+# cell stalls (the sim-plant-design.md §5 contract). Drive both short here so a
+# delivery confirms within ~2s and the swap loop self-clears headlessly. Loaders/
+# unloaders carry skip_auto_confirm and stay sim-operator-driven (CLEAR), so a
+# short auto_confirm does not race them. AbandonStuck stays at its 1h default.
+staging:
+  sweep_interval: 2s            # wall-clock ticker for the reconciliation + staged-bin sweeps
+  auto_confirm_delivered: 2s    # sim-clock age after which a stuck `delivered` order is confirmed
+
 sim:
   enabled: true
   seed: 1                           # fixed for reproducible dev runs (0 = derive+log)

@@ -224,7 +224,7 @@ func makeReadinessGate(db *sql.DB, cfg config.SimConfig) simwarlink.ReadinessFun
 
 		// Check every non-manual_swap node of this process under the active style.
 		rows, err := db.Query(`
-			SELECT c.role, c.swap_mode, r.active_bin_id, r.remaining_uop_cached
+			SELECT c.role, c.swap_mode, c.uop_capacity, r.active_bin_id, r.remaining_uop_cached, r.active_pull
 			FROM process_nodes pn
 			JOIN style_node_claims c ON c.style_id = ? AND c.core_node_name = pn.core_node_name
 			JOIN process_node_runtime_states r ON r.process_node_id = pn.id
@@ -236,22 +236,41 @@ func makeReadinessGate(db *sql.DB, cfg config.SimConfig) simwarlink.ReadinessFun
 
 		for rows.Next() {
 			var role, swapMode string
+			var uopCap, remainingUOP int
 			var activeBinID sql.NullInt64
-			var remainingUOP int
-			if err := rows.Scan(&role, &swapMode, &activeBinID, &remainingUOP); err != nil {
+			var activePull bool
+			if err := rows.Scan(&role, &swapMode, &uopCap, &activeBinID, &remainingUOP, &activePull); err != nil {
 				return true
 			}
 			// manual_swap nodes are operator-managed, not PLC-ticked.
 			if swapMode == string(protocol.SwapModeManualSwap) {
 				continue
 			}
-			// All non-manual_swap nodes need a bound bin.
+			// Parked A/B side (active_pull=false): the line isn't filling/draining
+			// it right now, so its fill level doesn't gate the cell — the active
+			// partner does. Skip it entirely (it may legitimately sit full while
+			// parked, awaiting its swap-out). The bound-bin checks below only apply
+			// to nodes the line is actually working.
+			if !activePull {
+				continue
+			}
+			// All active non-manual_swap nodes need a bound bin.
 			if !activeBinID.Valid || activeBinID.Int64 == 0 {
 				return false // no bin bound
 			}
-			// Consume nodes additionally need UOP > 0 (not starved).
+			// Consume nodes need UOP > 0 (not starved) — a real cell can't cycle an
+			// empty input, so the counter must stop rather than drive the count
+			// negative.
 			if role == "consume" && remainingUOP <= 0 {
 				return false // starved
+			}
+			// Produce nodes must stop when the output bin is full — a real machine
+			// can't cycle into a full bin. The relief swap (or A/B flip) carries it
+			// out and binds an empty, then the gate reopens. Without this the count
+			// drives past capacity. A/B headroom comes from the parked partner, which
+			// is skipped above and becomes active on the flip.
+			if role == "produce" && uopCap > 0 && remainingUOP >= uopCap {
+				return false // output full
 			}
 		}
 		return true // all checks passed

@@ -39,10 +39,11 @@ type simOperator struct {
 	// field so tests can inject a stub (the default reads the node's claim).
 	classify func(nodeID int64) (delay time.Duration, label string, action func() error, ok bool)
 
-	mu        sync.Mutex
-	pending   map[int64]bool // nodes with a LOAD/CLEAR scheduled/in-flight (idempotence)
-	releasing map[int64]bool // orders with a swap-ready release scheduled/in-flight
-	flipping  map[int64]bool // A/B active nodes with a cutover scheduled/in-flight
+	mu         sync.Mutex
+	pending    map[int64]bool // nodes with a LOAD/CLEAR scheduled/in-flight (idempotence)
+	releasing  map[int64]bool // orders with a swap-ready release scheduled/in-flight
+	flipping   map[int64]bool // A/B active nodes with a cutover scheduled/in-flight
+	confirming map[int64]bool // delivered swap legs with a confirm scheduled/in-flight
 }
 
 // StartSimOperator wires the sim operator to the EventBus. Sim builds only;
@@ -55,9 +56,10 @@ func (e *Engine) StartSimOperator(ctx context.Context, simCfg config.SimConfig, 
 		ops:       simCfg.Operators,
 		clk:       clk,
 		ctx:       ctx,
-		pending:   make(map[int64]bool),
-		releasing: make(map[int64]bool),
-		flipping:  make(map[int64]bool),
+		pending:    make(map[int64]bool),
+		releasing:  make(map[int64]bool),
+		flipping:   make(map[int64]bool),
+		confirming: make(map[int64]bool),
 	}
 	op.classify = op.classifyFromClaim
 	// The bus is synchronous (D4): handlers must not block — they dedupe and
@@ -94,7 +96,84 @@ func (op *simOperator) onDelivered(ev Event) {
 	if !ok || d.ProcessNodeID == nil {
 		return
 	}
-	op.schedule(*d.ProcessNodeID)
+	op.schedule(*d.ProcessNodeID)              // LOAD/CLEAR for manual_swap nodes
+	op.scheduleConfirm(d.OrderID, *d.ProcessNodeID) // sign off swap legs delivered to a line node
+}
+
+// confirmDelay is the operator's reaction time before signing off a delivered
+// swap leg — the headless equivalent of confirming receipt at the line. The sim
+// clock's After scales it by live speed.
+const confirmDelay = 2 * time.Second
+
+// scheduleConfirm dedupes by order and spawns the confirm worker. Safe on the
+// synchronous bus — it never blocks.
+func (op *simOperator) scheduleConfirm(orderID, nodeID int64) {
+	op.mu.Lock()
+	if op.confirming[orderID] {
+		op.mu.Unlock()
+		return
+	}
+	op.confirming[orderID] = true
+	op.mu.Unlock()
+	go op.runConfirm(orderID, nodeID)
+}
+
+// runConfirm signs off a swap leg that delivered a bin TO a produce/consume line
+// node. Why this exists: a produce/consume resupply (or A/B backfill) leg lands
+// `delivered` and stays non-terminal until something confirms it. The sim has no
+// human operator to confirm, and the only other confirm path — Core's
+// reconciliation auto-confirm sweep — confirms the CORE order but cannot
+// transition the EDGE order, so the Edge leg sits `delivered` forever and
+// CanAcceptOrders reports "active/staged order in progress", blocking the next
+// relief until the cell/press overfills (PLN_003 → hundreds of uop over cap).
+// Issuing the Edge receipt here (ConfirmDelivery) is the design's "Edge receipt"
+// confirm path (sim.md §5): it transitions the Edge order AND notifies Core, so
+// both sides reach `confirmed` and the swap loop self-clears.
+//
+// Scope guards keep it to exactly the legs that need it:
+//   - manual_swap loader/unloader nodes are LOAD/CLEAR-driven (skip_auto_confirm);
+//     never auto-confirmed here.
+//   - removal legs deliver to the supermarket, not the line node, so
+//     DeliveryNode != CoreNodeName filters them out (they auto-confirm already).
+//   - re-checks status==delivered after the dwell so a racing confirm is a no-op.
+func (op *simOperator) runConfirm(orderID, nodeID int64) {
+	defer func() {
+		op.mu.Lock()
+		delete(op.confirming, orderID)
+		op.mu.Unlock()
+	}()
+
+	node, _, claim, err := loadActiveNode(op.e.db, nodeID)
+	if err != nil || node == nil || claim == nil {
+		return
+	}
+	if claim.SwapMode == protocol.SwapModeManualSwap {
+		return // loader/unloader — LOAD/CLEAR owns its lifecycle
+	}
+	order, err := op.e.db.GetOrder(orderID)
+	if err != nil || order == nil {
+		return
+	}
+	if order.DeliveryNode != node.CoreNodeName {
+		return // only legs that bind a bin AT this node (resupply / A/B backfill)
+	}
+
+	select {
+	case <-op.ctx.Done():
+		return
+	case <-op.clk.After(confirmDelay):
+	}
+
+	// Re-read after the dwell — Core's sweep or a sibling may have advanced it.
+	order, err = op.e.db.GetOrder(orderID)
+	if err != nil || order == nil || order.Status != protocol.StatusDelivered {
+		return
+	}
+	if err := op.e.orderMgr.ConfirmDelivery(orderID, order.Quantity); err != nil {
+		op.e.debugFn("[sim] operator auto-confirm order %d rejected: %v", orderID, err)
+		return
+	}
+	op.e.logFn("[sim] operator auto-confirm delivered leg order %d at %s", orderID, node.CoreNodeName)
 }
 
 // schedule dedupes by node and spawns the delayed worker. Never blocks, so it's

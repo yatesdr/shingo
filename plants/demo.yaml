@@ -81,18 +81,18 @@ zones:
     retrieve_algorithm: FIFO
     store_algorithm: DPTH
     lanes:
-      - {name: Lane_12, slots: [{name: UTN_001, depth: 1}]}
-      - {name: Lane_13, slots: [{name: UTN_002, depth: 1}]}
-      - {name: Lane_14, slots: [{name: UTN_003, depth: 1}]}
-      - {name: Lane_15, slots: [{name: UTN_004, depth: 1}]}
-      - {name: Lane_16, slots: [{name: UTN_005, depth: 1}]}
-      - {name: Lane_17, slots: [{name: UTN_006, depth: 1}]}
-      - {name: Lane_18, slots: [{name: UTN_007, depth: 1}]}
-      - {name: Lane_19, slots: [{name: UTN_008, depth: 1}]}
-      - {name: Lane_20, slots: [{name: UTN_009, depth: 1}]}
-      - {name: Lane_21, slots: [{name: UTN_010, depth: 1}]}
-      - {name: Lane_22, slots: [{name: UTN_011, depth: 1}]}
-      - {name: Lane_23, slots: [{name: UTN_012, depth: 1}]}
+      - {name: Lane_12, slots: [{name: UTN_001, depth: 1}, {name: UTN_002, depth: 2}, {name: UTN_003, depth: 3}, {name: UTN_004, depth: 4}]}
+      - {name: Lane_13, slots: [{name: UTN_005, depth: 1}, {name: UTN_006, depth: 2}, {name: UTN_007, depth: 3}, {name: UTN_008, depth: 4}]}
+      - {name: Lane_14, slots: [{name: UTN_009, depth: 1}, {name: UTN_010, depth: 2}, {name: UTN_011, depth: 3}, {name: UTN_012, depth: 4}]}
+      - {name: Lane_15, slots: [{name: UTN_013, depth: 1}, {name: UTN_014, depth: 2}, {name: UTN_015, depth: 3}, {name: UTN_016, depth: 4}]}
+      - {name: Lane_16, slots: [{name: UTN_017, depth: 1}, {name: UTN_018, depth: 2}, {name: UTN_019, depth: 3}, {name: UTN_020, depth: 4}]}
+      - {name: Lane_17, slots: [{name: UTN_021, depth: 1}, {name: UTN_022, depth: 2}, {name: UTN_023, depth: 3}, {name: UTN_024, depth: 4}]}
+      - {name: Lane_18, slots: [{name: UTN_025, depth: 1}, {name: UTN_026, depth: 2}, {name: UTN_027, depth: 3}, {name: UTN_028, depth: 4}]}
+      - {name: Lane_19, slots: [{name: UTN_029, depth: 1}, {name: UTN_030, depth: 2}, {name: UTN_031, depth: 3}, {name: UTN_032, depth: 4}]}
+      - {name: Lane_20, slots: [{name: UTN_033, depth: 1}, {name: UTN_034, depth: 2}, {name: UTN_035, depth: 3}, {name: UTN_036, depth: 4}]}
+      - {name: Lane_21, slots: [{name: UTN_037, depth: 1}, {name: UTN_038, depth: 2}, {name: UTN_039, depth: 3}, {name: UTN_040, depth: 4}]}
+      - {name: Lane_22, slots: [{name: UTN_041, depth: 1}, {name: UTN_042, depth: 2}, {name: UTN_043, depth: 3}, {name: UTN_044, depth: 4}]}
+      - {name: Lane_23, slots: [{name: UTN_045, depth: 1}, {name: UTN_046, depth: 2}, {name: UTN_047, depth: 3}, {name: UTN_048, depth: 4}]}
 
 stations:
   # ── PRESS-1: two_robot_press_index (front + paired back, no staging) ──
@@ -168,6 +168,34 @@ bins:
   - {name: BIN-MT-06, slot: UTN_006}
   - {name: BIN-MT-07, slot: UTN_007}
   - {name: BIN-MT-08, slot: UTN_008}
+  - {name: BIN-MT-09, slot: UTN_009}
+  - {name: BIN-MT-10, slot: UTN_010}
+  - {name: BIN-MT-11, slot: UTN_011}
+  - {name: BIN-MT-12, slot: UTN_012}
+  - {name: BIN-MT-13, slot: UTN_013}
+  - {name: BIN-MT-14, slot: UTN_014}
+  - {name: BIN-MT-15, slot: UTN_015}
+  - {name: BIN-MT-16, slot: UTN_016}
+  - {name: BIN-MT-17, slot: UTN_017}
+  - {name: BIN-MT-18, slot: UTN_018}
+  - {name: BIN-MT-19, slot: UTN_019}
+  - {name: BIN-MT-20, slot: UTN_020}
+  - {name: BIN-MT-21, slot: UTN_021}
+  - {name: BIN-MT-22, slot: UTN_022}
+  - {name: BIN-MT-23, slot: UTN_023}
+  - {name: BIN-MT-24, slot: UTN_024}
+  - {name: BIN-MT-25, slot: UTN_025}
+  - {name: BIN-MT-26, slot: UTN_026}
+  - {name: BIN-MT-27, slot: UTN_027}
+  - {name: BIN-MT-28, slot: UTN_028}
+  - {name: BIN-MT-29, slot: UTN_029}
+  - {name: BIN-MT-30, slot: UTN_030}
+  - {name: BIN-MT-31, slot: UTN_031}
+  - {name: BIN-MT-32, slot: UTN_032}
+  - {name: BIN-MT-33, slot: UTN_033}
+  - {name: BIN-MT-34, slot: UTN_034}
+  - {name: BIN-MT-35, slot: UTN_035}
+  - {name: BIN-MT-36, slot: UTN_036}
 
 processes:
   - {name: PRESS-1, active_style: PRESS-1-RUN}        # two_robot_press_index
