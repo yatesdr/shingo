@@ -90,7 +90,7 @@ func startSimSubsystems(eng *engine.Engine, cfg *config.Config, wlClient plc.War
 	// Wire the readiness gate (G3) into the fake PLC client.
 	// Compose: calendar gate AND machine-readiness gate AND downtime gate.
 	if fake, ok := wlClient.(*simwarlink.FakeClient); ok && eng.DB() != nil {
-		machineGate := makeReadinessGate(eng.DB().DB, cfg.Sim)
+		machineGate := makeReadinessGate(eng.DB().DB)
 		cal := simwarlink.NewProductionCalendar(simwarlink.CalendarConfig{
 			Enabled: cfg.Sim.Calendar.Enabled,
 			Weekend: cfg.Sim.Calendar.Weekend,
@@ -127,8 +127,7 @@ func startSimSubsystems(eng *engine.Engine, cfg *config.Config, wlClient plc.War
 		}
 		downtimeModel = simwarlink.NewDowntimeModel(cfg.Sim, clk, station, setDown, downEmitEvent)
 
-		var gate simwarlink.ReadinessFunc
-		gate = func(plcName string) bool {
+		gate := func(plcName string) bool {
 			// Downtime gate: if the machine is in a downtime outage, suppress.
 			if downtimeModel != nil && downtimeModel.IsDown(plcName) {
 				return false
@@ -179,19 +178,10 @@ func startSimSubsystems(eng *engine.Engine, cfg *config.Config, wlClient plc.War
 //
 // Returns true if ALL non-manual_swap nodes are ready, false otherwise.
 // Returns true on any error (fail-open — a DB glitch shouldn't stop the sim).
-func makeReadinessGate(db *sql.DB, cfg config.SimConfig) simwarlink.ReadinessFunc {
-	// Build a map from plcName → the process's reporting point style_id so we
-	// can look up the process at runtime. plcName → style_id mapping is fixed
-	// at startup (the seed creates it once).
-	type procInfo struct {
-		processID int64
-		styleID   int64
-	}
-	procs := make(map[string]procInfo)
-	for _, p := range cfg.Processes {
-		procs[p.PLCName] = procInfo{} // placeholder, resolved below
-	}
-
+func makeReadinessGate(db *sql.DB) simwarlink.ReadinessFunc {
+	// The process and active style are resolved per-call from reporting_points
+	// (keyed by the PLC name the fake WarLink passes) — no startup cache, so a
+	// changeover that re-points rp.style_id is picked up on the very next tick.
 	return func(plcName string) bool {
 		// Resolve the process and active style for this PLC name from the
 		// reporting_points table (seeded by seeddev).
