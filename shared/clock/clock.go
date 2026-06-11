@@ -85,3 +85,28 @@ func AsSimClock() *SimClock {
 	sc, _ := defaultCl.(*SimClock)
 	return sc
 }
+
+// ScaleTTL converts a wall-time message-expiry budget into the clock domain the
+// envelope is stamped in. Envelope `exp` is stamped from clock.Now(); under a
+// fast-forward SimClock that is sim time, so a fixed sim-TTL T shrinks the REAL
+// pipeline budget to T/speed — at 15× a 10-minute TTL is only ~40 wall-seconds.
+// A normal pipeline hiccup (a lockstep restart's catch-up, a GC pause, a burst
+// of orders) then pushes order-lifecycle messages (order.update / order.staged /
+// order.ack) past expiry, the consumer drops them, and the order strands —
+// never released, eventually abandoned, starving the cell. Scaling the stamped
+// TTL by the effective speed keeps the real budget at T regardless of how fast
+// the sim runs.
+//
+// Production-safe and dormant: with no SimClock installed (AsSimClock()==nil) or
+// speed<=1 it returns d unchanged, so non-sim builds and 1× runs are untouched.
+func ScaleTTL(d time.Duration) time.Duration {
+	sc := AsSimClock()
+	if sc == nil {
+		return d
+	}
+	speed := sc.Speed()
+	if speed <= 1 {
+		return d
+	}
+	return time.Duration(float64(d) * speed)
+}
