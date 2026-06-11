@@ -34,4 +34,7 @@ dev-rates: ## Fill/starve check on the demo plant (run after editing it; no Dock
 dev-rates-solve: ## Derive balanced tick rates. Override: make dev-rates-solve ARGS="-line-rate 8 -transit 15m"
 	cd shingo-core && go run ./cmd/simcalc -solve -plant ../plants/demo.yaml $(ARGS)
 
+dev-fleet: ## Estimate the AMR fleet the plant needs. Override: make dev-fleet ARGS="-transit 15m -util 0.7"
+	cd shingo-core && go run ./cmd/simcalc -fleet -plant ../plants/demo.yaml -edge ../shingo-edge/shingoedge.dev.yaml $(ARGS)
+
 # dev-wipe target added in Phase 4 (T4.5).

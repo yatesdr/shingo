@@ -15,9 +15,17 @@
 //     sim.processes block. With -transit, also sizes reorder points + bins so a
 //     cell doesn't starve waiting for a bin to cross the floor (round-2 §2.3).
 //
+//   - FLEET (-fleet): the robot estimator (round-2 §3.1 / G16). Same rate model,
+//     pointed at the AMR fleet: each cell/press swaps a bin every capacity/rate
+//     minutes, each swap occupies robots for its choreography's floor crossings ×
+//     transit, and the summed offered load (erlangs) ÷ target utilization is the
+//     recommended fleet. The dual of the fill/starve check — that sizes inventory,
+//     this sizes the fleet that moves it. Tune with -transit and -util.
+//
 // Run:  make dev-rates            (check)
 //
 //	    make dev-rates-solve      (solve)
+//	    make dev-fleet            (fleet)
 //	or: (cd shingo-core && go run ./cmd/simcalc [-solve] -plant ../plants/demo.yaml \
 //	                                            -edge ../shingo-edge/shingoedge.dev.yaml)
 //
@@ -99,8 +107,10 @@ func main() {
 	plantPath := flag.String("plant", "plants/demo.yaml", "path to the plant spec YAML")
 	edgePath := flag.String("edge", "shingo-edge/shingoedge.dev.yaml", "path to the edge sim config YAML")
 	solve := flag.Bool("solve", false, "derive balanced tick rates instead of checking the configured ones")
+	fleet := flag.Bool("fleet", false, "estimate the AMR fleet the plant's swap cadence needs (robot estimator)")
 	lineRate := flag.Float64("line-rate", 6.0, "solve: anchor rate (parts/min) for line/cell processes")
-	transit := flag.String("transit", "", "solve: worst-case robot transit (e.g. 15m) to size reorder points + bins")
+	transit := flag.String("transit", "", "solve/fleet: robot transit per move (e.g. 15m). fleet defaults to 10m")
+	util := flag.Float64("util", 0.75, "fleet: target robot utilization (0..1); headroom for queueing + empty travel")
 	flag.Parse()
 
 	plant, err := plantspec.Load(*plantPath)
@@ -118,6 +128,11 @@ func main() {
 		fail("load edge config: %v", err)
 	}
 	rate, avail := edgeRates(edge)
+
+	if *fleet {
+		runFleet(plant, rate, *transit, *util, *plantPath)
+		return
+	}
 	flows := walkClaims(plant, rate, avail)
 	report(flows, capacityPerMin(edge.Sim.Operators.LoaderAutoLoad),
 		capacityPerMin(edge.Sim.Operators.UnloaderAutoClear),
@@ -413,6 +428,130 @@ func sizeFromTransit(plant *plantspec.Plant, rate map[string]float64, transit st
 		fmt.Printf("%-10s %-10.0f %-14d %-12d %s\n", n, f.consume, reorder, binCap,
 			fmt.Sprintf("%.0f/min × %.0fm transit", f.consume, mins))
 	}
+}
+
+// ───────────────────────────────── FLEET ─────────────────────────────────────
+//
+// The robot estimator (round-2 §3.1 / G16). Every cell and press swaps a bin on a
+// cadence set by its rate and bin capacity: a node making/consuming R parts/min
+// with a C-uop bin swaps R/C times a minute. Each swap occupies robots for the
+// loaded legs of its choreography (material_orders.go) × the per-move transit.
+// Summing swaps/min × loaded-moves × transit across every swap point gives the
+// OFFERED robot-load in erlangs (the average number of robots busy); the fleet is
+// that load divided by a target utilization so the queue doesn't blow up. This is
+// the dual of the fill/starve check: that one sizes inventory, this one sizes the
+// fleet that moves it — both fall straight out of the same rate model.
+
+// fleetMovesPerSwap returns the floor-spanning loaded crossings in one swap cycle
+// and the peak concurrent robots the cycle needs, per swap mode. A "crossing" is a
+// material-carrying leg that traverses the floor (≈ one transit); short staging
+// hops, the back↔front index hop, and empty repositioning are NOT counted — they're
+// small and fall into the util headroom. Crossing counts track the long legs of the
+// step builders in engine/material_orders.go.
+func fleetMovesPerSwap(mode string) (crossings float64, robots int) {
+	switch mode {
+	case "simple":
+		return 1, 1 // one floor crossing (old out / new in folded)
+	case "sequential":
+		return 2, 1 // removal (node→market) + backfill (source→node), one robot, serialized
+	case "single_robot":
+		return 2, 1 // fetch in (source→…→node) + ship out (node→…→market); staging hops are short
+	case "two_robot":
+		return 2, 2 // supply robot crosses in, removal robot crosses out — one long leg each
+	case "two_robot_press_index":
+		return 2, 2 // output→market + source→back; the back→front index hop is short
+	case "manual_swap":
+		return 1, 1 // one loaded crossing per push (loader→market) / pull (line→market)
+	default:
+		return 1, 1
+	}
+}
+
+func runFleet(plant *plantspec.Plant, rate map[string]float64, transit string, util float64, plantPath string) {
+	d := 10 * time.Minute
+	if transit != "" {
+		var err error
+		if d, err = time.ParseDuration(transit); err != nil || d <= 0 {
+			fail("bad -transit %q", transit)
+		}
+	}
+	if util <= 0 || util > 1 {
+		fail("bad -util %.2f (want 0..1)", util)
+	}
+	tmin := d.Minutes()
+	flows := walkClaims(plant, rate, nil) // for manual_swap throughput (loader/unloader)
+
+	type frow struct {
+		proc, role, payload, mode string
+		swaps, moves               float64
+		robots                     int
+		load                       float64
+	}
+	var rows []frow
+	var offered, peak float64
+
+	for _, ac := range activeClaims(plant) {
+		c, proc := ac.claim, ac.proc
+		if !c.IsManualSwap() && !c.IsActivePull() {
+			continue // parked A/B side — the active partner's cadence already counts the pair's swaps
+		}
+		cap := c.UOPCapacity
+		if cap <= 0 {
+			if f := flows[c.Payload]; f != nil {
+				cap = f.uopCap
+			}
+		}
+		if cap <= 0 {
+			continue
+		}
+		// parts/min flowing through this node sets its swap cadence.
+		var tp float64
+		switch {
+		case c.IsManualSwap() && c.Role == "produce": // loader: supplies its payload's draw
+			if f := flows[c.Payload]; f != nil {
+				tp = f.consume
+			}
+		case c.IsManualSwap() && c.Role == "consume": // unloader: drains its payload's make
+			if f := flows[c.Payload]; f != nil {
+				tp = f.produce
+			}
+		default:
+			tp = rate[proc]
+		}
+		if tp <= 0 {
+			continue
+		}
+		swaps := tp / float64(cap)
+		moves, robots := fleetMovesPerSwap(c.SwapMode)
+		load := swaps * moves * tmin // erlangs: avg robots busy on this node's loaded legs
+		offered += load
+		peak += float64(robots)
+		rows = append(rows, frow{proc, c.Role, c.Payload, c.SwapMode, swaps, moves, robots, load})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].proc != rows[j].proc {
+			return rows[i].proc < rows[j].proc
+		}
+		return rows[i].role < rows[j].role
+	})
+
+	fmt.Printf("Fleet sizing — plant %s, transit %s/move, target utilization %.0f%%\n\n", plantPath, d, util*100)
+	fmt.Printf("%-12s %-8s %-10s %-22s %-10s %-6s %-7s %s\n",
+		"PROCESS", "ROLE", "PAYLOAD", "SWAP MODE", "SWAPS/min", "CROSS", "ROBOTS", "LOAD(erlang)")
+	fmt.Println(strings.Repeat("─", 104))
+	for _, r := range rows {
+		fmt.Printf("%-12s %-8s %-10s %-22s %-10.2f %-6.0f %-7d %.2f\n",
+			r.proc, r.role, r.payload, r.mode, r.swaps, r.moves, r.robots, r.load)
+	}
+	fmt.Println(strings.Repeat("─", 100))
+
+	required := int(math.Ceil(offered / util))
+	fmt.Printf("Offered robot-load: %.2f erlang (avg robots continuously busy on loaded legs)\n", offered)
+	fmt.Printf("Peak if every swap overlapped: %.0f robots (upper bound, never all at once)\n", peak)
+	fmt.Printf("Recommended fleet: ⌈%.2f ÷ %.2f⌉ = %d AMRs\n", offered, util, required)
+	fmt.Println("note: counts loaded legs only at the given transit; empty repositioning, queueing, and")
+	fmt.Println("      downtime bunching are covered by the utilization headroom. Re-run with -transit to")
+	fmt.Println("      match the floor and -util to trade fleet size against queue wait.")
 }
 
 // ──────────────────────────────── CHECK ──────────────────────────────────────
