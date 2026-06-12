@@ -7,6 +7,16 @@ import (
 	"shingocore/domain"
 )
 
+// broadcastPayloadUpdate notifies live Core UI clients that a payload
+// template changed so the Payloads page refreshes without a manual
+// reload. Best-effort: a nil eventHub (tests) is a no-op.
+func (h *Handlers) broadcastPayloadUpdate() {
+	if h.eventHub == nil {
+		return
+	}
+	h.eventHub.Broadcast("payload-update", sseJSON(map[string]any{"action": "changed"}))
+}
+
 func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -27,6 +37,7 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.broadcastPayloadUpdate()
 	http.Redirect(w, r, "/payloads", http.StatusSeeOther)
 }
 
@@ -58,6 +69,7 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.broadcastPayloadUpdate()
 	http.Redirect(w, r, "/payloads", http.StatusSeeOther)
 }
 
@@ -73,6 +85,7 @@ func (h *Handlers) handlePayloadDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.broadcastPayloadUpdate()
 	http.Redirect(w, r, "/payloads", http.StatusSeeOther)
 }
 
@@ -123,6 +136,7 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	h.broadcastPayloadUpdate()
 	h.jsonOK(w, p)
 }
 
@@ -176,6 +190,7 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	h.broadcastPayloadUpdate()
 	h.jsonSuccess(w)
 }
 

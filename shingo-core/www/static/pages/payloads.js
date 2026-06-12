@@ -1,4 +1,12 @@
 import { api, delegateActions, el, escapeHtml, hideModal, removeParentElement, showModal, toast } from '/static/app.js';
+import { autoReloadOnSSE } from '/static/shared/utils.js';
+
+// The payloads list is server-rendered and changes rarely (only on a
+// payload create/edit/delete, which Core now broadcasts as
+// 'payload-update'). Auto-reload so a change made elsewhere shows here
+// without a manual refresh — skipped while a create/edit modal is open
+// so it never interrupts an operator mid-edit.
+autoReloadOnSSE('payload-update', { debounceMs: 800 });
 
 /* --- Manifest builder --- */
 function addManifestRow(containerId, catid, qty) {

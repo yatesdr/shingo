@@ -303,6 +303,13 @@ func (db *DB) migrate() error {
 	// v16: Add payload_code to orders for per-payload demand mapping.
 	db.Exec("ALTER TABLE orders ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''")
 
+	// v27 (Hopkinsville 2026-06-11): Core's reason a retrieve is sitting
+	// queued (dropoff occupied, no source bin, …), surfaced on the
+	// operator board so a parked "request full" explains itself instead
+	// of reading as a dead button. Populated from the OrderUpdate detail
+	// on the queued reply (manager.HandleDispatchReply / ReplyQueued).
+	db.Exec("ALTER TABLE orders ADD COLUMN queue_reason TEXT NOT NULL DEFAULT ''")
+
 	// v17 (lineside phase 6): per-claim soft threshold for the release
 	// qty-override prompt. Zero means "off" — the default. When >0, the
 	// HMI warns if the operator enters a qty greater than 2× this value.

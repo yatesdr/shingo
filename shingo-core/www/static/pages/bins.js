@@ -641,6 +641,14 @@ onSSE('bin-update', debounce(function(data) {
   if (currentBinId && currentBinId === data.bin_id) {
     openBinDetail(currentBinId);
   }
+  // Live-update the table so moves/loads/clears/status changes show
+  // without a manual refresh. In-place row patch is cheap and preserves
+  // the operator's filters, scroll, and bulk selection. A bin with no
+  // row yet (created on another client) surfaces on the next full load —
+  // rare, and not worth a disruptive whole-page reload here.
+  if (data.bin_id && document.querySelector('#bin-table tbody tr[data-id="' + data.bin_id + '"]')) {
+    refreshBinRow(data.bin_id);
+  }
 }, 500));
 
 // ===== HELPERS =====

@@ -104,7 +104,17 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 }
 
 func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, payloadCode string) {
-	if err := d.lifecycle.Queue(order, "dispatcher", "awaiting inventory"); err != nil {
+	// The planner persists the specific blocking reason (dropoff occupied,
+	// no source bin, …) to queue_reason before queueOrder runs. Surface it
+	// to Edge so the operator board can explain WHY the order is parked
+	// instead of showing a generic "awaiting inventory" — a brand-new crew
+	// otherwise reads the silent queue as a dead button and re-taps
+	// "request full", stacking duplicate queued orders.
+	reason := "awaiting inventory"
+	if fresh, err := d.db.GetOrder(order.ID); err == nil && fresh != nil && fresh.QueueReason != "" {
+		reason = fresh.QueueReason
+	}
+	if err := d.lifecycle.Queue(order, "dispatcher", reason); err != nil {
 		d.dbg("queue order %d: %v", order.ID, err)
 	}
 	if payloadCode != "" && order.PayloadCode == "" {
@@ -114,7 +124,7 @@ func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, pay
 	}
 	d.dbg("queued: order=%d uuid=%s payload=%s delivery=%s", order.ID, order.EdgeUUID, payloadCode, order.DeliveryNode)
 	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, env.Src.Station, payloadCode)
-	d.replies.SendUpdate(env, order.EdgeUUID, string(StatusQueued), "awaiting inventory")
+	d.replies.SendUpdate(env, order.EdgeUUID, string(StatusQueued), reason)
 }
 
 func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope, sourceNode, destNode *nodes.Node) {

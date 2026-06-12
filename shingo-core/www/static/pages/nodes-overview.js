@@ -1,9 +1,18 @@
 import { api, apiPost, delegateActions, toast, uiConfirm } from '/static/app.js';
+import { autoReloadOnSSE } from '/static/shared/utils.js';
 
 // Page-level helpers for the nodes overview: fleet sync, accordion
 // toggle, search/filter. Sibling modules (nodes-detail.js,
 // nodes-supermarket.js) read isAuth from #page-data independently
 // under ES module scoping.
+
+// Node tiles (and supermarket lanes) render their occupancy server-side,
+// so reflect live moves without a manual refresh. node-update covers
+// node config/enable changes; bin-update covers occupancy. Longer
+// debounce because bin moves are frequent plant-wide — a burst collapses
+// into one reload. Skipped while a node modal is open or the operator is
+// typing in the search/filter (see autoReloadOnSSE).
+autoReloadOnSSE(['node-update', 'bin-update'], { debounceMs: 2000 });
 
 async function syncOrGenerate(e) {
   if (e.shiftKey) {

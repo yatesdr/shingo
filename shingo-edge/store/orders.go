@@ -56,6 +56,12 @@ func (db *DB) UpdateOrderStatus(id int64, newStatus string) error {
 	return orders.UpdateStatus(db.DB, id, newStatus)
 }
 
+// UpdateOrderQueueReason records Core's reason for an order sitting
+// queued, surfaced on the operator board.
+func (db *DB) UpdateOrderQueueReason(id int64, reason string) error {
+	return orders.UpdateQueueReason(db.DB, id, reason)
+}
+
 // UpdateOrderWaybill writes the carrier waybill and ETA fields.
 func (db *DB) UpdateOrderWaybill(id int64, waybillID, eta string) error {
 	return orders.UpdateWaybill(db.DB, id, waybillID, eta)
