@@ -822,3 +822,26 @@ func (m *Manager) RollbackForRetry(orderUUID, detail string) error {
 	m.lifecycle.debug = m.DebugLog
 	return m.lifecycle.ForceTransition(order.ID, StatusStaged, detail)
 }
+
+// RollbackReleaseRejection handles a Core release-rejection (e.g. invalid_state)
+// without ever terminally failing the order — the scoped-B hardening for the
+// ALN_003 divergence (Springfield 2026-06-12). A release rejection means Core
+// declined to release this leg, typically because Edge's consolidated two-robot
+// release fanned out to a leg that isn't releasable (recovering, or already
+// finished). The Edge mirror must not die on it. Only an in_transit leg is
+// rolled back — the release moved it toward dispatch and Core bounced it, so
+// return it to staged for a retry. Any other state is left untouched: a
+// still-staged leg is already retryable, and a terminal or pre-release leg must
+// not be resurrected or re-failed by a stray fan-out rejection.
+func (m *Manager) RollbackReleaseRejection(orderUUID, detail string) error {
+	order, err := m.db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		return fmt.Errorf("get order %s: %w", orderUUID, err)
+	}
+	if order.Status != StatusInTransit {
+		m.DebugLog.Log("release rejection ignored for order %s (status=%s, not in_transit)", orderUUID, order.Status)
+		return nil
+	}
+	m.lifecycle.debug = m.DebugLog
+	return m.lifecycle.ForceTransition(order.ID, StatusStaged, detail)
+}

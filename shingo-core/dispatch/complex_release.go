@@ -23,6 +23,20 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
+	// A faulted leg is mid-recovery (SEER FAILED → Core's non-terminal `faulted`),
+	// not terminally dead — Core keeps the order alive and it re-stages once the
+	// robot recovers. Edge's consolidated two-robot release fans a release out to
+	// BOTH legs of a swap; when it reaches a faulted leg we must NOT reply with an
+	// error, because Edge turns any non-`manifest_sync_failed` order-error into a
+	// terminal StatusFailed — killing the Edge mirror while Core's order lives on
+	// (the ALN_003 divergence, Springfield 2026-06-12). No-op the release: there
+	// is nothing to dispatch on a faulted leg, and the post-recovery re-release
+	// re-fires normally. Mirrors the in_transit duplicate-fan-out special-case below.
+	if order.Status == StatusFaulted {
+		d.dbg("complex release: order %d is faulted (recovering) — no-op release, will re-stage", order.ID)
+		return
+	}
+
 	// Precondition: order must be staged or in_transit. InTransit is accepted
 	// for duplicate fan-out from Edge's consolidated two-robot release and for
 	// multi-wait re-release. The real duplicate gate is splitSegment returning nil.

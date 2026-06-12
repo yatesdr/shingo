@@ -87,6 +87,21 @@ func (h *EdgeHandler) HandleOrderError(env *protocol.Envelope, p *protocol.Order
 		return
 	}
 
+	// Recoverable error: Core rejected a release precondition (invalid_state) —
+	// e.g. the consolidated two-robot release fan-out reached a leg that's
+	// faulted/recovering or already finished. A release rejection must never
+	// terminally kill the Edge mirror (the ALN_003 divergence): roll an
+	// in_transit leg back to staged for a retry, and ignore the rejection for a
+	// terminal/pre-release leg. (Core's A1 fix stops emitting this for the
+	// faulted case; this is defense-in-depth for the rest.)
+	if p.ErrorCode == "invalid_state" {
+		detail := "Core rejected the release: " + p.Detail + ". Click release to retry."
+		if err := h.orderMgr.RollbackReleaseRejection(p.OrderUUID, detail); err != nil {
+			log.Printf("edge_handler: rollback release rejection %s: %v", p.OrderUUID, err)
+		}
+		return
+	}
+
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, orders.ReplyError, "", "", p.Detail); err != nil {
 		log.Printf("edge_handler: handle error for %s: %v", p.OrderUUID, err)
 	}

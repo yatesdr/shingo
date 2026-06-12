@@ -69,6 +69,61 @@ func TestAbortOrderDoesNotTransitionWhenCancelEnqueueFails(t *testing.T) {
 	}
 }
 
+// TestRollbackReleaseRejection_InTransitRollsBack pins scoped-B for the ALN_003
+// divergence: a Core release rejection (invalid_state) on an in_transit leg
+// rolls it back to staged so the operator can retry, instead of the mirror
+// dying terminally.
+func TestRollbackReleaseRejection_InTransitRollsBack(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge.station")
+
+	id, err := db.CreateOrder("uuid-rr-intransit", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(StatusInTransit)), "set in_transit")
+
+	if err := mgr.RollbackReleaseRejection("uuid-rr-intransit", "release error, retry"); err != nil {
+		t.Fatalf("RollbackReleaseRejection: %v", err)
+	}
+
+	got, err := db.GetOrderByUUID("uuid-rr-intransit")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if got.Status != StatusStaged {
+		t.Errorf("Status = %q, want staged (in_transit rejection must roll back for retry)", got.Status)
+	}
+}
+
+// TestRollbackReleaseRejection_TerminalIgnored pins the other half of scoped-B:
+// a stray release rejection reaching an already-finished leg must NOT resurrect
+// or re-fail it — the status is left untouched.
+func TestRollbackReleaseRejection_TerminalIgnored(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge.station")
+
+	id, err := db.CreateOrder("uuid-rr-terminal", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(StatusDelivered)), "set delivered (terminal)")
+
+	if err := mgr.RollbackReleaseRejection("uuid-rr-terminal", "release error, retry"); err != nil {
+		t.Fatalf("RollbackReleaseRejection: %v", err)
+	}
+
+	got, err := db.GetOrderByUUID("uuid-rr-terminal")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if got.Status != StatusDelivered {
+		t.Errorf("Status = %q, want delivered (terminal leg must not be resurrected by a stray release rejection)", got.Status)
+	}
+}
+
 func TestRedirectOrderDoesNotPersistWhenRedirectEnqueueFails(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)

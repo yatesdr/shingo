@@ -895,6 +895,52 @@ func TestHandleOrderRelease_InTransitWithNoMoreSegmentsIsNoOp(t *testing.T) {
 	}
 }
 
+// TestHandleOrderRelease_FaultedLegIsNoOp pins the A1 fix for the ALN_003
+// release divergence (Springfield 2026-06-12). Edge's two-robot consolidated
+// release fans out to both legs; when the delivery leg has bumper-faulted
+// (SEER FAILED → Core's non-terminal `faulted`), Core must NOT reply with an
+// `invalid_state` error: Edge converts any non-`manifest_sync_failed` order-error
+// into a terminal StatusFailed, killing the Edge mirror while Core's own order
+// stays alive and recovers — the exact divergence observed. Symmetric to the
+// in_transit no-op above: no error reply enqueued, status untouched, nothing
+// dispatched.
+func TestHandleOrderRelease_FaultedLegIsNoOp(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	order, _ := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-faulted-noop", "BIN-FAULTED-NOOP")
+
+	// Simulate the delivery robot bumper-faulting mid-drop: SEER FAILED → Core
+	// `faulted` (recoverable), as rds/poller maps it.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusFaulted), "test: robot bumper-faulted mid-drop"), "force faulted")
+	before, _ := db.GetOrder(order.ID)
+
+	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
+		OrderUUID: "uuid-faulted-noop",
+	})
+
+	msgs, err := db.ListPendingOutbox(10)
+	if err != nil {
+		t.Fatalf("list outbox: %v", err)
+	}
+	for _, m := range msgs {
+		if m.MsgType == string(protocol.TypeOrderError) {
+			t.Errorf("faulted leg must not enqueue an order-error (Edge would terminally fail the mirror): %s", string(m.Payload))
+		}
+	}
+
+	// Pure no-op: status stays faulted, wait index untouched.
+	got, _ := db.GetOrder(order.ID)
+	if got.Status != StatusFaulted {
+		t.Errorf("Status = %q, want faulted (no-op must not change status)", got.Status)
+	}
+	if got.WaitIndex != before.WaitIndex {
+		t.Errorf("WaitIndex changed %d -> %d; faulted release must be a pure no-op", before.WaitIndex, got.WaitIndex)
+	}
+}
+
 // TestHandleOrderRelease_InTransitMultiWaitDispatchesNextSegment verifies
 // that the relaxed precondition still does the right thing for a true
 // multi-wait order: when an in_transit order has more waits to consume,
