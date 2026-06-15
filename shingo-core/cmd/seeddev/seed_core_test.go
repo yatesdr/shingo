@@ -110,13 +110,14 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 	if len(pls) != 1 || pls[0].PayloadCode != "BRKT" {
 		t.Fatalf("PLK_LOADER payloads: want [BRKT], got %+v", pls)
 	}
-	// The demand keys on the synthetic loader id and resolves role + threshold from a
-	// window claim (the loader has no claim of its own): produce, threshold 80.
+	// The loader has no node of its own (core_node_name dropped), so its demand rows are
+	// addressed at its window node(s); query by loader_id (order-independent). Role +
+	// threshold resolve from the window claim: produce, threshold 80.
 	var dRole string
 	var dThresh int
 	if err := db.QueryRow(`SELECT role, replenish_uop_threshold FROM demand_registry
-		WHERE core_node_name='PLK_LOADER' AND payload_code='BRKT'`).Scan(&dRole, &dThresh); err != nil {
-		t.Fatalf("demand_registry PLK_LOADER: %v", err)
+		WHERE loader_id=$1 AND payload_code='BRKT'`, loader.ID).Scan(&dRole, &dThresh); err != nil {
+		t.Fatalf("demand_registry for PLK_LOADER (loader_id=%d): %v", loader.ID, err)
 	}
 	if dRole != "produce" || dThresh != 80 {
 		t.Fatalf("PLK_LOADER demand: want produce/80, got %s/%d", dRole, dThresh)

@@ -52,10 +52,10 @@ type simOperator struct {
 // shared clock for a manual-clock integration harness is deferred (J16).
 func (e *Engine) StartSimOperator(ctx context.Context, simCfg config.SimConfig, clk clock.Clock) {
 	op := &simOperator{
-		e:         e,
-		ops:       simCfg.Operators,
-		clk:       clk,
-		ctx:       ctx,
+		e:          e,
+		ops:        simCfg.Operators,
+		clk:        clk,
+		ctx:        ctx,
 		pending:    make(map[int64]bool),
 		releasing:  make(map[int64]bool),
 		flipping:   make(map[int64]bool),
@@ -96,7 +96,7 @@ func (op *simOperator) onDelivered(ev Event) {
 	if !ok || d.ProcessNodeID == nil {
 		return
 	}
-	op.schedule(*d.ProcessNodeID)              // LOAD/CLEAR for manual_swap nodes
+	op.schedule(*d.ProcessNodeID)                   // LOAD/CLEAR for manual_swap nodes
 	op.scheduleConfirm(d.OrderID, *d.ProcessNodeID) // sign off swap legs delivered to a line node
 }
 
