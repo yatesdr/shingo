@@ -26,10 +26,11 @@ func TestDevYAMLParses(t *testing.T) {
 	if cfg.WarLink.Mode != "poll" {
 		t.Errorf("warlink.mode = %q, want poll", cfg.WarLink.Mode)
 	}
-	// v3 plant: 5 sim processes (PRESS-1, PRESS-2, WELD-1, WELD-2, WELD-3).
-	// Manual_swap nodes (LOADER-COMP, UNLOADER-A, UNLOADER-B) don't tick.
-	if len(cfg.Sim.Processes) != 5 {
-		t.Fatalf("sim.processes = %d, want 5", len(cfg.Sim.Processes))
+	// Expanded plant: 9 sim processes (PRESS-1/2/3/4, WELD-1/2/3/4/5) — the two new
+	// component lines (CLIP→WELD-4, STUD→WELD-5) added PRESS-3/4 + WELD-4/5 so each
+	// loader type feeds a real cell. Manual_swap loaders/unloaders don't tick.
+	if len(cfg.Sim.Processes) != 9 {
+		t.Fatalf("sim.processes = %d, want 9", len(cfg.Sim.Processes))
 	}
 	p0 := cfg.Sim.Processes[0]
 	if p0.PLCName != "PRESS-1" || p0.TagName != "PRESS-1_COUNTER" {

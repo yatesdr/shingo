@@ -7,6 +7,14 @@ line_id: line1
 database_path: /data/shingoedge.db
 core_api: http://core:8083
 
+# Multi-window loader delivery (C4). On: a shared_window loader spreads its empties
+# across its window homes (budget = window count, round-robin to free windows, never
+# 2N). Off (production default): empties funnel to the loader's anchor, budget 1 —
+# behaviour-identical to the pre-multi-window resolver. The dev sim turns it on so
+# the demo's 3-window PLK_001 exercises the spread; flipping it changes only loaders
+# actually configured with window homes.
+loaders_multi_window: true
+
 warlink:
   enabled: false                    # sim starts the poller explicitly (T1.3); HMI apply is ignored in sim (F2)
   mode: poll
@@ -58,6 +66,24 @@ sim:
       tag_name: WELD-3_COUNTER
       tick_interval: 10s
       uop_per_tick: 1
+    # New de-confounded component lines (1:1 press→weld, 6/min): PRESS-3→WELD-4 (CLIP
+    # via PLK_X1 single-window), PRESS-4→WELD-5 (STUD via PLK_DECK dedicated).
+    - plc_name: PRESS-3
+      tag_name: PRESS-3_COUNTER
+      tick_interval: 10s
+      uop_per_tick: 1
+    - plc_name: PRESS-4
+      tag_name: PRESS-4_COUNTER
+      tick_interval: 10s
+      uop_per_tick: 1
+    - plc_name: WELD-4
+      tag_name: WELD-4_COUNTER
+      tick_interval: 10s
+      uop_per_tick: 1
+    - plc_name: WELD-5
+      tag_name: WELD-5_COUNTER
+      tick_interval: 10s
+      uop_per_tick: 1
   operators:
     enabled: true
     loader_auto_load: 5s
@@ -87,6 +113,22 @@ sim:
         min_mttr: 5m
         max_mttr: 30m
       - plc_name: WELD-3
+        availability: 0.85
+        min_mttr: 5m
+        max_mttr: 30m
+      - plc_name: PRESS-3
+        availability: 0.85
+        min_mttr: 5m
+        max_mttr: 30m
+      - plc_name: PRESS-4
+        availability: 0.85
+        min_mttr: 5m
+        max_mttr: 30m
+      - plc_name: WELD-4
+        availability: 0.85
+        min_mttr: 5m
+        max_mttr: 30m
+      - plc_name: WELD-5
         availability: 0.85
         min_mttr: 5m
         max_mttr: 30m

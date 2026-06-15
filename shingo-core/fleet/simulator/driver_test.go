@@ -115,6 +115,36 @@ func TestDriverStagedOrderWaitsForRelease(t *testing.T) {
 	}
 }
 
+// A release for an order the fleet no longer holds (evicted after settling) or one that
+// already reached a terminal state is idempotent — ReleaseOrder returns nil, not a hard
+// error. This stops a late/duplicate release (e.g. Core's complex auto-release racing a
+// downtime FAILED) from cascading a spurious fleet_failed that fails the order twice on
+// the Edge — the "simulator: order ... not found for release" noise.
+func TestReleaseOrderIdempotentForSettledOrder(t *testing.T) {
+	cfg := config.SimConfig{TransitTime: 5 * time.Second, JitterPct: 0, FailRate: 0}
+	_, s, _, _ := newTestDriver(t, cfg, 7)
+
+	// Unknown / already-evicted order → no-op, not an error.
+	if err := s.ReleaseOrder("sg-never-existed", nil, true); err != nil {
+		t.Errorf("release of unknown/evicted order should be a no-op, got %v", err)
+	}
+
+	// Settled (terminal) order still in the map → no-op. Create, cancel (→ STOPPED),
+	// then release.
+	res, err := s.CreateStagedOrder(fleet.StagedOrderRequest{
+		ExternalID: "settled", Blocks: []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateStagedOrder: %v", err)
+	}
+	if err := s.CancelOrder(res.VendorOrderID); err != nil {
+		t.Fatalf("CancelOrder: %v", err)
+	}
+	if err := s.ReleaseOrder(res.VendorOrderID, []fleet.OrderBlock{{BlockID: "b1", Location: "Q", BinTask: "JackUnload"}}, true); err != nil {
+		t.Errorf("release of a settled (STOPPED) order should be a no-op, got %v", err)
+	}
+}
+
 // T2.3 / Gate 2: two runs with the same seed and config produce an identical
 // transition sequence — the determinism the future DST suite relies on.
 func TestDriverDeterministicWithSeed(t *testing.T) {

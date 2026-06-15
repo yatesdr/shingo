@@ -14,6 +14,10 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     mem_limit: 512m
+    # Persist Core's DB so a `down`/`up` or restart doesn't wipe the seeded plant.
+    # Reseed only on an intentional `make dev-reset` (down -v, which drops this).
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U shingocore -d shingocore"]
       interval: 5s
@@ -103,5 +107,29 @@ services:
       edge:
         condition: service_started
 
+  # One-time migration for an existing plant: derive Core's bin_loaders aggregate
+  # from the live Edge style_node_claims (+ transitional/threshold tables),
+  # tripwire-check, write Core, seed demand_registry. Like seed it needs BOTH
+  # Postgres (network) and the edge SQLite (mount). Run once when migrating a plant
+  # whose loaders still live only in style_node_claims:
+  #   docker compose -f docker-compose.dev.yml run --rm migrate-loaders
+  # Add --dry-run to the command to derive + tripwire-check without writing.
+  migrate-loaders:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    profiles: ["tools"]
+    command: ["migrateloaders", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--station", "devplant.line1"]
+    environment:
+      SHINGO_ALLOW_SIM: "1"
+    volumes:
+      - edge-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      edge:
+        condition: service_started
+
 volumes:
   edge-data:
+  pgdata:

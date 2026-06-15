@@ -17,13 +17,22 @@ dev-down: ## Stop services (keep data volumes)
 dev-reset: ## Stop and delete volumes (fresh DBs on next up)
 	$(COMPOSE) down -v
 
-dev-seed: ## Seed the demo plant then restart edge to pick up new runtime states
+dev-seed: ## Seed the demo plant then restart core+edge to pick up the seeded registry + runtime states
 	# --build so an edited seeddev / demo.yaml is always picked up (the seed
 	# image is separate from core/edge and easy to leave stale otherwise).
-	# Restart edge after seed so it re-reads the freshly seeded runtime states
-	# (the engine caches them at startup; seed writes into SQLite behind it).
+	# Restart BOTH services: the seed writes behind the running engines. Edge
+	# caches runtime states at startup and the seed writes them into SQLite
+	# behind it; Core's threshold monitor does a one-shot startup sweep ~3s after
+	# boot, and the seed writes demand_registry (the C-push threshold bindings)
+	# behind it — so a registry seeded after that sweep stays UNMONITORED until
+	# Core restarts (the loop never gets a loop-below-threshold signal). The
+	# compose deps force core to start before the seed (edge depends on core,
+	# seed depends on edge), so the sweep always predates the seed. Restarting
+	# core re-runs the sweep against the populated registry. Mirrors production,
+	# where a deploy restarts Core after an out-of-band registry write
+	# (migrateloaders). See threshold_monitor.go startupSweep / Resync.
 	$(COMPOSE) run --build --rm seed
-	$(COMPOSE) restart edge
+	$(COMPOSE) restart core edge
 
 dev-logs: ## Tail core + edge logs
 	$(COMPOSE) logs -f core edge

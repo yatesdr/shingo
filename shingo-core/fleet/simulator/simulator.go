@@ -199,7 +199,20 @@ func (s *SimulatorBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.Ord
 
 	order, ok := s.orders[vendorOrderID]
 	if !ok {
-		return fmt.Errorf("simulator: order %s not found for release", vendorOrderID)
+		// Idempotent: the order already settled (FINISHED/STOPPED/FAILED) and was reaped
+		// by the eviction sweep before this release arrived — typically a complex order
+		// the downtime model FAILED mid-flight while Core's auto-release was in flight for
+		// it. Its terminal status already reached Core (DriveState fired before eviction),
+		// so the release is moot. No-op instead of erroring: a hard error cascades a
+		// spurious fleet_failed that fails the order a SECOND time on the Edge — the source
+		// of the "not found for release" noise. A real fleet tolerates an idempotent
+		// release of a settled order.
+		return nil
+	}
+	if isEvictableTerminal(order.state) {
+		// Same moot case, order still in the map (not yet evicted): it already reached a
+		// terminal state, so released blocks can't apply. No-op.
+		return nil
 	}
 	for _, b := range blocks {
 		order.blocks = append(order.blocks, simulatedBlock{

@@ -25,13 +25,14 @@ RUN go work sync \
 
 # 2) source + build (CGO off → static binaries that run on alpine)
 COPY . .
-RUN CGO_ENABLED=0 go build -tags sim -o /out/shingocore ./shingo-core/cmd/shingocore \
- && CGO_ENABLED=0 go build -tags sim -o /out/seeddev    ./shingo-core/cmd/seeddev \
- && CGO_ENABLED=0 go build -tags sim -o /out/shingoedge ./shingo-edge/cmd/shingoedge
+RUN CGO_ENABLED=0 go build -tags sim -o /out/shingocore      ./shingo-core/cmd/shingocore \
+ && CGO_ENABLED=0 go build -tags sim -o /out/seeddev         ./shingo-core/cmd/seeddev \
+ && CGO_ENABLED=0 go build -tags sim -o /out/migrateloaders  ./shingo-core/cmd/migrateloaders \
+ && CGO_ENABLED=0 go build -tags sim -o /out/shingoedge      ./shingo-edge/cmd/shingoedge
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates tzdata
-COPY --from=build /out/shingocore /out/shingoedge /out/seeddev /usr/local/bin/
+COPY --from=build /out/shingocore /out/shingoedge /out/seeddev /out/migrateloaders /usr/local/bin/
 # Dev config baked in; rebuild after editing (or mount over /etc/shingo to iterate).
 COPY shingo-core/shingocore.dev.yaml /etc/shingo/shingocore.dev.yaml
 COPY shingo-edge/shingoedge.dev.yaml /etc/shingo/shingoedge.dev.yaml

@@ -128,6 +128,31 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		procStation[cc.Process] = id
 	}
 
+	// Per-window operator stations. A claim may pin its node to its OWN station
+	// (operator_station) — the per-window-HMI model, one window per physical screen,
+	// so an operator loads the bin in front of them with no window-picker. Create each
+	// such station on the claim's process and map the node to it; the process_node
+	// below uses this instead of the process default.
+	claimStationByNode := make(map[string]int64) // core_node → operator station id
+	for _, c := range p.Claims {
+		if c.OperatorStation == "" {
+			continue
+		}
+		pid, ok := procIDs[styleProc[c.Style]]
+		if !ok {
+			continue
+		}
+		id, err := edgeUpsert(db,
+			`INSERT OR IGNORE INTO operator_stations(process_id, code, name) VALUES(?, ?, ?)`,
+			`SELECT id FROM operator_stations WHERE process_id=? AND code=?`,
+			[]any{pid, c.OperatorStation, c.OperatorStation}, []any{pid, c.OperatorStation})
+		if err != nil {
+			return fmt.Errorf("operator station %s (node %s): %w", c.OperatorStation, c.CoreNode, err)
+		}
+		stationIDs[c.OperatorStation] = id
+		claimStationByNode[c.CoreNode] = id
+	}
+
 	// process_nodes: one per distinct (process, core_node) drawn from claims.
 	pnIDByNode := make(map[string]int64) // core_node → process_node id (for runtime seeding)
 	seenPN := make(map[string]bool)
@@ -143,7 +168,9 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		}
 		seenPN[key] = true
 		opStation := sql.NullInt64{}
-		if sid, ok := procStation[proc]; ok {
+		if sid, ok := claimStationByNode[c.CoreNode]; ok {
+			opStation = sql.NullInt64{Int64: sid, Valid: true} // per-window station
+		} else if sid, ok := procStation[proc]; ok {
 			opStation = sql.NullInt64{Int64: sid, Valid: true}
 		}
 		pnID, err := edgeUpsert(db,

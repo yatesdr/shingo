@@ -46,6 +46,21 @@ payloads:
   - {code: BRKT,     uop_capacity: 20, bin_type: STANDARD}
   - {code: ASSY-X,   uop_capacity: 20, bin_type: STANDARD}
   - {code: ASSY-Y,   uop_capacity: 20, bin_type: STANDARD}
+  # De-confounded loader-test components: each gets its OWN payload + supermarket +
+  # consumer loop so the three loader TYPES never compete on a pooled threshold (so
+  # never-2N and "analytics counts == loads/unloads" are observable per loader).
+  #   CLIP → PLK_X1 (SINGLE-WINDOW) loop      → UNLOADER-C
+  #   STUD → PLK_DECK (DEDICATED, 2 positions) → UNLOADER-D
+  # BRKT stays PLK_LOADER (MULTI-WINDOW) → WELD-2, now the only BRKT loader.
+  - {code: CLIP,     uop_capacity: 20, bin_type: STANDARD}
+  - {code: STUD,     uop_capacity: 20, bin_type: STANDARD}
+  # Two FULL new component lines (no shortcuts) so each loader feeds a real cell AND each
+  # cell feeds a real unloader: PRESS-3→PANEL-C→WELD-4(PANEL-C+CLIP)→ASSY-C→UNLOADER-C,
+  # PRESS-4→PANEL-D→WELD-5(PANEL-D+STUD)→ASSY-D→UNLOADER-D.
+  - {code: PANEL-C,  uop_capacity: 30, bin_type: STANDARD}
+  - {code: PANEL-D,  uop_capacity: 30, bin_type: STANDARD}
+  - {code: ASSY-C,   uop_capacity: 20, bin_type: STANDARD}
+  - {code: ASSY-D,   uop_capacity: 20, bin_type: STANDARD}
 
 # Storage — deep multi-slot lanes (ASRS). depth 1 = lane mouth (accessible), higher =
 # buried. retrieve=FIFO + store=LKND: payloads self-segregate into lanes, FIFO reshuffles
@@ -63,6 +78,14 @@ zones:
       # Lane_04/05 = open (presses store full panels here; LKND overflow)
       - {name: Lane_04, slots: [{name: SMN_010, depth: 1}, {name: SMN_011, depth: 2}, {name: SMN_012, depth: 3}]}
       - {name: Lane_05, slots: [{name: SMN_013, depth: 1}, {name: SMN_014, depth: 2}, {name: SMN_015, depth: 3}]}
+      # Reshuffle buffer: shallow depth-1 lanes that stay empty under LKND (deep
+      # lanes fill first). A FIFO buried-bin retrieve needs up to 2 free shuffle
+      # slots to unbury; these guarantee that room so the zone can't deadlock at
+      # capacity. Keep FIFO + the seeded buried-oldest ASRS test intact.
+      - {name: Lane_24, slots: [{name: SMN_034, depth: 1}]}
+      - {name: Lane_25, slots: [{name: SMN_035, depth: 1}]}
+      - {name: Lane_26, slots: [{name: SMN_036, depth: 1}]}
+      - {name: Lane_27, slots: [{name: SMN_037, depth: 1}]}
   - name: SYN_SM_Comp
     retrieve_algorithm: FIFO
     store_algorithm: LKND
@@ -77,6 +100,11 @@ zones:
       - {name: Lane_09, slots: [{name: SMN_025, depth: 1}, {name: SMN_026, depth: 2}, {name: SMN_027, depth: 3}]}
       - {name: Lane_10, slots: [{name: SMN_028, depth: 1}, {name: SMN_029, depth: 2}, {name: SMN_030, depth: 3}]}
       - {name: Lane_11, slots: [{name: SMN_031, depth: 1}, {name: SMN_032, depth: 2}, {name: SMN_033, depth: 3}]}
+      # Reshuffle buffer (see SYN_SM_Stamp) — FG fills as welds + FASTLINE produce
+      # ASSY; keep depth-1 headroom so unloader retrieves never deadlock the lanes.
+      - {name: Lane_28, slots: [{name: SMN_038, depth: 1}]}
+      - {name: Lane_29, slots: [{name: SMN_039, depth: 1}]}
+      - {name: Lane_30, slots: [{name: SMN_040, depth: 1}]}
   - name: SYN_MT_Return
     retrieve_algorithm: FIFO
     store_algorithm: DPTH
@@ -93,6 +121,62 @@ zones:
       - {name: Lane_21, slots: [{name: UTN_037, depth: 1}, {name: UTN_038, depth: 2}, {name: UTN_039, depth: 3}, {name: UTN_040, depth: 4}]}
       - {name: Lane_22, slots: [{name: UTN_041, depth: 1}, {name: UTN_042, depth: 2}, {name: UTN_043, depth: 3}, {name: UTN_044, depth: 4}]}
       - {name: Lane_23, slots: [{name: UTN_045, depth: 1}, {name: UTN_046, depth: 2}, {name: UTN_047, depth: 3}, {name: UTN_048, depth: 4}]}
+      # Extra return-bank capacity for the two new lines (more empties cycling).
+      - {name: Lane_42, slots: [{name: UTN_049, depth: 1}, {name: UTN_050, depth: 2}, {name: UTN_051, depth: 3}, {name: UTN_052, depth: 4}]}
+      - {name: Lane_43, slots: [{name: UTN_053, depth: 1}, {name: UTN_054, depth: 2}, {name: UTN_055, depth: 3}, {name: UTN_056, depth: 4}]}
+  # Dedicated-loader BUFFER (step 7). A FIFO node group that stages empties to rotate into a
+  # PLK_DECK position on threshold AND parks changeover-orphaned partials. FIFO retrieve =
+  # oldest-first, so a parked partial (the older bin) is consumed before a fresh empty
+  # automatically — no partial-first logic. Wired as PLK_DECK.buffer_dest on the
+  # dedicated-loader claims below, AND as UNLOADER-D's outbound: PLK_DECK sources its
+  # threshold-fill empties FROM here, and UNLOADER-D returns the CLEAN empties it strips off
+  # drained ASSY-D INTO here — empties cycle unloader->buffer->position, distinct from the
+  # far return bank. (A consume node's evac would park payload-bearing partials that inflate
+  # the loader's stock count, so the unloader is the empty source, not WELD-5.) 6 slots =
+  # cycling empties + evac headroom.
+  - name: SYN_BUF_Deck
+    retrieve_algorithm: FIFO
+    store_algorithm: DPTH
+    lanes:
+      - {name: Lane_31, slots: [{name: BUF_001, depth: 1}, {name: BUF_002, depth: 2}, {name: BUF_003, depth: 3}, {name: BUF_004, depth: 4}, {name: BUF_005, depth: 5}, {name: BUF_006, depth: 6}]}
+  # Isolated component supermarkets so each loader's loop is independently observable
+  # (de-confound, per the test-rig fix). The loader stores fulls here; the matching
+  # unloader drains them, dropping system UOP so the loader's threshold re-trips —
+  # a self-cycling, threshold-gated, single-payload loop (no cross-talk with BRKT).
+  - name: SYN_SM_Clip
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      - {name: Lane_32, slots: [{name: SMN_041, depth: 1}, {name: SMN_042, depth: 2}, {name: SMN_043, depth: 3}]}
+      - {name: Lane_33, slots: [{name: SMN_044, depth: 1}]}   # reshuffle headroom
+  - name: SYN_SM_Stud
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      - {name: Lane_34, slots: [{name: SMN_045, depth: 1}, {name: SMN_046, depth: 2}, {name: SMN_047, depth: 3}]}
+      - {name: Lane_35, slots: [{name: SMN_048, depth: 1}]}
+  # New-line panel supermarkets (PRESS-3/4 output) and finished-goods supermarkets
+  # (WELD-4/5 output, drained by UNLOADER-C/D).
+  - name: SYN_SM_StampC
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      - {name: Lane_36, slots: [{name: SMN_049, depth: 1}, {name: SMN_050, depth: 2}, {name: SMN_051, depth: 3}]}
+  - name: SYN_SM_StampD
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      - {name: Lane_37, slots: [{name: SMN_052, depth: 1}, {name: SMN_053, depth: 2}, {name: SMN_054, depth: 3}]}
+  - name: SYN_SM_FGC
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      - {name: Lane_38, slots: [{name: SMN_055, depth: 1}, {name: SMN_056, depth: 2}, {name: SMN_057, depth: 3}]}
+  - name: SYN_SM_FGD
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      - {name: Lane_39, slots: [{name: SMN_058, depth: 1}, {name: SMN_059, depth: 2}, {name: SMN_060, depth: 3}]}
 
 stations:
   # ── PRESS-1: two_robot_press_index (front + paired back, no staging) ──
@@ -122,9 +206,45 @@ stations:
   - {name: ALN_008, kind: weld}      # WELD-3 produce ASSY-X  B (parked, A/B)
   - {name: SLN_009, kind: staging}   # WELD-3 ALN_006 inbound stage
   # ── Loader + unloaders (manual_swap) ──
-  - {name: PLK_001, kind: loader}    # component loader (BRKT)
+  # PLK_LOADER is a SHARED multi-window BRKT loader. Its identity (PLK_LOADER) is a
+  # synthetic label, NOT a node — there is no phantom anchor that never receives a
+  # bin. Its three windows below are its only physical nodes: each is a delivery
+  # target AND its own operator HMI. The loader is declared by the window_of claims
+  # (no anchor claim); the seed derives its config from the windows' shared claim.
+  - {name: PLK_W1, kind: loader}     # PLK_LOADER window 1
+  - {name: PLK_W2, kind: loader}     # PLK_LOADER window 2
+  - {name: PLK_W3, kind: loader}     # PLK_LOADER window 3
+  # Loader-TYPE coverage (each TYPE seeded so all three are exercisable):
+  #   PLK_LOADER = MULTI-WINDOW (shared, 3 windows, above)
+  #   PLK_X1     = SINGLE-WINDOW (one real node, its own anchor — the classic shape)
+  #   PLK_DECK   = DEDICATED-POSITIONS (PLK_D1+PLK_D2, both BRKT = same-payload-two-position)
+  - {name: PLK_X1, kind: loader}     # single-window CLIP loader (own loop → UNLOADER-C)
+  - {name: PLK_D1, kind: loader}     # PLK_DECK dedicated position 1 (STUD)
+  - {name: PLK_D2, kind: loader}     # PLK_DECK dedicated position 2 (STUD, same payload)
   - {name: FGN_001, kind: unloader}  # ASSY-X finished-goods exit
   - {name: FGN_002, kind: unloader}  # ASSY-Y finished-goods exit
+  # ── New CLIP line: PRESS-3 → WELD-4 (PANEL-C + CLIP → ASSY-C) → UNLOADER-C ──
+  # Gives the SINGLE-WINDOW loader PLK_X1 a real cell to feed AND a real unloader downstream.
+  - {name: PLN_005, kind: press}     # PRESS-3 front (produce PANEL-C)
+  - {name: PLN_006, kind: press}     # PRESS-3 paired back (index)
+  - {name: ALN_009, kind: weld}      # WELD-4 consume PANEL-C
+  - {name: SLN_010, kind: staging}   # WELD-4 ALN_009 inbound stage
+  - {name: ALN_010, kind: weld}      # WELD-4 consume CLIP (fed by PLK_X1)
+  - {name: SLN_011, kind: staging}   # WELD-4 ALN_010 inbound stage
+  - {name: ALN_011, kind: weld}      # WELD-4 produce ASSY-C
+  - {name: SLN_012, kind: staging}   # WELD-4 ALN_011 inbound stage
+  - {name: FGN_003, kind: unloader}  # UNLOADER-C drains ASSY-C
+  # ── New STUD line: PRESS-4 → WELD-5 (PANEL-D + STUD → ASSY-D) → UNLOADER-D ──
+  # Gives the DEDICATED loader PLK_DECK a real cell to feed AND a real unloader downstream.
+  - {name: PLN_007, kind: press}     # PRESS-4 front (produce PANEL-D)
+  - {name: PLN_008, kind: press}     # PRESS-4 paired back (index)
+  - {name: ALN_012, kind: weld}      # WELD-5 consume PANEL-D
+  - {name: SLN_013, kind: staging}   # WELD-5 ALN_012 inbound stage
+  - {name: ALN_013, kind: weld}      # WELD-5 consume STUD (fed by PLK_DECK)
+  - {name: SLN_014, kind: staging}   # WELD-5 ALN_013 inbound stage
+  - {name: ALN_014, kind: weld}      # WELD-5 produce ASSY-D
+  - {name: SLN_015, kind: staging}   # WELD-5 ALN_014 inbound stage
+  - {name: FGN_004, kind: unloader}  # UNLOADER-D drains ASSY-D
 
 # Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
 # (incl. A/B parked sides + press-index back) seeded with EMPTY active carriers. Consume
@@ -141,10 +261,16 @@ bins:
   - {name: BIN-RH-04, slot: SMN_007, payload: PANEL-RH, uop: 30}
   - {name: BIN-RH-05, slot: SMN_008, payload: PANEL-RH, uop: 30}
   - {name: BIN-RH-06, slot: SMN_009, payload: PANEL-RH, uop: 30}
-  # --- SYN_SM_Comp source: Lane_06 full (3 BRKT) ---
+  # --- SYN_SM_Comp source: Lane_06 seeded light (1 BRKT) so the PLK_001 loader's
+  # C-push trips within a few minutes instead of after draining a deep buffer ---
   - {name: BIN-BRKT-01, slot: SMN_016, payload: BRKT, uop: 20}
-  - {name: BIN-BRKT-02, slot: SMN_017, payload: BRKT, uop: 20}
-  - {name: BIN-BRKT-03, slot: SMN_018, payload: BRKT, uop: 20}
+  # De-confounded component supermarkets seeded light (1 bin each) so the loaders' C-push
+  # trips quickly: PLK_X1→CLIP→SYN_SM_Clip→WELD-1, PLK_DECK→STUD→SYN_SM_Stud→WELD-3.
+  - {name: BIN-CLIP-01, slot: SMN_041, payload: CLIP, uop: 20}
+  - {name: BIN-STUD-01, slot: SMN_045, payload: STUD, uop: 20}
+  # New-line panel supermarkets seeded light (1 bin each) so WELD-4/5 have initial runway.
+  - {name: BIN-PC-01,   slot: SMN_049, payload: PANEL-C, uop: 30}
+  - {name: BIN-PD-01,   slot: SMN_052, payload: PANEL-D, uop: 30}
   # --- Active produce bins (empty → fill → swap) ---
   - {name: BIN-ACT-P1F, slot: PLN_001}   # PRESS-1 front (filling)
   - {name: BIN-ACT-P1B, slot: PLN_002}   # PRESS-1 back (staged empty, indexes to front)
@@ -159,6 +285,18 @@ bins:
   - {name: BIN-ACT-W2-RH,   slot: ALN_003, payload: PANEL-RH, uop: 15}
   - {name: BIN-ACT-W2-BRKT, slot: ALN_004, payload: BRKT, uop: 12}
   - {name: BIN-ACT-W3-LH,   slot: ALN_006, payload: PANEL-LH, uop: 15}
+  # New CLIP line active bins (PRESS-3 index pair + WELD-4 consume PANEL-C/CLIP + produce ASSY-C)
+  - {name: BIN-ACT-P3F,    slot: PLN_005}                            # PRESS-3 front (filling)
+  - {name: BIN-ACT-P3B,    slot: PLN_006}                            # PRESS-3 back (staged empty)
+  - {name: BIN-ACT-W4-PC,  slot: ALN_009, payload: PANEL-C, uop: 20} # WELD-4 PANEL-C consume
+  - {name: BIN-ACT-W4-CL,  slot: ALN_010, payload: CLIP, uop: 15}    # WELD-4 CLIP consume (from PLK_X1)
+  - {name: BIN-ACT-W4,     slot: ALN_011}                            # WELD-4 ASSY-C output (empty carrier)
+  # New STUD line active bins (PRESS-4 index pair + WELD-5 consume PANEL-D/STUD + produce ASSY-D)
+  - {name: BIN-ACT-P4F,    slot: PLN_007}                            # PRESS-4 front (filling)
+  - {name: BIN-ACT-P4B,    slot: PLN_008}                            # PRESS-4 back (staged empty)
+  - {name: BIN-ACT-W5-PD,  slot: ALN_012, payload: PANEL-D, uop: 20} # WELD-5 PANEL-D consume
+  - {name: BIN-ACT-W5-ST,  slot: ALN_013, payload: STUD, uop: 15}    # WELD-5 STUD consume (from PLK_DECK)
+  - {name: BIN-ACT-W5,     slot: ALN_014}                            # WELD-5 ASSY-D output (empty carrier)
   # --- Empty carriers in SYN_MT_Return (prime the pump) ---
   - {name: BIN-MT-01, slot: UTN_001}
   - {name: BIN-MT-02, slot: UTN_002}
@@ -196,28 +334,73 @@ bins:
   - {name: BIN-MT-34, slot: UTN_034}
   - {name: BIN-MT-35, slot: UTN_035}
   - {name: BIN-MT-36, slot: UTN_036}
+  # --- Dedicated-loader buffer pre-stage: empties parked in SYN_BUF_Deck (step 7) ---
+  - {name: BIN-MT-37, slot: BUF_001}
+  - {name: BIN-MT-38, slot: BUF_002}
+  - {name: BIN-MT-59, slot: BUF_003}   # +2 prime the buffer loop (PLK_DECK pulls out; UNLOADER-D refills in)
+  - {name: BIN-MT-60, slot: BUF_004}
+  # --- Extra empties: headroom for the CLIP + STUD loader loops cycling through the
+  # return bank (loader fills an empty → SM → unloader returns the empty here). ---
+  - {name: BIN-MT-39, slot: UTN_037}
+  - {name: BIN-MT-40, slot: UTN_038}
+  - {name: BIN-MT-41, slot: UTN_039}
+  - {name: BIN-MT-42, slot: UTN_040}
+  - {name: BIN-MT-43, slot: UTN_041}
+  - {name: BIN-MT-44, slot: UTN_042}
+  - {name: BIN-MT-45, slot: UTN_043}
+  - {name: BIN-MT-46, slot: UTN_044}
+  - {name: BIN-MT-47, slot: UTN_045}
+  - {name: BIN-MT-48, slot: UTN_046}
+  - {name: BIN-MT-49, slot: UTN_047}
+  - {name: BIN-MT-50, slot: UTN_048}
+  - {name: BIN-MT-51, slot: UTN_049}
+  - {name: BIN-MT-52, slot: UTN_050}
+  - {name: BIN-MT-53, slot: UTN_051}
+  - {name: BIN-MT-54, slot: UTN_052}
+  - {name: BIN-MT-55, slot: UTN_053}
+  - {name: BIN-MT-56, slot: UTN_054}
+  - {name: BIN-MT-57, slot: UTN_055}
+  - {name: BIN-MT-58, slot: UTN_056}
 
 processes:
   - {name: PRESS-1, active_style: PRESS-1-RUN}        # two_robot_press_index
   - {name: PRESS-2, active_style: PRESS-2-RUN}        # A/B sequential
+  - {name: PRESS-3, active_style: PRESS-3-RUN}        # PANEL-C for the CLIP line
+  - {name: PRESS-4, active_style: PRESS-4-RUN}        # PANEL-D for the STUD line
   - {name: WELD-1, active_style: WELD-1-RUN}          # two_robot
   - {name: WELD-2, active_style: WELD-2-RUN}          # single_robot
   - {name: WELD-3, active_style: WELD-3-RUN}          # two_robot consume + A/B produce
-  - {name: LOADER-COMP, active_style: LOADER-COMP-RUN}
+  - {name: WELD-4, active_style: WELD-4-RUN}          # PANEL-C + CLIP → ASSY-C (CLIP line)
+  - {name: WELD-5, active_style: WELD-5-RUN}          # PANEL-D + STUD → ASSY-D (STUD line)
+  - {name: LOADER-COMP, active_style: LOADER-COMP-RUN}   # BRKT, multi-window PLK_LOADER
+  - {name: LOADER-CLIP, active_style: LOADER-CLIP-RUN}   # CLIP, single-window PLK_X1
+  - {name: LOADER-STUD, active_style: LOADER-STUD-RUN}   # STUD, dedicated PLK_DECK
   - {name: UNLOADER-A, active_style: UNLOADER-A-RUN}
   - {name: UNLOADER-B, active_style: UNLOADER-B-RUN}
+  - {name: UNLOADER-C, active_style: UNLOADER-C-RUN}   # drains ASSY-C (CLIP line)
+  - {name: UNLOADER-D, active_style: UNLOADER-D-RUN}   # drains ASSY-D (STUD line)
 
 styles:
   - {name: PRESS-1-RUN, process: PRESS-1, payload: PANEL-LH}
   - {name: PRESS-2-RUN, process: PRESS-2, payload: PANEL-RH}
+  - {name: PRESS-3-RUN, process: PRESS-3, payload: PANEL-C}
+  - {name: PRESS-4-RUN, process: PRESS-4, payload: PANEL-D}
   - {name: WELD-1-RUN, process: WELD-1, payload: ASSY-X}
   - {name: WELD-2-RUN, process: WELD-2, payload: ASSY-Y}
   - {name: WELD-3-RUN, process: WELD-3, payload: ASSY-X}
+  - {name: WELD-4-RUN, process: WELD-4, payload: ASSY-C}
+  - {name: WELD-5-RUN, process: WELD-5, payload: ASSY-D}
   - {name: LOADER-COMP-RUN, process: LOADER-COMP, payload: BRKT}
+  - {name: LOADER-CLIP-RUN, process: LOADER-CLIP, payload: CLIP}
+  - {name: LOADER-STUD-RUN, process: LOADER-STUD, payload: STUD}
   - {name: UNLOADER-A-RUN, process: UNLOADER-A, payload: ASSY-X}
   - {name: UNLOADER-B-RUN, process: UNLOADER-B, payload: ASSY-Y}
+  - {name: UNLOADER-C-RUN, process: UNLOADER-C, payload: ASSY-C}
+  - {name: UNLOADER-D-RUN, process: UNLOADER-D, payload: ASSY-D}
 
-operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, LOADER-COMP-OPS, UNLOADER-A-OPS, UNLOADER-B-OPS]
+# PLK_LOADER has no single station — each window is its own operator HMI (per-window
+# model), declared via operator_station on the window claims above.
+operator_stations: [PRESS-1-OPS, PRESS-2-OPS, PRESS-3-OPS, PRESS-4-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, WELD-4-OPS, WELD-5-OPS, PLK_W1-OPS, PLK_W2-OPS, PLK_W3-OPS, PLK_X1-OPS, PLK_D1-OPS, PLK_D2-OPS, UNLOADER-A-OPS, UNLOADER-B-OPS, UNLOADER-C-OPS, UNLOADER-D-OPS]
 
 claims:
   # ── PRESS-1 (two_robot_press_index): one claim on the front node, paired back ──
@@ -349,17 +532,34 @@ claims:
     inbound_source: SYN_MT_Return
     outbound_destination: SYN_SM_FG
 
-  # ── LOADER-COMP (manual_swap) ──
-  - core_node: PLK_001
-    style: LOADER-COMP-RUN
-    role: produce
-    swap_mode: manual_swap
-    payload: BRKT
-    uop_capacity: 20
-    reorder_point: 2
-    auto_reorder: true
-    inbound_source: SYN_MT_Return
-    outbound_destination: SYN_SM_Comp
+  # ── PLK_LOADER (manual_swap, multi-window) ──
+  # No anchor claim — the loader has no physical anchor node. Each window declares
+  # window_of: PLK_LOADER, so the seed builds ONE shared_window loader keyed on the
+  # synthetic id PLK_LOADER, derives its config (role/payload/source/dest) from these
+  # claims, and adds the three windows as its homes. Each window still gets a Core
+  # node + Edge process_node (these claims) so empties can be delivered to it. The
+  # BRKT demand keys on PLK_LOADER (below), not on any window.
+  # Each window pins itself to its OWN operator station (operator_station) — the
+  # per-window-HMI model: one physical screen per window, so an operator loads the
+  # bin in front of them with no window-picker and no misload.
+  - {core_node: PLK_W1, style: LOADER-COMP-RUN, role: produce, swap_mode: manual_swap, payload: BRKT, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MT_Return, outbound_destination: SYN_SM_Comp, window_of: PLK_LOADER, operator_station: PLK_W1-OPS}
+  - {core_node: PLK_W2, style: LOADER-COMP-RUN, role: produce, swap_mode: manual_swap, payload: BRKT, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MT_Return, outbound_destination: SYN_SM_Comp, window_of: PLK_LOADER, operator_station: PLK_W2-OPS}
+  - {core_node: PLK_W3, style: LOADER-COMP-RUN, role: produce, swap_mode: manual_swap, payload: BRKT, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MT_Return, outbound_destination: SYN_SM_Comp, window_of: PLK_LOADER, operator_station: PLK_W3-OPS}
+
+  # ── PLK_X1 (manual_swap, SINGLE-WINDOW): its own real-node loader — no window_of/home_of, so
+  # the seed builds a shared_window loader anchored at PLK_X1 (the classic single-node shape;
+  # step 1 materialises its anchor as a window member). Its OWN CLIP loop (→ SYN_SM_Clip, drained
+  # by UNLOADER-C) so single-window never-2N + analytics are observable in isolation (de-confound). ──
+  - {core_node: PLK_X1, style: LOADER-CLIP-RUN, role: produce, swap_mode: manual_swap, payload: CLIP, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MT_Return, outbound_destination: SYN_SM_Clip, operator_station: PLK_X1-OPS}
+
+  # ── PLK_DECK (manual_swap, DEDICATED-POSITIONS): two STUD positions = same-payload-two-position ──
+  # home_of: PLK_DECK groups both positions into one dedicated_positions loader keyed on the
+  # synthetic id PLK_DECK. Each position is its own demand_registry row + delivery target +
+  # operator HMI; the pooled STUD threshold trips and the (step-3) member-aware ReservationTarget
+  # routes the empty to the position the signal names. Its OWN STUD loop (→ SYN_SM_Stud, drained by
+  # UNLOADER-D) isolates the O2 routing watch. buffer_dest = SYN_BUF_Deck (step-7 buffer).
+  - {core_node: PLK_D1, style: LOADER-STUD-RUN, role: produce, swap_mode: manual_swap, payload: STUD, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MT_Return, outbound_destination: SYN_SM_Stud, buffer_dest: SYN_BUF_Deck, home_of: PLK_DECK, operator_station: PLK_D1-OPS}
+  - {core_node: PLK_D2, style: LOADER-STUD-RUN, role: produce, swap_mode: manual_swap, payload: STUD, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MT_Return, outbound_destination: SYN_SM_Stud, buffer_dest: SYN_BUF_Deck, home_of: PLK_DECK, operator_station: PLK_D2-OPS}
 
   # ── UNLOADER-A (manual_swap: pull full ASSY-X, return empty) ──
   - core_node: FGN_001
@@ -387,9 +587,142 @@ claims:
     outbound_destination: SYN_MT_Return
     auto_push: true
 
+  # ── CLIP LINE: PRESS-3 → WELD-4 (PANEL-C + CLIP → ASSY-C) → UNLOADER-C ──
+  # The single-window loader PLK_X1 feeds CLIP into WELD-4; UNLOADER-C drains ASSY-C.
+  - core_node: PLN_005
+    style: PRESS-3-RUN
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-C
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_006
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_StampC
+  - core_node: ALN_009
+    style: WELD-4-RUN
+    role: consume
+    swap_mode: two_robot
+    payload: PANEL-C
+    uop_capacity: 30
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SYN_SM_StampC
+    outbound_destination: SYN_MT_Return
+    inbound_staging: SLN_010
+  - core_node: ALN_010
+    style: WELD-4-RUN
+    role: consume
+    swap_mode: two_robot
+    payload: CLIP
+    uop_capacity: 20
+    reorder_point: 5
+    auto_reorder: true
+    inbound_source: SYN_SM_Clip
+    outbound_destination: SYN_MT_Return
+    inbound_staging: SLN_011
+  - core_node: ALN_011
+    style: WELD-4-RUN
+    role: produce
+    swap_mode: two_robot
+    payload: ASSY-C
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_FGC
+    inbound_staging: SLN_012
+  - core_node: FGN_003
+    style: UNLOADER-C-RUN
+    role: consume
+    swap_mode: manual_swap
+    payload: ASSY-C
+    uop_capacity: 20
+    reorder_point: 0
+    auto_reorder: false
+    inbound_source: SYN_SM_FGC
+    outbound_destination: SYN_MT_Return
+    auto_push: true
+
+  # ── STUD LINE: PRESS-4 → WELD-5 (PANEL-D + STUD → ASSY-D) → UNLOADER-D ──
+  # The dedicated loader PLK_DECK feeds STUD into WELD-5; UNLOADER-D drains ASSY-D.
+  - core_node: PLN_007
+    style: PRESS-4-RUN
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-D
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_008
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_StampD
+  - core_node: ALN_012
+    style: WELD-5-RUN
+    role: consume
+    swap_mode: two_robot
+    payload: PANEL-D
+    uop_capacity: 30
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SYN_SM_StampD
+    outbound_destination: SYN_MT_Return
+    inbound_staging: SLN_013
+  - core_node: ALN_013
+    style: WELD-5-RUN
+    role: consume
+    swap_mode: two_robot
+    payload: STUD
+    uop_capacity: 20
+    reorder_point: 5
+    auto_reorder: true
+    inbound_source: SYN_SM_Stud
+    outbound_destination: SYN_MT_Return
+    inbound_staging: SLN_014
+  - core_node: ALN_014
+    style: WELD-5-RUN
+    role: produce
+    payload: ASSY-D
+    swap_mode: two_robot
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SYN_MT_Return
+    outbound_destination: SYN_SM_FGD
+    inbound_staging: SLN_015
+  - core_node: FGN_004
+    style: UNLOADER-D-RUN
+    role: consume
+    swap_mode: manual_swap
+    payload: ASSY-D
+    uop_capacity: 20
+    reorder_point: 0
+    auto_reorder: false
+    inbound_source: SYN_SM_FGD
+    # step-7 buffer loop: UNLOADER-D drains ASSY-D and returns the CLEAN empty (uop 0, no
+    # payload) into the dedicated loader's buffer (SYN_BUF_Deck), NOT the far return bank.
+    # PLK_DECK re-sources that empty from the buffer on its next STUD threshold fill, so
+    # empties cycle unloader->buffer->position. (A consume node's evac would park payload-
+    # bearing partials that inflate the loader's stock count, so the unloader — not WELD-5 —
+    # is the clean-empty source.)
+    outbound_destination: SYN_BUF_Deck
+    auto_push: true
+
 # Demand registry. LOADER-COMP C-push on BRKT; unloaders informational.
+# BRKT threshold is set high (80 UOP ≈ 4 bins at capacity 20) so a dip pulls the
+# loader's whole 3-window budget at once — the multi-window spread + never-2N cap
+# are both visible in one reservation. Demand keys on the loader identity PLK_LOADER
+# (a synthetic id, not a node); its windows PLK_W1/2/3 are delivery targets, not
+# separate demand points.
 demands:
-  - {payload: BRKT, node: PLK_001, replenish_uop_threshold: 10}
+  # MULTI-WINDOW: BRKT keys on the synthetic loader id PLK_LOADER (windows PLK_W1/2/3 are
+  # delivery targets, not demand points). High threshold (80 ≈ 4 bins) so a dip pulls the
+  # whole 3-window budget — multi-window spread + never-2N both visible in one reservation.
+  - {payload: BRKT, node: PLK_LOADER, replenish_uop_threshold: 80}
+  # SINGLE-WINDOW: CLIP keys on PLK_X1 (its own real-node loader) — its own isolated loop.
+  - {payload: CLIP, node: PLK_X1, replenish_uop_threshold: 80}
+  # DEDICATED same-payload-two-position: per-position STUD rows. Both trip on the pooled STUD
+  # count; the step-3 member-aware fix routes each empty to the position the signal names (O2).
+  - {payload: STUD, node: PLK_D1, replenish_uop_threshold: 80}
+  - {payload: STUD, node: PLK_D2, replenish_uop_threshold: 80}
+  # Unloaders are event/auto-push driven (informational threshold 0).
   - {payload: ASSY-X, node: FGN_001, replenish_uop_threshold: 0}
   - {payload: ASSY-Y, node: FGN_002, replenish_uop_threshold: 0}
 
@@ -402,6 +735,10 @@ reporting_points:
   - {plc_name: WELD-1, tag_name: WELD-1_COUNTER, node: ALN_001, style: WELD-1-RUN}
   - {plc_name: WELD-2, tag_name: WELD-2_COUNTER, node: ALN_003, style: WELD-2-RUN}
   - {plc_name: WELD-3, tag_name: WELD-3_COUNTER, node: ALN_006, style: WELD-3-RUN}
+  - {plc_name: PRESS-3, tag_name: PRESS-3_COUNTER, node: PLN_005, style: PRESS-3-RUN}
+  - {plc_name: PRESS-4, tag_name: PRESS-4_COUNTER, node: PLN_007, style: PRESS-4-RUN}
+  - {plc_name: WELD-4, tag_name: WELD-4_COUNTER, node: ALN_009, style: WELD-4-RUN}
+  - {plc_name: WELD-5, tag_name: WELD-5_COUNTER, node: ALN_012, style: WELD-5-RUN}
 
 cell_configs:
   - {process: PRESS-1, station: PRESS-1-OPS}
@@ -409,6 +746,15 @@ cell_configs:
   - {process: WELD-1, station: WELD-1-OPS}
   - {process: WELD-2, station: WELD-2-OPS}
   - {process: WELD-3, station: WELD-3-OPS}
-  - {process: LOADER-COMP, station: LOADER-COMP-OPS}
+  # LOADER-COMP has no single cell station — its windows are per-window operator
+  # stations (PLK_W1/2/3-OPS), declared via operator_station on the window claims.
+  # LOADER-CLIP / LOADER-STUD also have no single cell station — per-node operator stations
+  # (PLK_X1-OPS, PLK_D1/2-OPS) on their claims, same as LOADER-COMP.
+  - {process: PRESS-3, station: PRESS-3-OPS}
+  - {process: PRESS-4, station: PRESS-4-OPS}
+  - {process: WELD-4, station: WELD-4-OPS}
+  - {process: WELD-5, station: WELD-5-OPS}
   - {process: UNLOADER-A, station: UNLOADER-A-OPS}
   - {process: UNLOADER-B, station: UNLOADER-B-OPS}
+  - {process: UNLOADER-C, station: UNLOADER-C-OPS}
+  - {process: UNLOADER-D, station: UNLOADER-D-OPS}

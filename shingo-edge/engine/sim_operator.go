@@ -207,14 +207,36 @@ func (op *simOperator) run(nodeID int64) {
 		return
 	case <-op.clk.After(delay):
 	}
-	if err := action(); err != nil {
-		// Tolerated: a precondition moved between delivery and now (bin already
-		// loaded, order cancelled, …). Engine validation rejected it — log at
-		// debug and move on.
-		op.e.debugFn("[sim] operator auto-%s node %d rejected: %v", label, nodeID, err)
-		return
+
+	// A manual_swap LOAD/CLEAR can land in a transient gap: the empty hasn't been
+	// placed at the slot yet, or the previous bin is still awaiting its outbound
+	// move. A single attempt that hits that gap orphans the order at `delivered`
+	// (the manual_swap node has no human to come back and act when the slot is
+	// ready). So retry a bounded number of times instead of firing once. action()
+	// is idempotent — it re-reads the node's bins each call — so a retry that still
+	// finds the slot not-ready is a harmless no-op until it is.
+	const (
+		maxAttempts = 8
+		retryDelay  = 4 * time.Second
+	)
+	for attempt := 1; ; attempt++ {
+		err := action()
+		if err == nil {
+			op.e.logFn("[sim] operator auto-%s node %d (attempt %d)", label, nodeID, attempt)
+			return
+		}
+		if attempt >= maxAttempts {
+			// Gave up: a precondition stayed unmet (order cancelled, slot never freed).
+			op.e.debugFn("[sim] operator auto-%s node %d gave up after %d attempts: %v", label, nodeID, attempt, err)
+			return
+		}
+		op.e.debugFn("[sim] operator auto-%s node %d attempt %d not ready, retrying: %v", label, nodeID, attempt, err)
+		select {
+		case <-op.ctx.Done():
+			return
+		case <-op.clk.After(retryDelay):
+		}
 	}
-	op.e.logFn("[sim] operator auto-%s node %d", label, nodeID)
 }
 
 // swapReleaseDelay is the simulated operator reaction time between a swap

@@ -81,6 +81,25 @@ func (p *Plant) Validate() error {
 	}
 	ref := func(name string) bool { _, ok := nodes[name]; return ok }
 
+	// loaderIdentities are SYNTHETIC loader-aggregate ids named by window_of claims
+	// that are not themselves declared nodes — a multi-window loader with no physical
+	// anchor node (the clean shape: its windows are its only nodes). Its demand-registry
+	// entry keys on this label, so a demand may reference a loader identity even though
+	// it is not a physical node. A window_of that DOES name a declared node is the
+	// legacy anchor shape and is already a valid ref.
+	loaderIdentities := map[string]bool{}
+	for _, c := range p.Claims {
+		if c.WindowOf != "" && !ref(c.WindowOf) {
+			loaderIdentities[c.WindowOf] = true
+		}
+		// HomeOf names a dedicated_positions loader identity the same way WindowOf
+		// names a shared_window one — a demand may key on it even when it is not a
+		// declared physical node (the synthetic clean shape).
+		if c.HomeOf != "" && !ref(c.HomeOf) {
+			loaderIdentities[c.HomeOf] = true
+		}
+	}
+
 	// --- edge processes / styles / operator stations ---
 	processes := make(map[string]bool)
 	for _, pr := range p.Processes {
@@ -165,6 +184,9 @@ func (p *Plant) Validate() error {
 		if c.OutboundDestination != "" && !ref(c.OutboundDestination) {
 			add("%s: unknown outbound_destination %q", where, c.OutboundDestination)
 		}
+		if c.BufferDest != "" && !ref(c.BufferDest) {
+			add("%s: unknown buffer_dest %q", where, c.BufferDest)
+		}
 		if c.PairedCoreNode != "" && !ref(c.PairedCoreNode) {
 			add("%s: unknown paired_core_node %q", where, c.PairedCoreNode)
 		}
@@ -214,7 +236,7 @@ func (p *Plant) Validate() error {
 		if !payloads[d.Payload] {
 			add("demand references unknown payload %q", d.Payload)
 		}
-		if !ref(d.Node) {
+		if !ref(d.Node) && !loaderIdentities[d.Node] {
 			add("demand for %q references unknown node %q", d.Payload, d.Node)
 		}
 	}

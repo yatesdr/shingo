@@ -39,10 +39,21 @@ messaging:
 # cell stalls (the sim-plant-design.md §5 contract). Drive both short here so a
 # delivery confirms within ~2s and the swap loop self-clears headlessly. Loaders/
 # unloaders carry skip_auto_confirm and stay sim-operator-driven (CLEAR), so a
-# short auto_confirm does not race them. AbandonStuck stays at its 1h default.
+# short auto_confirm does not race them.
+#
+# abandon_stuck is DISABLED here (0s). In production a non-terminal order stuck past
+# 1h is cancelled — a held swap removal leg, a robot parked at a staging node, real
+# faults worth clearing. In the SIM that same sweep reaps orders that are merely
+# waiting out a downtime outage: a press down past the depth of its supermarket's
+# buffer starves the downstream weld, whose two-robot swap then holds its removal leg
+# "until the supply sibling claims a bin" — and at 1h sim-time the sweep cancels it.
+# Those show up as a churn of cancelled/failed orders that are sim artifacts, not
+# plant problems. Off = the sim self-heals when the machine recovers, instead of
+# abandoning the backlog. (Must be a duration string — bare `0` fails yaml→Duration.)
 staging:
   sweep_interval: 2s            # wall-clock ticker for the reconciliation + staged-bin sweeps
   auto_confirm_delivered: 2s    # sim-clock age after which a stuck `delivered` order is confirmed
+  abandon_stuck: 0s             # sim: disable the >1h stuck-order abandonment sweep (0 = off)
 
 sim:
   enabled: true

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
 	"shingo/protocol"
@@ -11,7 +12,6 @@ import (
 	"shingocore/plantspec"
 	"shingocore/store"
 	"shingocore/store/bins"
-	"shingocore/store/demands"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
 )
@@ -163,36 +163,23 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 		}
 	}
 
-	// --- demand registry (role + threshold from spec, fallback to claim inference) ---
-	claimByNodePayload := make(map[string]plantspec.Claim)
-	for _, c := range p.Claims {
-		claimByNodePayload[c.CoreNode+"|"+c.Payload] = c
-	}
+	// --- bin-loader aggregate FIRST, then DERIVE demand_registry from it ---
+	// BuildDemandRegistryFromAggregate is the Core-authored derivation production uses; it
+	// stamps demand_registry.loader_id (the step-4 identity cutover) so the threshold
+	// monitor mints LoaderKey and the Edge resolves a SYNTHETIC loader (e.g. multi-window
+	// PLK_LOADER, whose anchor is not a node) by its token. The prior path wrote the
+	// demands block straight to the registry, leaving loader_id NULL → the synthetic
+	// loader's threshold signal dropped at the Edge (caught on the houseserver sim,
+	// 2026-06-14). Thresholds still flow from the demands block: seedBinLoaders' threshold
+	// map stamps them onto each loader's payload/home UOPThreshold, which the aggregate
+	// derivation reads back. Must run AFTER the loaders exist.
 	stationID := p.Namespace + "." + p.LineID
-	entries := make([]demands.RegistryEntry, 0, len(p.Demands))
-	for _, d := range p.Demands {
-		role := protocol.ClaimRoleConsume
-		var threshold int
-		var outboundDest string
-		if c, ok := claimByNodePayload[d.Node+"|"+d.Payload]; ok {
-			role = protocol.ClaimRole(c.Role)
-			outboundDest = c.OutboundDestination
-			// Use the explicit threshold from the spec if provided (G5),
-			// otherwise fall back to inferring from the claim's reorder_point.
-			if d.ReplenishUOPThreshold != nil {
-				threshold = *d.ReplenishUOPThreshold
-			} else {
-				threshold = int(c.ReorderPoint)
-			}
-		}
-		entries = append(entries, demands.RegistryEntry{
-			StationID:             stationID,
-			CoreNodeName:          d.Node,
-			Role:                  role,
-			PayloadCode:           d.Payload,
-			OutboundDest:          outboundDest,
-			ReplenishUOPThreshold: threshold,
-		})
+	if err := seedBinLoaders(db, p); err != nil {
+		return fmt.Errorf("seed bin loaders: %w", err)
+	}
+	entries, err := db.BuildDemandRegistryFromAggregate(stationID)
+	if err != nil {
+		return fmt.Errorf("build demand registry from aggregate: %w", err)
 	}
 	if len(entries) > 0 {
 		if _, err := db.SyncDemandRegistry(stationID, entries); err != nil {
@@ -202,6 +189,282 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 
 	log.Printf("core: %d node types, %d payloads, %d nodes, %d bins, %d demands",
 		4, len(payloadIDs), len(nodeIDs), len(p.Bins), len(entries))
+	return nil
+}
+
+// seedBinLoaders derives the Core-owned bin_loaders aggregate from the plant's
+// manual_swap claims — the dev-sim equivalent of the production migration, and
+// what makes the Core-owned loader read path exercisable in the sim. Grouped by
+// (core_node, role); the plantspec has no
+// home-location concept, so loaders are shared_window and their allowed payloads
+// become bin_loader_payloads (min_stock = reorder_point, uop_threshold from the
+// demand spec). Replenishment: consume → auto when auto_push else operator;
+// produce → auto. Idempotent — skips a (core_node, role) that already exists.
+func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
+	threshold := map[string]int{}
+	for _, d := range p.Demands {
+		if d.ReplenishUOPThreshold != nil {
+			threshold[d.Node+"|"+d.Payload] = *d.ReplenishUOPThreshold
+		}
+	}
+	type lkey struct{ node, role string }
+	type pcfg struct {
+		code             string
+		minStock, thresh int
+	}
+	first := map[lkey]plantspec.Claim{}
+	pls := map[lkey][]pcfg{}
+	var order []lkey
+	// windowsByLoader groups window nodes under their parent shared loader. A
+	// claim with window_of set is NOT its own loader — its node becomes a window
+	// home of the parent, so a shared loader presents one demand across N windows
+	// (the multi-window model the grid editor authors in production). The window
+	// node still got a Core node + Edge process_node from the normal seed path.
+	//
+	// window_of names EITHER an anchor node that has its own manual_swap claim (the
+	// legacy anchor+windows shape — the anchor becomes the loader, windows hang off
+	// it) OR a SYNTHETIC identity with no claim of its own (the clean shape — the
+	// loader has no physical anchor node; its windows are its only nodes, and the
+	// loader config is derived from the windows' shared claim below). windowLead /
+	// windowPls capture that derived config so a synthetic loader can be built.
+	windowsByLoader := map[string][]string{}
+	windowLead := map[string]plantspec.Claim{} // window_of → first window claim (config source)
+	windowPls := map[string][]pcfg{}           // window_of → deduped payload configs
+	windowPlSeen := map[string]bool{}          // window_of|code, dedup across N windows
+	// home_of groups dedicated POSITIONS (one payload each) under a dedicated_positions
+	// loader — the dual of window_of's shared windows. Each home claim is its own
+	// position; same payload on two positions is legal (the O2 lead-time-buffer case).
+	homesByLoader := map[string][]plantspec.Claim{} // home_of → dedicated position claims (ordered)
+	homeLead := map[string]plantspec.Claim{}        // home_of → first home claim (config source)
+	for _, c := range p.Claims {
+		if c.SwapMode != string(protocol.SwapModeManualSwap) {
+			continue
+		}
+		if c.WindowOf != "" {
+			windowsByLoader[c.WindowOf] = append(windowsByLoader[c.WindowOf], c.CoreNode)
+			if _, ok := windowLead[c.WindowOf]; !ok {
+				windowLead[c.WindowOf] = c
+			}
+			codes := c.AllowedPayloads
+			if len(codes) == 0 && c.Payload != "" {
+				codes = []string{c.Payload}
+			}
+			for _, code := range codes {
+				if windowPlSeen[c.WindowOf+"|"+code] {
+					continue // windows share the loader's payload set — count it once
+				}
+				windowPlSeen[c.WindowOf+"|"+code] = true
+				windowPls[c.WindowOf] = append(windowPls[c.WindowOf], pcfg{code, int(c.ReorderPoint), threshold[c.WindowOf+"|"+code]})
+			}
+			continue
+		}
+		if c.HomeOf != "" {
+			homesByLoader[c.HomeOf] = append(homesByLoader[c.HomeOf], c)
+			if _, ok := homeLead[c.HomeOf]; !ok {
+				homeLead[c.HomeOf] = c
+			}
+			continue
+		}
+		k := lkey{c.CoreNode, c.Role}
+		if _, ok := first[k]; !ok {
+			first[k] = c
+			order = append(order, k)
+		}
+		codes := c.AllowedPayloads
+		if len(codes) == 0 && c.Payload != "" {
+			codes = []string{c.Payload}
+		}
+		for _, code := range codes {
+			pls[k] = append(pls[k], pcfg{code, int(c.ReorderPoint), threshold[c.CoreNode+"|"+code]})
+		}
+	}
+
+	created := 0
+	for _, k := range order {
+		existing, err := db.GetLoaderByName(k.node, k.role)
+		if err != nil {
+			return fmt.Errorf("check loader %s/%s: %w", k.node, k.role, err)
+		}
+		if existing != nil {
+			continue
+		}
+		c := first[k]
+		repl := "auto"
+		if k.role == "consume" && !c.AutoPush {
+			repl = "operator"
+		}
+		id, err := db.CreateLoader(store.Loader{
+			Name:          k.node,
+			Role:          k.role,
+			Layout:        "shared_window",
+			Replenishment: repl,
+			OutboundDest:  c.OutboundDestination,
+			InboundSource: c.InboundSource,
+			BufferDest:    c.BufferDest,
+		})
+		if err != nil {
+			return fmt.Errorf("create loader %s/%s: %w", k.node, k.role, err)
+		}
+		for _, pc := range pls[k] {
+			if err := db.UpsertLoaderPayload(store.LoaderPayload{
+				LoaderID: id, PayloadCode: pc.code, MinStock: pc.minStock, UOPThreshold: pc.thresh,
+			}); err != nil {
+				return fmt.Errorf("seed loader payload %s/%s: %w", k.node, pc.code, err)
+			}
+		}
+		// Window homes. A loader authored with explicit windows (window_of children)
+		// gets one window per child. A plain single-node loader (no window_of) gets its
+		// ANCHOR materialised as its sole window — step 1: every loader resolves to at
+		// least one real member row, so the projectCoreLoader empty-windows fallback is
+		// dead code (removed in 6b). Behaviour-preserving: the fallback already treated
+		// such a loader's anchor as its window; this just makes it explicit data. Windows
+		// carry no per-position payload (the shared set rides bin_loader_payloads).
+		wins := windowsByLoader[k.node]
+		if len(wins) == 0 {
+			wins = []string{k.node} // materialise the anchor as the sole window
+		}
+		for i, win := range wins {
+			node, err := db.GetNodeByName(win)
+			if err != nil || node == nil {
+				return fmt.Errorf("seed loader %s window %s: node lookup: %w", k.node, win, err)
+			}
+			if err := db.UpsertLoaderHome(store.LoaderHome{
+				LoaderID: id, PositionNodeID: node.ID, PayloadCode: "", SortOrder: i,
+			}); err != nil {
+				return fmt.Errorf("seed loader %s window home %s: %w", k.node, win, err)
+			}
+		}
+		created++
+	}
+
+	// Synthetic-identity loaders. A window_of that names no anchor claim is a loader
+	// with NO physical anchor node: its identity is its surrogate id (minted onto the
+	// wire as the loader_key token) and its name is the window_of label; its windows are
+	// its only nodes (each a delivery target + its own operator HMI), and its config
+	// comes from the windows' shared claim. This is the clean multi-window shape — no
+	// phantom anchor node that never receives a bin. Nothing downstream needs the
+	// identity to be a node: the loader carries no node column at all, the threshold
+	// monitor accounts UOP system-wide per payload, and empties deliver to the windows.
+	// Demand keys on the loader's first window node. Sorted for a deterministic seed.
+	anchorNode := make(map[string]bool, len(order))
+	for _, k := range order {
+		anchorNode[k.node] = true
+	}
+	var synthIDs []string
+	for id := range windowsByLoader {
+		if !anchorNode[id] {
+			synthIDs = append(synthIDs, id)
+		}
+	}
+	sort.Strings(synthIDs)
+	for _, id := range synthIDs {
+		lead := windowLead[id]
+		existing, err := db.GetLoaderByName(id, lead.Role)
+		if err != nil {
+			return fmt.Errorf("check synthetic loader %s/%s: %w", id, lead.Role, err)
+		}
+		if existing != nil {
+			continue
+		}
+		repl := "auto"
+		if lead.Role == "consume" && !lead.AutoPush {
+			repl = "operator"
+		}
+		lid, err := db.CreateLoader(store.Loader{
+			Name:          id,
+			Role:          lead.Role,
+			Layout:        "shared_window",
+			Replenishment: repl,
+			OutboundDest:  lead.OutboundDestination,
+			InboundSource: lead.InboundSource,
+			BufferDest:    lead.BufferDest,
+		})
+		if err != nil {
+			return fmt.Errorf("create synthetic loader %s/%s: %w", id, lead.Role, err)
+		}
+		for _, pc := range windowPls[id] {
+			if err := db.UpsertLoaderPayload(store.LoaderPayload{
+				LoaderID: lid, PayloadCode: pc.code, MinStock: pc.minStock, UOPThreshold: pc.thresh,
+			}); err != nil {
+				return fmt.Errorf("seed synthetic loader payload %s/%s: %w", id, pc.code, err)
+			}
+		}
+		for i, win := range windowsByLoader[id] {
+			node, err := db.GetNodeByName(win)
+			if err != nil || node == nil {
+				return fmt.Errorf("seed synthetic loader %s window %s: node lookup: %w", id, win, err)
+			}
+			if err := db.UpsertLoaderHome(store.LoaderHome{
+				LoaderID: lid, PositionNodeID: node.ID, PayloadCode: "", SortOrder: i,
+			}); err != nil {
+				return fmt.Errorf("seed synthetic loader %s window home %s: %w", id, win, err)
+			}
+		}
+		created++
+	}
+
+	// Dedicated-positions loaders (home_of). Each home is a single-payload position;
+	// the loader's identity is the home_of label (synthetic — never a node). Same
+	// payload on two positions is legal and is the same-payload-two-position fixture
+	// (each its own demand_registry row; the pooled threshold trips, ReservationTarget
+	// routes to the named position). buffer_dest carries onto the aggregate for the
+	// step-7 buffer behaviour. Sorted for a deterministic seed.
+	var deckIDs []string
+	for id := range homesByLoader {
+		deckIDs = append(deckIDs, id)
+	}
+	sort.Strings(deckIDs)
+	for _, id := range deckIDs {
+		lead := homeLead[id]
+		existing, err := db.GetLoaderByName(id, lead.Role)
+		if err != nil {
+			return fmt.Errorf("check dedicated loader %s/%s: %w", id, lead.Role, err)
+		}
+		if existing != nil {
+			continue
+		}
+		repl := "auto"
+		if lead.Role == "consume" && !lead.AutoPush {
+			repl = "operator"
+		}
+		lid, err := db.CreateLoader(store.Loader{
+			Name:          id,
+			Role:          lead.Role,
+			Layout:        "dedicated_positions",
+			Replenishment: repl,
+			OutboundDest:  lead.OutboundDestination,
+			InboundSource: lead.InboundSource,
+			BufferDest:    lead.BufferDest,
+		})
+		if err != nil {
+			return fmt.Errorf("create dedicated loader %s/%s: %w", id, lead.Role, err)
+		}
+		for i, hc := range homesByLoader[id] {
+			node, err := db.GetNodeByName(hc.CoreNode)
+			if err != nil || node == nil {
+				return fmt.Errorf("seed dedicated loader %s position %s: node lookup: %w", id, hc.CoreNode, err)
+			}
+			code := hc.Payload
+			if code == "" && len(hc.AllowedPayloads) > 0 {
+				code = hc.AllowedPayloads[0]
+			}
+			thr := threshold[hc.CoreNode+"|"+code]
+			if thr == 0 {
+				thr = threshold[id+"|"+code] // loader-id-keyed demand fallback
+			}
+			if err := db.UpsertLoaderHome(store.LoaderHome{
+				LoaderID: lid, PositionNodeID: node.ID, PayloadCode: code,
+				MinStock: int(hc.ReorderPoint), UOPThreshold: thr, SortOrder: i,
+			}); err != nil {
+				return fmt.Errorf("seed dedicated loader %s position home %s: %w", id, hc.CoreNode, err)
+			}
+		}
+		created++
+	}
+
+	if created > 0 {
+		log.Printf("core: seeded %d bin loader(s) into the aggregate", created)
+	}
 	return nil
 }
 

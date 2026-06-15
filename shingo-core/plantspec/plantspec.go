@@ -117,22 +117,52 @@ type Style struct {
 
 // Claim is one style→core-node binding — the full claim row.
 type Claim struct {
-	CoreNode            string   `yaml:"core_node"`
-	Style               string   `yaml:"style"`
-	Role                string   `yaml:"role"`      // produce|consume
-	SwapMode            string   `yaml:"swap_mode"` // simple|sequential|single_robot|two_robot|two_robot_press_index|manual_swap
-	Payload             string   `yaml:"payload"`
-	UOPCapacity         int64    `yaml:"uop_capacity"`
-	ReorderPoint        int64    `yaml:"reorder_point"`
-	AutoReorder         bool     `yaml:"auto_reorder"`
-	InboundSource       string   `yaml:"inbound_source,omitempty"`
-	OutboundDestination string   `yaml:"outbound_destination,omitempty"`
-	InboundStaging      string   `yaml:"inbound_staging,omitempty"`
-	OutboundStaging     string   `yaml:"outbound_staging,omitempty"`
-	AutoPush            bool     `yaml:"auto_push"`
-	AutoConfirm         bool     `yaml:"auto_confirm"`
-	PairedCoreNode      string   `yaml:"paired_core_node,omitempty"`
-	AllowedPayloads     []string `yaml:"allowed_payloads,omitempty"`
+	CoreNode            string `yaml:"core_node"`
+	Style               string `yaml:"style"`
+	Role                string `yaml:"role"`      // produce|consume
+	SwapMode            string `yaml:"swap_mode"` // simple|sequential|single_robot|two_robot|two_robot_press_index|manual_swap
+	Payload             string `yaml:"payload"`
+	UOPCapacity         int64  `yaml:"uop_capacity"`
+	ReorderPoint        int64  `yaml:"reorder_point"`
+	AutoReorder         bool   `yaml:"auto_reorder"`
+	InboundSource       string `yaml:"inbound_source,omitempty"`
+	OutboundDestination string `yaml:"outbound_destination,omitempty"`
+	// BufferDest, on a manual_swap loader/unloader claim, names the buffer node
+	// group (zone/NGRP) that stages empties to rotate into a position on threshold
+	// and parks changeover-orphaned partials (plain FIFO, engineered capacity — the
+	// loader-buffer model, ledger §J). Carried onto bin_loaders.buffer_dest; the
+	// runtime behaviour lands with the buffer build (step 7). Most useful on a
+	// dedicated_positions loader, where a parked partial that lost its home slot
+	// during a changeover needs somewhere to wait.
+	BufferDest      string   `yaml:"buffer_dest,omitempty"`
+	InboundStaging  string   `yaml:"inbound_staging,omitempty"`
+	OutboundStaging string   `yaml:"outbound_staging,omitempty"`
+	AutoPush        bool     `yaml:"auto_push"`
+	AutoConfirm     bool     `yaml:"auto_confirm"`
+	PairedCoreNode  string   `yaml:"paired_core_node,omitempty"`
+	AllowedPayloads []string `yaml:"allowed_payloads,omitempty"`
+	// WindowOf, when set on a manual_swap loader claim, makes this node a WINDOW
+	// of the named shared loader rather than its own loader: the seed groups it as
+	// a window home of that loader (the multi-window model the grid editor authors
+	// in production). The window still gets a Core node + Edge process_node (so
+	// empties can deliver to it); only its loader-aggregate grouping changes.
+	WindowOf string `yaml:"window_of,omitempty"`
+	// HomeOf, when set on a manual_swap loader claim, makes this node a dedicated
+	// POSITION of the named dedicated_positions loader (the home-location model —
+	// the dual of WindowOf's shared windows). Each home_of claim is one position
+	// carrying its OWN payload (NOT a shared set); the same payload on two positions
+	// is legal (the O2 lead-time-buffer case). Like WindowOf, the node still gets a
+	// Core node + Edge process_node (so empties can deliver to it); only its
+	// loader-aggregate grouping changes. The named loader id may be synthetic (no
+	// declared node of its own — the clean shape) or an anchor node.
+	HomeOf string `yaml:"home_of,omitempty"`
+	// OperatorStation, when set, assigns this node's Edge process_node to its OWN
+	// operator station (created on the claim's process) instead of the process's
+	// default station. The per-window-HMI model gives each window of a shared loader
+	// its own physical screen — one window per station — so an operator loads the bin
+	// in front of them with no window-picker and no misload. Empty = the process's
+	// default station (the normal single-station-per-cell case).
+	OperatorStation string `yaml:"operator_station,omitempty"`
 	// ActivePull marks an A/B pair's live side. nil = the node is the active
 	// pull point (default true); set false on the parked (inactive) side so the
 	// seeder writes active_pull=0 and counter ticks skip it (review I4).
