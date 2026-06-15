@@ -239,6 +239,17 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 				if loader, err := s.loaders.LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(nodeView.ActiveClaim.Role)); err == nil && loader != nil {
 					nodeView.OperatorDriven = loader.IsOperatorDriven()
 					nodeView.HomeLocationLoader = loader.IsDedicated()
+					// Core owns the loader's payload set — the board shows it (the edge claim
+					// is just the node now). Overrides the claim-derived set above; falls back
+					// to it only when the loader carries no Core payloads (legacy / not migrated).
+					if ps := loader.PayloadSet(); len(ps) > 0 {
+						codes := make([]string, len(ps))
+						for i, pc := range ps {
+							codes[i] = string(pc)
+						}
+						nodeView.ActiveStylePayloads = codes
+						nodeView.AllStylePayloads = codes
+					}
 					if loader.IsShared() {
 						if wins := loader.Windows(); len(wins) > 1 {
 							nodeView.WindowGroupAnchor = string(loader.ID())
