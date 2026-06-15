@@ -39,7 +39,7 @@ func TestThresholdMonitor_DebounceWindow(t *testing.T) {
 	}
 }
 
-func TestThresholdMonitor_OnRegistryChanges(t *testing.T) {
+func TestThresholdMonitor_OnThresholdChanges(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()
 
@@ -50,7 +50,7 @@ func TestThresholdMonitor_OnRegistryChanges(t *testing.T) {
 		t.Fatal("debounce should block before reset")
 	}
 
-	tm.OnRegistryChanges([]demands.RegistryChange{{
+	tm.OnThresholdChanges([]demands.RegistryChange{{
 		StationID:    "station-1",
 		CoreNodeName: "MS-LOADER",
 		PayloadCode:  "WIDGET-A",
@@ -59,7 +59,7 @@ func TestThresholdMonitor_OnRegistryChanges(t *testing.T) {
 	}})
 
 	if !tm.allow(key) {
-		t.Error("allow after OnRegistryChanges reset should pass")
+		t.Error("allow after OnThresholdChanges reset should pass")
 	}
 }
 

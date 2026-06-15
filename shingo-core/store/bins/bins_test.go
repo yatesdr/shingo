@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"shingocore/store/bins"
+	"shingocore/store/nodes"
 	"testing"
 	"time"
 
@@ -591,6 +592,80 @@ func TestFindEmptyCompatible(t *testing.T) {
 			t.Errorf("got bin %d with excludeNodeID=0, want %d (zone A match) — 0 must mean no exclusion", got.ID, zoneA.ID)
 		}
 	})
+}
+
+// TestFindEmptyCompatible_PrefersAccessibleEmpty pins the 2026-06-13
+// empties-are-fungible fix: when several compatible empties exist, the planner
+// grabs the one that costs the least to extract — an accessible lane-mouth empty
+// before a buried one — rather than the lowest bin id. Before the fix these
+// queries ordered by bin id alone, so a deep empty that happened to be inserted
+// first was picked and then reactively reshuffled (planning_service.go
+// IsSlotAccessible → planBuriedReshuffle). Accessibility-first ordering means the
+// dig-out only happens when every empty is buried (see the last-resort test).
+func TestFindEmptyCompatible_PrefersAccessibleEmpty(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}), "SetPayloadBinTypes")
+
+	// A two-deep lane: S1 at the mouth (depth 1), S2 behind it (depth 2).
+	lane := &nodes.Node{Name: "LANE-FEC", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(db.DB, lane), "nodes.Create lane")
+	d1, d2 := 1, 2
+	s1 := &nodes.Node{Name: "FEC-S1", Enabled: true, ParentID: &lane.ID, Depth: &d1}
+	s2 := &nodes.Node{Name: "FEC-S2", Enabled: true, ParentID: &lane.ID, Depth: &d2}
+	testutil.MustNoErr(t, nodes.Create(db.DB, s1), "nodes.Create s1")
+	testutil.MustNoErr(t, nodes.Create(db.DB, s2), "nodes.Create s2")
+
+	// Deep empty created FIRST → lower bin id (what the old FIFO-by-id pick
+	// would return). Shallow/accessible empty created SECOND → higher bin id.
+	deep := &bins.Bin{BinTypeID: std.BinType.ID, Label: "FEC-DEEP", NodeID: &s2.ID, Status: "available"}
+	testutil.MustNoErr(t, bins.Create(db.DB, deep), "bins.Create deep")
+	shallow := &bins.Bin{BinTypeID: std.BinType.ID, Label: "FEC-SHALLOW", NodeID: &s1.ID, Status: "available"}
+	testutil.MustNoErr(t, bins.Create(db.DB, shallow), "bins.Create shallow")
+
+	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
+	if err != nil {
+		t.Fatalf("FindEmptyCompatible: %v", err)
+	}
+	if got.ID != shallow.ID {
+		t.Errorf("got bin %d (%q), want the accessible mouth empty %d (%q) — accessibility must beat lower bin id",
+			got.ID, got.Label, shallow.ID, shallow.Label)
+	}
+}
+
+// TestFindEmptyCompatible_BuriedEmptyIsLastResort confirms the fallback half of
+// the fix: when the ONLY compatible empty is buried, it must still be returned
+// (the planner then reshuffles to dig it out). The fix changes which empty is
+// preferred, not whether a buried empty is reachable at all.
+func TestFindEmptyCompatible_BuriedEmptyIsLastResort(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}), "SetPayloadBinTypes")
+
+	lane := &nodes.Node{Name: "LANE-LR", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(db.DB, lane), "nodes.Create lane")
+	d1, d2 := 1, 2
+	s1 := &nodes.Node{Name: "LR-S1", Enabled: true, ParentID: &lane.ID, Depth: &d1}
+	s2 := &nodes.Node{Name: "LR-S2", Enabled: true, ParentID: &lane.ID, Depth: &d2}
+	testutil.MustNoErr(t, nodes.Create(db.DB, s1), "nodes.Create s1")
+	testutil.MustNoErr(t, nodes.Create(db.DB, s2), "nodes.Create s2")
+
+	// S1 (mouth) is occupied by a non-available bin — not an empty candidate, but
+	// physically present, so it buries S2. The only compatible EMPTY is at S2.
+	occupier := &bins.Bin{BinTypeID: std.BinType.ID, Label: "LR-OCCUPIER", NodeID: &s1.ID, Status: "staged"}
+	testutil.MustNoErr(t, bins.Create(db.DB, occupier), "bins.Create occupier")
+	buried := &bins.Bin{BinTypeID: std.BinType.ID, Label: "LR-BURIED", NodeID: &s2.ID, Status: "available"}
+	testutil.MustNoErr(t, bins.Create(db.DB, buried), "bins.Create buried")
+
+	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
+	if err != nil {
+		t.Fatalf("FindEmptyCompatible: %v", err)
+	}
+	if got == nil || got.ID != buried.ID {
+		t.Fatalf("got %+v, want the buried empty %d — a buried empty must stay selectable as last resort", got, buried.ID)
+	}
 }
 
 // TestFindEmptyCompatible_AdvisoryFallback_NoRules verifies that a payload

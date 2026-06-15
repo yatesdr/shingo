@@ -406,9 +406,75 @@ type NodeInfo struct {
 	ParentNodeType string `json:"parent_node_type,omitempty"`
 }
 
-// NodeListResponse carries the core's authoritative node list.
+// NodeListResponse carries the core's authoritative node list, plus (loader
+// refactor cutover) the Core-owned loader config as a sibling slice so a loader
+// and its member positions arrive atomically with the topology. Loaders is
+// omitted until Core authors loaders, so this is additive — a pre-cutover Edge
+// ignores the unknown field.
 type NodeListResponse struct {
-	Nodes []NodeInfo `json:"nodes"`
+	Nodes   []NodeInfo   `json:"nodes"`
+	Loaders []LoaderInfo `json:"loaders,omitempty"`
+}
+
+// LoaderInfo describes one Core-owned bin loader (produce) or unloader (consume)
+// for the downward config sync. Carried as a sibling slice on NodeListResponse —
+// NOT folded into NodeInfo — so the loader and its positions/payloads arrive
+// together. The loader's identity is LoaderKey (the surrogate token); it has no
+// node id of its own. Edge keys on node NAMES, so Positions carry core_node_name
+// (Core resolves its position_node_id → name when building this). ConfigGen rides
+// every config write so Edge can detect stale config. Names per D4: layout =
+// shared_window | dedicated_positions; replenishment = auto | operator.
+type LoaderInfo struct {
+	Name string `json:"name"`
+	// LoaderKey is the loader's IDENTITY — the opaque token Core mints from
+	// bin_loaders.id as "loader:<id>". It is the Edge cache key that groups a loader's
+	// windows for the never-2N budget and what the pooled threshold signal names. The
+	// loader has no node id of its own (a multi-window loader spans many nodes); its
+	// delivery targets are the explicit member nodes in Positions. domain.LoaderID
+	// stays a string newtype so a future UUID swap is invisible.
+	LoaderKey     string              `json:"loader_key"`
+	Role          string              `json:"role"`
+	Layout        string              `json:"layout"`
+	Replenishment string              `json:"replenishment"`
+	OutboundDest  string              `json:"outbound_dest,omitempty"`
+	InboundSource string              `json:"inbound_source,omitempty"`
+	BufferDest    string              `json:"buffer_dest,omitempty"`
+	ConfigGen     int64               `json:"config_gen"`
+	Positions     []LoaderPosition    `json:"positions,omitempty"`
+	Payloads      []LoaderPayloadInfo `json:"payloads,omitempty"`
+}
+
+// LoaderPosition is one home of a loader. For a dedicated_positions loader it is
+// a position node bound to exactly one payload; for a shared_window loader it is
+// one window of the shared cluster, carrying no per-position payload (the shared
+// set rides LoaderInfo.Payloads). Kind makes that distinction EXPLICIT on the
+// wire so a consumer reading a single position need not re-derive it from the
+// payload being empty — the empty-payload-means-window convention that already
+// mis-wires the Edge. Kind is set by Core from the parent loader's Layout (the
+// single authoritative discriminator); see LoaderPositionKind* below.
+type LoaderPosition struct {
+	CoreNodeName string `json:"core_node_name"`
+	PayloadCode  string `json:"payload_code"`
+	Kind         string `json:"kind,omitempty"`
+	MinStock     int    `json:"min_stock"`
+	UOPThreshold int    `json:"uop_threshold"`
+}
+
+// LoaderPositionKind values for LoaderPosition.Kind. A window belongs to a
+// shared_window loader's shared budget and carries no payload; a dedicated
+// position carries one payload (possibly unassigned == empty). Empty Kind on the
+// wire means "from a Core that predates this field" — the reader falls back to
+// the parent loader's Layout, which remains authoritative.
+const (
+	LoaderPositionKindWindow    = "window"
+	LoaderPositionKindDedicated = "dedicated"
+)
+
+// LoaderPayloadInfo is one entry in a shared_window loader's allowed payload set.
+type LoaderPayloadInfo struct {
+	PayloadCode  string `json:"payload_code"`
+	MinStock     int    `json:"min_stock"`
+	UOPThreshold int    `json:"uop_threshold"`
 }
 
 // --- Production data schemas ---
@@ -792,10 +858,10 @@ type LinesideBucketDelta struct {
 // refillLoaderForPayload after the countLoaderInFlightEmptyIn dedup
 // guard.
 //
-// CoreNodeName is the canonical cross-system identifier (matches the
-// node name used by style_node_claims, process_nodes, demand_registry,
-// and the rest of the protocol). v6 renamed this from LoaderNode to
-// make the type symmetry with the rest of the system explicit.
+// CoreNodeName is the loader-member node the binding is about — a real node
+// (the position for dedicated, the first window for shared_window). The loader's
+// IDENTITY is LoaderKey; the Edge resolves the loader by that token and uses
+// CoreNodeName/MemberNodeName only as the delivery address.
 //
 // Reason carries either "below_threshold" (normal crossing) or
 // "warm_up_startup_sweep" (Core startup observed an existing
@@ -808,7 +874,20 @@ type LoopBelowThresholdSignal struct {
 	CurrentUOP   int    `json:"current_uop"`
 	Threshold    int    `json:"threshold"`
 	CoreNodeName string `json:"core_node_name"`
-	Reason       string `json:"reason"`
+	// MemberNodeName names the specific loader member (a dedicated position, or a
+	// shared window) the binding is about — distinct from the loader IDENTITY. The
+	// Edge routes the empty to THIS node instead of first-match, fixing the
+	// same-payload-on-two-positions bug (O2). Additive (omitempty); for a
+	// shared_window loader it is empty/the anchor and the seam funnels to a free
+	// window regardless. Today CoreNodeName still doubles as identity+member; step 4
+	// splits them (CoreNodeName → identity, MemberNodeName → the address).
+	MemberNodeName string `json:"member_node_name,omitempty"`
+	// LoaderKey is the loader's opaque identity token ("loader:<id>"). Additive;
+	// populated at the step-4 identity cutover (when demand_registry carries
+	// loader_id) and becomes the Edge cache key the signal resolves against. Empty
+	// before then — the Edge resolves via CoreNodeName until the cutover.
+	LoaderKey string `json:"loader_key,omitempty"`
+	Reason    string `json:"reason"`
 }
 
 // UOPAdjustment carries an absolute UOP value set by an admin via Core's

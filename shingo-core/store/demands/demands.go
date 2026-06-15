@@ -55,9 +55,13 @@ type ProductionLogEntry struct {
 // LoopBelowThresholdSignal. Zero means "Core does not monitor this
 // pair" — Edge falls back to legacy bin-count behavior.
 type RegistryEntry struct {
-	ID                    int64              `json:"id"`
-	StationID             string             `json:"station_id"`
-	CoreNodeName          string             `json:"core_node_name"`
+	ID           int64  `json:"id"`
+	StationID    string `json:"station_id"`
+	CoreNodeName string `json:"core_node_name"`
+	// LoaderID is the owning loader's surrogate (the identity cutover). Set from the
+	// aggregate at re-derive time; 0/NULL for legacy ClaimSync rows. The threshold
+	// monitor mints LoaderKey="loader:<id>" from it onto the signal.
+	LoaderID              int64              `json:"loader_id,omitempty"`
 	Role                  protocol.ClaimRole `json:"role"` // "produce" or "consume"
 	PayloadCode           string             `json:"payload_code"`
 	OutboundDest          string             `json:"outbound_dest"`
@@ -70,11 +74,15 @@ type RegistryEntry struct {
 // the SELECT list in one place — and the scan order in the helpers
 // below. Adding a new column without updating both will break the
 // positional Scan().
-const registrySelectCols = `id, station_id, core_node_name, role, payload_code, outbound_dest, replenish_uop_threshold, updated_at`
+const registrySelectCols = `id, station_id, core_node_name, role, payload_code, outbound_dest, replenish_uop_threshold, loader_id, updated_at`
 
 func scanRegistryEntry(row interface{ Scan(...any) error }) (RegistryEntry, error) {
 	var e RegistryEntry
-	err := row.Scan(&e.ID, &e.StationID, &e.CoreNodeName, &e.Role, &e.PayloadCode, &e.OutboundDest, &e.ReplenishUOPThreshold, &e.UpdatedAt)
+	var loaderID sql.NullInt64
+	err := row.Scan(&e.ID, &e.StationID, &e.CoreNodeName, &e.Role, &e.PayloadCode, &e.OutboundDest, &e.ReplenishUOPThreshold, &loaderID, &e.UpdatedAt)
+	if loaderID.Valid {
+		e.LoaderID = loaderID.Int64
+	}
 	return e, err
 }
 
@@ -263,8 +271,12 @@ func SyncRegistry(db *sql.DB, stationID string, entries []RegistryEntry) ([]Regi
 			log.Printf("WARNING demand sync: Edge sent CoreNodeName with whitespace: %q (station=%q)", e.CoreNodeName, stationID)
 			e.CoreNodeName = coreNodeName
 		}
-		if _, err := tx.Exec(`INSERT INTO demand_registry (station_id, core_node_name, role, payload_code, outbound_dest, replenish_uop_threshold) VALUES ($1, $2, $3, $4, $5, $6)`,
-			stationID, e.CoreNodeName, e.Role, e.PayloadCode, e.OutboundDest, e.ReplenishUOPThreshold); err != nil {
+		var lid any
+		if e.LoaderID > 0 {
+			lid = e.LoaderID // NULL for legacy ClaimSync rows; the loader token rides this
+		}
+		if _, err := tx.Exec(`INSERT INTO demand_registry (station_id, core_node_name, role, payload_code, outbound_dest, replenish_uop_threshold, loader_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			stationID, e.CoreNodeName, e.Role, e.PayloadCode, e.OutboundDest, e.ReplenishUOPThreshold, lid); err != nil {
 			return nil, err
 		}
 		key := priorKey(e.CoreNodeName, e.PayloadCode)

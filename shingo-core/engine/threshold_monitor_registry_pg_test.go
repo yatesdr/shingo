@@ -10,19 +10,20 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
+	"shingocore/store"
 	"shingocore/store/demands"
 	"shingocore/store/messaging"
 )
 
-// TestThresholdMonitor_OnRegistryChanges_FiresImmediatelyWhenBelowThreshold
+// TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold
 // pins the Springfield 6883 fix: when a demand-registry sync newly adds
 // (or raises) a threshold for a payload whose current system UOP is
 // already below the new value, the monitor must fire
-// LoopBelowThresholdSignal during OnRegistryChanges — not wait for the
-// next bin/bucket delta. Before the fix, OnRegistryChanges only rebuilt
+// LoopBelowThresholdSignal during OnThresholdChanges — not wait for the
+// next bin/bucket delta. Before the fix, OnThresholdChanges only rebuilt
 // the cache and reset the debounce; a zero-stock payload (no upcoming
 // delta) stayed silent until Core restart.
-func TestThresholdMonitor_OnRegistryChanges_FiresImmediatelyWhenBelowThreshold(t *testing.T) {
+func TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
@@ -46,18 +47,18 @@ func TestThresholdMonitor_OnRegistryChanges_FiresImmediatelyWhenBelowThreshold(t
 		t.Fatalf("seed initial registry: %v", err)
 	}
 
-	// Snapshot outbox state pre-OnRegistryChanges so the assertion
+	// Snapshot outbox state pre-OnThresholdChanges so the assertion
 	// below distinguishes the new signal from anything the test engine
 	// emitted at startup. The 3s startup-sweep gate keeps the sweep
 	// out of this test's window, but we belt-and-brace anyway.
 	preMsgs, _ := db.ListPendingOutbox(50)
 	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
 
-	// Drive OnRegistryChanges directly with a synthetic change list — the
+	// Drive OnThresholdChanges directly with a synthetic change list — the
 	// same shape handleClaimSync would produce after a real SyncRegistry
 	// returned a non-empty change set. This isolates the immediate-fire
 	// behavior without depending on the full ClaimSync path.
-	eng.thresholdMonitor.OnRegistryChanges([]demands.RegistryChange{{
+	eng.thresholdMonitor.OnThresholdChanges([]demands.RegistryChange{{
 		StationID:    stationID,
 		CoreNodeName: loader,
 		PayloadCode:  payload,
@@ -82,7 +83,7 @@ func TestThresholdMonitor_OnRegistryChanges_FiresImmediatelyWhenBelowThreshold(t
 	}
 	if hit == nil {
 		msgs, _ := db.ListPendingOutbox(50)
-		t.Fatalf("expected immediate LoopBelowThresholdSignal to %s after OnRegistryChanges, outbox=%v",
+		t.Fatalf("expected immediate LoopBelowThresholdSignal to %s after OnThresholdChanges, outbox=%v",
 			stationID, outboxSummary(msgs))
 	}
 	if hit.PayloadCode != payload {
@@ -97,6 +98,83 @@ func TestThresholdMonitor_OnRegistryChanges_FiresImmediatelyWhenBelowThreshold(t
 	if hit.CurrentUOP != 0 {
 		t.Errorf("signal CurrentUOP = %d, want 0 (no bins of this payload)", hit.CurrentUOP)
 	}
+}
+
+// TestThresholdMonitor_Resync_EngagesAndFiresSeededBinding pins the seed-ordering
+// fix. A demand_registry binding written OUT-OF-BAND (seeddev / migrateloaders
+// write it directly; ClaimSync is retired so the Edge pushes no claims) is
+// invisible to the monitor's one-shot startup sweep. Resync — called on Edge
+// (re)connect — must engage that binding and fire it immediately when already
+// below threshold, WITHOUT relying on a SyncDemandRegistry diff (the registry was
+// already written, so there is none). Before the fix the binding stayed dark
+// until Core restart — the exact dev-sim symptom.
+func TestThresholdMonitor_Resync_EngagesAndFiresSeededBinding(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+
+	const (
+		stationID = "station-resync"
+		loader    = "PLK-RESYNC"
+		payload   = "BRKT-RESYNC"
+	)
+
+	// Seed the registry directly (the seed path), with NO OnThresholdChanges
+	// notification — exactly how a fresh dev seed leaves the running monitor
+	// stale. No bins of this payload exist → system UOP is 0, below threshold.
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleProduce,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 50,
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	preMsgs, _ := db.ListPendingOutbox(50)
+	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+
+	// The Edge (re)connects → Resync. No diff is available, so only Resync can
+	// engage the binding and fire it.
+	eng.thresholdMonitor.Resync(stationID)
+
+	deadline := time.Now().Add(2 * time.Second)
+	var hit *protocol.LoopBelowThresholdSignal
+	for time.Now().Before(deadline) {
+		msgs, _ := db.ListPendingOutbox(50)
+		if countLoopBelowThresholdSignals(msgs, stationID) > preCount {
+			hit = findLoopBelowThresholdSignal(t, msgs, stationID)
+			if hit != nil {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if hit == nil {
+		msgs, _ := db.ListPendingOutbox(50)
+		t.Fatalf("expected Resync to fire LoopBelowThresholdSignal to %s, outbox=%v", stationID, outboxSummary(msgs))
+	}
+	if hit.PayloadCode != payload || hit.CoreNodeName != loader || hit.Threshold != 50 {
+		t.Errorf("signal = payload=%q node=%q threshold=%d, want %s/%s/50", hit.PayloadCode, hit.CoreNodeName, hit.Threshold, payload, loader)
+	}
+
+	// Station scoping: Resync of a DIFFERENT station must not fire this binding.
+	base := countLoopBelowThresholdSignals(mustOutbox(t, db), stationID)
+	eng.thresholdMonitor.Resync("some-other-station")
+	time.Sleep(200 * time.Millisecond)
+	if got := countLoopBelowThresholdSignals(mustOutbox(t, db), stationID); got != base {
+		t.Errorf("Resync(other-station) fired %s's binding (%d → %d)", stationID, base, got)
+	}
+}
+
+func mustOutbox(t *testing.T, db *store.DB) []*messaging.OutboxMessage {
+	t.Helper()
+	msgs, err := db.ListPendingOutbox(50)
+	if err != nil {
+		t.Fatalf("list outbox: %v", err)
+	}
+	return msgs
 }
 
 // findLoopBelowThresholdSignal scans outbox rows for a LoopBelowThresholdSignal

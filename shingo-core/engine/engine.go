@@ -72,6 +72,8 @@ type Engine struct {
 	nodeService           *service.NodeService
 	auditService          *service.AuditService
 	demandService         *service.DemandService
+	loaderService         *service.LoaderService
+	calculatorService     *service.ThresholdCalculatorService
 	payloadService        *service.PayloadService
 	missionService        *service.MissionService
 	testCmdService        *service.TestCommandService
@@ -173,6 +175,9 @@ func New(c Config) *Engine {
 	e.partsService = service.NewPartsService(e.db)
 	e.heartbeatService = service.NewHeartbeatService(e.db)
 	e.thresholdMonitor = NewThresholdMonitor(e)
+	// Loader CRUD re-derives demand_registry + nudges the monitor on each edit.
+	e.loaderService = service.NewLoaderService(e.db, e.thresholdMonitor)
+	e.calculatorService = service.NewThresholdCalculatorService(e.db)
 	e.etaCache = eta.NewCache(e.db.DB)
 	return e
 }

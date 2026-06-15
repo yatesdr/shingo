@@ -304,9 +304,13 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 		return nil, fmt.Errorf("record count bin %d: %w", b.ID, err)
 	}
 	expectedCopy := expected
+	uopCtx, err := resolveBinUOPContext(tx, b.ID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("resolve audit context bin %d: %w", b.ID, err)
+	}
 	if err := audit.AppendBinUOP(tx, b.ID, &expectedCopy, actualUOP,
 		audit.OpCycleCount, "service/bin_service.go:RecordCount",
-		nil, b.PayloadCode, actor, audit.BinUOPContext{}); err != nil {
+		nil, b.PayloadCode, actor, uopCtx); err != nil {
 		return nil, fmt.Errorf("audit cycle count bin %d: %w", b.ID, err)
 	}
 	if err := tx.Commit(); err != nil {

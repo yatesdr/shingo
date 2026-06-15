@@ -100,15 +100,18 @@ type BinUOPExecer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
-// BinUOPContext carries the §16-enrichment fields for a bin_uop_audit row:
-// the node the bin was at, its station, and a freeform JSON detail blob.
-// Grouped into a struct (rather than three more positional params on an
-// already-wide signature) so callers that don't populate them pass the zero
-// value, audit.BinUOPContext{}. Inventory refactor §16 PR 2.
+// BinUOPContext carries the §16-enrichment fields for a bin_uop_audit row: the node
+// the bin was at, the loader that owns that node (resolved at event time so loads /
+// unloads group per loader — keystone analytics), the station, and a freeform JSON
+// detail blob. Grouped into a struct (rather than more positional params on an
+// already-wide signature) so callers that don't populate them pass the zero value,
+// audit.BinUOPContext{}. LoaderID is a PLAIN value (no FK) — see the v37 migration:
+// it must survive a loader archive/delete. Inventory refactor §16 PR 2 + keystone step 2.
 type BinUOPContext struct {
-	NodeID  *int64
-	Station string
-	Detail  json.RawMessage
+	NodeID   *int64
+	LoaderID *int64
+	Station  string
+	Detail   json.RawMessage
 }
 
 // AppendBinUOP records a single write to bins.uop_remaining. Called from
@@ -141,14 +144,18 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 	if ctx.NodeID != nil {
 		node = *ctx.NodeID
 	}
+	var loader any
+	if ctx.LoaderID != nil {
+		loader = *ctx.LoaderID
+	}
 	var detail any
 	if len(ctx.Detail) > 0 {
 		detail = []byte(ctx.Detail)
 	}
 	if _, err := execer.Exec(`INSERT INTO bin_uop_audit
-		(bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, node_id, station, detail)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		binID, before, afterUOP, op, source, ord, payloadCode, actor, node, ctx.Station, detail); err != nil {
+		(bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, node_id, station, loader_id, detail)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		binID, before, afterUOP, op, source, ord, payloadCode, actor, node, ctx.Station, loader, detail); err != nil {
 		return fmt.Errorf("append bin_uop_audit bin=%d op=%q: %w", binID, op, err)
 	}
 	return nil
@@ -181,6 +188,9 @@ type BinUOPRow struct {
 	OrderID     *int64  `json:"order_id,omitempty"`
 	PayloadCode string  `json:"payload_code"`
 	Actor       string  `json:"actor"`
+	NodeID      *int64  `json:"node_id,omitempty"`
+	Station     string  `json:"station"`
+	LoaderID    *int64  `json:"loader_id,omitempty"`
 	Metadata    *string `json:"metadata,omitempty"`
 	AppliedAt   string  `json:"applied_at"`
 }
@@ -192,9 +202,12 @@ func scanBinUOPRows(rows *sql.Rows) ([]BinUOPRow, error) {
 		var r BinUOPRow
 		var before sql.NullInt64
 		var orderID sql.NullInt64
+		var nodeID sql.NullInt64
+		var station sql.NullString
+		var loaderID sql.NullInt64
 		var meta sql.NullString
 		if err := rows.Scan(&r.ID, &r.BinID, &before, &r.AfterUOP, &r.Op, &r.Source,
-			&orderID, &r.PayloadCode, &r.Actor, &meta, &r.AppliedAt); err != nil {
+			&orderID, &r.PayloadCode, &r.Actor, &nodeID, &station, &loaderID, &meta, &r.AppliedAt); err != nil {
 			return nil, err
 		}
 		if before.Valid {
@@ -205,6 +218,17 @@ func scanBinUOPRows(rows *sql.Rows) ([]BinUOPRow, error) {
 			v := orderID.Int64
 			r.OrderID = &v
 		}
+		if nodeID.Valid {
+			v := nodeID.Int64
+			r.NodeID = &v
+		}
+		if station.Valid {
+			r.Station = station.String
+		}
+		if loaderID.Valid {
+			v := loaderID.Int64
+			r.LoaderID = &v
+		}
 		if meta.Valid {
 			s := meta.String
 			r.Metadata = &s
@@ -214,7 +238,7 @@ func scanBinUOPRows(rows *sql.Rows) ([]BinUOPRow, error) {
 	return out, rows.Err()
 }
 
-const binUOPSelectCols = `id, bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, metadata, applied_at`
+const binUOPSelectCols = `id, bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, node_id, station, loader_id, metadata, applied_at`
 
 // ListBinUOPByBin returns the audit timeline for one bin, newest
 // first. Item 10's per-bin endpoint pages on this. limit clamps the

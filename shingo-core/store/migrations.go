@@ -375,6 +375,66 @@ func (db *DB) runVersionedMigrations() error {
 		{33, "add edge_cells for the auto-derived cell catalog (Q-034)",
 			v33EdgeCells,
 			func(q schema.Querier) bool { return schema.TableExists(q, "edge_cells") }},
+		// v34: Core-owned bin-loader aggregate. The loader's identity +
+		// per-position/per-payload replenishment config move from Edge
+		// style_node_claims to Core. These tables back the Core-owned loader read
+		// path — the aggregate the Edge syncs from and resolves loaders against.
+		// UNIQUE(position_node_id) is THE invariant — one payload per home
+		// position, one loader per node — making the SLN_002 misconfiguration
+		// unrepresentable. min_stock/uop_threshold default 0 (no silent floor; the
+		// magic-2 default was removed). buffer_dest models the overflow area (SME
+		// Q4 — runtime resolution lands with the read-cutover). No UNIQUE on
+		// (loader_id, payload_code) for homes: same payload on two home positions
+		// is legitimate (D1, allow+warn).
+		{34, "add bin-loader aggregate (bin_loaders/homes/payloads) for the Core-owned loader cutover",
+			v34BinLoaderAggregate,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "bin_loaders") &&
+					schema.TableExists(q, "bin_loader_homes") &&
+					schema.TableExists(q, "bin_loader_payloads")
+			}},
+		// v35: per-position ordering for dedicated_positions loaders. The
+		// Nodes-page grid-drag editor lets an operator drag position nodes into a
+		// loader and reorder them; sort_order persists that sequence (the physical
+		// position order) so it survives reload and can drive future layout UI.
+		// Additive, default 0 — existing homes keep their implicit
+		// position_node_id order until first reordered.
+		{35, "add sort_order to bin_loader_homes for drag-reorder of dedicated positions",
+			v35LoaderHomeSortOrder,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loader_homes", "sort_order") }},
+		// v36: archived_at for loader SOFT-delete (step 7). DeleteLoader will set this
+		// instead of cascading the loader + its homes/payloads away, so the stamped
+		// bin_uop_audit history survives a retired loader. Additive, NULL = active.
+		{36, "add bin_loaders.archived_at for loader soft-delete",
+			v36LoaderArchivedAt,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "archived_at") }},
+		// v37: loader_id on bin_uop_audit — the resolved loader surrogate stamped at
+		// EVENT time so loads (set_for_production) and unloads (release-family ops) group
+		// per loader. PLAIN value column, NO REFERENCES / NO cascade: archiving or
+		// deleting a loader must NOT destroy its audit history, and a node later
+		// reassigned to a different loader keeps each event's historical attribution.
+		{37, "add bin_uop_audit.loader_id (non-cascading) for per-loader load/unload analytics",
+			v37BinUOPAuditLoaderID,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_uop_audit", "loader_id") }},
+		// v38: loader_id on demand_registry — the loader IDENTITY behind a binding, set
+		// from the aggregate at re-derive time (the step-4 cutover). The threshold
+		// monitor mints LoaderKey="loader:<id>" from it onto the signal so the Edge
+		// resolves the loader by its token instead of core_node_name (which doubles as
+		// identity+member today). NULL for legacy ClaimSync-populated rows. Plain value
+		// (no FK — the registry is rebuilt full-state per station, not cascaded).
+		{38, "add demand_registry.loader_id for the loader-identity cutover",
+			v38DemandRegistryLoaderID,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "demand_registry", "loader_id") }},
+		// v39: drop bin_loaders.core_node_name (+ its UNIQUE(core_node_name, role)).
+		// The loader's identity is its surrogate id (minted onto the wire as the
+		// loader_key token); every delivery target is an explicit member node
+		// (windows/positions, FK'd to nodes). So the loader no longer borrows the
+		// universal node id, and the synthetic anchor string a multi-window loader had
+		// to invent is gone. Postgres drops the dependent UNIQUE with the column. The
+		// aggregate is rebuilt by seeddev / migrateloaders, so there is no data to keep.
+		{39, "drop bin_loaders.core_node_name + its UNIQUE (loader identity is the surrogate id)",
+			v39DropLoaderCoreNodeName,
+			func(q schema.Querier) bool { return !schema.ColumnExists(q, "bin_loaders", "core_node_name") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1020,6 +1080,121 @@ func v33EdgeCells(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v33 edge_cells: %w", err)
+		}
+	}
+	return nil
+}
+
+// v34BinLoaderAggregate creates the Core-owned bin-loader aggregate (loader
+// refactor cutover). See the migration-list comment for the design. All three
+// tables are additive and have no runtime reader until the LoaderStore cutover,
+// so applying this on a live plant changes no behavior.
+func v34BinLoaderAggregate(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS bin_loaders (
+			id              BIGSERIAL PRIMARY KEY,
+			name            TEXT        NOT NULL,
+			core_node_name  TEXT        NOT NULL,
+			role            TEXT        NOT NULL CHECK (role IN ('produce','consume')),
+			layout          TEXT        NOT NULL CHECK (layout IN ('shared_window','dedicated_positions')),
+			replenishment   TEXT        NOT NULL CHECK (replenishment IN ('auto','operator')),
+			outbound_dest   TEXT        NOT NULL DEFAULT '',
+			inbound_source  TEXT        NOT NULL DEFAULT '',
+			buffer_dest     TEXT        NOT NULL DEFAULT '',
+			config_gen      BIGINT      NOT NULL DEFAULT 1,
+			created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (core_node_name, role)
+		)`,
+		// dedicated_positions layout: one payload per physical position. The
+		// global UNIQUE(position_node_id) is the load-bearing invariant.
+		`CREATE TABLE IF NOT EXISTS bin_loader_homes (
+			loader_id        BIGINT  NOT NULL REFERENCES bin_loaders(id) ON DELETE CASCADE,
+			position_node_id BIGINT  NOT NULL REFERENCES nodes(id),
+			payload_code     TEXT    NOT NULL,
+			min_stock        INTEGER NOT NULL DEFAULT 0,
+			uop_threshold    INTEGER NOT NULL DEFAULT 0,
+			UNIQUE (position_node_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_bin_loader_homes_loader ON bin_loader_homes (loader_id)`,
+		// shared_window layout: the allowed payload set on a single window.
+		`CREATE TABLE IF NOT EXISTS bin_loader_payloads (
+			loader_id     BIGINT  NOT NULL REFERENCES bin_loaders(id) ON DELETE CASCADE,
+			payload_code  TEXT    NOT NULL,
+			min_stock     INTEGER NOT NULL DEFAULT 0,
+			uop_threshold INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (loader_id, payload_code)
+		)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v34 bin-loader aggregate: %w", err)
+		}
+	}
+	return nil
+}
+
+// v35LoaderHomeSortOrder adds the per-position ordering column used by the
+// Nodes-page grid-drag loader editor. Additive + idempotent.
+func v35LoaderHomeSortOrder(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bin_loader_homes ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("v35 loader home sort_order: %w", err)
+	}
+	return nil
+}
+
+// v36LoaderArchivedAt adds the soft-delete marker for loaders (step 7). NULL = active;
+// DeleteLoader sets NOW() instead of cascading away the loader + its analytics history.
+// Additive + idempotent.
+func v36LoaderArchivedAt(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`); err != nil {
+		return fmt.Errorf("v36 loader archived_at: %w", err)
+	}
+	return nil
+}
+
+// v37BinUOPAuditLoaderID adds the resolved loader surrogate to the inventory event log.
+// PLAIN BIGINT (NO REFERENCES / NO cascade) stamped at event time so the historical
+// attribution survives a node reassignment or a loader archive/delete. Partial index
+// on (loader_id, applied_at) for the per-loader analytics rollup. Additive + idempotent.
+func v37BinUOPAuditLoaderID(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE bin_uop_audit ADD COLUMN IF NOT EXISTS loader_id BIGINT`,
+		`CREATE INDEX IF NOT EXISTS idx_bin_uop_audit_loader ON bin_uop_audit (loader_id, applied_at) WHERE loader_id IS NOT NULL`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v37 bin_uop_audit loader_id: %w", err)
+		}
+	}
+	return nil
+}
+
+// v38DemandRegistryLoaderID adds the loader-identity column to demand_registry (the
+// step-4 cutover). NULL for legacy ClaimSync rows; set from the aggregate when the
+// registry is re-derived. The threshold monitor mints the loader_key from it. Additive
+// + idempotent.
+func v38DemandRegistryLoaderID(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE demand_registry ADD COLUMN IF NOT EXISTS loader_id BIGINT`); err != nil {
+		return fmt.Errorf("v38 demand_registry loader_id: %w", err)
+	}
+	return nil
+}
+
+// v39DropLoaderCoreNodeName drops the loader's borrowed universal node id and its
+// identity UNIQUE. After the identity cutover a loader is keyed by its surrogate id
+// (the loader_key token on the wire) and resolves every delivery target through
+// explicit member nodes, so core_node_name — synthetic for a multi-window loader —
+// has no remaining job. DROP COLUMN cascades the UNIQUE(core_node_name, role). The
+// per-position node ids in bin_loader_homes (REFERENCES nodes(id)) are untouched.
+func v39DropLoaderCoreNodeName(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE bin_loaders DROP CONSTRAINT IF EXISTS bin_loaders_core_node_name_role_key`,
+		`ALTER TABLE bin_loaders DROP COLUMN IF EXISTS core_node_name`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v39 drop bin_loaders.core_node_name: %w", err)
 		}
 	}
 	return nil

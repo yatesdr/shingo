@@ -45,6 +45,37 @@ func readBinUOPInTx(tx *sql.Tx, binID int64) (*int, error) {
 	return &v, nil
 }
 
+// resolveBinUOPContext builds the bin_uop_audit enrichment context inside the caller's
+// tx (keystone step 2): the bin's CURRENT node and the loader that owns that node, via
+// bin_loader_homes.position_node_id (UNIQUE — one loader per member node). Stamping the
+// loader_id at event time is what lets loads (set_for_production) and unloads
+// (release-family ops) group per loader per window/position. Both are NULL when the bin
+// is not at a loader member node — an ordinary produce/consume event — which the
+// per-loader analytics filter (loader_id IS NOT NULL) correctly excludes. node_id is
+// unaffected by the manifest UPDATE the caller runs around this (UPDATE never touches
+// node_id), so resolving here is order-independent. detail is passed through (only the
+// confirm path carries one).
+func resolveBinUOPContext(tx *sql.Tx, binID int64, detail json.RawMessage) (audit.BinUOPContext, error) {
+	var nodeID, loaderID sql.NullInt64
+	err := tx.QueryRow(`SELECT b.node_id, h.loader_id
+		FROM bins b
+		LEFT JOIN bin_loader_homes h ON h.position_node_id = b.node_id
+		WHERE b.id=$1`, binID).Scan(&nodeID, &loaderID)
+	if err != nil && err != sql.ErrNoRows {
+		return audit.BinUOPContext{Detail: detail}, fmt.Errorf("resolve bin_uop context bin %d: %w", binID, err)
+	}
+	ctx := audit.BinUOPContext{Detail: detail}
+	if nodeID.Valid {
+		v := nodeID.Int64
+		ctx.NodeID = &v
+	}
+	if loaderID.Valid {
+		v := loaderID.Int64
+		ctx.LoaderID = &v
+	}
+	return ctx, nil
+}
+
 // ClearForReuse empties a bin's manifest. The bin becomes visible
 // to FindEmptyCompatibleBin after this call. Owns its transaction.
 // ClearForReuse begins its own transaction and delegates to
@@ -100,7 +131,11 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, op, source
 		WHERE id=$1 RETURNING delta_epoch`, binID).Scan(&newEpoch); err != nil {
 		return 0, fmt.Errorf("clear manifest bin %d: %w", binID, err)
 	}
-	if err := audit.AppendBinUOP(tx, binID, before, 0, op, source, nil, "", "", audit.BinUOPContext{}); err != nil {
+	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
+	if err != nil {
+		return 0, err
+	}
+	if err := audit.AppendBinUOP(tx, binID, before, 0, op, source, nil, "", "", uopCtx); err != nil {
 		return 0, err
 	}
 	return newEpoch, nil
@@ -183,9 +218,13 @@ func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payload
 		payloadCode, manifestJSON, uop, binID).Scan(&newEpoch); err != nil {
 		return 0, fmt.Errorf("set manifest bin %d: %w", binID, err)
 	}
+	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
+	if err != nil {
+		return 0, err
+	}
 	if err := audit.AppendBinUOP(tx, binID, before, uop,
 		audit.OpSetForProduction, "service/bin_manifest.go:SetForProduction",
-		nil, payloadCode, "", audit.BinUOPContext{}); err != nil {
+		nil, payloadCode, "", uopCtx); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -217,9 +256,13 @@ func (s *BinManifestService) Confirm(binID int64, producedAt string) error {
 	detail, _ := json.Marshal(struct {
 		LoadedAt time.Time `json:"loaded_at"`
 	}{loadedAt})
+	uopCtx, err := resolveBinUOPContext(tx, binID, detail)
+	if err != nil {
+		return err
+	}
 	if err := audit.AppendBinUOP(tx, binID, before, uop,
 		audit.OpManifestConfirmed, "service/bin_manifest.go:Confirm",
-		nil, payloadCode, "", audit.BinUOPContext{Detail: detail}); err != nil {
+		nil, payloadCode, "", uopCtx); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -262,9 +305,13 @@ func (s *BinManifestService) ClearAndClaim(binID, orderID int64) error {
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
 	}
+	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
+	if err != nil {
+		return err
+	}
 	if err := audit.AppendBinUOP(tx, binID, before, 0,
 		audit.OpClearAndClaim, "service/bin_manifest.go:ClearAndClaim",
-		&orderID, "", "", audit.BinUOPContext{}); err != nil {
+		&orderID, "", "", uopCtx); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -295,9 +342,13 @@ func (s *BinManifestService) SyncUOPAndClaim(binID, orderID int64, remainingUOP 
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
 	}
+	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
+	if err != nil {
+		return err
+	}
 	if err := audit.AppendBinUOP(tx, binID, before, remainingUOP,
 		audit.OpSyncUOPAndClaim, "service/bin_manifest.go:SyncUOPAndClaim",
-		&orderID, "", "", audit.BinUOPContext{}); err != nil {
+		&orderID, "", "", uopCtx); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -455,9 +506,13 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 			op = audit.OpReleasedUnderpack
 			legacyTag = "released_underpack"
 		}
+		uopCtx, err := resolveBinUOPContext(tx, binID, nil)
+		if err != nil {
+			return err
+		}
 		if err := audit.AppendBinUOP(tx, binID, before, 0,
 			op, sourceLabel,
-			&orderID, "", actor, audit.BinUOPContext{}); err != nil {
+			&orderID, "", actor, uopCtx); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -512,9 +567,13 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	if sourceNodeFallback {
 		op = audit.OpReleasedPartialFallback
 	}
+	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
+	if err != nil {
+		return err
+	}
 	if err := audit.AppendBinUOP(tx, binID, before, *remainingUOP,
 		op, sourceLabel,
-		&orderID, "", actor, audit.BinUOPContext{}); err != nil {
+		&orderID, "", actor, uopCtx); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

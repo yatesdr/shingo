@@ -49,6 +49,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/store/demands"
+	"shingocore/store/loaders"
 )
 
 // thresholdDebounceWindow is the per-(loader, payload) suppression
@@ -74,6 +75,7 @@ type thresholdEntry struct {
 	coreNodeName string
 	payloadCode  string
 	threshold    int
+	loaderID     int64 // the owning loader (cutover); 0 for legacy ClaimSync bindings → no LoaderKey on the signal
 }
 
 // ThresholdMonitor tracks in-loop UOP per payload incrementally and
@@ -96,7 +98,7 @@ type ThresholdMonitor struct {
 	sweepDone bool
 	// thresholdsByPayload caches per-payload threshold bindings. Keyed
 	// by payload_code. Built from the startup sweep and kept fresh via
-	// OnRegistryChanges. Never queried from the DB on the hot path.
+	// OnThresholdChanges. Never queried from the DB on the hot path.
 	thresholdsByPayload map[string][]thresholdEntry
 	// uopCache is the combined (bin + bucket) UOP total per payload,
 	// maintained incrementally. Seeded by the startup sweep from the DB,
@@ -176,6 +178,7 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 				coreNodeName: b.CoreNodeName,
 				payloadCode:  b.PayloadCode,
 				threshold:    b.ReplenishUOPThreshold,
+				loaderID:     b.LoaderID,
 			})
 		}
 		m.thresholdsByPayload[payload] = tes
@@ -209,6 +212,7 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 					coreNodeName: b.CoreNodeName,
 					payloadCode:  b.PayloadCode,
 					threshold:    b.ReplenishUOPThreshold,
+					loaderID:     b.LoaderID,
 				}, total, "warm_up_startup_sweep")
 			}
 		}
@@ -351,7 +355,19 @@ func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason 
 		CurrentUOP:   total,
 		Threshold:    b.threshold,
 		CoreNodeName: b.coreNodeName,
-		Reason:       reason,
+		// MemberNodeName is the binding's loader member (a dedicated position, or the
+		// shared anchor). Today it equals CoreNodeName; the Edge routes the empty to
+		// THIS node (the same-payload-two-positions fix). Step 4 splits identity from
+		// address — CoreNodeName becomes the loader_key and this stays the address —
+		// and populates LoaderKey here (free once demand_registry carries loader_id).
+		MemberNodeName: b.coreNodeName,
+		Reason:         reason,
+	}
+	// The loader IDENTITY token (step-4 cutover). The Edge resolves the loader by this
+	// instead of CoreNodeName, so a synthetic loader (no anchor node) resolves cleanly.
+	// 0 for legacy ClaimSync bindings → empty key → Edge falls back to CoreNodeName.
+	if b.loaderID > 0 {
+		signal.LoaderKey = loaders.Key(b.loaderID)
 	}
 	if err := m.eng.SendDataToEdge(protocol.SubjectLoopBelowThreshold, b.stationID, signal); err != nil {
 		m.eng.logFn("threshold_monitor: send LoopBelowThresholdSignal to %s loader=%s payload=%s: %v",
@@ -362,7 +378,7 @@ func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason 
 		b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold, reason)
 }
 
-// OnRegistryChanges resets per-binding debounce + warm-up state for
+// OnThresholdChanges resets per-binding debounce + warm-up state for
 // every (loader, payload) whose threshold value moved, and rebuilds
 // the in-memory threshold cache for affected payloads. Called by
 // CoreDataService.handleClaimSync after SyncDemandRegistry returns its
@@ -376,7 +392,7 @@ func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason 
 // zero-stock payload) would stay silent until Core restarted — the
 // Springfield 6883 case where a threshold was configured but never
 // triggered because no delta arrived to drive checkBindings.
-func (m *ThresholdMonitor) OnRegistryChanges(changes []demands.RegistryChange) {
+func (m *ThresholdMonitor) OnThresholdChanges(changes []demands.RegistryChange) {
 	if len(changes) == 0 {
 		return
 	}
@@ -396,14 +412,65 @@ func (m *ThresholdMonitor) OnRegistryChanges(changes []demands.RegistryChange) {
 	}
 	m.mu.Unlock()
 
+	m.engagePayloads(affectedPayloads)
+}
+
+// Resync re-engages the monitor's bindings for one station from demand_registry,
+// firing any binding already below threshold. Called when an Edge (re)connects.
+//
+// The startup sweep reads demand_registry once, ~3s after Core boot. But the
+// registry is populated out-of-band: seeddev and migrateloaders write it directly
+// (separate processes that can't notify a running monitor), and the Edge sends
+// no ClaimSync (retired), so the usual runtime trigger
+// (handleClaimSync → OnThresholdChanges) never fires for loaders. Without a
+// re-engage on (re)connect, a binding seeded after the startup sweep stays dark
+// until Core restarts — exactly the dev-sim symptom (seed populates the registry,
+// edge restarts, but C-push never fires).
+//
+// Idempotent: engagePayloads only adds bindings and fires those below threshold;
+// the Edge's reservation seam dedups any redundant signal (never-2N), so
+// re-firing a still-below binding on a reconnect is safe.
+func (m *ThresholdMonitor) Resync(stationID string) {
 	if m.eng == nil || m.eng.db == nil {
 		return
 	}
+	entries, err := m.eng.db.ListDemandThresholds()
+	if err != nil {
+		m.eng.logFn("threshold_monitor: Resync(%s) list thresholds: %v", stationID, err)
+		return
+	}
+	affected := make(map[string]bool)
+	m.mu.Lock()
+	for _, e := range entries {
+		if e.StationID != stationID || e.ReplenishUOPThreshold <= 0 {
+			continue
+		}
+		// Clear debounce/warm-up so an already-below binding fires immediately on
+		// (re)connect instead of waiting out the window.
+		key := bindingKey(e.StationID, e.CoreNodeName, e.PayloadCode)
+		delete(m.debounce, key)
+		delete(m.warmUp, key)
+		affected[e.PayloadCode] = true
+	}
+	m.mu.Unlock()
+	if len(affected) == 0 {
+		return
+	}
+	m.eng.logFn("threshold_monitor: Resync station=%s — re-engaging %d monitored payload(s)", stationID, len(affected))
+	m.engagePayloads(affected)
+}
 
+// engagePayloads (re)builds the binding cache for each affected payload from
+// demand_registry, seeds its UOP baseline, and fires any binding below threshold.
+// Shared by OnThresholdChanges (incremental edits) and Resync ((re)connect).
+func (m *ThresholdMonitor) engagePayloads(affectedPayloads map[string]bool) {
+	if m.eng == nil || m.eng.db == nil {
+		return
+	}
 	for payload := range affectedPayloads {
 		entries, err := m.eng.db.LookupDemandThresholdsByPayload(payload)
 		if err != nil {
-			m.eng.logFn("threshold_monitor: OnRegistryChanges rebuild for %s: %v", payload, err)
+			m.eng.logFn("threshold_monitor: engagePayloads rebuild for %s: %v", payload, err)
 			continue
 		}
 		tes := make([]thresholdEntry, 0, len(entries))
@@ -413,6 +480,7 @@ func (m *ThresholdMonitor) OnRegistryChanges(changes []demands.RegistryChange) {
 				coreNodeName: e.CoreNodeName,
 				payloadCode:  e.PayloadCode,
 				threshold:    e.ReplenishUOPThreshold,
+				loaderID:     e.LoaderID,
 			})
 		}
 		m.mu.Lock()
@@ -436,7 +504,7 @@ func (m *ThresholdMonitor) OnRegistryChanges(changes []demands.RegistryChange) {
 		if !haveCached && m.eng.inventoryService != nil {
 			uop, err := m.eng.inventoryService.SystemUOPForPayload(context.Background(), []string{payload})
 			if err != nil {
-				m.eng.logFn("threshold_monitor: OnRegistryChanges seed cache for %s: %v", payload, err)
+				m.eng.logFn("threshold_monitor: engagePayloads seed cache for %s: %v", payload, err)
 				// Best-effort: fall through with total=0 so a zero-stock
 				// payload still fires. The DB error is logged loudly so
 				// the operator can see it.

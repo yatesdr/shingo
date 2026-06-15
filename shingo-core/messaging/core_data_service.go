@@ -31,9 +31,12 @@ type coreDataResponder interface {
 // Kafka delta handlers (OnBinUOPDelta, OnBucketApplied) which carry the
 // payload code and delta — no DB queries on the hot path.
 type ThresholdMonitor interface {
-	OnRegistryChanges(changes []demands.RegistryChange)
+	OnThresholdChanges(changes []demands.RegistryChange)
 	OnBinUOPDelta(payloadCode string, delta int)
 	OnBucketApplied(station, coreNodeName, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason)
+	// Resync re-engages a station's demand_registry bindings on (re)connect, so a
+	// threshold seeded after the startup sweep fires without a Core restart.
+	Resync(stationID string)
 }
 
 type CoreDataService struct {
@@ -349,6 +352,17 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	s.resp.replyData(env, protocol.SubjectEdgeRegistered,
 		&protocol.EdgeRegistered{StationID: p.StationID, Message: "registered"})
 	s.resp.dbg("reply published: subject=edge.registered station=%s", p.StationID)
+
+	// Re-engage the threshold monitor for this station's loader bindings. The
+	// monitor sweeps demand_registry once at Core startup, but the registry is
+	// (re)populated out-of-band afterward — seeddev/migrateloaders write it
+	// directly, and the Edge sends no ClaimSync (retired) — so a
+	// (re)connect is the trigger that turns the seeded registry into live monitor
+	// bindings. Without it a freshly-seeded UOP threshold never fires until Core
+	// restarts. Idempotent (the Edge seam dedups any redundant signal).
+	if s.thresholdMonitor != nil {
+		s.thresholdMonitor.Resync(p.StationID)
+	}
 }
 
 func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
@@ -428,8 +442,16 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 			}
 		}
 	}
-	s.resp.replyData(env, protocol.SubjectNodeListResponse, &protocol.NodeListResponse{Nodes: infos})
-	log.Printf("core_handler: sent node list (%d nodes) to %s", len(infos), env.Src.Station)
+	// Loader refactor cutover: include the Core-owned loader config as a sibling
+	// slice so Edge's persistent cache receives it atomically with the topology.
+	// Empty (and omitted on the wire) until Core authors loaders — additive.
+	loaderInfos, lerr := s.db.BuildLoaderInfos()
+	if lerr != nil {
+		// Non-fatal: send the node list without loaders rather than nothing.
+		log.Printf("core_handler: build loader infos for %s: %v", env.Src.Station, lerr)
+	}
+	s.resp.replyData(env, protocol.SubjectNodeListResponse, &protocol.NodeListResponse{Nodes: infos, Loaders: loaderInfos})
+	log.Printf("core_handler: sent node list (%d nodes, %d loaders) to %s", len(infos), len(loaderInfos), env.Src.Station)
 }
 
 func (s *CoreDataService) HandleProductionReport(env *protocol.Envelope, rpt *protocol.ProductionReport) {
@@ -589,7 +611,7 @@ func (s *CoreDataService) HandleClaimSync(env *protocol.Envelope, sync *protocol
 	// threshold value moved, so the new value engages immediately
 	// instead of waiting out the debounce window.
 	if s.thresholdMonitor != nil && len(changes) > 0 {
-		s.thresholdMonitor.OnRegistryChanges(changes)
+		s.thresholdMonitor.OnThresholdChanges(changes)
 	}
 }
 

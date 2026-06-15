@@ -18,21 +18,25 @@ import (
 // www/, cmd/, and test packages bind to the method contract rather
 // than the concrete struct layout.
 
-func (e *Engine) DB() *store.DB                                   { return e.db }
-func (e *Engine) AppConfig() *config.Config                       { return e.cfg }
-func (e *Engine) ConfigPath() string                              { return e.configPath }
-func (e *Engine) Dispatcher() *dispatch.Dispatcher                { return e.dispatcher }
-func (e *Engine) Tracker() fleet.OrderTracker                     { return e.tracker }
-func (e *Engine) Fleet() fleet.Backend                            { return e.fleet }
-func (e *Engine) MsgClient() *messaging.Client                    { return e.msgClient }
-func (e *Engine) Reconciliation() *ReconciliationService          { return e.reconciliation }
-func (e *Engine) Recovery() *RecoveryService                      { return e.recovery }
-func (e *Engine) BinManifest() *service.BinManifestService        { return e.binManifest }
-func (e *Engine) BinService() *service.BinService                 { return e.binService }
-func (e *Engine) OrderService() *service.OrderService             { return e.orderService }
-func (e *Engine) NodeService() *service.NodeService               { return e.nodeService }
-func (e *Engine) AuditService() *service.AuditService             { return e.auditService }
-func (e *Engine) DemandService() *service.DemandService           { return e.demandService }
+func (e *Engine) DB() *store.DB                            { return e.db }
+func (e *Engine) AppConfig() *config.Config                { return e.cfg }
+func (e *Engine) ConfigPath() string                       { return e.configPath }
+func (e *Engine) Dispatcher() *dispatch.Dispatcher         { return e.dispatcher }
+func (e *Engine) Tracker() fleet.OrderTracker              { return e.tracker }
+func (e *Engine) Fleet() fleet.Backend                     { return e.fleet }
+func (e *Engine) MsgClient() *messaging.Client             { return e.msgClient }
+func (e *Engine) Reconciliation() *ReconciliationService   { return e.reconciliation }
+func (e *Engine) Recovery() *RecoveryService               { return e.recovery }
+func (e *Engine) BinManifest() *service.BinManifestService { return e.binManifest }
+func (e *Engine) BinService() *service.BinService          { return e.binService }
+func (e *Engine) OrderService() *service.OrderService      { return e.orderService }
+func (e *Engine) NodeService() *service.NodeService        { return e.nodeService }
+func (e *Engine) AuditService() *service.AuditService      { return e.auditService }
+func (e *Engine) DemandService() *service.DemandService    { return e.demandService }
+func (e *Engine) LoaderService() *service.LoaderService    { return e.loaderService }
+func (e *Engine) CalculatorService() *service.ThresholdCalculatorService {
+	return e.calculatorService
+}
 func (e *Engine) PayloadService() *service.PayloadService         { return e.payloadService }
 func (e *Engine) MissionService() *service.MissionService         { return e.missionService }
 func (e *Engine) TestCommandService() *service.TestCommandService { return e.testCmdService }

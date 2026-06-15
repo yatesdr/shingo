@@ -68,6 +68,37 @@ const PayloadBinTypeAdvisoryClause = `
 	    )
 	  )`
 
+// AccessibleEmptyOrder ranks compatible empty-bin candidates by least-work-to-
+// grab and is the trailing ORDER BY / LIMIT for every empty-source query.
+//
+// Empties are fungible — which physical empty fills an order doesn't matter, so
+// the planner should grab the one that costs the least to extract:
+//  1. accessible slots first — a slot is accessible when nothing shallower in
+//     its lane is occupied (mirrors nodes.IsSlotAccessible exactly: no parent or
+//     no depth ⇒ accessible; otherwise no occupied sibling at a smaller depth);
+//  2. then shallowest depth — a lane-mouth empty beats one a row deeper;
+//  3. then bin id — a stable tiebreak.
+//
+// Before 2026-06-13 these queries ordered by bin id alone (lane-blind FIFO), so
+// the planner routinely picked a buried empty and then reactively reshuffled the
+// bins on top of it (planning_service.go IsSlotAccessible → planBuriedReshuffle).
+// Ordering accessibility first means an accessible empty is always preferred and
+// a reshuffle happens only when EVERY compatible empty is buried — the lane mouth
+// is emptied before anything gets dug out. The reshuffle path stays as the
+// last-resort fallback; it is no longer the common case.
+//
+// The accessibility subquery is uncorrelated to query params (it references the
+// candidate's own node columns), so it does not shift caller placeholder numbers.
+const AccessibleEmptyOrder = `
+	ORDER BY (n.parent_id IS NULL OR n.depth IS NULL OR NOT EXISTS (
+	             SELECT 1 FROM nodes sib JOIN bins bb ON bb.node_id = sib.id
+	             WHERE sib.parent_id = n.parent_id AND sib.id != n.id
+	               AND sib.depth IS NOT NULL AND sib.depth < n.depth
+	         )) DESC,
+	         COALESCE(n.depth, 0) ASC,
+	         b.id ASC
+	LIMIT 1`
+
 // ScanBin reads a single bin row (including joined bin_type code + node name).
 // Exported for cross-aggregate readers at the outer store/ level.
 func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
@@ -460,9 +491,7 @@ func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, exc
 		  AND n.is_synthetic = false
 		  AND COALESCE(b.payload_code, '') = ''
 		  AND b.node_id IN (SELECT id FROM descendants)
-		  AND ($3 = 0 OR b.node_id != $3)%s
-		ORDER BY b.id ASC
-		LIMIT 1`, BinJoinQuery, PayloadBinTypeAdvisoryClause), payloadCode, groupNodeID, excludeNodeID)
+		  AND ($3 = 0 OR b.node_id != $3)%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, groupNodeID, excludeNodeID)
 	return ScanBin(row)
 }
 
@@ -478,9 +507,7 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 			  AND n.is_synthetic = false
 			  AND n.zone = $2
 			  AND COALESCE(b.payload_code, '') = ''
-			  AND ($3 = 0 OR b.node_id != $3)%s
-			ORDER BY b.id ASC
-			LIMIT 1`, BinJoinQuery, PayloadBinTypeAdvisoryClause), payloadCode, preferZone, excludeNodeID)
+			  AND ($3 = 0 OR b.node_id != $3)%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, preferZone, excludeNodeID)
 		bin, err := ScanBin(row)
 		if err == nil {
 			return bin, nil
@@ -499,9 +526,7 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 		  AND n.enabled = true
 		  AND n.is_synthetic = false
 		  AND COALESCE(b.payload_code, '') = ''
-		  AND ($2 = 0 OR b.node_id != $2)%s
-		ORDER BY b.id ASC
-		LIMIT 1`, BinJoinQuery, PayloadBinTypeAdvisoryClause), payloadCode, excludeNodeID)
+		  AND ($2 = 0 OR b.node_id != $2)%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, excludeNodeID)
 	return ScanBin(row)
 }
 
