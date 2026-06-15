@@ -359,6 +359,9 @@
         <select id="loader-role"><option value="produce">produce (loader)</option><option value="consume">consume (unloader)</option></select>
         <select id="loader-layout"><option value="dedicated_positions">dedicated_positions (drag nodes in, payload per spot)</option><option value="shared_window">shared_window (one window, many payloads)</option></select>
       </div>
+      <label class="text-sm" style="font-weight:600;display:block;margin-top:10px">Replenishment</label>
+      <select id="loader-replenishment" style="width:100%"></select>
+      <div id="loader-replenishment-hint" class="text-muted text-sm" style="margin-top:3px"></div>
       <div id="loader-flow-section">
         <label class="text-sm" style="font-weight:600;display:block;margin-top:10px">Material flow <span class="text-muted" style="font-weight:400">(shared_window only)</span></label>
         <div class="flex gap-1" style="flex-wrap:wrap">

@@ -50,6 +50,42 @@ function setLayoutFlowVisibility() {
   if (sec) sec.style.display = (sel && sel.value === 'dedicated_positions') ? 'none' : '';
 }
 
+// setReplenishmentOptions populates the replenishment <select> with role-aware
+// options: a produce loader picks operator-driven vs auto/UOP-threshold; a consume
+// loader (unloader) only drains today (consume-threshold is wired but dormant, so
+// it shows greyed). `preferred` pre-selects a value (edit); otherwise the prior /
+// operator default holds. Writes loaders.Replenishment (operator | threshold).
+function setReplenishmentOptions(preferred) {
+  const sel = document.getElementById('loader-replenishment');
+  if (!sel) return;
+  const role = val('loader-role') || 'produce';
+  const want = preferred || sel.value || 'operator';
+  let opts, hint;
+  if (role === 'consume') {
+    opts = [['operator', 'Drain — window-queue empties out as bins fill', false],
+            ['threshold', 'Threshold (coming soon)', true]];
+    hint = 'Unloaders drain today; a consume threshold mode is wired but dormant.';
+  } else {
+    opts = [['operator', 'Operator-driven — operator stages from the board (no auto-fire)', false],
+            ['threshold', 'Auto — UOP threshold (Core auto-fires an empty when UOP drops)', false]];
+    hint = 'Auto fires when lineside UOP drops below the per-payload threshold (set on the Inventory page); operator-driven never auto-fires.';
+  }
+  sel.innerHTML = opts.map(function (o) {
+    const dis = o[2] ? ' disabled' : '';
+    const seld = (o[0] === want && !o[2]) ? ' selected' : '';
+    return '<option value="' + o[0] + '"' + dis + seld + '>' + escapeHtml(o[1]) + '</option>';
+  }).join('');
+  if (!sel.value || (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].disabled)) sel.value = 'operator';
+  const h = document.getElementById('loader-replenishment-hint');
+  if (h) h.textContent = hint;
+}
+
+// replenishLabel is the short mode tag shown in a loader box header.
+function replenishLabel(l) {
+  if (l.replenishment === 'threshold') return l.role === 'consume' ? 'threshold' : 'auto-threshold';
+  return l.role === 'consume' ? 'drain' : 'operator-driven';
+}
+
 function openLoaderModal() {
   setVal('loader-edit-id', '');
   ['loader-name', 'loader-inbound', 'loader-outbound', 'loader-buffer'].forEach(function (id) { setVal(id, ''); });
@@ -57,6 +93,7 @@ function openLoaderModal() {
   setText('loader-modal-title', 'Create Loader');
   setText('loader-submit-btn', 'Create Loader');
   setLayoutFlowVisibility();
+  setReplenishmentOptions();
   const m = document.getElementById('loader-modal');
   if (m) m.classList.add('active');
   result('');
@@ -81,6 +118,7 @@ function editLoader(lid) {
   setText('loader-modal-title', 'Edit Loader');
   setText('loader-submit-btn', 'Save');
   setLayoutFlowVisibility();
+  setReplenishmentOptions(l.replenishment || 'operator');
   const m = document.getElementById('loader-modal');
   if (m) m.classList.add('active');
   result('');
@@ -102,7 +140,7 @@ function submitLoader() {
   };
   if (editId) {
     result('Saving…');
-    apiPost('/api/loader/update', Object.assign({ id: Number(editId), name: name, layout: val('loader-layout') }, flow)).then(function (d) {
+    apiPost('/api/loader/update', Object.assign({ id: Number(editId), name: name, layout: val('loader-layout'), replenishment: val('loader-replenishment') }, flow)).then(function (d) {
       if (d && d.error) { result(d.error, true); return; }
       result('Saved', false);
       refresh();
@@ -117,7 +155,7 @@ function submitLoader() {
   const newGroups = [flow.outbound_dest, flow.buffer_dest].filter(function (n) { return n && !(n in nodesByName); });
   Promise.all(newGroups.map(function (n) { return apiPost('/api/node-group/create', { name: n }); }))
     .then(function () {
-      return apiPost('/api/loader/create', Object.assign({ name: name, role: val('loader-role'), layout: val('loader-layout') }, flow));
+      return apiPost('/api/loader/create', Object.assign({ name: name, role: val('loader-role'), layout: val('loader-layout'), replenishment: val('loader-replenishment') }, flow));
     })
     .then(function (d) {
       if (d && d.error) { result(d.error, true); return; }
@@ -254,7 +292,7 @@ function boxHtml(item) {
   const dedicated = l.layout === 'dedicated_positions';
   // Dedicated positions are their own inbound+outbound, so the inbound→outbound
   // flow is meaningless (false info) for them — only shared_window shows it.
-  let meta = escapeHtml(l.role) + ' · ' + escapeHtml(l.layout);
+  let meta = escapeHtml(l.role) + ' · ' + escapeHtml(l.layout) + ' · ' + escapeHtml(replenishLabel(l));
   if (!dedicated) {
     let flow = (l.inbound_source || '—') + ' → ' + (l.outbound_dest || '—');
     if (l.buffer_dest) flow += ' · buf ' + l.buffer_dest;
@@ -566,6 +604,8 @@ function stopDragScroll() {
 function init() {
   const layoutSel = document.getElementById('loader-layout');
   if (layoutSel) layoutSel.addEventListener('change', setLayoutFlowVisibility);
+  const roleSel = document.getElementById('loader-role');
+  if (roleSel) roleSel.addEventListener('change', function () { setReplenishmentOptions(); });
   document.addEventListener('dragstart', startDragScroll);
   document.addEventListener('dragover', function (e) { _dragY = e.clientY; });
   document.addEventListener('dragend', stopDragScroll);
