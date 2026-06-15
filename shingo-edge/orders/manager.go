@@ -663,12 +663,7 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		}
 		return m.TransitionOrder(order.ID, StatusInTransit, fmt.Sprintf("waybill %s, ETA %s", waybillID, eta))
 	case ReplyQueued:
-		// Order queued by Core — statusDetail carries the blocking reason
-		// (dropoff occupied, no source bin, …). Persist it on the order so
-		// the operator board can explain why the request hasn't moved.
-		if err := m.db.UpdateOrderQueueReason(order.ID, statusDetail); err != nil {
-			log.Printf("orders: set queue_reason for %s: %v", orderUUID, err)
-		}
+		// Order queued by Core — awaiting inventory
 		return m.TransitionOrder(order.ID, StatusQueued, statusDetail)
 	case ReplyUpdate:
 		// Status update with ETA only — don't touch waybill_id.

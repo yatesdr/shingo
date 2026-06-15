@@ -89,7 +89,7 @@ func BuildSingleSwapSteps(claim *processes.NodeClaim) []protocol.ComplexOrderSte
 	if claim.InboundStaging == "" || claim.OutboundStaging == "" {
 		return nil
 	}
-	return []protocol.ComplexOrderStep{
+	steps := []protocol.ComplexOrderStep{
 		buildStep("pickup", claim.InboundSource),         // 1
 		{Action: "dropoff", Node: claim.InboundStaging},  // 2
 		{Action: "wait", Node: claim.CoreNodeName},       // 3 drive to node + hold
@@ -100,6 +100,15 @@ func BuildSingleSwapSteps(claim *processes.NodeClaim) []protocol.ComplexOrderSte
 		{Action: "pickup", Node: claim.OutboundStaging},  // 8
 		buildStep("dropoff", claim.OutboundDestination),  // 9
 	}
+	// Produce backfill pulls a fresh EMPTY carrier (the store dual of a consume's
+	// full retrieve). Step 1's pickup defaults to a full retrieve, so without this a
+	// PRODUCE node's single-robot swap hunts a full payload bin in the empty pool,
+	// the dispatch fails ("no bin of..."), and the node is left with no carrier to
+	// fill — the cell stalls. Mirrors BuildSequentialBackfillSteps.
+	if claim.Role == protocol.ClaimRoleProduce && claim.InboundSource != "" {
+		markInboundEmpty(steps, claim.InboundSource)
+	}
+	return steps
 }
 
 // BuildTwoRobotSwapSteps builds steps for a two-robot coordinated swap.
