@@ -465,6 +465,38 @@ Core returns its node list. Used by edge to populate node dropdowns in the paylo
 | Name | `name` | string | Yes | Node name. |
 | Node Type | `node_type` | string | No | Node type code (e.g., `"NGRP"`, `"LANE"`). Empty for physical nodes. |
 
+`NodeListResponse` also carries the Core-owned **bin-loader aggregate** as a sibling
+slice, consumed by the Edge cache (`core_loaders`) — the loader resolvers' read source:
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Loaders | `loaders` | LoaderInfo[] | No | Core-owned loaders + their positions/payloads. |
+
+**LoaderInfo:**
+
+| Field | JSON Key | Type | Description |
+|---|---|---|---|
+| Name | `name` | string | Loader display name. |
+| Loader Key | `loader_key` | string | The loader's opaque IDENTITY token (`"loader:<id>"`, minted from the Core surrogate id). The loader has no node of its own — its delivery targets are the member nodes in `positions`, and the Edge cache + threshold signal key on this token. |
+| Role | `role` | string | `"produce"` (loader) or `"consume"` (unloader). |
+| Layout | `layout` | string | `"shared_window"` or `"dedicated_positions"`. The single authoritative discriminator. |
+| Replenishment | `replenishment` | string | `"auto"` or `"operator"`. |
+| Config Gen | `config_gen` | int | Bumped on every config write so Edge can detect stale config. |
+| Positions | `positions` | LoaderPosition[] | Member homes: windows (shared) or dedicated positions. |
+| Payloads | `payloads` | LoaderPayloadInfo[] | The shared allowed set (shared_window only). |
+
+**LoaderPosition:**
+
+| Field | JSON Key | Type | Description |
+|---|---|---|---|
+| Core Node Name | `core_node_name` | string | The position/window node NAME (Edge's key space). |
+| Payload Code | `payload_code` | string | The bound payload (dedicated); empty for a window or an unassigned position. |
+| Kind | `kind` | string | `"window"` or `"dedicated"`. Set by Core from the parent loader's `layout`. Makes the window-vs-position distinction **explicit** so a reader need not infer it from an empty `payload_code` (which is ambiguous between a window and an unassigned dedicated position). Empty only from a Core that predates this field; then `layout` is authoritative. |
+| Min Stock | `min_stock` | int | Per-position bin-count floor. |
+| UOP Threshold | `uop_threshold` | int | Per-position UOP-threshold replenishment trigger (0 = off). |
+
+**LoaderPayloadInfo:** `payload_code` (string), `min_stock` (int), `uop_threshold` (int) — one entry per payload in a shared_window loader's allowed set.
+
 #### TagVerifyRequest
 
 Sent by edge to verify a scanned QR tag against the expected bin for an order.

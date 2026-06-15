@@ -89,9 +89,9 @@ The strict deploy ordering is: `uop_backfill` from a reconnecting Edge must comp
 1. **Legacy**: `DemandSignal` fires on every bin move. Edge's `HandleDemandSignal` → `MaybeCreateLoaderEmptyIn`. For opted-in pairs (threshold > 0), this path is **explicitly skipped** via the `hasOptInLoaderThreshold` guard. For non-opted-in pairs it's the legacy bin-count fallback (`refillLoaderForPayload` with `ReorderPoint` floor of 2).
 2. **C-push**: `LoopBelowThresholdSignal` fires when Core detects threshold crossing. Edge's `HandleLoopBelowThreshold` → `refillLoaderForPayload`.
 
-Both paths converge through `refillLoaderForPayload`, which calls `countLoaderInFlightEmptyIn(loader.node.ID, payload)` before firing L1. If both signals race (e.g. a bin event triggers Core's monitor at the same moment as Edge's `HandleDemandSignal` for a non-opted-in payload), the in-flight guard catches the duplicate — second caller sees `inflight ≥ 1` and returns.
+Both paths converge through `tryCreateL1`, which routes the count→fire through the **reservation seam** `reserveLoaderBins` (see `bin-loader-unloader-architecture.md` → *Reservation Seam*). The seam takes a per-loader mutex and, in one snapshot, counts in-flight `retrieve_empty` orders across the loader's delivery-node set — applying both the per-payload dedup (fire only `want − in-flight-for-payload`) and the **loader-total capacity cap** (in-flight across the cluster ≤ budget, where budget = the delivery-set cardinality, one bin per window/position). This replaces the former per-node `manualSwapWindowSlots` constant: a multi-window loader's budget is the sum of its windows, not a hardcoded `1`. Because the seam holds the loader mutex across count and create, two racing signals (or a signal racing the operator's `RequestEmptyBin`) can no longer both read `inflight = 0` and both fire — the second waits, recounts, and sees the first.
 
-**Do not remove or weaken this guard during refactors.** It is the single dedup point between the two paths.
+**Do not remove or weaken the seam during refactors, and do not wrap it in a DB transaction** (its correctness is the mutex + count monotonicity, not isolation). It is the single dedup point across the threshold, side-cycle, and operator paths.
 
 ---
 

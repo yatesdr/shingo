@@ -226,6 +226,21 @@ Lanes are linear sequences of slots where only the front slot (depth 1) is physi
 
 Lanes can restrict which bin types they accept (via `node_bin_types`). During store resolution, lanes that do not accept the incoming bin's type are skipped.
 
+### Bin Loader Aggregate
+
+Core owns bin loaders as an aggregate (`bin_loaders` + `bin_loader_homes` + `bin_loader_payloads`), synced to the Edge cache (`core_loaders` + `core_loader_positions` + `core_loader_payloads`) and consumed by the Edge runtime as a first-class `domain.Loader`. A loader's **layout** (`shared_window` | `dedicated_positions`) is the single authoritative discriminator for how its homes behave — it is never inferred from "does it have positions" or "is the payload empty."
+
+**Position kind.** Each loader home carries an explicit `kind` (`window` | `dedicated`):
+
+- A **window** (shared-window layout) carries no per-position payload — the shared set lives at the loader level — and shares the loader's single budget with its sibling windows.
+- A **dedicated** position carries one payload, which may be empty when the operator has not assigned one yet.
+
+Because an empty `payload_code` is ambiguous between "a window" and "an unassigned dedicated position," the `kind` makes the distinction explicit on the wire (`LoaderPosition.kind`) and in the Edge cache (`core_loader_positions.kind`). It is **derived from the parent loader's layout** at the single Core projection point (`BuildLoaderInfos`), so layout stays the one source of truth and the value can never drift from it.
+
+### Typed Domain Identifiers (Edge runtime)
+
+The Edge `domain.Loader` and the surfaces built on it use newtypes — `LoaderID`, `NodeID`, `PayloadCode` — instead of bare strings, so the compiler rejects the bug class where an in-flight empty count is keyed by the wrong node string (process_node vs core_node). These are adopted on new surfaces only; legacy string call sites convert at the boundary (this is not a repo-wide rename).
+
 ---
 
 ## Relationship Diagram

@@ -1,5 +1,224 @@
 # Changelog
 
+## 2026-06-12 — Bin-loader multi-window refactor, checkpoint C4a: multi-window delivery (flag-gated)
+
+Activates the multi-window runtime — the payoff of the refactor — behind a config
+flag, default OFF. A shared loader configured with N windows now shares one budget
+of N and spreads empties one-per-window; **one demand of N → exactly N, never 2N,
+never two at one window.** This is the budget=N never-2N gate deferred from C3.
+
+### Added / Changed
+
+- `config.LoadersMultiWindow` (`loaders_multi_window`, default false) — gates
+  shared-window spreading. Off by default until the operator board (A2) renders
+  per-window state and the demand re-key (B9) land; a multi-window loader would
+  otherwise stage bins at windows the HMI can't show.
+- `domain.Loader.ReservationTarget(payload, multiWindow)` — with the flag on, a
+  shared loader resolves to (its windows, `SlotCount`); off, to (anchor, 1). A
+  single-window loader is unchanged either way, so flipping the flag only affects
+  loaders actually configured multi-window.
+- The reservation seam distributes empties **round-robin to free windows** (the
+  windows with no empty in flight), one physical bin per window; `fire` now takes
+  the target window list. The never-2N budget stays per-loader (keyed on
+  `loader.ID()`), so spreading does not fragment it. Decision record gains the
+  `targets=[…]` field.
+
+### Tests
+
+- `TestMultiWindow_DemandOfN_ExactlyNAcrossWindows` (flag on: 3-window loader, one
+  demand of 3 → exactly 3, one per window; full loader fires 0),
+  `TestRace_MultiWindow_NeverExceedsWindowCount` (concurrent, under `-race`: never
+  exceeds the window count, ≤1 per window), `TestReservationTarget` (per-layout
+  semantics). Flag-off behavior is unchanged (existing suites green). Full edge
+  `-race` suite green; build/vet/gofmt/golangci-lint clean.
+
+### Remaining for C4 (the feature's HMI + acceptance half)
+
+The runtime is ready and flag-gated. Still to land before turning the flag on in
+production: **the view-path cutover + A2 operator board** (`BuildView` reads the
+Loader projection; one loader card + per-window strip; converge the renderers),
+**B9** (`loader_id` demand re-key + typed binding key; retire the anchor), and the
+**dockerized sim acceptance gate** (`SimSLN002_Replay` + `SimMultiWindow_DemandOfN_ExactlyN`
+under `-race`) — which needs the simulator running.
+
+## 2026-06-12 — Bin-loader multi-window refactor, checkpoint C3: the Loader owns the reservation
+
+Makes the loader empty-in path resolve and reserve through the first-class
+`*domain.Loader`, retiring the `manualSwapNode {node, claim}` shim as the unit of
+resolution. A structural refactor under green tests — the never-2N invariant was
+already enforced in C1; this is the "rename, not a race-fix" step.
+
+### Changed
+
+- **The reservation seam is Loader-first.** `reserveLoaderEmpties(loader *domain.Loader, …)`
+  keys its mutex on `loader.ID()` and gets the delivery set + budget from
+  `loader.ReservationTarget(payload)`. That method encodes the per-layout
+  semantics in one place: shared funnels to the anchor (budget 1) until C4 widens
+  it to the windows (budget = `SlotCount`); a dedicated payload maps to its one
+  independent position (budget 1). C4 activates multi-window by changing only
+  `ReservationTarget`.
+- **The resolvers return `*domain.Loader` via the LoaderStore.** `findLoaderForDemand`
+  and `HandleLoopBelowThreshold` resolve through the flag-selected store (the two
+  flag-branches collapse to one call) and fail **closed** on a real store error
+  (a DB flicker drops the signal instead of rerouting it). `tryCreateL1` and
+  `refillLoaderForPayload` take `*domain.Loader`; the latter reads
+  `loader.MinStockFor(payload)` instead of a flag branch + `loaderMinStockFromCore`.
+- **`domain.Loader` carries the empty-in config** it needs (`InboundSource`,
+  per-payload `MinStock`) via functional options (`WithInboundSource` /
+  `WithMinStock`), so the legacy claim is fully out of this path. The fire closure
+  resolves the process node from the delivery node at fire time.
+- `manualSwapNode` survives only behind `findManualSwapNodes` (the push/board
+  enumeration the **unloader** shares) — its retirement there is deferred. Removed
+  the now-dead `loaderDeliveryNodes`.
+
+### Tests
+
+- Reworked the seam + try_create_l1 + findLoaderForDemand tests to the
+  `*domain.Loader` API; the budget-property test asserts budget 1 (the C3 shape) —
+  the budget=N multi-window property moves to C4 with `ReservationTarget`. A lazy
+  `loaders()` accessor lets struct-built test engines resolve without a nil store.
+  Full edge `-race` suite green; build/vet/gofmt/golangci-lint clean.
+
+### Docs
+
+- `docs/bin-loader-unloader-architecture.md` — seam is Loader-first
+  (`ReservationTarget`); LoaderStore now consumed by the empty-in path; the shim
+  retirement is scoped. (The adjudication named `edge-named-methods.md` /
+  `engine_db_methods_residual.md`; the former is a Phase-4 traceability table and
+  the latter does not exist, so the canonical bin-loader doc is the home.)
+
+## 2026-06-12 — Bin-loader multi-window refactor, checkpoint C2: consumer-defined LoaderStore
+
+Collapses the two loader-config duals (legacy `style_node_claims`, Core-owned
+aggregate) behind one consumer-defined interface, so callers stop branching on
+the `loaders_from_core` flag on every lookup. **Dormant** — the store is
+constructed and refreshed on each sync but the hot-path resolvers still return
+`*manualSwapNode`; C3 swaps them and retires the shim.
+
+### Added
+
+- **`engine.LoaderStore`** interface (`LoaderForPayload` / `LoaderAt` /
+  `Loaders`) + `ErrLoaderNotFound` sentinel. Defined at the consumer (engine).
+- **`aggregateLoaderStore`** — projects the Core cache into validated
+  `*domain.Loader`s and holds them as an **immutable snapshot** swapped
+  atomically (`atomic.Pointer`) on each node-list sync (`SetCoreLoaders` →
+  `Refresh`). Resolution reads memory, never the DB — eliminates torn
+  multi-statement cache reads and the demand-reroute-on-DB-flicker bug, and
+  removes the five-times-repeated full-table scan.
+- **`legacyLoaderStore`** — projects each `manual_swap` claim into a
+  single-window loader via `WalkClaims`.
+- `domain.Loader.Contains` / `ServesPayload` accessors.
+
+### Error contract (fail closed)
+
+A clean miss returns `ErrLoaderNotFound` (caller may fall back); a real failure
+(DB read, malformed config) returns a wrapped error (caller fails closed, never
+reroutes demand). Callers branch with `errors.Is`.
+
+### Tests
+
+- `TestLoaderStore_FlagDual` (legacy ≡ aggregate for one loader),
+  `TestResolve_CleanMiss_ReturnsSentinel`, `TestResolve_DBError_FailsClosed`
+  (legacy errors ≠ miss; aggregate keeps last-known-good across a failed
+  refresh), `TestRace_CacheReplaceDuringClusterResolve` (snapshot swap under
+  `-race`, no torn loader). Full edge `-race` suite green.
+
+### Docs
+
+- `docs/bin-loader-unloader-architecture.md` — LoaderStore section (interface,
+  the two impls, snapshot, fail-closed error contract). (The adjudication named
+  `shingo-edge/docs/architecture.md`, which does not exist; the bin-loader
+  architecture doc is the canonical home.)
+
+## 2026-06-12 — Bin-loader multi-window refactor, checkpoint C1: the reservation seam
+
+Makes loader empty-in creation count→fire **atomic per loader**, enforcing the
+never-2N invariant on today's node-keyed world — the foundation the multi-window
+feature builds on. Two commits (part 1 additive/behavior-preserving, part 2 the
+behavior-changing seam, race-gated), per the bisectability split.
+
+### Changed — part 1 (prerequisites)
+
+- `loaderMemberNodes` branches on the loader **Layout** instead of
+  `len(Positions)>0`, fixing the live bug where a shared_window loader with window
+  homes emitted `allowed:[""]` members. Shared loaders project a single anchor
+  member with the full shared set; the resolver still funnels them to the anchor
+  (delivery/count stay there until C4+).
+- `ListActiveByDeliveryNodeSet` — one `IN`-query counting in-flight orders across
+  a delivery-node set in a single snapshot.
+
+### Changed — part 2 (the seam)
+
+- **`reserveLoaderEmpties`** — the single chokepoint for loader L1 creation. A
+  per-`LoaderID` `sync.Map` mutex serialises count→fire so a demand signal and an
+  operator REQUEST can't both pass the in-flight count and both fire. One set
+  query yields the per-payload dedup **and** the loader-capacity cap (budget = the
+  delivery-set cardinality, retiring the magic `manualSwapWindowSlots = 1` on the
+  loader path; the unloader still uses the constant). **No transaction** —
+  atomicity is the mutex plus count monotonicity, and `CreateRetrieveOrder` is not
+  tx-pure (Core enqueue + synchronous emit mid-write). Fails closed on a count
+  error. Structured `loader_reserve` decision record per reservation.
+- All four empty-firing writers route through it: `tryCreateL1` (threshold +
+  side-cycle), `RequestEmptyBin` (operator, manual_swap), and
+  `maybeStageLoaderEmpty`/`MaybePushLoader` (via `tryCreateL1`).
+- **Pinned re-entrancy rule:** no order-event subscriber may synchronously
+  re-enter the seam for the same loader (the mutex is non-reentrant) — documented
+  in `bin-loader-unloader-architecture.md` and guarded by a deadlock test.
+
+### Tests
+
+- `TestRace_LoaderBudget_ConcurrentSignalsAndOperator` (the gate, run under
+  `-race`), `TestReserveLoaderEmpties_PropNeverExceedsBudget` (randomized,
+  multi-window budget), `TestReserveLoaderEmpties_EmitDuringReservation_NoDeadlock`,
+  plus `TestLoaderMemberNodes_BranchesOnLayout` and `TestListActiveByDeliveryNodeSet`.
+  Full edge `-race` suite green.
+
+### Docs
+
+- `docs/bin-loader-unloader-architecture.md` (reservation seam + re-entrancy rule),
+  `docs/uop-threshold-replenishment.md` (loader-total budget; dedup contract now the
+  seam), `shingo-edge/store/store.go` transaction-contract comment (seam owns no tx).
+
+## 2026-06-12 — Bin-loader multi-window refactor, checkpoint C0: first-class Loader type
+
+Foundation for the multi-window bin-loader work (a `shared_window` loader has N
+window nodes presenting one shared demand; load either window → satisfied). See
+`bin-loader-multiwindow-reviews-2026-06-12/FINAL-ADJUDICATION.md`. C0 is purely
+additive — **no runtime behavior change** — and lands ahead of the C1 reservation
+seam that enforces the never-2N invariant.
+
+### Added
+
+- **`domain.Loader`** (`shingo-edge/domain/loader.go`): the Edge runtime's
+  first-class bin-loader aggregate. Unexported fields, two constructors
+  (`NewSharedWindowLoader`, `NewDedicatedPositionsLoader`) that make invalid
+  states unconstructible — a shared layout with per-position payloads is
+  forbidden by the type signature; zero members, empty node ids, empty payloads,
+  and slot-count mismatch are rejected at construction. `SlotCount` (the
+  shared-window budget) is derived, never passed.
+- **Typed identifiers** `LoaderID`, `NodeID`, `PayloadCode` (newtypes over
+  string), adopted on the new Loader surfaces only — the compile-time guard
+  against the A1 bug class (a count keyed by the wrong node string).
+- **Explicit position `kind`** (`window` | `dedicated`) on the wire
+  (`protocol.LoaderPosition.Kind`) and the Edge cache
+  (`core_loader_positions.kind`), replacing the empty-`payload_code`-means-window
+  convention. Derived from the parent loader's `layout` at the single Core
+  projection point (`BuildLoaderInfos`), so layout stays the one source of truth.
+
+### Tests
+
+- `TestNewLoader_RejectsInvalidStates` (the C0 gate) plus valid-construction,
+  derived-slot-count, and accessor-immutability tests.
+- `TestBuildLoaderInfos` extended to pin the derived position `kind`.
+
+### Docs
+
+- `docs/terminology.md` — bin loader / unloader / window / dedicated position /
+  anchor / budget.
+- `docs/data-model.md` — bin-loader aggregate, position kind, typed identifiers.
+- `docs/wire-protocol.md` — documented `NodeListResponse.loaders` (`LoaderInfo` /
+  `LoaderPosition` incl. `kind` / `LoaderPayloadInfo`), previously undocumented.
+
 ## 2026-05-17 — Test Infrastructure Cleanup, Phase 6: Fleet-Simulator Doc Sync
 
 ### Documentation

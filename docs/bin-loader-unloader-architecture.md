@@ -92,7 +92,7 @@ Core is the natural home for the demand signal. `BinUpdatedEvent` already fires 
 
 ### Demand Registry
 
-Core maintains a `demand_registry` table mapping payload codes to loader/unloader station addresses. Edge syncs this via `ClaimSync` messages sent after registration:
+Core maintains a `demand_registry` table mapping payload codes to loader/unloader station addresses. It is derived from the Core-owned `bin_loaders` aggregate (`BuildDemandRegistryFromAggregate`, run by the seed / `migrateloaders`):
 
 ```
 demand_registry
@@ -102,7 +102,7 @@ demand_registry
   payload_code  TEXT     -- allowed payload
 ```
 
-`ClaimSync` is sent on Edge startup (after registration ack) and whenever claim config changes. Core upserts the registry on receipt.
+`ClaimSync` (the Edge→Core push of `style_node_claims`) is **retired**: Core owns loader config via the `bin_loaders` aggregate and derives `demand_registry` from it, syncing loader config down to the Edge through the node-list sync. `Engine.SendClaimSync` is a no-op, kept only so its call sites don't change.
 
 ### Event Flow
 
@@ -112,15 +112,15 @@ demand_registry
    - **Bin arrived at storage** (supply increased): send `DemandSignal` with role "consume" to matching unloader stations.
 3. Storage slot detection: `isStorageSlot` checks if the node's parent has `NodeTypeCode == "LANE"`.
 4. `sendDemandSignals` looks up the demand registry by payload code and role, sends a `DemandSignal` envelope to each matching Edge station.
-5. Edge `HandleDemandSignal` finds the matching `manual_swap` node by `CoreNodeName`, calls `tryAutoRequest` to create orders for payloads that don't already have pending orders.
+5. Edge's demand-signal handler routes by role to the reservation seam — produce → `MaybeCreateLoaderEmptyIn` (L1 empty-in), consume → `MaybeCreateUnloaderFullIn` (U1 full-in) — which resolves the loader from the Core aggregate and creates orders for payloads in deficit, deduped by the never-2N seam.
 
 ### Deduplication
 
-`tryAutoRequest` queries existing orders before creating new ones. Only creates orders for payloads where no non-terminal order exists. Core's `UNIQUE(edge_uuid)` constraint catches any remaining duplicates from at-least-once delivery.
+The reservation seam (`reserveLoaderBins`, below) counts in-flight orders across the loader's delivery set before firing, so a payload that already has a non-terminal order in flight creates nothing. Core's `UNIQUE(edge_uuid)` constraint catches any remaining duplicates from at-least-once delivery.
 
 ### Startup Sweep
 
-On Edge startup, `SendClaimSync` runs after registration ack (not during `eng.Start()`, because `sendFn` isn't wired yet at that point). Edge also runs `tryAutoRequest` for all bin_loader nodes to pick up demand that arrived while offline.
+On Edge startup, after registration ack, the auto-push sweeps `SweepPushLoaders` / `SweepPushUnloaders` offer every auto loader/unloader's payloads to the reservation seam, picking up demand that arrived while offline. (`SendClaimSync` is retired to a no-op — see Demand Registry above.)
 
 ---
 
@@ -146,6 +146,53 @@ HMI only shows payloads with active demand as actionable. Server-side enforcemen
 ### Edge SQLite Transaction Safety
 
 `tryAutoRequest` wraps check+create in a `BEGIN IMMEDIATE` transaction. Serializes concurrent access at the SQLite level, preventing duplicate orders when two order completions fire simultaneously.
+
+### Reservation Seam (the never-2N guarantee)
+
+Every loader empty-in (an L1 `retrieve_empty`) and every unloader full-in (a U1 retrieve of a full bin) is created through **one** chokepoint, `engine.reserveLoaderBins`. It owns the count→fire decision so a demand signal (Kafka), an operator request (HTTP), and the push sweep can never both pass the in-flight count and both fire. The invariant: **one demand of N → exactly N bins in flight across the loader's delivery cluster, never 2N** — in either direction (a `retrieveEmpty` parameter selects which direction's in-flight orders the budget counts).
+
+How it works:
+
+- **Per-loader mutex, keyed map, NO transaction.** `loaderResv` is a `sync.Map[loaderID]*sync.Mutex`; the reservation holds the loader's mutex across the count and the create. Two *different* loaders never block each other. There is deliberately **no surrounding DB transaction** — its atomicity is the mutex, not DB isolation.
+  - *Why no tx (monotonicity):* the only operation that *raises* a loader's in-flight empty count is the create the seam guards; every other mutation (completion, cancellation, failure) only *lowers* it. Serialising the up-writers therefore makes the count monotone-safe without isolation.
+  - *Why no tx (unsoundness):* `CreateRetrieveOrder` is not transaction-pure — it enqueues to Core and fires a synchronous `EmitOrderCreated` mid-write. A surrounding tx could roll back the DB rows while those side effects already happened, manufacturing the Core/Edge divergence it was meant to prevent.
+- **One set query.** In-flight is counted across the loader's whole delivery-node set in a single `ListActiveOrdersByDeliveryNodeSet` (one snapshot), giving both the per-payload dedup and the loader-capacity cap.
+- **The Loader owns the reservation shape.** `reserveLoaderBins` takes a `*domain.Loader`; the delivery-node set and the budget come from `loader.ReservationTarget(member, payload, multiWindow)`, which encodes the per-layout semantics so the seam stays layout-agnostic: a dedicated position maps to its one independent slot (budget 1); a shared loader funnels to its anchor (budget 1) **unless** multi-window is enabled, in which case it spreads to its windows (budget = `SlotCount`). The seam keys its mutex on `loader.ID()`.
+- **Multi-window delivery (flag-gated).** With config `loaders_multi_window` on, a shared loader's bins spread **one per free window** — the seam computes the windows with none in flight and assigns each new order to a distinct one (round-robin), so a demand of N at an N-window loader fires exactly N, one per window, never two at the same window. Default OFF: a shared loader funnels to its anchor. The never-2N budget is per-loader (keyed on `loader.ID()`), so it is not fragmented by spreading.
+- **One physical check the seam does NOT subsume.** The seam counts in-flight *orders*, not parked *bins*. The loader side relies purely on the order count because its `want` is demand-netted by the threshold monitor; the unloader's full-in is event-driven (`want=1`), so it keeps a physical "is a full already parked at the window?" check (`unloaderHasUsableFullPresent`) ahead of the seam.
+- **Fails closed.** A count read error fires nothing; the next signal retries.
+
+**Re-entrancy rule (MUST be honoured by every event-bus subscriber):** `reserveLoaderBins` calls its `fire` closure *while the loader's mutex is held*, and `CreateRetrieveOrder` dispatches `EmitOrderCreated` **synchronously** on the in-process bus (`eventbus.Emit` runs subscribers inline). **No `EventOrderCreated` (or any order-event) subscriber may synchronously call back into the reservation seam for the same loader** — `sync.Mutex` is non-reentrant and it would self-deadlock. A subscriber acting on a *different* loader is fine. If a subscriber ever needs to re-enter the same loader, split reserve-from-fire (end the lock after the DB insert; enqueue/emit after release). Guarded by `TestReserveLoaderEmpties_EmitDuringReservation_NoDeadlock`.
+
+Callers routed through the seam — **loader side:** `tryCreateL1` (threshold + side-cycle), `RequestEmptyBin` (operator, manual_swap), and `maybeStageLoaderEmpty`/`MaybePushLoader` (via `tryCreateL1`). **Unloader side:** `createUnloaderFullInViaSeam`, reached from the consume `DemandSignal` / line-evac (`MaybeCreateUnloaderFullIn`) and the auto-push sweep (`MaybePushUnloader`/`SweepPushUnloaders`).
+
+---
+
+## LoaderStore (config resolution)
+
+"Which loader serves this payload / contains this node, and what is its budget" is resolved through one consumer-defined interface, `engine.LoaderStore` (defined in the engine package, not next to the store — idiomatic Go, and it keeps the engine from importing store internals):
+
+```go
+type LoaderStore interface {
+    LoaderForPayload(payload PayloadCode, role LoaderRole, activeOnly bool) (*domain.Loader, error)
+    LoaderAt(coreNode NodeID, role LoaderRole) (*domain.Loader, error)
+    Loaders(role LoaderRole) ([]*domain.Loader, error)
+}
+```
+
+One implementation, `aggregateLoaderStore` — it projects the Core-owned cache into validated `*domain.Loader`s (via the domain constructors) and holds them as an **immutable in-memory snapshot**, swapped atomically (`atomic.Pointer`) on each node-list sync (`SetCoreLoaders` → `Refresh`). Resolution reads the snapshot, never the DB, so a torn multi-statement read of the cache is impossible and a DB flicker during a sync only keeps the last-known-good snapshot.
+
+**Error contract (fail closed).** Every lookup returns `(*domain.Loader, error)`:
+
+| Result | Meaning | Caller |
+|---|---|---|
+| `(loader, nil)` | resolved | use it |
+| `(nil, ErrLoaderNotFound)` | a clean miss | may take its fallback (e.g. payload-first-match) |
+| `(nil, other error)` | a real failure (DB read, malformed config) | **fail closed** — must NOT fall open, or a flicker reroutes demand to the wrong loader |
+
+Callers branch with `errors.Is(err, ErrLoaderNotFound)`. This closes the prior bug where `resolveCoreLoaderForPayload` returned `nil` for both a miss and a DB error and the caller fell open into payload-first-match on a transient flicker.
+
+**Consumed by both the loader and unloader paths.** `findLoaderForDemand` (DemandSignal) and `HandleLoopBelowThreshold` (C-push) resolve a `*domain.Loader` through the store and pass it to the seam; `refillLoaderForPayload` reads `loader.MinStockFor(payload)`. The unloader full-in resolves the same way — `MaybeCreateUnloaderFullIn` / `MaybePushUnloader` resolve a consume `*domain.Loader` through the store and route through the seam. The `manualSwapNode {node, claim}` shim is no longer the **unit of resolution**; it survives only as the projection the loader push/board enumerate (`manualSwapNodesFromCore`, built from the same aggregate), with `loaderFromManualSwapClaim` turning a resolved node into a single-window `Loader` for those paths.
 
 ---
 

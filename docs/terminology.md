@@ -92,6 +92,20 @@ A production area monitored by a station. Stored in the database as `production_
 
 An end-item type that a process produces. Stored in the database as `job_styles`. Switching the active style on a process is handled through the changeover workflow.
 
+### Bin Loader / Unloader
+
+A staging point where an operator manually fills empty bins (a **loader**, role `produce`) or empties full bins (an **unloader**, role `consume`) to feed/drain the kanban loop. Core owns the loader aggregate (`bin_loaders`); the Edge runtime consumes it as a first-class `domain.Loader`. A loader has one of two **layouts**:
+
+| Term | Meaning |
+|---|---|
+| **Shared window** | A loader with **N window nodes** that all present the **same** shared payload set and draw on **one** budget. An empty may be delivered to **any free window**. The invariant: one demand of N → exactly N empties in flight across all windows, never 2N. |
+| **Window** | One load point of a shared-window loader. Carries **no** per-position payload (the shared set is loader-level). Marked explicitly as `kind = "window"` — *not* inferred from an empty payload. |
+| **Dedicated positions** (a.k.a. *home-location*) | A loader with **N independent** positions, each its own node bound to one payload, each its own one-bin slot. Positions do **not** share a budget. |
+| **Position** | One dedicated home: one node, one payload (which may be unassigned/empty until the operator picks one). Marked `kind = "dedicated"`. |
+| **Anchor** | The loader's identity node (`core_node_name`). Historically also the shared demand key; being retired in favor of an explicit `loader_id` (see the multi-window refactor). |
+
+**Budget** = a loader's total physical bin slots (`SlotCount`). For a shared-window loader it is the shared empty-in ceiling across all windows.
+
 ## Robot and Fleet Concepts
 
 ### Available
