@@ -380,59 +380,11 @@ func TestReleaseOrderWithLineside_ConsumeReleaseDoesNotFireL1(t *testing.T) {
 	}
 }
 
-// TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires pins the
-// 2026-05-12 contract: L1 retrieve_empty creation no longer hard-blocks
-// on a parked empty bin at the loader. Pre-change, loaderHasUsableEmptyPresent
-// short-circuited refillLoaderForPayload across ALL allowed payloads
-// whenever Core telemetry reported any empty bin at the loader node. That
-// gated the operator-visible queue, not just the physical dispatch — during
-// a changeover swap the loader saw no incoming demand even though the math
-// said it should.
-//
-// New contract: L1 creation is gated only by the ReorderPoint vs.
-// (systemBinCount + inFlight) math. The "don't physically dispatch into
-// an occupied loader" safety net moved to Core's dispatch.CheckDropoffCapacity
-// (capacity.go:86), which queues the order with a queue_reason until the
-// parked bin clears. Fulfillment scanner re-plans on every BinUpdatedEvent
-// (core/engine/wiring.go:228), so the queued L1 dispatches when there's
-// room — no wedge.
-//
-// This test pins the positive direction: calling MaybeCreateLoaderEmptyIn
-// creates an L1 at the loader regardless of Core-side state. Post-PR-0 the
-// per-node capacity cap bounds the one-window loader to a single in-flight
-// empty (minStock=2 is reached over the fill/release cycle, not by queuing two
-// empties at a one-bin window). A future regression that re-introduces the
-// loader-bin-present gate at order-creation time will fail this test (zero
-// orders created when the test doesn't simulate a "no bin present" Core response).
-func TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	// Explicit ReorderPoint=2 gives the loader a replenishment policy (the silent
-	// 2-bin default was removed): demand fires and the per-node cap bounds it to one.
-	loaderNodeID := seedCapManualSwap(t, db, "L1-CREATE", "L1-CREATE-LOADER", protocol.ClaimRoleProduce, []string{"PART-CREATE"}, 2, false)
-	eng := testEngine(t, db)
-	seedCoreLoader(t, eng, sharedLoaderInfo("L1-CREATE-LOADER", "produce", "auto", "PART-CREATE", 2, 0))
-
-	eng.MaybeCreateLoaderEmptyIn("", "PART-CREATE")
-
-	loaderOrders, err := db.ListActiveOrdersByProcessNode(loaderNodeID)
-	if err != nil {
-		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
-	}
-	created := 0
-	for _, o := range loaderOrders {
-		if o.RetrieveEmpty && o.PayloadCode == "PART-CREATE" {
-			created++
-		}
-	}
-	// minStock=2 (explicit ReorderPoint), but the PR-0 per-node capacity cap
-	// bounds total in-flight empties at a one-window loader to manualSwapWindowSlots
-	// (1): only one empty is dispatched now; the second fires once the first is
-	// filled and the window frees.
-	if created != 1 {
-		t.Errorf("expected 1 L1 retrieve_empty order created at the one-window loader (cap), got %d", created)
-	}
-}
+// NOTE: TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires was REMOVED
+// with the bin-count produce trigger. Produce L1s now come from the UOP-threshold
+// path (HandleLoopBelowThreshold — handle_loop_below_threshold_test.go) or operator
+// staging (MaybePushLoader — maybe_push_loader_test.go); there is no bin-count
+// DemandSignal path left to test here.
 
 // TestHandleLoaderEmptyInCompletion_FiresL2 verifies the L2 fire on the
 // loader side: when an L1 retrieve_empty order (empty bin, role produce,

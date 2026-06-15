@@ -40,6 +40,15 @@ func TestRace_LoaderBudget_ConcurrentSignalsAndOperator(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	nodeID := seedCapManualSwap(t, db, "RACE", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 2, false)
+	// Seed the Core-loader cache so BOTH the automatic path (tryCreateL1) and the
+	// operator path (RequestEmptyBin) resolve the SAME aggregate loader — and lock
+	// the same loader_key mutex. (Without this both paths no-op/error and the race
+	// would be vacuous.)
+	seedCoreLoader(t, eng, sharedLoaderInfo("LOADER-1", "produce", "threshold", "P1", 0, 100))
+	dl, err := eng.loaders().LoaderAt("LOADER-1", domain.RoleProduce)
+	if err != nil || dl == nil {
+		t.Fatalf("loader did not resolve from the aggregate: %v", err)
+	}
 
 	const goroutines = 24
 	var wg sync.WaitGroup
@@ -48,8 +57,8 @@ func TestRace_LoaderBudget_ConcurrentSignalsAndOperator(t *testing.T) {
 		go func(g int) {
 			defer wg.Done()
 			if g%2 == 0 {
-				// demand path: wants minStock (2), seam caps to the budget (1)
-				eng.MaybeCreateLoaderEmptyIn("LOADER-1", "P1")
+				// automatic/threshold path: wants 2, seam caps to the budget (1)
+				_, _ = eng.tryCreateL1(dl, "P1", L1LoopThreshold, 2, "")
 			} else {
 				// operator path: a single empty request through the same seam
 				_, _ = eng.RequestEmptyBin(nodeID, "P1")
@@ -72,7 +81,7 @@ func mustSharedLoader(t *testing.T, id string, payloads ...string) *domain.Loade
 	for i, p := range payloads {
 		ps[i] = domain.PayloadCode(p)
 	}
-	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), id, domain.RoleProduce, domain.ReplenishmentAuto,
+	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), id, domain.RoleProduce, domain.ReplenishmentThreshold,
 		[]domain.Window{{Node: domain.NodeID(id)}}, ps, domain.WithInboundSource("EMPTY-SUPER"))
 	if err != nil {
 		t.Fatalf("build loader %s: %v", id, err)

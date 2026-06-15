@@ -44,7 +44,7 @@ func TestResolve_DBError_KeepsLastKnownGood(t *testing.T) {
 	dbA := testEngineDB(t)
 	cacheLoader(t, dbA, protocol.LoaderInfo{
 		Name: "Keep", LoaderKey: "loader:KEEP-LDR", Role: "produce",
-		Layout: "shared_window", Replenishment: "auto",
+		Layout: "shared_window", Replenishment: "threshold",
 		Positions: []protocol.LoaderPosition{{CoreNodeName: "KEEP-LDR", Kind: "window"}},
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "P1"}},
 	})
@@ -67,13 +67,13 @@ func TestRace_CacheReplaceDuringClusterResolve(t *testing.T) {
 	db := testEngineDB(t)
 	cacheLoader(t, db, protocol.LoaderInfo{
 		Name: "A", LoaderKey: "loader:RACE-A", Role: "produce", Layout: "shared_window",
-		Replenishment: "auto", Positions: []protocol.LoaderPosition{{CoreNodeName: "RACE-A", Kind: "window"}},
+		Replenishment: "threshold", Positions: []protocol.LoaderPosition{{CoreNodeName: "RACE-A", Kind: "window"}},
 		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PA"}},
 	})
 	agg := newAggregateLoaderStore(db, func(string, ...any) {})
 
 	configs := [][]protocol.LoaderInfo{
-		{{Name: "A", LoaderKey: "loader:RACE-A", Role: "produce", Layout: "shared_window", Replenishment: "auto", Positions: []protocol.LoaderPosition{{CoreNodeName: "RACE-A", Kind: "window"}}, Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PA"}}}},
+		{{Name: "A", LoaderKey: "loader:RACE-A", Role: "produce", Layout: "shared_window", Replenishment: "threshold", Positions: []protocol.LoaderPosition{{CoreNodeName: "RACE-A", Kind: "window"}}, Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PA"}}}},
 		{{Name: "B", LoaderKey: "loader:RACE-B", Role: "produce", Layout: "dedicated_positions", Replenishment: "operator", Positions: []protocol.LoaderPosition{{CoreNodeName: "RACE-B-1", PayloadCode: "PB", Kind: "dedicated"}}}},
 	}
 

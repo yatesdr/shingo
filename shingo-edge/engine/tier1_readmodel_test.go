@@ -30,18 +30,18 @@ func TestTier1_BUG1_OperatorAndDemandShareLockKey(t *testing.T) {
 
 	// Single-window real-node loader: node "PLK_X1", aggregate token "loader:PLK_X1".
 	nodeID := seedCapManualSwap(t, db, "PROC-X1", "PLK_X1", protocol.ClaimRoleProduce, []string{"PART-X"}, 2, false)
-	seedCoreLoader(t, eng, sharedLoaderInfo("PLK_X1", "produce", "auto", "PART-X", 2, 0))
+	seedCoreLoader(t, eng, sharedLoaderInfo("PLK_X1", "produce", "threshold", "PART-X", 0, 100))
 
 	// Operator path: RequestEmptyBin resolves the loader and reserves through the seam.
 	if _, err := eng.RequestEmptyBin(nodeID, "PART-X"); err != nil {
 		t.Fatalf("RequestEmptyBin: %v", err)
 	}
-	// Automatic path: the demand resolver + tryCreateL1 reserve through the same seam.
-	dl, _ := eng.findLoaderForDemand("PLK_X1", "PART-X")
-	if dl == nil {
-		t.Fatal("findLoaderForDemand(PLK_X1, PART-X) = nil")
+	// Automatic path: the aggregate resolver + tryCreateL1 reserve through the same seam.
+	dl, err := eng.loaders().LoaderAt("PLK_X1", domain.RoleProduce)
+	if err != nil || dl == nil {
+		t.Fatalf("LoaderAt(PLK_X1) = %v, %v", dl, err)
 	}
-	if _, err := eng.tryCreateL1(dl, "PART-X", L1SideCycle, 1, ""); err != nil {
+	if _, err := eng.tryCreateL1(dl, "PART-X", L1LoopThreshold, 1, ""); err != nil {
 		t.Fatalf("tryCreateL1: %v", err)
 	}
 
@@ -56,41 +56,24 @@ func TestTier1_BUG1_OperatorAndDemandShareLockKey(t *testing.T) {
 	}
 }
 
-// Gate 2 (BUG-2, dead C-push skip): the legacy DemandSignal path
-// (MaybeCreateLoaderEmptyIn) must SKIP a payload that opted into UOP-threshold C-push,
-// deferring it to HandleLoopBelowThreshold. Pre-fix the skip read a node-keyed cache
-// lookup with the loader_key token, which never matched → the skip was dead → the
-// bin-count path fired anyway. Seed BOTH a bin-count floor (min_stock=2) and a UOP
-// threshold (>0); with no core client the system count is 0 (< floor), so the bin-count
-// path WOULD fire if the skip were dead. The process node exists so a (buggy) fire can
-// actually create an order — making the zero-order assertion non-vacuous.
-func TestTier1_BUG2_ThresholdOptedPayloadSkipsBinCount(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
+// NOTE: the original Gate 2 (BUG-2, dead C-push skip via MaybeCreateLoaderEmptyIn)
+// is GONE — the bin-count produce path it skipped is fully retired, so there is no
+// bin-count path that could fire for a threshold-opted payload. BUG-2 is structurally
+// closed (not just skipped). The threshold path is exercised by
+// handle_loop_below_threshold_test.go; the operator-staging fallback by
+// maybe_push_loader_test.go.
 
-	nodeID := seedCapManualSwap(t, db, "PROC-TH", "TH-LOADER", protocol.ClaimRoleProduce, []string{"PART-T"}, 2, false)
-	seedCoreLoader(t, eng, sharedLoaderInfo("TH-LOADER", "produce", "auto", "PART-T", 2, 100))
-
-	eng.MaybeCreateLoaderEmptyIn("TH-LOADER", "PART-T")
-
-	if got := capActiveOrders(t, db, nodeID, true); len(got) != 0 {
-		t.Errorf("threshold-opted payload fired %d bin-count L1(s) via the DemandSignal path; "+
-			"want 0 — the C-push skip must hold (BUG-2)", len(got))
-	}
-}
-
-// Gate 3 (prerequisite A landed): the per-payload UOP threshold and the transitional
+// Gate 3 (prerequisite A landed): the per-payload UOP threshold and the operator-driven
 // flag must reach the *domain.Loader snapshot through projectCoreLoader and survive a
-// SetCoreLoaders refresh. Without the new uopThreshold projection the threshold silently
-// reads 0 and BUG-2's fix inverts to "threshold-opted but bin-count-only."
+// SetCoreLoaders refresh. Without the uopThreshold projection the threshold silently
+// reads 0 (and a threshold loader would fall back to operator staging).
 func TestTier1_SnapshotCarriesThresholdAndTransitional(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
 	seedCoreLoader(t, eng,
-		sharedLoaderInfo("AUTO-LDR", "produce", "auto", "PART-A", 2, 150),
+		sharedLoaderInfo("AUTO-LDR", "produce", "threshold", "PART-A", 2, 150),
 		sharedLoaderInfo("OP-LDR", "produce", "operator", "PART-B", 1, 0),
 	)
 
@@ -117,7 +100,7 @@ func TestTier1_SnapshotCarriesThresholdAndTransitional(t *testing.T) {
 	}
 
 	// Survives a refresh: the field is re-threaded, not stale.
-	seedCoreLoader(t, eng, sharedLoaderInfo("AUTO-LDR", "produce", "auto", "PART-A", 2, 222))
+	seedCoreLoader(t, eng, sharedLoaderInfo("AUTO-LDR", "produce", "threshold", "PART-A", 2, 222))
 	a2, _ := eng.loaders().LoaderForPayload("PART-A", domain.RoleProduce, true)
 	if a2 == nil || a2.UOPThresholdFor("PART-A") != 222 {
 		t.Errorf("after refresh UOPThresholdFor(PART-A) = %v, want 222", a2)
@@ -135,10 +118,10 @@ func TestTier1_DedicatedLoaderKeepsLayoutViaAggregate(t *testing.T) {
 
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
 		Name: "DECK", LoaderKey: "loader:DECK", Role: "produce", Layout: "dedicated_positions",
-		Replenishment: "auto", ConfigGen: 1,
+		Replenishment: "threshold", ConfigGen: 1,
 		Positions: []protocol.LoaderPosition{
-			{CoreNodeName: "D1", PayloadCode: "STUD", Kind: "dedicated", MinStock: 2},
-			{CoreNodeName: "D2", PayloadCode: "STUD", Kind: "dedicated", MinStock: 2},
+			{CoreNodeName: "D1", PayloadCode: "STUD", Kind: "dedicated"},
+			{CoreNodeName: "D2", PayloadCode: "STUD", Kind: "dedicated"},
 		},
 	})
 

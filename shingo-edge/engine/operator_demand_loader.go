@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -23,121 +22,13 @@ import (
 // anti-spam guard also encodes (operator_bin_ops.go).
 const manualSwapWindowSlots = 1
 
-// MaybeCreateLoaderEmptyIn (L1 of the side-cycle model) creates a
-// retrieve_empty order tracked at the loader for the given payload, if a
-// matching loader exists and doesn't already have an in-flight empty-in.
-// Called from ReleaseOrderWithLineside on consume-role releases under
-// DispositionCaptureLineside: when the line operator declares a bin
-// emptied, the loader gets a parallel "empty-in" demand so it stays in
-// the workflow. (Pre-2026-04-29 this fired on REQUEST; that over-supplied
-// the loader whenever the line later returned a partial.)
-//
-// L2 (filled-out to supermarket) is created when this order's bin reaches
-// the loader and the operator confirms — see handleLoaderEmptyInCompletion.
-//
-// The retrieve_empty order's source is left to Core's planner
-// (planRetrieveEmpty) which finds an unclaimed empty bin matching the bin
-// type. Excludes the loader itself via the excludeNodeID guard (commit
-// 7047c5a) so the loader isn't asked to source from itself.
-func (e *Engine) MaybeCreateLoaderEmptyIn(coreNodeName, payloadCode string) {
-	loader, viaFallback := e.findLoaderForDemand(coreNodeName, payloadCode)
-	if loader == nil {
-		return
-	}
-	// Each demand signal triggers a full sweep across all of the loader's
-	// allowed payloads, not just the signaled one. A multi-payload loader
-	// (e.g., A, B, C, D each with ReorderPoint=2) may have several payloads
-	// in deficit at once; we want the queue to reflect that all at once so
-	// the operator sees the full demand rather than discovering it one signal
-	// at a time. The signaled payload is what tells us which loader to
-	// evaluate; what to queue is computed per-payload from current state.
-	//
-	// UOP-threshold replenishment (C-push) — for any (loader, payload)
-	// with replenish_uop_threshold > 0, Core is the source of truth.
-	// Skip the legacy bin-count evaluation here; Core's
-	// LoopBelowThresholdSignal goes through HandleLoopBelowThreshold
-	// instead. The reserveLoaderEmpties seam on both paths is
-	// the dedup contract for the race window where both signals arrive
-	// near-simultaneously — do not remove or weaken either guard.
-	//
-	// Fallback-no-sweep (PR-0): when the loader was resolved via the
-	// payload-first-match fallback — the signal named no node, or named a node
-	// with no matching active loader — refill ONLY the signaled payload, never
-	// the resolved loader's whole AllowedPayloads catalog. The fallback is the
-	// NORMAL kanban path (R1), so a full-catalog sweep here fans an unrelated
-	// signal across every payload the resolved loader happens to list: the
-	// Springfield SLN_002 Factor C amplifier (one SMN_001 signal resolved by
-	// payload to SLN_002, then swept ~20 payloads → ~40 orders at a one-bin node).
-	// A shared_window loader sweeps its whole allowed set (multi-payload top-up in
-	// one signal). A dedicated loader has an empty shared set — each position is
-	// independent — so it (and any fallback-resolved loader) refills ONLY the
-	// signaled payload, never a full-catalog fan-out (the SLN_002 Factor C fix).
-	codes := loader.PayloadSet()
-	if viaFallback || len(codes) == 0 {
-		codes = []domain.PayloadCode{domain.PayloadCode(payloadCode)}
-	}
-	created := 0
-	for _, code := range codes {
-		// C-push opt-in is read straight off the resolved aggregate loader — the
-		// loader_key token is the identity now, so the old node-keyed cache lookup
-		// (hasThresholdFromCore) could never match and the skip was dead (BUG-2).
-		// A threshold-opted payload is driven by HandleLoopBelowThreshold, not the
-		// bin-count refill, so skip it here.
-		if loader.UOPThresholdFor(code) > 0 {
-			e.debugFn("kanban: HandleDemandSignal skip loader=%s payload=%s — C-push active",
-				loader.ID(), code)
-			continue
-		}
-		created += e.refillLoaderForPayload(loader, code)
-	}
-	// Sweep-summary observability (PR-0): one line per demand signal so a burst
-	// is visible at a glance — the per-payload :321 lines were the only reason
-	// the SLN_002 incident was diagnosable after the fact.
-	e.debugFn("side-cycle: loader=%s sweep_complete created=%d payloads_considered=%d via_fallback=%v signal_payload=%s",
-		loader.ID(), created, len(codes), viaFallback, payloadCode)
-}
-
-// findLoaderForDemand resolves the active-style produce loader for a legacy
-// DemandSignal. It prefers the node Core named (coreNodeName) so a payload
-// loaded at two separate loaders routes to the one the signal is about — the
-// same protection HandleLoopBelowThreshold has on the threshold path. It
-// falls back to payload-first-match when the signal carries no node, OR the
-// named node has no matching active loader, so the most load-bearing path
-// keeps working even if Core's DemandSignal node semantics differ from the
-// assumption (fail-safe pending SME confirmation of those semantics).
-//
-// Returns (loader, viaFallback): viaFallback is true when resolution went
-// through the payload-first-match fallback rather than the exact named node.
-// The caller uses it to scope the refill — a fallback-resolved loader must
-// refill ONLY the signaled payload, not its whole catalog (PR-0 Factor C fix).
-//
-// C3: resolves through the LoaderStore (the flag-selected dual) and returns a
-// *domain.Loader. Fails CLOSED on a real store error — a transient DB flicker
-// must drop the signal, not reroute it via payload-first-match to the wrong
-// loader (the F7 bug). A clean miss (ErrLoaderNotFound) is the legitimate
-// fallback trigger.
-func (e *Engine) findLoaderForDemand(coreNodeName, payloadCode string) (*domain.Loader, bool) {
-	role := domain.RoleProduce
-	pay := domain.PayloadCode(payloadCode)
-	if coreNodeName != "" {
-		l, err := e.loaders().LoaderAt(domain.NodeID(coreNodeName), role)
-		switch {
-		case err == nil && l != nil && l.ServesPayload(pay):
-			return l, false
-		case err != nil && !errors.Is(err, ErrLoaderNotFound):
-			e.logFn("kanban: demand signal core_node=%s loader-store error — failing closed: %v", coreNodeName, err)
-			return nil, false
-		default:
-			e.debugFn("kanban: demand signal core_node=%s has no loader for payload=%s — payload-first-match fallback",
-				coreNodeName, payloadCode)
-		}
-	}
-	l, err := e.loaders().LoaderForPayload(pay, role, true)
-	if err != nil || l == nil {
-		return nil, true
-	}
-	return l, true
-}
+// The legacy bin-count produce DemandSignal trigger (MaybeCreateLoaderEmptyIn +
+// findLoaderForDemand + refillLoaderForPayload) is RETIRED. A produce loader is now
+// either operator-driven (window-free opportunistic staging — MaybePushLoader) or
+// threshold-driven (UOP kanban autoreorder — HandleLoopBelowThreshold); there is no
+// bin-count floor. Core still emits produce DemandSignals on bin movements, but the
+// Edge no longer routes them to a handler (see cmd/shingoedge/main.go) — supply comes
+// from the threshold monitor and the operator push, both via the reserveLoaderBins seam.
 
 // HandleLoopBelowThreshold is the Core→Edge LoopBelowThresholdSignal
 // receiver. Operates in UOP space — the native unit of the threshold
@@ -306,111 +197,15 @@ func (e *Engine) warmLoaderCacheAndReplay() {
 	}
 }
 
-// refillLoaderForPayload tops the per-payload empty-in queue at one loader
-// up to (ReorderPoint - currentCount - inFlight) orders. Per-payload helper
-// so MaybeCreateLoaderEmptyIn can sweep across all allowed payloads.
-//
-// LEGACY BIN-COUNT PATH ONLY. The UOP-threshold C-push path lives in
-// HandleLoopBelowThreshold and does its own UOP-denominated math against
-// payload_catalog.uop_capacity — do not route threshold-driven signals
-// through here, the bin-count floor over-fires when threshold < capacity
-// (one bin would satisfy a threshold of 100 UOP at capacity 345, but
-// minStock=2 default would create two L1s).
-//
-// ReorderPoint semantics (produce-role): bin-count minimum-stock floor —
-// "I want at least N bins of this payload in the kanban loop." currentCount
-// is `systemBinCountForPayload`, which counts bins anywhere in the active
-// lifecycle (at storage, in transit, staged at consumer lines, being
-// filled at loaders) excluding flagged/maintenance/quality_hold/retired.
-// The gate fires L1s only when total in-loop inventory drops below N.
-// Zero ReorderPoint falls back to a magic-number floor of 2.
-//
-// Pre-2026-05-11 this used PreflightInventory's "available for sourcing"
-// count, which excluded staged bins at non-storage nodes — so a bin
-// staged at the consumer line didn't count toward inventory, and L1
-// fired even when total system inventory was at the floor. SNF2 plant
-// incident (76682-6TA0A.06, 2 bins in system, ReorderPoint=2, kept
-// firing L1) was that drift.
-//
-// The future kanban calculator (shingo-kanban-calculator-design.md) writes
-// its computed loop-size output into this same ReorderPoint column, so
-// operator-set values today and calculator-driven values tomorrow share one
-// read site.
-//
-// Fails OPEN on the system-count lookup: if Core can't be reached we treat
-// currentCount as zero and top the queue up to ReorderPoint. Idle is worse
-// than redundant.
-func (e *Engine) refillLoaderForPayload(loader *domain.Loader, payloadCode domain.PayloadCode) int {
-	// Pre-2026-05-12: a parked empty bin at the loader hard-blocked L1
-	// creation across all payloads. The intent was to prevent a second
-	// physical retrieve from wedging the floor (plant 2026-04-28 #483→#484:
-	// Core dispatched a retrieve to a loader that already had its bin, then
-	// later evicted the parked one). That gated the queue, not just the
-	// dispatch — operators couldn't see incoming demand, and during a
-	// changeover swap nothing fired at all (plant 2026-05-12).
-	//
-	// The dispatch-side safety net already exists at Core:
-	// dispatch.CheckDropoffCapacity (capacity.go:86) blocks every retrieve
-	// whose delivery node has an existing bin, putting the order in
-	// `queued` status with a queue_reason. The fulfillment scanner
-	// re-plans queued orders on every BinUpdatedEvent (wiring.go:228), so
-	// when the parked bin clears, the queued L1 dispatches automatically.
-	//
-	// With that downstream gate proven, we let L1 creation proceed
-	// freely: the operator HMI shows the queued demand, no robot moves
-	// to the loader until there's room, no wedge.
-	// No silent default. A produce manual_swap payload reaching this legacy
-	// bin-count path has already been confirmed NOT opted into UOP-threshold
-	// C-push (MaybeCreateLoaderEmptyIn skips threshold>0 payloads before calling
-	// here). If it also carries no explicit ReorderPoint it has no replenishment
-	// policy, so create nothing — replenishment is explicit opt-in (set a
-	// ReorderPoint or a UOP threshold). The former magic-2 default fired a silent
-	// over-supply here; ×payloads it was the SLN_002 incident's multiplier and it
-	// masked loaders that were never configured.
-	// Per-payload bin-count floor from the Loader: the cache's per-payload value
-	// for the aggregate, the claim's ReorderPoint for legacy — projected once at
-	// resolution, so no flag branch here. Zero = no bin-count policy → create nothing.
-	minStock := loader.MinStockFor(payloadCode)
-	if minStock <= 0 {
-		e.debugFn("side-cycle: loader=%s payload=%s has no ReorderPoint and no UOP threshold — no replenishment policy, creating no L1",
-			loader.Name(), payloadCode)
-		return 0
-	}
-	currentCount := 0
-	if count, ok := e.systemBinCountForPayload(string(payloadCode)); ok {
-		currentCount = count
-	}
-	if currentCount >= minStock {
-		e.logFn("side-cycle: loader=%s payload=%s currentCount=%d >= minStock=%d — skipping L1",
-			loader.Name(), payloadCode, currentCount, minStock)
-		return 0
-	}
-	// Desired total in-loop bins; tryCreateL1 subtracts what is already in
-	// flight (fail-closed) and fires the remainder. The system-count
-	// fail-OPEN above stays here at the caller — only the in-flight guard is
-	// centralized.
-	desired := minStock - currentCount
-	created, err := e.tryCreateL1(loader, payloadCode, L1SideCycle, desired, "") // legacy bin-count sweep: no member named → first-match
-	if err != nil {
-		e.logFn("side-cycle: loader=%s payload=%s — L1 creation failed after %d created: %v",
-			loader.Name(), payloadCode, created, err)
-		return created
-	}
-	if created > 0 {
-		e.logFn("side-cycle: loader=%s created=%d payload=%s minStock=%d currentCount=%d",
-			loader.Name(), created, payloadCode, minStock, currentCount)
-	}
-	return created
-}
-
 // L1Source identifies which path is creating a loader empty-in (L1)
-// retrieve_empty order. It is the typed replacement for the old free-text
-// `tag` and also carries the operator-driven-suppression policy, so adding a
-// source forces a decision about its class rather than defaulting silently.
+// retrieve_empty order. The legacy bin-count source (L1SideCycle) is retired —
+// a loader is supplied by the UOP-threshold C-push (L1LoopThreshold) or the
+// operator-driven opportunistic push (L1LoaderPush). It also carries the
+// operator-driven-suppression policy, so adding a source forces a decision
+// about its class rather than defaulting silently.
 type L1Source string
 
 const (
-	L1SideCycle     L1Source = "side-cycle"     // legacy bin-count refill
 	L1LoopThreshold L1Source = "loop_threshold" // UOP-threshold C-push
 	L1LoaderPush    L1Source = "loader_push"    // operator-driven opportunistic empty staging
 )
@@ -419,18 +214,12 @@ const (
 func (s L1Source) logTag() string { return string(s) }
 
 // suppressedByOperatorDriven reports whether an operator-driven loader silences
-// this source. Allowlist semantics: only the market-accounting (automatic)
-// sources opt in. L1LoaderPush — the operator-driven supply path itself — and
-// any future operator-driven source fall through to false, so they are NOT
-// suppressed: the operator is the signal on an operator-driven loader, and the
-// opportunistic empty staging that feeds them must keep running.
+// this source. Allowlist semantics: only the automatic market-accounting source
+// (L1LoopThreshold) opts in — an operator-driven loader is fed by the operator,
+// not the threshold monitor. L1LoaderPush (the operator-driven supply path itself)
+// falls through to false, so it is NOT suppressed.
 func (s L1Source) suppressedByOperatorDriven() bool {
-	switch s {
-	case L1SideCycle, L1LoopThreshold:
-		return true
-	default:
-		return false
-	}
+	return s == L1LoopThreshold
 }
 
 // loaderResvLock returns the per-loader reservation mutex, creating it on first
@@ -667,7 +456,10 @@ func (e *Engine) MaybePushLoader(_ int64) {
 		return
 	}
 	for _, l := range loaders {
-		if !l.IsOperatorDriven() {
+		// UsesOperatorStaging is true for operator-driven loaders AND for a
+		// threshold loader with no threshold configured (the fallback — it would
+		// otherwise be silently starved). SweepPushLoaders logs that misconfig.
+		if !l.UsesOperatorStaging() {
 			continue
 		}
 		e.maybeStageLoaderEmpty(l)
@@ -722,13 +514,20 @@ func (e *Engine) SweepPushLoaders() {
 	}
 	swept := 0
 	for _, l := range loaders {
-		if !l.IsOperatorDriven() {
+		if !l.UsesOperatorStaging() {
 			continue
+		}
+		if l.MisconfiguredThreshold() {
+			// Visible error: the loader is set to threshold replenishment but no UOP
+			// threshold is configured, so Core never signals it — it falls back to
+			// operator staging here. Fix the threshold in the loader config. (The
+			// loaders-admin UI surfaces the same misconfig flag.)
+			log.Printf("WARN loader-push: loader=%s replenishment=threshold but NO threshold configured — falling back to operator staging (set a UOP threshold in the loader config)", l.ID())
 		}
 		e.maybeStageLoaderEmpty(l)
 		swept++
 	}
 	if swept > 0 {
-		log.Printf("loader-push: startup sweep covered %d operator-driven loader(s)", swept)
+		log.Printf("loader-push: startup sweep covered %d operator-staged loader(s)", swept)
 	}
 }

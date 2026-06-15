@@ -104,11 +104,16 @@ func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode 
 	}
 }
 
-// pushUnloadersViaSeam is the 5b.2 seam-based auto-push: it walks every auto
-// (non-operator) consume loader in the aggregate and offers each allowed payload
-// to the shared reservation seam. The seam's never-2N budget makes it idempotent,
-// so it is safe on any window-free event or as a startup sweep — already-covered
-// windows create nothing. Replaces the legacy findManualSwapNodes walk under the flag.
+// pushUnloadersViaSeam is the seam-based auto-push: it walks every consume loader
+// in the aggregate and offers each allowed payload to the shared reservation seam.
+// The seam's never-2N budget makes it idempotent, so it is safe on any window-free
+// event or as a startup sweep — already-covered windows create nothing.
+//
+// A consume loader has a single mode: the window-queue DRAIN (operator). It pulls a
+// full whenever a window frees and one is waiting — operator-paced via never-2N.
+// The only thing skipped is a (dormant) consume threshold loader: consume-side UOP
+// thresholds aren't emitted yet, so threshold-mode consume loaders are left for that
+// future kanban work rather than auto-drained here.
 func (e *Engine) pushUnloadersViaSeam() {
 	loaders, err := e.loaderStore.Loaders(domain.RoleConsume)
 	if err != nil {
@@ -116,8 +121,8 @@ func (e *Engine) pushUnloadersViaSeam() {
 		return
 	}
 	for _, l := range loaders {
-		if l.Replenishment() != domain.ReplenishmentAuto {
-			continue // operator-driven unloader — no auto push (mirrors claim.AutoPush)
+		if l.Replenishment() == domain.ReplenishmentThreshold {
+			continue // dormant consume-threshold mode — no auto drain yet (future kanban)
 		}
 		for _, code := range l.PayloadSet() {
 			e.createUnloaderFullInViaSeam(l, string(code))

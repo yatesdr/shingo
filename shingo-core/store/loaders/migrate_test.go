@@ -64,15 +64,15 @@ func TestGroupIntoLoaders(t *testing.T) {
 	for _, h := range hl.Homes {
 		home[h.PositionNode] = h
 	}
-	if home["POS-1"].PayloadCode != "PH1" || home["POS-1"].MinStock != 3 {
-		t.Errorf("POS-1 home = %+v, want PH1/min3", home["POS-1"])
+	if home["POS-1"].PayloadCode != "PH1" {
+		t.Errorf("POS-1 home = %+v, want PH1", home["POS-1"])
 	}
 	if home["POS-2"].UOPThreshold != 50 {
 		t.Errorf("POS-2 threshold = %d, want 50", home["POS-2"].UOPThreshold)
 	}
 
-	if unl := byNode["UNL"]; unl.Loader.Replenishment != ReplenishmentAuto || unl.Loader.Role != RoleConsume || len(unl.Homes) != 1 || unl.Homes[0].PositionNode != "UNL" {
-		t.Errorf("UNL = %+v / homes %+v, want consume/auto + 1 anchor window (unloader parity)", unl.Loader, unl.Homes)
+	if unl := byNode["UNL"]; unl.Loader.Replenishment != ReplenishmentOperator || unl.Loader.Role != RoleConsume || len(unl.Homes) != 1 || unl.Homes[0].PositionNode != "UNL" {
+		t.Errorf("UNL = %+v / homes %+v, want consume/operator (drain) + 1 anchor window (unloader parity)", unl.Loader, unl.Homes)
 	}
 }
 
@@ -93,10 +93,10 @@ func TestReplenishmentMapping(t *testing.T) {
 		c    MigrationClaim
 		want string
 	}{
-		{"transitional→operator", MigrationClaim{Transitional: true, Role: RoleProduce}, ReplenishmentOperator},
-		{"consume no-autopush→operator", MigrationClaim{Role: RoleConsume, AutoPush: false}, ReplenishmentOperator},
-		{"consume autopush→auto", MigrationClaim{Role: RoleConsume, AutoPush: true}, ReplenishmentAuto},
-		{"produce→auto", MigrationClaim{Role: RoleProduce}, ReplenishmentAuto},
+		{"operator-driven→operator", MigrationClaim{Transitional: true, Role: RoleProduce}, ReplenishmentOperator},
+		{"consume no-autopush→operator (drain)", MigrationClaim{Role: RoleConsume, AutoPush: false}, ReplenishmentOperator},
+		{"consume autopush→operator (drain)", MigrationClaim{Role: RoleConsume, AutoPush: true}, ReplenishmentOperator},
+		{"produce→threshold", MigrationClaim{Role: RoleProduce}, ReplenishmentThreshold},
 	}
 	for _, tc := range cases {
 		if got := replenishment(tc.c); got != tc.want {
@@ -119,7 +119,7 @@ func TestLoaderFromClaimAndPayloadSet(t *testing.T) {
 		t.Errorf("home-location layout = %q, want dedicated_positions", hl.Layout)
 	}
 	ps := DerivePayloadSet(c)
-	if len(ps) != 2 || ps[0].PayloadCode != "A" || ps[0].MinStock != 3 || ps[0].UOPThreshold != 50 || ps[1].UOPThreshold != 0 {
-		t.Errorf("payload set = %+v, want A(min3,thr50) + B(min3,thr0)", ps)
+	if len(ps) != 2 || ps[0].PayloadCode != "A" || ps[0].UOPThreshold != 50 || ps[1].UOPThreshold != 0 {
+		t.Errorf("payload set = %+v, want A(thr50) + B(thr0)", ps)
 	}
 }

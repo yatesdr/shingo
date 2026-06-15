@@ -49,7 +49,7 @@ func (db *DB) WriteDerivedLoaders(derived []loaders.DerivedLoader) (created, ski
 			}
 			if herr := db.UpsertLoaderHome(loaders.Home{
 				LoaderID: id, PositionNodeID: node.ID, PayloadCode: h.PayloadCode,
-				MinStock: h.MinStock, UOPThreshold: h.UOPThreshold,
+				UOPThreshold: h.UOPThreshold,
 			}); herr != nil {
 				return created, skippedHomes, fmt.Errorf("write home %s: %w", h.PositionNode, herr)
 			}
@@ -126,7 +126,6 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 				CoreNodeName: node.Name,
 				PayloadCode:  h.PayloadCode,
 				Kind:         positionKind,
-				MinStock:     h.MinStock,
 				UOPThreshold: h.UOPThreshold,
 			})
 		}
@@ -138,7 +137,6 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 		for _, p := range payloads {
 			info.Payloads = append(info.Payloads, protocol.LoaderPayloadInfo{
 				PayloadCode:  p.PayloadCode,
-				MinStock:     p.MinStock,
 				UOPThreshold: p.UOPThreshold,
 			})
 		}

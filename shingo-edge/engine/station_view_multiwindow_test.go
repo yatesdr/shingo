@@ -68,14 +68,14 @@ func TestBuildView_SharedWindow_TagsWindowGroup(t *testing.T) {
 
 	// One shared_window loader with three windows; the station holds MW-W2.
 	eng.SetCoreLoaders([]protocol.LoaderInfo{{
-		Name: "MW", LoaderKey: "loader:MW-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "auto",
+		Name: "MW", LoaderKey: "loader:MW-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "threshold",
 		OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER", ConfigGen: 1,
 		Positions: []protocol.LoaderPosition{
 			{CoreNodeName: "MW-W1", Kind: protocol.LoaderPositionKindWindow},
 			{CoreNodeName: "MW-W2", Kind: protocol.LoaderPositionKindWindow},
 			{CoreNodeName: "MW-W3", Kind: protocol.LoaderPositionKindWindow},
 		},
-		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", MinStock: 2, UOPThreshold: 100}},
+		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
 	}})
 
 	view, err := eng.stationService.BuildView(sid)
@@ -108,10 +108,10 @@ func TestBuildView_SingleWindowLoader_NoWindowGroup(t *testing.T) {
 	// The station's node IS the loader's anchor (single-window: no positions).
 	sid := buildMultiWindowStation(t, db, "SW-PROC", "SW-LOADER")
 	eng.SetCoreLoaders([]protocol.LoaderInfo{{
-		Name: "SW", LoaderKey: "loader:SW-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "auto",
+		Name: "SW", LoaderKey: "loader:SW-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "threshold",
 		OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER", ConfigGen: 1,
 		Positions: []protocol.LoaderPosition{{CoreNodeName: "SW-LOADER", Kind: protocol.LoaderPositionKindWindow}},
-		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", MinStock: 2, UOPThreshold: 100}},
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
 	}})
 
 	view, err := eng.stationService.BuildView(sid)

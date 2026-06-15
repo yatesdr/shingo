@@ -33,7 +33,6 @@ type MigrationClaim struct {
 type DerivedHome struct {
 	PositionNode string
 	PayloadCode  string
-	MinStock     int
 	UOPThreshold int
 }
 
@@ -93,7 +92,7 @@ func GroupIntoLoaders(claims []MigrationClaim) ([]DerivedLoader, error) {
 			homeNodeSeen[nk] = true
 			out[i].Homes = append(out[i].Homes, DerivedHome{
 				PositionNode: c.CoreNode, PayloadCode: c.Payload,
-				MinStock: c.ReorderPoint, UOPThreshold: c.Thresholds[c.Payload],
+				UOPThreshold: c.Thresholds[c.Payload],
 			})
 			continue
 		}
@@ -149,28 +148,30 @@ func CheckHomeTripwire(claims []MigrationClaim) error {
 	return nil
 }
 
-// replenishment maps the legacy flags to the aggregate's replenishment mode
-// (D4): transitional → operator; otherwise a consume loader follows auto_push
-// (auto when pushing, operator when not), and a produce loader defaults to auto.
+// replenishment maps the legacy flags to the aggregate's replenishment mode:
+//   - operator-driven (legacy "transitional") → operator;
+//   - a consume loader (unloader) → ALWAYS operator — its single mode is the
+//     window-queue drain; there is no consume threshold mode today;
+//   - a produce loader → threshold (UOP kanban autoreorder). If it has no
+//     threshold configured the runtime falls back to operator staging + a
+//     visible error (see domain.Loader.UsesOperatorStaging), so threshold is
+//     the safe default here.
 func replenishment(c MigrationClaim) string {
-	if c.Transitional {
+	if c.Transitional || c.Role == RoleConsume {
 		return ReplenishmentOperator
 	}
-	if c.Role == RoleConsume && !c.AutoPush {
-		return ReplenishmentOperator
-	}
-	return ReplenishmentAuto
+	return ReplenishmentThreshold
 }
 
-// DerivePayloadSet returns the per-payload config (min_stock from reorder_point,
-// uop_threshold from the threshold map) for a shared_window loader's claim.
+// DerivePayloadSet returns the per-payload config (uop_threshold from the
+// threshold map) for a shared_window loader's claim. The legacy bin-count floor
+// (min_stock from reorder_point) is retired, so it is no longer derived.
 // Exposed for the migration writer and tested directly.
 func DerivePayloadSet(c MigrationClaim) []Payload {
 	out := make([]Payload, 0, len(c.Payloads))
 	for _, code := range c.Payloads {
 		out = append(out, Payload{
 			PayloadCode:  code,
-			MinStock:     c.ReorderPoint,
 			UOPThreshold: c.Thresholds[code],
 		})
 	}

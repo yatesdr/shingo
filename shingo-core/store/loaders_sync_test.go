@@ -35,7 +35,7 @@ func TestBuildDemandRegistryFromAggregate(t *testing.T) {
 
 	id, err := db.CreateLoader(loaders.Loader{
 		Name: "L", Role: loaders.RoleProduce,
-		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentAuto, OutboundDest: "FG-MARKET",
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentThreshold, OutboundDest: "FG-MARKET",
 	})
 	if err != nil {
 		t.Fatalf("CreateLoader: %v", err)
@@ -89,13 +89,13 @@ func TestBuildLoaderInfos(t *testing.T) {
 
 	id, err := db.CreateLoader(loaders.Loader{
 		Name: "L", Role: loaders.RoleProduce,
-		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentAuto,
+		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentThreshold,
 		OutboundDest: "FG-MARKET",
 	})
 	if err != nil {
 		t.Fatalf("CreateLoader: %v", err)
 	}
-	if err := db.UpsertLoaderHome(loaders.Home{LoaderID: id, PositionNodeID: posID, PayloadCode: "PART-A", MinStock: 2, UOPThreshold: 100}); err != nil {
+	if err := db.UpsertLoaderHome(loaders.Home{LoaderID: id, PositionNodeID: posID, PayloadCode: "PART-A", UOPThreshold: 100}); err != nil {
 		t.Fatalf("UpsertLoaderHome: %v", err)
 	}
 
@@ -117,8 +117,8 @@ func TestBuildLoaderInfos(t *testing.T) {
 	if p.CoreNodeName != "HOME-POS-1" {
 		t.Errorf("position carries %q, want the node NAME HOME-POS-1 (id→name bridge)", p.CoreNodeName)
 	}
-	if p.PayloadCode != "PART-A" || p.MinStock != 2 || p.UOPThreshold != 100 {
-		t.Errorf("position = %+v, want PART-A/2/100", p)
+	if p.PayloadCode != "PART-A" || p.UOPThreshold != 100 {
+		t.Errorf("position = %+v, want PART-A/thr100", p)
 	}
 	// Kind is derived from the parent loader's layout (dedicated here), stamped
 	// on the wire so the Edge never sniffs an empty payload to classify.

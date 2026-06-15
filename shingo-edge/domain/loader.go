@@ -79,14 +79,15 @@ const (
 
 func (r LoaderRole) valid() bool { return r == RoleProduce || r == RoleConsume }
 
-// LoaderReplenishment is auto (market-accounting fires empties) or operator (the
-// operator is the signal — the old "transitional" loader). Mirrors the Core
-// aggregate's loaders.Replenishment* constants.
+// LoaderReplenishment is operator (the operator stages/clears at the board) or
+// threshold (UOP kanban autoreorder — Core's threshold monitor fires the empties).
+// A consume loader (unloader) is always operator: its single mode is the
+// window-queue drain. Mirrors the Core aggregate's loaders.Replenishment* constants.
 type LoaderReplenishment string
 
 const (
-	ReplenishmentAuto     LoaderReplenishment = "auto"
-	ReplenishmentOperator LoaderReplenishment = "operator"
+	ReplenishmentOperator  LoaderReplenishment = "operator"
+	ReplenishmentThreshold LoaderReplenishment = "threshold"
 )
 
 // PositionKind is the EXPLICIT marker that replaces the empty-payload-means-window
@@ -122,7 +123,6 @@ type Window struct {
 type Position struct {
 	Node         NodeID
 	Payload      PayloadCode // "" when the operator hasn't assigned a payload yet
-	MinStock     int
 	UOPThreshold int
 }
 
@@ -159,7 +159,6 @@ type Loader struct {
 	inboundSource string              // the empty market L1s source from
 	outboundDest  string              // the market filled (L2) / emptied (U2) bins go to on completion
 	bufferDest    string              // the buffer node group (step 7): stages empties / parks orphaned partials
-	minStock      map[PayloadCode]int // shared_window per-payload bin-count floor
 	uopThreshold  map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in); dedicated carries it on Position
 }
 
@@ -186,16 +185,6 @@ func WithOutboundDest(dst string) LoaderOption {
 // changeover-orphaned partials (the step-7 buffer). Empty when not configured.
 func WithBufferDest(dst string) LoaderOption {
 	return func(l *Loader) { l.bufferDest = dst }
-}
-
-// WithMinStock sets the shared_window per-payload bin-count floor (ReorderPoint)
-// the legacy bin-count refill tops up to. Dedicated loaders carry MinStock on
-// each Position instead.
-func WithMinStock(m map[PayloadCode]int) LoaderOption {
-	return func(l *Loader) {
-		l.minStock = make(map[PayloadCode]int, len(m))
-		maps.Copy(l.minStock, m)
-	}
 }
 
 // WithUOPThreshold sets the shared_window per-payload UOP threshold (the C-push
@@ -304,26 +293,11 @@ func (l *Loader) OutboundDest() string { return l.outboundDest }
 // BufferDest is the buffer node group (step 7); empty when not configured.
 func (l *Loader) BufferDest() string { return l.bufferDest }
 
-// MinStockFor returns the per-payload bin-count floor (ReorderPoint) the legacy
-// bin-count refill tops up to: the shared per-payload value for shared_window, or
-// the matching position's MinStock for dedicated. Zero means "no bin-count policy."
-func (l *Loader) MinStockFor(p PayloadCode) int {
-	if v, ok := l.minStock[p]; ok {
-		return v
-	}
-	for _, pos := range l.positions {
-		if pos.Payload == p {
-			return pos.MinStock
-		}
-	}
-	return 0
-}
-
 // UOPThresholdFor returns the per-payload UOP threshold (the C-push opt-in): the
 // shared per-payload value for shared_window, or the matching position's
 // UOPThreshold for dedicated. Zero means "no UOP-threshold policy" (not opted into
-// C-push). Mirrors MinStockFor so the demand sweep can ask the aggregate directly
-// instead of a node-keyed cache lookup that the loader_key token can never match.
+// C-push). The demand sweep asks the aggregate directly instead of a node-keyed
+// cache lookup that the loader_key token can never match.
 func (l *Loader) UOPThresholdFor(p PayloadCode) int {
 	if v, ok := l.uopThreshold[p]; ok {
 		return v
@@ -334,6 +308,42 @@ func (l *Loader) UOPThresholdFor(p PayloadCode) int {
 		}
 	}
 	return 0
+}
+
+// hasConfiguredThreshold reports whether any payload/position carries a UOP
+// threshold > 0 — i.e. the loader is actually set up for threshold (C-push)
+// replenishment. A threshold-mode loader with none configured is misconfigured.
+func (l *Loader) hasConfiguredThreshold() bool {
+	for _, v := range l.uopThreshold {
+		if v > 0 {
+			return true
+		}
+	}
+	for _, pos := range l.positions {
+		if pos.UOPThreshold > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// UsesOperatorStaging reports whether this loader is supplied by operator-driven
+// opportunistic staging (the window-free push) rather than the automatic threshold
+// path. True when replenishment is operator, OR when it is threshold but NO
+// threshold is actually configured — the fallback: a threshold loader with no
+// threshold value would otherwise be silently starved (Core never signals it), so
+// it falls back to operator staging. Callers log that misconfiguration; the config
+// UI surfaces it. A consume loader is always operator, so this is true for it.
+func (l *Loader) UsesOperatorStaging() bool {
+	return l.replenishment == ReplenishmentOperator ||
+		(l.replenishment == ReplenishmentThreshold && !l.hasConfiguredThreshold())
+}
+
+// MisconfiguredThreshold reports the fallback case for a loud log / UI flag: the
+// loader is in threshold mode but has no threshold configured, so it is falling
+// back to operator staging.
+func (l *Loader) MisconfiguredThreshold() bool {
+	return l.replenishment == ReplenishmentThreshold && !l.hasConfiguredThreshold()
 }
 
 // SlotCount is the loader's total physical bin slots — for a shared_window loader

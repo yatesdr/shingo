@@ -50,15 +50,23 @@ func (s *LoaderService) Homes(loaderID int64) ([]loaders.Home, error) {
 // ── Writes (re-derive after each) ─────────────────────────────────────
 
 // Create persists a new loader and re-derives. Takes primitives (not a store
-// type) so www handlers can call it without importing the store. Empty
-// layout/replenishment default to shared_window/auto. The loader's identity is the
-// surrogate id returned here; member nodes are dragged in afterward. Returns the new id.
+// type) so www handlers can call it without importing the store. Empty layout
+// defaults to shared_window; empty replenishment defaults role-aware
+// (produce→threshold, consume→operator). The loader's identity is the surrogate
+// id returned here; member nodes are dragged in afterward. Returns the new id.
 func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, inboundSource, bufferDest string) (int64, error) {
 	if layout == "" {
 		layout = loaders.LayoutSharedWindow
 	}
 	if replenishment == "" {
-		replenishment = loaders.ReplenishmentAuto
+		// Role-aware default: a produce loader is threshold-driven (UOP kanban
+		// autoreorder); a consume loader (unloader) is always operator (the
+		// window-queue drain — no consume threshold mode today).
+		if role == loaders.RoleConsume {
+			replenishment = loaders.ReplenishmentOperator
+		} else {
+			replenishment = loaders.ReplenishmentThreshold
+		}
 	}
 	id, err := s.db.CreateLoader(loaders.Loader{
 		Name: name, Role: role, Layout: layout,
@@ -114,9 +122,11 @@ func (s *LoaderService) Delete(id int64) error {
 }
 
 // SetPayload assigns (or updates) a shared_window payload binding + threshold.
-func (s *LoaderService) SetPayload(loaderID int64, payloadCode string, minStock, uopThreshold int) error {
+// (The bin-count floor / min_stock is retired — replenishment is operator or
+// UOP-threshold, never bin-count.)
+func (s *LoaderService) SetPayload(loaderID int64, payloadCode string, uopThreshold int) error {
 	if err := s.db.UpsertLoaderPayload(loaders.Payload{
-		LoaderID: loaderID, PayloadCode: payloadCode, MinStock: minStock, UOPThreshold: uopThreshold,
+		LoaderID: loaderID, PayloadCode: payloadCode, UOPThreshold: uopThreshold,
 	}); err != nil {
 		return err
 	}
@@ -129,14 +139,14 @@ func (s *LoaderService) SetPayload(loaderID int64, payloadCode string, minStock,
 // one preserves its place (the store ignores sort_order on conflict). payloadCode
 // may be empty — the grid-drag drops a node first, then the operator assigns its
 // payload via the inline picker.
-func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode string, minStock, uopThreshold int) error {
+func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode string, uopThreshold int) error {
 	existing, err := s.db.ListLoaderHomes(loaderID)
 	if err != nil {
 		return err
 	}
 	if err := s.db.UpsertLoaderHome(loaders.Home{
 		LoaderID: loaderID, PositionNodeID: positionNodeID, PayloadCode: payloadCode,
-		MinStock: minStock, UOPThreshold: uopThreshold, SortOrder: len(existing),
+		UOPThreshold: uopThreshold, SortOrder: len(existing),
 	}); err != nil {
 		return err
 	}

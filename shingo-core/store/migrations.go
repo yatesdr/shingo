@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 
 	"shingocore/store/schema"
 )
@@ -435,6 +436,15 @@ func (db *DB) runVersionedMigrations() error {
 		{39, "drop bin_loaders.core_node_name + its UNIQUE (loader identity is the surrogate id)",
 			v39DropLoaderCoreNodeName,
 			func(q schema.Querier) bool { return !schema.ColumnExists(q, "bin_loaders", "core_node_name") }},
+		// v40: rename the replenishment enum value auto→threshold (role-aware) + swap the
+		// CHECK. Once the legacy bin-count floor is retired, "auto" only ever meant
+		// threshold-driven, so the model is operator|threshold. Conversion is role-aware:
+		// a produce auto loader is threshold (UOP kanban autoreorder); a consume auto loader
+		// (the AutoPush drain) becomes operator — consume's single mode is the window-queue
+		// drain, there is no consume threshold mode. min_stock columns are left dormant.
+		{40, "loader replenishment auto→threshold (role-aware) + CHECK (operator,threshold)",
+			v40LoaderReplenishmentThreshold,
+			v40CheckAllowsThreshold},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1198,6 +1208,37 @@ func v39DropLoaderCoreNodeName(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// v40LoaderReplenishmentThreshold renames the replenishment enum value auto→threshold
+// (role-aware) and swaps the CHECK constraint. Order matters: the old CHECK only allows
+// ('auto','operator'), so an UPDATE to 'threshold' would violate it — drop the CHECK
+// FIRST, convert, then add the new CHECK. Idempotent: after running there are no 'auto'
+// rows and the new CHECK is in place; re-running is a no-op (no rows match, DROP/ADD IF).
+func v40LoaderReplenishmentThreshold(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE bin_loaders DROP CONSTRAINT IF EXISTS bin_loaders_replenishment_check`,
+		`UPDATE bin_loaders SET replenishment='threshold' WHERE replenishment='auto' AND role='produce'`,
+		`UPDATE bin_loaders SET replenishment='operator'  WHERE replenishment='auto' AND role='consume'`,
+		`ALTER TABLE bin_loaders ADD CONSTRAINT bin_loaders_replenishment_check CHECK (replenishment IN ('operator','threshold'))`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v40 replenishment auto→threshold: %w", err)
+		}
+	}
+	return nil
+}
+
+// v40CheckAllowsThreshold is the v40 post-condition: the replenishment CHECK constraint
+// now references 'threshold'. Reads the constraint def from the catalog.
+func v40CheckAllowsThreshold(q schema.Querier) bool {
+	var def string
+	if err := q.QueryRow(`SELECT COALESCE(string_agg(pg_get_constraintdef(oid), ' '), '')
+		FROM pg_constraint WHERE conrelid='bin_loaders'::regclass AND contype='c'`).Scan(&def); err != nil {
+		return false
+	}
+	return strings.Contains(def, "threshold")
 }
 
 func migrateBinsCommandCenter(tx *sql.Tx) error {

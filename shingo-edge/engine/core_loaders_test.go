@@ -18,8 +18,8 @@ func TestCoreLoaderCache_ReplaceAndRead(t *testing.T) {
 	loaders := []protocol.LoaderInfo{
 		{
 			Name: "L", LoaderKey: "loader:LOADER-X", Role: "produce",
-			Layout: "dedicated_positions", Replenishment: "auto", OutboundDest: "FG-MARKET", ConfigGen: 3,
-			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-A", MinStock: 2, UOPThreshold: 100}},
+			Layout: "dedicated_positions", Replenishment: "threshold", OutboundDest: "FG-MARKET", ConfigGen: 3,
+			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-A", UOPThreshold: 100}},
 		},
 		{
 			Name: "U", LoaderKey: "loader:UNLOADER-Y", Role: "consume",

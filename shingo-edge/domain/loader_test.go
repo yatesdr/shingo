@@ -31,7 +31,7 @@ func TestNewLoader_RejectsInvalidStates(t *testing.T) {
 	}
 	for _, tc := range shared {
 		t.Run(tc.name, func(t *testing.T) {
-			if l, err := NewSharedWindowLoader(tc.id, "n", tc.role, ReplenishmentAuto, tc.windows, tc.payload); err == nil {
+			if l, err := NewSharedWindowLoader(tc.id, "n", tc.role, ReplenishmentThreshold, tc.windows, tc.payload); err == nil {
 				t.Fatalf("expected error, got loader %+v", l)
 			}
 		})
@@ -50,7 +50,7 @@ func TestNewLoader_RejectsInvalidStates(t *testing.T) {
 	}
 	for _, tc := range dedicated {
 		t.Run(tc.name, func(t *testing.T) {
-			if l, err := NewDedicatedPositionsLoader(tc.id, "n", tc.role, ReplenishmentAuto, tc.positions); err == nil {
+			if l, err := NewDedicatedPositionsLoader(tc.id, "n", tc.role, ReplenishmentThreshold, tc.positions); err == nil {
 				t.Fatalf("expected error, got loader %+v", l)
 			}
 		})
@@ -62,7 +62,7 @@ func TestNewLoader_RejectsInvalidStates(t *testing.T) {
 // to a mismatching value because it is never a parameter.
 func TestNewSharedWindowLoader_Valid(t *testing.T) {
 	t.Parallel()
-	l, err := NewSharedWindowLoader("WELD-1", "Weld 1 loader", RoleProduce, ReplenishmentAuto,
+	l, err := NewSharedWindowLoader("WELD-1", "Weld 1 loader", RoleProduce, ReplenishmentThreshold,
 		[]Window{{Node: "WELD-1-W1"}, {Node: "WELD-1-W2"}, {Node: "WELD-1-W3"}},
 		[]PayloadCode{"PART-A", "PART-B"})
 	if err != nil {
@@ -88,7 +88,7 @@ func TestNewSharedWindowLoader_Valid(t *testing.T) {
 func TestNewDedicatedPositionsLoader_Valid(t *testing.T) {
 	t.Parallel()
 	l, err := NewDedicatedPositionsLoader("SLN-2", "Home loader", RoleProduce, ReplenishmentOperator,
-		[]Position{{Node: "HOME-1", Payload: "PART-A", MinStock: 2}, {Node: "HOME-2", Payload: ""}})
+		[]Position{{Node: "HOME-1", Payload: "PART-A"}, {Node: "HOME-2", Payload: ""}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestReservationTarget(t *testing.T) {
 	t.Parallel()
 
 	// MULTI-WINDOW shared.
-	shared, err := NewSharedWindowLoader("WELD-1", "n", RoleProduce, ReplenishmentAuto,
+	shared, err := NewSharedWindowLoader("WELD-1", "n", RoleProduce, ReplenishmentThreshold,
 		[]Window{{Node: "WELD-1-W1"}, {Node: "WELD-1-W2"}}, []PayloadCode{"P1"})
 	if err != nil {
 		t.Fatalf("build shared: %v", err)
@@ -143,7 +143,7 @@ func TestReservationTarget(t *testing.T) {
 	}
 
 	// SINGLE-WINDOW shared.
-	single, err := NewSharedWindowLoader("LDR-1", "n", RoleProduce, ReplenishmentAuto,
+	single, err := NewSharedWindowLoader("LDR-1", "n", RoleProduce, ReplenishmentThreshold,
 		[]Window{{Node: "LDR-1"}}, []PayloadCode{"P1"})
 	if err != nil {
 		t.Fatalf("build single: %v", err)
@@ -153,7 +153,7 @@ func TestReservationTarget(t *testing.T) {
 	}
 
 	// DEDICATED with TWO same-payload positions — the O2 fixture.
-	ded, err := NewDedicatedPositionsLoader("DECK", "n", RoleProduce, ReplenishmentAuto,
+	ded, err := NewDedicatedPositionsLoader("DECK", "n", RoleProduce, ReplenishmentThreshold,
 		[]Position{{Node: "POS-1", Payload: "PA"}, {Node: "POS-2", Payload: "PA"}, {Node: "POS-3", Payload: "PB"}})
 	if err != nil {
 		t.Fatalf("build dedicated: %v", err)
@@ -180,7 +180,7 @@ func TestReservationTarget(t *testing.T) {
 // claim, and the buffer (step 7) has its node group. Unset fields are empty.
 func TestLoaderOutboundBufferOptions(t *testing.T) {
 	t.Parallel()
-	l, err := NewDedicatedPositionsLoader("DECK", "n", RoleProduce, ReplenishmentAuto,
+	l, err := NewDedicatedPositionsLoader("DECK", "n", RoleProduce, ReplenishmentThreshold,
 		[]Position{{Node: "POS-1", Payload: "PA"}},
 		WithOutboundDest("SYN_SM_Comp"), WithBufferDest("SYN_BUF_Deck"))
 	if err != nil {
@@ -192,7 +192,7 @@ func TestLoaderOutboundBufferOptions(t *testing.T) {
 	if l.BufferDest() != "SYN_BUF_Deck" {
 		t.Errorf("BufferDest = %q, want SYN_BUF_Deck", l.BufferDest())
 	}
-	bare, _ := NewSharedWindowLoader("L", "n", RoleProduce, ReplenishmentAuto,
+	bare, _ := NewSharedWindowLoader("L", "n", RoleProduce, ReplenishmentThreshold,
 		[]Window{{Node: "L"}}, []PayloadCode{"P1"})
 	if bare.OutboundDest() != "" || bare.BufferDest() != "" {
 		t.Errorf("unset outbound/buffer should be empty, got %q/%q", bare.OutboundDest(), bare.BufferDest())
@@ -203,7 +203,7 @@ func TestLoaderOutboundBufferOptions(t *testing.T) {
 // must not corrupt the aggregate's internal state.
 func TestLoader_AccessorsReturnCopies(t *testing.T) {
 	t.Parallel()
-	l, err := NewSharedWindowLoader("L", "n", RoleProduce, ReplenishmentAuto,
+	l, err := NewSharedWindowLoader("L", "n", RoleProduce, ReplenishmentThreshold,
 		[]Window{{Node: "W1"}}, []PayloadCode{"P1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

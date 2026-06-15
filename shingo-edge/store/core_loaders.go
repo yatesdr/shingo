@@ -40,14 +40,12 @@ type CoreLoaderPosition struct {
 	PositionNode string
 	PayloadCode  string
 	Kind         string
-	MinStock     int
 	UOPThreshold int
 }
 
 // CoreLoaderPayload is one entry in a shared_window allowed set.
 type CoreLoaderPayload struct {
 	PayloadCode  string
-	MinStock     int
 	UOPThreshold int
 }
 
@@ -76,17 +74,18 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 			return fmt.Errorf("insert core_loader %s/%s: %w", l.LoaderKey, l.Role, err)
 		}
 		for _, p := range l.Positions {
+			// min_stock column left dormant (bin-count floor retired) — defaults to 0.
 			if _, err := tx.Exec(
-				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, kind, min_stock, uop_threshold) VALUES (?,?,?,?,?,?)`,
-				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.Kind, p.MinStock, p.UOPThreshold,
+				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, kind, uop_threshold) VALUES (?,?,?,?,?)`,
+				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.Kind, p.UOPThreshold,
 			); err != nil {
 				return fmt.Errorf("insert position %s: %w", p.CoreNodeName, err)
 			}
 		}
 		for _, p := range l.Payloads {
 			if _, err := tx.Exec(
-				`INSERT INTO core_loader_payloads (loader_key, payload_code, min_stock, uop_threshold) VALUES (?,?,?,?)`,
-				l.LoaderKey, p.PayloadCode, p.MinStock, p.UOPThreshold,
+				`INSERT INTO core_loader_payloads (loader_key, payload_code, uop_threshold) VALUES (?,?,?)`,
+				l.LoaderKey, p.PayloadCode, p.UOPThreshold,
 			); err != nil {
 				return fmt.Errorf("insert payload %s: %w", p.PayloadCode, err)
 			}
@@ -147,13 +146,13 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 }
 
 func (db *DB) attachCoreLoaderChildren(l *CoreLoader) error {
-	prows, err := db.Query(`SELECT position_node, payload_code, kind, min_stock, uop_threshold FROM core_loader_positions WHERE loader_key=? ORDER BY position_node`, l.LoaderKey)
+	prows, err := db.Query(`SELECT position_node, payload_code, kind, uop_threshold FROM core_loader_positions WHERE loader_key=? ORDER BY position_node`, l.LoaderKey)
 	if err != nil {
 		return fmt.Errorf("list positions %s: %w", l.LoaderKey, err)
 	}
 	for prows.Next() {
 		var p CoreLoaderPosition
-		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.Kind, &p.MinStock, &p.UOPThreshold); err != nil {
+		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.Kind, &p.UOPThreshold); err != nil {
 			prows.Close()
 			return err
 		}
@@ -164,14 +163,14 @@ func (db *DB) attachCoreLoaderChildren(l *CoreLoader) error {
 		return err
 	}
 
-	yrows, err := db.Query(`SELECT payload_code, min_stock, uop_threshold FROM core_loader_payloads WHERE loader_key=? ORDER BY payload_code`, l.LoaderKey)
+	yrows, err := db.Query(`SELECT payload_code, uop_threshold FROM core_loader_payloads WHERE loader_key=? ORDER BY payload_code`, l.LoaderKey)
 	if err != nil {
 		return fmt.Errorf("list payloads %s: %w", l.LoaderKey, err)
 	}
 	defer yrows.Close()
 	for yrows.Next() {
 		var p CoreLoaderPayload
-		if err := yrows.Scan(&p.PayloadCode, &p.MinStock, &p.UOPThreshold); err != nil {
+		if err := yrows.Scan(&p.PayloadCode, &p.UOPThreshold); err != nil {
 			return err
 		}
 		l.Payloads = append(l.Payloads, p)

@@ -2,17 +2,17 @@ package engine
 
 import "testing"
 
-// TestMaybePushLoader_StagesOneEmptyForTransitionalLoaderOnly pins the
-// loader-side opportunistic staging: a transitional loader gets exactly one
-// empty staged (idempotent while in flight); a non-transitional loader gets
-// none (its empties come from the threshold/legacy paths).
-func TestMaybePushLoader_StagesOneEmptyForTransitionalLoaderOnly(t *testing.T) {
+// TestMaybePushLoader_StagesOneEmptyForOperatorDrivenLoaderOnly pins the
+// loader-side opportunistic staging: an operator-driven loader gets exactly one
+// empty staged (idempotent while in flight); a (configured) threshold loader gets
+// none (its empties come from the threshold path).
+func TestMaybePushLoader_StagesOneEmptyForOperatorDrivenLoaderOnly(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "PUSH-PROC", "PUSH-LOADER", "PART-P")
-	// Non-transitional in the aggregate: replenishment=auto.
-	seedCoreLoader(t, eng, sharedLoaderInfo("PUSH-LOADER", "produce", "auto", "PART-P", 0, 0))
+	// Threshold-driven WITH a configured threshold → no operator push.
+	seedCoreLoader(t, eng, sharedLoaderInfo("PUSH-LOADER", "produce", "threshold", "PART-P", 0, 100))
 
 	countEmpties := func() int {
 		ords, err := db.ListActiveOrdersByProcessNode(nodeID)
@@ -28,13 +28,14 @@ func TestMaybePushLoader_StagesOneEmptyForTransitionalLoaderOnly(t *testing.T) {
 		return n
 	}
 
-	// Not transitional → no opportunistic staging.
+	// Configured threshold loader → no opportunistic staging (Core's threshold
+	// monitor supplies it).
 	eng.MaybePushLoader(nodeID)
 	if got := countEmpties(); got != 0 {
-		t.Fatalf("non-transitional loader must not auto-stage, got %d", got)
+		t.Fatalf("configured threshold loader must not auto-stage, got %d", got)
 	}
 
-	// Mark transitional (replenishment=operator) → one empty staged.
+	// Mark operator-driven (replenishment=operator) → one empty staged.
 	seedCoreLoader(t, eng, sharedLoaderInfo("PUSH-LOADER", "produce", "operator", "PART-P", 0, 0))
 	eng.MaybePushLoader(nodeID)
 	if got := countEmpties(); got != 1 {
@@ -57,18 +58,18 @@ func TestMaybePushLoader_StagesOneEmptyForTransitionalLoaderOnly(t *testing.T) {
 	}
 }
 
-// TestSweepPushLoaders_OnlyTransitionalProduceLoaders pins that the startup
-// sweep stages for transitional produce loaders and skips ordinary ones.
-func TestSweepPushLoaders_OnlyTransitionalProduceLoaders(t *testing.T) {
+// TestSweepPushLoaders_OnlyOperatorStagedLoaders pins that the startup sweep
+// stages for operator-driven produce loaders and skips configured threshold ones.
+func TestSweepPushLoaders_OnlyOperatorStagedLoaders(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	_, transNode, _ := seedActiveManualSwapLoader(t, db, "T-PROC", "T-LOADER", "PART-A")
-	_, plainNode, _ := seedActiveManualSwapLoader(t, db, "P-PROC", "P-LOADER", "PART-B")
-	// T-LOADER transitional (replenishment=operator); P-LOADER ordinary (auto).
+	_, opNode, _ := seedActiveManualSwapLoader(t, db, "T-PROC", "T-LOADER", "PART-A")
+	_, thrNode, _ := seedActiveManualSwapLoader(t, db, "P-PROC", "P-LOADER", "PART-B")
+	// T-LOADER operator-driven; P-LOADER threshold-driven WITH a threshold configured.
 	seedCoreLoader(t, eng,
 		sharedLoaderInfo("T-LOADER", "produce", "operator", "PART-A", 0, 0),
-		sharedLoaderInfo("P-LOADER", "produce", "auto", "PART-B", 0, 0))
+		sharedLoaderInfo("P-LOADER", "produce", "threshold", "PART-B", 0, 100))
 
 	eng.SweepPushLoaders()
 
@@ -82,10 +83,36 @@ func TestSweepPushLoaders_OnlyTransitionalProduceLoaders(t *testing.T) {
 		}
 		return n
 	}
-	if got := countEmpties(transNode); got != 1 {
-		t.Errorf("transitional loader: want 1 staged empty, got %d", got)
+	if got := countEmpties(opNode); got != 1 {
+		t.Errorf("operator-driven loader: want 1 staged empty, got %d", got)
 	}
-	if got := countEmpties(plainNode); got != 0 {
-		t.Errorf("non-transitional loader: want 0 staged, got %d", got)
+	if got := countEmpties(thrNode); got != 0 {
+		t.Errorf("configured threshold loader: want 0 staged, got %d", got)
+	}
+}
+
+// TestMaybePushLoader_ThresholdWithoutThresholdFallsBackToStaging pins the
+// fallback: a loader set to replenishment=threshold but with NO threshold
+// configured would be silently starved (Core never signals it), so it falls back
+// to operator staging — exactly one empty staged.
+func TestMaybePushLoader_ThresholdWithoutThresholdFallsBackToStaging(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "FB-PROC", "FB-LOADER", "PART-F")
+	// threshold mode, but uop_threshold=0 → misconfigured → fall back to staging.
+	seedCoreLoader(t, eng, sharedLoaderInfo("FB-LOADER", "produce", "threshold", "PART-F", 0, 0))
+
+	eng.MaybePushLoader(nodeID)
+
+	n := 0
+	ords, _ := db.ListActiveOrdersByProcessNode(nodeID)
+	for _, o := range ords {
+		if o.RetrieveEmpty {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("threshold-with-no-threshold must fall back to staging 1 empty, got %d", n)
 	}
 }

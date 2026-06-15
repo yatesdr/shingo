@@ -289,8 +289,9 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			continue
 		}
 		c := first[k]
-		repl := "auto"
-		if k.role == "consume" && !c.AutoPush {
+		// Role-aware: produce → threshold (UOP kanban); consume → operator (drain).
+		repl := "threshold"
+		if k.role == "consume" {
 			repl = "operator"
 		}
 		id, err := db.CreateLoader(store.Loader{
@@ -307,7 +308,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 		}
 		for _, pc := range pls[k] {
 			if err := db.UpsertLoaderPayload(store.LoaderPayload{
-				LoaderID: id, PayloadCode: pc.code, MinStock: pc.minStock, UOPThreshold: pc.thresh,
+				LoaderID: id, PayloadCode: pc.code, UOPThreshold: pc.thresh,
 			}); err != nil {
 				return fmt.Errorf("seed loader payload %s/%s: %w", k.node, pc.code, err)
 			}
@@ -366,8 +367,8 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 		if existing != nil {
 			continue
 		}
-		repl := "auto"
-		if lead.Role == "consume" && !lead.AutoPush {
+		repl := "threshold"
+		if lead.Role == "consume" {
 			repl = "operator"
 		}
 		lid, err := db.CreateLoader(store.Loader{
@@ -384,7 +385,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 		}
 		for _, pc := range windowPls[id] {
 			if err := db.UpsertLoaderPayload(store.LoaderPayload{
-				LoaderID: lid, PayloadCode: pc.code, MinStock: pc.minStock, UOPThreshold: pc.thresh,
+				LoaderID: lid, PayloadCode: pc.code, UOPThreshold: pc.thresh,
 			}); err != nil {
 				return fmt.Errorf("seed synthetic loader payload %s/%s: %w", id, pc.code, err)
 			}
@@ -423,8 +424,8 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 		if existing != nil {
 			continue
 		}
-		repl := "auto"
-		if lead.Role == "consume" && !lead.AutoPush {
+		repl := "threshold"
+		if lead.Role == "consume" {
 			repl = "operator"
 		}
 		lid, err := db.CreateLoader(store.Loader{
@@ -454,7 +455,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			}
 			if err := db.UpsertLoaderHome(store.LoaderHome{
 				LoaderID: lid, PositionNodeID: node.ID, PayloadCode: code,
-				MinStock: int(hc.ReorderPoint), UOPThreshold: thr, SortOrder: i,
+				UOPThreshold: thr, SortOrder: i,
 			}); err != nil {
 				return fmt.Errorf("seed dedicated loader %s position home %s: %w", id, hc.CoreNode, err)
 			}

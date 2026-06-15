@@ -26,9 +26,12 @@ import (
 // the token off the wire (LoaderInfo.LoaderKey) and never re-derives it.
 func Key(id int64) string { return "loader:" + strconv.FormatInt(id, 10) }
 
-// Enum values mirror the v34 CHECK constraints. New names per the refactor
-// (D4): layout = shared_window | dedicated_positions; replenishment = auto |
-// operator. role stays produce | consume.
+// Enum values: layout = shared_window | dedicated_positions; role = produce |
+// consume; replenishment = operator | threshold. A produce loader is operator
+// (operator stages/clears at the board) or threshold (UOP kanban autoreorder).
+// A consume loader (unloader) is always operator — the window-queue drain.
+// "auto" was renamed to "threshold" (v40 migration) once the legacy bin-count
+// floor was retired, so "auto" no longer conflates threshold with bin-count.
 const (
 	RoleProduce = "produce"
 	RoleConsume = "consume"
@@ -36,8 +39,8 @@ const (
 	LayoutSharedWindow       = "shared_window"
 	LayoutDedicatedPositions = "dedicated_positions"
 
-	ReplenishmentAuto     = "auto"
-	ReplenishmentOperator = "operator"
+	ReplenishmentOperator  = "operator"
+	ReplenishmentThreshold = "threshold"
 )
 
 // Loader is the aggregate root: a bin loader (produce) or unloader (consume)
@@ -59,11 +62,14 @@ type Loader struct {
 // Home is one dedicated position: exactly one payload. The global
 // UNIQUE(position_node_id) makes "one payload per position, one loader per node"
 // unrepresentable-otherwise — the structural fix for the SLN_002 incident.
+//
+// The legacy bin-count floor (min_stock) is retired: a loader is operator-driven
+// or UOP-threshold-driven, never bin-count-driven. The DB column is left dormant
+// (defaults to 0) and is no longer read or written.
 type Home struct {
 	LoaderID       int64  `json:"loader_id"`
 	PositionNodeID int64  `json:"position_node_id"`
 	PayloadCode    string `json:"payload_code"`
-	MinStock       int    `json:"min_stock"`
 	UOPThreshold   int    `json:"uop_threshold"`
 	SortOrder      int    `json:"sort_order"`
 }
@@ -72,7 +78,6 @@ type Home struct {
 type Payload struct {
 	LoaderID     int64  `json:"loader_id"`
 	PayloadCode  string `json:"payload_code"`
-	MinStock     int    `json:"min_stock"`
 	UOPThreshold int    `json:"uop_threshold"`
 }
 
@@ -210,13 +215,15 @@ func UpsertHome(db *sql.DB, h Home) error {
 	// sort_order is set on INSERT (append position) but deliberately NOT in the
 	// ON CONFLICT SET — re-assigning a position's payload must preserve its place
 	// in the order; only SetHomeOrder rewrites it.
+	// min_stock is dormant (bin-count floor retired); leave the column at its
+	// default rather than writing it.
 	_, err := db.Exec(`
-		INSERT INTO bin_loader_homes (loader_id, position_node_id, payload_code, min_stock, uop_threshold, sort_order)
-		VALUES ($1,$2,$3,$4,$5,$6)
+		INSERT INTO bin_loader_homes (loader_id, position_node_id, payload_code, uop_threshold, sort_order)
+		VALUES ($1,$2,$3,$4,$5)
 		ON CONFLICT (position_node_id) DO UPDATE SET
 			loader_id=EXCLUDED.loader_id, payload_code=EXCLUDED.payload_code,
-			min_stock=EXCLUDED.min_stock, uop_threshold=EXCLUDED.uop_threshold`,
-		h.LoaderID, h.PositionNodeID, h.PayloadCode, h.MinStock, h.UOPThreshold, h.SortOrder)
+			uop_threshold=EXCLUDED.uop_threshold`,
+		h.LoaderID, h.PositionNodeID, h.PayloadCode, h.UOPThreshold, h.SortOrder)
 	if err != nil {
 		return fmt.Errorf("upsert home pos=%d: %w", h.PositionNodeID, err)
 	}
@@ -255,7 +262,7 @@ func RemoveHome(db *sql.DB, loaderID, positionNodeID int64) error {
 // ListHomes returns a loader's positions in operator-defined order (sort_order,
 // then position node id as a stable tiebreak).
 func ListHomes(db *sql.DB, loaderID int64) ([]Home, error) {
-	rows, err := db.Query(`SELECT loader_id, position_node_id, payload_code, min_stock, uop_threshold, sort_order
+	rows, err := db.Query(`SELECT loader_id, position_node_id, payload_code, uop_threshold, sort_order
 		FROM bin_loader_homes WHERE loader_id=$1 ORDER BY sort_order, position_node_id`, loaderID)
 	if err != nil {
 		return nil, fmt.Errorf("list homes loader=%d: %w", loaderID, err)
@@ -264,7 +271,7 @@ func ListHomes(db *sql.DB, loaderID int64) ([]Home, error) {
 	var out []Home
 	for rows.Next() {
 		var h Home
-		if err := rows.Scan(&h.LoaderID, &h.PositionNodeID, &h.PayloadCode, &h.MinStock, &h.UOPThreshold, &h.SortOrder); err != nil {
+		if err := rows.Scan(&h.LoaderID, &h.PositionNodeID, &h.PayloadCode, &h.UOPThreshold, &h.SortOrder); err != nil {
 			return nil, fmt.Errorf("scan home: %w", err)
 		}
 		out = append(out, h)
@@ -276,11 +283,11 @@ func ListHomes(db *sql.DB, loaderID int64) ([]Home, error) {
 // Bumps config_gen.
 func UpsertPayload(db *sql.DB, p Payload) error {
 	_, err := db.Exec(`
-		INSERT INTO bin_loader_payloads (loader_id, payload_code, min_stock, uop_threshold)
-		VALUES ($1,$2,$3,$4)
+		INSERT INTO bin_loader_payloads (loader_id, payload_code, uop_threshold)
+		VALUES ($1,$2,$3)
 		ON CONFLICT (loader_id, payload_code) DO UPDATE SET
-			min_stock=EXCLUDED.min_stock, uop_threshold=EXCLUDED.uop_threshold`,
-		p.LoaderID, p.PayloadCode, p.MinStock, p.UOPThreshold)
+			uop_threshold=EXCLUDED.uop_threshold`,
+		p.LoaderID, p.PayloadCode, p.UOPThreshold)
 	if err != nil {
 		return fmt.Errorf("upsert payload %s/loader=%d: %w", p.PayloadCode, p.LoaderID, err)
 	}
@@ -297,7 +304,7 @@ func RemovePayload(db *sql.DB, loaderID int64, payloadCode string) error {
 
 // ListPayloads returns a loader's allowed payload set, ordered by code.
 func ListPayloads(db *sql.DB, loaderID int64) ([]Payload, error) {
-	rows, err := db.Query(`SELECT loader_id, payload_code, min_stock, uop_threshold
+	rows, err := db.Query(`SELECT loader_id, payload_code, uop_threshold
 		FROM bin_loader_payloads WHERE loader_id=$1 ORDER BY payload_code`, loaderID)
 	if err != nil {
 		return nil, fmt.Errorf("list payloads loader=%d: %w", loaderID, err)
@@ -306,7 +313,7 @@ func ListPayloads(db *sql.DB, loaderID int64) ([]Payload, error) {
 	var out []Payload
 	for rows.Next() {
 		var p Payload
-		if err := rows.Scan(&p.LoaderID, &p.PayloadCode, &p.MinStock, &p.UOPThreshold); err != nil {
+		if err := rows.Scan(&p.LoaderID, &p.PayloadCode, &p.UOPThreshold); err != nil {
 			return nil, fmt.Errorf("scan payload: %w", err)
 		}
 		out = append(out, p)

@@ -68,7 +68,6 @@ func (h *Handlers) apiSetLoaderPayload(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		LoaderID     int64  `json:"loader_id"`
 		PayloadCode  string `json:"payload_code"`
-		MinStock     int    `json:"min_stock"`
 		UOPThreshold int    `json:"uop_threshold"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -78,7 +77,7 @@ func (h *Handlers) apiSetLoaderPayload(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "loader_id and payload_code are required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.LoaderService().SetPayload(req.LoaderID, req.PayloadCode, req.MinStock, req.UOPThreshold); err != nil {
+	if err := h.engine.LoaderService().SetPayload(req.LoaderID, req.PayloadCode, req.UOPThreshold); err != nil {
 		h.jsonError(w, "set payload: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -91,7 +90,6 @@ func (h *Handlers) apiSetLoaderHome(w http.ResponseWriter, r *http.Request) {
 		LoaderID       int64  `json:"loader_id"`
 		PositionNodeID int64  `json:"position_node_id"`
 		PayloadCode    string `json:"payload_code"`
-		MinStock       int    `json:"min_stock"`
 		UOPThreshold   int    `json:"uop_threshold"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -103,7 +101,7 @@ func (h *Handlers) apiSetLoaderHome(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "loader_id and position_node_id are required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.LoaderService().SetHome(req.LoaderID, req.PositionNodeID, req.PayloadCode, req.MinStock, req.UOPThreshold); err != nil {
+	if err := h.engine.LoaderService().SetHome(req.LoaderID, req.PositionNodeID, req.PayloadCode, req.UOPThreshold); err != nil {
 		h.jsonError(w, "set home: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

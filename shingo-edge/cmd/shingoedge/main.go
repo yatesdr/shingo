@@ -257,35 +257,18 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			changed.NodeName, changed.Action)
 		hb.RequestNodeSync()
 	})
-	// Kanban demand signals from Core's wiring_kanban driver. Produce-role
-	// signals translate to L1 retrieve_empty creation at the loader serving
-	// the signaled payload (MaybeCreateLoaderEmptyIn handles dedupe and the
-	// reorder-point gate). Consume-role signals are the opposite-direction
-	// mirror: a full arrived at storage, so fire the unloader U1
-	// (MaybeCreateUnloaderFullIn) to pull it. (The old rule dropped consume
-	// here to avoid double-firing with the operator-release trigger; the
-	// reserveLoaderBins seam now dedups both by in-flight count, so the
-	// Core-demand trigger is safe and symmetric with L1.)
-	//
-	// Long-term refactor target. This is the convergence point for the
-	// L1 trigger architecture. Today: event-driven via Core's
-	// wiring_kanban (Core observes bin movements at storage, emits
-	// DemandSignal). If the kanban model evolves — Edge-side periodic
-	// sweep over loader payloads, push the gate decision elsewhere,
-	// per-payload thresholds via the kanban calculator
-	// (shingo-kanban-calculator-design.md), or a Core-side sweep
-	// instead of event-driven — this handler is the single trigger
-	// surface to refactor from. Pre-this branch L1 also fired from
-	// operator_release.go and operator_stations.go release-time hooks;
-	// those were removed once DemandSignal became reliable, leaving
-	// this as the sole entry point.
+	// Kanban demand signals from Core's wiring_kanban driver. PRODUCE-role signals
+	// are NO LONGER handled: the legacy bin-count produce trigger is retired — a
+	// produce loader is supplied by the UOP-threshold C-push (SubjectLoopBelowThreshold,
+	// below) or operator staging, never a bin-count floor. CONSUME-role signals fire
+	// the unloader U1 to pull a freshly-arrived full (MaybeCreateUnloaderFullIn); the
+	// reserveLoaderBins seam dedups against the operator-release trigger by in-flight
+	// count. Core still emits produce DemandSignals on bin movements; the Edge drops
+	// them here harmlessly.
 	router.RegisterSubject(subjectRouter, protocol.SubjectDemandSignal, func(_ *protocol.Envelope, s *protocol.DemandSignal) {
 		log.Printf("edge_handler: demand signal: node=%s payload=%s role=%s reason=%s",
 			s.CoreNodeName, s.PayloadCode, s.Role, s.Reason)
-		switch s.Role {
-		case protocol.ClaimRoleProduce:
-			eng.MaybeCreateLoaderEmptyIn(s.CoreNodeName, s.PayloadCode)
-		case protocol.ClaimRoleConsume:
+		if s.Role == protocol.ClaimRoleConsume {
 			eng.MaybeCreateUnloaderFullIn(s.PayloadCode)
 		}
 	})

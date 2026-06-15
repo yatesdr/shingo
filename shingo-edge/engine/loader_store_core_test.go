@@ -22,10 +22,10 @@ func TestLoadersFromCore_SharedWindow(t *testing.T) {
 
 	// Seed the loader into the Core-loader cache and warm the aggregate snapshot.
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
-		Name: "L", LoaderKey: "loader:AGG-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "auto",
+		Name: "L", LoaderKey: "loader:AGG-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "threshold",
 		OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER", ConfigGen: 1,
 		Positions: []protocol.LoaderPosition{{CoreNodeName: "AGG-LOADER", Kind: "window"}},
-		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", MinStock: 2, UOPThreshold: 100}},
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
 	})
 
 	l, err := eng.loaders().LoaderForPayload("PART-A", domain.RoleProduce, true)
@@ -47,9 +47,6 @@ func TestLoadersFromCore_SharedWindow(t *testing.T) {
 	if !l.ServesPayload("PART-A") {
 		t.Error("loader should serve PART-A")
 	}
-	if got := l.MinStockFor("PART-A"); got != 2 {
-		t.Errorf("MinStockFor(PART-A) = %d, want 2", got)
-	}
 	if got := l.UOPThresholdFor("PART-A"); got != 100 {
 		t.Errorf("UOPThresholdFor(PART-A) = %d, want 100 (cache threshold)", got)
 	}
@@ -69,14 +66,14 @@ func TestLoadersFromCore_DedicatedAndUnloader(t *testing.T) {
 
 	seedCoreLoader(t, eng,
 		protocol.LoaderInfo{Name: "HL", LoaderKey: "loader:HL-LOADER", Role: "produce", Layout: "dedicated_positions", Replenishment: "operator", ConfigGen: 1,
-			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-H", Kind: "dedicated", MinStock: 3}}},
-		protocol.LoaderInfo{Name: "U", LoaderKey: "loader:UNL-1", Role: "consume", Layout: "shared_window", Replenishment: "auto", ConfigGen: 1,
+			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-H", Kind: "dedicated", UOPThreshold: 80}}},
+		protocol.LoaderInfo{Name: "U", LoaderKey: "loader:UNL-1", Role: "consume", Layout: "shared_window", Replenishment: "operator", ConfigGen: 1,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "UNL-1", Kind: "window"}},
 			Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-U"}}},
 	)
 
 	// dedicated_positions: resolves by payload to its position, carries the per-position
-	// min_stock + the dedicated layout, and replenishment=operator → transitional.
+	// threshold + the dedicated layout, and replenishment=operator → operator-driven.
 	l, err := eng.loaders().LoaderForPayload("PART-H", domain.RoleProduce, true)
 	if err != nil || l == nil {
 		t.Fatalf("LoaderForPayload(PART-H) = %v, %v; want the dedicated loader", l, err)
@@ -87,14 +84,14 @@ func TestLoadersFromCore_DedicatedAndUnloader(t *testing.T) {
 	if got := l.Positions(); len(got) != 1 || got[0].Node != "POS-1" {
 		t.Errorf("positions = %+v, want one at POS-1", got)
 	}
-	if got := l.MinStockFor("PART-H"); got != 3 {
-		t.Errorf("MinStockFor(PART-H) = %d, want 3 (position min_stock)", got)
+	if got := l.UOPThresholdFor("PART-H"); got != 80 {
+		t.Errorf("UOPThresholdFor(PART-H) = %d, want 80 (position threshold)", got)
 	}
 	if !l.IsOperatorDriven() {
 		t.Error("replenishment=operator loader should be operator-driven")
 	}
 
-	// unloader: consume + replenishment=auto.
+	// unloader: consume — always operator (the window-queue drain).
 	u, err := eng.loaders().LoaderForPayload("PART-U", domain.RoleConsume, true)
 	if err != nil || u == nil {
 		t.Fatalf("LoaderForPayload(PART-U, consume) = %v, %v; want the unloader", u, err)
@@ -102,8 +99,8 @@ func TestLoadersFromCore_DedicatedAndUnloader(t *testing.T) {
 	if u.Role() != domain.RoleConsume {
 		t.Errorf("role = %v, want consume", u.Role())
 	}
-	if u.Replenishment() != domain.ReplenishmentAuto {
-		t.Errorf("replenishment = %v, want auto", u.Replenishment())
+	if u.Replenishment() != domain.ReplenishmentOperator {
+		t.Errorf("replenishment = %v, want operator (consume drain)", u.Replenishment())
 	}
 
 	// Both loaders are in the snapshot (one produce + one consume).
@@ -138,8 +135,8 @@ func TestLoaderIdentityCutover_ResolveByKey(t *testing.T) {
 	// PLK_SYN is a synthetic identity (no process_node); loader_key is the real identity.
 	if err := db.ReplaceCoreLoaders([]protocol.LoaderInfo{{
 		Name: "Syn", LoaderKey: "loader:77", Role: "produce",
-		Layout: "shared_window", Replenishment: "auto", ConfigGen: 1,
-		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", MinStock: 2, UOPThreshold: 100}},
+		Layout: "shared_window", Replenishment: "threshold", ConfigGen: 1,
+		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
 		Positions: []protocol.LoaderPosition{
 			{CoreNodeName: "CUT-W1", Kind: protocol.LoaderPositionKindWindow},
 			{CoreNodeName: "CUT-W2", Kind: protocol.LoaderPositionKindWindow},

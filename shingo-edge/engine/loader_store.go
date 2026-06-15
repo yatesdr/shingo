@@ -76,15 +76,13 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			windows = append(windows, domain.Window{Node: domain.NodeID(p.PositionNode)})
 		}
 		payloadSet := make([]domain.PayloadCode, 0, len(l.Payloads))
-		minStock := make(map[domain.PayloadCode]int, len(l.Payloads))
 		uopThreshold := make(map[domain.PayloadCode]int, len(l.Payloads))
 		for _, p := range l.Payloads {
 			payloadSet = append(payloadSet, domain.PayloadCode(p.PayloadCode))
-			minStock[domain.PayloadCode(p.PayloadCode)] = p.MinStock
 			uopThreshold[domain.PayloadCode(p.PayloadCode)] = p.UOPThreshold
 		}
 		return domain.NewSharedWindowLoader(id, l.Name, role, repl, windows, payloadSet,
-			domain.WithInboundSource(l.InboundSource), domain.WithMinStock(minStock),
+			domain.WithInboundSource(l.InboundSource),
 			domain.WithUOPThreshold(uopThreshold),
 			domain.WithOutboundDest(l.OutboundDest), domain.WithBufferDest(l.BufferDest))
 
@@ -94,7 +92,6 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			positions = append(positions, domain.Position{
 				Node:         domain.NodeID(p.PositionNode),
 				Payload:      domain.PayloadCode(p.PayloadCode),
-				MinStock:     p.MinStock,
 				UOPThreshold: p.UOPThreshold,
 			})
 		}

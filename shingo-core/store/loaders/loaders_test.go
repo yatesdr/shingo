@@ -32,7 +32,7 @@ func seedNode(t *testing.T, db *store.DB, name string) int64 {
 func produceLoader(name string) loaders.Loader {
 	return loaders.Loader{
 		Name: name, Role: loaders.RoleProduce,
-		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentAuto,
+		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentThreshold,
 		OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER",
 	}
 }
@@ -114,7 +114,7 @@ func TestHomeOnePayloadPerPosition(t *testing.T) {
 	pos2 := seedNode(t, db, "POS-2")
 
 	// Assign pos1=PART-A to loaderA.
-	if err := db.UpsertLoaderHome(loaders.Home{LoaderID: loaderA, PositionNodeID: pos1, PayloadCode: "PART-A", MinStock: 2}); err != nil {
+	if err := db.UpsertLoaderHome(loaders.Home{LoaderID: loaderA, PositionNodeID: pos1, PayloadCode: "PART-A"}); err != nil {
 		t.Fatalf("upsert pos1=PART-A: %v", err)
 	}
 	// Re-assign pos1=PART-B (same loader) → replaces, still one row.

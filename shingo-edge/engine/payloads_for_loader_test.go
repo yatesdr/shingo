@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -69,20 +70,24 @@ func TestPayloadsForLoader_UnionsAcrossProcessesActiveVsAll(t *testing.T) {
 // resolves to that loader (not the alphabetically-first one) when the same
 // payload is loaded at two loaders, and falls back to first-match when no
 // node is named.
-func TestFindLoaderForDemand_RoutesToSignaledCoreNode(t *testing.T) {
+func TestLoaderResolution_RoutesToSignaledCoreNode(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	seedActiveManualSwapLoader(t, db, "AAA-PROC", "LOADER-A", "SHARED")
 	seedActiveManualSwapLoader(t, db, "BBB-PROC", "LOADER-B", "SHARED")
 	seedCoreLoader(t, eng,
-		sharedLoaderInfo("LOADER-A", "produce", "auto", "SHARED", 0, 0),
-		sharedLoaderInfo("LOADER-B", "produce", "auto", "SHARED", 0, 0))
+		sharedLoaderInfo("LOADER-A", "produce", "threshold", "SHARED", 0, 100),
+		sharedLoaderInfo("LOADER-B", "produce", "threshold", "SHARED", 0, 100))
 
-	if got, viaFallback := eng.findLoaderForDemand("LOADER-B", "SHARED"); got == nil || got.ID() != "loader:LOADER-B" || viaFallback {
-		t.Errorf("signaled LOADER-B but resolved %v (viaFallback=%v), want loader:LOADER-B via exact match", got, viaFallback)
+	// Node-targeted resolution (the threshold signal's CoreNodeName/MemberNodeName
+	// path): LoaderAt(node) resolves THAT loader even when the same payload is loaded
+	// at two loaders — not the alphabetically-first one.
+	if got, err := eng.loaders().LoaderAt("LOADER-B", domain.RoleProduce); err != nil || got == nil || got.ID() != "loader:LOADER-B" {
+		t.Errorf("LoaderAt(LOADER-B) resolved %v (err=%v), want loader:LOADER-B via exact member match", got, err)
 	}
-	if got, viaFallback := eng.findLoaderForDemand("", "SHARED"); got == nil || got.ID() != "loader:LOADER-A" || !viaFallback {
-		t.Errorf("no node named: fallback resolved %v (viaFallback=%v), want first-match loader:LOADER-A via fallback", got, viaFallback)
+	// Payload-first-match fallback (no node named): resolves the first serving loader.
+	if got, err := eng.loaders().LoaderForPayload("SHARED", domain.RoleProduce, true); err != nil || got == nil || got.ID() != "loader:LOADER-A" {
+		t.Errorf("LoaderForPayload(SHARED) resolved %v (err=%v), want first-match loader:LOADER-A", got, err)
 	}
 }

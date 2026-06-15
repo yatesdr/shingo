@@ -456,7 +456,6 @@ type LoaderPosition struct {
 	CoreNodeName string `json:"core_node_name"`
 	PayloadCode  string `json:"payload_code"`
 	Kind         string `json:"kind,omitempty"`
-	MinStock     int    `json:"min_stock"`
 	UOPThreshold int    `json:"uop_threshold"`
 }
 
@@ -473,7 +472,6 @@ const (
 // LoaderPayloadInfo is one entry in a shared_window loader's allowed payload set.
 type LoaderPayloadInfo struct {
 	PayloadCode  string `json:"payload_code"`
-	MinStock     int    `json:"min_stock"`
 	UOPThreshold int    `json:"uop_threshold"`
 }
 

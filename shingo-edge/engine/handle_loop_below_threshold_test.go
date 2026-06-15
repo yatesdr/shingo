@@ -125,7 +125,7 @@ func TestHandleLoopBelowThreshold_FiresForInactiveStyleLoader(t *testing.T) {
 		catalogService: service.NewCatalogService(db),
 	}
 	// Warm the loader cache so the threshold signal resolves (else it parks as "not synced").
-	seedCoreLoader(t, eng, sharedLoaderInfo("CAL-LOADER", "produce", "auto", "WIDGET-X", 2, 100))
+	seedCoreLoader(t, eng, sharedLoaderInfo("CAL-LOADER", "produce", "threshold", "WIDGET-X", 2, 100))
 
 	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
 		PayloadCode:  "WIDGET-X",
@@ -234,7 +234,7 @@ func TestHandleLoopBelowThreshold_CeilsToWholeBins(t *testing.T) {
 		catalogService: service.NewCatalogService(db),
 	}
 	// Warm the loader cache so the threshold signal resolves (else it parks as "not synced").
-	seedCoreLoader(t, eng, sharedLoaderInfo("MULTIBIN-LOADER", "produce", "auto", "TINY-PART", 0, 100))
+	seedCoreLoader(t, eng, sharedLoaderInfo("MULTIBIN-LOADER", "produce", "threshold", "TINY-PART", 0, 100))
 
 	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
 		PayloadCode:  "TINY-PART",
@@ -340,7 +340,7 @@ func TestHandleLoopBelowThreshold_SkipsWhenProjectedUOPCoversThreshold(t *testin
 		catalogService: service.NewCatalogService(db),
 	}
 	// Warm the loader cache so the threshold signal resolves (else it parks as "not synced").
-	seedCoreLoader(t, eng, sharedLoaderInfo("SKIP-LOADER", "produce", "auto", "BIG-PART", 0, 100))
+	seedCoreLoader(t, eng, sharedLoaderInfo("SKIP-LOADER", "produce", "threshold", "BIG-PART", 0, 100))
 
 	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
 		PayloadCode:  "BIG-PART",
@@ -435,7 +435,7 @@ func TestHandleLoopBelowThreshold_SkipsOnMissingCatalogCapacity(t *testing.T) {
 	}
 	// Warm the loader cache so the signal resolves; the catalog miss (not a loader
 	// miss) is what this test exercises.
-	seedCoreLoader(t, eng, sharedLoaderInfo("MISS-LOADER", "produce", "auto", "ORPHAN-PART", 0, 100))
+	seedCoreLoader(t, eng, sharedLoaderInfo("MISS-LOADER", "produce", "threshold", "ORPHAN-PART", 0, 100))
 
 	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
 		PayloadCode:  "ORPHAN-PART",
@@ -526,10 +526,10 @@ func TestHandleLoopBelowThreshold_ParksAndReplaysBeforeCacheSync(t *testing.T) {
 	// The node-list sync lands, carrying the loader. SetCoreLoaders warms the cache
 	// and replays the parked signal, which now resolves and fires its L1.
 	eng.SetCoreLoaders([]protocol.LoaderInfo{{
-		Name: "RL", LoaderKey: "loader:RACE-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "auto",
+		Name: "RL", LoaderKey: "loader:RACE-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "threshold",
 		InboundSource: "EMPTY-SUPER", OutboundDest: "FILLED", ConfigGen: 1,
 		Positions: []protocol.LoaderPosition{{CoreNodeName: "RACE-LOADER", Kind: "window"}},
-		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "RACE-PART", MinStock: 2, UOPThreshold: 100}},
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "RACE-PART", UOPThreshold: 100}},
 	}})
 
 	if !eng.loaderCacheWarmed.Load() {
@@ -564,8 +564,8 @@ func TestHandleLoopBelowThreshold_RoutesToSignaledCoreNode(t *testing.T) {
 	}), "seed catalog")
 	// Both loaders serve SHARED; the signal names LOADER-B, so the L1 must land there.
 	seedCoreLoader(t, eng,
-		sharedLoaderInfo("LOADER-A", "produce", "auto", "SHARED", 0, 100),
-		sharedLoaderInfo("LOADER-B", "produce", "auto", "SHARED", 0, 100))
+		sharedLoaderInfo("LOADER-A", "produce", "threshold", "SHARED", 0, 100),
+		sharedLoaderInfo("LOADER-B", "produce", "threshold", "SHARED", 0, 100))
 
 	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
 		PayloadCode:  "SHARED",
