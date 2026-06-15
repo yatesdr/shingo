@@ -217,8 +217,9 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
-		log.Printf("edge_handler: received node list (%d nodes)", len(resp.Nodes))
+		log.Printf("edge_handler: received node list (%d nodes, %d loaders)", len(resp.Nodes), len(resp.Loaders))
 		eng.SetCoreNodes(resp.Nodes)
+		eng.SetCoreLoaders(resp.Loaders)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectProductionReportAck, func(_ *protocol.Envelope, ack *protocol.ProductionReportAck) {
 		log.Printf("edge_handler: production report ack: station=%s accepted=%d", ack.StationID, ack.Accepted)
@@ -259,10 +260,12 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// Kanban demand signals from Core's wiring_kanban driver. Produce-role
 	// signals translate to L1 retrieve_empty creation at the loader serving
 	// the signaled payload (MaybeCreateLoaderEmptyIn handles dedupe and the
-	// reorder-point gate). Consume-role signals are dropped here; the
-	// unloader-side U1 path is fired from operator releases on the line,
-	// not from Core demand, and adding a second entry point would
-	// double-fire.
+	// reorder-point gate). Consume-role signals are the opposite-direction
+	// mirror: a full arrived at storage, so fire the unloader U1
+	// (MaybeCreateUnloaderFullIn) to pull it. (The old rule dropped consume
+	// here to avoid double-firing with the operator-release trigger; the
+	// reserveLoaderBins seam now dedups both by in-flight count, so the
+	// Core-demand trigger is safe and symmetric with L1.)
 	//
 	// Long-term refactor target. This is the convergence point for the
 	// L1 trigger architecture. Today: event-driven via Core's
@@ -279,10 +282,12 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	router.RegisterSubject(subjectRouter, protocol.SubjectDemandSignal, func(_ *protocol.Envelope, s *protocol.DemandSignal) {
 		log.Printf("edge_handler: demand signal: node=%s payload=%s role=%s reason=%s",
 			s.CoreNodeName, s.PayloadCode, s.Role, s.Reason)
-		if s.Role != protocol.ClaimRoleProduce {
-			return
+		switch s.Role {
+		case protocol.ClaimRoleProduce:
+			eng.MaybeCreateLoaderEmptyIn(s.CoreNodeName, s.PayloadCode)
+		case protocol.ClaimRoleConsume:
+			eng.MaybeCreateUnloaderFullIn(s.PayloadCode)
 		}
-		eng.MaybeCreateLoaderEmptyIn(s.CoreNodeName, s.PayloadCode)
 	})
 	// UOP-threshold replenishment: Core observes combined in-loop UOP
 	// (bins + buckets) per payload and signals here when a monitored
@@ -434,7 +439,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 
 	eng.SetNodeSyncFunc(hb.RequestNodeSync)
 	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
-	log.Printf("kanban: demand-signal handler wired — produce-role signals route to MaybeCreateLoaderEmptyIn")
+	log.Printf("kanban: demand-signal handler wired — produce->MaybeCreateLoaderEmptyIn, consume->MaybeCreateUnloaderFullIn")
 	log.Printf("kanban: loop-below-threshold handler wired — C-push signals route to HandleLoopBelowThreshold")
 
 	if err := eng.StartupReconcile(); err != nil {

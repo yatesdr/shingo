@@ -102,6 +102,7 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 	// calls (binCalls, bucketCalls, boundaryCalls, etc.) override this
 	// by calling eng.SetInventoryDeltaSink(...) themselves.
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
+	eng.loaderStore = newLoaderStore(eng)
 	return eng
 }
 

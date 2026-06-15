@@ -127,10 +127,14 @@ function renderReleasePromptStep1() {
     html += '<div class="modal-payload">Anything pulled to lineside during the swap?</div>';
     html += '</div>';
 
-    const hasPayloads = state.payloads.length > 0;
-    if (!hasPayloads) {
+    if (state.payloads.length === 0) {
         html += '<div class="os-release-prompt"><div style="color:#999;padding:12px 0;font-size:14px">No allowed payloads on this node.</div></div>';
     } else {
+        // Primary group: the chip grid and the PULL PARTS button visually
+        // belong together — the chips show what's about to be captured and
+        // the button submits it. Highlighted so the operator's eye lands
+        // here first; the partial/empty escape hatch and CANCEL sit below
+        // in a quieter row.
         html += '<div class="os-release-primary">';
         html += '<div class="os-release-primary-label">Anything pulled to lineside? Tap a part to edit qty.</div>';
         html += '<div class="os-release-part-grid">';
@@ -142,14 +146,18 @@ function renderReleasePromptStep1() {
                 esc(code) + ' (' + qty + ')</button>';
         });
         html += '</div>';
+        html += '<button type="button" class="os-action-btn request"' +
+            ' data-action="release-submit-parts">PULL PARTS LINESIDE, RELEASE</button>';
         html += '</div>';
     }
 
+    // RELEASE PARTIAL exposes the operator-overridable count. Operator
+    // taps the count to keypad-edit (Phase 0b — was a fixed runtime read).
+    // RELEASE EMPTY has no count; the bin is already zero by definition.
     const rt = state.entry && state.entry.runtime;
     const remainingUOP = rt && rt.remaining_uop_cached != null ? rt.remaining_uop_cached : 0;
-    const isChangeover = !!(state.entry && state.entry.changeover_task);
     const partialCount = state.partialCount != null ? state.partialCount : remainingUOP;
-    if (isChangeover && remainingUOP > 0) {
+    if (remainingUOP > 0) {
         html += '<div class="os-release-partial-count">';
         html += '<div class="os-release-primary-label">Bin returning to supermarket with:</div>';
         html += '<button type="button" class="os-release-qty-display"' +
@@ -157,55 +165,30 @@ function renderReleasePromptStep1() {
         html += '</div>';
     }
 
-    var pullPartsBtn = '<button type="button" class="os-action-btn request"' +
-        ' data-action="release-submit-parts">PULL PARTS LINESIDE, RELEASE</button>';
-
-    var row1RightBtn = '';
-    if (isChangeover) {
-        const submitLabel = remainingUOP > 0 ? 'RELEASE PARTIAL' : 'RELEASE EMPTY';
-        const submitTitle = remainingUOP > 0
-            ? 'No parts pulled to lineside. Bin returns to the supermarket with its current UOP intact.'
-            : 'No parts pulled to lineside. Bin is empty — manifest cleared.';
-        row1RightBtn = '<button type="button" class="os-action-btn release-empty"' +
-            ' data-action="release-submit"' +
-            ' title="' + esc(submitTitle) + '">' +
-            submitLabel + '</button>';
-    } else if (remainingUOP <= 0) {
-        row1RightBtn = '<button type="button" class="os-action-btn release-empty"' +
-            ' data-action="release-submit"' +
-            ' title="No parts pulled to lineside. Bin is empty — manifest cleared.">' +
-            'RELEASE EMPTY</button>';
-    } else {
-        row1RightBtn = '<button type="button" class="os-action-btn release-empty"' +
-            ' data-action="release-underpack-confirm"' +
-            ' title="Bin is physically empty, but the system still shows UOP remaining. Records the gap as missing inventory.">' +
-            'BIN EMPTY (UNDER COUNT)</button>';
-    }
-
     html += '<div class="modal-actions">';
-    if (hasPayloads) {
-        html += '<div class="os-release-row">';
-        html += pullPartsBtn;
-        html += row1RightBtn;
-        html += '</div>';
-    } else if (row1RightBtn) {
-        html += '<div class="os-release-row">';
-        html += row1RightBtn;
-        html += '</div>';
-    }
-    if (isChangeover && remainingUOP > 0) {
-        html += '<div class="os-release-row">';
+    // Label reflects the actual action: bin still has UOP → returns as-is
+    // (partial); bin is at zero → manifest cleared (empty). Same wire
+    // disposition mapping as before; just makes it visible to the operator.
+    const submitLabel = remainingUOP > 0 ? 'RELEASE PARTIAL' : 'RELEASE EMPTY';
+    const submitTitle = remainingUOP > 0
+        ? 'No parts pulled to lineside. Bin returns to the supermarket with its current UOP intact.'
+        : 'No parts pulled to lineside. Bin is empty — manifest cleared.';
+    html += '<button type="button" class="os-action-btn release-empty"' +
+        ' data-action="release-submit"' +
+        ' title="' + esc(submitTitle) + '">' +
+        submitLabel + '</button>';
+    // Underpack release: bin physically empty before count reaches zero.
+    // Only offered when the system still thinks the bin has UOP — otherwise
+    // RELEASE EMPTY is the right path. Routes through a confirmation
+    // modal because it's a destructive-ish action: the missing inventory
+    // is recorded as a forensics signal.
+    if (remainingUOP > 0) {
         html += '<button type="button" class="os-action-btn release-empty"' +
             ' data-action="release-underpack-confirm"' +
             ' title="Bin is physically empty, but the system still shows UOP remaining. Records the gap as missing inventory.">' +
             'BIN EMPTY (UNDER COUNT)</button>';
-        html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
-        html += '</div>';
-    } else {
-        html += '<div class="os-release-row">';
-        html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
-        html += '</div>';
     }
+    html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
     html += '</div>';
 
     nodeModalContent.innerHTML = html;
@@ -396,12 +379,13 @@ async function handleReleasePromptAction(evt) {
         return;
     }
 
-    //   release-submit            "RELEASE PARTIAL" / "RELEASE EMPTY" (changeover)
-    //                              or "RELEASE EMPTY" (material request, only
-    //                              rendered when remainingUOP <= 0).
-    //                              → send_partial_back when changeover AND bin
-    //                                still has UOP (preserve manifest);
-    //                                capture_lineside otherwise (manifest cleared).
+    //   release-submit            "RELEASE PARTIAL" / "RELEASE EMPTY"
+    //                              → send_partial_back when the bin still has UOP
+    //                                (preserve manifest); capture_lineside empty
+    //                                when the bin is already empty (operator
+    //                                confirms zero, manifest cleared). Label is
+    //                                chosen at render time from remaining_uop so
+    //                                the operator sees what they're submitting.
     //   release-submit-parts      "PULL PARTS LINESIDE, RELEASE" → capture_lineside, picked buckets.
     //   release-submit-underpack  "DECLARE EMPTY" (after confirmation) →
     //                              release_underpack disposition. Same wire
@@ -450,7 +434,7 @@ async function handleReleasePromptAction(evt) {
                 disposition: 'release_underpack',
                 called_by: calledBy,
             };
-        } else if (action === 'release-submit' && remainingUOP > 0 && state.entry.changeover_task) {
+        } else if (action === 'release-submit' && remainingUOP > 0) {
             // Phase 0b: ship the operator-entered count + system-suggested
             // baseline so Core can audit overrides.
             body = {

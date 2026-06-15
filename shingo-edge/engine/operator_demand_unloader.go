@@ -1,30 +1,11 @@
 package engine
 
 import (
+	"fmt"
 	"log"
 
-	"shingo/protocol"
-	"shingoedge/store/orders"
+	"shingoedge/domain"
 )
-
-// unloaderHasInFlightFullIn reports whether the unloader's CORE NODE already
-// has a non-terminal retrieve order (full-bin retrieve) for the payload.
-// Symmetric to the loader empty-in count — dedupes a flurry of line evac events
-// from queuing a stack of full-in mirror orders at the unloader. Keyed by core
-// node (delivery_node) so a shared unloader's process_node rows don't each
-// under-count; see [[shingo_manual_swap_core_node_scoping]].
-func (e *Engine) unloaderHasInFlightFullIn(coreNodeName string, payloadCode string) bool {
-	// Full-bin retrieve = retrieve order with payload code, NOT marked as
-	// retrieve_empty. The unloader's mirror order shape.
-	n, err := e.countActiveOrdersAtNode(coreNodeName, func(o orders.Order) bool {
-		return o.PayloadCode == payloadCode && !o.RetrieveEmpty
-	})
-	if err != nil {
-		e.logFn("side-cycle: list active orders for node %s: %v", coreNodeName, err)
-		return true
-	}
-	return n > 0
-}
 
 // unloaderHasUsableFullPresent is the consumer-side counterpart to the
 // removed loaderHasUsableEmptyPresent: skips the U1 full-in retrieve when
@@ -44,139 +25,122 @@ func (e *Engine) unloaderHasUsableFullPresent(coreNodeName, payloadCode string) 
 }
 
 // MaybeCreateUnloaderFullIn (U1 of the side-cycle model) is the consumer-side
-// counterpart to MaybeCreateLoaderEmptyIn. When the line releases a full bin
-// of payloadCode (DispositionCaptureLineside on a produce-role claim), this
-// creates a parallel "full-in" retrieve order tracked at the unloader so the
-// unloader operator's UI surfaces the demand directly. Without this mirror,
-// the unloader sees nothing — the line's evac order is tracked at the LINE's
-// process_node, not the unloader's.
+// counterpart to MaybeCreateLoaderEmptyIn: it pulls a full FG bin to the unloader
+// for the operator to process. Resolves the unloader as a consume *domain.Loader
+// and routes through the shared reservation seam (never-2N).
 //
 // U2 (empty-out from the unloader to the supermarket) fires when the unloader
 // operator confirms that the bin's contents have been processed — symmetric
 // to L2. See handleUnloaderFullInCompletion in wiring_completion.go.
 //
-// Caller: ReleaseOrderWithLineside in operator_release.go fires this for
-// produce-role releases under DispositionCaptureLineside, mirroring the L1
-// trigger for consume-role.
+// Callers: the consume DemandSignal handler (a full arrived at FG storage —
+// cmd/shingoedge/main.go) and ReleaseOrderWithLineside in operator_release.go
+// (produce-role lineside release). The seam dedups both (never-2N).
 func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
-	unloader := e.FindUnloaderForPayload(payloadCode)
-	if unloader == nil {
+	loader, err := e.loaderStore.LoaderForPayload(domain.PayloadCode(payloadCode), domain.RoleConsume, true)
+	if err != nil || loader == nil {
 		return
 	}
-	e.createUnloaderFullIn(*unloader, payloadCode)
+	e.createUnloaderFullInViaSeam(loader, payloadCode)
 }
 
-// createUnloaderFullIn fires a U1 retrieve_full at an ALREADY-RESOLVED
-// unloader if none is in flight and no full bin is parked at the window.
-// Split out from MaybeCreateUnloaderFullIn so the push/sweep paths — which
-// already hold the resolved node from their own walk — don't re-resolve it
-// per payload via FindUnloaderForPayload (a full claim-tree walk).
-func (e *Engine) createUnloaderFullIn(unloader manualSwapNode, payloadCode string) {
-	if e.unloaderHasInFlightFullIn(unloader.node.CoreNodeName, payloadCode) {
-		e.logFn("side-cycle: unloader %s already has in-flight full-in for %s, skipping",
-			unloader.node.Name, payloadCode)
+// createUnloaderFullInViaSeam is the consume-side path that routes the U1 full-in
+// through the SHARED reservation seam (reserveLoaderBins, retrieveEmpty=false).
+// The unloader is resolved as a *domain.Loader (role=consume), so the never-2N
+// budget, in-flight count, and free-window assignment are the EXACT code the
+// loader's L1 uses — one seam, no loader/unloader drift.
+//
+// One thing the seam does NOT subsume: it counts in-flight ORDERS, not parked BINS.
+// The loader could drop its physical-presence check because its `want` is demand-
+// netted by the threshold monitor; the unloader's want=1 is event-driven, so the
+// usable-full-present guard stays — run here over the delivery windows before the seam.
+func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode string) {
+	if loader == nil {
 		return
 	}
-	if e.unloaderHasUsableFullPresent(unloader.node.CoreNodeName, payloadCode) {
-		e.logFn("side-cycle: unloader %s already has a full bin (%s) parked, skipping U1",
-			unloader.node.Name, payloadCode)
-		return
+	lid := string(loader.ID())
+	pc := domain.PayloadCode(payloadCode)
+	nodes, budget := loader.ReservationTarget("", pc, e.multiWindowEnabled())
+	if len(nodes) == 0 || budget <= 0 {
+		return // this unloader doesn't serve the payload
 	}
-	nodeID := unloader.node.ID
-	// U1 (Unloader Full In) must NEVER auto-confirm. Same reasoning as L1:
-	// the unloader operator is an active participant — they need to
-	// physically process the bin's contents and confirm explicitly. Auto-
-	// confirming here would immediately fire U2 (empty-out to supermarket)
-	// before any processing has happened, with the bin still full. Honoring
-	// global cfg.Web.AutoConfirm at this layer defeats the side-cycle model.
-	autoConfirm := false
-	// Source group: unloader.claim.InboundSource — the FG supermarket the
-	// unloader pulls full bins from. Empty falls back to Core's global FIFO
-	// (the historical behaviour, preserved when InboundSource isn't set).
-	// This mirror order's primary purpose is UI demand surfacing, not
-	// driving robot movement (the line's evac drives that), but the source
-	// still needs to be group-aware so multi-supermarket plants don't
-	// surface demand against the wrong store.
-	order, err := e.orderMgr.CreateRetrieveOrder(
-		&nodeID, false, 1, unloader.node.CoreNodeName, unloader.claim.InboundSource, "",
-		"standard", payloadCode, autoConfirm, true,
-	)
+	// Physical parked-full guard — the order-counting seam can't see a full bin
+	// parked without an in-flight order. Symmetric to the legacy usable-present check.
+	for _, n := range nodes {
+		if e.unloaderHasUsableFullPresent(string(n), payloadCode) {
+			e.debugFn("side-cycle: unloader %s window %s already holds a full (%s) — skipping U1",
+				lid, n, payloadCode)
+			return
+		}
+	}
+	created, err := e.reserveLoaderBins(loader, pc, 1, "", false, func(deliveryNodes []string) (int, error) {
+		made := 0
+		for _, deliveryNode := range deliveryNodes {
+			node, nerr := e.db.GetProcessNodeByCoreNodeName(deliveryNode)
+			if nerr != nil || node == nil {
+				return made, fmt.Errorf("side-cycle: no process_node for unloader window %s: %w", deliveryNode, nerr)
+			}
+			nodeID := node.ID
+			// U1 = a FULL (retrieve_empty=false) pulled from the unloader's inbound FG
+			// supermarket (blank → Core global FIFO). autoConfirm MUST be false — the
+			// operator processes the bin before U2 fires (same rule as L1).
+			if _, cerr := e.orderMgr.CreateRetrieveOrder(
+				&nodeID, false, 1, deliveryNode, loader.InboundSource(), "",
+				"standard", payloadCode, false, true,
+			); cerr != nil {
+				return made, fmt.Errorf("side-cycle: create U1 loader=%s payload=%s: %w", lid, payloadCode, cerr)
+			}
+			made++
+			e.recordL1Burst(deliveryNode, 1) // delivery-node-keyed, the same tripwire as L1
+		}
+		return made, nil
+	})
 	if err != nil {
-		e.logFn("side-cycle: create full-in order for unloader %s payload %s: %v",
-			unloader.node.Name, payloadCode, err)
+		e.logFn("side-cycle: unloader %s seam full-in for %s failed after %d created: %v", lid, payloadCode, created, err)
 		return
 	}
-	log.Printf("side-cycle: full-in order %d for unloader %s payload %s",
-		order.ID, unloader.node.Name, payloadCode)
+	if created > 0 {
+		log.Printf("side-cycle: %d U1 order(s) via seam for unloader %s payload %s", created, lid, payloadCode)
+	}
 }
 
-// MaybePushUnloader is the auto-push trigger for consume manual_swap (unloader)
-// claims with AutoPush=true. It walks the unloader's allowed payloads and
-// fires a U1 retrieve_full for any payload not already in-flight or parked
-// at the window. Unlike MaybeCreateUnloaderFullIn (which is called from line
-// evac and targets ONE specific payload that just left the line), this push
-// is window-driven: it asks "given this unloader is free, is there ANY allowed
-// payload available upstream to pull in?" and creates orders accordingly.
-//
-// Trigger sites:
-//   - ClearBin completion (operator confirmed unload — window just freed).
-//   - handleManualSwapCompletion U2-arrived (empty returned to supermarket
-//     — window confirmed clear).
-//   - SweepPushUnloaders on Edge startup / registration ack — catches windows
-//     that became free while Edge was offline.
-//
-// No-op if claim isn't AutoPush, isn't manual_swap consume, or all allowed
-// payloads are already covered. Dedupe relies on the same in-flight /
-// usable-present checks MaybeCreateUnloaderFullIn uses; we delegate to it.
-//
-// nodeID names a specific unloader (typically the one whose window just
-// freed). Pass 0 for an "any unloader" sweep — see SweepPushUnloaders.
-func (e *Engine) MaybePushUnloader(nodeID int64) {
-	matches := e.findManualSwapNodes("")
-	for _, m := range matches {
-		if nodeID != 0 && m.node.ID != nodeID {
-			continue
+// pushUnloadersViaSeam is the 5b.2 seam-based auto-push: it walks every auto
+// (non-operator) consume loader in the aggregate and offers each allowed payload
+// to the shared reservation seam. The seam's never-2N budget makes it idempotent,
+// so it is safe on any window-free event or as a startup sweep — already-covered
+// windows create nothing. Replaces the legacy findManualSwapNodes walk under the flag.
+func (e *Engine) pushUnloadersViaSeam() {
+	loaders, err := e.loaderStore.Loaders(domain.RoleConsume)
+	if err != nil {
+		e.logFn("side-cycle: push-unloaders seam list: %v", err)
+		return
+	}
+	for _, l := range loaders {
+		if l.Replenishment() != domain.ReplenishmentAuto {
+			continue // operator-driven unloader — no auto push (mirrors claim.AutoPush)
 		}
-		if m.claim.Role != protocol.ClaimRoleConsume {
-			continue
-		}
-		if !m.claim.AutoPush {
-			continue
-		}
-		// Each allowed payload gets its own MaybeCreateUnloaderFullIn pass.
-		// That helper already short-circuits on in-flight + window-occupied.
-		// One payload per allowed code at most — the unloader window holds
-		// a single bin, but the multi-order queue lets us stage the next
-		// few in Core and dispatch them as the window frees.
-		for _, code := range m.claim.AllowedPayloads() {
-			e.createUnloaderFullIn(m, code)
+		for _, code := range l.PayloadSet() {
+			e.createUnloaderFullInViaSeam(l, string(code))
 		}
 	}
 }
 
-// SweepPushUnloaders walks every active consume manual_swap claim with
-// AutoPush=true and fires MaybePushUnloader. Intended for Edge startup
-// (after registration ack, mirroring SendClaimSync). Catches the case
-// where the unloader was empty when Edge went down and supply became
-// available while it was offline — without this, the window stays empty
-// until the next ClearBin/U2 completion.
+// MaybePushUnloader is the consume-side auto-push: when a window frees (ClearBin
+// or handleManualSwapCompletion U2-arrived) it offers every auto consume loader's
+// payloads to the shared seam. The seam's never-2N budget makes the sweep
+// idempotent, so already-full windows create nothing — which is why nodeID is now
+// only a (currently unused) efficiency hint and the old node→loader filter is gone.
+func (e *Engine) MaybePushUnloader(_ int64) {
+	e.pushUnloadersViaSeam()
+}
+
+// SweepPushUnloaders runs the consume auto-push sweep on Edge startup (after
+// registration ack). Catches windows that became free while Edge was offline.
+// The CAS guard serializes a re-register storm so concurrent sweeps don't stack.
 func (e *Engine) SweepPushUnloaders() {
 	if !e.sweepingUnloaders.CompareAndSwap(false, true) {
 		return // a sweep is already running — a re-register storm must not stack them
 	}
 	defer e.sweepingUnloaders.Store(false)
-	matches := e.findManualSwapNodes("")
-	swept := 0
-	for _, m := range matches {
-		if m.claim.Role != protocol.ClaimRoleConsume || !m.claim.AutoPush {
-			continue
-		}
-		for _, code := range m.claim.AllowedPayloads() {
-			e.createUnloaderFullIn(m, code)
-		}
-		swept++
-	}
-	if swept > 0 {
-		log.Printf("auto-push: startup sweep covered %d unloader claim(s)", swept)
-	}
+	e.pushUnloadersViaSeam()
 }

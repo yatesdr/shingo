@@ -31,6 +31,15 @@ type DB struct {
 // SQLite holds a single writer at a time (the busy_timeout DSN param
 // queues concurrent writers); the engine's max-open-conns=1 setting
 // makes that explicit. So nested Transaction calls deadlock — don't.
+//
+// Note for the loader empty-in path: the reservation seam
+// (engine.reserveLoaderEmpties) owns NO transaction and must not be given one.
+// Its atomicity comes from a per-loader mutex, not DB isolation, because the
+// only operation that raises a loader's in-flight count is the create it guards
+// (monotone-safe) and CreateRetrieveOrder is not tx-pure (it enqueues to Core
+// and emits synchronously mid-write). A surrounding tx would only add a
+// busy_timeout stall on this single connection and a rollback path that can't
+// undo the Core enqueue. See FINAL-ADJUDICATION Q1.
 func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
 	tx, err := db.Begin()
 	if err != nil {

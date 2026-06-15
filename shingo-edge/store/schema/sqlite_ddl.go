@@ -87,7 +87,6 @@ CREATE TABLE IF NOT EXISTS orders (
     bin_id          INTEGER,
     payload_code    TEXT NOT NULL DEFAULT '',
     sibling_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
-    queue_reason    TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -275,6 +274,43 @@ CREATE TABLE IF NOT EXISTS loader_payload_thresholds (
     updated_at              TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_by              TEXT    NOT NULL DEFAULT '',
     PRIMARY KEY (core_node_name, payload_code)
+);
+
+-- Core-owned loader config cache. Edge's persistent, last-known-good replica of
+-- Core's bin_loaders aggregate, written full-state on each node-list sync from
+-- NodeListResponse.Loaders. Persistent so an Edge reboot during a Core partition
+-- keeps loaders configured (an in-memory cache would silent-starve). The loader
+-- resolvers read it. Keyed by loader_key — the loader's surrogate IDENTITY token
+-- ("loader:<id>"); the loader has no node of its own. Positions/payloads carry the
+-- real member node NAMES (Edge's key space).
+CREATE TABLE IF NOT EXISTS core_loaders (
+    loader_key     TEXT    NOT NULL,   -- the loader IDENTITY token ("loader:<id>")
+    role           TEXT    NOT NULL,
+    name           TEXT    NOT NULL DEFAULT '',
+    layout         TEXT    NOT NULL DEFAULT '',
+    replenishment  TEXT    NOT NULL DEFAULT '',
+    outbound_dest  TEXT    NOT NULL DEFAULT '',
+    inbound_source TEXT    NOT NULL DEFAULT '',
+    buffer_dest    TEXT    NOT NULL DEFAULT '',
+    config_gen     INTEGER NOT NULL DEFAULT 0,
+    synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (loader_key)
+);
+CREATE TABLE IF NOT EXISTS core_loader_positions (
+    loader_key     TEXT    NOT NULL,   -- the owning loader's identity token
+    position_node  TEXT    NOT NULL,   -- the position node NAME (a real node)
+    payload_code   TEXT    NOT NULL,
+    kind           TEXT    NOT NULL DEFAULT '',  -- 'window' | 'dedicated' (synced from Core; Layout is authoritative if empty)
+    min_stock      INTEGER NOT NULL DEFAULT 0,
+    uop_threshold  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (loader_key, position_node)
+);
+CREATE TABLE IF NOT EXISTS core_loader_payloads (
+    loader_key     TEXT    NOT NULL,   -- the owning loader's identity token
+    payload_code   TEXT    NOT NULL,
+    min_stock      INTEGER NOT NULL DEFAULT 0,
+    uop_threshold  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (loader_key, payload_code)
 );
 
 -- Transitional bin loaders (operator-driven, manual payload selection):

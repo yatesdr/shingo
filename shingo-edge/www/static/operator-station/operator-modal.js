@@ -287,8 +287,6 @@ export function renderModal(entry) {
                     html += 'IN TRANSIT';
                 } else if (payloadQueued) {
                     html += 'QUEUED';
-                    var dqr = humanizeQueueReason(payloadQueued.queue_reason);
-                    if (dqr) html += '<div style="font-size:11px;color:#e0a96d;margin-top:2px;font-weight:400">' + esc(dqr) + '</div>';
                 } else if (isActive) {
                     html += 'active demand';
                 } else if (canRequest) {
@@ -397,13 +395,6 @@ export function renderModal(entry) {
                 // it can become "IN QUEUE: <reason>".
                 if (inFlight.status === 'queued') {
                     html += actionBtn('IN QUEUE', 'close', false, '');
-                    // Explain WHY it's parked. Without this the operator
-                    // reads a stalled request as a dead button and re-taps,
-                    // stacking duplicate queued orders (the new-crew trap).
-                    var qreason = humanizeQueueReason(inFlight.queue_reason);
-                    if (qreason) {
-                        html += '<div class="os-queue-reason" style="margin-top:6px;font-size:13px;color:#e0a96d;line-height:1.35">' + esc(qreason) + '</div>';
-                    }
                 } else {
                     html += actionBtn('ROBOT IN TRANSIT', 'close', false, '');
                 }
@@ -491,20 +482,6 @@ function actionBtn(label, cls, enabled, action) {
     return '<button type="button" class="os-action-btn ' + cls + '"' +
         (!enabled ? ' disabled' : '') +
         ' data-action="' + esc(action) + '">' + esc(label) + '</button>';
-}
-
-// humanizeQueueReason turns Core's terse queue_reason into a line a
-// new operator can act on. Core names the blocking node ("destination
-// SMN_01 occupied (1 bin(s))"); we lead with the action to take.
-// Unknown reasons pass through verbatim so we never hide information.
-function humanizeQueueReason(reason) {
-    if (!reason) return '';
-    var m = reason.match(/destination (\S+) occupied/i);
-    if (m) return 'Waiting — drop-off ' + m[1] + ' still has a bin in it. Clear it first.';
-    if (reason === 'awaiting inventory' || /no .*bin|no source|no available/i.test(reason)) {
-        return 'Waiting — no matching bin available to deliver yet.';
-    }
-    return 'Waiting — ' + reason;
 }
 
 // Verb dispatch table. Adding a new prefix-action means one entry here.

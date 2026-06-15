@@ -11,6 +11,8 @@ func TestMaybePushLoader_StagesOneEmptyForTransitionalLoaderOnly(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "PUSH-PROC", "PUSH-LOADER", "PART-P")
+	// Non-transitional in the aggregate: replenishment=auto.
+	seedCoreLoader(t, eng, sharedLoaderInfo("PUSH-LOADER", "produce", "auto", "PART-P", 0, 0))
 
 	countEmpties := func() int {
 		ords, err := db.ListActiveOrdersByProcessNode(nodeID)
@@ -32,10 +34,8 @@ func TestMaybePushLoader_StagesOneEmptyForTransitionalLoaderOnly(t *testing.T) {
 		t.Fatalf("non-transitional loader must not auto-stage, got %d", got)
 	}
 
-	// Mark transitional → one empty staged.
-	if err := db.SetTransitionalLoader("PUSH-LOADER", true, "test"); err != nil {
-		t.Fatalf("set transitional: %v", err)
-	}
+	// Mark transitional (replenishment=operator) → one empty staged.
+	seedCoreLoader(t, eng, sharedLoaderInfo("PUSH-LOADER", "produce", "operator", "PART-P", 0, 0))
 	eng.MaybePushLoader(nodeID)
 	if got := countEmpties(); got != 1 {
 		t.Fatalf("transitional loader should stage exactly 1 empty, got %d", got)
@@ -65,9 +65,10 @@ func TestSweepPushLoaders_OnlyTransitionalProduceLoaders(t *testing.T) {
 	eng := testEngine(t, db)
 	_, transNode, _ := seedActiveManualSwapLoader(t, db, "T-PROC", "T-LOADER", "PART-A")
 	_, plainNode, _ := seedActiveManualSwapLoader(t, db, "P-PROC", "P-LOADER", "PART-B")
-	if err := db.SetTransitionalLoader("T-LOADER", true, "test"); err != nil {
-		t.Fatalf("set transitional: %v", err)
-	}
+	// T-LOADER transitional (replenishment=operator); P-LOADER ordinary (auto).
+	seedCoreLoader(t, eng,
+		sharedLoaderInfo("T-LOADER", "produce", "operator", "PART-A", 0, 0),
+		sharedLoaderInfo("P-LOADER", "produce", "auto", "PART-B", 0, 0))
 
 	eng.SweepPushLoaders()
 

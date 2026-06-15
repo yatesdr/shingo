@@ -388,11 +388,21 @@ func matchLoaderEmptyIn(ctx *orderCompletionCtx) bool {
 
 func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
 	claim := ctx.Claim() // cached in Match
-	if claim.OutboundDestination == "" {
+	// L2 outbound routing comes from the loader AGGREGATE (the config source of truth),
+	// not the legacy style_node_claim — this severs the completion handler's dependency
+	// on style_node_claims-as-loader-config (keystone step 5). Fall back to the claim
+	// when the loader can't be resolved (cutover flag off / cache cold), so this is
+	// behaviour-preserving across the cutover (loader.OutboundDest() == the claim's
+	// outbound under both the aggregate and the legacy claim projection).
+	outbound := claim.OutboundDestination
+	if l, err := e.loaders().LoaderAt(domain.NodeID(ctx.node.CoreNodeName), domain.RoleProduce); err == nil && l != nil && l.OutboundDest() != "" {
+		outbound = l.OutboundDest()
+	}
+	if outbound == "" {
 		e.logFn("side-cycle: loader %s has no OutboundDestination — cannot create L2 (filled bin will sit until operator manually moves it)", ctx.node.Name)
 		return false
 	}
-	if claim.OutboundDestination == claim.CoreNodeName {
+	if outbound == ctx.node.CoreNodeName {
 		e.logFn("side-cycle: loader %s OutboundDestination same as CoreNode — skipping L2 (would be a same-node move)", ctx.node.Name)
 		return false
 	}
@@ -421,12 +431,12 @@ func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
 	// end. Pre-fix the L2 stuck delivered on Edge while Core auto-confirmed
 	// on its side; the divergence lit up the bin-loader UI as a permanent
 	// "Confirm" button on a move that had already physically completed.
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, claim.CoreNodeName, claim.OutboundDestination, loadedPayloadCode, true)
+	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, ctx.node.CoreNodeName, outbound, loadedPayloadCode, true)
 	if err != nil {
 		e.logFn("side-cycle: create L2 (filled-out) for loader %s: %v", ctx.node.Name, err)
 		return false
 	}
-	log.Printf("side-cycle: L2 (filled-out) order %d for loader %s → %s payload=%q", order.ID, ctx.node.Name, claim.OutboundDestination, loadedPayloadCode)
+	log.Printf("side-cycle: L2 (filled-out) order %d for loader %s → %s payload=%q", order.ID, ctx.node.Name, outbound, loadedPayloadCode)
 	// Runtime cache binding is owned by the delivered handler — L1's
 	// empty bin landing at the loader already wrote active_bin_id /
 	// remaining_uop_cached. Confirm only swaps the active order pointer
@@ -461,11 +471,18 @@ func matchUnloaderFullIn(ctx *orderCompletionCtx) bool {
 
 func applyUnloaderFullIn(e *Engine, ctx *orderCompletionCtx) bool {
 	claim := ctx.Claim() // cached in Match
-	if claim.OutboundDestination == "" {
+	// U2 outbound from the loader AGGREGATE (consume role), severing the legacy claim
+	// dependency symmetrically with the loader (keystone step 5). Claim fallback keeps
+	// it behaviour-preserving across the cutover.
+	outbound := claim.OutboundDestination
+	if l, err := e.loaders().LoaderAt(domain.NodeID(ctx.node.CoreNodeName), domain.RoleConsume); err == nil && l != nil && l.OutboundDest() != "" {
+		outbound = l.OutboundDest()
+	}
+	if outbound == "" {
 		e.logFn("side-cycle: unloader %s has no OutboundDestination — cannot create U2 (empty bin will sit until operator manually moves it)", ctx.node.Name)
 		return false
 	}
-	if claim.OutboundDestination == claim.CoreNodeName {
+	if outbound == ctx.node.CoreNodeName {
 		e.logFn("side-cycle: unloader %s OutboundDestination same as CoreNode — skipping U2 (would be a same-node move)", ctx.node.Name)
 		return false
 	}
@@ -476,12 +493,12 @@ func applyUnloaderFullIn(e *Engine, ctx *orderCompletionCtx) bool {
 	// arrived in the now-empty bin — thread it onto U2 so the operator
 	// station can match the empty-out move to the right tile (otherwise
 	// claim.PayloadCode wins and multi-payload unloaders mis-render).
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, claim.CoreNodeName, claim.OutboundDestination, ctx.order.PayloadCode, true)
+	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, ctx.node.CoreNodeName, outbound, ctx.order.PayloadCode, true)
 	if err != nil {
 		e.logFn("side-cycle: create U2 (empty-out) for unloader %s: %v", ctx.node.Name, err)
 		return false
 	}
-	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s payload=%q", order.ID, ctx.node.Name, claim.OutboundDestination, ctx.order.PayloadCode)
+	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s payload=%q", order.ID, ctx.node.Name, outbound, ctx.order.PayloadCode)
 	// Runtime cache binding is owned by the delivered handler — U1's
 	// full bin landing at the unloader already wrote active_bin_id /
 	// remaining_uop_cached. Confirm only swaps the active order pointer

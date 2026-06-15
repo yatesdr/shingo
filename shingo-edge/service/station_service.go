@@ -4,10 +4,25 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
 )
+
+// LoaderResolver resolves the Core-owned loader aggregate a node belongs to, for
+// the operator view. It is consumer-defined HERE (service sits below engine, so it
+// cannot import the engine's LoaderStore); the engine injects its flag-selected
+// LoaderStore via SetLoaderResolver. Routing the view through the SAME resolver the
+// runtime uses is deliberate — it keeps "what loader is this node part of" a single
+// source of truth (the B1 goal) instead of re-deriving it from the cache in the view.
+//
+// Contract: a clean miss returns (nil, nil) — the node is not a known aggregate
+// loader, and BuildView keeps its legacy claim-derived fields. A non-nil error is a
+// real failure; the view degrades to legacy rather than inventing a grouping.
+type LoaderResolver interface {
+	LoaderAt(coreNode domain.NodeID, role domain.LoaderRole) (*domain.Loader, error)
+}
 
 // StationService owns operator-station CRUD and the two cross-aggregate
 // orchestrations that span stations + processes + orders + lineside:
@@ -17,13 +32,25 @@ import (
 // sat as named methods on *engine.Engine.
 type StationService struct {
 	db *store.DB
+	// loaders resolves a node's parent loader aggregate for the operator view.
+	// Optional: nil leaves the multi-window view fields empty (legacy behaviour),
+	// so the lighter test constructors that don't wire it compile and pass
+	// unchanged. The engine injects the live resolver via SetLoaderResolver.
+	loaders LoaderResolver
 }
 
 // NewStationService constructs a StationService wrapping the shared
-// *store.DB.
+// *store.DB. The loader resolver is wired separately via SetLoaderResolver so
+// existing call sites (and tests) that don't need multi-window view fields stay
+// unchanged.
 func NewStationService(db *store.DB) *StationService {
 	return &StationService{db: db}
 }
+
+// SetLoaderResolver injects the loader-aggregate resolver used to populate the
+// multi-window view fields (WindowGroupAnchor / WindowNodes). The engine calls
+// this once at startup with its flag-selected LoaderStore.
+func (s *StationService) SetLoaderResolver(r LoaderResolver) { s.loaders = r }
 
 // ── Cross-aggregate orchestrations ──────────────────────────────────
 
@@ -208,6 +235,25 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 			}
 			if homeLoc, err := s.db.IsHomeLocationLoader(node.CoreNodeName); err == nil {
 				nodeView.HomeLocationLoader = homeLoc
+			}
+			// Window-group membership from the Core aggregate (the view-path cutover,
+			// C4b). The per-node legacy fields above structurally cannot express that
+			// this node is one window of a shared multi-window loader; the resolver —
+			// the same one the runtime resolves empties through — can. Additive: only a
+			// SHARED loader with more than one window populates these; single-window,
+			// dedicated, and legacy loaders leave them empty, so existing views are
+			// byte-identical.
+			if s.loaders != nil {
+				if loader, err := s.loaders.LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(nodeView.ActiveClaim.Role)); err == nil && loader != nil && loader.IsShared() {
+					if wins := loader.Windows(); len(wins) > 1 {
+						nodeView.WindowGroupAnchor = string(loader.ID())
+						names := make([]string, len(wins))
+						for i, w := range wins {
+							names[i] = string(w.Node)
+						}
+						nodeView.WindowNodes = names
+					}
+				}
 			}
 		}
 		view.Nodes = append(view.Nodes, nodeView)

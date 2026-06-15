@@ -118,7 +118,34 @@ type Engine struct {
 	// the list-then-create dedup gap. One sweep of each kind at a time.
 	sweepingUnloaders atomic.Bool
 	sweepingLoaders   atomic.Bool
-	kafkaConnFn       func() bool
+	// l1Burst is the per-delivery-node burst tripwire (PR-0 observability):
+	// WARNs when too many loader/unloader in-bin orders land on one node in a
+	// short window. Zero value is usable.
+	l1Burst loaderBurstTracker
+
+	// loaderResv serializes the count→fire reservation per loader so concurrent
+	// writers (a Kafka demand signal vs an HTTP RequestEmptyBin, or the push
+	// sweep) can't both read the same in-flight count and both fire empties —
+	// the never-2N invariant. map[loaderID]*sync.Mutex, keyed from day one (no
+	// global lock). NO transaction: see reserveLoaderEmpties and
+	// FINAL-ADJUDICATION Q1 (monotonicity + non-tx-pure CreateRetrieveOrder).
+	loaderResv sync.Map
+
+	// loaderStore is the consumer-defined resolver for loaders, backed by the
+	// Core-owned aggregate (the synced core_loaders cache), refreshed on each
+	// node-list sync.
+	loaderStore LoaderStore
+
+	// loaderCacheWarmed + pendingThreshold close the startup race where a Core
+	// LoopBelowThresholdSignal arrives before the first node-list sync populates the
+	// loader cache: the signal can't resolve a loader and would be dropped. Until the
+	// cache has synced once, such a signal is PARKED here and replayed the instant
+	// SetCoreLoaders warms the cache, so no startup reorder is lost (hold-and-replay).
+	loaderCacheWarmed atomic.Bool
+	pendingThreshMu   sync.Mutex
+	pendingThreshold  []*protocol.LoopBelowThresholdSignal
+
+	kafkaConnFn func() bool
 }
 
 // Config holds the parameters needed to create an Engine.
@@ -164,6 +191,11 @@ func New(c Config) *Engine {
 	e.reconciliation = newReconciliationService(e.db)
 	e.coreSync = newCoreSyncService(e)
 	e.stationService = service.NewStationService(e.db)
+	// Wire the operator view to the SAME flag-selected loader resolver the runtime
+	// uses, so the board's window-group membership and the empties it spreads can
+	// never disagree (multi-window C4b). Lazy via loaders() so the flag dual is
+	// honoured; the not-found sentinel is mapped to a clean miss for the view.
+	e.stationService.SetLoaderResolver(stationLoaderResolver{e})
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)
@@ -173,6 +205,7 @@ func New(c Config) *Engine {
 	e.catalogService = service.NewCatalogService(e.db)
 	e.orderService = service.NewOrderService(e.db)
 	e.preflightChecker = service.NewPreflightChecker(e.db, e.coreClient, e.cfg.StationID())
+	e.loaderStore = newLoaderStore(e)
 	return e
 }
 

@@ -13,31 +13,24 @@ import (
 // HMI rendering. The fleet/Core round trip writes back the
 // VendorOrderID into WaybillID once Core dispatches.
 type Order struct {
-	ID        int64              `json:"id"`
-	UUID      string             `json:"uuid"`
-	OrderType protocol.OrderType `json:"order_type"`
-	Status    protocol.Status    `json:"status"`
-	// QueueReason is Core's human-readable explanation for why a queued
-	// order hasn't dispatched (e.g. "destination SMN_01 occupied (1
-	// bin(s))"). Populated from the OrderUpdate detail on the queued
-	// reply; surfaced on the operator board so a parked request explains
-	// itself instead of looking like a dead button. Empty for
-	// non-queued orders.
-	QueueReason    string     `json:"queue_reason"`
-	ProcessNodeID  *int64     `json:"process_node_id,omitempty"`
-	RetrieveEmpty  bool       `json:"retrieve_empty"`
-	Quantity       int64      `json:"quantity"`
-	DeliveryNode   string     `json:"delivery_node"`
-	StagingNode    string     `json:"staging_node"`
-	SourceNode     string     `json:"source_node"`
-	LoadType       string     `json:"load_type"`
-	WaybillID      *string    `json:"waybill_id"`
-	ExternalRef    *string    `json:"external_ref"`
-	FinalCount     *int64     `json:"final_count"`
-	CountConfirmed bool       `json:"count_confirmed"`
-	ETA            *string    `json:"eta"`
-	AutoConfirm    bool       `json:"auto_confirm"`
-	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
+	ID             int64              `json:"id"`
+	UUID           string             `json:"uuid"`
+	OrderType      protocol.OrderType `json:"order_type"`
+	Status         protocol.Status    `json:"status"`
+	ProcessNodeID  *int64             `json:"process_node_id,omitempty"`
+	RetrieveEmpty  bool               `json:"retrieve_empty"`
+	Quantity       int64              `json:"quantity"`
+	DeliveryNode   string             `json:"delivery_node"`
+	StagingNode    string             `json:"staging_node"`
+	SourceNode     string             `json:"source_node"`
+	LoadType       string             `json:"load_type"`
+	WaybillID      *string            `json:"waybill_id"`
+	ExternalRef    *string            `json:"external_ref"`
+	FinalCount     *int64             `json:"final_count"`
+	CountConfirmed bool               `json:"count_confirmed"`
+	ETA            *string            `json:"eta"`
+	AutoConfirm    bool               `json:"auto_confirm"`
+	StagedExpireAt *time.Time         `json:"staged_expire_at,omitempty"`
 	// BinID is Core's ID for the bin associated with this order,
 	// snapshot from OrderDelivered. PLC tick attribution at
 	// consume/produce time looks up runtime.ActiveOrderID, reads its

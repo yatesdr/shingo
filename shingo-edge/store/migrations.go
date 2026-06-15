@@ -37,6 +37,19 @@ func hasV5LoaderColumn(db *DB) bool {
 	return hit > 0
 }
 
+// hasLegacyLoaderCacheKey reports whether the Core loader cache is on the old
+// (core_node_name, role) shape (pre-6b), detected by the core_node_name column on
+// core_loaders. When true, migrate() drops the three cache tables so schema.Apply
+// recreates them loader_key-keyed; the cache is rebuilt full-state on the next sync.
+func hasLegacyLoaderCacheKey(db *DB) bool {
+	var hit int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('core_loaders') WHERE name='core_node_name'`).Scan(&hit)
+	if err != nil {
+		return false
+	}
+	return hit > 0
+}
+
 // hasLegacyInventoryDeltaSeqPK returns true when inventory_delta_seq
 // exists without the epoch column (and therefore without epoch in its
 // PK). Probe via pragma_table_info — pre-epoch rows have just
@@ -100,6 +113,18 @@ func (db *DB) migrate() error {
 	// fix-up pass removed them entirely.
 	if hasV5LoaderColumn(db) {
 		db.Exec("DROP TABLE IF EXISTS loader_payload_thresholds")
+	}
+
+	// The Core loader cache (core_loaders + children) re-keyed from
+	// (core_node_name, role) to loader_key when the loader's borrowed node id was
+	// dropped. SQLite can't ALTER PRIMARY KEY in place, and the cache is rebuilt
+	// full-state on the next node-list sync, so detect the old shape (a
+	// core_node_name column on core_loaders) and DROP the three tables —
+	// schema.Apply recreates them loader_key-keyed and the next sync repopulates.
+	if hasLegacyLoaderCacheKey(db) {
+		db.Exec("DROP TABLE IF EXISTS core_loader_positions")
+		db.Exec("DROP TABLE IF EXISTS core_loader_payloads")
+		db.Exec("DROP TABLE IF EXISTS core_loaders")
 	}
 
 	// 2. Rename legacy tables BEFORE schema.Apply so existing data
@@ -217,6 +242,21 @@ func (db *DB) migrate() error {
 	// Not synced from Core (see catalog.UpsertCatalog comment).
 	db.Exec("ALTER TABLE payload_catalog ADD COLUMN cycle_seconds REAL NOT NULL DEFAULT 0")
 
+	// Multi-window C0: explicit position kind on the cached loader aggregate
+	// ('window' | 'dedicated'), synced from Core's LoaderPosition.Kind, so the
+	// resolver never sniffs an empty payload to tell a shared-window window from
+	// an unassigned dedicated position. Idempotent — duplicate ADD COLUMN fails
+	// silently. Empty on rows from a pre-Kind Core; the parent loader's layout
+	// stays authoritative (C1 branches on Layout).
+	db.Exec("ALTER TABLE core_loader_positions ADD COLUMN kind TEXT NOT NULL DEFAULT ''")
+
+	// Loader identity cutover (step 4): the cached loader's opaque identity token
+	// ("loader:<id>"), synced from Core's LoaderInfo.LoaderKey. projectCoreLoader keys
+	// the loader's identity on this instead of core_node_name. Idempotent — duplicate
+	// ADD COLUMN fails silently; empty on rows from a pre-cutover Core, in which case
+	// projectCoreLoader falls back to core_node_name.
+	db.Exec("ALTER TABLE core_loaders ADD COLUMN loader_key TEXT NOT NULL DEFAULT ''")
+
 	// 6. Data fixups
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")
 
@@ -302,13 +342,6 @@ func (db *DB) migrate() error {
 
 	// v16: Add payload_code to orders for per-payload demand mapping.
 	db.Exec("ALTER TABLE orders ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''")
-
-	// v27 (Hopkinsville 2026-06-11): Core's reason a retrieve is sitting
-	// queued (dropoff occupied, no source bin, …), surfaced on the
-	// operator board so a parked "request full" explains itself instead
-	// of reading as a dead button. Populated from the OrderUpdate detail
-	// on the queued reply (manager.HandleDispatchReply / ReplyQueued).
-	db.Exec("ALTER TABLE orders ADD COLUMN queue_reason TEXT NOT NULL DEFAULT ''")
 
 	// v17 (lineside phase 6): per-claim soft threshold for the release
 	// qty-override prompt. Zero means "off" — the default. When >0, the

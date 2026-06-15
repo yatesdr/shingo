@@ -75,11 +75,14 @@ func TestFindLoaderForDemand_RoutesToSignaledCoreNode(t *testing.T) {
 	eng := testEngine(t, db)
 	seedActiveManualSwapLoader(t, db, "AAA-PROC", "LOADER-A", "SHARED")
 	seedActiveManualSwapLoader(t, db, "BBB-PROC", "LOADER-B", "SHARED")
+	seedCoreLoader(t, eng,
+		sharedLoaderInfo("LOADER-A", "produce", "auto", "SHARED", 0, 0),
+		sharedLoaderInfo("LOADER-B", "produce", "auto", "SHARED", 0, 0))
 
-	if got := eng.findLoaderForDemand("LOADER-B", "SHARED"); got == nil || got.node.CoreNodeName != "LOADER-B" {
-		t.Errorf("signaled LOADER-B but resolved %v, want LOADER-B", got)
+	if got, viaFallback := eng.findLoaderForDemand("LOADER-B", "SHARED"); got == nil || got.ID() != "loader:LOADER-B" || viaFallback {
+		t.Errorf("signaled LOADER-B but resolved %v (viaFallback=%v), want loader:LOADER-B via exact match", got, viaFallback)
 	}
-	if got := eng.findLoaderForDemand("", "SHARED"); got == nil || got.node.CoreNodeName != "LOADER-A" {
-		t.Errorf("no node named: fallback resolved %v, want first-match LOADER-A", got)
+	if got, viaFallback := eng.findLoaderForDemand("", "SHARED"); got == nil || got.ID() != "loader:LOADER-A" || !viaFallback {
+		t.Errorf("no node named: fallback resolved %v (viaFallback=%v), want first-match loader:LOADER-A via fallback", got, viaFallback)
 	}
 }

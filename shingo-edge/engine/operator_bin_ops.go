@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -355,16 +356,54 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		}
 	}
 
-	// Anti-spam: a manual_swap loader has ONE physical bin slot, so at most one
-	// empty may be inbound at a time. Reject a second request while a
-	// retrieve_empty is already non-terminal at this slot. Scoped by CORE NODE
-	// (delivery_node), not process_node: a loader shared across styles/cells has
-	// many process_node rows for one slot, so a process-node check would miss an
-	// empty staged against a sibling row and let the slot be double-committed
-	// (see [[shingo_manual_swap_core_node_scoping]]). The board greys its request
-	// button the instant a request fires, so this is belt-and-suspenders for
-	// double-tap races and direct API callers. Fail closed on a read error:
-	// better to make the operator retry than to dispatch into the dark.
+	// manual_swap loaders route their empty-in reservation through the SAME
+	// per-loader seam as the demand/threshold paths, so an operator request and a
+	// kanban signal can't both pass the in-flight count and both fire — the
+	// never-2N invariant. The seam owns the count, the budget, and the create
+	// atomically; want=1 (the operator asks for one empty), autoConfirm forced off
+	// (the operator confirms after loading, matching the side-cycle path). Budget
+	// exhausted (a retrieve_empty already inbound across the loader's cluster) ⇒
+	// the seam fires nothing and we surface the familiar "already inbound" error.
+	if claim.SwapMode == protocol.SwapModeManualSwap {
+		dl, perr := loaderFromManualSwapClaim(*claim, domain.ReplenishmentAuto)
+		if perr != nil {
+			return nil, fmt.Errorf("node %s: build loader: %w", node.Name, perr)
+		}
+		var created *orders.Order
+		n, rerr := e.reserveLoaderBins(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), true, func(deliveryNodes []string) (int, error) {
+			made := 0
+			for _, deliveryNode := range deliveryNodes {
+				order, cerr := e.orderMgr.CreateRetrieveOrder(
+					&nodeID, true, 1, deliveryNode, claim.InboundSource, "",
+					"standard", payloadCode, false, true,
+				)
+				if cerr != nil {
+					return made, cerr
+				}
+				created = order
+				if uerr := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); uerr != nil {
+					log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, uerr)
+				}
+				made++
+			}
+			return made, nil
+		})
+		if rerr != nil {
+			return nil, fmt.Errorf("node %s: request empty: %w", node.Name, rerr)
+		}
+		if n == 0 || created == nil {
+			return nil, fmt.Errorf("node %s: an empty bin is already inbound", node.Name)
+		}
+		return created, nil
+	}
+
+	// Anti-spam for simple / multi-step modes (manual_swap is handled above via
+	// the reservation seam): one physical slot, so reject a second request while a
+	// retrieve_empty is already non-terminal at this CORE NODE (delivery_node, not
+	// process_node — a shared node has many process_node rows for one slot; see
+	// [[shingo_manual_swap_core_node_scoping]]). The board greys its request button
+	// the instant a request fires; this is belt-and-suspenders for double-tap races
+	// and direct API callers. Fail closed on a read error.
 	inFlightEmpties, err := e.countActiveOrdersAtNode(node.CoreNodeName, func(o orders.Order) bool {
 		return o.RetrieveEmpty
 	})
@@ -434,8 +473,9 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		}
 	}
 
-	// Simple / manual_swap modes: single retrieve. Core queues if no empty is
-	// immediately available.
+	// Simple mode: single retrieve (manual_swap returned above via the seam; the
+	// multi-step modes returned in the dispatch branch). Core queues if no empty
+	// is immediately available.
 	//
 	// Source group is the loader's claim.InboundSource (the supermarket the
 	// operator is configured to pull empties from). Without this, Core's

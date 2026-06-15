@@ -29,6 +29,16 @@ type Config struct {
 	Backup      BackupConfig      `yaml:"backup"`
 	CountGroups CountGroupsConfig `yaml:"count_groups"`
 	Sim         SimConfig         `yaml:"sim"`
+
+	// LoadersMultiWindow (C4) activates shared-window multi-window delivery: a
+	// shared loader's empty-in budget becomes its window count and empties spread
+	// across its windows (round-robin to free windows), instead of funneling to
+	// the anchor with budget 1. Default false — keep it off until the operator
+	// board renders per-window state (A2) and the demand re-key (B9) land, or a
+	// shared loader configured with >1 window would stage bins at windows the HMI
+	// can't yet show. The reservation seam already keys per-loader, so flipping
+	// this does not fragment the never-2N budget.
+	LoadersMultiWindow bool `yaml:"loaders_multi_window"`
 }
 
 // CountGroupsConfig holds the edge side of the advanced-zone light feature.

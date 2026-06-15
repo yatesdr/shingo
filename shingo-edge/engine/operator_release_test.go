@@ -398,16 +398,20 @@ func TestReleaseOrderWithLineside_ConsumeReleaseDoesNotFireL1(t *testing.T) {
 // room — no wedge.
 //
 // This test pins the positive direction: calling MaybeCreateLoaderEmptyIn
-// creates ReorderPoint=2 worth of L1 orders at the loader, regardless of
-// Core-side state. A future regression that re-introduces the
-// loader-bin-present gate at order-creation time will fail this test
-// (zero orders created when the test doesn't simulate a "no bin
-// present" Core response).
+// creates an L1 at the loader regardless of Core-side state. Post-PR-0 the
+// per-node capacity cap bounds the one-window loader to a single in-flight
+// empty (minStock=2 is reached over the fill/release cycle, not by queuing two
+// empties at a one-bin window). A future regression that re-introduces the
+// loader-bin-present gate at order-creation time will fail this test (zero
+// orders created when the test doesn't simulate a "no bin present" Core response).
 func TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	loaderNodeID, _ := seedManualSwapClaim(t, db, "L1-CREATE", "produce", "PART-CREATE", "STORAGE-NODE")
+	// Explicit ReorderPoint=2 gives the loader a replenishment policy (the silent
+	// 2-bin default was removed): demand fires and the per-node cap bounds it to one.
+	loaderNodeID := seedCapManualSwap(t, db, "L1-CREATE", "L1-CREATE-LOADER", protocol.ClaimRoleProduce, []string{"PART-CREATE"}, 2, false)
 	eng := testEngine(t, db)
+	seedCoreLoader(t, eng, sharedLoaderInfo("L1-CREATE-LOADER", "produce", "auto", "PART-CREATE", 2, 0))
 
 	eng.MaybeCreateLoaderEmptyIn("", "PART-CREATE")
 
@@ -421,11 +425,12 @@ func TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires(t *testing.T) {
 			created++
 		}
 	}
-	// seedManualSwapClaim doesn't set ReorderPoint, so refillLoaderForPayload's
-	// magic-number fallback applies: minStock=2. With currentCount=0 and
-	// inFlight=0, needed=2.
-	if created != 2 {
-		t.Errorf("expected 2 L1 retrieve_empty orders created at loader, got %d", created)
+	// minStock=2 (explicit ReorderPoint), but the PR-0 per-node capacity cap
+	// bounds total in-flight empties at a one-window loader to manualSwapWindowSlots
+	// (1): only one empty is dispatched now; the second fires once the first is
+	// filled and the window frees.
+	if created != 1 {
+		t.Errorf("expected 1 L1 retrieve_empty order created at the one-window loader (cap), got %d", created)
 	}
 }
 

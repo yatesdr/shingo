@@ -124,6 +124,8 @@ func TestHandleLoopBelowThreshold_FiresForInactiveStyleLoader(t *testing.T) {
 		orderMgr:       orders.NewManager(db, noOpOrderEmitter{}, "test-station"),
 		catalogService: service.NewCatalogService(db),
 	}
+	// Warm the loader cache so the threshold signal resolves (else it parks as "not synced").
+	seedCoreLoader(t, eng, sharedLoaderInfo("CAL-LOADER", "produce", "auto", "WIDGET-X", 2, 100))
 
 	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
 		PayloadCode:  "WIDGET-X",
@@ -139,10 +141,10 @@ func TestHandleLoopBelowThreshold_FiresForInactiveStyleLoader(t *testing.T) {
 	hasFired := false
 	hasDropped := false
 	for _, line := range logs {
-		if strings.Contains(line, "loop_threshold: signal received loader=CAL-LOADER") {
+		if strings.Contains(line, "loop_threshold: signal received loader=loader:CAL-LOADER") {
 			hasReceived = true
 		}
-		if strings.Contains(line, "loop_threshold: loader=CAL-LOADER payload=WIDGET-X firing 1 L1") {
+		if strings.Contains(line, "loop_threshold: loader=loader:CAL-LOADER payload=WIDGET-X firing 1 L1") {
 			hasFired = true
 		}
 		if strings.Contains(line, "no loader for payload=WIDGET-X") {
@@ -162,11 +164,17 @@ func TestHandleLoopBelowThreshold_FiresForInactiveStyleLoader(t *testing.T) {
 
 // TestHandleLoopBelowThreshold_CeilsToWholeBins covers the UOP-space
 // math: when threshold > capacity, one bin is insufficient and the
-// handler must fire ceil(gap / capacity) L1s in a single signal. The
-// SNF2 plant incident on 2026-05-21 was the opposite case (threshold
-// 100 / capacity 345 → ceil=1) where the legacy bin-count refill
-// over-fired to minStock=2 — this test pins the math from the other
-// side so future refactors can't quietly reintroduce a unit mismatch.
+// handler computes ceil(gap / capacity) desired bins. The SNF2 plant
+// incident on 2026-05-21 was the opposite case (threshold 100 /
+// capacity 345 → ceil=1) where the legacy bin-count refill over-fired
+// to minStock=2 — this test pins the math so future refactors can't
+// quietly reintroduce a unit mismatch.
+//
+// Post-PR-0 the per-node capacity cap bounds the ACTUAL fire to the
+// window's physical slot count (1 here): the math still computes 3
+// (asserted via the desired_bins log) but tryCreateL1 dispatches one,
+// and the remaining bins follow on subsequent signals as the window
+// frees. See bin-loader-refactor-reviews/impl-questions.md Q1.
 func TestHandleLoopBelowThreshold_CeilsToWholeBins(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -225,6 +233,8 @@ func TestHandleLoopBelowThreshold_CeilsToWholeBins(t *testing.T) {
 		orderMgr:       orders.NewManager(db, noOpOrderEmitter{}, "test-station"),
 		catalogService: service.NewCatalogService(db),
 	}
+	// Warm the loader cache so the threshold signal resolves (else it parks as "not synced").
+	seedCoreLoader(t, eng, sharedLoaderInfo("MULTIBIN-LOADER", "produce", "auto", "TINY-PART", 0, 100))
 
 	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
 		PayloadCode:  "TINY-PART",
@@ -236,14 +246,21 @@ func TestHandleLoopBelowThreshold_CeilsToWholeBins(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	found := false
+	mathComputed3 := false // ceil(900/300) = 3 desired bins (UOP-space math)
+	cappedToOne := false   // per-node window cap (1 physical slot) bounds the fire
 	for _, line := range logs {
-		if strings.Contains(line, "loop_threshold: loader=MULTIBIN-LOADER payload=TINY-PART firing 3 L1") {
-			found = true
+		if strings.Contains(line, "desired_bins=3") {
+			mathComputed3 = true
+		}
+		if strings.Contains(line, "loop_threshold: loader=loader:MULTIBIN-LOADER payload=TINY-PART firing 1 L1") {
+			cappedToOne = true
 		}
 	}
-	if !found {
-		t.Errorf("expected 'firing 3 L1' (ceil(900/300)); got: %v", logs)
+	if !mathComputed3 {
+		t.Errorf("expected ceil-to-whole-bins math desired_bins=3 (900/300); got: %v", logs)
+	}
+	if !cappedToOne {
+		t.Errorf("expected the fire capped to 1 L1 by the per-node window cap; got: %v", logs)
 	}
 }
 
@@ -322,6 +339,8 @@ func TestHandleLoopBelowThreshold_SkipsWhenProjectedUOPCoversThreshold(t *testin
 		orderMgr:       om,
 		catalogService: service.NewCatalogService(db),
 	}
+	// Warm the loader cache so the threshold signal resolves (else it parks as "not synced").
+	seedCoreLoader(t, eng, sharedLoaderInfo("SKIP-LOADER", "produce", "auto", "BIG-PART", 0, 100))
 
 	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
 		PayloadCode:  "BIG-PART",
@@ -336,7 +355,11 @@ func TestHandleLoopBelowThreshold_SkipsWhenProjectedUOPCoversThreshold(t *testin
 	skipped := false
 	fired := false
 	for _, line := range logs {
-		if strings.Contains(line, "in-flight") && strings.Contains(line, "skipping") {
+		// The reservation seam emits one structured decision record; a skip is
+		// to_fire=0 — it counted the in-flight empty that already covers the
+		// threshold and fired nothing (replaces the old per-payload "skipping"
+		// debug line).
+		if strings.Contains(line, "loader_reserve") && strings.Contains(line, "to_fire=0") {
 			skipped = true
 		}
 		if strings.Contains(line, "firing") && strings.Contains(line, "L1") {
@@ -344,7 +367,7 @@ func TestHandleLoopBelowThreshold_SkipsWhenProjectedUOPCoversThreshold(t *testin
 		}
 	}
 	if !skipped {
-		t.Errorf("expected in-flight dedup skip log (1 in-flight covers threshold); got: %v", logs)
+		t.Errorf("expected reservation-seam skip record (to_fire=0; 1 in-flight covers threshold); got: %v", logs)
 	}
 	if fired {
 		t.Errorf("must NOT fire an L1 when in-flight already covers threshold; got: %v", logs)
@@ -410,6 +433,9 @@ func TestHandleLoopBelowThreshold_SkipsOnMissingCatalogCapacity(t *testing.T) {
 		orderMgr:       orders.NewManager(db, noOpOrderEmitter{}, "test-station"),
 		catalogService: service.NewCatalogService(db),
 	}
+	// Warm the loader cache so the signal resolves; the catalog miss (not a loader
+	// miss) is what this test exercises.
+	seedCoreLoader(t, eng, sharedLoaderInfo("MISS-LOADER", "produce", "auto", "ORPHAN-PART", 0, 100))
 
 	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
 		PayloadCode:  "ORPHAN-PART",
@@ -439,6 +465,84 @@ func TestHandleLoopBelowThreshold_SkipsOnMissingCatalogCapacity(t *testing.T) {
 	}
 }
 
+// TestHandleLoopBelowThreshold_ParksAndReplaysBeforeCacheSync pins the startup-race
+// fix: a threshold signal that arrives before the loader cache's first sync (the
+// signal beat the node-list response) is PARKED, not dropped, and replayed the instant
+// SetCoreLoaders warms the cache — so the reorder isn't lost until the next delta.
+func TestHandleLoopBelowThreshold_ParksAndReplaysBeforeCacheSync(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	eng.loaderStore = newLoaderStore(eng) // aggregate store, COLD cache (no sync yet)
+	eng.catalogService = service.NewCatalogService(db)
+
+	// The loader's core node needs an Edge process_node (the L1 delivery target) and
+	// the payload needs a catalog capacity for the UOP-space math.
+	procID, err := db.CreateProcess("RACE-PROC", "", "active_production", "", "", false, false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: procID, CoreNodeName: "RACE-LOADER", Code: "R1", Name: "R1", Sequence: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	testutil.MustNoErr(t, db.UpsertPayloadCatalog(&catalog.CatalogEntry{
+		ID: 1, Name: "Race Part", Code: "RACE-PART", UOPCapacity: 100,
+	}), "seed catalog")
+
+	countL1 := func() int {
+		ords, err := db.ListActiveOrdersByProcessNode(nodeID)
+		if err != nil {
+			t.Fatalf("list orders: %v", err)
+		}
+		n := 0
+		for _, o := range ords {
+			if o.RetrieveEmpty && o.PayloadCode == "RACE-PART" {
+				n++
+			}
+		}
+		return n
+	}
+
+	sig := &protocol.LoopBelowThresholdSignal{
+		PayloadCode: "RACE-PART", CurrentUOP: 0, Threshold: 100, CoreNodeName: "RACE-LOADER", Reason: "below_threshold",
+	}
+
+	// Cold cache: the loader can't resolve yet, so the signal must be PARKED (not
+	// dropped) and fire nothing.
+	eng.HandleLoopBelowThreshold(sig)
+	if got := countL1(); got != 0 {
+		t.Fatalf("cold cache: expected 0 L1 (signal parked), got %d", got)
+	}
+	if n := len(eng.pendingThreshold); n != 1 {
+		t.Fatalf("expected 1 parked signal, got %d", n)
+	}
+	if eng.loaderCacheWarmed.Load() {
+		t.Fatal("cache must not be warmed before any SetCoreLoaders")
+	}
+
+	// The node-list sync lands, carrying the loader. SetCoreLoaders warms the cache
+	// and replays the parked signal, which now resolves and fires its L1.
+	eng.SetCoreLoaders([]protocol.LoaderInfo{{
+		Name: "RL", LoaderKey: "loader:RACE-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "auto",
+		InboundSource: "EMPTY-SUPER", OutboundDest: "FILLED", ConfigGen: 1,
+		Positions: []protocol.LoaderPosition{{CoreNodeName: "RACE-LOADER", Kind: "window"}},
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "RACE-PART", MinStock: 2, UOPThreshold: 100}},
+	}})
+
+	if !eng.loaderCacheWarmed.Load() {
+		t.Error("cache should be marked warmed after SetCoreLoaders")
+	}
+	if n := len(eng.pendingThreshold); n != 0 {
+		t.Errorf("pending buffer should be drained after replay, got %d", n)
+	}
+	if got := countL1(); got != 1 {
+		t.Errorf("after cache sync: expected the parked signal to replay and fire 1 L1, got %d", got)
+	}
+}
+
 // sprintf is a thin alias so the log-capture closures read cleanly.
 func sprintf(format string, args ...any) string { return fmt.Sprintf(format, args...) }
 
@@ -458,6 +562,10 @@ func TestHandleLoopBelowThreshold_RoutesToSignaledCoreNode(t *testing.T) {
 	testutil.MustNoErr(t, db.UpsertPayloadCatalog(&catalog.CatalogEntry{
 		ID: 1, Name: "Shared", Code: "SHARED", UOPCapacity: 100,
 	}), "seed catalog")
+	// Both loaders serve SHARED; the signal names LOADER-B, so the L1 must land there.
+	seedCoreLoader(t, eng,
+		sharedLoaderInfo("LOADER-A", "produce", "auto", "SHARED", 0, 100),
+		sharedLoaderInfo("LOADER-B", "produce", "auto", "SHARED", 0, 100))
 
 	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
 		PayloadCode:  "SHARED",

@@ -63,6 +63,19 @@ type StationNodeView struct {
 	// loader nodes, instead of one window with a card per payload. Orthogonal to
 	// TransitionalLoader (this is layout; that is type).
 	HomeLocationLoader bool `json:"home_location_loader,omitempty"`
+	// WindowGroupAnchor is the LoaderID this node belongs to when it is one window
+	// of a shared MULTI-window loader, resolved from the Core aggregate (not the
+	// legacy per-node claim). Empty for a single-window/legacy loader or a non-loader
+	// node. This is what lets the operator board show "Window N of <loader>" and know
+	// the node is part of a shared demand budget — the membership that the
+	// claim-derived fields above structurally cannot express (multi-window refactor
+	// C4b, the view-path cutover). Populated only for manual_swap nodes.
+	WindowGroupAnchor string `json:"window_group_anchor,omitempty"`
+	// WindowNodes is the sibling window set of this node's shared loader — every
+	// window's core_node_name in loader order — populated alongside WindowGroupAnchor.
+	// One physical bin per window; the windows share the loader's single empty-in
+	// budget (one demand of N → N empties across the set, never 2N).
+	WindowNodes []string `json:"window_nodes,omitempty"`
 	// ActivePayloadLineside maps an active-style payload code to the current
 	// lineside UOP for it — the bin at the consuming node plus parts pulled to
 	// the line (active buckets), summed across ALL active consume nodes for that

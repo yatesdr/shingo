@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -35,7 +36,6 @@ const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.r
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.sibling_order_id, o.created_at, o.updated_at,
-	COALESCE(o.queue_reason, ''),
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
 
 const joinClause = `FROM orders o
@@ -106,7 +106,6 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &createdAt, &updatedAt,
-			&o.QueueReason,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 			return nil, err
 		}
@@ -137,7 +136,6 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &createdAt, &updatedAt,
-		&o.QueueReason,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 		return err
 	}
@@ -197,14 +195,6 @@ func UpdateProcessNode(db *sql.DB, id int64, processNodeID *int64) error {
 // UpdateStatus changes the order status and bumps updated_at.
 func UpdateStatus(db *sql.DB, id int64, newStatus string) error {
 	_, err := db.Exec(`UPDATE orders SET status=?, updated_at=datetime('now') WHERE id=?`, newStatus, id)
-	return err
-}
-
-// UpdateQueueReason records Core's reason for parking an order in the
-// queued state, so the operator board can explain why it hasn't moved.
-// Does not bump updated_at — the queued status transition already did.
-func UpdateQueueReason(db *sql.DB, id int64, reason string) error {
-	_, err := db.Exec(`UPDATE orders SET queue_reason=? WHERE id=?`, reason, id)
 	return err
 }
 
@@ -357,6 +347,33 @@ func ListActiveByDeliveryNode(db *sql.DB, deliveryNode string) ([]Order, error) 
 	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
 		WHERE o.delivery_node = ? AND o.status NOT IN (%s)
 		ORDER BY o.created_at`, protocol.TerminalStatusSQLList()), deliveryNode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// ListActiveByDeliveryNodeSet returns non-terminal orders whose delivery_node is
+// in the given set, in a SINGLE query (one snapshot). The multi-window
+// reservation seam counts in-flight empties across a loader's whole delivery-node
+// cluster with this — a loop of per-node ListActiveByDeliveryNode would take N
+// separate snapshots and reopen the count→fire race window between them. An empty
+// set returns no orders (callers treat that as "nothing in flight"). Duplicate
+// node names are harmless (the IN set dedups them).
+func ListActiveByDeliveryNodeSet(db *sql.DB, deliveryNodes []string) ([]Order, error) {
+	if len(deliveryNodes) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(deliveryNodes))
+	args := make([]any, len(deliveryNodes))
+	for i, n := range deliveryNodes {
+		placeholders[i] = "?"
+		args[i] = n
+	}
+	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.delivery_node IN (%s) AND o.status NOT IN (%s)
+		ORDER BY o.created_at`, strings.Join(placeholders, ","), protocol.TerminalStatusSQLList()), args...)
 	if err != nil {
 		return nil, err
 	}

@@ -56,12 +56,6 @@ func (db *DB) UpdateOrderStatus(id int64, newStatus string) error {
 	return orders.UpdateStatus(db.DB, id, newStatus)
 }
 
-// UpdateOrderQueueReason records Core's reason for an order sitting
-// queued, surfaced on the operator board.
-func (db *DB) UpdateOrderQueueReason(id int64, reason string) error {
-	return orders.UpdateQueueReason(db.DB, id, reason)
-}
-
 // UpdateOrderWaybill writes the carrier waybill and ETA fields.
 func (db *DB) UpdateOrderWaybill(id int64, waybillID, eta string) error {
 	return orders.UpdateWaybill(db.DB, id, waybillID, eta)
@@ -156,6 +150,15 @@ func (db *DB) ListDeliveredRetrieveByDeliveryNode(deliveryNode string, retrieveE
 // orders at its physical slot regardless of which process_node staged them.
 func (db *DB) ListActiveOrdersByDeliveryNode(deliveryNode string) ([]orders.Order, error) {
 	return orders.ListActiveByDeliveryNode(db.DB, deliveryNode)
+}
+
+// ListActiveOrdersByDeliveryNodeSet returns non-terminal orders whose
+// delivery_node is in the given set, in one query. The multi-window reservation
+// seam counts a loader's in-flight empties across its whole delivery cluster with
+// this — one snapshot, not N per-node snapshots that would reopen the count→fire
+// race between reads.
+func (db *DB) ListActiveOrdersByDeliveryNodeSet(deliveryNodes []string) ([]orders.Order, error) {
+	return orders.ListActiveByDeliveryNodeSet(db.DB, deliveryNodes)
 }
 
 // ListActiveOrdersByProcessNodeOrSource returns non-terminal orders that

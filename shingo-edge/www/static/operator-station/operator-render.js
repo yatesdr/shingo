@@ -1,6 +1,7 @@
 import { el, esc, fillColor, postAction, showToast } from './operator-util.js';
 import { getView, claimedNodes, isReplenishing } from './operator-state.js';
 import { isActive } from './order-status.js';
+import { cardModel, headerModel, nodeFacts } from './operator-window-state.js';
 
 const grid = document.getElementById('os-grid');
 const headerInfo = document.getElementById('os-header-info');
@@ -249,56 +250,10 @@ export function renderGrid() {
     }
 }
 
-// cardState collapses the per-card state derivation that previously lived in
-// four parallel if/else ladders inside renderPayloadBoard (CSS class, status
-// tag, detail text, and the click action). One precedence computation here;
-// the render site reads the resolved fields. ctx carries the per-card
-// booleans; returns { cls, statusText, statusClass, detail, action, loadNow }.
-// action is role-gated (what a tap does, not merely how the card looks) — a
-// consume and produce card can look identical but dispatch differently.
-function cardState(ctx) {
-    var role = ctx.role;
-    var cls, statusText, statusClass;
-    if (ctx.payloadDelivered)         { cls = 'os-board-delivered';   statusText = 'DELIVERED';  statusClass = 'os-board-tag-delivered'; }
-    else if (ctx.canClearThisPayload) { cls = 'os-board-delivered';   statusText = 'SWAP';       statusClass = 'os-board-tag-delivered'; }
-    // Empty bin parked at an UNLOADER (consume). The previous full has been
-    // pulled/consumed; the operator confirms the swap (clear-bin), which sends
-    // the empty back and pulls the next full. This is NOT a LOAD — an empty at
-    // a consumer is never something to fill (that's the loader's job). Without
-    // this branch the empty trips the produce-oriented canLoadEmpty fallback
-    // below and renders a dead "LOAD" card with no action (plant 2026-06-02).
-    else if (ctx.canSwapEmpty)        { cls = 'os-board-delivered';   statusText = 'SWAP';       statusClass = 'os-board-tag-delivered'; }
-    else if (ctx.payloadInTransit)    { cls = 'os-board-transit';     statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit'; }
-    // An empty physically parked at the node is a LOAD action, not a QUEUED one.
-    // QUEUED means "waiting for a robot to bring an empty" (no bin here yet).
-    // Without this, an agnostic (blank-payload) empty parked at the node trips
-    // the all-cards-loadable fallback and every card reads QUEUED — misleading,
-    // since there's one bin loadable as any payload (plant 2026-06-01).
-    // canLoadEmpty is produce-only in practice: a consume empty parked is caught
-    // by canSwapEmpty above, which precedes this branch.
-    else if (ctx.loadNow)             { cls = 'os-board-queued';      statusText = 'LOAD';       statusClass = 'os-board-tag-queued'; }
-    else if (ctx.hasPayloadDemand)    { cls = 'os-board-queued';      statusText = 'QUEUED';     statusClass = 'os-board-tag-queued'; }
-    else if (ctx.canLoadEmpty)        { cls = 'os-board-queued';      statusText = 'LOAD';       statusClass = 'os-board-tag-queued'; }
-    else if (ctx.canRequestHere)      { cls = 'os-board-requestable'; statusText = 'REQUEST';    statusClass = 'os-board-tag-request'; }
-    else                              { cls = 'os-board-nodemand';    statusText = 'NO DEMAND';  statusClass = 'os-board-tag-nodemand'; }
-
-    var detail;
-    if (ctx.payloadDelivered) detail = 'Tap to ' + (role === 'produce' ? 'load' : 'unload');
-    else if (ctx.canClearThisPayload) detail = 'Loaded bin parked — tap to swap';
-    else if (ctx.canSwapEmpty) detail = 'Empty bin parked — tap to swap';
-    else if (ctx.binIsEmpty && (ctx.payloadInTransit || ctx.hasPayloadDemand)) detail = 'Empty bin at node — tap to load';
-    else if (ctx.payloadInTransit) detail = 'Robot en route';
-    else if (ctx.hasPayloadDemand) detail = 'Waiting for robot';
-    else if (ctx.canLoadEmpty) detail = 'Empty bin parked — tap to load';
-    else if (ctx.canRequestHere) detail = role === 'produce' ? 'Tap to request empty bin' : 'Tap to request full bin';
-    else detail = 'No kanban signal';
-
-    var canLoad = ((ctx.payloadDelivered && ctx.binIsEmpty) || (ctx.binIsEmpty && ctx.isActive) || ctx.canLoadEmpty) && role !== 'consume';
-    var canUnload = ctx.canClearThisPayload || ctx.canSwapEmpty || (ctx.payloadDelivered && role === 'consume');
-    var action = canLoad ? 'load' : (canUnload ? 'unload' : (ctx.canRequestHere ? 'request' : ''));
-
-    return { cls: cls, statusText: statusText, statusClass: statusClass, detail: detail, action: action, loadNow: ctx.loadNow };
-}
+// The per-card state machine (status tag, detail, action, badge facts) and the
+// header badge now live in operator-window-state.js — cardModel(entry, code) and
+// headerModel(entry) — so the loader/unloader wording is one table and the header
+// can't contradict the cards. operator-render is the render layer that consumes them.
 
 // confirmUnloadSwap gates the unloader swap behind an explicit operator
 // confirmation. The swap (clear-bin) is irreversible mid-shift — it confirms
@@ -329,63 +284,16 @@ function confirmUnloadSwap(nodeID) {
     document.body.appendChild(overlay);
 }
 
-// loaderCtx derives the node-level booleans a loader card needs from one
-// manual_swap entry — bin presence/emptiness, demand, and the role-gated
-// load/swap/clear affordances. Shared by the single-window board (one position,
-// many payloads) and the home-location board (one ctx per home position).
-function loaderCtx(entry) {
-    var claim = entry.active_claim;
-    var activeOrders = (entry.orders || []).filter(function(o) { return isActive(o.status); });
-    var hasBin = entry.bin_state && entry.bin_state.occupied;
-    var nodeBinIsEmpty = entry.bin_state && entry.bin_state.occupied && !entry.bin_state.payload_code;
-    var nodeBinIsLoaded = entry.bin_state && entry.bin_state.occupied && !!entry.bin_state.payload_code;
-    var hasDemand = activeOrders.length > 0;
-    return {
-        claim: claim,
-        activeOrders: activeOrders,
-        hasBin: hasBin,
-        hasDemand: hasDemand,
-        nodeBinIsEmpty: nodeBinIsEmpty,
-        loadableHere: nodeBinIsEmpty && hasDemand,
-        canLoadEmpty: nodeBinIsEmpty && !hasDemand,
-        canClearLoadedHere: claim.role === 'consume' && nodeBinIsLoaded,
-        canSwapEmptyHere: claim.role === 'consume' && nodeBinIsEmpty,
-    };
-}
-
 // buildLoaderCard renders ONE (position × payload) card — the atomic unit of the
 // loader board. Returns the card element, or null when a normal kanban loader's
-// idle card should be hidden. counters.queuePos tracks the per-payload queue
-// badge across cards. This is the single Card render shared by both layouts.
-function buildLoaderCard(entry, code, ctx, counters, opts) {
-    var claim = ctx.claim;
-    var payloadOrders = ctx.activeOrders.filter(function(o) { return o.payload_code === code; });
-    // The "every order lacks payload_code" fallback covers the empty-bin-parked
-    // phase: general demand, no per-payload binding yet → every allowed payload
-    // lights up so the operator can pick. Once a bin is loaded or an L2 carries a
-    // specific payload_code, it must NOT fire (else every tile reads QUEUED).
-    var hasPayloadDemand = payloadOrders.length > 0 || (ctx.nodeBinIsEmpty && ctx.hasDemand && ctx.activeOrders.every(function(o) { return !o.payload_code; }));
-    var payloadActive = hasPayloadDemand || ctx.loadableHere;
-    var payloadDelivered = payloadOrders.find(function(o) { return o.status === 'delivered'; });
-    var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit' || o.status === 'acknowledged'; });
-
+// idle card should be hidden. counters.queuePos tracks the per-payload queue badge
+// across cards. The card's STATE (status/detail/action/badge facts) comes from
+// cardModel (operator-window-state.js); this function is presentation only — DOM,
+// the transitional coverage badge, and idle-card hiding.
+function buildLoaderCard(entry, code, counters, opts) {
+    var claim = entry.active_claim;
     var card = el('div', { className: 'os-board-card' });
-    var loadNow = ctx.nodeBinIsEmpty && hasPayloadDemand;
-    var canClearThisPayload = ctx.canClearLoadedHere && entry.bin_state.payload_code === code;
-
-    var cs = cardState({
-        role: claim.role,
-        payloadDelivered: !!payloadDelivered,
-        payloadInTransit: !!payloadInTransit,
-        hasPayloadDemand: hasPayloadDemand,
-        canClearThisPayload: canClearThisPayload,
-        canSwapEmpty: ctx.canSwapEmptyHere,
-        canLoadEmpty: ctx.canLoadEmpty,
-        canRequestHere: false,
-        binIsEmpty: ctx.nodeBinIsEmpty,
-        isActive: payloadActive,
-        loadNow: loadNow,
-    });
+    var cs = cardModel(entry, code);
 
     // Coverage (ACTIVE = a running style needs this now; PRELOAD = covered only
     // by an inactive style) — drives the badge + the transitional idle override.
@@ -435,10 +343,10 @@ function buildLoaderCard(entry, code, ctx, counters, opts) {
 
     // Queue-position badge only for REAL per-payload orders (the agnostic
     // blank-payload empty must not stamp every card with a meaningless number).
-    if (payloadOrders.length > 0) {
+    if (cs.queueCount > 0) {
         var badge = el('span', { className: 'os-board-pos', textContent: String(counters.queuePos) });
-        if (payloadDelivered) badge.classList.add('os-board-pos-delivered');
-        else if (payloadInTransit) badge.classList.add('os-board-pos-transit');
+        if (cs.delivered) badge.classList.add('os-board-pos-delivered');
+        else if (cs.inTransit) badge.classList.add('os-board-pos-transit');
         else badge.classList.add('os-board-pos-queued');
         card.appendChild(badge);
         counters.queuePos++;
@@ -494,6 +402,10 @@ function renderPayloadBoard(entry) {
     const binPayload = binState && binState.payload_code ? binState.payload_code : '';
     const roleLabel = claim.role === 'produce' ? 'Loader' : 'Unloader';
 
+    // Header status badge from the shared model — same facts the cards read, so the
+    // badge can't contradict a card. Worded by role (loader awaits a BIN, unloader a FULL).
+    var hb = headerModel(entry);
+
     var infoBar = el('div', { className: 'os-board-header' });
     infoBar.innerHTML =
         '<div>' +
@@ -505,18 +417,17 @@ function renderPayloadBoard(entry) {
             '<div style="font-size:28px;font-weight:600;color:#fff">Bin: ' + esc(binLabel) + '</div>' +
             (binPayload ? '<div style="font-size:20px;color:#aab;margin-top:4px">' + esc(binPayload) + ' | UOP: ' + remaining + '</div>' : '') +
             '<div style="display:inline-block;font-size:22px;font-weight:700;padding:8px 20px;border-radius:6px;margin-top:8px;' +
-                (hasBin ? (binPayload ? 'background:#1a3a1a;color:#6f6' : 'background:#3a1a1a;color:#f88') : 'background:#2a2a1a;color:#ff6') + '">' +
-                (hasBin ? (binPayload ? 'LOADED' : 'EMPTY') : 'AWAITING BIN') +
+                hb.color + '">' + hb.text +
             '</div>' +
         '</div>';
     grid.appendChild(infoBar);
 
     // Payload cards come from the active/all union (transitional shows all, a
     // normal loader shows active), falling back to the claim list — see
-    // allowedPayloadsFor. Node-level affordances come from loaderCtx; both are
-    // shared with the home-location board via buildLoaderCard.
+    // allowedPayloadsFor. Each card's state comes from cardModel via buildLoaderCard;
+    // facts here are only for the request-bar guard.
     var allowed = allowedPayloadsFor(entry);
-    var ctx = loaderCtx(entry);
+    var facts = nodeFacts(entry);
 
     // Manual request / jumpstart button — ALL bin loaders (rendered just below,
     // above the cards). One button, not per-card: the operator is asking for a
@@ -534,7 +445,7 @@ function renderPayloadBoard(entry) {
     // the button greys out, so repeated taps can't stack the queue. The server
     // enforces the same rule (RequestEmptyBin rejects when an empty is already in
     // flight) as defense-in-depth against double-tap races and direct callers.
-    var canRequest = !hasBin && !ctx.hasDemand;
+    var canRequest = !hasBin && !facts.hasDemand;
 
     // Payload for the request splits by role:
     //   - produce (bin loader): an empty bin is a generic carrier, so the
@@ -560,7 +471,7 @@ function renderPayloadBoard(entry) {
     if (isProduce || requestPayload) {
         var reqBar = el('div', { className: 'os-board-reqbar' });
         var reqLabel = isProduce ? 'REQUEST EMPTY' : 'REQUEST FULL';
-        var reqReason = hasBin ? 'bin at node' : (ctx.hasDemand ? 'bin already inbound' : '');
+        var reqReason = hasBin ? 'bin at node' : (facts.hasDemand ? 'bin already inbound' : '');
         var reqBtn = el('button', {
             className: 'os-board-request-btn' + (canRequest ? '' : ' disabled'),
             textContent: canRequest ? reqLabel : reqLabel + ' — ' + reqReason,
@@ -588,7 +499,7 @@ function renderPayloadBoard(entry) {
     var counters = { queuePos: 1 };
     var rendered = 0;
     allowed.forEach(function(code) {
-        var card = buildLoaderCard(entry, code, ctx, counters);
+        var card = buildLoaderCard(entry, code, counters);
         if (card) { cardGrid.appendChild(card); rendered++; }
     });
 
@@ -634,9 +545,8 @@ function renderHomeLocationBoard(nodes) {
     var rendered = 0;
     nodes.forEach(function(node) {
         if (!node.active_claim) return;
-        var ctx = loaderCtx(node);
         allowedPayloadsFor(node).forEach(function(code) {
-            var card = buildLoaderCard(node, code, ctx, counters, { keepIdle: true });
+            var card = buildLoaderCard(node, code, counters, { keepIdle: true });
             if (!card) return;
             // Home label (physical position) + its own bin state, prepended so a
             // wall of cards stays scannable by home.
