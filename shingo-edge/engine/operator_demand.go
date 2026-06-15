@@ -2,7 +2,6 @@ package engine
 
 import (
 	"shingoedge/store/orders"
-	"shingoedge/store/processes"
 )
 
 // SendClaimSync is retired under the Core-owned loader aggregate. Core derives
@@ -12,60 +11,6 @@ import (
 // (startup-ack, the admin claim-edit path, the replenishment page) don't each
 // need to change.
 func (e *Engine) SendClaimSync() {}
-
-// manualSwapNode pairs a manual_swap claim with its matching process node. It is
-// projected from the Core-owned loader aggregate (manualSwapNodesFromCore) — the
-// loader push/board enumeration still consumes this shape.
-type manualSwapNode struct {
-	node  processes.Node
-	claim processes.NodeClaim
-}
-
-// findManualSwapNodes returns all (node, claim) pairs for manual_swap loaders,
-// projected from the Core loader aggregate. If coreNodeName is non-empty, only
-// nodes matching that name are returned.
-func (e *Engine) findManualSwapNodes(coreNodeName string) []manualSwapNode {
-	return e.manualSwapNodesFromCore(coreNodeName)
-}
-
-// FindLoaderForPayload returns the manual_swap PRODUCER (bin loader) for the
-// payload, or nil. Resolved from the Core aggregate.
-func (e *Engine) FindLoaderForPayload(payloadCode string) *manualSwapNode {
-	if payloadCode == "" {
-		return nil
-	}
-	return e.resolveCoreLoaderForPayload("", payloadCode, "produce")
-}
-
-// FindAnyLoaderClaimForPayload resolves a produce loader for the payload across
-// every style (the engineer Calculate path + the UOP-threshold L1 trigger, which
-// can target an inactive-style loader). Resolved from the Core aggregate.
-func (e *Engine) FindAnyLoaderClaimForPayload(payloadCode string) *manualSwapNode {
-	if payloadCode == "" {
-		return nil
-	}
-	return e.resolveCoreLoaderForPayload("", payloadCode, "produce")
-}
-
-// FindLoaderClaimAt resolves the produce loader for (coreNodeName, payloadCode) —
-// the node-targeted form a threshold (C-push) signal carries so the same payload
-// loaded at two loaders fires the L1 at the one Core signaled. Resolved from the
-// Core aggregate.
-func (e *Engine) FindLoaderClaimAt(coreNodeName, payloadCode string) *manualSwapNode {
-	if coreNodeName == "" || payloadCode == "" {
-		return nil
-	}
-	return e.resolveCoreLoaderForPayload(coreNodeName, payloadCode, "produce")
-}
-
-// FindUnloaderForPayload returns the manual_swap CONSUMER (unloader) for the
-// payload, or nil. Resolved from the Core aggregate.
-func (e *Engine) FindUnloaderForPayload(payloadCode string) *manualSwapNode {
-	if payloadCode == "" {
-		return nil
-	}
-	return e.resolveCoreLoaderForPayload("", payloadCode, "consume")
-}
 
 // systemBinCountForPayload reports how many bins of payloadCode are in the kanban
 // loop system-wide via Core's /api/inventory/system-count endpoint. This counts

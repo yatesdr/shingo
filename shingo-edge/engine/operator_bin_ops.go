@@ -365,16 +365,27 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// exhausted (a retrieve_empty already inbound across the loader's cluster) ⇒
 	// the seam fires nothing and we surface the familiar "already inbound" error.
 	if claim.SwapMode == protocol.SwapModeManualSwap {
-		dl, perr := loaderFromManualSwapClaim(*claim, domain.ReplenishmentAuto)
-		if perr != nil {
-			return nil, fmt.Errorf("node %s: build loader: %w", node.Name, perr)
+		// Resolve the loader from the Core aggregate — the SAME read-model the
+		// demand/threshold path uses — so the never-2N seam locks on the loader_key
+		// token, the identity every entry point now shares. Pre-cutover this built a
+		// throwaway single-window loader keyed on the node NAME, so the operator path
+		// and the automatic path locked different mutexes (BUG-1). LoaderAt resolves a
+		// manual_swap node via Contains (window or position).
+		dl, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleProduce)
+		if lerr != nil || dl == nil {
+			return nil, fmt.Errorf("node %s: not a configured loader: %w", node.Name, lerr)
 		}
+		// member = the operator's node. A dedicated loader routes the empty to that
+		// specific position; a shared loader IGNORES member (ReservationTarget) and the
+		// seam stages at a free window — the deliberate behaviour choice (see the impl
+		// log): consistent with the shared multi-window model, where an empty may go to
+		// any free window. The InboundSource is the aggregate's (== the old claim's).
 		var created *orders.Order
 		n, rerr := e.reserveLoaderBins(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), true, func(deliveryNodes []string) (int, error) {
 			made := 0
 			for _, deliveryNode := range deliveryNodes {
 				order, cerr := e.orderMgr.CreateRetrieveOrder(
-					&nodeID, true, 1, deliveryNode, claim.InboundSource, "",
+					&nodeID, true, 1, deliveryNode, dl.InboundSource(), "",
 					"standard", payloadCode, false, true,
 				)
 				if cerr != nil {

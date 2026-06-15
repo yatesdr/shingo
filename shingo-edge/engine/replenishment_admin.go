@@ -264,18 +264,19 @@ type CalculateInput struct {
 // result for UI display; the engineer then chooses Apply / Override
 // / Cancel via separate calls.
 //
-// Bin capacity resolves through FindAnyLoaderClaimForPayload —
-// non-active-gated, so a calculation against a payload on an
-// inactive style (commissioning, calibration, multi-process plants)
-// still finds the loader's UOPCapacity. The capacity is carried on
-// the response Inputs so the UI can render the implied-bin annotation
-// next to the threshold; the calculator itself does not consume it.
-// The L1 trigger path and SendClaimSync stay on active-gated
-// FindLoaderForPayload; only the calculator uses the wider search.
+// Bin capacity is a property of the PAYLOAD, so it resolves from the payload
+// catalog — the same source HandleLoopBelowThreshold uses (catalogService.GetByCode).
+// Catalog lookup is not style-gated, so a calculation against a payload on an
+// inactive style (commissioning, calibration, multi-process plants) still finds its
+// UOPCapacity. The capacity is carried on the response Inputs so the UI can render
+// the implied-bin annotation next to the threshold; the calculator itself does not
+// consume it. (Pre-cutover this read the capacity off the manual_swap shim claim,
+// where it was synthesized as 0 — a silent UI-annotation gap; sourcing from the
+// catalog both removes the last shim caller and makes the annotation non-zero.)
 func (e *Engine) CalculateThresholdForLoader(in CalculateInput) (service.CalculateResult, error) {
 	cap := 0
-	if loader := e.FindAnyLoaderClaimForPayload(in.PayloadCode); loader != nil {
-		cap = loader.claim.UOPCapacity
+	if entry, err := e.catalogService.GetByCode(in.PayloadCode); err == nil && entry != nil {
+		cap = entry.UOPCapacity
 	}
 	svc := service.NewThresholdCalculatorService(e.db)
 	return svc.Calculate(service.CalculateRequest{

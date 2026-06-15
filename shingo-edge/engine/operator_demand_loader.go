@@ -8,7 +8,6 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
-	"shingoedge/store/orders"
 )
 
 // manualSwapWindowSlots is how many bins a single manual_swap core node can
@@ -79,7 +78,12 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(coreNodeName, payloadCode string) {
 	}
 	created := 0
 	for _, code := range codes {
-		if e.hasOptInLoaderThreshold(string(loader.ID()), string(code)) {
+		// C-push opt-in is read straight off the resolved aggregate loader — the
+		// loader_key token is the identity now, so the old node-keyed cache lookup
+		// (hasThresholdFromCore) could never match and the skip was dead (BUG-2).
+		// A threshold-opted payload is driven by HandleLoopBelowThreshold, not the
+		// bin-count refill, so skip it here.
+		if loader.UOPThresholdFor(code) > 0 {
 			e.debugFn("kanban: HandleDemandSignal skip loader=%s payload=%s — C-push active",
 				loader.ID(), code)
 			continue
@@ -133,33 +137,6 @@ func (e *Engine) findLoaderForDemand(coreNodeName, payloadCode string) (*domain.
 		return nil, true
 	}
 	return l, true
-}
-
-// hasOptInLoaderThreshold returns true when Core's loader aggregate carries a
-// replenish UOP threshold > 0 for this (loader, payload) — i.e. the loader opted
-// into UOP-threshold (C-push) replenishment for that payload. Lookup failure
-// returns false: fall back to the bin-count L1 path rather than strand a payload
-// because a cache read flickered.
-func (e *Engine) hasOptInLoaderThreshold(coreNodeName, payloadCode string) bool {
-	return e.hasThresholdFromCore(coreNodeName, payloadCode)
-}
-
-// isTransitionalLoader reports whether the loader at coreNodeName is in the
-// transitional_loaders set — operator-driven, with the market-accounting L1
-// paths (UOP-threshold C-push and legacy bin-count) suppressed in favour of
-// opportunistic empty staging (MaybePushLoader) plus operator payload
-// selection at the board.
-//
-// Fails OPEN (returns false = not transitional) on a cache read error, mirroring
-// hasOptInLoaderThreshold: a transient flicker should let the automatic
-// supply paths run rather than silently strand a loader the operator can't
-// see is suppressed. (Treating an errored read as transitional would instead
-// stop all supply until the read recovers — the worse outcome.)
-func (e *Engine) isTransitionalLoader(coreNodeName string) bool {
-	if coreNodeName == "" {
-		return false
-	}
-	return e.isTransitionalFromCore(coreNodeName)
 }
 
 // HandleLoopBelowThreshold is the Core→Edge LoopBelowThresholdSignal
@@ -666,23 +643,6 @@ func (e *Engine) tryCreateL1(loader *domain.Loader, payload domain.PayloadCode, 
 	return created, nil
 }
 
-// loaderInFlightEmptyCount counts non-terminal retrieve_empty orders inbound to
-// the loader's CORE NODE regardless of payload tag. maybeStageLoaderEmpty uses it
-// as a cheap advisory pre-check before the seam; the threshold/legacy paths now
-// count per-payload AND in total inside reserveLoaderEmpties (one set query) so
-// their dedup + capacity are atomic. Keyed by core node (delivery_node) so
-// a shared loader's sibling process_node rows don't each under-count and stage
-// duplicate empties into one slot; see [[shingo_manual_swap_core_node_scoping]].
-func (e *Engine) loaderInFlightEmptyCount(coreNodeName string) (int, error) {
-	n, err := e.countActiveOrdersAtNode(coreNodeName, func(o orders.Order) bool {
-		return o.RetrieveEmpty
-	})
-	if err != nil {
-		return 0, fmt.Errorf("list active orders for node %s: %w", coreNodeName, err)
-	}
-	return n, nil
-}
-
 // MaybePushLoader is the loader-side mirror of MaybePushUnloader: the
 // opportunistic empty-staging push for TRANSITIONAL loaders. When a
 // transitional loader's window is free it stages one empty so the operator
@@ -697,20 +657,20 @@ func (e *Engine) loaderInFlightEmptyCount(coreNodeName string) (int, error) {
 //   - ClearBin (operator cleared the window).
 //   - SweepPushLoaders on Edge startup / registration ack.
 //
-// nodeID names a specific loader (typically the one whose window just freed);
-// pass 0 for an "any transitional loader" sweep — see SweepPushLoaders.
-func (e *Engine) MaybePushLoader(nodeID int64) {
-	for _, m := range e.findManualSwapNodes("") {
-		if nodeID != 0 && m.node.ID != nodeID {
+// The nodeID arg is now vestigial — the reservation seam's never-2N budget makes
+// the sweep idempotent (already-staged loaders create nothing), so there is no need
+// to filter to a specific loader. Mirrors MaybePushUnloader(_ int64).
+func (e *Engine) MaybePushLoader(_ int64) {
+	loaders, err := e.loaders().Loaders(domain.RoleProduce)
+	if err != nil {
+		e.logFn("loader-push: list produce loaders: %v", err)
+		return
+	}
+	for _, l := range loaders {
+		if !l.IsTransitional() {
 			continue
 		}
-		if m.claim.Role != protocol.ClaimRoleProduce {
-			continue
-		}
-		if !e.isTransitionalLoader(m.node.CoreNodeName) {
-			continue
-		}
-		e.maybeStageLoaderEmpty(m)
+		e.maybeStageLoaderEmpty(l)
 	}
 }
 
@@ -724,30 +684,24 @@ func (e *Engine) MaybePushLoader(nodeID int64) {
 //
 // Single-carrier assumption — see RequestEmptyBin: a blank order sources any
 // compatible empty, which is correct only when the loader uses one carrier type.
-func (e *Engine) maybeStageLoaderEmpty(loader manualSwapNode) {
-	// Misconfig guard stays: a loader with no allowed payloads isn't set up to
-	// load anything, so there's nothing to stage for — even agnostically.
-	if len(loader.claim.AllowedPayloads()) == 0 {
+func (e *Engine) maybeStageLoaderEmpty(loader *domain.Loader) {
+	if loader == nil {
+		return
+	}
+	// Misconfig guard: a loader with nothing to stage against (no shared payloads
+	// and no positions) isn't set up to load anything, so there's nothing to stage
+	// for — even agnostically.
+	if len(loader.PayloadSet()) == 0 && len(loader.Positions()) == 0 {
 		return // misconfigured loader — nothing to stage against
 	}
-	inFlight, err := e.loaderInFlightEmptyCount(loader.node.CoreNodeName)
-	if err != nil {
-		e.logFn("loader-push: in-flight lookup at %s failed — skipping: %v", loader.node.CoreNodeName, err)
-		return
-	}
-	if inFlight > 0 {
-		e.debugFn("loader-push: %s already has %d empty in flight — skipping", loader.node.CoreNodeName, inFlight)
-		return
-	}
-	// Project the resolved manual_swap node into a Loader for the seam (the push
-	// path still enumerates via findManualSwapNodes, which the unloader shares).
-	dl, perr := loaderFromManualSwapClaim(loader.claim, domain.ReplenishmentAuto)
-	if perr != nil {
-		e.logFn("loader-push: project loader %s failed — skipping: %v", loader.node.CoreNodeName, perr)
-		return
-	}
-	if _, err := e.tryCreateL1(dl, "", L1LoaderPush, 1, ""); err != nil { // opportunistic push: payload-agnostic, no member
-		e.logFn("loader-push: stage empty at %s failed: %v", loader.node.CoreNodeName, err)
+	// No separate advisory in-flight pre-check: the reservation seam owns the
+	// never-2N dedup atomically across the loader's delivery nodes, so a push for a
+	// loader that already has an empty in flight resolves to to_fire=0 and fires
+	// nothing. The empty is staged payload-AGNOSTIC (blank code) — the operator
+	// picks the payload at LoadBin; L1LoaderPush is exempt from the transitional
+	// suppression in tryCreateL1 (it IS the transitional supply path).
+	if _, err := e.tryCreateL1(loader, "", L1LoaderPush, 1, ""); err != nil { // opportunistic push: payload-agnostic, no member
+		e.logFn("loader-push: stage empty at loader=%s failed: %v", loader.ID(), err)
 	}
 }
 
@@ -761,16 +715,17 @@ func (e *Engine) SweepPushLoaders() {
 		return // a sweep is already running — a re-register storm must not stack them
 	}
 	defer e.sweepingLoaders.Store(false)
-	matches := e.findManualSwapNodes("")
+	loaders, err := e.loaders().Loaders(domain.RoleProduce)
+	if err != nil {
+		e.logFn("loader-push: startup sweep list produce loaders: %v", err)
+		return
+	}
 	swept := 0
-	for _, m := range matches {
-		if m.claim.Role != protocol.ClaimRoleProduce {
+	for _, l := range loaders {
+		if !l.IsTransitional() {
 			continue
 		}
-		if !e.isTransitionalLoader(m.node.CoreNodeName) {
-			continue
-		}
-		e.maybeStageLoaderEmpty(m)
+		e.maybeStageLoaderEmpty(l)
 		swept++
 	}
 	if swept > 0 {

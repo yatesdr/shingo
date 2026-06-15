@@ -7,7 +7,6 @@ import (
 
 	"shingoedge/domain"
 	"shingoedge/store"
-	"shingoedge/store/processes"
 )
 
 // loader_store.go — the LoaderStore: the consumer-defined interface the demand /
@@ -78,12 +77,15 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 		}
 		payloadSet := make([]domain.PayloadCode, 0, len(l.Payloads))
 		minStock := make(map[domain.PayloadCode]int, len(l.Payloads))
+		uopThreshold := make(map[domain.PayloadCode]int, len(l.Payloads))
 		for _, p := range l.Payloads {
 			payloadSet = append(payloadSet, domain.PayloadCode(p.PayloadCode))
 			minStock[domain.PayloadCode(p.PayloadCode)] = p.MinStock
+			uopThreshold[domain.PayloadCode(p.PayloadCode)] = p.UOPThreshold
 		}
 		return domain.NewSharedWindowLoader(id, l.Name, role, repl, windows, payloadSet,
 			domain.WithInboundSource(l.InboundSource), domain.WithMinStock(minStock),
+			domain.WithUOPThreshold(uopThreshold),
 			domain.WithOutboundDest(l.OutboundDest), domain.WithBufferDest(l.BufferDest))
 
 	case string(domain.LayoutDedicatedPositions):
@@ -187,31 +189,6 @@ func (s *aggregateLoaderStore) Loaders(role domain.LoaderRole) ([]*domain.Loader
 		}
 	}
 	return out, nil
-}
-
-// loaderFromManualSwapClaim projects a manual_swap shim claim into a
-// single-window *domain.Loader: id = the core node, one window (the same node),
-// the claim's allowed payloads as the shared set, and the claim's ReorderPoint as
-// each payload's bin-count floor. The push and operator paths reuse it to turn a
-// resolved manualSwapNode into a Loader for the reservation seam; they pass
-// repl=auto because the transitional gate is applied separately via
-// isTransitionalLoader, so no per-call transitional lookup is needed there.
-func loaderFromManualSwapClaim(claim processes.NodeClaim, repl domain.LoaderReplenishment) (*domain.Loader, error) {
-	payloadSet := make([]domain.PayloadCode, 0)
-	minStock := map[domain.PayloadCode]int{}
-	for _, p := range claim.AllowedPayloads() {
-		if p != "" {
-			payloadSet = append(payloadSet, domain.PayloadCode(p))
-			minStock[domain.PayloadCode(p)] = claim.ReorderPoint
-		}
-	}
-	return domain.NewSharedWindowLoader(
-		domain.LoaderID(claim.CoreNodeName), claim.CoreNodeName,
-		domain.LoaderRole(claim.Role), repl,
-		[]domain.Window{{Node: domain.NodeID(claim.CoreNodeName)}}, payloadSet,
-		domain.WithInboundSource(claim.InboundSource), domain.WithMinStock(minStock),
-		domain.WithOutboundDest(claim.OutboundDestination),
-	)
 }
 
 // loaders returns the engine's LoaderStore, lazily constructing one if absent.

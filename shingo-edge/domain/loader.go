@@ -160,6 +160,7 @@ type Loader struct {
 	outboundDest  string              // the market filled (L2) / emptied (U2) bins go to on completion
 	bufferDest    string              // the buffer node group (step 7): stages empties / parks orphaned partials
 	minStock      map[PayloadCode]int // shared_window per-payload bin-count floor
+	uopThreshold  map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in); dedicated carries it on Position
 }
 
 // LoaderOption sets optional runtime config on a constructed Loader. Variadic, so
@@ -194,6 +195,16 @@ func WithMinStock(m map[PayloadCode]int) LoaderOption {
 	return func(l *Loader) {
 		l.minStock = make(map[PayloadCode]int, len(m))
 		maps.Copy(l.minStock, m)
+	}
+}
+
+// WithUOPThreshold sets the shared_window per-payload UOP threshold (the C-push
+// opt-in the demand sweep checks to defer a payload to HandleLoopBelowThreshold).
+// Mirrors WithMinStock; dedicated loaders carry the threshold on each Position.
+func WithUOPThreshold(m map[PayloadCode]int) LoaderOption {
+	return func(l *Loader) {
+		l.uopThreshold = make(map[PayloadCode]int, len(m))
+		maps.Copy(l.uopThreshold, m)
 	}
 }
 
@@ -303,6 +314,23 @@ func (l *Loader) MinStockFor(p PayloadCode) int {
 	for _, pos := range l.positions {
 		if pos.Payload == p {
 			return pos.MinStock
+		}
+	}
+	return 0
+}
+
+// UOPThresholdFor returns the per-payload UOP threshold (the C-push opt-in): the
+// shared per-payload value for shared_window, or the matching position's
+// UOPThreshold for dedicated. Zero means "no UOP-threshold policy" (not opted into
+// C-push). Mirrors MinStockFor so the demand sweep can ask the aggregate directly
+// instead of a node-keyed cache lookup that the loader_key token can never match.
+func (l *Loader) UOPThresholdFor(p PayloadCode) int {
+	if v, ok := l.uopThreshold[p]; ok {
+		return v
+	}
+	for _, pos := range l.positions {
+		if pos.Payload == p {
+			return pos.UOPThreshold
 		}
 	}
 	return 0

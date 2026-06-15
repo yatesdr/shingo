@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"testing"
 
 	"shingo/protocol"
@@ -8,114 +9,108 @@ import (
 	"shingoedge/store/processes"
 )
 
-// TestLoadersFromCore_SharedWindow pins the aggregate read path for a
-// shared_window produce loader: FindLoaderForPayload resolves from the synced
-// cache, synthesizes a NodeClaim (node identity from the Edge process_node,
-// config from the cache), and the threshold/min_stock helpers read the cache.
+// TestLoadersFromCore_SharedWindow pins the single read-model for a shared_window
+// produce loader: it resolves from the synced cache through the *domain.Loader
+// aggregate snapshot, identity is the loader_key token, and the config
+// (inbound/outbound/min_stock/uop_threshold/payload set) is projected off the cache.
+// (Migrated from the deleted manualSwapNode shim + cache-direct helpers onto the
+// snapshot accessors — Tier 1.)
 func TestLoadersFromCore_SharedWindow(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	procID, err := db.CreateProcess("AGG-PROC", "", "active_production", "", "", false, false)
-	if err != nil {
-		t.Fatalf("create process: %v", err)
-	}
-	nodeID, err := db.CreateProcessNode(processes.NodeInput{ProcessID: procID, CoreNodeName: "AGG-LOADER", Code: "AGG", Name: "AGG-LOADER", Sequence: 1, Enabled: true})
-	if err != nil {
-		t.Fatalf("create node: %v", err)
-	}
-
-	if err := db.ReplaceCoreLoaders([]protocol.LoaderInfo{{
+	// Seed the loader into the Core-loader cache and warm the aggregate snapshot.
+	seedCoreLoader(t, eng, protocol.LoaderInfo{
 		Name: "L", LoaderKey: "loader:AGG-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "auto",
 		OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER", ConfigGen: 1,
 		Positions: []protocol.LoaderPosition{{CoreNodeName: "AGG-LOADER", Kind: "window"}},
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", MinStock: 2, UOPThreshold: 100}},
-	}}); err != nil {
-		t.Fatalf("seed cache: %v", err)
-	}
+	})
 
-	m := eng.FindLoaderForPayload("PART-A")
-	if m == nil {
-		t.Fatal("FindLoaderForPayload(PART-A) = nil from cache")
+	l, err := eng.loaders().LoaderForPayload("PART-A", domain.RoleProduce, true)
+	if err != nil || l == nil {
+		t.Fatalf("LoaderForPayload(PART-A) = %v, %v; want the cached loader", l, err)
 	}
-	if m.node.ID != nodeID || m.node.CoreNodeName != "AGG-LOADER" {
-		t.Errorf("node = %+v, want process_node %d / AGG-LOADER", m.node, nodeID)
+	if l.ID() != "loader:AGG-LOADER" {
+		t.Errorf("loader ID = %q, want the loader_key token loader:AGG-LOADER", l.ID())
 	}
-	if m.claim.Role != protocol.ClaimRoleProduce || m.claim.SwapMode != protocol.SwapModeManualSwap {
-		t.Errorf("claim role/swap = %v/%v, want produce/manual_swap", m.claim.Role, m.claim.SwapMode)
+	if !l.IsShared() || l.Role() != domain.RoleProduce {
+		t.Errorf("layout/role = %v/%v, want shared_window/produce", l.Layout(), l.Role())
 	}
-	if m.claim.ReorderPoint != 2 || m.claim.OutboundDestination != "FG-MARKET" || m.claim.InboundSource != "EMPTY-SUPER" {
-		t.Errorf("claim = %+v, want ReorderPoint 2 / FG-MARKET / EMPTY-SUPER", m.claim)
+	if l.InboundSource() != "EMPTY-SUPER" || l.OutboundDest() != "FG-MARKET" {
+		t.Errorf("inbound/outbound = %q/%q, want EMPTY-SUPER/FG-MARKET", l.InboundSource(), l.OutboundDest())
 	}
-	if got := m.claim.AllowedPayloads(); len(got) != 1 || got[0] != "PART-A" {
-		t.Errorf("allowed = %v, want [PART-A]", got)
+	if got := l.Windows(); len(got) != 1 || got[0].Node != "AGG-LOADER" {
+		t.Errorf("windows = %+v, want one at AGG-LOADER", got)
 	}
-	if !eng.hasOptInLoaderThreshold("AGG-LOADER", "PART-A") {
-		t.Error("hasOptInLoaderThreshold should be true (cache threshold 100)")
+	if !l.ServesPayload("PART-A") {
+		t.Error("loader should serve PART-A")
 	}
-	if ms, ok := eng.loaderMinStockFromCore("AGG-LOADER", "PART-A"); !ok || ms != 2 {
-		t.Errorf("loaderMinStockFromCore = %d,%v, want 2,true", ms, ok)
+	if got := l.MinStockFor("PART-A"); got != 2 {
+		t.Errorf("MinStockFor(PART-A) = %d, want 2", got)
 	}
-	if eng.FindLoaderForPayload("NOPE") != nil {
-		t.Error("FindLoaderForPayload(NOPE) should be nil (not in cache)")
+	if got := l.UOPThresholdFor("PART-A"); got != 100 {
+		t.Errorf("UOPThresholdFor(PART-A) = %d, want 100 (cache threshold)", got)
+	}
+	if _, err := eng.loaders().LoaderForPayload("NOPE", domain.RoleProduce, true); !errors.Is(err, ErrLoaderNotFound) {
+		t.Errorf("LoaderForPayload(NOPE) err = %v, want ErrLoaderNotFound", err)
 	}
 }
 
-// TestLoadersFromCore_DedicatedAndUnloader pins the dedicated_positions node
-// resolution (the POSITION node, with its per-position min_stock), the
-// replenishment=operator → transitional mapping, and the consume +
-// replenishment=auto → AutoPush mapping.
+// TestLoadersFromCore_DedicatedAndUnloader pins the snapshot resolution of a
+// dedicated_positions produce loader (position + per-position min_stock + layout +
+// the replenishment=operator → transitional mapping) and a consume unloader
+// (role + replenishment=auto). (Migrated onto the snapshot accessors — Tier 1.)
 func TestLoadersFromCore_DedicatedAndUnloader(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	procID, err := db.CreateProcess("AGG2-PROC", "", "active_production", "", "", false, false)
-	if err != nil {
-		t.Fatalf("create process: %v", err)
-	}
-	posID, err := db.CreateProcessNode(processes.NodeInput{ProcessID: procID, CoreNodeName: "POS-1", Code: "p1", Name: "POS-1", Sequence: 1, Enabled: true})
-	if err != nil {
-		t.Fatalf("create position node: %v", err)
-	}
-	if _, err := db.CreateProcessNode(processes.NodeInput{ProcessID: procID, CoreNodeName: "UNL-1", Code: "u1", Name: "UNL-1", Sequence: 2, Enabled: true}); err != nil {
-		t.Fatalf("create unloader node: %v", err)
-	}
-
-	if err := db.ReplaceCoreLoaders([]protocol.LoaderInfo{
-		{Name: "HL", LoaderKey: "loader:HL-LOADER", Role: "produce", Layout: "dedicated_positions", Replenishment: "operator", ConfigGen: 1,
-			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-H", MinStock: 3}}},
-		{Name: "U", LoaderKey: "loader:UNL-1", Role: "consume", Layout: "shared_window", Replenishment: "auto", ConfigGen: 1,
+	seedCoreLoader(t, eng,
+		protocol.LoaderInfo{Name: "HL", LoaderKey: "loader:HL-LOADER", Role: "produce", Layout: "dedicated_positions", Replenishment: "operator", ConfigGen: 1,
+			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-H", Kind: "dedicated", MinStock: 3}}},
+		protocol.LoaderInfo{Name: "U", LoaderKey: "loader:UNL-1", Role: "consume", Layout: "shared_window", Replenishment: "auto", ConfigGen: 1,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "UNL-1", Kind: "window"}},
 			Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-U"}}},
-	}); err != nil {
-		t.Fatalf("seed cache: %v", err)
+	)
+
+	// dedicated_positions: resolves by payload to its position, carries the per-position
+	// min_stock + the dedicated layout, and replenishment=operator → transitional.
+	l, err := eng.loaders().LoaderForPayload("PART-H", domain.RoleProduce, true)
+	if err != nil || l == nil {
+		t.Fatalf("LoaderForPayload(PART-H) = %v, %v; want the dedicated loader", l, err)
+	}
+	if !l.IsDedicated() {
+		t.Errorf("layout = %v, want dedicated_positions", l.Layout())
+	}
+	if got := l.Positions(); len(got) != 1 || got[0].Node != "POS-1" {
+		t.Errorf("positions = %+v, want one at POS-1", got)
+	}
+	if got := l.MinStockFor("PART-H"); got != 3 {
+		t.Errorf("MinStockFor(PART-H) = %d, want 3 (position min_stock)", got)
+	}
+	if !l.IsTransitional() {
+		t.Error("replenishment=operator loader should be transitional")
 	}
 
-	// dedicated_positions: resolves the POSITION node + its per-position min_stock.
-	m := eng.FindLoaderForPayload("PART-H")
-	if m == nil || m.node.ID != posID {
-		t.Fatalf("PART-H resolved %+v, want position node POS-1 (%d)", m, posID)
+	// unloader: consume + replenishment=auto.
+	u, err := eng.loaders().LoaderForPayload("PART-U", domain.RoleConsume, true)
+	if err != nil || u == nil {
+		t.Fatalf("LoaderForPayload(PART-U, consume) = %v, %v; want the unloader", u, err)
 	}
-	if m.claim.ReorderPoint != 3 {
-		t.Errorf("ReorderPoint = %d, want 3 (position min_stock)", m.claim.ReorderPoint)
+	if u.Role() != domain.RoleConsume {
+		t.Errorf("role = %v, want consume", u.Role())
 	}
-	if !eng.isTransitionalLoader("POS-1") {
-		t.Error("POS-1 should be transitional (replenishment=operator)")
-	}
-
-	// unloader: consume + replenishment=auto → AutoPush.
-	u := eng.FindUnloaderForPayload("PART-U")
-	if u == nil || u.claim.Role != protocol.ClaimRoleConsume {
-		t.Fatalf("FindUnloaderForPayload(PART-U) = %+v, want a consume loader", u)
-	}
-	if !u.claim.AutoPush {
-		t.Error("consume + replenishment=auto should map to AutoPush=true")
+	if u.Replenishment() != domain.ReplenishmentAuto {
+		t.Errorf("replenishment = %v, want auto", u.Replenishment())
 	}
 
-	if all := eng.findManualSwapNodes(""); len(all) != 2 {
-		t.Errorf("findManualSwapNodes = %d, want 2 (both cached loaders)", len(all))
+	// Both loaders are in the snapshot (one produce + one consume).
+	prod, _ := eng.loaders().Loaders(domain.RoleProduce)
+	cons, _ := eng.loaders().Loaders(domain.RoleConsume)
+	if len(prod) != 1 || len(cons) != 1 {
+		t.Errorf("Loaders: produce=%d consume=%d, want 1 and 1", len(prod), len(cons))
 	}
 }
 
