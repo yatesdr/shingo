@@ -610,7 +610,8 @@ function claimFieldVisibility(role, swap) {
     const showPair = !isManual;
     return {
         'claims-add-payload-group':           !isManual,
-        'claims-add-allowed-group':           isManual,
+        'claims-add-allowed-group':           false,
+        'claims-add-capacity-group':          !isManual,
         'claims-add-reorder-group':           !isManual,
         'claims-add-lineside-group':          role === 'consume' && !isManual,
         // Staging fieldset is hidden by manual_swap (no staging concept),
@@ -618,17 +619,17 @@ function claimFieldVisibility(role, swap) {
         // all (sequential / press_index).
         'claims-staging-fieldset':            !isManual && usesStaging,
         'claims-add-swap-group':              true,
-        'claims-source-fieldset':             true,
-        'claims-inbound-source-group':        true,
+        'claims-source-fieldset':             !isManual,
+        'claims-inbound-source-group':        !isManual,
         // Outbound destination is shown in every swap mode, including
         // two_robot (the old bin still goes somewhere).
-        'claims-outbound-destination-group':  true,
+        'claims-outbound-destination-group':  !isManual,
         'claims-changeover-fieldset':         !isManual,
         'claims-ab-fieldset':                 showPair,
         'claims-add-second-paired-group':     showPair && isPressIndex,
         'claims-add-reuse-bins-row':          showPair && isPressIndex,
-        'claims-auto-request-fieldset':       isManual,
-        'claims-auto-request-manual-swap':    isManual,
+        'claims-auto-request-fieldset':       false,
+        'claims-auto-request-manual-swap':    false,
         'claims-auto-request-standard':       !isManual,
         // Auto-push is only meaningful for a consume manual_swap
         // (unloader pulling parts from a bin).
