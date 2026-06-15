@@ -114,7 +114,10 @@ function editLoader(lid) {
   setVal('loader-inbound', l.inbound_source || '');
   setVal('loader-outbound', l.outbound_dest || '');
   setVal('loader-buffer', l.buffer_dest || '');
-  setDisabled('loader-role', true); setDisabled('loader-layout', true);
+  // Layout is the loader's shape — editable only while it has no members, so a flip
+  // can't orphan windows/positions. Role stays delete+recreate (it's the kind).
+  const hasMembers = (item.homes && item.homes.length > 0) || (item.payloads && item.payloads.length > 0);
+  setDisabled('loader-role', true); setDisabled('loader-layout', hasMembers);
   setText('loader-modal-title', 'Edit Loader');
   setText('loader-submit-btn', 'Save');
   setLayoutFlowVisibility();
@@ -302,13 +305,13 @@ function boxHtml(item) {
   // meaningful payload-pinned slot). Shared-window loaders + unloaders are defined
   // by the node GROUPS they pull from / feed — showing their individual windows is
   // noise (and confusing to other team members), so they render group zones only.
-  const nodes = dedicated ? nodeMembersHtml(item, dedicated) : '';
+  const nodes = nodeMembersHtml(item, dedicated);
   const payloadSet = dedicated ? '' : payloadChipsHtml(item);
   const groupsHtml = loaderGroupsHtml(l);
   const hint = isAuth
     ? (dedicated
       ? '<div class="loader-hint">Drag node tiles here · ⠿ reorder · × remove · pick a payload per spot (shows as a badge). UOP threshold lives on the Inventory page.</div>'
-      : '<div class="loader-hint">Shared-window loader — it references the node groups below (the source it pulls from and the supermarket it feeds). Set its shared payloads below; drag nodes into a group zone to compose it.</div>')
+      : '<div class="loader-hint">Shared-window loader — drag node tiles in above as its <strong>windows</strong> (where the operator loads); set its shared payloads below. The group zones are the source it pulls from and the supermarket it feeds.</div>')
     : '';
   return '<div class="loader-box" data-loader-id="' + l.id + '" data-layout="' + escapeHtml(l.layout) + '">'
     + '<div class="loader-box-header">'
@@ -317,7 +320,7 @@ function boxHtml(item) {
     + (isAuth ? '<button class="loader-box-edit" title="Edit loader">Edit</button>' : '')
     + (isAuth ? '<button class="loader-box-del" title="Delete loader">Delete</button>' : '')
     + '</div>'
-    + '<div class="loader-box-body">' + (dedicated ? '<div class="loader-members">' + nodes + '</div>' : '') + payloadSet + hint + groupsHtml + '</div>'
+    + '<div class="loader-box-body">' + '<div class="loader-members">' + nodes + '</div>' + payloadSet + hint + groupsHtml + '</div>'
     + '</div>';
 }
 
@@ -357,20 +360,25 @@ function payloadSelect(sel) {
   return '<select class="loader-pc-sel' + (sel ? ' has-payload' : '') + '" draggable="false">' + opts + '</select>';
 }
 
-// payloadChipsHtml renders a shared_window loader's allowed payload set (the
-// shared codes any window may serve), separate from the window nodes above.
+// payloadChipsHtml renders a shared_window loader's allowed payload set. The current
+// set shows as chips; editing is a collapsible checklist of the whole catalog (checked =
+// in the set) — check/uncheck several at once instead of typing + add one at a time.
 function payloadChipsHtml(item) {
-  const ps = item.payloads || [];
-  let html = '<div class="loader-payload-set"><span class="loader-set-label">Allowed payloads:</span>';
-  html += ps.map(function (p) {
-    return '<span class="loader-chip">' + escapeHtml(p.payload_code)
-      + (isAuth ? '<span class="loader-chip-x" data-pc="' + escapeHtml(p.payload_code) + '" title="remove">×</span>' : '')
-      + '</span>';
-  }).join('');
-  if (isAuth) {
-    html += '<span class="loader-chip-add"><input list="loader-payloads-dl" class="loader-add-pc" placeholder="+ payload"><button class="loader-add-pc-btn">add</button></span>';
+  const set = new Set((item.payloads || []).map(function (p) { return p.payload_code; }));
+  const chips = Array.from(set).map(function (c) { return '<span class="loader-chip">' + escapeHtml(c) + '</span>'; }).join('');
+  if (!isAuth) {
+    return '<div class="loader-payload-set"><span class="loader-set-label">Allowed payloads:</span>' + chips + '</div>';
   }
-  html += '</div>';
+  let html = '<div class="loader-payload-set"><span class="loader-set-label">Allowed payloads (' + set.size + '):</span> ' + chips;
+  html += '<details class="loader-pc-checklist" style="margin-top:4px">'
+    + '<summary style="cursor:pointer;color:#0a8f6a">Select payloads ▾</summary>'
+    + '<div style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;margin-top:4px;display:flex;flex-direction:column;gap:2px">';
+  html += payloadCodes.map(function (c) {
+    return '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem">'
+      + '<input type="checkbox" class="loader-pc-cb" data-pc="' + escapeHtml(c) + '"' + (set.has(c) ? ' checked' : '') + '>'
+      + escapeHtml(c) + '</label>';
+  }).join('');
+  html += '</div></details></div>';
   return html;
 }
 
@@ -415,14 +423,10 @@ function wireAll(host) {
     const edit = box.querySelector('.loader-box-edit');
     if (edit) edit.addEventListener('click', function () { editLoader(lid); });
 
-    box.querySelectorAll('.loader-chip-x').forEach(function (x) {
-      x.addEventListener('click', function () { removeChip(lid, x.dataset.pc); });
-    });
-    const addBtn = box.querySelector('.loader-add-pc-btn');
-    if (addBtn) addBtn.addEventListener('click', function () {
-      const inp = box.querySelector('.loader-add-pc');
-      const pc = inp ? (inp.value || '').trim() : '';
-      if (pc) addChip(lid, pc);
+    box.querySelectorAll('.loader-pc-cb').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        if (cb.checked) addChip(lid, cb.dataset.pc); else removeChip(lid, cb.dataset.pc);
+      });
     });
   });
 }
