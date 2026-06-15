@@ -101,16 +101,16 @@ func TestTier1_SnapshotCarriesThresholdAndTransitional(t *testing.T) {
 	if got := a.UOPThresholdFor("PART-A"); got != 150 {
 		t.Errorf("UOPThresholdFor(PART-A) = %d, want 150 (threaded off the cache)", got)
 	}
-	if a.IsTransitional() {
-		t.Error("replenishment=auto loader must not be transitional")
+	if a.IsOperatorDriven() {
+		t.Error("replenishment=auto loader must not be operator-driven")
 	}
 
 	op, err := eng.loaders().LoaderForPayload("PART-B", domain.RoleProduce, true)
 	if err != nil || op == nil {
 		t.Fatalf("resolve OP-LDR: %v", err)
 	}
-	if !op.IsTransitional() {
-		t.Error("replenishment=operator loader must be transitional")
+	if !op.IsOperatorDriven() {
+		t.Error("replenishment=operator loader must be operator-driven")
 	}
 	if got := op.UOPThresholdFor("PART-B"); got != 0 {
 		t.Errorf("UOPThresholdFor(PART-B) = %d, want 0 (none seeded)", got)

@@ -54,14 +54,14 @@ type StationNodeView struct {
 	// two cells (SNF2 + SNF3) see both cells' payloads instead of one.
 	ActiveStylePayloads []string `json:"active_style_payloads,omitempty"`
 	AllStylePayloads    []string `json:"all_style_payloads,omitempty"`
-	// TransitionalLoader is true when this loader's core node is in the
-	// transitional_loaders set — operator-driven, board defaults to preload.
-	TransitionalLoader bool `json:"transitional_loader,omitempty"`
+	// OperatorDriven is true when this loader's core node is in the
+	// operator_driven_loaders set — operator-driven, board defaults to preload.
+	OperatorDriven bool `json:"operator_driven,omitempty"`
 	// HomeLocationLoader is true when this loader's core node is in the
 	// home_location_loaders set — the dedicated-position LAYOUT. The board then
 	// renders one card per home (position × its payload) across the station's
 	// loader nodes, instead of one window with a card per payload. Orthogonal to
-	// TransitionalLoader (this is layout; that is type).
+	// OperatorDriven (this is layout; that is type).
 	HomeLocationLoader bool `json:"home_location_loader,omitempty"`
 	// WindowGroupAnchor is the LoaderID this node belongs to when it is one window
 	// of a shared MULTI-window loader, resolved from the Core aggregate (not the

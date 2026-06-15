@@ -230,8 +230,8 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 				nodeView.ActiveStylePayloads = act
 				nodeView.AllStylePayloads = all
 			}
-			if transitional, err := s.db.IsTransitionalLoader(node.CoreNodeName); err == nil {
-				nodeView.TransitionalLoader = transitional
+			if operatorDriven, err := s.db.IsOperatorDrivenLoader(node.CoreNodeName); err == nil {
+				nodeView.OperatorDriven = operatorDriven
 			}
 			if homeLoc, err := s.db.IsHomeLocationLoader(node.CoreNodeName); err == nil {
 				nodeView.HomeLocationLoader = homeLoc

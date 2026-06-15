@@ -219,13 +219,13 @@ type NodeClaim struct {
 	// downstream consumption. Default false preserves the kanban-driven model
 	// (DemandSignal-only). See engine/operator_demand.go MaybePushUnloader.
 	AutoPush bool `json:"auto_push"`
-	// TransitionalLoader is a computed, display-only field — NOT a persisted
-	// claim column. It mirrors the loader-wide transitional_loaders set
+	// OperatorDriven is a computed, display-only field — NOT a persisted
+	// claim column. It mirrors the loader-wide operator_driven_loaders set
 	// (Edge-only, keyed by core_node_name) and is populated by the API list
 	// path only for produce manual_swap (bin loader) claims so the Edge
 	// processes claim editor can reflect/toggle it. Every other reader sees
 	// the zero value; they don't consult it.
-	TransitionalLoader bool `json:"transitional_loader"`
+	OperatorDriven bool `json:"operator_driven"`
 	// HomeLocationLoader is the same kind of computed, display-only field for the
 	// home_location_loaders set (the LAYOUT axis) — populated by the API list path
 	// for produce manual_swap claims so the editor can reflect/toggle it.
@@ -277,15 +277,15 @@ type NodeClaimInput struct {
 	LinesideSoftThreshold int                `json:"lineside_soft_threshold"`
 	ReuseCompatibleBins   bool               `json:"reuse_compatible_bins"`
 	AutoPush              bool               `json:"auto_push"`
-	// TransitionalLoader toggles the loader-wide transitional_loaders set
+	// OperatorDriven toggles the loader-wide operator_driven_loaders set
 	// (Edge-only, keyed by core_node_name). It is NOT persisted on the claim
 	// row — the upsert handler applies it to the set only for a produce
 	// manual_swap claim. A nil pointer means "field absent, leave the set
 	// untouched" so saves of unrelated claims can't clear a loader's flag.
-	TransitionalLoader *bool `json:"transitional_loader,omitempty"`
+	OperatorDriven *bool `json:"operator_driven,omitempty"`
 	// HomeLocationLoader toggles the loader-wide home_location_loaders set
 	// (Edge-only, keyed by core_node_name) — the dedicated-position LAYOUT.
-	// Same rules as TransitionalLoader: applied only for a produce manual_swap
+	// Same rules as OperatorDriven: applied only for a produce manual_swap
 	// claim; a nil pointer leaves the set untouched.
 	HomeLocationLoader *bool `json:"home_location_loader,omitempty"`
 }

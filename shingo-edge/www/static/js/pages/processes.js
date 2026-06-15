@@ -1088,7 +1088,7 @@ function editClaim(claim) {
         evacuateOnChangeover: !!claim.evacuate_on_changeover,
         reuseCompatibleBins: !!claim.reuse_compatible_bins,
         autoPush: !!claim.auto_push,
-        transitionalLoader: !!claim.transitional_loader,
+        transitionalLoader: !!claim.operator_driven,
         homeLocationLoader: !!claim.home_location_loader,
         pairedCoreNode: claim.paired_core_node || '',
         secondPairedCoreNode: claim.second_paired_core_node || '',
@@ -1169,7 +1169,7 @@ async function saveClaim() {
     // *bool "absent = leave untouched" contract holds and saving an
     // unrelated claim can never clear a loader's flag.
     if (state.swapMode === 'manual_swap' && state.role === 'produce') {
-        claimBody.transitional_loader = state.transitionalLoader;
+        claimBody.operator_driven = state.transitionalLoader; // wire field renamed; form state key stays internal
         claimBody.home_location_loader = state.homeLocationLoader;
     }
 

@@ -346,9 +346,10 @@ func (l *Loader) SlotCount() int { return l.slotCount }
 func (l *Loader) IsShared() bool    { return l.layout == LayoutSharedWindow }
 func (l *Loader) IsDedicated() bool { return l.layout == LayoutDedicatedPositions }
 
-// IsTransitional reports whether the loader is operator-driven (replenishment =
-// operator) — the aggregate twin of the legacy transitional_loaders flag.
-func (l *Loader) IsTransitional() bool { return l.replenishment == ReplenishmentOperator }
+// IsOperatorDriven reports whether the loader's replenishment is operator-driven
+// (replenishment = operator) — the operator stages/clears at the board rather than
+// the automatic threshold path supplying it.
+func (l *Loader) IsOperatorDriven() bool { return l.replenishment == ReplenishmentOperator }
 
 // Windows returns a copy of the shared_window load points (nil for dedicated).
 func (l *Loader) Windows() []Window { return append([]Window(nil), l.windows...) }

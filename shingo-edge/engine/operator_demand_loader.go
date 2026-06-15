@@ -405,26 +405,26 @@ func (e *Engine) refillLoaderForPayload(loader *domain.Loader, payloadCode domai
 
 // L1Source identifies which path is creating a loader empty-in (L1)
 // retrieve_empty order. It is the typed replacement for the old free-text
-// `tag` and also carries the transitional-suppression policy, so adding a
+// `tag` and also carries the operator-driven-suppression policy, so adding a
 // source forces a decision about its class rather than defaulting silently.
 type L1Source string
 
 const (
 	L1SideCycle     L1Source = "side-cycle"     // legacy bin-count refill
 	L1LoopThreshold L1Source = "loop_threshold" // UOP-threshold C-push
-	L1LoaderPush    L1Source = "loader_push"    // transitional opportunistic empty staging
+	L1LoaderPush    L1Source = "loader_push"    // operator-driven opportunistic empty staging
 )
 
 // logTag is the stable, greppable prefix this source uses in log lines.
 func (s L1Source) logTag() string { return string(s) }
 
-// suppressedByTransitional reports whether a transitional loader silences
+// suppressedByOperatorDriven reports whether an operator-driven loader silences
 // this source. Allowlist semantics: only the market-accounting (automatic)
-// sources opt in. L1LoaderPush — the transitional supply path itself — and
+// sources opt in. L1LoaderPush — the operator-driven supply path itself — and
 // any future operator-driven source fall through to false, so they are NOT
-// suppressed: the operator is the signal on a transitional loader, and the
+// suppressed: the operator is the signal on an operator-driven loader, and the
 // opportunistic empty staging that feeds them must keep running.
-func (s L1Source) suppressedByTransitional() bool {
+func (s L1Source) suppressedByOperatorDriven() bool {
 	switch s {
 	case L1SideCycle, L1LoopThreshold:
 		return true
@@ -593,19 +593,19 @@ func loaderEmptySource(l *domain.Loader) string {
 
 // tryCreateL1 is the threshold/side-cycle entry to the reservation seam. It takes
 // the resolved *domain.Loader (C3: the Loader is the unit of resolution, not the
-// old manualSwapNode shim). The transitional gate is applied here; the count→fire
+// old manualSwapNode shim). The operator-driven gate is applied here; the count→fire
 // atomicity, the per-payload dedup, the capacity cap, and the decision record all
-// live in reserveLoaderEmpties. count is the desired total in-flight for the payload.
+// live in reserveLoaderBins. count is the desired total in-flight for the payload.
 func (e *Engine) tryCreateL1(loader *domain.Loader, payload domain.PayloadCode, source L1Source, count int, member domain.NodeID) (int, error) {
 	if loader == nil {
 		return 0, nil
 	}
 	coreNode := string(loader.ID())
-	// IsTransitional reads the aggregate directly — correct after loader.ID() became
+	// IsOperatorDriven reads the aggregate directly — correct after loader.ID() became
 	// the loader_key token (a cache lookup keyed on the old core_node_name would now
-	// miss). The push source is exempt regardless (it IS the transitional supply path).
-	if loader.IsTransitional() && source.suppressedByTransitional() {
-		e.debugFn("%s: loader=%s payload=%s skipped — transitional, operator-driven",
+	// miss). The push source is exempt regardless (it IS the operator-driven supply path).
+	if loader.IsOperatorDriven() && source.suppressedByOperatorDriven() {
+		e.debugFn("%s: loader=%s payload=%s skipped — operator-driven",
 			source.logTag(), coreNode, payload)
 		return 0, nil
 	}
@@ -644,10 +644,10 @@ func (e *Engine) tryCreateL1(loader *domain.Loader, payload domain.PayloadCode, 
 }
 
 // MaybePushLoader is the loader-side mirror of MaybePushUnloader: the
-// opportunistic empty-staging push for TRANSITIONAL loaders. When a
-// transitional loader's window is free it stages one empty so the operator
-// always has a bin to fill. Non-transitional loaders are no-ops here — their
-// empties come from the threshold/legacy paths (which know the payload and
+// opportunistic empty-staging push for OPERATOR-DRIVEN loaders. When an
+// operator-driven loader's window is free it stages one empty so the operator
+// always has a bin to fill. Threshold loaders are no-ops here — their
+// empties come from the threshold path (which knows the payload and
 // count). Opportunistic, one at a time: maybeStageLoaderEmpty fires only when
 // no empty is already in flight, and Core's CheckDropoffCapacity queues the
 // order if the window is still physically occupied, so it can't slam.
@@ -667,20 +667,20 @@ func (e *Engine) MaybePushLoader(_ int64) {
 		return
 	}
 	for _, l := range loaders {
-		if !l.IsTransitional() {
+		if !l.IsOperatorDriven() {
 			continue
 		}
 		e.maybeStageLoaderEmpty(l)
 	}
 }
 
-// maybeStageLoaderEmpty stages one empty at a transitional loader if none is
+// maybeStageLoaderEmpty stages one empty at an operator-driven loader if none is
 // already in flight. The empty is a generic carrier staged payload-AGNOSTIC
 // (blank code) rather than tagged with an arbitrary "representative" payload —
 // there is no payload-specific demand behind an opportunistic stage, so naming
 // one just fabricates a binding the operator routinely overrides at LoadBin.
 // One-at-a-time keeps it opportunistic; L1LoaderPush is exempt from the
-// transitional suppression in tryCreateL1 (it IS the transitional supply path).
+// operator-driven suppression in tryCreateL1 (it IS the operator-driven supply path).
 //
 // Single-carrier assumption — see RequestEmptyBin: a blank order sources any
 // compatible empty, which is correct only when the loader uses one carrier type.
@@ -698,14 +698,14 @@ func (e *Engine) maybeStageLoaderEmpty(loader *domain.Loader) {
 	// never-2N dedup atomically across the loader's delivery nodes, so a push for a
 	// loader that already has an empty in flight resolves to to_fire=0 and fires
 	// nothing. The empty is staged payload-AGNOSTIC (blank code) — the operator
-	// picks the payload at LoadBin; L1LoaderPush is exempt from the transitional
-	// suppression in tryCreateL1 (it IS the transitional supply path).
+	// picks the payload at LoadBin; L1LoaderPush is exempt from the operator-driven
+	// suppression in tryCreateL1 (it IS the operator-driven supply path).
 	if _, err := e.tryCreateL1(loader, "", L1LoaderPush, 1, ""); err != nil { // opportunistic push: payload-agnostic, no member
 		e.logFn("loader-push: stage empty at loader=%s failed: %v", loader.ID(), err)
 	}
 }
 
-// SweepPushLoaders walks every active transitional produce manual_swap loader
+// SweepPushLoaders walks every active operator-driven produce manual_swap loader
 // and stages an empty if its window is free. Intended for Edge startup (after
 // registration ack, mirroring SweepPushUnloaders): catches loaders that were
 // empty when Edge went down so the operator returns to a staged empty rather
@@ -722,13 +722,13 @@ func (e *Engine) SweepPushLoaders() {
 	}
 	swept := 0
 	for _, l := range loaders {
-		if !l.IsTransitional() {
+		if !l.IsOperatorDriven() {
 			continue
 		}
 		e.maybeStageLoaderEmpty(l)
 		swept++
 	}
 	if swept > 0 {
-		log.Printf("loader-push: startup sweep covered %d transitional loader(s)", swept)
+		log.Printf("loader-push: startup sweep covered %d operator-driven loader(s)", swept)
 	}
 }

@@ -98,8 +98,8 @@ func TestNewDedicatedPositionsLoader_Valid(t *testing.T) {
 	if l.SlotCount() != 2 {
 		t.Errorf("SlotCount = %d, want 2 (= position count)", l.SlotCount())
 	}
-	if !l.IsTransitional() {
-		t.Errorf("replenishment=operator should report IsTransitional")
+	if !l.IsOperatorDriven() {
+		t.Errorf("replenishment=operator should report IsOperatorDriven")
 	}
 	if got := l.DeliveryNodes(); len(got) != 2 || got[0] != "HOME-1" || got[1] != "HOME-2" {
 		t.Errorf("DeliveryNodes = %v, want the two position nodes", got)

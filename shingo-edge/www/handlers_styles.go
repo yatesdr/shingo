@@ -251,19 +251,19 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Transitional-loader flag is loader-wide (keyed by core_node_name) and
+	// Operator-driven flag is loader-wide (keyed by core_node_name) and
 	// Edge-only — not a claim column — so it's applied here against the
-	// transitional_loaders set rather than persisted by UpsertClaim. Only a
+	// operator_driven_loaders set rather than persisted by UpsertClaim. Only a
 	// produce manual_swap (bin loader) claim can carry it, and only when the
 	// request actually included the field (pointer non-nil) so saving an
 	// unrelated claim never clears a loader's flag. A failure here is logged
 	// but doesn't fail the claim save the operator already committed to.
-	if in.TransitionalLoader != nil &&
+	if in.OperatorDriven != nil &&
 		in.Role == protocol.ClaimRoleProduce &&
 		in.SwapMode == protocol.SwapModeManualSwap {
 		username, _ := h.sessions.getUser(r)
-		if err := h.engine.StyleService().SetTransitionalLoader(in.CoreNodeName, *in.TransitionalLoader, username); err != nil {
-			log.Printf("WARNING api apiUpsertStyleNodeClaim: set transitional loader %s: %v", in.CoreNodeName, err)
+		if err := h.engine.StyleService().SetOperatorDrivenLoader(in.CoreNodeName, *in.OperatorDriven, username); err != nil {
+			log.Printf("WARNING api apiUpsertStyleNodeClaim: set operator-driven loader %s: %v", in.CoreNodeName, err)
 		}
 	}
 	// Home-location LAYOUT flag — loader-wide / nil-safe like the transitional flag

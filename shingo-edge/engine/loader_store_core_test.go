@@ -90,8 +90,8 @@ func TestLoadersFromCore_DedicatedAndUnloader(t *testing.T) {
 	if got := l.MinStockFor("PART-H"); got != 3 {
 		t.Errorf("MinStockFor(PART-H) = %d, want 3 (position min_stock)", got)
 	}
-	if !l.IsTransitional() {
-		t.Error("replenishment=operator loader should be transitional")
+	if !l.IsOperatorDriven() {
+		t.Error("replenishment=operator loader should be operator-driven")
 	}
 
 	// unloader: consume + replenishment=auto.

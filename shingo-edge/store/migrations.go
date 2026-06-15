@@ -133,6 +133,12 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE production_lines RENAME TO processes")
 	db.Exec("ALTER TABLE job_styles RENAME TO styles")
 	db.Exec("ALTER TABLE location_nodes RENAME TO nodes")
+	// transitional_loaders → operator_driven_loaders: "transitional" read like a
+	// changeover/temporary state when it just means operator-driven replenishment.
+	// Same set, clearer name. Renamed before schema.Apply so existing rows migrate
+	// into the new table rather than being orphaned behind a fresh empty one.
+	// No-op on a fresh DB (old table absent → ALTER errors, ignored).
+	db.Exec("ALTER TABLE transitional_loaders RENAME TO operator_driven_loaders")
 
 	// 3. Canonical CREATE TABLE IF NOT EXISTS pass.
 	if err := schema.Apply(db.DB); err != nil {

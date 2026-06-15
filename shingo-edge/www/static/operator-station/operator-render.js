@@ -297,12 +297,12 @@ function buildLoaderCard(entry, code, counters, opts) {
 
     // Coverage (ACTIVE = a running style needs this now; PRELOAD = covered only
     // by an inactive style) — drives the badge + the transitional idle override.
-    var isActiveStylePayload = entry.transitional_loader &&
+    var isActiveStylePayload = entry.operator_driven &&
         (entry.active_style_payloads || []).indexOf(code) !== -1;
 
     // Transitional board: "NO DEMAND" is meaningless (operator-driven). On an
     // idle card show the coverage meaning instead.
-    if (entry.transitional_loader && cs.cls === 'os-board-nodemand') {
+    if (entry.operator_driven && cs.cls === 'os-board-nodemand') {
         if (isActiveStylePayload) {
             cs.statusText = 'ACTIVE'; cs.statusClass = 'os-board-tag-lineside'; cs.detail = '';
         } else {
@@ -313,12 +313,12 @@ function buildLoaderCard(entry, code, counters, opts) {
     // Normal (non-transitional) loader hides idle produce cards so the operator
     // sees only what's called for. Transitional keeps every card; a home-location
     // board passes keepIdle so every physical home stays on screen.
-    if (!entry.transitional_loader && claim.role === 'produce' && cs.cls === 'os-board-nodemand' && !(opts && opts.keepIdle)) return null;
+    if (!entry.operator_driven && claim.role === 'produce' && cs.cls === 'os-board-nodemand' && !(opts && opts.keepIdle)) return null;
 
     card.classList.add(cs.cls);
     if (cs.loadNow) card.classList.add('os-board-load-now');
 
-    if (entry.transitional_loader) {
+    if (entry.operator_driven) {
         card.classList.add(isActiveStylePayload ? 'os-board-cov-on-active' : 'os-board-cov-on-preload');
         card.appendChild(el('span', {
             className: 'os-board-cov ' + (isActiveStylePayload ? 'os-board-cov-active' : 'os-board-cov-preload'),
@@ -330,7 +330,7 @@ function buildLoaderCard(entry, code, counters, opts) {
     card.appendChild(el('span', { className: 'os-board-tag ' + cs.statusClass, textContent: cs.statusText }));
     card.appendChild(el('div', { className: 'os-board-detail', textContent: cs.detail }));
 
-    if (entry.transitional_loader && isActiveStylePayload) {
+    if (entry.operator_driven && isActiveStylePayload) {
         var lsMap = entry.active_payload_lineside || {};
         var lsUOP = lsMap[code] != null ? lsMap[code] : 0;
         var starved = (entry.starved_payloads || {})[code] === true;
@@ -372,7 +372,7 @@ function buildLoaderCard(entry, code, counters, opts) {
 // active), falling back to the single claim's list.
 function allowedPayloadsFor(entry) {
     var claim = entry.active_claim;
-    var modeList = entry.transitional_loader ? entry.all_style_payloads : entry.active_style_payloads;
+    var modeList = entry.operator_driven ? entry.all_style_payloads : entry.active_style_payloads;
     var allowed = (modeList && modeList.length > 0)
         ? modeList
         : ((claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
@@ -380,7 +380,7 @@ function allowedPayloadsFor(entry) {
             : (claim.payload_code ? [claim.payload_code] : []));
     // Transitional: sort ACTIVE-style payloads ahead of PRELOAD-only, alpha
     // tiebreak (deterministic — some field kiosks predate V8 stable sort).
-    if (entry.transitional_loader) {
+    if (entry.operator_driven) {
         var activeSet = entry.active_style_payloads || [];
         allowed = allowed.slice().sort(function(a, b) {
             var aRank = activeSet.indexOf(a) !== -1 ? 0 : 1;

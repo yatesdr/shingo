@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS core_loader_payloads (
 --   Core's threshold monitor already idles for these loaders (their
 --   thresholds are 0). Delete the row once supermarket space exists and
 --   thresholds are calibrated.
-CREATE TABLE IF NOT EXISTS transitional_loaders (
+CREATE TABLE IF NOT EXISTS operator_driven_loaders (
     core_node_name TEXT NOT NULL,
     updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
     updated_by     TEXT NOT NULL DEFAULT '',
@@ -335,7 +335,7 @@ CREATE TABLE IF NOT EXISTS transitional_loaders (
 
 -- home_location_loaders — membership set marking a bin loader's layout as
 -- "home location" (each payload its own dedicated node) vs the default single
--- window. Orthogonal to transitional_loaders (type vs layout). See
+-- window. Orthogonal to operator_driven_loaders (type vs layout). See
 -- store/home_location_loaders.go.
 CREATE TABLE IF NOT EXISTS home_location_loaders (
     core_node_name TEXT NOT NULL,

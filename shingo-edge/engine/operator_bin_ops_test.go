@@ -206,12 +206,12 @@ func TestLoadablePayloads_NotGatedByActiveStyle(t *testing.T) {
 		t.Errorf("normal loader: loadablePayloads = %v, want [PART-A PART-B] (not gated by active style)", got)
 	}
 
-	// Transitional flag does not change the server gate — same union.
-	if err := db.SetTransitionalLoader("LOADER", true, "test"); err != nil {
-		t.Fatalf("set transitional: %v", err)
+	// Operator-driven flag does not change the server gate — same union.
+	if err := db.SetOperatorDrivenLoader("LOADER", true, "test"); err != nil {
+		t.Fatalf("set operator-driven: %v", err)
 	}
 	if got := eng.loadablePayloads(node, claim); !slices.Equal(got, []string{"PART-A", "PART-B"}) {
-		t.Errorf("transitional loader: loadablePayloads = %v, want [PART-A PART-B] (same loader-wide union)", got)
+		t.Errorf("operator-driven loader: loadablePayloads = %v, want [PART-A PART-B] (same loader-wide union)", got)
 	}
 }
 

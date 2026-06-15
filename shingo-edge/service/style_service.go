@@ -87,10 +87,11 @@ func (s *StyleService) ListClaims(styleID int64) ([]processes.NodeClaim, error) 
 		if claims[i].Role != protocol.ClaimRoleProduce || claims[i].SwapMode != protocol.SwapModeManualSwap {
 			continue
 		}
-		// Fail-open: a lookup error leaves TransitionalLoader false rather
-		// than failing the whole claim list (mirrors isTransitionalLoader).
-		if on, lerr := s.db.IsTransitionalLoader(claims[i].CoreNodeName); lerr == nil {
-			claims[i].TransitionalLoader = on
+		// Fail-open: a lookup error leaves the flag false rather than failing
+		// the whole claim list. (Wire field name kept as TransitionalLoader —
+		// the operator-board JS contract; the backend set is operator_driven.)
+		if on, lerr := s.db.IsOperatorDrivenLoader(claims[i].CoreNodeName); lerr == nil {
+			claims[i].OperatorDriven = on
 		}
 		if on, lerr := s.db.IsHomeLocationLoader(claims[i].CoreNodeName); lerr == nil {
 			claims[i].HomeLocationLoader = on
@@ -99,12 +100,12 @@ func (s *StyleService) ListClaims(styleID int64) ([]processes.NodeClaim, error) 
 	return claims, nil
 }
 
-// SetTransitionalLoader marks (on) or clears the loader-wide transitional
+// SetOperatorDrivenLoader marks (on) or clears the loader-wide operator-driven
 // flag for a bin loader, keyed by core_node_name. updatedBy is recorded on
 // the audit column. The caller is responsible for restricting this to a
 // produce manual_swap claim — the set itself is loader-wide and untyped.
-func (s *StyleService) SetTransitionalLoader(coreNodeName string, on bool, updatedBy string) error {
-	return s.db.SetTransitionalLoader(coreNodeName, on, updatedBy)
+func (s *StyleService) SetOperatorDrivenLoader(coreNodeName string, on bool, updatedBy string) error {
+	return s.db.SetOperatorDrivenLoader(coreNodeName, on, updatedBy)
 }
 
 func (s *StyleService) SetHomeLocationLoader(coreNodeName string, on bool, updatedBy string) error {
