@@ -82,11 +82,13 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 		} else {
 			d.dbg("plan order %s (%s): %s", p.OrderUUID, p.OrderType, planErr.Detail)
 		}
-		// claim_failed is transient: bins exist but were claimed by a concurrent
-		// order in the TOCTOU gap between FindSourceBinFIFO and ClaimBin. Queue
-		// the order so the fulfillment scanner retries when a bin frees up.
-		if planErr.Code == "claim_failed" {
-			d.dbg("dispatch: claim_failed for order %s — queuing for retry", p.OrderUUID)
+		// Transient contention clears on its own — a source bin claimed by a
+		// concurrent order in the TOCTOU gap (claim_failed), or a buried bin whose
+		// lane is mid-reshuffle for another order (lane_locked). Queue the order so
+		// the fulfillment scanner retries instead of terminally failing it; multi-
+		// window loaders pulling empties in parallel make this contention routine.
+		if planErr.Transient() {
+			d.dbg("dispatch: %s for order %s — transient contention, queuing for retry", planErr.Code, p.OrderUUID)
 			d.queueOrder(order, env, payloadCode)
 			return
 		}
@@ -104,17 +106,7 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 }
 
 func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, payloadCode string) {
-	// The planner persists the specific blocking reason (dropoff occupied,
-	// no source bin, …) to queue_reason before queueOrder runs. Surface it
-	// to Edge so the operator board can explain WHY the order is parked
-	// instead of showing a generic "awaiting inventory" — a brand-new crew
-	// otherwise reads the silent queue as a dead button and re-taps
-	// "request full", stacking duplicate queued orders.
-	reason := "awaiting inventory"
-	if fresh, err := d.db.GetOrder(order.ID); err == nil && fresh != nil && fresh.QueueReason != "" {
-		reason = fresh.QueueReason
-	}
-	if err := d.lifecycle.Queue(order, "dispatcher", reason); err != nil {
+	if err := d.lifecycle.Queue(order, "dispatcher", "awaiting inventory"); err != nil {
 		d.dbg("queue order %d: %v", order.ID, err)
 	}
 	if payloadCode != "" && order.PayloadCode == "" {
@@ -124,7 +116,7 @@ func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, pay
 	}
 	d.dbg("queued: order=%d uuid=%s payload=%s delivery=%s", order.ID, order.EdgeUUID, payloadCode, order.DeliveryNode)
 	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, env.Src.Station, payloadCode)
-	d.replies.SendUpdate(env, order.EdgeUUID, string(StatusQueued), reason)
+	d.replies.SendUpdate(env, order.EdgeUUID, string(StatusQueued), "awaiting inventory")
 }
 
 func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope, sourceNode, destNode *nodes.Node) {
@@ -347,6 +339,11 @@ func (d *Dispatcher) HandleOrderStorageWaybill(env *protocol.Envelope, p *protoc
 	}
 	result, planErr := d.planner.Plan(order, env, "")
 	if planErr != nil {
+		if planErr.Transient() {
+			d.dbg("store waybill: %s for order %s — transient contention, queuing", planErr.Code, p.OrderUUID)
+			d.queueOrder(order, env, "")
+			return
+		}
 		d.failOrder(order, env, planErr.Code, planErr.Detail)
 		return
 	}
@@ -379,6 +376,11 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 
 	result, planErr := d.planner.Plan(order, env, payloadCode)
 	if planErr != nil {
+		if planErr.Transient() {
+			d.dbg("ingest: %s for order %s — transient contention, queuing", planErr.Code, p.OrderUUID)
+			d.queueOrder(order, env, payloadCode)
+			return
+		}
 		d.failOrder(order, env, planErr.Code, planErr.Detail)
 		return
 	}

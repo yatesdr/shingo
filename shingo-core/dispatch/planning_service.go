@@ -43,6 +43,28 @@ func (e *planningError) Unwrap() error {
 	return e.Err
 }
 
+// Transient reports whether the planning failure is contention that clears on its
+// own, so the order must be QUEUED for the fulfillment scanner to retry rather than
+// terminally failed:
+//   - claim_failed: a source bin existed but was claimed by a concurrent order in the
+//     TOCTOU gap between FindSourceBin and ClaimBin.
+//   - lane_locked: the buried source bin's lane is mid-reshuffle for another order.
+//
+// Both resolve within moments. Failing them drops an order that just needed to wait —
+// and multi-window loaders pulling empties in parallel make this contention routine.
+// The reshuffle/complex dispatch path already queues lane_locked; Transient() makes
+// every simple-planner path (retrieve, store, ingest) agree.
+func (e *planningError) Transient() bool {
+	if e == nil {
+		return false
+	}
+	switch e.Code {
+	case "claim_failed", "lane_locked":
+		return true
+	}
+	return false
+}
+
 type PlanningHandler func(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError)
 
 // plannerLifecycle is the narrow lifecycle surface the planning service
@@ -305,7 +327,11 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	}
 	s.dbg("retrieve_empty: found bin=%d label=%s at node=%s", bin.ID, bin.Label, bin.NodeName)
 
-	// Check if the bin is buried in a lane — FindEmptyCompatibleBin is lane-unaware.
+	// Last-resort reshuffle. The empty finder now prefers accessible (lane-mouth)
+	// empties (bins.AccessibleEmptyOrder), so a bin that lands here buried means
+	// EVERY compatible empty was buried — dig this one out rather than fail the
+	// order. Before the 2026-06-13 accessibility ordering this fired routinely
+	// (the finder picked by bin id, lane-blind); now it is the rare fallback.
 	if bin.NodeID != nil {
 		accessible, accErr := s.db.IsSlotAccessible(*bin.NodeID)
 		if accErr == nil && !accessible {
