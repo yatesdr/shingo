@@ -611,13 +611,6 @@ function claimFieldVisibility(role, swap) {
     return {
         'claims-add-payload-group':           !isManual,
         'claims-add-allowed-group':           isManual,
-        // Transitional flag is a produce-side (bin loader) concept; a
-        // consume manual_swap (unloader) has no transitional mode.
-        'claims-add-transitional-group':      isManual && role === 'produce',
-        // Home-location is a LAYOUT axis (dedicated per-payload node vs one shared
-        // window), orthogonal to role per the home_location_loaders data model — it
-        // applies to consume unloaders (dedicated finished-goods exits) too.
-        'claims-add-home-location-group':     isManual,
         'claims-add-reorder-group':           !isManual,
         'claims-add-lineside-group':          role === 'consume' && !isManual,
         // Staging fieldset is hidden by manual_swap (no staging concept),
@@ -811,8 +804,6 @@ function readClaimStateFromForm() {
         evacuateOnChangeover: get('claims-add-evacuate').checked,
         reuseCompatibleBins: get('claims-add-reuse-bins').checked,
         autoPush: get('claims-add-auto-push').checked,
-        transitionalLoader: get('claims-add-transitional').checked,
-        homeLocationLoader: get('claims-add-home-location').checked,
         pairedCoreNode: get('claims-add-paired-node').value,
         secondPairedCoreNode: get('claims-add-second-paired-node').value,
         autoConfirm: get('claims-add-auto-confirm').checked,
@@ -840,8 +831,6 @@ function writeClaimStateToForm(state) {
     get('claims-add-evacuate').checked = !!state.evacuateOnChangeover;
     get('claims-add-reuse-bins').checked = !!state.reuseCompatibleBins;
     get('claims-add-auto-push').checked = !!state.autoPush;
-    get('claims-add-transitional').checked = !!state.transitionalLoader;
-    get('claims-add-home-location').checked = !!state.homeLocationLoader;
     get('claims-add-paired-node').value = state.pairedCoreNode || '';
     get('claims-add-second-paired-node').value = state.secondPairedCoreNode || '';
     get('claims-add-auto-confirm').checked = !!state.autoConfirm;
@@ -1035,8 +1024,6 @@ function defaultClaimState() {
         evacuateOnChangeover: false,
         reuseCompatibleBins: false,
         autoPush: false,
-        transitionalLoader: false,
-        homeLocationLoader: false,
         pairedCoreNode: '',
         secondPairedCoreNode: '',
         autoConfirm: false,
@@ -1088,8 +1075,6 @@ function editClaim(claim) {
         evacuateOnChangeover: !!claim.evacuate_on_changeover,
         reuseCompatibleBins: !!claim.reuse_compatible_bins,
         autoPush: !!claim.auto_push,
-        transitionalLoader: !!claim.operator_driven,
-        homeLocationLoader: !!claim.home_location_loader,
         pairedCoreNode: claim.paired_core_node || '',
         secondPairedCoreNode: claim.second_paired_core_node || '',
         autoConfirm: !!claim.auto_confirm,
@@ -1163,15 +1148,10 @@ async function saveClaim() {
         auto_confirm: state.autoConfirm,
     };
 
-    // Transitional flag rides with the claim body only for a produce
-    // manual_swap (bin loader); the server applies it to the loader-wide
-    // transitional_loaders set. Omitted for every other role/mode so the
-    // *bool "absent = leave untouched" contract holds and saving an
-    // unrelated claim can never clear a loader's flag.
-    if (state.swapMode === 'manual_swap' && state.role === 'produce') {
-        claimBody.operator_driven = state.transitionalLoader; // wire field renamed; form state key stays internal
-        claimBody.home_location_loader = state.homeLocationLoader;
-    }
+    // Loader replenishment + dedicated-position layout are configured on the Core
+    // loader setup screen (Nodes -> Create/Edit Loader), not via this claim, so the
+    // operator_driven / home_location flags are no longer sent (the *bool
+    // "absent = leave untouched" contract leaves any legacy edge-table value alone).
 
     // NGRP expansion: if the picked node is a group AND we're creating
     // (not editing), fan out to the physical children with one POST

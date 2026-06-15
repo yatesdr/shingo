@@ -1,7 +1,6 @@
 package service
 
 import (
-	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -83,20 +82,9 @@ func (s *StyleService) ListClaims(styleID int64) ([]processes.NodeClaim, error) 
 	if err != nil {
 		return nil, err
 	}
-	for i := range claims {
-		if claims[i].Role != protocol.ClaimRoleProduce || claims[i].SwapMode != protocol.SwapModeManualSwap {
-			continue
-		}
-		// Fail-open: a lookup error leaves the flag false rather than failing
-		// the whole claim list. (Wire field name kept as TransitionalLoader —
-		// the operator-board JS contract; the backend set is operator_driven.)
-		if on, lerr := s.db.IsOperatorDrivenLoader(claims[i].CoreNodeName); lerr == nil {
-			claims[i].OperatorDriven = on
-		}
-		if on, lerr := s.db.IsHomeLocationLoader(claims[i].CoreNodeName); lerr == nil {
-			claims[i].HomeLocationLoader = on
-		}
-	}
+	// Loader replenishment (operator-driven) + dedicated-position layout now live on
+	// the Core aggregate, not these per-style edge flag tables, and the claim editor
+	// no longer surfaces them — so nothing is populated onto the claims here.
 	return claims, nil
 }
 

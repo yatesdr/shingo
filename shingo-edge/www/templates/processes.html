@@ -408,20 +408,9 @@ window.claimedByStation = {{json .ClaimedByStation}};
                 <div id="claims-allowed-picker" style="display:flex;flex-direction:column;gap:0.3rem;max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:0.5rem"></div>
                 <button class="btn btn-sm" type="button" data-action="syncPayloadCatalog" class="mt-2" title="Sync payload catalog from core">Sync Catalog</button>
             </div>
-            <div class="form-group" id="claims-add-transitional-group" hidden>
-                <label class="check-row">
-                    <input type="checkbox" id="claims-add-transitional">
-                    <span>Transitional (operator-driven) loader</span>
-                </label>
-                <div class="field-help--inline">Suppresses automatic replenishment for this loader — the operator drives loading from the preload board, empties flow opportunistically, and the board defaults to PRELOAD. Loader-wide: applies to this core node across every style.</div>
-            </div>
-            <div class="form-group" id="claims-add-home-location-group" hidden>
-                <label class="check-row">
-                    <input type="checkbox" id="claims-add-home-location">
-                    <span>Home-location layout (dedicated position per payload)</span>
-                </label>
-                <div class="field-help--inline">Each payload gets its own physical home — the board shows one card per home instead of one shared window. Layout only, independent of the transitional/traditional type. Loader-wide: applies to this core node.</div>
-            </div>
+            <!-- Loader replenishment (operator-driven vs auto/UOP-threshold) and the
+                 dedicated-position layout are configured on the Core loader setup screen
+                 (Nodes → Create/Edit Loader), not per style here. -->
             <div class="form-grid-2 mb-3">
                 <div class="form-group" class="form-group--nogap">
                     <label>UOP per Bin</label>

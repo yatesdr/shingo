@@ -230,28 +230,24 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 				nodeView.ActiveStylePayloads = act
 				nodeView.AllStylePayloads = all
 			}
-			if operatorDriven, err := s.db.IsOperatorDrivenLoader(node.CoreNodeName); err == nil {
-				nodeView.OperatorDriven = operatorDriven
-			}
-			if homeLoc, err := s.db.IsHomeLocationLoader(node.CoreNodeName); err == nil {
-				nodeView.HomeLocationLoader = homeLoc
-			}
-			// Window-group membership from the Core aggregate (the view-path cutover,
-			// C4b). The per-node legacy fields above structurally cannot express that
-			// this node is one window of a shared multi-window loader; the resolver —
-			// the same one the runtime resolves empties through — can. Additive: only a
-			// SHARED loader with more than one window populates these; single-window,
-			// dedicated, and legacy loaders leave them empty, so existing views are
-			// byte-identical.
+			// Operator-driven (board defaults to preload) + dedicated-position layout +
+			// window-group membership all come from the Core aggregate — the SAME resolver
+			// the runtime uses — so the board and the engine never disagree. A node absent
+			// from the aggregate resolves to nil (exactly as for the runtime), leaving the
+			// operator/layout fields false.
 			if s.loaders != nil {
-				if loader, err := s.loaders.LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(nodeView.ActiveClaim.Role)); err == nil && loader != nil && loader.IsShared() {
-					if wins := loader.Windows(); len(wins) > 1 {
-						nodeView.WindowGroupAnchor = string(loader.ID())
-						names := make([]string, len(wins))
-						for i, w := range wins {
-							names[i] = string(w.Node)
+				if loader, err := s.loaders.LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(nodeView.ActiveClaim.Role)); err == nil && loader != nil {
+					nodeView.OperatorDriven = loader.IsOperatorDriven()
+					nodeView.HomeLocationLoader = loader.IsDedicated()
+					if loader.IsShared() {
+						if wins := loader.Windows(); len(wins) > 1 {
+							nodeView.WindowGroupAnchor = string(loader.ID())
+							names := make([]string, len(wins))
+							for i, w := range wins {
+								names[i] = string(w.Node)
+							}
+							nodeView.WindowNodes = names
 						}
-						nodeView.WindowNodes = names
 					}
 				}
 			}
