@@ -72,6 +72,51 @@ func TestApiAuditBinTimeline_BadID(t *testing.T) {
 	}
 }
 
+// TestApiAuditEnrichmentColumns pins the keystone step-2 analytics columns
+// (node_id / station / loader_id) round-tripping through INSERT + SELECT + scan +
+// JSON. loader_id is a PLAIN value (no FK) stamped at event time, so an arbitrary id
+// is legitimate — that is exactly the property that lets it survive a loader archive.
+func TestApiAuditEnrichmentColumns(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-ENRICH-1")
+
+	router := chi.NewRouter()
+	router.Get("/api/audit/bin/{id}", h.apiAuditBinTimeline)
+
+	nodeID := sd.StorageNode.ID
+	loaderID := int64(4242)
+	v := 12
+	if err := audit.AppendBinUOP(db.DB, bin.ID, &v, 6,
+		audit.OpSetForProduction, "test", nil, sd.Payload.Code, "OP-ENRICH",
+		audit.BinUOPContext{NodeID: &nodeID, LoaderID: &loaderID, Station: "ST-ENRICH"}); err != nil {
+		t.Fatalf("seed enriched audit: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/audit/bin/%d", bin.ID), nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var rows []audit.BinUOPRow
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&rows), "decode")
+	if len(rows) == 0 {
+		t.Fatal("no audit rows")
+	}
+	r := rows[0]
+	if r.NodeID == nil || *r.NodeID != nodeID {
+		t.Errorf("NodeID = %v, want %d", r.NodeID, nodeID)
+	}
+	if r.LoaderID == nil || *r.LoaderID != loaderID {
+		t.Errorf("LoaderID = %v, want %d", r.LoaderID, loaderID)
+	}
+	if r.Station != "ST-ENRICH" {
+		t.Errorf("Station = %q, want ST-ENRICH", r.Station)
+	}
+}
+
 // TestApiAuditOperatorActivity pins the by-actor endpoint: rows
 // where actor matches the URL param exactly.
 func TestApiAuditOperatorActivity(t *testing.T) {

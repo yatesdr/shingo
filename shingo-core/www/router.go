@@ -172,6 +172,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/nodes/detail", h.apiNodeDetail)
 			r.Get("/nodes/bin-types", h.apiGetNodeBinTypes)
 			r.Get("/nodestate", h.apiNodeState)
+			// Loaders are part of the node layout (shop-floor read access) — the
+			// box render reads this; all loader WRITES stay auth-gated below.
+			r.Get("/loader/list", h.apiListLoaders)
 			r.Get("/fleet/robot-groups", h.apiRobotGroups)
 			r.Get("/map/points", h.apiScenePoints)
 			r.Get("/map/edges", h.apiSceneEdges)
@@ -344,6 +347,17 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/nodegroup/delete", h.apiDeleteNodeGroup)
 				r.Post("/nodegroup/add-lane", h.apiAddLane)
 				r.Post("/nodegroup/reorder-lane", h.apiReorderLaneSlots)
+				r.Post("/loader/create", h.apiCreateLoader)
+				r.Post("/loader/update", h.apiUpdateLoader)
+				r.Post("/loader/set-payload", h.apiSetLoaderPayload)
+				r.Post("/loader/set-home", h.apiSetLoaderHome)
+				r.Post("/loader/remove-home", h.apiRemoveLoaderHome)
+				r.Post("/loader/reorder-homes", h.apiReorderLoaderHomes)
+				r.Post("/loader/remove-payload", h.apiRemoveLoaderPayload)
+				r.Post("/loader/delete", h.apiDeleteLoader)
+				r.Post("/loader/calculate", h.apiCalculateThreshold)
+				// NOTE: GET /loader/list is registered in the PUBLIC block above
+				// (loaders render read-only on the shop-floor Nodes page).
 
 				// Corrections
 				r.Post("/corrections/create", h.apiCreateCorrection)
@@ -447,6 +461,11 @@ func (h *Handlers) render(w http.ResponseWriter, r *http.Request, name string, d
 	if _, exists := data["Authenticated"]; !exists {
 		data["Authenticated"] = h.isAuthenticated(r)
 	}
+	// Never cache the HTML shell: it carries auth-gated markup + cache-busted
+	// script tags that change on every deploy. Without this the browser (or a
+	// service worker) serves a stale page after a rebuild — e.g. a new toolbar
+	// button that's deployed but invisible until the user clears cache.
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		log.Printf("render %s: %v", name, err)
 		http.Error(w, "template error", http.StatusInternalServerError)

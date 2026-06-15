@@ -5,8 +5,14 @@
     {{if .Authenticated}}
     <div class="flex gap-1">
       <button class="btn btn-primary" data-action="openNgrpModal">Add Node Group</button>
+      <button class="btn" style="background:#0a8f6a;border-color:#0a8f6a;color:#fff" data-action="openLoaderModal">Create Loader</button>
       <button type="button" class="btn" data-action="syncOrGenerate" title="Ctrl-click: generate test nodes | Shift-click: delete test nodes">Sync from Fleet</button>
+      <!-- DEAD CODE (hidden 2026-06-12): "Check Occupancy" depends on RDS/SEER
+           bin tracking (GET /binDetails) that was never set up in production, so
+           it errors on live plants (the UI swallowed the real error). Hidden
+           rather than deleted; re-enable if RDS bin tracking ever ships.
       <button class="btn" data-action="checkOccupancy">Check Occupancy</button>
+      -->
     </div>
     {{end}}
   </div>
@@ -282,6 +288,7 @@
 <script type="module" src="/static/pages/nodes-overview.js?v={{cacheBust}}"></script>
 <script type="module" src="/static/pages/nodes-detail.js?v={{cacheBust}}"></script>
 <script type="module" src="/static/pages/nodes-supermarket.js?v={{cacheBust}}"></script>
+<script type="module" src="/static/pages/loaders.js?v={{cacheBust}}"></script>
 
 <!-- Node Occupancy Modal -->
 <div id="occupancy-modal" class="modal-overlay" data-backdrop-close>
@@ -331,6 +338,48 @@
       <button class="btn btn-primary" data-action="createNodeGroup">Create</button>
     </div>
     <span id="ngrp-result" class="text-sm"></span>
+  </div>
+</div>
+
+<!-- Create / Manage Loader Modal (loader refactor: Core-owned bin_loaders) -->
+<div id="loader-modal" class="modal-overlay" data-backdrop-close>
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header flex flex-between">
+      <h2 id="loader-modal-title">Create Loader</h2>
+      <button class="modal-close" data-action="closeLoaderModal">&times;</button>
+    </div>
+    <div class="form-group" style="border-left:3px solid #0a8f6a;padding-left:10px">
+      <input type="hidden" id="loader-edit-id">
+      <label class="text-sm" style="font-weight:600;display:block">Name</label>
+      <div class="flex gap-1" style="flex-wrap:wrap">
+        <input type="text" id="loader-name" placeholder="Name (e.g. COMP-LOADER)" style="flex:1">
+      </div>
+      <label class="text-sm" style="font-weight:600;display:block;margin-top:10px">Role &amp; layout</label>
+      <div class="flex gap-1" style="flex-wrap:wrap">
+        <select id="loader-role"><option value="produce">produce (loader)</option><option value="consume">consume (unloader)</option></select>
+        <select id="loader-layout"><option value="dedicated_positions">dedicated_positions (drag nodes in, payload per spot)</option><option value="shared_window">shared_window (one window, many payloads)</option></select>
+      </div>
+      <div id="loader-flow-section">
+        <label class="text-sm" style="font-weight:600;display:block;margin-top:10px">Material flow <span class="text-muted" style="font-weight:400">(shared_window only)</span></label>
+        <div class="flex gap-1" style="flex-wrap:wrap">
+          <input type="text" id="loader-inbound" list="loader-nodes-dl" placeholder="Inbound source (carriers in)" style="flex:1">
+          <input type="text" id="loader-outbound" list="loader-nodes-dl" placeholder="Outbound dest (bins out)" style="flex:1">
+          <input type="text" id="loader-buffer" list="loader-nodes-dl" placeholder="Overflow buffer (optional)" style="flex:1">
+        </div>
+      </div>
+      <datalist id="loader-nodes-dl"></datalist>
+      <datalist id="loader-payloads-dl"></datalist>
+      <div class="flex-end gap-1 mt-1">
+        <button id="loader-submit-btn" class="btn" style="background:#0a8f6a;border-color:#0a8f6a;color:#fff" data-action="submitLoader">Create Loader</button>
+      </div>
+      <span id="loader-result" class="text-sm"></span>
+    </div>
+    <div class="text-sm text-muted mt-2" style="line-height:1.5">
+      A <strong>dedicated_positions</strong> loader appears as a box on the grid — <strong>drag node tiles into it</strong>
+      to assign positions (each spot is its own in/out), <strong>⠿</strong> to reorder, <strong>×</strong> to remove,
+      then pick a payload per spot. A <strong>shared_window</strong> loader holds a payload set. <strong>Edit</strong> on a
+      box changes its name/flow. UOP thresholds live on the <strong>Inventory</strong> page.
+    </div>
   </div>
 </div>
 

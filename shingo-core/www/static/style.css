@@ -1011,6 +1011,158 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   margin-bottom: 0.35rem;
 }
 
+/* ── Core-owned loader boxes (Nodes-grid overlay) ───── */
+#loader-boxes { margin-bottom: 0.5rem; }
+.loader-empty {
+  border: 1.5px dashed #0a8f6a;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.loader-box {
+  border: 2px solid #0a8f6a;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+  background: var(--bg);
+}
+.loader-box-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, #0a8f6a 10%, var(--bg));
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.loader-box-name { font-weight: 700; color: #0a8f6a; }
+.loader-box-meta { color: var(--text-muted); font-size: 0.78rem; }
+.loader-box-edit, .loader-box-del {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.loader-box-edit { margin-left: auto; }
+.loader-box-del { margin-left: 0.35rem; }
+.loader-box-edit:hover { color: #0a8f6a; border-color: #0a8f6a; }
+.loader-box-del:hover { color: var(--danger); border-color: var(--danger); }
+.loader-box.loader-drop-reject { outline: 2px dashed var(--text-muted); outline-offset: 2px; opacity: 0.9; }
+.loader-box-body { padding: 0.5rem 0.75rem; }
+/* The loader's associated node groups (output supermarket + buffer) rendered INSIDE the
+   teal box as drop-zones: drag a node tile into a zone to add it to that group, drag a
+   slot tile out to remove it. Dashed teal = droppable. */
+.loader-box-group-zone {
+  margin-top: 0.5rem;
+  border: 1px dashed #0a8f6a; border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  background: color-mix(in srgb, #0a8f6a 6%, var(--bg));
+}
+.loader-group-zone-head { display: flex; align-items: baseline; gap: 0.4rem; margin-bottom: 0.3rem; }
+.loader-box-group-label {
+  font-weight: 600; color: #0a8f6a;
+  text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.03em;
+}
+.loader-box-group-name { color: var(--text); font-family: var(--mono, monospace); font-size: 0.78rem; }
+.loader-group-zone-body { display: flex; flex-wrap: wrap; gap: 0.4rem; min-height: 34px; align-items: center; }
+.loader-box-group-zone.loader-group-drop-target { border-style: solid; background: color-mix(in srgb, #0a8f6a 18%, var(--bg)); }
+.loader-group-slot { outline: 1px dashed color-mix(in srgb, #0a8f6a 50%, transparent); }
+.loader-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  min-height: 40px;
+  align-items: center;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.loader-box.loader-drop-target { outline: 2px dashed #0a8f6a; outline-offset: 2px; }
+.loader-box.loader-drop-target .loader-members { background: color-mix(in srgb, #0a8f6a 12%, var(--bg)); }
+/* A loader-box slot is a FULL-SIZE tile matching the grid node tiles (the user asked
+   the slots to look like the group/ungrouped nodes, not the old small chips), with a
+   teal outline to differentiate a slot from a plain node. Self-contained — it sets its
+   own block so it renders correctly even if the .node-tile class isn't on it — and
+   markLinkedTiles mirrors the canonical grid tile's live state colour on top (the
+   compound .loader-member.tile-* rules below let that colour win over the grey base).
+   The ⠿ reorder grip and × sit as corner overlays; the payload picker stacks below. */
+.loader-member {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 46px;
+  min-width: 92px;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  border: 2px solid #0a8f6a; /* the distinct loader outline (differentiates a slot) */
+  background: #e9ecef;
+  color: #495057;
+  font-size: 0.72rem;
+  text-align: center;
+}
+[data-theme="dark"] .loader-member { background: #2d333b; color: #adbac7; }
+/* Live state colour mirrored from the grid tile (markLinkedTiles) — compound so it
+   wins over the grey base above, matching the group node a slot points at. */
+.loader-member.tile-has-payload { background: #22c55e; color: #fff; }
+.loader-member.tile-empty-bin { background: repeating-linear-gradient(45deg, #22c55e, #22c55e 4px, #bbf7d0 4px, #bbf7d0 8px); color: #166534; }
+.loader-member.tile-staged { background: #67e8f9; color: #155e75; }
+.loader-member.dragging { opacity: 0.35; }
+.loader-grip { position: absolute; top: 2px; left: 4px; font-size: 0.62rem; opacity: 0.55; cursor: grab; user-select: none; }
+.loader-grip:active { cursor: grabbing; }
+.loader-member-name { font-weight: 700; }
+/* Per-position payload picker, styled as a badge. Muted "+ payload" prompt until
+   a code is chosen, then a solid teal badge (has-payload). */
+.loader-pc-sel {
+  font-size: 0.64rem;
+  padding: 0.05rem 0.25rem;
+  max-width: 82px;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  background: var(--card-bg);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.loader-pc-sel.has-payload {
+  border: 1px solid #0a8f6a;
+  background: color-mix(in srgb, #0a8f6a 18%, var(--bg));
+  color: var(--text);
+  font-weight: 700;
+}
+.loader-pc-badge {
+  font-size: 0.68rem; font-weight: 700; padding: 0.05rem 0.4rem; border-radius: 10px;
+  background: color-mix(in srgb, #0a8f6a 18%, var(--bg)); border: 1px solid #0a8f6a; color: var(--text);
+}
+.loader-member-x { position: absolute; top: 0; right: 4px; cursor: pointer; color: var(--text-muted); font-weight: 700; font-size: 0.95rem; line-height: 1; }
+.loader-member-x:hover { color: var(--danger); }
+.loader-members-empty, .loader-anchor { font-size: 0.75rem; color: var(--text-muted); }
+/* shared_window allowed-payload set (chips), beneath the window nodes. */
+.loader-payload-set { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin-top: 0.5rem; padding-top: 0.4rem; border-top: 1px dashed var(--border); }
+.loader-set-label { font-size: 0.72rem; font-weight: 600; color: var(--text-muted); }
+.loader-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.72rem;
+  background: var(--card-bg);
+}
+.loader-chip-x { cursor: pointer; color: var(--text-muted); font-weight: 700; }
+.loader-chip-x:hover { color: var(--danger); }
+.loader-chip-add input { width: 100px; font-size: 0.72rem; }
+.loader-hint { margin-top: 0.4rem; font-size: 0.7rem; color: var(--text-muted); opacity: 0.85; }
+/* A grid tile that's also a dedicated loader position — ringed teal to link the
+   two representations (the node stays on the grid; the box holds a member chip). */
+.node-tile.loader-linked { outline: 2px solid #0a8f6a; outline-offset: 1px; }
+
 /* ── AMR Task Board ─────────────────────────────────── */
 
 .board-page {

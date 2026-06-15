@@ -1,6 +1,5 @@
 import { api, delegateActions, formatDuration, uiConfirm } from '/static/app.js';
 import { renderBarList } from '/static/components/BarList.js';
-import { onSSE, debounce } from '/static/shared/utils.js';
 
 var allRows = [];
 var filteredRows = [];
@@ -12,15 +11,6 @@ var sortAsc = true;
   loadBuckets();
   loadProduction();
 })();
-
-// Live refresh: bin moves/loads/clears (bin-update) and cycle-count
-// corrections (inventory-update) re-render the table + rollup in place,
-// debounced so a burst collapses into one re-fetch. Preserves the
-// operator's filters and sort (refreshInventory re-runs applyFilters,
-// not the dropdown population). Buckets/production are lower-churn and
-// refresh on the next manual load.
-onSSE('bin-update', debounce(refreshInventory, 600));
-onSSE('inventory-update', debounce(refreshInventory, 600));
 
 async function loadInventory() {
   var loading = document.getElementById('inv-loading');
@@ -48,21 +38,6 @@ async function loadInventory() {
     errDiv.style.display = 'block';
     errDiv.textContent = 'Failed to load inventory: ' + e.message;
   }
-}
-
-// refreshInventory re-fetches and re-renders the inventory table + part
-// rollup in place on a live SSE event. Distinct from loadInventory: it
-// does NOT toggle the loading spinner or re-run populateFilterDropdowns
-// (which appends options and would duplicate them on every event), and it
-// preserves the operator's current filters/sort via applyFilters().
-async function refreshInventory() {
-  try {
-    var resp = await fetch('/api/inventory');
-    if (!resp.ok) return;
-    allRows = (await resp.json()) || [];
-    applyFilters();
-    renderPartRollup(allRows);
-  } catch (e) { /* keep the last good render */ }
 }
 
 function populateFilterDropdowns() {

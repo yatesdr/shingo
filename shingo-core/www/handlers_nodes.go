@@ -279,6 +279,12 @@ func (h *Handlers) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/nodes", http.StatusSeeOther)
 }
 
+// apiNodeOccupancy is POTENTIAL DEAD CODE (2026-06-12). Node occupancy reads
+// live bin positions from RDS/SEER (GetNodeOccupancy → GET /binDetails), but RDS
+// bin tracking was never set up in production, so this errors on real plants and
+// the "Check Occupancy" button has been hidden (see templates/nodes.html). The
+// route + handler are kept (not deleted) in case RDS bin tracking ships; remove
+// them if it stays unimplemented.
 func (h *Handlers) apiNodeOccupancy(w http.ResponseWriter, r *http.Request) {
 	results, err := h.engine.GetNodeOccupancy()
 	if err != nil {

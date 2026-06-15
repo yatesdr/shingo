@@ -34,6 +34,17 @@
     </table>
   </section>
 
+  <section class="card mb-2" id="inv-loaders">
+    <div class="section-head">
+      <h2>Loader Replenishment Thresholds</h2>
+      <span class="text-muted-sm">Per-payload UOP threshold for Core-owned loaders. Edits re-derive demand + push to Edge.</span>
+    </div>
+    <table class="table-compact w-full">
+      <thead><tr><th>Loader</th><th>Node</th><th>Role</th><th>Payload</th><th>Calc (cycle s)</th><th>UOP threshold</th></tr></thead>
+      <tbody id="inv-loaders-body"><tr><td colspan="6" class="dash-empty">Loading&hellip;</td></tr></tbody>
+    </table>
+  </section>
+
   <section class="card mb-2" id="inv-production">
     <div class="section-head">
       <h2>Production</h2>
@@ -121,4 +132,5 @@
 </div>
 
 <script type="module" src="/static/pages/inventory.js?v={{cacheBust}}"></script>
+<script type="module" src="/static/pages/inventory-loaders.js?v={{cacheBust}}"></script>
 {{end}}

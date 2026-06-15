@@ -53,6 +53,8 @@ type ServiceAccess interface {
 	NodeService() *service.NodeService
 	AuditService() *service.AuditService
 	DemandService() *service.DemandService
+	LoaderService() *service.LoaderService
+	CalculatorService() *service.ThresholdCalculatorService
 	PayloadService() *service.PayloadService
 	MissionService() *service.MissionService
 	TestCommandService() *service.TestCommandService

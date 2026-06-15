@@ -666,34 +666,6 @@ export function debounce(fn, ms) {
     };
 }
 
-// autoReloadOnSSE — keep a server-rendered page (one whose live data is
-// baked into the template, not re-fetchable client-side) current without
-// a manual refresh. Subscribes to the given SSE event type(s) and does a
-// debounced location.reload(). It deliberately SKIPS the reload while:
-//   - the tab is hidden (refreshes on the operator's next visit instead),
-//   - a modal is open (.modal-overlay.active — don't clobber an edit), or
-//   - a form field is focused (don't reset a search/filter mid-type).
-// The next event after the operator finishes refreshes once. Use for
-// config/board pages (payloads, nodes); pages with a client-side render
-// fn should re-render in place instead (cheaper, preserves all state).
-//
-//   autoReloadOnSSE(['node-update', 'bin-update']);
-//   autoReloadOnSSE('payload-update', { debounceMs: 800 });
-export function autoReloadOnSSE(events, opts) {
-    opts = opts || {};
-    const ms = opts.debounceMs || 1500;
-    const doReload = debounce(() => {
-        if (typeof document === 'undefined') return;
-        if (document.hidden) return;
-        if (document.querySelector('.modal-overlay.active, .modal.active')) return;
-        const ae = document.activeElement;
-        if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
-        if (typeof opts.busy === 'function' && opts.busy()) return;
-        location.reload();
-    }, ms);
-    (Array.isArray(events) ? events : [events]).forEach(ev => onSSE(ev, doReload));
-}
-
 // ─── Table sort ─────────────────────────────────────────────────────────
 //
 // installTableSort(root) wires click-to-sort onto any
