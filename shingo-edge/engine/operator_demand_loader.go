@@ -337,10 +337,11 @@ func (e *Engine) reserveLoaderBins(loader *domain.Loader, payload domain.Payload
 }
 
 // multiWindowEnabled reports whether shared-window multi-window delivery is on
-// (config LoadersMultiWindow). Off by default — a shared loader funnels to its
-// anchor until the operator board (A2) and demand re-key (B9) land.
+// (config LoadersMultiWindow). DEFAULT ON (nil cfg/flag = enabled): a shared
+// loader spreads empties across its windows; set `loaders_multi_window: false`
+// to funnel to the anchor with budget 1 instead.
 func (e *Engine) multiWindowEnabled() bool {
-	return e.cfg != nil && e.cfg.LoadersMultiWindow
+	return e.cfg == nil || e.cfg.LoadersMultiWindow == nil || *e.cfg.LoadersMultiWindow
 }
 
 // nodeIDStrings projects typed NodeIDs to the plain strings the order-query layer

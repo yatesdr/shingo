@@ -183,15 +183,25 @@ func (s *LoaderService) RemovePayload(loaderID int64, payloadCode string) error 
 }
 
 // rederive rebuilds demand_registry from the aggregate for every station that
-// carries loader-driven demand and nudges the threshold monitor. v1 re-derives
-// each distinct station already present in the registry (the dev sim has one);
-// per-station scoping by node_stations is a documented refinement.
+// could route this aggregate's demand, and nudges the threshold monitor. The
+// target set is the UNION of stations already present in the registry AND every
+// registered edge — keying only on existing registry rows can't bootstrap a
+// station with zero rows yet, which is exactly what left a UI-authored loader
+// with no demand routing until an edge reconnect/seed. Per-station scoping by
+// node_stations is a documented refinement.
 func (s *LoaderService) rederive() {
-	stations, err := s.db.DemandRegistryStations()
-	if err != nil {
-		return
+	stationSet := map[string]struct{}{}
+	if stations, err := s.db.DemandRegistryStations(); err == nil {
+		for _, st := range stations {
+			stationSet[st] = struct{}{}
+		}
 	}
-	for _, st := range stations {
+	if edges, err := s.db.ListEdges(); err == nil {
+		for _, e := range edges {
+			stationSet[e.StationID] = struct{}{}
+		}
+	}
+	for st := range stationSet {
 		entries, err := s.db.BuildDemandRegistryFromAggregate(st)
 		if err != nil {
 			continue

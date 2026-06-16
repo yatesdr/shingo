@@ -353,13 +353,21 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 		&protocol.EdgeRegistered{StationID: p.StationID, Message: "registered"})
 	s.resp.dbg("reply published: subject=edge.registered station=%s", p.StationID)
 
-	// Re-engage the threshold monitor for this station's loader bindings. The
-	// monitor sweeps demand_registry once at Core startup, but the registry is
-	// (re)populated out-of-band afterward — seeddev/migrateloaders write it
-	// directly, and the Edge sends no ClaimSync (retired) — so a
-	// (re)connect is the trigger that turns the seeded registry into live monitor
-	// bindings. Without it a freshly-seeded UOP threshold never fires until Core
-	// restarts. Idempotent (the Edge seam dedups any redundant signal).
+	// Derive demand_registry for this station from the Core-owned loader aggregate
+	// on (re)connect, so a plant configured entirely through the UI gets live
+	// demand routing without an out-of-band seeddev/migrateloaders run. Idempotent
+	// — SyncDemandRegistry diffs against the current rows. (The Edge sends no
+	// ClaimSync; it is retired.)
+	if entries, derr := s.db.BuildDemandRegistryFromAggregate(p.StationID); derr != nil {
+		log.Printf("core_handler: build demand_registry for %s: %v", p.StationID, derr)
+	} else if _, serr := s.db.SyncDemandRegistry(p.StationID, entries); serr != nil {
+		log.Printf("core_handler: seed demand_registry for %s: %v", p.StationID, serr)
+	}
+
+	// Re-engage the threshold monitor for this station's loader bindings: the
+	// monitor sweeps demand_registry once at Core startup, so a (re)connect after
+	// the seed above turns the freshly-derived registry into live monitor
+	// bindings. Without it a seeded UOP threshold never fires until Core restarts.
 	if s.thresholdMonitor != nil {
 		s.thresholdMonitor.Resync(p.StationID)
 	}

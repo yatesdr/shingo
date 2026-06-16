@@ -33,12 +33,13 @@ type Config struct {
 	// LoadersMultiWindow (C4) activates shared-window multi-window delivery: a
 	// shared loader's empty-in budget becomes its window count and empties spread
 	// across its windows (round-robin to free windows), instead of funneling to
-	// the anchor with budget 1. Default false — keep it off until the operator
-	// board renders per-window state (A2) and the demand re-key (B9) land, or a
-	// shared loader configured with >1 window would stage bins at windows the HMI
-	// can't yet show. The reservation seam already keys per-loader, so flipping
-	// this does not fragment the never-2N budget.
-	LoadersMultiWindow bool `yaml:"loaders_multi_window"`
+	// the anchor with budget 1. DEFAULT ON (nil = enabled): the gating
+	// prerequisites — the per-window operator board (A2) and the loader_key demand
+	// re-key (B9) — have shipped, so a >1-window shared loader is fully operable
+	// out of the box without a per-plant config edit. Set `loaders_multi_window:
+	// false` to opt back into anchor-funnel. The reservation seam keys per-loader,
+	// so this never fragments the never-2N budget.
+	LoadersMultiWindow *bool `yaml:"loaders_multi_window"`
 }
 
 // CountGroupsConfig holds the edge side of the advanced-zone light feature.

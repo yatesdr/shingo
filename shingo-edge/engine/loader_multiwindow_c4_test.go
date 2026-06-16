@@ -66,7 +66,8 @@ func TestMultiWindow_DemandOfN_ExactlyNAcrossWindows(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	eng.cfg.LoadersMultiWindow = true
+	mw := true
+	eng.cfg.LoadersMultiWindow = &mw
 
 	windows := []string{"MW-W1", "MW-W2", "MW-W3"}
 	seedWindowNodes(t, db, "MW-PROC", windows)
@@ -103,7 +104,8 @@ func TestRace_MultiWindow_NeverExceedsWindowCount(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	eng.cfg.LoadersMultiWindow = true
+	mw := true
+	eng.cfg.LoadersMultiWindow = &mw
 
 	windows := []string{"RMW-W1", "RMW-W2", "RMW-W3", "RMW-W4"}
 	seedWindowNodes(t, db, "RMW-PROC", windows)
