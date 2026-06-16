@@ -246,26 +246,21 @@ function renderGrid() {
   markLinkedTiles();
 }
 
-// markLinkedTiles mirrors each loader member's CANONICAL grid tile state onto the
-// loader-box slot tile, so a slot shows the same live colour (loaded / empty / staged
-// / claimed …) as the same node out on the grid — the slots look like the group nodes.
-// The grid (group) tile itself is left untouched: a slot is differentiated by its teal
-// outline, not by ringing the group node.
+// markLinkedTiles mirrors each loader slot's CANONICAL grid tile state onto the slot,
+// for BOTH window/position slots (.loader-member) AND output/buffer group-zone slots
+// (.loader-group-slot), so a node shows the same live colour (loaded / empty / staged
+// / claimed …) everywhere it appears — group or loader. The grid (group) tile itself is
+// left untouched: a slot is differentiated by its teal outline, not by ringing the node.
 function markLinkedTiles() {
   const STATE = ['tile-has-payload', 'tile-empty-bin', 'tile-staged', 'tile-maintenance', 'tile-claimed', 'tile-disabled', 'tile-synthetic'];
-  const memberIds = {};
-  loaderData.forEach(function (it) {
-    (it.homes || []).forEach(function (h) { memberIds[String(h.position_node_id)] = true; });
-  });
-  Object.keys(memberIds).forEach(function (id) {
-    // Scope to the grid so the lookup never matches the slot tile (which now also
-    // carries .node-tile[data-id]); copy the canonical tile's state classes onto every
-    // slot tile for that node.
+  // Walk every rendered slot tile (both kinds carry .node-tile[data-id]); scope the
+  // canonical lookup to #tile-grid so it never matches a slot tile, then copy the grid
+  // tile's state classes onto the slot.
+  document.querySelectorAll('.loader-member[data-id], .loader-group-slot[data-id]').forEach(function (m) {
+    const id = m.dataset.id;
     const grid = document.querySelector('#tile-grid .node-tile[data-id="' + id + '"]');
-    document.querySelectorAll('.loader-member[data-id="' + id + '"]').forEach(function (m) {
-      STATE.forEach(function (c) { m.classList.remove(c); });
-      if (grid) STATE.forEach(function (c) { if (grid.classList.contains(c)) m.classList.add(c); });
-    });
+    STATE.forEach(function (c) { m.classList.remove(c); });
+    if (grid) STATE.forEach(function (c) { if (grid.classList.contains(c)) m.classList.add(c); });
   });
 }
 
@@ -392,16 +387,24 @@ function payloadChipsHtml(item) {
   if (!isAuth) {
     return '<div class="loader-payload-set"><span class="loader-set-label">Allowed payloads:</span>' + chips + '</div>';
   }
-  let html = '<div class="loader-payload-set"><span class="loader-set-label">Allowed payloads (' + set.size + '):</span> ' + chips;
+  let html = '<div class="loader-payload-set" data-loader-id="' + item.loader.id + '"><span class="loader-set-label">Allowed payloads (' + set.size + '):</span> ' + chips;
+  // Collapsible whole-catalog checklist. Ticking boxes only updates local state — the
+  // panel stays OPEN and nothing round-trips until "Save payloads" commits the diff in
+  // one batch (set-payload for adds, remove-payload for removes, one refresh after).
   html += '<details class="loader-pc-checklist" style="margin-top:4px">'
     + '<summary style="cursor:pointer;color:#0a8f6a">Select payloads ▾</summary>'
-    + '<div style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;margin-top:4px;display:flex;flex-direction:column;gap:2px">';
+    + '<div class="loader-pc-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;margin-top:4px;display:flex;flex-direction:column;gap:2px">';
   html += payloadCodes.map(function (c) {
     return '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem">'
       + '<input type="checkbox" class="loader-pc-cb" data-pc="' + escapeHtml(c) + '"' + (set.has(c) ? ' checked' : '') + '>'
       + escapeHtml(c) + '</label>';
   }).join('');
-  html += '</div></details></div>';
+  html += '</div>'
+    + '<div class="loader-pc-actions">'
+    + '<button type="button" class="loader-pc-save">Save payloads</button>'
+    + '<span class="loader-pc-status"></span>'
+    + '</div>'
+    + '</details></div>';
   return html;
 }
 
@@ -446,11 +449,18 @@ function wireAll(host) {
     const edit = box.querySelector('.loader-box-edit');
     if (edit) edit.addEventListener('click', function () { editLoader(lid); });
 
-    box.querySelectorAll('.loader-pc-cb').forEach(function (cb) {
-      cb.addEventListener('change', function () {
-        if (cb.checked) addChip(lid, cb.dataset.pc); else removeChip(lid, cb.dataset.pc);
+    // Allowed-payload checklist: ticking a box only updates the live "unsaved" status
+    // (no API call, no re-render — the panel stays open). The Save button commits the
+    // diff in one batch. See savePayloads.
+    const pcSave = box.querySelector('.loader-pc-save');
+    if (pcSave) {
+      const updateStatus = function () { refreshPayloadStatus(lid, box); };
+      box.querySelectorAll('.loader-pc-cb').forEach(function (cb) {
+        cb.addEventListener('change', updateStatus);
       });
-    });
+      pcSave.addEventListener('click', function () { savePayloads(lid, box, pcSave); });
+      updateStatus();
+    }
   });
 }
 
@@ -576,11 +586,56 @@ function removeMember(lid, nodeId) {
 function deleteLoader(lid) {
   apiPost('/api/loader/delete', { id: Number(lid) }).then(refresh).catch(function (err) { toast('' + err, 'error'); });
 }
-function addChip(lid, pc) {
-  apiPost('/api/loader/set-payload', { loader_id: Number(lid), payload_code: pc, uop_threshold: 0 }).then(refresh).catch(function (err) { toast('' + err, 'error'); });
+// loaderPayloadDiff returns {checked, toAdd, toRemove} for a loader's checklist:
+// the currently-ticked boxes vs the loader's saved payload set.
+function loaderPayloadDiff(lid, box) {
+  const item = loaderData.find(function (it) { return String(it.loader.id) === String(lid); });
+  const current = new Set(((item && item.payloads) || []).map(function (p) { return p.payload_code; }));
+  const checked = [];
+  box.querySelectorAll('.loader-pc-cb').forEach(function (cb) { if (cb.checked) checked.push(cb.dataset.pc); });
+  const checkedSet = new Set(checked);
+  const toAdd = checked.filter(function (pc) { return !current.has(pc); });
+  const toRemove = Array.from(current).filter(function (pc) { return !checkedSet.has(pc); });
+  return { checked: checked, toAdd: toAdd, toRemove: toRemove };
 }
-function removeChip(lid, pc) {
-  apiPost('/api/loader/remove-payload', { loader_id: Number(lid), payload_code: pc }).then(refresh).catch(function (err) { toast('' + err, 'error'); });
+
+// refreshPayloadStatus updates the checklist's live "unsaved" line + Save button state
+// as boxes are ticked, without touching the server.
+function refreshPayloadStatus(lid, box) {
+  const btn = box.querySelector('.loader-pc-save');
+  const status = box.querySelector('.loader-pc-status');
+  if (!btn) return;
+  const d = loaderPayloadDiff(lid, box);
+  const dirty = d.toAdd.length + d.toRemove.length > 0;
+  btn.disabled = !dirty;
+  btn.classList.toggle('is-dirty', dirty);
+  if (status) {
+    status.textContent = dirty
+      ? '● ' + d.checked.length + ' selected · +' + d.toAdd.length + ' / −' + d.toRemove.length + ' unsaved'
+      : d.checked.length + ' selected · saved';
+  }
+}
+
+// savePayloads commits the checklist in ONE batch: it diffs the ticked boxes against
+// the loader's saved set and fires the set-payload (adds) / remove-payload (removes)
+// calls together, then refreshes once — so the panel stays open while you tick boxes
+// instead of collapsing + round-tripping per click.
+function savePayloads(lid, box, btn) {
+  const d = loaderPayloadDiff(lid, box);
+  if (!d.toAdd.length && !d.toRemove.length) { toast('No payload changes to save', 'warning'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  const ops = d.toAdd.map(function (pc) {
+    return apiPost('/api/loader/set-payload', { loader_id: Number(lid), payload_code: pc, uop_threshold: 0 });
+  }).concat(d.toRemove.map(function (pc) {
+    return apiPost('/api/loader/remove-payload', { loader_id: Number(lid), payload_code: pc });
+  }));
+  Promise.all(ops).then(function () {
+    toast('Saved ' + (d.toAdd.length + d.toRemove.length) + ' payload change(s)', 'success');
+    refresh();
+  }).catch(function (err) {
+    toast('' + err, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save payloads'; }
+  });
 }
 
 function findHome(lid, nodeId) {
