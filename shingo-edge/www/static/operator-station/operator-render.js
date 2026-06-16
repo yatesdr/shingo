@@ -631,15 +631,24 @@ function createNodeButton(entry) {
     const inboundOrders = (entry.orders || []).filter(o =>
         o.status === 'in_transit' || o.status === 'staged'
     );
+    const drain = isDrainSlot(entry);
     let stateClass;
-    if (releaseReady) {
+    if (drain) {
+        // A drain (consume) slot owns its OWN palette (idle/awaiting/ready); the
+        // generic order-state colors below are loader/press semantics. Critically,
+        // an in_transit order at a drain is the OUTbound empty (U2) leaving after a
+        // clear, NOT a full arriving — so 'os-in-transit' (purple = inbound) would be
+        // a lie. drainColorClass maps any active order to amber 'awaiting'. (An AMR-fed
+        // unloader's inbound U1 also reads as amber 'awaiting' — the palette's intent.)
+        stateClass = drainColorClass(entry);
+    } else if (releaseReady) {
         stateClass = 'os-release-ready';
     } else if (inChangeover) {
         stateClass = 'os-changeover';
     } else if (inboundOrders.length > 0) {
         stateClass = 'os-in-transit';
     } else {
-        stateClass = isDrainSlot(entry) ? drainColorClass(entry) : nodeColorClass(entry);
+        stateClass = nodeColorClass(entry);
     }
     const btn = el('div', { className: 'os-node-btn ' + stateClass });
 
@@ -649,9 +658,9 @@ function createNodeButton(entry) {
 
     // Banner label for the priority states. The full-tile background
     // already signals "something is up"; the label says what.
-    if (releaseReady) {
+    if (releaseReady && !drain) {
         btn.appendChild(el('span', { className: 'os-node-banner', textContent: 'RELEASE READY' }));
-    } else if (inChangeover) {
+    } else if (inChangeover && !drain) {
         btn.appendChild(el('span', { className: 'os-node-banner', textContent: 'CHANGEOVER' }));
     }
 

@@ -365,10 +365,15 @@
       <div id="loader-flow-section">
         <label class="text-sm" style="font-weight:600;display:block;margin-top:10px">Material flow <span class="text-muted" style="font-weight:400">(shared_window only)</span></label>
         <div class="flex gap-1" style="flex-wrap:wrap">
-          <input type="text" id="loader-inbound" list="loader-nodes-dl" placeholder="Inbound source (carriers in)" style="flex:1">
+          <input type="text" id="loader-inbound" list="loader-nodes-dl" placeholder="Inbound source (blank = fed directly)" style="flex:1">
           <input type="text" id="loader-outbound" list="loader-nodes-dl" placeholder="Outbound dest (bins out)" style="flex:1">
           <input type="text" id="loader-buffer" list="loader-nodes-dl" placeholder="Overflow buffer (optional)" style="flex:1">
         </div>
+        <div class="flex gap-1 mt-1" style="align-items:center;flex-wrap:wrap">
+          <button type="button" class="btn btn-sm" data-action="clearLoaderInbound">Inbound: None (fed directly)</button>
+          <span class="text-muted text-sm">press / forklift / reach-truck fed — no auto-pull</span>
+        </div>
+        <div class="text-muted text-sm" style="margin-top:3px">Set <strong>Inbound</strong> only if an AMR should auto-restock this position. Leave it blank (or click <em>None</em>) for a press/forklift-fed loader or a drain unloader — Shingo won't queue carrier pulls.</div>
       </div>
       <datalist id="loader-nodes-dl"></datalist>
       <datalist id="loader-payloads-dl"></datalist>

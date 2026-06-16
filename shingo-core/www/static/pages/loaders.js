@@ -134,6 +134,17 @@ function closeLoaderModal() {
   if (m) m.classList.remove('active');
 }
 
+// clearLoaderInbound blanks the Inbound source — the explicit "fed directly"
+// choice. A blank inbound is a real, supported config (press/forklift/reach-truck
+// fed: Shingo creates no auto-pull retrieve), not an error, but the free-text
+// datalist field gives no visible "none" option and an accidental value is easy to
+// leave set — so this one-tap clear surfaces it for non-power users. submitLoader
+// already sends whatever's in the field, so the blank persists on save.
+function clearLoaderInbound() {
+  const e = document.getElementById('loader-inbound');
+  if (e) { e.value = ''; e.focus(); }
+}
+
 // submitLoader handles both create and edit (driven by the hidden loader-edit-id).
 function submitLoader() {
   const editId = val('loader-edit-id');
