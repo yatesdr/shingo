@@ -429,41 +429,10 @@ func TestHandleLoaderEmptyInCompletion_FiresL2(t *testing.T) {
 	}
 }
 
-// TestHandleUnloaderFullInCompletion_FiresU2 verifies the U2 mirror of
-// handleLoaderEmptyInCompletion: when a U1 retrieve order (full bin, role
-// consume, manual_swap) confirms at the unloader, U2 fires as a move from
-// the unloader to claim.OutboundDestination.
-func TestHandleUnloaderFullInCompletion_FiresU2(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U2-FIRE", "consume", "PART-U2", "STORAGE-NODE")
-
-	// U1 = retrieve order (NOT retrieve_empty) at the unloader for the payload.
-	orderID, err := db.CreateOrder("uuid-u1-fire", orders.TypeRetrieve,
-		&unloaderNodeID, false, 1, "U2-FIRE-MSWAP-NODE", "", "", "PART-U2", false, "")
-	if err != nil {
-		t.Fatalf("create U1 order: %v", err)
-	}
-	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
-
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-	emitOrderCompleted(eng, orderID, "uuid-u1-fire", orders.TypeRetrieve, &unloaderNodeID)
-
-	all, err := db.ListActiveOrdersByProcessNode(unloaderNodeID)
-	if err != nil {
-		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
-	}
-	var u2Found bool
-	for _, o := range all {
-		if o.OrderType == orders.TypeMove && o.DeliveryNode == "STORAGE-NODE" {
-			u2Found = true
-		}
-	}
-	if !u2Found {
-		t.Errorf("expected U2 move from unloader to STORAGE-NODE; got %+v", all)
-	}
-}
+// The unloader empty-out (U2) is no longer fired by a U1 retrieve completing —
+// it's driven by the operator's CLEAR tap (ClearBin → createUnloaderEmptyOut) so
+// a press/forklift-fed drain with no U1 still drains. See the
+// TestClearBin_FiresEmptyOut_* tests in operator_bin_ops_test.go.
 
 // TestHandleNormalReplenishment_RetrieveStillResets verifies that simple
 // retrieve orders that DELIVER to the process node continue to reset

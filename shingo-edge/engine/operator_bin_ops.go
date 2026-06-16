@@ -222,22 +222,24 @@ func (e *Engine) confirmLoaderL1OnLoad(coreNodeName string, uopCount int64) (int
 	return l1ID, true
 }
 
-// ClearBin clears the manifest on the bin at a manual_swap node and, for
-// consume-role nodes, confirms the active U1 retrieve_full so the side-cycle
-// progresses to U2. Used by unloaders after physical removal and for fixing
-// mis-loads.
+// ClearBin clears the manifest on the bin at a manual_swap node. For consume-role
+// nodes (unloaders) it ALSO drives the side-cycle's empty-out (U2): the operator's
+// CLEAR tap means "I processed this bin's contents; the now-empty bin is ready to
+// go back." Used by unloaders after physical removal and for fixing mis-loads.
 //
-// Symmetric to LoadBin's confirmLoaderL1OnLoad: the operator's tap IS the
-// explicit confirmation that the inbound order completed. Without confirming,
-// the U1 sits at `delivered` forever and handleUnloaderFullInCompletion never
-// fires — bin cleared physically but order lifecycle stuck. Mis-load case (no
-// active U1) is preserved: the confirm helper returns ok=false and ClearBin
-// proceeds with the manifest clear only.
+// The empty-out is driven by the CLEAR itself (createUnloaderEmptyOut), not by a U1
+// retrieve completing. That is the whole point: a press/forklift-fed drain has NO
+// inbound U1 (the press delivers the full directly), so the old U1-completion trigger
+// never fired and the empty bin stranded at the window. Driving off the clear fires
+// the U2 for an AMR-fed unloader (which still confirms its U1 here, receipt-ack style)
+// and a directly-fed drain alike — one path, no double-fire.
 //
-// Post-clear, if the claim has AutoPush enabled, MaybePushUnloader is called
-// to fire the next U1 retrieve_full immediately — push-driven unloaders
-// don't wait for a kanban demand signal, so the clear-event IS the next-bin
-// trigger.
+// The empty-out is created BEFORE the manifest clear, while Core's bin record is still
+// coherent (same timing the old completion handler relied on). It's gated on a bin
+// actually being present, so clearing an already-empty window creates nothing.
+//
+// Post-clear, if the claim has AutoPush enabled, MaybePushUnloader offers the next pull
+// to the reservation seam — a no-inbound drain is gated there too, so it's a no-op.
 func (e *Engine) ClearBin(nodeID int64) error {
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -249,14 +251,28 @@ func (e *Engine) ClearBin(nodeID int64) error {
 	if claim.SwapMode != protocol.SwapModeManualSwap {
 		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
 	}
-	// Confirm U1 BEFORE the bin clear so handleUnloaderFullInCompletion
-	// sees a coherent (still-loaded) bin and the U2 it creates carries the
-	// right PayloadCode from the U1 order row. The bin manifest clear that
-	// follows is purely physical state — order-lifecycle progression is
-	// owned by the confirm + OrderCompleted event handler.
+	// Capture the bin in the window BEFORE confirm/clear, while Core's manifest is
+	// still coherent. clearedPayload threads onto the empty-out so the operator board
+	// matches the move to the right tile (multi-payload drains otherwise mis-render);
+	// hadBin gates the empty-out so clearing an already-empty window creates nothing.
+	var clearedPayload string
+	var hadBin bool
 	if claim.Role == protocol.ClaimRoleConsume {
+		if bins, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName}); len(bins) > 0 && bins[0].Occupied {
+			clearedPayload = bins[0].PayloadCode
+			hadBin = true
+		}
+		// Confirm any AMR-fed inbound (U1) — the operator's CLEAR tap IS the receipt
+		// ack. A press/forklift-fed drain has no U1; the helper returns ok=false and
+		// we proceed to the empty-out regardless (it no longer depends on a U1).
 		if u1ID, ok := e.confirmUnloaderU1OnClear(node.CoreNodeName); ok {
 			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %s", u1ID, node.CoreNodeName)
+		}
+		// Empty-out (U2): send the now-empty bin to the unloader's outbound (empty
+		// totes). Created here, before the manifest clear, so it fires off the CLEAR
+		// for every consume drain — not just ones an AMR fed.
+		if hadBin {
+			e.createUnloaderEmptyOut(node, claim, clearedPayload)
 		}
 	}
 	if err := e.coreClient.ClearBin(node.CoreNodeName); err != nil {
@@ -311,6 +327,45 @@ func (e *Engine) confirmUnloaderU1OnClear(coreNodeName string) (int64, bool) {
 		return 0, false
 	}
 	return u1ID, true
+}
+
+// createUnloaderEmptyOut fires the side-cycle empty-out (U2): a move of the now-empty
+// bin from the unloader window to the unloader's outbound destination (e.g. empty
+// totes). Called from ClearBin once the operator confirms a processed bin, so it fires
+// for an AMR-fed unloader AND a press/forklift-fed drain — the latter has no inbound
+// U1, so the old order-completion trigger (handleUnloaderFullInCompletion, now removed)
+// never fired for it.
+//
+// Outbound resolves from the loader AGGREGATE (consume role), falling back to the
+// claim — the same severing-the-legacy-claim source the old handler used. payloadCode
+// is the part that was in the cleared bin; it threads onto the move so a multi-payload
+// drain board matches the empty-out to the right tile. U2 auto-confirms: outbound is an
+// unattended supermarket node with no operator to tap CONFIRM (same rule as L2).
+func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.NodeClaim, payloadCode string) {
+	outbound := claim.OutboundDestination
+	if l, err := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleConsume); err == nil && l != nil && l.OutboundDest() != "" {
+		outbound = l.OutboundDest()
+	}
+	if outbound == "" {
+		e.logFn("side-cycle: unloader %s has no OutboundDestination — cannot create U2 (empty bin will sit until operator manually moves it)", node.Name)
+		return
+	}
+	if outbound == node.CoreNodeName {
+		e.logFn("side-cycle: unloader %s OutboundDestination same as CoreNode — skipping U2 (would be a same-node move)", node.Name)
+		return
+	}
+	nodeID := node.ID
+	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, node.CoreNodeName, outbound, payloadCode, true)
+	if err != nil {
+		e.logFn("side-cycle: create U2 (empty-out) for unloader %s: %v", node.Name, err)
+		return
+	}
+	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s payload=%q", order.ID, node.Name, outbound, payloadCode)
+	// Point the runtime active order at U2 so the unloader UI shows the empty-out next.
+	// (ClearBin's SetClaimAndCount zeroes the count/claim but leaves this pointer.)
+	if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, &order.ID, nil); err != nil {
+		log.Printf("side-cycle: update runtime orders for unloader %d: %v", node.ID, err)
+	}
 }
 
 // RequestEmptyBin delivers an empty bin to a produce node. Manual_swap and

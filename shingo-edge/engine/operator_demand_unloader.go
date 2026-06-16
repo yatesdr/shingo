@@ -30,8 +30,9 @@ func (e *Engine) unloaderHasUsableFullPresent(coreNodeName, payloadCode string) 
 // and routes through the shared reservation seam (never-2N).
 //
 // U2 (empty-out from the unloader to the supermarket) fires when the unloader
-// operator confirms that the bin's contents have been processed — symmetric
-// to L2. See handleUnloaderFullInCompletion in wiring_completion.go.
+// operator taps CLEAR — driven off the clear itself (ClearBin →
+// createUnloaderEmptyOut), not off this U1 completing, so a press/forklift-fed
+// drain with no U1 still drains.
 //
 // Callers: the consume DemandSignal handler (a full arrived at FG storage —
 // cmd/shingoedge/main.go) and ReleaseOrderWithLineside in operator_release.go
@@ -59,6 +60,14 @@ func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode 
 		return
 	}
 	lid := string(loader.ID())
+	if loader.InboundSource() == "" {
+		// Forklift/press-fed drain: no AMR source to pull a full from — the operator
+		// (reach truck) feeds the windows directly. Skip auto-pull (no U1 retrieve);
+		// nothing to queue. The empty-out on clear (outbound_dest) is independent and
+		// still fires. Unloaders that DO set an inbound source keep auto-pulling.
+		e.debugFn("side-cycle: unloader %s has no inbound_source — fed directly, skip U1 auto-pull", lid)
+		return
+	}
 	pc := domain.PayloadCode(payloadCode)
 	nodes, budget := loader.ReservationTarget("", pc, e.multiWindowEnabled())
 	if len(nodes) == 0 || budget <= 0 {

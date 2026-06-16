@@ -447,68 +447,6 @@ func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
 	return true
 }
 
-// matchUnloaderFullIn matches a U1 full-in retrieve order completing at a
-// manual_swap consumer (unloader) node. U1 brought a full bin to the
-// unloader; the operator processed its contents; CONFIRM means the
-// (now-empty) bin is ready to send back to the supermarket. Apply fires
-// the U2 (empty-out) move.
-//
-// Symmetric to matchLoaderEmptyIn (L1→L2). Discriminator between L1 and U1
-// retrieve orders is the claim role: producer (loader, L1, RetrieveEmpty=true)
-// vs consumer (unloader, U1, full-bin retrieve with PayloadCode).
-//
-// As with the loader path, OutboundDestination validity checks stay in
-// Apply to preserve fall-through-with-warning behavior on malformed claims.
-func matchUnloaderFullIn(ctx *orderCompletionCtx) bool {
-	if ctx.order.OrderType != orders.TypeRetrieve || ctx.order.RetrieveEmpty {
-		return false
-	}
-	claim := ctx.Claim()
-	return claim != nil &&
-		claim.SwapMode == protocol.SwapModeManualSwap &&
-		claim.Role == protocol.ClaimRoleConsume
-}
-
-func applyUnloaderFullIn(e *Engine, ctx *orderCompletionCtx) bool {
-	claim := ctx.Claim() // cached in Match
-	// U2 outbound from the loader AGGREGATE (consume role), severing the legacy claim
-	// dependency symmetrically with the loader (keystone step 5). Claim fallback keeps
-	// it behaviour-preserving across the cutover.
-	outbound := claim.OutboundDestination
-	if l, err := e.loaders().LoaderAt(domain.NodeID(ctx.node.CoreNodeName), domain.RoleConsume); err == nil && l != nil && l.OutboundDest() != "" {
-		outbound = l.OutboundDest()
-	}
-	if outbound == "" {
-		e.logFn("side-cycle: unloader %s has no OutboundDestination — cannot create U2 (empty bin will sit until operator manually moves it)", ctx.node.Name)
-		return false
-	}
-	if outbound == ctx.node.CoreNodeName {
-		e.logFn("side-cycle: unloader %s OutboundDestination same as CoreNode — skipping U2 (would be a same-node move)", ctx.node.Name)
-		return false
-	}
-	nodeID := ctx.node.ID
-	// U2 always auto-confirms: OutboundDestination is an unattended supermarket
-	// node, no operator there to tap CONFIRM. Same rationale as L2.
-	// U1 (the order being completed) carries the specific payload code that
-	// arrived in the now-empty bin — thread it onto U2 so the operator
-	// station can match the empty-out move to the right tile (otherwise
-	// claim.PayloadCode wins and multi-payload unloaders mis-render).
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, ctx.node.CoreNodeName, outbound, ctx.order.PayloadCode, true)
-	if err != nil {
-		e.logFn("side-cycle: create U2 (empty-out) for unloader %s: %v", ctx.node.Name, err)
-		return false
-	}
-	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s payload=%q", order.ID, ctx.node.Name, outbound, ctx.order.PayloadCode)
-	// Runtime cache binding is owned by the delivered handler — U1's
-	// full bin landing at the unloader already wrote active_bin_id /
-	// remaining_uop_cached. Confirm only swaps the active order pointer
-	// so the unloader UI shows U2 next.
-	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, &order.ID, nil); err != nil {
-		log.Printf("side-cycle: update runtime orders for unloader %d: %v", ctx.node.ID, err)
-	}
-	return true
-}
-
 // matchManualSwap matches a move order completion on a manual_swap node.
 // The bin has been sent to destination, the node is vacant.
 func matchManualSwap(ctx *orderCompletionCtx) bool {

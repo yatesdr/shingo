@@ -399,6 +399,14 @@ func (e *Engine) tryCreateL1(loader *domain.Loader, payload domain.PayloadCode, 
 			source.logTag(), coreNode, payload)
 		return 0, nil
 	}
+	if loaderEmptySource(loader) == "" {
+		// No inbound/buffer source to pull empties from — a forklift/press-fed loader is
+		// supplied directly (operator stages empties at the window). Skip auto-L1; nothing
+		// to queue. Symmetric to the unloader's no-inbound gate in createUnloaderFullInViaSeam.
+		e.debugFn("%s: loader=%s payload=%s skipped — no inbound source (fed directly)",
+			source.logTag(), coreNode, payload)
+		return 0, nil
+	}
 	created, err := e.reserveLoaderBins(loader, payload, count, member, true, func(deliveryNodes []string) (int, error) {
 		made := 0
 		for i, deliveryNode := range deliveryNodes {

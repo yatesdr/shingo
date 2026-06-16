@@ -15,10 +15,10 @@ import "shingo/protocol"
 // "is this row applicable?" question) separate from its Apply side-effects.
 // The dispatcher walks completionChain top-down; the first row whose Match
 // returns true gets to Apply, and the cascade stops when Apply returns
-// true. Two rows (loader_empty_in / unloader_full_in) use Apply's bool to
-// signal "matched but malformed config — log diagnostic and fall through
-// to normal_replenishment for default cleanup"; every other row's Apply
-// returns true unconditionally because Match has already gated it.
+// true. loader_empty_in uses Apply's bool to signal "matched but malformed
+// config — log diagnostic and fall through to normal_replenishment for
+// default cleanup"; every other row's Apply returns true unconditionally
+// because Match has already gated it.
 //
 // Adding a new completion case is now: write Match + Apply, insert a row.
 // No cascade edits, no precedence-by-source-order, no precondition-gate
@@ -61,10 +61,13 @@ func matchAlways(*orderCompletionCtx) bool { return true }
 //     move or non-swap-evacuate complex
 //  4. changeover_release     — Order A → direct (non-staged) delivery
 //  5. loader_empty_in        — L1 confirm fires L2 (filled-out)
-//  6. unloader_full_in       — U1 confirm fires U2 (empty-out)
-//  7. manual_swap            — Move order on a manual_swap node
-//  8. produce_ingest         — Ingest order on a produce node
-//  9. normal_replenishment   — terminal fallback (retrieve/complex)
+//  6. manual_swap            — Move order on a manual_swap node
+//  7. produce_ingest         — Ingest order on a produce node
+//  8. normal_replenishment   — terminal fallback (retrieve/complex)
+//
+// The unloader empty-out (U2) is NOT a completion case: it is driven by the
+// operator's CLEAR tap (ClearBin → createUnloaderEmptyOut), not by a U1 retrieve
+// completing — a press/forklift-fed drain has no U1. See ClearBin in operator_bin_ops.go.
 //
 // order_b_complex's KeepStaged branch is preserved as a no-op stub
 // (handleKeepStagedOrderBCompletion) rather than a separate table row;
@@ -75,7 +78,6 @@ var completionChain = []completionCase{
 	{Name: "order_b_simple", Match: matchOrderBSimple, Apply: applyOrderBSimple},
 	{Name: "changeover_release", Match: matchChangeoverRelease, Apply: applyChangeoverRelease},
 	{Name: "loader_empty_in", Match: matchLoaderEmptyIn, Apply: applyLoaderEmptyIn},
-	{Name: "unloader_full_in", Match: matchUnloaderFullIn, Apply: applyUnloaderFullIn},
 	{Name: string(protocol.SwapModeManualSwap), Match: matchManualSwap, Apply: applyManualSwap},
 	{Name: "produce_ingest", Match: matchProduceIngest, Apply: applyProduceIngest},
 	{Name: "normal_replenishment", Match: matchAlways, Apply: applyNormalReplenishmentTerminal},

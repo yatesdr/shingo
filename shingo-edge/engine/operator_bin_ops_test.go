@@ -10,6 +10,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
+	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
@@ -101,21 +102,56 @@ func TestConfirmUnloaderU1OnClear_RequiresDelivered(t *testing.T) {
 	}
 }
 
-// TestClearBin_FiresU2ViaU1Confirm is the integration test for the symmetric
-// fix: operator tap on a consume manual_swap card invokes Engine.ClearBin,
-// which (a) confirms the delivered U1 and (b) triggers
-// handleUnloaderFullInCompletion via the OrderCompleted event bus → U2 move
-// order created. Pre-fix, step (a) was missing and step (b) never fired —
-// bin cleared physically, order stuck at `delivered`.
-func TestClearBin_FiresU2ViaU1Confirm(t *testing.T) {
-	t.Parallel()
-	// Fake Core HTTP server — answers OK to the bin-clear call ClearBin
-	// proxies through coreClient. Without this, eng.coreClient.ClearBin
-	// would error and the test would fail before we got to verify U2.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+// fakeCoreBinServer stands in for Core's telemetry API in the ClearBin tests.
+// It serves /api/telemetry/node-bins (the FetchNodeBins call ClearBin uses to
+// decide whether a bin is physically present) with one bin of the given
+// occupancy/payload, and answers {"status":"ok"} to everything else (notably
+// the /api/telemetry/bin-clear POST ClearBin proxies). Without it, FetchNodeBins
+// returns nothing → ClearBin treats the window as empty → no empty-out.
+func fakeCoreBinServer(t *testing.T, occupied bool, payload string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/telemetry/node-bins" {
+			bin := map[string]any{"occupied": occupied}
+			if occupied {
+				bin["payload_code"] = payload
+			}
+			json.NewEncoder(w).Encode([]map[string]any{bin})
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// countMovesTo returns how many active move orders at the node target dest —
+// used to assert the empty-out (U2) fired exactly once (no double).
+func countMovesTo(t *testing.T, db *store.DB, nodeID int64, dest string) (n int, payload string) {
+	t.Helper()
+	all, err := db.ListActiveOrdersByProcessNode(nodeID)
+	if err != nil {
+		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
+	}
+	for _, o := range all {
+		if o.OrderType == orders.TypeMove && o.DeliveryNode == dest {
+			n++
+			payload = o.PayloadCode
+		}
+	}
+	return n, payload
+}
+
+// TestClearBin_FiresEmptyOut_AMRFed: an AMR-fed unloader (a delivered U1 brought
+// the full) is cleared by the operator. ClearBin must (a) confirm the U1 and
+// (b) create EXACTLY ONE empty-out (U2) move to the outbound. The "exactly one"
+// is the regression guard for the refactor: the empty-out now fires from the
+// clear itself, and the old U1-completion handler was removed — if it were still
+// registered, the live completion chain (exercised here via the bridged emitter)
+// would create a second U2.
+func TestClearBin_FiresEmptyOut_AMRFed(t *testing.T) {
+	t.Parallel()
+	srv := fakeCoreBinServer(t, true, "PART-CLR")
 
 	db := testEngineDB(t)
 	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U2-VIA-CLR", "consume", "PART-CLR", "STORAGE-NODE")
@@ -128,42 +164,77 @@ func TestClearBin_FiresU2ViaU1Confirm(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusDelivered)), "set U1 delivered")
 
 	eng := testEngine(t, db)
-	// Swap in a real bridged emitter so ConfirmDelivery's terminal
-	// transition fires EventOrderCompleted on eng.Events, where
-	// handleUnloaderFullInCompletion is subscribed.
+	// Bridged emitter + wired handlers so ConfirmDelivery's terminal transition
+	// fires EventOrderCompleted through the live completion chain — the U1
+	// retrieve now falls through to normal_replenishment (the unloader_full_in
+	// case is gone). This proves that fall-through creates no second empty-out.
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.coreClient = NewCoreClient(srv.URL)
 	eng.wireEventHandlers()
 
 	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID), "ClearBin")
 
-	// U1 must have been confirmed by ClearBin's pre-clear confirm step.
 	after, err := db.GetOrder(orderID)
 	if err != nil {
 		t.Fatalf("reload U1: %v", err)
 	}
 	if after.Status != orders.StatusConfirmed {
-		t.Errorf("U1 status = %q, want %q (ClearBin should have confirmed before clearing)", after.Status, orders.StatusConfirmed)
+		t.Errorf("U1 status = %q, want %q (ClearBin should confirm the inbound U1)", after.Status, orders.StatusConfirmed)
 	}
 
-	// U2 must exist as a move order from the unloader → OutboundDestination
-	// (STORAGE-NODE per the seed). Created by handleUnloaderFullInCompletion
-	// after consuming the OrderCompleted event.
-	all, err := db.ListActiveOrdersByProcessNode(unloaderNodeID)
-	if err != nil {
-		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
+	n, payload := countMovesTo(t, db, unloaderNodeID, "STORAGE-NODE")
+	if n != 1 {
+		t.Errorf("empty-out moves to STORAGE-NODE = %d, want exactly 1 (no double-fire)", n)
 	}
-	var u2Found bool
-	for _, o := range all {
-		if o.OrderType == orders.TypeMove && o.DeliveryNode == "STORAGE-NODE" {
-			u2Found = true
-			if o.PayloadCode != "PART-CLR" {
-				t.Errorf("U2 payload_code = %q, want %q (must thread U1 payload onto U2)", o.PayloadCode, "PART-CLR")
-			}
-		}
+	if payload != "PART-CLR" {
+		t.Errorf("empty-out payload_code = %q, want %q (cleared bin's payload threads onto U2)", payload, "PART-CLR")
 	}
-	if !u2Found {
-		t.Errorf("expected U2 move from unloader to STORAGE-NODE after ClearBin; got %+v", all)
+}
+
+// TestClearBin_FiresEmptyOut_PressFed is the core of the fix: a press/forklift-fed
+// drain has NO inbound U1 (the press delivered the full directly), so the old
+// U1-completion trigger never fired and the empty bin stranded. Driving the
+// empty-out off the CLEAR makes it fire here too — one U2 move, payload threaded
+// from Core's bin manifest (not from any order, because there is none).
+func TestClearBin_FiresEmptyOut_PressFed(t *testing.T) {
+	t.Parallel()
+	srv := fakeCoreBinServer(t, true, "PRESS-PART")
+
+	db := testEngineDB(t)
+	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U2-PRESS", "consume", "PRESS-PART", "EMPTY-TOTES")
+
+	eng := testEngine(t, db)
+	eng.coreClient = NewCoreClient(srv.URL)
+
+	// No U1 order exists — the press fed the window directly.
+	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID), "ClearBin")
+
+	n, payload := countMovesTo(t, db, unloaderNodeID, "EMPTY-TOTES")
+	if n != 1 {
+		t.Errorf("press-fed empty-out moves = %d, want exactly 1 (the fix: no U1 needed)", n)
+	}
+	if payload != "PRESS-PART" {
+		t.Errorf("press-fed empty-out payload = %q, want %q (from the bin manifest)", payload, "PRESS-PART")
+	}
+}
+
+// TestClearBin_NoEmptyOut_WhenWindowEmpty pins the hadBin gate: clearing a window
+// Core reports as empty creates NO move — otherwise a stray clear would queue a
+// phantom empty-out with no bin to pick up (the queue noise this refactor removes).
+func TestClearBin_NoEmptyOut_WhenWindowEmpty(t *testing.T) {
+	t.Parallel()
+	srv := fakeCoreBinServer(t, false, "")
+
+	db := testEngineDB(t)
+	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U2-EMPTY", "consume", "PART-X", "EMPTY-TOTES")
+
+	eng := testEngine(t, db)
+	eng.coreClient = NewCoreClient(srv.URL)
+
+	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID), "ClearBin")
+
+	if n, _ := countMovesTo(t, db, unloaderNodeID, "EMPTY-TOTES"); n != 0 {
+		t.Errorf("empty-out moves on empty window = %d, want 0 (hadBin gate)", n)
 	}
 }
 
