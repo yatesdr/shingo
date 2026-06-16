@@ -48,6 +48,11 @@ type LoaderStore interface {
 	LoaderByKey(key domain.LoaderID, role domain.LoaderRole) (*domain.Loader, error)
 	// Loaders returns every loader of the given role.
 	Loaders(role domain.LoaderRole) ([]*domain.Loader, error)
+	// LoaderForNode resolves the loader (of ANY role) that contains coreNode as a
+	// window/position. A node belongs to at most one loader (UNIQUE position node),
+	// so the result is unambiguous and role-agnostic. This is what lets a Core-owned
+	// loader's node be treated as a manual_swap loader node without a per-style claim.
+	LoaderForNode(coreNode domain.NodeID) (*domain.Loader, error)
 }
 
 // ── Aggregate projection ────────────────────────────────────────────
@@ -188,6 +193,15 @@ func (s *aggregateLoaderStore) Loaders(role domain.LoaderRole) ([]*domain.Loader
 	return out, nil
 }
 
+func (s *aggregateLoaderStore) LoaderForNode(coreNode domain.NodeID) (*domain.Loader, error) {
+	for _, l := range s.snapshot() {
+		if l.Contains(coreNode) {
+			return l, nil
+		}
+	}
+	return nil, ErrLoaderNotFound
+}
+
 // loaders returns the engine's LoaderStore, lazily constructing one if absent.
 // engine.New and the test harness set e.loaderStore up front, so the lazy path is
 // only taken by tests that build an Engine struct directly — single-threaded
@@ -216,6 +230,14 @@ type stationLoaderResolver struct{ e *Engine }
 
 func (r stationLoaderResolver) LoaderAt(coreNode domain.NodeID, role domain.LoaderRole) (*domain.Loader, error) {
 	l, err := r.e.loaders().LoaderAt(coreNode, role)
+	if errors.Is(err, ErrLoaderNotFound) {
+		return nil, nil
+	}
+	return l, err
+}
+
+func (r stationLoaderResolver) LoaderForNode(coreNode domain.NodeID) (*domain.Loader, error) {
+	l, err := r.e.loaders().LoaderForNode(coreNode)
 	if errors.Is(err, ErrLoaderNotFound) {
 		return nil, nil
 	}

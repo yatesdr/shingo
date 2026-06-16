@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store"
 	storeorders "shingoedge/store/orders"
@@ -344,6 +345,13 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	if err == nil {
 		if _, err := e.db.GetActiveProcessChangeover(node.ProcessID); err == nil {
 			return false, "changeover in progress"
+		}
+		// A window/position of a Core-owned loader uses the multi-order queue even
+		// without a per-style manual_swap claim (Core-owned loader refactor): mirror
+		// the claim-based shortcut below so a synth-claim loader node isn't held to
+		// the serial single-order constraint.
+		if l, lerr := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName)); lerr == nil && l != nil {
+			return true, ""
 		}
 	}
 	runtime, err := e.db.GetProcessNodeRuntime(nodeID)

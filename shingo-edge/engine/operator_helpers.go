@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -18,6 +19,39 @@ func loadActiveNode(db *store.DB, nodeID int64) (*processes.Node, *processes.Run
 	}
 	claim := findActiveClaim(db, node)
 	return node, runtime, claim, nil
+}
+
+// loadActiveNode (Engine method) wraps the package loadActiveNode with a
+// Core-owned-loader fallback: when a node has no per-style edge claim but IS a
+// window/position of a Core loader, it returns a SYNTHESIZED manual_swap claim so
+// the operator load/clear/request paths treat the node as a loader without a
+// per-style style_node_claim. This completes the Core-owned loader refactor — Core
+// owns the loader; the edge needs no style_node_claim to operate it. The synthetic
+// claim has ID==0; callers that persist active_claim_id MUST guard on ID==0.
+func (e *Engine) loadActiveNode(nodeID int64) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim, error) {
+	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
+	if err != nil || claim != nil || node == nil {
+		return node, runtime, claim, err
+	}
+	if synth := e.synthLoaderClaim(node.CoreNodeName); synth != nil {
+		claim = synth
+	}
+	return node, runtime, claim, nil
+}
+
+// synthLoaderClaim returns a synthesized manual_swap NodeClaim for a node that is a
+// member of a Core-owned loader but has no per-style edge claim, or nil if the node
+// belongs to no loader. Resolved through the SAME LoaderStore the runtime uses, so
+// the synthesized view never diverges from dispatch. See domain.Loader.SynthClaim.
+func (e *Engine) synthLoaderClaim(coreNodeName string) *processes.NodeClaim {
+	if coreNodeName == "" {
+		return nil
+	}
+	l, err := e.loaders().LoaderForNode(domain.NodeID(coreNodeName))
+	if err != nil || l == nil {
+		return nil
+	}
+	return l.SynthClaim(domain.NodeID(coreNodeName))
 }
 
 // findActiveClaim finds the node claim governing this node right now.

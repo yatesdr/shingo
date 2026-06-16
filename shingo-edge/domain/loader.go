@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+
+	"shingo/protocol"
 )
 
 // loader.go — the Edge runtime's first-class bin-loader aggregate (B1, the
@@ -370,6 +372,36 @@ func (l *Loader) Positions() []Position { return append([]Position(nil), l.posit
 // PayloadSet returns a copy of the shared allowed payload set (nil for dedicated;
 // a dedicated loader's payloads live per-position).
 func (l *Loader) PayloadSet() []PayloadCode { return append([]PayloadCode(nil), l.payloadSet...) }
+
+// SynthClaim builds an in-memory, NON-PERSISTED manual_swap NodeClaim that
+// represents this loader at coreNode. It is the Core-owned-loader path's stand-in
+// for a per-style style_node_claim: a node that is a window/position of a Core
+// loader but has no edge claim still must read as a manual_swap loader node for
+// the operator board + load/clear runtime to engage. ID stays 0 to mark it
+// synthetic — it is never written back, and callers MUST guard `ID == 0` before
+// using the id as a foreign key (e.g. runtime active_claim_id). AllowedPayloadCodes
+// carries the loader's payloads (shared set, plus any dedicated-position payloads)
+// so loadablePayloads resolves correctly off the claim too.
+func (l *Loader) SynthClaim(coreNode NodeID) *NodeClaim {
+	codes := make([]string, 0, len(l.payloadSet)+len(l.positions))
+	for _, p := range l.payloadSet {
+		codes = append(codes, string(p))
+	}
+	for _, pos := range l.positions {
+		if pos.Payload != "" {
+			codes = append(codes, string(pos.Payload))
+		}
+	}
+	return &NodeClaim{
+		CoreNodeName:        string(coreNode),
+		Role:                protocol.ClaimRole(l.role),
+		SwapMode:            protocol.SwapModeManualSwap,
+		AllowedPayloadCodes: codes,
+		InboundSource:       l.inboundSource,
+		OutboundDestination: l.outboundDest,
+		AutoConfirm:         true, // mandatory for bin_loader claims (auto-confirm delivery)
+	}
+}
 
 // Contains reports whether node is one of this loader's member nodes (a window or a
 // position) — used to resolve a loader from any of the physical nodes that belong to

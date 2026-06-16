@@ -22,6 +22,10 @@ import (
 // real failure; the view degrades to legacy rather than inventing a grouping.
 type LoaderResolver interface {
 	LoaderAt(coreNode domain.NodeID, role domain.LoaderRole) (*domain.Loader, error)
+	// LoaderForNode resolves the loader (any role) a node belongs to, so the view
+	// can treat a Core-owned loader's window/position as a manual_swap loader node
+	// even when it has no per-style edge claim. (nil, nil) on a clean miss.
+	LoaderForNode(coreNode domain.NodeID) (*domain.Loader, error)
 }
 
 // StationService owns operator-station CRUD and the two cross-aggregate
@@ -196,6 +200,17 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 		}
 		if process.TargetStyleID != nil && node.CoreNodeName != "" {
 			nodeView.TargetClaim, _ = s.db.GetStyleNodeClaimByNode(*process.TargetStyleID, node.CoreNodeName)
+		}
+		// Core-owned-loader fallback: a window/position of a Core loader with no
+		// per-style edge claim still reads as a manual_swap loader node, so the
+		// operator board renders (and the runtime treats it as a loader). Synthesize
+		// the claim from the aggregate via the SAME resolver the runtime uses, so the
+		// view and the engine never disagree. A node that isn't an aggregate loader
+		// resolves to nil (clean miss) and keeps its plain-node view.
+		if nodeView.ActiveClaim == nil && s.loaders != nil && node.CoreNodeName != "" {
+			if l, lerr := s.loaders.LoaderForNode(domain.NodeID(node.CoreNodeName)); lerr == nil && l != nil {
+				nodeView.ActiveClaim = l.SynthClaim(domain.NodeID(node.CoreNodeName))
+			}
 		}
 		if nodeTask, ok := nodeTaskMap[node.ID]; ok {
 			taskCopy := nodeTask

@@ -47,7 +47,7 @@ func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeCla
 // that node. No transport order is created — the bin stays in place until a
 // move order sends it to OutboundDestination.
 func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error {
-	node, _, claim, err := loadActiveNode(e.db, nodeID)
+	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,12 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	// active_bin_id comes from Core's LoadBin response — that's the
 	// authoritative pointer to the bin physically at this slot, regardless
 	// of whether any order was tracking it.
-	claimID := claim.ID
+	// claim.ID is 0 for a synthesized Core-loader claim (no style_node_claim row);
+	// pass nil rather than a 0 foreign key into the runtime's active_claim_id.
+	var claimIDPtr *int64
+	if claim.ID != 0 {
+		claimIDPtr = &claim.ID
+	}
 	var activeBinID *int64
 	var deltaEpoch int64
 	if loadResp != nil && loadResp.BinID > 0 {
@@ -162,7 +167,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		deltaEpoch = loadResp.DeltaEpoch
 	}
 	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.ManualLoad(nodeID, &claimID, activeBinID, deltaEpoch, int(uopCount)); err != nil {
+		if err := e.inventoryDelta.ManualLoad(nodeID, claimIDPtr, activeBinID, deltaEpoch, int(uopCount)); err != nil {
 			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 		}
 	}
@@ -234,7 +239,7 @@ func (e *Engine) confirmLoaderL1OnLoad(coreNodeName string, uopCount int64) (int
 // don't wait for a kanban demand signal, so the clear-event IS the next-bin
 // trigger.
 func (e *Engine) ClearBin(nodeID int64) error {
-	node, _, claim, err := loadActiveNode(e.db, nodeID)
+	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return err
 	}
@@ -257,9 +262,13 @@ func (e *Engine) ClearBin(nodeID int64) error {
 	if err := e.coreClient.ClearBin(node.CoreNodeName); err != nil {
 		return fmt.Errorf("clear bin: %w", err)
 	}
-	claimID := claim.ID
+	// claim.ID is 0 for a synthesized Core-loader claim — pass nil, not a 0 FK.
+	var claimIDPtr *int64
+	if claim.ID != 0 {
+		claimIDPtr = &claim.ID
+	}
 	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.SetClaimAndCount(nodeID, &claimID, 0); err != nil {
+		if err := e.inventoryDelta.SetClaimAndCount(nodeID, claimIDPtr, 0); err != nil {
 			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 		}
 	}
@@ -311,7 +320,7 @@ func (e *Engine) confirmUnloaderU1OnClear(coreNodeName string) (int64, bool) {
 // through the same multi-stop trip a full bin would. Returns the primary
 // order; the second leg (R2) is tracked on the runtime row.
 func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Order, error) {
-	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
+	node, runtime, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -512,7 +521,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 // payload are available. Unlike RequestEmptyBin, this does NOT check node occupancy
 // — the unloader expects full bins to arrive.
 func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order, error) {
-	node, _, claim, err := loadActiveNode(e.db, nodeID)
+	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return nil, err
 	}
