@@ -341,10 +341,23 @@ func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingU
 // orders are allowed simultaneously. The changeover check still applies.
 func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	// Check changeover first — applies regardless of runtime state.
+	//
+	// Scope the gate to nodes actually PARTICIPATING in the changeover. A
+	// changeover only creates a changeover_node_task for nodes whose style
+	// claim changes between the old and new style (see planChangeover in
+	// operator_changeover_plan.go). A node with no task — e.g. a bin loader
+	// that only supplies empties to the line — is not being swapped and must
+	// stay available. Gating on the whole process instead wrongly blocked
+	// the loader from calling an empty bin during a changeover on a press
+	// that shares its process (the "node X unavailable: changeover in
+	// progress" field report at Springfield). Fail-open on lookup errors,
+	// matching the prior behavior of this guard.
 	node, err := e.db.GetProcessNode(nodeID)
 	if err == nil {
-		if _, err := e.db.GetActiveProcessChangeover(node.ProcessID); err == nil {
-			return false, "changeover in progress"
+		if co, err := e.db.GetActiveProcessChangeover(node.ProcessID); err == nil {
+			if _, err := e.db.GetChangeoverNodeTaskByNode(co.ID, nodeID); err == nil {
+				return false, "changeover in progress"
+			}
 		}
 		// A window/position of a Core-owned loader uses the multi-order queue even
 		// without a per-style manual_swap claim (Core-owned loader refactor): mirror

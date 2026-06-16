@@ -129,7 +129,7 @@ func TestCanAcceptOrders(t *testing.T) {
 		}
 	})
 
-	t.Run("unavailable during changeover", func(t *testing.T) {
+	t.Run("unavailable during changeover when node participates", func(t *testing.T) {
 		db := testEngineDB(t)
 		processID, nodeID := seedProcessNode(t, db)
 
@@ -143,8 +143,14 @@ func TestCanAcceptOrders(t *testing.T) {
 			t.Fatalf("create to style: %v", err)
 		}
 
-		// Create active changeover
-		_, err = service.NewChangeoverService(db).Create(processID, &fromStyleID, toStyleID, "test", "test changeover", nil, nil, nil)
+		// Create active changeover WITH a node task for this node — the node is
+		// actually being swapped, so it must be blocked.
+		existing, err := db.ListProcessNodesByProcess(processID)
+		if err != nil {
+			t.Fatalf("list process nodes: %v", err)
+		}
+		tasks := []processes.NodeTaskInput{{ProcessID: processID, CoreNodeName: "TEST-NODE", Situation: "swap", State: "swap_required"}}
+		_, err = service.NewChangeoverService(db).Create(processID, &fromStyleID, toStyleID, "test", "test changeover", nil, tasks, existing)
 		if err != nil {
 			t.Fatalf("create changeover: %v", err)
 		}
@@ -156,6 +162,35 @@ func TestCanAcceptOrders(t *testing.T) {
 		}
 		if reason != "changeover in progress" {
 			t.Errorf("expected 'changeover in progress', got: %s", reason)
+		}
+	})
+
+	t.Run("available during changeover when node does not participate", func(t *testing.T) {
+		db := testEngineDB(t)
+		processID, nodeID := seedProcessNode(t, db)
+
+		fromStyleID, err := db.CreateStyle("Style-A", "old style", processID)
+		if err != nil {
+			t.Fatalf("create from style: %v", err)
+		}
+		toStyleID, err := db.CreateStyle("Style-B", "new style", processID)
+		if err != nil {
+			t.Fatalf("create to style: %v", err)
+		}
+
+		// Active changeover, but NO node task references this node — e.g. a bin
+		// loader that only supplies empties and isn't part of the swap. It must
+		// stay available (regression guard for the "node X unavailable:
+		// changeover in progress" loader bug).
+		_, err = service.NewChangeoverService(db).Create(processID, &fromStyleID, toStyleID, "test", "loader not in changeover", nil, nil, nil)
+		if err != nil {
+			t.Fatalf("create changeover: %v", err)
+		}
+		eng := &Engine{db: db}
+
+		ok, reason := eng.CanAcceptOrders(nodeID)
+		if !ok {
+			t.Errorf("expected available (node not in changeover), got: %s", reason)
 		}
 	})
 
