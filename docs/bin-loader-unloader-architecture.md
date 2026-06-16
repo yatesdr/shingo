@@ -208,23 +208,22 @@ No schema changes to `ProcessNodeRuntimeState`. The serial model for consume/pro
 
 ## Protocol
 
-### ClaimSync (Edge to Core)
+### Loader config: `NodeListResponse.Loaders` (Core → Edge)
 
-Subject: `claim.sync`
+Loader configuration is **Core-owned** and rides the node-list sync — there is no
+dedicated loader-config message. `node.list_response` carries a `Loaders []LoaderInfo`
+slice alongside the topology (`BuildLoaderInfos`), and the Edge swaps it into its
+`core_loaders` cache / `aggregateLoaderStore` snapshot atomically with the node list.
+This replaced the Edge→Core `ClaimSync` push below.
 
-```go
-type ClaimSync struct {
-    StationID string           `json:"station_id"`
-    Claims    []ClaimSyncEntry `json:"claims"`
-}
+### ClaimSync — RETIRED
 
-type ClaimSyncEntry struct {
-    CoreNodeName        string   `json:"core_node_name"`
-    Role                string   `json:"role"`
-    AllowedPayloadCodes []string `json:"allowed_payload_codes"`
-    OutboundDestination string   `json:"outbound_destination,omitempty"`
-}
-```
+`claim.sync` (the Edge→Core push of `style_node_claims` with a per-node `mode`/payload
+set) authored loader config before the Core-owned refactor. It is **retired**:
+`Engine.SendClaimSync` is a no-op kept only so its call sites don't change, and the
+per-style edge loader checkboxes / `style_node_claims.mode` authoring path are gone.
+Core now owns the `bin_loaders` aggregate and derives `demand_registry` from it (see
+Demand Registry), syncing config down on the node list.
 
 ### DemandSignal (Core to Edge)
 
@@ -249,38 +248,45 @@ type DemandSignal struct {
 
 ## Implementation Files
 
-### Core
+As-built after the Core-owned loader refactor. Loader config lives in the Core
+`bin_loaders` aggregate; the Edge consumes a read-only projection. The retired
+ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 
-| File | Change |
-|------|--------|
-| `engine/wiring.go` | `handleKanbanDemand` subscription on BinUpdatedEvent. `isStorageSlot` (parent LANE check). `sendDemandSignals` (demand registry lookup, DemandSignal envelope to Edge). |
-| `messaging/core_data_service.go` | `HandleClaimSync` -- upserts demand_registry on receipt. `SendDataToEdge` for DemandSignal delivery. |
-| `store/schema_postgres.go` | `demand_registry` table. `UNIQUE INDEX` on `orders.edge_uuid`. |
-| `store/demand_registry.go` | `UpsertDemandRegistry`, `LookupDemandRegistry` queries. |
-| `store/orders.go` | `ON CONFLICT (edge_uuid) DO NOTHING` in CreateOrder. |
-| `dispatch/fulfillment_scanner.go` | Bin-occupied guard in `tryFulfill` (~8-10 lines). |
+### Core (owns the loader config)
 
-### Edge
+| File | Role |
+|------|------|
+| `store/loaders/loaders.go`, `store/loaders.go` | The `bin_loaders` aggregate: `bin_loaders` (identity, role, layout, replenishment, flow dests) + `bin_loader_homes` (windows / dedicated positions, `UNIQUE(position_node_id)`) + `bin_loader_payloads` (shared-window payload set). CRUD + `GroupIntoLoaders` (migration derive) + `DeleteLoader` (soft-archive `archived_at`). |
+| `service/loader_service.go` | Loader CRUD service (Create/Update/Delete/SetHome/SetPayload). `rederive` rebuilds `demand_registry` from the aggregate for the union of registry stations + registered edges and nudges the threshold monitor. |
+| `store/loaders_sync.go` | `BuildLoaderInfos` (loader config for the node-list sync), `BuildDemandRegistryFromAggregate`, `DemandRegistryStations`. |
+| `store/demand_registry.go`, `store/demands/demands.go` | `demand_registry` table + `SyncDemandRegistry` (diff/upsert). |
+| `engine/wiring_*.go` | `handleKanbanDemand` on `BinUpdatedEvent`; `isStorageSlot` (parent LANE check); `sendDemandSignals` (demand_registry lookup → `DemandSignal` to the Edge). |
+| `messaging/core_data_service.go` | Node-list response carries `Loaders` (`BuildLoaderInfos`); **seeds `demand_registry` from the aggregate on edge (re)connect**, then `thresholdMonitor.Resync`. (No `HandleClaimSync` — retired.) |
+| `store/migrations.go` | `bin_loaders` aggregate schema (v34–v40); `UNIQUE` on `orders.edge_uuid`. |
+| `cmd/migrateloaders` | One-time per-plant migration: derive the aggregate from the legacy edge `style_node_claims` + seed `demand_registry`. |
+| `www/handlers_loader.go`, `www/static/pages/loaders.js` | Core loader admin UI (create, layout, windows/positions, payload checklist + batch save, replenishment). |
+| `dispatch/` | One-robot-at-a-time + bin-occupied guards in the fulfillment scanner. |
 
-| File | Change |
-|------|--------|
-| `engine/operator_stations.go` | `HandleDemandSignal` (finds matching node, calls tryAutoRequest). `SendClaimSync` (builds ClaimSyncEntry list from active claims). `RequestFullBin` (mirrors RequestEmptyBin with retrieveEmpty=false). `tryAutoRequest` updated for multi-payload demand with BEGIN IMMEDIATE. |
-| `engine/wiring.go` | TypeRetrieve handler for bin_loader (UOP=0, clears runtime). TypeMove completion triggers tryAutoRequest. |
-| `cmd/shingoedge/main.go` | `SendClaimSync` wired to registration ack callback. `SetDemandSignalHandler` wired to engine. |
-| `messaging/edge_handler.go` | `onDemandSignal` callback, `SetDemandSignalHandler`, SubjectDemandSignal case in HandleData. |
-| `store/style_node_claims.go` | `mode` column (loader/unloader), `AllowedPayloads()` method. |
-| `store/schema.go` | Migration for mode column on style_node_claims. |
-| `store/orders.go` | `payload_code` column on orders. `ListActiveOrdersByProcessNode` query. |
-| `www/static/operator-station/operator.js` | Demand queue cards, payload board view, status labels (DELIVERED / IN TRANSIT / QUEUED / NO DEMAND). |
-| `www/static/js/pages/processes.js` | Mode selector (loader/unloader) on claim config form. |
-| `www/templates/processes.html` | Mode dropdown in claim form. |
+### Edge (consumes the Core projection)
+
+| File | Role |
+|------|------|
+| `store/core_loaders.go`, `engine/loader_store.go` | `core_loaders` cache + `aggregateLoaderStore` — an immutable in-memory snapshot of the Core loader config, swapped atomically on each node-list sync. |
+| `engine/core_loaders.go` | `SetCoreLoaders` / `Refresh` — ingest `NodeListResponse.Loaders` into the cache. |
+| `engine/operator_demand_loader.go`, `operator_demand_unloader.go` | `DemandSignal` handling; the `reserveLoaderBins` never-2N seam; `multiWindowEnabled` (default ON). |
+| `domain/loader.go` | The `Loader` type, layouts (`shared_window` / `dedicated_positions`), `SlotCount`, `ReservationTarget`. |
+| `service/station_service.go` | `BuildView` resolves a node's parent loader + windows from the aggregate for the operator HMI. |
+| `messaging/edge_handler.go` | `onDemandSignal` callback; node-list handler feeds `SetCoreLoaders`. |
+| `config/config.go` | `LoadersMultiWindow` (`loaders_multi_window`, default ON). |
+| `www/static/operator-station/*` | Demand-queue payload board + per-window state. |
+| `engine/*` (retired) | `SendClaimSync` is a no-op; no `processes.js` loader-mode selector; `transitional_loaders` → `operator_driven_loaders` flag. |
 
 ### Protocol
 
-| File | Change |
-|------|--------|
-| `protocol/types.go` | `SubjectClaimSync`, `SubjectDemandSignal` constants. |
-| `protocol/payloads.go` | `ClaimSync`, `ClaimSyncEntry`, `DemandSignal` structs. |
+| File | Role |
+|------|------|
+| `protocol/payloads.go` | `LoaderInfo` (carried on `NodeListResponse.Loaders`), `DemandSignal`. `ClaimSync`/`ClaimSyncEntry` remain defined but unused (retired). |
+| `protocol/types.go` | `SubjectDemandSignal`. `SubjectClaimSync` retired. |
 
 ---
 
@@ -316,54 +322,52 @@ When the operator loads DEF into the bin at SMN_001, the system sets the manifes
 
 **Future modes:** Hand loading stations and decanter stations could reuse the same infrastructure (demand queue, payload cards, hard rejection) with different cycle behaviors. The mode field accommodates future values like `hand_load` or `decanter`.
 
-## Transitional Preload Mode
+## Operator-Driven Loaders (formerly "transitional preload")
 
-A bridge for loaders whose payloads don't all have supermarket slots yet (the
-manual tugger isn't fully eliminated), so UOP-threshold replenishment can't own
-them. Design rationale lives in `transitional-bin-loader-plan-v2.md` at the
-GitHub root; this section is the as-built summary.
+A loader whose replenishment is **operator-paced** rather than UOP-threshold-paced:
+the operator decides what to stage from a preload board instead of the system
+auto-firing on a kanban threshold. Originally a bridge for loaders whose payloads
+don't all have supermarket slots yet (the manual tugger isn't fully eliminated).
+Design rationale in `transitional-bin-loader-plan-v2.md` at the GitHub root; this is
+the as-built summary. ("Transitional" was renamed "operator-driven"; the per-bin-count
+`min_stock` floor is retired — replenishment is `{operator, threshold}`.)
 
-**The flag.** A loader is marked transitional by membership in the Edge-only
-`transitional_loaders` table, keyed by `core_node_name` (1:1 with the physical
-loader — a loader shared across processes/styles has many claim rows but one
-core node, so the flag is loader-wide). It is **not** plumbed through ClaimSync;
-Core's threshold monitor already idles for a loader with no configured
-threshold. `isTransitionalLoader(coreNodeName)` reads it, failing open
-(non-transitional) on a DB error.
+**How it's set.** Replenishment is a field on the Core `bin_loaders` aggregate —
+`operator` (this mode) or `threshold` (UOP-auto). Core owns it, so it rides the
+node-list sync into the Edge cache; there is no separate edge flag to author. (The
+legacy Edge-only `operator_driven_loaders` table — renamed from `transitional_loaders`
+— survives as a fallback read keyed by `core_node_name`, failing open to
+non-operator-driven on a DB error, but the Core replenishment field is authoritative.)
 
-**What it changes.** For a transitional loader the market-accounting automatic
-L1 paths are suppressed — both legacy bin-count (`refillLoaderForPayload`) and
-UOP-threshold C-push (`HandleLoopBelowThreshold`) short-circuit in the single
-`tryCreateL1` chokepoint (allowlist gate: `L1Source.suppressedByTransitional`).
-Empties instead flow via `MaybePushLoader`, the loader-side mirror of
-`MaybePushUnloader`: when the window is free it opportunistically stages one
-empty. The staged empty is **payload-agnostic** — a generic carrier with no
-payload tag, since an opportunistic stage has no payload-specific demand behind
-it; the operator binds the real payload at load. Triggered on L2/clear
-completion and a startup sweep. (Single-carrier assumption: a blank order
-sources any compatible empty, which is correct only when the loader uses one
-carrier type — `OrderRequest` carries no bin-type field, so `payload_code` is
-the only carrier proxy on the wire. A multi-carrier loader would need a bin-type
-field added before it could request a generic empty by carrier.)
+**What it changes.** For an operator-driven loader the market-accounting automatic L1
+paths are suppressed — the UOP-threshold C-push (`HandleLoopBelowThreshold`)
+short-circuits in the single `tryCreateL1` chokepoint. Empties instead flow via
+`MaybePushLoader`, the loader-side mirror of `MaybePushUnloader`: when a window is free
+it opportunistically stages one empty. The staged empty is **payload-agnostic** — a
+generic carrier with no payload tag, since an opportunistic stage has no
+payload-specific demand behind it; the operator binds the real payload at load.
+Triggered on L2/clear completion and a startup sweep. (Single-carrier assumption: a
+blank order sources any compatible empty, correct only when the loader uses one carrier
+type — `OrderRequest` carries no bin-type field, so `payload_code` is the only carrier
+proxy on the wire. A multi-carrier loader needs a bin-type field added first.)
 
-**The board.** The HMI gains a PRELOAD / ACTIVE-ONLY toggle. ACTIVE-ONLY shows
-only what the running styles need; PRELOAD shows the full covered list and
-enables manual requests (the formalized `canRequestHere` path). The card sets
-come from the multi-process view-model union (`active_style_payloads` /
-`all_style_payloads`), which spans **every** active process sharing the loader —
-so an operator at a loader feeding two cells sees both cells' payloads. A
-transitional loader defaults to PRELOAD (no meaningful active-demand mode);
-PRELOAD is shown with a distinct violet header treatment (not amber/orange,
-which mean release/changeover).
+**The board.** The HMI gains a PRELOAD / ACTIVE-ONLY toggle. ACTIVE-ONLY shows only
+what the running styles need; PRELOAD shows the full covered list and enables manual
+requests (the `canRequestHere` path). The card sets come from the multi-process
+view-model union (`active_style_payloads` / `all_style_payloads`), spanning **every**
+active process sharing the loader — so an operator at a loader feeding two cells sees
+both cells' payloads. An operator-driven loader defaults to PRELOAD; PRELOAD shows a
+distinct violet header (not amber/orange, which mean release/changeover).
 
-**Routing.** Both automatic L1 paths resolve the loader by the signal's
-`CoreNodeName`, not by first payload match, so a payload loaded at two separate
-loaders routes to the one the signal names.
+**Routing.** The automatic L1 paths resolve the loader by the demand signal's owning
+loader (the Edge maps the signal's `CoreNodeName` to its `loader_key`), not by first
+payload match, so a payload loaded at two separate loaders routes to the one the signal
+names.
 
 **Supermarket browse/manipulate panel** (PRELOAD-mode reach into the loader's
-`InboundSource` / `OutboundDestination` markets, with a direction-aware
-server-side move guard) is specified in the plan and **not yet implemented**.
+`InboundSource` / `OutboundDestination` markets, with a direction-aware server-side
+move guard) is specified in the plan and **not yet implemented**.
 
-**Deprecation.** Add supermarket space, clear the `transitional_loaders` row,
-calibrate thresholds — the loader returns to C-push automatically. The preload
+**Deprecation.** Add supermarket space, switch the loader's replenishment to
+`threshold`, calibrate thresholds — it returns to UOP C-push automatically. The preload
 board stays available as a manual override.
