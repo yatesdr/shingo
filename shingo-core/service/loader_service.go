@@ -140,6 +140,19 @@ func (s *LoaderService) SetPayload(loaderID int64, payloadCode string, uopThresh
 // may be empty — the grid-drag drops a node first, then the operator assigns its
 // payload via the inline picker.
 func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode string, uopThreshold int) error {
+	// A loader window/position must be a real physical slot — a node a bin can
+	// actually sit in. Reject synthetic container nodes (a node group or a
+	// lane) and missing nodes. Without this guard, assigning an empty
+	// lane/group as a window yields a loader that dispatches into a location
+	// with no slots ("synthetic node has no children") — the failure behind
+	// the Springfield "lane 14" loader-window incident.
+	node, err := s.db.GetNode(positionNodeID)
+	if err != nil {
+		return fmt.Errorf("loader window node %d not found: %w", positionNodeID, err)
+	}
+	if node.IsSynthetic {
+		return fmt.Errorf("loader window must be a physical slot, not a %s container (%s)", node.NodeTypeCode, node.Name)
+	}
 	existing, err := s.db.ListLoaderHomes(loaderID)
 	if err != nil {
 		return err
