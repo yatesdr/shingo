@@ -22,6 +22,7 @@ func TestLoaderService_SetHome_RejectsSyntheticWindow(t *testing.T) {
 
 	loaderID, err := db.CreateLoader(loaders.Loader{
 		Name: "TEST-LOADER", Role: "produce", Layout: "dedicated_positions",
+		Replenishment: loaders.ReplenishmentThreshold,
 	})
 	testutil.MustNoErr(t, err, "create loader")
 
