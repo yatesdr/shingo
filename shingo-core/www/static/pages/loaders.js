@@ -114,10 +114,11 @@ function editLoader(lid) {
   setVal('loader-inbound', l.inbound_source || '');
   setVal('loader-outbound', l.outbound_dest || '');
   setVal('loader-buffer', l.buffer_dest || '');
-  // Layout is the loader's shape — editable only while it has no members, so a flip
-  // can't orphan windows/positions. Role stays delete+recreate (it's the kind).
-  const hasMembers = (item.homes && item.homes.length > 0) || (item.payloads && item.payloads.length > 0);
-  setDisabled('loader-role', true); setDisabled('loader-layout', hasMembers);
+  // Role stays locked (delete+recreate — it's the loader's kind). Layout is always
+  // editable now; submitLoader pops a confirm and drops the loader's members first if
+  // you change it on one that already has windows/positions/payloads (they can't carry
+  // across layouts).
+  setDisabled('loader-role', true); setDisabled('loader-layout', false);
   setText('loader-modal-title', 'Edit Loader');
   setText('loader-submit-btn', 'Save');
   setLayoutFlowVisibility();
@@ -142,13 +143,35 @@ function submitLoader() {
     inbound_source: val('loader-inbound'), outbound_dest: val('loader-outbound'), buffer_dest: val('loader-buffer'),
   };
   if (editId) {
-    result('Saving…');
-    apiPost('/api/loader/update', Object.assign({ id: Number(editId), name: name, layout: val('loader-layout'), replenishment: val('loader-replenishment') }, flow)).then(function (d) {
-      if (d && d.error) { result(d.error, true); return; }
-      result('Saved', false);
-      refresh();
-      setTimeout(closeLoaderModal, 400);
-    }).catch(function (e) { result('' + e, true); });
+    const eitem = loaderData.find(function (it) { return String(it.loader.id) === String(editId); });
+    const newLayout = val('loader-layout');
+    const homes = eitem ? (eitem.homes || []) : [];
+    const pls = eitem ? (eitem.payloads || []) : [];
+    const doUpdate = function () {
+      result('Saving…');
+      apiPost('/api/loader/update', Object.assign({ id: Number(editId), name: name, layout: newLayout, replenishment: val('loader-replenishment') }, flow)).then(function (d) {
+        if (d && d.error) { result(d.error, true); return; }
+        result('Saved', false);
+        refresh();
+        setTimeout(closeLoaderModal, 400);
+      }).catch(function (e) { result('' + e, true); });
+    };
+    // Changing layout on a loader that already has members would orphan them, so confirm
+    // and drop them first (the operator opted in).
+    if (eitem && newLayout !== eitem.loader.layout && (homes.length + pls.length) > 0) {
+      if (!window.confirm('Changing layout to "' + newLayout + '" will drop this loader’s ' + homes.length + ' node(s) and ' + pls.length + ' payload(s). Continue?')) {
+        setVal('loader-layout', eitem.loader.layout);
+        result('Cancelled — layout unchanged', false);
+        return;
+      }
+      result('Dropping members…');
+      Promise.all([].concat(
+        homes.map(function (h) { return apiPost('/api/loader/remove-home', { loader_id: Number(editId), position_node_id: h.position_node_id }); }),
+        pls.map(function (p) { return apiPost('/api/loader/remove-payload', { loader_id: Number(editId), payload_code: p.payload_code }); })
+      )).then(doUpdate).catch(function (e) { result('' + e, true); });
+      return;
+    }
+    doUpdate();
     return;
   }
   result('Creating…');
