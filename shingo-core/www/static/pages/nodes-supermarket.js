@@ -245,16 +245,15 @@ function onDrop(e) {
   var draggedTile = document.querySelector('.node-tile[data-id="' + nodeID + '"]');
   var isAlreadyInLane = draggedTile && draggedTile.dataset.parentId === String(parentID);
 
-  var container = this;
   if (isDirectSection) {
-    reparentNode(nodeID, parentID, 0, container, draggedTile, insertIdx);
+    reparentNode(nodeID, parentID, 0);
   } else if (isAlreadyInLane) {
     var ordered = existingIDs.slice();
     ordered.splice(insertIdx, 0, nodeID);
-    reorderLane(parentID, ordered, container, draggedTile, insertIdx);
+    reorderLane(parentID, ordered);
   } else {
     var position = insertIdx + 1;
-    reparentNode(nodeID, parentID, position, container, draggedTile, insertIdx);
+    reparentNode(nodeID, parentID, position);
   }
 }
 
@@ -265,58 +264,29 @@ function onDropGrid(e) {
   this.classList.remove('drop-target');
   var nodeID = parseInt(e.dataTransfer.getData('text/plain'));
   if (!nodeID) return;
-  var tile = document.querySelector('.node-tile[data-id="' + nodeID + '"]');
-  reparentNode(nodeID, null, 0, null, tile, 0);
+  reparentNode(nodeID, null, 0);
 }
 
-function reparentNode(nodeID, parentID, position, container, tile, insertIdx) {
+// After a successful move the authoritative parent/order lives in the DB.
+// buildHierarchy() rewrites the DOM destructively from the flat tile grid and
+// is not safely re-runnable, and the old optimistic DOM patching could leave
+// the moved node rendered in BOTH the source and destination lane until a
+// manual refresh. Reload so the view is rebuilt from server state — correct
+// and drift-free.
+function reparentNode(nodeID, parentID, position) {
   apiPost('/api/nodes/reparent', { node_id: nodeID, parent_id: parentID, position: position })
   .then(function(data) {
     if (data.error) { toast('Reparent failed: ' + data.error, 'error'); return; }
-    if (!tile) return;
-    if (parentID && container) {
-      var siblings = container.querySelectorAll('.node-tile');
-      var refNode = siblings[insertIdx] || null;
-      container.insertBefore(tile, refNode);
-      tile.dataset.parentId = String(parentID);
-      if (!tile.querySelector('.slot-depth')) {
-        var badge = document.createElement('span');
-        badge.className = 'slot-depth';
-        tile.appendChild(badge);
-      }
-      if (!tile.getAttribute('draggable')) {
-        tile.setAttribute('draggable', 'true');
-        tile.addEventListener('dragstart', onDragStart);
-        tile.addEventListener('dragend', onDragEnd);
-      }
-      updateLaneDepths(container);
-      updateLaneCounts(container);
-    } else {
-      var oldContainer = tile.closest('.smkt-lane-slots');
-      var grid = document.getElementById('tile-grid');
-      var badge = tile.querySelector('.slot-depth');
-      if (badge) badge.remove();
-      tile.dataset.parentId = '';
-      tile.dataset.depth = '0';
-      grid.appendChild(tile);
-      if (oldContainer) {
-        updateLaneDepths(oldContainer);
-        updateLaneCounts(oldContainer);
-      }
-    }
+    window.location.reload();
   })
   .catch(function(e) { toast('Reparent error: ' + e, 'error'); });
 }
 
-function reorderLane(laneID, orderedIDs, container, draggedTile, insertIdx) {
+function reorderLane(laneID, orderedIDs) {
   apiPost('/api/nodegroup/reorder-lane', { lane_id: laneID, ordered_ids: orderedIDs })
   .then(function(data) {
     if (data.error) { toast('Reorder failed: ' + data.error, 'error'); return; }
-    orderedIDs.forEach(function(id) {
-      var t = container.querySelector('.node-tile[data-id="' + id + '"]');
-      if (t) container.appendChild(t);
-    });
-    updateLaneDepths(container);
+    window.location.reload();
   })
   .catch(function(e) { toast('Reorder error: ' + e, 'error'); });
 }
