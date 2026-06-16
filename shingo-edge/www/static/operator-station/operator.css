@@ -334,6 +334,13 @@ body {
 .os-node-btn.os-empty { background: var(--os-red); animation: os-pulse 1.5s ease-in-out infinite; }
 .os-node-btn.os-unclaimed { background: var(--os-gray); opacity: 0.5; cursor: default; }
 
+/* Drain (consume unloader) slot palette — the loader-board card colors, not the
+   saturated fills. Empty/idle is neutral dark (NOT a fault), inbound full is amber,
+   parked full is green. Matches os-board-transit / os-board-delivered. */
+.os-node-btn.os-drain-idle     { background: var(--os-surface); border-color: var(--os-border); }
+.os-node-btn.os-drain-awaiting { background: #2a2a1a; border-color: #5a5a2a; }
+.os-node-btn.os-drain-ready    { background: #1a3a1a; border-color: #2a5a2a; }
+
 @keyframes os-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.55; }

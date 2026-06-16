@@ -1,7 +1,7 @@
 import { el, esc, fillColor, postAction, showToast } from './operator-util.js';
 import { getView, claimedNodes, isReplenishing } from './operator-state.js';
 import { isActive } from './order-status.js';
-import { cardModel, headerModel, nodeFacts } from './operator-window-state.js';
+import { cardModel, headerModel, nodeFacts, ROLE_WORDS } from './operator-window-state.js';
 
 const grid = document.getElementById('os-grid');
 const headerInfo = document.getElementById('os-header-info');
@@ -591,6 +591,25 @@ function gridDimensions() {
     return { cols: 4, rows: Math.max(2, Math.ceil(count / 4)) };
 }
 
+// isDrainSlot reports a consume (drain) shared-window loader slot — the same class
+// renderGrid's drainSlots routes to the per-window slot view. Drives the slot-only
+// click (tap a parked full → confirm swap; empty = no-op) and the board palette below.
+function isDrainSlot(entry) {
+    const c = entry.active_claim;
+    return !!c && c.swap_mode === 'manual_swap' && c.role === 'consume'
+        && !entry.home_location_loader;
+}
+
+// drainColorClass maps a drain slot to the loader-board card palette (not the
+// saturated fill colors): full parked = green, full inbound = amber, empty = neutral.
+function drainColorClass(entry) {
+    const bs = entry.bin_state;
+    const awaiting = (entry.orders || []).some(o => isActive(o.status));
+    if (bs && bs.occupied && bs.payload_code) return 'os-drain-ready';
+    if (awaiting) return 'os-drain-awaiting';
+    return 'os-drain-idle';
+}
+
 function createNodeButton(entry) {
     const claim = entry.active_claim;
     const runtime = entry.runtime || {};
@@ -620,7 +639,7 @@ function createNodeButton(entry) {
     } else if (inboundOrders.length > 0) {
         stateClass = 'os-in-transit';
     } else {
-        stateClass = nodeColorClass(entry);
+        stateClass = isDrainSlot(entry) ? drainColorClass(entry) : nodeColorClass(entry);
     }
     const btn = el('div', { className: 'os-node-btn ' + stateClass });
 
@@ -654,7 +673,7 @@ function createNodeButton(entry) {
         const hasActiveOrder = (entry.orders || []).some(o => isActive(o.status));
         let statusText;
         if (hasActiveOrder) {
-            statusText = 'AWAITING STOCK';
+            statusText = 'AWAITING ' + ((ROLE_WORDS[claim.role] && ROLE_WORDS[claim.role].awaiting) || 'STOCK');
         } else if (binPayload) {
             statusText = binPayload;
         } else if (remaining > 0) {
@@ -688,7 +707,17 @@ function createNodeButton(entry) {
         btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));
     }
 
-    btn.addEventListener('click', () => openModalRef(entry.node.id));
+    if (isDrainSlot(entry)) {
+        // Drain slot: tap a parked full → confirm-swap panel (no payload picker).
+        // An empty/idle slot has nothing to pull, so the tap is a no-op.
+        btn.addEventListener('click', () => {
+            const bs = entry.bin_state;
+            const fullPresent = bs && bs.occupied && bs.payload_code;
+            if (fullPresent) confirmUnloadSwap(entry.node.id);
+        });
+    } else {
+        btn.addEventListener('click', () => openModalRef(entry.node.id));
+    }
     return btn;
 }
 
