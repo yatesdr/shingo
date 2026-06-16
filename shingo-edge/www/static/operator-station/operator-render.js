@@ -224,7 +224,17 @@ export function renderGrid() {
     const manualSwapNodes = nodes.filter(function(n) {
         return n.active_claim && n.active_claim.swap_mode === 'manual_swap';
     });
-    if (manualSwapNodes.length >= 1 && manualSwapNodes.length === nodes.length) {
+    const allManualSwap = manualSwapNodes.length >= 1 && manualSwapNodes.length === nodes.length;
+    // A consume (drain) shared-window loader renders as physical SLOTS — the node
+    // grid below (one tile per window, showing the bin/part actually present), NOT
+    // the loader payload board. An unloader operator just clears whatever full bin
+    // lands in a slot, so a card-per-allowed-payload catalog (often the whole plant's
+    // parts) is pure noise. Home-location (dedicated-position) unloaders keep their
+    // per-position board; produce-side loaders keep the payload board.
+    const drainSlots = allManualSwap
+        && !manualSwapNodes.some(function(n) { return n.home_location_loader; })
+        && manualSwapNodes.every(function(n) { return n.active_claim.role === 'consume'; });
+    if (allManualSwap && !drainSlots) {
         grid.classList.add('os-board-mode');
         document.body.classList.add('os-board-mode-active');
         grid.style.removeProperty('--os-cols');
