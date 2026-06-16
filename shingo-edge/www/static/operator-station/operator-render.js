@@ -672,7 +672,12 @@ function createNodeButton(entry) {
         // in_transit, delivered-awaiting-confirm).
         const hasActiveOrder = (entry.orders || []).some(o => isActive(o.status));
         let statusText;
-        if (hasActiveOrder) {
+        if (isDrainSlot(entry) && binState && binState.occupied && binPayload) {
+            // Drain slot with a full PARKED → show the part that's here to clear, even
+            // if a NEXT full is queued/inbound (hasActiveOrder). "AWAITING" must not
+            // mask a present full — the green tile + tap-to-confirm already say "act".
+            statusText = binPayload;
+        } else if (hasActiveOrder) {
             statusText = 'AWAITING ' + ((ROLE_WORDS[claim.role] && ROLE_WORDS[claim.role].awaiting) || 'STOCK');
         } else if (binPayload) {
             statusText = binPayload;
