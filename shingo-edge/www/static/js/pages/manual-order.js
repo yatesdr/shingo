@@ -13,6 +13,13 @@ import { api, createSSE, delegateActions, toast } from '/static/js/shingoedge.js
         if (typeof entry.node_id === 'string') return entry.node_id;
         return '';
     }
+    // name -> node_type (NGRP/LANE/'') from the core sync, so the picker can badge
+    // a synthetic container distinctly from a targetable slot.
+    var coreType = {};
+    coreNodesRaw.forEach(function(e) {
+        var nm = coreNodeName(e);
+        if (nm && e && typeof e === 'object' && e.node_type) coreType[nm] = e.node_type;
+    });
     var coreNodes = coreNodesRaw.map(coreNodeName).filter(Boolean);
 
     // Build merged set: core nodes first, then any edge-only nodes
@@ -21,13 +28,28 @@ import { api, createSSE, delegateActions, toast } from '/static/js/shingoedge.js
     coreNodes.sort().forEach(function(n) {
         seen[n] = true;
         var edge = edgeNodes.find(function(e){ return e.id === n; });
-        merged.push({ id: n, desc: edge ? edge.desc : '', source: 'core' });
+        merged.push({ id: n, desc: edge ? edge.desc : '', source: 'core', type: coreType[n] || '' });
     });
     edgeNodes.forEach(function(e) {
         if (!seen[e.id]) {
-            merged.push({ id: e.id, desc: e.desc, source: 'local' });
+            merged.push({ id: e.id, desc: e.desc, source: 'local', type: '' });
         }
     });
+
+    // Label a node: synthetic containers (NGRP "group" / LANE "lane") get a type
+    // badge so they don't read like a slot; a dotted child slot ("Group.Slot") is
+    // indented under its container (which sorts immediately before it). The option
+    // value stays the full node name the order API expects.
+    function nodeOptionLabel(n) {
+        var t = (n.type || '').toUpperCase();
+        if (t === 'NGRP' || t === 'LANE') {
+            return n.id + '  \u00b7 ' + (t === 'LANE' ? 'lane' : 'group');
+        }
+        var label = (n.id.indexOf('.') !== -1) ? '\u00a0\u00a0\u21b3 ' + n.id : n.id;
+        if (n.desc) label += ' \u2014 ' + n.desc;
+        if (n.source === 'local') label += ' (local)';
+        return label;
+    }
 
     // Populate all node selects
     ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
@@ -36,10 +58,7 @@ import { api, createSSE, delegateActions, toast } from '/static/js/shingoedge.js
             var opt = document.createElement('option');
             opt.value = n.id;
             opt.dataset.source = n.source;
-            var label = n.id;
-            if (n.desc) label += ' \u2014 ' + n.desc;
-            if (n.source === 'local') label += ' (local)';
-            opt.textContent = label;
+            opt.textContent = nodeOptionLabel(n);
             sel.appendChild(opt);
         });
     });

@@ -307,29 +307,65 @@ function switchManualOrderTab(name, btn) {
   updateManualOrderQuantityVisibility();
 }
 
+// buildNodeOptionsHTML renders the manual-order node <option>s with the topology
+// made visible: synthetic containers (NGRP "group" / LANE "lane") are badged and
+// their child slots nested beneath them, so a container no longer reads like a
+// targetable slot — operators were dead-ending by picking a synthetic group like
+// "Supermarket Area". Display-only: /api/nodes already carries node_type_code /
+// is_synthetic / parent_id, and every node stays selectable (a group is a valid
+// source for a group-retrieve). Mirrors the edge manual-order picker.
+function buildNodeOptionsHTML(nodes) {
+  var byId = {};
+  nodes.forEach(function(n) { byId[n.id] = n; });
+  function typeLabel(n) {
+    var c = (n.node_type_code || '').toUpperCase();
+    if (c === 'NGRP') return 'group';
+    if (c === 'LANE') return 'lane';
+    return n.is_synthetic ? 'group' : '';
+  }
+  // A container with no zone of its own sits with its first child's zone.
+  function zoneOf(n) {
+    if (n.zone) return n.zone;
+    if (n.is_synthetic) {
+      var kid = nodes.find(function(c) { return c.parent_id === n.id && c.zone; });
+      if (kid) return kid.zone;
+    }
+    return 'Other';
+  }
+  function opt(n, indent) {
+    var t = typeLabel(n);
+    var label = (indent ? '  ↳ ' : '') + n.name + (t ? '  · ' + t : '');
+    return '<option value="' + escapeHtml(n.name) + '">' + escapeHtml(label) + '</option>';
+  }
+  var byZone = {};
+  nodes.forEach(function(n) {
+    if (!n.enabled) return;
+    var z = zoneOf(n);
+    (byZone[z] = byZone[z] || []).push(n);
+  });
+  var byName = function(a, b) { return a.name.localeCompare(b.name); };
+  var html = '<option value="">— select —</option>';
+  Object.keys(byZone).sort().forEach(function(zone) {
+    var roots = [], kids = {};
+    byZone[zone].forEach(function(n) {
+      if (n.parent_id && byId[n.parent_id]) (kids[n.parent_id] = kids[n.parent_id] || []).push(n);
+      else roots.push(n);
+    });
+    roots.sort(byName);
+    html += '<optgroup label="' + escapeHtml(zone) + '">';
+    roots.forEach(function(root) {
+      html += opt(root, false);
+      (kids[root.id] || []).sort(byName).forEach(function(k) { html += opt(k, true); });
+    });
+    html += '</optgroup>';
+  });
+  return html;
+}
+
 function loadManualOrderDropdowns() {
   apiGet('/api/nodes')
     .then(function(nodes) {
-      var byZone = {};
-      for (var i = 0; i < nodes.length; i++) {
-        var n = nodes[i];
-        if (!n.enabled) continue;
-        var z = n.zone || 'Other';
-        if (!byZone[z]) byZone[z] = [];
-        byZone[z].push(n);
-      }
-      var zones = Object.keys(byZone).sort();
-      var html = '<option value="">— select —</option>';
-      for (var zi = 0; zi < zones.length; zi++) {
-        var zone = zones[zi];
-        html += '<optgroup label="' + escapeHtml(zone) + '">';
-        var zNodes = byZone[zone];
-        zNodes.sort(function(a, b) { return a.name.localeCompare(b.name); });
-        for (var ni = 0; ni < zNodes.length; ni++) {
-          html += '<option value="' + escapeHtml(zNodes[ni].name) + '">' + escapeHtml(zNodes[ni].name) + '</option>';
-        }
-        html += '</optgroup>';
-      }
+      var html = buildNodeOptionsHTML(nodes);
       // Transport tab
       document.getElementById('mo-source').innerHTML = html;
       document.getElementById('mo-delivery').innerHTML = html;
