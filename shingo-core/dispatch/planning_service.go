@@ -306,7 +306,14 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	// rejects empties (PayloadCode == "" != payloadCode).
 	if order.SourceNode != "" {
 		sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
-		if err == nil && sourceNode != nil && sourceNode.IsSynthetic && sourceNode.NodeTypeCode == protocol.NodeClassNGRP {
+		// Accept either a supermarket NGRP or a LANE directly as the empties
+		// source container. FindEmptyCompatibleBinInGroup recurses descendants,
+		// so a LANE root scopes the search to that lane's own slots. Operators
+		// doing a manual empty pull may pick the lane node itself (not just the
+		// parent group) — both must resolve to the scoped reader rather than
+		// falling through to the global any-zone finder below.
+		if err == nil && sourceNode != nil && sourceNode.IsSynthetic &&
+			(sourceNode.NodeTypeCode == protocol.NodeClassNGRP || sourceNode.NodeTypeCode == protocol.NodeClassLANE) {
 			groupBin, gerr := s.db.FindEmptyCompatibleBinInGroup(payloadCode, sourceNode.ID, excludeNodeID)
 			if gerr != nil {
 				s.dbg("retrieve_empty: no empty in group %s for payload=%s, queuing order %d",

@@ -857,6 +857,74 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 	}
 }
 
+// TestRetrieveEmpty_LaneSourceScopesToLane verifies that a manual empty pull
+// whose source_node is a LANE (not its parent NGRP) scopes the empty search to
+// that lane's own slots — exercising the planRetrieveEmpty LANE-source gate
+// (previously NGRP-only, so a LANE source fell through to the global finder).
+// A decoy empty outside the lane (no depth, lower id) would win the global
+// any-zone finder; the LANE source must skip it and pick the lane's empty.
+func TestRetrieveEmpty_LaneSourceScopesToLane(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, _ = setupTestData(t, db)
+
+	grpType, _ := db.GetNodeTypeByCode("NGRP")
+	lanType, _ := db.GetNodeTypeByCode("LANE")
+	bt, _ := db.GetBinTypeByCode("DEFAULT")
+
+	bp := &payloads.Payload{Code: "LANE-SCOPE-BP"}
+	db.CreatePayload(bp)
+	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
+
+	// Decoy empty OUTSIDE any lane, created first (lower id, no depth) so the
+	// global any-zone finder would prefer it over the lane's empty.
+	decoyNode := &nodes.Node{Name: "LSC-DECOY", Enabled: true}
+	db.CreateNode(decoyNode)
+	decoy := &bins.Bin{BinTypeID: bt.ID, Label: "LSC-DECOY-EMPTY", NodeID: &decoyNode.ID, Status: "available"}
+	db.CreateBin(decoy)
+
+	// NGRP -> LANE -> single accessible slot holding the empty we expect.
+	grp := &nodes.Node{Name: "LSC-GRP", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
+	db.CreateNode(grp)
+	grp, _ = db.GetNode(grp.ID)
+	lane := &nodes.Node{Name: "LSC-LANE", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
+	db.CreateNode(lane)
+	lane, _ = db.GetNode(lane.ID)
+	d1 := 1
+	slot := &nodes.Node{Name: "LSC-LANE-S1", ParentID: &lane.ID, Enabled: true, Depth: &d1}
+	db.CreateNode(slot)
+	laneEmpty := &bins.Bin{BinTypeID: bt.ID, Label: "LSC-LANE-EMPTY", NodeID: &slot.ID, Status: "available"}
+	db.CreateBin(laneEmpty)
+
+	dest := &nodes.Node{Name: "LSC-LINE", Enabled: true}
+	db.CreateNode(dest)
+
+	backend := testdb.NewTrackingBackend()
+	emitter := &mockEmitter{}
+	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock()}
+	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:     "lane-empty-src-1",
+		OrderType:     OrderTypeRetrieve,
+		PayloadCode:   "LANE-SCOPE-BP",
+		DeliveryNode:  dest.Name,
+		SourceNode:    lane.Name, // pick the LANE itself, not the parent group
+		RetrieveEmpty: true,
+		Quantity:      1,
+	})
+
+	if len(emitter.failed) > 0 {
+		t.Fatalf("order should not fail, got: %s", emitter.failed[0].errorCode)
+	}
+	o := testdb.RequireOrder(t, db, "lane-empty-src-1")
+	if o.SourceNode != slot.Name {
+		t.Errorf("source = %q, want %q — a LANE source must scope to the lane's own slots, not the global decoy %q",
+			o.SourceNode, slot.Name, decoyNode.Name)
+	}
+}
+
 func TestRetrieveEmpty_BuriedTriggersReshuffle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
