@@ -1,6 +1,7 @@
 package www
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"shingocore/service"
+	"shingocore/store/bins"
 )
 
 // dashboardTemplates maps a dashboard kind to the chromeless template that
@@ -15,9 +17,10 @@ import (
 // is kind-agnostic; adding a new dashboard kind means registering a renderer
 // template here (and a matching branch in dashboard.js). v1 ships one kind.
 var dashboardTemplates = map[string]string{
-	"task-board": "dashboard-display.html",
-	"robot-map":  "dashboard-map.html",
-	"heartbeat":  "heartbeat.html",
+	"task-board":  "dashboard-display.html",
+	"robot-map":   "dashboard-map.html",
+	"heartbeat":   "heartbeat.html",
+	"node-report": "dashboard-node-report.html",
 }
 
 // handleDashboardDisplay renders a dashboard. By default it renders INSIDE
@@ -223,4 +226,144 @@ func (h *Handlers) apiStations(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(out)
 	h.jsonOK(w, out)
+}
+
+// apiDashboardNodeReport returns the live bin state for every node in the
+// loader referenced by a node-report dashboard's config_json. Public: the
+// chromeless kiosk reads it.
+func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		h.jsonError(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	d, err := h.engine.DashboardService().Get(id)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if d == nil {
+		h.jsonError(w, "dashboard not found", http.StatusNotFound)
+		return
+	}
+
+	var cfg struct {
+		LoaderID int64 `json:"loader_id"`
+	}
+	if err := json.Unmarshal(d.Config, &cfg); err != nil || cfg.LoaderID == 0 {
+		h.jsonError(w, "dashboard config missing loader_id", http.StatusBadRequest)
+		return
+	}
+
+	svc := h.engine.LoaderService()
+	loader, err := svc.Get(cfg.LoaderID)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if loader == nil {
+		h.jsonError(w, "loader not found", http.StatusNotFound)
+		return
+	}
+
+	nodeSvc := h.engine.NodeService()
+
+	type nodeRow struct {
+		NodeName     string `json:"node_name"`
+		GroupName   string `json:"group_name"`
+		Occupied     bool   `json:"occupied"`
+		PayloadCode string `json:"payload_code"`
+		UOPRemaining int    `json:"uop_remaining"`
+	}
+	type payloadRow struct {
+		PayloadCode string `json:"payload_code"`
+		Occupied     bool   `json:"occupied"`
+		NodeName     string `json:"node_name"`
+	GroupName   string `json:"group_name"`
+		UOPRemaining int    `json:"uop_remaining"`
+	}
+
+	resp := map[string]any{
+		"loader_name": loader.Name,
+		"layout":      loader.Layout,
+	}
+
+	if loader.Layout == "shared_window" {
+		payloads, pErr := svc.Payloads(cfg.LoaderID)
+		if pErr != nil {
+			h.jsonError(w, pErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp["payloads_count"] = len(payloads)
+		allBins, bErr := h.engine.BinService().ListBins()
+		if bErr != nil {
+			h.jsonError(w, bErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		binByPayload := make(map[string]*bins.Bin, len(allBins))
+		for i := range allBins {
+			b := allBins[i]
+			if b.PayloadCode != "" && b.Status != "retired" {
+				if _, exists := binByPayload[b.PayloadCode]; !exists {
+					binByPayload[b.PayloadCode] = b
+				}
+			}
+		}
+		allNodes, _ := nodeSvc.ListNodes()
+		nodeParent := make(map[string]string, len(allNodes))
+		for _, n := range allNodes {
+			if n.ParentName != "" {
+				nodeParent[n.Name] = n.ParentName
+			}
+		}
+		rows := make([]payloadRow, 0, len(payloads))
+		for _, p := range payloads {
+			row := payloadRow{PayloadCode: p.PayloadCode}
+			if b, ok := binByPayload[p.PayloadCode]; ok {
+				row.Occupied = true
+				row.UOPRemaining = b.UOPRemaining
+				row.NodeName = b.NodeName
+				row.GroupName = nodeParent[b.NodeName]
+			}
+			rows = append(rows, row)
+		}
+		resp["rows"] = rows
+	} else {
+		homes, err := svc.Homes(cfg.LoaderID)
+		if err != nil {
+			h.jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rows := make([]nodeRow, 0, len(homes))
+		for _, hm := range homes {
+			node, nErr := nodeSvc.GetNode(hm.PositionNodeID)
+			if nErr != nil || node == nil {
+				continue
+			}
+			row := nodeRow{NodeName: node.Name}
+			if node.ParentName != "" {
+				row.GroupName = node.ParentName
+			}
+			bins, bErr := nodeSvc.ListBinsByNode(hm.PositionNodeID)
+			if bErr == nil {
+				for _, b := range bins {
+					if b.PayloadCode != "" && b.Status != "retired" {
+						row.Occupied = true
+						row.PayloadCode = b.PayloadCode
+						row.UOPRemaining = b.UOPRemaining
+						break
+					}
+				}
+			}
+			if row.PayloadCode == "" && hm.PayloadCode != "" {
+				row.PayloadCode = hm.PayloadCode
+			}
+			rows = append(rows, row)
+		}
+		resp["homes_count"] = len(homes)
+		resp["rows"] = rows
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	h.jsonOK(w, resp)
 }

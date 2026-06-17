@@ -474,6 +474,10 @@ func (h *Handlers) binLoadPayload(b *domain.Bin, params json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "loaded", "", p.PayloadCode, protocol.AuditActorUI)
+	fresh, _ := h.engine.BinService().GetBin(b.ID)
+	if fresh != nil {
+		b = fresh
+	}
 	h.emitBinUpdate(b, "loaded", p.PayloadCode)
 	return nil
 }
@@ -656,6 +660,8 @@ func (h *Handlers) emitBinUpdate(b *domain.Bin, action, detail string) {
 		NodeID:      derefInt64(b.NodeID),
 		Action:      action,
 		PayloadCode: b.PayloadCode,
+		Detail:      detail,
+		Actor:       protocol.AuditActorUI,
 	}})
 }
 

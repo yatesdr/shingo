@@ -13,7 +13,8 @@ import { el, apiGet, apiPost, apiPut, apiDelete, toast, uiConfirm } from '/stati
 const KINDS = [
   { value: 'task-board', label: 'Task Board' },
   { value: 'robot-map', label: 'Robot Map' },
-  { value: 'heartbeat', label: 'Heartbeat' }
+  { value: 'heartbeat', label: 'Heartbeat' },
+  { value: 'node-report', label: 'Node Report' }
 ];
 
 function kindLabel(k) {
@@ -163,6 +164,50 @@ function openModal(d) {
     });
   }
 
+  // Loader picker — shown only for node-report kind. Populated from
+  // GET /api/loader/list (public). The selected loader_id is stored in
+  // config_json so the kiosk page resolves which homes to display.
+  var savedConfig = (d && d.config) ? d.config : {};
+  var selectedLoaderID = savedConfig.loader_id || 0;
+
+  var loaderSelect = el('select', { className: 'form-input' }, [
+    el('option', { value: '' }, 'Loading loaders\u2026')
+  ]);
+  var loaderField = field('Loader', loaderSelect);
+
+  function showHideFields() {
+    var k = kindSelect.value;
+    var showStations = k !== 'node-report';
+    var showLoader = k === 'node-report';
+    pickerBox.parentElement.style.display = showStations ? '' : 'none';
+    loaderField.style.display = showLoader ? '' : 'none';
+  }
+
+  apiGet('/api/loader/list')
+    .then(function (resp) {
+      loaderSelect.innerHTML = '';
+      var items = (resp && resp.loaders) ? resp.loaders : [];
+      if (!items.length) {
+        loaderSelect.appendChild(el('option', { value: '' }, 'No loaders configured'));
+        return;
+      }
+      loaderSelect.appendChild(el('option', { value: '' }, '— select —'));
+      items.forEach(function (item) {
+        var l = item.loader || {};
+        var homes = item.homes || [];
+        var label = l.name + ' (' + l.layout + ', ' + homes.length + ' position' + (homes.length !== 1 ? 's' : '') + ')';
+        var opt = el('option', { value: String(l.id) }, label);
+        if (l.id === selectedLoaderID) opt.selected = true;
+        loaderSelect.appendChild(opt);
+      });
+    })
+    .catch(function () {
+      loaderSelect.innerHTML = '';
+      loaderSelect.appendChild(el('option', { value: '' }, 'Failed to load'));
+    });
+
+  kindSelect.addEventListener('change', showHideFields);
+
   var enabledInput = el('input', { type: 'checkbox' });
   enabledInput.checked = d ? !!d.enabled : true;
 
@@ -171,7 +216,8 @@ function openModal(d) {
       el('h2', {}, isEdit ? 'Edit Dashboard' : 'New Dashboard'),
       field('Name', nameInput),
       field('Kind', kindSelect),
-      field('Area — stations (none selected = whole plant)', pickerBox),
+      field('Area \u2014 stations (none selected = whole plant)', pickerBox),
+      loaderField,
       el('label', { style: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' } },
         [enabledInput, 'Enabled']),
       el('div', { style: { display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' } }, [
@@ -181,6 +227,10 @@ function openModal(d) {
     ])
   ]);
   document.body.appendChild(overlay);
+  if (d) {
+    kindSelect.value = d.kind;
+  }
+  showHideFields();
   setTimeout(function () { nameInput.focus(); }, 0);
 
   function close() { overlay.remove(); }
@@ -188,12 +238,18 @@ function openModal(d) {
   function doSave() {
     var name = nameInput.value.trim();
     if (!name) { toast('Name is required', 'error'); return; }
+    var kind = kindSelect.value;
     var payload = {
       name: name,
-      kind: kindSelect.value,
-      stations: Array.from(selected),
+      kind: kind,
+      stations: kind !== 'node-report' ? Array.from(selected) : [],
       enabled: enabledInput.checked
     };
+    if (kind === 'node-report') {
+      var lid = parseInt(loaderSelect.value, 10);
+      if (!lid) { toast('Select a loader', 'error'); return; }
+      payload.config = { loader_id: lid };
+    }
     var req = isEdit
       ? apiPut('/api/dashboards/' + d.id, payload)
       : apiPost('/api/dashboards', payload);

@@ -15,6 +15,7 @@ const KINDS = [
     { value: 'heartbeat', label: 'Heartbeat' },
     { value: 'task-board', label: 'Flight Board' },
     { value: 'robot-map', label: 'Robot Map' },
+    { value: 'node-report', label: 'Node Report' },
 ];
 const kindLabel = (k) => (KINDS.find((x) => x.value === k) || {}).label || k;
 
@@ -179,12 +180,35 @@ function openModal(d) {
     const enabledInput = el('input', { type: 'checkbox' });
     enabledInput.checked = d ? !!d.enabled : true;
 
+    // Loader picker — shown only for node-report kind. The selected loader_id
+    // is stored in config_json so the kiosk resolves which homes to display.
+    const savedConfig = (d && d.config) ? d.config : {};
+    let selectedLoaderID = savedConfig.loader_id || 0;
+    const loaderSelect = el('select', { className: 'form-input' },
+        [el('option', { value: '' }, 'Loading loaders\u2026')]);
+    const loaderField = field('Loader', loaderSelect);
+    apiGet('/api/loader/list').then((resp) => {
+        loaderSelect.innerHTML = '';
+        const items = (resp && resp.loaders) ? resp.loaders : [];
+        if (!items.length) { loaderSelect.appendChild(el('option', { value: '' }, 'No loaders configured')); return; }
+        loaderSelect.appendChild(el('option', { value: '' }, '\u2014 select \u2014'));
+        items.forEach((item) => {
+            const l = item.loader || {};
+            const homes = item.homes || [];
+            const label = l.name + ' (' + l.layout + ', ' + homes.length + ' position' + (homes.length !== 1 ? 's' : '') + ')';
+            const opt = el('option', { value: String(l.id) }, label);
+            if (l.id === selectedLoaderID) opt.selected = true;
+            loaderSelect.appendChild(opt);
+        });
+    }).catch(() => { loaderSelect.innerHTML = ''; loaderSelect.appendChild(el('option', { value: '' }, 'Failed to load')); });
+
     const overlay = el('div', { className: 'modal-overlay active' }, [
         el('div', { className: 'modal', style: { maxWidth: '480px' } }, [
             el('h2', {}, isEdit ? 'Edit Dashboard' : 'New Dashboard'),
             field('Name', nameInput),
             field('Type', kindSelect),
-            field('Area — stations (none selected = whole plant)', pickerBox),
+            field('Area \u2014 stations (none selected = whole plant)', pickerBox),
+            loaderField,
             cellsField,
             el('label', { style: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' } }, [enabledInput, 'Enabled']),
             el('div', { style: { display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' } }, [
@@ -194,19 +218,48 @@ function openModal(d) {
         ]),
     ]);
     document.body.appendChild(overlay);
+
+    function syncKindUI() {
+        const isNodeReport = kindSelect.value === 'node-report';
+        cellsField.style.display = kindSelect.value === 'heartbeat' ? '' : 'none';
+        pickerBox.parentElement.style.display = isNodeReport ? 'none' : '';
+        loaderField.style.display = isNodeReport ? '' : 'none';
+    }
+    kindSelect.addEventListener('change', syncKindUI);
     syncKindUI();
     setTimeout(() => nameInput.focus(), 0);
-
-    function syncKindUI() { cellsField.style.display = (kindSelect.value === 'heartbeat') ? '' : 'none'; }
-    kindSelect.addEventListener('change', syncKindUI);
 
     function close() { overlay.remove(); }
 
     function doSave() {
         const name = nameInput.value.trim();
         if (!name) { toast('Name is required', 'error'); return; }
-        const payload = { name, kind: kindSelect.value, stations: Array.from(selected), enabled: enabledInput.checked };
-        if (kindSelect.value === 'heartbeat') payload.config = buildConfig();
+        const kind = kindSelect.value;
+        const payload = { name, kind, stations: kind !== 'node-report' ? Array.from(selected) : [], enabled: enabledInput.checked };
+        if (kind === 'heartbeat') payload.config = buildConfig();
+        if (kind === 'node-report') {
+            const lid = parseInt(loaderSelect.value, 10);
+            if (!lid) { toast('Select a loader', 'error'); return; }
+            payload.config = { loader_id: lid };
+        }
+        const req = isEdit ? apiPut('/api/dashboards/' + d.id, payload) : apiPost('/api/dashboards', payload);
+        req.then(() => { toast(isEdit ? 'Saved' : 'Created', 'success'); close(); load(); })
+            .catch((e) => toast('Save failed: ' + e, 'error'));
+    }
+
+    function close() { overlay.remove(); }
+
+    function doSave() {
+        const name = nameInput.value.trim();
+        if (!name) { toast('Name is required', 'error'); return; }
+        const kind = kindSelect.value;
+        const payload = { name, kind, stations: kind !== 'node-report' ? Array.from(selected) : [], enabled: enabledInput.checked };
+        if (kind === 'heartbeat') payload.config = buildConfig();
+        if (kind === 'node-report') {
+            const lid = parseInt(loaderSelect.value, 10);
+            if (!lid) { toast('Select a loader', 'error'); return; }
+            payload.config = { loader_id: lid };
+        }
         const req = isEdit ? apiPut('/api/dashboards/' + d.id, payload) : apiPost('/api/dashboards', payload);
         req.then(() => { toast(isEdit ? 'Saved' : 'Created', 'success'); close(); load(); })
             .catch((e) => toast('Save failed: ' + e, 'error'));

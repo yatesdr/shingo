@@ -225,6 +225,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/dashboards", h.apiListDashboards)
 			r.Get("/dashboards/{id}", h.apiGetDashboard)
 			r.Get("/dashboards/{id}/cells", h.apiDashboardCells) // refactor #4: per-dashboard heartbeat cells
+			r.Get("/dashboards/{id}/node-report", h.apiDashboardNodeReport)
 
 			// Payloads & manifest
 			r.Get("/payloads/templates", h.apiListPayloads)
