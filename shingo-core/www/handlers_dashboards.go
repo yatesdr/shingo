@@ -8,8 +8,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"shingocore/domain"
 	"shingocore/service"
-	"shingocore/store/bins"
 )
 
 // dashboardTemplates maps a dashboard kind to the chromeless template that
@@ -270,16 +270,16 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 
 	type nodeRow struct {
 		NodeName     string `json:"node_name"`
-		GroupName   string `json:"group_name"`
+		GroupName    string `json:"group_name"`
 		Occupied     bool   `json:"occupied"`
-		PayloadCode string `json:"payload_code"`
+		PayloadCode  string `json:"payload_code"`
 		UOPRemaining int    `json:"uop_remaining"`
 	}
 	type payloadRow struct {
-		PayloadCode string `json:"payload_code"`
+		PayloadCode  string `json:"payload_code"`
 		Occupied     bool   `json:"occupied"`
 		NodeName     string `json:"node_name"`
-	GroupName   string `json:"group_name"`
+		GroupName    string `json:"group_name"`
 		UOPRemaining int    `json:"uop_remaining"`
 	}
 
@@ -300,7 +300,7 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 			h.jsonError(w, bErr.Error(), http.StatusInternalServerError)
 			return
 		}
-		binByPayload := make(map[string]*bins.Bin, len(allBins))
+		binByPayload := make(map[string]*domain.Bin, len(allBins))
 		for i := range allBins {
 			b := allBins[i]
 			if b.PayloadCode != "" && b.Status != "retired" {
