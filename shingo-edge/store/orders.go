@@ -83,6 +83,11 @@ func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
 	return orders.UpdateStepsJSON(db.DB, id, stepsJSON)
 }
 
+// GetOrderStepsJSON returns the raw steps_json document for an order.
+func (db *DB) GetOrderStepsJSON(id int64) (string, error) {
+	return orders.GetStepsJSON(db.DB, id)
+}
+
 // UpdateOrderStagedExpireAt sets (or clears) the staged_expire_at
 // timestamp on an order.
 func (db *DB) UpdateOrderStagedExpireAt(id int64, stagedExpireAt *time.Time) error {

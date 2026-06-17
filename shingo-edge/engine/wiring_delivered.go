@@ -19,6 +19,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"log"
 
 	"shingo/protocol"
@@ -57,7 +58,24 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if err != nil {
 		return
 	}
-	if order.DeliveryNode != node.CoreNodeName {
+	// Did the bin actually land at this process node? Simple orders carry the
+	// destination in DeliveryNode. Complex orders (press swaps, etc.) leave it
+	// blank — their per-leg destinations live in steps_json — so for a complex
+	// order we check that its final dropoff step targets this node. This keeps
+	// the removal-shaped filter intact (a leg ending at a supermarket has a
+	// final dropoff != this node, so it still no-ops) while letting a swap that
+	// delivers a fresh bin to a producing cell bind the active bin. Without it,
+	// every complex delivery to a producing node failed to bind active_bin_id
+	// and PLC ticks parked in pending_uop_delta forever (HK PLN_04, 2026-06-17).
+	deliveredHere := order.DeliveryNode == node.CoreNodeName
+	if !deliveredHere && order.DeliveryNode == "" && order.OrderType == protocol.OrderTypeComplex {
+		if stepsJSON, sErr := e.db.GetOrderStepsJSON(order.ID); sErr != nil {
+			log.Printf("delivered: order %d — cannot load steps to resolve complex destination: %v", order.ID, sErr)
+		} else {
+			deliveredHere = finalDropoffNode(stepsJSON) == node.CoreNodeName
+		}
+	}
+	if !deliveredHere {
 		return
 	}
 	if _, err := e.db.EnsureProcessNodeRuntime(node.ID); err != nil {
@@ -97,4 +115,26 @@ func deliveredFallbackUOP(claim *processes.NodeClaim) int {
 		return 0
 	}
 	return claim.UOPCapacity
+}
+
+// finalDropoffNode returns the node of the last "dropoff" step in a complex
+// order's step list, or "" if the steps can't be parsed or contain no dropoff.
+// Complex orders don't populate Order.DeliveryNode (their destinations live in
+// steps_json), so the final dropoff is how the delivery handler learns where
+// the bin actually came to rest.
+func finalDropoffNode(stepsJSON string) string {
+	if stepsJSON == "" {
+		return ""
+	}
+	var steps []protocol.ComplexOrderStep
+	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
+		return ""
+	}
+	dest := ""
+	for _, s := range steps {
+		if s.Action == protocol.ActionDropoff && s.Node != "" {
+			dest = s.Node
+		}
+	}
+	return dest
 }

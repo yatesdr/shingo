@@ -230,6 +230,18 @@ func UpdateStepsJSON(db *sql.DB, id int64, stepsJSON string) error {
 	return err
 }
 
+// GetStepsJSON returns the raw steps_json document for an order, or "" when the
+// order has none. Used by the delivery-binding handler to resolve a complex
+// order's final dropoff node — complex orders leave Order.DeliveryNode blank and
+// carry their per-leg destinations here instead.
+func GetStepsJSON(db *sql.DB, id int64) (string, error) {
+	var s sql.NullString
+	if err := db.QueryRow(`SELECT steps_json FROM orders WHERE id=?`, id).Scan(&s); err != nil {
+		return "", err
+	}
+	return s.String, nil
+}
+
 // UpdateStagedExpireAt sets (or clears, when stagedExpireAt is nil) the
 // staged_expire_at timestamp on an order. Times are stored in
 // SQLite-canonical UTC formatting.

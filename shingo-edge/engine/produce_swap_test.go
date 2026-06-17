@@ -106,6 +106,69 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 	return eng
 }
 
+// TestDelivered_ComplexOrderBindsActiveBin pins the Fix 5 binding fix: a bin
+// delivered to a producing node by a COMPLEX order (DeliveryNode blank,
+// destination only in steps_json) must bind active_bin_id. Previously the
+// delivery handler bailed on the empty DeliveryNode and the bin never bound, so
+// PLC ticks parked in pending_uop_delta forever (HK PLN_04, 2026-06-17). The
+// second half pins the removal-shaped filter: a complex order whose final
+// dropoff is elsewhere (a supermarket) must NOT rebind this node.
+func TestDelivered_ComplexOrderBindsActiveBin(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	// Swap mode is irrelevant to the binding fix (handleNodeOrderDelivered keys
+	// on order type + destination, not the claim's swap mode); use the default
+	// to avoid the press-index paired-node requirement.
+	_, nodeID, _, _ := seedProduceNode(t, db, "")
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "get node")
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Complex order whose final dropoff lands at the producing node, with a
+	// blank DeliveryNode (as complex orders have) — destination only in steps.
+	const binID int64 = 4242
+	orderID, err := db.CreateOrder("uuid-cmplx-bind", orders.TypeComplex,
+		&nodeID, false, 1, "", "", "PAIRED", "", true, "WIDGET-A")
+	testutil.MustNoErr(t, err, "create complex order")
+	steps := `[{"action":"wait","node":"PAIRED"},{"action":"pickup","node":"PAIRED"},{"action":"dropoff","node":"` + node.CoreNodeName + `"}]`
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID, steps), "set steps")
+	bid := binID
+	testutil.MustNoErr(t, db.UpdateOrderBinID(orderID, &bid), "set bin id")
+
+	eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
+		OrderID: orderID, OrderType: orders.TypeComplex, ProcessNodeID: &nodeID, BinID: &bid,
+	}})
+
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "get runtime")
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != binID {
+		t.Fatalf("complex delivery to producing node: ActiveBinID = %v, want %d (must bind)", rt.ActiveBinID, binID)
+	}
+
+	// Removal-shaped complex order (final dropoff = a supermarket, not this
+	// node) must NOT rebind — the active bin stays bin 4242.
+	const binID2 int64 = 5555
+	orderID2, err := db.CreateOrder("uuid-cmplx-removal", orders.TypeComplex,
+		&nodeID, false, 1, "", "", node.CoreNodeName, "", true, "WIDGET-A")
+	testutil.MustNoErr(t, err, "create removal order")
+	removalSteps := `[{"action":"pickup","node":"` + node.CoreNodeName + `"},{"action":"dropoff","node":"FILLED-STORAGE"}]`
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID2, removalSteps), "set removal steps")
+	bid2 := binID2
+	testutil.MustNoErr(t, db.UpdateOrderBinID(orderID2, &bid2), "set removal bin id")
+
+	eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
+		OrderID: orderID2, OrderType: orders.TypeComplex, ProcessNodeID: &nodeID, BinID: &bid2,
+	}})
+
+	rt2, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "get runtime after removal")
+	if rt2.ActiveBinID == nil || *rt2.ActiveBinID != binID {
+		t.Errorf("after removal-shaped complex delivery: ActiveBinID = %v, want %d unchanged (removal must NOT rebind)", rt2.ActiveBinID, binID)
+	}
+}
+
 func TestProduceSimple_FinalizeIngest(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
