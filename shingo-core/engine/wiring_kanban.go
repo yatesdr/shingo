@@ -14,6 +14,18 @@ import (
 	"shingo/protocol"
 )
 
+// TODO(kanban-eval): this demand-signal path (handleKanbanDemand →
+// sendDemandSignals → DemandSignal → edge MaybeCreate{Loader,Unloader}*) is
+// WIRED but DORMANT in practice. At Hopkinsville (2026-06-17) every
+// BinUpdatedEvent skips or suppresses: empties are ignored, and the live press
+// flow delivers fulls/empties via complex orders that bypass the kanban
+// auto-replenish/drain entirely. DECIDE: remove as dead code, or finish wiring
+// and adopt it. Study the produce (loader empty-in) and consume (unloader
+// full-in) paths SEPARATELY — produce may be live at other plants, consume is
+// dormant; verify other plants (e.g. Springfield) before any removal.
+// NB: do NOT fold isStorageSlot into this decision — it is shared with
+// arrival-staging (resolveNodeStaging) and is load-bearing regardless.
+//
 // handleKanbanDemand checks if a bin event at a storage node should trigger
 // demand signals to Edge stations via the demand registry.
 //
@@ -91,6 +103,9 @@ func (e *Engine) isStorageSlot(nodeID int64) bool {
 	return parent.NodeTypeCode == protocol.NodeClassLANE || parent.NodeTypeCode == protocol.NodeClassNGRP
 }
 
+// TODO(kanban-eval): part of the dormant demand-signal path — see the eval note
+// on handleKanbanDemand before removing or rewiring this.
+//
 // sendDemandSignals looks up the demand registry for the given payload code and role,
 // then sends a DemandSignal to each matching Edge station.
 func (e *Engine) sendDemandSignals(payloadCode string, role protocol.ClaimRole, reason string) {
