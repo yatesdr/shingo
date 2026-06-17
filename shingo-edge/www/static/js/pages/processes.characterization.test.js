@@ -546,6 +546,55 @@ async function runSaveClaimManualSwapCase() {
     }
 }
 
+// Run saveClaim for a (produce, manual_swap) loader claim with NO allowed
+// payloads selected — the real post-cutover flow, where the per-style picker is
+// hidden because Core owns the loader's payload set (the loader board). Pins the
+// fix for the "Select at least one allowed payload" dead end: validation must NOT
+// block, and the claim saves with a blank payload_code + empty allowed list.
+async function runSaveClaimManualSwapNoPickerCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+
+    elements['claims-style-selector'].value = '7';
+    ctx.onClaimsStyleChanged();
+
+    elements['claims-add-node'].value = 'NODE_L';
+    elements['claims-add-role'].value = 'produce';
+    elements['claims-add-swap'].value = 'manual_swap';
+    elements['claims-add-capacity'].value = '0';
+    elements['claims-add-reorder'].value = '0';
+    elements['claims-add-lineside-soft'].value = '0';
+
+    // No checkbox injected: the picker is retired, so getSelectedAllowedPayloads()
+    // returns []. Pre-fix this tripped "Select at least one allowed payload" and
+    // saveClaim returned without POSTing.
+    ctx.toggleClaimsAddPayload();
+    ctx.validateClaimStaging();
+
+    await ctx.saveClaim();
+
+    if (apiRecorder.length !== 1) {
+        reportFailure(`saveClaim/manual_swap-no-picker: expected 1 POST (validation must not block), got ${apiRecorder.length}`, 1, apiRecorder.length);
+        return;
+    }
+    const body = apiRecorder[0].body;
+    const checks = {
+        role: 'produce',
+        swap_mode: 'manual_swap',
+        payload_code: '',
+        allowed_payload_codes: [],
+    };
+    for (const k of Object.keys(checks)) {
+        if (JSON.stringify(body[k]) !== JSON.stringify(checks[k])) {
+            reportFailure(`saveClaim/manual_swap-no-picker body[${k}]`, checks[k], body[k]);
+        } else {
+            passed++;
+        }
+    }
+}
+
 // Run saveClaim for a (produce, sequential) claim with evacuate_on_changeover
 // — verifies the changeover mechanic is now driven by swap mode + the
 // evacuate flag on the active claim, not by a special "changeover" role.
@@ -593,6 +642,7 @@ async function runSaveClaimEvacuateOnChangeoverCase() {
     runVisibilityCases();
     await runSaveClaimSchemaCase();
     await runSaveClaimManualSwapCase();
+    await runSaveClaimManualSwapNoPickerCase();
     await runSaveClaimEvacuateOnChangeoverCase();
 
     if (failures > 0) {

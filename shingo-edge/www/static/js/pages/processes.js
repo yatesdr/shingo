@@ -845,11 +845,11 @@ function validateClaimState(state) {
     if (!state.coreNodeName) {
         errors.push({ field: 'coreNodeName', msg: 'Select a core node' });
     }
-    if (state.swapMode === 'manual_swap') {
-        if (state.allowedPayloadCodes.length === 0) {
-            errors.push({ field: 'allowedPayloadCodes', msg: 'Select at least one allowed payload' });
-        }
-    } else if ((state.role === 'consume' || state.role === 'produce') && !state.payloadCode) {
+    // manual_swap loaders carry no edge-side allowed list: Core owns the loader's
+    // payload set (set on the loader board), so the per-style edge picker was
+    // retired and there is nothing to require here. Other roles still need a
+    // primary payload.
+    if (state.swapMode !== 'manual_swap' && (state.role === 'consume' || state.role === 'produce') && !state.payloadCode) {
         errors.push({ field: 'payloadCode', msg: 'Select a payload' });
     }
     // single_robot needs both inbound+outbound staging, two_robot just inbound.
@@ -1113,21 +1113,17 @@ async function saveClaim() {
         return;
     }
 
-    // manual_swap forces payload_code to the first allowed payload for
-    // backwards compat with the wire format (existing claims still have
-    // a single primary payload_code; manual_swap's allowed_payload_codes
-    // is the set the operator can switch among).
-    var primaryPayload = state.payloadCode;
-    if (state.swapMode === 'manual_swap') {
-        primaryPayload = state.allowedPayloadCodes[0];
-    }
+    // manual_swap claims carry no edge-side payload: Core owns the loader's
+    // payload set (loader board), so payload_code is blank and the operator
+    // switches among the aggregate's payloads at load time.
+    var primaryPayload = state.swapMode === 'manual_swap' ? '' : state.payloadCode;
 
     var claimBody = {
         style_id: state.styleId,
         core_node_name: state.coreNodeName,
         role: state.role,
         swap_mode: state.swapMode,
-        payload_code: state.swapMode === 'manual_swap' ? '' : primaryPayload,
+        payload_code: primaryPayload,
         allowed_payload_codes: state.allowedPayloadCodes,
         uop_capacity: state.uopCapacity,
         reorder_point: state.reorderPoint,

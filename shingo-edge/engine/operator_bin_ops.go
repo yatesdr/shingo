@@ -12,25 +12,27 @@ import (
 )
 
 // loadablePayloads returns the payload codes an operator may load or request at
-// this manual_swap node: every payload configured on the physical loader across
-// all styles and all cells sharing it (PayloadsForLoader's `all`). It is
-// deliberately NOT gated by which style is active — a loader responds to what is
-// called for, not to the running style:
+// this manual_swap loader node. Post-cutover the loader's payload set is
+// Core-owned, so this resolves it from the aggregate — the SAME resolver the
+// operator board uses in station_service — so the board and this gate never
+// disagree: the operator must be able to load every payload their board offers.
 //
-//   - A normal loader fills system demand (UOP-threshold / default replenish)
-//     and doesn't care whether a style is active or inactive; a shared loader
-//     (e.g. SNF2 + SNF3) must accept either cell's payload.
-//   - A transitional loader is operator-driven and stages ahead for upcoming
-//     styles.
+// It is deliberately NOT gated by which style is active — a loader responds to
+// what is called for, not the running style: a shared loader (e.g. SNF2 + SNF3)
+// must accept either cell's payload, and an operator-driven loader stages ahead
+// for upcoming styles. The aggregate's set is style-agnostic by construction.
 //
-// The active-vs-all distinction is purely a board *display* concern: a
-// transitional board defaults to the active union and toggles to "show all".
-// The server gate only ensures the payload is one this loader is physically
-// configured for — so it's the same `all` union for both loader types.
-//
-// Fails open to this node's active-claim list if the union read errors or comes
-// back empty, so a DB hiccup can't strand the operator with zero loadable cards.
+// Fallback order keeps the operator from being stranded with zero loadable cards
+// when the loader isn't (yet) in the aggregate — legacy / not-migrated nodes use
+// the per-style edge claim union (PayloadsForLoader), then the claim's own list,
+// and a union read error fails open to the active claim. This is the pre-cutover
+// behaviour, preserved only for the non-aggregate path.
 func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeClaim) []string {
+	if l, err := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(claim.Role)); err == nil && l != nil {
+		if codes := l.LoadablePayloadCodes(); len(codes) > 0 {
+			return codes
+		}
+	}
 	_, all, _, err := processes.PayloadsForLoader(e.db.DB, node.CoreNodeName, claim.Role)
 	if err != nil {
 		e.logFn("loader: payload union read for %s failed, using active claim: %v", node.CoreNodeName, err)
@@ -593,11 +595,13 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
 	}
 
-	// Validate payload code against allowed list
+	// Validate payload code against the loader's Core-owned payload set — same
+	// aggregate-first resolution as the produce side (see loadablePayloads), so a
+	// consume loader's board and gate agree on what may be requested.
 	if payloadCode == "" {
 		return nil, fmt.Errorf("no payload code specified")
 	}
-	if !slices.Contains(claim.AllowedPayloads(), payloadCode) {
+	if !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
 		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 

@@ -257,11 +257,9 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 					// Core owns the loader's payload set — the board shows it (the edge claim
 					// is just the node now). Overrides the claim-derived set above; falls back
 					// to it only when the loader carries no Core payloads (legacy / not migrated).
-					if ps := loader.PayloadSet(); len(ps) > 0 {
-						codes := make([]string, len(ps))
-						for i, pc := range ps {
-							codes[i] = string(pc)
-						}
+					// Same LoadablePayloadCodes the load/request gate uses (incl. dedicated
+					// positions), so the board and the engine never disagree about what loads.
+					if codes := loader.LoadablePayloadCodes(); len(codes) > 0 {
 						nodeView.ActiveStylePayloads = codes
 						nodeView.AllStylePayloads = codes
 					}

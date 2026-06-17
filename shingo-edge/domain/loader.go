@@ -373,6 +373,24 @@ func (l *Loader) Positions() []Position { return append([]Position(nil), l.posit
 // a dedicated loader's payloads live per-position).
 func (l *Loader) PayloadSet() []PayloadCode { return append([]PayloadCode(nil), l.payloadSet...) }
 
+// LoadablePayloadCodes returns the flattened set of payload codes an operator may
+// load or request at this loader: the shared allowed set (shared_window) plus any
+// dedicated-position payloads. This is the Core-owned source of truth that the
+// load/request gates and the operator board both read, so they never disagree
+// about what is loadable. SynthClaim seeds its AllowedPayloadCodes from the same set.
+func (l *Loader) LoadablePayloadCodes() []string {
+	codes := make([]string, 0, len(l.payloadSet)+len(l.positions))
+	for _, p := range l.payloadSet {
+		codes = append(codes, string(p))
+	}
+	for _, pos := range l.positions {
+		if pos.Payload != "" {
+			codes = append(codes, string(pos.Payload))
+		}
+	}
+	return codes
+}
+
 // SynthClaim builds an in-memory, NON-PERSISTED manual_swap NodeClaim that
 // represents this loader at coreNode. It is the Core-owned-loader path's stand-in
 // for a per-style style_node_claim: a node that is a window/position of a Core
@@ -383,20 +401,11 @@ func (l *Loader) PayloadSet() []PayloadCode { return append([]PayloadCode(nil), 
 // carries the loader's payloads (shared set, plus any dedicated-position payloads)
 // so loadablePayloads resolves correctly off the claim too.
 func (l *Loader) SynthClaim(coreNode NodeID) *NodeClaim {
-	codes := make([]string, 0, len(l.payloadSet)+len(l.positions))
-	for _, p := range l.payloadSet {
-		codes = append(codes, string(p))
-	}
-	for _, pos := range l.positions {
-		if pos.Payload != "" {
-			codes = append(codes, string(pos.Payload))
-		}
-	}
 	return &NodeClaim{
 		CoreNodeName:        string(coreNode),
 		Role:                protocol.ClaimRole(l.role),
 		SwapMode:            protocol.SwapModeManualSwap,
-		AllowedPayloadCodes: codes,
+		AllowedPayloadCodes: l.LoadablePayloadCodes(),
 		InboundSource:       l.inboundSource,
 		OutboundDestination: l.outboundDest,
 		AutoConfirm:         true, // mandatory for bin_loader claims (auto-confirm delivery)
