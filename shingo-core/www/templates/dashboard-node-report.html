@@ -4,9 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Dashboard.Name}} — Node Report</title>
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/dashboard.css?v={{cacheBust}}">
-  <link rel="stylesheet" href="/static/style.css?v={{cacheBust}}">
+  <link rel="icon" type="image/svg+xml"
+    href="/static/favicon.svg">
+  <link rel="stylesheet"
+    href="/static/dashboard.css?v={{cacheBust}}">
+  <link rel="stylesheet"
+    href="/static/style.css?v={{cacheBust}}">
 </head>
 <body class="dash-kiosk"
       data-dashboard-id="{{.Dashboard.ID}}"
@@ -23,20 +26,12 @@
 
   <main id="dash-main">
     <div class="nr-stats" id="nr-stats"></div>
-    <table class="nr-table" id="nr-table">
-      <thead>
-        <tr>
-          <th>Node</th>
-          <th>Node Group</th>
-          <th>Status</th>
-          <th>Payload</th>
-        </tr>
-      </thead>
-      <tbody id="nr-body"></tbody>
-    </table>
+    <div class="nr-columns" id="nr-columns"></div>
     <div class="board-empty" id="nr-empty" style="display:none">No nodes configured</div>
   </main>
 
-  <script type="module" src="/static/pages/dashboard-node-report.js?v={{cacheBust}}"></script>
+  <script type="module"
+    src="/static/pages/dashboard-node-report.js?v={{cacheBust}}">
+  </script>
 </body>
 </html>

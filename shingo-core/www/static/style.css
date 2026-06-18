@@ -1513,12 +1513,33 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   font-size: 0.9rem;
   color: var(--text-muted);
 }
-.nr-table {
+.nr-columns {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
   width: 100%;
-  border-collapse: collapse;
-  font-size: 1.15rem;
+  height: calc(100vh - 140px);
+  overflow: hidden;
 }
-.nr-table thead th {
+.nr-col-table {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 1.15rem;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.nr-col-table thead {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+.nr-col-table tbody {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+.nr-col-table thead th {
   text-align: left;
   padding: 0.6rem 1rem;
   border-bottom: 2px solid var(--border);
@@ -1527,15 +1548,16 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   font-size: 0.95rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  background: var(--surface);
 }
-.nr-table tbody tr {
+.nr-col-table tbody tr {
   border-bottom: 1px solid var(--border);
   transition: background 0.15s;
 }
-.nr-table tbody tr:hover {
+.nr-col-table tbody tr:hover {
   background: rgba(255, 255, 255, 0.03);
 }
-.nr-table tbody td {
+.nr-col-table tbody td {
   padding: 0.75rem 1rem;
   vertical-align: middle;
 }
