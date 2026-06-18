@@ -222,44 +222,29 @@ func GetStats(db *sql.DB, f Filter) (*Stats, error) {
 	return s, nil
 }
 
-// GetStatsV2 computes the corrected mission stats for the dashboards (plan
-// §3.A / §8 #5). Confirmed / hard-failed / skipped come straight from
-// terminal_state; the ambiguous STOPPED/cancelled rows are reclassified into
-// operator-cancel vs system-stop by joining each to its terminal
-// order_history detail (classifyStops). success_rate is
-// Confirmed/(Confirmed+Failed); cancelled and skipped are excluded.
+// GetStatsV2 computes the corrected dashboard mission stats (plan §3.A / §8 #5).
+// COUNTS (confirmed/failed/cancelled/skipped + success_rate) come from the
+// orders table — the complete terminal record, including failures that never
+// became a robot mission — via order_outcome.go. success_rate is
+// Confirmed/(Confirmed+Failed); cancelled and skipped are excluded. DURATIONS
+// (avg/P50/P95 lead + avg execution) stay on mission_telemetry: only robot
+// missions have an execution interval.
 func GetStatsV2(db *sql.DB, f Filter) (*StatsV2, error) {
-	where, args := buildWhere(f)
 	s := &StatsV2{}
 
-	countQuery := fmt.Sprintf(`SELECT
-		COUNT(*),
-		COUNT(*) FILTER (WHERE terminal_state IN ('FINISHED','delivered','confirmed')),
-		COUNT(*) FILTER (WHERE terminal_state IN ('FAILED','failed')),
-		COUNT(*) FILTER (WHERE terminal_state IN ('SKIPPED','skipped')),
-		COUNT(*) FILTER (WHERE terminal_state IN ('STOPPED','stopped','cancelled','canceled'))
-		FROM mission_telemetry%s`, where)
-	var hardFailed, stoppedCancelled int64
-	if err := db.QueryRow(countQuery, args...).Scan(
-		&s.Total, &s.Confirmed, &hardFailed, &s.Skipped, &stoppedCancelled,
-	); err != nil {
+	c, err := getOrderOutcomeCounts(db, f)
+	if err != nil {
 		return nil, err
 	}
+	s.Total, s.Confirmed, s.Failed, s.Cancelled, s.Skipped = c.total, c.confirmed, c.failed, c.cancelled, c.skipped
 
-	s.Failed = hardFailed
-	if stoppedCancelled > 0 {
-		b, err := classifyStops(db, where, args)
+	if c.cancelled > 0 {
+		o, err := getCancelOrigins(db, f)
 		if err != nil {
-			// Non-fatal: fall back to counting STOPPED/cancelled as cancelled
-			// (legacy behavior) rather than failing the whole stats call.
-			log.Printf("telemetry: stop classification: %v", err)
-			s.Cancelled = stoppedCancelled
+			// Non-fatal: keep the cancelled total, drop only the origin sub-split.
+			log.Printf("telemetry: cancel-origin split: %v", err)
 		} else {
-			s.Failed += b.systemStops
-			s.CancelledShingo = b.cancelShingo
-			s.CancelledRDS = b.cancelRDS
-			s.UnclassifiedStops = b.cancelUnclassified
-			s.Cancelled = b.cancelShingo + b.cancelRDS + b.cancelUnclassified
+			s.CancelledShingo, s.CancelledRDS, s.UnclassifiedStops = o.shingo, o.rds, o.unclassified
 		}
 	}
 
@@ -267,12 +252,13 @@ func GetStatsV2(db *sql.DB, f Filter) (*StatsV2, error) {
 		s.SuccessRate = float64(s.Confirmed) / float64(denom) * 100
 	}
 
-	// AvgDuration/P50/P95 stay lead time (created→terminal); AvgExecution is the
-	// assignment→completion figure the tile headlines (Q-031). Filter each metric
-	// INDEPENDENTLY — lead on duration_ms>0, execution on exec_ms>0 — so a
-	// nonpositive lead (e.g. the dev sim's clock-drifted durations) doesn't
-	// suppress the execution average, and vice-versa. exec_ms is computed once
-	// per row in the derived table.
+	// Durations from mission_telemetry. AvgDuration/P50/P95 are lead time
+	// (created→terminal); AvgExecution is assignment→completion the tile
+	// headlines (Q-031). Filter each metric INDEPENDENTLY so a nonpositive lead
+	// (the dev sim's clock-drifted durations) doesn't suppress the execution
+	// average, and vice-versa. exec_ms is computed once per row in the derived
+	// table.
+	where, args := buildWhere(f)
 	durQuery := fmt.Sprintf(`SELECT
 		COALESCE(AVG(duration_ms) FILTER (WHERE duration_ms > 0), 0)::BIGINT,
 		COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms > 0), 0)::BIGINT,
@@ -285,64 +271,6 @@ func GetStatsV2(db *sql.DB, f Filter) (*StatsV2, error) {
 	}
 
 	return s, nil
-}
-
-// stopBreakdown splits the STOPPED/cancelled bucket: system-initiated stops
-// (counted as failures) and cancels by origin (Q-030). systemStops + the three
-// cancel counts always sum to the STOPPED/cancelled total.
-type stopBreakdown struct {
-	systemStops        int64 // grace/timeout/structural/abandon → failures
-	cancelShingo       int64 // "cancelled by …" / "aborted by …"
-	cancelRDS          int64 // "fleet order stopped"
-	cancelUnclassified int64 // detail matched no pattern
-}
-
-// classifyStops pulls the terminal order_history detail for every
-// STOPPED/cancelled mission in the window and classifies each in Go via
-// domain.ClassifyTermination (failure vs cancel) then domain.ClassifyCancelOrigin
-// (shingo vs rds vs unclassified). The LEFT JOIN LATERAL yields exactly one row
-// per mission (detail ” when no history exists).
-func classifyStops(db *sql.DB, where string, args []any) (stopBreakdown, error) {
-	stopCond := "terminal_state IN ('STOPPED','stopped','cancelled','canceled')"
-	stopWhere := where
-	if stopWhere == "" {
-		stopWhere = " WHERE " + stopCond
-	} else {
-		stopWhere += " AND " + stopCond
-	}
-	q := fmt.Sprintf(`SELECT mt.terminal_state, COALESCE(oh.detail, '')
-		FROM mission_telemetry mt
-		LEFT JOIN LATERAL (
-			SELECT detail FROM order_history oh
-			WHERE oh.order_id = mt.order_id
-			ORDER BY oh.created_at DESC, oh.id DESC
-			LIMIT 1
-		) oh ON TRUE%s`, stopWhere)
-	rows, err := db.Query(q, args...)
-	if err != nil {
-		return stopBreakdown{}, err
-	}
-	defer rows.Close()
-	var b stopBreakdown
-	for rows.Next() {
-		var ts, detail string
-		if err := rows.Scan(&ts, &detail); err != nil {
-			return stopBreakdown{}, err
-		}
-		if domain.ClassifyTermination(ts, detail) == domain.OutcomeFailed {
-			b.systemStops++
-			continue
-		}
-		switch domain.ClassifyCancelOrigin(detail) {
-		case domain.CancelOriginShingo:
-			b.cancelShingo++
-		case domain.CancelOriginRDS:
-			b.cancelRDS++
-		default:
-			b.cancelUnclassified++
-		}
-	}
-	return b, rows.Err()
 }
 
 func buildWhere(f Filter) (string, []any) {

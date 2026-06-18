@@ -105,18 +105,21 @@ type TelemetryStats struct {
 //
 //	success_rate = Confirmed / (Confirmed + Failed) * 100
 //
-// Cancelled and Skipped are excluded from the denominator (a missing source
-// bin the operator cancels is not a robot failure). System-initiated stops
-// (grace/timeout/structural) count as failures, distinguished from
-// operator cancels by ClassifyTermination on the order_history detail.
+// Cancelled and Skipped are excluded from the denominator (a deliberate cancel
+// or a never-needed skip is not a fulfillment failure). COUNTS are sourced from
+// the orders table — the complete terminal record, including failures that
+// never became a robot mission (store/telemetry/order_outcome.go) — so
+// system-initiated stops the pipeline already files as status='failed' count
+// directly, with no separate reclassification. Durations are still computed
+// from mission_telemetry (only robot missions have an execution interval).
 //
 // Served by /api/missions/stats/v2 as a sibling of the legacy
 // /api/missions/stats so existing consumers (current missions.js) keep
 // seeing the old number until they migrate.
 type TelemetryStatsV2 struct {
-	Total     int64 `json:"total"`     // all terminal rows in the window
-	Confirmed int64 `json:"confirmed"` // FINISHED / delivered / confirmed
-	Failed    int64 `json:"failed"`    // hard failures + system-initiated stops
+	Total     int64 `json:"total"`     // all terminal orders in the window
+	Confirmed int64 `json:"confirmed"` // orders.status='confirmed'
+	Failed    int64 `json:"failed"`    // orders.status='failed' (incl. pre-dispatch + system stops)
 	Cancelled int64 `json:"cancelled"` // all cancels (shingo + rds + unclassified)
 	// Cancelled origin split (Q-030); sum to Cancelled. Shown as the Cancelled
 	// tile sub-stat so an anonymous "fleet order stopped" wedge is visible.
@@ -138,10 +141,11 @@ type TelemetryStatsV2 struct {
 // (plan §3.B / §15.B). One endpoint returns every metric per bucket so the
 // 2×2 grid (throughput, success rate, P50/P95 duration, cancellation rate)
 // and the hero sparklines are all served by a single fetch ("fetched once",
-// §3.B / §3.A). SuccessRate here is a bucket-level approximation —
-// Confirmed/(Confirmed+Failed) using hard failures only, without the
-// order_history stop reclassification GetStatsV2 does (too expensive
-// per-bucket); the precise number lives on the hero.
+// §3.B / §3.A). COUNTS (Total/Confirmed/Failed/Cancelled + SuccessRate) are
+// sourced per-bucket from the orders table — the same complete terminal record
+// the hero uses — so the bucket success rate matches the hero's definition
+// (no longer a hard-failures-only approximation). P50/P95 execution comes from
+// mission_telemetry; GetTimeseries merges the two by bucket.
 type TelemetryBucket struct {
 	BucketStart   time.Time `json:"bucket_start"`
 	Total         int64     `json:"total"`
