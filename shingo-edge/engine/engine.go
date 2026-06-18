@@ -18,6 +18,7 @@ package engine
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -397,19 +398,48 @@ func (e *Engine) OrderService() *service.OrderService           { return e.order
 // ── Core node sync ──────────────────────────────────────────────────
 
 // SetCoreNodes updates the core node set and emits EventCoreNodesUpdated.
+//
+// Core qualifies a group-child node's name as "Group.Child" when it builds the
+// node list (core_data_service.go), purely for display uniqueness in the edge
+// pickers. The runtime, however, keys on the BARE child name everywhere that
+// matters — loader windows (BuildLoaderInfos → node.Name), the orders a claim
+// emits (consume_plan: SimpleDest = claim.CoreNodeName), and Core's own node
+// resolution. So a node picked under its qualified name matches no loader window
+// and emits an order Core can't resolve (the unloader-board-blank bug). Trim to
+// the bare name here, at the single ingestion point, so every picker downstream
+// stores the identity the runtime matches. Collision-safe: if two qualified
+// names reduce to the same bare name, the later keeps its qualified form so no
+// node is silently dropped.
 func (e *Engine) SetCoreNodes(nodes []protocol.NodeInfo) {
 	e.coreNodesMu.Lock()
 	e.coreNodes = make(map[string]protocol.NodeInfo, len(nodes))
+	normalized := make([]protocol.NodeInfo, 0, len(nodes))
 	for _, n := range nodes {
+		if bare := bareNodeName(n.Name); bare != n.Name {
+			if _, taken := e.coreNodes[bare]; !taken {
+				n.Name = bare
+			}
+		}
 		e.coreNodes[n.Name] = n
+		normalized = append(normalized, n)
 	}
 	e.coreNodesMu.Unlock()
 
 	e.Events.Emit(Event{
 		Type:      EventCoreNodesUpdated,
 		Timestamp: clock.Now(),
-		Payload:   CoreNodesUpdatedEvent{Nodes: nodes},
+		Payload:   CoreNodesUpdatedEvent{Nodes: normalized},
 	})
+}
+
+// bareNodeName strips Core's display-only "Group." prefix from a group-child
+// node name, returning the bare child name the runtime keys on. Node names carry
+// no dot themselves, so the segment after the last dot is the child name.
+func bareNodeName(name string) string {
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		return name[i+1:]
+	}
+	return name
 }
 
 // CoreNodes returns a copy of the core node set.
