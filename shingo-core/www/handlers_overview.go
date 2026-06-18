@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"time"
 
 	"shingo/shared/clock"
 )
@@ -102,47 +103,75 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 		return rows[i]["util_pct"].(float64) > rows[j]["util_pct"].(float64)
 	})
 
-	// Fleet Load: hourly concurrency for the viewed day (the filter's Until
-	// day, else today). Truncate the day in the plant timezone:
-	// parseMissionFilter normalizes Until to UTC, so truncating in its own
-	// (UTC) location rolled "today 23:59 plant-local" into tomorrow's UTC day —
-	// charting an all-future, all-zero series (0% util, "No peak in window").
-	day := clock.Now()
-	if f.Until != nil {
-		day = *f.Until
-	}
-	dayStart := plantDayStart(day)
-	conc, _ := h.engine.MissionService().HourlyConcurrency(dayStart, f.StationID)
+	// Fleet Load: on a Today-width window keep the hourly intraday concurrency
+	// curve; on a multi-day range (7d/30d) switch to a per-day peak/avg rollup
+	// so the chart honors the range selector — the curve used to always show a
+	// single day regardless of range. avg_load/peak/util are computed from
+	// whichever series is in play; load_granularity tells the frontend which
+	// shape load_series carries.
+	var (
+		loadSeries      any
+		loadGranularity string
+		peak            int64
+		peakHour        string
+		avgLoad         float64
+	)
+	if f.Since != nil && f.Until != nil && f.Until.Sub(*f.Since) > 36*time.Hour {
+		loadGranularity = "day"
+		days, _ := h.engine.MissionService().DailyConcurrency(*f.Since, *f.Until, f.StationID)
+		loadSeries = days
+		var sum float64
+		for _, d := range days {
+			sum += d.Avg
+			if d.Peak > peak {
+				peak = d.Peak
+				peakHour = d.Day.In(plantLocation).Format("Jan 2") // plant-local day
+			}
+		}
+		if len(days) > 0 {
+			avgLoad = sum / float64(len(days)) // mean of daily-average concurrency
+		}
+	} else {
+		loadGranularity = "hour"
+		// The viewed day is the filter's Until day, else today. Truncate in the
+		// plant timezone: parseMissionFilter normalizes Until to UTC, so
+		// truncating in its own (UTC) location rolled "today 23:59 plant-local"
+		// into tomorrow's UTC day — charting an all-future, all-zero series.
+		day := clock.Now()
+		if f.Until != nil {
+			day = *f.Until
+		}
+		conc, _ := h.engine.MissionService().HourlyConcurrency(plantDayStart(day), f.StationID)
 
-	// Clamp the series to elapsed hours (min(now, until)). A "today" view at 9am
-	// otherwise averages in ~15 future zero-hours (deflating avg load / fleet
-	// util) and a stray future bucket could read as the peak. Comparison is on
-	// the absolute instant, so the bucket/cutoff display locations don't matter.
-	cutoff := clock.Now()
-	if f.Until != nil && f.Until.Before(cutoff) {
-		cutoff = *f.Until
-	}
-	kept := conc[:0]
-	for _, c := range conc {
-		if !c.Hour.After(cutoff) {
-			kept = append(kept, c)
+		// Clamp to elapsed hours (min(now, until)): a "today" view at 9am
+		// otherwise averages in ~15 future zero-hours (deflating avg load / fleet
+		// util) and a stray future bucket could read as the peak.
+		cutoff := clock.Now()
+		if f.Until != nil && f.Until.Before(cutoff) {
+			cutoff = *f.Until
+		}
+		kept := conc[:0]
+		for _, c := range conc {
+			if !c.Hour.After(cutoff) {
+				kept = append(kept, c)
+			}
+		}
+		conc = kept
+		loadSeries = conc
+
+		var sum int64
+		for _, c := range conc {
+			sum += c.Concurrency
+			if c.Concurrency > peak {
+				peak = c.Concurrency
+				peakHour = c.Hour.In(plantLocation).Format("15:04") // plant-local, not UTC
+			}
+		}
+		if len(conc) > 0 {
+			avgLoad = float64(sum) / float64(len(conc))
 		}
 	}
-	conc = kept
 
-	var peak, sum int64
-	peakHour := ""
-	for _, c := range conc {
-		sum += c.Concurrency
-		if c.Concurrency > peak {
-			peak = c.Concurrency
-			peakHour = c.Hour.In(plantLocation).Format("15:04") // plant-local, not UTC
-		}
-	}
-	avgLoad := 0.0
-	if len(conc) > 0 {
-		avgLoad = float64(sum) / float64(len(conc))
-	}
 	// size is the count of real (non-blank) robots, accumulated above.
 	utilPct := 0.0
 	if size > 0 {
@@ -162,8 +191,9 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 			"headroom":         float64(size) - avgLoad,
 			"ceiling_reached":  size > 0 && peak >= size,
 		},
-		"load_series":    conc,
-		"typical_series": []any{}, // typical-day overlay deferred (Q-008)
-		"robots":         rows,
+		"load_series":      loadSeries,
+		"load_granularity": loadGranularity,
+		"typical_series":   []any{}, // typical-day overlay deferred (Q-008)
+		"robots":           rows,
 	})
 }

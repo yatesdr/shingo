@@ -46,9 +46,15 @@ func (s *MissionService) RobotMissionAggs(f telemetry.Filter) ([]telemetry.Robot
 }
 
 // HourlyConcurrency returns 24 hourly fleet-concurrency points for the Fleet
-// Load chart (plan §15.C).
+// Load chart's single-day (Today) view (plan §15.C).
 func (s *MissionService) HourlyConcurrency(dayStart time.Time, stationID string) ([]telemetry.HourConcurrency, error) {
 	return s.db.GetHourlyConcurrency(dayStart, stationID)
+}
+
+// DailyConcurrency returns per-day peak/avg fleet concurrency over [since,
+// until] for the Fleet Load chart's multi-day (7d/30d) view (plan §15.C).
+func (s *MissionService) DailyConcurrency(since, until time.Time, stationID string) ([]telemetry.DayConcurrency, error) {
+	return s.db.GetDailyConcurrency(since, until, stationID)
 }
 
 // Breakdown returns the top-10 mission groups by robot or route (plan §3.F).

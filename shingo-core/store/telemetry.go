@@ -48,6 +48,10 @@ func (db *DB) GetHourlyConcurrency(dayStart time.Time, stationID string) ([]tele
 	return telemetry.GetHourlyConcurrency(db.DB, dayStart, stationID)
 }
 
+func (db *DB) GetDailyConcurrency(since, until time.Time, stationID string) ([]telemetry.DayConcurrency, error) {
+	return telemetry.GetDailyConcurrency(db.DB, since, until, stationID)
+}
+
 func (db *DB) GetMissionBreakdown(f telemetry.Filter, by string) ([]telemetry.BreakdownRow, error) {
 	return telemetry.GetBreakdown(db.DB, f, by)
 }

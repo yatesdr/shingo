@@ -11,7 +11,6 @@ import { createFleetRow, updateFleetRow } from '/static/components/RobotTile.js'
 
 export function createFleetSection(store) {
     let chart = null;
-    let curRange = 'today'; // item 3 tail: drives the single-day chart's "(last day of range)" caption
 
     function mount() {
         installChartThemeHook();
@@ -40,7 +39,6 @@ export function createFleetSection(store) {
     }
 
     function refresh(state) {
-        curRange = state.range;
         const p = new URLSearchParams();
         const win = windowFor(state.range);
         p.set('since', win.since); p.set('until', win.until);
@@ -67,7 +65,7 @@ export function createFleetSection(store) {
         if (ceil) ceil.style.display = f.ceiling_reached ? '' : 'none';
 
         renderSummary(f);
-        renderChart(data.load_series || [], data.typical_series || [], f.size);
+        renderChart(data.load_series || [], data.typical_series || [], f.size, data.load_granularity || 'hour');
         renderRows(data.robots || []);
     }
 
@@ -83,7 +81,10 @@ export function createFleetSection(store) {
         el.innerHTML = cells.map((c) => '<div><div class="v">' + c[1] + '</div><div class="k">' + c[0] + '</div></div>').join('');
     }
 
-    function renderChart(load, typical, size) {
+    // renderChart draws the Fleet Load curve. granularity 'hour' (Today) is the
+    // intraday concurrency curve for the viewed day; 'day' (7d/30d) is a per-day
+    // peak/avg rollup across the range, so the chart honors the range selector.
+    function renderChart(load, typical, size, granularity) {
         const canvas = document.getElementById('fl-canvas');
         if (!canvas) return;
         if (chart) { try { chart.destroy(); } catch (_) {} chart = null; }
@@ -91,36 +92,51 @@ export function createFleetSection(store) {
             const dayLabel = document.getElementById('fl-day');
             if (dayLabel) dayLabel.textContent = '';
             const box = canvas.parentElement;
-            if (box) box.innerHTML = '<div class="dash-empty">No fleet activity for this day.</div>';
+            if (box) box.innerHTML = '<div class="dash-empty">No fleet activity in this window.</div>';
             return;
         }
         const c = chartColors();
-        const labels = load.map((h2) => fmtHour(h2.hour));
-        // Item 3 tail: the concurrency series is a single day even on 7d/30d.
-        // Label which day it is so the chart isn't mistaken for the whole range.
-        const dayLabel = document.getElementById('fl-day');
-        if (dayLabel) {
-            const d0 = load[0] && load[0].hour ? new Date(load[0].hour) : null;
-            const day = d0 && !isNaN(d0.getTime()) ? ymd(d0) : '';
-            const windowed = (curRange === '7d' || curRange === '30d');
-            dayLabel.textContent = 'Fleet load — ' + (day || 'latest day') + (windowed ? ' (last day of range)' : '');
-        }
         const ceiling = Math.max(size, 1);
-        const datasets = [{
-            label: 'Robots used', data: load.map((h2) => h2.concurrency),
-            borderColor: c.info, backgroundColor: withAlpha(c.info, 0.18),
-            fill: true, tension: 0.3, pointRadius: 0,
-        }, {
-            label: 'Fleet ceiling', data: labels.map(() => ceiling),
-            borderColor: c.warning, borderDash: [6, 4], borderWidth: 1,
-            pointRadius: 0, fill: false,
-        }];
-        // Typical-day overlay (deferred — empty until materialized, Q-008).
-        if (typical && typical.length === load.length) {
-            datasets.push({
-                label: 'Typical', data: typical.map((t) => t.concurrency != null ? t.concurrency : t),
-                borderColor: c.text, borderDash: [3, 3], borderWidth: 1, pointRadius: 0, fill: false,
-            });
+        const dayLabel = document.getElementById('fl-day');
+        const daily = granularity === 'day';
+
+        let labels, datasets;
+        if (daily) {
+            labels = load.map((d) => fmtDay(d.day));
+            if (dayLabel) dayLabel.textContent = 'Fleet load — daily peak / avg robots used across range';
+            datasets = [{
+                label: 'Peak robots used', data: load.map((d) => d.peak),
+                borderColor: c.info, backgroundColor: withAlpha(c.info, 0.18),
+                fill: true, tension: 0.3, pointRadius: 0,
+            }, {
+                label: 'Avg robots used', data: load.map((d) => Math.round((d.avg || 0) * 10) / 10),
+                borderColor: c.success, borderWidth: 1, pointRadius: 0, fill: false, tension: 0.3,
+            }, {
+                label: 'Fleet ceiling', data: labels.map(() => ceiling),
+                borderColor: c.warning, borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false,
+            }];
+        } else {
+            labels = load.map((h2) => fmtHour(h2.hour));
+            if (dayLabel) {
+                const d0 = load[0] && load[0].hour ? new Date(load[0].hour) : null;
+                const day = d0 && !isNaN(d0.getTime()) ? ymd(d0) : '';
+                dayLabel.textContent = 'Fleet load — ' + (day || 'latest day');
+            }
+            datasets = [{
+                label: 'Robots used', data: load.map((h2) => h2.concurrency),
+                borderColor: c.info, backgroundColor: withAlpha(c.info, 0.18),
+                fill: true, tension: 0.3, pointRadius: 0,
+            }, {
+                label: 'Fleet ceiling', data: labels.map(() => ceiling),
+                borderColor: c.warning, borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false,
+            }];
+            // Typical-day overlay (deferred — empty until materialized, Q-008).
+            if (typical && typical.length === load.length) {
+                datasets.push({
+                    label: 'Typical', data: typical.map((t) => t.concurrency != null ? t.concurrency : t),
+                    borderColor: c.text, borderDash: [3, 3], borderWidth: 1, pointRadius: 0, fill: false,
+                });
+            }
         }
         chart = makeChart(canvas, {
             type: 'line',
@@ -148,6 +164,7 @@ export function createFleetSection(store) {
 // ─── helpers ──────────────────────────────────────────────────────────────
 function setText(id, v) { const e = document.getElementById(id); if (e) e.textContent = v; }
 function fmtHour(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? '' : String(d.getHours()).padStart(2, '0') + ':00'; }
+function fmtDay(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? '' : (d.getMonth() + 1) + '/' + d.getDate(); }
 
 function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 function windowFor(range) {
