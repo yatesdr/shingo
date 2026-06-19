@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/dispatch/binsource"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -216,6 +217,27 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 		}
 	}
 
+	// Dedicated home loader: a concrete position node sources from its loader's
+	// whole pool (every home position ∪ the kept-partial buffer), oldest part X
+	// first — so a partial parked in the buffer is consumed before a fresh full.
+	// Only fires when the source IS a loader position; any other node leaves
+	// source nil and falls through to the global FIFO scan below.
+	if source == nil && order.SourceNode != "" {
+		bin, bnode, isLoaderPos, lerr := s.sourceFromDedicatedLoader(order.SourceNode, payloadCode, binsource.Drain)
+		if lerr != nil {
+			return nil, &planningError{Code: "loader_source", Detail: lerr.Error(), Err: lerr}
+		}
+		if isLoaderPos {
+			if bin == nil {
+				// Loader position with no eligible bin of X — queue; do NOT fall
+				// through to the global scan, which would pull plant-wide.
+				s.dbg("retrieve: loader pool for %s has no %s, queuing order %d", order.SourceNode, payloadCode, order.ID)
+				return &PlanningResult{Queued: true}, nil
+			}
+			source, sourceNode = bin, bnode
+		}
+	}
+
 	if source == nil {
 		// Resolve destination first so the source-finder can exclude it —
 		// prevents same-node retrieve when a matching bin is already at the
@@ -292,6 +314,26 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 		if destNode, derr := s.db.GetNodeByDotName(order.DeliveryNode); derr == nil && destNode != nil {
 			preferZone = destNode.Zone
 			excludeNodeID = destNode.ID
+		}
+	}
+
+	// Dedicated home loader (Fill): a concrete position node sources a CONTAINER
+	// for X from the loader's pool — a partial of X to top up (oldest), else the
+	// cheapest empty. Mirrors planRetrieve's Drain branch, with Fill intent. The
+	// claim below is plain (no manifest change), so a topped-up partial keeps its
+	// X manifest; core completion moves the bin without clearing it. A non-loader
+	// (or NGRP/LANE) source falls through to the supermarket/global empty finders.
+	if order.SourceNode != "" {
+		chosen, _, isLoaderPos, lerr := s.sourceFromDedicatedLoader(order.SourceNode, payloadCode, binsource.Fill)
+		if lerr != nil {
+			return nil, &planningError{Code: "loader_source", Detail: lerr.Error(), Err: lerr}
+		}
+		if isLoaderPos {
+			if chosen == nil {
+				s.dbg("retrieve_empty: loader pool for %s has no container for %s, queuing order %d", order.SourceNode, payloadCode, order.ID)
+				return &PlanningResult{Queued: true}, nil
+			}
+			bin = chosen
 		}
 	}
 
@@ -496,6 +538,29 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 			s.dbg("move: NGRP resolved node %s but no bin, queuing order %d", result.Node.Name, order.ID)
 			return &PlanningResult{Queued: true}, nil
 		}
+	} else if bin, bnode, isLoaderPos, lerr := s.sourceFromDedicatedLoader(order.SourceNode, payloadCode, binsource.Drain); lerr != nil {
+		return nil, &planningError{Code: "loader_source", Detail: lerr.Error(), Err: lerr}
+	} else if isLoaderPos {
+		// Dedicated-loader position: source the loader's whole pool (every home
+		// position ∪ the kept-partial buffer), oldest part X first — same as
+		// planRetrieve. A move-mode consume cell (swap dispatch issues a move,
+		// not a retrieve) reaches a partial parked in the buffer this way. No
+		// eligible bin of X → queue; do NOT fall through to the single-node claim,
+		// which would only see the position and miss the buffer.
+		if bin == nil {
+			s.dbg("move: loader pool for %s has no %s, queuing order %d", order.SourceNode, payloadCode, order.ID)
+			return &PlanningResult{Queued: true}, nil
+		}
+		remainingUOP := extractRemainingUOP(env)
+		if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, remainingUOP); err != nil {
+			return nil, &planningError{Code: "claim_failed", Detail: err.Error(), Err: err}
+		}
+		order.BinID = &bin.ID
+		if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
+			log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
+		}
+		sourceNode = bnode
+		s.dbg("move: loader pool sourced bin=%d at %s (remainingUOP=%v)", bin.ID, sourceNode.Name, remainingUOP)
 	} else {
 		// Concrete source node: claim a bin directly at the node.
 		candidates, _ := s.db.ListBinsByNode(sourceNode.ID)

@@ -279,6 +279,25 @@ func ListHomes(db *sql.DB, loaderID int64) ([]Home, error) {
 	return out, rows.Err()
 }
 
+// GetHomeByPositionNode returns the dedicated-position home row for a node, or
+// (nil, nil) if the node is not a loader position. The global
+// UNIQUE(position_node_id) guarantees at most one match, so this resolves a
+// physical node to its owning loader + the part pinned there — the Core-side
+// counterpart to the Edge's LoaderForNode.
+func GetHomeByPositionNode(db *sql.DB, positionNodeID int64) (*Home, error) {
+	var h Home
+	err := db.QueryRow(`SELECT loader_id, position_node_id, payload_code, uop_threshold, sort_order
+		FROM bin_loader_homes WHERE position_node_id=$1`, positionNodeID).
+		Scan(&h.LoaderID, &h.PositionNodeID, &h.PayloadCode, &h.UOPThreshold, &h.SortOrder)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get home by position node %d: %w", positionNodeID, err)
+	}
+	return &h, nil
+}
+
 // UpsertPayload adds or updates an allowed payload on a shared_window loader.
 // Bumps config_gen.
 func UpsertPayload(db *sql.DB, p Payload) error {
