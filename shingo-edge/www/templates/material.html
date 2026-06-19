@@ -2,7 +2,7 @@
 
 <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem;flex-wrap:wrap">
     {{if .Processes}}
-    <select class="form-input" style="width:16rem" data-action-change="navigateToProcess">
+    <select class="form-input" style="width:16rem" onchange="window.location='?process='+this.value" data-action-change="navigateToProcess">
         {{range .Processes}}
         <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
         {{end}}

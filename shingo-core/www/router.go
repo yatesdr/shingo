@@ -130,6 +130,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		// system-health) landing stays the home page; Overview lives in the
 		// Dashboards dropdown at /overview.
 		r.Get("/", h.handleDashboard)
+		r.Get("/dashboards", h.handleDashboardsPage)
 		r.Get("/overview", h.handleOverview)
 		r.Get("/login", h.handleLoginPage)
 		r.Post("/login", h.handleLogin)
@@ -416,7 +417,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/config", h.handleConfig)
 			r.Post("/config/save", h.handleConfigSave)
 			r.Get("/fleet-explorer", h.handleFleetExplorer)
-			r.Get("/dashboards", h.handleDashboardsAdmin)
 			r.Get("/admin/cells", h.handleCellsAdmin)
 
 			// Traffic (count group CRUD)

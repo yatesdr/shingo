@@ -27,23 +27,30 @@
             <a href="/">Shingo Edge</a>
         </div>
         <div class="nav-links">
-            <a href="/material" class="{{if eq .Page "material"}}active{{end}}">Status</a>
-            <a href="/orders" class="{{if eq .Page "orders"}}active{{end}}">Orders</a>
-            <a href="/production" class="{{if eq .Page "production"}}active{{end}}">Production</a>
-            <a href="/changeover" class="{{if eq .Page "changeover"}}active{{end}}">Changeover</a>
-            {{if .Authenticated}}
-            <span class="nav-sep"></span>
+            <a href="/" class="{{if eq .Page "home"}}active{{end}}">Home</a>
             <div class="nav-dropdown">
-              <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "config") (eq .Page "traffic") (eq .Page "processes") (eq .Page "manual-order") (eq .Page "manual-message") (eq .Page "logs") (eq .Page "lineside-buckets") (eq .Page "replenishment")}} active{{end}}">Admin</a>
+              <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "material") (eq .Page "orders") (eq .Page "production") (eq .Page "changeover") (eq .Page "processes") (eq .Page "lineside-buckets") (eq .Page "replenishment")}} active{{end}}">Operations</a>
+              <div class="nav-dropdown-menu">
+                <a href="/material"{{if eq .Page "material"}} class="active"{{end}}>Status</a>
+                <a href="/orders"{{if eq .Page "orders"}} class="active"{{end}}>Orders</a>
+                <a href="/production"{{if eq .Page "production"}} class="active"{{end}}>Production</a>
+                <a href="/changeover"{{if eq .Page "changeover"}} class="active"{{end}}>Changeover</a>
+                {{if .Authenticated}}
+                <a href="/processes"{{if eq .Page "processes"}} class="active"{{end}}>Processes</a>
+                <a href="/lineside-buckets"{{if eq .Page "lineside-buckets"}} class="active"{{end}}>Lineside Buckets</a>
+                <a href="/replenishment"{{if eq .Page "replenishment"}} class="active"{{end}}>Replenishment</a>
+                {{end}}
+              </div>
+            </div>
+            {{if .Authenticated}}
+            <div class="nav-dropdown">
+              <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "traffic") (eq .Page "manual-order") (eq .Page "manual-message") (eq .Page "config") (eq .Page "logs")}} active{{end}}">Admin</a>
               <div class="nav-dropdown-menu">
                 <a href="/traffic"{{if eq .Page "traffic"}} class="active"{{end}}>Traffic</a>
-                <a href="/processes"{{if eq .Page "processes"}} class="active"{{end}}>Processes</a>
                 <a href="/manual-order"{{if eq .Page "manual-order"}} class="active"{{end}}>Manual Order</a>
                 <a href="/manual-message"{{if eq .Page "manual-message"}} class="active"{{end}}>Kafka Direct</a>
                 <a href="/config"{{if eq .Page "config"}} class="active"{{end}}>System</a>
                 <a href="/diagnostics"{{if eq .Page "logs"}} class="active"{{end}}>Logs</a>
-                <a href="/lineside-buckets"{{if eq .Page "lineside-buckets"}} class="active"{{end}}>Lineside Buckets</a>
-                <a href="/replenishment"{{if eq .Page "replenishment"}} class="active"{{end}}>Replenishment</a>
               </div>
             </div>
             {{end}}

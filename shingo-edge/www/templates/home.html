@@ -1,0 +1,95 @@
+{{template "header" .}}
+
+<h1>Home</h1>
+
+<section class="card mb-2">
+    <div class="section-head"><h3>Quick Nav</h3></div>
+    <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+        <a href="/material" class="btn" style="color:var(--primary)">Status</a>
+        <a href="/orders" class="btn" style="color:var(--primary)">Orders</a>
+        <a href="/production" class="btn" style="color:var(--primary)">Production</a>
+        <a href="/changeover" class="btn" style="color:var(--primary)">Changeover</a>
+        {{if .Authenticated}}
+        <span class="text-muted" style="align-self:center;">|</span>
+        <a href="/processes" class="btn" style="color:var(--primary)">Processes</a>
+        <a href="/lineside-buckets" class="btn" style="color:var(--primary)">Lineside Buckets</a>
+        <a href="/replenishment" class="btn" style="color:var(--primary)">Replenishment</a>
+        <span class="text-muted" style="align-self:center;">|</span>
+        <a href="/traffic" class="btn" style="color:var(--primary)">Traffic</a>
+        <a href="/manual-order" class="btn" style="color:var(--primary)">Manual Order</a>
+        <a href="/config" class="btn" style="color:var(--primary)">System</a>
+        <a href="/diagnostics" class="btn" style="color:var(--primary)">Logs</a>
+        {{end}}
+    </div>
+</section>
+
+<div class="grid grid-2 mb-2">
+    <div class="card" style="padding:1.25rem;">
+        <div class="section-head" style="margin-bottom:0.75rem;"><h2>System Health</h2></div>
+        <div style="display:flex;flex-direction:column;gap:0.75rem;">
+            <div style="display:flex;align-items:center;gap:0.6rem;">
+                <span class="health {{if .CoreAvailable}}health-ok{{else}}health-fail{{end}}"></span>
+                <div>
+                    <div style="font-weight:600;">Core</div>
+                    <div style="font-size:0.8rem;{{if .CoreAvailable}}color:var(--color-success,green){{else}}color:var(--color-danger,#d44){{end}}">{{if .CoreAvailable}}Connected{{else}}Disconnected{{end}}</div>
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:0.6rem;">
+                <span class="health {{if .WarLinkConnected}}health-ok{{else}}health-fail{{end}}"></span>
+                <div>
+                    <div style="font-weight:600;">WarLink</div>
+                    <div style="font-size:0.8rem;{{if .WarLinkConnected}}color:var(--color-success,green){{else}}color:var(--color-danger,#d44){{end}}">{{if .WarLinkConnected}}Connected{{else if .WarLinkError}}{{.WarLinkError}}{{else}}Disconnected{{end}}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card" style="padding:1.25rem;">
+        <div class="section-head" style="margin-bottom:0.75rem;"><h2>At a Glance</h2></div>
+        <div class="grid grid-2" style="gap:0.6rem;">
+            <div class="card stat" data-tip="Active orders on this station.">
+                <div class="value">{{.ActiveOrderCount}}</div>
+                <div class="label">Active Orders</div>
+            </div>
+            <div class="card stat" data-tip="Total parts produced today across all processes.">
+                <div class="value">{{.TodayProduction}}</div>
+                <div class="label">Today's Production</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{{if .Processes}}
+<section class="card">
+    <div class="section-head"><h3>Processes</h3></div>
+    <table class="table">
+        <thead>
+            <tr>
+                <th style="min-width:8rem">Process</th>
+                <th style="min-width:8rem">Active Style</th>
+                <th style="min-width:8rem">Target Style</th>
+                <th style="min-width:12rem">Counter</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Processes}}
+            <tr>
+                <td><strong style="color:var(--primary)">{{.Name}}</strong></td>
+                <td>{{if .ActiveStyle}}{{.ActiveStyle}}{{else}}<span class="text-muted">None</span>{{end}}</td>
+                <td>{{if .TargetStyle}}<span class="badge badge-changeover">{{.TargetStyle}}</span>{{else}}<span class="text-muted">--</span>{{end}}</td>
+                <td>
+                    {{if .CounterPLC}}
+                    {{.CounterPLC}} / {{.CounterTag}}
+                    {{if .CounterOn}} <span class="badge badge-active">On</span>{{else}} <span class="text-muted">Off</span>{{end}}
+                    {{else}}
+                    <span class="text-muted">--</span>
+                    {{end}}
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</section>
+{{end}}
+
+{{template "footer" .}}

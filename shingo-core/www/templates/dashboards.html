@@ -1,28 +1,15 @@
 {{define "content"}}
 <div class="flex flex-between mb-2">
   <h1>Dashboards</h1>
-  <button class="btn btn-primary" id="dash-new">+ New Dashboard</button>
+  {{if .Authenticated}}<button class="btn btn-sm" id="resync-edges" title="Ask every edge to re-send its registration + cell catalog (over Kafka)">&#x21bb; Re-sync edges</button>{{end}}
 </div>
 
-<p class="muted mb-2">
-  Saved floor displays. Each renders chromeless at <code>/dashboard/&lt;id&gt;</code> —
-  open that link full-screen on a wall monitor. Scope a board to a plant area by
-  listing its station IDs; leave the area empty to show the whole plant.
-</p>
-
-<table class="table" id="dash-table">
-  <thead>
-    <tr>
-      <th>Name</th>
-      <th>Kind</th>
-      <th>Area (stations)</th>
-      <th>Enabled</th>
-      <th>Display</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody id="dash-tbody"></tbody>
-</table>
-
-<script type="module" src="/static/pages/dashboards.js?v={{cacheBust}}"></script>
+<section class="card mb-2" id="dash-hub">
+  <div class="section-head">
+    <h2>Saved Dashboards</h2>
+    {{if .Authenticated}}<button class="btn btn-sm btn-primary" id="dash-new">+ New dashboard</button>{{end}}
+  </div>
+  <div class="dash-card-grid" id="dash-cards"><div class="dash-empty">Loading dashboards&hellip;</div></div>
+</section>
+<script type="module" src="/static/pages/dashboard-landing.js?v={{cacheBust}}"></script>
 {{end}}

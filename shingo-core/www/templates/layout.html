@@ -18,15 +18,20 @@
   <nav>
     <div class="container flex-center" style="gap:1.5rem;">
       <a href="/" class="brand">Shingo Core</a>
-      <a href="/"{{if eq .Page "dashboard"}} class="active"{{end}}>Dashboard</a>
+      <a href="/"{{if eq .Page "dashboard"}} class="active"{{end}}>Home</a>
+      <a href="/dashboards"{{if eq .Page "dashboards"}} class="active"{{end}}>Dashboards</a>
       <a href="/overview"{{if eq .Page "overview"}} class="active"{{end}}>Overview</a>
-      <a href="/orders"{{if eq .Page "orders"}} class="active"{{end}}>Orders</a>
-      <a href="/missions"{{if eq .Page "missions"}} class="active"{{end}}>Missions</a>
-      <a href="/robots"{{if eq .Page "robots"}} class="active"{{end}}>Robots</a>
-      <a href="/traffic"{{if eq .Page "traffic"}} class="active"{{end}}>Traffic</a>
-      <span class="nav-sep"></span>
       <div class="nav-dropdown">
-        <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "inventory") (eq .Page "nodes") (eq .Page "bins") (eq .Page "payloads")}} active{{end}}">Assets</a>
+        <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "orders") (eq .Page "missions") (eq .Page "robots") (eq .Page "traffic")}} active{{end}}">Operations</a>
+        <div class="nav-dropdown-menu">
+          <a href="/orders"{{if eq .Page "orders"}} class="active"{{end}}>Orders</a>
+          <a href="/missions"{{if eq .Page "missions"}} class="active"{{end}}>Missions</a>
+          <a href="/robots"{{if eq .Page "robots"}} class="active"{{end}}>Robots</a>
+          <a href="/traffic"{{if eq .Page "traffic"}} class="active"{{end}}>Traffic</a>
+        </div>
+      </div>
+      <div class="nav-dropdown">
+        <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "inventory") (eq .Page "nodes") (eq .Page "bins") (eq .Page "payloads")}} active{{end}}">Materials</a>
         <div class="nav-dropdown-menu">
           <a href="/inventory"{{if eq .Page "inventory"}} class="active"{{end}}>Inventory</a>
           <a href="/nodes"{{if eq .Page "nodes"}} class="active"{{end}}>Nodes</a>
@@ -38,11 +43,16 @@
       <div class="nav-dropdown">
         <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "demand") (eq .Page "test-orders") (eq .Page "fleet-explorer") (eq .Page "logs") (eq .Page "config")}} active{{end}}">Admin</a>
         <div class="nav-dropdown-menu">
-          <a href="/demand"{{if eq .Page "demand"}} class="active"{{end}}>Demand</a>
           <a href="/test-orders"{{if eq .Page "test-orders"}} class="active"{{end}}>Test Orders</a>
           <a href="/fleet-explorer"{{if eq .Page "fleet-explorer"}} class="active"{{end}}>Fleet Explorer</a>
           <a href="/diagnostics"{{if eq .Page "logs"}} class="active"{{end}}>Logs</a>
           <a href="/config"{{if eq .Page "config"}} class="active"{{end}}>Config</a>
+          <div class="nav-dropdown-submenu">
+            <a href="#">Legacy</a>
+            <div class="nav-dropdown-menu">
+              <a href="/demand"{{if eq .Page "demand"}} class="active"{{end}}>Demand</a>
+            </div>
+          </div>
         </div>
       </div>
       <div class="ml-auto flex-center" style="gap:0.75rem;">

@@ -203,7 +203,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Get("/status", h.apiStatus)
 
 		// ── Public pages (shop floor — no auth) ─────────────────
-		r.Get("/", h.handleMaterial)
+		r.Get("/", h.handleHome)
 		r.Get("/material", h.handleMaterial)
 		r.Get("/orders", h.handleOrders)
 		// Permanent redirect for any operator bookmark from the
@@ -530,6 +530,7 @@ func (h *Handlers) renderTemplate(w http.ResponseWriter, r *http.Request, name s
 		_, isAuth := h.sessions.getUser(r)
 		m["Authenticated"] = isAuth
 	}
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	if err := h.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

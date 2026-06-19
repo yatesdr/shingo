@@ -2,6 +2,7 @@ package www
 
 import (
 	"net/http"
+	"time"
 
 	"shingoedge/domain"
 	"shingoedge/engine"
@@ -61,6 +62,82 @@ func buildStationViews(eng ServiceAccess, activeProcess *domain.Process) []domai
 		}
 	}
 	return views
+}
+
+func (h *Handlers) handleHome(w http.ResponseWriter, r *http.Request) {
+	anomalies, rpMap := loadAnomalyData(h)
+
+	// System health
+	coreAvailable := h.engine.CoreAPI() != nil && h.engine.CoreAPI().Available()
+	warLinkConnected := false
+	warLinkErrorMsg := ""
+	if plcMgr := h.engine.PLCManager(); plcMgr != nil {
+		warLinkConnected = plcMgr.IsWarLinkConnected()
+		if err := plcMgr.WarLinkError(); err != nil {
+			warLinkErrorMsg = err.Error()
+		}
+	}
+
+	// Active orders
+	activeOrders, _ := h.engine.OrderService().ListActive()
+
+	// Processes with styles
+	processes, _ := h.engine.ProcessService().List()
+	type processSummary struct {
+		Name          string
+		ActiveStyle   string
+		TargetStyle   string
+		CounterPLC    string
+		CounterTag    string
+		CounterOn     bool
+	}
+	var procSummaries []processSummary
+	for _, p := range processes {
+		var activeStyle, targetStyle string
+		if p.ActiveStyleID != nil {
+			if s, err := h.engine.StyleService().Get(*p.ActiveStyleID); err == nil {
+				activeStyle = s.Name
+			}
+		}
+		if p.TargetStyleID != nil {
+			if s, err := h.engine.StyleService().Get(*p.TargetStyleID); err == nil {
+				targetStyle = s.Name
+			}
+		}
+		procSummaries = append(procSummaries, processSummary{
+			Name:        p.Name,
+			ActiveStyle: activeStyle,
+			TargetStyle: targetStyle,
+			CounterPLC:  p.CounterPLCName,
+			CounterTag:  p.CounterTagName,
+			CounterOn:   p.CounterEnabled,
+		})
+	}
+
+	// Today's production totals
+	today := time.Now().Format("2006-01-02")
+	var todayTotal int64
+	for _, p := range processes {
+		totals, err := h.engine.CounterService().HourlyTotals(p.ID, today)
+		if err == nil {
+			for _, v := range totals {
+				todayTotal += v
+			}
+		}
+	}
+
+	data := map[string]any{
+		"Page":            "home",
+		"Anomalies":        anomalies,
+		"ReportingPointMap": rpMap,
+		"CoreAvailable":    coreAvailable,
+		"WarLinkConnected": warLinkConnected,
+		"WarLinkError":     warLinkErrorMsg,
+		"ActiveOrderCount": len(activeOrders),
+		"TodayProduction":  todayTotal,
+		"Processes":        procSummaries,
+	}
+	h.renderTemplate(w, r, "home.html", data)
 }
 
 func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {

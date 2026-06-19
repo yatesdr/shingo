@@ -701,7 +701,7 @@ textarea { resize: vertical; min-height: 60px; }
   z-index: 100;
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
-.nav-dropdown:hover .nav-dropdown-menu { display: block; }
+.nav-dropdown:hover > .nav-dropdown-menu { display: block; }
 .nav-dropdown-menu a {
   display: block;
   padding: 0.4rem 1rem;
@@ -711,6 +711,17 @@ textarea { resize: vertical; min-height: 60px; }
 }
 .nav-dropdown-menu a:hover { background: var(--bg); text-decoration: none; }
 .nav-dropdown-menu a.active { color: var(--primary); font-weight: 600; }
+.nav-dropdown-submenu { position: relative; }
+.nav-dropdown-submenu > .nav-dropdown-menu {
+  left: 100%;
+  top: -0.3rem;
+}
+.nav-dropdown-submenu > a::after {
+  content: ' \25B8';
+  font-size: 0.7em;
+  float: right;
+}
+.nav-dropdown-submenu:hover > .nav-dropdown-menu { display: block; }
 
 /* Loading spinner */
 .spinner { display: inline-block; width: 1.2rem; height: 1.2rem; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.6s linear infinite; }

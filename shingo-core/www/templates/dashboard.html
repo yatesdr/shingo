@@ -1,72 +1,94 @@
 {{define "content"}}
 <div data-sse="dashboard">
-  <div class="flex flex-between mb-2">
-    <h1>Dashboard</h1>
-    {{if .Authenticated}}<button class="btn btn-sm" id="resync-edges" title="Ask every edge to re-send its registration + cell catalog (over Kafka)">&#x21bb; Re-sync edges</button>{{end}}
-  </div>
+  <h1>Home</h1>
 
-  <!-- Dashboard hub (refactor #3): see + make + open any dashboard here, in-core.
-       Replaces the standalone /dashboards Manage table. -->
-  <section class="card mb-2" id="dash-hub">
-    <div class="section-head">
-      <h2>Dashboards</h2>
-      {{if .Authenticated}}<button class="btn btn-sm btn-primary" id="dash-new">+ New dashboard</button>{{end}}
+  <section class="card mb-2">
+    <div class="section-head"><h3>Quick Nav</h3></div>
+    <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+      <a href="/dashboards" class="btn">Dashboards</a>
+      <a href="/overview" class="btn">Overview</a>
+      <span class="text-muted" style="align-self:center;">|</span>
+      <a href="/orders" class="btn">Orders</a>
+      <a href="/missions" class="btn">Missions</a>
+      <a href="/robots" class="btn">Robots</a>
+      <a href="/traffic" class="btn">Traffic</a>
+      <span class="text-muted" style="align-self:center;">|</span>
+      <a href="/inventory" class="btn">Inventory</a>
+      <a href="/nodes" class="btn">Nodes</a>
+      <a href="/bins" class="btn">Bins</a>
+      <a href="/payloads" class="btn">Payloads</a>
     </div>
-    <div class="dash-card-grid" id="dash-cards"><div class="dash-empty">Loading dashboards&hellip;</div></div>
   </section>
 
-  <div class="grid grid-6 mb-1">
-    <div class="card stat" data-tip="Orders currently being processed — includes pending, dispatched, in-transit, and awaiting confirmation.">
-      <div class="value">{{.TotalOrders}}</div>
-      <div class="label">Active Orders</div>
-    </div>
-    <div class="card stat" data-tip="Registered storage locations, stations, and waypoints in the node graph.">
-      <div class="value">{{.TotalNodes}}</div>
-      <div class="label">Total Nodes</div>
-    </div>
-    <div class="card stat" data-tip="Connection to the robot fleet controller. Required for dispatching and tracking robot missions.">
-      <div class="value">
-        <span id="fleet-status" class="health {{if .FleetOK}}health-ok{{else}}health-fail{{end}}"></span>
-        {{if .FleetOK}}OK{{else}}Down{{end}}
+  <div class="grid grid-2 mb-2">
+    <div class="card" style="padding:1.25rem;">
+      <div class="section-head" style="margin-bottom:0.75rem;"><h2>System Health</h2></div>
+      <div style="display:flex;flex-direction:column;gap:0.75rem;">
+        <div style="display:flex;align-items:center;gap:0.6rem;">
+          <span class="health {{if .FleetOK}}health-ok{{else}}health-fail{{end}}" id="fleet-status"></span>
+          <div>
+            <div style="font-weight:600;">Fleet Manager</div>
+            <div class="text-muted" style="font-size:0.8rem;">{{.FleetName}} &mdash; {{if .FleetOK}}Connected{{else}}Disconnected{{end}}</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:0.6rem;">
+          <span class="health {{if .MessagingOK}}health-ok{{else}}health-fail{{end}}" id="msg-status"></span>
+          <div>
+            <div style="font-weight:600;">Messaging</div>
+            <div class="text-muted" style="font-size:0.8rem;">Kafka broker &mdash; {{if .MessagingOK}}Connected{{else}}Disconnected{{end}}</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:0.6rem;">
+          <span class="health {{if .DatabaseOK}}health-ok{{else}}health-fail{{end}}" id="db-status"></span>
+          <div>
+            <div style="font-weight:600;">Database</div>
+            <div class="text-muted" style="font-size:0.8rem;">PostgreSQL &mdash; {{if .DatabaseOK}}Connected{{else}}Disconnected{{end}}</div>
+          </div>
+        </div>
       </div>
-      <div class="label">Fleet Manager ({{.FleetName}})</div>
     </div>
-    <div class="card stat" data-tip="Connection to the message broker linking Core and Edge stations. Handles order acknowledgments and status sync.">
-      <div class="value">
-        <span id="msg-status" class="health {{if .MessagingOK}}health-ok{{else}}health-fail{{end}}"></span>
-        {{if .MessagingOK}}OK{{else}}Down{{end}}
-      </div>
-      <div class="label">Messaging</div>
-    </div>
-    <div class="card stat" data-tip="PostgreSQL connection status.">
-      <div class="value">
-        <span id="db-status" class="health {{if .DatabaseOK}}health-ok{{else}}health-fail{{end}}"></span>
-        {{if .DatabaseOK}}OK{{else}}Down{{end}}
-      </div>
-      <div class="label">Database</div>
-    </div>
-    <div class="card stat" data-tip="Orders actively being polled against the fleet manager for real-time status updates.">
-      <div class="value">{{.PollerActive}}</div>
-      <div class="label">Polling Orders</div>
-    </div>
-  </div>
-  {{if .Recon}}
-  <div class="grid grid-6 mb-1">
-    <div class="card stat" data-tip="State mismatches — e.g. terminal orders still holding bin locks, or confirmed orders missing completion timestamps. Investigate if non-zero.">
-      <div class="value">{{.Recon.CompletionAnomalies}}</div>
-      <div class="label">Completion Anomalies</div>
-    </div>
-    <div class="card stat" data-tip="Queued messages awaiting delivery to Edge stations. Clears automatically. Stale entries may indicate a messaging issue.">
-      <div class="value">{{.Recon.OutboxPending}}</div>
-      <div class="label">Pending Outbox</div>
-    </div>
-  </div>
-  {{end}}
-  <div class="text-muted mb-3 text-right" style="font-size:0.8rem;">SSE clients: {{.SSEClients}}</div>
 
-  {{if .ActiveOrders}}
-  <div class="card">
-    <h3>Active Orders</h3>
+    <div class="card" style="padding:1.25rem;">
+      <div class="section-head" style="margin-bottom:0.75rem;"><h2>At a Glance</h2></div>
+      <div class="grid grid-2" style="gap:0.6rem;">
+        <div class="card stat" data-tip="Orders currently being processed.">
+          <div class="value">{{.TotalOrders}}</div>
+          <div class="label">Active Orders</div>
+        </div>
+        <div class="card stat" data-tip="Registered locations in the node graph.">
+          <div class="value">{{.TotalNodes}}</div>
+          <div class="label">Total Nodes</div>
+        </div>
+        <div class="card stat" data-tip="Orders actively being polled for status updates.">
+          <div class="value">{{.PollerActive}}</div>
+          <div class="label">Polling Orders</div>
+        </div>
+        <div class="card stat" data-tip="SSE connections.">
+          <div class="value">{{.SSEClients}}</div>
+          <div class="label">SSE Clients</div>
+        </div>
+      </div>
+      {{if .Recon}}
+      <div class="grid grid-2" style="gap:0.6rem;margin-top:0.6rem;">
+        <div class="card stat" data-tip="State mismatches.">
+          <div class="value">{{.Recon.CompletionAnomalies}}</div>
+          <div class="label">Recon Anomalies</div>
+        </div>
+        <div class="card stat" data-tip="Queued messages for Edge stations.">
+          <div class="value">{{.Recon.OutboxPending}}</div>
+          <div class="label">Pending Outbox</div>
+        </div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+
+  {{if .RecentOrders}}
+  <section class="card">
+    <div class="section-head flex-between">
+      <h3>Recent Active Orders</h3>
+      <a href="/orders" class="btn btn-sm">View all &rarr;</a>
+    </div>
     <table>
       <thead>
         <tr>
@@ -80,7 +102,7 @@
         </tr>
       </thead>
       <tbody>
-        {{range .ActiveOrders}}
+        {{range .RecentOrders}}
         <tr>
           <td><a href="/orders/detail?id={{.ID}}">{{.ID}}</a></td>
           <td>{{.StationID}}</td>
@@ -97,12 +119,11 @@
         {{end}}
       </tbody>
     </table>
-  </div>
+  </section>
   {{else}}
   <div class="card">
     <p class="text-muted">No active orders.</p>
   </div>
   {{end}}
 </div>
-<script type="module" src="/static/pages/dashboard-landing.js?v={{cacheBust}}"></script>
 {{end}}

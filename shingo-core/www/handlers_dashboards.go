@@ -79,11 +79,11 @@ func (h *Handlers) handleBoardKindRedirect(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/", http.StatusSeeOther) // none configured → the hub
 }
 
-// handleDashboardsAdmin is retired (refactor #3): the standalone Manage table is
-// replaced by the dashboard hub on the Dashboard page. Kept as a redirect so old
-// bookmarks/links land on the hub rather than 404.
-func (h *Handlers) handleDashboardsAdmin(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/", http.StatusFound)
+// handleDashboardsPage renders the dashboard hub — the management page where
+// users see, create, edit, and open every dashboard. Replaces the retired
+// handleDashboardsAdmin redirect (consolidation refactor #3).
+func (h *Handlers) handleDashboardsPage(w http.ResponseWriter, r *http.Request) {
+	h.render(w, r, "dashboards.html", map[string]any{"Page": "dashboards"})
 }
 
 // apiListDashboards returns every dashboard definition. Public read so a
