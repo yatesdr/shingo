@@ -320,6 +320,16 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	}
 	resolvedSteps = newSteps
 
+	// Dedicated home loader PARK: when this is a changeover return from a
+	// dedicated-loader home (order.SourceNode = the evac pickup), Core decides where
+	// the bin lands — HOME if free, else a buffer slot, else drain — and rewrites
+	// DeliveryNode. The Edge shipped DeliveryNode="" and named no target, so Core is
+	// the single authority; the release-time redirect overlay (patchRedirectSegments)
+	// carries the choice to the fleet. A non-dedicated / non-loader source is left
+	// untouched (drains as today). NOT a dispatch gate (no isConcreteStorageDropoff
+	// widening) — a resolution-time read, so the swap supply leg is never gated.
+	d.placeForDedicatedLoader(order, resolvedSteps)
+
 	// Two-robot swap removal-leg hold: don't let the removal (evac) leg
 	// claim/pull the line bin until the supply sibling has secured a
 	// replacement bin. Stops a swap from stranding the line when the
