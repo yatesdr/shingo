@@ -73,24 +73,14 @@ func isFullOf(c Cand, x string) bool { return c.Payload == x && c.UOP >= c.Cap }
 
 func isPartialOf(c Cand, x string) bool { return c.Payload == x && c.UOP > 0 && c.UOP < c.Cap }
 
-// statusUsable rejects exactly the statuses the concrete-pickup path rejects
-// (binresolver.BinUnavailableReason) — maintenance, flagged, retired,
-// quality_hold. 'staged' is ACCEPTED (loader slots are sourced as concrete
-// pickups), as is 'available'.
-func statusUsable(s domain.BinStatus) bool {
-	switch s {
-	case domain.BinStatusMaintenance, domain.BinStatusFlagged, domain.BinStatusRetired, domain.BinStatusQualityHold:
-		return false
-	}
-	return true
-}
-
 // eligible reports whether c can satisfy want: a bin of part X only (Payload == X
 // excludes empties and other parts up front), filtered by intent. A FULL must be
 // manifest-confirmed to be a ready source; a partial (a known-good returned bin)
-// need not be.
+// need not be. The status reject-set is domain.BinStatus.BlocksPickup — the SAME
+// predicate binresolver.BinUnavailableReason uses, so the loader ranker and the
+// concrete-node path can no longer drift ('staged'/'available' stay pickable).
 func eligible(c Cand, w Want) bool {
-	if c.Claimed || c.Locked || !statusUsable(c.Status) {
+	if c.Claimed || c.Locked || c.Status.BlocksPickup() {
 		return false
 	}
 	switch w.Intent {
@@ -109,6 +99,17 @@ func eligible(c Cand, w Want) bool {
 // less reports whether a ranks ahead of b. Part-X bins: FIFO, oldest first. Fill
 // puts a partial of X ahead of any empty; empties are fungible, picked stably by
 // BinID (not aged).
+//
+// The intent asymmetry is DELIBERATE — do NOT "fix" it by adding a Drain tier (see
+// IMPLEMENTATION-PLAN §3.1). The partial-first tier is mandatory only on Fill, where
+// a partial competes against EMPTIES whose FIFO key falls back to an ancient,
+// immutable created_at (an old tote would otherwise bury a fresh partial). On Drain
+// there are no empties — candidates are only full/partial of X, all carrying a real
+// loaded_at — and a kept partial keeps its original (older) loaded_at across return,
+// so plain FIFO already serves it ahead of any newer bin. A Drain tier would be dead
+// code at best, and at worst would consume a NEWER partial before a genuinely OLDER
+// full — a FIFO violation. (Holds while consume "drains the bin out of shingo"; a
+// future consume-side partial-keep that stages aged fulls would re-open this.)
 func less(a, b Cand, w Want) bool {
 	if w.Intent == Fill {
 		ae, be := isEmpty(a), isEmpty(b)

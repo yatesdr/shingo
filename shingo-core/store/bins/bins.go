@@ -224,6 +224,31 @@ func ListByNode(db *sql.DB, nodeID int64) ([]*Bin, error) {
 	return scanBins(rows)
 }
 
+// ListByNodes returns every non-retired bin across the given nodes in ONE query —
+// the batched form of ListByNode for the dedicated-loader pool gather (one read
+// instead of N per-member reads on the hot retrieve path). Same retired-bin
+// exclusion + id-desc order. (pgx stdlib has no native []int64 array param, so the
+// IN-list is built with explicit placeholders, as elsewhere in this file.)
+func ListByNodes(db *sql.DB, nodeIDs []int64) ([]*Bin, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(nodeIDs))
+	args := make([]any, len(nodeIDs))
+	for i, id := range nodeIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	query := fmt.Sprintf(`%s WHERE b.node_id IN (%s) AND b.status != 'retired' ORDER BY b.id DESC`,
+		BinJoinQuery, strings.Join(placeholders, ","))
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanBins(rows)
+}
+
 // CountByNode returns how many non-retired bins sit at the given node.
 // Same retired-bin exclusion rationale as ListByNode.
 func CountByNode(db *sql.DB, nodeID int64) (int, error) {

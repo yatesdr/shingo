@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 
@@ -649,6 +650,43 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T
 	}
 	if got.ClaimedBy == nil || *got.ClaimedBy != order.ID {
 		t.Errorf("ClaimedBy = %v, want %d (preserved)", got.ClaimedBy, order.ID)
+	}
+}
+
+// TestBinManifestService_SyncOrClearForReleased_PreservesLoadedAt is the D8
+// invariant: SEND PARTIAL BACK (the remainingUOP>0 branch) must NOT re-stamp
+// loaded_at. The dedicated-loader ranker's "a kept partial is the oldest bin of X
+// and re-consumes itself" property depends on this — a loaded_at=NOW() here would
+// silently invert the ranker (the partial would become the newest, never drained).
+func TestBinManifestService_SyncOrClearForReleased_PreservesLoadedAt(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-LA", "PART-A", 100)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+
+	// Backdate loaded_at to a known, non-null instant so the invariant is testable.
+	want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if _, err := db.DB.Exec(`UPDATE bins SET loaded_at=$1 WHERE id=$2`, want, bin.ID); err != nil {
+		t.Fatalf("backdate loaded_at: %v", err)
+	}
+
+	partial := 800
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""), "SyncOrClearForReleased(800)")
+
+	got, _ := db.GetBin(bin.ID)
+	if got.LoadedAt == nil {
+		t.Fatal("loaded_at = NULL after partial return; want it preserved")
+	}
+	if !got.LoadedAt.Equal(want) {
+		t.Errorf("loaded_at = %v, want %v (UNCHANGED across SEND PARTIAL BACK — the ranker depends on it)", got.LoadedAt.UTC(), want)
+	}
+	// Sanity: the partial DID sync, so we know the >0 branch actually ran.
+	if got.UOPRemaining != 800 {
+		t.Errorf("UOPRemaining = %d, want 800 (partial branch must have run)", got.UOPRemaining)
 	}
 }
 

@@ -24,6 +24,9 @@ func (db *DB) ListBins() ([]*bins.Bin, error)                { return bins.List(
 func (db *DB) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) {
 	return bins.ListByNode(db.DB, nodeID)
 }
+func (db *DB) ListBinsByNodes(nodeIDs []int64) ([]*bins.Bin, error) {
+	return bins.ListByNodes(db.DB, nodeIDs)
+}
 func (db *DB) ListBinsByClaim(orderID int64) ([]*bins.Bin, error) {
 	return bins.ListByClaim(db.DB, orderID)
 }

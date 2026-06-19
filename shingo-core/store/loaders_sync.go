@@ -170,10 +170,17 @@ func (db *DB) BuildDemandRegistryFromAggregate(stationID string) ([]demands.Regi
 			return nil, err
 		}
 		for _, h := range homes {
-			// Skip homes with no payload yet: a shared_window loader's homes are
-			// physical WINDOWS (the payload set in bin_loader_payloads governs), and
-			// a just-dropped dedicated position is unassigned until the operator
-			// picks a payload. Either way it drives no demand — emitting an
+			// A BUFFER slot holds kept partials and pins no payload — it drives no
+			// threshold demand of its own (it is fed by parked returns, not the
+			// monitor). Skip it by KIND, not by blank payload, so it is no longer
+			// conflated with an unconfigured position.
+			if h.Kind == loaders.HomeKindBuffer {
+				continue
+			}
+			// A HOME with no payload yet also drives no demand, but for a different
+			// reason: a shared_window loader's homes are physical WINDOWS (the payload
+			// set in bin_loader_payloads governs), and a just-dropped dedicated
+			// position is unassigned until the operator picks a payload. Emitting an
 			// empty-payload registry entry would be junk.
 			if h.PayloadCode == "" {
 				continue

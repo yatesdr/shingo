@@ -445,6 +445,16 @@ func (db *DB) runVersionedMigrations() error {
 		{40, "loader replenishment auto→threshold (role-aware) + CHECK (operator,threshold)",
 			v40LoaderReplenishmentThreshold,
 			v40CheckAllowsThreshold},
+		// v41: home_kind discriminator on bin_loader_homes. A dedicated loader's
+		// member is either a payload-pinned/unassigned HOME position or a
+		// kept-partial BUFFER slot. Before this a buffer was an overloaded
+		// blank-payload row — indistinguishable from an unpinned home (the D4
+		// foot-gun). Additive, DEFAULT 'home' so every existing row is a home
+		// (intentional buffers don't exist in prod config yet); buffers are
+		// written explicitly. CHECK pins the domain.
+		{41, "add home_kind to bin_loader_homes (home|buffer discriminator)",
+			v41LoaderHomeKind,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loader_homes", "home_kind") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1239,6 +1249,25 @@ func v40CheckAllowsThreshold(q schema.Querier) bool {
 		return false
 	}
 	return strings.Contains(def, "threshold")
+}
+
+// v41LoaderHomeKind adds the home/buffer discriminator to bin_loader_homes so a
+// dedicated loader's BUFFER slot (kept partials, no pinned payload) is no longer
+// the same blank-payload row as an unpinned HOME position. Additive + idempotent;
+// DEFAULT 'home' backfills every existing row as a home (no live buffer config
+// exists yet). The CHECK pins the two-value domain.
+func v41LoaderHomeKind(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE bin_loader_homes ADD COLUMN IF NOT EXISTS home_kind TEXT NOT NULL DEFAULT 'home'`,
+		`ALTER TABLE bin_loader_homes DROP CONSTRAINT IF EXISTS bin_loader_homes_home_kind_check`,
+		`ALTER TABLE bin_loader_homes ADD CONSTRAINT bin_loader_homes_home_kind_check CHECK (home_kind IN ('home','buffer'))`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v41 home_kind: %w", err)
+		}
+	}
+	return nil
 }
 
 func migrateBinsCommandCenter(tx *sql.Tx) error {

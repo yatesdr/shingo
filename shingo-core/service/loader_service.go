@@ -139,7 +139,17 @@ func (s *LoaderService) SetPayload(loaderID int64, payloadCode string, uopThresh
 // one preserves its place (the store ignores sort_order on conflict). payloadCode
 // may be empty — the grid-drag drops a node first, then the operator assigns its
 // payload via the inline picker.
-func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode string, uopThreshold int) error {
+func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode, homeKind string, uopThreshold int) error {
+	// homeKind is the home/buffer discriminator; "" normalises to home in the store.
+	// A BUFFER slot pins no payload (it holds whatever partial parks there), so a
+	// payload sent alongside a buffer kind is dropped rather than trusted.
+	switch homeKind {
+	case "", loaders.HomeKindHome:
+	case loaders.HomeKindBuffer:
+		payloadCode = ""
+	default:
+		return fmt.Errorf("invalid home_kind %q (want %q or %q)", homeKind, loaders.HomeKindHome, loaders.HomeKindBuffer)
+	}
 	// A loader window/position must be a real physical slot — a node a bin can
 	// actually sit in. Reject synthetic container nodes (a node group or a
 	// lane) and missing nodes. Without this guard, assigning an empty
@@ -159,7 +169,7 @@ func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode stri
 	}
 	if err := s.db.UpsertLoaderHome(loaders.Home{
 		LoaderID: loaderID, PositionNodeID: positionNodeID, PayloadCode: payloadCode,
-		UOPThreshold: uopThreshold, SortOrder: len(existing),
+		Kind: homeKind, UOPThreshold: uopThreshold, SortOrder: len(existing),
 	}); err != nil {
 		return err
 	}

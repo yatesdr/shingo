@@ -354,11 +354,11 @@ function boxHtml(item) {
 }
 
 // nodeMembersHtml renders a loader's node members (bin_loader_homes). Shared_window
-// = a flat list of windows (name only). dedicated_positions = members split into
-// two visual zones: payload-pinned POSITIONS and blank-payload BUFFER nodes (which
-// hold kept partials / staged empties). Both are real members the pool sources —
-// the split is purely visual: drag a tile in + pick a payload = a position; leave
-// it blank = a buffer node (a dropped tile lands in Buffer until you pin a payload).
+// = a flat list of windows (name only). dedicated_positions = members split into two
+// zones by home_kind: HOME positions (payload pinned, or awaiting one) and BUFFER
+// slots (kept partials, no payload). The zone IS the discriminator now — dropping a
+// tile into Buffer marks it home_kind=buffer; an unpinned HOME stays a home (inert
+// until a payload is picked), no longer mis-filed as a buffer (the D4 fix).
 function nodeMembersHtml(item, dedicated) {
   const homes = item.homes || [];
   if (!dedicated) {
@@ -367,32 +367,40 @@ function nodeMembersHtml(item, dedicated) {
     }
     return homes.map(function (h) { return loaderMemberTile(h, false); }).join('');
   }
-  const positions = homes.filter(function (h) { return h.payload_code; });
-  const buffer = homes.filter(function (h) { return !h.payload_code; });
+  const isBuffer = function (h) { return (h.home_kind || 'home') === 'buffer'; };
+  const positions = homes.filter(function (h) { return !isBuffer(h); });
+  const buffer = homes.filter(isBuffer);
   const posTiles = positions.length
     ? positions.map(function (h) { return loaderMemberTile(h, true); }).join('')
     : '<span class="loader-members-empty">no positions yet — drag a tile in, pick a payload</span>';
   const bufTiles = buffer.length
     ? buffer.map(function (h) { return loaderMemberTile(h, true); }).join('')
-    : '<span class="loader-members-empty">no buffer nodes — drag a tile in, leave the payload blank</span>';
+    : '<span class="loader-members-empty">no buffer slots — drag a tile into this zone</span>';
   return '<div class="loader-zone-label">Positions</div>'
     + '<div class="loader-zone">' + posTiles + '</div>'
-    + '<div class="loader-zone-label">Buffer <span class="loader-zone-sub">partials &amp; empties · no payload</span></div>'
+    + '<div class="loader-zone-label">Buffer <span class="loader-zone-sub">kept partials · no payload</span></div>'
     + '<div class="loader-zone loader-zone-buffer">' + bufTiles + '</div>';
 }
 
-// loaderMemberTile draws one member slot — reused for windows, positions and buffer
-// nodes. A dedicated member shows its per-spot payload picker (blank = a buffer
-// node); a shared window shows name only. The slot reuses the grid node tile (same
-// block/size/state colour, copied in markLinkedTiles) with the loader controls on top.
+// loaderMemberTile draws one member slot — reused for windows, home positions and
+// buffer slots. A HOME shows its per-spot payload picker; a BUFFER shows a static
+// "buffer" badge (it pins no payload); a shared window shows name only. data-kind
+// carries home_kind so a drag can tell a within-zone reorder from a cross-zone
+// re-kind. The slot reuses the grid node tile (same block/size/state colour, copied
+// in markLinkedTiles) with the loader controls on top.
 function loaderMemberTile(h, dedicated) {
   const nm = nodesById[h.position_node_id] || ('node#' + h.position_node_id);
+  const kind = (h.home_kind || 'home');
   let badge = '';
   if (dedicated) {
-    badge = isAuth ? payloadSelect(h.payload_code)
-      : (h.payload_code ? '<span class="loader-pc-badge">' + escapeHtml(h.payload_code) + '</span>' : '');
+    if (kind === 'buffer') {
+      badge = '<span class="loader-pc-badge loader-buffer-badge" title="kept-partial buffer slot — pins no payload">buffer</span>';
+    } else {
+      badge = isAuth ? payloadSelect(h.payload_code)
+        : (h.payload_code ? '<span class="loader-pc-badge">' + escapeHtml(h.payload_code) + '</span>' : '');
+    }
   }
-  return '<div class="node-tile loader-member" data-id="' + h.position_node_id + '"' + (isAuth ? ' draggable="true"' : '') + '>'
+  return '<div class="node-tile loader-member" data-id="' + h.position_node_id + '" data-kind="' + kind + '"' + (isAuth ? ' draggable="true"' : '') + '>'
     + (isAuth ? '<span class="loader-grip" title="drag the tile to reorder / move">⠿</span>' : '')
     + '<span class="tile-loc">' + escapeHtml(nm) + '</span>'
     + badge
@@ -552,13 +560,24 @@ function onBoxDrop(e) {
   const reorder = function () {
     apiPost('/api/loader/reorder-homes', { loader_id: lid, ordered_ids: ordered }).then(refresh).catch(function (err) { toast('' + err, 'error'); });
   };
-  if (already) { reorder(); return; }
-  // New position (from the grid or another loader) — preserve any prior payload/threshold on a move.
+  // Which zone did the tile land in? The Buffer zone marks the member
+  // home_kind=buffer; anywhere else (Positions zone, shared-window list) is a home.
+  const inBuffer = !!(e.target && e.target.closest && e.target.closest('.loader-zone-buffer'));
+  const homeKind = inBuffer ? 'buffer' : 'home';
+
+  // Reorder-only when an existing member is dragged within its own zone (kind
+  // unchanged). A cross-zone drag (home↔buffer) falls through to set-home to re-kind.
+  const draggedTile = tiles.find(function (t) { return parseInt(t.dataset.id, 10) === nodeId; });
+  const curKind = draggedTile ? (draggedTile.dataset.kind || 'home') : null;
+  if (already && curKind === homeKind) { reorder(); return; }
+
+  // New position (from the grid or another loader), or a cross-zone re-kind. A buffer
+  // pins no payload; a home preserves any prior payload/threshold on a move.
   const prev = findHomeAnyLoader(nodeId);
   apiPost('/api/loader/set-home', {
     loader_id: lid, position_node_id: nodeId,
-    payload_code: prev ? prev.payload_code : '',
-    min_stock: prev ? prev.min_stock : 0,
+    payload_code: homeKind === 'buffer' ? '' : (prev ? prev.payload_code : ''),
+    home_kind: homeKind,
     uop_threshold: prev ? prev.uop_threshold : 0,
   }).then(function (d) {
     if (d && d.error) { toast(d.error, 'error'); return; }
@@ -609,7 +628,8 @@ function setMemberPayload(lid, nodeId, pc) {
   const home = findHome(lid, nodeId);
   apiPost('/api/loader/set-home', {
     loader_id: Number(lid), position_node_id: Number(nodeId), payload_code: pc,
-    min_stock: home ? home.min_stock : 0, uop_threshold: home ? home.uop_threshold : 0,
+    home_kind: home ? (home.home_kind || 'home') : 'home',
+    uop_threshold: home ? home.uop_threshold : 0,
   }).then(refresh).catch(function (err) { toast('' + err, 'error'); });
 }
 function removeMember(lid, nodeId) {

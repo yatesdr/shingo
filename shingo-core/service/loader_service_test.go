@@ -29,12 +29,12 @@ func TestLoaderService_SetHome_RejectsSyntheticWindow(t *testing.T) {
 	// A synthetic container node (lane/group) must be rejected as a window.
 	lane := &nodes.Node{Name: "FAKE-LANE", Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create synthetic lane")
-	if err := svc.SetHome(loaderID, lane.ID, "", 0); err == nil {
+	if err := svc.SetHome(loaderID, lane.ID, "", "", 0); err == nil {
 		t.Fatal("SetHome accepted a synthetic container node as a loader window; want rejection")
 	}
 
 	// A real physical slot node must be accepted.
 	slot := &nodes.Node{Name: "REAL-SLOT", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(slot), "create physical slot")
-	testutil.MustNoErr(t, svc.SetHome(loaderID, slot.ID, "", 0), "SetHome physical slot")
+	testutil.MustNoErr(t, svc.SetHome(loaderID, slot.ID, "", "", 0), "SetHome physical slot")
 }

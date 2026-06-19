@@ -10,6 +10,7 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
+	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
 )
@@ -63,9 +64,11 @@ func makeEmptyBin(t *testing.T, db *store.DB, nodeID int64, label string) *bins.
 }
 
 // dedicatedLoaderFixture wires a dedicated loader of the given role for PART-X
-// with one payload-pinned home position and one unmarked buffer (a member with a
-// blank payload) — no separate buffer node group. Returns the position + buffer.
-// The cell binds to the home position; the buffer holds kept partials.
+// with one payload-pinned home position and one explicit BUFFER slot
+// (home_kind=buffer, no payload) — no separate buffer node group. Returns the
+// position + buffer. The cell binds to the home position; the buffer holds kept
+// partials. (An UNPINNED home — kind=home, blank payload — would be inert; the
+// buffer is sourced only because it is marked as such.)
 func dedicatedLoaderFixture(t *testing.T, db *store.DB, role string) (pos *nodes.Node, buffer *nodes.Node) {
 	t.Helper()
 	if err := db.CreatePayload(&payloads.Payload{Code: "PART-X", Description: "X", UOPCapacity: 10}); err != nil {
@@ -85,11 +88,12 @@ func dedicatedLoaderFixture(t *testing.T, db *store.DB, role string) (pos *nodes
 	if err != nil {
 		t.Fatalf("create loader: %v", err)
 	}
-	// Pinned home position (payload X) + an unmarked buffer (blank payload).
-	if err := db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID, PositionNodeID: pos.ID, PayloadCode: "PART-X"}); err != nil {
+	// Pinned home position (payload X) + an explicit BUFFER slot (home_kind=buffer,
+	// no payload). The buffer is a real pool member; an unpinned home would be inert.
+	if err := db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID, PositionNodeID: pos.ID, PayloadCode: "PART-X", Kind: loaders.HomeKindHome}); err != nil {
 		t.Fatalf("upsert pinned home: %v", err)
 	}
-	if err := db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID, PositionNodeID: buffer.ID, PayloadCode: ""}); err != nil {
+	if err := db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID, PositionNodeID: buffer.ID, Kind: loaders.HomeKindBuffer}); err != nil {
 		t.Fatalf("upsert buffer: %v", err)
 	}
 	return pos, buffer

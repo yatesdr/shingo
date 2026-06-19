@@ -1103,6 +1103,14 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   background: color-mix(in srgb, var(--text-muted) 8%, var(--bg));
   border: 1px dashed color-mix(in srgb, var(--text-muted) 30%, transparent);
 }
+/* The buffer badge reads as muted (a slot that pins no payload) vs the teal payload
+   badge a home position carries. */
+.loader-buffer-badge {
+  background: color-mix(in srgb, var(--text-muted) 18%, var(--bg));
+  color: var(--text-muted);
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 40%, transparent);
+  font-style: italic;
+}
 /* A loader slot IS a node tile: it inherits .node-tile (same size, padding, and live
    state colour — the .tile-* classes mirrored on by markLinkedTiles), so a node looks
    identical whether it sits in a node group or a loader. It adds ONLY a teal outline to

@@ -90,6 +90,7 @@ func (h *Handlers) apiSetLoaderHome(w http.ResponseWriter, r *http.Request) {
 		LoaderID       int64  `json:"loader_id"`
 		PositionNodeID int64  `json:"position_node_id"`
 		PayloadCode    string `json:"payload_code"`
+		HomeKind       string `json:"home_kind"` // "" / home / buffer (zone the tile dropped into)
 		UOPThreshold   int    `json:"uop_threshold"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -97,11 +98,12 @@ func (h *Handlers) apiSetLoaderHome(w http.ResponseWriter, r *http.Request) {
 	}
 	// payload_code is optional: the grid-drag adds the position first (empty
 	// payload) and the operator assigns its payload afterward via the picker.
+	// home_kind is optional too: absent → home (the store normalises it).
 	if req.LoaderID == 0 || req.PositionNodeID == 0 {
 		h.jsonError(w, "loader_id and position_node_id are required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.LoaderService().SetHome(req.LoaderID, req.PositionNodeID, req.PayloadCode, req.UOPThreshold); err != nil {
+	if err := h.engine.LoaderService().SetHome(req.LoaderID, req.PositionNodeID, req.PayloadCode, req.HomeKind, req.UOPThreshold); err != nil {
 		h.jsonError(w, "set home: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -41,6 +41,14 @@ const (
 
 	ReplenishmentOperator  = "operator"
 	ReplenishmentThreshold = "threshold"
+
+	// home_kind discriminates a dedicated loader's members: a HOME is a position
+	// the cell binds to (payload pinned, or blank when not yet assigned); a BUFFER
+	// is a kept-partial slot with no pinned payload. Source ranks homes ∪ buffers;
+	// an unpinned home (kind=home, blank payload) is inert. Replaces the
+	// blank-payload overload (D4 / round-3 Call 2).
+	HomeKindHome   = "home"
+	HomeKindBuffer = "buffer"
 )
 
 // Loader is the aggregate root: a bin loader (produce) or unloader (consume)
@@ -70,8 +78,19 @@ type Home struct {
 	LoaderID       int64  `json:"loader_id"`
 	PositionNodeID int64  `json:"position_node_id"`
 	PayloadCode    string `json:"payload_code"`
+	Kind           string `json:"home_kind"` // HomeKindHome | HomeKindBuffer; "" normalises to home
 	UOPThreshold   int    `json:"uop_threshold"`
 	SortOrder      int    `json:"sort_order"`
+}
+
+// InSourcePool reports whether this member's bins belong in the loader's Source
+// candidate pool. A BUFFER slot always does (it holds kept partials). A pinned
+// HOME does. An UNPINNED home (dragged in, no payload assigned yet) does NOT — it
+// is inert, so a stray bin parked on a half-configured position is never sourced.
+// This is the D4 disambiguation: buffer vs unassigned-home, keyed on home_kind,
+// not on the overloaded blank payload. (A blank kind reads as home — see UpsertHome.)
+func (h Home) InSourcePool() bool {
+	return h.Kind == HomeKindBuffer || h.PayloadCode != ""
 }
 
 // Payload is one entry in a shared_window loader's allowed set.
@@ -212,18 +231,26 @@ func DeleteLoader(db *sql.DB, id int64) error {
 // Same payload on a second position is allowed (D1) — there is deliberately no
 // UNIQUE(loader_id, payload_code) — two homes for a high-runner is legitimate.
 func UpsertHome(db *sql.DB, h Home) error {
+	// A blank kind normalises to HOME: every legacy/zero-value caller creates a home
+	// position, and a BUFFER slot is written with an explicit kind. Pinning it here
+	// keeps the NOT NULL/CHECK column satisfied without touching every caller.
+	kind := h.Kind
+	if kind == "" {
+		kind = HomeKindHome
+	}
 	// sort_order is set on INSERT (append position) but deliberately NOT in the
 	// ON CONFLICT SET — re-assigning a position's payload must preserve its place
-	// in the order; only SetHomeOrder rewrites it.
+	// in the order; only SetHomeOrder rewrites it. home_kind IS in the SET so
+	// dragging a member between the Positions and Buffer zones re-kinds it.
 	// min_stock is dormant (bin-count floor retired); leave the column at its
 	// default rather than writing it.
 	_, err := db.Exec(`
-		INSERT INTO bin_loader_homes (loader_id, position_node_id, payload_code, uop_threshold, sort_order)
-		VALUES ($1,$2,$3,$4,$5)
+		INSERT INTO bin_loader_homes (loader_id, position_node_id, payload_code, home_kind, uop_threshold, sort_order)
+		VALUES ($1,$2,$3,$4,$5,$6)
 		ON CONFLICT (position_node_id) DO UPDATE SET
 			loader_id=EXCLUDED.loader_id, payload_code=EXCLUDED.payload_code,
-			uop_threshold=EXCLUDED.uop_threshold`,
-		h.LoaderID, h.PositionNodeID, h.PayloadCode, h.UOPThreshold, h.SortOrder)
+			home_kind=EXCLUDED.home_kind, uop_threshold=EXCLUDED.uop_threshold`,
+		h.LoaderID, h.PositionNodeID, h.PayloadCode, kind, h.UOPThreshold, h.SortOrder)
 	if err != nil {
 		return fmt.Errorf("upsert home pos=%d: %w", h.PositionNodeID, err)
 	}
@@ -262,7 +289,7 @@ func RemoveHome(db *sql.DB, loaderID, positionNodeID int64) error {
 // ListHomes returns a loader's positions in operator-defined order (sort_order,
 // then position node id as a stable tiebreak).
 func ListHomes(db *sql.DB, loaderID int64) ([]Home, error) {
-	rows, err := db.Query(`SELECT loader_id, position_node_id, payload_code, uop_threshold, sort_order
+	rows, err := db.Query(`SELECT loader_id, position_node_id, payload_code, home_kind, uop_threshold, sort_order
 		FROM bin_loader_homes WHERE loader_id=$1 ORDER BY sort_order, position_node_id`, loaderID)
 	if err != nil {
 		return nil, fmt.Errorf("list homes loader=%d: %w", loaderID, err)
@@ -271,7 +298,7 @@ func ListHomes(db *sql.DB, loaderID int64) ([]Home, error) {
 	var out []Home
 	for rows.Next() {
 		var h Home
-		if err := rows.Scan(&h.LoaderID, &h.PositionNodeID, &h.PayloadCode, &h.UOPThreshold, &h.SortOrder); err != nil {
+		if err := rows.Scan(&h.LoaderID, &h.PositionNodeID, &h.PayloadCode, &h.Kind, &h.UOPThreshold, &h.SortOrder); err != nil {
 			return nil, fmt.Errorf("scan home: %w", err)
 		}
 		out = append(out, h)
@@ -286,9 +313,9 @@ func ListHomes(db *sql.DB, loaderID int64) ([]Home, error) {
 // counterpart to the Edge's LoaderForNode.
 func GetHomeByPositionNode(db *sql.DB, positionNodeID int64) (*Home, error) {
 	var h Home
-	err := db.QueryRow(`SELECT loader_id, position_node_id, payload_code, uop_threshold, sort_order
+	err := db.QueryRow(`SELECT loader_id, position_node_id, payload_code, home_kind, uop_threshold, sort_order
 		FROM bin_loader_homes WHERE position_node_id=$1`, positionNodeID).
-		Scan(&h.LoaderID, &h.PositionNodeID, &h.PayloadCode, &h.UOPThreshold, &h.SortOrder)
+		Scan(&h.LoaderID, &h.PositionNodeID, &h.PayloadCode, &h.Kind, &h.UOPThreshold, &h.SortOrder)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

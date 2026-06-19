@@ -52,14 +52,22 @@ func IsAvailableAtConcreteNode(b *bins.Bin, payloadCode string) bool {
 // root-cause: the line bin was visibly there with a matching payload, but no
 // log explained why the claim silently failed.
 //
-// Keep this in lockstep with IsAvailableAtConcreteNode — adding a new reject
-// rule there means adding a new branch here.
+// The status reject-set is domain.BinStatus.BlocksPickup — the SAME predicate the
+// pure loader ranker (binsource.eligible) uses, so the concrete path and the ranker
+// can no longer drift. IsAvailableAtConcreteNode derives from this.
+//
+// The locked check matches the ranker too: a locked bin was already unclaimable
+// (the claim guards locked=false, service/bin_manifest.go), so surfacing it here is
+// zero behaviour change — it just explains the skip instead of letting the claim
+// silently fail.
 func BinUnavailableReason(b *bins.Bin, payloadCode string) string {
 	if b.ClaimedBy != nil {
 		return fmt.Sprintf("already claimed by order %d", *b.ClaimedBy)
 	}
-	switch b.Status {
-	case domain.BinStatusMaintenance, domain.BinStatusFlagged, domain.BinStatusRetired, domain.BinStatusQualityHold:
+	if b.Locked {
+		return "locked for active handling"
+	}
+	if b.Status.BlocksPickup() {
 		return fmt.Sprintf("status=%q rejects pickup", b.Status)
 	}
 	if payloadCode != "" && b.PayloadCode != "" && b.PayloadCode != payloadCode {

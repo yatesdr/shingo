@@ -82,6 +82,20 @@ func (s BinStatus) CanTransitionTo(to BinStatus) bool {
 	return false
 }
 
+// BlocksPickup reports whether a bin in this status must never be sourced for a
+// pickup/retrieve — maintenance, flagged, retired, and quality_hold are all
+// off-limits. This is the SINGLE reject-set shared by the pure loader ranker
+// (binsource.eligible) and the concrete-node predicate
+// (binresolver.BinUnavailableReason), so the two can no longer drift. 'staged'
+// and 'available' are pickable (loader/lineside slots source as concrete pickups).
+func (s BinStatus) BlocksPickup() bool {
+	switch s {
+	case BinStatusMaintenance, BinStatusFlagged, BinStatusRetired, BinStatusQualityHold:
+		return true
+	}
+	return false
+}
+
 // String satisfies fmt.Stringer.
 func (s BinStatus) String() string { return string(s) }
 
