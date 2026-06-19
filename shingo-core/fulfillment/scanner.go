@@ -209,8 +209,15 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	}
 
 	payloadCode := order.PayloadCode
-	if payloadCode == "" {
-		// Empty PayloadCode on a non-complex order is a construction
+	// retrieve_empty is exempt: an empty is a generic carrier, so the
+	// operator-agnostic loader request ("REQUEST EMPTY" on a manual_swap
+	// bin loader) legitimately ships a blank payload_code — the empty
+	// finder below sources any compatible empty, and with none available
+	// leaves the order queued to retry. Firing the guard for retrieve_empty
+	// turned that wait-for-empty into a hard "cannot match a source bin"
+	// failure that spammed Springfield's SMN_001 loader board.
+	if payloadCode == "" && order.OrderType != protocol.OrderTypeRetrieveEmpty {
+		// Empty PayloadCode on a retrieve/move order is a construction
 		// bug — the order was queued without the key the fulfiller
 		// needs. Returning silently here would leave the order forever
 		// queued with no operator-visible signal; route through the

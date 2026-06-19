@@ -252,6 +252,39 @@ func TestScanner_TryFulfill_RetrieveEmpty_NoBinAvailable_UsesDestZone(t *testing
 	}
 }
 
+// A retrieve_empty order legitimately carries a blank payload_code: an
+// empty is a generic carrier, so the operator-agnostic loader request
+// ("REQUEST EMPTY" on a manual_swap bin loader) ships untagged and Core
+// sources any compatible empty. The empty-payload guard must NOT fire for
+// retrieve_empty — doing so turned a should-wait-for-empty into a hard
+// "cannot match a source bin" failure (the Springfield SMN_001 spam). A
+// blank retrieve_empty must reach the empty finder; with none available it
+// stays queued (no failFn). newTestScanner's failFn t.Errorf's on any call,
+// so a guard regression fails this test automatically.
+func TestScanner_TryFulfill_RetrieveEmpty_BlankPayload_ReachesFinder(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	order := seedQueuedRetrieve(f, 9, "dest-09")
+	order.OrderType = protocol.OrderTypeRetrieveEmpty
+	order.PayloadCode = "" // agnostic empty request — blank is legitimate here
+	f.errFindEmptyBin = errors.New("no empties available")
+	s := newTestScanner(t, f)
+
+	if got := s.RunOnce(); got != 0 {
+		t.Fatalf("RunOnce: got %d, want 0 (no empty available → stays queued)", got)
+	}
+	if len(f.findEmptyPrefZones) != 1 {
+		t.Fatalf("FindEmptyCompatibleBin should be called once for blank retrieve_empty, got %d (guard fired instead?)",
+			len(f.findEmptyPrefZones))
+	}
+	if got := f.findEmptyPrefZones[0].PayloadCode; got != "" {
+		t.Errorf("payload passed to finder: got %q, want \"\" (blank/agnostic)", got)
+	}
+	if len(f.claimedBins) != 0 {
+		t.Errorf("no empty available should not claim a bin: %v", f.claimedBins)
+	}
+}
+
 func TestScanner_TryFulfill_Retrieve_NoSourceBin_Skipped(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
