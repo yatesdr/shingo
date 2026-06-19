@@ -766,25 +766,17 @@ func TestPlanReshuffle_SimpleRetrieve_RespectsTargetNodeExclusion(t *testing.T) 
 	// PlanReshuffle will treat them all as blockers. We just need to
 	// validate that the planner can satisfy the shuffle-slot demand
 	// (or fails cleanly when it can't).
-	_, err := PlanReshuffle(db, target, slots[1], lane, grp.ID)
-	if err == nil {
-		// One blocker (depth 1) needs one shuffle slot. We have one
-		// non-target direct child available.
-		// (5 of the lane slots are filled but only those shallower
-		// than the target at depth 2 — i.e. depth 1 only — count as
-		// blockers.) Hard to predict exact count from this setup;
-		// instead verify the negative direction: the planner must not
-		// have returned slots[0] (depth 1) as the shuffle destination
-		// because depth 1 is itself a blocker.
-		// (This test prefers asserting the failure case below.)
-	}
+	// Exercise the planner on the satisfiable setup (one blocker at depth 1 with one
+	// non-target child available); this test asserts the failure case below rather
+	// than the exact shuffle-slot choice, so the result is intentionally discarded.
+	_, _ = PlanReshuffle(db, target, slots[1], lane, grp.ID)
 	// Sanity assertion: the helper returns the documented error shape
 	// when shuffle demand exceeds pool. We expect ≥ 4 blockers (slots
 	// 0..3 inclusive were filled) shallower than target depth 5 if
 	// target were at slot 4, but the actual target is depth 2 with one
 	// blocker at depth 1. To force the documented error, request many
 	// slots directly.
-	_, err = findShuffleSlots(db, 0, grp.ID, 10)
+	_, err := findShuffleSlots(db, 0, grp.ID, 10)
 	if err == nil {
 		t.Errorf("expected error when shuffle demand exceeds pool")
 	} else if !strings.Contains(err.Error(), "need") || !strings.Contains(err.Error(), "shuffle slots") {

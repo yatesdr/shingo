@@ -349,8 +349,8 @@ func TestNodeService_GetGroupLayout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddLane: %v", err)
 	}
-	// Create two slots and attach to the lane via reparent.
-	var slotIDs []int64
+	// Create two slots and attach to the lane via reparent. (The slot ids aren't
+	// needed afterward — this test asserts on the derived group layout below.)
 	for i := 1; i <= 2; i++ {
 		slot := &nodes.Node{Name: "NGRP-LAYOUT-S" + string(rune('0'+i)), Enabled: true}
 		if err := db.CreateNode(slot); err != nil {
@@ -359,7 +359,6 @@ func TestNodeService_GetGroupLayout(t *testing.T) {
 		if err := db.ReparentNode(slot.ID, &laneID, i); err != nil {
 			t.Fatalf("reparent slot %d: %v", i, err)
 		}
-		slotIDs = append(slotIDs, slot.ID)
 	}
 
 	layout, err := svc.GetGroupLayout(grpID)
