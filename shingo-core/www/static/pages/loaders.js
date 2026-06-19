@@ -349,34 +349,55 @@ function boxHtml(item) {
     + (isAuth ? '<button class="loader-box-edit" title="Edit loader">Edit</button>' : '')
     + (isAuth ? '<button class="loader-box-del" title="Delete loader">Delete</button>' : '')
     + '</div>'
-    + '<div class="loader-box-body">' + '<div class="loader-members">' + nodes + '</div>' + payloadSet + hint + groupsHtml + '</div>'
+    + '<div class="loader-box-body">' + '<div class="loader-members' + (dedicated ? ' loader-members-zoned' : '') + '">' + nodes + '</div>' + payloadSet + hint + groupsHtml + '</div>'
     + '</div>';
 }
 
-// nodeMembersHtml renders a loader's node members (bin_loader_homes) for BOTH
-// layouts: shared_window = windows (name only), dedicated_positions = positions
-// each carrying a payload shown as an editable badge.
+// nodeMembersHtml renders a loader's node members (bin_loader_homes). Shared_window
+// = a flat list of windows (name only). dedicated_positions = members split into
+// two visual zones: payload-pinned POSITIONS and blank-payload BUFFER nodes (which
+// hold kept partials / staged empties). Both are real members the pool sources —
+// the split is purely visual: drag a tile in + pick a payload = a position; leave
+// it blank = a buffer node (a dropped tile lands in Buffer until you pin a payload).
 function nodeMembersHtml(item, dedicated) {
   const homes = item.homes || [];
-  if (!homes.length) {
-    return '<span class="loader-members-empty">no ' + (dedicated ? 'positions' : 'windows') + ' yet — drag node tiles in</span>';
-  }
-  return homes.map(function (h) {
-    const nm = nodesById[h.position_node_id] || ('node#' + h.position_node_id);
-    let badge = '';
-    if (dedicated) {
-      badge = isAuth ? payloadSelect(h.payload_code)
-        : (h.payload_code ? '<span class="loader-pc-badge">' + escapeHtml(h.payload_code) + '</span>' : '');
+  if (!dedicated) {
+    if (!homes.length) {
+      return '<span class="loader-members-empty">no windows yet — drag node tiles in</span>';
     }
-    // node-tile + loader-member: the slot reuses the grid node tile (same block/size/
-    // state colour, copied in markLinkedTiles) with the loader outline + controls on top.
-    return '<div class="node-tile loader-member" data-id="' + h.position_node_id + '"' + (isAuth ? ' draggable="true"' : '') + '>'
-      + (isAuth ? '<span class="loader-grip" title="drag the tile to reorder / move">⠿</span>' : '')
-      + '<span class="tile-loc">' + escapeHtml(nm) + '</span>'
-      + badge
-      + (isAuth ? '<span class="loader-member-x" title="remove" draggable="false">×</span>' : '')
-      + '</div>';
-  }).join('');
+    return homes.map(function (h) { return loaderMemberTile(h, false); }).join('');
+  }
+  const positions = homes.filter(function (h) { return h.payload_code; });
+  const buffer = homes.filter(function (h) { return !h.payload_code; });
+  const posTiles = positions.length
+    ? positions.map(function (h) { return loaderMemberTile(h, true); }).join('')
+    : '<span class="loader-members-empty">no positions yet — drag a tile in, pick a payload</span>';
+  const bufTiles = buffer.length
+    ? buffer.map(function (h) { return loaderMemberTile(h, true); }).join('')
+    : '<span class="loader-members-empty">no buffer nodes — drag a tile in, leave the payload blank</span>';
+  return '<div class="loader-zone-label">Positions</div>'
+    + '<div class="loader-zone">' + posTiles + '</div>'
+    + '<div class="loader-zone-label">Buffer <span class="loader-zone-sub">partials &amp; empties · no payload</span></div>'
+    + '<div class="loader-zone loader-zone-buffer">' + bufTiles + '</div>';
+}
+
+// loaderMemberTile draws one member slot — reused for windows, positions and buffer
+// nodes. A dedicated member shows its per-spot payload picker (blank = a buffer
+// node); a shared window shows name only. The slot reuses the grid node tile (same
+// block/size/state colour, copied in markLinkedTiles) with the loader controls on top.
+function loaderMemberTile(h, dedicated) {
+  const nm = nodesById[h.position_node_id] || ('node#' + h.position_node_id);
+  let badge = '';
+  if (dedicated) {
+    badge = isAuth ? payloadSelect(h.payload_code)
+      : (h.payload_code ? '<span class="loader-pc-badge">' + escapeHtml(h.payload_code) + '</span>' : '');
+  }
+  return '<div class="node-tile loader-member" data-id="' + h.position_node_id + '"' + (isAuth ? ' draggable="true"' : '') + '>'
+    + (isAuth ? '<span class="loader-grip" title="drag the tile to reorder / move">⠿</span>' : '')
+    + '<span class="tile-loc">' + escapeHtml(nm) + '</span>'
+    + badge
+    + (isAuth ? '<span class="loader-member-x" title="remove" draggable="false">×</span>' : '')
+    + '</div>';
 }
 
 // payloadSelect is an inline per-position payload picker styled as a badge — it
