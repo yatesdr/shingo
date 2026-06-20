@@ -425,11 +425,27 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// and the operator's release-time RemainingUOP arrives via
 	// HandleOrderRelease. If a future Edge starts sending RemainingUOP at
 	// intake we'd persist it on the order row to recover here.
-	// Shadow check: snapshot the pre-claim candidate bins so the pure planner
-	// (shadowComparePlan, below) sees exactly what the live loop is about to
-	// claim from. Read-only; must precede the claim.
+	//
+	// Snapshot the pre-claim candidate bins before the claim mutates ownership:
+	// the read-only validator (shadowComparePlan, below) — and, on the plan
+	// path, the plan itself — must see exactly the state the claim acts on.
 	shadowBins := d.snapshotPickupBins(resolvedSteps)
-	if err := d.claimComplexBins(order, resolvedSteps, order.PayloadCode, nil); err != nil {
+
+	// Claim the order's bins from a computed plan — the single claim path.
+	// ApplyComplexPlan re-walks the live candidates the plan ordered, claims
+	// sequentially so each claim consumes its bin, and re-derives the race
+	// signal, terminal disposition, and primary bin from its own attempts.
+	// claimComplexBins is retained unwired in complex_claims.go purely as the
+	// differential parity reference; it is not a runtime alternative.
+	// shadowComparePlan runs read-only afterward to compare the pure plan against
+	// what was persisted.
+	processNode := order.ProcessNode
+	if processNode == "" {
+		processNode = order.SourceNode
+	}
+	plan := BuildComplexPlan(resolvedSteps, shadowBins, order.PayloadCode, processNode)
+	claimErr := d.ApplyComplexPlan(order, plan, order.PayloadCode, nil)
+	if claimErr != nil {
 		// Three terminal outcomes, distinguished by planningError.Code:
 		//   - claim_failed: transient race loss. Don't fail the order;
 		//     queue_reason="claim_failed" replays on the next scanner tick.
@@ -442,26 +458,26 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		//   - no_bin (default): bins existed but were unclaimable
 		//     (already-claimed, payload mismatch, status). Terminal Fail.
 		var pe *planningError
-		if errors.As(err, &pe) {
+		if errors.As(claimErr, &pe) {
 			switch pe.Code {
 			case "claim_failed":
 				if serr := d.db.SetOrderQueueReason(order.ID, "claim_failed"); serr != nil {
 					log.Printf("dispatch: set queue_reason claim_failed for order %d: %v", order.ID, serr)
 				}
 				d.dbg("complex: order %d held in queue on claim_failed: %s", order.ID, pe.Detail)
-				return err
+				return claimErr
 			case "no_source_bin":
 				d.skipOrderInternal(order, "no_source_bin", pe.Detail)
-				return err
+				return claimErr
 			}
 		}
-		d.failOrderInternal(order, "no_bin", err.Error())
-		return err
+		d.failOrderInternal(order, "no_bin", claimErr.Error())
+		return claimErr
 	}
 
-	// Shadow check: now that the live loop has claimed (err == nil), compare the
-	// pure planner's decisions against what it persisted. Log-only, no cutover.
-	// See complex_shadow.go.
+	// Read-only parity validator: rebuild the pure plan from the pre-claim
+	// snapshot and compare it against what the authority persisted. Race-aware
+	// and log-only — never alters dispatch. See complex_shadow.go.
 	d.shadowComparePlan(order, resolvedSteps, shadowBins)
 
 	preWait, hasWait := splitAtWait(resolvedSteps)

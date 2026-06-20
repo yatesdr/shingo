@@ -10,6 +10,12 @@ import (
 )
 
 // claimComplexBins resolves and claims bins for pickup steps in a complex order.
+//
+// No longer wired into dispatch: ApplyComplexPlan is the live claim path.
+// claimComplexBins is retained as the reference implementation the differential
+// parity harness checks ApplyComplexPlan against, pending integration sign-off;
+// it is not a runtime alternative.
+//
 // For single-pickup orders (the most common pattern), it sets Order.BinID so
 // that the normal completion flow — ApplyBinArrival (moves bin to delivery
 // node in the DB) and maybeCreateReturnOrder (auto-return on cancel/fail) —
