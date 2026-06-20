@@ -14,7 +14,7 @@ import (
 // iteration order.
 //
 // Two callers — planMove (concrete-source-node branch) and
-// claimComplexBins (per pickup step) — used to share this loop body
+// ApplyComplexPlan (per pickup step) — used to share this loop body
 // inline. Both need the same retry-on-race semantics: a bin can pass
 // BinUnavailableReason (read of payload/status/claimed_by) and still
 // fail ClaimForDispatch (write under the SQL claimed_by IS NULL guard

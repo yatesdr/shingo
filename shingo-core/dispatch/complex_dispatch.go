@@ -435,8 +435,6 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// ApplyComplexPlan re-walks the live candidates the plan ordered, claims
 	// sequentially so each claim consumes its bin, and re-derives the race
 	// signal, terminal disposition, and primary bin from its own attempts.
-	// claimComplexBins is retained unwired in complex_claims.go purely as the
-	// differential parity reference; it is not a runtime alternative.
 	// shadowComparePlan runs read-only afterward to compare the pure plan against
 	// what was persisted.
 	processNode := order.ProcessNode

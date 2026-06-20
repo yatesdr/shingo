@@ -84,7 +84,7 @@ type PlannedBinClaim struct {
 // processNode is the order's source node — the outgoing bin at that node is
 // the one that receives the operator's RemainingUOP signal at apply time.
 //
-// Bin selection mirrors the inline loop in claimComplexBins: for each
+// Bin selection mirrors the live claim path (ApplyComplexPlan): for each
 // pickup step, walk the candidate bins and take the first one where
 // BinUnavailableReason returns "". A step with no usable candidate adds an
 // entry to plan.Skips with the same per-bin reject summary the inline path
@@ -109,8 +109,8 @@ func BuildComplexPlan(steps []resolvedStep, binsByNode map[string][]*bins.Bin, p
 			continue
 		}
 		// Empty pickup leg (produce node's "bring an empty to fill"): claim an
-		// EMPTY carrier, not a payload-matching full — mirrors claimComplexBins
-		// (complex_claims.go) so the plan is a faithful model of the live claim
+		// EMPTY carrier, not a payload-matching full — mirrors the live claim path
+		// so the plan is a faithful model of the live claim
 		// path. Without this the planner would pick a payload-matching full at
 		// an empty leg and the shadow comparison would flag a spurious mismatch
 		// on every refill order.
@@ -160,7 +160,7 @@ func BuildComplexPlan(steps []resolvedStep, binsByNode map[string][]*bins.Bin, p
 
 // selectClaim walks bin candidates for a single pickup step and returns the
 // first eligible bin, or (nil, rejectReasons) if every candidate failed. The
-// reject reasons match the strings the inline claimComplexBins loop emits so
+// reject reasons match the strings the live claim path emits so
 // log lines stay diff-stable across the refactor.
 func selectClaim(candidates []*bins.Bin, payloadCode string) (*bins.Bin, []string) {
 	var rejects []string

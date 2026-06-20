@@ -78,7 +78,7 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 // (SEND PARTIAL BACK). Must run before backend.ReleaseOrder so the fleet
 // doesn't proceed against an inconsistent manifest.
 //
-// When order.BinID is nil (claimComplexBins missed), falls back to locating
+// When order.BinID is nil (the complex claim missed), falls back to locating
 // the bin at order.ProcessNode/SourceNode — the ALN_002 incident path.
 func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *orders.Order, p *protocol.OrderRelease) error {
 	if p.Disposition != nil {
@@ -215,7 +215,7 @@ func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.
 //     bin first, then any non-empty bin at the node.
 //
 // Pre-Phase-3 this was node-only and would silently miss bins that
-// claimComplexBins HAD claimed but UpdateOrderBinID failed to persist
+// the complex claim HAD claimed but UpdateOrderBinID failed to persist
 // (DB-write race), and miss any in-transit bin during the rare case
 // where release fires after pickup has already happened.
 func (d *Dispatcher) findFallbackBinAtSource(order *orders.Order) (int64, bool) {
@@ -238,7 +238,7 @@ func (d *Dispatcher) findFallbackBinAtSource(order *orders.Order) (int64, bool) 
 	}
 
 	// 2) Node fallback — only reached when no bin is claimed by this
-	// order at all (claimComplexBins missed entirely, or order is in
+	// order at all (the complex claim missed entirely, or order is in
 	// a partial-state we can't reason about from claims).
 	lookupNode := order.ProcessNode
 	if lookupNode == "" {

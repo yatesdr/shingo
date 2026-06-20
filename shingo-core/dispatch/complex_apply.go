@@ -10,10 +10,9 @@ import (
 )
 
 // ApplyComplexPlan claims bins for a complex order from a previously computed
-// ComplexPlan. It is the plan-consuming counterpart to claimComplexBins and
-// produces the same durable state — claimed bins, Order.BinID, and the
-// order_bins junction rows — so the two can be exercised interchangeably and
-// compared for parity.
+// ComplexPlan. It is the single claim path for complex orders, producing the
+// durable state the completion flow depends on — claimed bins, Order.BinID, and
+// the order_bins junction rows.
 //
 // Architecture: the plan supplies ordering and intent (the resolved step
 // sequence, which pickup is the process node, the per-bin destination model);

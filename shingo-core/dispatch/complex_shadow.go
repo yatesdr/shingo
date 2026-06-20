@@ -10,12 +10,12 @@ import (
 
 // ComplexPlan shadow comparison.
 //
-// Shadow mode validates, in production and with zero behavior change, that the
-// pure BuildComplexPlan would make the same primary-claim decision the live
-// inline claimComplexBins loop actually makes — and, via the persisted re-read
-// below, that the claim actually reached the order row. When plan and live agree
-// across a representative volume of real orders, the dispatcher can later be cut
-// over to consume a Plan directly with confidence.
+// Runs read-only after every complex claim as a post-cutover canary: it rebuilds
+// the pure BuildComplexPlan from the pre-claim snapshot and checks that what the
+// live claim path (ApplyComplexPlan) persisted matches what a fresh plan
+// predicts — and, via the persisted re-read below, that the claim actually
+// reached the order row. A non-benign mismatch flags a real claim bug in
+// production.
 //
 // The detection target is the silent-claim-failure class (ALN_002 → SMN_003,
 // 2026-04-23): the live path "succeeds" but Order.BinID ends up nil or pointing
@@ -37,13 +37,13 @@ import (
 //     invariant monitor.
 //
 // Everything here is read-only and log-only. snapshotPickupBins and the order
-// re-read issue extra read queries (the live loop re-lists the same nodes when
-// it claims); that is an accepted diagnostic cost on the complex-dispatch path,
-// which is not hot.
+// re-read issue extra read queries (the live claim path re-lists the same nodes
+// when it claims); that is an accepted diagnostic cost on the complex-dispatch
+// path, which is not hot.
 
 // snapshotPickupBins lists the candidate bins at each distinct pickup node,
 // keyed by dot-name, from the PRE-claim state. It must be called before
-// claimComplexBins mutates bin ownership so BuildComplexPlan sees the same
+// ApplyComplexPlan mutates bin ownership so BuildComplexPlan sees the same
 // candidates the live loop will. Best-effort and read-only: a node that fails
 // to resolve or list is simply omitted, which BuildComplexPlan renders as the
 // same "no bins at node" skip the live loop records on the identical failure.
@@ -71,20 +71,20 @@ func (d *Dispatcher) snapshotPickupBins(steps []resolvedStep) map[string][]*bins
 
 // shadowComparePlan builds the pure plan from the pre-claim candidate snapshot
 // and logs where the plan's primary-claim decision diverges from what
-// claimComplexBins persisted. Call it only after a SUCCESSFUL claim (err == nil)
+// ApplyComplexPlan persisted. Call it only after a SUCCESSFUL claim (err == nil)
 // — that is where silent partial failures hide (the order proceeded yet
 // Order.BinID is wrong or never reached the row). Log-only; it never alters
 // dispatch.
 //
 // The primary comparison is against the PERSISTED Order.BinID (re-read from the
 // row), so it observes a failed UpdateOrderBinID at dispatch time, not just an
-// in-memory divergence. The in-memory value claimComplexBins set is kept as a
+// in-memory divergence. The in-memory value ApplyComplexPlan set is kept as a
 // secondary signal that pins a persistence failure specifically. A primary
 // divergence that is not an outright silent failure is most often a claim race
 // or candidate skew between the snapshot and the live list — logged distinctly
 // so it is not mistaken for a planner logic bug.
 func (d *Dispatcher) shadowComparePlan(order *orders.Order, steps []resolvedStep, binsByNode map[string][]*binsstore.Bin) {
-	// Mirror claimComplexBins' processNode derivation: explicit ProcessNode for
+	// Mirror the live claim's processNode derivation: explicit ProcessNode for
 	// swap orders, else SourceNode. (An earlier version passed ProcessNode raw,
 	// so its IsProcessNode flagging was wrong whenever ProcessNode was empty.)
 	processNode := order.ProcessNode
@@ -107,7 +107,7 @@ func (d *Dispatcher) shadowComparePlan(order *orders.Order, steps []resolvedStep
 
 	planPrimary := plan.primaryBinID(processNode)
 
-	// In-memory primary: the bin claimComplexBins set on the order struct in this
+	// In-memory primary: the bin ApplyComplexPlan set on the order struct in this
 	// process — the secondary signal, used below to pin a persistence failure.
 	var inMemoryPrimary int64
 	if order.BinID != nil {
@@ -167,7 +167,7 @@ func (d *Dispatcher) shadowComparePlan(order *orders.Order, steps []resolvedStep
 	// shadow is blind to.
 	d.compareComplexJunction(order, plan)
 
-	// Persistence check (secondary): the bin claimComplexBins set in memory did
+	// Persistence check (secondary): the bin ApplyComplexPlan set in memory did
 	// not reach the row — a dispatch-time UpdateOrderBinID failure, which lets the
 	// order proceed with a BinID the DB never recorded (one of the original
 	// incident's silent paths). Distinct from the plan-vs-persisted divergence
@@ -282,7 +282,7 @@ func (d *Dispatcher) compareComplexJunction(order *orders.Order, plan *ComplexPl
 
 // primaryBinID returns the bin the plan would write to Order.BinID: the claim
 // at processNode if one exists, else the first claim — mirroring the primaryIdx
-// selection in claimComplexBins. Returns 0 when the plan claimed nothing.
+// selection in ApplyComplexPlan. Returns 0 when the plan claimed nothing.
 func (p *ComplexPlan) primaryBinID(processNode string) int64 {
 	if len(p.BinClaims) == 0 {
 		return 0

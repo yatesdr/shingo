@@ -12,7 +12,7 @@ import (
 	"shingocore/store/orders"
 )
 
-// TestClaimComplexBins_EmptyLegClaimsEmptyCarrier is the produce-node fix:
+// TestApplyComplexPlan_EmptyLegClaimsEmptyCarrier is the produce-node fix:
 // a complex swap stores the produced full and fetches an EMPTY carrier to
 // refill the press. The empty pickup leg (step.Empty) must claim an empty
 // carrier, NOT a payload-matching full sitting in the same source — the
@@ -21,7 +21,7 @@ import (
 // Source node holds BOTH a full PART-A bin and an empty carrier. Pre-fix,
 // claimFirstAvailable would take whichever came first (BinUnavailableReason
 // accepts both); the fix filters the empty leg to empties.
-func TestClaimComplexBins_EmptyLegClaimsEmptyCarrier(t *testing.T) {
+func TestApplyComplexPlan_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storeNode, lineNode, bp := setupTestData(t, db)
@@ -62,8 +62,9 @@ func TestClaimComplexBins_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 		{Action: "pickup", Node: src.Name, Empty: true},
 		{Action: "dropoff", Node: lineNode.Name},
 	}
-	if err := d.claimComplexBins(order, steps, bp.Code, nil); err != nil {
-		t.Fatalf("claimComplexBins: %v", err)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, order.ProcessNode)
+	if err := d.ApplyComplexPlan(order, plan, bp.Code, nil); err != nil {
+		t.Fatalf("ApplyComplexPlan: %v", err)
 	}
 
 	// The empty carrier is claimed by this order; the full at the same source is NOT.

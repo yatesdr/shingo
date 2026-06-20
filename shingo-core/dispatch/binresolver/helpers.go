@@ -45,7 +45,7 @@ func IsAvailableAtConcreteNode(b *bins.Bin, payloadCode string) bool {
 // Returns "" when the bin is available; otherwise a short, log-friendly string
 // describing why the bin was rejected.
 //
-// Exists so callers (claimComplexBins, planning_service) can tell operators
+// Exists so callers (the complex claim path, planning_service) can tell operators
 // WHY a bin at the right node was skipped — the previous d.dbg only logged
 // payload mismatches, leaving claimed_by / status rejections silent. That
 // silence is what made the ALN_002 → SMN_003 incident (2026-04-23) hard to

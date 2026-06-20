@@ -30,7 +30,7 @@ type claimedBin struct {
 }
 
 // pickupSkip records why a pickup step in a complex order failed to claim a
-// bin. Surfaced to production logs by claimComplexBins so silent claim
+// bin. Surfaced to production logs by ApplyComplexPlan so silent claim
 // failures (the ALN_002 → SMN_003 incident class) become diagnosable from
 // the log instead of only from the late-bind manifest fallback path.
 type pickupSkip struct {
@@ -60,7 +60,7 @@ func stepSkipSummaries(skips []pickupSkip) []string {
 	return out
 }
 
-// emptyNodeSkipReason is the literal reason string set in claimComplexBins
+// emptyNodeSkipReason is the literal reason string set in ApplyComplexPlan
 // when ListBinsByNode returns zero rows for a pickup step. allStepSkipsAreEmptyNode
 // keys on this exact value to distinguish "source was emptied externally"
 // (terminal-skip) from "bins were there but rejected" (terminal-fail).
