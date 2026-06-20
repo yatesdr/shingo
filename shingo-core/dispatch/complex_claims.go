@@ -31,7 +31,9 @@ import (
 //
 // Compound order children (ParentOrderID != nil) never populate the junction
 // table — each child is a single-bin order handled by the legacy path.
-func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep, payloadCode string, remainingUOP *int) error {
+// Retained as the differential parity reference (exercised by the docker-gated
+// harness) until the gated cleanup removes it; it has no production caller.
+func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep, payloadCode string, remainingUOP *int) error { //nolint:unused
 	// processNode names the line node whose claim drives this order — the
 	// node where the operator releases / confirms and where the bin used
 	// for late-bind manifest sync lives. Edge sets it explicitly via
