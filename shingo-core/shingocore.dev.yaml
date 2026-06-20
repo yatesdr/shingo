@@ -60,6 +60,17 @@ staging:
   sweep_interval: 2s            # wall-clock ticker for the reconciliation + staged-bin sweeps
   auto_confirm_delivered: 2s    # sim-clock age after which a stuck `delivered` order is confirmed
   abandon_stuck: 0s             # sim: disable the >1h stuck-order abandonment sweep (0 = off)
+  # ttl (sim): finite staging expiry so lineside bins auto-unstage. The PRODUCTION
+  # default is 0 (permanent — staged bins release only when a claim picks them).
+  # In the sim that gridlocks: swap/complex deliveries land bins `staged` at lineside
+  # nodes with staged_expires_at=NULL, the stagedBinSweepLoop skips NULL-expiry bins,
+  # and if no claim grabs them they freeze staged forever — choking the node (6/9
+  # machines idle, ~23/96 bins frozen, reconciliation "critical"). A finite TTL gives
+  # the existing sweep (ReleaseExpiredStagedBins, every sweep_interval) a deadline to
+  # act on, so a staged bin reverts to `available` if no claim picks it within 30s
+  # (~3s wall at 10×). 30s is short enough to clear a stall, long enough that a bin
+  # genuinely mid-swap (picked within 30s) isn't yanked.
+  ttl: 30s
 
 sim:
   enabled: true
