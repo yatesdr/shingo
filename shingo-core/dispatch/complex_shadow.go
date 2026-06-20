@@ -24,11 +24,12 @@ import (
 // empty/zeroed. The single value that went wrong in those incidents is
 // Order.BinID (the primary claim), so that is what the shadow compares.
 //
-// Two things are deliberately out of scope here:
-//   - The full per-bin set of a multi-pickup order (the order_bins junction).
-//     The current scope compares only the primary claim; full-parity validation
-//     of every claimed bin is future work, for when the dispatcher actually
-//     consumes the Plan instead of the inline loop.
+// Scope: the primary comparison (Order.BinID) plus the full claimed set and
+// per-bin destinations of a multi-pickup order (the order_bins junction), via
+// compareComplexJunction. Both are race-aware — a bin the other path now holds,
+// or one consumed by a same-node double-pick, is agreement, not a divergence.
+//
+// One thing remains deliberately out of scope here:
 //   - Post-dispatch manifest resets — a bin's count being zeroed AFTER a correct
 //     dispatch. That is a runtime-lifecycle problem, not a dispatch-time claim
 //     decision, so it needs its own monitor and is not observable here. It is
@@ -142,11 +143,29 @@ func (d *Dispatcher) shadowComparePlan(order *orders.Order, steps []resolvedStep
 		log.Printf("dispatch: complex-plan shadow order=%d planner under-claims: persisted Order.BinID=%d but plan claimed no primary (plan skips=%d)",
 			order.ID, persistedPrimary, len(plan.Skips))
 	default:
-		// Both chose a primary but a different bin — most likely a claim race or
-		// snapshot/candidate skew, not a logic divergence.
-		log.Printf("dispatch: complex-plan shadow order=%d primary-claim mismatch plan=%d persisted=%d (likely claim race or candidate skew)",
-			order.ID, planPrimary, persistedPrimary)
+		// Both chose a primary but a different bin. Classify before crying wolf:
+		// a predicted bin now held by another order is agreement-under-race; one
+		// held by this order at another step is the same-node double-pick the
+		// read-only planner cannot model; only a free predicted bin is a real
+		// selection divergence.
+		switch d.binDivergenceKind(planPrimary, order.ID) {
+		case "race":
+			d.dbg("complex-plan shadow order=%d primary agreement-under-race: plan bin %d taken by another order, authority claimed %d",
+				order.ID, planPrimary, persistedPrimary)
+		case "self":
+			d.dbg("complex-plan shadow order=%d primary same-node double-pick: plan bin %d consumed by this order, authority claimed %d",
+				order.ID, planPrimary, persistedPrimary)
+		default:
+			log.Printf("dispatch: complex-plan shadow order=%d primary-claim mismatch plan=%d persisted=%d (no race explanation)",
+				order.ID, planPrimary, persistedPrimary)
+		}
 	}
+
+	// Full claimed-set + junction parity (race-aware). The primary check above
+	// sees only Order.BinID; this observes the second-and-later claims and the
+	// per-bin destinations the cutover now drives — the columns a primary-only
+	// shadow is blind to.
+	d.compareComplexJunction(order, plan)
 
 	// Persistence check (secondary): the bin claimComplexBins set in memory did
 	// not reach the row — a dispatch-time UpdateOrderBinID failure, which lets the
@@ -156,6 +175,108 @@ func (d *Dispatcher) shadowComparePlan(order *orders.Order, steps []resolvedStep
 	if inMemoryPrimary != persistedPrimary {
 		log.Printf("dispatch: complex-plan shadow order=%d BinID not persisted: in-memory=%d persisted=%d — UpdateOrderBinID did not stick",
 			order.ID, inMemoryPrimary, persistedPrimary)
+	}
+}
+
+// binDivergenceKind classifies why an authority claimed a different bin than the
+// plan predicted for a step:
+//
+//   - "race": the predicted bin is now held by ANOTHER order, so the authority
+//     correctly walked to a sibling — agreement-under-race, not a bug.
+//   - "self": the predicted bin is held by THIS order at a different step — the
+//     same-node double-pick the read-only planner cannot model (it builds its
+//     claimed-map only after selection, so it predicts the same bin twice).
+//   - "real": the predicted bin is free, so the difference is a genuine
+//     selection divergence worth surfacing.
+func (d *Dispatcher) binDivergenceKind(predictedBinID, orderID int64) string {
+	if predictedBinID == 0 {
+		return "real"
+	}
+	b, err := d.db.GetBin(predictedBinID)
+	if err != nil || b == nil || b.ClaimedBy == nil {
+		return "real"
+	}
+	if *b.ClaimedBy == orderID {
+		return "self"
+	}
+	return "race"
+}
+
+// compareComplexJunction validates the full claimed set and per-bin destinations
+// the cutover drives, against the pure plan, for multi-pickup orders (where the
+// order_bins junction exists). It is the parity column a primary-only shadow is
+// blind to: the second-and-later claims and their destinations.
+//
+// Race-aware and log-only. Differences a concurrent claim or a same-node
+// double-pick explains are logged benign (debug); only an unexplained bin, a
+// missing/extra row, or a destination mismatch on an otherwise-agreeing claim
+// set is surfaced loudly. Compound children carry no junction and are skipped.
+func (d *Dispatcher) compareComplexJunction(order *orders.Order, plan *ComplexPlan) {
+	if len(plan.BinClaims) <= 1 || order.ParentOrderID != nil {
+		return
+	}
+	persisted, err := d.db.ListOrderBins(order.ID)
+	if err != nil {
+		log.Printf("dispatch: complex-plan shadow order=%d junction re-read failed: %v", order.ID, err)
+		return
+	}
+	persistedByStep := make(map[int]*orders.OrderBin, len(persisted))
+	for _, ob := range persisted {
+		persistedByStep[ob.StepIndex] = ob
+	}
+	plannedSteps := make(map[int]bool, len(plan.BinClaims))
+
+	fullAgreement := len(persisted) == len(plan.BinClaims)
+	for _, bc := range plan.BinClaims {
+		plannedSteps[bc.StepIndex] = true
+		ob, ok := persistedByStep[bc.StepIndex]
+		if !ok {
+			fullAgreement = false
+			switch d.binDivergenceKind(bc.BinID, order.ID) {
+			case "race", "self":
+				d.dbg("complex-plan shadow order=%d junction step %d: plan bin %d not persisted, explained by race/double-pick", order.ID, bc.StepIndex, bc.BinID)
+			default:
+				log.Printf("dispatch: complex-plan shadow order=%d junction GAP step %d node=%s: plan predicted bin %d but no order_bins row (no race explanation)",
+					order.ID, bc.StepIndex, bc.NodeName, bc.BinID)
+			}
+			continue
+		}
+		if ob.BinID != bc.BinID {
+			fullAgreement = false
+			switch d.binDivergenceKind(bc.BinID, order.ID) {
+			case "race":
+				d.dbg("complex-plan shadow order=%d junction step %d agreement-under-race: plan bin %d taken, authority claimed %d", order.ID, bc.StepIndex, bc.BinID, ob.BinID)
+			case "self":
+				d.dbg("complex-plan shadow order=%d junction step %d same-node double-pick: plan bin %d consumed by this order, authority claimed %d", order.ID, bc.StepIndex, bc.BinID, ob.BinID)
+			default:
+				log.Printf("dispatch: complex-plan shadow order=%d junction BIN mismatch step %d node=%s plan=%d persisted=%d (no race explanation)",
+					order.ID, bc.StepIndex, bc.NodeName, bc.BinID, ob.BinID)
+			}
+		}
+	}
+
+	// Destinations are only comparable when the full claimed set agrees: a
+	// sibling fallback on any step re-derives the destination map, so a partial
+	// race would make a dest "mismatch" that is in fact correct. Under full
+	// agreement both maps come from the same function over the same bins, so a
+	// difference here is a genuine per-bin mis-delivery regression.
+	if fullAgreement {
+		for _, bc := range plan.BinClaims {
+			ob := persistedByStep[bc.StepIndex]
+			if expected := plan.PerBinDestinations[bc.BinID]; ob.DestNode != expected {
+				log.Printf("dispatch: complex-plan shadow order=%d junction DEST mismatch step %d bin=%d plan-dest=%s persisted-dest=%s",
+					order.ID, bc.StepIndex, bc.BinID, expected, ob.DestNode)
+			}
+		}
+	}
+
+	// Rows the plan never predicted — the authority claimed at a step the
+	// read-only planner skipped (the planner-under-claims signal).
+	for _, ob := range persisted {
+		if !plannedSteps[ob.StepIndex] {
+			log.Printf("dispatch: complex-plan shadow order=%d junction EXTRA step %d node=%s: persisted bin %d not predicted by plan",
+				order.ID, ob.StepIndex, ob.NodeName, ob.BinID)
+		}
 	}
 }
 
