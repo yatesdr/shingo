@@ -309,7 +309,7 @@ function renderJournal(data) {
 // ===== BIN ACTIONS =====
 function doBinAction(action, params) {
   apiPost('/api/bins/action', { id: currentBinId, action: action, params: params || {} })
-    .then(function() { openBinDetail(currentBinId); })
+    .then(function() { openBinDetail(currentBinId); refreshBinRow(currentBinId); })
     .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
@@ -352,7 +352,7 @@ function requestTransport() {
     toast('Bin is already at this location', 'info'); return;
   }
   apiPost('/api/bins/request-transport', { bin_id: currentBinId, destination_node_id: nodeId })
-    .then(function(data) { toast(data.message || 'Transport requested', 'info'); openBinDetail(currentBinId); })
+    .then(function(data) { toast(data.message || 'Transport requested', 'info'); openBinDetail(currentBinId); refreshBinRow(currentBinId); })
     .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
