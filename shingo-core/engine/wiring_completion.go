@@ -191,9 +191,13 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 
 	e.logFn("delivery: order=%d type=%s bin=%d arriving %s -> %s (staged=%v)",
 		order.ID, order.OrderType, *order.BinID, order.SourceNode, order.DeliveryNode, staged)
-	if err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
+	evicted, err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt)
+	if err != nil {
 		e.logFn("engine: apply bin arrival on delivery for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return
+	}
+	if evicted {
+		e.logFn("WARN: delivery of bin %d to %s evicted a stale bin record there — a successful delivery proved the slot empty; the stale bin is at _TRANSIT, recover via the anomalies page", *order.BinID, order.DeliveryNode)
 	}
 
 	// Re-read bin for the event payload (post-ApplyArrival state). The
@@ -409,9 +413,13 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 	// Same overrides existed here in the safety-net path and were removed
 	// for the same reason.
 
-	if err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
+	evicted, err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt)
+	if err != nil {
 		e.logFn("engine: apply bin arrival for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return
+	}
+	if evicted {
+		e.logFn("WARN: delivery of bin %d to %s evicted a stale bin record there — a successful delivery proved the slot empty; the stale bin is at _TRANSIT, recover via the anomalies page", *order.BinID, order.DeliveryNode)
 	}
 
 	// Emit bin contents changed

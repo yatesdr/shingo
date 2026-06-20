@@ -564,18 +564,59 @@ func (s *BinService) GetManifest(binID int64) (*bins.Manifest, error) {
 // Phase 6.1 introduced this method as a thin delegate; Phase 6.4a
 // moved the orchestration body in from the (now-deleted) outer
 // store/completion.go::ApplyBinArrival.
-func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time) error {
+// Returns evicted=true when the destination already recorded a different
+// non-retired bin and that stale ghost was evicted to _TRANSIT (see below);
+// callers surface that as an operator alert. A normal arrival onto an empty
+// slot returns evicted=false and does no extra node lookup.
+func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return false, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
+	// Stale-state reconciliation. A successful arrival is physical proof
+	// the slot is empty: RDS faults on a delivery to an occupied single-bin
+	// position, so a completed delivery means any different bin shingo still
+	// records here is a stale ghost (an untracked manual move left the record
+	// behind). Evict the ghost to _TRANSIT, unclaimed + anomaly_at, so it
+	// surfaces in ListAnomalies and is recoverable via RecoverTransitAnomaly —
+	// never reject the newcomer, which the delivery just proved is the real
+	// bin. Synthetic nodes (LANE/NGRP/_TRANSIT) hold many bins by design and
+	// are exempt (mirrors ensurePhysicalNodeEmpty). The _TRANSIT lookup is
+	// lazy — only on the rare collision, not on every arrival.
+	evicted := false
+	var occupied bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM bins WHERE node_id=$1 AND id<>$2 AND status<>'retired')`,
+		toNodeID, binID).Scan(&occupied); err != nil {
+		return false, fmt.Errorf("check destination occupancy node %d: %w", toNodeID, err)
+	}
+	if occupied {
+		node, err := s.db.GetNode(toNodeID)
+		if err != nil {
+			return false, fmt.Errorf("lookup destination node %d: %w", toNodeID, err)
+		}
+		if !node.IsSynthetic {
+			transit, err := s.db.GetNodeByName(domain.TransitNodeName)
+			if err != nil {
+				return false, fmt.Errorf("lookup transit node %q: %w", domain.TransitNodeName, err)
+			}
+			res, err := tx.Exec(`UPDATE bins SET node_id=$1, claimed_by=NULL, anomaly_at=NOW(), updated_at=NOW()
+				WHERE node_id=$2 AND id<>$3 AND status<>'retired'`, transit.ID, toNodeID, binID)
+			if err != nil {
+				return false, fmt.Errorf("evict stale bin(s) from node %d: %w", toNodeID, err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				evicted = true
+			}
+		}
+	}
+
 	if _, err := tx.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2`, toNodeID, binID); err != nil {
-		return fmt.Errorf("move bin: %w", err)
+		return false, fmt.Errorf("move bin: %w", err)
 	}
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
-		return fmt.Errorf("unclaim bin: %w", err)
+		return false, fmt.Errorf("unclaim bin: %w", err)
 	}
 	if staged {
 		// nullableTime: pass UTC time or nil, mirroring helpers.NullableTime
@@ -587,15 +628,18 @@ func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt 
 		}
 		if _, err := tx.Exec(`UPDATE bins SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW() WHERE id=$2`,
 			expiresVal, binID); err != nil {
-			return fmt.Errorf("stage bin: %w", err)
+			return false, fmt.Errorf("stage bin: %w", err)
 		}
 	} else {
 		if _, err := tx.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
-			return fmt.Errorf("set available bin: %w", err)
+			return false, fmt.Errorf("set available bin: %w", err)
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit arrival bin %d: %w", binID, err)
+	}
+	return evicted, nil
 }
 
 // ── Phase 1 of bin-transit-state: in-transit lifecycle ─────────────

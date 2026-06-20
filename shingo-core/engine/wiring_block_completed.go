@@ -212,9 +212,13 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	}
 
 	staged, expiresAt := e.resolveNodeStaging(destNode)
-	if err := e.binService.ApplyArrival(binID, destNode.ID, staged, expiresAt); err != nil {
+	evicted, err := e.binService.ApplyArrival(binID, destNode.ID, staged, expiresAt)
+	if err != nil {
 		e.logFn("transit: order %d intermediate store arrival bin %d -> %s: %v", order.ID, binID, ev.Location, err)
 		return
+	}
+	if evicted {
+		e.logFn("WARN: intermediate store of bin %d at %s evicted a stale bin record there — a successful delivery proved the slot empty; the stale bin is at _TRANSIT, recover via the anomalies page", binID, ev.Location)
 	}
 
 	e.dbg("transit: bin %d stored at %s on dropoff (order %d, block %s) — slot now reflects the physical bin",

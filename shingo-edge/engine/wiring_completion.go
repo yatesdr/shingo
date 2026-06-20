@@ -167,6 +167,15 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 	if ctx.order.Status != orders.StatusConfirmed {
 		if ctx.order.Status == orders.StatusCancelled || ctx.order.Status == orders.StatusFailed {
 			e.handleOrphanedTaskOrderCompleted(ctx.order)
+			// A plain abort leaves the node's active-bin pointer stale: the
+			// bin may still be present (cancel-before-pickup) or already gone
+			// (post-pickup). Reconcile against Core's physical truth — the
+			// same tri-state rebind/clear/retain the changeover-cancel path
+			// uses. Best-effort; never blocks the bail. The nodeTask==nil case
+			// is vacuous here, so the only guard is a process-node-linked order.
+			if ctx.order.ProcessNodeID != nil {
+				e.reconcileActiveBinAfterCancel(*ctx.order.ProcessNodeID, ctx.runtime.ActiveClaimID)
+			}
 		}
 		return
 	}
