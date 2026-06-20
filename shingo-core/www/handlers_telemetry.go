@@ -307,6 +307,7 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NodeName string `json:"node_name"`
+		BinID    int64  `json:"bin_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.jsonError(w, err.Error(), http.StatusBadRequest)
@@ -327,7 +328,28 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
 		return
 	}
+	// Resolve which bin to clear. One bin → unambiguous. More than one → the
+	// caller must name a bin_id, otherwise we'd silently clear an arbitrary
+	// bins[0]. No count/occupancy refusal: the unloader clears full finished
+	// bins by design, so a non-empty bin is not itself a reason to refuse.
 	bin := bins[0]
+	switch {
+	case req.BinID != 0:
+		bin = nil
+		for _, b := range bins {
+			if b.ID == req.BinID {
+				bin = b
+				break
+			}
+		}
+		if bin == nil {
+			h.jsonError(w, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName), http.StatusConflict)
+			return
+		}
+	case len(bins) > 1:
+		h.jsonError(w, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(bins)), http.StatusConflict)
+		return
+	}
 	newEpoch, err := h.engine.BinManifest().ClearForReuse(bin.ID)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)

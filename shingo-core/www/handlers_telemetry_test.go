@@ -375,6 +375,70 @@ func TestApiBinClear_HappyPath(t *testing.T) {
 	}
 }
 
+// TestApiBinClear_AmbiguousMultipleBins_Returns409 verifies that when a node
+// holds more than one bin, a node_name-only clear is ambiguous and must be
+// refused (409) rather than silently clearing an arbitrary bins[0].
+func TestApiBinClear_AmbiguousMultipleBins_Returns409(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-AMB-1")
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-AMB-2")
+
+	rec := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear",
+		map[string]any{"node_name": sd.StorageNode.Name})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status: got %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	assertJSONError(t, rec.Body.Bytes(), "specify bin_id")
+}
+
+// TestApiBinClear_AmbiguousWithBinID_ClearsNamedBin pins the disambiguation
+// path: with multiple bins at a node, an explicit bin_id clears exactly that
+// bin and leaves the others untouched.
+func TestApiBinClear_AmbiguousWithBinID_ClearsNamedBin(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	keep := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-KEEP")
+	target := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TARGET")
+
+	rec := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear",
+		map[string]any{"node_name": sd.StorageNode.Name, "bin_id": target.ID})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		BinID int64 `json:"bin_id"`
+	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
+	if resp.BinID != target.ID {
+		t.Errorf("cleared bin_id: got %d, want %d (the named bin)", resp.BinID, target.ID)
+	}
+	if got, _ := db.GetBin(target.ID); got.PayloadCode != "" {
+		t.Errorf("target payload_code should be cleared, got %q", got.PayloadCode)
+	}
+	if got, _ := db.GetBin(keep.ID); got.PayloadCode == "" {
+		t.Error("the other bin must be untouched, but its payload_code was cleared")
+	}
+}
+
+// TestApiBinClear_BinIDNotAtNode_Returns409 pins the guard that a supplied
+// bin_id must actually be at the named node.
+func TestApiBinClear_BinIDNotAtNode_Returns409(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-ONLY")
+
+	rec := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear",
+		map[string]any{"node_name": sd.StorageNode.Name, "bin_id": 999999})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status: got %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	assertJSONError(t, rec.Body.Bytes(), "not at node")
+}
+
 // --- apiEMaintRobotTelemetry (+ download) -----------------------------------
 
 func TestApiEMaintRobotTelemetry_EmptyFleet(t *testing.T) {
