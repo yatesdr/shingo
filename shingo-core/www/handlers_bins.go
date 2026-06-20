@@ -273,7 +273,8 @@ func httpStatusForCreate(err error) int {
 	case strings.Contains(msg, "not found"):
 		return http.StatusBadRequest
 	case strings.Contains(msg, "cannot create multiple bins"),
-		strings.Contains(msg, "already has"):
+		strings.Contains(msg, "already has"),
+		strings.Contains(msg, "already exist"):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

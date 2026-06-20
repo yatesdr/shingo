@@ -208,14 +208,15 @@ func TestBinService_CreateBatch_SingleAtPhysicalNode(t *testing.T) {
 		NodeID:    &sd.StorageNode.ID,
 		Status:    "available",
 	}
-	testutil.MustNoErr(t, svc.CreateBatch(template, "OK-", 1), "CreateBatch(1)")
+	// count==1 uses the entered label verbatim: no numeric suffix.
+	testutil.MustNoErr(t, svc.CreateBatch(template, "OK-1", 1), "CreateBatch(1)")
 
 	bins, err := db.ListBinsByNode(sd.StorageNode.ID)
 	if err != nil {
 		t.Fatalf("list bins: %v", err)
 	}
-	if len(bins) != 1 || bins[0].Label != "OK-0001" {
-		t.Errorf("bins = %+v, want one bin with label OK-0001", bins)
+	if len(bins) != 1 || bins[0].Label != "OK-1" {
+		t.Errorf("bins = %+v, want one bin with verbatim label OK-1", bins)
 	}
 }
 
@@ -235,6 +236,105 @@ func TestBinService_CreateBatch_DefaultsCountToOne(t *testing.T) {
 	bins, _ := db.ListBinsByNode(sd.StorageNode.ID)
 	if len(bins) != 1 {
 		t.Errorf("len(bins) = %d, want 1 (count=0 should default to 1)", len(bins))
+	}
+}
+
+// TestBinService_CreateBatch_WidthPreservingIncrement verifies the count>1
+// label rule: a trailing digit run is incremented from its parsed value,
+// preserving zero-pad width (CART-08 → CART-08, CART-09, CART-10).
+func TestBinService_CreateBatch_WidthPreservingIncrement(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	bt := ensureDefaultBinType(t, db)
+	syn := &nodes.Node{Name: "GRP-WIDTH", Enabled: true, IsSynthetic: true}
+	testutil.MustNoErr(t, db.CreateNode(syn), "create synthetic node")
+	svc := newBinSvc(db)
+
+	template := bins.Bin{BinTypeID: bt.ID, NodeID: &syn.ID, Status: "available"}
+	testutil.MustNoErr(t, svc.CreateBatch(template, "CART-08", 3), "CreateBatch")
+
+	got, err := db.ListBinsByNode(syn.ID)
+	if err != nil {
+		t.Fatalf("list bins: %v", err)
+	}
+	want := map[string]bool{"CART-08": false, "CART-09": false, "CART-10": false}
+	if len(got) != len(want) {
+		t.Fatalf("len(bins) = %d, want %d (%+v)", len(got), len(want), got)
+	}
+	for _, b := range got {
+		if _, ok := want[b.Label]; !ok {
+			t.Errorf("unexpected label %q", b.Label)
+			continue
+		}
+		want[b.Label] = true
+	}
+	for label, seen := range want {
+		if !seen {
+			t.Errorf("missing label %q", label)
+		}
+	}
+}
+
+// TestBinService_CreateBatch_CollisionCreatesNothing verifies the count==1
+// collision case: re-creating an existing verbatim label is rejected and no
+// duplicate is created.
+func TestBinService_CreateBatch_CollisionCreatesNothing(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	bt := ensureDefaultBinType(t, db)
+	syn := &nodes.Node{Name: "GRP-DUP", Enabled: true, IsSynthetic: true}
+	testutil.MustNoErr(t, db.CreateNode(syn), "create synthetic node")
+	svc := newBinSvc(db)
+
+	template := bins.Bin{BinTypeID: bt.ID, NodeID: &syn.ID, Status: "available"}
+	testutil.MustNoErr(t, svc.CreateBatch(template, "DUP-1", 1), "seed bin")
+
+	err := svc.CreateBatch(template, "DUP-1", 1)
+	if err == nil {
+		t.Fatal("expected collision error on duplicate label")
+	}
+	if !strings.Contains(err.Error(), "already exist") {
+		t.Errorf("error = %q, want 'already exist'", err.Error())
+	}
+
+	got, _ := db.ListBinsByNode(syn.ID)
+	dup := 0
+	for _, b := range got {
+		if b.Label == "DUP-1" {
+			dup++
+		}
+	}
+	if dup != 1 {
+		t.Errorf("DUP-1 bins = %d, want 1 (collision must not create a duplicate)", dup)
+	}
+}
+
+// TestBinService_CreateBatch_MidBatchCollisionAtomic verifies the
+// all-or-nothing contract: when one label in a batch collides, none of the
+// batch is created — even the labels that were free. CART-09 pre-exists, so
+// CreateBatch(CART-08, 3) (→ CART-08, CART-09, CART-10) must create neither
+// CART-08 nor CART-10.
+func TestBinService_CreateBatch_MidBatchCollisionAtomic(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	bt := ensureDefaultBinType(t, db)
+	syn := &nodes.Node{Name: "GRP-MIDDUP", Enabled: true, IsSynthetic: true}
+	testutil.MustNoErr(t, db.CreateNode(syn), "create synthetic node")
+	svc := newBinSvc(db)
+
+	// Seed the middle label of the batch.
+	seed := &bins.Bin{BinTypeID: bt.ID, Label: "CART-09", NodeID: &syn.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(seed), "seed CART-09")
+
+	template := bins.Bin{BinTypeID: bt.ID, NodeID: &syn.ID, Status: "available"}
+	err := svc.CreateBatch(template, "CART-08", 3)
+	if err == nil {
+		t.Fatal("expected mid-batch collision to fail the whole batch")
+	}
+
+	got, _ := db.ListBinsByNode(syn.ID)
+	if len(got) != 1 || got[0].Label != "CART-09" {
+		t.Errorf("bins = %+v, want only the pre-existing CART-09 (no partial batch)", got)
 	}
 }
 

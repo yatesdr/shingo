@@ -2,6 +2,9 @@ package service
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -51,10 +54,13 @@ func (s *BinService) Create(b *bins.Bin) error {
 }
 
 // CreateBatch inserts `count` bins sharing a template (bin type, node,
-// status, description). Labels are formed as `labelPrefix + NNNN` starting
-// at 0001. Physical nodes may only receive one bin; synthetic nodes may
-// receive many.
-func (s *BinService) CreateBatch(template bins.Bin, labelPrefix string, count int) error {
+// status, description), all-or-nothing in a single transaction. Label
+// handling (see batchLabels): with count==1 the entered label is used
+// verbatim; with count>1 a trailing digit run is incremented preserving
+// zero-pad width, and a label with no trailing digits falls back to the
+// historical label+NNNN scheme starting at 0001. Physical nodes may only
+// receive one bin; synthetic nodes may receive many.
+func (s *BinService) CreateBatch(template bins.Bin, label string, count int) error {
 	if count <= 0 {
 		count = 1
 	}
@@ -74,14 +80,93 @@ func (s *BinService) CreateBatch(template bins.Bin, labelPrefix string, count in
 		}
 	}
 
-	for i := 0; i < count; i++ {
-		b := template
-		b.Label = labelPrefix + fmt.Sprintf("%04d", i+1)
-		if err := s.db.CreateBin(&b); err != nil {
-			return err
+	labels := batchLabels(label, count)
+
+	// Friendly pre-check: report every colliding label up front ("created
+	// none") instead of failing on the first duplicate with a raw constraint
+	// error. The partial unique index plus the transaction below are the
+	// actual atomicity guarantee against a concurrent racer; this is UX only.
+	existing, err := s.existingLabels(labels)
+	if err != nil {
+		return fmt.Errorf("check existing labels: %w", err)
+	}
+	if len(existing) > 0 {
+		return fmt.Errorf("label(s) already exist, created none: %s", strings.Join(existing, ", "))
+	}
+
+	var nodeArg any
+	if template.NodeID != nil {
+		nodeArg = *template.NodeID
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	for _, lbl := range labels {
+		if _, err := tx.Exec(
+			`INSERT INTO bins (bin_type_id, label, description, node_id, status) VALUES ($1, $2, $3, $4, $5)`,
+			template.BinTypeID, lbl, template.Description, nodeArg, template.Status,
+		); err != nil {
+			return fmt.Errorf("create bin %q: %w", lbl, err)
 		}
 	}
-	return nil
+	return tx.Commit()
+}
+
+// trailingDigits captures a label's leading text and its final run of digits.
+var trailingDigits = regexp.MustCompile(`^(.*?)(\d+)$`)
+
+// batchLabels expands a starting label into `count` labels. count<=1 yields
+// the label verbatim. For count>1 a trailing digit run is incremented from
+// its parsed value, preserving zero-pad width — %0*d widens automatically on
+// carry (e.g. "BIN98" → BIN98, BIN99, BIN100). A label with no trailing
+// digits (or an unparseable run) falls back to label+NNNN starting at 0001.
+func batchLabels(label string, count int) []string {
+	if count <= 1 {
+		return []string{label}
+	}
+	labels := make([]string, 0, count)
+	if m := trailingDigits.FindStringSubmatch(label); m != nil {
+		if start, err := strconv.Atoi(m[2]); err == nil {
+			head, width := m[1], len(m[2])
+			for i := 0; i < count; i++ {
+				labels = append(labels, head+fmt.Sprintf("%0*d", width, start+i))
+			}
+			return labels
+		}
+	}
+	for i := 0; i < count; i++ {
+		labels = append(labels, label+fmt.Sprintf("%04d", i+1))
+	}
+	return labels
+}
+
+// existingLabels returns the subset of the given labels already present in the
+// bins table, matching the idx_bins_label_unique predicate (non-empty labels).
+func (s *BinService) existingLabels(labels []string) ([]string, error) {
+	placeholders := make([]string, 0, len(labels))
+	args := make([]any, 0, len(labels))
+	for _, l := range labels {
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)+1))
+		args = append(args, l)
+	}
+	rows, err := s.db.Query(
+		`SELECT label FROM bins WHERE label != '' AND label IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var found []string
+	for rows.Next() {
+		var l string
+		if err := rows.Scan(&l); err != nil {
+			return nil, err
+		}
+		found = append(found, l)
+	}
+	return found, rows.Err()
 }
 
 // ensurePhysicalNodeEmpty guards the one-bin-per-physical-node invariant.
