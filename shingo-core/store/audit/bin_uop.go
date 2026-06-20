@@ -69,6 +69,16 @@ const (
 	// (payload_code = bin's payload code).
 	OpOperatorOverridePullParts      = "operator_override_pull_parts"
 	OpOperatorOverrideReleasePartial = "operator_override_release_partial"
+
+	// OpStaleEpochDropped tags a BinUOPDelta the applier dropped because its
+	// wire epoch was below the bin's current delta_epoch — i.e. the bin was
+	// reset (load/clear/release) after Edge cached that epoch, so the delta
+	// belongs to a retired delta-stream generation. An observation row (no
+	// paired bin write, before_uop == after_uop): the count is unchanged, but
+	// the dropped quantity is recorded so it surfaces in the discrepancy view
+	// instead of vanishing silently. metadata carries
+	// {wire_epoch, bin_epoch, sequence_id, delta}.
+	OpStaleEpochDropped = "stale_epoch_dropped"
 )
 
 // ReleaseFamilyOps is the canonical set of ops that retire a bin's manifest —
@@ -305,6 +315,40 @@ func ListBinUOPOverridesByStation(db *sql.DB, station string, limit, offset int)
 		limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list bin_uop_audit overrides by station %q: %w", station, err)
+	}
+	return scanBinUOPRows(rows)
+}
+
+// ListBinUOPDiscrepancies returns the discrepancy ledger, newest first.
+// It is a view over bin_uop_audit — no separate table — surfacing rows where
+// the tracked count diverged from physical reality:
+//   - stale_epoch_dropped: a delta the applier dropped (lost production signal);
+//   - after_uop < 0: over-consume / negative remaining ("needs reconcile");
+//   - released_empty / released_underpack (incl. the no-owner fallback) where
+//     the bin still carried counted parts at release (before_uop > after_uop) —
+//     parts that left without being counted down.
+//
+// Clean empties (before == after) are excluded so the ledger stays signal, and
+// payload_code is captured at release time (see SyncOrClearForReleased) so the
+// part is named. Served by idx_bin_uop_audit_op / idx_bin_uop_audit_op_time.
+func ListBinUOPDiscrepancies(db *sql.DB, limit, offset int) ([]BinUOPRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := db.Query(`SELECT `+binUOPSelectCols+`
+		FROM bin_uop_audit
+		WHERE op = $1
+		   OR after_uop < 0
+		   OR (op IN ($2, $3, $4) AND COALESCE(before_uop, 0) > after_uop)
+		ORDER BY applied_at DESC, id DESC
+		LIMIT $5 OFFSET $6`,
+		OpStaleEpochDropped, OpReleasedEmpty, OpReleasedEmptyFallback, OpReleasedUnderpack,
+		limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list bin_uop_audit discrepancies: %w", err)
 	}
 	return scanBinUOPRows(rows)
 }

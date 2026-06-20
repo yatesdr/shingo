@@ -609,6 +609,60 @@ func TestBinManifestService_SyncOrClearForReleased_ZeroClearsManifest(t *testing
 	}
 }
 
+// TestBinManifestService_SyncOrClearForReleased_ZeroBumpsEpoch verifies the
+// release-empty path bumps delta_epoch, so a late tick from the retired load
+// is recognizably cross-epoch and the applier drops it instead of corrupting
+// the next load's count.
+func TestBinManifestService_SyncOrClearForReleased_ZeroBumpsEpoch(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-EPOCH0", "PART-A", 100)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+
+	var before int64
+	testutil.MustNoErr(t, db.QueryRow(`SELECT delta_epoch FROM bins WHERE id=$1`, bin.ID).Scan(&before), "epoch before")
+
+	zero := 0
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(bin.ID, order.ID, &zero, "", ""), "release empty")
+
+	var after int64
+	testutil.MustNoErr(t, db.QueryRow(`SELECT delta_epoch FROM bins WHERE id=$1`, bin.ID).Scan(&after), "epoch after")
+	if after != before+1 {
+		t.Errorf("delta_epoch = %d, want %d (release-empty must bump the epoch)", after, before+1)
+	}
+}
+
+// TestBinManifestService_SyncOrClearForReleased_PositiveBumpsEpoch pins that
+// the partial-release path also bumps delta_epoch — the authoritative count
+// changed out-of-band from the delta stream, so the old generation's in-flight
+// ticks must not double-count against the synced value.
+func TestBinManifestService_SyncOrClearForReleased_PositiveBumpsEpoch(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-EPOCHP", "PART-A", 100)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+
+	var before int64
+	testutil.MustNoErr(t, db.QueryRow(`SELECT delta_epoch FROM bins WHERE id=$1`, bin.ID).Scan(&before), "epoch before")
+
+	partial := 80
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""), "release partial")
+
+	var after int64
+	testutil.MustNoErr(t, db.QueryRow(`SELECT delta_epoch FROM bins WHERE id=$1`, bin.ID).Scan(&after), "epoch after")
+	if after != before+1 {
+		t.Errorf("delta_epoch = %d, want %d (partial release must bump the epoch)", after, before+1)
+	}
+}
+
 func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

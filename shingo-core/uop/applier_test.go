@@ -3,6 +3,7 @@
 package uop_test
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -95,6 +96,74 @@ func TestInventoryDelta_BinUOPDelta_DedupesReplay(t *testing.T) {
 	testutil.MustNoErr(t, db.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, bin.ID).Scan(&got), "read bin")
 	if got != 90 {
 		t.Errorf("uop_remaining = %d, want 90 (100 - 10 once, not 100 - 30)", got)
+	}
+}
+
+// TestInventoryDelta_BinUOPDelta_StaleEpochDroppedAndAudited verifies that a
+// delta whose wire epoch is below the bin's current delta_epoch (and >0) belongs
+// to a retired delta-stream generation — the bin was reset on Core after Edge
+// cached the old epoch. It must be dropped (uop_remaining unchanged) and recorded
+// as a stale_epoch_dropped observation row so the dropped quantity surfaces in the
+// discrepancy view instead of vanishing.
+func TestInventoryDelta_BinUOPDelta_StaleEpochDroppedAndAudited(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-STALE-EPOCH", "PART-A", 100)
+	// Advance the bin to epoch 2 (a load/clear/release bumped it on Core).
+	_, err := db.Exec(`UPDATE bins SET delta_epoch=2 WHERE id=$1`, bin.ID)
+	testutil.MustNoErr(t, err, "advance epoch")
+
+	// A consume tick still carrying the retired epoch 1 (>0) must be dropped.
+	d := makeBinDelta(bin.ID, "PART-A", -7, 1, protocol.ReasonConsumeTick)
+	d.Epoch = 1
+	if err := svc.ApplyBinUOPDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+		t.Fatalf("stale-epoch apply error = %v, want uop.ErrInventoryDeltaSkipped", err)
+	}
+
+	var got int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, bin.ID).Scan(&got), "read bin")
+	if got != 100 {
+		t.Errorf("uop_remaining = %d, want 100 unchanged (stale delta must not apply)", got)
+	}
+
+	var before, after int
+	var meta string
+	testutil.MustNoErr(t, db.QueryRow(`SELECT before_uop, after_uop, metadata FROM bin_uop_audit
+		WHERE bin_id=$1 AND op='stale_epoch_dropped'`, bin.ID).Scan(&before, &after, &meta), "read stale audit row")
+	if before != 100 || after != 100 {
+		t.Errorf("audit before/after = %d/%d, want 100/100 (count-unchanged observation)", before, after)
+	}
+	var m struct {
+		Delta     int   `json:"delta"`
+		WireEpoch int64 `json:"wire_epoch"`
+		BinEpoch  int64 `json:"bin_epoch"`
+	}
+	testutil.MustNoErr(t, json.Unmarshal([]byte(meta), &m), "parse audit metadata")
+	if m.Delta != -7 || m.WireEpoch != 1 || m.BinEpoch != 2 {
+		t.Errorf("audit metadata = %+v, want delta=-7 wire_epoch=1 bin_epoch=2", m)
+	}
+}
+
+// TestInventoryDelta_BinUOPDelta_BootstrapEpochZeroApplies pins the >0 clause:
+// epoch 0 is the bootstrap/unknown sentinel (Edge restart, fresh runtime, the
+// ADD-COLUMN backfill) and must always apply even though the bin is at epoch 1.
+func TestInventoryDelta_BinUOPDelta_BootstrapEpochZeroApplies(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-EPOCH0", "PART-A", 100)
+	// makeBinDelta leaves Epoch == 0; the bin defaults to delta_epoch 1.
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -4, 1, protocol.ReasonConsumeTick)), "apply epoch-0 delta")
+
+	var got int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, bin.ID).Scan(&got), "read bin")
+	if got != 96 {
+		t.Errorf("uop_remaining = %d, want 96 (epoch-0 bootstrap delta must apply)", got)
 	}
 }
 

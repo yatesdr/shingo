@@ -3,8 +3,11 @@
 package service
 
 import (
-	"shingo/protocol/testutil"
 	"testing"
+
+	"shingo/protocol/testutil"
+	"shingocore/internal/testdb"
+	"shingocore/store/audit"
 )
 
 func TestAuditService_Append_PersistsRow(t *testing.T) {
@@ -99,5 +102,57 @@ func TestAuditService_ListForEntity_FiltersByEntity(t *testing.T) {
 	}
 	if len(order1) != 1 || order1[0].EntityID != 1 || order1[0].EntityType != "order" {
 		t.Errorf("order/1 = %+v, want exactly the order/1 row", order1)
+	}
+}
+
+// TestAuditService_ListBinUOPDiscrepancies_FiltersToRealDivergence verifies the
+// discrepancy ledger: it surfaces stale-epoch drops, negative remaining, and
+// release-empties that still carried counted parts — but not clean empties or
+// ordinary cycle counts.
+func TestAuditService_ListBinUOPDiscrepancies_FiltersToRealDivergence(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewAuditService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DISCREP", "PART-A", 100)
+	pi := func(n int) *int { return &n }
+
+	// Clean release-empty (before == after == 0): NOT a discrepancy.
+	testutil.MustNoErr(t, audit.AppendBinUOP(db.DB, bin.ID, pi(0), 0,
+		audit.OpReleasedEmpty, "test", nil, "PART-A", "op", audit.BinUOPContext{}), "clean empty")
+	// Lossy release-empty (40 counted, released as empty): discrepancy.
+	testutil.MustNoErr(t, audit.AppendBinUOP(db.DB, bin.ID, pi(40), 0,
+		audit.OpReleasedEmpty, "test", nil, "PART-A", "op", audit.BinUOPContext{}), "lossy empty")
+	// Stale-epoch dropped observation (before == after): discrepancy.
+	testutil.MustNoErr(t, audit.AppendBinUOPOverride(db.DB, bin.ID, 50, 50,
+		audit.OpStaleEpochDropped, "test", nil, "PART-A", "ALN", []byte(`{"delta":-3}`)), "stale drop")
+	// Negative remaining (after_uop < 0): discrepancy regardless of op.
+	testutil.MustNoErr(t, audit.AppendBinUOP(db.DB, bin.ID, pi(1), -2,
+		"bin_uop_delta", "test", nil, "PART-A", "ALN", audit.BinUOPContext{}), "negative remaining")
+	// Ordinary cycle count (before == after, non-negative): NOT a discrepancy.
+	testutil.MustNoErr(t, audit.AppendBinUOP(db.DB, bin.ID, pi(100), 100,
+		audit.OpCycleCount, "test", nil, "PART-A", "op", audit.BinUOPContext{}), "cycle count")
+
+	rows, err := svc.ListBinUOPDiscrepancies(100, 0)
+	testutil.MustNoErr(t, err, "ListBinUOPDiscrepancies")
+
+	got := map[string]int{}
+	for _, r := range rows {
+		if r.BinID == bin.ID {
+			got[r.Op]++
+		}
+	}
+	if got[audit.OpStaleEpochDropped] != 1 {
+		t.Errorf("stale_epoch_dropped = %d, want 1", got[audit.OpStaleEpochDropped])
+	}
+	if got["bin_uop_delta"] != 1 {
+		t.Errorf("negative bin_uop_delta = %d, want 1", got["bin_uop_delta"])
+	}
+	if got[audit.OpReleasedEmpty] != 1 {
+		t.Errorf("released_empty = %d, want 1 (lossy included, clean excluded)", got[audit.OpReleasedEmpty])
+	}
+	if got[audit.OpCycleCount] != 0 {
+		t.Errorf("cycle_count = %d, want 0 (not a discrepancy)", got[audit.OpCycleCount])
 	}
 }

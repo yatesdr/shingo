@@ -95,3 +95,19 @@ func (h *Handlers) apiAuditStationOverrides(w http.ResponseWriter, r *http.Reque
 	}
 	h.jsonOK(w, rows)
 }
+
+// apiAuditDiscrepancies returns the discrepancy ledger: bin_uop_audit
+// rows where the tracked count diverged from reality — dropped stale ticks,
+// negative remaining, and release-empties that still carried counted parts.
+// A read-only view over bin_uop_audit, not a separate ledger table.
+//
+//	GET /api/audit/discrepancies[?limit=N&offset=M]
+func (h *Handlers) apiAuditDiscrepancies(w http.ResponseWriter, r *http.Request) {
+	limit, offset := h.parseAuditPaging(r)
+	rows, err := h.engine.AuditService().ListBinUOPDiscrepancies(limit, offset)
+	if err != nil {
+		h.jsonError(w, "list discrepancies: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, rows)
+}

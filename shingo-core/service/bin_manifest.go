@@ -45,6 +45,23 @@ func readBinUOPInTx(tx *sql.Tx, binID int64) (*int, error) {
 	return &v, nil
 }
 
+// bumpEpoch increments a bin's delta_epoch inside the caller's tx and returns
+// the new value. Every count-reset/clear path calls this so "a reset starts a
+// fresh delta stream" is structural — a new reset path can't silently forget
+// it. That omission is the failure this guards against: a reset that didn't
+// bump left late cross-epoch ticks looking same-epoch, so the applier's
+// stale-epoch guard couldn't tell them apart from live ticks and dropped (or
+// misapplied) them.
+func bumpEpoch(tx *sql.Tx, binID int64) (int64, error) {
+	var epoch int64
+	if err := tx.QueryRow(
+		`UPDATE bins SET delta_epoch=delta_epoch+1 WHERE id=$1 RETURNING delta_epoch`,
+		binID).Scan(&epoch); err != nil {
+		return 0, fmt.Errorf("bump delta_epoch bin %d: %w", binID, err)
+	}
+	return epoch, nil
+}
+
 // resolveBinUOPContext builds the bin_uop_audit enrichment context inside the caller's
 // tx (keystone step 2): the bin's CURRENT node and the loader that owns that node, via
 // bin_loader_homes.position_node_id (UNIQUE — one loader per member node). Stamping the
@@ -125,11 +142,14 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, op, source
 	if err != nil {
 		return 0, err
 	}
-	var newEpoch int64
-	if err := tx.QueryRow(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0,
-		delta_epoch=delta_epoch+1, manifest_confirmed=false, loaded_at=NULL, updated_at=NOW()
-		WHERE id=$1 RETURNING delta_epoch`, binID).Scan(&newEpoch); err != nil {
+	if _, err := tx.Exec(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0,
+		manifest_confirmed=false, loaded_at=NULL, updated_at=NOW()
+		WHERE id=$1`, binID); err != nil {
 		return 0, fmt.Errorf("clear manifest bin %d: %w", binID, err)
+	}
+	newEpoch, err := bumpEpoch(tx, binID)
+	if err != nil {
+		return 0, err
 	}
 	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
 	if err != nil {
@@ -211,12 +231,15 @@ func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payload
 	if err != nil {
 		return 0, err
 	}
-	var newEpoch int64
-	if err := tx.QueryRow(`UPDATE bins SET payload_code=$1, manifest=$2, uop_remaining=$3,
-		delta_epoch=delta_epoch+1, manifest_confirmed=false, updated_at=NOW()
-		WHERE id=$4 RETURNING delta_epoch`,
-		payloadCode, manifestJSON, uop, binID).Scan(&newEpoch); err != nil {
+	if _, err := tx.Exec(`UPDATE bins SET payload_code=$1, manifest=$2, uop_remaining=$3,
+		manifest_confirmed=false, updated_at=NOW()
+		WHERE id=$4`,
+		payloadCode, manifestJSON, uop, binID); err != nil {
 		return 0, fmt.Errorf("set manifest bin %d: %w", binID, err)
+	}
+	newEpoch, err := bumpEpoch(tx, binID)
+	if err != nil {
+		return 0, err
 	}
 	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
 	if err != nil {
@@ -304,6 +327,9 @@ func (s *BinManifestService) ClearAndClaim(binID, orderID int64) error {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
+	}
+	if _, err := bumpEpoch(tx, binID); err != nil {
+		return err
 	}
 	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
 	if err != nil {
@@ -474,6 +500,11 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	if err != nil {
 		return err
 	}
+	// Capture the part code before the zero-path clears payload_code, so the
+	// release audit row names the part (the discrepancy view reads it).
+	// Best-effort: a missing bin surfaces below via the UPDATE's 0-rows guard.
+	var releasedPayloadCode string
+	_ = tx.QueryRow(`SELECT COALESCE(payload_code, '') FROM bins WHERE id=$1`, binID).Scan(&releasedPayloadCode)
 
 	if *remainingUOP == 0 {
 		// Clear manifest, preserve claim (if applicable). The claimed_by guard
@@ -497,6 +528,9 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		if n == 0 {
 			return notFoundErr
 		}
+		if _, err := bumpEpoch(tx, binID); err != nil {
+			return err
+		}
 		op := audit.OpReleasedEmpty
 		legacyTag := "released_empty"
 		switch {
@@ -512,7 +546,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		}
 		if err := audit.AppendBinUOP(tx, binID, before, 0,
 			op, sourceLabel,
-			&orderID, "", actor, uopCtx); err != nil {
+			&orderID, releasedPayloadCode, actor, uopCtx); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -563,6 +597,9 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	if n == 0 {
 		return notFoundErr
 	}
+	if _, err := bumpEpoch(tx, binID); err != nil {
+		return err
+	}
 	op := audit.OpReleasedPartial
 	if sourceNodeFallback {
 		op = audit.OpReleasedPartialFallback
@@ -573,7 +610,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	}
 	if err := audit.AppendBinUOP(tx, binID, before, *remainingUOP,
 		op, sourceLabel,
-		&orderID, "", actor, uopCtx); err != nil {
+		&orderID, releasedPayloadCode, actor, uopCtx); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

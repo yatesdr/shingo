@@ -266,6 +266,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/audit/bin/{id}", h.apiAuditBinTimeline)
 			r.Get("/audit/operator/{name}", h.apiAuditOperatorActivity)
 			r.Get("/audit/station/{station}", h.apiAuditStationOverrides)
+			r.Get("/audit/discrepancies", h.apiAuditDiscrepancies)
 			r.Get("/corrections", h.apiListNodeCorrections)
 			r.Get("/cms-transactions", h.apiListCMSTransactions)
 			r.Get("/outbox/deadletters", h.apiListDeadLetterOutbox)

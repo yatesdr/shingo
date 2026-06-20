@@ -116,25 +116,67 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 
 	scopeKey := strconv.FormatInt(d.BinID, 10)
 
-	// Stale-epoch guard. If Edge sends a delta with an epoch below the
-	// bin's current delta_epoch (Edge cache is behind a load/clear that
-	// already happened on Core), the dedup row for that older epoch is
-	// either missing or has a higher last_seq than this delta — in
-	// either case the apply would silently drop. Log it loudly here so
-	// "bin stopped counting" is grep-able instead of opaque, then fall
-	// through to the dedup UPSERT (which still drops the delta into
-	// the old epoch's row if present, harmlessly).
+	// Stale-epoch guard. Every Core-side count reset bumps the bin's
+	// delta_epoch (service.bumpEpoch), so a delta whose wire epoch is below
+	// the bin's current epoch belongs to a retired generation — Edge cached
+	// the old epoch and counted against a bin that has since been loaded,
+	// cleared, or released. Drop it (applying would corrupt the post-reset
+	// count) and record the dropped quantity as a discrepancy observation so
+	// it is reportable instead of vanishing silently. Edge re-seeds the new
+	// epoch on its next bin-state refresh.
+	//
+	// The >0 clause is load-bearing: epoch 0 is the bootstrap/unknown
+	// sentinel (Edge restart, fresh runtime, the ADD-COLUMN backfill) and
+	// must always apply, never drop.
+	//
+	// Known limitation (bounded and deliberate): dropping a stale-epoch
+	// consume delta protects the post-reset count and records the delta as a
+	// discrepancy observation. It does not attempt to attribute a late delta
+	// between the bin that was released and the bin that succeeds it at the
+	// slot, and it does not resolve why a count reaches a release with a
+	// non-zero or negative remainder. Reconciling release-time inventory
+	// discrepancies — and the related case of a bin released while still
+	// being consumed — is a known inventory-accuracy follow-up, intentionally
+	// out of scope here. The behavior is observable, not silent: every
+	// dropped delta writes a discrepancy audit row.
 	var currentEpoch int64
 	if err := tx.QueryRow(`SELECT delta_epoch FROM bins WHERE id=$1`, d.BinID).Scan(&currentEpoch); err == nil {
-		if d.Epoch < currentEpoch {
-			log.Printf("WARN: BinUOPDelta stale epoch bin=%d wire_epoch=%d bin_epoch=%d seq=%d — delta dropped; Edge bin-state cache is behind Core (next bin-state refresh will repair)",
-				d.BinID, d.Epoch, currentEpoch, d.SequenceID)
-		} else if d.Epoch > currentEpoch {
-			// Edge ahead of Core is a real anomaly — Core controls
-			// epoch via lifecycle handlers, so Edge shouldn't see a
-			// higher value before Core writes it. Possible cause: a
-			// stale Core read or a corrupt Edge cache; log but still
-			// apply since the new epoch isn't worse than continuing.
+		switch {
+		case d.Epoch > 0 && d.Epoch < currentEpoch:
+			var before int
+			if err := tx.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, d.BinID).Scan(&before); err != nil {
+				return fmt.Errorf("read bin %d for stale-epoch audit: %w", d.BinID, err)
+			}
+			metadata, err := json.Marshal(struct {
+				WireEpoch  int64 `json:"wire_epoch"`
+				BinEpoch   int64 `json:"bin_epoch"`
+				SequenceID int64 `json:"sequence_id"`
+				Delta      int   `json:"delta"`
+			}{d.Epoch, currentEpoch, d.SequenceID, d.Delta})
+			if err != nil {
+				return fmt.Errorf("marshal stale-epoch audit metadata bin=%d: %w", d.BinID, err)
+			}
+			// Observation row: before == after (count unchanged), the dropped
+			// delta lives in metadata. AppendBinUOPOverride is the no-paired-
+			// write shape and writes the same metadata column as the normal
+			// bin_uop_delta rows.
+			if err := audit.AppendBinUOPOverride(tx, d.BinID, before, before,
+				audit.OpStaleEpochDropped, "service/inventory_delta_service.go:staleEpoch",
+				nil, d.PayloadCode, d.Station, metadata); err != nil {
+				return err
+			}
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("commit stale-epoch drop bin=%d: %w", d.BinID, err)
+			}
+			log.Printf("BinUOPDelta stale epoch DROPPED bin=%d wire_epoch=%d bin_epoch=%d seq=%d delta=%d — routed to discrepancy audit (Edge cache behind Core; next bin-state refresh repairs)",
+				d.BinID, d.Epoch, currentEpoch, d.SequenceID, d.Delta)
+			return ErrInventoryDeltaSkipped
+		case d.Epoch > currentEpoch:
+			// Edge ahead of Core is a real anomaly — Core controls epoch via
+			// lifecycle handlers, so Edge shouldn't see a higher value before
+			// Core writes it. Possible cause: a stale Core read or a corrupt
+			// Edge cache; log but still apply since the new epoch isn't worse
+			// than continuing.
 			log.Printf("WARN: BinUOPDelta future epoch bin=%d wire_epoch=%d bin_epoch=%d seq=%d — Edge ahead of Core",
 				d.BinID, d.Epoch, currentEpoch, d.SequenceID)
 		}
