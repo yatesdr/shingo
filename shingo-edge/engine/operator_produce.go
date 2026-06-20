@@ -105,21 +105,38 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	return &NodeOrderResult{CycleMode: dispatch.CycleMode, OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
 }
 
-// dispatchProduceIngest creates the ingest order from the plan's manifest.
-// All produce modes (simple and complex) issue this so Core has the part
-// count for the bin sitting at the process node.
+// dispatchProduceIngest gives Core the part count for the bin at the process
+// node. Simple mode creates a real local ingest order — there the ingest IS
+// the operator's active store order. Swap modes send a manifest-only stamp
+// with NO local order: the swap's complex order carries the bin, so a local
+// ingest order would only be a phantom for the abort fan-out to cancel (the
+// "not_found" bug). Returns (nil, nil) in swap mode — applyProducePlan
+// discards the swap-mode ingest order anyway.
 func (e *Engine) dispatchProduceIngest(nodeID int64, node *processes.Node, claim *processes.NodeClaim, plan *ProducePlan) (*orders.Order, error) {
-	return e.orderMgr.CreateIngestOrder(
-		&nodeID,
+	if plan.SimpleOnly {
+		return e.orderMgr.CreateIngestOrder(
+			&nodeID,
+			claim.PayloadCode,
+			"", // bin label resolved by core from node contents
+			node.CoreNodeName,
+			plan.Manifest[0].Quantity,
+			plan.Manifest,
+			plan.AutoConfirmIngest,
+			plan.ProducedAtRFC3339,
+			false, // simple mode: a real store order, not manifest-only
+		)
+	}
+	if err := e.orderMgr.QueueIngestManifest(
 		claim.PayloadCode,
 		"", // bin label resolved by core from node contents
 		node.CoreNodeName,
 		plan.Manifest[0].Quantity,
 		plan.Manifest,
-		plan.AutoConfirmIngest,
 		plan.ProducedAtRFC3339,
-		!plan.SimpleOnly, // swap modes: manifest only — the swap carries the bin, no store order
-	)
+	); err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 // dispatchComplexLeg issues a single complex order with the right auto-

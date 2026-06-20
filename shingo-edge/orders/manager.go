@@ -400,6 +400,29 @@ func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel,
 	return m.db.GetOrder(orderID)
 }
 
+// QueueIngestManifest sends a manifest-only ingest stamp to Core WITHOUT
+// minting a local order. Swap-mode produce finalize uses this: the swap's
+// complex order carries the bin, and the ingest exists only to stamp Core's
+// bin manifest. Creating a local order there made a phantom that the
+// operator-abort fan-out later cancelled, producing the "not_found" error —
+// and Core's manifest-only ingest handler creates no order and sends no reply,
+// so nothing ever matched it back. This mirrors CreateIngestOrder's envelope
+// but ships it through the fire-and-forget Queue path (like ConfirmDelivery's
+// receipt): no order row, no transition, no EmitOrderCreated. The stamp is
+// still delivered (durable outbox, idempotent SetForProduction at Core).
+func (m *Manager) QueueIngestManifest(payloadCode, binLabel, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, producedAt string) error {
+	return m.sender.Queue(protocol.TypeOrderIngest, &protocol.OrderIngestRequest{
+		OrderUUID:    uuid.New().String(),
+		PayloadCode:  payloadCode,
+		BinLabel:     binLabel,
+		SourceNode:   sourceNode,
+		Quantity:     quantity,
+		Manifest:     manifest,
+		ProducedAt:   producedAt,
+		ManifestOnly: true,
+	})
+}
+
 // ReleaseOrder sends a release message for a staged (dwelling) order.
 //
 // remainingUOP late-binds the bin's manifest at Core's release handler. Pass

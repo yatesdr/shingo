@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"testing"
 
 	"shingo/protocol"
@@ -203,6 +204,59 @@ func TestProduceSimple_FinalizeIngest(t *testing.T) {
 	}
 }
 
+// TestProduceSwap_FinalizeSendsManifestOnlyIngestNoLocalOrder verifies that a
+// swap-mode produce finalize must NOT mint a local ingest order (the phantom
+// the operator-abort fan-out used to cancel into a "not_found"), yet Core must
+// still receive the manifest-only ingest stamp via the fire-and-forget outbox.
+func TestProduceSwap_FinalizeSendsManifestOnlyIngestNoLocalOrder(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, _ := seedProduceNode(t, db, "sequential")
+	eng := testEngine(t, db)
+
+	if _, err := eng.FinalizeProduceNode(nodeID); err != nil {
+		t.Fatalf("FinalizeProduceNode: %v", err)
+	}
+
+	// No local ingest order should exist — the swap's complex order carries
+	// the bin; the ingest is now only a fire-and-forget manifest stamp.
+	all, err := db.ListOrders()
+	if err != nil {
+		t.Fatalf("list orders: %v", err)
+	}
+	for _, o := range all {
+		if o.OrderType == orders.TypeIngest {
+			t.Errorf("swap finalize created local ingest order #%d (phantom should be gone)", o.ID)
+		}
+	}
+
+	// Core still receives the manifest-only ingest stamp via the outbox.
+	msgs, err := db.ListPendingOutbox(100)
+	if err != nil {
+		t.Fatalf("list outbox: %v", err)
+	}
+	stamped := false
+	for _, m := range msgs {
+		if m.MsgType != protocol.TypeOrderIngest {
+			continue
+		}
+		var env protocol.Envelope
+		testutil.MustNoErr(t, json.Unmarshal(m.Payload, &env), "unmarshal envelope")
+		var req protocol.OrderIngestRequest
+		testutil.MustNoErr(t, env.DecodePayload(&req), "decode ingest payload")
+		if !req.ManifestOnly {
+			t.Error("ingest stamp ManifestOnly = false, want true (swap carries the bin)")
+		}
+		if req.PayloadCode != "WIDGET-A" {
+			t.Errorf("ingest stamp PayloadCode = %q, want WIDGET-A", req.PayloadCode)
+		}
+		stamped = true
+	}
+	if !stamped {
+		t.Error("expected a manifest-only TypeOrderIngest stamp in the outbox, found none")
+	}
+}
+
 func TestProduceSequential_RemovalThenBackfill(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -233,20 +287,18 @@ func TestProduceSequential_RemovalThenBackfill(t *testing.T) {
 		t.Error("ActiveOrderID should match the removal order")
 	}
 
-	// An ingest order should also have been created (before the complex order)
+	// Swap modes no longer create a local ingest order — the swap's complex
+	// order carries the bin and the manifest is sent fire-and-forget. (The
+	// outbox stamp is covered by
+	// TestProduceSwap_FinalizeSendsManifestOnlyIngestNoLocalOrder.)
 	allOrders, err := db.ListOrders()
 	if err != nil {
 		t.Fatalf("list orders: %v", err)
 	}
-	hasIngest := false
 	for _, o := range allOrders {
 		if o.OrderType == orders.TypeIngest {
-			hasIngest = true
-			break
+			t.Errorf("swap finalize created a local ingest order #%d (phantom should be gone)", o.ID)
 		}
-	}
-	if !hasIngest {
-		t.Error("expected an ingest order to manifest the filled bin")
 	}
 }
 
