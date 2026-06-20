@@ -142,7 +142,31 @@ func (e *Engine) canCompleteChangeover(changeoverID int64) (bool, []string, erro
 			reasons = append(reasons, fmt.Sprintf("task at node %s in %s", task.NodeName, task.State))
 		}
 	}
+	for _, orderID := range linkedOrderIDs(tasks) {
+		order, err := e.db.GetOrder(orderID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return false, nil, err
+		}
+		if !protocol.IsTerminal(order.Status) {
+			reasons = append(reasons, fmt.Sprintf("order %d in %s", order.ID, order.Status))
+		}
+	}
+	if len(reasons) > 0 {
+		return false, reasons, nil
+	}
+	return true, nil, nil
+}
+
+// linkedOrderIDs returns the deduped order IDs referenced by a changeover's
+// node tasks — both the next-material and old-material-release legs — in
+// first-seen order. canCompleteChangeover and the cutover auto-confirm
+// pre-pass share it so they reason over exactly the same order set.
+func linkedOrderIDs(tasks []processes.NodeTask) []int64 {
 	seen := map[int64]struct{}{}
+	var ids []int64
 	for _, task := range tasks {
 		for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
 			if orderID == nil {
@@ -152,22 +176,43 @@ func (e *Engine) canCompleteChangeover(changeoverID int64) (bool, []string, erro
 				continue
 			}
 			seen[*orderID] = struct{}{}
-			order, err := e.db.GetOrder(*orderID)
-			if err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					continue
-				}
-				return false, nil, err
-			}
-			if !protocol.IsTerminal(order.Status) {
-				reasons = append(reasons, fmt.Sprintf("order %d in %s", order.ID, order.Status))
-			}
+			ids = append(ids, *orderID)
 		}
 	}
-	if len(reasons) > 0 {
-		return false, reasons, nil
+	return ids
+}
+
+// autoConfirmDeliveredLinkedOrders confirms any changeover-linked order the
+// fleet has already delivered but the operator hasn't acknowledged. A
+// delivered-but-unconfirmed order is non-terminal, so it would otherwise
+// block canCompleteChangeover even though the material is physically on the
+// line. ConfirmDelivery emits the completion synchronously, so the gate that
+// runs immediately after sees the order as confirmed.
+//
+// in_transit/staged/faulted orders are left untouched — they still block the
+// gate, as intended. On a ConfirmDelivery error the order is left delivered
+// so the gate reports it rather than masking a real failure.
+func (e *Engine) autoConfirmDeliveredLinkedOrders(changeoverID int64) error {
+	tasks, err := e.db.ListChangeoverNodeTasks(changeoverID)
+	if err != nil {
+		return err
 	}
-	return true, nil, nil
+	for _, orderID := range linkedOrderIDs(tasks) {
+		order, err := e.db.GetOrder(orderID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return err
+		}
+		if order.Status != protocol.StatusDelivered {
+			continue
+		}
+		if err := e.orderMgr.ConfirmDelivery(order.ID, order.Quantity); err != nil {
+			log.Printf("cutover: auto-confirm delivered order %d failed, leaving for gate: %v", order.ID, err)
+		}
+	}
+	return nil
 }
 
 // CompleteProcessProductionCutover runs the operator-driven cutover:
@@ -188,6 +233,12 @@ func (e *Engine) CompleteProcessProductionCutoverFromPLC(processID int64) error 
 func (e *Engine) completeCutover(processID int64, triggeredBy string) error {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
+		return err
+	}
+	// Auto-confirm any linked order the fleet already delivered, so the gate
+	// below isn't blocked on an operator clerical step for material that is
+	// physically on the line. in_transit/staged/faulted still block.
+	if err := e.autoConfirmDeliveredLinkedOrders(changeover.ID); err != nil {
 		return err
 	}
 	// Gate must run before any of the five mutations below. The function

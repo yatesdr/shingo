@@ -255,3 +255,66 @@ func TestChangeover_FailedTaskInCompletedChangeover_NotStamped(t *testing.T) {
 		t.Errorf("expected task to remain released, got %s — late failure stamped a finalized changeover", final.State)
 	}
 }
+
+// TestChangeover_Cutover_AutoConfirmsDeliveredLinkedOrder verifies cutover
+// auto-confirmation. A linked order the fleet has delivered but the operator
+// never confirmed is non-terminal (delivered → confirmed is still pending), so
+// it would otherwise block the cutover gate even though the material is already
+// on the line. completeCutover runs a pre-pass that auto-confirms delivered
+// linked orders before gating, so the gate passes and the order ends confirmed
+// with final_count == quantity. in_transit/staged/faulted still block (covered
+// by the two PrematureComplete tests above).
+func TestChangeover_Cutover_AutoConfirmsDeliveredLinkedOrder(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, _, _, toStyleID := seedPhase3SwapScenario(t, db)
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
+
+	// Drive every node task terminal and every linked order to delivered —
+	// delivered is the exact non-terminal state the pre-pass must clear.
+	tasks, err := db.ListChangeoverNodeTasks(changeover.ID)
+	if err != nil {
+		t.Fatalf("list node tasks: %v", err)
+	}
+	var deliveredOrderIDs []int64
+	for _, task := range tasks {
+		testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskReleased), "release task")
+		for _, orderIDPtr := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
+			if orderIDPtr == nil {
+				continue
+			}
+			db.UpdateOrderStatus(*orderIDPtr, string(orders.StatusSubmitted))
+			db.UpdateOrderStatus(*orderIDPtr, string(orders.StatusInTransit))
+			db.UpdateOrderStatus(*orderIDPtr, string(orders.StatusDelivered))
+			deliveredOrderIDs = append(deliveredOrderIDs, *orderIDPtr)
+		}
+	}
+	if len(deliveredOrderIDs) == 0 {
+		t.Fatal("scenario produced no linked orders to deliver")
+	}
+
+	if err := eng.CompleteProcessProductionCutover(processID); err != nil {
+		t.Fatalf("cutover should proceed after auto-confirming delivered orders, got: %v", err)
+	}
+
+	// GetActiveProcessChangeover filters out completed rows — nil means done.
+	if co, _ := db.GetActiveProcessChangeover(processID); co != nil {
+		t.Fatalf("expected changeover to complete, still active in state=%s", co.State)
+	}
+
+	for _, orderID := range deliveredOrderIDs {
+		order, err := db.GetOrder(orderID)
+		if err != nil {
+			t.Fatalf("get order %d: %v", orderID, err)
+		}
+		if order.Status != orders.StatusConfirmed {
+			t.Errorf("order %d: status = %s, want confirmed", orderID, order.Status)
+		}
+		if order.FinalCount == nil || *order.FinalCount != order.Quantity {
+			t.Errorf("order %d: final_count = %v, want quantity %d", orderID, order.FinalCount, order.Quantity)
+		}
+	}
+}
