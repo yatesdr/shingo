@@ -171,43 +171,6 @@ func TestBuildComplexPlan_EmptyLegNoCarrierSkips(t *testing.T) {
 	}
 }
 
-func TestComplexPlan_primaryBinID(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name        string
-		claims      []PlannedBinClaim
-		processNode string
-		want        int64
-	}{
-		{
-			name:        "process-node match returns that bin",
-			claims:      []PlannedBinClaim{{NodeName: "storage.A1", BinID: 100}, {NodeName: "line.L1", BinID: 200}},
-			processNode: "line.L1",
-			want:        200,
-		},
-		{
-			name:        "no process-node match returns the first claim",
-			claims:      []PlannedBinClaim{{NodeName: "storage.A1", BinID: 100}, {NodeName: "storage.A2", BinID: 200}},
-			processNode: "line.L1",
-			want:        100,
-		},
-		{
-			name:        "no claims returns 0",
-			claims:      nil,
-			processNode: "line.L1",
-			want:        0,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			p := &ComplexPlan{BinClaims: tt.claims}
-			if got := p.primaryBinID(tt.processNode); got != tt.want {
-				t.Errorf("primaryBinID(%q) = %d, want %d", tt.processNode, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestBuildComplexPlan_AllCandidatesRejected(t *testing.T) {
 	t.Parallel()
 	// One bin available but claimed by another order, one with the wrong

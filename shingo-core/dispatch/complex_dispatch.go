@@ -426,22 +426,19 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// HandleOrderRelease. If a future Edge starts sending RemainingUOP at
 	// intake we'd persist it on the order row to recover here.
 	//
-	// Snapshot the pre-claim candidate bins before the claim mutates ownership:
-	// the read-only validator (shadowComparePlan, below) — and, on the plan
-	// path, the plan itself — must see exactly the state the claim acts on.
-	shadowBins := d.snapshotPickupBins(resolvedSteps)
+	// Snapshot the pre-claim candidate bins; BuildComplexPlan resolves the
+	// order's steps against them.
+	pickupBins := d.snapshotPickupBins(resolvedSteps)
 
 	// Claim the order's bins from a computed plan — the single claim path.
 	// ApplyComplexPlan re-walks the live candidates the plan ordered, claims
 	// sequentially so each claim consumes its bin, and re-derives the race
 	// signal, terminal disposition, and primary bin from its own attempts.
-	// shadowComparePlan runs read-only afterward to compare the pure plan against
-	// what was persisted.
 	processNode := order.ProcessNode
 	if processNode == "" {
 		processNode = order.SourceNode
 	}
-	plan := BuildComplexPlan(resolvedSteps, shadowBins, order.PayloadCode, processNode)
+	plan := BuildComplexPlan(resolvedSteps, pickupBins, order.PayloadCode, processNode)
 	claimErr := d.ApplyComplexPlan(order, plan, order.PayloadCode, nil)
 	if claimErr != nil {
 		// Three terminal outcomes, distinguished by planningError.Code:
@@ -472,11 +469,6 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		d.failOrderInternal(order, "no_bin", claimErr.Error())
 		return claimErr
 	}
-
-	// Read-only parity validator: rebuild the pure plan from the pre-claim
-	// snapshot and compare it against what the authority persisted. Race-aware
-	// and log-only — never alters dispatch. See complex_shadow.go.
-	d.shadowComparePlan(order, resolvedSteps, shadowBins)
 
 	preWait, hasWait := splitAtWait(resolvedSteps)
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
