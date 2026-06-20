@@ -23,7 +23,13 @@ messaging:
     group_id: shingocore
   orders_topic: shingo.orders
   dispatch_topic: shingo.dispatch
-  outbox_drain_interval: 5s
+  # 500ms (sim): at 10× sim the plant inserts outbox rows far faster than the
+  # PRODUCTION-paced 5s tick (batch 50 → ~10 msg/s ceiling) can drain, so ~150–200
+  # time-sensitive order transitions sit pending (sent_at IS NULL) in steady state
+  # and publish seconds late, stressing swap choreography. The drainer does one
+  # batch per tick, so shortening the interval is the lever (batch size is fixed at
+  # 50 in messaging.NewOutboxDrainer). 500ms × 50 = up to 100k msg/s headroom.
+  outbox_drain_interval: 500ms
   station_id: core
 
 # rds / count_groups / fire_alarm intentionally omitted — sim mode skips the RDS
@@ -67,6 +73,19 @@ sim:
                                     # without it core/edge drift by boot-skew × speed and cross-process messages expire,
                                     # stalling the swap loop. Both epoch AND anchor_wall MUST match edge. Rebuild after
                                     # editing (configs are baked into the image): docker compose build core edge.
-  transit_time: 5s
+  # Finite fleet + realistic transit. Production-plant scale: Springfield runs ~7
+  # AMRs, Hopkinsville 10, at ~42–86% utilization (door-to-door ~0.1 m/s; median
+  # two-robot weld occupancy ~855s). 5s transit made robots a non-constraint (1
+  # erlang → any fleet works) and is unrealistic. This demo plant is denser than a
+  # real one (27 swap-producing claims vs ~10-15 at a real plant), so it needs more
+  # robots to stay fed: fleet 20 @ 45-60s transit. simcalc estimates ~12-16 erlang
+  # of loaded-leg demand there; 20 robots targets ~0.7-0.8 util with headroom for
+  # downtime bunching. Validated empirically: 12 @ 60-90s starved (queue_wait
+  # mounted to 5h+, throughput ~0.7 orders/min). (simcalc overcounts vs real plants
+  # — it models no robot reuse — so this is tuned to measured throughput, not the
+  # raw estimator.)
+  transit_min: 45s
+  transit_max: 60s
+  fleet_size: 20
   jitter_pct: 0.2
   fail_rate: 0.0
