@@ -300,6 +300,17 @@ func generateCase(r *rand.Rand, idx int) parityCase {
 		c.pickups = []genPickup{shared}
 	}
 
+	// Compound children (ParentOrderID != nil) claim their bins but suppress the
+	// order_bins junction — each child is a single-bin order. Fuzz that branch on
+	// a fraction of the two-pickup shapes so junction suppression is exercised
+	// across many states, not pinned by a single enumerated case.
+	switch shape {
+	case shapeSwapInOneRobot, shapeTwoRobotSupply, shapeABBackfill, shapeSameNodeDouble:
+		if r.Intn(100) < 10 {
+			c.compoundChild = true
+		}
+	}
+
 	return c
 }
 

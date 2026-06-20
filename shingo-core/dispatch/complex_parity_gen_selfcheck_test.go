@@ -21,11 +21,12 @@ func TestParityGenerator_DistributionAndValidity(t *testing.T) {
 	}
 
 	var (
-		pk1, pk2     int
-		emptyLegs    int
-		sameNode     int
-		withRejects  int // cases where at least one node leads with a read-reject
-		withEmptyAll int // cases where at least one node has zero candidates
+		pk1, pk2      int
+		emptyLegs     int
+		sameNode      int
+		compoundChild int // cases with ParentOrderID != nil (junction suppressed)
+		withRejects   int // cases where at least one node leads with a read-reject
+		withEmptyAll  int // cases where at least one node has zero candidates
 	)
 
 	for _, c := range cases {
@@ -68,6 +69,13 @@ func TestParityGenerator_DistributionAndValidity(t *testing.T) {
 			}
 		}
 
+		if c.compoundChild {
+			compoundChild++
+			if totalPickupSteps < 2 {
+				t.Fatalf("%s: compound-child set on a single-pickup shape", c.name)
+			}
+		}
+
 		for _, p := range c.pickups {
 			if p.empty {
 				emptyLegs++
@@ -88,8 +96,8 @@ func TestParityGenerator_DistributionAndValidity(t *testing.T) {
 
 	pk1Pct := pct(pk1, n)
 	pk2Pct := pct(pk2, n)
-	t.Logf("pk1=%d (%.1f%%) pk2=%d (%.1f%%) emptyLegs=%d sameNode=%d leadRejects=%d emptyNodes=%d",
-		pk1, pk1Pct, pk2, pk2Pct, emptyLegs, sameNode, withRejects, withEmptyAll)
+	t.Logf("pk1=%d (%.1f%%) pk2=%d (%.1f%%) emptyLegs=%d sameNode=%d compoundChild=%d leadRejects=%d emptyNodes=%d",
+		pk1, pk1Pct, pk2, pk2Pct, emptyLegs, sameNode, compoundChild, withRejects, withEmptyAll)
 
 	// pk1/pk2 should track the ~52/48 production split within a tolerance band.
 	if pk1Pct < 44 || pk1Pct > 60 {
@@ -104,6 +112,9 @@ func TestParityGenerator_DistributionAndValidity(t *testing.T) {
 	}
 	if sameNode == 0 {
 		t.Error("no same-node double-pick cases generated")
+	}
+	if compoundChild == 0 {
+		t.Error("no compound-child cases generated")
 	}
 	if withRejects == 0 {
 		t.Error("no walk-past-reject cases generated")
