@@ -106,7 +106,7 @@ func TestRegression_15_PartialBackReconstructsManifest(t *testing.T) {
 }
 
 // TestRegression_15_PartialBackFallbackReconstructsManifest is the source-
-// node fallback variant of #15. When claimComplexBins missed populating
+// node fallback variant of #15. When ApplyComplexPlan missed populating
 // order.BinID, HandleOrderRelease locates the bin by source-node lookup
 // and calls SyncOrClearForReleasedNoOwner. The reconstruction must apply
 // on the fallback path too — otherwise we patch one path and leave the

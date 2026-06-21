@@ -30,7 +30,7 @@ const (
 	// StatusSkipped is the "the work was never needed" terminal status —
 	// distinct from Failed (work attempted and errored) and Cancelled (work
 	// aborted by external decision). Today its sole producer is
-	// DispatchPreparedComplex: when claimComplexBins finds zero bins at every
+	// DispatchPreparedComplex: when ApplyComplexPlan finds zero bins at every
 	// pickup node (the source was emptied externally — quality hold, manual
 	// removal, etc.), the order moves to Skipped instead of Failed so the
 	// operator-facing surface treats it as a no-op rather than an alarm.

@@ -455,18 +455,18 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		var pe *planningError
 		if errors.As(claimErr, &pe) {
 			switch pe.Code {
-			case "claim_failed":
-				if serr := d.db.SetOrderQueueReason(order.ID, "claim_failed"); serr != nil {
+			case codeClaimFailed:
+				if serr := d.db.SetOrderQueueReason(order.ID, codeClaimFailed); serr != nil {
 					log.Printf("dispatch: set queue_reason claim_failed for order %d: %v", order.ID, serr)
 				}
 				d.dbg("complex: order %d held in queue on claim_failed: %s", order.ID, pe.Detail)
 				return claimErr
-			case "no_source_bin":
-				d.skipOrderInternal(order, "no_source_bin", pe.Detail)
+			case codeNoSourceBin:
+				d.skipOrderInternal(order, codeNoSourceBin, pe.Detail)
 				return claimErr
 			}
 		}
-		d.failOrderInternal(order, "no_bin", claimErr.Error())
+		d.failOrderInternal(order, codeNoBin, claimErr.Error())
 		return claimErr
 	}
 

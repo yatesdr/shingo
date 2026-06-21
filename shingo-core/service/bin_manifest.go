@@ -441,7 +441,7 @@ func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remain
 // and we've located the bin by source-node lookup instead.
 //
 // Why no claim guard: the bin we're targeting wasn't claimed by this
-// order (claimComplexBins missed it at creation time, which is the bug
+// order (ApplyComplexPlan missed it at creation time, which is the bug
 // this method is the safety net for). Requiring claimed_by=$orderID
 // would always fail. The locked=false guard stays — actively-handled
 // bins must not be mutated mid-flight regardless of how we found them.

@@ -252,7 +252,7 @@ func TestClassifyResolutionError_ChainWalking(t *testing.T) {
 	}
 }
 
-// TestEmptyBinsOnly pins the empty-carrier filter used by claimComplexBins on a
+// TestEmptyBinsOnly pins the empty-carrier filter used by ApplyComplexPlan on a
 // produce node's empty pickup leg. BinUnavailableReason accepts both an empty
 // and a payload-matching full, so the claim path must pre-filter to empties —
 // otherwise a full of the part could be claimed and delivered to the press.

@@ -333,7 +333,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		return
 	}
 
-	// Check for multi-bin junction table rows (populated by claimComplexBins
+	// Check for multi-bin junction table rows (populated by ApplyComplexPlan
 	// for orders with 2+ pickup steps). If present, each bin has a per-step
 	// destination — use the junction table path instead of the legacy single-bin path.
 	orderBins, _ := e.db.ListOrderBins(order.ID)

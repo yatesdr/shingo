@@ -27,6 +27,28 @@ type planningError struct {
 	Err    error
 }
 
+// planningError code values. These strings are matched as literals at producer
+// and consumer sites (the Transient() switch, the complex-dispatch router) and
+// serialize verbatim into the orders.queue_reason / skip-reason DB columns, so
+// the values are part of a persisted, compared contract: renaming a constant is
+// safe, changing the string it holds is not.
+const (
+	codeUnknownType    = "unknown_type"
+	codeStructural     = "structural"
+	codeLoaderSource   = "loader_source"
+	codeNodeError      = "node_error"
+	codeClaimFailed    = "claim_failed"
+	codeLaneLocked     = "lane_locked"
+	codeReshuffleError = "reshuffle_error"
+	codeMissingSource  = "missing_source"
+	codeInvalidNode    = "invalid_node"
+	codeSameNode       = "same_node"
+	codeNoPayload      = "no_payload"
+	codeNoBin          = "no_bin"
+	codeNoStorage      = "no_storage"
+	codeNoSourceBin    = "no_source_bin"
+)
+
 func (e *planningError) Error() string {
 	if e == nil {
 		return ""
@@ -60,7 +82,7 @@ func (e *planningError) Transient() bool {
 		return false
 	}
 	switch e.Code {
-	case "claim_failed", "lane_locked":
+	case codeClaimFailed, codeLaneLocked:
 		return true
 	}
 	return false
@@ -146,7 +168,7 @@ func (s *PlanningService) Plan(order *orders.Order, env *protocol.Envelope, payl
 	handler, ok := s.handlers[order.OrderType]
 	if !ok {
 		return nil, &planningError{
-			Code:   "unknown_type",
+			Code:   codeUnknownType,
 			Detail: fmt.Sprintf("unknown order type: %s", order.OrderType),
 		}
 	}
@@ -199,7 +221,7 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 					s.dbg("retrieve: STRUCTURAL failure in group %s: %s",
 						order.SourceNode, structErr.Reason)
 					return nil, &planningError{
-						Code:   "structural",
+						Code:   codeStructural,
 						Detail: structErr.Error(),
 						Err:    structErr,
 					}
@@ -225,7 +247,7 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 	if source == nil && order.SourceNode != "" {
 		bin, bnode, isLoaderPos, lerr := s.sourceFromDedicatedLoader(order.SourceNode, payloadCode, binsource.Drain)
 		if lerr != nil {
-			return nil, &planningError{Code: "loader_source", Detail: lerr.Error(), Err: lerr}
+			return nil, &planningError{Code: codeLoaderSource, Detail: lerr.Error(), Err: lerr}
 		}
 		if isLoaderPos {
 			if bin == nil {
@@ -256,7 +278,7 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 		}
 		sourceNode, err = s.db.GetNode(*source.NodeID)
 		if err != nil {
-			return nil, &planningError{Code: "node_error", Detail: err.Error(), Err: err}
+			return nil, &planningError{Code: codeNodeError, Detail: err.Error(), Err: err}
 		}
 	}
 
@@ -266,7 +288,7 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 	}
 	remainingUOP := extractRemainingUOP(env)
 	if err := s.binManifest.ClaimForDispatch(source.ID, order.ID, remainingUOP); err != nil {
-		return nil, &planningError{Code: "claim_failed", Detail: err.Error(), Err: err}
+		return nil, &planningError{Code: codeClaimFailed, Detail: err.Error(), Err: err}
 	}
 	order.BinID = &source.ID
 	if err := s.db.UpdateOrderBinID(order.ID, source.ID); err != nil {
@@ -278,7 +300,7 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 	}
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
-		return nil, &planningError{Code: "node_error", Detail: err.Error(), Err: err}
+		return nil, &planningError{Code: codeNodeError, Detail: err.Error(), Err: err}
 	}
 	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }
@@ -326,7 +348,7 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	if order.SourceNode != "" {
 		chosen, _, isLoaderPos, lerr := s.sourceFromDedicatedLoader(order.SourceNode, payloadCode, binsource.Fill)
 		if lerr != nil {
-			return nil, &planningError{Code: "loader_source", Detail: lerr.Error(), Err: lerr}
+			return nil, &planningError{Code: codeLoaderSource, Detail: lerr.Error(), Err: lerr}
 		}
 		if isLoaderPos {
 			if chosen == nil {
@@ -402,7 +424,7 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	// retrieve_empty always does a plain claim — no manifest change needed
 	// (the bin is already empty).
 	if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, nil); err != nil {
-		return nil, &planningError{Code: "claim_failed", Detail: err.Error(), Err: err}
+		return nil, &planningError{Code: codeClaimFailed, Detail: err.Error(), Err: err}
 	}
 	order.BinID = &bin.ID
 	if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
@@ -410,7 +432,7 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	}
 	sourceNode, err := s.db.GetNode(*bin.NodeID)
 	if err != nil {
-		return nil, &planningError{Code: "node_error", Detail: err.Error(), Err: err}
+		return nil, &planningError{Code: codeNodeError, Detail: err.Error(), Err: err}
 	}
 	order.SourceNode = sourceNode.Name
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
@@ -418,29 +440,29 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	}
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
-		return nil, &planningError{Code: "node_error", Detail: err.Error(), Err: err}
+		return nil, &planningError{Code: codeNodeError, Detail: err.Error(), Err: err}
 	}
 	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }
 
 func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *BuriedError) (*PlanningResult, *planningError) {
 	if s.laneLock.IsLocked(buried.LaneID) {
-		return nil, &planningError{Code: "lane_locked", Detail: fmt.Sprintf("lane %d is locked by another reshuffle", buried.LaneID)}
+		return nil, &planningError{Code: codeLaneLocked, Detail: fmt.Sprintf("lane %d is locked by another reshuffle", buried.LaneID)}
 	}
 	lane, err := s.db.GetNode(buried.LaneID)
 	if err != nil || lane.ParentID == nil {
-		return nil, &planningError{Code: "reshuffle_error", Detail: "cannot determine node group for lane", Err: err}
+		return nil, &planningError{Code: codeReshuffleError, Detail: "cannot determine node group for lane", Err: err}
 	}
 	plan, err := PlanReshuffle(s.db, buried.Bin, buried.Slot, lane, *lane.ParentID)
 	if err != nil {
-		return nil, &planningError{Code: "reshuffle_error", Detail: fmt.Sprintf("cannot plan reshuffle: %v", err), Err: err}
+		return nil, &planningError{Code: codeReshuffleError, Detail: fmt.Sprintf("cannot plan reshuffle: %v", err), Err: err}
 	}
 	if !s.laneLock.TryLock(buried.LaneID, order.ID) {
-		return nil, &planningError{Code: "lane_locked", Detail: "lane locked concurrently"}
+		return nil, &planningError{Code: codeLaneLocked, Detail: "lane locked concurrently"}
 	}
 	if err := s.createCompound(order, plan); err != nil {
 		s.laneLock.Unlock(buried.LaneID)
-		return nil, &planningError{Code: "reshuffle_error", Detail: fmt.Sprintf("cannot create compound order: %v", err), Err: err}
+		return nil, &planningError{Code: codeReshuffleError, Detail: fmt.Sprintf("cannot create compound order: %v", err), Err: err}
 	}
 	// createCompound already transitioned the parent to Reshuffling via
 	// lifecycle.BeginReshuffle and dispatched the first child via the
@@ -455,11 +477,11 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 
 func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
 	if order.SourceNode == "" {
-		return nil, &planningError{Code: "missing_source", Detail: "move order requires source_node"}
+		return nil, &planningError{Code: codeMissingSource, Detail: "move order requires source_node"}
 	}
 	sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
 	if err != nil {
-		return nil, &planningError{Code: "invalid_node", Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
+		return nil, &planningError{Code: codeInvalidNode, Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
 	}
 	// Same-node validation must come before the capacity gate: a
 	// same-node move is invalid regardless of capacity (would produce
@@ -469,7 +491,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 	// would never clear.
 	destPreCheck, dErr := s.db.GetNodeByDotName(order.DeliveryNode)
 	if dErr == nil && destPreCheck != nil && sourceNode.ID == destPreCheck.ID {
-		return nil, &planningError{Code: "same_node", Detail: fmt.Sprintf("source and destination are the same node (%s)", sourceNode.Name)}
+		return nil, &planningError{Code: codeSameNode, Detail: fmt.Sprintf("source and destination are the same node (%s)", sourceNode.Name)}
 	}
 
 	// Phase 4 of bin-transit-state: dropoff-capacity gate. Move orders
@@ -518,7 +540,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 		if result.Bin != nil {
 			remainingUOP := extractRemainingUOP(env)
 			if err := s.binManifest.ClaimForDispatch(result.Bin.ID, order.ID, remainingUOP); err != nil {
-				return nil, &planningError{Code: "claim_failed", Detail: err.Error(), Err: err}
+				return nil, &planningError{Code: codeClaimFailed, Detail: err.Error(), Err: err}
 			}
 			order.BinID = &result.Bin.ID
 			if err := s.db.UpdateOrderBinID(order.ID, result.Bin.ID); err != nil {
@@ -529,7 +551,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 			// not the NGRP name. This is critical for handleOrderCompleted.
 			concreteNode, cErr := s.db.GetNode(*result.Bin.NodeID)
 			if cErr != nil {
-				return nil, &planningError{Code: "node_error", Detail: fmt.Sprintf("resolve slot for bin %d: %v", result.Bin.ID, cErr), Err: cErr}
+				return nil, &planningError{Code: codeNodeError, Detail: fmt.Sprintf("resolve slot for bin %d: %v", result.Bin.ID, cErr), Err: cErr}
 			}
 			sourceNode = concreteNode
 			s.dbg("move: NGRP resolved bin=%d at %s (remainingUOP=%v)", result.Bin.ID, sourceNode.Name, remainingUOP)
@@ -539,7 +561,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 			return &PlanningResult{Queued: true}, nil
 		}
 	} else if bin, bnode, isLoaderPos, lerr := s.sourceFromDedicatedLoader(order.SourceNode, payloadCode, binsource.Drain); lerr != nil {
-		return nil, &planningError{Code: "loader_source", Detail: lerr.Error(), Err: lerr}
+		return nil, &planningError{Code: codeLoaderSource, Detail: lerr.Error(), Err: lerr}
 	} else if isLoaderPos {
 		// Dedicated-loader position: source the loader's whole pool (every home
 		// position ∪ the kept-partial buffer), oldest part X first — same as
@@ -553,7 +575,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 		}
 		remainingUOP := extractRemainingUOP(env)
 		if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, remainingUOP); err != nil {
-			return nil, &planningError{Code: "claim_failed", Detail: err.Error(), Err: err}
+			return nil, &planningError{Code: codeClaimFailed, Detail: err.Error(), Err: err}
 		}
 		order.BinID = &bin.ID
 		if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
@@ -577,15 +599,15 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 			// service plan loop) treats it as a queue signal so the
 			// scanner re-tries on the next tick.
 			if raced {
-				return nil, &planningError{Code: "claim_failed", Detail: detail}
+				return nil, &planningError{Code: codeClaimFailed, Detail: detail}
 			}
 			if payloadCode != "" {
-				return nil, &planningError{Code: "no_payload", Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.SourceNode)}
+				return nil, &planningError{Code: codeNoPayload, Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.SourceNode)}
 			}
 			// Safety net: a move order without a claimed bin would silently
 			// dispatch to the fleet, but handleOrderCompleted would skip the
 			// bin arrival update (BinID == nil). Fail loudly instead.
-			return nil, &planningError{Code: "no_bin", Detail: detail}
+			return nil, &planningError{Code: codeNoBin, Detail: detail}
 		}
 		order.BinID = &picked.ID
 		if err := s.db.UpdateOrderBinID(order.ID, picked.ID); err != nil {
@@ -600,7 +622,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 	}
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
-		return nil, &planningError{Code: "node_error", Detail: err.Error(), Err: err}
+		return nil, &planningError{Code: codeNodeError, Detail: err.Error(), Err: err}
 	}
 	// If the destination is still a synthetic NGRP, resolve a concrete child
 	// slot now. This happens when intake (CreateInboundOrder) deferred
@@ -626,7 +648,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 	// Guard: source and destination must differ. A same-node move is physically
 	// impossible and would waste a fleet transport order.
 	if sourceNode.ID == destNode.ID {
-		return nil, &planningError{Code: "same_node", Detail: fmt.Sprintf("source and destination are the same node (%s)", sourceNode.Name)}
+		return nil, &planningError{Code: codeSameNode, Detail: fmt.Sprintf("source and destination are the same node (%s)", sourceNode.Name)}
 	}
 	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }
@@ -651,21 +673,21 @@ func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope,
 	if order.SourceNode != "" {
 		sourceNode, err = s.db.GetNodeByDotName(order.SourceNode)
 		if err != nil {
-			return nil, &planningError{Code: "invalid_node", Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
+			return nil, &planningError{Code: codeInvalidNode, Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
 		}
 	} else if originalDeliveryNode != "" {
 		sourceNode, err = s.db.GetNodeByDotName(originalDeliveryNode)
 		if err != nil {
-			return nil, &planningError{Code: "invalid_node", Detail: fmt.Sprintf("node %q not found", originalDeliveryNode), Err: err}
+			return nil, &planningError{Code: codeInvalidNode, Detail: fmt.Sprintf("node %q not found", originalDeliveryNode), Err: err}
 		}
 	}
 	if sourceNode == nil {
-		return nil, &planningError{Code: "missing_source", Detail: "store order requires a source location"}
+		return nil, &planningError{Code: codeMissingSource, Detail: "store order requires a source location"}
 	}
 
 	destNode, err := s.db.FindStorageDestination(payloadCode, sourceNode.ID)
 	if err != nil {
-		return nil, &planningError{Code: "no_storage", Detail: "no available storage node found", Err: err}
+		return nil, &planningError{Code: codeNoStorage, Detail: "no available storage node found", Err: err}
 	}
 	s.dbg("store: selected destination=%s for order %d", destNode.Name, order.ID)
 	order.DeliveryNode = destNode.Name
@@ -689,7 +711,7 @@ func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope,
 		}
 	}
 	if order.BinID == nil {
-		return nil, &planningError{Code: "no_bin", Detail: fmt.Sprintf("no available bin at %s", sourceNode.Name)}
+		return nil, &planningError{Code: codeNoBin, Detail: fmt.Sprintf("no available bin at %s", sourceNode.Name)}
 	}
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
 		log.Printf("dispatch: update order %d source_node: %v", order.ID, err)

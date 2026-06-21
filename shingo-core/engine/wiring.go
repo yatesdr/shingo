@@ -310,7 +310,7 @@ func (e *Engine) wireEventHandlers() {
 	//
 	//   - Cancelled / Failed: explicit cleanup paths.
 	//   - Skipped: a complex parent that gets skipped at Queued (e.g.,
-	//     claimComplexBins returns no_source_bin because the unburied
+	//     ApplyComplexPlan returns no_source_bin because the unburied
 	//     target was moved or anomalied between unbury completion and
 	//     scanner pickup) needs the same cleanup — no pickup happens,
 	//     so the bin-transit listener will never fire.

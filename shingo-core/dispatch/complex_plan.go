@@ -14,10 +14,10 @@ import (
 // preview the order, lets tests cover the planning math without a DB, and
 // gives one inspectable structure to log for incident postmortems.
 //
-// Build with BuildComplexPlan. The matching Apply path (the dispatcher
-// rewire that persists the order, claims bins, and ships fleet blocks) lives
-// in HandleComplexOrderRequest today; migrating it to consume a Plan is a
-// follow-up step.
+// Build with BuildComplexPlan, then apply with ApplyComplexPlan, which
+// re-walks the resolved steps over live bin state to claim each pickup and
+// write the durable order/bin links. DispatchPreparedComplex runs both and
+// ships the resulting fleet blocks.
 type ComplexPlan struct {
 	// SourceNode is the first actionable (pickup/dropoff) step's node;
 	// DeliveryNode is the last. Match the values stored on the order row.
@@ -109,11 +109,10 @@ func BuildComplexPlan(steps []resolvedStep, binsByNode map[string][]*bins.Bin, p
 			continue
 		}
 		// Empty pickup leg (produce node's "bring an empty to fill"): claim an
-		// EMPTY carrier, not a payload-matching full — mirrors the live claim path
-		// so the plan is a faithful model of the live claim
-		// path. Without this the planner would pick a payload-matching full at
-		// an empty leg and the shadow comparison would flag a spurious mismatch
-		// on every refill order.
+		// EMPTY carrier, not a payload-matching full, so the plan models the same
+		// selection the live claim path (ApplyComplexPlan) makes. Without this
+		// filter the planner would predict a payload-matching full at an empty
+		// leg and mispredict the bin on every refill order.
 		claimPayload := payloadCode
 		if s.Empty {
 			candidates = emptyBinsOnly(candidates)

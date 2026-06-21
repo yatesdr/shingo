@@ -226,7 +226,7 @@ func TestComplexOrder_BinPoachingPrevention(t *testing.T) {
 
 	// Complex order must now claim the bin at dispatch time
 	if complexOrder.BinID == nil {
-		t.Fatalf("complex order has BinID=nil — claimComplexBins did not set it")
+		t.Fatalf("complex order has BinID=nil — ApplyComplexPlan did not set it")
 	}
 	if *complexOrder.BinID != bin.ID {
 		t.Fatalf("complex order claimed bin %d, want %d", *complexOrder.BinID, bin.ID)
@@ -295,7 +295,7 @@ func TestComplexOrder_StaleBinLocation(t *testing.T) {
 
 	order := testdb.RequireOrder(t, db, "complex-24b")
 	if order.BinID == nil {
-		t.Fatalf("complex order BinID=nil — claimComplexBins did not set it")
+		t.Fatalf("complex order BinID=nil — ApplyComplexPlan did not set it")
 	}
 	t.Logf("complex order %d: vendor_id=%s, bin_id=%d", order.ID, order.VendorOrderID, *order.BinID)
 
@@ -367,7 +367,7 @@ func TestComplexOrder_PhantomInventoryRetrieve(t *testing.T) {
 
 	order := testdb.RequireOrder(t, db, "complex-24c")
 	if order.BinID == nil {
-		t.Fatalf("complex order BinID=nil — claimComplexBins did not set it")
+		t.Fatalf("complex order BinID=nil — ApplyComplexPlan did not set it")
 	}
 
 	// Complete the complex order — drive RUNNING → FINISHED, then Edge receipt

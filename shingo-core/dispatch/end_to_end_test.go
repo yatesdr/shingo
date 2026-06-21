@@ -326,7 +326,7 @@ func TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateBin(occB), "create occB")
 
 	// The evac leg's source: a manifest-confirmed bin at the line so
-	// claimComplexBins can pick it up once the order dispatches.
+	// ApplyComplexPlan can pick it up once the order dispatches.
 	_ = testdb.CreateBinAtNode(t, db, bp.Code, lineNode.ID, "EVAC-BIN")
 
 	backend := testdb.NewTrackingBackend()

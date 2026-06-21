@@ -544,7 +544,7 @@ func TestBinManifestService_ClaimForDispatch_ConcurrentRace(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────
 
 // claimBinForTest sets claimed_by directly so SyncOrClearForReleased's
-// already-claimed precondition is met. Mirrors what claimComplexBins would
+// already-claimed precondition is met. Mirrors what ApplyComplexPlan would
 // have done at order creation time.
 func claimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
 	t.Helper()
@@ -806,7 +806,7 @@ func TestBinManifestService_SyncOrClearForReleased_LockedRejected(t *testing.T) 
 // TestBinManifestService_SyncOrClearForReleased_ActorOnAuditRow verifies
 // that the caller's actor identity lands on the audit row, and that an
 // empty actor falls back to "system" for consistency with other bin
-// audits (claimComplexBins, etc.).
+// audits (ApplyComplexPlan, etc.).
 func TestBinManifestService_SyncOrClearForReleased_ActorOnAuditRow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

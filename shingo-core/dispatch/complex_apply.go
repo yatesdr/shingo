@@ -72,20 +72,20 @@ func (d *Dispatcher) ApplyComplexPlan(order *orders.Order, plan *ComplexPlan, pa
 		node, err := d.db.GetNodeByDotName(c.Node)
 		if err != nil {
 			reason := fmt.Sprintf("cannot resolve node %s: %v", c.Node, err)
-			d.dbg("complex apply: order %d pickup step %d at %s — %s", order.ID, stepIndex, c.Node, reason)
+			log.Printf("complex apply: order %d pickup step %d at %s — %s", order.ID, stepIndex, c.Node, reason)
 			stepSkips = append(stepSkips, pickupSkip{stepIndex, c.Node, reason})
 			continue
 		}
 		bins, err := d.db.ListBinsByNode(node.ID)
 		if err != nil {
 			reason := fmt.Sprintf("ListBinsByNode failed: %v", err)
-			d.dbg("complex apply: order %d pickup step %d at %s — %s", order.ID, stepIndex, c.Node, reason)
+			log.Printf("complex apply: order %d pickup step %d at %s — %s", order.ID, stepIndex, c.Node, reason)
 			stepSkips = append(stepSkips, pickupSkip{stepIndex, c.Node, reason})
 			continue
 		}
 		if len(bins) == 0 {
 			reason := emptyNodeSkipReason
-			d.dbg("complex apply: order %d pickup step %d at %s — %s", order.ID, stepIndex, c.Node, reason)
+			log.Printf("complex apply: order %d pickup step %d at %s — %s", order.ID, stepIndex, c.Node, reason)
 			stepSkips = append(stepSkips, pickupSkip{stepIndex, c.Node, reason})
 			continue
 		}
@@ -109,7 +109,7 @@ func (d *Dispatcher) ApplyComplexPlan(order *orders.Order, plan *ComplexPlan, pa
 			claimPayload = ""
 			if len(candidates) == 0 {
 				reason := "no empty carrier at node for empty pickup leg"
-				d.dbg("complex apply: order %d pickup step %d at %s — %s", order.ID, stepIndex, c.Node, reason)
+				log.Printf("complex apply: order %d pickup step %d at %s — %s", order.ID, stepIndex, c.Node, reason)
 				stepSkips = append(stepSkips, pickupSkip{stepIndex, c.Node, reason})
 				continue
 			}
@@ -124,7 +124,7 @@ func (d *Dispatcher) ApplyComplexPlan(order *orders.Order, plan *ComplexPlan, pa
 		if picked == nil {
 			reason := fmt.Sprintf("no candidate among %d bin(s); rejects: [%s]",
 				len(bins), joinRejects(rejects))
-			d.dbg("complex apply: order %d pickup step %d at %s — %s", order.ID, stepIndex, c.Node, reason)
+			log.Printf("complex apply: order %d pickup step %d at %s — %s", order.ID, stepIndex, c.Node, reason)
 			stepSkips = append(stepSkips, pickupSkip{stepIndex, c.Node, reason})
 			continue
 		}
@@ -140,18 +140,18 @@ func (d *Dispatcher) ApplyComplexPlan(order *orders.Order, plan *ComplexPlan, pa
 		// a genuinely empty source is a no-op (no_source_bin -> Skip), and bins
 		// present but unclaimable is terminal (no_bin -> Fail).
 		if anyRaced {
-			return &planningError{Code: "claim_failed", Detail: fmt.Sprintf("lost claim race at all pickup nodes for order %d", order.ID)}
+			return &planningError{Code: codeClaimFailed, Detail: fmt.Sprintf("lost claim race at all pickup nodes for order %d", order.ID)}
 		}
 		if allStepSkipsAreEmptyNode(stepSkips) {
-			return &planningError{Code: "no_source_bin", Detail: fmt.Sprintf("no bin at pickup node(s) for order %d — source was emptied externally", order.ID)}
+			return &planningError{Code: codeNoSourceBin, Detail: fmt.Sprintf("no bin at pickup node(s) for order %d — source was emptied externally", order.ID)}
 		}
-		return &planningError{Code: "no_bin", Detail: fmt.Sprintf("no available bin at pickup node(s) for order %d", order.ID)}
+		return &planningError{Code: codeNoBin, Detail: fmt.Sprintf("no available bin at pickup node(s) for order %d", order.ID)}
 	}
 
 	// Partial coverage: surface the missed steps loudly so the late-bind
 	// manifest fallback has a paired diagnostic instead of being the only signal.
 	if len(stepSkips) > 0 {
-		d.dbg("complex apply: order %d claimed %d/%d pickup step(s); %d step(s) missed: %v",
+		log.Printf("complex apply: order %d claimed %d/%d pickup step(s); %d step(s) missed: %v",
 			order.ID, len(claimed), pickupSteps, len(stepSkips), stepSkipSummaries(stepSkips))
 	}
 

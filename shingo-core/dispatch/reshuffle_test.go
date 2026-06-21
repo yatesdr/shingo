@@ -1943,7 +1943,7 @@ func TestLaneLockExtension_RowDeletedOnTerminal(t *testing.T) {
 // cleanup contract across all four terminal statuses a complex
 // parent can reach after the row is written. Cancelled and Failed
 // are the explicit cleanup paths; Skipped is the gap where a
-// complex parent reaches a no-pickup terminal (claimComplexBins
+// complex parent reaches a no-pickup terminal (ApplyComplexPlan
 // finds no bins) and the bin-transit listener never fires;
 // Completed is the defensive path for force-confirm /
 // admin-recovery scenarios.

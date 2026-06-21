@@ -18,13 +18,13 @@ import (
 
 // Complex order lifecycle tests (TC-42, TC-43, TC-47, TC-48, TC-49, TC-50).
 // Each test exercises a failure mode or edge case specific to complex orders
-// (StepsJSON-based fleet block generation, claimComplexBins, wait/release).
+// (StepsJSON-based fleet block generation, ApplyComplexPlan, wait/release).
 
 // --- Test: Complex order cancel mid-transit ---
 //
 // Scenario: A complex order (pickup → dropoff → wait → pickup → dropoff) is
 // dispatched and the robot is in transit (RUNNING). The operator cancels the
-// order. The bin was claimed by claimComplexBins and is physically on the robot.
+// order. The bin was claimed by ApplyComplexPlan and is physically on the robot.
 //
 // Expected: The order is cancelled. The bin claim is released. An auto-return
 // order is created to bring the bin back to its origin. No bin is permanently
@@ -334,14 +334,14 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 	}
 }
 
-// --- Test: Ghost robot — claimComplexBins finds no bin (TC-49) ---
+// --- Test: Ghost robot — ApplyComplexPlan finds no bin (TC-49) ---
 //
 // Scenario: A complex order specifies a pickup at a node, but the node
 // has no bins at all — the source was emptied externally before this
 // dispatch tick (plant case: operator pulled the bin to quality hold
 // after the order was queued but before the scanner picked it up).
 //
-// Expected (post no_source_bin refactor): claimComplexBins returns a
+// Expected (post no_source_bin refactor): ApplyComplexPlan returns a
 // planningError with code "no_source_bin", and DispatchPreparedComplex
 // routes it to lifecycle.Skip → StatusSkipped (terminal, distinct from
 // Failed). No robot is dispatched. The semantic distinction matters
@@ -413,7 +413,7 @@ func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 //
 // Scenario: Two complex orders are submitted sequentially, both picking up
 // from the same storage node that has only one available bin.
-// claimComplexBins runs for both orders in sequence. The first should claim
+// ApplyComplexPlan runs for both orders in sequence. The first should claim
 // the bin; the second should fail at planning with "no_bin".
 //
 // Expected: First order claims the bin and dispatches. Second order fails
@@ -468,7 +468,7 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 	// puts an in-flight order at LINE1-IN, so order2 hits the dropoff-
 	// capacity gate (queued) rather than failing immediately at bin claim.
 	// On scanner replay (after order1 confirms / fails / cancels) order2
-	// will reach claimComplexBins, find no bin, and fail. Either terminal
+	// will reach ApplyComplexPlan, find no bin, and fail. Either terminal
 	// state (failed) or transient state (queued, awaiting retry) is
 	// acceptable for this test — what matters is the bin and the second
 	// order are NOT double-claimed.
@@ -575,7 +575,7 @@ func TestComplexOrder_SequentialBackfill(t *testing.T) {
 
 	// Bin claimed at storage (first step is pickup)
 	if order.BinID == nil {
-		t.Fatal("expected BinID to be set — claimComplexBins should claim at pickup node")
+		t.Fatal("expected BinID to be set — ApplyComplexPlan should claim at pickup node")
 	}
 	bin, _ = db.GetBin(bin.ID)
 	if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
@@ -628,7 +628,7 @@ func TestComplexOrder_SequentialBackfill(t *testing.T) {
 //	wait(CoreNode) → pickup(CoreNode) → dropoff(OutboundDest)
 //
 // Robot drives to line and holds (RDS BinTask=Wait), operator releases, picks
-// up old bin, delivers to outbound destination. claimComplexBins iterates ALL
+// up old bin, delivers to outbound destination. ApplyComplexPlan iterates ALL
 // steps (including post-wait) and finds the pickup(lineNode) step, claiming
 // the bin there.
 //
@@ -658,9 +658,9 @@ func TestComplexOrder_SequentialRemoval(t *testing.T) {
 
 	order := testdb.RequireOrderStatus(t, db, "seq-removal-1", dispatch.StatusDispatched)
 
-	// Bin claimed — claimComplexBins iterates ALL steps including post-wait
+	// Bin claimed — ApplyComplexPlan iterates ALL steps including post-wait
 	if order.BinID == nil {
-		t.Fatal("expected BinID set — claimComplexBins finds post-wait pickup step")
+		t.Fatal("expected BinID set — ApplyComplexPlan finds post-wait pickup step")
 	}
 
 	// 1 pre-wait block, staged
@@ -834,7 +834,7 @@ func TestComplexOrder_TwoRobotSwap_Resupply(t *testing.T) {
 //	wait(CoreNode) → pickup(CoreNode) → dropoff(OutboundDest)
 //
 // Same structure as sequential removal but in the two-robot context.
-// Robot drives to node and holds (RDS BinTask=Wait). claimComplexBins
+// Robot drives to node and holds (RDS BinTask=Wait). ApplyComplexPlan
 // finds the post-wait pickup and claims the bin.
 //
 // Expected: 1 pre-wait block (Wait), staged. After release: 3 blocks.
@@ -863,9 +863,9 @@ func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
 
 	order := testdb.RequireOrderStatus(t, db, "tworobot-removal-1", dispatch.StatusDispatched)
 
-	// Bin claimed — claimComplexBins iterates ALL steps including post-wait
+	// Bin claimed — ApplyComplexPlan iterates ALL steps including post-wait
 	if order.BinID == nil {
-		t.Fatal("expected BinID set — claimComplexBins finds post-wait pickup step")
+		t.Fatal("expected BinID set — ApplyComplexPlan finds post-wait pickup step")
 	}
 
 	// 1 pre-wait block, staged
@@ -1038,7 +1038,7 @@ func TestComplexOrder_StagingAndDeliver(t *testing.T) {
 //   - oldBin: lineNode → outStaging → outboundDest (final dest, step 9)
 //
 // The fix:
-//   - claimComplexBins populates order_bins with per-bin destinations computed
+//   - ApplyComplexPlan populates order_bins with per-bin destinations computed
 //     by resolvePerBinDestinations (bin flow simulation through the step list)
 //   - handleMultiBinCompleted moves each bin to its per-step destination via
 //     ApplyMultiBinArrival (single atomic transaction)
@@ -1094,7 +1094,7 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 	// Old bin at line also claimed (pickup at lineNode is step 5)
 	oldBin, _ = db.GetBin(oldBin.ID)
 	if oldBin.ClaimedBy == nil {
-		t.Log("NOTE: old bin was not claimed — claimComplexBins may not have found it")
+		t.Log("NOTE: old bin was not claimed — ApplyComplexPlan may not have found it")
 	} else if *oldBin.ClaimedBy != order.ID {
 		t.Errorf("old bin claimed_by = %d, want order %d", *oldBin.ClaimedBy, order.ID)
 	}
@@ -1187,7 +1187,7 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 	// Lineside delivery: bin must be "staged" (not "available").
 	// resolveNodeStaging marks lineside bins as staged so FindSourceBinFIFO
 	// can't poach them; the bin stays staged until the next cycle's
-	// claimComplexBins claims it (claimComplexBins intentionally allows
+	// ApplyComplexPlan claims it (ApplyComplexPlan intentionally allows
 	// staged bins per TC-24a) or operator action releases it.
 	//
 	// Previously the WaitIndex>0 override forced this to "available", which
@@ -1246,7 +1246,7 @@ func TestComplexOrder_DoubleWait(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
-	// Need bins at both nodes for claimComplexBins:
+	// Need bins at both nodes for ApplyComplexPlan:
 	//   - step 0: pickup(storage) → needs bin at storage
 	//   - step 3: pickup(line) → needs bin at line
 	//   - step 6: pickup(storage) → needs second bin at storage

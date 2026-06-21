@@ -127,10 +127,10 @@ func TestBuildComplexPlan_NoBinsAtNode(t *testing.T) {
 func TestBuildComplexPlan_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 	t.Parallel()
 	// A produce node's empty pickup leg (step.Empty) must claim an EMPTY
-	// carrier, never a payload-matching full — mirroring claimComplexBins. The
-	// full bin is listed FIRST, so only the empty filter keeps selectClaim from
-	// grabbing it. Without this the planner diverges from the live claim path on
-	// every refill order and the shadow comparison goes spuriously noisy.
+	// carrier, never a payload-matching full — mirroring the live claim path
+	// (ApplyComplexPlan). The full bin is listed FIRST, so only the empty filter
+	// keeps selectClaim from grabbing it. Without this the planner would predict
+	// a payload-matching full at the empty leg on every refill order.
 	steps := []resolvedStep{
 		{Action: "pickup", Node: "press.P1", Empty: true},
 		{Action: "dropoff", Node: "press.P1"},
@@ -152,7 +152,7 @@ func TestBuildComplexPlan_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 func TestBuildComplexPlan_EmptyLegNoCarrierSkips(t *testing.T) {
 	t.Parallel()
 	// Empty leg with only a full present: the plan skips with the same reason
-	// string claimComplexBins emits, not a misleading "no bins at node".
+	// string the live claim path emits, not a misleading "no bins at node".
 	steps := []resolvedStep{
 		{Action: "pickup", Node: "press.P1", Empty: true},
 		{Action: "dropoff", Node: "press.P1"},

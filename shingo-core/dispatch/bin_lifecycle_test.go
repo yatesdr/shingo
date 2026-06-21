@@ -399,7 +399,7 @@ func TestComplexOrder_RemainingUOP_ProcessNodeOnly(t *testing.T) {
 // HandleOrderRelease + RemainingUOP integration tests.
 //
 // These tests stage a complex order with a wait step (so it lands in
-// StatusStaged with the line bin claimed by claimComplexBins), then call
+// StatusStaged with the line bin claimed by ApplyComplexPlan), then call
 // HandleOrderRelease with various RemainingUOP values to assert the
 // late-binding manifest sync runs correctly before the fleet release.
 //
@@ -462,7 +462,7 @@ func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lin
 		}
 	}
 	if order.BinID == nil {
-		t.Fatalf("expected order.BinID to be set by claimComplexBins; got nil")
+		t.Fatalf("expected order.BinID to be set by ApplyComplexPlan; got nil")
 	}
 	if *order.BinID != bin.ID {
 		t.Fatalf("expected order to claim bin %d, got %d", bin.ID, *order.BinID)
@@ -568,7 +568,7 @@ func TestHandleOrderRelease_RemainingUOPNilLeavesManifestAlone(t *testing.T) {
 // source-node fallback path. Setup: an order with order.BinID=nil but a
 // bin sitting at order.SourceNode (the line). This is the production
 // failure mode for two-robot Order B observed on ALN_002 plant test
-// 2026-04-23 — claimComplexBins didn't populate BinID, but the bin is
+// 2026-04-23 — ApplyComplexPlan didn't populate BinID, but the bin is
 // physically at the line and the operator's release wants its manifest
 // cleared. Without the fallback, HandleOrderRelease silently skipped the
 // sync and the bin landed at OutboundDestination still tagged.
@@ -590,7 +590,7 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, `{"items":[{"catid":"PART-A","qty":100}]}`, bp.Code, 100), "set manifest")
 
 	// Order whose BinID is nil but whose SourceNode points at the line.
-	// Mimics the production failure mode where claimComplexBins didn't
+	// Mimics the production failure mode where ApplyComplexPlan didn't
 	// claim a bin for the order at creation time.
 	order := &orders.Order{
 		EdgeUUID:     "uuid-fallback-clear",

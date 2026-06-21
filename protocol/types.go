@@ -319,7 +319,7 @@ var validTransitions = map[Status][]Status{
 	// returns; Acknowledged is reported asynchronously by the vendor later.
 	// Queued → Sourcing supports the scanner's re-resolve path when an
 	// inflight bin claim becomes invalid.
-	// Queued → Skipped is fired by DispatchPreparedComplex when claimComplexBins
+	// Queued → Skipped is fired by DispatchPreparedComplex when ApplyComplexPlan
 	// finds zero bins at every pickup node — the work was never needed.
 	// Queued → Reshuffling supports the complex-order buried-source path:
 	// complex intake creates the parent at Queued, then pivots to

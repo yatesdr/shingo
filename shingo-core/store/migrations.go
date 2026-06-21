@@ -1468,7 +1468,7 @@ func v13FixNodePayloadsFK(tx *sql.Tx) error {
 
 // v14OrderProcessNode adds the process_node column to orders. Distinct
 // from source_node — process_node names the line node a swap order
-// belongs to so claimComplexBins can pick the line bin for
+// belongs to so ApplyComplexPlan can pick the line bin for
 // order.BinID and the release-time fallback can locate the right bin.
 //
 // Uses ALTER TABLE ... ADD COLUMN IF NOT EXISTS so PostgreSQL itself
