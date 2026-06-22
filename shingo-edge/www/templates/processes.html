@@ -389,7 +389,12 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         <option value="single_robot">1-Robot Swap</option>
                         <option value="two_robot">2-Robot Swap</option>
                         <option value="two_robot_press_index">2-Robot Press Index Swap</option>
-                        <option value="manual_swap">Manual Swap</option>
+                        <!-- Manual Swap (bin loader / unloader) is intentionally NOT offered here:
+                             loaders are Core-owned topology now. Configure them on the Core loader
+                             setup screen (Nodes -> Create/Edit Loader) and add the position nodes to
+                             an Operator Station; the runtime resolves them as manual_swap via the
+                             loader aggregate (SynthClaim). Existing manual_swap claims still render
+                             below and can be removed, but are no longer authored/edited here. -->
                     </select>
                 </div>
             </div>

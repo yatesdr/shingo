@@ -749,7 +749,14 @@ function renderClaimRow(c) {
         '<td class="mono" style="font-size:0.8rem">' + esc(c.outbound_destination || '—') + '</td>' +
         '<td class="mono" style="font-size:0.8rem">' + esc(c.paired_core_node || '—') + '</td>' +
         '<td style="white-space:nowrap">' +
-            '<button class="btn btn-sm" data-action="edit-claim" data-claim-id="' + c.id + '">Edit</button> ' +
+            // manual_swap = a bin loader/unloader. Loaders are Core-owned now and
+            // resolve via SynthClaim, so they are no longer authored or edited here
+            // (the Swap Mode dropdown drops the option). An existing manual_swap claim
+            // is read-only — show a hint instead of Edit — but stays removable so a
+            // legacy/stray loader claim can still be cleaned up.
+            (c.swap_mode === 'manual_swap'
+                ? '<span class="badge" title="Bin loaders are configured on Core (Nodes -> loader setup) and added to an Operator Station; they resolve automatically here. This row is read-only.">Core loader</span> '
+                : '<button class="btn btn-sm" data-action="edit-claim" data-claim-id="' + c.id + '">Edit</button> ') +
             '<button class="btn btn-sm btn-danger" data-action="remove-claim" data-claim-id="' + c.id + '">Remove</button>' +
         '</td>';
     return tr;
