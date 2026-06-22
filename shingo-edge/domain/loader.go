@@ -391,6 +391,38 @@ func (l *Loader) LoadablePayloadCodes() []string {
 	return codes
 }
 
+// PayloadAt returns the payload pinned to the dedicated position at coreNode.
+// Only meaningful for a dedicated_positions loader: each position is one node
+// bound to one payload. A shared_window window, an unpinned home, or a buffer
+// slot carries no payload — ("", false). A node that isn't a position of this
+// loader also returns ("", false).
+func (l *Loader) PayloadAt(coreNode NodeID) (PayloadCode, bool) {
+	for _, pos := range l.positions {
+		if pos.Node == coreNode {
+			return pos.Payload, pos.Payload != ""
+		}
+	}
+	return "", false
+}
+
+// LoadablePayloadCodesAt scopes LoadablePayloadCodes to a SPECIFIC member node.
+// For a dedicated_positions loader each position is a one-payload home, so the
+// loadable set AT that node is just its own pinned payload (an unpinned home or a
+// buffer slot has none → nil). For a shared_window loader every window offers the
+// whole shared set, so it returns LoadablePayloadCodes() unchanged. This is the
+// per-node truth the operator board and the load/request gate must read for a
+// dedicated loader: a home must advertise (and the gate accept) only its own part,
+// never the other positions' parts. SynthClaim seeds AllowedPayloadCodes from it.
+func (l *Loader) LoadablePayloadCodesAt(coreNode NodeID) []string {
+	if l.IsDedicated() {
+		if p, ok := l.PayloadAt(coreNode); ok {
+			return []string{string(p)}
+		}
+		return nil
+	}
+	return l.LoadablePayloadCodes()
+}
+
 // SynthClaim builds an in-memory, NON-PERSISTED manual_swap NodeClaim that
 // represents this loader at coreNode. It is the Core-owned-loader path's stand-in
 // for a per-style style_node_claim: a node that is a window/position of a Core
@@ -398,14 +430,15 @@ func (l *Loader) LoadablePayloadCodes() []string {
 // the operator board + load/clear runtime to engage. ID stays 0 to mark it
 // synthetic — it is never written back, and callers MUST guard `ID == 0` before
 // using the id as a foreign key (e.g. runtime active_claim_id). AllowedPayloadCodes
-// carries the loader's payloads (shared set, plus any dedicated-position payloads)
-// so loadablePayloads resolves correctly off the claim too.
+// is scoped to THIS node (LoadablePayloadCodesAt): a dedicated home carries only
+// its own pinned payload, a shared window the whole set — so loadablePayloads
+// resolves the same per-node truth off the claim that the gate does.
 func (l *Loader) SynthClaim(coreNode NodeID) *NodeClaim {
 	return &NodeClaim{
 		CoreNodeName:        string(coreNode),
 		Role:                protocol.ClaimRole(l.role),
 		SwapMode:            protocol.SwapModeManualSwap,
-		AllowedPayloadCodes: l.LoadablePayloadCodes(),
+		AllowedPayloadCodes: l.LoadablePayloadCodesAt(coreNode),
 		InboundSource:       l.inboundSource,
 		OutboundDestination: l.outboundDest,
 		AutoConfirm:         true, // mandatory for bin_loader claims (auto-confirm delivery)

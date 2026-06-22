@@ -29,7 +29,9 @@ import (
 // behaviour, preserved only for the non-aggregate path.
 func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeClaim) []string {
 	if l, err := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(claim.Role)); err == nil && l != nil {
-		if codes := l.LoadablePayloadCodes(); len(codes) > 0 {
+		// Scoped to THIS node: a dedicated home loads only its own pinned payload,
+		// not the loader's other positions' parts; a shared window loads the whole set.
+		if codes := l.LoadablePayloadCodesAt(domain.NodeID(node.CoreNodeName)); len(codes) > 0 {
 			return codes
 		}
 	}
