@@ -170,6 +170,49 @@ func TestPlanMove_DedicatedLoaderPool_DrainsBufferedPartialOldestFirst(t *testin
 	}
 }
 
+// TestPlanMove_DedicatedLoaderPosition_EmptyPayload_ClaimsPhysicalBin pins the
+// manual-empty-move fix: a MOVE with NO payload from a dedicated home position is a
+// direct relocation of the (true-empty) carrier parked there, NOT a part-keyed pool
+// drain. It must claim the physical bin at the position via the concrete-node path
+// and dispatch — never route through the payload-keyed loader pool, which can't
+// resolve an empty and would queue the order, after which the fulfiller's
+// empty-payload guard hard-fails it. (Live repro: Springfield manual "Move" of the
+// empty CARRIERs sitting on SMN_014..016 → "order has empty payload_code; cannot
+// match a source bin".)
+func TestPlanMove_DedicatedLoaderPosition_EmptyPayload_ClaimsPhysicalBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, _ := setupTestData(t, db)
+	pos, _ := dedicatedLoaderFixture(t, db, "produce")
+
+	// A true-empty carrier sits on the home position (payload "", 0 UOP).
+	empty := makeEmptyBin(t, db, pos.ID, "mv-empty-carrier")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
+		OrderUUID:    "loader-move-empty-1",
+		OrderType:    OrderTypeMove,
+		PayloadCode:  "", // --none-- : a payload-less relocation
+		DeliveryNode: lineNode.Name,
+		SourceNode:   pos.Name,
+		Quantity:     1.0,
+	})
+
+	order, err := db.GetOrderByUUID("loader-move-empty-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.Status == "failed" {
+		t.Fatalf("empty-payload move FAILED (%s) — the loader-pool path must not swallow a payload-less relocation", order.Status)
+	}
+	if order.BinID == nil {
+		t.Fatalf("empty-payload move claimed no bin (status=%s) — expected the physical empty carrier at the position", order.Status)
+	}
+	if *order.BinID != empty.ID {
+		t.Fatalf("claimed bin %d, want the empty carrier %d physically at the position", *order.BinID, empty.ID)
+	}
+}
+
 // TestPlanRetrieveEmpty_DedicatedLoaderPool_FillPrefersPartialOverEmpty is the
 // produce/Fill path: a fresh EMPTY sits at the home position and a PARTIAL of X
 // sits in a buffer. retrieve_empty must claim the PARTIAL to top up (not the

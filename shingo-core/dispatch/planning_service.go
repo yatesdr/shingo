@@ -562,13 +562,23 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 		}
 	} else if bin, bnode, isLoaderPos, lerr := s.sourceFromDedicatedLoader(order.SourceNode, payloadCode, binsource.Drain); lerr != nil {
 		return nil, &planningError{Code: codeLoaderSource, Detail: lerr.Error(), Err: lerr}
-	} else if isLoaderPos {
-		// Dedicated-loader position: source the loader's whole pool (every home
-		// position ∪ the kept-partial buffer), oldest part X first — same as
-		// planRetrieve. A move-mode consume cell (swap dispatch issues a move,
-		// not a retrieve) reaches a partial parked in the buffer this way. No
-		// eligible bin of X → queue; do NOT fall through to the single-node claim,
-		// which would only see the position and miss the buffer.
+	} else if isLoaderPos && payloadCode != "" {
+		// Dedicated-loader position, part-keyed move: source the loader's whole
+		// pool (every home position ∪ the kept-partial buffer), oldest part X
+		// first — same as planRetrieve. A move-mode consume cell (swap dispatch
+		// issues a move, not a retrieve) reaches a partial parked in the buffer
+		// this way. No eligible bin of X → queue; do NOT fall through to the
+		// single-node claim, which would only see the position and miss the buffer.
+		//
+		// Empty payload is excluded on purpose: a payload-less move is a direct
+		// relocation of the physical bin sitting AT the position (a manual move,
+		// or a true-empty carrier the operator is shuffling), not a part-keyed
+		// pool source — pool sourcing keys on the part and can't resolve an empty,
+		// so it would queue and then hard-fail on the fulfiller's empty-payload
+		// guard. Fall through to the concrete-node claim below, which claims the
+		// bin actually parked there regardless of payload (BinUnavailableReason
+		// skips the payload check when the order payload is blank) — the same path
+		// a move from any non-loader node already uses.
 		if bin == nil {
 			s.dbg("move: loader pool for %s has no %s, queuing order %d", order.SourceNode, payloadCode, order.ID)
 			return &PlanningResult{Queued: true}, nil
