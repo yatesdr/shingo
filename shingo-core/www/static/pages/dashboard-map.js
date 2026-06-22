@@ -62,6 +62,8 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   var rotate90 = false;     // orient the plant's long axis along screen X
   var focusRobot = null;    // click-to-focus: id of the robot whose route is lit
   var mapKeyOpen = false;   // node-type symbol key collapsed by default (reference info)
+  var cometLayer = null;    // persistent SVG overlay holding the route comets
+  var lastCometSig = '';    // signature of the last-built comet set (rebuild only on change)
   var clickBound = false;   // host click handler attached once
   // Above this many active routes, the ambient view calms to dim lines (no
   // comets) so a busy floor doesn't become 20 arrows fighting for attention;
@@ -217,10 +219,16 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     points.forEach(function (p) {
       if (isFinite(p.pos_x) && isFinite(p.pos_y)) { wx.push(p.pos_x); wy.push(p.pos_y); }
     });
-    Object.keys(robots).forEach(function (k) {
-      var r = robots[k];
-      if (isFinite(r.x) && isFinite(r.y)) { wx.push(r.x); wy.push(r.y); }
-    });
+    // Robots are EXCLUDED from the view bounds when a scene is synced: folding
+    // live positions into the frame re-fit (and so subtly rescaled/panned) the
+    // whole map every tick, which shifted every route path out from under the
+    // comet. Fall back to robot positions only when there is no scene to frame.
+    if (!points.length) {
+      Object.keys(robots).forEach(function (k) {
+        var r = robots[k];
+        if (isFinite(r.x) && isFinite(r.y)) { wx.push(r.x); wy.push(r.y); }
+      });
+    }
     // Orphan graph vertices (edge endpoints with no synced point) can sit
     // outside the points' bounding box — include them so lines aren't clipped.
     tnodes.forEach(function (t) {
@@ -454,6 +462,50 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     }
   }
 
+  // ── persistent comet overlay ───────────────────────────────────────
+  // The comets live on their own <svg> layered over the map — a sibling of
+  // #map-svg-wrap inside the position:relative .map-main, with the same viewBox
+  // and pointer-events:none so robot clicks fall through to the scene. The
+  // per-tick scene rebuild wipes #map-svg-wrap, NOT this layer, so the comet
+  // animations keep running; we only clear+rebuild the layer when the comet SET
+  // actually changes (route added/removed, status/focus/scale/frame change),
+  // detected by a signature. That decoupling is what fixes the teleporting and
+  // the renderer churn.
+  function ensureCometLayer() {
+    if (cometLayer && cometLayer.parentNode) return cometLayer;
+    var host = document.getElementById('map-svg-wrap');
+    var parent = host && host.parentNode;
+    if (!parent) return null;
+    cometLayer = svgEl('svg', { class: 'map-comet-layer', preserveAspectRatio: 'xMidYMid meet' });
+    // Insert right after the map wrap: above the scene (so comets aren't hidden
+    // by the SVG's opaque background) but below the class-legend overlay.
+    parent.insertBefore(cometLayer, host.nextSibling);
+    return cometLayer;
+  }
+
+  function clearCometLayer() {
+    if (cometLayer) { while (cometLayer.firstChild) cometLayer.removeChild(cometLayer.firstChild); }
+    lastCometSig = '';
+  }
+
+  function syncCometLayer(cometRoutes, robotR) {
+    var vbKey = view ? (Math.round(view.minX) + ',' + Math.round(view.minY) + ',' +
+      Math.round(view.w) + ',' + Math.round(view.h)) : 'none';
+    var sig = vbKey + '|' + Math.round(robotR * 100) + '|' +
+      cometRoutes.map(function (c) { return c.sig; }).join(';');
+    if (sig === lastCometSig) return; // nothing structural changed — let SMIL run
+    lastCometSig = sig;
+    var layer = ensureCometLayer();
+    if (!layer) return;
+    if (view) layer.setAttribute('viewBox', view.minX + ' ' + view.minY + ' ' + view.w + ' ' + view.h);
+    while (layer.firstChild) layer.removeChild(layer.firstChild);
+    cometRoutes.forEach(function (c) {
+      // invisible path = the comet's motion track (mpath target).
+      layer.appendChild(svgEl('path', { id: c.id, d: c.d, fill: 'none', stroke: 'none' }));
+      addComet(layer, c.id, c.color, robotR);
+    });
+  }
+
   // ── render (coalesced via rAF) ─────────────────────────────────────
   var dirty = false;
   function scheduleRender() {
@@ -540,6 +592,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     computeView();
     if (!view) {
       host.innerHTML = '';
+      clearCometLayer();
       if (empty) empty.style.display = points.length ? 'none' : 'block';
       return;
     }
@@ -581,45 +634,60 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       }
     }
 
-    // ── routes (UNDER the nodes) ──────────────────────────────────────
-    // Drawn before the nodes so the travel-node network and typed waypoints
-    // stay readable on top of running paths — the old order buried nodes under
-    // every active route. Each route is a dark casing (separates same-status
-    // paths where they overlap) + a dim colored base + a comet. The comet runs
-    // for the focused robot, or for all routes when the floor is quiet (≤
-    // COMET_LIMIT and nothing focused); a busy unfocused floor calms to lines.
+    // ── routes ────────────────────────────────────────────────────────
+    // Comet-only: the standing route line is gone. The comet alone carries the
+    // route, and it lives on a PERSISTENT overlay (syncCometLayer below) that the
+    // per-tick scene rebuild does not touch — so it animates continuously instead
+    // of restarting every SSE tick (which made it teleport, and the constant SMIL
+    // churn pinned the renderer). Here we only draw the destination ring, collect
+    // each comet's stable path, and — for reduced-motion users — a faint static
+    // lane line as the accessible, motion-free fallback.
     var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     var activeRoutes = orders.filter(function (o) {
       var r = robots[o.robot_id];
       return r && isFinite(r.x) && isFinite(r.y) && findNode(o.delivery_node);
     });
-    var ambientComet = !focusRobot && activeRoutes.length <= COMET_LIMIT;
+    // Which routes get a comet: with a focus set, only the focused robot's;
+    // otherwise all of them while the floor is quiet (≤ COMET_LIMIT). A busy
+    // unfocused floor shows none (just robots + destination rings) so it doesn't
+    // become a swarm of arrows — click a robot to light its lane.
+    var cometRoutes = [];
     activeRoutes.forEach(function (o, idx) {
       var r = robots[o.robot_id];
       var dest = findNode(o.delivery_node);
       var color = STATUS_COLOR[o.status] || '#888';
       var focused = !!focusRobot && o.robot_id === focusRobot;
       var dimmed = !!focusRobot && !focused;
-      var world = routeWorld(r.x, r.y, dest);
-      var screenPts = world
-        ? world.map(function (w) { return proj(w[0], w[1]); })
-        : [proj(r.x, r.y), proj(dest.x, dest.y)]; // graph couldn't connect → straight hint
-      var pointsStr = screenPts.map(function (p) { return p[0] + ',' + p[1]; }).join(' ');
-      var dStr = 'M ' + screenPts.map(function (p) { return p[0] + ' ' + p[1]; }).join(' L ');
-      var pathId = 'route-' + idx;
-      // dark casing — a slightly wider stroke in the map-canvas color, so two
-      // overlapping same-status routes read as two lines instead of one blob.
-      svg.appendChild(svgEl('polyline', {
-        points: pointsStr, class: 'map-route-casing', fill: 'none',
-        'stroke-width': robotR * 0.5, 'stroke-opacity': dimmed ? 0.5 : 1
-      }));
-      // dim colored base — also the path the comet rides (carries the id).
-      svg.appendChild(svgEl('path', {
-        id: pathId, d: dStr, class: 'map-route-base', fill: 'none', stroke: color,
-        'stroke-width': robotR * 0.22, 'stroke-opacity': dimmed ? 0.28 : 0.5
-      }));
-      if ((focused || ambientComet) && !reduceMotion) addComet(svg, pathId, color, robotR);
-      // destination marker ring.
+      var wantComet = !reduceMotion && (focusRobot ? focused : activeRoutes.length <= COMET_LIMIT);
+      if (wantComet) {
+        // Comet rides a STABLE lane: source → destination along the network when a
+        // source node is known, so the path doesn't shift as the robot drives;
+        // falls back to the robot's current position only when there's no source.
+        var src = findNode(o.source_node);
+        var sx = src ? src.x : r.x, sy = src ? src.y : r.y;
+        var cworld = routeWorld(sx, sy, dest);
+        var cpts = cworld
+          ? cworld.map(function (w) { return proj(w[0], w[1]); })
+          : [proj(sx, sy), proj(dest.x, dest.y)];
+        cometRoutes.push({
+          id: 'comet-route-' + idx,
+          d: 'M ' + cpts.map(function (p) { return p[0] + ' ' + p[1]; }).join(' L '),
+          color: color,
+          // identity (NOT geometry) — so robot movement alone does not rebuild.
+          sig: o.robot_id + '>' + (o.source_node || '') + '>' + o.delivery_node + '>' + o.status
+        });
+      }
+      // Reduced-motion fallback: a faint static lane line (no animation).
+      if (reduceMotion) {
+        var rworld = routeWorld(r.x, r.y, dest);
+        var rscreen = rworld ? rworld.map(function (w) { return proj(w[0], w[1]); }) : [proj(r.x, r.y), proj(dest.x, dest.y)];
+        svg.appendChild(svgEl('polyline', {
+          points: rscreen.map(function (p) { return p[0] + ',' + p[1]; }).join(' '),
+          class: 'map-route-base', fill: 'none', stroke: color,
+          'stroke-width': robotR * 0.22, 'stroke-opacity': dimmed ? 0.25 : 0.5
+        }));
+      }
+      // destination marker ring (always).
       var dp = proj(dest.x, dest.y);
       svg.appendChild(svgEl('circle', {
         cx: dp[0], cy: dp[1], r: robotR * 0.7, fill: 'none', stroke: color,
@@ -740,6 +808,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
     host.innerHTML = '';
     host.appendChild(svg);
+    syncCometLayer(cometRoutes, robotR);
     renderClassLegend();
     renderLegend(); // live fleet counts track every robot/order tick
   }

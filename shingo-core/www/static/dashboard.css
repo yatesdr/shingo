@@ -164,14 +164,13 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 /* Order source/destination highlight ring (status-colored in JS). */
 .map-node-hot { opacity: 0.95; }
 
-/* Routes follow the aisles. Three layers per route (drawn UNDER the nodes so
- * waypoints stay legible): a dark casing that separates same-status paths where
- * they overlap, a dim colored base line, and a comet (built in JS) that leads
- * with a bright arrow and a tail fading behind it. The comet replaced the old
- * marching-dash overlay — fewer constantly-blinking lines, and the path sits
- * empty between laps so other routes and nodes show through. Per-element
- * opacity is set in JS (focus dims unselected routes), so no class opacity. */
-.map-route-casing { stroke: #070a0f; stroke-linecap: round; stroke-linejoin: round; }
+/* Routes are comet-only: no standing line. The comet (a bright leading arrow +
+ * fading tail, built in JS) carries the route and lives on .map-comet-layer — a
+ * separate <svg> overlaid on the map so the per-tick scene rebuild doesn't
+ * restart its animation. The layer ignores pointer events so robot clicks reach
+ * the scene. .map-route-base is now only the reduced-motion fallback (a faint
+ * static lane line for users who opt out of animation). */
+.map-comet-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .map-route-base { stroke-linecap: round; stroke-linejoin: round; }
 .map-comet-head { stroke: none; }
 
