@@ -48,6 +48,13 @@ export function openDrillModal(metric, filterState) {
     overlay.appendChild(box);
     document.body.appendChild(overlay);
 
+    // Note-kind metrics (e.g. Fleet load) have no timeseries to range over — hide
+    // the 4w/12w/52w toggle so it doesn't imply a control that does nothing.
+    if (cfg.kind === 'note') {
+        const rt = box.querySelector('.drill-range');
+        if (rt) rt.style.display = 'none';
+    }
+
     const state = {
         overlay, box, cfg, metric,
         filter: filterState || {},

@@ -164,20 +164,16 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 /* Order source/destination highlight ring (status-colored in JS). */
 .map-node-hot { opacity: 0.95; }
 
-/* Routes follow the aisles: a dim base line with a flowing dashed overlay so
- * direction of travel reads without clutter. The flow polyline carries a JS-set
- * pathLength that normalizes dash units to robot size, so this fixed pattern
- * (period 2) renders consistently on any map scale and the -2 offset loops
- * seamlessly. */
-.map-route-base { opacity: 0.3; stroke-linecap: round; stroke-linejoin: round; }
-.map-route-flow {
-  opacity: 0.95;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 0.55 1.45;
-  animation: map-flow 0.9s linear infinite;
-}
-@keyframes map-flow { to { stroke-dashoffset: -2; } }
+/* Routes follow the aisles. Three layers per route (drawn UNDER the nodes so
+ * waypoints stay legible): a dark casing that separates same-status paths where
+ * they overlap, a dim colored base line, and a comet (built in JS) that leads
+ * with a bright arrow and a tail fading behind it. The comet replaced the old
+ * marching-dash overlay — fewer constantly-blinking lines, and the path sits
+ * empty between laps so other routes and nodes show through. Per-element
+ * opacity is set in JS (focus dims unselected routes), so no class opacity. */
+.map-route-casing { stroke: #070a0f; stroke-linecap: round; stroke-linejoin: round; }
+.map-route-base { stroke-linecap: round; stroke-linejoin: round; }
+.map-comet-head { stroke: none; }
 
 /* Robots: moving = chevron with heading + pulsing halo; parked = compact
  * disc, no halo (heading is noise when docked, and haloless discs keep
@@ -187,6 +183,11 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 @keyframes map-halo { 0%, 100% { opacity: 0.13; } 50% { opacity: 0.27; } }
 .map-robot { stroke: rgba(255, 255, 255, 0.55); }
 .map-robot-core { fill: #070a0f; }
+/* Each robot's glyphs + chip sit in a [data-robot] group — click to focus its
+ * route. Pointer cursor hints the affordance. */
+.map-robot-hit { cursor: pointer; }
+/* Quiet outline on the focused robot — an outline, not another status color. */
+.map-robot-focus { stroke: rgba(207, 228, 255, 0.85); }
 /* Hairline tying a de-collided name chip back to its robot. */
 .map-chip-leader { stroke: rgba(255, 255, 255, 0.18); }
 
@@ -208,7 +209,9 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .map-route-flow, .map-robot-halo { animation: none; }
+  /* Comets are skipped in JS under reduced-motion (routes show as static dim
+   * lines); the halo pulse is the only CSS animation left to silence. */
+  .map-robot-halo { animation: none; }
 }
 
 .map-legend { display: flex; gap: 0.9rem; font-size: 0.95rem; color: var(--dash-muted); }
@@ -218,20 +221,37 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 .map-legend-count { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--dash-text); margin-left: 0.1rem; }
 .map-legend-zero { opacity: 0.4; }
 
-/* Node-class legend — bottom-left overlay on the map, populated from the
- * scene's distinct class_name values. */
+/* Node-class key — bottom-left overlay on the map, populated from the scene's
+ * distinct class_name values. Collapsed behind a small toggle by default so it
+ * doesn't read as a second always-on legend competing with the header status
+ * counts; the symbol key is reference info an operator learns once. */
 .map-class-legend {
   position: absolute;
   left: 0.9rem;
   bottom: 0.9rem;
+  max-width: 60%;
+  font-size: 1rem;
+  color: var(--dash-muted);
+}
+.map-key-toggle {
+  background: rgba(22, 27, 34, 0.85);
+  border: 1px solid var(--dash-border);
+  border-radius: 8px;
+  color: var(--dash-muted);
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+.map-key-toggle:hover { color: var(--dash-text); }
+.map-key-items {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem 1rem;
-  max-width: 60%;
+  margin-top: 0.4rem;
   padding: 0.5rem 0.8rem;
   background: rgba(22, 27, 34, 0.85);
   border: 1px solid var(--dash-border);
   border-radius: 8px;
-  font-size: 1rem;
-  color: var(--dash-muted);
 }
+.map-key-items[hidden] { display: none; }

@@ -60,6 +60,13 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   var hotNodes = {};        // lowercased node name -> status (highlight)
   var view = null;          // {minX, minY, w, h} screen-space bounding box
   var rotate90 = false;     // orient the plant's long axis along screen X
+  var focusRobot = null;    // click-to-focus: id of the robot whose route is lit
+  var mapKeyOpen = false;   // node-type symbol key collapsed by default (reference info)
+  var clickBound = false;   // host click handler attached once
+  // Above this many active routes, the ambient view calms to dim lines (no
+  // comets) so a busy floor doesn't become 20 arrows fighting for attention;
+  // clicking a robot still lights its comet. Tune to taste.
+  var COMET_LIMIT = 12;
 
   // proj maps world (x, y) to screen coords. Y is negated (world up -> screen
   // down). When the plant footprint is taller than wide, the whole map rotates
@@ -122,12 +129,13 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       ['charging', 'Charging', DOCK_COLOR.charge], ['parked', 'Parked', DOCK_COLOR.park],
       ['idle', 'Idle', STATE_COLOR.ready], ['error', 'Error', STATE_COLOR.error]
     ];
-    el.innerHTML = items.map(function (it) {
-      var n = counts[it[0]];
-      return '<span class="map-legend-item' + (n ? '' : ' map-legend-zero') +
-        '"><span class="map-legend-dot" style="background:' + it[2] + '"></span>' + it[1] +
-        '<span class="map-legend-count">' + n + '</span></span>';
-    }).join('');
+    // Only active states show — a zero bucket is just clutter (Blocked sitting
+    // there doing nothing). Exceptions (Blocked/Error) therefore appear only
+    // when something is actually blocked/faulted, so they read as real signal.
+    el.innerHTML = items.filter(function (it) { return counts[it[0]] > 0; }).map(function (it) {
+      return '<span class="map-legend-item"><span class="map-legend-dot" style="background:' + it[2] +
+        '"></span>' + it[1] + '<span class="map-legend-count">' + counts[it[0]] + '</span></span>';
+    }).join('') || '<span class="map-legend-item map-legend-zero">No active robots</span>';
   }
 
   // ── robot normalization (handles SSE lowercase + REST PascalCase) ──
@@ -397,6 +405,55 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     }).join(' ');
   }
 
+  // Mix a hex color toward white by `amt` (0..1) — used to brighten the comet's
+  // leading arrow so the head reads as the front of the streak while the tail
+  // keeps the route's status hue.
+  function hexLighten(hex, amt) {
+    var h = String(hex).replace('#', '');
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    var r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+    if (!isFinite(r) || !isFinite(g) || !isFinite(b)) return hex;
+    r = Math.round(r + (255 - r) * amt); g = Math.round(g + (255 - g) * amt); b = Math.round(b + (255 - b) * amt);
+    return '#' + [r, g, b].map(function (v) { return ('0' + v.toString(16)).slice(-2); }).join('');
+  }
+
+  // Comet: a bright leading arrow followed by a tail of dots that taper in size
+  // and fade in opacity behind it, riding the route path (#pathId) via SMIL
+  // animateMotion. Repeats seamlessly; each dot fades out at the destination and
+  // back in at the robot, so the path is empty between laps and other routes /
+  // nodes show through. Trail length 10, ~6s per lap (chosen in preview).
+  function addComet(svg, pathId, color, robotR) {
+    var dur = 6, count = 10;
+    var gap = (dur * 0.16) / count; // tail tightness: dots span ~16% of a lap
+    var headK = robotR * 0.5;
+    var headColor = hexLighten(color, 0.45);
+    for (var i = 0; i < count; i++) {
+      var begin = (-dur + i * gap).toFixed(3) + 's'; // most-negative = leading head
+      var op = (1 - i / count).toFixed(3);
+      var node;
+      if (i === 0) {
+        node = svgEl('polygon', {
+          points: (headK * 1.7) + ',0 ' + (-headK) + ',' + headK + ' ' +
+            (-headK * 0.35) + ',0 ' + (-headK) + ',' + (-headK),
+          fill: headColor, class: 'map-comet-head'
+        });
+      } else {
+        node = svgEl('circle', { cx: 0, cy: 0, r: (robotR * 0.4 * (1 - 0.7 * i / count)).toFixed(3), fill: color });
+      }
+      var am = svgEl('animateMotion', { dur: dur + 's', repeatCount: 'indefinite', begin: begin, rotate: 'auto' });
+      var mp = document.createElementNS(SVGNS, 'mpath');
+      mp.setAttributeNS('http://www.w3.org/1999/xlink', 'href', '#' + pathId);
+      mp.setAttribute('href', '#' + pathId);
+      am.appendChild(mp);
+      node.appendChild(am);
+      node.appendChild(svgEl('animate', {
+        attributeName: 'opacity', values: '0;' + op + ';' + op + ';0', keyTimes: '0;0.06;0.9;1',
+        dur: dur + 's', begin: begin, repeatCount: 'indefinite'
+      }));
+      svg.appendChild(node);
+    }
+  }
+
   // ── render (coalesced via rAF) ─────────────────────────────────────
   var dirty = false;
   function scheduleRender() {
@@ -466,6 +523,20 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     var host = document.getElementById('map-svg-wrap');
     var empty = document.getElementById('map-empty');
     if (!host) return;
+    // Click-to-focus: clicking a robot (its glyph or name chip) lights that
+    // robot's route comet and dims the rest; clicking it again, or clicking
+    // empty floor, clears the focus. Delegated once — the SVG is rebuilt each
+    // render, so we walk up to the nearest [data-robot] ancestor.
+    if (!clickBound) {
+      clickBound = true;
+      host.addEventListener('click', function (ev) {
+        var t = ev.target;
+        while (t && t !== host && !(t.getAttribute && t.getAttribute('data-robot'))) t = t.parentNode;
+        var id = (t && t.getAttribute) ? t.getAttribute('data-robot') : null;
+        focusRobot = (id && id === focusRobot) ? null : (id || null);
+        scheduleRender();
+      });
+    }
     computeView();
     if (!view) {
       host.innerHTML = '';
@@ -510,7 +581,54 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       }
     }
 
-    // nodes — receded travel dots + distinct outlined waypoint shapes.
+    // ── routes (UNDER the nodes) ──────────────────────────────────────
+    // Drawn before the nodes so the travel-node network and typed waypoints
+    // stay readable on top of running paths — the old order buried nodes under
+    // every active route. Each route is a dark casing (separates same-status
+    // paths where they overlap) + a dim colored base + a comet. The comet runs
+    // for the focused robot, or for all routes when the floor is quiet (≤
+    // COMET_LIMIT and nothing focused); a busy unfocused floor calms to lines.
+    var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    var activeRoutes = orders.filter(function (o) {
+      var r = robots[o.robot_id];
+      return r && isFinite(r.x) && isFinite(r.y) && findNode(o.delivery_node);
+    });
+    var ambientComet = !focusRobot && activeRoutes.length <= COMET_LIMIT;
+    activeRoutes.forEach(function (o, idx) {
+      var r = robots[o.robot_id];
+      var dest = findNode(o.delivery_node);
+      var color = STATUS_COLOR[o.status] || '#888';
+      var focused = !!focusRobot && o.robot_id === focusRobot;
+      var dimmed = !!focusRobot && !focused;
+      var world = routeWorld(r.x, r.y, dest);
+      var screenPts = world
+        ? world.map(function (w) { return proj(w[0], w[1]); })
+        : [proj(r.x, r.y), proj(dest.x, dest.y)]; // graph couldn't connect → straight hint
+      var pointsStr = screenPts.map(function (p) { return p[0] + ',' + p[1]; }).join(' ');
+      var dStr = 'M ' + screenPts.map(function (p) { return p[0] + ' ' + p[1]; }).join(' L ');
+      var pathId = 'route-' + idx;
+      // dark casing — a slightly wider stroke in the map-canvas color, so two
+      // overlapping same-status routes read as two lines instead of one blob.
+      svg.appendChild(svgEl('polyline', {
+        points: pointsStr, class: 'map-route-casing', fill: 'none',
+        'stroke-width': robotR * 0.5, 'stroke-opacity': dimmed ? 0.5 : 1
+      }));
+      // dim colored base — also the path the comet rides (carries the id).
+      svg.appendChild(svgEl('path', {
+        id: pathId, d: dStr, class: 'map-route-base', fill: 'none', stroke: color,
+        'stroke-width': robotR * 0.22, 'stroke-opacity': dimmed ? 0.28 : 0.5
+      }));
+      if ((focused || ambientComet) && !reduceMotion) addComet(svg, pathId, color, robotR);
+      // destination marker ring.
+      var dp = proj(dest.x, dest.y);
+      svg.appendChild(svgEl('circle', {
+        cx: dp[0], cy: dp[1], r: robotR * 0.7, fill: 'none', stroke: color,
+        'stroke-width': robotR * 0.14, 'stroke-opacity': dimmed ? 0.35 : 0.65
+      }));
+    });
+
+    // nodes — receded travel dots + distinct outlined waypoint shapes, ON TOP
+    // of routes so they stay legible even with paths running underneath.
     points.forEach(function (p) {
       if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
       drawNode(svg, p, nodeR);
@@ -523,43 +641,6 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       svg.appendChild(svgEl('circle', { cx: os[0], cy: os[1], r: nodeR * 0.6, class: 'map-node-travel' }));
     });
 
-    // routes: robot -> destination, lit along the aisle network when possible.
-    orders.forEach(function (o) {
-      var r = robots[o.robot_id];
-      if (!r || !isFinite(r.x) || !isFinite(r.y)) return;
-      var dest = findNode(o.delivery_node);
-      if (!dest) return;
-      var color = STATUS_COLOR[o.status] || '#888';
-      var world = routeWorld(r.x, r.y, dest);
-      if (world) {
-        var pts = world.map(function (w) { var s = proj(w[0], w[1]); return s[0] + ',' + s[1]; }).join(' ');
-        // pathLength normalizes the route so the CSS dash pattern (period 2)
-        // renders at a consistent physical size on any map scale: one dash
-        // unit = 0.6 × robotR world units.
-        var len = 0;
-        for (var wi = 1; wi < world.length; wi++) {
-          len += Math.sqrt(Math.pow(world[wi][0] - world[wi - 1][0], 2) + Math.pow(world[wi][1] - world[wi - 1][1], 2));
-        }
-        var plen = Math.max(2, Math.round(len / (robotR * 0.6)));
-        svg.appendChild(svgEl('polyline', {
-          points: pts, class: 'map-route-base', fill: 'none', stroke: color, 'stroke-width': robotR * 0.22
-        }));
-        svg.appendChild(svgEl('polyline', {
-          points: pts, class: 'map-route-flow', fill: 'none', stroke: color, 'stroke-width': robotR * 0.22, pathLength: plen
-        }));
-      } else {
-        // graph couldn't connect them — fall back to a straight hint line.
-        var rs = proj(r.x, r.y), ds = proj(dest.x, dest.y);
-        svg.appendChild(svgEl('line', {
-          x1: rs[0], y1: rs[1], x2: ds[0], y2: ds[1],
-          class: 'map-route-base', stroke: color, 'stroke-width': robotR * 0.22
-        }));
-      }
-      // destination marker ring.
-      var dp = proj(dest.x, dest.y);
-      svg.appendChild(svgEl('circle', { cx: dp[0], cy: dp[1], r: robotR * 0.7, fill: 'none', stroke: color, 'stroke-width': robotR * 0.14, 'stroke-opacity': 0.65 }));
-    });
-
     // robots — halo, then chevron, so labels (last pass) sit above everything.
     var robotList = Object.keys(robots).map(function (k) { return robots[k]; })
       .filter(function (r) { return isFinite(r.x) && isFinite(r.y); });
@@ -569,10 +650,21 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       var moving = r.state === 'busy' || !!ord || isMoving(r);
       var color = robotColor(r, ord, moving);
       var alert = r.state === 'error';
+      // Each robot's glyphs live in a [data-robot] group so a click anywhere on
+      // the robot focuses its route (delegated handler walks up to this group).
+      var rg = svgEl('g', { 'data-robot': r.id, class: 'map-robot-hit' });
+      svg.appendChild(rg);
+      // Focus ring on the selected robot — a quiet outline, not another color.
+      if (focusRobot && r.id === focusRobot) {
+        rg.appendChild(svgEl('circle', {
+          cx: s[0], cy: s[1], r: robotR * 1.8, class: 'map-robot-focus',
+          fill: 'none', 'stroke-width': robotR * 0.12
+        }));
+      }
       // Halo only where it carries signal: motion or a fault. Parked robots
       // get none, so a charge row reads as a tidy strip of docked units.
       if (moving || alert) {
-        svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 1.35, class: 'map-robot-halo', fill: color }));
+        rg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 1.35, class: 'map-robot-halo', fill: color }));
       }
       if (moving) {
         // In motion the chevron shows heading. Fleet Angle is radians
@@ -580,8 +672,8 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
         var rot = -(r.angle * 180 / Math.PI) + (rotate90 ? 90 : 0);
         var g = svgEl('g', { transform: 'translate(' + s[0] + ',' + s[1] + ') rotate(' + rot + ')' });
         g.appendChild(svgEl('polygon', { points: chevronPoints(robotR), class: 'map-robot', fill: color, 'stroke-width': robotR * 0.16 }));
-        svg.appendChild(g);
-        svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 0.22, class: 'map-robot-core' }));
+        rg.appendChild(g);
+        rg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 0.22, class: 'map-robot-core' }));
       } else {
         // Parked/stopped: heading is noise — a compact disc reads as a docked
         // unit. A ready robot docked on a bay snaps to the bay center and
@@ -597,11 +689,11 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
             dr = nodeR * (dock.kind === 'charge' ? 1.05 : 0.88);
           }
         }
-        svg.appendChild(svgEl('circle', {
+        rg.appendChild(svgEl('circle', {
           cx: cx, cy: cy, r: dr, class: 'map-robot',
           fill: color, 'stroke-width': robotR * 0.14
         }));
-        svg.appendChild(svgEl('circle', { cx: cx, cy: cy, r: dr * 0.3, class: 'map-robot-core' }));
+        rg.appendChild(svgEl('circle', { cx: cx, cy: cy, r: dr * 0.3, class: 'map-robot-core' }));
       }
     });
 
@@ -624,22 +716,26 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       var color = robotColor(r, ord, r.state === 'busy' || !!ord || isMoving(r));
       var halfW = (r.id.length * fontS * 0.62) / 2 + fontS * 0.55;
       var chipH = fontS * 1.3;
+      // Chip lives in a [data-robot] group too, so clicking the name focuses
+      // the same robot as clicking its glyph.
+      var cg = svgEl('g', { 'data-robot': r.id, class: 'map-robot-hit' });
+      svg.appendChild(cg);
       // Leader line ties a displaced chip back to its robot so a stacked
       // cluster of names stays attributable.
       if (Math.abs(ly - s[1]) > robotR * 2.6) {
-        svg.appendChild(svgEl('line', {
+        cg.appendChild(svgEl('line', {
           x1: s[0], y1: s[1], x2: lx, y2: ly - chipH * 0.7,
           class: 'map-chip-leader', 'stroke-width': fontS * 0.06
         }));
       }
-      svg.appendChild(svgEl('rect', {
+      cg.appendChild(svgEl('rect', {
         x: lx - halfW, y: ly - chipH * 0.75, width: halfW * 2, height: chipH, rx: fontS * 0.25,
         class: 'map-chip', stroke: color, 'stroke-width': fontS * 0.06
       }));
-      svg.appendChild(svgEl('circle', { cx: lx - halfW + fontS * 0.5, cy: ly - chipH * 0.1, r: fontS * 0.2, fill: color }));
+      cg.appendChild(svgEl('circle', { cx: lx - halfW + fontS * 0.5, cy: ly - chipH * 0.1, r: fontS * 0.2, fill: color }));
       var label = svgEl('text', { x: lx + fontS * 0.35, y: ly, class: 'map-robot-label', 'font-size': fontS });
       label.textContent = r.id;
-      svg.appendChild(label);
+      cg.appendChild(label);
     });
 
     host.innerHTML = '';
@@ -705,7 +801,16 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
           n === 'ChargePoint' || n === 'ParkPoint') return;
       items.push(legendSwatch(classColors[n] || '#67748f', 'dot', prettyClass(n)));
     });
-    el.innerHTML = items.join('');
+    if (!items.length) { el.innerHTML = ''; return; }
+    // The node-type key is reference an operator learns once, so it lives behind
+    // a small collapsible toggle (default closed) instead of a permanent second
+    // legend strip competing with the live status counts in the header.
+    el.innerHTML =
+      '<button type="button" class="map-key-toggle" aria-expanded="' + mapKeyOpen + '">' +
+        (mapKeyOpen ? '▾' : '▸') + ' Map key</button>' +
+      '<div class="map-key-items"' + (mapKeyOpen ? '' : ' hidden') + '>' + items.join('') + '</div>';
+    var btn = el.querySelector('.map-key-toggle');
+    if (btn) btn.addEventListener('click', function () { mapKeyOpen = !mapKeyOpen; renderClassLegend(); });
   }
 
   // ── data loads ─────────────────────────────────────────────────────

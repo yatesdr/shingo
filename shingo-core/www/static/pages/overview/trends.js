@@ -58,9 +58,18 @@ export function createTrendsSection(store, opts) {
 
         charts.push(buildChart(grid, 'success_rate', 'Success rate (%)', {
             type: 'line',
-            // Plot a gap (null) for thin buckets so 100/0 noise doesn't read as
-            // real swings; spanGaps:false breaks the line across the gap.
-            data: { labels, datasets: [{ data: points.map((p) => ((p.confirmed + p.failed) >= MIN_RATE_DENOM ? round1(p.success_rate) : null)), borderColor: c.success, backgroundColor: c.success, tension: 0.3, pointRadius: 0, fill: false, spanGaps: false }] },
+            // Thin buckets (<MIN_RATE_DENOM finished missions) are plotted as null
+            // so 100/0 noise doesn't read as a real swing. Rather than leave a
+            // blank gap, spanGaps bridges them with a SAME-COLOR DASHED segment:
+            // solid where the rate is trustworthy, dashed where it's spanning a
+            // dropped/thin bucket — via the segment.borderDash callback, which
+            // dashes any segment touching a skipped point.
+            data: { labels, datasets: [{
+                data: points.map((p) => ((p.confirmed + p.failed) >= MIN_RATE_DENOM ? round1(p.success_rate) : null)),
+                borderColor: c.success, backgroundColor: c.success, tension: 0.3, pointRadius: 0, fill: false,
+                spanGaps: true,
+                segment: { borderDash: (ctx) => (ctx.p0.skip || ctx.p1.skip) ? [6, 6] : undefined },
+            }] },
             options: { scales: { y: { min: 0, max: 100 } } },
         }));
 
@@ -76,10 +85,16 @@ export function createTrendsSection(store, opts) {
             options: { plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
         }));
 
-        charts.push(buildChart(grid, 'cancellation', 'Cancellation rate (%)', {
+        charts.push(buildChart(grid, 'cancellation', 'Cancellation & failure rate (%)', {
             type: 'line',
-            data: { labels, datasets: [{ data: points.map((p) => p.total ? round1(p.cancelled / p.total * 100) : 0), borderColor: c.text, backgroundColor: c.text, tension: 0.3, pointRadius: 0, fill: false }] },
-            options: { scales: { y: { min: 0, max: 100 } } },
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Cancelled', data: points.map((p) => p.total ? round1(p.cancelled / p.total * 100) : 0), borderColor: c.text, backgroundColor: c.text, tension: 0.3, pointRadius: 0, fill: false },
+                    { label: 'Failed', data: points.map((p) => p.total ? round1((p.failed || 0) / p.total * 100) : 0), borderColor: c.danger, backgroundColor: c.danger, tension: 0.3, pointRadius: 0, fill: false },
+                ],
+            },
+            options: { scales: { y: { min: 0, max: 100 } }, plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
         }));
 
         // Initial draw animates; subsequent data sets shouldn't (§4) — handled
