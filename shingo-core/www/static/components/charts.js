@@ -29,23 +29,53 @@ export function chartColors() {
     };
 }
 
+// applyTheme sets the shared "calm chart" look so charts don't read as stock
+// Chart.js: thin lines, no point markers, x-gridlines off and only a few faint
+// y-guides, no axis borders, muted ticks, and a quiet point-style legend. Every
+// default is merged UNDER the caller's options (Object.assign({defaults}, caller)),
+// so any chart can still override. (P8 restyle — the type-hierarchy/hero pass is
+// separate, P8b.)
 function applyTheme(config, c) {
     config.options = config.options || {};
     const o = config.options;
     if (o.responsive === undefined) o.responsive = true;
     if (o.maintainAspectRatio === undefined) o.maintainAspectRatio = false;
+
+    // Thin lines, gentle smoothing, no dots — datasets can still override.
+    o.elements = o.elements || {};
+    o.elements.line = Object.assign({ borderWidth: 1.6, tension: 0.3 }, o.elements.line || {});
+    o.elements.point = Object.assign({ radius: 0, hitRadius: 6, hoverRadius: 3 }, o.elements.point || {});
+    o.elements.bar = Object.assign({ borderRadius: 3 }, o.elements.bar || {});
+
     o.plugins = o.plugins || {};
     if (o.plugins.legend === undefined) o.plugins.legend = { display: false };
+    // When a chart does show a legend, make it quiet: small circular swatches,
+    // muted text, top-right — not boxed Chart.js defaults.
+    if (o.plugins.legend && o.plugins.legend.display) {
+        if (o.plugins.legend.position === undefined) o.plugins.legend.position = 'top';
+        if (o.plugins.legend.align === undefined) o.plugins.legend.align = 'end';
+        o.plugins.legend.labels = Object.assign(
+            { color: c.text, boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: 'circle', padding: 12, font: { size: 11 } },
+            o.plugins.legend.labels || {}
+        );
+    }
     o.plugins.tooltip = Object.assign({
         backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text,
-        borderColor: c.grid, borderWidth: 1,
+        borderColor: c.grid, borderWidth: 1, padding: 10, cornerRadius: 6, usePointStyle: true,
     }, o.plugins.tooltip || {});
+
     o.scales = o.scales || {};
-    for (const axis of ['x', 'y']) {
-        o.scales[axis] = o.scales[axis] || {};
-        o.scales[axis].grid = Object.assign({ color: c.grid }, o.scales[axis].grid || {});
-        o.scales[axis].ticks = Object.assign({ color: c.text }, o.scales[axis].ticks || {});
-    }
+    // X axis: no gridlines, no axis border, muted + decluttered ticks.
+    o.scales.x = o.scales.x || {};
+    o.scales.x.grid = Object.assign({ display: false, drawBorder: false }, o.scales.x.grid || {});
+    o.scales.x.border = Object.assign({ display: false }, o.scales.x.border || {});
+    o.scales.x.ticks = Object.assign({ color: c.text, maxRotation: 0, autoSkip: true, maxTicksLimit: 8, font: { size: 11 } }, o.scales.x.ticks || {});
+    // Y axis: a few faint horizontal guides only, no axis border, no tick marks.
+    o.scales.y = o.scales.y || {};
+    o.scales.y.grid = Object.assign({ color: c.grid, drawBorder: false, drawTicks: false }, o.scales.y.grid || {});
+    o.scales.y.border = Object.assign({ display: false }, o.scales.y.border || {});
+    o.scales.y.ticks = Object.assign({ color: c.text, maxTicksLimit: 5, padding: 8, font: { size: 11 } }, o.scales.y.ticks || {});
+
     return config;
 }
 
