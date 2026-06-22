@@ -11,18 +11,28 @@ import (
 )
 
 // TestProcessesTemplateSwapModeOptions pins the <option value="..."> set
-// in the Swap Mode dropdown to protocol.AllSwapModes(). Removing a swap
-// mode from the protocol without removing its <option> (or vice versa)
-// fails this test in CI.
+// in the Swap Mode dropdown to protocol.AllSwapModes() — MINUS manual_swap.
+// Removing a swap mode from the protocol without removing its <option> (or
+// vice versa) fails this test in CI.
 //
 // "simple" is included as a hidden option — it's the default swap mode
 // for bare delivery (no swap choreography). New claims default to
 // single_robot in the editor, so "simple" is not user-selectable, but
 // existing claims with swap_mode="simple" must still render in edit mode.
+//
+// manual_swap is intentionally EXCLUDED from the dropdown (commit 0ef5b95):
+// bin loaders / unloaders are Core-owned topology and resolve at runtime via
+// the loader aggregate (SynthClaim), so they are no longer authored or edited
+// in this editor. Existing manual_swap claims still render read-only in the
+// claims list, but the Swap Mode dropdown drops the option. Every OTHER swap
+// mode must still match the protocol enum, so the drift guard holds for them.
 func TestProcessesTemplateSwapModeOptions(t *testing.T) {
 	got := readSelectOptions(t, "claims-add-swap")
 	want := make([]string, 0, len(protocol.AllSwapModes()))
 	for _, m := range protocol.AllSwapModes() {
+		if m == protocol.SwapModeManualSwap {
+			continue // not authored in the editor — see docstring
+		}
 		want = append(want, string(m))
 	}
 	assertSameSet(t, "swap_mode", got, want)
