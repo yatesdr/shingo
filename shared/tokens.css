@@ -64,6 +64,15 @@
   --warning: #ffc107;
   --info: #0dcaf0;
 
+  /* Data-visualization roles (P18). Charts + hero numbers are MONOCHROME — white
+   * primary, gray secondary; indigo is a sparing anchor only, never a series.
+   * Theme-aware: --viz-primary inverts (near-black on light, near-white on dark);
+   * --viz-secondary/--viz-accent resolve per theme via var(). The semantic hues
+   * (--danger/--warning/--success) stay reserved for failure/limit/target marks. */
+  --viz-primary: #1b2027;            /* near-black ink (light) */
+  --viz-secondary: var(--text-muted);
+  --viz-accent: var(--accent);
+
   /* Unified order-status palette (P13) — ONE palette feeds map dots, the
    * floor-display board, and (via status-classes.css) the badges. These are the
    * saturated "dot" hues; the matching badge bg/text pairs live in
@@ -123,6 +132,7 @@
   --danger: #f85149;
   --warning: #d29922;
   --info: #39d2f5;
+  --viz-primary: #eaf0f6;            /* near-white ink (dark) — P18 */
 
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);

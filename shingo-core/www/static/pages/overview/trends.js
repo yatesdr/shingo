@@ -53,7 +53,7 @@ export function createTrendsSection(store, opts) {
 
         charts.push(buildChart(grid, 'throughput', 'Throughput (missions per ' + bucket + ')', {
             type: 'bar',
-            data: { labels, datasets: [{ data: points.map((p) => p.total), backgroundColor: c.primary, borderRadius: 2 }] },
+            data: { labels, datasets: [{ data: points.map((p) => p.total), backgroundColor: c.vizAccent, borderRadius: 2 }] }, // throughput = the ONE indigo anchor (P18)
         }));
 
         charts.push(buildChart(grid, 'success_rate', 'Success rate (%)', {
@@ -66,7 +66,7 @@ export function createTrendsSection(store, opts) {
             // dashes any segment touching a skipped point.
             data: { labels, datasets: [{
                 data: points.map((p) => ((p.confirmed + p.failed) >= MIN_RATE_DENOM ? round1(p.success_rate) : null)),
-                borderColor: c.success, backgroundColor: c.success, tension: 0.3, pointRadius: 0, fill: false,
+                borderColor: c.vizPrimary, backgroundColor: c.vizPrimary, tension: 0.3, pointRadius: 0, fill: false, // success = white, not green (P18)
                 spanGaps: true,
                 segment: { borderDash: (ctx) => (ctx.p0.skip || ctx.p1.skip) ? [6, 6] : undefined },
             }] },
@@ -78,8 +78,8 @@ export function createTrendsSection(store, opts) {
             data: {
                 labels,
                 datasets: [
-                    { label: 'P50', data: points.map((p) => msToS(p.p50_ms)), borderColor: c.info, backgroundColor: c.info, tension: 0.3, pointRadius: 0, fill: false },
-                    { label: 'P95', data: points.map((p) => msToS(p.p95_ms)), borderColor: c.warning, backgroundColor: c.warning, tension: 0.3, pointRadius: 0, fill: false },
+                    { label: 'P50', data: points.map((p) => msToS(p.p50_ms)), borderColor: c.vizPrimary, backgroundColor: c.vizPrimary, tension: 0.3, pointRadius: 0, fill: false }, // P18: P50 white
+                    { label: 'P95', data: points.map((p) => msToS(p.p95_ms)), borderColor: c.vizSecondary, backgroundColor: c.vizSecondary, tension: 0.3, pointRadius: 0, fill: false }, // P18: P95 gray
                 ],
             },
             options: { plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
@@ -90,8 +90,8 @@ export function createTrendsSection(store, opts) {
             data: {
                 labels,
                 datasets: [
-                    { label: 'Cancelled', data: points.map((p) => p.total ? round1(p.cancelled / p.total * 100) : 0), borderColor: c.text, backgroundColor: c.text, tension: 0.3, pointRadius: 0, fill: false },
-                    { label: 'Failed', data: points.map((p) => p.total ? round1((p.failed || 0) / p.total * 100) : 0), borderColor: c.danger, backgroundColor: c.danger, tension: 0.3, pointRadius: 0, fill: false },
+                    { label: 'Cancelled', data: points.map((p) => p.total ? round1(p.cancelled / p.total * 100) : 0), borderColor: c.vizSecondary, backgroundColor: c.vizSecondary, tension: 0.3, pointRadius: 0, fill: false }, // P18: cancelled gray
+                    { label: 'Failed', data: points.map((p) => p.total ? round1((p.failed || 0) / p.total * 100) : 0), borderColor: c.danger, backgroundColor: c.danger, tension: 0.3, pointRadius: 0, fill: false }, // P18: failure = red (semantic)
                 ],
             },
             options: { scales: { y: { min: 0, max: 100 } }, plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },

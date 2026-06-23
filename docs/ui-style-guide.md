@@ -180,10 +180,12 @@ The original operator tokens used visual names. Rename to semantic:
    inline; add `--accent-test: #7c3aed` to tokens.css and reference it.
 4. **`--info` and `--primary` must remain visually distinct in all themes.**
    This was a real bug — check both light and dark mode when adjusting.
-5. **Indigo is the UI accent, never a status (P13).** `--accent` (and its alias
-   `--primary`) is for interactive chrome only — links, focus, selection,
-   primary action, the one primary chart series. Status hues live in the
-   `--status-*-dot` tokens and the `.badge-*` classes; don't cross the streams.
+5. **Indigo is the UI accent, never a status (P13) — and never the default data
+   series (P18).** `--accent` (and its alias `--primary`) is for interactive
+   chrome only — links, focus, selection, primary action. It is **not** a chart
+   series color; charts use it only as a sparing anchor (see Data visualization).
+   Status hues live in the `--status-*-dot` tokens and the `.badge-*` classes;
+   don't cross the streams.
 
 ## Status indicators
 
@@ -269,8 +271,9 @@ offline gray; a moving robot tracks the in-transit cyan.
 **Indigo `#7C7CF0` (dark) / `#4F4FD6` (light) is the reserved UI accent** —
 `--accent`, and `--primary` aliases it. Use it for **interactive / UI chrome
 only**: links, focus rings, selection, the primary action (`.btn-primary`),
-active tabs, the live pill, the map focus ring, and the one "primary series"
-that matters in a chart.
+active tabs, section ticks, the live pill, and the map focus ring. In charts it
+is a **budget, not a fill** — at most one anchor element per view (see Data
+visualization); it is **not** the default for a chart's primary series.
 
 **Foreground vs filled (P15).** The accent has two values for two jobs.
 `--accent` (light indigo) is the *foreground* — text, links, focus rings, active
@@ -304,8 +307,9 @@ mode inverts to light-cards-on-grey):
 
 Text: `--text` primary (`#E6EDF3` dark via `--text-strong` on boards) ·
 `--text-muted` secondary (`#8B949E`) · `--text-tertiary` faint labels
-(`#6E7681`). **Never pure white or black.** Charts use one accent (indigo) for
-the primary series and gray the rest; semantic status colors are left alone.
+(`#6E7681`). **Never pure white or black.** Chart series are **monochrome** —
+white primary, gray secondary (`--viz-*`); indigo is a sparing anchor, not a
+series color, and the semantic hues stay reserved (see Data visualization).
 
 **Rule: Core and Edge admin surfaces consume `shared/status-classes.css`
 exclusively for order-lifecycle badges.** Core's local `style.css` must not
@@ -388,6 +392,50 @@ In Go templates, always emit both the base and modifier class:
 ```
 
 Edge admin's `orders-body.html` and similar partials need updating to match.
+
+## Data visualization
+
+Charts, KPI numbers, and other data marks follow a **monochrome-with-a-whisper**
+discipline (P18). The board reads as mostly white/gray ink; color is spent only
+where it carries meaning. This is deliberately stricter than "use the theme
+palette" — color on a data surface is a scarce budget, not decoration.
+
+**The law:**
+
+1. **Data is monochrome.** The primary series and all hero numbers are
+   **white** (`--viz-primary`); secondary / context series are **gray**
+   (`--viz-secondary`). Both are theme-aware — they invert to near-black on
+   light backgrounds. A chart with two series is white + gray, not two hues.
+2. **Indigo is a budget, not a fill.** `--accent` (`--viz-accent`) is
+   *punctuation*: section ticks, live/active states, links, and **at most one
+   anchor element per view** (e.g. the throughput bars). Never paint a data
+   series with it, and never more than one anchor on screen.
+3. **Hero numbers are white, always.** A thin indigo underline *may* mark the
+   single focal metric (e.g. Success rate) — that underline is the whole indigo
+   budget for the KPI strip.
+4. **Semantic hues encode meaning only.** Red (`--danger`), amber
+   (`--warning`), green (`--success`) appear **only** where they mean something —
+   failure = red, ceiling/limit = amber dashed, target breach. Never to
+   differentiate or decorate series.
+5. **Success-rate is white, not green.** "Good vs bad" comes from the target
+   line plus the delta color — that frees green from being decorative, so a green
+   mark on the board always means a real positive signal.
+6. **Badges are a separate system.** Status **badges** keep the Signal
+   categorical palette (see Status indicators). Charts are not badges — the
+   monochrome rule governs data marks, the Signal palette governs lifecycle
+   pills. Don't let one leak into the other.
+
+**Tokens** (`--viz-*`, both themes): `--viz-primary` (white / near-black,
+theme-aware) · `--viz-secondary` (gray) · `--viz-accent` (= `--accent` indigo).
+Series colors reference these, never inline hex. `--danger` / `--warning` /
+`--success` stay for the semantic cases above.
+
+**Reference implementation: `/overview`.** Throughput bars = the one indigo
+anchor; success-rate line white (dashed bridge over thin buckets); duration P50
+white / P95 gray; cancellation gray, failure red; fleet-load avg gray fill, peak
+white line, ceiling amber dashed (no indigo in that chart); footprint white +
+gray. KPI heroes white with a single indigo underline under Success rate;
+section titles get a thin indigo tick; the live pill is indigo.
 
 ## Modals
 

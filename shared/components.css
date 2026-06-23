@@ -199,6 +199,7 @@
   line-height: 1.1;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
+  color: var(--viz-primary); /* P18: hero numbers are white (theme-aware mono) */
 }
 .kpi-sub { font-size: 0.78rem; color: var(--text-muted); }
 .kpi-delta {
@@ -238,6 +239,17 @@
   flex-wrap: wrap;
 }
 .section-head h2 { margin: 0; }
+/* P18: a thin indigo tick before each section title — punctuation, not fill. */
+.section-head h2::before {
+  content: '';
+  display: inline-block;
+  width: 3px;
+  height: 0.85em;
+  margin-right: 0.5rem;
+  border-radius: 1px;
+  background: var(--accent);
+  vertical-align: -0.04em;
+}
 .view-detail {
   font-size: 0.85rem;
   cursor: pointer;
@@ -296,7 +308,7 @@
 
 /* SSE liveness pill in the filter bar. */
 .live-pill { font-size: 0.8rem; color: var(--text-muted); }
-.live-pill.is-live { color: var(--success); }
+.live-pill.is-live { color: var(--accent); } /* P18: live = indigo (active state) */
 
 /* Synthetic-data badge (?demo=on), shared with /heartbeat (§13). */
 .demo-badge {
@@ -343,6 +355,9 @@
 }
 /* The one number the eye should land on. */
 .kpi-tile--hero .kpi-value { font-size: 2.2rem; font-weight: 500; }
+/* P18: the single focal metric (Success rate) gets a thin indigo underline —
+ * the whole indigo budget for the KPI strip. inline-block so it hugs the number. */
+.kpi-tile--hero .kpi-value { display: inline-block; align-self: flex-start; border-bottom: 2px solid var(--accent); padding-bottom: 0.08rem; }
 .kpi-tile--hero .kpi-label { font-size: 0.72rem; color: var(--text-tertiary); }
 /* Demoted supporting tiles — quiet and small. */
 .kpi-tile--mini .kpi-value { font-size: 1rem; font-weight: 500; }
@@ -353,7 +368,8 @@
 /* Section-body hero (Fleet / Footprint): big number + small label + sub. */
 .ov-hero-row { display: flex; flex-wrap: wrap; gap: 2.5rem; align-items: flex-start; }
 .ov-hero { display: flex; flex-direction: column; gap: 0.05rem; }
-.ov-hero__value { font-size: 2.2rem; font-weight: 500; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.ov-hero__value { font-size: 2.2rem; font-weight: 500; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--viz-primary); }
+.ov-hero__sub.is-ceiling { color: var(--warning); } /* P18: "at ceiling" = amber (semantic limit) */
 .ov-hero__label { font-size: 0.7rem; font-weight: 400; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); }
 .ov-hero__sub { font-size: 0.82rem; font-weight: 400; color: var(--text-muted); margin-top: 0.1rem; }
 .ov-support { display: flex; flex-wrap: wrap; gap: 0.9rem 1.75rem; margin: 0.7rem 0 1rem; }

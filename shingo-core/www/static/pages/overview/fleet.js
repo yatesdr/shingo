@@ -58,8 +58,13 @@ export function createFleetSection(store) {
         const f = data.fleet;
         // Dual hero.
         setText('fl-util', (f.util_pct || 0).toFixed(0) + '%');
-        setText('fl-peak', (f.peak_concurrency != null ? f.peak_concurrency : '—') + ' / ' + f.size + (f.ceiling_reached ? ' · at ceiling' : ''));
-        setText('fl-peak-sub', f.peak_concurrency ? ('peak @ ' + (f.peak_hour || '—')) : 'no peak in window');
+        setText('fl-peak', (f.peak_concurrency != null ? f.peak_concurrency : '—') + ' / ' + f.size);
+        // "at ceiling" is the one amber (semantic limit) — P18; otherwise a muted peak-hour note.
+        var peakSub = document.getElementById('fl-peak-sub');
+        if (peakSub) {
+            if (f.ceiling_reached) { peakSub.textContent = 'at ceiling'; peakSub.classList.add('is-ceiling'); }
+            else { peakSub.textContent = f.peak_concurrency ? ('peak @ ' + (f.peak_hour || '—')) : 'no peak in window'; peakSub.classList.remove('is-ceiling'); }
+        }
         // Supporting row (demoted).
         setText('fl-size', f.size);
         setText('fl-online', f.online + ' / ' + f.size);
@@ -99,11 +104,11 @@ export function createFleetSection(store) {
             // fill sits behind the peak line.
             datasets = [{
                 label: 'Avg robots used', data: load.map((d) => Math.round((d.avg || 0) * 10) / 10),
-                borderColor: c.success, backgroundColor: withAlpha(c.success, 0.18),
+                borderColor: c.vizSecondary, backgroundColor: withAlpha(c.vizSecondary, 0.18), // P18: avg = neutral gray fill
                 fill: true, tension: 0.3, pointRadius: 0,
             }, {
                 label: 'Peak robots used', data: load.map((d) => d.peak),
-                borderColor: c.info, borderWidth: 1.4, pointRadius: 0, fill: false, tension: 0.3,
+                borderColor: c.vizPrimary, borderWidth: 1.4, pointRadius: 0, fill: false, tension: 0.3, // P18: peak = white line
             }, {
                 label: 'Fleet ceiling', data: labels.map(() => ceiling),
                 borderColor: c.warning, borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false,
@@ -117,7 +122,7 @@ export function createFleetSection(store) {
             }
             datasets = [{
                 label: 'Robots used', data: load.map((h2) => h2.concurrency),
-                borderColor: c.info, backgroundColor: withAlpha(c.info, 0.18),
+                borderColor: c.vizPrimary, backgroundColor: withAlpha(c.vizSecondary, 0.18), // P18: white line, gray fill
                 fill: true, tension: 0.3, pointRadius: 0,
             }, {
                 label: 'Fleet ceiling', data: labels.map(() => ceiling),
@@ -127,7 +132,7 @@ export function createFleetSection(store) {
             if (typical && typical.length === load.length) {
                 datasets.push({
                     label: 'Typical', data: typical.map((t) => t.concurrency != null ? t.concurrency : t),
-                    borderColor: c.text, borderDash: [3, 3], borderWidth: 1, pointRadius: 0, fill: false,
+                    borderColor: c.vizSecondary, borderDash: [3, 3], borderWidth: 1, pointRadius: 0, fill: false, // P18: context = gray
                 });
             }
         }

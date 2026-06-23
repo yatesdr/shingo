@@ -21,8 +21,14 @@ export function chartColors() {
         grid: cssVar('--chart-grid', 'rgba(120,120,120,0.25)'),
         text: cssVar('--text-muted', '#6c757d'),
         surface: cssVar('--surface', '#ffffff'),
-        primary: cssVar('--primary', '#7c7cf0'),  // P13: --primary now aliases the indigo accent
-        accent: cssVar('--accent', '#7c7cf0'),     // the UI accent for the one series that matters
+        primary: cssVar('--primary', '#7c7cf0'),
+        accent: cssVar('--accent', '#7c7cf0'),
+        // Data-viz roles (P18): series are MONOCHROME — vizPrimary (white) for the
+        // primary series, vizSecondary (gray) for context; vizAccent (indigo) is a
+        // sparing anchor (e.g. throughput bars), never a default series color.
+        vizPrimary: cssVar('--viz-primary', '#eaf0f6'),
+        vizSecondary: cssVar('--viz-secondary', '#8b949e'),
+        vizAccent: cssVar('--viz-accent', '#7c7cf0'),
         success: cssVar('--success', '#198754'),
         info: cssVar('--info', '#0dcaf0'),
         warning: cssVar('--warning', '#ffc107'),
