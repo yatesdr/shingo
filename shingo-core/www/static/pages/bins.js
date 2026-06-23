@@ -6,6 +6,25 @@ var currentBinId = null;
 var currentBinData = null;
 var ccState = { step: 0, bins: [], index: 0, results: [] };
 
+// ===== ALERT ESCALATION (P20) =====
+// A card/row is as loud as the loudest status it contains (extends the Signal
+// rule "only alerts are loud" up a level). These are the only "alert" statuses;
+// a card whose bin status OR current-order status is one gets an alert
+// affordance keyed to the loudest. Edge colors reuse existing semantic tokens
+// (faulted→amber, failed/blocked→red) — no invented colors. Per-field pills are
+// never overwritten; only card/row chrome is added.
+var ALERT_STATUSES = ['faulted', 'failed', 'blocked'];
+var ALERT_EDGE = { faulted: 'var(--warning)', failed: 'var(--danger)', blocked: 'var(--danger)' };
+// loudestAlert: most-severe alert present among the given statuses (red beats
+// amber — failed/blocked outrank faulted), or null when none are alerts.
+function loudestAlert(statuses) {
+  var present = statuses.filter(function(s) { return ALERT_STATUSES.indexOf(s) !== -1; });
+  if (!present.length) return null;
+  if (present.indexOf('failed') !== -1) return 'failed';
+  if (present.indexOf('blocked') !== -1) return 'blocked';
+  return 'faulted';
+}
+
 // ===== FILTERING =====
 function filterBins() {
   var q = document.getElementById('bin-search').value.toLowerCase();
@@ -90,7 +109,7 @@ function renderOverview(data) {
   var html = '<div class="bd-fields">';
   if (inTransit && ord && ord.source_node) {
     html += bdField('Location', esc(ord.source_node) + ' → ' + esc(ord.delivery_node) +
-      ' <span class="text-muted" style="font-size:0.85em">(in transit)</span>');
+      ' <span class="badge badge-in_transit">in transit</span>'); // P21: in_transit is a Signal status — show its cyan pill, not muted text
   } else {
     html += bdField('Location', b.node_name || '<span class="text-muted">unassigned</span>');
   }
@@ -124,7 +143,23 @@ function renderOverview(data) {
     html += '</div>';
   }
 
-  document.getElementById('bd-overview').innerHTML = html;
+  // P20 — card-level escalation. The two per-field pills above (bin Status,
+  // Current Order status) stay exactly as built; here we only add chrome so the
+  // card is as loud as its loudest status. When the bin or its current order is
+  // an alert, prepend a banner (warning glyph + the loudest alert echoed as its
+  // Signal badge) and key the card's left-edge to that alert. No alert → no
+  // banner, edge cleared (looks exactly as before).
+  var alert = loudestAlert([b.status, ord && ord.status]);
+  if (alert) {
+    html = '<div class="bd-alert" style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem">' +
+      '<span aria-hidden="true" style="color:' + ALERT_EDGE[alert] + ';font-size:1.15em">&#9888;</span>' +
+      '<span class="badge badge-' + alert + '">' + alert + '</span>' +
+      '<span class="text-muted">needs attention</span></div>' + html;
+  }
+  var ov = document.getElementById('bd-overview');
+  ov.innerHTML = html;
+  ov.style.borderLeft = alert ? ('4px solid ' + ALERT_EDGE[alert]) : '';
+  ov.style.paddingLeft = alert ? '0.85rem' : '';
 }
 
 function renderContents(data) {

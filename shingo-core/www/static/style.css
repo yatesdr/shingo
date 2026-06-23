@@ -63,7 +63,12 @@ nav .nav-sep { width: 1px; height: 1.2rem; background: var(--border); flex-shrin
 
 /* Order-lifecycle badges are defined in shared/status-classes.css.
  * Only Core-specific (non-protocol) badge classes belong here. */
-.badge-available, .badge-loaded { background: #bbf7d0; color: #166534; }
+.badge-loaded { background: #bbf7d0; color: #166534; }
+/* P21: 'available' means idle/free, not delivered-green — and it's ~80% of bin
+ * rows, a green wall that out-shouts staged/faulted. Recede it to the quietest
+ * neutral pill (reuses the shared .badge-muted neutral): off the success-green,
+ * calmer than staged teal, distinct from pending slate. Flat weight, like the rest. */
+.badge-available { background: #e2e3e5; color: #41464b; }
 .badge-empty { background: #e5e7eb; color: #6b7280; }
 .badge-claimed { background: #fde68a; color: #92400e; }
 .badge-flagged { background: #fde68a; color: #92400e; }

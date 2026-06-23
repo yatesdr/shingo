@@ -73,6 +73,13 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   var DOCK_COLOR = { charge: '#e3b341', park: '#d98c4a' };
   var CHARGE_RING = '#c9a227';
   var PARK_RING = '#b0723a';
+  // Active-node accent (P21): an order source/destination ("hot") node is marked
+  // by the GLYPH ITSELF taking the UI accent — an indigo stroke + soft glow —
+  // instead of a separate status-colored ring on top (which crossed delivered-
+  // green with "active" and misaligned/z-fought the glyph). Green stays reserved
+  // for delivered. Read once at load; the kiosk theme is static.
+  var ACCENT = cssVar('--accent', '#7c7cf0');
+  var ACCENT_GLOW = cssVar('--accent-glow', 'rgba(124,124,240,0.55)');
 
   // ── state ──────────────────────────────────────────────────────────
   var points = [];          // scene points (static layout)
@@ -634,42 +641,52 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     var hot = hotNodes[String(p.point_name || '').toLowerCase()] ||
       hotNodes[String(p.label || '').toLowerCase()] ||
       hotNodes[String(p.instance_name || '').toLowerCase()];
+    // Capture each node's PRIMARY glyph so an active node can take the accent on
+    // the glyph itself (P21) rather than via a separate ring drawn on top.
+    var glyph = null;
     if (isTravel(cls)) {
       // The numerous travel waypoints recede to a faint dot network.
-      svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.6, class: 'map-node-travel' }));
+      glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.6, class: 'map-node-travel' });
+      svg.appendChild(glyph);
     } else if (cls === 'ActionPoint') {
       // An action point IS a node on the network — draw it as the standard
       // node dot with an outline ring around it, not a detached filled donut
       // floating beside the web.
       svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.55, class: 'map-node-travel' }));
-      svg.appendChild(svgEl('circle', {
+      glyph = svgEl('circle', {
         cx: s[0], cy: s[1], r: nodeR * 1.5, class: 'map-node-action',
         fill: 'none', stroke: '#587aa6', 'stroke-width': nodeR * 0.4
-      }));
+      });
+      svg.appendChild(glyph);
     } else if (cls === 'ChargePoint') {
-      svg.appendChild(svgEl('circle', {
+      glyph = svgEl('circle', {
         cx: s[0], cy: s[1], r: nodeR * 1.3, class: 'map-node-charge',
         fill: 'none', stroke: CHARGE_RING, 'stroke-width': nodeR * 0.45
-      }));
+      });
+      svg.appendChild(glyph);
       svg.appendChild(svgEl('polygon', {
         points: boltPoints(s[0], s[1], nodeR), fill: CHARGE_RING, 'fill-opacity': 0.75
       }));
     } else if (cls === 'ParkPoint') {
       // Ring like the other waypoint types — color differentiates. (Squares
       // merged into a striped strip when park bays sat a glyph-width apart.)
-      svg.appendChild(svgEl('circle', {
+      glyph = svgEl('circle', {
         cx: s[0], cy: s[1], r: nodeR * 1.1, class: 'map-node-park',
         fill: 'none', stroke: PARK_RING, 'stroke-width': nodeR * 0.4
-      }));
+      });
+      svg.appendChild(glyph);
     } else {
-      svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.9, fill: classColors[cls] || '#67748f', 'fill-opacity': 0.7 }));
+      glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.9, fill: classColors[cls] || '#67748f', 'fill-opacity': 0.7 });
+      svg.appendChild(glyph);
     }
-    // Order source/destination highlight: a status-colored ring on top.
-    if (hot) {
-      svg.appendChild(svgEl('circle', {
-        cx: s[0], cy: s[1], r: nodeR * 2.2, class: 'map-node-hot',
-        fill: 'none', stroke: STATUS_COLOR[hot] || '#fff', 'stroke-width': nodeR * 0.5
-      }));
+    // Active node (order source/destination): the glyph itself takes the UI
+    // accent — an indigo stroke + soft glow — marking it as live/active (per the
+    // guide, the accent marks genuinely live elements). No separate ring; green
+    // stays delivered-only.
+    if (hot && glyph) {
+      glyph.setAttribute('stroke', ACCENT);
+      glyph.setAttribute('stroke-width', nodeR * 0.45);
+      glyph.setAttribute('style', 'filter: drop-shadow(0 0 ' + (nodeR * 1.1).toFixed(2) + 'px ' + ACCENT_GLOW + ')');
     }
   }
 
