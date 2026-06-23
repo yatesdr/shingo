@@ -176,6 +176,45 @@ func TestPlaceForDedicatedLoader_SupplyLeg_Untouched(t *testing.T) {
 	}
 }
 
+// (g) REGRESSION GUARD: a two-robot swap supply leg whose SOURCE is a dedicated home
+// (the real dedicated-loader supply shape: picks fresh bin FROM home → stages →
+// delivers to line) must not be rerouted. Pattern A must exit when steps contain
+// a wait — the staging wait embedded in the two-robot supply chain is the gate.
+// Without this guard, Pattern A overwrites DeliveryNode=line with the home, making
+// the order circular (pickup=home, deliver=home) and Core skips it (SPR-2026-06-23).
+func TestPlaceForDedicatedLoader_SupplyFromHome_Untouched(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, _, outbound, _ := parkFixture(t, db)
+	line := &nodes.Node{Name: "ALN-LINE", Enabled: true}
+	if err := db.CreateNode(line); err != nil {
+		t.Fatalf("create line: %v", err)
+	}
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	// Supply leg: source = home (dedicated home, IS a loader home), delivery = line.
+	// Steps mirror the two-robot swap shape: pickup home → stage → wait → pickup → drop line.
+	supply := &orders.Order{
+		EdgeUUID: "supply-from-home-1", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		Quantity: 1, SourceNode: home.Name, DeliveryNode: line.Name, PayloadCode: "PART-X",
+	}
+	if err := db.CreateOrder(supply); err != nil {
+		t.Fatalf("create supply order: %v", err)
+	}
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: home.Name},
+		{Action: protocol.ActionDropoff, Node: outbound.Name},
+		{Action: protocol.ActionWait, Node: outbound.Name},
+		{Action: protocol.ActionPickup, Node: outbound.Name},
+		{Action: protocol.ActionDropoff, Node: line.Name},
+	}
+	d.placeForDedicatedLoader(supply, steps)
+
+	if supply.DeliveryNode != line.Name {
+		t.Fatalf("supply-from-home leg DeliveryNode = %q, want UNCHANGED line %q (Pattern A must not touch supply legs)", supply.DeliveryNode, line.Name)
+	}
+}
+
 // The release-time link: after placeForDedicatedLoader rewrites DeliveryNode, the
 // existing patchRedirectSegments must overlay it onto the final dropoff step so the
 // fleet follows the park choice. This is why no Edge step change is needed — Core is

@@ -44,12 +44,13 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 	// the intent for the removal leg, and the single-robot-swap shape can't
 	// produce a same-order conflict here.
 
-	if order.SourceNode != "" && order.DeliveryNode == "" {
-		// Pattern A: pick up FROM a home with no explicit delivery yet → route the
-		// return. Guard on DeliveryNode=="" because supply legs also pick from a
-		// home node but carry an explicit delivery (the line node); without the guard
-		// Pattern A overwrites their delivery with the home, making the order
-		// circular (pickup=SMN_014, deliver=SMN_014) and Core skips it.
+	if order.SourceNode != "" && !hasWaitStep(steps) {
+		// Pattern A: partial bin at a home position → route the return.
+		// Guard on !hasWaitStep: supply legs that pick FROM a home carry a wait step
+		// (staging gate in the two-robot swap); evac/return legs are simple
+		// pickup→dropoff with no wait. Without the guard Pattern A fires on
+		// supply-from-home legs and overwrites their delivery with the home, making
+		// the order circular (pickup=SMN_014, deliver=SMN_014) → Core skips it.
 		srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
 		if err != nil || srcNode == nil {
 			return
@@ -132,6 +133,18 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 func orderDeliversTo(steps []resolvedStep, node string) bool {
 	for _, s := range steps {
 		if s.Action == protocol.ActionDropoff && s.Node == node {
+			return true
+		}
+	}
+	return false
+}
+
+// hasWaitStep reports whether any step in a resolved step list is a wait action.
+// Used to distinguish evac/return legs (simple pickup→dropoff, no wait) from
+// supply-from-home legs (staging wait embedded in the two-robot swap chain).
+func hasWaitStep(steps []resolvedStep) bool {
+	for _, s := range steps {
+		if s.Action == protocol.ActionWait {
 			return true
 		}
 	}
