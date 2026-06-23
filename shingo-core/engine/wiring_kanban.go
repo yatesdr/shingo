@@ -76,11 +76,18 @@ func (e *Engine) handleKanbanDemand(ev BinUpdatedEvent) {
 }
 
 // isStorageSlot returns true if the node is a storage slot — either a
-// LANE/NGRP itself, or a direct child of one. NGRP children added
-// 2026-04-29: plants modeling supermarkets as an NGRP → direct concrete
-// children (no LANE in the path) need those children treated as storage
-// so arriving bins land `available`, not `staged`. Lineside cells remain
-// parented under processes/zones and continue to stage on arrival.
+// LANE/NGRP itself, a direct child of one, or a dedicated loader home/buffer
+// position. NGRP children added 2026-04-29: plants modeling supermarkets as
+// an NGRP → direct concrete children (no LANE in the path) need those
+// children treated as storage so arriving bins land `available`, not `staged`.
+// Lineside cells remain parented under processes/zones and continue to stage
+// on arrival.
+//
+// Dedicated loader home/buffer positions (bin_loader_homes) are always
+// storage-like: the loader aggregate owns their inventory, bins should arrive
+// available so the threshold monitor and swap planner see them correctly.
+// These nodes are parentless (no LANE/NGRP in their lineage), so the
+// bin_loader_homes check must come before the parentless early-return.
 //
 // The string was "NODE_GROUP" until the SMKT→NGRP rename (commit 3e3fb4a)
 // dropped the legacy code — anything still comparing to "NODE_GROUP" is
@@ -94,7 +101,10 @@ func (e *Engine) isStorageSlot(nodeID int64) bool {
 		return true
 	}
 	if node.ParentID == nil {
-		return false
+		// Parentless nodes default to lineside (staged arrivals) unless this is a
+		// dedicated loader home or buffer position — those are storage-like.
+		home, herr := e.db.GetLoaderHomeByPositionNode(nodeID)
+		return herr == nil && home != nil
 	}
 	parent, err := e.db.GetNode(*node.ParentID)
 	if err != nil {

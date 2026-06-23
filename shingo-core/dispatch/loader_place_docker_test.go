@@ -215,6 +215,77 @@ func TestPlaceForDedicatedLoader_SupplyFromHome_Untouched(t *testing.T) {
 	}
 }
 
+// Supply leg with a staging wait step delivering to a home that already holds a
+// physical bin must route to buffer — not attempt delivery to the occupied home and
+// fault on arrival (mirrors the SPR-2026-06-23 / order-2237 incident).
+func TestPlaceForDedicatedLoader_SupplyWithWait_HomeOccupied_RoutesBuffer(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, outbound, _ := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	// Physical bin already at the home; no in-flight orders (the case where
+	// in-flight-only would falsely clear the home as available).
+	makeLoaderBin(t, db, "PART-X", home.ID, "home-occupied", 100, time.Now().UTC())
+
+	staging := &nodes.Node{Name: "LX-STAGE2", Enabled: true}
+	if err := db.CreateNode(staging); err != nil {
+		t.Fatalf("create staging: %v", err)
+	}
+	supply := &orders.Order{
+		EdgeUUID: "supply-wait-1", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		Quantity: 1, SourceNode: staging.Name, DeliveryNode: home.Name, PayloadCode: "PART-X",
+	}
+	if err := db.CreateOrder(supply); err != nil {
+		t.Fatalf("create supply order: %v", err)
+	}
+	steps := []resolvedStep{
+		{Action: protocol.ActionWait, Node: staging.Name},
+		{Action: protocol.ActionPickup, Node: staging.Name},
+		{Action: protocol.ActionDropoff, Node: home.Name},
+	}
+	d.placeForDedicatedLoader(supply, steps)
+
+	if supply.DeliveryNode != buffer.Name {
+		t.Fatalf("DeliveryNode = %q, want BUFFER %q (home physically occupied, supply+wait must not deliver there)",
+			supply.DeliveryNode, buffer.Name)
+	}
+	_ = outbound // fixture requires it; not used by this case
+}
+
+// Supply leg with wait step delivering to a free home (no physical bin, no
+// in-flight) must still route directly to the home.
+func TestPlaceForDedicatedLoader_SupplyWithWait_HomeFree_RoutesHome(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, _, outbound, _ := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	staging := &nodes.Node{Name: "LX-STAGE3", Enabled: true}
+	if err := db.CreateNode(staging); err != nil {
+		t.Fatalf("create staging: %v", err)
+	}
+	supply := &orders.Order{
+		EdgeUUID: "supply-wait-free-1", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		Quantity: 1, SourceNode: staging.Name, DeliveryNode: home.Name, PayloadCode: "PART-X",
+	}
+	if err := db.CreateOrder(supply); err != nil {
+		t.Fatalf("create supply order: %v", err)
+	}
+	steps := []resolvedStep{
+		{Action: protocol.ActionWait, Node: staging.Name},
+		{Action: protocol.ActionPickup, Node: staging.Name},
+		{Action: protocol.ActionDropoff, Node: home.Name},
+	}
+	d.placeForDedicatedLoader(supply, steps)
+
+	if supply.DeliveryNode != home.Name {
+		t.Fatalf("DeliveryNode = %q, want HOME %q (home free, supply+wait should route home)",
+			supply.DeliveryNode, home.Name)
+	}
+	_ = outbound
+}
+
 // The release-time link: after placeForDedicatedLoader rewrites DeliveryNode, the
 // existing patchRedirectSegments must overlay it onto the final dropoff step so the
 // fleet follows the park choice. This is why no Edge step change is needed — Core is

@@ -30,11 +30,19 @@ import (
 // every dropoff has. Do NOT route through the Edge reserveLoaderBins seam (wrong
 // store, re-introduces divergence) and do NOT add ClaimSlot here.
 //
-// The home occupancy read is IN-FLIGHT ONLY by design: the only bin physically at
-// the home is the evac's own, which is leaving, so CheckDropoffCapacity's bin-count
-// half would force buffer every time (the physical half is vacuous for the park).
-// The buffer read is FULL CheckDropoffCapacity — a buffer legitimately holds a
-// parked partial, so its physical occupancy is real and must block.
+// The home occupancy check is split by order shape:
+//
+//   - Evac/return legs (no wait step): in-flight orders only. The physical bin at
+//     the home is the one being evac'd (it is leaving), so CountBins would always
+//     read as occupied and force buffer incorrectly.
+//
+//   - Supply legs (wait step embedded): full CheckDropoffCapacity — both physical
+//     bins and in-flight orders. A supply leg may target a home that already holds
+//     a real bin (e.g. leftover from a prior manual move); routing it there without
+//     the physical check causes a robot fault on arrival.
+//
+// The buffer read is always full CheckDropoffCapacity — a buffer legitimately holds
+// a parked partial, so its physical occupancy is real and must block.
 func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolvedStep) {
 	// Pattern A: SourceNode is a home position (produce-side return).
 	// Pattern B: DeliveryNode is a home position (consume-side removal leg).
@@ -76,9 +84,12 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 	}
 
 	if order.DeliveryNode != "" {
-		// Pattern B: explicit DeliveryNode is a home position (consume-side removal
-		// leg where outbound_destination = inbound_source). The home is where the
-		// removal robot is returning the evac bin; route home-first, else buffer.
+		// Pattern B: explicit DeliveryNode is a home position. Two shapes land here:
+		//   - Evac/return (no wait step): the removal robot returning an evac bin to
+		//     the home after changeover. In-flight check only — see header comment.
+		//   - Supply leg (wait step): a fresh bin sourced from a staging/supermarket
+		//     node delivering to the home. Use the full capacity gate so a physically-
+		//     occupied home routes to buffer instead of faulting on arrival.
 		destNode, err := d.db.GetNodeByDotName(order.DeliveryNode)
 		if err != nil || destNode == nil {
 			return
@@ -92,7 +103,16 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 			return
 		}
 		homeName := destNode.Name
-		// No same-order guard here: delivering to the home is the intent.
+		if hasWaitStep(steps) {
+			// Supply leg: full capacity gate (physical bins + in-flight).
+			if blocked, _ := CheckDropoffCapacity(d.db, homeName, order.ID); blocked {
+				d.placeForLoader(order, home.LoaderID, homeName)
+			} else {
+				d.setParkDestination(order, homeName, "home")
+			}
+			return
+		}
+		// Evac/return: in-flight only.
 		inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
 		if ierr == nil && inFlight == 0 {
 			d.setParkDestination(order, homeName, "home")
