@@ -15,18 +15,23 @@ export function createFootprintSection(store) {
         installChartThemeHook();
         const body = document.getElementById('ops-footprint-body');
         if (!body) return;
+        // P8b: Bins managed is the hero (full/empty as its subtitle); Lines and
+        // Processes demote to the supporting row.
         body.innerHTML = h`
-            <div class="footprint-nums">
-              <div class="footprint-num card" style="margin:0">
-                <div class="v" id="fp-cells">—</div><div class="k">Lines</div>
+            <div class="ov-hero">
+              <div class="ov-hero__value" id="fp-bins">—</div>
+              <div class="ov-hero__label">Bins managed</div>
+              <div class="ov-hero__sub" id="fp-bins-split"></div>
+            </div>
+            <div class="ov-support">
+              <div class="ov-support__item">
+                <div class="ov-support__value" id="fp-cells">—</div>
+                <div class="ov-support__label">Lines</div>
                 <div id="fp-cells-spark" class="kpi-spark"></div>
               </div>
-              <div class="footprint-num card" style="margin:0">
-                <div class="v" id="fp-processes">—</div><div class="k">Processes managed</div>
-              </div>
-              <div class="footprint-num card" style="margin:0">
-                <div class="v" id="fp-bins">—</div><div class="k">Bins managed</div>
-                <div class="footprint-split" id="fp-bins-split" style="font-size:0.78rem;color:var(--text-muted);margin-top:2px"></div>
+              <div class="ov-support__item">
+                <div class="ov-support__value" id="fp-processes">—</div>
+                <div class="ov-support__label">Processes managed</div>
               </div>
             </div>
             <div class="chart-caption" style="margin-top:1rem">Bins managed — full vs empty (last 30d)</div>

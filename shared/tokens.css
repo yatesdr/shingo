@@ -16,10 +16,12 @@
  */
 
 :root {
-  /* Surfaces */
-  --bg: #f8f9fa;
+  /* Surfaces — --bg (page) and --surface (cards) ALIAS the elevation steps
+   * (P8b) so a card reads one step lighter than the page, app-wide. The
+   * elevation values themselves are defined just below. */
+  --bg: var(--elev-base);
   --bg-dark: #e9ecef;
-  --surface: #ffffff;
+  --surface: var(--elev-surface);
   --border: #dee2e6;
   /* Elevation steps (P13) — each a shade lighter than the surface behind it, so
    * cards read by elevation and most hard borders can drop. The dark values are
@@ -94,9 +96,9 @@
 }
 
 [data-theme="dark"] {
-  --bg: #161b22;
+  --bg: var(--elev-base);
   --bg-dark: #0d1117;
-  --surface: #1c2128;
+  --surface: var(--elev-surface);
   --border: #30363d;
   /* Elevation — canonical dark floor-board steps (P13). */
   --elev-canvas: #0b0f16;

@@ -184,9 +184,9 @@
   position: relative;
   overflow: hidden;
 }
-.kpi-tile--clickable { cursor: pointer; }
-.kpi-tile--clickable:hover { border-color: var(--primary); }
-.kpi-tile--clickable:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.kpi-tile--clickable { cursor: pointer; border-radius: var(--radius); }
+.kpi-tile--clickable:hover { background: var(--elev-raised); }  /* P8b: lift, not a border */
+.kpi-tile--clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .kpi-label {
   font-size: 0.75rem;
   color: var(--text-muted);
@@ -324,9 +324,46 @@
 }
 .ops-title { font-size: 1.4rem; margin: 0 auto 0 0; }
 
+/* ─── P8b hero hierarchy (overview sections) ──────────────────────────────
+ * One big hero number per section; supporting stats demoted to small muted
+ * figures. Two weights only — 500 (numbers) and 400 (labels). Colors via
+ * tokens: hero/value inherit --text, labels use --text-tertiary. */
+
+/* Top KPI strip reframed: a Success-rate hero + a quiet supporting row. */
+.ops-kpi-hero {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) 2.4fr;
+  gap: 1.25rem 1.5rem;
+  align-items: center;
+}
+.ops-hero-support { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
+@media (max-width: 900px) {
+  .ops-kpi-hero { grid-template-columns: 1fr; }
+  .ops-hero-support { grid-template-columns: repeat(2, 1fr); }
+}
+/* The one number the eye should land on. */
+.kpi-tile--hero .kpi-value { font-size: 2.2rem; font-weight: 500; }
+.kpi-tile--hero .kpi-label { font-size: 0.72rem; color: var(--text-tertiary); }
+/* Demoted supporting tiles — quiet and small. */
+.kpi-tile--mini .kpi-value { font-size: 1rem; font-weight: 500; }
+.kpi-tile--mini .kpi-label { font-size: 0.68rem; color: var(--text-tertiary); }
+.kpi-tile--mini .kpi-delta { font-size: 0.72rem; }
+.kpi-tile--mini .kpi-spark { display: none; }
+
+/* Section-body hero (Fleet / Footprint): big number + small label + sub. */
+.ov-hero-row { display: flex; flex-wrap: wrap; gap: 2.5rem; align-items: flex-start; }
+.ov-hero { display: flex; flex-direction: column; gap: 0.05rem; }
+.ov-hero__value { font-size: 2.2rem; font-weight: 500; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.ov-hero__label { font-size: 0.7rem; font-weight: 400; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); }
+.ov-hero__sub { font-size: 0.82rem; font-weight: 400; color: var(--text-muted); margin-top: 0.1rem; }
+.ov-support { display: flex; flex-wrap: wrap; gap: 0.9rem 1.75rem; margin: 0.7rem 0 1rem; }
+.ov-support__item { display: flex; flex-direction: column; gap: 0.02rem; }
+.ov-support__value { font-size: 0.95rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+.ov-support__label { font-size: 0.7rem; font-weight: 400; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); }
+
 /* Fleet Load chart box (§15.C) and footprint headline numbers (§15.D). */
 .fleet-load-box {
-  border: 1px solid var(--border);
+  background: var(--elev-raised);  /* P8b: raised panel within the section card, no border */
   border-radius: var(--radius);
   padding: 1rem;
   margin-bottom: 1rem;

@@ -16,24 +16,28 @@ export function createFleetSection(store) {
         installChartThemeHook();
         const body = document.getElementById('ops-fleet-body');
         if (!body) return;
+        // P8b: dual hero (utilization + peak), supporting stats demoted, chart kept.
         body.innerHTML = h`
-            <div class="grid grid-4 fleet-kpis" id="fl-kpis">
-              <div class="card" style="margin:0"><div class="kpi-label">In fleet</div><div class="stat-value" id="fl-size">—</div></div>
-              <div class="card" style="margin:0"><div class="kpi-label">Online</div><div class="stat-value" id="fl-online">—</div></div>
-              <div class="card" style="margin:0"><div class="kpi-label">Missions (window)</div><div class="stat-value" id="fl-missions">—</div></div>
-              <div class="card" style="margin:0"><div class="kpi-label">Fleet utilization</div><div class="stat-value" id="fl-util">—</div></div>
+            <div class="ov-hero-row">
+              <div class="ov-hero">
+                <div class="ov-hero__value" id="fl-util">—</div>
+                <div class="ov-hero__label">Fleet utilization</div>
+              </div>
+              <div class="ov-hero">
+                <div class="ov-hero__value" id="fl-peak">—</div>
+                <div class="ov-hero__label">Peak concurrency</div>
+                <div class="ov-hero__sub" id="fl-peak-sub"></div>
+              </div>
+            </div>
+            <div class="ov-support">
+              <div class="ov-support__item"><div class="ov-support__value" id="fl-size">—</div><div class="ov-support__label">In fleet</div></div>
+              <div class="ov-support__item"><div class="ov-support__value" id="fl-online">—</div><div class="ov-support__label">Online</div></div>
+              <div class="ov-support__item"><div class="ov-support__value" id="fl-missions">—</div><div class="ov-support__label">Missions (window)</div></div>
+              <div class="ov-support__item"><div class="ov-support__value" id="fl-avgload">—</div><div class="ov-support__label">Avg load</div></div>
             </div>
             <div class="fleet-load-box">
-              <div class="flex flex-between" style="align-items:flex-start">
-                <div>
-                  <div class="fleet-headline" id="fl-head">&mdash;</div>
-                  <div class="fleet-headline--peak" id="fl-peak"></div>
-                </div>
-                <span class="ceiling-pill" id="fl-ceiling" style="display:none">ceiling reached</span>
-              </div>
-              <div class="chart-caption" id="fl-day" style="margin-top:0.35rem"></div>
-              <div class="chart-box" style="height:200px;margin-top:0.5rem"><canvas id="fl-canvas"></canvas></div>
-              <div class="fleet-summary" id="fl-summary"></div>
+              <div class="chart-caption" id="fl-day"></div>
+              <div class="chart-box" style="height:200px;margin-top:0.35rem"><canvas id="fl-canvas"></canvas></div>
             </div>
             <div class="bar-list" id="fl-rows"></div>`;
     }
@@ -52,33 +56,18 @@ export function createFleetSection(store) {
     function render(data) {
         if (!data || !data.fleet) return;
         const f = data.fleet;
+        // Dual hero.
+        setText('fl-util', (f.util_pct || 0).toFixed(0) + '%');
+        setText('fl-peak', (f.peak_concurrency != null ? f.peak_concurrency : '—') + ' / ' + f.size + (f.ceiling_reached ? ' · at ceiling' : ''));
+        setText('fl-peak-sub', f.peak_concurrency ? ('peak @ ' + (f.peak_hour || '—')) : 'no peak in window');
+        // Supporting row (demoted).
         setText('fl-size', f.size);
         setText('fl-online', f.online + ' / ' + f.size);
         setText('fl-missions', f.missions);
-        setText('fl-util', (f.util_pct || 0).toFixed(0) + '%');
+        setText('fl-avgload', (f.avg_load || 0).toFixed(1));
 
-        const head = document.getElementById('fl-head');
-        if (head) head.textContent = (f.avg_load || 0).toFixed(1) + ' / ' + f.size + ' robots used on average · ' + (f.util_pct || 0).toFixed(0) + '% fleet utilization';
-        const peak = document.getElementById('fl-peak');
-        if (peak) peak.textContent = f.peak_concurrency ? ('Peak: ' + f.peak_concurrency + ' robots @ ' + (f.peak_hour || '—')) : 'No peak in window';
-        const ceil = document.getElementById('fl-ceiling');
-        if (ceil) ceil.style.display = f.ceiling_reached ? '' : 'none';
-
-        renderSummary(f);
         renderChart(data.load_series || [], data.typical_series || [], f.size, data.load_granularity || 'hour');
         renderRows(data.robots || []);
-    }
-
-    function renderSummary(f) {
-        const el = document.getElementById('fl-summary');
-        if (!el) return;
-        const cells = [
-            ['Avg load', (f.avg_load || 0).toFixed(1)],
-            ['vs typical', f.typical_load != null ? (f.avg_load - f.typical_load).toFixed(1) : '—'],
-            ['At ceiling', f.ceiling_reached ? 'yes' : 'no'],
-            ['Headroom', (f.headroom != null ? f.headroom.toFixed(1) : '—')],
-        ];
-        el.innerHTML = cells.map((c) => '<div><div class="v">' + c[1] + '</div><div class="k">' + c[0] + '</div></div>').join('');
     }
 
     // renderChart draws the Fleet Load curve. granularity 'hour' (Today) is the

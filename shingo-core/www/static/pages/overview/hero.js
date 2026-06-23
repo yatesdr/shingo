@@ -18,18 +18,30 @@ export function createHeroSection(store) {
         const grid = document.getElementById('ops-kpi-grid');
         if (!grid) return;
         grid.innerHTML = '';
-        const specs = [
-            { id: 'success', label: 'Success rate', drill: 'success_rate' },
+        // P8b hero hierarchy: Success rate is the single hero number; the rest
+        // demote to a quiet supporting row. Same tiles/values as before — only
+        // the size/layout changes (no data or update-logic change; refresh()
+        // still updates each tile by its `tiles` key).
+        const heroTile = KpiTile({ id: 'success', label: 'Success rate', drill: 'success_rate' });
+        heroTile.classList.add('kpi-tile--hero');
+        tiles.success = heroTile;
+        grid.appendChild(heroTile);
+
+        const support = document.createElement('div');
+        support.className = 'ops-hero-support';
+        const supportSpecs = [
             { id: 'completed', label: 'Completed', drill: 'completed' },
             { id: 'avg', label: 'Avg duration', drill: 'avg_duration' },
             { id: 'cancelled', label: 'Cancelled', drill: 'cancelled' },
             { id: 'inflight', label: 'In flight', drill: 'in_flight' },
         ];
-        for (const s of specs) {
+        for (const s of supportSpecs) {
             const t = KpiTile(s);
+            t.classList.add('kpi-tile--mini');
             tiles[s.id] = t;
-            grid.appendChild(t);
+            support.appendChild(t);
         }
+        grid.appendChild(support);
         // Live: in-flight count + alerts react to order/robot churn.
         const live = debounce(() => { refreshActive(); refreshAlerts(); }, 1500);
         onSSE('order-update', live);

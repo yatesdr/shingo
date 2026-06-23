@@ -18,7 +18,9 @@ nav a:hover, nav a.active { color: var(--primary); text-decoration: none; }
 nav .nav-sep { width: 1px; height: 1.2rem; background: var(--border); flex-shrink: 0; }
 
 /* Cards */
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1.25rem; margin-bottom: 1rem; }
+/* P8b: borderless — depth comes from the surface being one step lighter than
+ * the page (--surface vs --bg), with a soft shadow for lift on light mode. */
+.card { background: var(--surface); border-radius: 0.5rem; padding: 1.25rem; margin-bottom: 1rem; box-shadow: var(--shadow-sm); }
 .card h2, .card h3 { margin-bottom: 0.75rem; }
 
 /* Dashboard hub cards (refactor #3) */
