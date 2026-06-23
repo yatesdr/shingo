@@ -114,13 +114,18 @@ names.
   /* Text */
   --text: #212529;
   --text-muted: #6c757d;
-  /* Semantic */
-  --primary: #0d6efd;
-  --primary-hover: #0b5ed7;
+  /* UI accent (Indigo) — reserved for interactive chrome, never a status. */
+  --accent: #4f4fd6;
+  --accent-hover: #3e3ec0;
+  /* Semantic — --primary aliases the accent so every CTA/link/tab adopts it. */
+  --primary: var(--accent);
+  --primary-hover: var(--accent-hover);
   --success: #198754;
   --danger: #dc3545;
   --warning: #ffc107;
   --info: #0dcaf0;  /* must remain distinct from --primary in all themes */
+  /* Elevation steps (cards read one shade lighter than their background). */
+  --elev-canvas: #eceef2; --elev-base: #f4f6f8; --elev-surface: #ffffff; --elev-raised: #ffffff;
   /* Geometry */
   --radius: 0.375rem;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -173,6 +178,10 @@ The original operator tokens used visual names. Rename to semantic:
    inline; add `--accent-test: #7c3aed` to tokens.css and reference it.
 4. **`--info` and `--primary` must remain visually distinct in all themes.**
    This was a real bug — check both light and dark mode when adjusting.
+5. **Indigo is the UI accent, never a status (P13).** `--accent` (and its alias
+   `--primary`) is for interactive chrome only — links, focus, selection,
+   primary action, the one primary chart series. Status hues live in the
+   `--status-*-dot` tokens and the `.badge-*` classes; don't cross the streams.
 
 ## Status indicators
 
@@ -205,21 +214,21 @@ Each active phase has its own color so it's distinguishable at a glance:
 |---|---|---|
 | dispatched | Blue | Robot assigned, mission queued — "assignment blue" |
 | in_transit | Cyan | Robot physically moving — "movement cyan" |
-| staged | Indigo | Bin at destination, awaiting next step — "staging indigo" |
-| reshuffling | Violet | Rearranging bins — "shuffle violet" |
+| staged | Teal | Bin at destination, awaiting next step. **Was indigo** — moved to teal so Indigo could be reserved as the UI accent (P13); teal sits beside in-transit cyan and stays clear of the success green |
+| reshuffling | Pink | Rearranging bins — active handling, **not** a fault. **Was violet** — moved to free the accent and to read as benign activity rather than an alarm (P13) |
 
 **Light theme palette** (defined in `shared/status-classes.css`):
 
 | Signal | Statuses | Background | Text |
 |---|---|---|---|
-| Early: pending | pending | `#f1f5f9` | `#475569` |
+| Early: pending | pending | `#e2e8f0` | `#475569` |
 | Early: sourcing | sourcing | `#fef3e2` | `#92660c` |
-| Early: queued | queued | `#e1e7fd` | `#3b46ad` |
+| Early: queued | queued | `#dde6fb` | `#3457b0` |
 | Submitted | submitted, acknowledged | `#dbeafe` | `#1e40af` |
-| Active: dispatched | dispatched | `#bfdbfe` | `#1d4ed8` |
-| Active: in_transit | in_transit | `#bae6fd` | `#155e75` |
-| Active: staged | staged | `#cdd0fb` | `#3730a3` |
-| Active: reshuffling | reshuffling | `#ddd6fe` | `#6d28d9` |
+| Active: dispatched | dispatched | `#cfe0fd` | `#1d4ed8` |
+| Active: in_transit | in_transit | `#c5edf6` | `#155e75` |
+| Active: staged (teal) | staged | `#c5eee3` | `#0c6b54` |
+| Active: reshuffling (pink) | reshuffling | `#f8dcec` | `#8f2f64` |
 | Success | delivered, confirmed | `#c6f6d5` | `#166534` |
 | No-op | skipped | `#e0e7f0` | `#51607a` |
 | Attention (loud) | faulted | `#fde68a` | `#92400e` |
@@ -229,6 +238,63 @@ Each active phase has its own color so it's distinguishable at a glance:
 **Dark theme** uses deeper backgrounds and brighter text, tuned for
 shop-floor LCDs under fluorescent lighting. See `shared/status-classes.css`
 for exact values.
+
+### One palette, three renderers (P13)
+
+There is **one** status palette. It feeds the badges (above), the robot-map
+status dots, and the floor-display board rows. Before P13 the map kept its own
+`STATUS_COLOR` table that disagreed with the badges; now both read the same
+`--status-<status>-dot` tokens from `shared/tokens.css`. The "dot" tokens are the
+saturated hue; the badge bg/text pairs above are the calm-weight pills derived
+from the same hue.
+
+| Status | Dot token | Dot hue |
+|---|---|---|
+| pending | `--status-pending-dot` | `#8b95a5` slate |
+| queued | `--status-queued-dot` | `#7aa2f0` periwinkle |
+| dispatched | `--status-dispatched-dot` | `#4f9bff` blue |
+| in_transit | `--status-in-transit-dot` | `#34c3e0` cyan |
+| staged | `--status-staged-dot` | `#15b8a0` teal |
+| reshuffling | `--status-reshuffling-dot` | `#df6fb4` pink |
+| blocked | `--status-blocked-dot` | `#f85149` red (map/board only — not a protocol badge status) |
+| delivered | `--status-delivered-dot` | `#3fb950` green |
+
+Robot states are unchanged: ready green, charging amber (`#e3b341`), error red,
+offline gray; a moving robot tracks the in-transit cyan.
+
+### The Indigo accent (P13)
+
+**Indigo `#7C7CF0` (dark) / `#4F4FD6` (light) is the reserved UI accent** —
+`--accent`, and `--primary` aliases it. Use it for **interactive / UI chrome
+only**: links, focus rings, selection, the primary action (`.btn-primary`),
+active tabs, the live pill, the map focus ring, and the one "primary series"
+that matters in a chart.
+
+**Indigo is NEVER a status hue.** This is the rule that drove moving staged off
+indigo and reshuffling off violet. One restrained accent *glow* is allowed on
+genuinely live/active elements (the route comet, a live pill); everywhere else
+the accent is a flat fill or stroke. `--info` (cyan) and the status blues
+(`dispatched`) stay their own tokens — never fold a data/semantic color into the
+accent. If a screen needs `--primary` to *mean* something (a status, a series),
+give that spot its own token instead.
+
+### Surface elevation + text (P13)
+
+Cards read by **elevation** — each surface one shade lighter than what sits
+behind it — so most hard borders can drop. Tokens (dark values shown; light
+mode inverts to light-cards-on-grey):
+
+| Token | Dark | Role |
+|---|---|---|
+| `--elev-canvas` | `#0B0F16` | the void behind everything |
+| `--elev-base` | `#0D1117` | page background |
+| `--elev-surface` | `#161B22` | cards / panels |
+| `--elev-raised` | `#1F2733` | raised elements on a card |
+
+Text: `--text` primary (`#E6EDF3` dark via `--text-strong` on boards) ·
+`--text-muted` secondary (`#8B949E`) · `--text-tertiary` faint labels
+(`#6E7681`). **Never pure white or black.** Charts use one accent (indigo) for
+the primary series and gray the rest; semantic status colors are left alone.
 
 **Rule: Core and Edge admin surfaces consume `shared/status-classes.css`
 exclusively for order-lifecycle badges.** Core's local `style.css` must not

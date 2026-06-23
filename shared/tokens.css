@@ -21,19 +21,53 @@
   --bg-dark: #e9ecef;
   --surface: #ffffff;
   --border: #dee2e6;
+  /* Elevation steps (P13) — each a shade lighter than the surface behind it, so
+   * cards read by elevation and most hard borders can drop. The dark values are
+   * the canonical floor-board palette; light keeps cards light-on-grey. */
+  --elev-canvas: #eceef2;
+  --elev-base: #f4f6f8;
+  --elev-surface: #ffffff;
+  --elev-raised: #ffffff;
 
-  /* Text */
+  /* Text — primary/secondary stay as --text/--text-muted. --text-strong is the
+   * brightest body text (floor boards), --text-tertiary the faintest labels.
+   * Never pure white/black. */
   --text: #212529;
   --text-muted: #6c757d;
+  --text-strong: #11161c;
+  --text-tertiary: #8a929c;
+
+  /* UI accent — Indigo. Reserved for UI/interactive chrome ONLY (links, focus
+   * rings, selection, primary action, live pill, map focus ring). NEVER a
+   * status hue (P13). --primary aliases the accent so every existing
+   * primary-action/link/tab consumer adopts it without a find/replace. */
+  --accent: #4f4fd6;            /* light-mode indigo, AA on white */
+  --accent-hover: #3e3ec0;
+  --accent-glow: color-mix(in srgb, var(--accent) 55%, transparent);
 
   /* Semantic */
-  --primary: #0d6efd;
-  --primary-hover: #0b5ed7;
-  --primary-dark: #0b5ed7;
+  --primary: var(--accent);
+  --primary-hover: var(--accent-hover);
+  --primary-dark: var(--accent-hover);
   --success: #198754;
   --danger: #dc3545;
   --warning: #ffc107;
   --info: #0dcaf0;
+
+  /* Unified order-status palette (P13) — ONE palette feeds map dots, the
+   * floor-display board, and (via status-classes.css) the badges. These are the
+   * saturated "dot" hues; the matching badge bg/text pairs live in
+   * status-classes.css. Progression: cool (waiting → moving) → warm pink (needs
+   * handling) → red (blocked) → green (done). Indigo is deliberately absent —
+   * it is the UI accent, never a status. */
+  --status-pending-dot:     #8b95a5;   /* slate */
+  --status-queued-dot:      #7aa2f0;   /* periwinkle */
+  --status-dispatched-dot:  #4f9bff;   /* blue */
+  --status-in-transit-dot:  #34c3e0;   /* cyan */
+  --status-staged-dot:      #15b8a0;   /* teal  (was indigo) */
+  --status-reshuffling-dot: #df6fb4;   /* pink  (was violet) */
+  --status-blocked-dot:     #f85149;   /* red = alarm */
+  --status-delivered-dot:   #3fb950;   /* green */
 
   /* Dashboard / charts (mission-telemetry plan §4). These reference the
    * semantic tokens above, so they resolve per-theme without a dark-mode
@@ -56,13 +90,25 @@
   --bg-dark: #0d1117;
   --surface: #1c2128;
   --border: #30363d;
+  /* Elevation — canonical dark floor-board steps (P13). */
+  --elev-canvas: #0b0f16;
+  --elev-base: #0d1117;
+  --elev-surface: #161b22;
+  --elev-raised: #1f2733;
 
   --text: #c9d1d9;
   --text-muted: #8b949e;
+  --text-strong: #e6edf3;
+  --text-tertiary: #6e7681;
 
-  --primary: #58a6ff;
-  --primary-hover: #4093e6;
-  --primary-dark: #4093e6;
+  /* Accent — Indigo (dark). --primary aliases --accent (kept explicit in this
+   * block so the token-presence drift test sees it in both themes). Status dots
+   * are inherited from :root (the saturated hues read correctly on dark). */
+  --accent: #7c7cf0;
+  --accent-hover: #9a9af5;
+  --primary: var(--accent);
+  --primary-hover: var(--accent-hover);
+  --primary-dark: var(--accent-hover);
   --success: #3fb950;
   --danger: #f85149;
   --warning: #d29922;

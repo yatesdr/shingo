@@ -48,7 +48,7 @@ import { onSSE } from '/static/shared/utils.js';
   var stateColors = {
     'CREATED': 'var(--text-muted)',
     'TOBEDISPATCHED': 'var(--info)',
-    'RUNNING': 'var(--primary)',
+    'RUNNING': 'var(--status-dispatched-dot)',
     'WAITING': 'var(--warning)',
     'FINISHED': 'var(--success)',
     'FAILED': 'var(--danger)',

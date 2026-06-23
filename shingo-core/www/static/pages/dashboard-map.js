@@ -31,20 +31,45 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   var dashboardId = body.getAttribute('data-dashboard-id');
   var SVGNS = 'http://www.w3.org/2000/svg';
 
-  // ── status / state palettes (kept in sync with dashboard.css) ──────
+  // Read a CSS custom property off :root with a hex fallback, so the map's
+  // colors come from the shared token palette (P13, shared/tokens.css) instead
+  // of duplicated hexes. Resolved once at module load — the kiosk theme is
+  // static (data-theme=dark) — and the fallback keeps the map sane if
+  // tokens.css somehow didn't load.
+  function cssVar(name, fallback) {
+    try {
+      var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      return v || fallback;
+    } catch (e) { return fallback; }
+  }
+
+  // ── status / state palettes — the UNIFIED status dots (shared/tokens.css) ──
+  // Same palette that feeds the badges and the floor-display board, so a status
+  // reads the same hue everywhere. Indigo is absent on purpose (it's the UI
+  // accent). Fallbacks mirror the dark-theme token values.
   var STATUS_COLOR = {
-    in_transit: '#4f9bff', staged: '#9aa8fa', dispatched: '#3a7fd0',
-    blocked: '#c66bff', acknowledged: '#8b949e', queued: '#a371f7',
-    pending: '#8b949e', delivered: '#3fb950'
+    in_transit: cssVar('--status-in-transit-dot', '#34c3e0'),
+    staged: cssVar('--status-staged-dot', '#15b8a0'),
+    dispatched: cssVar('--status-dispatched-dot', '#4f9bff'),
+    blocked: cssVar('--status-blocked-dot', '#f85149'),
+    acknowledged: cssVar('--status-pending-dot', '#8b95a5'),
+    queued: cssVar('--status-queued-dot', '#7aa2f0'),
+    pending: cssVar('--status-pending-dot', '#8b95a5'),
+    delivered: cssVar('--status-delivered-dot', '#3fb950')
   };
+  // Robot states unchanged (P13): ready green, error red, offline gray; a moving
+  // robot with no order falls back to the in-transit cyan.
   var STATE_COLOR = {
-    ready: '#3fb950', busy: '#4f9bff', paused: '#8b949e',
-    error: '#f85149', offline: '#6e7681'
+    ready: cssVar('--status-delivered-dot', '#3fb950'),
+    busy: cssVar('--status-in-transit-dot', '#34c3e0'),
+    paused: cssVar('--text-muted', '#8b949e'),
+    error: cssVar('--status-blocked-dot', '#f85149'),
+    offline: cssVar('--text-tertiary', '#6e7681')
   };
   // Bays as sockets: a robot docked on a charge/park point takes the bay's
   // hue, so an occupied ring reads as a filled socket and an empty ring as an
-  // available bay. Staged rides the indigo/blue family per the Signal scheme
-  // in docs/ui-style-guide.md; amber belongs to charging.
+  // available bay. Amber belongs to charging (a robot state, unchanged by the
+  // P13 palette work — staged is now teal in the unified status scheme).
   var DOCK_COLOR = { charge: '#e3b341', park: '#d98c4a' };
   var CHARGE_RING = '#c9a227';
   var PARK_RING = '#b0723a';

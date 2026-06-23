@@ -7,12 +7,16 @@
  */
 
 :root {
-  --dash-bg: #0d1117;
-  --dash-surface: #161b22;
-  --dash-surface-2: #1c2230;
-  --dash-text: #e6edf3;
-  --dash-muted: #8b949e;
-  --dash-border: #30363d;
+  /* The kiosk now loads shared/tokens.css (data-theme=dark) ahead of this file,
+   * so these --dash-* names are thin aliases onto the shared elevation/text
+   * tokens (P13) — one source of truth, no duplicated hexes. The hex fallbacks
+   * keep the board rendering even if tokens.css fails to load. */
+  --dash-bg: var(--elev-base, #0d1117);
+  --dash-surface: var(--elev-surface, #161b22);
+  --dash-surface-2: var(--elev-raised, #1f2733);
+  --dash-text: var(--text-strong, #e6edf3);
+  --dash-muted: var(--text-muted, #8b949e);
+  --dash-border: var(--border, #30363d);
 }
 
 * { box-sizing: border-box; }
@@ -108,17 +112,19 @@ html, body {
 }
 
 /* ── Status color-coding (left border on the row + status cell text) ──
- * The single most important "manage by sight" signal: blocked = red,
- * moving = blue, waiting = amber, done-ish = green. Add a new status here
- * and in dashboard.js statusLabel(). */
-tr.st-in_transit   { border-left-color: #2f81f7; } .st-in_transit   .r-status, td.st-in_transit   { color: #6cb0ff; }
-tr.st-staged       { border-left-color: #d29922; } .st-staged       .r-status, td.st-staged       { color: #e3b341; }
-tr.st-dispatched   { border-left-color: #1f6feb; } .st-dispatched   .r-status, td.st-dispatched   { color: #79c0ff; }
-tr.st-acknowledged { border-left-color: #8b949e; } .st-acknowledged .r-status, td.st-acknowledged { color: #b1bac4; }
-tr.st-queued       { border-left-color: #a371f7; } .st-queued       .r-status, td.st-queued       { color: #d2a8ff; }
-tr.st-pending      { border-left-color: #8b949e; } .st-pending      .r-status, td.st-pending      { color: #b1bac4; }
-tr.st-blocked      { border-left-color: #bf5af2; background: rgba(191, 90, 242, 0.10); } .st-blocked .r-status, td.st-blocked { color: #d6a8ff; }
-tr.st-delivered    { border-left-color: #2ea043; } .st-delivered    .r-status, td.st-delivered    { color: #56d364; }
+ * The single most important "manage by sight" signal, now on the UNIFIED status
+ * palette (P13): each row's left border is the saturated status dot token; the
+ * status text is the same hue lightened for legibility on the dark board.
+ * staged moved amber→teal to match the rest of the system. Add a new status
+ * here AND in dashboard.js statusLabel(). */
+tr.st-in_transit   { border-left-color: var(--status-in-transit-dot); } .st-in_transit   .r-status, td.st-in_transit   { color: color-mix(in srgb, var(--status-in-transit-dot) 75%, #fff); }
+tr.st-staged       { border-left-color: var(--status-staged-dot); } .st-staged       .r-status, td.st-staged       { color: color-mix(in srgb, var(--status-staged-dot) 70%, #fff); }
+tr.st-dispatched   { border-left-color: var(--status-dispatched-dot); } .st-dispatched   .r-status, td.st-dispatched   { color: color-mix(in srgb, var(--status-dispatched-dot) 80%, #fff); }
+tr.st-acknowledged { border-left-color: var(--status-pending-dot); } .st-acknowledged .r-status, td.st-acknowledged { color: color-mix(in srgb, var(--status-pending-dot) 70%, #fff); }
+tr.st-queued       { border-left-color: var(--status-queued-dot); } .st-queued       .r-status, td.st-queued       { color: color-mix(in srgb, var(--status-queued-dot) 80%, #fff); }
+tr.st-pending      { border-left-color: var(--status-pending-dot); } .st-pending      .r-status, td.st-pending      { color: color-mix(in srgb, var(--status-pending-dot) 70%, #fff); }
+tr.st-blocked      { border-left-color: var(--status-blocked-dot); background: color-mix(in srgb, var(--status-blocked-dot) 10%, transparent); } .st-blocked .r-status, td.st-blocked { color: color-mix(in srgb, var(--status-blocked-dot) 80%, #fff); }
+tr.st-delivered    { border-left-color: var(--status-delivered-dot); } .st-delivered    .r-status, td.st-delivered    { color: color-mix(in srgb, var(--status-delivered-dot) 78%, #fff); }
 
 /* New-row flash when an order first appears on this board. */
 tr.row-new { animation: row-flash 1.4s ease-out; }
@@ -185,8 +191,9 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 /* Each robot's glyphs + chip sit in a [data-robot] group — click to focus its
  * route. Pointer cursor hints the affordance. */
 .map-robot-hit { cursor: pointer; }
-/* Quiet outline on the focused robot — an outline, not another status color. */
-.map-robot-focus { stroke: rgba(207, 228, 255, 0.85); }
+/* Outline on the focused robot — the UI accent (indigo), not a status color:
+ * click-to-focus is a UI selection, so it reads as the reserved accent (P13). */
+.map-robot-focus { stroke: var(--accent, #7c7cf0); }
 /* Hairline tying a de-collided name chip back to its robot. */
 .map-chip-leader { stroke: rgba(255, 255, 255, 0.18); }
 

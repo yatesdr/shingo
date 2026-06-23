@@ -78,9 +78,9 @@
  * quiet and clearly "waiting", but each stage distinct: pending is the
  * coolest slate, sourcing warms to sand ("actively looking for material"),
  * queued shifts to periwinkle, leading into the submitted steel blue. */
-.badge-pending      { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
+.badge-pending      { background: #e2e8f0; color: #475569; border-color: #cbd5e1; }
 .badge-sourcing     { background: #fef3e2; color: #92660c; border-color: #fce0b8; }
-.badge-queued       { background: #e1e7fd; color: #3b46ad; border-color: #c4cff5; }
+.badge-queued       { background: #dde6fb; color: #3457b0; border-color: #c4cff5; }
 
 /* ── Submitted / acknowledged ─────────────────────────────────────────
  * The system has accepted the order. Cool steel blue — slightly more
@@ -93,15 +93,16 @@
  *
  *   dispatched  — blue     (robot assigned, mission queued)
  *   in_transit  — cyan     (robot physically moving)
- *   staged      — indigo   (bin at destination, awaiting next step)
- *   reshuffling — violet   (rearranging bins for the next delivery)
+ *   staged      — teal     (bin at destination, awaiting next step)
+ *   reshuffling — pink     (rearranging bins — active handling, not a fault)
  *
- * Distinct hues let operators scan a table and pick out phase at a
- * glance without reading labels. */
-.badge-dispatched   { background: #bfdbfe; color: #1d4ed8; border-color: #93c5fd; }
-.badge-in_transit   { background: #bae6fd; color: #155e75; border-color: #7dd3fc; }
-.badge-staged       { background: #cdd0fb; color: #3730a3; border-color: #a5b4fc; }
-.badge-reshuffling  { background: #ddd6fe; color: #6d28d9; border-color: #c4b5fd; }
+ * Distinct hues let operators scan a table and pick out phase at a glance
+ * without reading labels. staged was indigo and reshuffling violet; both moved
+ * (teal / pink) so Indigo is free as the reserved UI accent (P13). */
+.badge-dispatched   { background: #cfe0fd; color: #1d4ed8; border-color: #a9c7fb; }
+.badge-in_transit   { background: #c5edf6; color: #155e75; border-color: #9ed8ec; }
+.badge-staged       { background: #c5eee3; color: #0c6b54; border-color: #9bdcc9; }
+.badge-reshuffling  { background: #f8dcec; color: #8f2f64; border-color: #f0bdd9; }
 
 /* ── Terminal — success ───────────────────────────────────────────────
  * Green — unmistakable "done" signal, held at the same calm weight as the
@@ -146,8 +147,8 @@
 /* Active — dark (each phase keeps its own hue, boosted for contrast) */
 [data-theme="dark"] .badge-dispatched   { background: #1a3550; color: #93c5fd; border-color: #1e4a6e; }
 [data-theme="dark"] .badge-in_transit   { background: #0c2a30; color: #7dd3e8; border-color: #0f4450; }
-[data-theme="dark"] .badge-staged       { background: #1e1b4b; color: #a5b4fc; border-color: #2e2a60; }
-[data-theme="dark"] .badge-reshuffling  { background: #2e1065; color: #c4b5fd; border-color: #3b1880; }
+[data-theme="dark"] .badge-staged       { background: #06302a; color: #5fd9be; border-color: #0c4d42; }
+[data-theme="dark"] .badge-reshuffling  { background: #3a1029; color: #f0a6cf; border-color: #5a1a40; }
 
 /* Success — dark (bright green, high contrast) */
 [data-theme="dark"] .badge-delivered,

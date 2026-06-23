@@ -96,7 +96,7 @@ textarea { resize: vertical; min-height: 60px; }
 /* Buttons */
 .btn { display: inline-block; padding: 0.4rem 1rem; border: none; border-radius: 0.3rem; font-size: 0.9rem; cursor: pointer; text-align: center; }
 .btn-primary { background: var(--primary); color: #fff; }
-.btn-primary:hover { background: #0b5ed7; }
+.btn-primary:hover { background: var(--primary-hover); }
 .btn-danger { background: var(--danger); color: #fff; }
 .btn-danger:hover { background: #bb2d3b; }
 .btn-sm { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
@@ -479,7 +479,7 @@ textarea { resize: vertical; min-height: 60px; }
 [data-theme="dark"] .ep-item:hover { background: #252c35; }
 
 
-[data-theme="dark"] .btn-primary:hover { background: #4090e0; }
+[data-theme="dark"] .btn-primary:hover { background: var(--primary-hover); }
 [data-theme="dark"] .btn-danger:hover { background: #da3633; }
 
 /* Dark overrides for Core-specific badges only.
