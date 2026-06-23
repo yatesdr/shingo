@@ -18,6 +18,7 @@
         <tr><td><strong>Description</strong></td><td>{{if .Order.PayloadDesc}}{{.Order.PayloadDesc}}{{else}}<span class="text-muted">-</span>{{end}}</td></tr>
         <tr><td><strong>Quantity</strong></td><td>{{.Order.Quantity}}</td></tr>
         <tr><td><strong>Status</strong></td><td><span class="badge badge-{{.Order.Status}}">{{.Order.Status}}</span></td></tr>
+        {{if .Order.QueueReason}}<tr><td><strong>Queue Reason</strong></td><td><span class="text-muted">{{.Order.QueueReason}}</span></td></tr>{{end}}
         <tr><td><strong>Vendor Order</strong></td><td>{{.Order.VendorOrderID}}{{if .Order.VendorOrderID}} <a href="/missions/{{.Order.ID}}" title="View mission telemetry, timeline, and robot tracking" style="font-size:.85em;margin-left:.5rem">View Mission</a>{{end}}</td></tr>
         <tr><td><strong>Robot</strong></td><td>{{.Order.RobotID}}</td></tr>
         <tr><td><strong>Priority</strong></td><td>{{.Order.Priority}}</td></tr>
@@ -115,7 +116,10 @@
             {{if .PayloadDesc}}<div class="text-muted" style="font-size:0.8rem">{{.PayloadDesc}}</div>{{end}}
             {{if and (not .PayloadCode) (not .PayloadDesc)}}<span class="text-muted">-</span>{{end}}
           </td>
-          <td data-sort-value="{{.Status}}"><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+          <td data-sort-value="{{.Status}}">
+            <span class="badge badge-{{.Status}}">{{.Status}}</span>
+            {{if .QueueReason}}<div class="text-muted" style="font-size:0.78rem;max-width:22rem;white-space:normal">{{.QueueReason}}</div>{{end}}
+          </td>
           <td>{{.RobotID}}</td>
           <td data-sort-value="{{.CreatedAt}}">{{formatTime .CreatedAt}}</td>
           {{if $.Authenticated}}
