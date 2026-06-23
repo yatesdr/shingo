@@ -55,11 +55,16 @@ func List(db *sql.DB) ([]Order, error) {
 
 // ListActive returns every order operator-visible on the edge HMI —
 // excludes confirmed/cancelled/skipped (operator has nothing to do
-// with these) but keeps failed visible so the operator can retry or
-// acknowledge. See protocol.IsOperatorVisible for the predicate doc.
+// with these) but keeps failed/faulted visible so the operator can
+// retry or acknowledge. See protocol.IsOperatorVisible for the predicate.
+//
+// Terminal-but-visible orders (failed, faulted) are capped to 7 days so
+// historical failures don't accumulate forever in the view. Non-terminal
+// orders (queued, in_transit, staged, …) are always shown regardless of age.
 func ListActive(db *sql.DB) ([]Order, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
 		WHERE o.status IN (%s)
+		AND (o.status NOT IN ('failed','faulted') OR o.created_at > datetime('now', '-7 days'))
 		ORDER BY o.created_at DESC`, protocol.OperatorVisibleStatusSQLList()))
 	if err != nil {
 		return nil, err
@@ -82,11 +87,12 @@ func CountActive(db *sql.DB) int {
 }
 
 // ListActiveByProcess returns operator-visible orders for one process.
-// Mirrors ListActive's predicate (failed stays visible for retry).
+// Mirrors ListActive's predicate and 7-day terminal-order window.
 func ListActiveByProcess(db *sql.DB, processID int64) ([]Order, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
 		WHERE o.status IN (%s)
 		AND pl.id = ?
+		AND (o.status NOT IN ('failed','faulted') OR o.created_at > datetime('now', '-7 days'))
 		ORDER BY o.created_at DESC`, protocol.OperatorVisibleStatusSQLList()), processID)
 	if err != nil {
 		return nil, err
