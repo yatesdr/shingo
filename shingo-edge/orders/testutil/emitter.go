@@ -29,6 +29,9 @@ func (NoOpOrderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orde
 func (NoOpOrderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binEpoch int64) {
 }
 
+func (NoOpOrderEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binEpoch int64, deliveryNode string) {
+}
+
 func (NoOpOrderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
 }
 

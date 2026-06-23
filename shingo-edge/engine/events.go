@@ -226,6 +226,11 @@ type OrderDeliveredEvent struct {
 	// nil = older Core didn't send it; fall back to the role default.
 	BinUOP   *int  `json:"bin_uop,omitempty"`
 	BinEpoch int64 `json:"bin_epoch,omitempty"`
+	// DeliveryNode is the Core dot-name of the destination. Set only for
+	// Core-admin (stationless) deliveries where ProcessNodeID is nil because
+	// the Edge has no order row. handleNodeOrderDelivered uses it as a fallback
+	// to resolve the process node when ProcessNodeID is absent.
+	DeliveryNode string `json:"delivery_node,omitempty"`
 }
 
 // UOPAdjustedEvent is emitted when Core sends an admin-originated UOP

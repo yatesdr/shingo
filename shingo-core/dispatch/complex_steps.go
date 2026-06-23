@@ -24,6 +24,12 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 	for i, step := range steps {
 		switch step.Action {
 		case protocol.ActionPickup, protocol.ActionDropoff:
+			// Blank dropoff = deferred destination (placeForDedicatedLoader resolves it
+			// after intake). Pass it through unchanged, same as reResolveComplexSteps.
+			if step.Action == protocol.ActionDropoff && step.Node == "" {
+				resolved = append(resolved, resolvedStep{Action: protocol.ActionDropoff, Empty: step.Empty})
+				continue
+			}
 			nodeName, group, err := d.resolveStepNode(step, payloadCode)
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)

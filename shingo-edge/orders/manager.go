@@ -508,17 +508,27 @@ func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, 
 	return nil
 }
 
-// HandleDeliveredWithExpiry processes a delivered reply with optional
-// staged expiry. binID captures Core's bin id at delivery so the PLC
-// tick path can attribute deltas to the right bin; nil for multi-bin
-// orders. uop+epoch are Core's snapshot of that bin at delivery (from the
-// OrderDelivered envelope) — Edge seeds its runtime cache + active_bin_epoch
-// from them so tick deltas carry the right count baseline and load-lifecycle
-// generation, with no separate HTTP pull. uop nil = older Core didn't send
-// it → Edge falls back to its role default (see wiring_delivered.go).
-func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64) error {
+// HandleDeliveredWithExpiry processes a delivered reply with optional staged
+// expiry. binID captures Core's bin id at delivery so the PLC tick path can
+// attribute deltas to the right bin; nil for multi-bin orders. uop+epoch are
+// Core's snapshot of that bin at delivery (from the OrderDelivered envelope)
+// — Edge seeds its runtime cache + active_bin_epoch from them so tick deltas
+// carry the right count baseline and load-lifecycle generation, with no
+// separate HTTP pull. uop nil = older Core didn't send it; Edge falls back to
+// its role default (see wiring_delivered.go).
+//
+// deliveryNode is the Core dot-name of the destination, forwarded from the
+// OrderDelivered protocol message. When the order isn't found by UUID (Core-
+// admin manual orders have no Edge row), a fallback bind event is emitted using
+// deliveryNode so the runtime cache can still be updated.
+func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64, deliveryNode string) error {
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {
+		// Core-admin order — no Edge row. Emit a bind-only fallback event so the
+		// runtime cache updates if the delivery node maps to an Edge process node.
+		if binID != nil && deliveryNode != "" {
+			m.emitter.EmitOrderDeliveredFallback(*binID, uop, epoch, deliveryNode)
+		}
 		return fmt.Errorf("order %s not found: %w", orderUUID, err)
 	}
 	return m.handleDelivered(order, statusDetail, stagedExpireAt, binID, uop, epoch)

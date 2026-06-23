@@ -48,6 +48,11 @@ import (
 // plan / architecture doc).
 func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if delivered.ProcessNodeID == nil || delivered.BinID == nil {
+		// Fallback for Core-admin orders (no Edge order row): ProcessNodeID is nil.
+		// Resolve the process node from DeliveryNode if present.
+		if delivered.BinID != nil && delivered.DeliveryNode != "" {
+			e.handleFallbackDelivered(delivered)
+		}
 		return
 	}
 	order, err := e.db.GetOrder(delivered.OrderID)
@@ -115,6 +120,34 @@ func deliveredFallbackUOP(claim *processes.NodeClaim) int {
 		return 0
 	}
 	return claim.UOPCapacity
+}
+
+// handleFallbackDelivered binds the runtime cache for Core-admin orders that
+// have no Edge row (ProcessNodeID is nil). The delivery node is looked up by
+// Core dot-name; if it maps to an Edge process node that has an active claim,
+// the cache and active_bin_id are updated exactly as for a normal delivery.
+func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
+	node, err := e.db.GetProcessNodeByCoreNodeName(delivered.DeliveryNode)
+	if err != nil || node == nil {
+		return
+	}
+	if _, err := e.db.EnsureProcessNodeRuntime(node.ID); err != nil {
+		return
+	}
+	claim := findActiveClaim(e.db, node)
+	if claim == nil {
+		return
+	}
+	cacheValue := deliveredFallbackUOP(claim)
+	if delivered.BinUOP != nil {
+		cacheValue = *delivered.BinUOP
+	}
+	claimID := claim.ID
+	if e.inventoryDelta != nil {
+		if err := e.inventoryDelta.OnDelivered(node.ID, &claimID, *delivered.BinID, delivered.BinEpoch, cacheValue); err != nil {
+			log.Printf("delivered fallback: node %s bin %d: %v", delivered.DeliveryNode, *delivered.BinID, err)
+		}
+	}
 }
 
 // finalDropoffNode returns the node of the last "dropoff" step in a complex

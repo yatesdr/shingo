@@ -87,13 +87,20 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 		}
 	}
 
-	if err := e.sendToEdge(protocol.TypeOrderDelivered, order.StationID, &protocol.OrderDelivered{
+	// Core-admin (manual move) orders have no station; broadcast to all edges so
+	// each can attempt the bin binding via DeliveryNode fallback.
+	stationID := order.StationID
+	if stationID == "" {
+		stationID = protocol.StationBroadcast
+	}
+	if err := e.sendToEdge(protocol.TypeOrderDelivered, stationID, &protocol.OrderDelivered{
 		OrderUUID:      order.EdgeUUID,
 		DeliveredAt:    clock.Now().UTC(),
 		StagedExpireAt: stagedExpireAt,
 		BinID:          binID,
 		UOPRemaining:   uopRemaining,
 		DeltaEpoch:     deltaEpoch,
+		DeliveryNode:   order.DeliveryNode,
 	}); err != nil {
 		e.logFn("engine: delivered notification: %v", err)
 	}

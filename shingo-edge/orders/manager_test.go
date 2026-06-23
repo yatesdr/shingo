@@ -19,6 +19,8 @@ func (testEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType
 }
 func (testEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binEpoch int64) {
 }
+func (testEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binEpoch int64, deliveryNode string) {
+}
 func (testEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
 }
 

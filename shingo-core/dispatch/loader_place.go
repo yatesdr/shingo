@@ -36,44 +36,73 @@ import (
 // The buffer read is FULL CheckDropoffCapacity — a buffer legitimately holds a
 // parked partial, so its physical occupancy is real and must block.
 func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolvedStep) {
-	if order.SourceNode == "" {
-		return
-	}
-	// SourceNode is the evac pickup = the home position. Resolve the loader the same
-	// way the source side does (GetLoaderHomeByPositionNode + Layout gate); anything
-	// that isn't a dedicated-loader home leaves DeliveryNode untouched → drain as today.
-	srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
-	if err != nil || srcNode == nil {
-		return
-	}
-	home, err := d.db.GetLoaderHomeByPositionNode(srcNode.ID)
-	if err != nil || home == nil {
-		return
-	}
-	loader, err := d.db.GetLoader(home.LoaderID)
-	if err != nil || loader == nil || loader.Layout != loaders.LayoutDedicatedPositions {
+	// Pattern A: SourceNode is a home position (produce-side return).
+	// Pattern B: DeliveryNode is a home position (consume-side removal leg).
+	// Both route to the same home/buffer/drain logic; the only structural
+	// difference is that Pattern A guards against same-order double-commit
+	// (orderDeliversTo) while Pattern B does not — delivering to the home IS
+	// the intent for the removal leg, and the single-robot-swap shape can't
+	// produce a same-order conflict here.
+
+	if order.SourceNode != "" {
+		// Pattern A: pick up FROM a home → route the return.
+		srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
+		if err != nil || srcNode == nil {
+			return
+		}
+		home, err := d.db.GetLoaderHomeByPositionNode(srcNode.ID)
+		if err != nil || home == nil {
+			return
+		}
+		loader, err := d.db.GetLoader(home.LoaderID)
+		if err != nil || loader == nil || loader.Layout != loaders.LayoutDedicatedPositions {
+			return
+		}
+		homeName := srcNode.Name
+		if !orderDeliversTo(steps, homeName) {
+			inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
+			if ierr == nil && inFlight == 0 {
+				d.setParkDestination(order, homeName, "home")
+				return
+			}
+		}
+		d.placeForLoader(order, home.LoaderID, homeName)
 		return
 	}
 
-	homeName := srcNode.Name
-	// HOME if provably free. Free = (a) this order does not ITSELF deliver a bin to
-	// the home — a single-robot swap delivers the new style to the home in the SAME
-	// order, which the in-flight count excludes, so that bin would be invisible and
-	// we'd double-commit — AND (b) no OTHER order is in-flight to the home.
-	if !orderDeliversTo(steps, homeName) {
+	if order.DeliveryNode != "" {
+		// Pattern B: explicit DeliveryNode is a home position (consume-side removal
+		// leg where outbound_destination = inbound_source). The home is where the
+		// removal robot is returning the evac bin; route home-first, else buffer.
+		destNode, err := d.db.GetNodeByDotName(order.DeliveryNode)
+		if err != nil || destNode == nil {
+			return
+		}
+		home, err := d.db.GetLoaderHomeByPositionNode(destNode.ID)
+		if err != nil || home == nil {
+			return
+		}
+		loader, err := d.db.GetLoader(home.LoaderID)
+		if err != nil || loader == nil || loader.Layout != loaders.LayoutDedicatedPositions {
+			return
+		}
+		homeName := destNode.Name
+		// No same-order guard here: delivering to the home is the intent.
 		inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
 		if ierr == nil && inFlight == 0 {
 			d.setParkDestination(order, homeName, "home")
 			return
 		}
+		d.placeForLoader(order, home.LoaderID, homeName)
 	}
+}
 
-	// Else the first FREE buffer member (home_kind='buffer'). Full capacity read here:
-	// a buffer member legitimately holds a parked partial, so its physical occupancy
-	// must block. Never double-commit a buffer slot.
-	members, merr := d.db.ListLoaderHomes(home.LoaderID)
+// placeForLoader routes to a free buffer slot for the given loader, or drains.
+// Shared by Pattern A and Pattern B after the home-first check fails.
+func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeName string) {
+	members, merr := d.db.ListLoaderHomes(loaderID)
 	if merr != nil {
-		log.Printf("dispatch: place loader %d members: %v — draining order %d", home.LoaderID, merr, order.ID)
+		log.Printf("dispatch: place loader %d members: %v — draining order %d", loaderID, merr, order.ID)
 		return
 	}
 	for _, m := range members {
@@ -85,14 +114,12 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 			continue
 		}
 		if blocked, _ := CheckDropoffCapacity(d.db, bn.Name, order.ID); blocked {
-			continue // occupied or in-flight → try the next buffer slot
+			continue
 		}
 		d.setParkDestination(order, bn.Name, "buffer")
 		return
 	}
-
-	// Else drain — leave order.DeliveryNode at the configured outbound (unchanged).
-	d.dbg("place: loader %d home %s not free and no free buffer — draining order %d", home.LoaderID, homeName, order.ID)
+	d.dbg("place: loader home %s not free and no free buffer — draining order %d", homeName, order.ID)
 }
 
 // orderDeliversTo reports whether any dropoff step in this order targets node. Used

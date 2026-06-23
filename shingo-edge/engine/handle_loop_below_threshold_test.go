@@ -27,6 +27,8 @@ func (noOpOrderEmitter) EmitOrderCompleted(int64, string, protocol.OrderType, *i
 }
 func (noOpOrderEmitter) EmitOrderDelivered(int64, string, protocol.OrderType, *int64, *int64, *int, int64) {
 }
+func (noOpOrderEmitter) EmitOrderDeliveredFallback(int64, *int, int64, string) {
+}
 func (noOpOrderEmitter) EmitOrderFailed(int64, string, protocol.OrderType, string) {
 }
 func (noOpOrderEmitter) EmitOrderFaulted(int64, string, string) {

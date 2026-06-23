@@ -185,6 +185,12 @@ type OrderDelivered struct {
 	// for single-bin orders (BinID != nil).
 	UOPRemaining *int  `json:"uop_remaining,omitempty"`
 	DeltaEpoch   int64 `json:"delta_epoch,omitempty"`
+	// DeliveryNode is the Core dot-name of the destination. Populated for all
+	// orders so the Edge can bind the runtime cache even when the order was
+	// created on Core directly (no Edge order row). Broadcast to all edges when
+	// the order has no station (stationID==""); omitempty so older Edge builds
+	// ignore the field silently.
+	DeliveryNode string `json:"delivery_node,omitempty"`
 }
 
 // BinPickedUp notifies Edge that a robot has physically picked up a
