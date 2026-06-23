@@ -104,14 +104,14 @@ export function createFleetSection(store) {
             // fill sits behind the peak line.
             datasets = [{
                 label: 'Avg robots used', data: load.map((d) => Math.round((d.avg || 0) * 10) / 10),
-                borderColor: c.vizSecondary, backgroundColor: withAlpha(c.vizSecondary, 0.18), // P18: avg = neutral gray fill
+                borderColor: c.vizTeal, backgroundColor: withAlpha(c.vizTeal, 0.13), // P19: avg = teal + soft fill
                 fill: true, tension: 0.3, pointRadius: 0,
             }, {
                 label: 'Peak robots used', data: load.map((d) => d.peak),
-                borderColor: c.vizPrimary, borderWidth: 1.4, pointRadius: 0, fill: false, tension: 0.3, // P18: peak = white line
+                borderColor: c.vizIndigo, borderWidth: 1.4, pointRadius: 0, fill: false, tension: 0.3, // P19: peak = indigo line
             }, {
                 label: 'Fleet ceiling', data: labels.map(() => ceiling),
-                borderColor: c.warning, borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false,
+                borderColor: c.vizAmber, borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false,
             }];
         } else {
             labels = load.map((h2) => fmtHour(h2.hour));
@@ -122,11 +122,11 @@ export function createFleetSection(store) {
             }
             datasets = [{
                 label: 'Robots used', data: load.map((h2) => h2.concurrency),
-                borderColor: c.vizPrimary, backgroundColor: withAlpha(c.vizSecondary, 0.18), // P18: white line, gray fill
+                borderColor: c.vizTeal, backgroundColor: withAlpha(c.vizTeal, 0.13), // P19: teal line + soft fill
                 fill: true, tension: 0.3, pointRadius: 0,
             }, {
                 label: 'Fleet ceiling', data: labels.map(() => ceiling),
-                borderColor: c.warning, borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false,
+                borderColor: c.vizAmber, borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false,
             }];
             // Typical-day overlay (deferred — empty until materialized, Q-008).
             if (typical && typical.length === load.length) {

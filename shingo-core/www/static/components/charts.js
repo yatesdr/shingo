@@ -23,12 +23,19 @@ export function chartColors() {
         surface: cssVar('--surface', '#ffffff'),
         primary: cssVar('--primary', '#7c7cf0'),
         accent: cssVar('--accent', '#7c7cf0'),
-        // Data-viz roles (P18): series are MONOCHROME — vizPrimary (white) for the
-        // primary series, vizSecondary (gray) for context; vizAccent (indigo) is a
-        // sparing anchor (e.g. throughput bars), never a default series color.
+        // Curated data-viz palette (P19 — supersedes P18 mono). One vibrant set:
+        // categorical indigo→violet→sky→teal→amber→coral + green=good/coral=bad/
+        // amber=warn. vizPrimary (white/near-black) is hero numbers + chart text.
         vizPrimary: cssVar('--viz-primary', '#eaf0f6'),
         vizSecondary: cssVar('--viz-secondary', '#8b949e'),
         vizAccent: cssVar('--viz-accent', '#7c7cf0'),
+        vizIndigo: cssVar('--viz-indigo', '#7c7cf0'),
+        vizViolet: cssVar('--viz-violet', '#b07cf5'),
+        vizSky: cssVar('--viz-sky', '#38bdf8'),
+        vizTeal: cssVar('--viz-teal', '#2dd4bf'),
+        vizAmber: cssVar('--viz-amber', '#facc5b'),
+        vizCoral: cssVar('--viz-coral', '#fb7185'),
+        vizGreen: cssVar('--viz-green', '#34d399'),
         success: cssVar('--success', '#198754'),
         info: cssVar('--info', '#0dcaf0'),
         warning: cssVar('--warning', '#ffc107'),

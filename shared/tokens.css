@@ -64,14 +64,22 @@
   --warning: #ffc107;
   --info: #0dcaf0;
 
-  /* Data-visualization roles (P18). Charts + hero numbers are MONOCHROME — white
-   * primary, gray secondary; indigo is a sparing anchor only, never a series.
-   * Theme-aware: --viz-primary inverts (near-black on light, near-white on dark);
-   * --viz-secondary/--viz-accent resolve per theme via var(). The semantic hues
-   * (--danger/--warning/--success) stay reserved for failure/limit/target marks. */
+  /* Curated data-viz palette (P19 — supersedes P18 mono). ONE vibrant set for all
+   * charts: categorical order indigo → violet → sky → teal → amber → coral, plus
+   * green=good / coral=bad / amber=warn-ceiling-target semantics. Light variants
+   * are deepened to ~600-level so they stay legible on a light surface; the bright
+   * board hues live in the dark block. --viz-primary (white / near-black,
+   * theme-aware) backs hero numbers + chart text. */
   --viz-primary: #1b2027;            /* near-black ink (light) */
   --viz-secondary: var(--text-muted);
   --viz-accent: var(--accent);
+  --viz-indigo: var(--accent);       /* series-1 = the UI accent */
+  --viz-violet: #7c3aed;
+  --viz-sky: #0284c7;
+  --viz-teal: #0d9488;
+  --viz-amber: #b45309;
+  --viz-coral: #e11d48;
+  --viz-green: #059669;
 
   /* Unified order-status palette (P13) — ONE palette feeds map dots, the
    * floor-display board, and (via status-classes.css) the badges. These are the
@@ -93,8 +101,8 @@
    * override. --kpi-up / --kpi-down are aliases for delta arrows so they
    * can be retuned without a find-replace across the dashboards. */
   --chart-grid: color-mix(in srgb, var(--text-muted) 25%, transparent);
-  --kpi-up: var(--success);
-  --kpi-down: var(--danger);
+  --kpi-up: var(--viz-green);   /* P19: delta arrows — green up/good */
+  --kpi-down: var(--viz-coral); /* coral down/bad */
 
   /* Geometry */
   --radius: 6px;
@@ -132,7 +140,14 @@
   --danger: #f85149;
   --warning: #d29922;
   --info: #39d2f5;
-  --viz-primary: #eaf0f6;            /* near-white ink (dark) — P18 */
+  --viz-primary: #eaf0f6;            /* near-white ink (dark) */
+  /* Bright board hues for the curated palette (P19); --viz-indigo tracks --accent. */
+  --viz-violet: #b07cf5;
+  --viz-sky: #38bdf8;
+  --viz-teal: #2dd4bf;
+  --viz-amber: #facc5b;
+  --viz-coral: #fb7185;
+  --viz-green: #34d399;
 
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);

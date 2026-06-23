@@ -54,7 +54,7 @@ export function createFootprintSection(store) {
         setText('fp-processes', fp.processes_managed);
         setText('fp-bins', fp.bins_managed); // total stays the headline
         setText('fp-bins-split', binSplitText(fp));
-        spark('fp-cells-spark', fp.cells_spark, 'var(--viz-secondary)'); // P18: context sparkline = gray
+        spark('fp-cells-spark', fp.cells_spark, 'var(--viz-teal)'); // P19: palette sparkline (teal)
         renderBinsChart(fp.bins_series || []);
         renderChart(fp.load_series || []);
     }
@@ -79,8 +79,8 @@ export function createFootprintSection(store) {
             data: {
                 labels,
                 datasets: [
-                    { label: 'Full', data: series.map((b) => b.full), borderColor: c.vizPrimary, backgroundColor: withAlpha(c.vizPrimary, 0.45), fill: true, stack: 'bins', tension: 0.2, pointRadius: 0 }, // P18: white
-                    { label: 'Empty', data: series.map((b) => b.empty), borderColor: c.vizSecondary, backgroundColor: withAlpha(c.vizSecondary, 0.18), fill: true, stack: 'bins', tension: 0.2, pointRadius: 0 }, // P18: gray
+                    { label: 'Full', data: series.map((b) => b.full), borderColor: c.vizTeal, backgroundColor: withAlpha(c.vizTeal, 0.4), fill: true, stack: 'bins', tension: 0.2, pointRadius: 0 }, // P19: teal
+                    { label: 'Empty', data: series.map((b) => b.empty), borderColor: c.vizIndigo, backgroundColor: withAlpha(c.vizIndigo, 0.28), fill: true, stack: 'bins', tension: 0.2, pointRadius: 0 }, // P19: indigo
                 ],
             },
             options: { scales: { y: { min: 0, stacked: true, ticks: { precision: 0 } } }, plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
@@ -103,8 +103,8 @@ export function createFootprintSection(store) {
             data: {
                 labels,
                 datasets: [
-                    { label: 'Loaded', data: series.map((b) => b.loaded), borderColor: c.vizPrimary, backgroundColor: c.vizPrimary, tension: 0.3, pointRadius: 0, fill: false }, // P18: white
-                    { label: 'Unloaded', data: series.map((b) => b.unloaded), borderColor: c.vizSecondary, backgroundColor: c.vizSecondary, tension: 0.3, pointRadius: 0, fill: false }, // P18: gray
+                    { label: 'Loaded', data: series.map((b) => b.loaded), borderColor: c.vizTeal, backgroundColor: c.vizTeal, tension: 0.3, pointRadius: 0, fill: false }, // P19: teal
+                    { label: 'Unloaded', data: series.map((b) => b.unloaded), borderColor: c.vizIndigo, backgroundColor: c.vizIndigo, tension: 0.3, pointRadius: 0, fill: false }, // P19: indigo
                 ],
             },
             options: { scales: { y: { min: 0, ticks: { precision: 0 } } }, plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },

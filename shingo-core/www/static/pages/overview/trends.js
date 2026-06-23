@@ -53,7 +53,7 @@ export function createTrendsSection(store, opts) {
 
         charts.push(buildChart(grid, 'throughput', 'Throughput (missions per ' + bucket + ')', {
             type: 'bar',
-            data: { labels, datasets: [{ data: points.map((p) => p.total), backgroundColor: c.vizAccent, borderRadius: 2 }] }, // throughput = the ONE indigo anchor (P18)
+            data: { labels, datasets: [{ data: points.map((p) => p.total), backgroundColor: c.vizIndigo, borderRadius: 2 }] }, // throughput bars = indigo / series-1 (P19)
         }));
 
         charts.push(buildChart(grid, 'success_rate', 'Success rate (%)', {
@@ -66,7 +66,7 @@ export function createTrendsSection(store, opts) {
             // dashes any segment touching a skipped point.
             data: { labels, datasets: [{
                 data: points.map((p) => ((p.confirmed + p.failed) >= MIN_RATE_DENOM ? round1(p.success_rate) : null)),
-                borderColor: c.vizPrimary, backgroundColor: c.vizPrimary, tension: 0.3, pointRadius: 0, fill: false, // success = white, not green (P18)
+                borderColor: c.vizGreen, backgroundColor: withAlpha(c.vizGreen, 0.13), tension: 0.3, pointRadius: 0, fill: true, // success = green + soft fill (P19)
                 spanGaps: true,
                 segment: { borderDash: (ctx) => (ctx.p0.skip || ctx.p1.skip) ? [6, 6] : undefined },
             }] },
@@ -78,8 +78,8 @@ export function createTrendsSection(store, opts) {
             data: {
                 labels,
                 datasets: [
-                    { label: 'P50', data: points.map((p) => msToS(p.p50_ms)), borderColor: c.vizPrimary, backgroundColor: c.vizPrimary, tension: 0.3, pointRadius: 0, fill: false }, // P18: P50 white
-                    { label: 'P95', data: points.map((p) => msToS(p.p95_ms)), borderColor: c.vizSecondary, backgroundColor: c.vizSecondary, tension: 0.3, pointRadius: 0, fill: false }, // P18: P95 gray
+                    { label: 'P50', data: points.map((p) => msToS(p.p50_ms)), borderColor: c.vizSky, backgroundColor: c.vizSky, tension: 0.3, pointRadius: 0, fill: false }, // P19: P50 sky
+                    { label: 'P95', data: points.map((p) => msToS(p.p95_ms)), borderColor: c.vizViolet, backgroundColor: c.vizViolet, tension: 0.3, pointRadius: 0, fill: false }, // P19: P95 violet
                 ],
             },
             options: { plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
@@ -90,8 +90,8 @@ export function createTrendsSection(store, opts) {
             data: {
                 labels,
                 datasets: [
-                    { label: 'Cancelled', data: points.map((p) => p.total ? round1(p.cancelled / p.total * 100) : 0), borderColor: c.vizSecondary, backgroundColor: c.vizSecondary, tension: 0.3, pointRadius: 0, fill: false }, // P18: cancelled gray
-                    { label: 'Failed', data: points.map((p) => p.total ? round1((p.failed || 0) / p.total * 100) : 0), borderColor: c.danger, backgroundColor: c.danger, tension: 0.3, pointRadius: 0, fill: false }, // P18: failure = red (semantic)
+                    { label: 'Cancelled', data: points.map((p) => p.total ? round1(p.cancelled / p.total * 100) : 0), borderColor: c.vizAmber, backgroundColor: c.vizAmber, tension: 0.3, pointRadius: 0, fill: false }, // P19: cancelled amber
+                    { label: 'Failed', data: points.map((p) => p.total ? round1((p.failed || 0) / p.total * 100) : 0), borderColor: c.vizCoral, backgroundColor: c.vizCoral, tension: 0.3, pointRadius: 0, fill: false }, // P19: failure = coral (semantic)
                 ],
             },
             options: { scales: { y: { min: 0, max: 100 } }, plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
@@ -141,3 +141,15 @@ function windowFor(range) {
 
 function round1(v) { return Math.round((v || 0) * 10) / 10; }
 function msToS(ms) { return Math.round((ms || 0) / 100) / 10; }
+
+// withAlpha turns a resolved color into a translucent area fill (P19 soft fills).
+// Handles hex; falls back to color-mix for var()/named colors.
+function withAlpha(color, a) {
+    if (color && color[0] === '#') {
+        let hex = color.slice(1);
+        if (hex.length === 3) hex = hex.split('').map((x) => x + x).join('');
+        const n = parseInt(hex, 16);
+        return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+    }
+    return 'color-mix(in srgb, ' + color + ' ' + Math.round(a * 100) + '%, transparent)';
+}

@@ -308,7 +308,7 @@
 
 /* SSE liveness pill in the filter bar. */
 .live-pill { font-size: 0.8rem; color: var(--text-muted); }
-.live-pill.is-live { color: var(--accent); } /* P18: live = indigo (active state) */
+.live-pill.is-live { color: var(--viz-green); } /* P19: live = green */
 
 /* Synthetic-data badge (?demo=on), shared with /heartbeat (§13). */
 .demo-badge {
@@ -369,7 +369,7 @@
 .ov-hero-row { display: flex; flex-wrap: wrap; gap: 2.5rem; align-items: flex-start; }
 .ov-hero { display: flex; flex-direction: column; gap: 0.05rem; }
 .ov-hero__value { font-size: 2.2rem; font-weight: 500; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--viz-primary); }
-.ov-hero__sub.is-ceiling { color: var(--warning); } /* P18: "at ceiling" = amber (semantic limit) */
+.ov-hero__sub.is-ceiling { color: var(--viz-amber); } /* P19: "at ceiling" = amber (semantic limit) */
 .ov-hero__label { font-size: 0.7rem; font-weight: 400; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); }
 .ov-hero__sub { font-size: 0.82rem; font-weight: 400; color: var(--text-muted); margin-top: 0.1rem; }
 .ov-support { display: flex; flex-wrap: wrap; gap: 0.9rem 1.75rem; margin: 0.7rem 0 1rem; }
