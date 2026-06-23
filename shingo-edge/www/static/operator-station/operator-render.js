@@ -372,6 +372,11 @@ function buildLoaderCard(entry, code, counters, opts) {
         card.addEventListener('click', function() {
             confirmUnloadSwap(entry.node.id);
         });
+    } else {
+        card.style.cursor = 'pointer';
+        card.addEventListener('click', function() {
+            openModalRef(entry.node.id);
+        });
     }
 
     return card;
