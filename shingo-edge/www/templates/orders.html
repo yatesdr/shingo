@@ -10,6 +10,7 @@
     </select>
     {{end}}
     <a href="/orders?process={{.ActiveProcessID}}" class="btn btn-sm{{if not .FilterStatus}} btn-primary{{end}}">All</a>
+    <a href="/orders?process={{.ActiveProcessID}}&status=confirmed" class="btn btn-sm{{if eq .FilterStatus "confirmed"}} btn-primary{{end}}">Confirmed</a>
     <a href="/orders?process={{.ActiveProcessID}}&status=faulted" class="btn btn-sm{{if eq .FilterStatus "faulted"}} btn-primary{{end}}">Faulted</a>
     <a href="/orders?process={{.ActiveProcessID}}&status=failed" class="btn btn-sm{{if eq .FilterStatus "failed"}} btn-primary{{end}}">Failed</a>
     <a href="/orders?process={{.ActiveProcessID}}&status=queued" class="btn btn-sm{{if eq .FilterStatus "queued"}} btn-primary{{end}}">Queued</a>

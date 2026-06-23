@@ -782,7 +782,7 @@ func TestOrders_ActiveListFilters(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 
-	a, _ := db.CreateOrder("a", "retrieve", nil, false, 1, "", "", "", "", false, "")
+	_, _ = db.CreateOrder("a", "retrieve", nil, false, 1, "", "", "", "", false, "")
 	b, _ := db.CreateOrder("b", "retrieve", nil, false, 1, "", "", "", "", false, "")
 	c, _ := db.CreateOrder("c", "retrieve", nil, false, 1, "", "", "", "", false, "")
 
@@ -790,8 +790,9 @@ func TestOrders_ActiveListFilters(t *testing.T) {
 	db.UpdateOrderStatus(b, "confirmed")
 	db.UpdateOrderStatus(c, "cancelled")
 
+	// ListActiveOrders: pending + confirmed (7-day window) are shown; cancelled is not.
 	active, err := db.ListActiveOrders()
-	if err != nil || len(active) != 1 || active[0].ID != a {
+	if err != nil || len(active) != 2 {
 		t.Fatalf("active: %v len=%d", err, len(active))
 	}
 
@@ -800,9 +801,12 @@ func TestOrders_ActiveListFilters(t *testing.T) {
 		t.Errorf("count = %d, want 1", n)
 	}
 
-	// Mark c failed too — still excluded from CountActiveOrders (but ListActiveOrders
-	// only excludes confirmed/cancelled, so c still shows in ListActiveOrders).
+	// Mark c failed — confirmed/failed/faulted all show within 7 days; cancelled excluded.
 	db.UpdateOrderStatus(c, "failed")
+	active2, err2 := db.ListActiveOrders()
+	if err2 != nil || len(active2) != 3 {
+		t.Fatalf("active after failing c: %v len=%d", err2, len(active2))
+	}
 	if got := db.CountActiveOrders(); got != 1 {
 		t.Errorf("count after failing c = %d, want 1", got)
 	}

@@ -53,19 +53,17 @@ func List(db *sql.DB) ([]Order, error) {
 	return scanOrders(rows)
 }
 
-// ListActive returns every order operator-visible on the edge HMI —
-// excludes confirmed/cancelled/skipped (operator has nothing to do
-// with these) but keeps failed/faulted visible so the operator can
-// retry or acknowledge. See protocol.IsOperatorVisible for the predicate.
+// ListActive returns orders visible on the edge HMI orders history screen.
 //
-// Terminal-but-visible orders (failed, faulted) are capped to 7 days so
-// historical failures don't accumulate forever in the view. Non-terminal
-// orders (queued, in_transit, staged, …) are always shown regardless of age.
+// Always shown: non-terminal active statuses (queued, in_transit, staged, …).
+// Shown for 7 days: confirmed, failed, faulted — recent history without
+// accumulating months of noise.
+// Never shown: cancelled, skipped — operator has nothing to do with these.
 func ListActive(db *sql.DB) ([]Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
-		WHERE o.status IN (%s)
-		AND (o.status NOT IN ('failed','faulted') OR o.created_at > datetime('now', '-7 days'))
-		ORDER BY o.created_at DESC`, protocol.OperatorVisibleStatusSQLList()))
+	rows, err := db.Query(`SELECT ` + selectCols + ` ` + joinClause + `
+		WHERE o.status NOT IN ('cancelled','skipped')
+		AND (o.status NOT IN ('confirmed','failed','faulted') OR o.created_at > datetime('now', '-7 days'))
+		ORDER BY o.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -86,14 +84,13 @@ func CountActive(db *sql.DB) int {
 	return count
 }
 
-// ListActiveByProcess returns operator-visible orders for one process.
-// Mirrors ListActive's predicate and 7-day terminal-order window.
+// ListActiveByProcess returns orders for one process. Mirrors ListActive's predicate.
 func ListActiveByProcess(db *sql.DB, processID int64) ([]Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
-		WHERE o.status IN (%s)
+	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.status NOT IN ('cancelled','skipped')
 		AND pl.id = ?
-		AND (o.status NOT IN ('failed','faulted') OR o.created_at > datetime('now', '-7 days'))
-		ORDER BY o.created_at DESC`, protocol.OperatorVisibleStatusSQLList()), processID)
+		AND (o.status NOT IN ('confirmed','failed','faulted') OR o.created_at > datetime('now', '-7 days'))
+		ORDER BY o.created_at DESC`, processID)
 	if err != nil {
 		return nil, err
 	}
