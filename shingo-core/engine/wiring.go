@@ -1,4 +1,4 @@
-﻿// wiring.go â€" Core event handler wiring.
+// wiring.go â€" Core event handler wiring.
 //
 // This is the reactive heart of ShinGo Core. wireEventHandlers() is the
 // single master registry â€" every EventBus subscription lives here so
