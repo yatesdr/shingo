@@ -104,13 +104,17 @@ export function createFleetSection(store) {
         if (daily) {
             labels = load.map((d) => fmtDay(d.day));
             if (dayLabel) dayLabel.textContent = 'Fleet load — daily peak / avg robots used across range';
+            // Fill the AVERAGE (typical usage) and draw peak as a thin envelope
+            // line above it — filling under peak overstated usage (it made a big
+            // mountain when the floor mostly uses ~1 robot). Avg first so its
+            // fill sits behind the peak line.
             datasets = [{
-                label: 'Peak robots used', data: load.map((d) => d.peak),
-                borderColor: c.info, backgroundColor: withAlpha(c.info, 0.18),
+                label: 'Avg robots used', data: load.map((d) => Math.round((d.avg || 0) * 10) / 10),
+                borderColor: c.success, backgroundColor: withAlpha(c.success, 0.18),
                 fill: true, tension: 0.3, pointRadius: 0,
             }, {
-                label: 'Avg robots used', data: load.map((d) => Math.round((d.avg || 0) * 10) / 10),
-                borderColor: c.success, borderWidth: 1, pointRadius: 0, fill: false, tension: 0.3,
+                label: 'Peak robots used', data: load.map((d) => d.peak),
+                borderColor: c.info, borderWidth: 1.4, pointRadius: 0, fill: false, tension: 0.3,
             }, {
                 label: 'Fleet ceiling', data: labels.map(() => ceiling),
                 borderColor: c.warning, borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false,
