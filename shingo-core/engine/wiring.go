@@ -1,20 +1,20 @@
-// wiring.go â€” Core event handler wiring.
+﻿// wiring.go â€" Core event handler wiring.
 //
 // This is the reactive heart of ShinGo Core. wireEventHandlers() is the
-// single master registry â€” every EventBus subscription lives here so
+// single master registry â€" every EventBus subscription lives here so
 // the full reactive contract can be read top-to-bottom without cross-
 // referencing other files. Handler implementations are split by
 // functional concern into sibling files:
 //
-//   wiring_vendor_status.go   â€“ fleet status â†’ order status mapping,
+//   wiring_vendor_status.go   â€" fleet status â†’ order status mapping,
 //                                waybill/staged/terminal dispatch
-//   wiring_completion.go      â€“ delivery arrival, completion cleanup,
+//   wiring_completion.go      â€" delivery arrival, completion cleanup,
 //                                multi-bin junction-table paths
-//   wiring_staging.go         â€“ resolveNodeStaging / resolveStagingExpiry
-//   wiring_auto_return.go     â€“ maybeCreateReturnOrder and related
-//   wiring_kanban.go          â€“ demand-registry signalling on bin moves
-//   wiring_telemetry.go       â€“ per-transition mission events + summary
-//   wiring_count_group.go     â€“ CountGroup broadcast to edges
+//   wiring_staging.go         â€" resolveNodeStaging / resolveStagingExpiry
+//   wiring_auto_return.go     â€" maybeCreateReturnOrder and related
+//   wiring_kanban.go          â€" demand-registry signalling on bin moves
+//   wiring_telemetry.go       â€" per-transition mission events + summary
+//   wiring_count_group.go     â€" CountGroup broadcast to edges
 //
 // sendToEdge (the outbound envelope helper) also lives here since it
 // is shared by the subscription handlers above.
@@ -36,7 +36,7 @@ import (
 	"shingocore/dispatch"
 )
 
-// â”€â”€ Outbound messaging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Outbound messaging â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 // sendToEdge builds a protocol envelope and enqueues it for dispatch to an edge station.
 func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error {
@@ -57,10 +57,10 @@ func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error
 	return nil
 }
 
-// â”€â”€ Event subscriptions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Event subscriptions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 func (e *Engine) wireEventHandlers() {
-	// â”€â”€ Dispatch tracking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Dispatch tracking â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	// When an order is dispatched, track it in the tracker
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderDispatchedEvent]) {
 		ev := evt.Payload
@@ -77,7 +77,7 @@ func (e *Engine) wireEventHandlers() {
 		e.logFn("engine: tracking vendor order %s for order %d", ev.VendorOrderID, ev.OrderID)
 	}, EventOrderDispatched)
 
-	// â”€â”€ Vendor status changes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Vendor status changes â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderStatusChangedEvent]) {
 		ev := evt.Payload
 		e.dbg("vendor status change: order=%d vendor=%s %s->%s robot=%s", ev.OrderID, ev.VendorOrderID, ev.OldStatus, ev.NewStatus, ev.RobotID)
@@ -89,7 +89,7 @@ func (e *Engine) wireEventHandlers() {
 		e.recordMissionEvent(evt.Payload)
 	}, EventOrderStatusChanged)
 
-	// â”€â”€ Order failure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Order failure â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
 		ev := evt.Payload
 		e.logFn("engine: order %d failed: %s - %s", ev.OrderID, ev.ErrorCode, ev.Detail)
@@ -97,7 +97,7 @@ func (e *Engine) wireEventHandlers() {
 
 		// Notify ShinGo Edge so it can transition the order locally.
 		// Mirrors the EventOrderCancelled handler's notification block below.
-		// The edge handler (HandleOrderError) is idempotent â€” duplicate
+		// The edge handler (HandleOrderError) is idempotent â€" duplicate
 		// failure notifications for an already-failed order are harmless.
 		// Auto-return orders have empty EdgeUUID by design (Core-internal);
 		// the gate correctly skips them.
@@ -147,7 +147,7 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventOrderSkipped)
 
-	// â”€â”€ Order completion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Order completion â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
 		ev := evt.Payload
 		e.logFn("engine: order %d completed", ev.OrderID)
@@ -155,7 +155,7 @@ func (e *Engine) wireEventHandlers() {
 		e.handleOrderCompleted(ev)
 	}, EventOrderCompleted)
 
-	// â”€â”€ Order cancellation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Order cancellation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
 		ev := evt.Payload
 		e.logFn("engine: order %d cancelled: %s", ev.OrderID, ev.Reason)
@@ -165,7 +165,7 @@ func (e *Engine) wireEventHandlers() {
 		// The dispatcher path (edge-initiated cancel) sends its own reply via
 		// ReplySender.SendCancelled, but engine-initiated cancellations (web UI
 		// terminate, fleet status change, recovery) go through this event handler.
-		// The edge handler (HandleOrderCancelled) is idempotent â€” a duplicate
+		// The edge handler (HandleOrderCancelled) is idempotent â€" a duplicate
 		// cancellation for an already-cancelled order is harmless.
 		if ev.StationID != "" && ev.EdgeUUID != "" {
 			if err := e.sendToEdge(protocol.TypeOrderCancelled, ev.StationID,
@@ -188,7 +188,7 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventOrderCancelled)
 
-	// â”€â”€ Audit-only subscriptions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Audit-only subscriptions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderReceivedEvent]) {
 		ev := evt.Payload
 		e.logFn("engine: order %d received from %s: %s %s -> %s", ev.OrderID, ev.StationID, ev.OrderType, ev.PayloadCode, ev.DeliveryNode)
@@ -213,7 +213,7 @@ func (e *Engine) wireEventHandlers() {
 		e.db.AppendAudit("correction", ev.CorrectionID, ev.CorrectionType, "", ev.Reason, ev.Actor)
 	}, EventCorrectionApplied)
 
-	// â”€â”€ CMS transaction logging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ CMS transaction logging â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
 		ev := evt.Payload
 		if ev.Action == "moved" && ev.FromNodeID != 0 && ev.ToNodeID != 0 {
@@ -221,7 +221,7 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventBinUpdated)
 
-	// â”€â”€ Fulfillment scanner triggers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Fulfillment scanner triggers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	// Async trigger for high-volume signals (bin moves, order
 	// completions). The scanner coalesces overlapping triggers via
 	// its `pending` flag; a goroutine here keeps the emitting handler
@@ -239,7 +239,7 @@ func (e *Engine) wireEventHandlers() {
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCancelled)
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderFailed)
 	// EventBinEnteredTransit is the slot-vacancy signal added in Phase 1
-	// of the bin-transit-state project â€” every pickup that moves a bin
+	// of the bin-transit-state project â€" every pickup that moves a bin
 	// to _TRANSIT frees its source slot, which can unblock queued orders
 	// that needed to drop something there. Subscribing here makes the
 	// scanner re-evaluate without waiting for the order to fully complete.
@@ -251,7 +251,7 @@ func (e *Engine) wireEventHandlers() {
 	// DispatchPreparedComplex, so capacity decisions are serialized via
 	// scan-mu (no TOCTOU between two concurrent fresh intakes for the
 	// same dropoff). Synchronous so the dispatched-status transition is
-	// observable on return from HandleComplexOrderRequest â€” the existing
+	// observable on return from HandleComplexOrderRequest â€" the existing
 	// test fixtures rely on that ordering, and operator-facing latency
 	// expectations don't tolerate "queued for ~1ms while a goroutine
 	// gets scheduled." Untyped subscribe — handler doesn't read payload.
@@ -261,7 +261,7 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventOrderQueued)
 
-	// â”€â”€ Per-block completion â†’ transit transition â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Per-block completion â†’ transit transition â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	// Phase 2 of the bin-transit-state project: pickup blocks (BinTask=Load
 	// or "pickup"-flavoured operations) drive the bin claimed at that step
 	// onto the synthetic _TRANSIT node. The poller diffs per-block state
@@ -343,14 +343,14 @@ func (e *Engine) wireEventHandlers() {
 		terminal(evt.Payload.OrderID)
 	}, EventOrderCompleted)
 
-	// â”€â”€ Queued order audit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Queued order audit â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
 		ev := evt.Payload
-		e.logFn(“engine: order %d queued for payload %s”, ev.OrderID, ev.PayloadCode)
-		e.db.AppendAudit(“order”, ev.OrderID, “queued”, “”, fmt.Sprintf(“payload=%s from %s”, ev.PayloadCode, ev.StationID), “system”)
+		e.logFn("engine: order %d queued for payload %s", ev.OrderID, ev.PayloadCode)
+		e.db.AppendAudit("order", ev.OrderID, "queued", "", fmt.Sprintf("payload=%s from %s", ev.PayloadCode, ev.StationID), "system")
 	}, EventOrderQueued)
 
-	// â”€â”€ Queue-reason push â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Queue-reason push â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	// Runs third for EventOrderQueued — after the sync scanner (1st) and
 	// the audit handler (2nd) above — so the scanner's latest
 	// SetOrderQueueReason call is visible when we read the order back.
@@ -359,15 +359,15 @@ func (e *Engine) wireEventHandlers() {
 	// scanner transition away from StatusQueued, suppressing the push.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
 		ev := evt.Payload
-		if ev.EdgeUUID == “” || ev.StationID == “” {
+		if ev.EdgeUUID == "" || ev.StationID == "" {
 			return
 		}
 		order, err := e.db.GetOrder(ev.OrderID)
 		if err != nil {
-			e.logFn(“engine: queue_reason push: load order %d: %v”, ev.OrderID, err)
+			e.logFn("engine: queue_reason push: load order %d: %v", ev.OrderID, err)
 			return
 		}
-		if order.Status != dispatch.StatusQueued || order.QueueReason == “” {
+		if order.Status != dispatch.StatusQueued || order.QueueReason == "" {
 			return
 		}
 		if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID, &protocol.OrderUpdate{
@@ -375,11 +375,11 @@ func (e *Engine) wireEventHandlers() {
 			Status:      string(dispatch.StatusQueued),
 			QueueReason: order.QueueReason,
 		}); err != nil {
-			e.logFn(“engine: queue_reason update to edge: %v”, err)
+			e.logFn("engine: queue_reason update to edge: %v", err)
 		}
 	}, EventOrderQueued)
 
-	// â”€â”€ Kanban demand â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Kanban demand â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	// look up the demand registry and send a demand signal to Edge.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
 		e.handleKanbanDemand(evt.Payload)
@@ -397,7 +397,7 @@ func (e *Engine) wireEventHandlers() {
 		}, EventBinUpdated)
 	}
 
-	// â”€â”€ Count-group transitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// â"€â"€ Count-group transitions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	// When the countgroup runner detects a debounced occupancy change
 	// (or fires the RDS-down fail-safe), ship a CountGroupCommand to
 	// all edges. Each edge checks its own bindings map and either
