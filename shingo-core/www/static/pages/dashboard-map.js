@@ -89,6 +89,8 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   var mapKeyOpen = false;   // node-type symbol key collapsed by default (reference info)
   var cometLayer = null;    // persistent SVG overlay holding the route comets
   var lastCometSig = '';    // signature of the last-built comet set (rebuild only on change)
+  var cometState = [];      // live comet geometry + dot elements, positioned each frame by rAF
+  var cometRAF = 0;         // requestAnimationFrame handle for the comet positioner loop
   var clickBound = false;   // host click handler attached once
   // Above this many active routes, the ambient view calms to dim lines (no
   // comets) so a busy floor doesn't become 20 arrows fighting for attention;
@@ -450,42 +452,101 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     return '#' + [r, g, b].map(function (v) { return ('0' + v.toString(16)).slice(-2); }).join('');
   }
 
-  // Comet: a bright leading arrow followed by a tail of dots that taper in size
-  // and fade in opacity behind it, riding the route path (#pathId) via SMIL
-  // animateMotion. Repeats seamlessly; each dot fades out at the destination and
-  // back in at the robot, so the path is empty between laps and other routes /
-  // nodes show through. Trail length 10, ~6s per lap (chosen in preview).
-  function addComet(svg, pathId, color, robotR) {
-    var dur = 6, count = 10;
-    var gap = (dur * 0.16) / count; // tail tightness: dots span ~16% of a lap
+  // Comet trail params, shared by the builder and the rAF positioner: a bright
+  // leading arrow (i=0) trailed by dots that taper in size and fade behind it.
+  // ~6s per lap; the tail spans ~16% of the path so the lane sits empty between
+  // passes and other routes/nodes show through.
+  var COMET_PERIOD = 6000;  // ms per lap
+  var COMET_COUNT = 10;     // dots per comet (head + 9 tail)
+  var COMET_SPAN = 0.16;    // tail occupies this fraction of the path length
+
+  // buildCometDots appends one comet's dot elements to the overlay and returns
+  // their specs. NO SMIL: positions are set every frame by tickComets from the
+  // route's LIVE polyline, so the comet leaves the robot and tracks it as it
+  // drives, and never restarts/teleports when the path is retargeted. (P17 —
+  // replaces the animateMotion/mpath approach, which Chrome would not re-sample
+  // when the referenced path's geometry changed mid-animation.)
+  function buildCometDots(layer, color, robotR) {
     var headK = robotR * 0.5;
     var headColor = hexLighten(color, 0.45);
-    for (var i = 0; i < count; i++) {
-      var begin = (-dur + i * gap).toFixed(3) + 's'; // most-negative = leading head
-      var op = (1 - i / count).toFixed(3);
-      var node;
+    var dots = [];
+    for (var i = 0; i < COMET_COUNT; i++) {
+      var el;
       if (i === 0) {
-        node = svgEl('polygon', {
+        el = svgEl('polygon', {
           points: (headK * 1.7) + ',0 ' + (-headK) + ',' + headK + ' ' +
             (-headK * 0.35) + ',0 ' + (-headK) + ',' + (-headK),
           fill: headColor, class: 'map-comet-head'
         });
       } else {
-        node = svgEl('circle', { cx: 0, cy: 0, r: (robotR * 0.4 * (1 - 0.7 * i / count)).toFixed(3), fill: color });
+        el = svgEl('circle', { r: (robotR * 0.4 * (1 - 0.7 * i / COMET_COUNT)).toFixed(3), fill: color });
       }
-      var am = svgEl('animateMotion', { dur: dur + 's', repeatCount: 'indefinite', begin: begin, rotate: 'auto' });
-      var mp = document.createElementNS(SVGNS, 'mpath');
-      mp.setAttributeNS('http://www.w3.org/1999/xlink', 'href', '#' + pathId);
-      mp.setAttribute('href', '#' + pathId);
-      am.appendChild(mp);
-      node.appendChild(am);
-      node.appendChild(svgEl('animate', {
-        attributeName: 'opacity', values: '0;' + op + ';' + op + ';0', keyTimes: '0;0.06;0.9;1',
-        dur: dur + 's', begin: begin, repeatCount: 'indefinite'
-      }));
-      svg.appendChild(node);
+      el.setAttribute('opacity', '0');
+      layer.appendChild(el);
+      dots.push({ el: el, idx: i, isHead: i === 0, baseOpacity: (1 - i / COMET_COUNT) });
     }
+    return dots;
   }
+
+  // Cumulative segment lengths so a 0..1 fraction maps to an arc-length point.
+  function measurePolyline(pts) {
+    var cum = [0], total = 0, i;
+    for (i = 1; i < pts.length; i++) {
+      var dx = pts[i][0] - pts[i - 1][0], dy = pts[i][1] - pts[i - 1][1];
+      total += Math.sqrt(dx * dx + dy * dy);
+      cum.push(total);
+    }
+    return { cum: cum, total: total };
+  }
+
+  // Point + heading (deg) at fraction f (0..1) along a measured polyline.
+  function pointAt(pts, meas, f) {
+    if (!pts || pts.length < 2 || meas.total <= 0) {
+      return { x: pts && pts[0] ? pts[0][0] : 0, y: pts && pts[0] ? pts[0][1] : 0, a: 0 };
+    }
+    var target = f * meas.total, lo = 0;
+    while (lo < meas.cum.length - 2 && meas.cum[lo + 1] < target) lo++;
+    var segLen = meas.cum[lo + 1] - meas.cum[lo];
+    var t = segLen > 0 ? (target - meas.cum[lo]) / segLen : 0;
+    var p0 = pts[lo], p1 = pts[lo + 1];
+    return {
+      x: p0[0] + (p1[0] - p0[0]) * t,
+      y: p0[1] + (p1[1] - p0[1]) * t,
+      a: Math.atan2(p1[1] - p0[1], p1[0] - p0[0]) * 180 / Math.PI
+    };
+  }
+
+  // tickComets positions every comet's dots along its LIVE polyline each frame.
+  // Geometry comes from cometState, which syncCometLayer refreshes every render
+  // tick — so the streak follows the robot as it drives, gliding continuously
+  // with no teardown or restart. Idles itself (stops re-arming) when empty.
+  function tickComets(now) {
+    cometRAF = 0;
+    if (!cometState.length) return;
+    var base = (now % COMET_PERIOD) / COMET_PERIOD; // head phase, advances with time
+    var gapFrac = COMET_SPAN / COMET_COUNT;
+    for (var c = 0; c < cometState.length; c++) {
+      var cs = cometState[c];
+      for (var d = 0; d < cs.dots.length; d++) {
+        var dot = cs.dots[d];
+        var f = base - dot.idx * gapFrac;
+        f -= Math.floor(f); // wrap into [0,1)
+        var p = pointAt(cs.pts, cs.meas, f);
+        // Fade in near the robot, out near the destination — no pop at the wrap.
+        var env = f < 0.06 ? f / 0.06 : (f > 0.9 ? (1 - f) / 0.1 : 1);
+        dot.el.setAttribute('opacity', (dot.baseOpacity * Math.max(0, Math.min(1, env))).toFixed(3));
+        if (dot.isHead) {
+          dot.el.setAttribute('transform', 'translate(' + p.x.toFixed(2) + ' ' + p.y.toFixed(2) + ') rotate(' + p.a.toFixed(1) + ')');
+        } else {
+          dot.el.setAttribute('cx', p.x.toFixed(2));
+          dot.el.setAttribute('cy', p.y.toFixed(2));
+        }
+      }
+    }
+    cometRAF = requestAnimationFrame(tickComets);
+  }
+  function startComets() { if (!cometRAF && cometState.length) cometRAF = requestAnimationFrame(tickComets); }
+  function stopComets() { if (cometRAF) { cancelAnimationFrame(cometRAF); cometRAF = 0; } }
 
   // ── persistent comet overlay ───────────────────────────────────────
   // The comets live on their own <svg> layered over the map — a sibling of
@@ -510,25 +571,41 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
   function clearCometLayer() {
     if (cometLayer) { while (cometLayer.firstChild) cometLayer.removeChild(cometLayer.firstChild); }
+    cometState = [];
+    stopComets();
     lastCometSig = '';
   }
 
   function syncCometLayer(cometRoutes, robotR) {
-    var vbKey = view ? (Math.round(view.minX) + ',' + Math.round(view.minY) + ',' +
-      Math.round(view.w) + ',' + Math.round(view.h)) : 'none';
-    var sig = vbKey + '|' + Math.round(robotR * 100) + '|' +
-      cometRoutes.map(function (c) { return c.sig; }).join(';');
-    if (sig === lastCometSig) return; // nothing structural changed — let SMIL run
-    lastCometSig = sig;
     var layer = ensureCometLayer();
     if (!layer) return;
     if (view) layer.setAttribute('viewBox', view.minX + ' ' + view.minY + ' ' + view.w + ' ' + view.h);
-    while (layer.firstChild) layer.removeChild(layer.firstChild);
-    cometRoutes.forEach(function (c) {
-      // invisible path = the comet's motion track (mpath target).
-      layer.appendChild(svgEl('path', { id: c.id, d: c.d, fill: 'none', stroke: 'none' }));
-      addComet(layer, c.id, c.color, robotR);
-    });
+    var vbKey = view ? (Math.round(view.minX) + ',' + Math.round(view.minY) + ',' +
+      Math.round(view.w) + ',' + Math.round(view.h)) : 'none';
+    // SET signature = which comets exist (identity + color + frame + scale), NOT
+    // the path geometry. Robot movement only refreshes geometry (below); the dot
+    // elements are rebuilt solely when the SET changes.
+    var sig = vbKey + '|' + Math.round(robotR * 100) + '|' +
+      cometRoutes.map(function (c) { return c.sig + ':' + c.color; }).join(';');
+    if (sig !== lastCometSig) {
+      // SET changed (route added/removed, focus, status, scale, frame) — rebuild
+      // the dot elements. Brief and infrequent.
+      lastCometSig = sig;
+      while (layer.firstChild) layer.removeChild(layer.firstChild);
+      cometState = cometRoutes.map(function (c) {
+        return { pts: c.pts, meas: measurePolyline(c.pts), dots: buildCometDots(layer, c.color, robotR) };
+      });
+    } else {
+      // Same SET — just refresh each comet's live geometry (robot moved). The rAF
+      // positioner reads it next frame, so the streak tracks the robot with no
+      // teardown and no restart. The deterministic sort in render() keeps index →
+      // comet stable, so cometState[i] always matches cometRoutes[i].
+      for (var i = 0; i < cometState.length && i < cometRoutes.length; i++) {
+        cometState[i].pts = cometRoutes[i].pts;
+        cometState[i].meas = measurePolyline(cometRoutes[i].pts);
+      }
+    }
+    startComets();
   }
 
   // ── render (coalesced via rAF) ─────────────────────────────────────
@@ -685,21 +762,23 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       var dimmed = !!focusRobot && !focused;
       var wantComet = !reduceMotion && (focusRobot ? focused : activeRoutes.length <= COMET_LIMIT);
       if (wantComet) {
-        // Comet rides a STABLE lane: source → destination along the network when a
-        // source node is known, so the path doesn't shift as the robot drives;
-        // falls back to the robot's current position only when there's no source.
-        var src = findNode(o.source_node);
-        var sx = src ? src.x : r.x, sy = src ? src.y : r.y;
-        var cworld = routeWorld(sx, sy, dest);
+        // Comet runs from the ROBOT'S CURRENT position to its destination, along
+        // the network — routeWorld() starts the path at (r.x, r.y), so the streak
+        // leaves the robot, not a fixed node. The polyline is recomputed every
+        // tick and handed to syncCometLayer; the rAF positioner reads it live, so
+        // the comet tracks the robot while gliding. syncCometLayer rebuilds the
+        // dot elements only when the comet SET changes (route added/removed/
+        // focus/status).
+        var cworld = routeWorld(r.x, r.y, dest);
         var cpts = cworld
           ? cworld.map(function (w) { return proj(w[0], w[1]); })
-          : [proj(sx, sy), proj(dest.x, dest.y)];
+          : [proj(r.x, r.y), proj(dest.x, dest.y)];
         cometRoutes.push({
-          id: 'comet-route-' + idx,
-          d: 'M ' + cpts.map(function (p) { return p[0] + ' ' + p[1]; }).join(' L '),
+          pts: cpts,
           color: color,
-          // identity (NOT geometry) — so robot movement alone does not rebuild.
-          sig: o.robot_id + '>' + (o.source_node || '') + '>' + o.delivery_node + '>' + o.status
+          // membership/rebuild key (NOT geometry) — geometry tracks the robot
+          // live via the rAF positioner, never forcing a rebuild on movement.
+          sig: o.robot_id + '>' + o.delivery_node + '>' + o.status
         });
       }
       // Reduced-motion fallback: a faint static lane line (no animation).
@@ -719,6 +798,10 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
         'stroke-width': robotR * 0.14, 'stroke-opacity': dimmed ? 0.35 : 0.65
       }));
     });
+    // Deterministic order so the comet SET signature is order-independent — a
+    // server reshuffle of `orders` doesn't force a needless rebuild, and index →
+    // overlay path id stays stable for in-place geometry updates.
+    cometRoutes.sort(function (a, b) { return a.sig < b.sig ? -1 : a.sig > b.sig ? 1 : 0; });
 
     // nodes — receded travel dots + distinct outlined waypoint shapes, ON TOP
     // of routes so they stay legible even with paths running underneath.
