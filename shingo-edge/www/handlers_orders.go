@@ -31,6 +31,19 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		activeOrders, _ = h.engine.OrderService().ListActive()
 	}
 
+	// Optional status filter — post-filter from operator-visible set so the
+	// tab counts reflect what's actually on screen.
+	filterStatus := r.URL.Query().Get("status")
+	if filterStatus != "" {
+		var filtered []domain.Order
+		for _, o := range activeOrders {
+			if string(o.Status) == filterStatus {
+				filtered = append(filtered, o)
+			}
+		}
+		activeOrders = filtered
+	}
+
 	// Core-synced nodes for redirect dropdown
 	coreNodes := h.engine.CoreNodes()
 	knownNodes := make([]string, 0, len(coreNodes))
@@ -44,6 +57,7 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		"Page":              "orders",
 		"Processes":         processes,
 		"ActiveProcessID":   activeProcessID,
+		"FilterStatus":      filterStatus,
 		"ActiveOrders":      activeOrders,
 		"KnownNodes":        knownNodes,
 		"Anomalies":         anomalies,
@@ -65,6 +79,16 @@ func (h *Handlers) handleOrdersPartial(w http.ResponseWriter, r *http.Request) {
 		activeOrders, _ = h.engine.OrderService().ListActiveByProcess(activeProcessID)
 	} else {
 		activeOrders, _ = h.engine.OrderService().ListActive()
+	}
+	filterStatus := r.URL.Query().Get("status")
+	if filterStatus != "" {
+		var filtered []domain.Order
+		for _, o := range activeOrders {
+			if string(o.Status) == filterStatus {
+				filtered = append(filtered, o)
+			}
+		}
+		activeOrders = filtered
 	}
 	data := map[string]any{
 		"ActiveOrders": activeOrders,

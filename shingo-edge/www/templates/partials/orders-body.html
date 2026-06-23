@@ -4,6 +4,7 @@
         <tr>
             <th>UUID</th>
             <th>Type</th>
+            <th>Payload</th>
             <th>Process</th>
             <th>Target</th>
             <th>Status</th>
@@ -15,11 +16,16 @@
     <tbody id="orders-body">
         {{range .ActiveOrders}}
         <tr data-order-id="{{.ID}}">
-            <td class="tag-name">{{printf "%.8s" .UUID}}</td>
+            {{/* P20-equivalent: left-edge alert for faulted (amber) and failed (red). */}}
+            <td class="tag-name"{{if eq .Status "faulted"}} style="border-left:3px solid var(--warning)"{{else if eq .Status "failed"}} style="border-left:3px solid var(--danger)"{{end}}>{{printf "%.8s" .UUID}}</td>
             <td>{{.OrderType}}</td>
+            <td>{{if .PayloadCode}}<code style="font-size:0.8rem">{{.PayloadCode}}</code>{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
             <td>{{if .ProcessName}}{{.ProcessName}}{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
             <td class="mono">{{.DeliveryNode}}{{if .StagingNode}} <span style="color:var(--text-muted);font-size:0.75rem">(stg: {{.StagingNode}})</span>{{end}}</td>
-            <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+            <td>
+                <span class="badge badge-{{.Status}}">{{.Status}}</span>
+                {{if .QueueReason}}<div style="font-size:0.78rem;color:var(--text-muted);max-width:22rem;white-space:normal;margin-top:0.15rem">{{.QueueReason}}</div>{{end}}
+            </td>
             <td>{{formatTime .CreatedAt}}</td>
             <td>{{if .ETA}}{{.ETA}}{{else}}--{{end}}</td>
             <td class="actions">
@@ -39,7 +45,7 @@
             </td>
         </tr>
         {{else}}
-        <tr><td colspan="8" class="empty-cell">No active orders</td></tr>
+        <tr><td colspan="9" class="empty-cell">No active orders</td></tr>
         {{end}}
     </tbody>
 </table>

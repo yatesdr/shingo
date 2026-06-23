@@ -1,6 +1,6 @@
 {{template "header" .}}
 
-<div style="display:flex;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap">
+<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap">
     {{if .Processes}}
     <select class="form-input" style="width:14rem" data-action-change="navigateToProcessOrOrders">
         <option value="" {{if eq .ActiveProcessID 0}}selected{{end}}>All Processes</option>
@@ -9,12 +9,17 @@
         {{end}}
     </select>
     {{end}}
+    <a href="/orders?process={{.ActiveProcessID}}" class="btn btn-sm{{if not .FilterStatus}} btn-primary{{end}}">All</a>
+    <a href="/orders?process={{.ActiveProcessID}}&status=faulted" class="btn btn-sm{{if eq .FilterStatus "faulted"}} btn-primary{{end}}">Faulted</a>
+    <a href="/orders?process={{.ActiveProcessID}}&status=failed" class="btn btn-sm{{if eq .FilterStatus "failed"}} btn-primary{{end}}">Failed</a>
+    <a href="/orders?process={{.ActiveProcessID}}&status=queued" class="btn btn-sm{{if eq .FilterStatus "queued"}} btn-primary{{end}}">Queued</a>
+    <a href="/orders?process={{.ActiveProcessID}}&status=in_transit" class="btn btn-sm{{if eq .FilterStatus "in_transit"}} btn-primary{{end}}">In Transit</a>
 </div>
 
 <div class="card">
     <div class="card-body"
          id="orders-content"
-         hx-get="/orders/partial{{if .ActiveProcessID}}?process={{.ActiveProcessID}}{{end}}"
+         hx-get="/orders/partial?process={{.ActiveProcessID}}&status={{.FilterStatus}}"
          hx-trigger="refreshOrders from:body, sse:order-update throttle:3s, sse:order-completed, sse:order-failed"
          hx-swap="innerHTML"
          hx-ext="sse"

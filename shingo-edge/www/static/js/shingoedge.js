@@ -440,7 +440,10 @@ export function navigateToProcess(el) {
 }
 
 export function navigateToProcessOrOrders(el) {
-    window.location = (el && el.value) ? '?process=' + el.value : '/orders';
+    var status = new URLSearchParams(window.location.search).get('status');
+    var qs = el && el.value ? 'process=' + el.value : '';
+    if (status) qs = (qs ? qs + '&' : '') + 'status=' + status;
+    window.location = '/orders' + (qs ? '?' + qs : '');
 }
 
 // --- delegateActions: re-exported from shared ---
