@@ -115,8 +115,10 @@ names.
   --text: #212529;
   --text-muted: #6c757d;
   /* UI accent (Indigo) — reserved for interactive chrome, never a status. */
-  --accent: #4f4fd6;
+  --accent: #4f4fd6;            /* foreground: text/links/focus/active */
   --accent-hover: #3e3ec0;
+  --accent-solid: #4f4fd6;      /* filled buttons/badges under white text (P15) */
+  --accent-solid-hover: #3e3ec0;
   /* Semantic — --primary aliases the accent so every CTA/link/tab adopts it. */
   --primary: var(--accent);
   --primary-hover: var(--accent-hover);
@@ -269,6 +271,15 @@ offline gray; a moving robot tracks the in-transit cyan.
 only**: links, focus rings, selection, the primary action (`.btn-primary`),
 active tabs, the live pill, the map focus ring, and the one "primary series"
 that matters in a chart.
+
+**Foreground vs filled (P15).** The accent has two values for two jobs.
+`--accent` (light indigo) is the *foreground* — text, links, focus rings, active
+states *on* a surface. Surfaces that put **white text on an accent background**
+(filled buttons, solid badges) use **`--accent-solid`** (`#4F4FD6`,
+theme-invariant — and `--accent-solid-hover` `#3E3EC0`) instead: the foreground
+indigo in dark (`#7C7CF0`) under white text is only **3.50:1** (fails AA), while
+`--accent-solid` is **6.14:1** in both themes. Rule of thumb: accent *on* a
+surface → `--accent`; accent *as* the surface under light text → `--accent-solid`.
 
 **Indigo is NEVER a status hue.** This is the rule that drove moving staged off
 indigo and reshuffling off violet. One restrained accent *glow* is allowed on

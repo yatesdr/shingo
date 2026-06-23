@@ -302,8 +302,8 @@ main.container {
 .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
 .btn-block { width: 100%; }
 
-.btn-primary { background: var(--primary); color: white; }
-.btn-primary:hover { background: var(--primary-dark); }
+.btn-primary { background: var(--accent-solid); color: white; }
+.btn-primary:hover { background: var(--accent-solid-hover); }
 
 .btn-danger { background: var(--danger); color: white; }
 .btn-danger:hover { background: #bb2d3b; }
@@ -473,7 +473,7 @@ textarea.form-input {
 }
 .tag-select-option:hover,
 .tag-select-option.highlighted {
-    background: var(--primary);
+    background: var(--accent-solid);
     color: #fff;
 }
 .tag-select-option .tag-type {
@@ -733,9 +733,9 @@ textarea.form-input {
 }
 
 .step-active {
-    background: var(--primary);
+    background: var(--accent-solid);
     color: #fff;
-    border-color: var(--primary);
+    border-color: var(--accent-solid);
     font-weight: 700;
 }
 

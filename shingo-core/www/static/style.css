@@ -95,8 +95,8 @@ textarea { resize: vertical; min-height: 60px; }
 
 /* Buttons */
 .btn { display: inline-block; padding: 0.4rem 1rem; border: none; border-radius: 0.3rem; font-size: 0.9rem; cursor: pointer; text-align: center; }
-.btn-primary { background: var(--primary); color: #fff; }
-.btn-primary:hover { background: var(--primary-hover); }
+.btn-primary { background: var(--accent-solid); color: #fff; }
+.btn-primary:hover { background: var(--accent-solid-hover); }
 .btn-danger { background: var(--danger); color: #fff; }
 .btn-danger:hover { background: #bb2d3b; }
 .btn-sm { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
@@ -332,7 +332,7 @@ textarea { resize: vertical; min-height: 60px; }
   text-overflow: ellipsis;
 }
 .ep-item:hover { background: #e9ecef; }
-.ep-item.ep-active { background: var(--primary); color: #fff; }
+.ep-item.ep-active { background: var(--accent-solid); color: #fff; }
 
 /* Robot tile grid */
 .robot-grid {
@@ -479,7 +479,7 @@ textarea { resize: vertical; min-height: 60px; }
 [data-theme="dark"] .ep-item:hover { background: #252c35; }
 
 
-[data-theme="dark"] .btn-primary:hover { background: var(--primary-hover); }
+[data-theme="dark"] .btn-primary:hover { background: var(--accent-solid-hover); }
 [data-theme="dark"] .btn-danger:hover { background: #da3633; }
 
 /* Dark overrides for Core-specific badges only.
@@ -535,7 +535,7 @@ textarea { resize: vertical; min-height: 60px; }
 .sm-cell { width: 36px; height: 36px; border-radius: 4px; cursor: pointer;
            display: flex; align-items: center; justify-content: center; font-size: 0.65rem; }
 .sm-empty { background: var(--surface); border: 1px dashed var(--border); }
-.sm-occupied { background: var(--primary); color: white; }
+.sm-occupied { background: var(--accent-solid); color: white; }
 .sm-claimed { background: var(--warning); color: white; }
 .sm-flagged { background: var(--danger); color: white; }
 .sm-shuffle { background: var(--info); color: white; }
@@ -827,7 +827,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   margin-left:4px;
   display:flex; align-items:center; justify-content:center;
 }
-.info-btn:hover { background:var(--primary); color:#fff; border-color:var(--primary); }
+.info-btn:hover { background:var(--accent-solid); color:#fff; border-color:var(--accent-solid); }
 #info-body p { margin-bottom:0.5rem; }
 #info-body strong { color:var(--text); }
 .help-btn {
@@ -838,7 +838,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   cursor:pointer; padding:0; margin-left:2px;
   vertical-align:middle; line-height:1;
 }
-.help-btn:hover { background:var(--primary); color:#fff; border-color:var(--primary); }
+.help-btn:hover { background:var(--accent-solid); color:#fff; border-color:var(--accent-solid); }
 .field-tip {
   position:fixed; z-index:2000;
   background:#1a1a2e; color:#e8e8e8;

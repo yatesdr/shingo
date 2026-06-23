@@ -44,6 +44,14 @@
   --accent: #4f4fd6;            /* light-mode indigo, AA on white */
   --accent-hover: #3e3ec0;
   --accent-glow: color-mix(in srgb, var(--accent) 55%, transparent);
+  /* Solid-fill accent (P15). Buttons/badges that put WHITE text on an accent
+   * BACKGROUND need a darker indigo than the foreground accent: the foreground
+   * accent in dark (#7c7cf0) under white text is only 3.50:1 (fails AA). This
+   * fill is 6.14:1 with white and works on both light and dark backgrounds, so
+   * it is theme-invariant — defined once here, NOT overridden per theme.
+   * Foreground accent (text / links / focus / active) stays --accent. */
+  --accent-solid: #4f4fd6;
+  --accent-solid-hover: #3e3ec0;
 
   /* Semantic */
   --primary: var(--accent);
