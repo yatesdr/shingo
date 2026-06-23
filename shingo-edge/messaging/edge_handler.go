@@ -59,6 +59,11 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, replyType, "", p.ETA, p.Detail); err != nil {
 		log.Printf("edge_handler: handle update for %s: %v", p.OrderUUID, err)
 	}
+	if p.QueueReason != "" {
+		if err := h.orderMgr.SetOrderQueueReason(p.OrderUUID, p.QueueReason); err != nil {
+			log.Printf("edge_handler: set queue_reason for %s: %v", p.OrderUUID, err)
+		}
+	}
 }
 
 func (h *EdgeHandler) HandleOrderDelivered(env *protocol.Envelope, p *protocol.OrderDelivered) {

@@ -346,8 +346,37 @@ func (e *Engine) wireEventHandlers() {
 	// â”€â”€ Queued order audit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
 		ev := evt.Payload
-		e.logFn("engine: order %d queued for payload %s", ev.OrderID, ev.PayloadCode)
-		e.db.AppendAudit("order", ev.OrderID, "queued", "", fmt.Sprintf("payload=%s from %s", ev.PayloadCode, ev.StationID), "system")
+		e.logFn(“engine: order %d queued for payload %s”, ev.OrderID, ev.PayloadCode)
+		e.db.AppendAudit(“order”, ev.OrderID, “queued”, “”, fmt.Sprintf(“payload=%s from %s”, ev.PayloadCode, ev.StationID), “system”)
+	}, EventOrderQueued)
+
+	// â”€â”€ Queue-reason push â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// Runs third for EventOrderQueued — after the sync scanner (1st) and
+	// the audit handler (2nd) above — so the scanner's latest
+	// SetOrderQueueReason call is visible when we read the order back.
+	// Only pushes if the order is still queued (scanner didn't dispatch)
+	// and carries a non-empty blocking reason; orders dispatched by the
+	// scanner transition away from StatusQueued, suppressing the push.
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
+		ev := evt.Payload
+		if ev.EdgeUUID == “” || ev.StationID == “” {
+			return
+		}
+		order, err := e.db.GetOrder(ev.OrderID)
+		if err != nil {
+			e.logFn(“engine: queue_reason push: load order %d: %v”, ev.OrderID, err)
+			return
+		}
+		if order.Status != dispatch.StatusQueued || order.QueueReason == “” {
+			return
+		}
+		if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID, &protocol.OrderUpdate{
+			OrderUUID:   ev.EdgeUUID,
+			Status:      string(dispatch.StatusQueued),
+			QueueReason: order.QueueReason,
+		}); err != nil {
+			e.logFn(“engine: queue_reason update to edge: %v”, err)
+		}
 	}, EventOrderQueued)
 
 	// â”€â”€ Kanban demand â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

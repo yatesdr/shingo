@@ -141,6 +141,12 @@ type OrderUpdate struct {
 	Status    string `json:"status"`
 	Detail    string `json:"detail,omitempty"`
 	ETA       string `json:"eta,omitempty"`
+	// QueueReason carries the blocking signal from Core's orders.queue_reason when
+	// Status is "queued" — e.g. "no bin of requested payload in node group AMR
+	// Supermarket". Omitted (not cleared) for non-queued updates; omitempty means
+	// an absent field signals "leave unchanged", not "clear". Core emits this from
+	// the EventOrderQueued handler after the fulfillment scanner completes its pass.
+	QueueReason string `json:"queue_reason,omitempty"`
 }
 
 // OrderDelivered signals fleet delivery complete.
@@ -579,6 +585,11 @@ type OrderStatusSnapshot struct {
 	DeliveryNode  string `json:"delivery_node,omitempty"`
 	VendorOrderID string `json:"vendor_order_id,omitempty"`
 	ErrorDetail   string `json:"error_detail,omitempty"`
+	// QueueReason is Core's current blocking signal for a queued order
+	// (orders.queue_reason) — e.g. "no bin of requested payload in node
+	// group AMR Supermarket". Re-evaluated by the dispatcher/scanner and
+	// cleared on dispatch, so Edge refreshes it on each status resync.
+	QueueReason string `json:"queue_reason,omitempty"`
 }
 
 // OrderStatusResponse carries the authoritative Core-side state for requested orders.

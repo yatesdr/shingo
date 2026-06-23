@@ -44,9 +44,14 @@ type Order struct {
 	// release gate don't depend on volatile runtime slot pointers,
 	// which can be nulled by bin-pickup events before release fires.
 	// Nil for non-paired orders (single-robot, simple, manual_swap).
-	SiblingOrderID *int64    `json:"sibling_order_id,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	SiblingOrderID *int64 `json:"sibling_order_id,omitempty"`
+	// QueueReason holds Core's last blocking signal for this order
+	// (mirrored from Core's orders.queue_reason via OrderUpdate push).
+	// Non-empty only while status == "queued". HMI renders it as
+	// "IN QUEUE: <reason>" so operators can see WHY a robot isn't coming.
+	QueueReason string    `json:"queue_reason"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 	// Joined fields
 	ProcessName     string `json:"process_name"`
 	ProcessNodeName string `json:"process_node_name"`

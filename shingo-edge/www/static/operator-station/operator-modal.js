@@ -390,11 +390,13 @@ export function renderModal(entry) {
                 //
                 // Status-aware label so a queued order doesn't pretend a
                 // robot is moving when capacity gating is actually what's
-                // holding it. queue_reason isn't on the edge Order today
-                // so we just show "IN QUEUE"; if/when reason gets plumbed
-                // it can become "IN QUEUE: <reason>".
+                // holding it. queue_reason is pushed by Core via OrderUpdate
+                // and stored on the edge order row; show it when available.
                 if (inFlight.status === 'queued') {
-                    html += actionBtn('IN QUEUE', 'close', false, '');
+                    var queueLabel = inFlight.queue_reason
+                        ? 'IN QUEUE: ' + inFlight.queue_reason
+                        : 'IN QUEUE';
+                    html += actionBtn(queueLabel, 'close', false, '');
                 } else {
                     html += actionBtn('ROBOT IN TRANSIT', 'close', false, '');
                 }

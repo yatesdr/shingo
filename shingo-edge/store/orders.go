@@ -102,6 +102,12 @@ func (db *DB) UpdateOrderBinID(id int64, binID *int64) error {
 	return orders.UpdateBinID(db.DB, id, binID)
 }
 
+// SetOrderQueueReason writes (or clears) the blocking reason on a queued order.
+// Called from the edge handler when Core pushes an OrderUpdate with a QueueReason.
+func (db *DB) SetOrderQueueReason(uuid, reason string) error {
+	return orders.SetQueueReason(db.DB, uuid, reason)
+}
+
 // LinkOrderSiblings writes a bidirectional sibling_order_id pointer
 // between two orders in a two-robot swap pair. Used so the supply
 // guard and release gate can identify the pair without depending on

@@ -492,6 +492,13 @@ func (db *DB) migrate() error {
 		db.Exec(`ALTER TABLE inventory_delta_seq_new RENAME TO inventory_delta_seq`)
 	}
 
+	// v27: queue_reason on orders — mirrors Core's orders.queue_reason so
+	// the operator HMI can show WHY an order is waiting instead of just "IN QUEUE".
+	// Populated via the OrderUpdate push when Core's dispatcher leaves an order
+	// queued after a scanner pass. Empty on non-queued orders; cleared implicitly
+	// when the HMI renders non-queued statuses.
+	db.Exec("ALTER TABLE orders ADD COLUMN queue_reason TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }
 

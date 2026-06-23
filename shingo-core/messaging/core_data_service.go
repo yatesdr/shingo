@@ -564,6 +564,7 @@ func (s *CoreDataService) HandleOrderStatusRequest(env *protocol.Envelope, req *
 			snap.DeliveryNode = order.DeliveryNode
 			snap.VendorOrderID = order.VendorOrderID
 			snap.ErrorDetail = order.ErrorDetail
+			snap.QueueReason = order.QueueReason
 		}
 		resp.Orders = append(resp.Orders, snap)
 	}

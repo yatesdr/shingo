@@ -541,6 +541,12 @@ func (m *Manager) TransitionOrder(orderID int64, newStatus protocol.Status, deta
 	return m.lifecycle.Transition(orderID, newStatus, detail)
 }
 
+// SetOrderQueueReason persists Core's blocking reason for a queued order.
+// Called from the edge handler when an OrderUpdate carries a QueueReason field.
+func (m *Manager) SetOrderQueueReason(uuid, reason string) error {
+	return m.db.SetOrderQueueReason(uuid, reason)
+}
+
 // AbortOrder cancels a non-terminal order and enqueues a cancel message.
 // The cancel message is enqueued BEFORE the local transition so that Core
 // is guaranteed to receive the cancellation — preventing a robot from
