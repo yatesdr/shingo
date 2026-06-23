@@ -44,8 +44,12 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 	// the intent for the removal leg, and the single-robot-swap shape can't
 	// produce a same-order conflict here.
 
-	if order.SourceNode != "" {
-		// Pattern A: pick up FROM a home → route the return.
+	if order.SourceNode != "" && order.DeliveryNode == "" {
+		// Pattern A: pick up FROM a home with no explicit delivery yet → route the
+		// return. Guard on DeliveryNode=="" because supply legs also pick from a
+		// home node but carry an explicit delivery (the line node); without the guard
+		// Pattern A overwrites their delivery with the home, making the order
+		// circular (pickup=SMN_014, deliver=SMN_014) and Core skips it.
 		srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
 		if err != nil || srcNode == nil {
 			return
