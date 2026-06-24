@@ -44,6 +44,7 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 	}
 	views := []domain.OperatorStationView{*view}
 	enrichViewBinState(h.engine.CoreAPI(), views)
+	h.orchestration.EnrichHomeBufferPartials(views[0].Nodes)
 	view.Nodes = views[0].Nodes
 	_ = h.engine.StationService().Touch(id, "online")
 	writeJSON(w, struct {

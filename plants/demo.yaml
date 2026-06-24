@@ -221,6 +221,7 @@ stations:
   - {name: PLK_X1, kind: loader}     # single-window CLIP loader (own loop → UNLOADER-C)
   - {name: PLK_D1, kind: loader}     # PLK_DECK dedicated position 1 (STUD)
   - {name: PLK_D2, kind: loader}     # PLK_DECK dedicated position 2 (STUD, same payload)
+  - {name: PLK_BUF, kind: loader}    # PLK_DECK buffer slot (no pinned payload; holds partials)
   - {name: FGN_001, kind: unloader}  # ASSY-X finished-goods exit
   - {name: FGN_002, kind: unloader}  # ASSY-Y finished-goods exit
   # ── New CLIP line: PRESS-3 → WELD-4 (PANEL-C + CLIP → ASSY-C) → UNLOADER-C ──
@@ -558,9 +559,11 @@ claims:
   # operator HMI; the pooled STUD threshold trips and the (step-3) member-aware ReservationTarget
   # routes the empty to the position the signal names. Its OWN STUD loop (→ SYN_SM_Stud, drained by
   # UNLOADER-D) isolates the O2 routing watch. buffer_dest = SYN_BUF_Deck (step-7 buffer).
+  # PLK_BUF is a no-payload home position that acts as the Clear-Loader-Home consolidation buffer:
+  # the operator can push an empty from a home position to PLK_BUF and pull a partial from PLK_BUF
+  # back to that home. Edge identifies it as a buffer via pos.Payload == "" in the loader aggregate.
   - {core_node: PLK_D1, style: LOADER-STUD-RUN, role: produce, swap_mode: manual_swap, payload: STUD, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MT_Return, outbound_destination: SYN_SM_Stud, buffer_dest: SYN_BUF_Deck, home_of: PLK_DECK, operator_station: PLK_D1-OPS}
   - {core_node: PLK_D2, style: LOADER-STUD-RUN, role: produce, swap_mode: manual_swap, payload: STUD, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MT_Return, outbound_destination: SYN_SM_Stud, buffer_dest: SYN_BUF_Deck, home_of: PLK_DECK, operator_station: PLK_D2-OPS}
-
   # ── UNLOADER-A (manual_swap: pull full ASSY-X, return empty) ──
   - core_node: FGN_001
     style: UNLOADER-A-RUN

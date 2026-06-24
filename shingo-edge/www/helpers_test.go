@@ -18,6 +18,7 @@ import (
 	"shingo/protocol/auth"
 	"shingo/protocol/testutil"
 	"shingoedge/config"
+	"shingoedge/domain"
 	"shingoedge/engine"
 	"shingoedge/engine/changeover"
 	"shingoedge/orders"
@@ -143,6 +144,8 @@ func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition
 func (s *stubEngine) FinalizeProduceNode(int64) (*engine.NodeOrderResult, error)        { return nil, nil }
 func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem) error { return nil }
 func (s *stubEngine) ClearBin(int64, string) error                                      { return nil }
+func (s *stubEngine) ClearLoaderHome(int64) error                                       { return nil }
+func (s *stubEngine) EnrichHomeBufferPartials([]domain.StationNodeView)                 {}
 func (s *stubEngine) PushEmptyOut(int64) error                                          { return nil }
 func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)         { return nil, nil }
 func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)          { return nil, nil }

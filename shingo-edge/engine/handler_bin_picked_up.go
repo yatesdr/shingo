@@ -224,4 +224,15 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 
 	e.logFn("bin_picked_up: flushed deltas + cleared active for order=%s bin=%d (status=%s)",
 		orderUUID, binID, order.Status)
+
+	// Home consolidation: if this was Order A of a ClearLoaderHome sequence,
+	// the robot just cleared the home position. Fire Order B (buffer partial → home).
+	e.homeConsolidationsMu.Lock()
+	if c, ok := e.homeConsolidations[orderUUID]; ok {
+		delete(e.homeConsolidations, orderUUID)
+		e.homeConsolidationsMu.Unlock()
+		e.dispatchBufferConsolidation(c)
+		return
+	}
+	e.homeConsolidationsMu.Unlock()
 }

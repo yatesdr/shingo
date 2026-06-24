@@ -374,6 +374,33 @@ function confirmPushEmpty(nodeID) {
     document.body.appendChild(overlay);
 }
 
+// confirmClearLoaderHome shows a confirmation overlay before firing the
+// clear-loader-home consolidation sequence. The operator declares this home bin
+// empty; Shingo moves the carrier to the buffer, then pulls the buffer partial
+// back to the home.
+function confirmClearLoaderHome(nodeID) {
+    const overlay = el('div', { className: 'os-co-picker-overlay' });
+    const panel = el('div', { className: 'os-co-picker' });
+    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Clear this home bin?' }));
+    panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+        textContent: 'Declares this bin empty. Shingo will move the empty carrier to the buffer, then pull the buffer partial to this home.' }));
+
+    const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'CONFIRM CLEAR' });
+    confirm.addEventListener('click', function() {
+        overlay.remove();
+        postAction('/api/process-nodes/' + nodeID + '/clear-loader-home', undefined, loadViewRef);
+    });
+    panel.appendChild(confirm);
+
+    const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
+    cancel.addEventListener('click', () => overlay.remove());
+    panel.appendChild(cancel);
+
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
 // buildLoaderCard renders ONE (position × payload) card — the atomic unit of the
 // loader board. Returns the card element, or null when a normal kanban loader's
 // idle card should be hidden. counters.queuePos tracks the per-payload queue badge
@@ -651,6 +678,20 @@ function renderHomeLocationBoard(nodes) {
                 className: 'os-board-home',
                 textContent: esc(node.node.name) + ' · ' + binTxt,
             }), card.firstChild);
+            // "Clear Bin" — only for home tiles with a buffer partial of the same
+            // payload. Shows the consolidation confirmation overlay on tap.
+            if (node.has_buffer_partial && bs.occupied && bs.payload_code && code === bs.payload_code) {
+                var clearBtn = el('button', {
+                    className: 'os-co-picker-btn',
+                    textContent: 'CLEAR BIN',
+                });
+                clearBtn.style.cssText = 'margin-top:12px;width:100%;font-size:18px;';
+                clearBtn.addEventListener('click', function(evt) {
+                    evt.stopPropagation();
+                    confirmClearLoaderHome(node.node.id);
+                });
+                card.appendChild(clearBtn);
+            }
             cardGrid.appendChild(card);
             rendered++;
         });

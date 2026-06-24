@@ -63,6 +63,11 @@ type StationNodeView struct {
 	// loader nodes, instead of one window with a card per payload. Orthogonal to
 	// OperatorDriven (this is layout; that is type).
 	HomeLocationLoader bool `json:"home_location_loader,omitempty"`
+	// HasBufferPartial is true when this is a dedicated home position with a
+	// tracked bin (UOP > 0) AND the loader's buffer slot holds a partial with
+	// the same payload. When set, the HMI shows the "Clear Bin" button so the
+	// operator can zero the home bin and trigger the consolidation move sequence.
+	HasBufferPartial bool `json:"has_buffer_partial,omitempty"`
 	// WindowGroupAnchor is the LoaderID this node belongs to when it is one window
 	// of a shared MULTI-window loader, resolved from the Core aggregate (not the
 	// legacy per-node claim). Empty for a single-window/legacy loader or a non-loader

@@ -79,6 +79,19 @@ func (h *Handlers) apiRequestFullBin(w http.ResponseWriter, r *http.Request) {
 	writeJSONWithTrigger(w, r, order, "refreshMaterial")
 }
 
+func (h *Handlers) apiClearLoaderHome(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	if err := h.orchestration.ClearLoaderHome(id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
 func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

@@ -95,6 +95,8 @@ type EngineOrchestration interface {
 	FinalizeProduceNode(nodeID int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
 	ClearBin(nodeID int64, binTypeCode string) error
+	ClearLoaderHome(nodeID int64) error
+	EnrichHomeBufferPartials(nodes []domain.StationNodeView)
 	PushEmptyOut(nodeID int64) error
 	RequestEmptyBin(nodeID int64, payloadCode string) (*domain.Order, error)
 	RequestFullBin(nodeID int64, payloadCode string) (*domain.Order, error)

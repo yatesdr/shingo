@@ -149,6 +149,13 @@ type Engine struct {
 	pendingThreshold  []*protocol.LoopBelowThresholdSignal
 
 	kafkaConnFn func() bool
+
+	// homeConsolidations tracks pending two-order consolidation sequences
+	// initiated by ClearLoaderHome. Key = Order A's UUID. When Order A's robot
+	// picks up the empty carrier (home is now clear), HandleBinPickedUp fires
+	// Order B (buffer partial → home). Protected by homeConsolidationsMu.
+	homeConsolidations   map[string]homeConsolidation
+	homeConsolidationsMu sync.Mutex
 }
 
 // Config holds the parameters needed to create an Engine.
@@ -209,6 +216,7 @@ func New(c Config) *Engine {
 	e.orderService = service.NewOrderService(e.db)
 	e.preflightChecker = service.NewPreflightChecker(e.db, e.coreClient, e.cfg.StationID())
 	e.loaderStore = newLoaderStore(e)
+	e.homeConsolidations = make(map[string]homeConsolidation)
 	return e
 }
 
