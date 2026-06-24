@@ -457,74 +457,109 @@ func TestBinManifestService_ClearAndClaim_FailsIfLocked(t *testing.T) {
 	}
 }
 
-// TestBinManifestService_ClaimForDispatch_ConcurrentRace verifies that when two
-// goroutines race ClaimForDispatch on the same bin with different remainingUOP
-// values (one ClearAndClaim, one SyncUOPAndClaim), exactly one wins and the bin
-// ends up in the correct state for the winner's operation.
+// TestBinManifestService_ClaimForDispatch_ConcurrentRace verifies that when N
+// goroutines race ClaimForDispatch on the same bin with adversarial remainingUOP
+// values (mix of ClearAndClaim, SyncUOPAndClaim, and plain ClaimBin), exactly
+// one wins and the bin ends up in the correct state for that winner's operation.
+//
+// N=5 exercises three distinct claim operations concurrently — a more adversarial
+// surface than the original N=2 (ClearAndClaim vs SyncUOPAndClaim only).
 func TestBinManifestService_ClaimForDispatch_ConcurrentRace(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
 
-	// Create a bin with a manifest
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-RACE-1", "PART-A", 100)
-	order1 := createTestOrder(t, db, sd.LineNode.ID)
-	order2 := createTestOrder(t, db, sd.LineNode.ID)
-
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-RACE-N", "PART-A", 100)
 	originalPayloadCode := bin.PayloadCode
 
-	// Goroutine 1: ClearAndClaim (remainingUOP=0, clears manifest)
-	// Goroutine 2: SyncUOPAndClaim (remainingUOP=42, preserves manifest)
-	var wg sync.WaitGroup
-	errs := make([]error, 2)
-	wg.Add(2)
+	// Five adversarial callers:
+	//   [0] ClearAndClaim  (remainingUOP=0)   — clears manifest
+	//   [1] SyncUOPAndClaim(remainingUOP=42)  — preserves manifest, sets UOP=42
+	//   [2] SyncUOPAndClaim(remainingUOP=77)  — preserves manifest, sets UOP=77
+	//   [3] ClaimBin       (remainingUOP=nil) — plain claim, no manifest change
+	//   [4] ClearAndClaim  (remainingUOP=0)   — second clear contender
+	const N = 5
+	uops := [N]*int{func() *int { v := 0; return &v }(),
+		func() *int { v := 42; return &v }(),
+		func() *int { v := 77; return &v }(),
+		nil,
+		func() *int { v := 0; return &v }(),
+	}
 
-	go func() {
-		defer wg.Done()
-		zero := 0
-		errs[0] = svc.ClaimForDispatch(bin.ID, order1.ID, &zero)
-	}()
-	go func() {
-		defer wg.Done()
-		partial := 42
-		errs[1] = svc.ClaimForDispatch(bin.ID, order2.ID, &partial)
-	}()
+	orders := make([]int64, N)
+	for i := 0; i < N; i++ {
+		o := createTestOrder(t, db, sd.LineNode.ID)
+		orders[i] = o.ID
+	}
+
+	// Release all goroutines at once via a closed channel to maximise contention.
+	ready := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make([]error, N)
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			<-ready
+			errs[i] = svc.ClaimForDispatch(bin.ID, orders[i], uops[i])
+		}()
+	}
+	close(ready)
 	wg.Wait()
 
-	// Exactly one should succeed
-	successCount := 0
-	for _, err := range errs {
+	// Exactly one goroutine must succeed.
+	winnerIdx := -1
+	for i, err := range errs {
 		if err == nil {
-			successCount++
+			if winnerIdx != -1 {
+				t.Errorf("multiple winners: goroutine %d and goroutine %d both succeeded", winnerIdx, i)
+			}
+			winnerIdx = i
 		}
 	}
-	if successCount != 1 {
-		t.Errorf("expected exactly 1 successful claim, got %d (errs: %v)", successCount, errs)
+	if winnerIdx == -1 {
+		t.Fatalf("no winner: all %d goroutines failed (errs: %v)", N, errs)
 	}
 
-	// Verify bin is in a consistent state
+	// Bin must be claimed and in a state consistent with the winner's operation.
 	got, _ := db.GetBin(bin.ID)
 	if got.ClaimedBy == nil {
 		t.Fatal("bin should be claimed by the winner")
 	}
+	if *got.ClaimedBy != orders[winnerIdx] {
+		t.Errorf("ClaimedBy = %d, want winner order %d", *got.ClaimedBy, orders[winnerIdx])
+	}
 
-	// Verify manifest state matches the winner's operation
-	if errs[0] == nil {
-		// ClearAndClaim won: manifest should be cleared
+	switch winnerIdx {
+	case 0, 4: // ClearAndClaim won
 		if got.PayloadCode != "" {
 			t.Errorf("ClearAndClaim won but PayloadCode = %q, want empty", got.PayloadCode)
 		}
 		if got.UOPRemaining != 0 {
 			t.Errorf("ClearAndClaim won but UOPRemaining = %d, want 0", got.UOPRemaining)
 		}
-	} else {
-		// SyncUOPAndClaim won: manifest preserved, UOP=42
+	case 1: // SyncUOPAndClaim(42) won
 		if got.PayloadCode != originalPayloadCode {
-			t.Errorf("SyncUOPAndClaim won but PayloadCode = %q, want %q", got.PayloadCode, originalPayloadCode)
+			t.Errorf("SyncUOPAndClaim(42) won but PayloadCode = %q, want %q", got.PayloadCode, originalPayloadCode)
 		}
 		if got.UOPRemaining != 42 {
-			t.Errorf("SyncUOPAndClaim won but UOPRemaining = %d, want 42", got.UOPRemaining)
+			t.Errorf("SyncUOPAndClaim(42) won but UOPRemaining = %d, want 42", got.UOPRemaining)
+		}
+	case 2: // SyncUOPAndClaim(77) won
+		if got.PayloadCode != originalPayloadCode {
+			t.Errorf("SyncUOPAndClaim(77) won but PayloadCode = %q, want %q", got.PayloadCode, originalPayloadCode)
+		}
+		if got.UOPRemaining != 77 {
+			t.Errorf("SyncUOPAndClaim(77) won but UOPRemaining = %d, want 77", got.UOPRemaining)
+		}
+	case 3: // ClaimBin (nil UOP) won — no manifest change
+		if got.PayloadCode != originalPayloadCode {
+			t.Errorf("ClaimBin won but PayloadCode = %q, want %q (unchanged)", got.PayloadCode, originalPayloadCode)
+		}
+		if got.UOPRemaining != 100 {
+			t.Errorf("ClaimBin won but UOPRemaining = %d, want 100 (unchanged)", got.UOPRemaining)
 		}
 	}
 }
