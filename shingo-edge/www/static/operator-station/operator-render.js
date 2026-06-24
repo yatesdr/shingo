@@ -685,7 +685,7 @@ function renderPayloadBoard(entry) {
                     className: 'os-board-request-btn',
                     textContent: 'CLEAR BIN',
                 });
-                clearMarketBtn.style.cssText = 'background:#2e7d32;border-color:#2e7d32;color:#fff;';
+                clearMarketBtn.style.cssText = 'background:#c62828;border-color:#c62828;color:#fff;';
                 clearMarketBtn.addEventListener('click', function() {
                     postAction('/api/process-nodes/' + entry.node.id + '/clear-bin', {}, loadViewRef);
                 });
