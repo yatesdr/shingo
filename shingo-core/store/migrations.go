@@ -455,6 +455,13 @@ func (db *DB) runVersionedMigrations() error {
 		{41, "add home_kind to bin_loader_homes (home|buffer discriminator)",
 			v41LoaderHomeKind,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loader_homes", "home_kind") }},
+		// v42: dormant reservations table for the plan/apply → reservation-sourcing
+		// refactor (Phase 1). Created empty and unused in Phase 0 so that Phase 1 can
+		// land the write path without a flag day: the table exists on all environments
+		// before any production code writes to it.
+		{42, "create reservations table (dormant; Phase-1 reservation-sourcing seam)",
+			v42Reservations,
+			func(q schema.Querier) bool { return schema.TableExists(q, "reservations") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1268,6 +1275,30 @@ func v41LoaderHomeKind(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// v42Reservations creates the reservations table for the Phase-1
+// reservation-sourcing seam. Dormant in Phase 0: no production code
+// writes to it. store/reservations exposes the Acquire/Confirm/Release/Expire
+// surface as stubs; Phase 1 fills the bodies and wires callers.
+func v42Reservations(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS reservations (
+		id          BIGSERIAL PRIMARY KEY,
+		order_id    BIGINT NOT NULL REFERENCES orders(id),
+		bin_id      BIGINT NOT NULL REFERENCES bins(id),
+		state       TEXT NOT NULL DEFAULT 'pending',
+		reserved_by TEXT NOT NULL DEFAULT '',
+		reason      TEXT NOT NULL DEFAULT '',
+		created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		expires_at  TIMESTAMPTZ NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create reservations table: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_reservations_order ON reservations(order_id)`); err != nil {
+		return fmt.Errorf("create idx_reservations_order: %w", err)
+	}
+	_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_reservations_bin ON reservations(bin_id)`)
+	return err
 }
 
 func migrateBinsCommandCenter(tx *sql.Tx) error {
