@@ -96,15 +96,15 @@ type Engine struct {
 	catalogService    *service.CatalogService
 	orderService      *service.OrderService
 
-	coreClient       *CoreClient
-	coreNodes        map[string]protocol.NodeInfo
-	coreNodesMu      sync.RWMutex
-	payloadBinTypes  []protocol.PayloadBinTypeInfo
+	coreClient        *CoreClient
+	coreNodes         map[string]protocol.NodeInfo
+	coreNodesMu       sync.RWMutex
+	payloadBinTypes   []protocol.PayloadBinTypeInfo
 	payloadBinTypesMu sync.RWMutex
-	nodeSyncFn    func()
-	catalogSyncFn func()
-	sendFn        func(*protocol.Envelope) error
-	kafkaReconnFn func() error
+	nodeSyncFn        func()
+	catalogSyncFn     func()
+	sendFn            func(*protocol.Envelope) error
+	kafkaReconnFn     func() error
 
 	// inventoryDelta is the Phase 1 delta sink. Set by the composition
 	// root via SetInventoryDeltaSink. Nil in test contexts that don't

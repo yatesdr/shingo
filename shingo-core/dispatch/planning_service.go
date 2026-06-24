@@ -48,20 +48,20 @@ func asPlanningError(err error, detail string) *planningError {
 // the values are part of a persisted, compared contract: renaming a constant is
 // safe, changing the string it holds is not.
 const (
-	codeUnknownType    = "unknown_type"
-	codeStructural     = "structural"
-	codeLoaderSource   = "loader_source"
-	codeNode           = "node_error"
-	codeClaimFailed    = "claim_failed"
-	codeLaneLocked     = "lane_locked"
-	codeReshuffle      = "reshuffle_error"
-	codeMissingSource  = "missing_source"
-	codeInvalidNode    = "invalid_node"
-	codeSameNode       = "same_node"
-	codeNoPayload      = "no_payload"
-	codeNoBin          = "no_bin"
-	codeNoStorage      = "no_storage"
-	codeNoSourceBin    = "no_source_bin"
+	codeUnknownType   = "unknown_type"
+	codeStructural    = "structural"
+	codeLoaderSource  = "loader_source"
+	codeNode          = "node_error"
+	codeClaimFailed   = "claim_failed"
+	codeLaneLocked    = "lane_locked"
+	codeReshuffle     = "reshuffle_error"
+	codeMissingSource = "missing_source"
+	codeInvalidNode   = "invalid_node"
+	codeSameNode      = "same_node"
+	codeNoPayload     = "no_payload"
+	codeNoBin         = "no_bin"
+	codeNoStorage     = "no_storage"
+	codeNoSourceBin   = "no_source_bin"
 )
 
 func (e *planningError) Error() string {

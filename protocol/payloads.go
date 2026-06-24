@@ -434,8 +434,8 @@ type PayloadBinTypeInfo struct {
 // omitted until Core authors loaders, so this is additive — a pre-cutover Edge
 // ignores the unknown field.
 type NodeListResponse struct {
-	Nodes          []NodeInfo           `json:"nodes"`
-	Loaders        []LoaderInfo         `json:"loaders,omitempty"`
+	Nodes           []NodeInfo           `json:"nodes"`
+	Loaders         []LoaderInfo         `json:"loaders,omitempty"`
 	PayloadBinTypes []PayloadBinTypeInfo `json:"payload_bin_types,omitempty"`
 }
 
