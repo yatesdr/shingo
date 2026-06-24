@@ -491,6 +491,21 @@ func (h *Handlers) binClear(b *domain.Bin, _ json.RawMessage) error {
 	}
 	h.engine.AuditService().Append("bin", b.ID, "cleared", oldCode, "", protocol.AuditActorUI)
 	h.emitBinUpdate(b, "cleared", "")
+	// Release the bin from Edge's runtime so the press HMI count resets
+	// immediately via SSE rather than waiting for the next page load.
+	// Mirrors the release leg of binMove — Released=true clears active_bin_id
+	// and emits EventUOPAdjusted which SSE broadcasts as counter-update.
+	if b.NodeName != "" {
+		if err := h.orchestration.SendDataToEdge(protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
+			BinID:        b.ID,
+			CoreNodeName: b.NodeName,
+			Released:     true,
+			Actor:        protocol.AuditActorUI,
+			AdjustedAt:   time.Now().UTC(),
+		}); err != nil {
+			log.Printf("bin_clear: release-from-edge broadcast bin %d (node %s): %v", b.ID, b.NodeName, err)
+		}
+	}
 	return nil
 }
 
