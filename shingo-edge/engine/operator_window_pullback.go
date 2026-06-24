@@ -6,9 +6,9 @@
 // the loader HMI, clicks "PULL FROM MARKET", picks a bin from the market list,
 // and Shingo dispatches a single move order: market slot → loader window.
 //
-// After the robot delivers the bin to the window the operator clears it
-// physically (or via the normal Clear Bin action) and then restarts the
-// standard empty-request / load-full cycle.
+// After the robot delivers the bin to the window Edge auto-clears the UOP
+// (via the marketPullbacks delivery hook in wiring_delivered.go) so the
+// operator can immediately resume the standard empty-request / load-full cycle.
 
 package engine
 
