@@ -109,6 +109,25 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 			log.Printf("delivered: set runtime for node %d bin %d: %v", node.ID, *delivered.BinID, err)
 		}
 	}
+
+	// Auto-clear: if this was a pull-from-market delivery, zero the bin UOP
+	// immediately so the operator doesn't need to hit a separate Clear Bin button.
+	e.marketPullbacksMu.Lock()
+	_, isPullback := e.marketPullbacks[order.UUID]
+	if isPullback {
+		delete(e.marketPullbacks, order.UUID)
+	}
+	e.marketPullbacksMu.Unlock()
+	if isPullback {
+		if err := e.coreClient.ClearBin(node.CoreNodeName, ""); err != nil {
+			log.Printf("market_pullback: auto-clear bin at %s: %v", node.CoreNodeName, err)
+		} else {
+			log.Printf("market_pullback: auto-cleared bin at %s on delivery", node.CoreNodeName)
+			if e.inventoryDelta != nil {
+				_ = e.inventoryDelta.SetClaimAndCount(node.ID, &claimID, 0)
+			}
+		}
+	}
 }
 
 // deliveredFallbackUOP returns the cache value to use when Core is

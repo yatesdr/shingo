@@ -136,6 +136,11 @@ func (e *Engine) PullFromMarket(nodeID int64, sourceCoreName string) error {
 	if err != nil {
 		return fmt.Errorf("pull from market: create order: %w", err)
 	}
-	log.Printf("market_pullback: order %d: %s → %s payload=%q", order.ID, sourceCoreName, node.CoreNodeName, payload)
+	log.Printf("market_pullback: order %d: %s → %s payload=%q (auto-clear on delivery)", order.ID, sourceCoreName, node.CoreNodeName, payload)
+
+	e.marketPullbacksMu.Lock()
+	e.marketPullbacks[order.UUID] = nodeID
+	e.marketPullbacksMu.Unlock()
+
 	return nil
 }

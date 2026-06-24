@@ -675,31 +675,19 @@ function renderPayloadBoard(entry) {
         }
         reqBar.appendChild(reqBtn);
 
-        // PULL FROM MARKET / CLEAR BIN — produce loaders with an outbound_destination.
-        // When no bin is at the window: show PULL FROM MARKET (open picker).
-        // When a bin has arrived: flip to CLEAR BIN in green — operator clears it
-        // physically then hits this to zero the UOP and restart normal flow.
+        // PULL FROM MARKET — produce loaders with an outbound_destination.
+        // Pulls a specific bin from the supermarket back to this window; Edge
+        // auto-clears (zeroes UOP) when the bin is delivered so the operator
+        // doesn't need a separate Clear Bin step.
         if (isProduce && claim.outbound_destination) {
-            if (hasBin) {
-                var clearMarketBtn = el('button', {
-                    className: 'os-board-request-btn',
-                    textContent: 'CLEAR BIN',
-                });
-                clearMarketBtn.style.cssText = 'background:#c62828;border-color:#c62828;color:#fff;';
-                clearMarketBtn.addEventListener('click', function() {
-                    postAction('/api/process-nodes/' + entry.node.id + '/clear-bin', {}, loadViewRef);
-                });
-                reqBar.appendChild(clearMarketBtn);
-            } else {
-                var pullBtn = el('button', {
-                    className: 'os-board-request-btn',
-                    textContent: 'PULL FROM MARKET',
-                });
-                pullBtn.addEventListener('click', function() {
-                    showPullFromMarketPicker(entry.node.id);
-                });
-                reqBar.appendChild(pullBtn);
-            }
+            var pullBtn = el('button', {
+                className: 'os-board-request-btn',
+                textContent: 'PULL FROM MARKET',
+            });
+            pullBtn.addEventListener('click', function() {
+                showPullFromMarketPicker(entry.node.id);
+            });
+            reqBar.appendChild(pullBtn);
         }
 
         grid.appendChild(reqBar);

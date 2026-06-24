@@ -156,6 +156,12 @@ type Engine struct {
 	// Order B (buffer partial → home). Protected by homeConsolidationsMu.
 	homeConsolidations   map[string]homeConsolidation
 	homeConsolidationsMu sync.Mutex
+
+	// marketPullbacks tracks pull-from-market orders so the delivery handler
+	// can auto-clear the bin when it arrives at the loader window.
+	// Key = order UUID, value = Edge process node ID of the loader window.
+	marketPullbacks   map[string]int64
+	marketPullbacksMu sync.Mutex
 }
 
 // Config holds the parameters needed to create an Engine.
@@ -217,6 +223,7 @@ func New(c Config) *Engine {
 	e.preflightChecker = service.NewPreflightChecker(e.db, e.coreClient, e.cfg.StationID())
 	e.loaderStore = newLoaderStore(e)
 	e.homeConsolidations = make(map[string]homeConsolidation)
+	e.marketPullbacks = make(map[string]int64)
 	return e
 }
 
