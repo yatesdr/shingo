@@ -146,6 +146,8 @@ func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem
 func (s *stubEngine) ClearBin(int64, string) error                                      { return nil }
 func (s *stubEngine) ClearLoaderHome(int64) error                                       { return nil }
 func (s *stubEngine) EnrichHomeBufferPartials([]domain.StationNodeView)                 {}
+func (s *stubEngine) FetchMarketBins(int64) ([]engine.MarketBinInfo, error)             { return nil, nil }
+func (s *stubEngine) PullFromMarket(int64, string) error                                { return nil }
 func (s *stubEngine) PushEmptyOut(int64) error                                          { return nil }
 func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)         { return nil, nil }
 func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)          { return nil, nil }

@@ -401,6 +401,53 @@ function confirmClearLoaderHome(nodeID) {
     document.body.appendChild(overlay);
 }
 
+// showPullFromMarketPicker fetches bins currently sitting in the loader's
+// outbound supermarket and presents a picker so the operator can pull one back
+// to the loader window. Used during cell launches to recover bins from the
+// market before resuming normal empty-request / load-full flow.
+function showPullFromMarketPicker(nodeID) {
+    const overlay = el('div', { className: 'os-co-picker-overlay' });
+    const panel = el('div', { className: 'os-co-picker' });
+    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Pull bin from market' }));
+    panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+        textContent: 'Select a bin in the outbound market to pull back to this loader window.' }));
+
+    const listDiv = el('div', { style: 'margin:8px 0 4px;' });
+    listDiv.textContent = 'Loading…';
+    panel.appendChild(listDiv);
+
+    const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
+    cancel.addEventListener('click', () => overlay.remove());
+    panel.appendChild(cancel);
+
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+
+    fetch('/api/process-nodes/' + nodeID + '/market-bins', { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(bins) {
+            listDiv.textContent = '';
+            if (!bins || bins.length === 0) {
+                listDiv.textContent = 'No bins available in the market.';
+                return;
+            }
+            bins.forEach(function(b) {
+                var btn = el('button', { className: 'os-co-picker-btn' });
+                btn.textContent = b.payload_code + ' — UOP: ' + b.uop_remaining + '  [' + b.node_name + ']';
+                btn.addEventListener('click', function() {
+                    overlay.remove();
+                    postAction('/api/process-nodes/' + nodeID + '/pull-from-market',
+                        { source_core_node: b.node_name }, loadViewRef);
+                });
+                listDiv.appendChild(btn);
+            });
+        })
+        .catch(function() {
+            listDiv.textContent = 'Could not load market bins.';
+        });
+}
+
 // buildLoaderCard renders ONE (position × payload) card — the atomic unit of the
 // loader board. Returns the card element, or null when a normal kanban loader's
 // idle card should be hidden. counters.queuePos tracks the per-payload queue badge
@@ -610,6 +657,21 @@ function renderPayloadBoard(entry) {
             reqBtn.disabled = true;
         }
         reqBar.appendChild(reqBtn);
+
+        // PULL FROM MARKET — produce loaders with an outbound_destination only.
+        // Lets the operator pull a specific bin from the supermarket back to this
+        // window (e.g. during a cell launch to clear bins before normal flow).
+        if (isProduce && claim.outbound_destination) {
+            var pullBtn = el('button', {
+                className: 'os-board-request-btn',
+                textContent: 'PULL FROM MARKET',
+            });
+            pullBtn.addEventListener('click', function() {
+                showPullFromMarketPicker(entry.node.id);
+            });
+            reqBar.appendChild(pullBtn);
+        }
+
         grid.appendChild(reqBar);
     }
 

@@ -97,6 +97,8 @@ type EngineOrchestration interface {
 	ClearBin(nodeID int64, binTypeCode string) error
 	ClearLoaderHome(nodeID int64) error
 	EnrichHomeBufferPartials(nodes []domain.StationNodeView)
+	FetchMarketBins(nodeID int64) ([]engine.MarketBinInfo, error)
+	PullFromMarket(nodeID int64, sourceCoreName string) error
 	PushEmptyOut(nodeID int64) error
 	RequestEmptyBin(nodeID int64, payloadCode string) (*domain.Order, error)
 	RequestFullBin(nodeID int64, payloadCode string) (*domain.Order, error)
