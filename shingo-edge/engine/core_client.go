@@ -443,11 +443,17 @@ type PayloadSystemCount struct {
 }
 
 // ClearBin clears the manifest on the bin at a node via Core's HTTP API.
-func (c *CoreClient) ClearBin(nodeName string) error {
+// binTypeCode is optional: when non-empty Core re-stamps the carrier's
+// bin_type_id atomically with the manifest clear (dunnage float).
+func (c *CoreClient) ClearBin(nodeName, binTypeCode string) error {
 	if c.baseURL == "" {
 		return fmt.Errorf("core API not configured")
 	}
-	body, _ := json.Marshal(map[string]string{"node_name": nodeName})
+	reqBody := map[string]string{"node_name": nodeName}
+	if binTypeCode != "" {
+		reqBody["bin_type_code"] = binTypeCode
+	}
+	body, _ := json.Marshal(reqBody)
 	resp, err := c.http.Post(c.baseURL+"/api/telemetry/bin-clear", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("bin-clear request failed: %w", err)

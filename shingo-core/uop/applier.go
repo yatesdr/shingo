@@ -61,7 +61,10 @@ type ManifestClearer interface {
 	// apply, not a load/clear handler that ships a response to Edge)
 	// but the signature matches BinManifestService directly to avoid
 	// an adapter layer.
-	ClearForReuseTx(tx *sql.Tx, binID int64, op, source string) (int64, error)
+	//
+	// binTypeID is always nil on this path (auto-clear on UOP zero);
+	// the parameter exists so the interface matches BinManifestService.
+	ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID *int64, op, source string) (int64, error)
 }
 
 // InventoryDeltaService applies BinUOPDelta and LinesideBucketDelta
@@ -265,7 +268,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 		// capture-reduction-driven clear; alternative would be to
 		// proactively push the new epoch back to Edge as a side channel,
 		// which the current architecture doesn't have a transport for.
-		if _, err := s.binManifest.ClearForReuseTx(tx, d.BinID,
+		if _, err := s.binManifest.ClearForReuseTx(tx, d.BinID, nil,
 			audit.OpReleasedCaptureEmpty,
 			"service/inventory_delta_service.go:ApplyBinUOPDelta"); err != nil {
 			return fmt.Errorf("clear manifest on capture_reduction zero bin=%d: %w", d.BinID, err)

@@ -532,6 +532,18 @@ func (s *BinService) ListBinTypes() ([]*bins.BinType, error) {
 	return s.db.ListBinTypes()
 }
 
+// GetBinTypeByCode fetches a bin type by its unique code.
+func (s *BinService) GetBinTypeByCode(code string) (*bins.BinType, error) {
+	return s.db.GetBinTypeByCode(code)
+}
+
+// GetEffectiveBinTypesForNode returns the bin types valid at a node based on
+// its bin_type_mode property. An empty result means no restriction (mode="all"
+// or unconfigured) — callers should treat nil/empty as "allow everything."
+func (s *BinService) GetEffectiveBinTypesForNode(nodeID int64) ([]*bins.BinType, error) {
+	return s.db.GetEffectiveBinTypes(nodeID)
+}
+
 // CountBinsByAllNodes returns a map of node_id -> bin count for every
 // node that has at least one bin. Absorbed from engine_db_methods.go
 // as part of the nodesPageDataStore dissolution (PR 3a.5.1).

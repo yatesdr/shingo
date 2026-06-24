@@ -172,7 +172,7 @@ func TestClearBin_FiresEmptyOut_AMRFed(t *testing.T) {
 	eng.coreClient = NewCoreClient(srv.URL)
 	eng.wireEventHandlers()
 
-	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, ""), "ClearBin")
 
 	after, err := db.GetOrder(orderID)
 	if err != nil {
@@ -207,7 +207,7 @@ func TestClearBin_FiresEmptyOut_PressFed(t *testing.T) {
 	eng.coreClient = NewCoreClient(srv.URL)
 
 	// No U1 order exists — the press fed the window directly.
-	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, ""), "ClearBin")
 
 	n, payload := countMovesTo(t, db, unloaderNodeID, "EMPTY-TOTES")
 	if n != 1 {
@@ -231,7 +231,7 @@ func TestClearBin_NoEmptyOut_WhenWindowEmpty(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.coreClient = NewCoreClient(srv.URL)
 
-	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, ""), "ClearBin")
 
 	if n, _ := countMovesTo(t, db, unloaderNodeID, "EMPTY-TOTES"); n != 0 {
 		t.Errorf("empty-out moves on empty window = %d, want 0 (hadBin gate)", n)
@@ -283,6 +283,139 @@ func TestLoadablePayloads_NotGatedByActiveStyle(t *testing.T) {
 	}
 	if got := eng.loadablePayloads(node, claim); !slices.Equal(got, []string{"PART-A", "PART-B"}) {
 		t.Errorf("operator-driven loader: loadablePayloads = %v, want [PART-A PART-B] (same loader-wide union)", got)
+	}
+}
+
+// seedSimpleClaim seeds a process/node/style/claim with SwapMode "simple" so
+// that PushEmptyOut's manual_swap guard can be exercised.
+func seedSimpleClaim(t *testing.T, db *store.DB, prefix string, role protocol.ClaimRole) (nodeID int64) {
+	t.Helper()
+	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" simple", "active_production", "", "", false, false)
+	if err != nil {
+		t.Fatalf("create simple process: %v", err)
+	}
+	nodeID, err = db.CreateProcessNode(processes.NodeInput{
+		ProcessID:    processID,
+		CoreNodeName: prefix + "-SIMPLE-NODE",
+		Code:         prefix[:3],
+		Name:         prefix + " simple",
+		Sequence:     1,
+		Enabled:      true,
+	})
+	if err != nil {
+		t.Fatalf("create simple node: %v", err)
+	}
+	styleID, err := db.CreateStyle(prefix+"-SIMPLE-STYLE", prefix+" simple", processID)
+	if err != nil {
+		t.Fatalf("create simple style: %v", err)
+	}
+	db.SetActiveStyle(processID, &styleID)
+
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID:      styleID,
+		CoreNodeName: prefix + "-SIMPLE-NODE",
+		Role:         role,
+		SwapMode:     protocol.SwapModeSimple,
+		PayloadCode:  "PART-SMP",
+		UOPCapacity:  100,
+	}); err != nil {
+		t.Fatalf("upsert simple claim: %v", err)
+	}
+	db.EnsureProcessNodeRuntime(nodeID)
+	return nodeID
+}
+
+// TestPushEmptyOut_EmptyWindow_CreatesExactlyOneMove: an occupied-but-empty
+// carrier is sitting in the window. PushEmptyOut must queue exactly one move
+// order (U2 empty-out) to the outbound destination.
+func TestPushEmptyOut_EmptyWindow_CreatesExactlyOneMove(t *testing.T) {
+	t.Parallel()
+	// empty=true, payload="" → occupied but empty carrier
+	srv := fakeCoreBinServer(t, true, "")
+
+	db := testEngineDB(t)
+	nodeID, _ := seedManualSwapClaim(t, db, "PE-OK", "consume", "PART-PE", "EMPTY-STORE")
+
+	eng := testEngine(t, db)
+	eng.coreClient = NewCoreClient(srv.URL)
+
+	if err := eng.PushEmptyOut(nodeID); err != nil {
+		t.Fatalf("PushEmptyOut: %v", err)
+	}
+
+	n, _ := countMovesTo(t, db, nodeID, "EMPTY-STORE")
+	if n != 1 {
+		t.Errorf("move orders to EMPTY-STORE = %d, want exactly 1", n)
+	}
+}
+
+// TestPushEmptyOut_FullWindow_ReturnsError: the bin still has a payload —
+// PushEmptyOut must refuse (the operator hasn't cleared it yet).
+func TestPushEmptyOut_FullWindow_ReturnsError(t *testing.T) {
+	t.Parallel()
+	srv := fakeCoreBinServer(t, true, "PART-FULL")
+
+	db := testEngineDB(t)
+	nodeID, _ := seedManualSwapClaim(t, db, "PE-FULL", "consume", "PART-FULL", "EMPTY-STORE")
+
+	eng := testEngine(t, db)
+	eng.coreClient = NewCoreClient(srv.URL)
+
+	if err := eng.PushEmptyOut(nodeID); err == nil {
+		t.Fatal("PushEmptyOut on a full window: want error, got nil")
+	}
+
+	n, _ := countMovesTo(t, db, nodeID, "EMPTY-STORE")
+	if n != 0 {
+		t.Errorf("move orders = %d, want 0 (no order created for full bin)", n)
+	}
+}
+
+// TestPushEmptyOut_NonManualSwapNode_ReturnsError: the node's claim is not
+// manual_swap — PushEmptyOut must refuse before touching any orders.
+func TestPushEmptyOut_NonManualSwapNode_ReturnsError(t *testing.T) {
+	t.Parallel()
+	srv := fakeCoreBinServer(t, true, "")
+
+	db := testEngineDB(t)
+	nodeID := seedSimpleClaim(t, db, "SMP", "consume")
+
+	eng := testEngine(t, db)
+	eng.coreClient = NewCoreClient(srv.URL)
+
+	if err := eng.PushEmptyOut(nodeID); err == nil {
+		t.Fatal("PushEmptyOut on non-manual_swap node: want error, got nil")
+	}
+
+	all, _ := db.ListActiveOrdersByProcessNode(nodeID)
+	if len(all) != 0 {
+		t.Errorf("orders created = %d, want 0 (guard must fire before order creation)", len(all))
+	}
+}
+
+// TestPushEmptyOut_DoubleTap_StillExactlyOneMove: two PushEmptyOut calls in
+// quick succession for the same empty carrier. The in-flight guard must block
+// the second call after the first order is created, leaving exactly one move.
+func TestPushEmptyOut_DoubleTap_StillExactlyOneMove(t *testing.T) {
+	t.Parallel()
+	srv := fakeCoreBinServer(t, true, "")
+
+	db := testEngineDB(t)
+	nodeID, _ := seedManualSwapClaim(t, db, "PE-DUP", "consume", "PART-DUP", "EMPTY-STORE")
+
+	eng := testEngine(t, db)
+	eng.coreClient = NewCoreClient(srv.URL)
+
+	if err := eng.PushEmptyOut(nodeID); err != nil {
+		t.Fatalf("first PushEmptyOut: %v", err)
+	}
+	if err := eng.PushEmptyOut(nodeID); err == nil {
+		t.Fatal("second PushEmptyOut: want error (in-flight guard), got nil")
+	}
+
+	n, _ := countMovesTo(t, db, nodeID, "EMPTY-STORE")
+	if n != 1 {
+		t.Errorf("move orders after double-tap = %d, want exactly 1 (guard must block second)", n)
 	}
 }
 

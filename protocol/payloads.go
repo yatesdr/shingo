@@ -418,14 +418,25 @@ type NodeInfo struct {
 	ParentNodeType string `json:"parent_node_type,omitempty"`
 }
 
+// PayloadBinTypeInfo maps one payload code to one bin-type code.
+// One row per (payload, bin_type) pair in payload_bin_types.
+// Carried as a sibling slice on NodeListResponse so Edge can derive
+// the dunnage picker options from a node's allowed payloads without
+// a per-node query.
+type PayloadBinTypeInfo struct {
+	PayloadCode string `json:"payload_code"`
+	BinTypeCode string `json:"bin_type_code"`
+}
+
 // NodeListResponse carries the core's authoritative node list, plus (loader
 // refactor cutover) the Core-owned loader config as a sibling slice so a loader
 // and its member positions arrive atomically with the topology. Loaders is
 // omitted until Core authors loaders, so this is additive — a pre-cutover Edge
 // ignores the unknown field.
 type NodeListResponse struct {
-	Nodes   []NodeInfo   `json:"nodes"`
-	Loaders []LoaderInfo `json:"loaders,omitempty"`
+	Nodes          []NodeInfo           `json:"nodes"`
+	Loaders        []LoaderInfo         `json:"loaders,omitempty"`
+	PayloadBinTypes []PayloadBinTypeInfo `json:"payload_bin_types,omitempty"`
 }
 
 // LoaderInfo describes one Core-owned bin loader (produce) or unloader (consume)

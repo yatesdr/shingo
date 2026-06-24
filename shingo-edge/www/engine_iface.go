@@ -41,6 +41,10 @@ type ServiceAccess interface {
 	// state read with no engine-side side effects — admin pages,
 	// orders, and manual-order forms all need it.
 	CoreNodes() map[string]protocol.NodeInfo
+	// PayloadBinTypes returns the cached payload→dunnage mapping delivered
+	// by Core on each NodeListResponse. Used by the operator-station view
+	// handler to populate the dunnage picker without a per-node query.
+	PayloadBinTypes() []protocol.PayloadBinTypeInfo
 
 	// ── Service accessors ──────────────────────────────────────────
 	// Phase 6.2′: per-domain services. Handlers reach single-aggregate
@@ -90,7 +94,8 @@ type EngineOrchestration interface {
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
 	FinalizeProduceNode(nodeID int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
-	ClearBin(nodeID int64) error
+	ClearBin(nodeID int64, binTypeCode string) error
+	PushEmptyOut(nodeID int64) error
 	RequestEmptyBin(nodeID int64, payloadCode string) (*domain.Order, error)
 	RequestFullBin(nodeID int64, payloadCode string) (*domain.Order, error)
 

@@ -438,7 +438,10 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 		}
 		for _, n := range nodeList {
 			if n.ParentID == nil {
-				infos = append(infos, protocol.NodeInfo{Name: n.Name, NodeType: n.NodeTypeCode})
+				infos = append(infos, protocol.NodeInfo{
+					Name:     n.Name,
+					NodeType: n.NodeTypeCode,
+				})
 			} else if !n.IsSynthetic {
 				if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == protocol.NodeClassNGRP {
 					infos = append(infos, protocol.NodeInfo{
@@ -458,7 +461,22 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 		// Non-fatal: send the node list without loaders rather than nothing.
 		log.Printf("core_handler: build loader infos for %s: %v", env.Src.Station, lerr)
 	}
-	s.resp.replyData(env, protocol.SubjectNodeListResponse, &protocol.NodeListResponse{Nodes: infos, Loaders: loaderInfos})
+	// Payload→dunnage mapping: one query replaces the N+1 per-node
+	// GetEffectiveBinTypes calls. Edge uses this to derive picker options
+	// from the node's allowed payloads (claim.AllowedPayloadCodes).
+	pbtPairs, pbtErr := s.db.ListPayloadBinTypeMappings()
+	if pbtErr != nil {
+		log.Printf("core_handler: list payload bin types for %s: %v", env.Src.Station, pbtErr)
+	}
+	var payloadBinTypes []protocol.PayloadBinTypeInfo
+	for _, p := range pbtPairs {
+		payloadBinTypes = append(payloadBinTypes, protocol.PayloadBinTypeInfo{PayloadCode: p[0], BinTypeCode: p[1]})
+	}
+	s.resp.replyData(env, protocol.SubjectNodeListResponse, &protocol.NodeListResponse{
+		Nodes:           infos,
+		Loaders:         loaderInfos,
+		PayloadBinTypes: payloadBinTypes,
+	})
 	log.Printf("core_handler: sent node list (%d nodes, %d loaders) to %s", len(infos), len(loaderInfos), env.Src.Station)
 }
 

@@ -382,7 +382,7 @@ func (op *simOperator) classifyFromClaim(nodeID int64) (time.Duration, string, f
 		c := claim
 		return op.loaderDelay(), "load", func() error { return op.loadBin(nodeID, c) }, true
 	case protocol.ClaimRoleConsume: // unloader: full bin arrived → CLEAR it
-		return op.unloaderDelay(), "clear", func() error { return op.e.ClearBin(nodeID) }, true
+		return op.unloaderDelay(), "clear", func() error { return op.e.ClearBin(nodeID, "") }, true
 	}
 	return 0, "", nil, false
 }

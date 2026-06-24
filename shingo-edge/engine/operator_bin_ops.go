@@ -244,7 +244,10 @@ func (e *Engine) confirmLoaderL1OnLoad(coreNodeName string, uopCount int64) (int
 //
 // Post-clear, if the claim has AutoPush enabled, MaybePushUnloader offers the next pull
 // to the reservation seam — a no-inbound drain is gated there too, so it's a no-op.
-func (e *Engine) ClearBin(nodeID int64) error {
+// ClearBin clears the bin at the consume-unloader window. binTypeCode is the
+// dunnage type the operator selected at the confirm tap; empty string means no
+// change to the carrier's bin_type_id (existing behaviour for all other callers).
+func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return err
@@ -279,7 +282,7 @@ func (e *Engine) ClearBin(nodeID int64) error {
 			e.createUnloaderEmptyOut(node, claim, clearedPayload)
 		}
 	}
-	if err := e.coreClient.ClearBin(node.CoreNodeName); err != nil {
+	if err := e.coreClient.ClearBin(node.CoreNodeName, binTypeCode); err != nil {
 		return fmt.Errorf("clear bin: %w", err)
 	}
 	// claim.ID is 0 for a synthesized Core-loader claim — pass nil, not a 0 FK.
@@ -301,6 +304,59 @@ func (e *Engine) ClearBin(nodeID int64) error {
 	// stage the next empty. Gated inside MaybePushLoader on transitional.
 	if claim.Role == protocol.ClaimRoleProduce {
 		e.MaybePushLoader(nodeID)
+	}
+	return nil
+}
+
+// PushEmptyOut sends the empty bin currently sitting in a drain window outbound
+// without waiting for the next full-bin delivery. Used when the slot holds an
+// empty (payload_code=="") and the operator taps PUSH EMPTY on the unloader
+// board — the carrier exits immediately so the AMR can bring a fresh full bin.
+//
+// Delegates to createUnloaderEmptyOut so all the same routing/logging rules
+// apply (outbound from loader aggregate, auto-confirms, runtime order updated).
+func (e *Engine) PushEmptyOut(nodeID int64) error {
+	node, _, claim, err := e.loadActiveNode(nodeID)
+	if err != nil {
+		return err
+	}
+	if claim == nil {
+		return fmt.Errorf("node %s has no active claim", node.Name)
+	}
+	// Mirror ClearBin: PushEmptyOut is for manual_swap consume windows only.
+	if claim.SwapMode != protocol.SwapModeManualSwap {
+		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	}
+	if claim.Role != protocol.ClaimRoleConsume {
+		return fmt.Errorf("node %s is not a consume node", node.Name)
+	}
+	bins, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+	if len(bins) == 0 || !bins[0].Occupied {
+		return fmt.Errorf("node %s has no bin to push", node.Name)
+	}
+	// Only push if the bin is actually empty (no payload). A full bin sitting
+	// in the window means the operator confirmed earlier but the AMR is still
+	// staging — don't evict it.
+	if bins[0].PayloadCode != "" {
+		return fmt.Errorf("node %s bin is not empty (payload=%q)", node.Name, bins[0].PayloadCode)
+	}
+	// Double-tap guard: the order layer has no dedup for move orders, so two
+	// rapid taps would each call createUnloaderEmptyOut and create two U2
+	// orders for the same physical bin. Check for an active move before
+	// creating another — same style as confirmUnloaderU1OnClear's delivered
+	// retrieve lookup.
+	existing, err := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, protocol.OrderTypeMove)
+	if err != nil {
+		return fmt.Errorf("check in-flight move for node %s: %w", node.Name, err)
+	}
+	if len(existing) > 0 {
+		return fmt.Errorf("node %s already has an empty-out in flight", node.Name)
+	}
+	e.createUnloaderEmptyOut(node, claim, "")
+	// Re-arm the delivery seam so the next full bin is requested after the
+	// empty departs — mirrors ClearBin's gated MaybePushUnloader at its tail.
+	if claim.AutoPush {
+		e.MaybePushUnloader(nodeID)
 	}
 	return nil
 }

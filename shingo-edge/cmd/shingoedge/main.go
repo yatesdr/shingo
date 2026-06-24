@@ -217,9 +217,10 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
-		log.Printf("edge_handler: received node list (%d nodes, %d loaders)", len(resp.Nodes), len(resp.Loaders))
+		log.Printf("edge_handler: received node list (%d nodes, %d loaders, %d payload-bin-types)", len(resp.Nodes), len(resp.Loaders), len(resp.PayloadBinTypes))
 		eng.SetCoreNodes(resp.Nodes)
 		eng.SetCoreLoaders(resp.Loaders)
+		eng.SetPayloadBinTypes(resp.PayloadBinTypes)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectProductionReportAck, func(_ *protocol.Envelope, ack *protocol.ProductionReportAck) {
 		log.Printf("edge_handler: production report ack: station=%s accepted=%d", ack.StationID, ack.Accepted)

@@ -271,19 +271,99 @@ export function renderGrid() {
 // — so the operator must declare the full pulled / bin empty before it fires.
 // Reuses the os-co-picker overlay styling already used by the changeover/cutover
 // confirmations so the look is consistent.
-function confirmUnloadSwap(nodeID) {
+//
+// allowedPayloadCodes is the node's claim.allowed_payload_codes. The dunnage
+// picker options are the distinct bin_type_codes mapped to those payloads via
+// the view-level payload_bin_types catalog. A node configured for tote-payloads
+// only resolves to totes; a node with no payload restriction shows all dunnage
+// types in the catalog.
+function confirmUnloadSwap(nodeID, allowedPayloadCodes) {
+    var view = getView();
+    var catalog = (view && view.payload_bin_types) || [];
+
+    // Derive distinct dunnage codes for this node's payloads.
+    var seen = {};
+    var binTypeCodes = [];
+    catalog.forEach(function(e) {
+        if (!seen[e.bin_type_code] &&
+                (allowedPayloadCodes && allowedPayloadCodes.length > 0
+                    ? allowedPayloadCodes.indexOf(e.payload_code) >= 0
+                    : true)) {
+            seen[e.bin_type_code] = true;
+            binTypeCodes.push(e.bin_type_code);
+        }
+    });
+    // Fallback: if no payloads matched, show all dunnage codes so the
+    // operator is never stuck (e.g. node has no payloads configured yet).
+    if (binTypeCodes.length === 0) {
+        catalog.forEach(function(e) {
+            if (!seen[e.bin_type_code]) {
+                seen[e.bin_type_code] = true;
+                binTypeCodes.push(e.bin_type_code);
+            }
+        });
+    }
+
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Full pulled, empty filled?' }));
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
         textContent: 'Confirms the bin is unloaded. The empty returns to the supermarket and the next full is requested.' }));
 
-    const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'CONFIRM SWAP' });
-    confirm.addEventListener('click', function() {
+    const binTypes = binTypeCodes.length > 0 ? binTypeCodes : null;
+    // Single-type stations auto-fill: skip the picker and send the code
+    // directly on CONFIRM SWAP so the dunnage is still recorded without
+    // forcing the operator to tap a one-item menu.
+    const autoCode = binTypes && binTypes.length === 1 ? binTypes[0] : null;
+    if (binTypes && !autoCode) {
+        // Two or more types: show the picker so the operator selects one.
+        panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+            textContent: 'Select dunnage type for this carrier:' }));
+        binTypes.forEach(function(code) {
+            const btn = el('button', { className: 'os-co-picker-btn', textContent: code });
+            btn.addEventListener('click', function() {
+                overlay.remove();
+                postAction('/api/process-nodes/' + nodeID + '/clear-bin',
+                    { bin_type_code: code }, loadViewRef);
+            });
+            panel.appendChild(btn);
+        });
+    } else {
+        // No catalog / exactly one type (auto-fill): one button.
+        const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'CONFIRM SWAP' });
+        confirm.addEventListener('click', function() {
+            overlay.remove();
+            postAction('/api/process-nodes/' + nodeID + '/clear-bin',
+                autoCode ? { bin_type_code: autoCode } : undefined, loadViewRef);
+        });
+        panel.appendChild(confirm);
+    }
+
+    const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
+    cancel.addEventListener('click', () => overlay.remove());
+    panel.appendChild(cancel);
+
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
+// confirmPushEmpty shows a confirmation panel for an empty carrier sitting in a
+// drain slot. Tapping PUSH EMPTY fires the push-empty endpoint so the carrier is
+// sent to the supermarket and the node can request a fresh full bin.
+function confirmPushEmpty(nodeID) {
+    const overlay = el('div', { className: 'os-co-picker-overlay' });
+    const panel = el('div', { className: 'os-co-picker' });
+    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Empty bin in slot' }));
+    panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+        textContent: 'Send the empty carrier to the supermarket so a full bin can be requested.' }));
+
+    const push = el('button', { className: 'os-co-picker-btn', textContent: 'PUSH EMPTY' });
+    push.addEventListener('click', function() {
         overlay.remove();
-        postAction('/api/process-nodes/' + nodeID + '/clear-bin', undefined, loadViewRef);
+        postAction('/api/process-nodes/' + nodeID + '/push-empty', undefined, loadViewRef);
     });
-    panel.appendChild(confirm);
+    panel.appendChild(push);
 
     const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
     cancel.addEventListener('click', () => overlay.remove());
@@ -370,7 +450,7 @@ function buildLoaderCard(entry, code, counters, opts) {
     } else if (cs.action === 'unload') {
         card.style.cursor = 'pointer';
         card.addEventListener('click', function() {
-            confirmUnloadSwap(entry.node.id);
+            confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes);
         });
     } else {
         card.style.cursor = 'pointer';
@@ -727,12 +807,16 @@ function createNodeButton(entry) {
     }
 
     if (isDrainSlot(entry)) {
-        // Drain slot: tap a parked full → confirm-swap panel (no payload picker).
-        // An empty/idle slot has nothing to pull, so the tap is a no-op.
+        // Drain slot tap logic:
+        //   full parked  → confirm-swap panel (with optional dunnage picker)
+        //   empty parked → push-empty confirmation panel
+        //   no bin       → no-op
         btn.addEventListener('click', () => {
             const bs = entry.bin_state;
             const fullPresent = bs && bs.occupied && bs.payload_code;
-            if (fullPresent) confirmUnloadSwap(entry.node.id);
+            const emptyPresent = bs && bs.occupied && !bs.payload_code;
+            if (fullPresent) confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes);
+            else if (emptyPresent) confirmPushEmpty(entry.node.id);
         });
     } else {
         btn.addEventListener('click', () => openModalRef(entry.node.id));

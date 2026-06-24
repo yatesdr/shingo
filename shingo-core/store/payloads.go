@@ -29,3 +29,28 @@ func (db *DB) ListBinTypesForPayload(payloadID int64) ([]*bins.BinType, error) {
 func (db *DB) SetPayloadBinTypes(payloadID int64, binTypeIDs []int64) error {
 	return payloads.SetBinTypes(db.DB, payloadID, binTypeIDs)
 }
+
+// ListPayloadBinTypeMappings returns every (payload_code, bin_type_code) pair
+// from payload_bin_types, ordered by payload then type. One call replaces the
+// N+1 per-node GetEffectiveBinTypes queries on the NodeListResponse path.
+func (db *DB) ListPayloadBinTypeMappings() ([][2]string, error) {
+	rows, err := db.DB.Query(`
+		SELECT p.code, bt.code
+		FROM payload_bin_types pbt
+		JOIN payloads p  ON p.id  = pbt.payload_id
+		JOIN bin_types bt ON bt.id = pbt.bin_type_id
+		ORDER BY p.code, bt.code`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][2]string
+	for rows.Next() {
+		var pair [2]string
+		if err := rows.Scan(&pair[0], &pair[1]); err != nil {
+			return nil, err
+		}
+		out = append(out, pair)
+	}
+	return out, rows.Err()
+}

@@ -104,6 +104,7 @@ func (s *stubEngine) ApplyWarLinkConfig()                                       
 func (s *stubEngine) ReconnectKafka() error                                               { return nil }
 func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error                           { return nil }
 func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo                             { return s.core }
+func (s *stubEngine) PayloadBinTypes() []protocol.PayloadBinTypeInfo                     { return nil }
 func (s *stubEngine) RequestNodeSync()                                                    {}
 func (s *stubEngine) RequestCatalogSync()                                                 {}
 func (s *stubEngine) RequestOrderStatusSync() error                                       { return nil }
@@ -141,7 +142,8 @@ func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition
 }
 func (s *stubEngine) FinalizeProduceNode(int64) (*engine.NodeOrderResult, error)        { return nil, nil }
 func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem) error { return nil }
-func (s *stubEngine) ClearBin(int64) error                                              { return nil }
+func (s *stubEngine) ClearBin(int64, string) error { return nil }
+func (s *stubEngine) PushEmptyOut(int64) error    { return nil }
 func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)         { return nil, nil }
 func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)          { return nil, nil }
 func (s *stubEngine) PreviewChangeoverPlan(int64, int64) (changeover.Plan, error) {

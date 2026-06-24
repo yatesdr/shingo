@@ -14,6 +14,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store/bins"
 	"shingocore/store/payloads"
 )
 
@@ -420,6 +421,77 @@ func TestApiBinClear_AmbiguousWithBinID_ClearsNamedBin(t *testing.T) {
 	}
 	if got, _ := db.GetBin(keep.ID); got.PayloadCode == "" {
 		t.Error("the other bin must be untouched, but its payload_code was cleared")
+	}
+}
+
+// TestApiBinClear_UnknownBinTypeCode_Returns400 sends a bin_type_code that
+// does not exist in the database; the handler must reject it with 400.
+func TestApiBinClear_UnknownBinTypeCode_Returns400(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-UNK-CODE")
+
+	rec := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear",
+		map[string]any{"node_name": sd.StorageNode.Name, "bin_type_code": "DOES-NOT-EXIST"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	assertJSONError(t, rec.Body.Bytes(), "unknown bin type code")
+}
+
+// TestApiBinClear_BinTypeCodeKnownNotInNodeSet_Returns200 verifies that a
+// bin_type_code that exists globally but is not in the node's node_bin_types
+// set is now accepted (200). The node-membership check was dropped in the
+// dunnage redesign: the picker derives options from payload→dunnage mappings,
+// not node_bin_types, so node-membership is no longer the gate. Blast radius
+// of a mis-pick is "starves out, repair via re-type" (R3), not data corruption.
+func TestApiBinClear_BinTypeCodeKnownNotInNodeSet_Returns200(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-RELAXED")
+
+	// Register the default bin type on the node, then use a second type
+	// that the node_bin_types table does NOT list — must now succeed.
+	testutil.MustNoErr(t, db.SetNodeBinTypes(sd.StorageNode.ID, []int64{sd.BinType.ID}), "set node bin types")
+	other := &bins.BinType{Code: "45x48-OTHER", Description: "not in node set"}
+	if err := db.CreateBinType(other); err != nil {
+		t.Fatalf("create other bin type: %v", err)
+	}
+
+	rec := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear",
+		map[string]any{"node_name": sd.StorageNode.Name, "bin_type_code": "45x48-OTHER"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestApiBinClear_NoBinTypeCode_LeavesTypeUnchanged verifies that omitting
+// bin_type_code is a no-op for the bin's type: the clear succeeds (200) but
+// the bin_type_id on the bin remains whatever it was before.
+func TestApiBinClear_NoBinTypeCode_LeavesTypeUnchanged(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-NOTYPE")
+	origTypeID := bin.BinTypeID
+
+	rec := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear",
+		map[string]any{"node_name": sd.StorageNode.Name})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	after, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("get bin post-clear: %v", err)
+	}
+	if after.PayloadCode != "" {
+		t.Errorf("PayloadCode = %q, want empty (manifest must clear)", after.PayloadCode)
+	}
+	if after.BinTypeID != origTypeID {
+		t.Errorf("BinTypeID = %d, want %d (nil path must not change type)", after.BinTypeID, origTypeID)
 	}
 }
 

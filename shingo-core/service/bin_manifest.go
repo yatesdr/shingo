@@ -45,6 +45,18 @@ func readBinUOPInTx(tx *sql.Tx, binID int64) (*int, error) {
 	return &v, nil
 }
 
+// binTypeCodeInTx looks up a bin type's code by ID inside an open tx.
+// Best-effort only (returns "" on zero id or scan failure); callers use it
+// for audit-detail enrichment, not correctness decisions.
+func binTypeCodeInTx(tx *sql.Tx, id int64) string {
+	if id == 0 {
+		return ""
+	}
+	var code string
+	_ = tx.QueryRow(`SELECT code FROM bin_types WHERE id=$1`, id).Scan(&code)
+	return code
+}
+
 // bumpEpoch increments a bin's delta_epoch inside the caller's tx and returns
 // the new value. Every count-reset/clear path calls this so "a reset starts a
 // fresh delta stream" is structural — a new reset path can't silently forget
@@ -100,14 +112,20 @@ func resolveBinUOPContext(tx *sql.Tx, binID int64, detail json.RawMessage) (audi
 // the bin's state to Edge (e.g. handlers that return JSON containing
 // the bin's row) can include it in their response. Callers that don't
 // care can ignore the value.
-func (s *BinManifestService) ClearForReuse(binID int64) (int64, error) {
+//
+// binTypeID is optional (nil = leave bin_type_id unchanged). When
+// non-nil the type is written atomically with the manifest clear so
+// a floating carrier's dunnage identity is always consistent with its
+// empty state. Callers that don't set dunnage (UOP-applier auto-clear,
+// admin clear) pass nil.
+func (s *BinManifestService) ClearForReuse(binID int64, binTypeID *int64) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	epoch, err := s.ClearForReuseTx(tx, binID, audit.OpClearForReuse, "service/bin_manifest.go:ClearForReuse")
+	epoch, err := s.ClearForReuseTx(tx, binID, binTypeID, audit.OpClearForReuse, "service/bin_manifest.go:ClearForReuse")
 	if err != nil {
 		return 0, err
 	}
@@ -137,14 +155,28 @@ func (s *BinManifestService) ClearForReuse(binID int64) (int64, error) {
 // for whatever delta arrives next — the SetForProduction would bump
 // a second time, but the (load-side) Edge cache learns the post-clear
 // epoch on the bin-state refresh that follows the clear.
-func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, op, source string) (int64, error) {
+//
+// binTypeID is optional (nil = preserve existing bin_type_id). When
+// non-nil, bin_type_id is updated atomically with the manifest clear.
+func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID *int64, op, source string) (int64, error) {
 	before, err := readBinUOPInTx(tx, binID)
 	if err != nil {
 		return 0, err
 	}
+	// Capture the old bin_type_id before the UPDATE so the audit row can
+	// record the from→to transition. Only paid when the caller supplies a
+	// new type; the common nil path skips this read entirely.
+	var oldTypeID sql.NullInt64
+	if binTypeID != nil {
+		_ = tx.QueryRow(`SELECT bin_type_id FROM bins WHERE id=$1`, binID).Scan(&oldTypeID)
+	}
+	// COALESCE($2, bin_type_id): when binTypeID is nil the column is
+	// left unchanged; when non-nil the dunnage type is re-stamped
+	// atomically with the manifest clear + epoch bump.
 	if _, err := tx.Exec(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0,
-		manifest_confirmed=false, loaded_at=NULL, updated_at=NOW()
-		WHERE id=$1`, binID); err != nil {
+		manifest_confirmed=false, loaded_at=NULL,
+		bin_type_id=COALESCE($2, bin_type_id), updated_at=NOW()
+		WHERE id=$1`, binID, binTypeID); err != nil {
 		return 0, fmt.Errorf("clear manifest bin %d: %w", binID, err)
 	}
 	newEpoch, err := bumpEpoch(tx, binID)
@@ -154,6 +186,16 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, op, source
 	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
 	if err != nil {
 		return 0, err
+	}
+	// Record from→to bin-type codes in the audit detail so a floating
+	// carrier's dunnage history is reconstructable from bin_uop_audit rows.
+	if binTypeID != nil {
+		fromCode := binTypeCodeInTx(tx, oldTypeID.Int64) // "" when NULL or missing
+		toCode := binTypeCodeInTx(tx, *binTypeID)
+		uopCtx.Detail, _ = json.Marshal(map[string]string{
+			"dunnage_from": fromCode,
+			"dunnage_to":   toCode,
+		})
 	}
 	if err := audit.AppendBinUOP(tx, binID, before, 0, op, source, nil, "", "", uopCtx); err != nil {
 		return 0, err

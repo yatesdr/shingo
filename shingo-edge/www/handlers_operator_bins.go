@@ -85,7 +85,24 @@ func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.orchestration.ClearBin(id); err != nil {
+	var body struct {
+		BinTypeCode string `json:"bin_type_code"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := h.orchestration.ClearBin(id, body.BinTypeCode); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
+func (h *Handlers) apiPushEmptyOut(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	if err := h.orchestration.PushEmptyOut(id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

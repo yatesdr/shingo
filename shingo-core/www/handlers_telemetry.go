@@ -304,10 +304,16 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 
 // apiBinClear clears the manifest on the bin at a node, resetting it to empty.
 // POST /api/telemetry/bin-clear
+//
+// Optional bin_type_code: when present the carrier's bin_type_id is updated
+// atomically with the manifest clear (dunnage floating — operator declared
+// which dunnage type they just loaded). Unknown or node-disallowed codes
+// return 400. Absent → bin_type_id is unchanged (existing behaviour).
 func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		NodeName string `json:"node_name"`
-		BinID    int64  `json:"bin_id,omitempty"`
+		NodeName    string `json:"node_name"`
+		BinID       int64  `json:"bin_id,omitempty"`
+		BinTypeCode string `json:"bin_type_code,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.jsonError(w, err.Error(), http.StatusBadRequest)
@@ -350,12 +356,26 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(bins)), http.StatusConflict)
 		return
 	}
-	newEpoch, err := h.engine.BinManifest().ClearForReuse(bin.ID)
+
+	// Resolve optional dunnage re-type. Existence check keeps the blast radius
+	// of a mis-pick to "starves out, repair via re-type" (R3 severity).
+	var binTypeID *int64
+	if req.BinTypeCode != "" {
+		bt, err := h.engine.BinService().GetBinTypeByCode(req.BinTypeCode)
+		if err != nil {
+			h.jsonError(w, fmt.Sprintf("unknown bin type code %q", req.BinTypeCode), http.StatusBadRequest)
+			return
+		}
+		id := bt.ID
+		binTypeID = &id
+	}
+
+	newEpoch, err := h.engine.BinManifest().ClearForReuse(bin.ID, binTypeID)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("telemetry: bin-clear bin=%d at node=%s epoch=%d", bin.ID, req.NodeName, newEpoch)
+	log.Printf("telemetry: bin-clear bin=%d at node=%s bin_type=%s epoch=%d", bin.ID, req.NodeName, req.BinTypeCode, newEpoch)
 	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "cleared", "bin_id": bin.ID,
 	}))

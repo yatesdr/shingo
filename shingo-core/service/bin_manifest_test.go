@@ -83,7 +83,7 @@ func TestBinManifestService_ClearForReuse(t *testing.T) {
 	}
 
 	// Clear the bin
-	if _, err := svc.ClearForReuse(bin.ID); err != nil {
+	if _, err := svc.ClearForReuse(bin.ID, nil); err != nil {
 		t.Fatalf("ClearForReuse"+": %v", err)
 	}
 
@@ -124,7 +124,7 @@ func TestBinManifestService_ClearForReuse_MakesVisibleToFindEmpty(t *testing.T) 
 	}
 
 	// Clear the bin
-	if _, err := svc.ClearForReuse(bin.ID); err != nil {
+	if _, err := svc.ClearForReuse(bin.ID, nil); err != nil {
 		t.Fatalf("ClearForReuse"+": %v", err)
 	}
 
@@ -143,6 +143,86 @@ func TestBinManifestService_ClearForReuse_MakesVisibleToFindEmpty(t *testing.T) 
 // callers — partial-consumption sync goes through ApplyBinUOPDelta in
 // the post-bin-as-truth flow. SyncUOPAndClaim covers the
 // claim-with-uop case directly.)
+
+func TestBinManifestService_ClearForReuse_SetsBinTypeID(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	// Create a distinct bin type to stamp; CreateBinType fills bt.ID on success.
+	dunnage := &bins.BinType{Code: "45x48-KD-T1", Description: "Knockdown dunnage"}
+	testutil.MustNoErr(t, db.CreateBinType(dunnage), "create dunnage bin type")
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DUNNAGE-1", "PART-A", 50)
+	origTypeID := bin.BinTypeID
+
+	before, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("get bin pre-clear: %v", err)
+	}
+	newEpoch, err := svc.ClearForReuse(bin.ID, &dunnage.ID)
+	if err != nil {
+		t.Fatalf("ClearForReuse with binTypeID: %v", err)
+	}
+
+	after, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("get bin post-clear: %v", err)
+	}
+	if after.PayloadCode != "" {
+		t.Errorf("PayloadCode = %q, want empty (manifest not cleared)", after.PayloadCode)
+	}
+	if after.BinTypeID != dunnage.ID {
+		t.Errorf("BinTypeID = %d, want %d (dunnage type not stamped)", after.BinTypeID, dunnage.ID)
+	}
+	if after.BinTypeID == origTypeID {
+		t.Error("BinTypeID unchanged from original — COALESCE did not write")
+	}
+	if newEpoch <= before.DeltaEpoch {
+		t.Errorf("delta_epoch = %d, want > %d (epoch must bump on clear)", newEpoch, before.DeltaEpoch)
+	}
+
+	// Audit detail must record from→to codes, not just a bare boolean.
+	var rawDetail []byte
+	testutil.MustNoErr(t, db.QueryRow(
+		`SELECT detail FROM bin_uop_audit WHERE bin_id=$1 ORDER BY id DESC LIMIT 1`, bin.ID,
+	).Scan(&rawDetail), "load audit detail")
+	var detail map[string]string
+	testutil.MustNoErr(t, json.Unmarshal(rawDetail, &detail), "parse audit detail")
+	if detail["dunnage_to"] != "45x48-KD-T1" {
+		t.Errorf("audit detail dunnage_to = %q, want %q", detail["dunnage_to"], "45x48-KD-T1")
+	}
+	// from should be the original type code ("DEFAULT" from SetupStandardData).
+	if detail["dunnage_from"] == "" {
+		t.Errorf("audit detail dunnage_from is empty, want the prior bin-type code")
+	}
+}
+
+func TestBinManifestService_ClearForReuse_NilLeavesTypeUnchanged(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DUNNAGE-2", "PART-B", 50)
+	wantTypeID := bin.BinTypeID
+
+	if _, err := svc.ClearForReuse(bin.ID, nil); err != nil {
+		t.Fatalf("ClearForReuse(nil): %v", err)
+	}
+
+	after, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("get bin post-clear: %v", err)
+	}
+	if after.BinTypeID != wantTypeID {
+		t.Errorf("BinTypeID = %d, want %d (nil must leave type unchanged)", after.BinTypeID, wantTypeID)
+	}
+	if after.PayloadCode != "" {
+		t.Errorf("PayloadCode = %q, want empty", after.PayloadCode)
+	}
+}
 
 func TestBinManifestService_ClearAndClaim_Atomic(t *testing.T) {
 	t.Parallel()

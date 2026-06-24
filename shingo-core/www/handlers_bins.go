@@ -486,7 +486,7 @@ func (h *Handlers) binLoadPayload(b *domain.Bin, params json.RawMessage) error {
 func (h *Handlers) binClear(b *domain.Bin, _ json.RawMessage) error {
 	oldCode := b.PayloadCode
 	// Epoch return discarded — same rationale as binLoad above.
-	if _, err := h.engine.BinService().Manifest().ClearForReuse(b.ID); err != nil {
+	if _, err := h.engine.BinService().Manifest().ClearForReuse(b.ID, nil); err != nil {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "cleared", oldCode, "", protocol.AuditActorUI)

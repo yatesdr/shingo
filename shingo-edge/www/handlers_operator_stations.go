@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 )
 
@@ -45,7 +46,13 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 	enrichViewBinState(h.engine.CoreAPI(), views)
 	view.Nodes = views[0].Nodes
 	_ = h.engine.StationService().Touch(id, "online")
-	writeJSON(w, view)
+	writeJSON(w, struct {
+		*domain.OperatorStationView
+		PayloadBinTypes []protocol.PayloadBinTypeInfo `json:"payload_bin_types,omitempty"`
+	}{
+		OperatorStationView: view,
+		PayloadBinTypes:     h.engine.PayloadBinTypes(),
+	})
 }
 
 func (h *Handlers) apiGetActiveOrders(w http.ResponseWriter, r *http.Request) {
