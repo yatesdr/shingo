@@ -27,6 +27,21 @@ type planningError struct {
 	Err    error
 }
 
+// asPlanningError wraps a ClaimForDispatch error (or a synthetic race signal
+// with err==nil) as a codeClaimFailed planningError — the transient-contention
+// code that queues the order for scanner retry. All six claim-failure sites that
+// feed this helper have already had structural failures pre-filtered by
+// BinUnavailableReason or an explicit claimed_by==nil guard, so a non-nil error
+// or raced==true at those sites specifically indicates a SQL CAS miss, not an
+// operator configuration problem.
+//
+// Do NOT use for planStore: that path's inline loop deliberately produces
+// codeNoBin (terminal) regardless of whether the CAS failed or the bin was
+// pre-filtered. See the TODO(Phase1) comment in planStore.
+func asPlanningError(err error, detail string) *planningError {
+	return &planningError{Code: codeClaimFailed, Detail: detail, Err: err}
+}
+
 // planningError code values. These strings are matched as literals at producer
 // and consumer sites (the Transient() switch, the complex-dispatch router) and
 // serialize verbatim into the orders.queue_reason / skip-reason DB columns, so
@@ -288,7 +303,7 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 	}
 	remainingUOP := extractRemainingUOP(env)
 	if err := s.binManifest.ClaimForDispatch(source.ID, order.ID, remainingUOP); err != nil {
-		return nil, &planningError{Code: codeClaimFailed, Detail: err.Error(), Err: err}
+		return nil, asPlanningError(err, err.Error())
 	}
 	order.BinID = &source.ID
 	if err := s.db.UpdateOrderBinID(order.ID, source.ID); err != nil {
@@ -424,7 +439,7 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	// retrieve_empty always does a plain claim — no manifest change needed
 	// (the bin is already empty).
 	if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, nil); err != nil {
-		return nil, &planningError{Code: codeClaimFailed, Detail: err.Error(), Err: err}
+		return nil, asPlanningError(err, err.Error())
 	}
 	order.BinID = &bin.ID
 	if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
@@ -540,7 +555,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 		if result.Bin != nil {
 			remainingUOP := extractRemainingUOP(env)
 			if err := s.binManifest.ClaimForDispatch(result.Bin.ID, order.ID, remainingUOP); err != nil {
-				return nil, &planningError{Code: codeClaimFailed, Detail: err.Error(), Err: err}
+				return nil, asPlanningError(err, err.Error())
 			}
 			order.BinID = &result.Bin.ID
 			if err := s.db.UpdateOrderBinID(order.ID, result.Bin.ID); err != nil {
@@ -585,7 +600,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 		}
 		remainingUOP := extractRemainingUOP(env)
 		if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, remainingUOP); err != nil {
-			return nil, &planningError{Code: codeClaimFailed, Detail: err.Error(), Err: err}
+			return nil, asPlanningError(err, err.Error())
 		}
 		order.BinID = &bin.ID
 		if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
@@ -609,7 +624,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 			// service plan loop) treats it as a queue signal so the
 			// scanner re-tries on the next tick.
 			if raced {
-				return nil, &planningError{Code: codeClaimFailed, Detail: detail}
+				return nil, asPlanningError(nil, detail)
 			}
 			if payloadCode != "" {
 				return nil, &planningError{Code: codeNoPayload, Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.SourceNode)}
@@ -721,6 +736,12 @@ func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope,
 		}
 	}
 	if order.BinID == nil {
+		// TODO(Phase1): decide claim semantics before routing through the seam.
+		// planStore's loop guards with `if bin.ClaimedBy == nil` before calling
+		// ClaimForDispatch, so a CAS failure here is either a race (same TOCTOU
+		// window as other paths) or a pre-filter miss — the two are indistinguishable
+		// without a raced-flag. For now the terminal codeNoBin is preserved; Phase 1
+		// can add a raced flag here once the seam has reservation semantics.
 		return nil, &planningError{Code: codeNoBin, Detail: fmt.Sprintf("no available bin at %s", sourceNode.Name)}
 	}
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {

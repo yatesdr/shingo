@@ -140,7 +140,7 @@ func (d *Dispatcher) ApplyComplexPlan(order *orders.Order, plan *ComplexPlan, pa
 		// a genuinely empty source is a no-op (no_source_bin -> Skip), and bins
 		// present but unclaimable is terminal (no_bin -> Fail).
 		if anyRaced {
-			return &planningError{Code: codeClaimFailed, Detail: fmt.Sprintf("lost claim race at all pickup nodes for order %d", order.ID)}
+			return asPlanningError(nil, fmt.Sprintf("lost claim race at all pickup nodes for order %d", order.ID))
 		}
 		if allStepSkipsAreEmptyNode(stepSkips) {
 			return &planningError{Code: codeNoSourceBin, Detail: fmt.Sprintf("no bin at pickup node(s) for order %d — source was emptied externally", order.ID)}
