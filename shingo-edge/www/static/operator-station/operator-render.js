@@ -412,7 +412,7 @@ function showPullFromMarketPicker(nodeID) {
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
         textContent: 'Select a bin in the outbound market to pull back to this loader window.' }));
 
-    const listDiv = el('div', { style: 'margin:8px 0 4px;' });
+    const listDiv = el('div', { style: 'margin:8px 0 4px;display:flex;flex-direction:column;gap:10px;' });
     listDiv.textContent = 'Loading…';
     panel.appendChild(listDiv);
 
@@ -433,8 +433,25 @@ function showPullFromMarketPicker(nodeID) {
                 return;
             }
             bins.forEach(function(b) {
+                // Strip group prefix — "AMR Supermarket.SMN_0010" → "SMN_0010"
+                var nodeShort = b.node_name.replace(/^.*\./, '');
+
                 var btn = el('button', { className: 'os-co-picker-btn' });
-                btn.textContent = b.payload_code + ' — UOP: ' + b.uop_remaining + '  [' + b.node_name + ']';
+                btn.style.cssText = 'text-align:left;padding:14px 18px;display:block;width:100%;';
+
+                var nodeEl = el('div', { textContent: nodeShort });
+                nodeEl.style.cssText = 'font-size:22px;font-weight:700;letter-spacing:0.03em;';
+
+                var payloadEl = el('div', { textContent: b.payload_code });
+                payloadEl.style.cssText = 'font-size:17px;font-weight:600;margin-top:5px;';
+
+                var uopEl = el('div', { textContent: 'UOP: ' + b.uop_remaining });
+                uopEl.style.cssText = 'font-size:13px;margin-top:3px;opacity:0.7;';
+
+                btn.appendChild(nodeEl);
+                btn.appendChild(payloadEl);
+                btn.appendChild(uopEl);
+
                 btn.addEventListener('click', function() {
                     overlay.remove();
                     postAction('/api/process-nodes/' + nodeID + '/pull-from-market',
