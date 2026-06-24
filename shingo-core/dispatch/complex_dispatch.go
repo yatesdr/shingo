@@ -439,6 +439,16 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		processNode = order.SourceNode
 	}
 	plan := BuildComplexPlan(resolvedSteps, pickupBins, order.PayloadCode, processNode)
+	// ORPHANED-HOLD WINDOW OPENS HERE (see engine/complex_sourcing_window_test.go).
+	// ApplyComplexPlan claims bins in the DB while order.Status is still StatusQueued.
+	// If the process crashes between this line and MoveToSourcing below, the bin(s)
+	// remain claimed by an order that never advances past queued. Recovery relies on
+	// two periodic sweeps running in sequence:
+	//   1. AbandonStuckOrders (engine) ages out the queued order → terminal.
+	//   2. ReleaseOrphanedClaims (store) then finds the bin claimed by a terminal
+	//      order and releases it.
+	// Simple-path orders call MoveToSourcing BEFORE claim; only complex-path orders
+	// (this call site) have this asymmetry.
 	claimErr := d.ApplyComplexPlan(order, plan, order.PayloadCode, nil)
 	if claimErr != nil {
 		// Three terminal outcomes, distinguished by planningError.Code:
@@ -479,6 +489,11 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return fmt.Errorf("no actionable blocks")
 	}
 
+	// ORPHANED-HOLD WINDOW CLOSES HERE.
+	// MoveToSourcing advances the order to StatusSourcing. Past this point the bin
+	// claim is legitimate — the order is actively progressing and AbandonStuckOrders
+	// routes sourcing/dispatched orders through the fleet-cancel path (which includes
+	// unclaim), not through ReleaseOrphanedClaims.
 	if err := d.lifecycle.MoveToSourcing(order, "scanner", "complex order ready to dispatch"); err != nil {
 		log.Printf("dispatch: complex order %d → sourcing: %v", order.ID, err)
 	}
