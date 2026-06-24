@@ -51,10 +51,10 @@ const (
 	codeUnknownType    = "unknown_type"
 	codeStructural     = "structural"
 	codeLoaderSource   = "loader_source"
-	codeNodeError      = "node_error"
+	codeNode           = "node_error"
 	codeClaimFailed    = "claim_failed"
 	codeLaneLocked     = "lane_locked"
-	codeReshuffleError = "reshuffle_error"
+	codeReshuffle      = "reshuffle_error"
 	codeMissingSource  = "missing_source"
 	codeInvalidNode    = "invalid_node"
 	codeSameNode       = "same_node"
@@ -293,7 +293,7 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 		}
 		sourceNode, err = s.db.GetNode(*source.NodeID)
 		if err != nil {
-			return nil, &planningError{Code: codeNodeError, Detail: err.Error(), Err: err}
+			return nil, &planningError{Code: codeNode, Detail: err.Error(), Err: err}
 		}
 	}
 
@@ -315,7 +315,7 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 	}
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
-		return nil, &planningError{Code: codeNodeError, Detail: err.Error(), Err: err}
+		return nil, &planningError{Code: codeNode, Detail: err.Error(), Err: err}
 	}
 	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }
@@ -447,7 +447,7 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	}
 	sourceNode, err := s.db.GetNode(*bin.NodeID)
 	if err != nil {
-		return nil, &planningError{Code: codeNodeError, Detail: err.Error(), Err: err}
+		return nil, &planningError{Code: codeNode, Detail: err.Error(), Err: err}
 	}
 	order.SourceNode = sourceNode.Name
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
@@ -455,7 +455,7 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	}
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
-		return nil, &planningError{Code: codeNodeError, Detail: err.Error(), Err: err}
+		return nil, &planningError{Code: codeNode, Detail: err.Error(), Err: err}
 	}
 	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }
@@ -466,18 +466,18 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 	}
 	lane, err := s.db.GetNode(buried.LaneID)
 	if err != nil || lane.ParentID == nil {
-		return nil, &planningError{Code: codeReshuffleError, Detail: "cannot determine node group for lane", Err: err}
+		return nil, &planningError{Code: codeReshuffle, Detail: "cannot determine node group for lane", Err: err}
 	}
 	plan, err := PlanReshuffle(s.db, buried.Bin, buried.Slot, lane, *lane.ParentID)
 	if err != nil {
-		return nil, &planningError{Code: codeReshuffleError, Detail: fmt.Sprintf("cannot plan reshuffle: %v", err), Err: err}
+		return nil, &planningError{Code: codeReshuffle, Detail: fmt.Sprintf("cannot plan reshuffle: %v", err), Err: err}
 	}
 	if !s.laneLock.TryLock(buried.LaneID, order.ID) {
 		return nil, &planningError{Code: codeLaneLocked, Detail: "lane locked concurrently"}
 	}
 	if err := s.createCompound(order, plan); err != nil {
 		s.laneLock.Unlock(buried.LaneID)
-		return nil, &planningError{Code: codeReshuffleError, Detail: fmt.Sprintf("cannot create compound order: %v", err), Err: err}
+		return nil, &planningError{Code: codeReshuffle, Detail: fmt.Sprintf("cannot create compound order: %v", err), Err: err}
 	}
 	// createCompound already transitioned the parent to Reshuffling via
 	// lifecycle.BeginReshuffle and dispatched the first child via the
@@ -566,7 +566,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 			// not the NGRP name. This is critical for handleOrderCompleted.
 			concreteNode, cErr := s.db.GetNode(*result.Bin.NodeID)
 			if cErr != nil {
-				return nil, &planningError{Code: codeNodeError, Detail: fmt.Sprintf("resolve slot for bin %d: %v", result.Bin.ID, cErr), Err: cErr}
+				return nil, &planningError{Code: codeNode, Detail: fmt.Sprintf("resolve slot for bin %d: %v", result.Bin.ID, cErr), Err: cErr}
 			}
 			sourceNode = concreteNode
 			s.dbg("move: NGRP resolved bin=%d at %s (remainingUOP=%v)", result.Bin.ID, sourceNode.Name, remainingUOP)
@@ -647,7 +647,7 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 	}
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
-		return nil, &planningError{Code: codeNodeError, Detail: err.Error(), Err: err}
+		return nil, &planningError{Code: codeNode, Detail: err.Error(), Err: err}
 	}
 	// If the destination is still a synthetic NGRP, resolve a concrete child
 	// slot now. This happens when intake (CreateInboundOrder) deferred
