@@ -86,6 +86,8 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // Neutral grey for a robot in motion without an active job (just-delivered driving
   // away, idle repositioning to park). Never green while physically moving.
   var IDLE_MOVE_COLOR = cssVar('--map-robot-idle', '#8b949e');
+  // Action point dot: one step brighter than the travel dot, quieter than a ring.
+  var NODE_ACTION_COLOR = cssVar('--map-node-action', '#90a2bf');
 
   // ── state ──────────────────────────────────────────────────────────
   var points = [];          // scene points (static layout)
@@ -109,6 +111,13 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // comets) so a busy floor doesn't become 20 arrows fighting for attention;
   // clicking a robot still lights its comet. Tune to taste.
   var COMET_LIMIT = 12;
+
+  // ── activity feed + status rail ────────────────────────────────────
+  var activityFeed = [];   // [{text, level, ts}] — newest first
+  var prevOrderMap = {};   // order_id -> order snapshot, for transition diffs
+  var feedTimer = 0;       // setInterval handle for age-fade re-renders
+  var FEED_MAX_AGE_MS = 3 * 60 * 1000; // events older than 3 min are dropped
+  var FEED_MAX_ITEMS = 5;
 
   // proj maps world (x, y) to screen coords. Y is negated (world up -> screen
   // down). When the plant footprint is taller than wide, the whole map rotates
@@ -661,30 +670,27 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.85, class: 'map-node-travel' });
       svg.appendChild(glyph);
     } else if (cls === 'ActionPoint') {
-      // An action point IS a node on the network — draw it as the standard
-      // node dot with an outline ring around it, not a detached filled donut
-      // floating beside the web.
-      svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.8, class: 'map-node-travel' }));
-      glyph = svgEl('circle', {
-        cx: s[0], cy: s[1], r: nodeR * 1.5, class: 'map-node-action',
-        fill: 'none', stroke: '#587aa6', 'stroke-width': nodeR * 0.4
-      });
+      // Single dot — no ring. Quiets dense cells; the accent glyph still fires
+      // on hot nodes, and the map key legend identifies the type.
+      glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 1.0, fill: NODE_ACTION_COLOR });
       svg.appendChild(glyph);
     } else if (cls === 'ChargePoint') {
+      // Thin ring (charge stays identifiable) + faint bolt; smaller than before
+      // so a row of chargers reads as a calm strip, not a noisy fence.
       glyph = svgEl('circle', {
-        cx: s[0], cy: s[1], r: nodeR * 1.3, class: 'map-node-charge',
-        fill: 'none', stroke: CHARGE_RING, 'stroke-width': nodeR * 0.45
+        cx: s[0], cy: s[1], r: nodeR * 0.95, class: 'map-node-charge',
+        fill: 'none', stroke: CHARGE_RING, 'stroke-width': nodeR * 0.22
       });
       svg.appendChild(glyph);
       svg.appendChild(svgEl('polygon', {
-        points: boltPoints(s[0], s[1], nodeR), fill: cssVar('--map-bay-glyph', '#6b7a90'), 'fill-opacity': 0.5
+        points: boltPoints(s[0], s[1], nodeR * 0.8), fill: cssVar('--map-bay-glyph', '#6b7a90'), 'fill-opacity': 0.4
       }));
     } else if (cls === 'ParkPoint') {
-      // Ring like the other waypoint types — color differentiates. (Squares
-      // merged into a striped strip when park bays sat a glyph-width apart.)
+      // Single faint dot — no ring. Park bays are plentiful; rings-on-rings made
+      // a charge row look identical to a pack of park bays.
       glyph = svgEl('circle', {
-        cx: s[0], cy: s[1], r: nodeR * 1.1, class: 'map-node-park',
-        fill: 'none', stroke: PARK_RING, 'stroke-width': nodeR * 0.4
+        cx: s[0], cy: s[1], r: nodeR * 0.85,
+        fill: cssVar('--map-node', '#7e92b3'), 'fill-opacity': 0.55
       });
       svg.appendChild(glyph);
     } else {
@@ -855,6 +861,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       var moving = r.state === 'busy' || !!ord || isMoving(r);
       var color = robotColor(r, ord, moving);
       var alert = r.state === 'error';
+      var fault = alert || (ord && (ord.status === 'blocked' || ord.status === 'faulted'));
       // Each robot's glyphs live in a [data-robot] group so a click anywhere on
       // the robot focuses its route (delegated handler walks up to this group).
       var rg = svgEl('g', { 'data-robot': r.id, class: 'map-robot-hit' });
@@ -864,6 +871,14 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
         rg.appendChild(svgEl('circle', {
           cx: s[0], cy: s[1], r: robotR * 1.8, class: 'map-robot-focus',
           fill: 'none', 'stroke-width': robotR * 0.12
+        }));
+      }
+      // Fault flare: loud outer ring so a blocked/error robot is the first thing
+      // the eye hits. Drawn outside the normal halo so both rings compound.
+      if (fault) {
+        rg.appendChild(svgEl('circle', {
+          cx: s[0], cy: s[1], r: robotR * 2.4, class: 'map-robot-fault-flare',
+          fill: STATUS_COLOR.blocked || STATE_COLOR.error
         }));
       }
       // Halo only where it carries signal: motion or a fault. Parked robots
@@ -948,6 +963,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     syncCometLayer(cometRoutes, robotR);
     renderClassLegend();
     renderLegend(); // live fleet counts track every robot/order tick
+    renderRail();
   }
 
   // Faint grid + corner brackets — gives the floor a frame so the scene reads
@@ -998,10 +1014,10 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     var have = {};
     points.forEach(function (p) { have[classOf(p)] = true; });
     var items = [];
-    if (have.LocationMark || have.GeneralLocation) items.push(legendSwatch('#323c4a', 'dot', 'Travel node'));
-    if (have.ActionPoint) items.push(legendSwatch('#587aa6', 'ring', 'Action point'));
+    if (have.LocationMark || have.GeneralLocation) items.push(legendSwatch(cssVar('--map-node', '#7e92b3'), 'dot', 'Travel node'));
+    if (have.ActionPoint) items.push(legendSwatch(NODE_ACTION_COLOR, 'dot', 'Action point'));
     if (have.ChargePoint) items.push(legendSwatch(CHARGE_RING, 'ring', 'Charge point'));
-    if (have.ParkPoint) items.push(legendSwatch(PARK_RING, 'ring', 'Park point'));
+    if (have.ParkPoint) items.push(legendSwatch(cssVar('--map-node', '#7e92b3'), 'dot', 'Park point'));
     Object.keys(have).sort().forEach(function (n) {
       if (n === 'LocationMark' || n === 'GeneralLocation' || n === 'ActionPoint' ||
           n === 'ChargePoint' || n === 'ParkPoint') return;
@@ -1017,6 +1033,105 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       '<div class="map-key-items"' + (mapKeyOpen ? '' : ' hidden') + '>' + items.join('') + '</div>';
     var btn = el.querySelector('.map-key-toggle');
     if (btn) btn.addEventListener('click', function () { mapKeyOpen = !mapKeyOpen; renderClassLegend(); });
+  }
+
+  // ── status rail + activity feed ────────────────────────────────────
+
+  function pushFeedEvent(text, level) {
+    activityFeed.unshift({ text: text, level: level || 'info', ts: Date.now() });
+    if (activityFeed.length > 30) activityFeed.length = 30;
+  }
+
+  // Called with each fresh orders array BEFORE `orders` is updated, so we
+  // can detect transitions from the previous snapshot.
+  // delivery_node is the consumer (destination that called for parts).
+  function diffAndUpdateOrders(newOrders) {
+    var newMap = {};
+    newOrders.forEach(function (o) {
+      if (o.order_id == null) return;
+      var key = String(o.order_id);
+      newMap[key] = o;
+      var prev = prevOrderMap[key];
+      if (!prev) {
+        if (o.delivery_node) pushFeedEvent(o.delivery_node + ' called for parts');
+      } else if (prev.status !== o.status) {
+        var st = o.status;
+        if (st === 'dispatched' || st === 'in_transit') {
+          pushFeedEvent((o.robot_id || '?') + ' responding');
+        } else if (st === 'staged') {
+          pushFeedEvent((o.robot_id || '?') + ' staged · ' + (o.delivery_node || '?'));
+        } else if (st === 'delivered' || st === 'confirmed') {
+          pushFeedEvent('Delivered to ' + (o.delivery_node || '?'));
+        } else if (st === 'blocked' || st === 'faulted') {
+          pushFeedEvent((o.delivery_node || o.source_node || '?') + ' blocked', 'alert');
+        }
+      }
+    });
+    prevOrderMap = newMap;
+  }
+
+  function renderRail() {
+    var motionEl = document.getElementById('rail-motion-list');
+    var activityEl = document.getElementById('rail-activity-list');
+    if (!motionEl || !activityEl) return;
+
+    // ── In-motion list ────────────────────────────────────────────────
+    var INACTIVE = { delivered: true, confirmed: true, cancelled: true };
+    var active = orders.filter(function (o) { return !INACTIVE[o.status]; });
+    active.sort(function (a, b) {
+      function rank(o) {
+        if (o.status === 'blocked' || o.status === 'faulted') return 0;
+        if (o.status === 'in_transit') return 1;
+        if (o.status === 'staged' || o.status === 'dispatched' || o.status === 'queued') return 2;
+        return 3;
+      }
+      return rank(a) - rank(b);
+    });
+    var overflow = active.length > 8 ? active.length - 8 : 0;
+    var shown = active.slice(0, 8);
+    var statusLabel = {
+      in_transit: 'moving', staged: 'staged', dispatched: 'dispatched',
+      blocked: 'BLOCKED', faulted: 'FAULTED', acknowledged: 'waiting',
+      queued: 'queued', pending: 'pending', reshuffling: 'reshuffling'
+    };
+    if (!shown.length) {
+      motionEl.innerHTML = '<li class="rail-empty">No active orders</li>';
+    } else {
+      motionEl.innerHTML = shown.map(function (o) {
+        var color = STATUS_COLOR[o.status] || '#888';
+        var label = statusLabel[o.status] || o.status;
+        return '<li class="rail-row" style="border-left-color:' + color + '">' +
+          '<span class="rail-row-id">' + escapeText(o.robot_id || '—') + '</span>' +
+          '<span class="rail-row-arrow">→</span>' +
+          '<span class="rail-row-node">' + escapeText(o.delivery_node || '?') + '</span>' +
+          '<span class="rail-row-status" style="color:' + color + '">' + escapeText(label) + '</span>' +
+          '</li>';
+      }).join('') + (overflow ? '<li class="rail-empty">+' + overflow + ' more</li>' : '');
+    }
+
+    // ── Activity feed ─────────────────────────────────────────────────
+    var now = Date.now();
+    activityFeed = activityFeed.filter(function (e) { return (now - e.ts) < FEED_MAX_AGE_MS; });
+    var showing = activityFeed.slice(0, FEED_MAX_ITEMS);
+    if (!showing.length) {
+      activityEl.innerHTML = '<li class="rail-empty">No recent activity</li>';
+    } else {
+      activityEl.innerHTML = showing.map(function (e) {
+        var ageFrac = (now - e.ts) / FEED_MAX_AGE_MS;
+        var opacity = Math.max(0.25, 1 - ageFrac * 0.75).toFixed(2);
+        var cls = 'rail-event' + (e.level === 'alert' ? ' rail-event-alert' : '');
+        return '<li class="' + cls + '" style="opacity:' + opacity + '">' + escapeText(e.text) + '</li>';
+      }).join('');
+    }
+  }
+
+  function startFeedTimer() {
+    if (feedTimer) return;
+    feedTimer = setInterval(function () {
+      var now = Date.now();
+      activityFeed = activityFeed.filter(function (e) { return (now - e.ts) < FEED_MAX_AGE_MS; });
+      renderRail();
+    }, 10000);
   }
 
   // ── data loads ─────────────────────────────────────────────────────
@@ -1059,6 +1174,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }).then(function (data) {
+      diffAndUpdateOrders(data || []); // diff against snapshot BEFORE updating `orders`
       orders = data || [];
       orderByRobot = {};
       hotNodes = {};
@@ -1098,6 +1214,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
   function init() {
     renderLegend();
+    startFeedTimer(); // starts the 10s interval that ages/expires feed events
     // Initial paint from REST so the board isn't blank before the first SSE tick.
     refreshAll();
     setSSEReloadOnBuild(true);
