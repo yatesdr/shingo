@@ -867,7 +867,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
         var r = robots[k];
         if (!isFinite(r.x) || !isFinite(r.y)) return;
         var ord = orderByRobot[r.id];
-        var moving = r.state === 'busy' || !!ord || isMoving(r);
+        var moving = r.state === 'busy' || isMoving(r);
         var ms2 = proj(r.x, r.y);
         minimapRobotGroup.appendChild(svgEl('circle', {
           cx: ms2[0], cy: ms2[1], r: dr, fill: robotColor(r, ord, moving)
@@ -1075,12 +1075,8 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
           'stroke-width': robotR * 0.22, 'stroke-opacity': dimmed ? 0.25 : 0.5
         }));
       }
-      // destination marker ring (always).
-      var dp = proj(dest.x, dest.y);
-      svg.appendChild(svgEl('circle', {
-        cx: dp[0], cy: dp[1], r: robotR * 0.7, fill: 'none', stroke: color,
-        'stroke-width': robotR * 0.14, 'stroke-opacity': dimmed ? 0.35 : 0.65
-      }));
+      // Destination is marked by the node glyph's indigo accent (drawNode/hotNodes),
+      // not a separate ring — no duplicate marker drawn here.
     });
     // Deterministic order so the comet SET signature is order-independent — a
     // server reshuffle of `orders` doesn't force a needless rebuild, and index →
@@ -1102,7 +1098,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     robotList.forEach(function (r) {
       var s = proj(r.x, r.y);
       var ord = orderByRobot[r.id];
-      var moving = r.state === 'busy' || !!ord || isMoving(r);
+      var moving = r.state === 'busy' || isMoving(r);
       var color = robotColor(r, ord, moving);
       var alert = r.state === 'error';
       var fault = alert || (ord && (ord.status === 'blocked' || ord.status === 'faulted'));
@@ -1423,8 +1419,10 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       orders = data || [];
       orderByRobot = {};
       hotNodes = {};
+      var INACTIVE_HOT = { delivered: true, confirmed: true, cancelled: true };
       orders.forEach(function (o) {
         if (o.robot_id) orderByRobot[o.robot_id] = o;
+        if (INACTIVE_HOT[o.status]) return;
         if (o.source_node) hotNodes[String(o.source_node).toLowerCase()] = o.status;
         if (o.delivery_node) hotNodes[String(o.delivery_node).toLowerCase()] = o.status;
       });
