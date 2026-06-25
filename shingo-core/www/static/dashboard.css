@@ -19,12 +19,12 @@
   --dash-border: var(--border, #30363d);
   /* Map-specific tokens — floor plan palette so colors come from :root, not JS hex. */
   --map-floor: #131a24;       /* lifted off near-black */
-  --map-aisle: #56698a;       /* neutral steel — floor-plan structure */
-  --map-node: #7e92b3;        /* LM / travel waypoint dots */
+  --map-aisle: #45566e;       /* neutral steel — receded one step so robots dominate */
+  --map-node: #66768f;        /* LM / travel waypoint dots */
   --map-bay-ring: #3c4a5e;    /* empty charge/park outline — receded */
   --map-bay-glyph: #6b7a90;   /* faint charge bolt so charge≠park when empty */
   --map-robot-idle: #8b949e;  /* repositioning / idle-moving robot (neutral grey) */
-  --map-node-action: #90a2bf; /* action point: one step brighter than the travel dot */
+  --map-node-action: #7a8ba6; /* action point: one step brighter than --map-node */
 }
 
 * { box-sizing: border-box; }
@@ -365,4 +365,19 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   opacity: 0.55;
   font-style: italic;
   padding: 0.2rem 0;
+}
+
+/* ── minimap (whole-plant overview, bottom-right of the map region) ── */
+/* pointer-events:none set on the SVG itself; this box is just the frame. */
+.map-minimap {
+  position: absolute;
+  bottom: 0.9rem;
+  right: 0.9rem;
+  width: min(220px, 22%);
+  height: min(165px, 18vh);
+  background: var(--dash-surface);
+  border: 1px solid var(--dash-border);
+  border-radius: 6px;
+  opacity: 0.85;
+  overflow: hidden;
 }

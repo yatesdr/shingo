@@ -107,6 +107,13 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   var cometState = [];      // live comet geometry + dot elements, positioned each frame by rAF
   var cometRAF = 0;         // requestAnimationFrame handle for the comet positioner loop
   var clickBound = false;   // host click handler attached once
+  // ── auto-framing state ─────────────────────────────────────────────
+  var viewTarget = null;          // desired view after hysteresis; `view` eases toward this
+  var fullPlantView = null;       // whole-plant bbox in screen space (minimap fixed viewBox)
+  var viewEaseRAF = 0;            // rAF handle for the viewBox ease loop
+  var minimapEl = null;           // persistent minimap <svg> inside .map-region
+  var minimapViewportRect = null; // viewport indicator rect inside the minimap
+  var minimapRobotGroup = null;   // robot-dots <g> inside the minimap
   // Above this many active routes, the ambient view calms to dim lines (no
   // comets) so a busy floor doesn't become 20 arrows fighting for attention;
   // clicking a robot still lights its comet. Tune to taste.
@@ -268,43 +275,186 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     return STATE_COLOR[r.state] || '#888';
   }
 
-  // ── coordinate framing: screen = (x, -y) ───────────────────────────
+  // ── coordinate framing: ROI view with smooth easing ─────────────────
+  // Four concerns kept separate: (1) full-plant extent for orientation + clamp,
+  // (2) region-of-interest (robots + active routes), (3) hysteresis so tiny jitter
+  // doesn't nudge the frame each tick, (4) a lerp ease loop that updates the live
+  // viewBox attributes between render() calls without a full SVG rebuild.
+
+  function lerpView(a, b, t) {
+    return {
+      minX: a.minX + (b.minX - a.minX) * t,
+      minY: a.minY + (b.minY - a.minY) * t,
+      w: a.w + (b.w - a.w) * t,
+      h: a.h + (b.h - a.h) * t
+    };
+  }
+
+  // Set the viewBox on both live SVGs without rebuilding the scene.
+  function updateLiveViewBox() {
+    if (!view) return;
+    var vb = view.minX + ' ' + view.minY + ' ' + view.w + ' ' + view.h;
+    var sceneSVG = document.querySelector('#map-svg-wrap .map-svg');
+    if (sceneSVG) sceneSVG.setAttribute('viewBox', vb);
+    if (cometLayer) cometLayer.setAttribute('viewBox', vb);
+  }
+
+  var EASE_ALPHA = 0.18; // per-frame lerp factor (~18% per ~16ms frame)
+
+  function tickEase() {
+    viewEaseRAF = 0;
+    if (!view || !viewTarget) return;
+    var eps = Math.max(view.w, view.h) * 0.002; // stop when within 0.2% of extent
+    if (Math.abs(view.minX - viewTarget.minX) < eps &&
+        Math.abs(view.minY - viewTarget.minY) < eps &&
+        Math.abs(view.w - viewTarget.w) < eps &&
+        Math.abs(view.h - viewTarget.h) < eps) {
+      view = viewTarget;
+      updateLiveViewBox();
+      updateMinimapDynamic();
+      return;
+    }
+    view = lerpView(view, viewTarget, EASE_ALPHA);
+    updateLiveViewBox();
+    updateMinimapDynamic();
+    viewEaseRAF = requestAnimationFrame(tickEase);
+  }
+
+  function startEase() {
+    if (viewEaseRAF) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      view = viewTarget;
+      updateLiveViewBox();
+      updateMinimapDynamic();
+      return;
+    }
+    viewEaseRAF = requestAnimationFrame(tickEase);
+  }
+
+  // Hysteresis: only adopt a new target if the shift is meaningful.
+  // Prevents per-SSE-tick robot micro-jitter from nudging the frame constantly.
+  function adoptViewTarget(candidate) {
+    if (!viewTarget) {
+      viewTarget = candidate;
+      view = candidate; // snap on first paint — no animation for the initial frame
+      return;
+    }
+    var extentOld = Math.max(viewTarget.w, viewTarget.h);
+    var cxOld = viewTarget.minX + viewTarget.w / 2;
+    var cyOld = viewTarget.minY + viewTarget.h / 2;
+    var cxNew = candidate.minX + candidate.w / 2;
+    var cyNew = candidate.minY + candidate.h / 2;
+    var drift = Math.sqrt(Math.pow(cxNew - cxOld, 2) + Math.pow(cyNew - cyOld, 2));
+    var extentNew = Math.max(candidate.w, candidate.h);
+    var extentChange = Math.abs(extentNew - extentOld) / extentOld;
+    if (drift > extentOld * 0.15 || extentChange > 0.25) {
+      viewTarget = candidate;
+      startEase();
+    }
+  }
+
   function computeView() {
+    // Full-plant world coords: all scene points + orphan graph vertices.
     var wx = [], wy = [];
     points.forEach(function (p) {
       if (isFinite(p.pos_x) && isFinite(p.pos_y)) { wx.push(p.pos_x); wy.push(p.pos_y); }
     });
-    // Robots are EXCLUDED from the view bounds when a scene is synced: folding
-    // live positions into the frame re-fit (and so subtly rescaled/panned) the
-    // whole map every tick, which shifted every route path out from under the
-    // comet. Fall back to robot positions only when there is no scene to frame.
-    if (!points.length) {
+    tnodes.forEach(function (t) {
+      if (t.orphan) { wx.push(t.x); wy.push(t.y); }
+    });
+    // No scene at all: fall back to robot positions
+    if (!wx.length) {
       Object.keys(robots).forEach(function (k) {
         var r = robots[k];
         if (isFinite(r.x) && isFinite(r.y)) { wx.push(r.x); wy.push(r.y); }
       });
     }
-    // Orphan graph vertices (edge endpoints with no synced point) can sit
-    // outside the points' bounding box — include them so lines aren't clipped.
-    tnodes.forEach(function (t) {
-      if (t.orphan) { wx.push(t.x); wy.push(t.y); }
-    });
-    if (!wx.length) { view = null; return; }
+    if (!wx.length) { view = null; viewTarget = null; return; }
+
     var minWx = Math.min.apply(null, wx), maxWx = Math.max.apply(null, wx);
     var minWy = Math.min.apply(null, wy), maxWy = Math.max.apply(null, wy);
-    // Orient the plant's long axis horizontally so a tall footprint fills a
-    // wide screen instead of being squeezed into a thin central column.
+    // Orientation is based on the FULL plant so a zoomed-in ROI never flips.
     rotate90 = (maxWy - minWy) > (maxWx - minWx);
-    var sx = [], sy = [];
+
+    // Full-plant screen-space bbox (stable reference for clamping + minimap viewBox)
+    var fsx = [], fsy = [];
     for (var i = 0; i < wx.length; i++) {
-      var s = proj(wx[i], wy[i]);
-      sx.push(s[0]); sy.push(s[1]);
+      var fs = proj(wx[i], wy[i]);
+      fsx.push(fs[0]); fsy.push(fs[1]);
     }
-    var minX = Math.min.apply(null, sx), maxX = Math.max.apply(null, sx);
-    var minY = Math.min.apply(null, sy), maxY = Math.max.apply(null, sy);
-    var w = Math.max(maxX - minX, 1), h = Math.max(maxY - minY, 1);
-    var pad = Math.max(w, h) * 0.05;
-    view = { minX: minX - pad, minY: minY - pad, w: w + 2 * pad, h: h + 2 * pad };
+    var fpMinX = Math.min.apply(null, fsx), fpMaxX = Math.max.apply(null, fsx);
+    var fpMinY = Math.min.apply(null, fsy), fpMaxY = Math.max.apply(null, fsy);
+    var fpW = Math.max(fpMaxX - fpMinX, 1), fpH = Math.max(fpMaxY - fpMinY, 1);
+    var fpPad = Math.max(fpW, fpH) * 0.05;
+    fullPlantView = {
+      minX: fpMinX - fpPad, minY: fpMinY - fpPad,
+      w: fpW + 2 * fpPad, h: fpH + 2 * fpPad
+    };
+
+    // ── Region of interest ────────────────────────────────────────────
+    // ROI = all robot positions + active-order source/delivery nodes + routes.
+    // Fallback: no robots + no active orders → full plant (current behavior).
+    var INACTIVE_ROI = { delivered: true, confirmed: true, cancelled: true };
+    var activeOrds = orders.filter(function (o) { return !INACTIVE_ROI[o.status]; });
+    var robotArr = Object.keys(robots).map(function (k) { return robots[k]; })
+      .filter(function (r) { return isFinite(r.x) && isFinite(r.y); });
+
+    var roiSx = [], roiSy = [];
+    robotArr.forEach(function (r) {
+      var rs = proj(r.x, r.y); roiSx.push(rs[0]); roiSy.push(rs[1]);
+    });
+    activeOrds.forEach(function (o) {
+      var sn = findNode(o.source_node);
+      if (sn) { var ss = proj(sn.x, sn.y); roiSx.push(ss[0]); roiSy.push(ss[1]); }
+      var dn = findNode(o.delivery_node);
+      if (dn) { var ds = proj(dn.x, dn.y); roiSx.push(ds[0]); roiSy.push(ds[1]); }
+      var rbt = robots[o.robot_id];
+      if (rbt && dn) {
+        var rworld = routeWorld(rbt.x, rbt.y, dn);
+        if (rworld) {
+          rworld.forEach(function (w) {
+            var ws = proj(w[0], w[1]); roiSx.push(ws[0]); roiSy.push(ws[1]);
+          });
+        }
+      }
+    });
+    if (!roiSx.length) { roiSx = fsx.slice(); roiSy = fsy.slice(); }
+
+    var roiMinX = Math.min.apply(null, roiSx), roiMaxX = Math.max.apply(null, roiSx);
+    var roiMinY = Math.min.apply(null, roiSy), roiMaxY = Math.max.apply(null, roiSy);
+    var roiW = Math.max(roiMaxX - roiMinX, 1), roiH = Math.max(roiMaxY - roiMinY, 1);
+    var roiCX = (roiMinX + roiMaxX) / 2, roiCY = (roiMinY + roiMaxY) / 2;
+
+    // Pad ~12%
+    var pad = Math.max(roiW, roiH) * 0.12;
+    roiW += 2 * pad; roiH += 2 * pad;
+    roiMinX = roiCX - roiW / 2; roiMinY = roiCY - roiH / 2;
+
+    // Clamp: max = padded full plant; min = max(graphScale*6, fullPlant*0.12)
+    var fullExt = Math.max(fpW, fpH);
+    var maxExt = Math.max(fpW + 2 * fpPad, fpH + 2 * fpPad);
+    var minExt = Math.max(graphScale > 0 ? graphScale * 6 : 0, fullExt * 0.12, 1);
+    var curExt = Math.max(roiW, roiH);
+    if (curExt > maxExt) {
+      var sd = maxExt / curExt; roiW *= sd; roiH *= sd;
+    } else if (curExt < minExt) {
+      var su = minExt / curExt; roiW *= su; roiH *= su;
+    }
+    roiMinX = roiCX - roiW / 2; roiMinY = roiCY - roiH / 2;
+
+    // Expand to fill the container's pixel aspect ratio — kills letterbox margins.
+    var container = document.getElementById('map-svg-wrap');
+    if (container && container.clientWidth > 1 && container.clientHeight > 1) {
+      var cAsp = container.clientWidth / container.clientHeight;
+      var vAsp = roiW / roiH;
+      if (vAsp < cAsp) {
+        var nW = roiH * cAsp; roiMinX -= (nW - roiW) / 2; roiW = nW;
+      } else {
+        var nH = roiW / cAsp; roiMinY -= (nH - roiH) / 2; roiH = nH;
+      }
+    }
+
+    adoptViewTarget({ minX: roiMinX, minY: roiMinY, w: roiW, h: roiH });
   }
 
   function buildNodeIndex() {
@@ -636,6 +786,95 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     startComets();
   }
 
+  // ── minimap (persistent small overview, bottom-right of .map-region) ──
+  // The minimap SVG has a FIXED viewBox = the full plant. Only the robot dots
+  // and the viewport rect change — those are updated cheaply by tickEase and
+  // render() without rebuilding the static network layer.
+
+  function rebuildMinimap() {
+    if (!fullPlantView) return;
+    var region = document.querySelector('.map-region');
+    if (!region) return;
+    if (!minimapEl) {
+      minimapEl = svgEl('svg', { class: 'map-minimap', 'pointer-events': 'none' });
+      region.appendChild(minimapEl);
+    }
+    var fp = fullPlantView;
+    minimapEl.setAttribute('viewBox', fp.minX + ' ' + fp.minY + ' ' + fp.w + ' ' + fp.h);
+    minimapEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    while (minimapEl.firstChild) minimapEl.removeChild(minimapEl.firstChild);
+
+    // Static layer: travel network + all scene point dots
+    var netG = svgEl('g', { opacity: '0.3' });
+    var sw = (graphScale > 0 ? graphScale : Math.max(fp.w, fp.h) * 0.01) * 0.06;
+    if (tnodes.length > 1) {
+      var seen = {};
+      for (var ai = 0; ai < tadj.length; ai++) {
+        var edges = tadj[ai] || [];
+        for (var ei = 0; ei < edges.length; ei++) {
+          var bi = edges[ei].n;
+          var ekey = ai < bi ? ai + '_' + bi : bi + '_' + ai;
+          if (seen[ekey]) continue; seen[ekey] = true;
+          var mpa = proj(tnodes[ai].x, tnodes[ai].y);
+          var mpb = proj(tnodes[bi].x, tnodes[bi].y);
+          netG.appendChild(svgEl('line', {
+            x1: mpa[0], y1: mpa[1], x2: mpb[0], y2: mpb[1],
+            stroke: cssVar('--map-aisle', '#45566e'), 'stroke-width': sw
+          }));
+        }
+      }
+    }
+    var dotR = sw * 1.2;
+    points.forEach(function (p) {
+      if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
+      var ms = proj(p.pos_x, p.pos_y);
+      netG.appendChild(svgEl('circle', { cx: ms[0], cy: ms[1], r: dotR, fill: cssVar('--map-node', '#66768f') }));
+    });
+    minimapEl.appendChild(netG);
+
+    // Dynamic: robot dots group + viewport indicator rect
+    minimapRobotGroup = svgEl('g');
+    minimapEl.appendChild(minimapRobotGroup);
+    var vbSw = sw * 1.8;
+    minimapViewportRect = svgEl('rect', {
+      fill: 'none', stroke: cssVar('--map-aisle', '#45566e'),
+      'stroke-width': vbSw, rx: vbSw * 1.5
+    });
+    minimapEl.appendChild(minimapViewportRect);
+
+    updateMinimapDynamic();
+  }
+
+  // Called from tickEase (viewport rect) and render() (robot dots + rect).
+  function updateMinimapDynamic() {
+    if (!minimapEl || !minimapViewportRect) return;
+    // Refresh robot dots
+    if (minimapRobotGroup) {
+      while (minimapRobotGroup.firstChild) minimapRobotGroup.removeChild(minimapRobotGroup.firstChild);
+      var dr = (graphScale > 0 ? graphScale : 0.5) * 0.22;
+      Object.keys(robots).forEach(function (k) {
+        var r = robots[k];
+        if (!isFinite(r.x) || !isFinite(r.y)) return;
+        var ord = orderByRobot[r.id];
+        var moving = r.state === 'busy' || !!ord || isMoving(r);
+        var ms2 = proj(r.x, r.y);
+        minimapRobotGroup.appendChild(svgEl('circle', {
+          cx: ms2[0], cy: ms2[1], r: dr, fill: robotColor(r, ord, moving)
+        }));
+      });
+    }
+    // Refresh viewport rect
+    if (view) {
+      minimapViewportRect.setAttribute('x', view.minX);
+      minimapViewportRect.setAttribute('y', view.minY);
+      minimapViewportRect.setAttribute('width', view.w);
+      minimapViewportRect.setAttribute('height', view.h);
+      minimapViewportRect.removeAttribute('visibility');
+    } else {
+      minimapViewportRect.setAttribute('visibility', 'hidden');
+    }
+  }
+
   // ── render (coalesced via rAF) ─────────────────────────────────────
   var dirty = false;
   function scheduleRender() {
@@ -667,7 +906,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     var glyph = null;
     if (isTravel(cls)) {
       // The numerous travel waypoints recede to a faint dot network.
-      glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.85, class: 'map-node-travel' });
+      glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.7, class: 'map-node-travel' });
       svg.appendChild(glyph);
     } else if (cls === 'ActionPoint') {
       // Single dot — no ring. Quiets dense cells; the accent glyph still fires
@@ -849,7 +1088,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     tnodes.forEach(function (t) {
       if (!t.orphan) return;
       var os = proj(t.x, t.y);
-      svg.appendChild(svgEl('circle', { cx: os[0], cy: os[1], r: nodeR * 0.85, class: 'map-node-travel' }));
+      svg.appendChild(svgEl('circle', { cx: os[0], cy: os[1], r: nodeR * 0.7, class: 'map-node-travel' }));
     });
 
     // robots — halo, then chevron, so labels (last pass) sit above everything.
@@ -964,6 +1203,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     renderClassLegend();
     renderLegend(); // live fleet counts track every robot/order tick
     renderRail();
+    rebuildMinimap(); // rebuild static network layer + robot dots + viewport rect
   }
 
   // Faint grid + corner brackets — gives the floor a frame so the scene reads
