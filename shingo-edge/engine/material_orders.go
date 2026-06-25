@@ -388,25 +388,10 @@ func buildTwoRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) Change
 		{Action: "pickup", Node: toClaim.InboundStaging},
 		{Action: "dropoff", Node: toClaim.CoreNodeName},
 	}
-	// Dedicated-home changeover protection: when the from-claim has the same
-	// node as both its inbound source AND outbound destination (the dedicated
-	// home pattern — the robot picks full from here and returns spent here), a
-	// same-style swap works because Robot A vacates that slot before Robot B
-	// arrives. But in a cross-style changeover Robot A picks from a different
-	// home (toClaim.InboundSource), so the from-claim's home is never vacated
-	// and may hold a pre-staged bin. In that case use OutboundStaging instead
-	// (global payload fallback when unset), letting Core route to an available
-	// buffer slot rather than the occupied dedicated home.
-	returnDest := fromClaim.OutboundDestination
-	isDedicatedHome := fromClaim.InboundSource != "" && fromClaim.InboundSource == fromClaim.OutboundDestination
-	isCrossStyle := fromClaim.OutboundDestination != toClaim.InboundSource
-	if isDedicatedHome && isCrossStyle {
-		returnDest = fromClaim.OutboundStaging
-	}
 	stepsB := []protocol.ComplexOrderStep{
-		{Action: "wait", Node: fromClaim.CoreNodeName},   // drive to node + hold (shared "ready")
-		{Action: "pickup", Node: fromClaim.CoreNodeName}, // evacuate old
-		buildStep("dropoff", returnDest),                 // home if same-style, buffer fallback if cross-style
+		{Action: "wait", Node: fromClaim.CoreNodeName},      // drive to node + hold (shared "ready")
+		{Action: "pickup", Node: fromClaim.CoreNodeName},    // evacuate old
+		buildStep("dropoff", fromClaim.OutboundDestination), // straight to final
 	}
 	return ChangeoverDispatch{
 		StepsA:        stepsA,
