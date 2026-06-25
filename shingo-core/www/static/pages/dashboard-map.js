@@ -12,10 +12,13 @@
 // (world Y is up, screen Y is down) so the plant isn't drawn upside-down; text
 // stays upright because we negate per-element rather than flipping a group.
 //
-// Visual language (the "floor HUD"): robots are the hero — a bright chevron with
-// heading, a soft pulsing halo, and a monospace name chip. The scene recedes to
-// a faint travel-node network so the robots read clearly against it; action /
-// charge / park points draw as distinct outlined shapes rather than filled blobs.
+// Visual language (the "floor HUD"): the travel network is a legible neutral-steel
+// floor plan — aisles and LM nodes render in a neutral steel hue so the room structure
+// reads at a glance. Robots stay the hero via saturation, halo, and motion: a bright
+// chevron with heading, a pulsing halo, and a monospace name chip. Robot color tracks
+// order status (saturated lifecycle hue while on an active job); a delivered/confirmed
+// robot still moving, or any idle robot in motion, shows neutral grey — green only at
+// rest. Charge/park bays recede to quiet outlines; they light up only when a robot docks.
 //
 // Routes follow the aisles. The travel network is the scene's real
 // connectivity — drivable path segments (SEER advanced curves) served by
@@ -71,8 +74,8 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // available bay. Amber belongs to charging (a robot state, unchanged by the
   // P13 palette work — staged is now teal in the unified status scheme).
   var DOCK_COLOR = { charge: '#e3b341', park: '#d98c4a' };
-  var CHARGE_RING = '#c9a227';
-  var PARK_RING = '#b0723a';
+  var CHARGE_RING = cssVar('--map-bay-ring', '#3c4a5e');
+  var PARK_RING = cssVar('--map-bay-ring', '#3c4a5e');
   // Active-node accent (P21): an order source/destination ("hot") node is marked
   // by the GLYPH ITSELF taking the UI accent — an indigo stroke + soft glow —
   // instead of a separate status-colored ring on top (which crossed delivered-
@@ -80,6 +83,9 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // for delivered. Read once at load; the kiosk theme is static.
   var ACCENT = cssVar('--accent', '#7c7cf0');
   var ACCENT_GLOW = cssVar('--accent-glow', 'rgba(124,124,240,0.55)');
+  // Neutral grey for a robot in motion without an active job (just-delivered driving
+  // away, idle repositioning to park). Never green while physically moving.
+  var IDLE_MOVE_COLOR = cssVar('--map-robot-idle', '#8b949e');
 
   // ── state ──────────────────────────────────────────────────────────
   var points = [];          // scene points (static layout)
@@ -230,17 +236,23 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     return null;
   }
 
-  // Effective robot color: order status > fault > bay hue > state.
-  // Color carries STATUS, shape carries MOTION. An idle robot driving itself
-  // (e.g. returning to park after a cancel) is a green chevron — transit blue
-  // means it's actually on an order / busy. Bay hues only apply while
-  // stationary, so a robot passing a charger doesn't flash amber.
+  // Effective robot color: fault > active job > physical motion > bay hue > state.
+  // A delivered/confirmed order is NOT a job — the robot is transitioning. While
+  // physically moving with no active job (just delivered, repositioning, returning
+  // to park) the robot shows IDLE_MOVE_COLOR (neutral grey) so green never appears
+  // on a moving robot. Bay hues apply only at rest so a passing robot doesn't flash.
   function robotColor(r, ord, moving) {
-    if (ord) return STATUS_COLOR[ord.status] || STATE_COLOR[r.state] || '#888';
+    // Error/offline takes priority regardless of order state.
     if (r.state === 'error' || r.state === 'offline') return STATE_COLOR[r.state];
-    // Bay hue only for READY robots at rest — a paused robot on a park bay
-    // stays grey; its pause is the signal, not the bay.
-    if (!moving && r.state === 'ready') {
+    // Treat the order as a job only while it is still active.
+    var job = ord && ord.status !== 'delivered' && ord.status !== 'confirmed' ? ord : null;
+    if (job) return STATUS_COLOR[job.status] || STATE_COLOR[r.state] || '#888';
+    // No active job: grey if physically in motion; dock-hue / state-color at rest.
+    // Use physical-motion signals only (not !!ord) so delivered-order robots that
+    // have stopped already get their resting color immediately.
+    var physMoving = r.state === 'busy' || isMoving(r);
+    if (physMoving) return IDLE_MOVE_COLOR;
+    if (r.state === 'ready') {
       var dock = dockOf(r);
       if (dock) return DOCK_COLOR[dock.kind];
     }
@@ -646,13 +658,13 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     var glyph = null;
     if (isTravel(cls)) {
       // The numerous travel waypoints recede to a faint dot network.
-      glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.6, class: 'map-node-travel' });
+      glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.85, class: 'map-node-travel' });
       svg.appendChild(glyph);
     } else if (cls === 'ActionPoint') {
       // An action point IS a node on the network — draw it as the standard
       // node dot with an outline ring around it, not a detached filled donut
       // floating beside the web.
-      svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.55, class: 'map-node-travel' }));
+      svg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.8, class: 'map-node-travel' }));
       glyph = svgEl('circle', {
         cx: s[0], cy: s[1], r: nodeR * 1.5, class: 'map-node-action',
         fill: 'none', stroke: '#587aa6', 'stroke-width': nodeR * 0.4
@@ -665,7 +677,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       });
       svg.appendChild(glyph);
       svg.appendChild(svgEl('polygon', {
-        points: boltPoints(s[0], s[1], nodeR), fill: CHARGE_RING, 'fill-opacity': 0.75
+        points: boltPoints(s[0], s[1], nodeR), fill: cssVar('--map-bay-glyph', '#6b7a90'), 'fill-opacity': 0.5
       }));
     } else if (cls === 'ParkPoint') {
       // Ring like the other waypoint types — color differentiates. (Squares
@@ -725,7 +737,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     // corridor.
     var base = graphScale || unit * 0.03;
     var robotR = Math.max(unit * 0.004, Math.min(unit * 0.010, base * 0.9));
-    var nodeR = Math.max(unit * 0.0018, Math.min(unit * 0.006, base * 0.3));
+    var nodeR = Math.max(unit * 0.0024, Math.min(unit * 0.006, base * 0.3));
     var fontS = Math.max(unit * 0.006, Math.min(unit * 0.0085, base * 0.8));
 
     var svg = svgEl('svg', {
@@ -747,7 +759,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
           var pa = proj(tnodes[a].x, tnodes[a].y), pb = proj(tnodes[b].x, tnodes[b].y);
           svg.appendChild(svgEl('line', {
             x1: pa[0], y1: pa[1], x2: pb[0], y2: pb[1],
-            class: 'map-aisle', 'stroke-width': nodeR * 0.35
+            class: 'map-aisle', 'stroke-width': nodeR * 0.55
           }));
         }
       }
@@ -831,7 +843,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     tnodes.forEach(function (t) {
       if (!t.orphan) return;
       var os = proj(t.x, t.y);
-      svg.appendChild(svgEl('circle', { cx: os[0], cy: os[1], r: nodeR * 0.6, class: 'map-node-travel' }));
+      svg.appendChild(svgEl('circle', { cx: os[0], cy: os[1], r: nodeR * 0.85, class: 'map-node-travel' }));
     });
 
     // robots — halo, then chevron, so labels (last pass) sit above everything.
@@ -989,7 +1001,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     if (have.LocationMark || have.GeneralLocation) items.push(legendSwatch('#323c4a', 'dot', 'Travel node'));
     if (have.ActionPoint) items.push(legendSwatch('#587aa6', 'ring', 'Action point'));
     if (have.ChargePoint) items.push(legendSwatch(CHARGE_RING, 'ring', 'Charge point'));
-    if (have.ParkPoint) items.push(legendSwatch('#b0723a', 'ring', 'Park point'));
+    if (have.ParkPoint) items.push(legendSwatch(PARK_RING, 'ring', 'Park point'));
     Object.keys(have).sort().forEach(function (n) {
       if (n === 'LocationMark' || n === 'GeneralLocation' || n === 'ActionPoint' ||
           n === 'ChargePoint' || n === 'ParkPoint') return;

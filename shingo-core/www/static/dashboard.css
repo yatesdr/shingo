@@ -17,6 +17,13 @@
   --dash-text: var(--text-strong, #e6edf3);
   --dash-muted: var(--text-muted, #8b949e);
   --dash-border: var(--border, #30363d);
+  /* Map-specific tokens — floor plan palette so colors come from :root, not JS hex. */
+  --map-floor: #131a24;       /* lifted off near-black */
+  --map-aisle: #56698a;       /* neutral steel — floor-plan structure */
+  --map-node: #7e92b3;        /* LM / travel waypoint dots */
+  --map-bay-ring: #3c4a5e;    /* empty charge/park outline — receded */
+  --map-bay-glyph: #6b7a90;   /* faint charge bolt so charge≠park when empty */
+  --map-robot-idle: #8b949e;  /* repositioning / idle-moving robot (neutral grey) */
 }
 
 * { box-sizing: border-box; }
@@ -149,9 +156,9 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(ellipse at center, transparent 62%, rgba(0, 0, 0, 0.35) 100%);
+  background: radial-gradient(ellipse at center, transparent 72%, rgba(0, 0, 0, 0.15) 100%);
 }
-.map-svg { width: 100%; height: 100%; display: block; background: #070a0f; }
+.map-svg { width: 100%; height: 100%; display: block; background: var(--map-floor, #131a24); }
 
 /* Sizes (radius, stroke, font) are set in user units by dashboard-map.js so
  * they scale with the map; CSS here owns colors, opacity, and animation.
@@ -160,13 +167,13 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 
 /* Backdrop: faint grid + corner brackets frame the floor. Grid stroke-width is
  * set in JS user units — a CSS width would not scale with the map. */
-.map-grid { stroke: rgba(255, 255, 255, 0.03); }
+.map-grid { stroke: rgba(255, 255, 255, 0.05); }
 .map-bracket { stroke: rgba(120, 160, 210, 0.35); stroke-linecap: round; }
 
 /* Travel network: the scene's synced path segments and receded waypoint dots.
  * Lines carry the structure, so they sit a step brighter than the dots. */
-.map-aisle { stroke: #243245; stroke-linecap: round; }
-.map-node-travel { fill: #2c3542; }
+.map-aisle { stroke: var(--map-aisle, #56698a); stroke-linecap: round; }
+.map-node-travel { fill: var(--map-node, #7e92b3); }
 /* Order source/destination highlight ring (status-colored in JS). */
 .map-node-hot { opacity: 0.95; }
 
