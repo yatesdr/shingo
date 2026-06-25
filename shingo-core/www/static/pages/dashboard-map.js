@@ -391,66 +391,73 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       w: fpW + 2 * fpPad, h: fpH + 2 * fpPad
     };
 
-    // ── Region of interest ────────────────────────────────────────────
-    // ROI = all robot positions + active-order source/delivery nodes + routes.
-    // Fallback: no robots + no active orders → full plant (current behavior).
+    // ── State-based view target ────────────────────────────────────────
+    // IDLE floor (no active orders): target = whole plant so parked robots
+    // never shrink the frame (fixes the P24a cramped-strip problem).
+    // ACTIVE: gentle ROI zoom, never smaller than 55% of full-plant extent.
     var INACTIVE_ROI = { delivered: true, confirmed: true, cancelled: true };
     var activeOrds = orders.filter(function (o) { return !INACTIVE_ROI[o.status]; });
-    var robotArr = Object.keys(robots).map(function (k) { return robots[k]; })
-      .filter(function (r) { return isFinite(r.x) && isFinite(r.y); });
-
-    var roiSx = [], roiSy = [];
-    robotArr.forEach(function (r) {
-      var rs = proj(r.x, r.y); roiSx.push(rs[0]); roiSy.push(rs[1]);
-    });
-    activeOrds.forEach(function (o) {
-      var sn = findNode(o.source_node);
-      if (sn) { var ss = proj(sn.x, sn.y); roiSx.push(ss[0]); roiSy.push(ss[1]); }
-      var dn = findNode(o.delivery_node);
-      if (dn) { var ds = proj(dn.x, dn.y); roiSx.push(ds[0]); roiSy.push(ds[1]); }
-      var rbt = robots[o.robot_id];
-      if (rbt && dn) {
-        var rworld = routeWorld(rbt.x, rbt.y, dn);
-        if (rworld) {
-          rworld.forEach(function (w) {
-            var ws = proj(w[0], w[1]); roiSx.push(ws[0]); roiSy.push(ws[1]);
-          });
-        }
-      }
-    });
-    if (!roiSx.length) { roiSx = fsx.slice(); roiSy = fsy.slice(); }
-
-    var roiMinX = Math.min.apply(null, roiSx), roiMaxX = Math.max.apply(null, roiSx);
-    var roiMinY = Math.min.apply(null, roiSy), roiMaxY = Math.max.apply(null, roiSy);
-    var roiW = Math.max(roiMaxX - roiMinX, 1), roiH = Math.max(roiMaxY - roiMinY, 1);
-    var roiCX = (roiMinX + roiMaxX) / 2, roiCY = (roiMinY + roiMaxY) / 2;
-
-    // Pad ~12%
-    var pad = Math.max(roiW, roiH) * 0.12;
-    roiW += 2 * pad; roiH += 2 * pad;
-    roiMinX = roiCX - roiW / 2; roiMinY = roiCY - roiH / 2;
-
-    // Clamp: max = padded full plant; min = max(graphScale*6, fullPlant*0.12)
     var fullExt = Math.max(fpW, fpH);
     var maxExt = Math.max(fpW + 2 * fpPad, fpH + 2 * fpPad);
-    var minExt = Math.max(graphScale > 0 ? graphScale * 6 : 0, fullExt * 0.12, 1);
-    var curExt = Math.max(roiW, roiH);
-    if (curExt > maxExt) {
-      var sd = maxExt / curExt; roiW *= sd; roiH *= sd;
-    } else if (curExt < minExt) {
-      var su = minExt / curExt; roiW *= su; roiH *= su;
+
+    var roiMinX, roiMinY, roiW, roiH;
+
+    if (!activeOrds.length) {
+      // Idle: start from the pre-padded full-plant rect; aspect-fill below.
+      roiMinX = fullPlantView.minX; roiMinY = fullPlantView.minY;
+      roiW = fullPlantView.w; roiH = fullPlantView.h;
+    } else {
+      // Active: include each active order's robot + source + delivery + route.
+      var roiSx = [], roiSy = [];
+      activeOrds.forEach(function (o) {
+        var rbt = robots[o.robot_id];
+        if (rbt && isFinite(rbt.x) && isFinite(rbt.y)) {
+          var rs = proj(rbt.x, rbt.y); roiSx.push(rs[0]); roiSy.push(rs[1]);
+        }
+        var sn = findNode(o.source_node);
+        if (sn) { var ss = proj(sn.x, sn.y); roiSx.push(ss[0]); roiSy.push(ss[1]); }
+        var dn = findNode(o.delivery_node);
+        if (dn) { var ds = proj(dn.x, dn.y); roiSx.push(ds[0]); roiSy.push(ds[1]); }
+        if (rbt && dn) {
+          var rworld = routeWorld(rbt.x, rbt.y, dn);
+          if (rworld) {
+            rworld.forEach(function (w) {
+              var ws = proj(w[0], w[1]); roiSx.push(ws[0]); roiSy.push(ws[1]);
+            });
+          }
+        }
+      });
+      if (!roiSx.length) { roiSx = fsx.slice(); roiSy = fsy.slice(); }
+
+      var rMinX = Math.min.apply(null, roiSx), rMaxX = Math.max.apply(null, roiSx);
+      var rMinY = Math.min.apply(null, roiSy), rMaxY = Math.max.apply(null, roiSy);
+      var rW = Math.max(rMaxX - rMinX, 1), rH = Math.max(rMaxY - rMinY, 1);
+      var rCX = (rMinX + rMaxX) / 2, rCY = (rMinY + rMaxY) / 2;
+
+      // Pad ~12% then clamp: max = full plant, min = 55% of full-plant extent.
+      var rPad = Math.max(rW, rH) * 0.12;
+      rW += 2 * rPad; rH += 2 * rPad;
+      var curExt = Math.max(rW, rH);
+      var minExt = fullExt * 0.55;
+      if (curExt > maxExt) {
+        var sd = maxExt / curExt; rW *= sd; rH *= sd;
+      } else if (curExt < minExt) {
+        var su = minExt / curExt; rW *= su; rH *= su;
+      }
+      roiMinX = rCX - rW / 2; roiMinY = rCY - rH / 2;
+      roiW = rW; roiH = rH;
     }
-    roiMinX = roiCX - roiW / 2; roiMinY = roiCY - roiH / 2;
 
     // Expand to fill the container's pixel aspect ratio — kills letterbox margins.
     var container = document.getElementById('map-svg-wrap');
     if (container && container.clientWidth > 1 && container.clientHeight > 1) {
       var cAsp = container.clientWidth / container.clientHeight;
       var vAsp = roiW / roiH;
+      var vCX = roiMinX + roiW / 2, vCY = roiMinY + roiH / 2;
       if (vAsp < cAsp) {
-        var nW = roiH * cAsp; roiMinX -= (nW - roiW) / 2; roiW = nW;
+        roiW = roiH * cAsp; roiMinX = vCX - roiW / 2;
       } else {
-        var nH = roiW / cAsp; roiMinY -= (nH - roiH) / 2; roiH = nH;
+        roiH = roiW / cAsp; roiMinY = vCY - roiH / 2;
       }
     }
 
@@ -848,6 +855,10 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // Called from tickEase (viewport rect) and render() (robot dots + rect).
   function updateMinimapDynamic() {
     if (!minimapEl || !minimapViewportRect) return;
+    // Hide the minimap at full-plant view (idle); it adds no context when the
+    // detail view IS the whole plant. Show it once active orders push a zoom.
+    var INACTIVE_MM = { delivered: true, confirmed: true, cancelled: true };
+    minimapEl.style.display = orders.some(function (o) { return !INACTIVE_MM[o.status]; }) ? '' : 'none';
     // Refresh robot dots
     if (minimapRobotGroup) {
       while (minimapRobotGroup.firstChild) minimapRobotGroup.removeChild(minimapRobotGroup.firstChild);
@@ -909,8 +920,10 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.7, class: 'map-node-travel' });
       svg.appendChild(glyph);
     } else if (cls === 'ActionPoint') {
-      // Single dot — no ring. Quiets dense cells; the accent glyph still fires
-      // on hot nodes, and the map key legend identifies the type.
+      // Hidden when idle: declutters dense cells down to faint aisle structure.
+      // Only drawn when an active order uses this node (hot), at which point the
+      // accent section below adds the indigo stroke + glow.
+      if (!hot) return;
       glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 1.0, fill: NODE_ACTION_COLOR });
       svg.appendChild(glyph);
     } else if (cls === 'ChargePoint') {
@@ -981,7 +994,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     // made everything huge on a floor that is two tight cells + a long
     // corridor.
     var base = graphScale || unit * 0.03;
-    var robotR = Math.max(unit * 0.004, Math.min(unit * 0.010, base * 0.9));
+    var robotR = Math.max(unit * 0.0065, Math.min(unit * 0.016, base * 1.3));
     var nodeR = Math.max(unit * 0.0024, Math.min(unit * 0.006, base * 0.3));
     var fontS = Math.max(unit * 0.006, Math.min(unit * 0.0085, base * 0.8));
 
@@ -1004,7 +1017,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
           var pa = proj(tnodes[a].x, tnodes[a].y), pb = proj(tnodes[b].x, tnodes[b].y);
           svg.appendChild(svgEl('line', {
             x1: pa[0], y1: pa[1], x2: pb[0], y2: pb[1],
-            class: 'map-aisle', 'stroke-width': nodeR * 0.55
+            class: 'map-aisle', 'stroke-width': nodeR * 0.38
           }));
         }
       }

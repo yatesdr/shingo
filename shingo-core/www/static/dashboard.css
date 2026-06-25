@@ -176,7 +176,7 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 
 /* Travel network: the scene's synced path segments and receded waypoint dots.
  * Lines carry the structure, so they sit a step brighter than the dots. */
-.map-aisle { stroke: var(--map-aisle, #56698a); stroke-linecap: round; }
+.map-aisle { stroke: var(--map-aisle, #56698a); stroke-linecap: round; stroke-opacity: 0.65; }
 .map-node-travel { fill: var(--map-node, #7e92b3); }
 /* Order source/destination highlight ring (status-colored in JS). */
 .map-node-hot { opacity: 0.95; }
