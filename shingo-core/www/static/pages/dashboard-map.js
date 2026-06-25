@@ -916,14 +916,10 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     // the glyph itself (P21) rather than via a separate ring drawn on top.
     var glyph = null;
     if (isTravel(cls)) {
-      // The numerous travel waypoints recede to a faint dot network.
-      glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.7, class: 'map-node-travel' });
-      svg.appendChild(glyph);
+      // Travel nodes are path structure only — no dot drawn. The aisle lines
+      // carry the network; vertex dots added visual noise without information.
     } else if (cls === 'ActionPoint') {
-      // Hidden when idle: declutters dense cells down to faint aisle structure.
-      // Only drawn when an active order uses this node (hot), at which point the
-      // accent section below adds the indigo stroke + glow.
-      if (!hot) return;
+      // Single dot — no ring.
       glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 1.0, fill: NODE_ACTION_COLOR });
       svg.appendChild(glyph);
     } else if (cls === 'ChargePoint') {
@@ -994,7 +990,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     // made everything huge on a floor that is two tight cells + a long
     // corridor.
     var base = graphScale || unit * 0.03;
-    var robotR = Math.max(unit * 0.0065, Math.min(unit * 0.016, base * 1.3));
+    var robotR = Math.max(unit * 0.004, Math.min(unit * 0.010, base * 0.9));
     var nodeR = Math.max(unit * 0.0024, Math.min(unit * 0.006, base * 0.3));
     var fontS = Math.max(unit * 0.006, Math.min(unit * 0.0085, base * 0.8));
 
@@ -1017,7 +1013,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
           var pa = proj(tnodes[a].x, tnodes[a].y), pb = proj(tnodes[b].x, tnodes[b].y);
           svg.appendChild(svgEl('line', {
             x1: pa[0], y1: pa[1], x2: pb[0], y2: pb[1],
-            class: 'map-aisle', 'stroke-width': nodeR * 0.38
+            class: 'map-aisle', 'stroke-width': nodeR * 0.48
           }));
         }
       }
@@ -1096,13 +1092,8 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
       drawNode(svg, p, nodeR);
     });
-    // Edge endpoints that never synced as scene points ("missing" nodes)
-    // still join the travel network — draw them so no line ends float.
-    tnodes.forEach(function (t) {
-      if (!t.orphan) return;
-      var os = proj(t.x, t.y);
-      svg.appendChild(svgEl('circle', { cx: os[0], cy: os[1], r: nodeR * 0.7, class: 'map-node-travel' }));
-    });
+    // Orphan tnodes (edge endpoints with no scene point) — no dot drawn; the
+    // aisle lines already show where the network goes.
 
     // robots — halo, then chevron, so labels (last pass) sit above everything.
     var robotList = Object.keys(robots).map(function (k) { return robots[k]; })
