@@ -1029,6 +1029,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     // lane line as the accessible, motion-free fallback.
     var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     var activeRoutes = orders.filter(function (o) {
+      if (o.status === 'delivered' || o.status === 'confirmed' || o.status === 'cancelled') return false;
       var r = robots[o.robot_id];
       return r && isFinite(r.x) && isFinite(r.y) && findNode(o.delivery_node);
     });
