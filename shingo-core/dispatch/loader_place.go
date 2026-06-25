@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"log"
 
 	"shingo/protocol"
@@ -175,6 +176,10 @@ func hasWaitStep(steps []resolvedStep) bool {
 // time patchRedirectSegments overlays this onto the final dropoff step, so the fleet
 // follows it; persisting it now also makes the order in-flight to the chosen node so
 // a concurrent restock's gate observes it (the never-2N handshake).
+//
+// steps_json is also patched so the HMI displays the resolved destination (e.g. a
+// buffer slot) rather than the Edge's original planned home node. Both writes happen
+// before HandleOrderRelease sends the order to the fleet, so they are consistent.
 func (d *Dispatcher) setParkDestination(order *orders.Order, node, kind string) {
 	if order.DeliveryNode == node {
 		return // already there — idempotent across scanner replays
@@ -184,5 +189,23 @@ func (d *Dispatcher) setParkDestination(order *orders.Order, node, kind string) 
 		return
 	}
 	order.DeliveryNode = node
+	if order.StepsJSON != "" {
+		var steps []resolvedStep
+		if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err == nil {
+			for i := len(steps) - 1; i >= 0; i-- {
+				if steps[i].Action == protocol.ActionDropoff {
+					steps[i].Node = node
+					break
+				}
+			}
+			if patched, err := json.Marshal(steps); err == nil {
+				if uErr := d.db.UpdateOrderStepsJSON(order.ID, string(patched)); uErr != nil {
+					log.Printf("dispatch: place park steps_json order %d → %s: %v", order.ID, node, uErr)
+				} else {
+					order.StepsJSON = string(patched)
+				}
+			}
+		}
+	}
 	d.dbg("place: order %d returning partial → %s (%s)", order.ID, node, kind)
 }
