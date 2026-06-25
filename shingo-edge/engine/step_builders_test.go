@@ -201,6 +201,43 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 	}
 }
 
+// Cross-style changeover: from-claim uses a dedicated home (inbound_source ==
+// outbound_destination == same specific node). Robot A picks from the NEW
+// style's home (toClaim.InboundSource = HOME-B), never vacating the old home
+// (HOME-A). Robot B must NOT return to HOME-A (it may hold a pre-staged bin);
+// it should use OutboundStaging instead.
+func TestBuildSwapChangeoverSteps_TwoRobot_DedicatedHomeCrossStyle(t *testing.T) {
+	t.Parallel()
+	from := &processes.NodeClaim{
+		CoreNodeName:        "ALN_001",
+		InboundSource:       "HOME-A", // dedicated home: inbound == outbound
+		OutboundStaging:     "",       // empty → Core global fallback
+		OutboundDestination: "HOME-A",
+		SwapMode:            "two_robot",
+	}
+	to := &processes.NodeClaim{
+		CoreNodeName:   "ALN_001",
+		InboundSource:  "HOME-B", // different home — Robot A never clears HOME-A
+		InboundStaging: "SLN_001",
+	}
+
+	disp := BuildSwapChangeoverSteps(from, to, "", "")
+
+	if disp.StepsA == nil || disp.StepsB == nil {
+		t.Fatalf("expected both StepsA and StepsB, got A=%v B=%v", disp.StepsA, disp.StepsB)
+	}
+	// Robot B must NOT return to the occupied HOME-A. OutboundStaging is empty
+	// so buildStep("dropoff","") produces a step with no Node — Core resolves
+	// the destination via global payload fallback.
+	lastB := disp.StepsB[len(disp.StepsB)-1]
+	if lastB.Node == "HOME-A" {
+		t.Errorf("Order B dropoff: got HOME-A (occupied dedicated home); want empty node (global fallback)")
+	}
+	if lastB.Node != "" {
+		t.Errorf("Order B dropoff: expected empty node (global fallback), got %q", lastB.Node)
+	}
+}
+
 // two_robot Evacuate has no second "tooling done" wait: with two
 // independent robots, Robot B clears the line while Robot A delivers,
 // so the line is naturally clear without an operator gate between the
