@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/store"
 	"shingocore/store/loaders"
 	"shingocore/store/orders"
 )
@@ -172,21 +173,17 @@ func hasWaitStep(steps []resolvedStep) bool {
 	return false
 }
 
-// setParkDestination commits the chosen dropoff onto the order header. The release-
-// time patchRedirectSegments overlays this onto the final dropoff step, so the fleet
-// follows it; persisting it now also makes the order in-flight to the chosen node so
-// a concurrent restock's gate observes it (the never-2N handshake).
+// applyDeliveryNode is the canonical way to override an order's final
+// destination. It updates delivery_node (the in-flight gate used by the
+// never-2N handshake and capacity checks) and, for complex orders, patches
+// the last dropoff step in steps_json so the HMI route display stays
+// consistent with what the fleet will actually receive.
 //
-// steps_json is also patched so the HMI displays the resolved destination (e.g. a
-// buffer slot) rather than the Edge's original planned home node. Both writes happen
-// before HandleOrderRelease sends the order to the fleet, so they are consistent.
-func (d *Dispatcher) setParkDestination(order *orders.Order, node, kind string) {
-	if order.DeliveryNode == node {
-		return // already there — idempotent across scanner replays
-	}
-	if err := d.db.UpdateOrderDeliveryNode(order.ID, node); err != nil {
-		log.Printf("dispatch: place park dest order %d → %s: %v", order.ID, node, err)
-		return
+// Call this instead of db.UpdateOrderDeliveryNode directly whenever the
+// resolved destination may differ from what the Edge originally planned.
+func applyDeliveryNode(db *store.DB, order *orders.Order, node string) error {
+	if err := db.UpdateOrderDeliveryNode(order.ID, node); err != nil {
+		return err
 	}
 	order.DeliveryNode = node
 	if order.StepsJSON != "" {
@@ -199,13 +196,28 @@ func (d *Dispatcher) setParkDestination(order *orders.Order, node, kind string) 
 				}
 			}
 			if patched, err := json.Marshal(steps); err == nil {
-				if uErr := d.db.UpdateOrderStepsJSON(order.ID, string(patched)); uErr != nil {
-					log.Printf("dispatch: place park steps_json order %d → %s: %v", order.ID, node, uErr)
+				if uErr := db.UpdateOrderStepsJSON(order.ID, string(patched)); uErr != nil {
+					log.Printf("dispatch: applyDeliveryNode steps_json order %d → %s: %v", order.ID, node, uErr)
 				} else {
 					order.StepsJSON = string(patched)
 				}
 			}
 		}
+	}
+	return nil
+}
+
+// setParkDestination commits the chosen dropoff for a dedicated-loader
+// return leg. Delegates to applyDeliveryNode to keep delivery_node and
+// steps_json in sync; also makes the order in-flight to the chosen node
+// so concurrent restock gates observe it (the never-2N handshake).
+func (d *Dispatcher) setParkDestination(order *orders.Order, node, kind string) {
+	if order.DeliveryNode == node {
+		return // already there — idempotent across scanner replays
+	}
+	if err := applyDeliveryNode(d.db, order, node); err != nil {
+		log.Printf("dispatch: place park dest order %d → %s: %v", order.ID, node, err)
+		return
 	}
 	d.dbg("place: order %d returning partial → %s (%s)", order.ID, node, kind)
 }
