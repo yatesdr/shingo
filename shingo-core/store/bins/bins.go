@@ -31,11 +31,16 @@ type Bin = domain.Bin
 // binJoinQuery is the SELECT prefix used by every bin-reading query.
 // Export as BinJoinQuery so cross-aggregate readers at the outer store/
 // level (which need to add their own WHERE clauses) can reuse it.
+// BinJoinQuery is the SELECT prefix used by every bin-reading query.
+// The 27th column (has_pending_reservation) is populated from the
+// reservations table so BinUnavailableReason can filter reserved bins
+// without a separate round-trip. ScanBin reads it into HasPendingReservation.
 const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node_id, b.status, b.claimed_by, b.staged_at, b.staged_expires_at,
 	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.delta_epoch, b.manifest_confirmed,
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
 	b.loaded_at, b.anomaly_at, b.created_at, b.updated_at,
-	bt.code, COALESCE(n.name, ''), COALESCE(p.uop_capacity, 0)
+	bt.code, COALESCE(n.name, ''), COALESCE(p.uop_capacity, 0),
+	EXISTS(SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending') AS has_pending_reservation
 	FROM bins b
 	JOIN bin_types bt ON bt.id = b.bin_type_id
 	LEFT JOIN nodes n ON n.id = b.node_id
@@ -109,7 +114,8 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.StagedAt, &b.StagedExpiresAt,
 		&b.PayloadCode, &manifest, &b.UOPRemaining, &b.DeltaEpoch, &b.ManifestConfirmed,
 		&b.Locked, &b.LockedBy, &b.LockedAt, &b.LastCountedAt, &b.LastCountedBy,
-		&b.LoadedAt, &b.AnomalyAt, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity)
+		&b.LoadedAt, &b.AnomalyAt, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity,
+		&b.HasPendingReservation)
 	if err != nil {
 		return nil, err
 	}
@@ -431,8 +437,17 @@ func ListAvailable(db *sql.DB) ([]*Bin, error) {
 
 // Claim marks a bin as claimed by an order to prevent double-dispatch.
 // Fails if the bin is locked or already claimed by another order.
+//
+// Demoted-CAS guard (D2): additionally requires this order's pending
+// reservation to exist (placed by ClaimForDispatch's Acquire step) so
+// a concurrent claimer without a reservation cannot steal the bin even
+// if it passes the claimed_by IS NULL check. claimed_by IS NULL stays
+// as defense-in-depth for the mixed-binary rollback window.
 func Claim(db *sql.DB, binID, orderID int64) error {
-	res, err := db.Exec(`UPDATE bins SET claimed_by=$1, updated_at=$3 WHERE id=$2 AND locked=false AND claimed_by IS NULL`, orderID, binID, clock.Now().UTC())
+	res, err := db.Exec(`UPDATE bins SET claimed_by=$1, updated_at=$3
+		WHERE id=$2 AND locked=false AND claimed_by IS NULL
+		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$1 AND bin_id=$2 AND state='pending')`,
+		orderID, binID, clock.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -516,7 +531,8 @@ func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, exc
 		  AND n.is_synthetic = false
 		  AND COALESCE(b.payload_code, '') = ''
 		  AND b.node_id IN (SELECT id FROM descendants)
-		  AND ($3 = 0 OR b.node_id != $3)%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, groupNodeID, excludeNodeID)
+		  AND ($3 = 0 OR b.node_id != $3)
+		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, groupNodeID, excludeNodeID)
 	return ScanBin(row)
 }
 
@@ -532,7 +548,8 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 			  AND n.is_synthetic = false
 			  AND n.zone = $2
 			  AND COALESCE(b.payload_code, '') = ''
-			  AND ($3 = 0 OR b.node_id != $3)%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, preferZone, excludeNodeID)
+			  AND ($3 = 0 OR b.node_id != $3)
+			  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, preferZone, excludeNodeID)
 		bin, err := ScanBin(row)
 		if err == nil {
 			return bin, nil
@@ -551,7 +568,8 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 		  AND n.enabled = true
 		  AND n.is_synthetic = false
 		  AND COALESCE(b.payload_code, '') = ''
-		  AND ($2 = 0 OR b.node_id != $2)%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, excludeNodeID)
+		  AND ($2 = 0 OR b.node_id != $2)
+		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, excludeNodeID)
 	return ScanBin(row)
 }
 

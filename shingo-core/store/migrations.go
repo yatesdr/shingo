@@ -462,6 +462,18 @@ func (db *DB) runVersionedMigrations() error {
 		{42, "create reservations table (dormant; Phase-1 reservation-sourcing seam)",
 			v42Reservations,
 			func(q schema.Querier) bool { return schema.TableExists(q, "reservations") }},
+		// v43: partial unique index on reservations(bin_id) that makes Acquire
+		// exactly-one-winner. Without this the Phase-1 reserve-then-confirm flow
+		// has no DB-level enforcement: two concurrent Acquires on the same bin
+		// could both insert pending rows and both think they won the race.
+		// WHERE state IN ('pending','confirmed') leaves cancelled/expired rows
+		// outside the constraint so a bin freed by Expire or Release can be
+		// immediately re-reserved without violating the index.
+		{43, "add uq_reservations_bin_active partial unique index (Phase-1 race gate)",
+			v43ReservationsBinActiveIndex,
+			func(q schema.Querier) bool {
+				return schema.IndexExists(q, "uq_reservations_bin_active")
+			}},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1298,6 +1310,18 @@ func v42Reservations(tx *sql.Tx) error {
 		return fmt.Errorf("create idx_reservations_order: %w", err)
 	}
 	_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_reservations_bin ON reservations(bin_id)`)
+	return err
+}
+
+// v43ReservationsBinActiveIndex adds the partial unique index that makes
+// Phase-1 Acquire exactly-one-winner. Two concurrent Acquires on the same
+// bin both try to INSERT a 'pending' row; only one can satisfy the uniqueness
+// constraint and the other gets a conflict, returning the race signal.
+// WHERE state IN ('pending','confirmed') leaves expired/released rows
+// outside the constraint so a freed bin can be immediately re-reserved.
+func v43ReservationsBinActiveIndex(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_reservations_bin_active
+		ON reservations (bin_id) WHERE state IN ('pending','confirmed')`)
 	return err
 }
 

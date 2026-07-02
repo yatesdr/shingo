@@ -47,6 +47,7 @@ func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND b.manifest_confirmed = true
 		  AND b.status = 'available'
 		  AND ($2 = '' OR b.payload_code = $2)
+		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
 		  AND NOT EXISTS (
 			SELECT 1 FROM nodes sib
 			JOIN bins sb ON sb.node_id = sib.id

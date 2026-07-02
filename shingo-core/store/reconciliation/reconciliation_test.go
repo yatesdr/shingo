@@ -34,12 +34,8 @@ func TestCoverage_ListOrderCompletionAnomalies(t *testing.T) {
 	if err := orders.Create(db.DB, claimed); err != nil {
 		t.Fatalf("create claimed order: %v", err)
 	}
-	if err := bins.Claim(db.DB, bin.ID, claimed.ID); err != nil {
-		t.Fatalf("claim bin: %v", err)
-	}
-	if err := orders.UpdateStatus(db.DB, claimed.ID, "failed", "test failure"); err != nil {
-		t.Fatalf("mark failed: %v", err)
-	}
+	testdb.ClaimBinForTest(t, db, bin.ID, claimed.ID)
+	testdb.SeedOrderStatus(t, db, claimed.ID, "failed", "test failure")
 
 	missingBin := &orders.Order{EdgeUUID: "missing-bin", StationID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: node.Name}
 	if err := orders.Create(db.DB, missingBin); err != nil {
@@ -53,9 +49,7 @@ func TestCoverage_ListOrderCompletionAnomalies(t *testing.T) {
 	if err := orders.Create(db.DB, confirmedNoComplete); err != nil {
 		t.Fatalf("create confirmed-no-complete order: %v", err)
 	}
-	if err := orders.UpdateStatus(db.DB, confirmedNoComplete.ID, "confirmed", "receipt accepted"); err != nil {
-		t.Fatalf("mark confirmed: %v", err)
-	}
+	testdb.SeedOrderStatus(t, db, confirmedNoComplete.ID, "confirmed", "receipt accepted")
 
 	anomalies, err := reconciliation.ListOrderCompletionAnomalies(db.DB)
 	if err != nil {
@@ -87,9 +81,7 @@ func TestCoverage_GetReconciliationSummary(t *testing.T) {
 	if err := orders.Create(db.DB, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := orders.UpdateStatus(db.DB, order.ID, "confirmed", "partial completion"); err != nil {
-		t.Fatalf("mark confirmed: %v", err)
-	}
+	testdb.SeedOrderStatus(t, db, order.ID, "confirmed", "partial completion")
 	if err := messaging.EnqueueOutbox(db.DB, "dispatch", []byte(`{}`), "order.update", "edge.1"); err != nil {
 		t.Fatalf("enqueue outbox: %v", err)
 	}

@@ -196,15 +196,20 @@ func TestClaim_And_Unclaim(t *testing.T) {
 	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
 
 	t.Run("Claim_sets_claimed_by", func(t *testing.T) {
-		testutil.MustNoErr(t, bins.Claim(db.DB, bin.ID, 42), "bins.Claim")
+		o := testdb.CreateOrder(t, db)
+		testdb.ReserveBin(t, db, o.ID, bin.ID) // demoted-CAS guard requires a pending reservation
+		testutil.MustNoErr(t, bins.Claim(db.DB, bin.ID, o.ID), "bins.Claim")
 		got, _ := bins.Get(db.DB, bin.ID)
-		if got.ClaimedBy == nil || *got.ClaimedBy != 42 {
-			t.Errorf("ClaimedBy = %v, want 42", got.ClaimedBy)
+		if got.ClaimedBy == nil || *got.ClaimedBy != o.ID {
+			t.Errorf("ClaimedBy = %v, want %d", got.ClaimedBy, o.ID)
 		}
 	})
 
 	t.Run("Claim_again_errors_when_already_claimed", func(t *testing.T) {
-		if err := bins.Claim(db.DB, bin.ID, 99); err == nil {
+		// bin is already claimed by the prior subtest; a second claim fails on
+		// claimed_by IS NULL before the reservation guard, so no reservation needed.
+		o := testdb.CreateOrder(t, db)
+		if err := bins.Claim(db.DB, bin.ID, o.ID); err == nil {
 			t.Error("second bins.Claim: expected error, got nil")
 		}
 	})
@@ -222,9 +227,12 @@ func TestClaim_And_Unclaim(t *testing.T) {
 		bin3 := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-CLM-3", NodeID: &std.StorageNode.ID, Status: "available"}
 		testutil.MustNoErr(t, bins.Create(db.DB, bin2), "bins.Create bin2")
 		testutil.MustNoErr(t, bins.Create(db.DB, bin3), "bins.Create bin3")
-		testutil.MustNoErr(t, bins.Claim(db.DB, bin2.ID, 777), "bins.Claim bin2")
-		testutil.MustNoErr(t, bins.Claim(db.DB, bin3.ID, 777), "bins.Claim bin3")
-		bins.UnclaimByOrder(db.DB, 777)
+		o := testdb.CreateOrder(t, db)
+		testdb.ReserveBin(t, db, o.ID, bin2.ID)
+		testdb.ReserveBin(t, db, o.ID, bin3.ID)
+		testutil.MustNoErr(t, bins.Claim(db.DB, bin2.ID, o.ID), "bins.Claim bin2")
+		testutil.MustNoErr(t, bins.Claim(db.DB, bin3.ID, o.ID), "bins.Claim bin3")
+		bins.UnclaimByOrder(db.DB, o.ID)
 		g2, _ := bins.Get(db.DB, bin2.ID)
 		g3, _ := bins.Get(db.DB, bin3.ID)
 		if g2.ClaimedBy != nil || g3.ClaimedBy != nil {
@@ -236,7 +244,9 @@ func TestClaim_And_Unclaim(t *testing.T) {
 		bin4 := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-CLM-LOCKED", NodeID: &std.StorageNode.ID, Status: "available"}
 		testutil.MustNoErr(t, bins.Create(db.DB, bin4), "bins.Create bin4")
 		testutil.MustNoErr(t, bins.Lock(db.DB, bin4.ID, "tester"), "bins.Lock")
-		if err := bins.Claim(db.DB, bin4.ID, 1); err == nil {
+		o := testdb.CreateOrder(t, db)
+		testdb.ReserveBin(t, db, o.ID, bin4.ID) // reserve so the claim fails on the LOCK, not a missing reservation
+		if err := bins.Claim(db.DB, bin4.ID, o.ID); err == nil {
 			t.Error("bins.Claim of locked bin: expected error, got nil")
 		}
 	})
@@ -408,7 +418,8 @@ func TestNodeTileStates(t *testing.T) {
 	// Empty (no manifest) bin at line node, claimed by an order.
 	empty := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-TILE-EMPTY", NodeID: &std.LineNode.ID, Status: "available"}
 	testutil.MustNoErr(t, bins.Create(db.DB, empty), "bins.Create empty")
-	testutil.MustNoErr(t, bins.Claim(db.DB, empty.ID, 11), "bins.Claim empty")
+	emptyOrder := testdb.CreateOrder(t, db)
+	testdb.ClaimBinForTest(t, db, empty.ID, emptyOrder.ID)
 
 	states, err := bins.NodeTileStates(db.DB)
 	if err != nil {

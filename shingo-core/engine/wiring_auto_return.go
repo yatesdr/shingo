@@ -154,9 +154,11 @@ func (e *Engine) createSingleReturnOrder(order *orders.Order, binID int64, sourc
 		return
 	}
 
-	// Claim the bin for the return order. The bin was already unclaimed by
-	// UnclaimOrderBins on the cancel/fail path, so claimed_by IS NULL.
-	if err := e.db.ClaimBin(binID, returnOrder.ID); err != nil {
+	// Claim the bin for the return order via ClaimForDispatch (reserve-then-claim).
+	// No break-through variant is needed: the predecessor order reached a terminal
+	// status, and TerminalizeOrder already released BOTH its claim and its
+	// reservation, so the bin is free and a plain Acquire succeeds.
+	if err := e.binManifest.ClaimForDispatch(binID, returnOrder.ID, nil); err != nil {
 		e.logFn("engine: claim bin %d for return order %d: %v", binID, returnOrder.ID, err)
 	}
 

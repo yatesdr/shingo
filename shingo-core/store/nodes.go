@@ -36,7 +36,7 @@ func (db *DB) UnclaimSlot(nodeID int64) error { return nodes.UnclaimSlot(db.DB, 
 
 // UnclaimOrderSlots releases all slot claims held by an order. Mirrors
 // UnclaimOrderBins and is called from the same terminal cleanup hooks.
-func (db *DB) UnclaimOrderSlots(orderID int64) { nodes.UnclaimOrderSlots(db.DB, orderID) }
+func (db *DB) UnclaimOrderSlots(orderID int64) error { return nodes.UnclaimOrderSlots(db.DB, orderID) }
 
 // ReparentNode moves a node into a new parent (or removes it from a parent).
 // When adopting into a lane, it sets the depth based on position. When

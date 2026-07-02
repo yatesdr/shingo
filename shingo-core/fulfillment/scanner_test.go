@@ -61,11 +61,13 @@ func (s stubLifecycle) Queue(ord *orders.Order, _, reason string) error {
 // register in the fake's statusUpdates slice for assertion.
 func newTestScanner(t *testing.T, db Store) *Scanner {
 	t.Helper()
+	claimer, _ := db.(Claimer) // fakeStore implements ClaimForDispatch
 	return NewScanner(
 		db,
 		nil, // dispatcher — not reached on any tested path
 		stubLifecycle{db: db},
 		nil, // resolver — not reached on any tested path
+		claimer,
 		func(string, string, any) error { return nil },
 		func(orderID int64, code, detail string) {
 			t.Errorf("unexpected failFn call: order=%d code=%s detail=%s",
@@ -193,6 +195,7 @@ func TestScannerScanForRetrieve_FailsCleanlyOnEmptyPayload(t *testing.T) {
 		nil,
 		stubLifecycle{db: f},
 		nil,
+		f, // claimer
 		func(string, string, any) error { return nil },
 		func(orderID int64, code, detail string) {
 			failCalls = append(failCalls, struct {

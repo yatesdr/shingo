@@ -52,8 +52,9 @@ func TestPhase0_DispositionTriad_ClaimFailed(t *testing.T) {
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	d.SetPostFindHook(func() {
-		// Steal the bin between Find and Claim so the inbound order's CAS fails.
-		_ = db.ClaimBin(bin.ID, stealer.ID)
+		// Reserve the bin between Find and Claim so the inbound order's Acquire
+		// conflicts — the reservation is the race point post-1a (was the CAS).
+		testdb.ReserveBin(t, db, stealer.ID, bin.ID)
 		d.SetPostFindHook(nil) // fire once only
 	})
 
@@ -108,7 +109,7 @@ func TestPhase0_DispositionTriad_NoBin_PlanStore(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(stealer), "create stealer order")
-	testutil.MustNoErr(t, db.ClaimBin(bin.ID, stealer.ID), "pre-claim bin")
+	testdb.ClaimBinForTest(t, db, bin.ID, stealer.ID)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{

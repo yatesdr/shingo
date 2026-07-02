@@ -8,8 +8,10 @@ package store
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 func (db *DB) CreateOrder(o *orders.Order) error { return orders.Create(db.DB, o) }
@@ -201,28 +203,52 @@ func (db *DB) ListOrdersByBin(binID int64, limit int) ([]*orders.Order, error) {
 	return orders.ListByBinID(db.DB, binID, limit)
 }
 
-// FailOrderAtomic transitions an order to "failed" and releases all bin
-// claims in a single transaction. This prevents the leak where
-// UpdateOrderStatus succeeds but UnclaimOrderBins fails silently, leaving
-// bins permanently claimed by a terminal order. Cross-aggregate.
-func (db *DB) FailOrderAtomic(orderID int64, detail string) error {
+// TerminalizeOrder transitions an order to a terminal status and releases ALL of
+// its holds — bin claims, destination-slot claims, order_bins junction rows, and
+// reservations (pending and confirmed) — in a single transaction. It is the one
+// chokepoint that makes "reaching a terminal status releases everything" a
+// structural invariant rather than several divergent write paths; transition()
+// routes every IsTerminal target here (including the success terminal
+// 'confirmed', whose reservation previously leaked through UpdateOrderStatus and
+// bricked the bin via the uq_reservations_bin_active partial unique index).
+//
+// Any bin still claimed by this order and parked at _TRANSIT when the order
+// terminalizes never arrived anywhere, so it is stamped anomalous (anomaly_at,
+// the signal operator recovery picks up via ListAnomalousTransitBins) regardless
+// of which terminal we reached. In the happy path this matches ZERO rows: a
+// delivered bin was moved out of _TRANSIT and unclaimed at delivery time. It
+// fires only when an arrival failed or was skipped — including the confirmed
+// case where the operator confirmed receipt but the engine's delivery-arrival
+// write never landed (the completion safety-net can't recover it because this
+// chokepoint has, correctly, already cleared claimed_by). error_detail is
+// persisted for every terminal except the clean success 'confirmed' (which would
+// otherwise surface receipt text as an "error"); order_history keeps the full
+// detail regardless. Cross-aggregate.
+func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE orders SET status='failed', error_detail=$1, updated_at=NOW() WHERE id=$2`, detail, orderID); err != nil {
+
+	// error_detail is suppressed only for the clean success 'confirmed' (which
+	// would otherwise surface receipt text as an "error").
+	errDetail := detail
+	if status == protocol.StatusConfirmed {
+		errDetail = ""
+	}
+	if _, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=NOW() WHERE id=$3`, string(status), errDetail, orderID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'failed', $2)`, orderID, detail); err != nil {
+	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, $2, $3)`, orderID, string(status), detail); err != nil {
 		return err
 	}
 	// Anomaly mark MUST run before claim release: the WHERE filters on
-	// claimed_by=$orderID, which the next statement clears. Bins at
-	// _TRANSIT with no live claim are the binary anomaly signal under
-	// bin-transit-state — operator recovery picks them up via
-	// ListAnomalousTransitBins. COALESCE preserves an earlier stamp if
-	// a bin was already flagged from a prior failure.
+	// claimed_by=$orderID, which the next statement clears. COALESCE preserves an
+	// earlier stamp. Unconditional across terminals — a bin still claimed by this
+	// order and parked at _TRANSIT never arrived, whether the order failed, was
+	// skipped, or was confirmed with a lost arrival write. Zero rows on the happy
+	// path (a delivered bin already left _TRANSIT and dropped its claim).
 	if _, err := tx.Exec(`
 		UPDATE bins SET anomaly_at=COALESCE(anomaly_at, NOW()), updated_at=NOW()
 		WHERE claimed_by=$1
@@ -240,77 +266,62 @@ func (db *DB) FailOrderAtomic(orderID int64, detail string) error {
 	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
 		return err
 	}
-	return tx.Commit()
-}
-
-// SkipOrderAtomic transitions an order to "skipped" and releases all bin
-// claims in a single transaction. Same atomic-write rationale as
-// FailOrderAtomic. Distinct from Fail by intent: skipped means "the work
-// was never needed" (the world already advanced past the order's purpose,
-// e.g. complex evac with no bin at any pickup node). Bins are NOT marked
-// anomalous — the missing inventory is the expected condition, not a leak
-// to investigate. Cross-aggregate.
-func (db *DB) SkipOrderAtomic(orderID int64, detail string) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE orders SET status='skipped', error_detail=$1, updated_at=NOW() WHERE id=$2`, detail, orderID); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'skipped', $2)`, orderID, detail); err != nil {
-		return err
-	}
-	// Release any bin claims this order took during dispatch. In the
-	// no_source_bin path that produces today's sole Skip, zero bins were
-	// claimed so this is a no-op — included for symmetry with Fail/Cancel
-	// and to keep future Skip producers safe by default.
-	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
-		return err
-	}
-	// Release this order's destination-slot claims too (store dual of the bin
-	// release above); ReleaseOrphanedClaims is the defense-in-depth backstop.
-	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
+	// Release any reservations this order holds (pending or confirmed). Must run
+	// in the same tx so no window exists where the order is terminal but its
+	// reservation still blocks the bin. The owner-liveness reaper is the
+	// defense-in-depth backstop for any row that leaks past this path.
+	if err := reservations.ReleaseByOrder(tx, orderID); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-// CancelOrderAtomic transitions an order to "cancelled" and releases all bin
-// claims in a single transaction. Same rationale as FailOrderAtomic.
-// Cross-aggregate.
-func (db *DB) CancelOrderAtomic(orderID int64, detail string) error {
+// FailOrderAtomic transitions an order to "failed" and releases all its holds.
+// A failure marks _TRANSIT bins anomalous (a claim released mid-flight is a leak
+// to investigate). Thin wrapper over TerminalizeOrder.
+func (db *DB) FailOrderAtomic(orderID int64, detail string) error {
+	return db.TerminalizeOrder(orderID, protocol.StatusFailed, detail)
+}
+
+
+// ReleaseClaimForBin is the inverse of a single ClaimForDispatch: it clears the
+// bin's claim AND releases its reservation in one transaction. Dispatch-failure
+// rollbacks route through this instead of a bare UnclaimBin, which would clear
+// claimed_by only and orphan the CONFIRMED reservation ClaimForDispatch leaves
+// on success — bricking the bin via uq_reservations_bin_active. Owner-scoped
+// (only clears claimed_by held by orderID) and bin-keyed on the reservation (the
+// unique index guarantees at most one active row per bin, and this order owns
+// it). Idempotent: a not-claimed / not-reserved bin is a harmless no-op.
+func (db *DB) ReleaseClaimForBin(binID, orderID int64) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE orders SET status='cancelled', error_detail=$1, updated_at=NOW() WHERE id=$2`, detail, orderID); err != nil {
+	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1 AND claimed_by=$2`, binID, orderID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'cancelled', $2)`, orderID, detail); err != nil {
+	if err := reservations.ReleaseByBin(tx, binID); err != nil {
 		return err
 	}
-	// Same anomaly-mark contract as FailOrderAtomic — see comments there.
-	if _, err := tx.Exec(`
-		UPDATE bins SET anomaly_at=COALESCE(anomaly_at, NOW()), updated_at=NOW()
-		WHERE claimed_by=$1
-		  AND node_id IN (SELECT id FROM nodes WHERE name='_TRANSIT')`, orderID); err != nil {
+	return tx.Commit()
+}
+
+// ReleaseClaimByOrder is the multi-bin inverse: it clears claimed_by for every
+// bin this order holds AND releases all its reservations in one transaction. The
+// coupled replacement for UnclaimOrderBins on rollback / re-queue paths that
+// abandon an order's claims without going terminal (which would otherwise leak
+// the confirmed reservations). Idempotent.
+func (db *DB) ReleaseClaimByOrder(orderID int64) error {
+	tx, err := db.Begin()
+	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
 		return err
 	}
-	// Release this order's destination-slot claims too (store dual of the bin
-	// release above); ReleaseOrphanedClaims is the defense-in-depth backstop.
-	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
+	if err := reservations.ReleaseByOrder(tx, orderID); err != nil {
 		return err
 	}
 	return tx.Commit()

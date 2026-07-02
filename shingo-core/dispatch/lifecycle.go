@@ -184,31 +184,19 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 	}
 	ev.PreviousStatus = from
 
+	// One chokepoint: every terminal target releases the order's claims +
+	// reservations atomically via TerminalizeOrder; non-terminal targets are a
+	// plain status write. Keying on IsTerminal (derived from validTransitions)
+	// means a future terminal status can't silently skip release the way the
+	// success terminal 'confirmed' used to on the old status switch.
 	var err error
-	switch to {
-	case StatusCancelled:
-		// CancelOrderAtomic writes status='cancelled' AND releases bin
-		// claims in a single transaction. Preserves crash-safety.
-		err = s.db.CancelOrderAtomic(ord.ID, ev.Reason)
-	case StatusFailed:
-		// FailOrderAtomic writes status='failed' AND releases bin claims
-		// atomically. Same rationale.
+	if protocol.IsTerminal(to) {
 		detail := ev.ErrorDetail
 		if detail == "" {
 			detail = ev.Reason
 		}
-		err = s.db.FailOrderAtomic(ord.ID, detail)
-	case StatusSkipped:
-		// SkipOrderAtomic writes status='skipped' AND releases bin claims
-		// atomically. Same atomic-write rationale as Cancel/Fail — bin
-		// claims taken during dispatch must be released even though the
-		// order didn't reach a fleet leg.
-		detail := ev.ErrorDetail
-		if detail == "" {
-			detail = ev.Reason
-		}
-		err = s.db.SkipOrderAtomic(ord.ID, detail)
-	default:
+		err = s.db.TerminalizeOrder(ord.ID, to, detail)
+	} else {
 		detail := ev.Reason
 		if detail == "" {
 			detail = fmt.Sprintf("%s → %s by %s", from, to, ev.Actor)

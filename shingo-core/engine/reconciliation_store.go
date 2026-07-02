@@ -39,6 +39,11 @@ type ReconciliationStore interface {
 	// EmitOrderCompleted to Edge.
 	Query(query string, args ...any) (*sql.Rows, error)
 	GetOrder(id int64) (*orders.Order, error)
+
+	// ExpireReservations deletes pending reservations whose expires_at is
+	// in the past, freeing bins held by orders that crashed between Acquire
+	// and Confirm. Returns the count of rows deleted.
+	ExpireReservations() (int, error)
 }
 
 // Compile-time check.

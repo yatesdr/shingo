@@ -44,6 +44,11 @@ type Bin struct {
 	BinTypeCode string `json:"bin_type_code"`
 	NodeName    string `json:"node_name"`
 	UOPCapacity int    `json:"uop_capacity,omitempty"` // JOIN from payloads.uop_capacity
+	// HasPendingReservation is populated by BinJoinQuery from the reservations
+	// table. True when another order holds a pending (pre-claim) reservation on
+	// this bin. BinUnavailableReason checks this field so the dispatch loop
+	// never offers a reserved bin as a claim candidate.
+	HasPendingReservation bool `json:"has_pending_reservation,omitempty"`
 }
 
 // ManifestEntry is a single line in a bin's manifest — one CatID /

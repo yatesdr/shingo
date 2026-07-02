@@ -52,7 +52,8 @@ func TestApplyArrival(t *testing.T) {
 			bin := &bins.Bin{BinTypeID: bt.ID, Label: "AB-" + tc.name, NodeID: &startNode.ID, Status: "available"}
 			testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
 			// Claim so we can verify ApplyArrival releases it.
-			db.ClaimBin(bin.ID, 7)
+			claimer := testdb.CreateOrder(t, db)
+			testdb.ClaimBinForTest(t, db, bin.ID, claimer.ID)
 
 			evicted, err := svc.ApplyArrival(bin.ID, destNode.ID, tc.staged, tc.expiresAt)
 			testutil.MustNoErr(t, err, "ApplyArrival")
@@ -121,12 +122,14 @@ func TestApplyArrival_EvictsStaleGhostOnOccupiedPhysicalNode(t *testing.T) {
 	// Stale ghost: shingo records it at the destination, still claimed.
 	ghost := &bins.Bin{BinTypeID: bt.ID, Label: "F-GHOST", NodeID: &destNode.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(ghost), "create ghost bin")
-	testutil.MustNoErr(t, db.ClaimBin(ghost.ID, 11), "claim ghost")
+	ghostOrder := testdb.CreateOrder(t, db)
+	testdb.ClaimBinForTest(t, db, ghost.ID, ghostOrder.ID)
 
 	// Arriving bin: the real, RDS-verified bin being delivered.
 	arriving := &bins.Bin{BinTypeID: bt.ID, Label: "F-ARRIVING", NodeID: &startNode.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(arriving), "create arriving bin")
-	testutil.MustNoErr(t, db.ClaimBin(arriving.ID, 22), "claim arriving")
+	arrivingOrder := testdb.CreateOrder(t, db)
+	testdb.ClaimBinForTest(t, db, arriving.ID, arrivingOrder.ID)
 
 	evicted, err := svc.ApplyArrival(arriving.ID, destNode.ID, false, nil)
 	testutil.MustNoErr(t, err, "ApplyArrival")

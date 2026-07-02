@@ -73,6 +73,15 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 		t.Fatal("vendor order ID should be set")
 	}
 
+	// After dispatch the bin is claimed by the order (via ClaimForDispatch).
+	dispatchedBin, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("get bin after dispatch: %v", err)
+	}
+	if dispatchedBin.ClaimedBy == nil || *dispatchedBin.ClaimedBy != order.ID {
+		t.Errorf("after dispatch, bin claimed_by = %v, want %d", dispatchedBin.ClaimedBy, order.ID)
+	}
+
 	// Phase 2: Simulate fleet delivery, then confirm receipt
 	db.UpdateOrderStatus(order.ID, string(StatusDelivered), "fleet delivered")
 
@@ -94,13 +103,15 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 		t.Error("completed at should be set")
 	}
 
-	// Verify bin was claimed
-	claimedBin, err := db.GetBin(bin.ID)
+	// After the order completes, the claim is RELEASED (TerminalizeOrder on the
+	// confirmed transition / Rule-B at delivery). A claim persisting here was the
+	// leak the terminal chokepoint closed — so assert it's gone, not held.
+	completedBin, err := db.GetBin(bin.ID)
 	if err != nil {
 		t.Fatalf("get bin: %v", err)
 	}
-	if claimedBin.ClaimedBy == nil {
-		t.Error("bin should be claimed")
+	if completedBin.ClaimedBy != nil {
+		t.Errorf("bin claimed_by = %v after completion, want nil (claim released on completion)", completedBin.ClaimedBy)
 	}
 }
 

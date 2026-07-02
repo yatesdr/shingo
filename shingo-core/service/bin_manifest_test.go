@@ -233,7 +233,8 @@ func TestBinManifestService_ClearAndClaim_Atomic(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-AC-1", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
 
-	// Atomic clear and claim
+	// Atomic clear and claim (guard requires a pending reservation first)
+	testdb.ReserveBin(t, db, order.ID, bin.ID)
 	testutil.MustNoErr(t, svc.ClearAndClaim(bin.ID, order.ID), "ClearAndClaim")
 
 	got, _ := db.GetBin(bin.ID)
@@ -262,10 +263,12 @@ func TestBinManifestService_ClearAndClaim_FailsIfAlreadyClaimed(t *testing.T) {
 	order1 := createTestOrder(t, db, sd.LineNode.ID)
 	order2 := createTestOrder(t, db, sd.LineNode.ID)
 
-	// First claim succeeds
+	// First claim succeeds (guard requires a pending reservation first)
+	testdb.ReserveBin(t, db, order1.ID, bin.ID)
 	testutil.MustNoErr(t, svc.ClearAndClaim(bin.ID, order1.ID), "first ClearAndClaim")
 
-	// Second claim must fail (bin already claimed)
+	// Second claim must fail (bin already claimed) — claimed_by IS NULL fails
+	// before the reservation guard, so order2 needs no reservation to prove this.
 	err := svc.ClearAndClaim(bin.ID, order2.ID)
 	if err == nil {
 		t.Fatal("expected second ClearAndClaim to fail, got nil")
@@ -289,7 +292,8 @@ func TestBinManifestService_SyncUOPAndClaim(t *testing.T) {
 
 	originalManifest := *bin.Manifest
 
-	// Sync UOP and claim atomically
+	// Sync UOP and claim atomically (guard requires a pending reservation first)
+	testdb.ReserveBin(t, db, order.ID, bin.ID)
 	testutil.MustNoErr(t, svc.SyncUOPAndClaim(bin.ID, order.ID, 37), "SyncUOPAndClaim")
 
 	got, _ := db.GetBin(bin.ID)
@@ -522,6 +526,10 @@ func TestBinManifestService_ClearAndClaim_FailsIfLocked(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-LCK-1", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
 
+	// Reserve first so the ONLY reason the claim fails below is the lock, not a
+	// missing reservation (otherwise the test would pass for the wrong reason).
+	testdb.ReserveBin(t, db, order.ID, bin.ID)
+
 	// Lock the bin
 	db.Exec("UPDATE bins SET locked=true WHERE id=$1", bin.ID)
 
@@ -658,14 +666,13 @@ func TestBinManifestService_ClaimForDispatch_ConcurrentRace(t *testing.T) {
 //   - retry-safe: repeating the same call leaves the row in the same state
 // ──────────────────────────────────────────────────────────────────────────
 
-// claimBinForTest sets claimed_by directly so SyncOrClearForReleased's
-// already-claimed precondition is met. Mirrors what ApplyComplexPlan would
-// have done at order creation time.
+// claimBinForTest claims a bin for an order so SyncOrClearForReleased's
+// already-claimed precondition is met. Delegates to testdb.ClaimBinForTest,
+// which reserves-then-claims (Acquire -> ClaimBin -> Confirm) as the demoted-CAS
+// guard now requires — the same sequence ClaimForDispatch runs at dispatch time.
 func claimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
 	t.Helper()
-	if err := db.ClaimBin(binID, orderID); err != nil {
-		t.Fatalf("claim bin %d for order %d: %v", binID, orderID, err)
-	}
+	testdb.ClaimBinForTest(t, db, binID, orderID)
 }
 
 func TestBinManifestService_SyncOrClearForReleased_NilIsNoOp(t *testing.T) {

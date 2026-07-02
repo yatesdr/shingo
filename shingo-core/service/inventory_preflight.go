@@ -83,6 +83,7 @@ func (s *InventoryService) PreflightAvailability(ctx context.Context, station st
 		  AND b.status NOT IN ('staged', 'maintenance', 'flagged', 'retired', 'quality_hold')
 		  AND n.enabled = true
 		  AND n.is_synthetic = false
+		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
 		GROUP BY b.payload_code`
 
 	rows, err := s.db.QueryContext(ctx, query, args...)

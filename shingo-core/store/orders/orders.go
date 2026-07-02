@@ -117,10 +117,17 @@ func GetNextChild(db *sql.DB, parentOrderID int64) (*Order, error) {
 	return ScanOrder(row)
 }
 
-// UpdateStatus transitions an order to a new status and records it in history.
-// detail is persisted to error_detail only for terminal error statuses; it is
-// cleared on normal transitions so the UI doesn't show stale error text.
+// UpdateStatus transitions an order to a NON-terminal status and records it in
+// history. Terminal statuses are refused: they MUST go through TerminalizeOrder
+// (via lifecycle.transition), which sets the status AND releases the order's
+// claims + reservations atomically. A raw terminal write here would leave those
+// holds behind and brick the bin via uq_reservations_bin_active — the leak this
+// guard closes. Test fixtures that need to seed a terminal state use
+// testdb.SeedOrderStatus (a raw write); production has no terminal caller.
 func UpdateStatus(db *sql.DB, id int64, status, detail string) error {
+	if protocol.IsTerminal(protocol.Status(status)) {
+		return fmt.Errorf("UpdateStatus: refusing raw terminal write to %q (id=%d) — route terminal transitions through TerminalizeOrder", status, id)
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return err

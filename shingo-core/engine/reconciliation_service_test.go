@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
 )
@@ -465,9 +466,7 @@ func TestReconciliationService_AutoConfirm_ConfirmsStuckDelivered(t *testing.T) 
 	svc.confirmDelivered = func(o *orders.Order) error {
 		hookCount.Add(1)
 		hookOrderID.Store(o.ID)
-		if err := db.UpdateOrderStatus(o.ID, "confirmed", "fake confirm"); err != nil {
-			return err
-		}
+		testdb.SeedOrderStatus(t, db, o.ID, "confirmed", "fake confirm")
 		return db.CompleteOrder(o.ID)
 	}
 

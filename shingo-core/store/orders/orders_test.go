@@ -189,32 +189,31 @@ func TestOrderCRUD(t *testing.T) {
 	}
 }
 
-// -------- Failed/cancelled transitions preserve error_detail --------------
+// -------- UpdateStatus refuses terminal writes (the guard) -----------------
 
-func TestUpdateStatus_PreservesErrorDetailOnTerminal(t *testing.T) {
+// TestUpdateStatus_RefusesTerminal pins the guard: a raw UpdateStatus to any
+// terminal status is refused, because terminal transitions must go through
+// TerminalizeOrder (which ALSO releases claims + reservations atomically). A raw
+// terminal write here would leave them behind and brick the bin — the leak the
+// guard closes. (Was TestUpdateStatus_PreservesErrorDetailOnTerminal, which
+// pinned the leak-enabling behavior; error_detail on terminals is now covered by
+// TerminalizeOrder.)
+func TestUpdateStatus_RefusesTerminal(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
-	o := newPendingOrder("uuid-fail")
+	o := newPendingOrder("uuid-term-guard")
 	testutil.MustNoErr(t, orders.Create(db, o), "Create")
 
-	testutil.MustNoErr(t, orders.UpdateStatus(db, o.ID, "failed", "robot crashed"), "UpdateStatus failed")
-	got, _ := orders.Get(db, o.ID)
-	if got.Status != "failed" {
-		t.Errorf("Status = %q, want failed", got.Status)
-	}
-	if got.ErrorDetail != "robot crashed" {
-		t.Errorf("ErrorDetail = %q, want 'robot crashed'", got.ErrorDetail)
-	}
-
-	// Cancelled also preserves detail.
-	o2 := newPendingOrder("uuid-cancel")
-	testutil.MustNoErr(t, orders.Create(db, o2), "Create o2")
-	testutil.MustNoErr(t, orders.UpdateStatus(db, o2.ID, "cancelled", "operator stop"), "UpdateStatus cancelled")
-	got2, _ := orders.Get(db, o2.ID)
-	if got2.ErrorDetail != "operator stop" {
-		t.Errorf("ErrorDetail = %q, want 'operator stop'", got2.ErrorDetail)
+	for _, term := range []string{"failed", "cancelled", "skipped", "confirmed"} {
+		if err := orders.UpdateStatus(db, o.ID, term, "should be refused"); err == nil {
+			t.Errorf("UpdateStatus(%q): want error (terminals must go through TerminalizeOrder), got nil", term)
+		}
+		got, _ := orders.Get(db, o.ID)
+		if got.Status != "pending" {
+			t.Errorf("after refused UpdateStatus(%q), status = %q, want pending (the write must not apply)", term, got.Status)
+		}
 	}
 }
 
@@ -235,7 +234,7 @@ func TestHistory_AppendAndList(t *testing.T) {
 		{"sourcing", "picking bin"},
 		{"dispatched", "sent to RDS"},
 		{"in_transit", "robot moving"},
-		{"confirmed", "delivered"},
+		{"delivered", "arrived at line"}, // non-terminal; UpdateStatus refuses terminals now
 	}
 	for _, e := range events {
 		if err := orders.UpdateStatus(db, o.ID, e.status, e.detail); err != nil {
@@ -505,8 +504,9 @@ func TestChildOrders(t *testing.T) {
 		t.Errorf("GetNextChild = %d, want %d", next.ID, children[0].ID)
 	}
 
-	// Advance: mark c1 confirmed, next pending is c2.
-	testutil.MustNoErr(t, orders.UpdateStatus(db, children[0].ID, "confirmed", "done"), "UpdateStatus c1")
+	// Advance: mark c1 confirmed (seed the terminal state directly — UpdateStatus
+	// now refuses terminals), next pending is c2.
+	testdb.SeedOrderStatus(t, d, children[0].ID, "confirmed", "done")
 	next2, _ := orders.GetNextChild(db, parent.ID)
 	if next2.ID != children[1].ID {
 		t.Errorf("GetNextChild after c1 done = %d, want %d", next2.ID, children[1].ID)

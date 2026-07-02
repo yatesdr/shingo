@@ -187,7 +187,7 @@ func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
 	// by the time delivery fires (ClaimForDispatch at planning time);
 	// without the claim here the safety-net correctly skips because nothing
 	// signals the bin still belongs to this order.
-	testutil.MustNoErr(t, db.ClaimBin(bin.ID, order.ID), "claim bin")
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 
 	// Verify bin is still at storage node
 	testdb.RequireBinAtNode(t, db, bin.ID, sd.StorageNode.ID)
@@ -200,6 +200,53 @@ func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
 
 	// Bin should now be at the delivery (line) node via ApplyBinArrival
 	testdb.AssertBinAtNode(t, db, bin.ID, sd.LineNode.ID)
+}
+
+// TestOrderCompleted_ConfirmedNetNoOpsAfterClaimCleared is the negative twin of
+// TestOrderCompleted_SafetyNetArrival, pinning the terminal-chokepoint
+// consequence for confirmed orders: on the Delivered→Confirmed transition,
+// TerminalizeOrder clears claimed_by BEFORE fireCompleted emits
+// EventOrderCompleted (see dispatch.transition — status write precedes the
+// hooks), so by the time handleOrderCompleted runs the claim-based safety-net
+// guard finds no claim and no-ops. The net therefore CANNOT recover a confirmed
+// order whose delivery-arrival failed — that residual is made visible instead by
+// TerminalizeOrder's unconditional _TRANSIT anomaly stamp (pinned in
+// store: TestTerminalizeOrder_AnomalyAndDetailByStatus). Setup mirrors the
+// positive twin but omits the claim to reproduce the post-TerminalizeOrder state.
+func TestOrderCompleted_ConfirmedNetNoOpsAfterClaimCleared(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-CO-NOOP")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+
+	// A confirmed order whose delivery-arrival never landed: bin still at source,
+	// claimed_by cleared (as TerminalizeOrder leaves it on the confirmed transition).
+	order := &orders.Order{
+		EdgeUUID:     "co-confirmed-noop",
+		StationID:    "line-1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		Status:       "confirmed",
+		SourceNode:   sd.StorageNode.Name,
+		DeliveryNode: sd.LineNode.Name,
+		BinID:        &bin.ID,
+		PayloadCode:  sd.Payload.Code,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	// Deliberately NOT claimed — the chokepoint already released it.
+	testdb.RequireBinAtNode(t, db, bin.ID, sd.StorageNode.ID)
+
+	eng.handleOrderCompleted(OrderCompletedEvent{
+		OrderID:   order.ID,
+		EdgeUUID:  order.EdgeUUID,
+		StationID: order.StationID,
+	})
+
+	// Net no-ops: the bin stays at source — the safety net can't recover it once
+	// the claim is gone. (The stranded bin is surfaced via the anomaly stamp.)
+	testdb.AssertBinAtNode(t, db, bin.ID, sd.StorageNode.ID)
 }
 
 // TestRegression_LinesideStagingPreventsFifoPoach is the load-bearing
@@ -241,7 +288,7 @@ func TestRegression_LinesideStagingPreventsFifoPoach(t *testing.T) {
 	// has a claimed bin. Mirror that here so the safety net actually
 	// fires and the lineside-staging assertion below has something to
 	// check.
-	testutil.MustNoErr(t, db.ClaimBin(bin.ID, order.ID), "claim bin")
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID: order.ID, EdgeUUID: order.EdgeUUID, StationID: order.StationID,
@@ -304,7 +351,7 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 		PayloadCode:  sd.Payload.Code,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(emptyOrder), "create empty order")
-	testutil.MustNoErr(t, db.ClaimBin(binEmpty.ID, emptyOrder.ID), "claim empty bin")
+	testdb.ClaimBinForTest(t, db, binEmpty.ID, emptyOrder.ID)
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID: emptyOrder.ID, EdgeUUID: emptyOrder.EdgeUUID, StationID: emptyOrder.StationID,
 	})
@@ -330,7 +377,7 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(complexOrder), "create complex order")
 	testutil.MustNoErr(t, db.UpdateOrderWaitIndex(complexOrder.ID, 1), "update wait index")
-	testutil.MustNoErr(t, db.ClaimBin(binComplex.ID, complexOrder.ID), "claim complex bin")
+	testdb.ClaimBinForTest(t, db, binComplex.ID, complexOrder.ID)
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID: complexOrder.ID, EdgeUUID: complexOrder.EdgeUUID, StationID: complexOrder.StationID,
 	})

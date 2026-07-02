@@ -273,7 +273,9 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 	if err := s.db.UpdateOrderStatus(order.ID, string(StatusPending), "ingest order received"); err != nil {
 		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
 	}
-	if err := s.db.ClaimBin(bin.ID, order.ID); err != nil {
+	// Reserve-then-claim through ClaimForDispatch (the demoted-CAS claim primitive
+	// requires a pending reservation). nil UOP = plain claim.
+	if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, nil); err != nil {
 		log.Printf("dispatch: claim bin %d for order %d: %v", bin.ID, order.ID, err)
 	}
 	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeStore, p.PayloadCode, "")

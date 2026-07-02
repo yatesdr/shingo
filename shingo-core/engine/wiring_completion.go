@@ -120,6 +120,15 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 		return
 	}
 
+	// Release the order's destination-slot claims now that its bins have
+	// arrived — the dispatch-time ClaimSlot has served its purpose. Without this
+	// the happy path leaked slot claims until the terminal transition (the
+	// TerminalizeOrder backstop at 'confirmed'), so a slot could stay
+	// un-reclaimable in the Delivered→Confirmed window after its bin moved on.
+	if err := e.db.UnclaimOrderSlots(order.ID); err != nil {
+		e.logFn("engine: release slot claims for order %d on arrival: %v", order.ID, err)
+	}
+
 	// Multi-bin path
 	orderBins, _ := e.db.ListOrderBins(order.ID)
 	if len(orderBins) > 0 {

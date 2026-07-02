@@ -52,11 +52,12 @@ func makeOrderAt(t *testing.T, db *store.DB, uuid string, status protocol.Status
 		Quantity:     1,
 		DeliveryNode: "DELV.1",
 	}
+	// CreateOrder persists Status directly, so the fixture is already at the
+	// requested (possibly terminal) status — no round-trip through
+	// UpdateOrderStatus, which now refuses terminal writes. This helper
+	// deliberately bypasses lifecycle validation to seed arbitrary states.
 	if err := db.CreateOrder(ord); err != nil {
 		t.Fatalf("create order at status %s: %v", status, err)
-	}
-	if err := db.UpdateOrderStatus(ord.ID, string(status), "test fixture"); err != nil {
-		t.Fatalf("update fixture status to %s: %v", status, err)
 	}
 	ord.Status = status
 	return ord

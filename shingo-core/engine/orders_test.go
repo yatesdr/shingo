@@ -8,9 +8,12 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
+	"shingo/shared/clock"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // orders_test.go — coverage for orders.go.
@@ -155,7 +158,7 @@ func TestCreateDirectOrder_FleetDispatchFails(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
-	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-DIRECT-FAIL")
+	bin := createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-DIRECT-FAIL")
 	sim := simulator.New(simulator.WithCreateFailure())
 	eng := newTestEngine(t, db, sim)
 
@@ -189,6 +192,17 @@ func TestCreateDirectOrder_FleetDispatchFails(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("EventOrderFailed not fired after fleet failure")
+	}
+
+	// Rollback must release the RESERVATION too, not just claimed_by — else the
+	// confirmed row bricks the bin. Assert re-acquirability (the assertion a
+	// claimed_by-only rollback would silently pass).
+	if got, _ := db.GetBin(bin.ID); got.ClaimedBy != nil {
+		t.Errorf("bin claimed_by = %v after dispatch-failure rollback, want nil", got.ClaimedBy)
+	}
+	probe := testdb.CreateOrder(t, db)
+	if err := reservations.Acquire(db, probe.ID, bin.ID, "test", "reacquire", clock.Now().Add(time.Minute)); err != nil {
+		t.Errorf("bin not re-acquirable after dispatch-failure rollback: %v (reservation leaked?)", err)
 	}
 }
 

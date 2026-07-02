@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -8,6 +9,7 @@ import (
 	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // DirectOrderRequest holds the parameters for creating a direct fleet order.
@@ -52,7 +54,9 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 	}
 	var srcBinID int64
 	for _, b := range srcBins {
-		if b.ClaimedBy == nil {
+		// Reservation-aware (1b): skip bins another order has reserved but not yet
+		// claimed, so ClaimForDispatch below doesn't lose the Acquire race.
+		if b.ClaimedBy == nil && !b.HasPendingReservation {
 			srcBinID = b.ID
 			break
 		}
@@ -77,7 +81,13 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 	if err := e.db.CreateOrder(order); err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
 	}
-	if err := e.db.ClaimBin(srcBinID, order.ID); err != nil {
+	if err := e.binManifest.ClaimForDispatch(srcBinID, order.ID, nil); err != nil {
+		// A reservation conflict is a transient race (another order reserved the
+		// bin between the read above and this Acquire), not a permanent failure;
+		// tag it so the caller can retry rather than surface a hard 500.
+		if errors.Is(err, reservations.ErrReservationConflict) {
+			return nil, fmt.Errorf("claim bin %d: transient reservation conflict, retry: %w", srcBinID, err)
+		}
 		return nil, fmt.Errorf("claim bin %d: %w", srcBinID, err)
 	}
 	if err := e.dispatcher.Lifecycle().MarkPending(order, req.Desc); err != nil {
@@ -86,8 +96,12 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 
 	vendorOrderID, err := e.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
-		if uerr := e.db.UnclaimBin(srcBinID); uerr != nil {
-			e.logFn("engine: unclaim bin %d after dispatch failure: %v", srcBinID, uerr)
+		// Coupled rollback: clear the claim AND release the reservation, so once
+		// the claim above routes through ClaimForDispatch this can't orphan a
+		// confirmed reservation. (DispatchDirect already Fail'd the order, which
+		// released it — this is the idempotent belt.)
+		if uerr := e.db.ReleaseClaimForBin(srcBinID, order.ID); uerr != nil {
+			e.logFn("engine: release claim for bin %d after dispatch failure: %v", srcBinID, uerr)
 		}
 		return nil, fmt.Errorf("fleet dispatch failed: %w", err)
 	}

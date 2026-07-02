@@ -411,7 +411,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(child3), "create child3")
 
 	// Claim the bin by child3
-	db.ClaimBin(binC3.ID, child3.ID)
+	testdb.ClaimBinForTest(t, db, binC3.ID, child3.ID)
 
 	// Lock the lane to verify it gets released
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -522,7 +522,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 		BinID:         &binC3.ID,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(child3), "create child3")
-	db.ClaimBin(binC3.ID, child3.ID)
+	testdb.ClaimBinForTest(t, db, binC3.ID, child3.ID)
 
 	// Child 4: still pending — should also be cancelled
 	binC4 := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-C4-PENDING")
@@ -538,7 +538,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 		BinID:         &binC4.ID,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(child4), "create child4")
-	db.ClaimBin(binC4.ID, child4.ID)
+	testdb.ClaimBinForTest(t, db, binC4.ID, child4.ID)
 
 	// Lock the lane
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -1183,7 +1183,7 @@ func TestPendingRestocks_StaleRowsSkipped(t *testing.T) {
 		Status:    StatusCancelled, // terminal
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(parent.ID, string(StatusCancelled), "fixture"), "set Cancelled")
+	testdb.SeedOrderStatus(t, db, parent.ID, string(StatusCancelled), "fixture")
 
 	syn := &orders.Order{
 		EdgeUUID:  "uuid-pr-stale-syn",
@@ -1618,9 +1618,7 @@ func driveCompoundChildrenToConfirmed(t *testing.T, d *Dispatcher, parentID int6
 		// Direct DB writes: bypass the lifecycle's transition table
 		// (the harness needs to fast-forward through several legal
 		// states). Status defaults to Pending; jump to Confirmed.
-		if err := d.db.UpdateOrderStatus(child.ID, string(StatusConfirmed), "test harness"); err != nil {
-			t.Fatalf("UpdateOrderStatus child %d: %v", child.ID, err)
-		}
+		testdb.SeedOrderStatus(t, d.db, child.ID, string(StatusConfirmed), "test harness")
 	}
 	if err := d.AdvanceCompoundOrder(parentID); err != nil {
 		t.Fatalf("AdvanceCompoundOrder: %v", err)

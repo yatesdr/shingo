@@ -198,8 +198,27 @@ func (f *fakeStore) ClaimBin(binID, orderID int64) error {
 	return nil
 }
 
+// ClaimForDispatch mirrors ClaimBin for the reserve-then-claim path the scanner
+// now uses — records to the same claimedBins signal and honors errClaimBin, so
+// existing claim/no-claim assertions and error-injection tests keep working. The
+// fakeStore doubles as the fulfillment.Claimer in the test scanner constructors.
+func (f *fakeStore) ClaimForDispatch(binID, orderID int64, _ *int) error {
+	if f.errClaimBin != nil {
+		return f.errClaimBin
+	}
+	f.claimedBins = append(f.claimedBins, [2]int64{binID, orderID})
+	return nil
+}
+
 func (f *fakeStore) UnclaimOrderBins(orderID int64) {
 	f.unclaimedOrderIDs = append(f.unclaimedOrderIDs, orderID)
+}
+
+// ReleaseClaimByOrder is the coupled rollback; record it under the same signal
+// so rollback assertions on unclaimedOrderIDs keep working after the re-route.
+func (f *fakeStore) ReleaseClaimByOrder(orderID int64) error {
+	f.unclaimedOrderIDs = append(f.unclaimedOrderIDs, orderID)
+	return nil
 }
 
 func (f *fakeStore) UpdateOrderBinID(orderID, binID int64) error {

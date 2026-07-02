@@ -27,20 +27,23 @@ func TestClaimBin_SilentOverwrite(t *testing.T) {
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-CLAIM")
+	order1 := testdb.CreateOrder(t, db)
+	order2 := testdb.CreateOrder(t, db)
 
-	// Order 1 claims the bin
-	testutil.MustNoErr(t, db.ClaimBin(bin.ID, 100), "first ClaimBin")
+	// Order 1 claims the bin (reserve-then-claim, as the demoted-CAS guard requires)
+	testdb.ReserveBin(t, db, order1.ID, bin.ID)
+	testutil.MustNoErr(t, db.ClaimBin(bin.ID, order1.ID), "first ClaimBin")
 
 	// Verify claim is set
-	testdb.RequireBinClaimedBy(t, db, bin.ID, 100)
+	testdb.RequireBinClaimedBy(t, db, bin.ID, order1.ID)
 
-	// Order 2 tries to claim the same bin — this SHOULD fail but currently doesn't.
-	err := db.ClaimBin(bin.ID, 200)
+	// Order 2 tries to claim the same bin — must fail on the claimed_by IS NULL guard.
+	err := db.ClaimBin(bin.ID, order2.ID)
 	if err == nil {
-		// Bug confirmed: second claim silently overwrote the first.
+		// Regression: second claim silently overwrote the first.
 		bin, _ = db.GetBin(bin.ID)
-		t.Errorf("BUG: ClaimBin(bin=%d, order=200) succeeded — silently overwrote claim from order 100. claimed_by is now %v",
-			bin.ID, *bin.ClaimedBy)
+		t.Errorf("BUG: ClaimBin(bin=%d, order=%d) succeeded — silently overwrote claim from order %d. claimed_by is now %v",
+			bin.ID, order2.ID, order1.ID, *bin.ClaimedBy)
 	} else {
 		t.Logf("ClaimBin correctly rejected second claim: %v", err)
 	}

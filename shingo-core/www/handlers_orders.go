@@ -351,7 +351,11 @@ func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc str
 	}
 
 	if _, err := h.engine.Fleet().CreateStagedOrder(req); err != nil {
-		orders.UpdateStatus(order.ID, "failed", "fleet error: "+err.Error())
+		// Terminal write must release the order's holds atomically — a raw
+		// UpdateStatus("failed") is refused by the store guard and would leak.
+		if ferr := orders.FailAtomic(order.ID, "fleet error: "+err.Error()); ferr != nil {
+			log.Printf("www: fail manual send_to order %d: %v", order.ID, ferr)
+		}
 		h.readBackManualOrder(w, orderUUID)
 		return
 	}
@@ -470,13 +474,20 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		return
 	}
 
-	if err := orders.ClaimBin(bin.ID, order.ID); err != nil {
+	// Reserve-then-claim through ClaimForDispatch (the guard requires a pending
+	// reservation); rollback below releases it if dispatch fails.
+	if err := h.engine.BinManifest().ClaimForDispatch(bin.ID, order.ID, nil); err != nil {
 		h.jsonError(w, "failed to claim bin: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if _, err := h.engine.Dispatcher().DispatchDirect(order, sourceNode, destNode); err != nil {
-		orders.UnclaimBin(bin.ID)
+		// Coupled rollback: clear the claim AND release the reservation, so once
+		// the claim above routes through ClaimForDispatch this can't leak a
+		// confirmed reservation.
+		if rerr := orders.ReleaseClaimForBin(bin.ID, order.ID); rerr != nil {
+			log.Printf("www: release claim for bin %d after dispatch failure: %v", bin.ID, rerr)
+		}
 		h.readBackManualOrder(w, orderUUID)
 		return
 	}

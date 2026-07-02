@@ -151,7 +151,8 @@ func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, 
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
 		  AND b.status NOT IN ('staged', 'maintenance', 'flagged', 'retired', 'quality_hold')
-		  AND ($2 = 0 OR b.node_id != $2)%s
+		  AND ($2 = 0 OR b.node_id != $2)
+		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
 		LIMIT 1`, BinJoinQuery, PayloadBinTypeAdvisoryClause), payloadCode, excludeNodeID)
 	return ScanBin(row)

@@ -411,7 +411,7 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
-	db.ClaimBin(bin.ID, order.ID)
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 

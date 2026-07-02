@@ -251,7 +251,7 @@ func TestApiRequestBinTransport_ClaimedBinReturns409(t *testing.T) {
 		OrderType: "move", Status: "pending", Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(priorOrder), "create prior order")
-	testutil.MustNoErr(t, db.ClaimBin(bin.ID, priorOrder.ID), "seed claim")
+	testdb.ClaimBinForTest(t, db, bin.ID, priorOrder.ID)
 
 	rec := postJSON(t, h.apiRequestBinTransport, "/api/bin/transport",
 		map[string]any{"bin_id": bin.ID, "destination_node_id": sd.LineNode.ID})

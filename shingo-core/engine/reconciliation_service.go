@@ -98,6 +98,11 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 					s.logFn("engine: abandoned %d stuck orders", n)
 				}
 			}
+			if n, err := s.db.ExpireReservations(); err != nil {
+				s.logFn("engine: expire reservations error: %v", err)
+			} else if n > 0 {
+				s.logFn("engine: expired %d stale reservations", n)
+			}
 		}
 	}
 }

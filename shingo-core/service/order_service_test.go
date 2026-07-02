@@ -102,20 +102,24 @@ func TestOrderService_UpdateStatus_TransitionAndHistory(t *testing.T) {
 	}
 }
 
-func TestOrderService_UpdateStatus_TerminalFailedPersistsDetail(t *testing.T) {
+// TestOrderService_UpdateStatus_RefusesTerminal pins the guard through the
+// OrderService: a terminal UpdateStatus is refused — terminals must go through
+// the lifecycle's TerminalizeOrder, which ALSO releases claims + reservations.
+// (Was ..._TerminalFailedPersistsDetail, which pinned the leak-enabling
+// behavior; terminal error_detail is now owned by TerminalizeOrder.)
+func TestOrderService_UpdateStatus_RefusesTerminal(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
 
 	o := makeOrder(t, db, sd.LineNode.Name)
-	testutil.MustNoErr(t, svc.UpdateStatus(o.ID, "failed", "resolver had no matching bin"), "UpdateStatus(failed)")
-	got, _ := db.GetOrder(o.ID)
-	if got.Status != "failed" {
-		t.Errorf("Status = %q, want failed", got.Status)
+	if err := svc.UpdateStatus(o.ID, "failed", "resolver had no matching bin"); err == nil {
+		t.Error("OrderService.UpdateStatus(failed): want error (terminals must go through the lifecycle), got nil")
 	}
-	if got.ErrorDetail != "resolver had no matching bin" {
-		t.Errorf("ErrorDetail = %q, want detail persisted on terminal", got.ErrorDetail)
+	got, _ := db.GetOrder(o.ID)
+	if got.Status == "failed" {
+		t.Errorf("status = %q — a refused terminal write must not apply", got.Status)
 	}
 }
 
@@ -240,6 +244,7 @@ func TestOrderService_ClaimBin_And_UnclaimBin(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "OS-CLAIM-1", "", 0)
 	o := makeOrder(t, db, sd.LineNode.Name)
 
+	testdb.ReserveBin(t, db, o.ID, bin.ID)
 	testutil.MustNoErr(t, svc.ClaimBin(bin.ID, o.ID), "ClaimBin")
 	got, _ := db.GetBin(bin.ID)
 	if got.ClaimedBy == nil || *got.ClaimedBy != o.ID {
@@ -262,6 +267,7 @@ func TestOrderService_ClaimBin_FailsIfAlreadyClaimed(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "OS-CLAIM-2", "", 0)
 	o1 := makeOrder(t, db, sd.LineNode.Name)
 
+	testdb.ReserveBin(t, db, o1.ID, bin.ID)
 	testutil.MustNoErr(t, svc.ClaimBin(bin.ID, o1.ID), "first ClaimBin")
 
 	// Second order tries to claim the same bin — must fail.
@@ -370,7 +376,7 @@ func TestOrderService_ListOrders_FiltersByStatus(t *testing.T) {
 
 	pending := makeOrder(t, db, sd.LineNode.Name)
 	failed := makeOrder(t, db, sd.LineNode.Name)
-	testutil.MustNoErr(t, db.UpdateOrderStatus(failed.ID, "failed", "test failure"), "UpdateOrderStatus")
+	testdb.SeedOrderStatus(t, db, failed.ID, "failed", "test failure")
 
 	// status="" => all orders, both included
 	all, err := svc.ListOrders("", 100)

@@ -44,6 +44,10 @@ type Store interface {
 	// Mutations performed on the bin/order during fulfillment.
 	ClaimBin(binID, orderID int64) error
 	UnclaimOrderBins(orderID int64)
+	// ReleaseClaimByOrder is the coupled rollback (clears claimed_by AND releases
+	// reservations); re-queue paths that abandon claims without going terminal
+	// use it so a re-routed reserve-then-claim can't leak a confirmed reservation.
+	ReleaseClaimByOrder(orderID int64) error
 	UpdateOrderBinID(orderID, binID int64) error
 	UpdateOrderSourceNode(id int64, sourceNode string) error
 	UpdateOrderStatus(id int64, status, detail string) error

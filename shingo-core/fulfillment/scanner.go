@@ -29,6 +29,7 @@ type Scanner struct {
 	dispatcher Dispatcher
 	lifecycle  Lifecycle
 	resolver   Resolver
+	claimer    Claimer
 	sendToEdge func(msgType, stationID string, payload any) error
 	// failFn fails an order in the DB AND emits EventOrderFailed so the
 	// standard handler chain (audit, return order, edge notification) fires.
@@ -56,6 +57,7 @@ func NewScanner(
 	dispatcher Dispatcher,
 	lifecycle Lifecycle,
 	resolver Resolver,
+	claimer Claimer,
 	sendFn func(string, string, any) error,
 	failFn func(orderID int64, code, detail string),
 	logFn func(string, ...any),
@@ -66,6 +68,7 @@ func NewScanner(
 		dispatcher: dispatcher,
 		lifecycle:  lifecycle,
 		resolver:   resolver,
+		claimer:    claimer,
 		sendToEdge: sendFn,
 		failFn:     failFn,
 		logFn:      logFn,
@@ -305,8 +308,8 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		return false
 	}
 
-	// Claim the bin
-	if err := s.db.ClaimBin(bin.ID, order.ID); err != nil {
+	// Claim the bin (reserve-then-claim; the guard requires a pending reservation)
+	if err := s.claimer.ClaimForDispatch(bin.ID, order.ID, nil); err != nil {
 		if s.debugLog != nil {
 			s.debugLog("fulfillment: claim bin %d for order %d failed: %v", bin.ID, order.ID, err)
 		}
@@ -316,7 +319,9 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Resolve source node
 	sourceNode, err = s.db.GetNode(*bin.NodeID)
 	if err != nil {
-		s.db.UnclaimOrderBins(order.ID)
+		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
+			s.logFn("fulfillment: release claim for order %d on source-node rollback: %v", order.ID, rerr)
+		}
 		return false
 	}
 
@@ -336,7 +341,9 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
 		s.logFn("fulfillment: dest node %q not found for order %d: %v", order.DeliveryNode, order.ID, err)
-		s.db.UnclaimOrderBins(order.ID)
+		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
+			s.logFn("fulfillment: release claim for order %d on dest-node rollback: %v", order.ID, rerr)
+		}
 		if err := s.lifecycle.Queue(order, "fulfillment", "awaiting inventory"); err != nil {
 			s.logFn("fulfillment: order %d → queued: %v", order.ID, err)
 		}
@@ -349,7 +356,9 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
 		s.logFn("fulfillment: fleet dispatch failed for order %d, re-queuing: %v", order.ID, err)
-		s.db.UnclaimOrderBins(order.ID)
+		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
+			s.logFn("fulfillment: release claim for order %d on fleet-fail rollback: %v", order.ID, rerr)
+		}
 		if err := s.lifecycle.Queue(order, "fulfillment", "fleet unavailable, re-queued"); err != nil {
 			s.logFn("fulfillment: order %d → queued: %v", order.ID, err)
 		}

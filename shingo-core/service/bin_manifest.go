@@ -4,15 +4,25 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 
 	"shingocore/domain"
 	"shingocore/store/audit"
 	"shingocore/store/bins"
+	"shingocore/store/reservations"
 )
+
+// reservationClaimTTL is the maximum time a pending reservation may exist
+// before the Expire reaper reclaims it. Acquire→Confirm is milliseconds
+// in 1a (one function call), so a pending row older than this TTL is almost
+// certainly a crash-leak. Must be kept shorter than the rolling-restart
+// window so the reaper clears leaked holds before old binaries serve traffic.
+const reservationClaimTTL = 60 * time.Second
 
 // BinManifestService manages bin manifest lifecycle mutations.
 // All manifest changes flow through this service so that validation,
@@ -356,12 +366,17 @@ func (s *BinManifestService) ClearAndClaim(binID, orderID int64) error {
 	if err != nil {
 		return err
 	}
+	// Demoted-CAS guard (D2): requires this order's pending reservation to
+	// exist, so a concurrent claimer without a reservation cannot steal the
+	// bin even if it passes the claimed_by IS NULL check. claimed_by IS NULL
+	// is defense-in-depth for the mixed-binary rollback window.
 	res, err := tx.Exec(`
 		UPDATE bins SET
 			payload_code='', manifest=NULL, uop_remaining=0,
 			manifest_confirmed=false, loaded_at=NULL,
 			claimed_by=$1, updated_at=NOW()
-		WHERE id=$2 AND locked=false AND claimed_by IS NULL`,
+		WHERE id=$2 AND locked=false AND claimed_by IS NULL
+		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$1 AND bin_id=$2 AND state='pending')`,
 		orderID, binID)
 	if err != nil {
 		return fmt.Errorf("clear+claim bin %d: %w", binID, err)
@@ -398,10 +413,12 @@ func (s *BinManifestService) SyncUOPAndClaim(binID, orderID int64, remainingUOP 
 	if err != nil {
 		return err
 	}
+	// Demoted-CAS guard (D2): mirrors ClearAndClaim — see comment there.
 	res, err := tx.Exec(`
 		UPDATE bins SET
 			uop_remaining=$1, claimed_by=$2, updated_at=NOW()
-		WHERE id=$3 AND locked=false AND claimed_by IS NULL`,
+		WHERE id=$3 AND locked=false AND claimed_by IS NULL
+		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$2 AND bin_id=$3 AND state='pending')`,
 		remainingUOP, orderID, binID)
 	if err != nil {
 		return fmt.Errorf("sync+claim bin %d: %w", binID, err)
@@ -430,14 +447,36 @@ func (s *BinManifestService) SyncUOPAndClaim(binID, orderID int64, remainingUOP 
 //     SME-lock-permitted overpack washout where the captured count
 //     exceeded the tracked count, landing the bin negative)
 //   - *remainingUOP > 0: sync UOP + claim (partial consumption)
+//
+// Phase-1a: reserve-then-confirm. Race now resolves at Acquire (unique index
+// on reservations.bin_id WHERE state IN ('pending','confirmed')) rather than
+// at the SQL CAS claimed_by IS NULL. Sequence:
+//  1. Acquire a pending reservation — unique index makes this exactly-one-winner.
+//  2. Run the existing claim SQL (ClearAndClaim / SyncUOPAndClaim / ClaimBin)
+//     with the demoted-CAS guard (requires reservation EXISTS).
+//  3. Confirm the reservation (pending → confirmed).
+//  4. On ANY failure after Acquire → Release (best-effort; Expire is the backstop).
 func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP *int) error {
+	expiresAt := clock.Now().Add(reservationClaimTTL)
+	if err := reservations.Acquire(s.db, orderID, binID, "ClaimForDispatch", "", expiresAt); err != nil {
+		return err // ErrReservationConflict or transient DB error — both surface as codeClaimFailed
+	}
+
+	var claimErr error
 	if remainingUOP != nil && *remainingUOP <= 0 {
-		return s.ClearAndClaim(binID, orderID)
+		claimErr = s.ClearAndClaim(binID, orderID)
+	} else if remainingUOP != nil {
+		claimErr = s.SyncUOPAndClaim(binID, orderID, *remainingUOP)
+	} else {
+		claimErr = s.db.ClaimBin(binID, orderID)
 	}
-	if remainingUOP != nil {
-		return s.SyncUOPAndClaim(binID, orderID, *remainingUOP)
+	if claimErr != nil {
+		if rErr := reservations.Release(s.db, orderID, binID); rErr != nil {
+			log.Printf("dispatch: ClaimForDispatch release reservation order=%d bin=%d: %v", orderID, binID, rErr)
+		}
+		return claimErr
 	}
-	return s.db.ClaimBin(binID, orderID)
+	return reservations.Confirm(s.db, orderID, binID)
 }
 
 // SyncOrClearForReleased applies the operator's release-time remainingUOP value

@@ -26,8 +26,9 @@ func (s *stubDispatcher) DispatchPreparedComplex(o *orders.Order) error {
 
 func newTestScannerWithDispatcher(t *testing.T, db Store, d Dispatcher) *Scanner {
 	t.Helper()
+	claimer, _ := db.(Claimer) // fakeStore implements ClaimForDispatch
 	return NewScanner(
-		db, d, stubLifecycle{db: db}, nil,
+		db, d, stubLifecycle{db: db}, nil, claimer,
 		func(string, string, any) error { return nil },
 		func(int64, string, string) {},
 		t.Logf, nil,

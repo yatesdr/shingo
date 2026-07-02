@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 )
 
@@ -59,7 +60,7 @@ func TestReapplyOrderCompletion_Success(t *testing.T) {
 		BinID:        &bin.ID,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.ClaimBin(bin.ID, order.ID), "claim bin")
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 
 	testutil.MustNoErr(t, eng.Recovery().ReapplyOrderCompletion(order.ID, "op-recovery"), "ReapplyOrderCompletion")
 
@@ -188,8 +189,8 @@ func TestReleaseTerminalBinClaim_Success(t *testing.T) {
 		BinID:     &bin.ID,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, "cancelled", "seed"), "cancel order")
-	testutil.MustNoErr(t, db.ClaimBin(bin.ID, order.ID), "claim bin")
+	testdb.SeedOrderStatus(t, db, order.ID, "cancelled", "seed")
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 
 	testutil.MustNoErr(t, eng.ReleaseTerminalBinClaim(bin.ID, "op-term"), "ReleaseTerminalBinClaim")
 
@@ -225,7 +226,7 @@ func TestReleaseTerminalBinClaim_RefusesActiveClaim(t *testing.T) {
 		BinID:     &bin.ID,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.ClaimBin(bin.ID, order.ID), "claim")
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 
 	if err := eng.Recovery().ReleaseTerminalBinClaim(bin.ID, "op"); err == nil {
 		t.Fatal("expected refusal to release active claim")

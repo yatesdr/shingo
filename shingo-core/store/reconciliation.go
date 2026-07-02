@@ -4,7 +4,10 @@ package store
 // This file preserves the *store.DB method surface so external callers
 // don't need to change.
 
-import "shingocore/store/reconciliation"
+import (
+	"shingocore/store/reconciliation"
+	"shingocore/store/reservations"
+)
 
 func (db *DB) ListOrderCompletionAnomalies() ([]*reconciliation.CompletionAnomaly, error) {
 	return reconciliation.ListOrderCompletionAnomalies(db.DB)
@@ -20,4 +23,8 @@ func (db *DB) GetReconciliationSummary() (*reconciliation.Summary, error) {
 
 func (db *DB) ReleaseOrphanedClaims() (int, error) {
 	return reconciliation.ReleaseOrphanedClaims(db.DB)
+}
+
+func (db *DB) ExpireReservations() (int, error) {
+	return reservations.Expire(db.DB)
 }

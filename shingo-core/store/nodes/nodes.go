@@ -107,8 +107,9 @@ func UnclaimSlot(db *sql.DB, nodeID int64) error {
 // so a terminated order never strands a slot claim (the bin-claim path had a
 // leaked-claim failure mode under partial failure, fixed by reconciliation;
 // the slot claim inherits that by riding the same hooks).
-func UnclaimOrderSlots(db *sql.DB, orderID int64) {
-	db.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID)
+func UnclaimOrderSlots(db *sql.DB, orderID int64) error {
+	_, err := db.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID)
+	return err
 }
 
 // Create inserts a new node and sets n.ID on success.

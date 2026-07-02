@@ -66,6 +66,15 @@ linters:
           msg: "Direct FailOrderAtomic calls bypass the state machine. Use dispatch.LifecycleService.Fail."
         - pattern: 'db\.CancelOrderAtomic'
           msg: "Direct CancelOrderAtomic calls bypass the state machine. Use dispatch.LifecycleService.CancelOrder."
+        # Reservation-sourcing bypass guard. Bin claims must go through the
+        # reserve→claim→confirm sequence (BinManifestService.ClaimForDispatch),
+        # which holds a revocable reservation across the decide→do gap; a bare
+        # db.ClaimBin reopens the claim race. This is the guard that would have
+        # caught the five production claim sites that slipped ClaimForDispatch
+        # during 1a. Sanctioned callers (ClaimForDispatch itself + the test
+        # helper) are carved out in exclusions.rules #6 below.
+        - pattern: 'db\.ClaimBin'
+          msg: "Direct ClaimBin calls bypass reservation-sourcing (reserve→claim→confirm, which closes the decide→do claim gap). Claim through service.BinManifestService.ClaimForDispatch; in tests use testdb.ClaimBinForTest."
         # Note on swap-mode constants: forbidigo can only match identifier
         # expressions (selector exprs like `db.UpdateOrderStatus`), not
         # string literals. The swap-mode raw-string guard is enforced by
@@ -183,6 +192,17 @@ linters:
           - forbidigo
       # 5. Store-level implementations themselves.
       - path: "shingo-core/store/orders\\.go"
+        linters:
+          - forbidigo
+      # 6. Sanctioned bin-claim callers (db.ClaimBin guard). ClaimForDispatch
+      #    is the reserve→claim→confirm path the guard points everyone else to,
+      #    so its own db.ClaimBin call is the one that must be allowed; the
+      #    testdb helper builds fixtures and isn't named *_test.go, so the
+      #    blanket _test.go carveout below misses it.
+      - path: "shingo-core/service/bin_manifest\\.go"
+        linters:
+          - forbidigo
+      - path: "shingo-core/internal/testdb/.*\\.go"
         linters:
           - forbidigo
       # 7. Edge lifecycle driver — equivalent to #1 for the edge module.

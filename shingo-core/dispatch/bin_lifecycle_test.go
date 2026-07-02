@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -15,6 +16,7 @@ import (
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/payloads"
+	"shingocore/store/reservations"
 )
 
 // TestSwapRemovalLegHeld_UntilSupplyClaims pins the two-robot swap dispatch
@@ -283,10 +285,20 @@ func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 					}
 					return
 				}
-				if cerr := db.ClaimBin(found.ID, orderID); cerr != nil {
-					// Another order claimed this bin between our Find and
-					// Claim — re-Find (it's now excluded) and try the next.
+				// Acquire the pending reservation the demoted-CAS ClaimBin
+				// guard now requires. On a lost race another order already
+				// holds the active (unique-per-bin) reservation, so re-Find —
+				// the reserved bin is now excluded — and take the next.
+				if rerr := reservations.Acquire(db, orderID, found.ID, "test", "race-claim", time.Now().Add(time.Hour)); rerr != nil {
 					continue
+				}
+				if cerr := db.ClaimBin(found.ID, orderID); cerr != nil {
+					errors[idx] = cerr
+					return
+				}
+				if cerr := reservations.Confirm(db, orderID, found.ID); cerr != nil {
+					errors[idx] = cerr
+					return
 				}
 				results[idx] = found.ID
 				return

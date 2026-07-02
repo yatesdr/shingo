@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"shingo/protocol/debuglog"
 	"shingo/protocol/testutil"
+	"shingo/shared/clock"
 	"shingocore/config"
 	"shingocore/engine"
 	"shingocore/fleet"
@@ -18,6 +20,7 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // Characterization tests for handlers_orders.go — pinned before the Stage 1
@@ -291,8 +294,13 @@ func TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim(t *testing.T) 
 		t.Errorf("vendor_order_id should be empty after failed dispatch, got %q", got.VendorOrderID)
 	}
 
-	// The critical rollback: bin claim released.
+	// The critical rollback: bin claim released AND re-acquirable (the reservation
+	// released too, not just claimed_by — else the confirmed row bricks the bin).
 	testdb.RequireBinUnclaimed(t, db, bin.ID)
+	probe := testdb.CreateOrder(t, db)
+	if err := reservations.Acquire(db, probe.ID, bin.ID, "test", "reacquire", clock.Now().Add(time.Minute)); err != nil {
+		t.Errorf("bin not re-acquirable after spot-submit rollback: %v (reservation leaked?)", err)
+	}
 }
 
 func TestSubmitSpotRetrieveSpecific_MissingBinLabel(t *testing.T) {
@@ -352,7 +360,7 @@ func TestSubmitSpotRetrieveSpecific_BinAlreadyClaimed(t *testing.T) {
 
 	// Stand up a prior order and have it claim the bin.
 	prior := makeOrder(t, db, "prior-claim-1", "", 0)
-	testutil.MustNoErr(t, db.ClaimBin(bin.ID, prior.ID), "seed prior claim")
+	testdb.ClaimBinForTest(t, db, bin.ID, prior.ID)
 
 	resp, status := submitRetrieveSpecific(t, h, bin.Label, sd.LineNode.Name)
 	if status != http.StatusConflict {

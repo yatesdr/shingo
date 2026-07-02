@@ -69,6 +69,17 @@ func ColumnExists(c Querier, table, column string) bool {
 	return exists
 }
 
+// IndexExists reports whether the named index exists in the database's
+// public schema. Returns false on any query error or if the name is empty.
+func IndexExists(c Querier, indexName string) bool {
+	var exists bool
+	c.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname=$1)`,
+		indexName,
+	).Scan(&exists)
+	return exists
+}
+
 // ColumnType returns the SQL data type of the named column (e.g.
 // "boolean", "integer", "text"), or an empty string if the column
 // does not exist or any query error occurs.

@@ -35,12 +35,8 @@ func TestCoverage_RepairConfirmedOrderCompletion(t *testing.T) {
 	if err := orders.Create(db.DB, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := orders.UpdateStatus(db.DB, order.ID, "confirmed", "simulated"); err != nil {
-		t.Fatalf("confirm order: %v", err)
-	}
-	if err := bins.Claim(db.DB, bin.ID, order.ID); err != nil {
-		t.Fatalf("claim bin: %v", err)
-	}
+	testdb.SeedOrderStatus(t, db, order.ID, "confirmed", "simulated")
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	if err := recovery.RepairConfirmedOrderCompletion(db.DB, order.ID, bin.ID, dest.ID, true, nil); err != nil {
 		t.Fatalf("repair: %v", err)
 	}
@@ -85,9 +81,7 @@ func TestCoverage_ReleaseTerminalBinClaimRejectsActiveOrder(t *testing.T) {
 	if err := orders.Create(db.DB, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := bins.Claim(db.DB, bin.ID, order.ID); err != nil {
-		t.Fatalf("claim bin: %v", err)
-	}
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	if _, err := recovery.ReleaseTerminalBinClaim(db.DB, bin.ID); err == nil {
 		t.Fatalf("expected active claim release to fail")
 	}
@@ -112,12 +106,8 @@ func TestCoverage_ReleaseTerminalBinClaimAllowsCancelledOrder(t *testing.T) {
 	if err := orders.Create(db.DB, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := orders.UpdateStatus(db.DB, order.ID, "cancelled", "simulated"); err != nil {
-		t.Fatalf("cancel order: %v", err)
-	}
-	if err := bins.Claim(db.DB, bin.ID, order.ID); err != nil {
-		t.Fatalf("claim bin: %v", err)
-	}
+	testdb.SeedOrderStatus(t, db, order.ID, "cancelled", "simulated")
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	gotOrderID, err := recovery.ReleaseTerminalBinClaim(db.DB, bin.ID)
 	if err != nil {
 		t.Fatalf("release: %v", err)

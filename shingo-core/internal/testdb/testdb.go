@@ -23,11 +23,14 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 	"shingocore/config"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 	"shingocore/store/payloads"
+	"shingocore/store/reservations"
 )
 
 // templateDBName is the name of the pre-migrated database every test gets
@@ -410,6 +413,80 @@ func CreateBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int6
 		t.Fatalf("get bin %s after setup: %v", label, err)
 	}
 	return got
+}
+
+// orderSeq keeps CreateOrder's EdgeUUIDs unique within a test process.
+var orderSeq atomic.Int64
+
+// CreateOrder inserts a minimal real order and returns it. Tests that reserve or
+// claim a bin need a real order row — reservations.order_id and bins.claimed_by
+// both FK to orders(id), so hardcoded/bogus order ids fail. Status defaults to
+// queued; pass opts to override fields, e.g.
+//
+//	testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "delivered" })
+func CreateOrder(t *testing.T, db *store.DB, opts ...func(*orders.Order)) *orders.Order {
+	t.Helper()
+	o := &orders.Order{
+		EdgeUUID:  fmt.Sprintf("testorder-%d", orderSeq.Add(1)),
+		StationID: "test",
+		OrderType: "retrieve",
+		Status:    "queued",
+		Quantity:  1,
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+	if err := db.CreateOrder(o); err != nil {
+		t.Fatalf("testdb.CreateOrder: %v", err)
+	}
+	return o
+}
+
+// ClaimBinForTest reserves then claims binID for orderID, mirroring the
+// production reserve-then-confirm path (service.ClaimForDispatch): Acquire (a
+// pending reservation) → ClaimBin → Confirm. The claim primitives now carry a
+// demoted-CAS guard (AND EXISTS a pending reservation for order+bin), so a bare
+// db.ClaimBin without this sequence fails "bin is locked, already claimed, or
+// does not exist". Use wherever a test needs a bin already claimed by a real
+// order. orderID must reference a real order (see CreateOrder).
+func ClaimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
+	t.Helper()
+	if err := reservations.Acquire(db, orderID, binID, "test", "test-claim", clock.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("testdb.ClaimBinForTest Acquire(bin=%d order=%d): %v", binID, orderID, err)
+	}
+	if err := db.ClaimBin(binID, orderID); err != nil {
+		t.Fatalf("testdb.ClaimBinForTest ClaimBin(bin=%d order=%d): %v", binID, orderID, err)
+	}
+	if err := reservations.Confirm(db, orderID, binID); err != nil {
+		t.Fatalf("testdb.ClaimBinForTest Confirm(bin=%d order=%d): %v", binID, orderID, err)
+	}
+}
+
+// ReserveBin acquires a pending reservation for orderID on binID and nothing
+// else — for tests that then exercise a GUARDED claim primitive directly
+// (svc.ClearAndClaim / SyncUOPAndClaim / db.ClaimBin), which need a pending
+// reservation to exist but perform the claim themselves. orderID must reference
+// a real order (see CreateOrder).
+func ReserveBin(t *testing.T, db *store.DB, orderID, binID int64) {
+	t.Helper()
+	if err := reservations.Acquire(db, orderID, binID, "test", "test-reserve", clock.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("testdb.ReserveBin Acquire(bin=%d order=%d): %v", binID, orderID, err)
+	}
+}
+
+// SeedOrderStatus forces an order to an arbitrary status via a raw write,
+// bypassing both lifecycle validation and the terminal-status guard on
+// orders.UpdateStatus. For fixtures that must seed an order already in a
+// terminal state (failed/cancelled/skipped/confirmed) to exercise
+// reconciliation/recovery/matrix logic — NOT a stand-in for the real lifecycle
+// in behavior tests (those must go through TerminalizeOrder, which also releases
+// claims + reservations).
+func SeedOrderStatus(t *testing.T, db *store.DB, orderID int64, status, detail string) {
+	t.Helper()
+	if _, err := db.DB.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=NOW() WHERE id=$3`,
+		status, detail, orderID); err != nil {
+		t.Fatalf("testdb.SeedOrderStatus(order=%d, %s): %v", orderID, status, err)
+	}
 }
 
 // Envelope returns a standard test envelope (Edge → Core, station "line-1").

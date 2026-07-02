@@ -172,3 +172,39 @@ func selectClaim(candidates []*bins.Bin, payloadCode string) (*bins.Bin, []strin
 	}
 	return nil, rejects
 }
+
+// distinctSourceNeeds returns the pickup steps that require sourcing a NEW bin —
+// the order's distinct source needs — with relay re-grabs removed. A swap's step
+// list re-picks the same bin as it relays through staging (BuildSingleSwapSteps:
+// 4 pickup actions, 2 distinct bins), so the pickup-action count overstates the
+// bins the order must actually find.
+//
+// A pickup at node N is a relay re-grab (the order re-collecting a bin it earlier
+// parked at N) iff an EARLIER step is a dropoff at N: at reserve time N is empty
+// (the bin hasn't relayed there yet) and the order already holds that bin, so the
+// re-grab is silently skipped — not a miss. A pickup at N with no earlier
+// same-order dropoff(N) is a TRUE source, and an empty N there is a real miss.
+//
+// Pure over the resolved step list — no live node state, which is exactly why it
+// is correct at reserve time (staging nodes are still empty then). The dispatch
+// reserve keys on this to distinguish "genuinely missing a distinct bin" (hold
+// and keep trying) from "expected empty staging re-grab" (skip). See
+// distinct_bin_pure_test.go for the swap-relay fixture.
+func distinctSourceNeeds(steps []resolvedStep) []resolvedStep {
+	dropped := make(map[string]bool, len(steps))
+	var needs []resolvedStep
+	for _, s := range steps {
+		switch s.Action {
+		case protocol.ActionDropoff:
+			if s.Node != "" {
+				dropped[s.Node] = true
+			}
+		case protocol.ActionPickup:
+			if s.Node != "" && dropped[s.Node] {
+				continue // relay re-grab of a bin this order already holds
+			}
+			needs = append(needs, s)
+		}
+	}
+	return needs
+}

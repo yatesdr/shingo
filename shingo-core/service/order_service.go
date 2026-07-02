@@ -91,6 +91,14 @@ func (s *OrderService) UnclaimBin(binID int64) error {
 	return s.db.UnclaimBin(binID)
 }
 
+// ReleaseClaimForBin is the coupled rollback (clears claimed_by AND releases the
+// reservation). The manual-order rollback uses it instead of UnclaimBin so that,
+// once the claim routes through ClaimForDispatch, a dispatch failure can't orphan
+// the confirmed reservation and brick the bin.
+func (s *OrderService) ReleaseClaimForBin(binID, orderID int64) error {
+	return s.db.ReleaseClaimForBin(binID, orderID)
+}
+
 // --- Queries --------------------------------------------------------------
 
 // GetOrder loads an order by ID. Absorbed from engine_db_methods.go as

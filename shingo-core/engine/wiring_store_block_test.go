@@ -46,8 +46,8 @@ func TestHandleStoreBlockCompleted_RecordsIntermediateStore(t *testing.T) {
 	// claimed by the order (in flight). Junction rows carry each bin's dest.
 	binStore := testdb.CreateBinAtNode(t, db, sd.Payload.Code, lineNode.ID, "CARRIER-STORE")
 	binRetr := testdb.CreateBinAtNode(t, db, sd.Payload.Code, lineNode.ID, "CARRIER-RETR")
-	testutil.MustNoErr(t, db.ClaimBin(binStore.ID, ord.ID), "claim store bin")
-	testutil.MustNoErr(t, db.ClaimBin(binRetr.ID, ord.ID), "claim retrieve bin")
+	testdb.ClaimBinForTest(t, db, binStore.ID, ord.ID)
+	testdb.ClaimBinForTest(t, db, binRetr.ID, ord.ID)
 	testutil.MustNoErr(t, db.InsertOrderBin(ord.ID, binStore.ID, 1, "pickup", lineNode.Name, storeNode.Name), "order_bin store leg")
 	testutil.MustNoErr(t, db.InsertOrderBin(ord.ID, binRetr.ID, 3, "pickup", "EMPTY-SRC", lineNode.Name), "order_bin retrieve leg")
 
@@ -103,7 +103,7 @@ func TestHandleStoreBlockCompleted_SkipsFinalDelivery(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create complex order")
 
 	binRetr := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "CARRIER-RETR2")
-	testutil.MustNoErr(t, db.ClaimBin(binRetr.ID, ord.ID), "claim retrieve bin")
+	testdb.ClaimBinForTest(t, db, binRetr.ID, ord.ID)
 	testutil.MustNoErr(t, db.InsertOrderBin(ord.ID, binRetr.ID, 3, "pickup", "EMPTY-SRC", lineNode.Name), "order_bin retrieve leg")
 
 	// Dropoff at the FINAL delivery node — must be skipped here.

@@ -53,6 +53,14 @@ type Resolver interface {
 	Resolve(syntheticNode *nodes.Node, orderType protocol.OrderType, payloadCode string, binTypeID *int64) (*binresolver.ResolveResult, error)
 }
 
+// Claimer is the reserve-then-claim primitive the scanner uses to claim a source
+// bin (Acquire -> claim -> Confirm). A one-method consumer interface (matching
+// Dispatcher/Lifecycle/Resolver) so scanner_test.go can stub it without pulling
+// in service; *service.BinManifestService satisfies it structurally.
+type Claimer interface {
+	ClaimForDispatch(binID, orderID int64, remainingUOP *int) error
+}
+
 // Compile-time checks that the concrete dispatch types satisfy the
 // consumer-side interfaces. If dispatch drops or renames either
 // method, the assertion catches it before a build failure elsewhere.

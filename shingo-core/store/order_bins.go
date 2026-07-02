@@ -9,6 +9,7 @@ import (
 
 	"shingocore/store/internal/helpers"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // InsertOrderBin records a claimed bin and its resolved destination for a
@@ -41,6 +42,15 @@ func (db *DB) ApplyMultiBinArrival(instructions []orders.BinArrivalInstruction) 
 		if _, err := tx.Exec(`UPDATE bins SET node_id=$1, claimed_by=NULL, updated_at=NOW() WHERE id=$2`,
 			inst.ToNodeID, inst.BinID); err != nil {
 			return fmt.Errorf("move bin %d: %w", inst.BinID, err)
+		}
+		// Release the bin's reservation alongside its claim (see ApplyArrival) so
+		// a delivered bin frees for re-reservation at delivery, not at terminal.
+		if err := reservations.ReleaseByBin(tx, inst.BinID); err != nil {
+			return fmt.Errorf("release reservation on arrival bin %d: %w", inst.BinID, err)
+		}
+		// Release the destination slot's dispatch-time claim (see ApplyArrival).
+		if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, inst.ToNodeID); err != nil {
+			return fmt.Errorf("release destination slot claim node %d: %w", inst.ToNodeID, err)
 		}
 		if inst.Staged {
 			if _, err := tx.Exec(`UPDATE bins SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW() WHERE id=$2`,

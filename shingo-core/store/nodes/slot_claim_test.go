@@ -99,7 +99,9 @@ func TestClaimSlot_UnclaimOrderSlots(t *testing.T) {
 	if err := nodes.ClaimSlot(sdb, s2, order); err != nil {
 		t.Fatalf("claim s2: %v", err)
 	}
-	nodes.UnclaimOrderSlots(sdb, order)
+	if err := nodes.UnclaimOrderSlots(sdb, order); err != nil {
+		t.Fatalf("UnclaimOrderSlots: %v", err)
+	}
 
 	other := mkSlotOrder(t, sdb, "order-other")
 	if err := nodes.ClaimSlot(sdb, s1, other); err != nil {

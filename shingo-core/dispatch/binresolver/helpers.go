@@ -64,6 +64,9 @@ func BinUnavailableReason(b *bins.Bin, payloadCode string) string {
 	if b.ClaimedBy != nil {
 		return fmt.Sprintf("already claimed by order %d", *b.ClaimedBy)
 	}
+	if b.HasPendingReservation {
+		return "pending reservation held by another order"
+	}
 	if b.Locked {
 		return "locked for active handling"
 	}

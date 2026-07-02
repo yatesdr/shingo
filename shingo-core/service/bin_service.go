@@ -13,6 +13,7 @@ import (
 	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
 
 // BinService centralizes bin validation and mutation. Handlers call BinService
@@ -629,6 +630,19 @@ func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	}
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
 		return false, fmt.Errorf("unclaim bin: %w", err)
+	}
+	// A bin's reservation lives exactly as long as its claim: release it in the
+	// same tx that clears claimed_by, so the delivered bin frees for
+	// re-reservation now rather than lingering (blocked) until the owning order's
+	// terminal transition.
+	if err := reservations.ReleaseByBin(tx, binID); err != nil {
+		return false, fmt.Errorf("release reservation on arrival bin %d: %w", binID, err)
+	}
+	// Release the destination slot's dispatch-time claim (the store dual of the
+	// bin claim): the bin has arrived, so the dropoff claim is fulfilled. Atomic
+	// with the arrival; a no-op for LINE deliveries (never slot-claimed).
+	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, toNodeID); err != nil {
+		return false, fmt.Errorf("release destination slot claim node %d: %w", toNodeID, err)
 	}
 	if staged {
 		// nullableTime: pass UTC time or nil, mirroring helpers.NullableTime

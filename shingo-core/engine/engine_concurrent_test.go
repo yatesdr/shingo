@@ -561,7 +561,7 @@ func TestStagingExpiry_DoesNotExpireActiveClaim(t *testing.T) {
 		Status:       dispatch.StatusQueued,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(secondOrder), "create second order")
-	testutil.MustNoErr(t, db.ClaimBin(bin.ID, secondOrder.ID), "claim bin for second order")
+	testdb.ClaimBinForTest(t, db, bin.ID, secondOrder.ID)
 
 	// Set staging expiry to past
 	if _, err := db.Exec(`UPDATE bins SET staged_expires_at = NOW() - interval '1 hour' WHERE id = $1`, bin.ID); err != nil {

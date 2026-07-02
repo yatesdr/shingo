@@ -32,8 +32,8 @@ func TestMoveToTransit_PreservesClaim(t *testing.T) {
 
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "TR-BIN-1", NodeID: &source.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
-	const orderID int64 = 4242
-	testutil.MustNoErr(t, db.ClaimBin(bin.ID, orderID), "claim bin")
+	orderID := testdb.CreateOrder(t, db).ID
+	testdb.ClaimBinForTest(t, db, bin.ID, orderID)
 
 	testutil.MustNoErr(t, svc.MoveToTransit(bin.ID), "MoveToTransit")
 
@@ -70,7 +70,8 @@ func TestMoveToTransit_Idempotent(t *testing.T) {
 
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "TR-BIN-IDEM", NodeID: &source.ID, Status: "available"}
 	db.CreateBin(bin)
-	db.ClaimBin(bin.ID, 1)
+	idemOrder := testdb.CreateOrder(t, db)
+	testdb.ClaimBinForTest(t, db, bin.ID, idemOrder.ID)
 
 	testutil.MustNoErr(t, svc.MoveToTransit(bin.ID), "first MoveToTransit")
 	testutil.MustNoErr(t, svc.MoveToTransit(bin.ID), "second MoveToTransit (should be no-op)")
