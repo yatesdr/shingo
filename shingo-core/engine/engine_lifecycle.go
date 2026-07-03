@@ -44,8 +44,11 @@ func (e *Engine) Start() {
 		e.tracker = tb.Tracker()
 	}
 
-	// Create fulfillment scanner for queued orders
-	e.fulfillment = fulfillment.NewScanner(e.db, e.dispatcher, e.dispatcher.Lifecycle(), resolver, e.binManifest, e.sendToEdge, e.failOrderAndEmit, e.logFn, e.debugLog)
+	// Create fulfillment scanner for queued orders. The scanner shares the ONE
+	// SourceFinder seam with intake planning (same resolver + DB) so replay can't
+	// drift its source scoping from intake.
+	sourceFinder := dispatch.NewSourceFinder(e.db, resolver, e.debugLog)
+	e.fulfillment = fulfillment.NewScanner(e.db, e.dispatcher, e.dispatcher.Lifecycle(), sourceFinder, e.binManifest, e.sendToEdge, e.failOrderAndEmit, e.logFn, e.debugLog)
 
 	// Wire event handlers
 	e.wireEventHandlers()

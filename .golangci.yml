@@ -75,6 +75,18 @@ linters:
         # helper) are carved out in exclusions.rules #6 below.
         - pattern: 'db\.ClaimBin'
           msg: "Direct ClaimBin calls bypass reservation-sourcing (reserve→claim→confirm, which closes the decide→do claim gap). Claim through service.BinManifestService.ClaimForDispatch; in tests use testdb.ClaimBinForTest."
+        # Source-finder collapse guard (commit 3a). The plant-wide bin finders are
+        # the LAST tier of dispatch.SourceFinder; calling them directly re-opens the
+        # intake↔scanner-replay drift the collapse fixed (dropped loader-pool and
+        # group-scoped-empty scoping → wrong-source-on-replay). Route source finding
+        # through dispatch.SourceFinder.FindSource. The FindEmptyCompatibleBin pattern
+        # also prefix-matches FindEmptyCompatibleBinInGroup. Sanctioned callers
+        # (source_finder.go itself + the still-inline complex_steps.go copy) are carved
+        # out in exclusions.rules #7 below.
+        - pattern: 'db\.FindSourceBinFIFO'
+          msg: "Direct FindSourceBinFIFO calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
+        - pattern: 'db\.FindEmptyCompatibleBin'
+          msg: "Direct FindEmptyCompatibleBin(InGroup) calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
         # Note on swap-mode constants: forbidigo can only match identifier
         # expressions (selector exprs like `db.UpdateOrderStatus`), not
         # string literals. The swap-mode raw-string guard is enforced by
@@ -205,11 +217,31 @@ linters:
       - path: "shingo-core/internal/testdb/.*\\.go"
         linters:
           - forbidigo
-      # 7. Edge lifecycle driver — equivalent to #1 for the edge module.
+      # 6b. testharness re-exports internal/testdb fixtures across the module
+      #     boundary (the integration module can't import internal/). Its
+      #     ClaimBinForTest wrapper trips the db.ClaimBin pattern by substring
+      #     (`testdb.ClaimBinForTest` contains `db.ClaimBin`) — same sanctioned
+      #     test-fixture category as #6.
+      - path: "shingo-core/testharness/.*\\.go"
+        linters:
+          - forbidigo
+      # 7. Sanctioned source-finder callers (db.FindSourceBinFIFO /
+      #    db.FindEmptyCompatibleBin guard, commit 3a). source_finder.go IS the
+      #    shared seam — its own plant-wide-fallback calls are the ones everyone
+      #    else routes through. complex_steps.go holds the last inline copy
+      #    (resolveStepNode); it is a visible, TODO(post-1c)-marked exception until
+      #    the post-1c unification folds it into the finder.
+      - path: "shingo-core/dispatch/source_finder\\.go"
+        linters:
+          - forbidigo
+      - path: "shingo-core/dispatch/complex_steps\\.go"
+        linters:
+          - forbidigo
+      # 8. Edge lifecycle driver — equivalent to #1 for the edge module.
       - path: "shingo-edge/orders/lifecycle_service\\.go"
         linters:
           - forbidigo
-      # 8. Edge store-level implementation.
+      # 9. Edge store-level implementation.
       - path: "shingo-edge/store/orders\\.go"
         linters:
           - forbidigo

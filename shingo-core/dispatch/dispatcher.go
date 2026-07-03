@@ -313,10 +313,10 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 			d.replies.SendError(env, p.OrderUUID, "invalid_node", fmt.Sprintf("redirect destination %q not found", p.NewDeliveryNode))
 			return
 		}
-		if err != nil {
-			d.replies.SendError(env, p.OrderUUID, "redirect_failed", err.Error())
-			return
-		}
+		// Any other prepare failure (source + dest resolved, but PrepareRedirect
+		// still errored) → generic redirect_failed.
+		d.replies.SendError(env, p.OrderUUID, "redirect_failed", err.Error())
+		return
 	}
 	if newDest == nil {
 		d.dbg("redirect dest %q not found (post-prepare): %v", p.NewDeliveryNode, err)

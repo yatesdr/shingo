@@ -29,6 +29,7 @@ import (
 	"shingocore/service"
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
+	coreorders "shingocore/store/orders"
 	coreharness "shingocore/testharness"
 	"shingocore/uop"
 
@@ -238,12 +239,23 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 	}
 
 	// ── Release empty: count resets and delta_epoch advances again. ──
-	const releaseOrderID int64 = 778899
-	if err := coreDB.ClaimBin(bin.ID, releaseOrderID); err != nil {
-		t.Fatalf("claim bin: %v", err)
+	// A real order claims the bin via reserve→claim→confirm: a bare ClaimBin
+	// fails the demoted-CAS seatbelt (needs a pending reservation) and
+	// reservations.order_id FKs to orders(id), so the claimer must be a real row.
+	releaseOrder := &coreorders.Order{
+		EdgeUUID:    "scenario-swap-release-1",
+		StationID:   "edge.test",
+		OrderType:   dispatch.OrderTypeRetrieveEmpty,
+		Status:      dispatch.StatusStaged,
+		PayloadCode: sd.Payload.Code,
+		Quantity:    1,
 	}
+	if err := coreDB.CreateOrder(releaseOrder); err != nil {
+		t.Fatalf("create release order: %v", err)
+	}
+	coreharness.ClaimBinForTest(t, coreDB, bin.ID, releaseOrder.ID)
 	zero := 0
-	if err := manifest.SyncOrClearForReleased(bin.ID, releaseOrderID, &zero, protocol.DispositionReleaseEmpty, "operator"); err != nil {
+	if err := manifest.SyncOrClearForReleased(bin.ID, releaseOrder.ID, &zero, protocol.DispositionReleaseEmpty, "operator"); err != nil {
 		t.Fatalf("release empty: %v", err)
 	}
 	if got := uopOf(); got != 0 {

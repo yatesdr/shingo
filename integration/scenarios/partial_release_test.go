@@ -116,9 +116,9 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 	if err := coreDB.UpdateOrderStatus(order.ID, string(dispatch.StatusStaged), "scenario setup"); err != nil {
 		t.Fatalf("force staged: %v", err)
 	}
-	if err := coreDB.ClaimBin(bin.ID, order.ID); err != nil {
-		t.Fatalf("claim bin: %v", err)
-	}
+	// Reserve→claim→confirm: a bare ClaimBin fails the demoted-CAS seatbelt
+	// (needs a pending reservation for this order+bin).
+	coreharness.ClaimBinForTest(t, coreDB, bin.ID, order.ID)
 
 	// Need the OUTBOUND-DEST node for step resolution downstream
 	// (HandleOrderRelease reads steps to figure out post-wait segments).

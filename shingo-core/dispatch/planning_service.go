@@ -6,7 +6,6 @@ import (
 	"log"
 
 	"shingo/protocol"
-	"shingocore/dispatch/binsource"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -116,6 +115,7 @@ type plannerLifecycle interface {
 type PlanningService struct {
 	db          *store.DB
 	resolver    NodeResolver
+	finder      *SourceFinder
 	laneLock    *LaneLock
 	binManifest *service.BinManifestService
 	debug       func(string, ...any)
@@ -135,6 +135,7 @@ func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock,
 	s := &PlanningService{
 		db:             db,
 		resolver:       resolver,
+		finder:         NewSourceFinder(db, resolver, debug),
 		laneLock:       laneLock,
 		binManifest:    binManifest,
 		debug:          debug,
@@ -190,6 +191,39 @@ func (s *PlanningService) Plan(order *orders.Order, env *protocol.Envelope, payl
 	return handler(order, env, payloadCode)
 }
 
+// resolveSource runs the shared SourceFinder for one intent and maps its
+// non-Found outcomes to caller return values. On OutcomeFound it returns the bin
+// + its node with proceed=true; on every other outcome it returns the
+// queue/reshuffle/terminal result with proceed=false, so the caller can:
+//
+//	source, sourceNode, pr, pe, ok := s.resolveSource(order, intent)
+//	if !ok { return pr, pe }
+//
+// The disposition (queue vs reshuffle vs terminal) lives in the finder, so
+// intake and scanner-replay can no longer drift on it. OutcomeWait now writes
+// queue_reason (intake used to queue silently on no-source); OutcomeStructural
+// re-raises the finder's TermCode verbatim (the codeStructural/codeLoaderSource/
+// codeNode strings are the persisted contract intake already used).
+func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bins.Bin, *nodes.Node, *PlanningResult, *planningError, bool) {
+	res := s.finder.FindSource(order, intent)
+	switch res.Outcome {
+	case OutcomeFound:
+		return res.Bin, res.Node, nil, nil, true
+	case OutcomeReshuffle:
+		pr, pe := s.planBuriedReshuffle(order, res.Buried)
+		return nil, nil, pr, pe, false
+	case OutcomeStructural:
+		s.dbg("plan: order %d structural — %s: %s", order.ID, res.TermCode, res.Err)
+		return nil, nil, nil, &planningError{Code: res.TermCode, Detail: res.Err.Error(), Err: res.Err}, false
+	default: // OutcomeWait
+		s.dbg("plan: order %d queued — %s", order.ID, res.QueueReason)
+		if err := s.db.SetOrderQueueReason(order.ID, res.QueueReason); err != nil {
+			log.Printf("dispatch: set queue_reason for order %d: %v", order.ID, err)
+		}
+		return nil, nil, &PlanningResult{Queued: true}, nil, false
+	}
+}
+
 func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
 	// Phase 4 of bin-transit-state: dropoff-capacity gate before any
 	// state transition. Self-exclusion (order.ID) prevents the order's
@@ -208,96 +242,15 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 		log.Printf("dispatch: planRetrieve order %d → sourcing: %v", order.ID, err)
 	}
 
-	var source *bins.Bin
-	var sourceNode *nodes.Node
-
-	if order.SourceNode != "" && s.resolver != nil {
-		// `srcGroup` (not `sourceNode`) so the success-path write at the
-		// bottom of this block lands in the outer `sourceNode` rather than
-		// a shadow — the shadow form panicked on `sourceNode.Name` below
-		// once unloader auto-push lit up the NGRP retrieve path.
-		srcGroup, err := s.db.GetNodeByDotName(order.SourceNode)
-		if err == nil && srcGroup.IsSynthetic && srcGroup.NodeTypeCode == protocol.NodeClassNGRP {
-			result, err := s.resolver.Resolve(srcGroup, OrderTypeRetrieve, payloadCode, nil)
-			if err != nil {
-				// Route through the same classifier the complex-
-				// intake path uses. Behavior unchanged on this
-				// surface — buried → planBuriedReshuffle, structural
-				// → terminal planningError, capacity → queue. The
-				// classifier just replaces the two open-coded
-				// errors.As blocks.
-				switch class, payload := classifyResolutionError(err); class {
-				case ResolutionBuried:
-					buriedErr := payload.(*BuriedError)
-					s.dbg("retrieve: bin %d buried in lane %d, planning reshuffle", buriedErr.Bin.ID, buriedErr.LaneID)
-					return s.planBuriedReshuffle(order, buriedErr)
-				case ResolutionStructural:
-					structErr := payload.(*StructuralError)
-					s.dbg("retrieve: STRUCTURAL failure in group %s: %s",
-						order.SourceNode, structErr.Reason)
-					return nil, &planningError{
-						Code:   codeStructural,
-						Detail: structErr.Error(),
-						Err:    structErr,
-					}
-				default:
-					// ResolutionCapacity, Transient, and Fatal all
-					// queue here today. The pre-v7 path made the
-					// same call — anything not buried-or-structural
-					// fell through to the queue branch. Preserve.
-					s.dbg("retrieve: no source in group %s for payload=%s, queuing order %d", order.SourceNode, payloadCode, order.ID)
-					return &PlanningResult{Queued: true}, nil
-				}
-			}
-			source = result.Bin
-			sourceNode, _ = s.db.GetNode(*source.NodeID)
-		}
+	// Source finding is delegated to the shared SourceFinder (NGRP resolver →
+	// dedicated-loader pool → plant-wide FIFO, with the exclude-dest and no-
+	// fall-through scoping baked in) so intake and scanner-replay can't drift.
+	source, sourceNode, pr, pe, ok := s.resolveSource(order, IntentFull)
+	if !ok {
+		return pr, pe
 	}
 
-	// Dedicated home loader: a concrete position node sources from its loader's
-	// whole pool (every home position ∪ the kept-partial buffer), oldest part X
-	// first — so a partial parked in the buffer is consumed before a fresh full.
-	// Only fires when the source IS a loader position; any other node leaves
-	// source nil and falls through to the global FIFO scan below.
-	if source == nil && order.SourceNode != "" {
-		bin, bnode, isLoaderPos, lerr := s.sourceFromDedicatedLoader(order.SourceNode, payloadCode, binsource.Drain)
-		if lerr != nil {
-			return nil, &planningError{Code: codeLoaderSource, Detail: lerr.Error(), Err: lerr}
-		}
-		if isLoaderPos {
-			if bin == nil {
-				// Loader position with no eligible bin of X — queue; do NOT fall
-				// through to the global scan, which would pull plant-wide.
-				s.dbg("retrieve: loader pool for %s has no %s, queuing order %d", order.SourceNode, payloadCode, order.ID)
-				return &PlanningResult{Queued: true}, nil
-			}
-			source, sourceNode = bin, bnode
-		}
-	}
-
-	if source == nil {
-		// Resolve destination first so the source-finder can exclude it —
-		// prevents same-node retrieve when a matching bin is already at the
-		// destination. See SHINGO_TODO.md "Same-node retrieve" entry.
-		var excludeNodeID int64
-		if order.DeliveryNode != "" {
-			if destNode, err := s.db.GetNodeByDotName(order.DeliveryNode); err == nil && destNode != nil {
-				excludeNodeID = destNode.ID
-			}
-		}
-		var err error
-		source, err = s.db.FindSourceBinFIFO(payloadCode, excludeNodeID)
-		if err != nil {
-			s.dbg("retrieve: no source bin for payload=%s, queuing order %d", payloadCode, order.ID)
-			return &PlanningResult{Queued: true}, nil
-		}
-		sourceNode, err = s.db.GetNode(*source.NodeID)
-		if err != nil {
-			return nil, &planningError{Code: codeNode, Detail: err.Error(), Err: err}
-		}
-	}
-
-	s.dbg("retrieve: FIFO source bin=%d payload=%s node=%s", source.ID, payloadCode, sourceNode.Name)
+	s.dbg("retrieve: source bin=%d payload=%s node=%s", source.ID, payloadCode, sourceNode.Name)
 	if s.postFindHook != nil {
 		s.postFindHook()
 	}
@@ -339,99 +292,15 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 		log.Printf("dispatch: planRetrieveEmpty order %d → sourcing: %v", order.ID, err)
 	}
 
-	var bin *bins.Bin
-
-	// Destination resolution is shared by both source-group and fallback
-	// paths — used for excludeNodeID (prevent same-node retrieve) and
-	// preferZone (zone-preferring fallback). Hoisted out of the inner
-	// branches so the fallback can reuse it without re-querying.
-	var preferZone string
-	var excludeNodeID int64
-	if order.DeliveryNode != "" {
-		if destNode, derr := s.db.GetNodeByDotName(order.DeliveryNode); derr == nil && destNode != nil {
-			preferZone = destNode.Zone
-			excludeNodeID = destNode.ID
-		}
+	// Source finding is delegated to the shared SourceFinder (dedicated-loader
+	// Fill pool → group/lane-scoped empty → plant-wide empty, with the last-
+	// resort buried→reshuffle baked in as tier 6) so intake and scanner-replay
+	// can't drift on the scoping that isolates multi-supermarket empties.
+	bin, sourceNode, pr, pe, ok := s.resolveSource(order, IntentEmpty)
+	if !ok {
+		return pr, pe
 	}
-
-	// Dedicated home loader (Fill): a concrete position node sources a CONTAINER
-	// for X from the loader's pool — a partial of X to top up (oldest), else the
-	// cheapest empty. Mirrors planRetrieve's Drain branch, with Fill intent. The
-	// claim below is plain (no manifest change), so a topped-up partial keeps its
-	// X manifest; core completion moves the bin without clearing it. A non-loader
-	// (or NGRP/LANE) source falls through to the supermarket/global empty finders.
-	if order.SourceNode != "" {
-		chosen, _, isLoaderPos, lerr := s.sourceFromDedicatedLoader(order.SourceNode, payloadCode, binsource.Fill)
-		if lerr != nil {
-			return nil, &planningError{Code: codeLoaderSource, Detail: lerr.Error(), Err: lerr}
-		}
-		if isLoaderPos {
-			if chosen == nil {
-				s.dbg("retrieve_empty: loader pool for %s has no container for %s, queuing order %d", order.SourceNode, payloadCode, order.ID)
-				return &PlanningResult{Queued: true}, nil
-			}
-			bin = chosen
-		}
-	}
-
-	// Source-group resolution. When the edge sends order.SourceNode (e.g. a
-	// bin_loader claim's InboundSource), restrict the empty-bin search to
-	// descendants of that NGRP. Without this a Hopkinsville-style multi-
-	// supermarket setup pulls empties from whichever supermarket has the
-	// lowest bins.id — including the empty-tote return area instead of the
-	// configured pickup. Uses a dedicated group-scoped reader rather than
-	// reusing GroupResolver.ResolveRetrieve, because that path applies the
-	// payload-match-required semantics of isBinAvailableForRetrieve, which
-	// rejects empties (PayloadCode == "" != payloadCode).
-	if order.SourceNode != "" {
-		sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
-		// Accept either a supermarket NGRP or a LANE directly as the empties
-		// source container. FindEmptyCompatibleBinInGroup recurses descendants,
-		// so a LANE root scopes the search to that lane's own slots. Operators
-		// doing a manual empty pull may pick the lane node itself (not just the
-		// parent group) — both must resolve to the scoped reader rather than
-		// falling through to the global any-zone finder below.
-		if err == nil && sourceNode != nil && sourceNode.IsSynthetic &&
-			(sourceNode.NodeTypeCode == protocol.NodeClassNGRP || sourceNode.NodeTypeCode == protocol.NodeClassLANE) {
-			groupBin, gerr := s.db.FindEmptyCompatibleBinInGroup(payloadCode, sourceNode.ID, excludeNodeID)
-			if gerr != nil {
-				s.dbg("retrieve_empty: no empty in group %s for payload=%s, queuing order %d",
-					order.SourceNode, payloadCode, order.ID)
-				return &PlanningResult{Queued: true}, nil
-			}
-			bin = groupBin
-		}
-	}
-
-	if bin == nil {
-		var err error
-		bin, err = s.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeNodeID)
-		if err != nil {
-			s.dbg("retrieve_empty: no bin for payload=%s, queuing order %d", payloadCode, order.ID)
-			return &PlanningResult{Queued: true}, nil
-		}
-	}
-	s.dbg("retrieve_empty: found bin=%d label=%s at node=%s", bin.ID, bin.Label, bin.NodeName)
-
-	// Last-resort reshuffle. The empty finder now prefers accessible (lane-mouth)
-	// empties (bins.AccessibleEmptyOrder), so a bin that lands here buried means
-	// EVERY compatible empty was buried — dig this one out rather than fail the
-	// order. Before the 2026-06-13 accessibility ordering this fired routinely
-	// (the finder picked by bin id, lane-blind); now it is the rare fallback.
-	if bin.NodeID != nil {
-		accessible, accErr := s.db.IsSlotAccessible(*bin.NodeID)
-		if accErr == nil && !accessible {
-			slot, slotErr := s.db.GetNode(*bin.NodeID)
-			if slotErr == nil && slot.ParentID != nil {
-				lane, laneErr := s.db.GetNode(*slot.ParentID)
-				if laneErr == nil && lane.NodeTypeCode == protocol.NodeClassLANE {
-					s.dbg("retrieve_empty: bin %d is buried at slot %s in lane %s, triggering reshuffle",
-						bin.ID, slot.Name, lane.Name)
-					return s.planBuriedReshuffle(order, &BuriedError{Bin: bin, Slot: slot, LaneID: lane.ID})
-				}
-			}
-		}
-	}
+	s.dbg("retrieve_empty: found bin=%d label=%s at node=%s", bin.ID, bin.Label, sourceNode.Name)
 
 	if s.postFindHook != nil {
 		s.postFindHook()
@@ -444,10 +313,6 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	order.BinID = &bin.ID
 	if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
 		log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
-	}
-	sourceNode, err := s.db.GetNode(*bin.NodeID)
-	if err != nil {
-		return nil, &planningError{Code: codeNode, Detail: err.Error(), Err: err}
 	}
 	order.SourceNode = sourceNode.Name
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
@@ -526,121 +391,43 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 		log.Printf("dispatch: planMove order %d → sourcing: %v", order.ID, err)
 	}
 
-	// If the source is a synthetic NGRP (supermarket group), resolve to a
-	// concrete bin within the group. Without this, ListBinsByNode on the NGRP
-	// returns zero bins (they live at child slots, not on the NGRP itself),
-	// causing the order to dispatch without a bin claim. On completion the
-	// bin's DB location would never update — it'd still show the old slot.
+	// Source finding via the shared SourceFinder. The move tiers live there —
+	// NGRP resolver (concrete child slot), dedicated-loader Drain pool, and the
+	// concrete-node candidate — so intake and scanner-replay pick the same bin
+	// and can't drift. The finder is pure; the claim happens here.
 	//
-	// We reuse OrderTypeRetrieve semantics: finding the best bin in an NGRP
-	// for a move-from-supermarket is the same operation as a retrieve.
-	if sourceNode.IsSynthetic && sourceNode.NodeTypeCode == protocol.NodeClassNGRP && s.resolver != nil {
-		result, rErr := s.resolver.Resolve(sourceNode, OrderTypeRetrieve, payloadCode, nil)
-		if rErr != nil {
-			switch class, payload := classifyResolutionError(rErr); class {
-			case ResolutionBuried:
-				buriedErr := payload.(*BuriedError)
-				s.dbg("move: bin %d buried in lane %d, planning reshuffle", buriedErr.Bin.ID, buriedErr.LaneID)
-				return s.planBuriedReshuffle(order, buriedErr)
-			case ResolutionStructural:
-				structErr := payload.(*StructuralError)
-				s.dbg("move: STRUCTURAL failure in group %s: %s (falling through to queue)",
-					order.SourceNode, structErr.Reason)
-				fallthrough
-			default:
-				s.dbg("move: no source in group %s for payload=%s, queuing order %d", order.SourceNode, payloadCode, order.ID)
-				return &PlanningResult{Queued: true}, nil
-			}
-		}
-		if result.Bin != nil {
-			remainingUOP := extractRemainingUOP(env)
-			if err := s.binManifest.ClaimForDispatch(result.Bin.ID, order.ID, remainingUOP); err != nil {
-				return nil, asPlanningError(err, err.Error())
-			}
-			order.BinID = &result.Bin.ID
-			if err := s.db.UpdateOrderBinID(order.ID, result.Bin.ID); err != nil {
-				log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
-			}
-			// Update sourceNode to the resolved concrete slot so that
-			// SourceNode in the DB reflects the actual pickup location,
-			// not the NGRP name. This is critical for handleOrderCompleted.
-			concreteNode, cErr := s.db.GetNode(*result.Bin.NodeID)
-			if cErr != nil {
-				return nil, &planningError{Code: codeNode, Detail: fmt.Sprintf("resolve slot for bin %d: %v", result.Bin.ID, cErr), Err: cErr}
-			}
-			sourceNode = concreteNode
-			s.dbg("move: NGRP resolved bin=%d at %s (remainingUOP=%v)", result.Bin.ID, sourceNode.Name, remainingUOP)
-		} else {
-			// Resolver returned a node but no specific bin — queue and retry.
-			s.dbg("move: NGRP resolved node %s but no bin, queuing order %d", result.Node.Name, order.ID)
-			return &PlanningResult{Queued: true}, nil
-		}
-	} else if bin, bnode, isLoaderPos, lerr := s.sourceFromDedicatedLoader(order.SourceNode, payloadCode, binsource.Drain); lerr != nil {
-		return nil, &planningError{Code: codeLoaderSource, Detail: lerr.Error(), Err: lerr}
-	} else if isLoaderPos && payloadCode != "" {
-		// Dedicated-loader position, part-keyed move: source the loader's whole
-		// pool (every home position ∪ the kept-partial buffer), oldest part X
-		// first — same as planRetrieve. A move-mode consume cell (swap dispatch
-		// issues a move, not a retrieve) reaches a partial parked in the buffer
-		// this way. No eligible bin of X → queue; do NOT fall through to the
-		// single-node claim, which would only see the position and miss the buffer.
-		//
-		// Empty payload is excluded on purpose: a payload-less move is a direct
-		// relocation of the physical bin sitting AT the position (a manual move,
-		// or a true-empty carrier the operator is shuffling), not a part-keyed
-		// pool source — pool sourcing keys on the part and can't resolve an empty,
-		// so it would queue and then hard-fail on the fulfiller's empty-payload
-		// guard. Fall through to the concrete-node claim below, which claims the
-		// bin actually parked there regardless of payload (BinUnavailableReason
-		// skips the payload check when the order payload is blank) — the same path
-		// a move from any non-loader node already uses.
-		if bin == nil {
-			s.dbg("move: loader pool for %s has no %s, queuing order %d", order.SourceNode, payloadCode, order.ID)
-			return &PlanningResult{Queued: true}, nil
-		}
-		remainingUOP := extractRemainingUOP(env)
-		if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, remainingUOP); err != nil {
-			return nil, asPlanningError(err, err.Error())
-		}
-		order.BinID = &bin.ID
-		if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
-			log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
-		}
-		sourceNode = bnode
-		s.dbg("move: loader pool sourced bin=%d at %s (remainingUOP=%v)", bin.ID, sourceNode.Name, remainingUOP)
-	} else {
-		// Concrete source node: claim a bin directly at the node.
-		candidates, _ := s.db.ListBinsByNode(sourceNode.ID)
-		remainingUOP := extractRemainingUOP(env)
-		picked, rejects, raced := claimFirstAvailable(candidates, payloadCode, func(b *bins.Bin) error {
-			return s.binManifest.ClaimForDispatch(b.ID, order.ID, remainingUOP)
-		})
-		if picked == nil {
-			detail := fmt.Sprintf("no unclaimed bin at %s for move order %d (evaluated %d bin(s); rejects: [%s])",
-				order.SourceNode, order.ID, len(candidates), joinRejects(rejects))
-			s.dbg("move: order %d at %s — %s", order.ID, order.SourceNode, detail)
-			// Race-loss vs structural-unavailable discrimination (#4).
-			// claim_failed is retry-eligible; the caller (planning
-			// service plan loop) treats it as a queue signal so the
-			// scanner re-tries on the next tick.
-			if raced {
-				return nil, asPlanningError(nil, detail)
-			}
-			if payloadCode != "" {
-				return nil, &planningError{Code: codeNoPayload, Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.SourceNode)}
-			}
-			// Safety net: a move order without a claimed bin would silently
-			// dispatch to the fleet, but handleOrderCompleted would skip the
-			// bin arrival update (BinID == nil). Fail loudly instead.
-			return nil, &planningError{Code: codeNoBin, Detail: detail}
-		}
-		order.BinID = &picked.ID
-		if err := s.db.UpdateOrderBinID(order.ID, picked.ID); err != nil {
-			s.dbg("move: WARNING order %d UpdateOrderBinID(bin=%d) failed — order.BinID will read NULL on next load: %v",
-				order.ID, picked.ID, err)
-		}
-		s.dbg("move: claimed bin=%d at %s (remainingUOP=%v)", picked.ID, order.SourceNode, remainingUOP)
+	// Behavior changes vs the old inline branches (intended, ratified with the
+	// A6 fix direction — a queued move should hold-and-retry, not spuriously
+	// terminal-fail):
+	//   - the concrete-node tier is find-first-available-then-claim (was
+	//     claimFirstAvailable's within-call multi-try); a claim race re-queues
+	//     via claim_failed and the next scanner tick picks another candidate.
+	//   - no available bin at the source node now QUEUES and holds-and-retries
+	//     (was terminal codeNoBin/codeNoPayload) — demand is operator-driven and
+	//     never evaporates, so the bin is expected to arrive.
+	//   - a structural NGRP-source error stays TERMINAL, failing with the
+	//     structural detail (was a move-specific fall-through-queue) — a config
+	//     or human error never self-heals, so it must fail loudly rather than sit
+	//     queued. The finder maps ResolutionStructural -> OutcomeStructural and
+	//     resolveSource raises it as a terminal planningError, unifying move's
+	//     disposition with planRetrieve.
+	source, resolvedSource, pr, pe, ok := s.resolveSource(order, IntentFull)
+	if !ok {
+		return pr, pe
 	}
+	remainingUOP := extractRemainingUOP(env)
+	if err := s.binManifest.ClaimForDispatch(source.ID, order.ID, remainingUOP); err != nil {
+		return nil, asPlanningError(err, err.Error())
+	}
+	order.BinID = &source.ID
+	if err := s.db.UpdateOrderBinID(order.ID, source.ID); err != nil {
+		log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
+	}
+	// The finder returns the concrete slot (resolved NGRP child, loader
+	// position, or concrete node) — the actual pickup location handleOrderCompleted
+	// needs, never the NGRP name.
+	sourceNode = resolvedSource
+	s.dbg("move: sourced bin=%d at %s (remainingUOP=%v)", source.ID, sourceNode.Name, remainingUOP)
 
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
 		log.Printf("dispatch: update order %d source_node: %v", order.ID, err)

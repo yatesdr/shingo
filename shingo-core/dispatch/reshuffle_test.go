@@ -1476,7 +1476,8 @@ func TestRestoreBlockers_OffDefault(t *testing.T) {
 }
 
 // TestReshuffleRestoreParent_NotVisibleToScanner: synthetic parent
-// at StatusReshuffling does not appear in ListQueuedOrders.
+// at StatusReshuffling does not appear in the scanner's acquiring scan set
+// (Reshuffling is neither queued nor sourcing).
 func TestReshuffleRestoreParent_NotVisibleToScanner(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -1489,13 +1490,13 @@ func TestReshuffleRestoreParent_NotVisibleToScanner(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(syn), "create synthetic")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(syn.ID, string(StatusReshuffling), "test"), "set Reshuffling")
 
-	queued, err := db.ListQueuedOrders()
+	queued, err := db.ListAcquiringOrders()
 	if err != nil {
-		t.Fatalf("ListQueuedOrders: %v", err)
+		t.Fatalf("ListAcquiringOrders: %v", err)
 	}
 	for _, o := range queued {
 		if o.OrderType == OrderTypeReshuffleRestore {
-			t.Errorf("synthetic restore parent %d returned by ListQueuedOrders", o.ID)
+			t.Errorf("synthetic restore parent %d returned by ListAcquiringOrders", o.ID)
 		}
 	}
 }

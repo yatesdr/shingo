@@ -1,9 +1,7 @@
 package fulfillment
 
 import (
-	"shingo/protocol"
 	"shingocore/dispatch"
-	"shingocore/dispatch/binresolver"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -43,19 +41,19 @@ type Lifecycle interface {
 	Queue(ord *orders.Order, actor, reason string) error
 }
 
-// Resolver is the narrow resolver surface the scanner depends on.
-//
-// Signature mirrors binresolver.NodeResolver (exported via the
-// dispatch.NodeResolver alias). Declared here rather than reusing
-// the alias so scanner_test.go does not have to pull in dispatch
-// to stub a fake resolver.
-type Resolver interface {
-	Resolve(syntheticNode *nodes.Node, orderType protocol.OrderType, payloadCode string, binTypeID *int64) (*binresolver.ResolveResult, error)
+// BinFinder is the narrow source-finding surface the scanner depends on — the
+// ONE seam both intake planning and scanner replay route through, so the scanner
+// can no longer drift its own inline finder from intake's tier scoping (the bug
+// the collapse fixed). *dispatch.SourceFinder satisfies it structurally; the
+// finder is pure (no claims/transitions), so the scanner keeps its own claim +
+// dispatch orchestration and only asks the finder "where is the bin."
+type BinFinder interface {
+	FindSource(order *orders.Order, intent dispatch.Intent) dispatch.SourceResult
 }
 
 // Claimer is the reserve-then-claim primitive the scanner uses to claim a source
 // bin (Acquire -> claim -> Confirm). A one-method consumer interface (matching
-// Dispatcher/Lifecycle/Resolver) so scanner_test.go can stub it without pulling
+// Dispatcher/Lifecycle/BinFinder) so scanner_test.go can stub it without pulling
 // in service; *service.BinManifestService satisfies it structurally.
 type Claimer interface {
 	ClaimForDispatch(binID, orderID int64, remainingUOP *int) error
@@ -66,6 +64,6 @@ type Claimer interface {
 // method, the assertion catches it before a build failure elsewhere.
 var (
 	_ Dispatcher = (*dispatch.Dispatcher)(nil)
-	_ Resolver   = (*dispatch.DefaultResolver)(nil)
+	_ BinFinder  = (*dispatch.SourceFinder)(nil)
 	_ Lifecycle  = (*dispatch.LifecycleService)(nil)
 )

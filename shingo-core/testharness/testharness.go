@@ -55,6 +55,16 @@ func CreateBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int6
 	return testdb.CreateBinAtNode(t, db, payloadCode, nodeID, label)
 }
 
+// ClaimBinForTest reserves then claims binID for orderID via the production
+// reserve→claim→confirm path (a bare db.ClaimBin fails the demoted-CAS seatbelt,
+// which requires a pending reservation). orderID must reference a real order.
+// Wraps the internal testdb helper so cross-module integration scenarios can
+// establish a claimed-bin precondition without importing internal/testdb.
+func ClaimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
+	t.Helper()
+	testdb.ClaimBinForTest(t, db, binID, orderID)
+}
+
 // MockBackend is the fleet.Backend stub used by Core dispatch tests.
 // Re-exported so the integration harness can construct dispatchers
 // without touching internal/testdb directly.

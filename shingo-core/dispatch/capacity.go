@@ -55,11 +55,13 @@ type CapacityDB interface {
 // rendering to operators.
 //
 // excludeOrderID is the caller's own order — its in-flight status is
-// excluded from the count to prevent self-collision when planning-time
-// gates check capacity from inside the order's own dispatch path.
-// Pass 0 from preview/scanner paths where the caller's order ID is
-// either nonexistent or already in `queued` status (which the in-
-// flight count excludes anyway).
+// excluded from the count to prevent self-collision when a gate checks
+// capacity from inside the order's own dispatch/retry path. Every real
+// caller now passes its order.ID: the intake planners always did, and the
+// fulfillment scanner must too since commit 3b widened its retry set to
+// include `sourcing` orders (which the in-flight tally counts) — passing 0
+// there would let a self-retrying order block itself forever. Pass 0 only
+// from preview paths that have no order row yet.
 //
 // "Capacity" here is the same predicate the fulfillment scanner has
 // used for queued retrieves: zero physical bins at the node AND zero

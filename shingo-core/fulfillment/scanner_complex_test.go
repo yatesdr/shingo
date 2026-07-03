@@ -24,11 +24,12 @@ func (s *stubDispatcher) DispatchPreparedComplex(o *orders.Order) error {
 	return s.preparedErr
 }
 
-func newTestScannerWithDispatcher(t *testing.T, db Store, d Dispatcher) *Scanner {
+func newTestScannerWithDispatcher(t *testing.T, f *fakeStore, d Dispatcher) *Scanner {
 	t.Helper()
-	claimer, _ := db.(Claimer) // fakeStore implements ClaimForDispatch
+	// finder is nil: the complex branch dispatches via DispatchPreparedComplex
+	// and returns before the source finder is consulted.
 	return NewScanner(
-		db, d, stubLifecycle{db: db}, nil, claimer,
+		f, d, stubLifecycle{db: f}, nil, f,
 		func(string, string, any) error { return nil },
 		func(int64, string, string) {},
 		t.Logf, nil,

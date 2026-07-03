@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/dispatch"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -16,34 +17,20 @@ import (
 
 // Scope note:
 //
-// These tests exercise the scanner's pre-dispatch control flow — the
-// branches of tryFulfill that return false before
-// s.dispatcher.DispatchDirect is invoked. That covers every
-// "skip / unclaim / re-queue" path the production scanner walks when
-// inventory is missing, the order was cancelled, the destination is
-// still occupied, the bin claim fails, or an intermediate lookup
-// errors out.
-//
-// The happy-path dispatch, the NGRP structural-error path, and the
-// sendToEdge ack/waybill path are intentionally out of scope: both
-// *dispatch.Dispatcher and *dispatch.DefaultResolver are concrete
-// types holding *store.DB, and stubbing them requires either a
-// database or a larger scanner refactor (dependency inversion for
-// the dispatcher/resolver fields). The integration-level test
-// TestFulfillmentScanner_QueueToDispatch in engine/ already covers
-// the green path end-to-end; these unit tests fill in the branches
-// that were previously only exercised by production traffic.
+// These tests exercise the scanner's pre-dispatch control flow — the branches of
+// tryFulfill up to and including dispatch. Source finding itself is NOT tested
+// here: it moved to the shared dispatch.SourceFinder (dispatch/source_finder_test.go
+// pins the tier cascade). The scanner holds the finder behind the one-method
+// BinFinder interface, so these tests drive a fakeFinder returning a canned
+// outcome and assert the scanner's orchestration around it — claim, rollback,
+// re-queue, dispatch, and the store short-circuit.
 
-// stubLifecycle implements the narrow Lifecycle interface for tests by
-// writing transition calls through to the underlying fake Store. The
-// scanner now routes status changes through lifecycle.MoveToSourcing
-// and lifecycle.Queue rather than calling db.UpdateOrderStatus directly,
-// but tests assert against the fake store's statusUpdates slice. The
-// stub preserves the existing contract: lifecycle calls land in the
-// fake's recorded-update list, so test expectations like "expected 2
-// status updates: Sourcing then Queued" continue to work.
+// stubLifecycle implements the narrow Lifecycle interface for tests by writing
+// transition calls through to the fake store's UpdateOrderStatus (kept on the
+// fake though it's no longer a Store method) so test expectations like "expected
+// Sourcing then Queued" keep asserting against statusUpdates.
 type stubLifecycle struct {
-	db Store
+	db *fakeStore
 }
 
 func (s stubLifecycle) MoveToSourcing(ord *orders.Order, _, reason string) error {
@@ -54,33 +41,86 @@ func (s stubLifecycle) Queue(ord *orders.Order, _, reason string) error {
 	return s.db.UpdateOrderStatus(ord.ID, string(protocol.StatusQueued), reason)
 }
 
-// newTestScanner builds a Scanner wired to a fake store and no-op
-// callbacks. Dispatcher and resolver are left nil — every test here
-// stays on paths that return before invoking them. Lifecycle is wired
-// to a stub that writes through to the fake store so transition calls
-// register in the fake's statusUpdates slice for assertion.
-func newTestScanner(t *testing.T, db Store) *Scanner {
+// fakeFinder stubs BinFinder: it records each call and returns a canned outcome.
+type fakeFinder struct {
+	result dispatch.SourceResult
+	calls  []fakeFinderCall
+}
+
+type fakeFinderCall struct {
+	orderID int64
+	intent  dispatch.Intent
+}
+
+func (f *fakeFinder) FindSource(order *orders.Order, intent dispatch.Intent) dispatch.SourceResult {
+	f.calls = append(f.calls, fakeFinderCall{orderID: order.ID, intent: intent})
+	return f.result
+}
+
+func waitFinder(reason string) *fakeFinder {
+	return &fakeFinder{result: dispatch.SourceResult{Outcome: dispatch.OutcomeWait, QueueReason: reason}}
+}
+
+func foundFinder(binID int64, nodeName string) *fakeFinder {
+	return &fakeFinder{result: dispatch.SourceResult{
+		Outcome: dispatch.OutcomeFound,
+		Bin:     &bins.Bin{ID: binID},
+		Node:    &nodes.Node{ID: 900 + binID, Name: nodeName},
+	}}
+}
+
+// recordingDispatcher records DispatchDirect for the paths that reach dispatch.
+type recordingDispatcher struct {
+	directCalls []directCall
+	directErr   error
+}
+
+type directCall struct {
+	orderID    int64
+	sourceNode string
+	destNode   string
+}
+
+func (d *recordingDispatcher) DispatchDirect(o *orders.Order, src, dst *nodes.Node) (string, error) {
+	d.directCalls = append(d.directCalls, directCall{orderID: o.ID, sourceNode: src.Name, destNode: dst.Name})
+	if d.directErr != nil {
+		return "", d.directErr
+	}
+	return "V-1", nil
+}
+
+func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
+	panic("recordingDispatcher: complex path not expected in this test")
+}
+
+// newTestScanner wires a scanner whose finder always waits and whose dispatcher
+// is nil — for the pre-finder branches (cancelled, in-flight, dest occupied,
+// empty-payload guard) that never reach dispatch. failFn t.Errorf's on any call
+// so a guard regression fails the test automatically.
+func newTestScanner(t *testing.T, f *fakeStore) *Scanner {
 	t.Helper()
-	claimer, _ := db.(Claimer) // fakeStore implements ClaimForDispatch
-	return NewScanner(
-		db,
-		nil, // dispatcher — not reached on any tested path
-		stubLifecycle{db: db},
-		nil, // resolver — not reached on any tested path
-		claimer,
-		func(string, string, any) error { return nil },
+	return newScannerWith(t, f, waitFinder("no source"), nil,
 		func(orderID int64, code, detail string) {
-			t.Errorf("unexpected failFn call: order=%d code=%s detail=%s",
-				orderID, code, detail)
-		},
+			t.Errorf("unexpected failFn call: order=%d code=%s detail=%s", orderID, code, detail)
+		})
+}
+
+func newScannerWith(t *testing.T, f *fakeStore, finder BinFinder, dispatcher Dispatcher, failFn func(int64, string, string)) *Scanner {
+	t.Helper()
+	return NewScanner(
+		f,
+		dispatcher,
+		stubLifecycle{db: f},
+		finder,
+		f, // claimer
+		func(string, string, any) error { return nil },
+		failFn,
 		t.Logf,
 		nil,
 	)
 }
 
-// seedQueuedRetrieve installs a simple retrieve order and the
-// delivery node lookup it will perform. Source node lookups default
-// to empty so tryFulfill falls through to FindSourceBinFIFO.
+// seedQueuedRetrieve installs a simple retrieve order and its delivery node.
 func seedQueuedRetrieve(f *fakeStore, orderID int64, deliveryNode string) *orders.Order {
 	order := &orders.Order{
 		ID:           orderID,
@@ -120,18 +160,13 @@ func TestScanner_ListQueuedOrders_ErrorReturnsZero(t *testing.T) {
 	}
 }
 
-// ── tryFulfill() branches ────────────────────────────────────────────
+// ── tryFulfill() pre-finder branches ─────────────────────────────────
 
 func TestScanner_TryFulfill_OrderCancelledBetweenListAndFetch(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 1, "dest-01")
-	// GetOrder returns a fresh copy where the order has since flipped
-	// out of queued (cancelled/failed/etc). tryFulfill must skip it.
-	f.ordersByID[order.ID] = &orders.Order{
-		ID:     order.ID,
-		Status: protocol.StatusCancelled,
-	}
+	f.ordersByID[order.ID] = &orders.Order{ID: order.ID, Status: protocol.StatusCancelled}
 	s := newTestScanner(t, f)
 
 	if got := s.RunOnce(); got != 0 {
@@ -161,8 +196,6 @@ func TestScanner_TryFulfill_DestNodeHasBin_Skipped(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 3, "dest-03")
-	// Node lookup succeeds; the node still has a bin parked on it
-	// (e.g. the previous order's outbound hasn't been unloaded yet).
 	f.binsAtNode[100] = 1
 	s := newTestScanner(t, f)
 
@@ -174,11 +207,7 @@ func TestScanner_TryFulfill_DestNodeHasBin_Skipped(t *testing.T) {
 	}
 }
 
-// Empty PayloadCode on a non-complex order is a construction bug. The
-// scanner used to return silently, leaving the order queued forever
-// with no operator-visible signal; the guard routes through failFn so
-// the standard EventOrderFailed handler chain (audit, return order,
-// edge notification) fires.
+// A blank payload on a plain retrieve is a construction bug — route through failFn.
 func TestScannerScanForRetrieve_FailsCleanlyOnEmptyPayload(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
@@ -190,23 +219,13 @@ func TestScannerScanForRetrieve_FailsCleanlyOnEmptyPayload(t *testing.T) {
 		code    string
 		detail  string
 	}
-	s := NewScanner(
-		f,
-		nil,
-		stubLifecycle{db: f},
-		nil,
-		f, // claimer
-		func(string, string, any) error { return nil },
-		func(orderID int64, code, detail string) {
-			failCalls = append(failCalls, struct {
-				orderID int64
-				code    string
-				detail  string
-			}{orderID, code, detail})
-		},
-		t.Logf,
-		nil,
-	)
+	s := newScannerWith(t, f, waitFinder("unused"), nil, func(orderID int64, code, detail string) {
+		failCalls = append(failCalls, struct {
+			orderID int64
+			code    string
+			detail  string
+		}{orderID, code, detail})
+	})
 
 	if got := s.RunOnce(); got != 0 {
 		t.Fatalf("RunOnce: got %d, want 0 (empty payload)", got)
@@ -217,83 +236,86 @@ func TestScannerScanForRetrieve_FailsCleanlyOnEmptyPayload(t *testing.T) {
 	if len(failCalls) != 1 {
 		t.Fatalf("failFn should be called exactly once for empty payload, got %d", len(failCalls))
 	}
-	fc := failCalls[0]
-	if fc.orderID != order.ID {
-		t.Errorf("failFn order ID = %d, want %d", fc.orderID, order.ID)
-	}
-	if fc.code != "structural" {
-		t.Errorf("failFn code = %q, want %q", fc.code, "structural")
-	}
-	if !strings.Contains(fc.detail, "empty payload_code") {
-		t.Errorf("failFn detail = %q, want substring %q", fc.detail, "empty payload_code")
+	if fc := failCalls[0]; fc.orderID != order.ID || fc.code != "structural" || !strings.Contains(fc.detail, "empty payload_code") {
+		t.Errorf("failFn call = %+v, want order %d code=structural detail~empty payload_code", fc, order.ID)
 	}
 }
 
-func TestScanner_TryFulfill_RetrieveEmpty_NoBinAvailable_UsesDestZone(t *testing.T) {
+// ── tryFulfill() finder-driven branches ──────────────────────────────
+
+// retrieve_empty routes to the finder with IntentEmpty; a Wait leaves the order
+// queued (no claim, no failFn).
+func TestScanner_TryFulfill_RetrieveEmpty_FinderWaits_StaysQueued(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 5, "dest-05")
 	order.OrderType = protocol.OrderTypeRetrieveEmpty
-	// delivery node has Zone="ZONE-A" already — preferZone should
-	// derive from it.
-	f.errFindEmptyBin = errors.New("no empties available")
+	finder := waitFinder("no empty bin available")
 	s := newTestScanner(t, f)
+	s.finder = finder // finder is white-box accessible in-package
 
 	if got := s.RunOnce(); got != 0 {
 		t.Fatalf("RunOnce: got %d, want 0 (no empty bin)", got)
 	}
-	if len(f.findEmptyPrefZones) != 1 {
-		t.Fatalf("FindEmptyCompatibleBin should be called once, got %d", len(f.findEmptyPrefZones))
-	}
-	got := f.findEmptyPrefZones[0]
-	if got.PayloadCode != "PN-123" {
-		t.Errorf("payload code: got %q, want %q", got.PayloadCode, "PN-123")
-	}
-	if got.PreferZone != "ZONE-A" {
-		t.Errorf("preferZone derivation: got %q, want %q (dest node's zone)",
-			got.PreferZone, "ZONE-A")
-	}
-}
-
-// A retrieve_empty order legitimately carries a blank payload_code: an
-// empty is a generic carrier, so the operator-agnostic loader request
-// ("REQUEST EMPTY" on a manual_swap bin loader) ships untagged and Core
-// sources any compatible empty. The empty-payload guard must NOT fire for
-// retrieve_empty — doing so turned a should-wait-for-empty into a hard
-// "cannot match a source bin" failure (the Springfield SMN_001 spam). A
-// blank retrieve_empty must reach the empty finder; with none available it
-// stays queued (no failFn). newTestScanner's failFn t.Errorf's on any call,
-// so a guard regression fails this test automatically.
-func TestScanner_TryFulfill_RetrieveEmpty_BlankPayload_ReachesFinder(t *testing.T) {
-	t.Parallel()
-	f := newFakeStore()
-	order := seedQueuedRetrieve(f, 9, "dest-09")
-	order.OrderType = protocol.OrderTypeRetrieveEmpty
-	order.PayloadCode = "" // agnostic empty request — blank is legitimate here
-	f.errFindEmptyBin = errors.New("no empties available")
-	s := newTestScanner(t, f)
-
-	if got := s.RunOnce(); got != 0 {
-		t.Fatalf("RunOnce: got %d, want 0 (no empty available → stays queued)", got)
-	}
-	if len(f.findEmptyPrefZones) != 1 {
-		t.Fatalf("FindEmptyCompatibleBin should be called once for blank retrieve_empty, got %d (guard fired instead?)",
-			len(f.findEmptyPrefZones))
-	}
-	if got := f.findEmptyPrefZones[0].PayloadCode; got != "" {
-		t.Errorf("payload passed to finder: got %q, want \"\" (blank/agnostic)", got)
+	if len(finder.calls) != 1 || finder.calls[0].intent != dispatch.IntentEmpty {
+		t.Fatalf("finder should be called once with IntentEmpty, got %+v", finder.calls)
 	}
 	if len(f.claimedBins) != 0 {
 		t.Errorf("no empty available should not claim a bin: %v", f.claimedBins)
 	}
 }
 
-func TestScanner_TryFulfill_Retrieve_NoSourceBin_Skipped(t *testing.T) {
+// A retrieve_empty carries a blank payload legitimately (agnostic empty request);
+// the empty-payload guard must NOT fire — the order must reach the finder.
+func TestScanner_TryFulfill_RetrieveEmpty_BlankPayload_ReachesFinder(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	order := seedQueuedRetrieve(f, 9, "dest-09")
+	order.OrderType = protocol.OrderTypeRetrieveEmpty
+	order.PayloadCode = "" // blank is legitimate here
+	finder := waitFinder("no empty bin available")
+	s := newTestScanner(t, f)
+	s.finder = finder
+
+	if got := s.RunOnce(); got != 0 {
+		t.Fatalf("RunOnce: got %d, want 0 (no empty → stays queued)", got)
+	}
+	if len(finder.calls) != 1 || finder.calls[0].intent != dispatch.IntentEmpty {
+		t.Fatalf("blank retrieve_empty must reach the finder with IntentEmpty (guard must not fire), got %+v", finder.calls)
+	}
+	if len(f.claimedBins) != 0 {
+		t.Errorf("no empty available should not claim a bin: %v", f.claimedBins)
+	}
+}
+
+// A payload-less MOVE must NOT trip the empty-payload guard — it reaches the
+// finder (IntentFull) and no failFn fires. [A6]
+func TestScanner_TryFulfill_PayloadlessMove_ReachesFinder(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	order := seedQueuedRetrieve(f, 15, "dest-15")
+	order.OrderType = protocol.OrderTypeMove
+	order.PayloadCode = ""
+	order.SourceNode = "MOVE-SRC"
+	finder := waitFinder("no available bin at MOVE-SRC")
+	s := newTestScanner(t, f) // its failFn t.Errorf's on any call
+	s.finder = finder
+
+	if got := s.RunOnce(); got != 0 {
+		t.Fatalf("RunOnce: got %d, want 0 (finder waits)", got)
+	}
+	if len(finder.calls) != 1 || finder.calls[0].intent != dispatch.IntentFull {
+		t.Fatalf("payload-less move must reach the finder with IntentFull (guard exempt), got %+v", finder.calls)
+	}
+}
+
+func TestScanner_TryFulfill_Retrieve_FinderWaits_Skipped(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 6, "dest-06")
-	f.errFindSourceBinFIFO = errors.New("no source bin")
+	finder := waitFinder("no source bin available")
 	s := newTestScanner(t, f)
+	s.finder = finder
 
 	if got := s.RunOnce(); got != 0 {
 		t.Fatalf("RunOnce: got %d, want 0 (no source bin)", got)
@@ -301,16 +323,18 @@ func TestScanner_TryFulfill_Retrieve_NoSourceBin_Skipped(t *testing.T) {
 	if len(f.claimedBins) != 0 {
 		t.Errorf("no-source should not claim a bin: %v", f.claimedBins)
 	}
+	if len(f.queueReasons) != 1 || f.queueReasons[0].Reason != "no source bin available" {
+		t.Errorf("queue_reason should record the finder's wait reason, got %v", f.queueReasons)
+	}
 }
 
-func TestScanner_TryFulfill_ClaimBinFails_SkipsSilently(t *testing.T) {
+func TestScanner_TryFulfill_ClaimFails_SkipsSilently(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 7, "dest-07")
-	sourceNodeID := int64(200)
-	f.sourceBin = &bins.Bin{ID: 42, NodeID: &sourceNodeID, PayloadCode: "PN-123"}
 	f.errClaimBin = errors.New("already claimed by another scanner")
 	s := newTestScanner(t, f)
+	s.finder = foundFinder(42, "src-07")
 
 	if got := s.RunOnce(); got != 0 {
 		t.Fatalf("RunOnce: got %d, want 0 (claim contention)", got)
@@ -323,74 +347,151 @@ func TestScanner_TryFulfill_ClaimBinFails_SkipsSilently(t *testing.T) {
 	}
 }
 
-func TestScanner_TryFulfill_GetNodeAfterClaimFails_Unclaims(t *testing.T) {
-	t.Parallel()
-	f := newFakeStore()
-	seedQueuedRetrieve(f, 8, "dest-08")
-	sourceNodeID := int64(201)
-	f.sourceBin = &bins.Bin{ID: 43, NodeID: &sourceNodeID, PayloadCode: "PN-123"}
-	// Bin claim succeeds, but the source-node lookup fails before the
-	// order can be updated. The scanner must release the claim so
-	// the bin is selectable by the next pass.
-	f.errGetNode = errors.New("node disappeared")
-	s := newTestScanner(t, f)
-
-	if got := s.RunOnce(); got != 0 {
-		t.Fatalf("RunOnce: got %d, want 0 (node lookup failed)", got)
-	}
-	if len(f.claimedBins) != 1 {
-		t.Fatalf("bin should have been claimed before the failure: got %v", f.claimedBins)
-	}
-	if len(f.unclaimedOrderIDs) != 1 || f.unclaimedOrderIDs[0] != 8 {
-		t.Errorf("unclaim should run for order 8: got %v", f.unclaimedOrderIDs)
-	}
-	if len(f.statusUpdates) != 0 {
-		t.Errorf("status should not be touched when source node missing: %v", f.statusUpdates)
-	}
-}
-
+// After a successful claim, a failed destination lookup must release the claim
+// and re-queue (status trail Sourcing → Queued). The finder returns the source
+// node, so there is no post-claim source-node re-resolve anymore.
 func TestScanner_TryFulfill_DestNodeLookupFails_UnclaimsAndRequeues(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
-	order := seedQueuedRetrieve(f, 9, "dest-09")
-	sourceNodeID := int64(202)
-	f.sourceBin = &bins.Bin{ID: 44, NodeID: &sourceNodeID, PayloadCode: "PN-123"}
-	f.nodesByID[sourceNodeID] = &nodes.Node{ID: sourceNodeID, Name: "src-09"}
-
-	// First GetNodeByDotName succeeds (bin-occupancy check);
-	// second call (final destination resolution) fails.
-	var calls int32
-	dest := f.nodesByDot[order.DeliveryNode]
-	f.getNodeByDotNameFn = func(name string) (*nodes.Node, error) {
-		n := atomic.AddInt32(&calls, 1)
-		if n == 1 {
-			return dest, nil
-		}
-		return nil, errors.New("dest vanished")
-	}
-
+	// dest-09 is intentionally NOT registered: the capacity gate treats the
+	// lookup miss as "not blocked" (passes), then the post-claim dest resolve
+	// fails and the scanner rolls back.
+	order := &orders.Order{ID: 9, Status: protocol.StatusQueued, PayloadCode: "PN-123", DeliveryNode: "dest-09"}
+	f.queued = append(f.queued, order)
+	f.ordersByID[9] = order
 	s := newTestScanner(t, f)
+	s.finder = foundFinder(44, "src-09")
+
 	if got := s.RunOnce(); got != 0 {
 		t.Fatalf("RunOnce: got %d, want 0 (dest lookup failed after claim)", got)
 	}
-
 	if len(f.claimedBins) != 1 {
 		t.Fatalf("bin should have been claimed before dest lookup: got %v", f.claimedBins)
 	}
 	if len(f.unclaimedOrderIDs) != 1 || f.unclaimedOrderIDs[0] != 9 {
 		t.Errorf("unclaim should run for order 9: got %v", f.unclaimedOrderIDs)
 	}
+	if len(f.statusUpdates) != 2 ||
+		f.statusUpdates[0].Status != string(protocol.StatusSourcing) ||
+		f.statusUpdates[1].Status != string(protocol.StatusQueued) {
+		t.Fatalf("status trail: got %v, want [Sourcing, Queued]", f.statusUpdates)
+	}
+}
 
-	// Status trail: StatusSourcing (bin found) → StatusQueued (re-queue)
-	if len(f.statusUpdates) != 2 {
-		t.Fatalf("expected 2 status updates, got %d: %v", len(f.statusUpdates), f.statusUpdates)
+// A queued store dispatches the bin it already holds — no finder call, no second
+// claim. [A5]
+func TestStoreReplayDispatchesOwnClaimedBin(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	binID := int64(77)
+	order := &orders.Order{
+		ID:           4,
+		Status:       protocol.StatusQueued,
+		OrderType:    protocol.OrderTypeStore,
+		BinID:        &binID,
+		SourceNode:   "STORE-SRC",
+		DeliveryNode: "STORE-DEST",
 	}
-	if f.statusUpdates[0].Status != string(protocol.StatusSourcing) {
-		t.Errorf("first status: got %q, want %q", f.statusUpdates[0].Status, protocol.StatusSourcing)
+	f.queued = append(f.queued, order)
+	f.ordersByID[4] = order
+	f.nodesByDot["STORE-SRC"] = &nodes.Node{ID: 500, Name: "STORE-SRC"}
+	f.nodesByDot["STORE-DEST"] = &nodes.Node{ID: 501, Name: "STORE-DEST"} // empty → gate passes
+
+	finder := waitFinder("should not be called")
+	dispatcher := &recordingDispatcher{}
+	s := newScannerWith(t, f, finder, dispatcher, func(int64, string, string) {})
+
+	if got := s.RunOnce(); got != 1 {
+		t.Fatalf("RunOnce: got %d, want 1 (store dispatched)", got)
 	}
-	if f.statusUpdates[1].Status != string(protocol.StatusQueued) {
-		t.Errorf("second status: got %q, want %q (re-queue on transient dest miss)",
-			f.statusUpdates[1].Status, protocol.StatusQueued)
+	if len(finder.calls) != 0 {
+		t.Errorf("store must NOT consult the finder (it owns its bin): %+v", finder.calls)
+	}
+	if len(f.claimedBins) != 0 {
+		t.Errorf("store must NOT re-claim a bin: %v", f.claimedBins)
+	}
+	if len(dispatcher.directCalls) != 1 || dispatcher.directCalls[0].orderID != 4 ||
+		dispatcher.directCalls[0].sourceNode != "STORE-SRC" || dispatcher.directCalls[0].destNode != "STORE-DEST" {
+		t.Errorf("store dispatch: got %+v, want one DispatchDirect(order 4, STORE-SRC → STORE-DEST)", dispatcher.directCalls)
+	}
+}
+
+// ── commit 3b: widened scan set {queued, sourcing} ──────────────────
+
+// A complex order sitting in `sourcing` (the widened scan set) is re-attempted —
+// DispatchPreparedComplex's entry guard accepts IsAcquiring. A SIMPLE order in
+// sourcing is scoped out (not re-sourced) to avoid a double-claim / the intake
+// race until commit 4's reserve-reconcile lands.
+func TestScannerRetriesSourcingOrder(t *testing.T) {
+	t.Parallel()
+
+	t.Run("complex sourcing order is retried", func(t *testing.T) {
+		f := newFakeStore()
+		dispatcher := &stubDispatcher{}
+		s := newTestScannerWithDispatcher(t, f, dispatcher)
+		f.nodesByDot["LINE_01"] = &nodes.Node{ID: 7, Name: "LINE_01"}
+		order := &orders.Order{
+			ID: 42, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeComplex,
+			DeliveryNode: "LINE_01", PayloadCode: "PN-X",
+		}
+		f.queued = append(f.queued, order)
+		f.ordersByID[42] = order
+
+		if got := s.RunOnce(); got != 1 {
+			t.Fatalf("RunOnce: got %d, want 1 (sourcing complex order retried)", got)
+		}
+		if len(dispatcher.preparedCalls) != 1 || dispatcher.preparedCalls[0] != 42 {
+			t.Errorf("DispatchPreparedComplex calls = %v, want [42]", dispatcher.preparedCalls)
+		}
+	})
+
+	t.Run("simple sourcing order is scoped out", func(t *testing.T) {
+		f := newFakeStore()
+		finder := foundFinder(88, "src-x") // would dispatch if the finder were consulted
+		s := newTestScanner(t, f)
+		s.finder = finder
+		f.nodesByDot["dest-x"] = &nodes.Node{ID: 100, Name: "dest-x"}
+		order := &orders.Order{
+			ID: 43, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeRetrieve,
+			DeliveryNode: "dest-x", PayloadCode: "PN-X",
+		}
+		f.queued = append(f.queued, order)
+		f.ordersByID[43] = order
+
+		if got := s.RunOnce(); got != 0 {
+			t.Fatalf("RunOnce: got %d, want 0 (simple sourcing order scoped out)", got)
+		}
+		if len(finder.calls) != 0 {
+			t.Errorf("a simple sourcing order must not consult the finder: %+v", finder.calls)
+		}
+		if len(f.claimedBins) != 0 {
+			t.Errorf("a simple sourcing order must not claim: %v", f.claimedBins)
+		}
+	})
+}
+
+// A7: the scanner's capacity gate self-excludes — it passes order.ID, not 0, so
+// the in-flight tally (which counts `sourcing`) can't count the order's own row.
+// In 3b simple sourcing orders are scoped out before the gate, so this pins the
+// mechanism a QUEUED order threads; commit 4 makes it load-bearing once sourcing
+// orders reach the gate.
+func TestScannerCapacityGatePassesOrderID(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	order := seedQueuedRetrieve(f, 55, "dest-55") // concrete dest, 0 bins, 0 in-flight
+	s := newTestScanner(t, f)
+	s.finder = waitFinder("no source") // stop after the gate
+
+	if got := s.RunOnce(); got != 0 {
+		t.Fatalf("RunOnce: got %d, want 0", got)
+	}
+	if len(f.capacityExcludeIDs) == 0 {
+		t.Fatalf("capacity gate in-flight count was never called")
+	}
+	for _, id := range f.capacityExcludeIDs {
+		if id != order.ID {
+			t.Errorf("capacity gate excludeID = %d, want order.ID %d (A7: scanner must self-exclude)", id, order.ID)
+		}
 	}
 }
 
@@ -401,11 +502,6 @@ func TestScanner_RunOnce_TriggerDuringScan_RerunsOnce(t *testing.T) {
 	f := newFakeStore()
 	s := newTestScanner(t, f)
 
-	// Simulate an event arriving mid-scan: the fake sets pending=true
-	// by calling s.Trigger() when ListQueuedOrders is entered.
-	// After the first scan returns, RunOnce sees pending=true and
-	// calls scan() a second time; on that second call the hook is
-	// already cleared (we unset it below) so it doesn't loop.
 	var calls int
 	f.onListQueuedOrders = func() {
 		calls++
@@ -427,13 +523,10 @@ func TestScanner_StartPeriodicSweep_StopHaltsLoop(t *testing.T) {
 	f := newFakeStore()
 	s := newTestScanner(t, f)
 
-	// Counter is installed before the sweep starts so there's no
-	// data race with the goroutine's ListQueuedOrders call.
 	var scanCount int32
 	f.onListQueuedOrders = func() { atomic.AddInt32(&scanCount, 1) }
 
 	s.StartPeriodicSweep(5 * time.Millisecond)
-	// Wait for at least one sweep to fire.
 	testutil.Eventually(t, 2*time.Second, func() bool {
 		return atomic.LoadInt32(&scanCount) >= 1
 	})
@@ -444,9 +537,6 @@ func TestScanner_StartPeriodicSweep_StopHaltsLoop(t *testing.T) {
 		t.Fatalf("sweep should have fired at least once before Stop")
 	}
 
-	// A tick firing concurrent with Stop can race through one more
-	// RunOnce before the stopChan select wins, so tolerate +1 but
-	// no more — otherwise the loop is still running.
 	time.Sleep(40 * time.Millisecond) // negative assertion: verify no further sweeps
 	final := atomic.LoadInt32(&scanCount)
 	if final > afterStop+1 {

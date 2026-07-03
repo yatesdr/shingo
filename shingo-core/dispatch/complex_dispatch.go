@@ -237,16 +237,18 @@ func (d *Dispatcher) swapRemovalLegHeld(order *orders.Order) (bool, string) {
 }
 
 func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
-	// Defense-in-depth: the fulfillment scanner's tryFulfill already
-	// gates on StatusQueued before calling here, so a parent in
-	// Reshuffling (with a compound in flight) won't reach us through
-	// the scanner. Anything that calls this function directly (engine
-	// recovery, future call sites) must still respect the invariant —
-	// proceeding on a non-Queued order would re-dispatch a parent
-	// mid-reshuffle or post-resume races. Return nil so the caller
-	// treats it as a no-op rather than an error.
-	if order.Status != StatusQueued {
-		d.dbg("complex: DispatchPreparedComplex called with status=%s (want queued); skipping", order.Status)
+	// Defense-in-depth: the fulfillment scanner's tryFulfill already gates on
+	// IsAcquiring ({queued, sourcing}) before calling here, so a parent in
+	// Reshuffling (with a compound in flight), or one already dispatched or
+	// terminal, won't reach us through the scanner. Anything calling this
+	// directly (engine recovery, future call sites) must still respect the
+	// invariant — proceeding on a non-acquiring order would re-dispatch a parent
+	// mid-reshuffle or race a post-resume. Commit 3b widened the accepted set
+	// from queued to acquiring so a complex order that reached `sourcing` but
+	// didn't finish dispatching is retried. Return nil so the caller treats a
+	// non-acquiring order as a no-op, not an error.
+	if !protocol.IsAcquiring(order.Status) {
+		d.dbg("complex: DispatchPreparedComplex called with status=%s (want queued/sourcing); skipping", order.Status)
 		return nil
 	}
 
@@ -447,8 +449,10 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	//   1. AbandonStuckOrders (engine) ages out the queued order → terminal.
 	//   2. ReleaseOrphanedClaims (store) then finds the bin claimed by a terminal
 	//      order and releases it.
-	// Simple-path orders call MoveToSourcing BEFORE claim; only complex-path orders
-	// (this call site) have this asymmetry.
+	// The intake planners call MoveToSourcing BEFORE the claim; this complex call
+	// site AND the scanner's simple-retrieve path (fulfillment.Scanner.tryFulfill)
+	// both claim BEFORE MoveToSourcing. This call site's orphaned-hold window is
+	// the widest of the three, which is why the two-sweep recovery is documented here.
 	claimErr := d.ApplyComplexPlan(order, plan, order.PayloadCode, nil)
 	if claimErr != nil {
 		// Three terminal outcomes, distinguished by planningError.Code:

@@ -128,6 +128,20 @@ func IsPreDispatch(s Status) bool {
 // IsPreDispatch is the method form.
 func (s Status) IsPreDispatch() bool { return IsPreDispatch(s) }
 
+// IsAcquiring reports whether the order is actively trying to acquire its source
+// bin — either queued (waiting for the fulfillment scanner to pick it up) or
+// sourcing (mid-reserve; the scanner retries it once commit 4 moves
+// MoveToSourcing to the start of the reserve attempt). The scanner's scan set and
+// re-check, and DispatchPreparedComplex's entry guard, all key on this so
+// "retryable pre-dispatch state" has one definition. Narrower than IsPreDispatch,
+// which also includes `pending` (pre-intake, not yet a scanner-retry candidate).
+func IsAcquiring(s Status) bool {
+	return s == StatusQueued || s == StatusSourcing
+}
+
+// IsAcquiring is the method form.
+func (s Status) IsAcquiring() bool { return IsAcquiring(s) }
+
 // IsRuntimeStuckCandidate reports whether an order whose updated_at is
 // far in the past should be flagged as runtime-stuck. Excludes Faulted
 // (intentional grace-period non-terminal), Delivered (waits for operator
@@ -180,6 +194,7 @@ var (
 	failureTerminalStatusSQLList       = buildStatusSQLList(IsFailureTerminal)
 	vendorActiveStatusSQLList          = buildStatusSQLList(IsVendorActive)
 	preDispatchStatusSQLList           = buildStatusSQLList(IsPreDispatch)
+	acquiringStatusSQLList             = buildStatusSQLList(IsAcquiring)
 	runtimeStuckCandidateStatusSQLList = buildStatusSQLList(IsRuntimeStuckCandidate)
 	operatorVisibleStatusSQLList       = buildStatusSQLList(IsOperatorVisible)
 )
@@ -223,6 +238,10 @@ func VendorActiveStatusSQLList() string { return vendorActiveStatusSQLList }
 // Use for source-reference guards (re-parent, delete, rename a node
 // referenced by not-yet-dispatched orders).
 func PreDispatchStatusSQLList() string { return preDispatchStatusSQLList }
+
+// AcquiringStatusSQLList returns 'queued','sourcing' — the fulfillment scanner's
+// retry set. Use in `status IN (AcquiringStatusSQLList())`.
+func AcquiringStatusSQLList() string { return acquiringStatusSQLList }
 
 // RuntimeStuckCandidateStatusSQLList returns the non-terminal subset
 // that should be watched for stale updated_at — excludes faulted,

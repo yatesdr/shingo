@@ -734,9 +734,9 @@ func TestListActiveBySourceRef(t *testing.T) {
 	}
 }
 
-// -------- ListQueued (FIFO, oldest first) --------------------------------
+// -------- ListAcquiring (queued + sourcing, FIFO within priority) --------
 
-func TestListQueued(t *testing.T) {
+func TestListAcquiring(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
@@ -753,19 +753,21 @@ func TestListQueued(t *testing.T) {
 	// KEEP: timestamp separation — distinct created_at for FIFO ordering.
 	time.Sleep(10 * time.Millisecond)
 	id2 := mk("q2", "queued")
-	mk("p", "pending")   // not queued
-	mk("c", "confirmed") // not queued
+	time.Sleep(10 * time.Millisecond)
+	id3 := mk("s1", "sourcing") // widened set includes sourcing (commit 3b)
+	mk("p", "pending")          // not acquiring
+	mk("c", "confirmed")        // not acquiring
 
-	got, err := orders.ListQueued(db)
+	got, err := orders.ListAcquiring(db)
 	if err != nil {
-		t.Fatalf("ListQueued: %v", err)
+		t.Fatalf("ListAcquiring: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2", len(got))
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3 (2 queued + 1 sourcing; pending/confirmed excluded)", len(got))
 	}
-	if got[0].ID != id1 || got[1].ID != id2 {
-		t.Errorf("FIFO order wrong: got [%d, %d], want [%d, %d]",
-			got[0].ID, got[1].ID, id1, id2)
+	if got[0].ID != id1 || got[1].ID != id2 || got[2].ID != id3 {
+		t.Errorf("FIFO order wrong: got [%d, %d, %d], want [%d, %d, %d]",
+			got[0].ID, got[1].ID, got[2].ID, id1, id2, id3)
 	}
 }
 

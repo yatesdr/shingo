@@ -164,6 +164,7 @@ var predicateProjectorPairs = []struct {
 	{"IsFailureTerminal", IsFailureTerminal, FailureTerminalStatusSQLList},
 	{"IsVendorActive", IsVendorActive, VendorActiveStatusSQLList},
 	{"IsPreDispatch", IsPreDispatch, PreDispatchStatusSQLList},
+	{"IsAcquiring", IsAcquiring, AcquiringStatusSQLList},
 	{"IsRuntimeStuckCandidate", IsRuntimeStuckCandidate, RuntimeStuckCandidateStatusSQLList},
 	{"IsOperatorVisible", IsOperatorVisible, OperatorVisibleStatusSQLList},
 }

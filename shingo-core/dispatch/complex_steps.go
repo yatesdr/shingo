@@ -123,6 +123,13 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 // group (NGRP), it is automatically resolved via the group resolver. If the
 // node is concrete, it is returned directly. If no node is provided, the
 // global fallback resolves via payload code.
+//
+// TODO(post-1c): route this through dispatch.SourceFinder. This is the last
+// inline copy of the plant-wide bin finders (FindEmptyCompatibleBinInGroup /
+// FindEmptyCompatibleBin / FindSourceBinFIFO below) — the simple planners and the
+// scanner already collapsed onto SourceFinder in commit 3a. It is a visible,
+// forbidigo-carved-out exception (exclusions.rules #7) until the complex-path
+// unification (D25 / Option 3) folds distinctSourceNeeds through the finder.
 func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode string) (string, string, error) {
 	if step.Node != "" {
 		node, err := d.db.GetNodeByDotName(step.Node)

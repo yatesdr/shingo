@@ -485,12 +485,17 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
-// ListQueued returns all orders in "queued" status, ordered by priority
-// DESC (highest first) then created_at ASC (FIFO within a priority class).
-// orders.priority is INTEGER NOT NULL DEFAULT 0, so unset orders fall to
-// FIFO naturally.
-func ListQueued(db *sql.DB) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status = 'queued' ORDER BY priority DESC, created_at ASC`, SelectCols))
+// ListAcquiring returns all orders in an "acquiring" status (queued or
+// sourcing) — the fulfillment scanner's retry set — ordered by priority DESC
+// (highest first) then created_at ASC (FIFO within a priority class).
+// orders.priority is INTEGER NOT NULL DEFAULT 0, so unset orders fall to FIFO
+// naturally.
+//
+// Widened from queued-only (commit 3b): the scanner also retries orders sitting
+// in `sourcing`. Before commit 4 moves MoveToSourcing to the start of the reserve
+// attempt few orders rest there, but the scan set must see them when they do.
+func ListAcquiring(db *sql.DB) ([]*Order, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status IN (%s) ORDER BY priority DESC, created_at ASC`, SelectCols, protocol.AcquiringStatusSQLList()))
 	if err != nil {
 		return nil, err
 	}

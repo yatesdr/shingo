@@ -2,7 +2,6 @@ package fulfillment
 
 import (
 	"shingocore/store"
-	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -16,50 +15,55 @@ import (
 //  2. Tests can drop a hand-rolled fake into the scanner and
 //     exercise queue-to-dispatch behaviour without a database.
 //
-// The set below is exactly the methods the scanner calls on the
-// store — no more, no less. A lint of `grep 's\.db\.' scanner.go`
-// should match one-to-one with the entries here.
+// The set below is exactly what the scanner needs — no more, no less: the
+// methods it calls directly on s.db, PLUS the CapacityDB set that
+// CheckDropoffCapacity(s.db, …) requires (GetNodeByDotName, CountBinsByNode,
+// CountInFlightOrdersByDeliveryNodeExcluding, ListChildNodes). After the 3a
+// SourceFinder collapse the finder owns source lookup and returns the bin's node,
+// so the plant-wide finders and the node-by-id read left this interface.
 //
 // This interface is wider than material or dispatch/binresolver
 // (fulfillment is orchestration, not pure compute) but the goal is
 // the same: make the DB dependency explicit and make the scanner
 // unit-testable in isolation.
 type Store interface {
-	// Order reads.
-	ListQueuedOrders() ([]*orders.Order, error)
+	// Order reads. ListAcquiringOrders is the scanner's scan set — orders in
+	// {queued, sourcing} (widened from queued-only in commit 3b).
+	ListAcquiringOrders() ([]*orders.Order, error)
 	GetOrder(id int64) (*orders.Order, error)
-	CountInFlightOrdersByDeliveryNode(deliveryNode string) (int, error)
+	// CapacityDB: the capacity gate self-excludes the caller's own order.
 	CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode string, excludeID int64) (int, error)
 
-	// Node reads.
-	GetNode(id int64) (*nodes.Node, error)
+	// Node reads (both are also part of the CapacityDB set).
 	GetNodeByDotName(name string) (*nodes.Node, error)
 	ListChildNodes(parentID int64) ([]*nodes.Node, error)
 
-	// Bin reads.
+	// Bin reads (CapacityDB).
 	CountBinsByNode(nodeID int64) (int, error)
-	FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64) (*bins.Bin, error)
-	FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error)
 
-	// Mutations performed on the bin/order during fulfillment.
-	ClaimBin(binID, orderID int64) error
-	UnclaimOrderBins(orderID int64)
+	// Mutations performed on the order during fulfillment.
+	//
 	// ReleaseClaimByOrder is the coupled rollback (clears claimed_by AND releases
 	// reservations); re-queue paths that abandon claims without going terminal
 	// use it so a re-routed reserve-then-claim can't leak a confirmed reservation.
 	ReleaseClaimByOrder(orderID int64) error
 	UpdateOrderBinID(orderID, binID int64) error
 	UpdateOrderSourceNode(id int64, sourceNode string) error
-	UpdateOrderStatus(id int64, status, detail string) error
 	// SetOrderQueueReason records why an order is sitting queued.
 	// Phase 4 of bin-transit-state — surfaced through the order-status
 	// API so ops can see the blocking node instead of guessing.
 	SetOrderQueueReason(id int64, reason string) error
-
-	// Structural-error fallback path (see scanner.go: only used when
-	// failFn is nil — older tests construct the scanner without it).
-	FailOrderAtomic(orderID int64, detail string) error
 }
+
+// Trimmed to this interface's "no more, no less" contract as the scanner's
+// surface shrank:
+//   - 3a (SourceFinder collapse): ClaimBin, UnclaimOrderBins, UpdateOrderStatus,
+//     FailOrderAtomic — the scanner claims via Claimer.ClaimForDispatch, rolls
+//     back via ReleaseClaimByOrder, transitions via Lifecycle, fails via failFn.
+//   - 3-cleanup: FindSourceBinFIFO + FindEmptyCompatibleBin (the finder owns
+//     source lookup now), GetNode (the finder returns the bin's node), and the
+//     non-excluding CountInFlightOrdersByDeliveryNode (only the self-excluding
+//     variant is used, by the capacity gate).
 
 // Compile-time check that *store.DB satisfies Store. If the store
 // package drops or renames one of the methods above, this assertion

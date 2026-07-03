@@ -181,8 +181,9 @@ func (db *DB) ListActiveOrdersBySourceRef(names []string) ([]*orders.Order, erro
 	return orders.ListActiveBySourceRef(db.DB, names)
 }
 
-// ListQueuedOrders returns all orders in "queued" status, oldest first (FIFO).
-func (db *DB) ListQueuedOrders() ([]*orders.Order, error) { return orders.ListQueued(db.DB) }
+// ListAcquiringOrders returns all orders in an acquiring status (queued or
+// sourcing) — the fulfillment scanner's retry set — priority then FIFO.
+func (db *DB) ListAcquiringOrders() ([]*orders.Order, error) { return orders.ListAcquiring(db.DB) }
 
 // UpdateOrderPayloadCode sets the payload_code on an order.
 func (db *DB) UpdateOrderPayloadCode(orderID int64, payloadCode string) error {
@@ -282,7 +283,6 @@ func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail str
 func (db *DB) FailOrderAtomic(orderID int64, detail string) error {
 	return db.TerminalizeOrder(orderID, protocol.StatusFailed, detail)
 }
-
 
 // ReleaseClaimForBin is the inverse of a single ClaimForDispatch: it clears the
 // bin's claim AND releases its reservation in one transaction. Dispatch-failure
