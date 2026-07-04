@@ -237,6 +237,169 @@ func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 	}
 }
 
+// TestConfirmHealsClaimedButPendingBin is the D45 wedge pin. It reproduces the
+// exact half-state a transient DB error / core restart leaves between the two
+// separate writes ConfirmClaim used to make — the hard claim COMMITTED but the
+// reservation confirm NOT run — and asserts the next confirm HEALS it instead of
+// wedging codeClaimFailed forever.
+//
+// Pre-fix mechanism: bin is claimed_by=order with the reservation still pending;
+// reconcile matches it (confirmed:false), the alreadyOurs skip was gated on
+// rp.confirmed so it fell through to ConfirmClaim → bins.Claim required
+// claimed_by IS NULL → 0 rows → claim_failed → requeue, every tick, forever (the
+// owner-liveness reaper never fires: the order is live in `sourcing`). Fixed by the
+// owner-idempotent claim CAS + claim/confirm-in-one-tx + the honest claimed-by-us skip.
+func TestConfirmHealsClaimedButPendingBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	nodeA := &nodes.Node{Name: "HEAL-SRC", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(nodeA), "node A")
+	binA := testdb.CreateBinAtNode(t, db, bp.Code, nodeA.ID, "HEAL-BIN")
+
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: nodeA.Name},
+		{Action: protocol.ActionDropoff, Node: lineNode.Name},
+	}
+	order := mkComplexOrder(t, db, "heal-1", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name)
+
+	// Seed the wedge: a PENDING reservation on binA AND the bin already hard-claimed
+	// by the order (ClaimBin does not confirm the reservation) — claim committed,
+	// confirm never ran.
+	testdb.ReserveBin(t, db, order.ID, binA.ID)
+	testutil.MustNoErr(t, db.ClaimBin(binA.ID, order.ID), "seed committed claim (reservation stays pending)")
+	if seed, _ := db.ListReservationsByOrder(order.ID); stateOf(seed, binA.ID) != "pending" {
+		t.Fatalf("seed reservation = %q, want pending (the wedge half-state)", stateOf(seed, binA.ID))
+	}
+
+	assigned, outcome, err := d.reserveComplexPlan(order, plan)
+	testutil.MustNoErr(t, err, "reserve")
+	if outcome != reserveComplete {
+		t.Fatalf("outcome = %v, want reserveComplete", outcome)
+	}
+	if cerr := d.confirmComplexPlan(order, plan, assigned); cerr != nil {
+		t.Fatalf("confirm of a claimed-but-pending bin must SUCCEED (heal the wedge), got %v", cerr)
+	}
+
+	// Reservation healed pending→confirmed.
+	res, _ := db.ListReservationsByOrder(order.ID)
+	if st := stateOf(res, binA.ID); st != "confirmed" {
+		t.Errorf("bin A reservation = %q, want confirmed after heal", st)
+	}
+	// No second bin claimed; the order still owns exactly binA.
+	claimed, _ := db.ListBinsByClaim(order.ID)
+	if len(claimed) != 1 || claimed[0].ID != binA.ID {
+		t.Fatalf("claimed = %+v, want exactly binA=%d (heal must not claim a second bin)", claimed, binA.ID)
+	}
+	gotA, _ := db.GetBin(binA.ID)
+	if gotA.ClaimedBy == nil || *gotA.ClaimedBy != order.ID {
+		t.Errorf("bin A claimed_by = %v, want order %d", gotA.ClaimedBy, order.ID)
+	}
+}
+
+// TestConfirmPartialFailureConverges pins the multi-bin confirm state machine
+// (indigo-shrike §4.1: the most subtle on the branch, previously untested). A
+// complex order with three needs confirms #1, then a mid-loop failure on #2 (its
+// pending reservation reaped, the seatbelt's 0-rows path) requeues the whole
+// attempt; the next tick re-reserves the reaped need and converges — every bin
+// claimed by the order exactly once, every reservation confirmed, no stray
+// reservations, order.BinID + order_bins correct, nothing double-claimed.
+func TestConfirmPartialFailureConverges(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	nodeA := &nodes.Node{Name: "PF-A", Enabled: true}
+	nodeB := &nodes.Node{Name: "PF-B", Enabled: true}
+	nodeC := &nodes.Node{Name: "PF-C", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(nodeA), "node A")
+	testutil.MustNoErr(t, db.CreateNode(nodeB), "node B")
+	testutil.MustNoErr(t, db.CreateNode(nodeC), "node C")
+	binA := testdb.CreateBinAtNode(t, db, bp.Code, nodeA.ID, "PF-BIN-A")
+	binB := testdb.CreateBinAtNode(t, db, bp.Code, nodeB.ID, "PF-BIN-B")
+	binC := testdb.CreateBinAtNode(t, db, bp.Code, nodeC.ID, "PF-BIN-C")
+
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: nodeA.Name}, // process node → order.BinID
+		{Action: protocol.ActionDropoff, Node: lineNode.Name},
+		{Action: protocol.ActionPickup, Node: nodeB.Name}, // need #2 — forced to fail
+		{Action: protocol.ActionDropoff, Node: lineNode.Name},
+		{Action: protocol.ActionPickup, Node: nodeC.Name},
+		{Action: protocol.ActionDropoff, Node: lineNode.Name},
+	}
+	order := mkComplexOrder(t, db, "partialfail-1", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name)
+
+	// ── Tick 1: reserve all three, then force the confirm to fail on need #2. ──
+	assigned1, outcome1, err := d.reserveComplexPlan(order, plan)
+	testutil.MustNoErr(t, err, "reserve tick 1")
+	if outcome1 != reserveComplete {
+		t.Fatalf("tick 1 outcome = %v, want reserveComplete", outcome1)
+	}
+	// Reap need #2's (binB) pending reservation mid-tick: ConfirmClaim on binB then
+	// sees 0 rows (seatbelt) and fails AFTER binA (#1) has been confirmed+claimed.
+	testutil.MustNoErr(t, db.ReleaseReservation(order.ID, binB.ID), "reap binB reservation")
+
+	cerr := d.confirmComplexPlan(order, plan, assigned1)
+	var pe *planningError
+	if !errors.As(cerr, &pe) || pe.Code != codeClaimFailed {
+		t.Fatalf("tick 1 confirm: got %v, want a codeClaimFailed planningError (requeue)", cerr)
+	}
+	gotA, _ := db.GetBin(binA.ID)
+	if gotA.ClaimedBy == nil || *gotA.ClaimedBy != order.ID {
+		t.Fatalf("tick 1: bin A claimed_by = %v, want order %d (confirmed before the fail)", gotA.ClaimedBy, order.ID)
+	}
+	gotB, _ := db.GetBin(binB.ID)
+	gotC, _ := db.GetBin(binC.ID)
+	if gotB.ClaimedBy != nil || gotC.ClaimedBy != nil {
+		t.Fatalf("tick 1: B/C must stay unclaimed after the fail, got B=%v C=%v", gotB.ClaimedBy, gotC.ClaimedBy)
+	}
+	if c1, _ := db.ListBinsByClaim(order.ID); len(c1) != 1 {
+		t.Fatalf("tick 1: %d bins claimed, want exactly 1 (A) — no partial double-claim", len(c1))
+	}
+
+	// ── Tick 2: re-reserve (re-acquires B) and confirm converges the whole set. ──
+	assigned2, outcome2, err := d.reserveComplexPlan(order, plan)
+	testutil.MustNoErr(t, err, "reserve tick 2")
+	if outcome2 != reserveComplete {
+		t.Fatalf("tick 2 outcome = %v, want reserveComplete", outcome2)
+	}
+	if cerr := d.confirmComplexPlan(order, plan, assigned2); cerr != nil {
+		t.Fatalf("tick 2 confirm must converge, got %v", cerr)
+	}
+
+	claimed, _ := db.ListBinsByClaim(order.ID)
+	if len(claimed) != 3 {
+		t.Fatalf("converged claims = %d, want 3 (A, B, C)", len(claimed))
+	}
+	for _, id := range []int64{binA.ID, binB.ID, binC.ID} {
+		g, _ := db.GetBin(id)
+		if g.ClaimedBy == nil || *g.ClaimedBy != order.ID {
+			t.Errorf("bin %d claimed_by = %v, want order %d", id, g.ClaimedBy, order.ID)
+		}
+	}
+	res, _ := db.ListReservationsByOrder(order.ID)
+	if !reservesExactly(res, binA.ID, binB.ID, binC.ID) {
+		t.Fatalf("held = %+v, want exactly {A,B,C} confirmed, no strays", res)
+	}
+	for _, id := range []int64{binA.ID, binB.ID, binC.ID} {
+		if st := stateOf(res, id); st != "confirmed" {
+			t.Errorf("bin %d reservation = %q, want confirmed", id, st)
+		}
+	}
+	if order.BinID == nil || *order.BinID != binA.ID {
+		t.Errorf("order.BinID = %v, want binA=%d (process node)", order.BinID, binA.ID)
+	}
+	obs, _ := db.ListOrderBins(order.ID)
+	if len(obs) != 3 {
+		t.Errorf("order_bins rows = %d, want 3", len(obs))
+	}
+}
+
 // TestReserveMootWhenAllSourcesEmpty pins that an order that can reserve NOTHING
 // because every source node is empty is reserveMoot (→ the caller skips it and the
 // changeover advances), not reserveHolding (which would hold forever).

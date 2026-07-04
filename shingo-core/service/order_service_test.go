@@ -235,7 +235,7 @@ func TestOrderService_SetPriority_OrderNotFound(t *testing.T) {
 	}
 }
 
-func TestOrderService_ClaimBin_And_UnclaimBin(t *testing.T) {
+func TestOrderService_ClaimBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -251,11 +251,9 @@ func TestOrderService_ClaimBin_And_UnclaimBin(t *testing.T) {
 		t.Errorf("ClaimedBy = %v, want %d", got.ClaimedBy, o.ID)
 	}
 
-	testutil.MustNoErr(t, svc.UnclaimBin(bin.ID), "UnclaimBin")
-	got, _ = db.GetBin(bin.ID)
-	if got.ClaimedBy != nil {
-		t.Errorf("ClaimedBy = %v, want nil after UnclaimBin", got.ClaimedBy)
-	}
+	// The bare UnclaimBin inverse was removed in D45 (it orphaned the coupled
+	// reservation and bricked the bin). Release now goes through the coupled
+	// ReleaseClaimForBin, which is covered by the claim_release / delivery tests.
 }
 
 func TestOrderService_ClaimBin_FailsIfAlreadyClaimed(t *testing.T) {

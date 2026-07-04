@@ -435,17 +435,43 @@ func ListAvailable(db *sql.DB) ([]*Bin, error) {
 	return scanBins(rows)
 }
 
+// binExecer is satisfied by both *sql.DB and *sql.Tx, so the claim primitive can
+// run standalone (Claim) or inside a caller's transaction (ClaimTx) — the latter
+// lets the hard claim commit atomically with the reservation confirm (D45).
+type binExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 // Claim marks a bin as claimed by an order to prevent double-dispatch.
 // Fails if the bin is locked or already claimed by another order.
 //
 // Demoted-CAS guard (D2): additionally requires this order's pending
 // reservation to exist (placed by ClaimForDispatch's Acquire step) so
 // a concurrent claimer without a reservation cannot steal the bin even
-// if it passes the claimed_by IS NULL check. claimed_by IS NULL stays
-// as defense-in-depth for the mixed-binary rollback window.
+// if it passes the claimed_by check. claimed_by IS NULL stays as
+// defense-in-depth for the mixed-binary rollback window.
+//
+// Owner-idempotent (D45): the CAS is (claimed_by IS NULL OR claimed_by=$1),
+// mirroring nodes.ClaimSlot. A re-claim by the SAME order succeeds instead of
+// hitting 0 rows — so a claim that committed but whose reservation confirm did
+// NOT (a transient DB error / core restart between the two writes) heals on the
+// next retry rather than wedging codeClaimFailed forever. The EXISTS(pending)
+// seatbelt is untouched: a claim without a live reservation still affects 0 rows.
 func Claim(db *sql.DB, binID, orderID int64) error {
+	return claimBin(db, binID, orderID)
+}
+
+// ClaimTx is Claim inside a caller-provided transaction, so the hard claim can
+// commit atomically with the reservation pending→confirmed flip (D45 — closes the
+// claim/confirm non-atomicity wedge). Identical demoted-CAS + owner-idempotent
+// seatbelt as Claim.
+func ClaimTx(tx *sql.Tx, binID, orderID int64) error {
+	return claimBin(tx, binID, orderID)
+}
+
+func claimBin(db binExecer, binID, orderID int64) error {
 	res, err := db.Exec(`UPDATE bins SET claimed_by=$1, updated_at=$3
-		WHERE id=$2 AND locked=false AND claimed_by IS NULL
+		WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
 		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$1 AND bin_id=$2 AND state='pending')`,
 		orderID, binID, clock.Now().UTC())
 	if err != nil {

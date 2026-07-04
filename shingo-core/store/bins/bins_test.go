@@ -252,6 +252,31 @@ func TestClaim_And_Unclaim(t *testing.T) {
 	})
 }
 
+// TestClaimRejectsWithoutReservation pins the demoted-CAS seatbelt at the SQL
+// level, independent of the Go callers: a bin with NO active reservation cannot be
+// claimed even by a well-formed order. This is the invariant the D45
+// owner-idempotent CAS change (claimed_by IS NULL OR claimed_by=$1) must NOT
+// weaken — the EXISTS(pending reservation) leg still gates every claim, so a bare
+// claim without a reservation affects 0 rows and errors. Guards against a future
+// schema/predicate drift silently re-opening claim-without-reservation.
+func TestClaimRejectsWithoutReservation(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+
+	bin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-NORESV-1", NodeID: &std.StorageNode.ID, Status: "available"}
+	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
+	o := testdb.CreateOrder(t, db) // real order, but NO reservation placed
+
+	if err := bins.Claim(db.DB, bin.ID, o.ID); err == nil {
+		t.Fatal("bins.Claim without a reservation: expected error (seatbelt), got nil")
+	}
+	got, _ := bins.Get(db.DB, bin.ID)
+	if got.ClaimedBy != nil {
+		t.Errorf("ClaimedBy = %v, want nil — a claim without a reservation must affect 0 rows", *got.ClaimedBy)
+	}
+}
+
 func TestLock_And_Unlock(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

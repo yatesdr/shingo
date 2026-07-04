@@ -87,6 +87,21 @@ linters:
           msg: "Direct FindSourceBinFIFO calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
         - pattern: 'db\.FindEmptyCompatibleBin'
           msg: "Direct FindEmptyCompatibleBin(InGroup) calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
+        # Unclaim-inverse guard (D45). Clearing bins.claimed_by WITHOUT releasing
+        # the coupled reservation orphans a confirmed reservation and bricks the bin
+        # via uq_reservations_bin_active — the exact failure the coupled release
+        # helpers exist to prevent. The db.UnclaimBin / db.UnclaimOrderBins / service
+        # wrappers were deleted; these guard the SURVIVING store-level primitives so
+        # a new caller is steered to the coupled inverse instead of re-opening the
+        # brick. `bins\.Unclaim` prefix-matches `bins.UnclaimByOrder`; the binsstore
+        # alias (used in dispatch) gets its own entry. This is the release-direction
+        # twin of the db.ClaimBin claim-direction guard above. Sanctioned callers:
+        # the definition file (declarations don't match a `pkg.Fn` selector) and
+        # tests (the blanket _test.go carveout under exclusions.rules).
+        - pattern: 'bins\.Unclaim'
+          msg: "Direct bins.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation, orphaning a confirmed reservation and bricking the bin (uq_reservations_bin_active). Use the coupled inverse db.ReleaseClaimForBin / db.ReleaseClaimByOrder (store/orders.go)."
+        - pattern: 'binsstore\.Unclaim'
+          msg: "Direct binsstore.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation. Use db.ReleaseClaimForBin / db.ReleaseClaimByOrder (store/orders.go)."
         # Note on swap-mode constants: forbidigo can only match identifier
         # expressions (selector exprs like `db.UpdateOrderStatus`), not
         # string literals. The swap-mode raw-string guard is enforced by

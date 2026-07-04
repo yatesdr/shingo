@@ -260,15 +260,30 @@ func (d *Dispatcher) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, 
 
 	var claimed []claimedBin
 	for _, rp := range assigned {
-		alreadyOurs := false
-		if rp.confirmed {
-			// Skip the re-claim ONLY when the bin is already claimed by THIS order.
-			if b, gerr := d.db.GetBin(rp.binID); gerr == nil && b != nil &&
-				b.ClaimedBy != nil && *b.ClaimedBy == order.ID {
-				alreadyOurs = true
-			}
+		// Is the bin ALREADY hard-claimed by THIS order? A prior tick may have
+		// claimed it and crashed/errored before confirming its reservation (the D45
+		// wedge half-state: claimed_by=order, reservation still pending). Check by
+		// DATA, not by rp.confirmed — a claimed-but-pending bin is still ours.
+		claimedByUs := false
+		if b, gerr := d.db.GetBin(rp.binID); gerr == nil && b != nil &&
+			b.ClaimedBy != nil && *b.ClaimedBy == order.ID {
+			claimedByUs = true
 		}
-		if !alreadyOurs {
+		if claimedByUs {
+			// Already ours — never re-claim (re-claiming would risk a false 0-rows
+			// failure). If the reservation is still pending, confirm it in place;
+			// if already confirmed this is a no-op. The bin is not re-touched.
+			if !rp.confirmed {
+				if err := d.binManifest.ConfirmHeldReservation(order.ID, rp.binID); err != nil {
+					return &planningError{
+						Code:   codeClaimFailed,
+						Detail: fmt.Sprintf("confirm held reservation bin %d for order %d: %v", rp.binID, order.ID, err),
+					}
+				}
+			}
+		} else {
+			// Not ours (unclaimed, or claimed by ANOTHER order — which fails the
+			// demoted-CAS seatbelt with 0 rows ⇒ claim_failed, unchanged).
 			// RemainingUOP is nil for complex intake (Edge threads it at release,
 			// not intake) — same as the old ApplyComplexPlan call.
 			if err := d.binManifest.ConfirmClaim(rp.binID, order.ID, nil); err != nil {

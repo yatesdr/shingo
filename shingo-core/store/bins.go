@@ -62,11 +62,11 @@ func (db *DB) ListAvailableBins() ([]*bins.Bin, error) { return bins.ListAvailab
 // ClaimBin marks a bin as claimed by an order.
 func (db *DB) ClaimBin(binID, orderID int64) error { return bins.Claim(db.DB, binID, orderID) }
 
-// UnclaimBin releases a bin from an order claim.
-func (db *DB) UnclaimBin(binID int64) error { return bins.Unclaim(db.DB, binID) }
-
-// UnclaimOrderBins releases all bins claimed by a specific order.
-func (db *DB) UnclaimOrderBins(orderID int64) { bins.UnclaimByOrder(db.DB, orderID) }
+// (D45) The bare db.UnclaimBin / db.UnclaimOrderBins wrappers were removed:
+// clearing claimed_by WITHOUT releasing the coupled reservation orphans a
+// confirmed reservation and bricks the bin via uq_reservations_bin_active. Use
+// the coupled inverses ReleaseClaimForBin / ReleaseClaimByOrder (store/orders.go)
+// instead — a forbidigo rule now guards the surviving bins.Unclaim primitives.
 
 // FindEmptyCompatibleBin finds an unclaimed, available bin compatible with
 // the given payload code, preferring the given zone. excludeNodeID > 0

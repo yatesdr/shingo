@@ -362,21 +362,31 @@ func (s *BinManifestService) ClearAndClaim(binID, orderID int64) error {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
+	if err := s.clearAndClaimTx(tx, binID, orderID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
+// clearAndClaimTx is ClearAndClaim's body against a caller-provided tx, so the
+// claim can commit in the SAME transaction as the reservation confirm (D45).
+func (s *BinManifestService) clearAndClaimTx(tx *sql.Tx, binID, orderID int64) error {
 	before, err := readBinUOPInTx(tx, binID)
 	if err != nil {
 		return err
 	}
 	// Demoted-CAS guard (D2): requires this order's pending reservation to
 	// exist, so a concurrent claimer without a reservation cannot steal the
-	// bin even if it passes the claimed_by IS NULL check. claimed_by IS NULL
-	// is defense-in-depth for the mixed-binary rollback window.
+	// bin even if it passes the claimed_by check. claimed_by IS NULL is
+	// defense-in-depth for the mixed-binary rollback window; the OR claimed_by=$1
+	// leg makes a re-claim by THIS order idempotent (D45 — the wedge heal),
+	// mirroring bins.Claim / nodes.ClaimSlot.
 	res, err := tx.Exec(`
 		UPDATE bins SET
 			payload_code='', manifest=NULL, uop_remaining=0,
 			manifest_confirmed=false, loaded_at=NULL,
 			claimed_by=$1, updated_at=NOW()
-		WHERE id=$2 AND locked=false AND claimed_by IS NULL
+		WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
 		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$1 AND bin_id=$2 AND state='pending')`,
 		orderID, binID)
 	if err != nil {
@@ -393,12 +403,9 @@ func (s *BinManifestService) ClearAndClaim(binID, orderID int64) error {
 	if err != nil {
 		return err
 	}
-	if err := audit.AppendBinUOP(tx, binID, before, 0,
+	return audit.AppendBinUOP(tx, binID, before, 0,
 		audit.OpClearAndClaim, "service/bin_manifest.go:ClearAndClaim",
-		&orderID, "", "", uopCtx); err != nil {
-		return err
-	}
-	return tx.Commit()
+		&orderID, "", "", uopCtx)
 }
 
 // SyncUOPAndClaim atomically syncs remaining UOP and claims the bin.
@@ -409,16 +416,23 @@ func (s *BinManifestService) SyncUOPAndClaim(binID, orderID int64, remainingUOP 
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
+	if err := s.syncUOPAndClaimTx(tx, binID, orderID, remainingUOP); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
+// syncUOPAndClaimTx is SyncUOPAndClaim's body against a caller-provided tx (D45).
+func (s *BinManifestService) syncUOPAndClaimTx(tx *sql.Tx, binID, orderID int64, remainingUOP int) error {
 	before, err := readBinUOPInTx(tx, binID)
 	if err != nil {
 		return err
 	}
-	// Demoted-CAS guard (D2): mirrors ClearAndClaim — see comment there.
+	// Demoted-CAS guard (D2) + owner-idempotent (D45): mirrors clearAndClaimTx.
 	res, err := tx.Exec(`
 		UPDATE bins SET
 			uop_remaining=$1, claimed_by=$2, updated_at=NOW()
-		WHERE id=$3 AND locked=false AND claimed_by IS NULL
+		WHERE id=$3 AND locked=false AND (claimed_by IS NULL OR claimed_by=$2)
 		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$2 AND bin_id=$3 AND state='pending')`,
 		remainingUOP, orderID, binID)
 	if err != nil {
@@ -432,12 +446,9 @@ func (s *BinManifestService) SyncUOPAndClaim(binID, orderID int64, remainingUOP 
 	if err != nil {
 		return err
 	}
-	if err := audit.AppendBinUOP(tx, binID, before, remainingUOP,
+	return audit.AppendBinUOP(tx, binID, before, remainingUOP,
 		audit.OpSyncUOPAndClaim, "service/bin_manifest.go:SyncUOPAndClaim",
-		&orderID, "", "", uopCtx); err != nil {
-		return err
-	}
-	return tx.Commit()
+		&orderID, "", "", uopCtx)
 }
 
 // ClaimForDispatch selects the correct bin operation based on remaining UOP
@@ -453,31 +464,66 @@ func (s *BinManifestService) SyncUOPAndClaim(binID, orderID int64, remainingUOP 
 // on reservations.bin_id WHERE state IN ('pending','confirmed')) rather than
 // at the SQL CAS claimed_by IS NULL. Sequence:
 //  1. Acquire a pending reservation — unique index makes this exactly-one-winner.
-//  2. Run the existing claim SQL (ClearAndClaim / SyncUOPAndClaim / ClaimBin)
-//     with the demoted-CAS guard (requires reservation EXISTS).
-//  3. Confirm the reservation (pending → confirmed).
-//  4. On ANY failure after Acquire → Release (best-effort; Expire is the backstop).
+//  2. claimAndConfirm: run the claim SQL (ClearAndClaim / SyncUOPAndClaim / ClaimBin,
+//     demoted-CAS guard requires reservation EXISTS) AND Confirm the reservation
+//     (pending → confirmed) in ONE transaction — both or neither (D45).
+//  3. On ANY failure after Acquire → Release (best-effort; Expire is the backstop).
 func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP *int) error {
 	expiresAt := clock.Now().Add(reservationClaimTTL)
 	if err := reservations.Acquire(s.db, orderID, binID, "ClaimForDispatch", "", expiresAt); err != nil {
 		return err // ErrReservationConflict or transient DB error — both surface as codeClaimFailed
 	}
-
-	var claimErr error
-	if remainingUOP != nil && *remainingUOP <= 0 {
-		claimErr = s.ClearAndClaim(binID, orderID)
-	} else if remainingUOP != nil {
-		claimErr = s.SyncUOPAndClaim(binID, orderID, *remainingUOP)
-	} else {
-		claimErr = s.db.ClaimBin(binID, orderID)
-	}
-	if claimErr != nil {
+	if err := s.claimAndConfirm(binID, orderID, remainingUOP); err != nil {
 		if rErr := reservations.Release(s.db, orderID, binID); rErr != nil {
 			log.Printf("dispatch: ClaimForDispatch release reservation order=%d bin=%d: %v", orderID, binID, rErr)
 		}
-		return claimErr
+		return err
 	}
-	return reservations.Confirm(s.db, orderID, binID)
+	return nil
+}
+
+// claimUnderReservationTx runs the correct hard-claim UPDATE for the bin's
+// remainingUOP disposition inside tx — the three-flavored primitive:
+//
+//   - remainingUOP == nil: plain claim (no manifest change)
+//   - *remainingUOP <= 0:  clear manifest + claim (depleted)
+//   - *remainingUOP > 0:   sync UOP + claim (partial consumption)
+//
+// All three carry the same demoted-CAS + owner-idempotent seatbelt. It does NOT
+// confirm the reservation — callers pair it with reservations.Confirm in the SAME
+// tx (see claimAndConfirm) so the claim and the pending→confirmed flip commit
+// atomically (D45).
+func (s *BinManifestService) claimUnderReservationTx(tx *sql.Tx, binID, orderID int64, remainingUOP *int) error {
+	switch {
+	case remainingUOP != nil && *remainingUOP <= 0:
+		return s.clearAndClaimTx(tx, binID, orderID)
+	case remainingUOP != nil:
+		return s.syncUOPAndClaimTx(tx, binID, orderID, *remainingUOP)
+	default:
+		return bins.ClaimTx(tx, binID, orderID)
+	}
+}
+
+// claimAndConfirm hard-claims the bin (per its remainingUOP disposition) AND flips
+// its reservation pending→confirmed in ONE transaction — both or neither. This is
+// the atomicity the wedge fix (D45) requires: the pre-fix code committed the claim
+// and then confirmed as a SEPARATE statement, so a transient DB error / core
+// restart between them left the bin claimed_by=order with the reservation still
+// pending. Combined with the owner-idempotent claim CAS, this makes the half-state
+// unreachable on the happy path and self-healing on retry if one ever exists.
+func (s *BinManifestService) claimAndConfirm(binID, orderID int64, remainingUOP *int) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if err := s.claimUnderReservationTx(tx, binID, orderID, remainingUOP); err != nil {
+		return err
+	}
+	if err := reservations.Confirm(tx, orderID, binID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ConfirmClaim commits an ALREADY-RESERVED bin to a hard claim, then confirms the
@@ -493,18 +539,23 @@ func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP
 // never re-acquires or proceeds without a reservation. Unlike ClaimForDispatch it
 // does NOT release on failure: the reservation belongs to the plan-time reserve
 // step, and the caller's reconcile owns keep/release on the next tick.
+//
+// D45: the claim and the reservation confirm now land in ONE transaction
+// (claimAndConfirm), and the claim CAS is owner-idempotent — so a re-run against a
+// bin THIS order already claimed (a prior confirm whose reservation-confirm write
+// was lost to a transient error / restart) heals to confirmed instead of wedging
+// codeClaimFailed forever.
 func (s *BinManifestService) ConfirmClaim(binID, orderID int64, remainingUOP *int) error {
-	var claimErr error
-	if remainingUOP != nil && *remainingUOP <= 0 {
-		claimErr = s.ClearAndClaim(binID, orderID)
-	} else if remainingUOP != nil {
-		claimErr = s.SyncUOPAndClaim(binID, orderID, *remainingUOP)
-	} else {
-		claimErr = s.db.ClaimBin(binID, orderID)
-	}
-	if claimErr != nil {
-		return claimErr
-	}
+	return s.claimAndConfirm(binID, orderID, remainingUOP)
+}
+
+// ConfirmHeldReservation flips a reservation pending→confirmed WITHOUT re-running
+// the claim SQL — for the crash-replay case where confirmComplexPlan finds the bin
+// already hard-claimed by THIS order but its reservation still pending (the wedge
+// half-state). Re-claiming is unnecessary (we already own the bin) and would only
+// risk a false 0-rows failure, so the reconcile confirms the reservation directly.
+// Idempotent (reservations.Confirm no-ops an already-confirmed row).
+func (s *BinManifestService) ConfirmHeldReservation(orderID, binID int64) error {
 	return reservations.Confirm(s.db, orderID, binID)
 }
 

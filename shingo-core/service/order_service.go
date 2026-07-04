@@ -84,17 +84,11 @@ func (s *OrderService) ClaimBin(binID, orderID int64) error {
 	return s.db.ClaimBin(binID, orderID)
 }
 
-// UnclaimBin releases an order's claim on a bin. Used by the manual-order
-// rollback path when dispatch rejects the order after the claim was
-// already written.
-func (s *OrderService) UnclaimBin(binID int64) error {
-	return s.db.UnclaimBin(binID)
-}
-
 // ReleaseClaimForBin is the coupled rollback (clears claimed_by AND releases the
-// reservation). The manual-order rollback uses it instead of UnclaimBin so that,
-// once the claim routes through ClaimForDispatch, a dispatch failure can't orphan
-// the confirmed reservation and brick the bin.
+// reservation). The manual-order rollback uses it instead of a bare claimed_by
+// clear so that, once the claim routes through ClaimForDispatch, a dispatch
+// failure can't orphan the confirmed reservation and brick the bin. (The bare
+// Unclaim wrappers were removed in D45 — this is their only sanctioned inverse.)
 func (s *OrderService) ReleaseClaimForBin(binID, orderID int64) error {
 	return s.db.ReleaseClaimForBin(binID, orderID)
 }
