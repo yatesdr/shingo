@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"shingo/protocol"
 	"shingo/shared/clock"
 	"shingocore/store/messaging"
 	"shingocore/store/orders"
@@ -98,10 +99,10 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 					s.logFn("engine: abandoned %d stuck orders", n)
 				}
 			}
-			if n, err := s.db.ExpireReservations(); err != nil {
-				s.logFn("engine: expire reservations error: %v", err)
+			if n, err := s.db.ReapOrphanedReservations(); err != nil {
+				s.logFn("engine: reap orphaned reservations error: %v", err)
 			} else if n > 0 {
-				s.logFn("engine: expired %d stale reservations", n)
+				s.logFn("engine: reaped %d orphaned reservations from terminal/gone orders", n)
 			}
 		}
 	}
@@ -177,20 +178,23 @@ func (s *ReconciliationService) AutoConfirmStuckDeliveredOrders(timeout time.Dur
 	return confirmed, nil
 }
 
-// AbandonStuckOrders cancels non-terminal orders that have sat without
-// progress past the timeout: a held two-robot swap removal leg whose
-// supply never arrives (queued), a robot parked at a staging node
-// (staged), or a leg handed to the fleet that never started moving
-// (sourcing/dispatched). The last is the long-weekend drain — orders
-// dispatched Friday whose robots dwelled all weekend, drained, and
-// faulted on transport when finally moved (2026-06-05/07) sit at
-// `dispatched`/vendor CREATED, which the original queued/staged-only sweep
-// missed. in_transit is intentionally excluded: that's an actively moving
-// robot, not a stuck one. Without this a stuck swap ties up a robot and
-// clutters the board until an operator intervenes (ALN_003 swap-starvation,
-// 2026-06-03). Cancelling reuses the standard teardown (fleet cancel, bin
-// unclaim, auto-return, Edge notify) and cascades to the swap sibling.
-// Returns the count abandoned.
+// AbandonStuckOrders cancels RUNTIME-stuck orders that have sat without progress past the
+// timeout: a robot parked at a staging node (staged), or a leg handed to the fleet that
+// never started moving (dispatched). The latter is the long-weekend drain — orders
+// dispatched Friday whose robots dwelled all weekend, drained, and faulted on transport
+// when finally moved (2026-06-05/07) sit at `dispatched`/vendor CREATED.
+//
+// Scope = protocol.IsStuckSweepCandidate ({dispatched, staged}). in_transit is excluded (an
+// actively moving robot is not stuck). PRE-DISPATCH WAITING (queued/sourcing) is excluded
+// per D18-Q4: demand is operator-driven and never evaporates, so a waiting order holds
+// INDEFINITELY and is never abandoned on a timer — a wait of days is legitimate, and give-up
+// is an operator decision. This is the 1c narrowing of the old
+// {queued,staged,sourcing,dispatched} set: a swap removal leg whose supply never arrives now
+// WAITS (the sibling gate holds it in queued/sourcing) rather than being auto-cancelled at
+// ~1h; the operator cancels if it is truly abandoned.
+//
+// Cancelling reuses the standard teardown (fleet cancel, bin unclaim, auto-return, Edge
+// notify) and cascades to the swap sibling. Returns the count abandoned.
 func (s *ReconciliationService) AbandonStuckOrders(timeout time.Duration) (int, error) {
 	if timeout <= 0 {
 		return 0, nil
@@ -199,13 +203,13 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout time.Duration) (int, 
 	// Sim-clock cutoff, same rationale as AutoConfirmStuckDeliveredOrders — order
 	// updated_at is clock.Now()-stamped, so a wall-NOW() comparison never fires in sim.
 	cutoff := clock.Now().UTC().Add(-timeout)
-	rows, err := s.db.Query(`
+	rows, err := s.db.Query(fmt.Sprintf(`
 		SELECT id
 		FROM orders
-		WHERE status IN ('queued', 'staged', 'sourcing', 'dispatched')
+		WHERE status IN (%s)
 		  AND updated_at < $1
 		ORDER BY updated_at ASC
-		LIMIT 100`, cutoff)
+		LIMIT 100`, protocol.StuckSweepStatusSQLList()), cutoff)
 	if err != nil {
 		return 0, err
 	}
@@ -236,12 +240,10 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout time.Duration) (int, 
 			continue
 		}
 		// A sibling cancel from an earlier iteration this pass may already
-		// have moved this one terminal — skip if no longer in an
-		// abandonable (stuck non-terminal) state.
-		switch order.Status {
-		case "queued", "staged", "sourcing", "dispatched":
-			// still stuck — abandon below
-		default:
+		// have moved this one out of the stuck-sweep set (terminal, or a
+		// re-queue back to a pre-dispatch waiting state) — skip if it is no
+		// longer a runtime-stuck candidate.
+		if !protocol.IsStuckSweepCandidate(order.Status) {
 			continue
 		}
 		reason := fmt.Sprintf("abandoned: stuck in %s past %s", order.Status, timeout)

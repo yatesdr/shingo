@@ -342,7 +342,16 @@ func (s *LifecycleService) Queue(ord *orders.Order, actor, reason string) error 
 
 // MoveToSourcing transitions {Pending, Queued, Acknowledged, Dispatched}
 // → Sourcing. Used by planning, redirect, and scanner re-resolve paths.
+//
+// Idempotent for the 1c reserve-retry loop: with commit 4's MoveToSourcing-at-
+// start, a complex order re-enters DispatchPreparedComplex every tick while it
+// sources partials, firing sourcing→sourcing repeatedly. Skip that self-transition
+// (rather than adding a self-edge to the transition table) so its action hooks
+// don't re-run; genuinely illegal from-states are still rejected by transition().
 func (s *LifecycleService) MoveToSourcing(ord *orders.Order, actor, reason string) error {
+	if ord.Status == StatusSourcing {
+		return nil
+	}
 	return s.transition(ord, StatusSourcing, Event{
 		Actor:  actor,
 		Reason: reason,

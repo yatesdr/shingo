@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 
 	"github.com/google/uuid"
 
@@ -389,6 +390,23 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// drop-offs must not be (a two-robot supply leg delivers to a line a sibling
 	// evac clears; gating it would deadlock), same role gate as the capacity
 	// check above.
+	//
+	// CANONICAL ORDER (D18-Q5): claim the slots in ascending node-ID order, NOT step
+	// order. Two orders whose FIXED-concrete drop-offs overlap in opposite step order
+	// would otherwise cross-hold — A grabs S1 and waits on S2 while B grabs S2 and waits
+	// on S1: a true ABBA slot deadlock, now UNBOUNDED since commit 5 stopped the stuck-
+	// sweep from abandoning pre-dispatch orders. One global claim order makes the loser
+	// fail its FIRST contended slot before holding anything the winner needs, so it backs
+	// off cleanly (holding none) and retries. Fungible/NGRP slots re-resolve on contention
+	// and don't strictly need this; sorting them too is harmless. SLOTS-BEFORE-BINS: this
+	// whole loop runs to completion (or requeues) BEFORE reserveComplexPlan touches a bin
+	// — do not interleave the two claim classes, or a slot↔bin cross-type cycle becomes
+	// possible. Each class fully ordered before the next is what keeps that cycle closed.
+	type slotClaim struct {
+		stepIndex int
+		node      *nodes.Node
+	}
+	var slotClaims []slotClaim
 	for i := range resolvedSteps {
 		s := resolvedSteps[i]
 		if s.Action != protocol.ActionDropoff || s.Node == "" || !d.isConcreteStorageDropoff(s.Node) {
@@ -398,12 +416,16 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		if nerr != nil || node == nil {
 			continue // claim/dispatch path below surfaces a clearer error
 		}
-		if cerr := d.db.ClaimSlot(node.ID, order.ID); cerr != nil {
-			reason := fmt.Sprintf("drop-off slot %s claimed by another order", s.Node)
-			if resolvedSteps[i].Group != "" {
+		slotClaims = append(slotClaims, slotClaim{stepIndex: i, node: node})
+	}
+	sort.Slice(slotClaims, func(a, b int) bool { return slotClaims[a].node.ID < slotClaims[b].node.ID })
+	for _, sc := range slotClaims {
+		if cerr := d.db.ClaimSlot(sc.node.ID, order.ID); cerr != nil {
+			reason := fmt.Sprintf("drop-off slot %s claimed by another order", resolvedSteps[sc.stepIndex].Node)
+			if resolvedSteps[sc.stepIndex].Group != "" {
 				// Revert to the NGRP so reResolveComplexSteps re-picks a free
 				// slot on the next tick; persist so the choice isn't redone blind.
-				resolvedSteps[i].Node = resolvedSteps[i].Group
+				resolvedSteps[sc.stepIndex].Node = resolvedSteps[sc.stepIndex].Group
 				if j, mErr := json.Marshal(resolvedSteps); mErr == nil {
 					if uErr := d.db.UpdateOrderStepsJSON(order.ID, string(j)); uErr != nil {
 						log.Printf("dispatch: update steps_json after slot-claim loss for order %d: %v", order.ID, uErr)
@@ -422,84 +444,84 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		}
 	}
 
-	// Claim bins at pickup nodes. RemainingUOP is intentionally nil here
-	// — Edge's `CreateComplexOrder` doesn't thread it through at intake,
-	// and the operator's release-time RemainingUOP arrives via
-	// HandleOrderRelease. If a future Edge starts sending RemainingUOP at
-	// intake we'd persist it on the order row to recover here.
-	//
-	// Snapshot the pre-claim candidate bins; BuildComplexPlan resolves the
-	// order's steps against them.
-	pickupBins := d.snapshotPickupBins(resolvedSteps)
+	// 1c reserve/confirm (commit 4, D39). MoveToSourcing at the START of the reserve
+	// attempt: the order stays `sourcing` while it holds partials and the scanner
+	// retries it (commit 3's widening, complex scope). Idempotent — a retried order
+	// re-enters sourcing→sourcing every tick, which MoveToSourcing skips. The gates
+	// above (swap-hold, capacity, slot-claim) run first and park a blocked order in
+	// its entry status (queued first pass, sourcing on retry); both are retried by
+	// the complex-scoped scanner, and each wrote queue_reason for the Edge push.
+	if err := d.lifecycle.MoveToSourcing(order, "scanner", "reserving source bins"); err != nil {
+		log.Printf("dispatch: complex order %d → sourcing: %v", order.ID, err)
+	}
 
-	// Claim the order's bins from a computed plan — the single claim path.
-	// ApplyComplexPlan re-walks the live candidates the plan ordered, claims
-	// sequentially so each claim consumes its bin, and re-derives the race
-	// signal, terminal disposition, and primary bin from its own attempts.
+	// Plan = ordering + intent. RemainingUOP is nil at complex intake (Edge threads
+	// it at release, not intake). The plan's predicted bins are advisory; reserve and
+	// confirm select/claim against live state, keyed on the plan's distinct needs.
 	processNode := order.ProcessNode
 	if processNode == "" {
 		processNode = order.SourceNode
 	}
-	plan := BuildComplexPlan(resolvedSteps, pickupBins, order.PayloadCode, processNode)
-	// ORPHANED-HOLD WINDOW OPENS HERE (see engine/complex_sourcing_window_test.go).
-	// ApplyComplexPlan claims bins in the DB while order.Status is still StatusQueued.
-	// If the process crashes between this line and MoveToSourcing below, the bin(s)
-	// remain claimed by an order that never advances past queued. Recovery relies on
-	// two periodic sweeps running in sequence:
-	//   1. AbandonStuckOrders (engine) ages out the queued order → terminal.
-	//   2. ReleaseOrphanedClaims (store) then finds the bin claimed by a terminal
-	//      order and releases it.
-	// The intake planners call MoveToSourcing BEFORE the claim; this complex call
-	// site AND the scanner's simple-retrieve path (fulfillment.Scanner.tryFulfill)
-	// both claim BEFORE MoveToSourcing. This call site's orphaned-hold window is
-	// the widest of the three, which is why the two-sweep recovery is documented here.
-	claimErr := d.ApplyComplexPlan(order, plan, order.PayloadCode, nil)
-	if claimErr != nil {
-		// Three terminal outcomes, distinguished by planningError.Code:
-		//   - claim_failed: transient race loss. Don't fail the order;
-		//     queue_reason="claim_failed" replays on the next scanner tick.
-		//   - no_source_bin: every pickup node was empty. The work was
-		//     never needed (e.g. evac for a bin that was removed to
-		//     quality hold before dispatch). Route to lifecycle.Skip so
-		//     the operator surface treats it as a no-op rather than an
-		//     alarm; Edge's HandleOrderSkipped advances the linked
-		//     changeover node task to its post-completion state.
-		//   - no_bin (default): bins existed but were unclaimable
-		//     (already-claimed, payload mismatch, status). Terminal Fail.
-		var pe *planningError
-		if errors.As(claimErr, &pe) {
-			switch pe.Code {
-			case codeClaimFailed:
-				if serr := d.db.SetOrderQueueReason(order.ID, codeClaimFailed); serr != nil {
-					log.Printf("dispatch: set queue_reason claim_failed for order %d: %v", order.ID, serr)
-				}
-				d.dbg("complex: order %d held in queue on claim_failed: %s", order.ID, pe.Detail)
-				return claimErr
-			case codeNoSourceBin:
-				d.skipOrderInternal(order, codeNoSourceBin, pe.Detail)
-				return claimErr
+	plan := BuildComplexPlan(resolvedSteps, d.snapshotPickupBins(resolvedSteps), order.PayloadCode, processNode)
+
+	// Reserve = reconcile held reservations against the distinct source needs and
+	// soft-hold the gaps (reserveComplexPlan). Runs AFTER the canonical slot-claim loop
+	// above, never interleaved with it (SLOTS-BEFORE-BINS, D18-Q5) — one claim class fully
+	// ordered before the next is what prevents a slot↔bin cross-type deadlock cycle. GO is
+	// gated on a COMPLETE distinct-bin set (D5): an incomplete order holds its partials and
+	// stays `sourcing` for the
+	// scanner to retry — a robot never starts a job it can't finish, and give-up is
+	// operator-driven, never a timer (D18-Q4). There is no orphaned-hold window now:
+	// the order is already `sourcing` before it holds anything, so a crash leaves a
+	// `sourcing` order whose pending holds the reaper reclaims (TTL in commit 4,
+	// owner-liveness in commit 5) — not a `queued` order stranded with claimed bins.
+	assigned, outcome, rerr := d.reserveComplexPlan(order, plan)
+	if rerr != nil {
+		log.Printf("dispatch: complex order %d reserve error: %v", order.ID, rerr)
+		return rerr
+	}
+	switch outcome {
+	case reserveMoot:
+		// Reserved nothing and every source node is empty — the work is void (e.g. a
+		// swap evac whose line bin was removed to quality hold before dispatch). Skip
+		// so Edge's HandleOrderSkipped advances the linked changeover task, rather
+		// than hold forever: a moot evac is not demand (D18-Q4).
+		d.skipOrderInternal(order, codeNoSourceBin, fmt.Sprintf("complex order %d: no bin at any source node", order.ID))
+		return fmt.Errorf("complex order %d moot — skipped", order.ID)
+	case reserveHolding:
+		const reason = "awaiting source bins"
+		if order.QueueReason != reason {
+			if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+				log.Printf("dispatch: set queue_reason for complex order %d: %v", order.ID, serr)
 			}
 		}
-		d.failOrderInternal(order, codeNoBin, claimErr.Error())
-		return claimErr
+		d.dbg("complex: order %d incomplete reserve — holding partials, retrying next tick", order.ID)
+		return fmt.Errorf("complex order %d reserve incomplete", order.ID)
+	}
+
+	// Confirm = commit the complete reserved set to hard claims (apply-as-confirm, no
+	// live re-walk). A claim_failed (a pending hold reaped, or a bin claimed by
+	// another order between reserve and confirm) requeues the attempt; a malformed
+	// order (no source pickup) fails.
+	if cerr := d.confirmComplexPlan(order, plan, assigned); cerr != nil {
+		var pe *planningError
+		if errors.As(cerr, &pe) && pe.Code == codeClaimFailed {
+			if serr := d.db.SetOrderQueueReason(order.ID, codeClaimFailed); serr != nil {
+				log.Printf("dispatch: set queue_reason claim_failed for order %d: %v", order.ID, serr)
+			}
+			d.dbg("complex: order %d held on claim_failed: %s", order.ID, pe.Detail)
+			return cerr
+		}
+		d.failOrderInternal(order, codeNoBin, cerr.Error())
+		return cerr
 	}
 
 	preWait, hasWait := splitAtWait(resolvedSteps)
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 	blocks := stepsToBlocks(vendorOrderID, preWait, 0)
-
 	if len(blocks) == 0 {
 		d.failOrderInternal(order, "invalid_steps", "no actionable steps before wait")
 		return fmt.Errorf("no actionable blocks")
-	}
-
-	// ORPHANED-HOLD WINDOW CLOSES HERE.
-	// MoveToSourcing advances the order to StatusSourcing. Past this point the bin
-	// claim is legitimate — the order is actively progressing and AbandonStuckOrders
-	// routes sourcing/dispatched orders through the fleet-cancel path (which includes
-	// unclaim), not through ReleaseOrphanedClaims.
-	if err := d.lifecycle.MoveToSourcing(order, "scanner", "complex order ready to dispatch"); err != nil {
-		log.Printf("dispatch: complex order %d → sourcing: %v", order.ID, err)
 	}
 
 	req := fleet.StagedOrderRequest{

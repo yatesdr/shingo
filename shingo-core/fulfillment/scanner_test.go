@@ -328,7 +328,11 @@ func TestScanner_TryFulfill_Retrieve_FinderWaits_Skipped(t *testing.T) {
 	}
 }
 
-func TestScanner_TryFulfill_ClaimFails_SkipsSilently(t *testing.T) {
+// D37: with commit 4's MoveToSourcing flipped BEFORE the claim, a simple order
+// whose claim fails must RE-QUEUE (sourcing→queued) so the complex-only scope
+// guard retries it — leaving it in `sourcing` would wedge it. Status trail:
+// Sourcing (before claim) then Queued (claim-fail re-queue).
+func TestScannerSimpleClaimFailRequeues(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 7, "dest-07")
@@ -339,11 +343,13 @@ func TestScanner_TryFulfill_ClaimFails_SkipsSilently(t *testing.T) {
 	if got := s.RunOnce(); got != 0 {
 		t.Fatalf("RunOnce: got %d, want 0 (claim contention)", got)
 	}
-	if len(f.unclaimedOrderIDs) != 0 {
-		t.Errorf("failed claim should not trigger unclaim: %v", f.unclaimedOrderIDs)
+	if len(f.claimedBins) != 0 {
+		t.Errorf("failed claim should not record a claim: %v", f.claimedBins)
 	}
-	if len(f.statusUpdates) != 0 {
-		t.Errorf("failed claim should not trigger status change: %v", f.statusUpdates)
+	if len(f.statusUpdates) != 2 ||
+		f.statusUpdates[0].Status != string(protocol.StatusSourcing) ||
+		f.statusUpdates[1].Status != string(protocol.StatusQueued) {
+		t.Fatalf("status trail on claim fail: got %v, want [Sourcing, Queued] (D37 re-queue)", f.statusUpdates)
 	}
 }
 

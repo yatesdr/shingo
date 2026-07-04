@@ -40,10 +40,11 @@ type ReconciliationStore interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 	GetOrder(id int64) (*orders.Order, error)
 
-	// ExpireReservations deletes pending reservations whose expires_at is
-	// in the past, freeing bins held by orders that crashed between Acquire
-	// and Confirm. Returns the count of rows deleted.
-	ExpireReservations() (int, error)
+	// ReapOrphanedReservations reaps reservation rows (pending AND confirmed) whose
+	// owning order is terminal or gone — the 1c owner-liveness backstop behind
+	// TerminalizeOrder. Never age-based: a hold under a live order is sacred. Returns
+	// the count of rows deleted.
+	ReapOrphanedReservations() (int, error)
 }
 
 // Compile-time check.

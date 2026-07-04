@@ -303,10 +303,22 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// OutcomeFound.
 	bin, sourceNode := res.Bin, res.Node
 
+	// D37: MoveToSourcing BEFORE the claim (commit-4 normalization — the intake
+	// planners and the complex path both move-before-claim, so the simple family
+	// matches). On claim failure the simple order MUST re-queue (sourcing→queued):
+	// simple orders park in `queued` in 1c, and the scanner's complex-only scope
+	// guard never retries one left in `sourcing` — that would be a permanent wedge.
+	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin found, claiming"); err != nil {
+		s.logFn("fulfillment: order %d → sourcing: %v", order.ID, err)
+	}
+
 	// Claim the bin (reserve-then-claim; the guard requires a pending reservation).
 	if err := s.claimer.ClaimForDispatch(bin.ID, order.ID, nil); err != nil {
 		if s.debugLog != nil {
 			s.debugLog("fulfillment: claim bin %d for order %d failed: %v", bin.ID, order.ID, err)
+		}
+		if qerr := s.lifecycle.Queue(order, "fulfillment", "claim contention, re-queued"); qerr != nil {
+			s.logFn("fulfillment: order %d → queued after claim fail: %v", order.ID, qerr)
 		}
 		return false
 	}
@@ -317,9 +329,6 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	}
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
 		s.logFn("fulfillment: update source_node for order %d: %v", order.ID, err)
-	}
-	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin found, dispatching"); err != nil {
-		s.logFn("fulfillment: order %d → sourcing: %v", order.ID, err)
 	}
 
 	// Resolve destination.

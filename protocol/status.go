@@ -160,6 +160,25 @@ func IsRuntimeStuckCandidate(s Status) bool {
 // IsRuntimeStuckCandidate is the method form.
 func (s Status) IsRuntimeStuckCandidate() bool { return IsRuntimeStuckCandidate(s) }
 
+// IsStuckSweepCandidate reports whether the DESTRUCTIVE AbandonStuckOrders sweep may
+// auto-cancel an order that has sat past its timeout. This is the runtime, the-vendor-
+// has-it-but-nothing-is-moving set: dispatched (handed to the fleet, the robot may never
+// have started) and staged (a robot parked holding a bin). It deliberately EXCLUDES
+// in_transit (an actively moving robot is not stuck) and ALL pre-dispatch waiting states
+// (pending/sourcing/queued) — D18-Q4: demand is operator-driven and never evaporates, so
+// a waiting order holds INDEFINITELY and is never abandoned on a timer.
+//
+// Narrower than both IsVendorActive (which also includes in_transit) and the informational
+// IsRuntimeStuckCandidate (which flags stale pre-dispatch / in_transit orders for the
+// health board but must NEVER drive a cancel). Kept as its own predicate precisely because
+// "worth surfacing as stale" and "safe to auto-cancel" are different questions.
+func IsStuckSweepCandidate(s Status) bool {
+	return s == StatusDispatched || s == StatusStaged
+}
+
+// IsStuckSweepCandidate is the method form.
+func (s Status) IsStuckSweepCandidate() bool { return IsStuckSweepCandidate(s) }
+
 // IsOperatorVisible reports whether the status should still appear on
 // operator-facing HMI surfaces (edge ListActive, kanban demand pages,
 // manual-message picker). Distinct from !IsTerminal: Failed orders stay
@@ -196,6 +215,7 @@ var (
 	preDispatchStatusSQLList           = buildStatusSQLList(IsPreDispatch)
 	acquiringStatusSQLList             = buildStatusSQLList(IsAcquiring)
 	runtimeStuckCandidateStatusSQLList = buildStatusSQLList(IsRuntimeStuckCandidate)
+	stuckSweepStatusSQLList            = buildStatusSQLList(IsStuckSweepCandidate)
 	operatorVisibleStatusSQLList       = buildStatusSQLList(IsOperatorVisible)
 )
 
@@ -247,6 +267,11 @@ func AcquiringStatusSQLList() string { return acquiringStatusSQLList }
 // that should be watched for stale updated_at — excludes faulted,
 // delivered, reshuffling per the predicate's doc.
 func RuntimeStuckCandidateStatusSQLList() string { return runtimeStuckCandidateStatusSQLList }
+
+// StuckSweepStatusSQLList returns 'dispatched','staged' — the runtime states the
+// destructive AbandonStuckOrders sweep may auto-cancel. Excludes in_transit and all
+// pre-dispatch waiting (D18-Q4). Use in `status IN (StuckSweepStatusSQLList())`.
+func StuckSweepStatusSQLList() string { return stuckSweepStatusSQLList }
 
 // OperatorVisibleStatusSQLList returns the statuses that should still
 // appear on Edge HMI surfaces. Skipped/Confirmed/Cancelled are excluded;

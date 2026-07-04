@@ -115,49 +115,74 @@ func TestReservations_ConcurrentAcquire(t *testing.T) {
 	}
 }
 
-// TestReservations_Expire is the crash-leak backstop test: a pending reservation
-// that was never Confirmed (simulating a crash between Acquire and Confirm) is
-// reaped by Expire, and the bin becomes acquirable again.
-func TestReservations_Expire(t *testing.T) {
+// TestReapOrphaned_OwnerLiveness pins the 1c reaper contract (D18-Q4 / D7): holds are
+// reaped on OWNER LIVENESS, never age. A hold aged far past the retired 60s TTL SURVIVES
+// while its order is non-terminal (sourcing) — this is the D37 churn window closing. Once
+// the order goes terminal, BOTH its pending and confirmed holds are reaped on the next
+// sweep — the backstop behind TerminalizeOrder (which releases in-tx) for crashed/bypassed
+// paths.
+//
+// The "order gone" leg (order_id NOT IN orders) is structurally UNREACHABLE and so cannot
+// be exercised here: reservations.order_id is a RESTRICT foreign key (migrations.go v42, no
+// ON DELETE) and orders are never hard-deleted, so a reservation can never outlive its
+// order row. It stays as one-clause insurance against a future ON DELETE CASCADE.
+func TestReapOrphaned_OwnerLiveness(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
-	bin := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-EXPIRE-1")
+	binPending := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-REAP-P")
+	binConfirmed := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-REAP-C")
 
-	// Acquire with a TTL already in the past — simulates a crash-leaked hold.
-	pastExpiry := clock.Now().Add(-1 * time.Second)
-	o1 := testdb.CreateOrder(t, db)
-	o2 := testdb.CreateOrder(t, db)
-	if err := reservations.Acquire(db, o1.ID, bin.ID, "test", "expire", pastExpiry); err != nil {
-		t.Fatalf("Acquire with past TTL: %v", err)
+	// An order legitimately in sourcing, holding one pending + one confirmed bin, both
+	// stamped with an expiry an hour in the PAST — far beyond the retired 60s TTL.
+	o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusSourcing })
+	longPast := clock.Now().Add(-1 * time.Hour)
+	if err := reservations.Acquire(db, o.ID, binPending.ID, "test", "reap", longPast); err != nil {
+		t.Fatalf("acquire pending: %v", err)
+	}
+	if err := reservations.Acquire(db, o.ID, binConfirmed.ID, "test", "reap", longPast); err != nil {
+		t.Fatalf("acquire confirmed: %v", err)
+	}
+	if err := reservations.Confirm(db, o.ID, binConfirmed.ID); err != nil {
+		t.Fatalf("confirm: %v", err)
 	}
 
-	// Another order cannot acquire yet (row exists).
-	if err := reservations.Acquire(db, o2.ID, bin.ID, "test", "expire", clock.Now().Add(60*time.Second)); err != reservations.ErrReservationConflict {
-		t.Fatalf("before Expire: wanted ErrReservationConflict, got %v", err)
-	}
-
-	n, err := reservations.Expire(db)
+	// Sweep 1 — the order is alive (sourcing). Age is irrelevant: NOTHING is reaped.
+	n, err := reservations.ReapOrphaned(db)
 	if err != nil {
-		t.Fatalf("Expire: %v", err)
+		t.Fatalf("ReapOrphaned (live order): %v", err)
 	}
-	if n == 0 {
-		t.Fatal("Expire deleted 0 rows — expected at least 1 past-TTL reservation")
+	if n != 0 {
+		t.Fatalf("reaped %d rows under a live sourcing order — holds are sacred no matter how old (D18-Q4)", n)
+	}
+	if held, _ := reservations.ListByOrder(db, o.ID); len(held) != 2 {
+		t.Fatalf("held = %d after live sweep, want 2 (both survive)", len(held))
 	}
 
-	// After expiry the bin is acquirable.
-	if err := reservations.Acquire(db, o2.ID, bin.ID, "test", "expire", clock.Now().Add(60*time.Second)); err != nil {
-		t.Fatalf("Acquire after Expire: %v", err)
-	}
-	_ = reservations.Release(db, o2.ID, bin.ID)
+	// The order goes terminal via a RAW status write — simulating a crash/bypass that
+	// leaked past TerminalizeOrder (which would otherwise release in the same tx). The
+	// reaper is exactly that backstop.
+	testdb.SeedOrderStatus(t, db, o.ID, string(protocol.StatusFailed), "reaper test")
 
-	// HasPendingReservation should now be false.
-	got, err := db.GetBin(bin.ID)
+	// Sweep 2 — owner is terminal: BOTH the pending and the confirmed hold are reaped.
+	n, err = reservations.ReapOrphaned(db)
 	if err != nil {
-		t.Fatalf("GetBin: %v", err)
+		t.Fatalf("ReapOrphaned (terminal order): %v", err)
 	}
-	if got.HasPendingReservation {
-		t.Error("HasPendingReservation = true after Expire — expected false")
+	if n != 2 {
+		t.Fatalf("reaped %d rows, want 2 (pending + confirmed under a terminal order)", n)
+	}
+	if held, _ := reservations.ListByOrder(db, o.ID); len(held) != 0 {
+		t.Fatalf("held = %d after terminal reap, want 0", len(held))
+	}
+
+	// Both bins are re-acquirable — no active reservation lingers to brick them.
+	other := testdb.CreateOrder(t, db)
+	if err := reservations.Acquire(db, other.ID, binPending.ID, "test", "reacquire", clock.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("re-acquire previously-pending bin: %v", err)
+	}
+	if err := reservations.Acquire(db, other.ID, binConfirmed.ID, "test", "reacquire", clock.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("re-acquire previously-confirmed bin: %v", err)
 	}
 }
 

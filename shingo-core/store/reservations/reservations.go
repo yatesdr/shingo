@@ -2,22 +2,20 @@
 // plan/apply → reservation-sourcing refactor.
 //
 // Acquire → Confirm → Release is the per-dispatch lifecycle.
-// Expire reclaims pending rows whose TTL has passed (crash-leak backstop).
+// ReapOrphaned reclaims rows whose owning order is terminal/gone (owner-liveness backstop).
 //
 // Phase-0 stub bodies are replaced here. The v43 migration must have run
 // before any Acquire call: the partial unique index uq_reservations_bin_active
 // is what makes Acquire exactly-one-winner.
 //
-// ⚠ PHASE-1A CAVEAT ON Expire:
-// Expire uses expires_at (stamped at Acquire time with a short TTL ~60s)
-// as a proxy for "orphaned". This is valid in 1a because Acquire→Confirm
-// is a single function call (milliseconds), so a pending row older than
-// the TTL is almost certainly a crash-leak — not a legitimately held
-// reservation. In Phase 1c, orders in 'sourcing' will legitimately hold
-// reservations for minutes-to-hours while waiting. Phase 1c MUST replace
-// this age-based reap with an order-liveness check: only reap a pending
-// hold whose owning order is terminal/gone. Do NOT inherit the age-proxy
-// logic into 1c.
+// REAPING IS OWNER-LIVENESS, NOT AGE (1c — D18-Q4 / D7). The 1a reaper used expires_at
+// (a short ~60s TTL) as a proxy for "orphaned", valid only because Acquire→Confirm was
+// milliseconds then. In 1c an order in 'sourcing' legitimately holds its reservations for
+// minutes-to-hours (or days) while it waits for a source to appear — so age is no longer a
+// proxy for orphaned. ReapOrphaned keys on the OWNING ORDER's liveness instead: a hold is
+// reclaimed only when its order is terminal or gone, never on age. The expires_at column is
+// still stamped at Acquire (it is NOT NULL) but is no longer read by any reaper — vestigial
+// pending a schema drop. Do NOT re-introduce an age-based reap.
 package reservations
 
 import (
@@ -25,7 +23,7 @@ import (
 	"fmt"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol"
 )
 
 // Execer is the minimal interface all functions in this package need.
@@ -35,6 +33,19 @@ import (
 // they already hold.
 type Execer interface {
 	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// Queryer is the read counterpart of Execer, for the SELECT-returning helpers.
+// Both *sql.DB and *sql.Tx satisfy it.
+type Queryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// Reservation is one row of the order's held reservations, as returned by
+// ListByOrder. State is "pending" or "confirmed".
+type Reservation struct {
+	BinID int64
+	State string
 }
 
 // ErrReservationConflict is returned by Acquire when another order already
@@ -47,8 +58,14 @@ var ErrReservationConflict = fmt.Errorf("reservations: bin already reserved (rac
 // expiresAt is the absolute deadline after which Expire may reclaim the hold
 // if the Confirm step was never reached (crash-leak backstop).
 //
-// Returns ErrReservationConflict when another order already holds an active
-// (pending or confirmed) reservation on binID — the caller lost the race.
+// Returns ErrReservationConflict when an active (pending or confirmed)
+// reservation already exists on binID. The unique index uq_reservations_bin_active
+// is keyed on bin_id ALONE, so this fires even when THIS SAME order already holds
+// the bin — re-Acquiring your own hold conflicts on its own row. Callers that
+// retry across ticks (the 1c plan-time reserve/reconcile) MUST therefore
+// load-held-first and skip Acquire for bins they already hold, or they will
+// report their own held bins as "missing" every tick. A conflict on a bin the
+// caller does NOT already hold is a genuine race lost to another order.
 // Returns any other non-nil error for transient DB failures.
 func Acquire(db Execer, orderID, binID int64, reservedBy, reason string, expiresAt time.Time) error {
 	result, err := db.Exec(
@@ -123,29 +140,57 @@ func ReleaseByBin(db Execer, binID int64) error {
 	return nil
 }
 
-// Expire removes pending reservation rows whose expires_at has passed.
-// Uses clock.Now() (sim-time in sim, wall-time in prod) as the cutoff —
-// matching AbandonStuckOrders — so the reaper fires correctly in sim
-// regardless of sim-clock speed.
-//
-// Only 'pending' rows are reaped; 'confirmed' rows are owned by the order
-// lifecycle and are cleared by ReleaseByOrder on teardown.
-//
-// Returns the number of rows deleted and any error. Errors are non-fatal
-// to the caller (the reconciliation loop logs and continues).
-//
-// ⚠ 1a proxy: expires_at is a proxy for "orphaned" because Acquire→Confirm
-// is milliseconds in 1a; a row still pending past its TTL is a crash-leak.
-// Phase 1c must replace this with order-liveness gating before extending
-// reservation TTLs to minutes-or-hours. See package-level caveat.
-func Expire(db Execer) (int, error) {
-	cutoff := clock.Now().UTC()
-	result, err := db.Exec(
-		`DELETE FROM reservations WHERE state='pending' AND expires_at < $1`,
-		cutoff,
+// ListByOrder returns all reservations held by orderID, both pending and
+// confirmed. The 1c plan-time reconcile loads its own holds with this BEFORE
+// deciding what to keep / release / acquire — the owner-aware step that dodges
+// the per-bin unique-index self-conflict documented on Acquire.
+func ListByOrder(db Queryer, orderID int64) ([]Reservation, error) {
+	rows, err := db.Query(
+		`SELECT bin_id, state FROM reservations WHERE order_id=$1 ORDER BY bin_id`,
+		orderID,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("reservations expire: %w", err)
+		return nil, fmt.Errorf("reservations list-by-order: %w", err)
+	}
+	defer rows.Close()
+	var out []Reservation
+	for rows.Next() {
+		var r Reservation
+		if err := rows.Scan(&r.BinID, &r.State); err != nil {
+			return nil, fmt.Errorf("reservations list-by-order scan: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ReapOrphaned deletes reservation rows — in BOTH states — whose owning order is
+// terminal or no longer exists. This is the 1c owner-liveness reaper (D18-Q4 / D7):
+// reclamation keys on the OWNER being dead, NEVER on the hold's age. A hold under a live,
+// non-terminal order is sacred no matter how long it has been held — an order in sourcing
+// legitimately waits minutes-to-hours (or days) for its source to appear; demand is
+// operator-driven and never evaporates.
+//
+// It is the defense-in-depth backstop BEHIND the terminal chokepoint: TerminalizeOrder
+// (store/orders.go) already releases an order's reservations in the same tx that takes it
+// terminal, so on the normal path there is nothing here to reap. This catches rows that
+// leaked past that path — a crash between the status write and the release, or a raw
+// status bypass. Idempotent with the chokepoint: a row already released there simply isn't
+// present.
+//
+// The `order_id NOT IN (orders)` leg is currently unreachable — reservations.order_id is a
+// RESTRICT foreign key (migrations.go v42) and orders are never hard-deleted, so a
+// reservation can never outlive its order row — but is kept as one-clause insurance against
+// a future ON DELETE CASCADE. Returns the number of rows deleted; errors are non-fatal to
+// the caller (the reconciliation loop logs and continues).
+func ReapOrphaned(db Execer) (int, error) {
+	result, err := db.Exec(fmt.Sprintf(
+		`DELETE FROM reservations
+		 WHERE order_id IN (SELECT id FROM orders WHERE status IN (%s))
+		    OR order_id NOT IN (SELECT id FROM orders)`,
+		protocol.TerminalStatusSQLList()))
+	if err != nil {
+		return 0, fmt.Errorf("reservations reap-orphaned: %w", err)
 	}
 	n, _ := result.RowsAffected()
 	return int(n), nil

@@ -2,28 +2,16 @@
 
 package dispatch
 
-// Complex-order concurrency test: two ApplyComplexPlan calls targeting the same
-// pickup node race for the single available bin.
-//
-// Design note: ApplyComplexPlan has no test hook between ListBinsByNode and
-// ClaimForDispatch (unlike PlanningService.postFindHook on the simple path).
-// We therefore rely on timing: both goroutines are released simultaneously via
-// close(ready), maximising the probability that they interleave ListBinsByNode
-// before either commits a claim.
-//
-// The SQL CAS (WHERE claimed_by IS NULL) guarantees exactly one winner
-// regardless of interleaving. The losing goroutine will receive either:
-//   - codeClaimFailed  if it saw the bin as unclaimed on read (true race);
-//   - codeNoBin        if it saw the bin as claimed by the winner on read
-//                      (sequential, BinUnavailableReason pre-filtered it).
-//
-// Either outcome is a correct implementation; the test pins "exactly one order
-// claims the bin" and "the loser's error wraps *planningError".
-// See SYNTH-round2.md §ErrRaced for why we don't sentinel-distinguish the two.
+// Concurrency test (ported to the 1c reserve/confirm split, D39): two orders
+// reserveComplexPlan the same single-bin source at once. The reservations unique
+// index (per bin) admits exactly one — the winner reserves the bin and completes;
+// the loser sees ErrReservationConflict, counts the bin missing (incomplete, NOT
+// an error), and — the load-bearing rider — its reconcile does NOT touch the
+// winner's hold. The loser re-queues with its own partial intact (here nothing,
+// since the sole bin went to the winner) and retries next tick.
 
 import (
 	"encoding/json"
-	"errors"
 	"sync"
 	"testing"
 
@@ -34,12 +22,7 @@ import (
 	"shingocore/store/orders"
 )
 
-// TestApplyComplexPlan_ConcurrentPickupContention verifies that two concurrent
-// ApplyComplexPlan calls targeting the same pickup node produce exactly one
-// successful claim. The loser receives a planningError with Code either
-// codeClaimFailed (raced) or codeNoBin (sequential) — both are valid; what
-// must never happen is both orders claiming the same bin.
-func TestApplyComplexPlan_ConcurrentPickupContention(t *testing.T) {
+func TestReserveComplexPlan_ConcurrentContention(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, lineNode, bp := setupTestData(t, db)
@@ -47,7 +30,7 @@ func TestApplyComplexPlan_ConcurrentPickupContention(t *testing.T) {
 	// Source node with a single bin — the contested resource.
 	srcNode := &nodes.Node{Name: "CONC-SRC", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(srcNode), "create source node")
-	testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "BIN-CONC-ONLY")
+	onlyBin := testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "BIN-CONC-ONLY")
 
 	mkOrder := func(uuid string) *orders.Order {
 		o := &orders.Order{
@@ -75,65 +58,59 @@ func TestApplyComplexPlan_ConcurrentPickupContention(t *testing.T) {
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
-	// Parse steps once; reuse across both goroutines (read-only after creation).
 	var steps []resolvedStep
-	testutil.MustNoErr(t, func() error {
-		return json.Unmarshal([]byte(order1.StepsJSON), &steps)
-	}(), "parse steps")
+	testutil.MustNoErr(t, json.Unmarshal([]byte(order1.StepsJSON), &steps), "parse steps")
 
 	ready := make(chan struct{})
 	var wg sync.WaitGroup
+	outcomes := make([]reserveOutcome, 2)
 	errs := make([]error, 2)
 	wg.Add(2)
-
 	for i, order := range []*orders.Order{order1, order2} {
 		i, order := i, order
 		go func() {
 			defer wg.Done()
-			<-ready // released simultaneously to maximise race window
-			pickupBins := d.snapshotPickupBins(steps)
-			plan := BuildComplexPlan(steps, pickupBins, bp.Code, srcNode.Name)
-			errs[i] = d.ApplyComplexPlan(order, plan, bp.Code, nil)
+			<-ready // released simultaneously to maximise the race window
+			plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, srcNode.Name)
+			_, outcomes[i], errs[i] = d.reserveComplexPlan(order, plan)
 		}()
 	}
 	close(ready)
 	wg.Wait()
 
-	// Exactly one must succeed.
-	winnerIdx := -1
+	// A lost race is "missing" (holding), never an error.
 	for i, err := range errs {
-		if err == nil {
-			if winnerIdx != -1 {
-				t.Errorf("multiple winners: goroutine %d and %d both succeeded", winnerIdx, i)
-			}
+		if err != nil {
+			t.Fatalf("goroutine %d reserve errored: %v (a lost race must be incomplete, not an error)", i, err)
+		}
+	}
+
+	// Exactly one order completed (won the single bin); the other is holding.
+	winners := 0
+	winnerIdx := -1
+	for i, oc := range outcomes {
+		if oc == reserveComplete {
+			winners++
 			winnerIdx = i
 		}
 	}
-	if winnerIdx == -1 {
-		t.Fatalf("no winner: both goroutines failed (%v)", errs)
+	if winners != 1 {
+		t.Fatalf("reserveComplete count = %d, want exactly 1 (single bin, two orders): outcomes=%v", winners, outcomes)
 	}
-	loserIdx := 1 - winnerIdx
+	loser := []*orders.Order{order1, order2}[1-winnerIdx]
+	winner := []*orders.Order{order1, order2}[winnerIdx]
 
-	// The bin must be claimed by exactly one order.
-	claimed, err := db.ListBinsByClaim(order1.ID)
-	testutil.MustNoErr(t, err, "list claimed bins for order1")
-	claimed2, err := db.ListBinsByClaim(order2.ID)
-	testutil.MustNoErr(t, err, "list claimed bins for order2")
-
-	if len(claimed) > 0 && len(claimed2) > 0 {
-		t.Error("both orders have a claimed bin — CAS invariant violated")
+	// The bin is reserved by exactly the winner.
+	wRes, err := db.ListReservationsByOrder(winner.ID)
+	testutil.MustNoErr(t, err, "list winner reservations")
+	if len(wRes) != 1 || wRes[0].BinID != onlyBin.ID {
+		t.Errorf("winner reservations = %+v, want exactly the contested bin %d", wRes, onlyBin.ID)
 	}
 
-	// Loser's error must be a planningError with a recognised claim-failure code.
-	var pe *planningError
-	if !errors.As(errs[loserIdx], &pe) {
-		t.Fatalf("loser error %v does not wrap *planningError", errs[loserIdx])
-	}
-	// In the concurrent case (true CAS race) pe.Code == codeClaimFailed.
-	// In the sequential case (BinUnavailableReason pre-filtered) pe.Code == codeNoBin.
-	// Both are valid; what must never happen is any other code (e.g. reshuffle_error).
-	if pe.Code != codeClaimFailed && pe.Code != codeNoBin {
-		t.Errorf("loser planningError.Code = %q, want %q or %q",
-			pe.Code, codeClaimFailed, codeNoBin)
+	// The loser holds nothing — it neither stole the winner's bin nor released it.
+	lRes, err := db.ListReservationsByOrder(loser.ID)
+	testutil.MustNoErr(t, err, "list loser reservations")
+	if len(lRes) != 0 {
+		t.Errorf("loser reservations = %+v, want none (lost the race; must not hold or release the winner's bin)", lRes)
 	}
 }

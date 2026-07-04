@@ -2,10 +2,10 @@
 
 package dispatch
 
-// End-to-end coverage that ApplyComplexPlan is the live claim path. A two-pickup
-// order dispatched through DispatchPreparedComplex must claim both bins, record
-// both order_bins junction rows with the correct per-bin destinations, set the
-// primary bin, and reach a non-failed terminal status.
+// End-to-end coverage of the 1c reserve/confirm claim path (D39). A two-pickup
+// order dispatched through DispatchPreparedComplex must reserve then confirm both
+// bins, record both order_bins junction rows with the correct per-bin destinations,
+// set the primary bin, and reach a non-failed terminal status.
 
 import (
 	"encoding/json"

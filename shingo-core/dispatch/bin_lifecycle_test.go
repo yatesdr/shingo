@@ -1076,7 +1076,7 @@ func TestDispatchPreparedComplex_NoSourceBinSkipsNotFails(t *testing.T) {
 // by another order, payload mismatch, etc.), the order still terminates
 // as Failed — that's an alarm, not a no-op. Pins the gate so a future
 // refactor can't accidentally collapse the two cases.
-func TestDispatchPreparedComplex_BinClaimedElsewhereFails(t *testing.T) {
+func TestDispatchPreparedComplex_BinClaimedElsewhereHolds(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
@@ -1115,8 +1115,14 @@ func TestDispatchPreparedComplex_BinClaimedElsewhereFails(t *testing.T) {
 	order, _ := db.GetOrderByUUID("uuid-evac-claimed")
 	_ = d.DispatchPreparedComplex(order)
 
+	// Behavior change (commit 4, D39): a bin present but claimed by another order
+	// is no longer a terminal Fail — the reserve holds the order in `sourcing` and
+	// the scanner retries it, because the contested bin frees when the other order
+	// completes (D5/D18-Q4 hold-and-retry). A claimer that is actually dead/gone
+	// (like the bogus 999999 here) is cleared by the orphan-claim reaper, which
+	// then lets the retry through. Was: StatusFailed.
 	got, _ := db.GetOrderByUUID("uuid-evac-claimed")
-	if got.Status != StatusFailed {
-		t.Errorf("status = %q, want %q (bin present but unclaimable must Fail, not Skip)", got.Status, StatusFailed)
+	if got.Status != StatusSourcing {
+		t.Errorf("status = %q, want %q (bin present but claimed elsewhere now HOLDS for retry, not Fail)", got.Status, StatusSourcing)
 	}
 }

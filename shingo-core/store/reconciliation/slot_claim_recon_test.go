@@ -30,6 +30,15 @@ func TestReleaseOrphanedClaims_ReleasesSlotClaims(t *testing.T) {
 	if err := nodes.ClaimSlot(sdb, slot.ID, order.ID); err != nil {
 		t.Fatalf("claim slot: %v", err)
 	}
+	// Negative: while the owning order is still non-terminal (queued), the sweep must NOT
+	// touch its claim — only terminal orders' claims are orphaned. A legitimately-queued
+	// order that holds a claim mid-dispatch must not lose it. (This pins the leg the retired
+	// complex_sourcing_window_test used to cover.)
+	if n, err := reconciliation.ReleaseOrphanedClaims(sdb); err != nil {
+		t.Fatalf("ReleaseOrphanedClaims (pre-terminal): %v", err)
+	} else if n != 0 {
+		t.Fatalf("pre-terminal sweep released %d claim(s), want 0 (a queued order is not orphaned)", n)
+	}
 	// Mark terminal WITHOUT releasing the slot (the leak the sweep heals) — a raw
 	// write is the point here: it simulates a terminal status that slipped past
 	// the atomic TerminalizeOrder (which orders.UpdateStatus now refuses outright).

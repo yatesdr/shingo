@@ -129,7 +129,7 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 // FindEmptyCompatibleBin / FindSourceBinFIFO below) — the simple planners and the
 // scanner already collapsed onto SourceFinder in commit 3a. It is a visible,
 // forbidigo-carved-out exception (exclusions.rules #7) until the complex-path
-// unification (D25 / Option 3) folds distinctSourceNeeds through the finder.
+// unification (D25 / Option 3) folds complexPickups through the finder.
 func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode string) (string, string, error) {
 	if step.Node != "" {
 		node, err := d.db.GetNodeByDotName(step.Node)

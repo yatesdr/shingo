@@ -149,17 +149,17 @@ func TestAbandonStuckOrders(t *testing.T) {
 		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
 		return o
 	}
-	stuckHeld := mk("stuck-held", "queued")                 // a held swap removal leg
-	stuckStaged := mk("stuck-staged", "staged")             // a robot parked at staging
-	stuckSourcing := mk("stuck-sourcing", "sourcing")       // handed off, never moved
+	stuckStaged := mk("stuck-staged", "staged")             // a robot parked at staging — runtime-stuck
 	stuckDispatched := mk("stuck-dispatched", "dispatched") // dispatched Fri, dwelled all weekend (06-05/07)
+	waitingQueued := mk("waiting-queued", "queued")         // pre-dispatch waiting — sacred (D18-Q4)
+	waitingSourcing := mk("waiting-sourcing", "sourcing")   // holding partials, retrying — sacred (D18-Q4)
 	fresh := mk("fresh-queued", "queued")                   // just queued — must survive
 	moving := mk("moving-intransit", "in_transit")          // actively moving — must survive even when aged
 
-	// Age the stuck ones AND the in_transit one past the 1h TTL; leave
-	// `fresh` at NOW(). The aged in_transit proves status (not just age)
-	// gates the sweep — an actively moving robot is never abandoned.
-	for _, id := range []int64{stuckHeld.ID, stuckStaged.ID, stuckSourcing.ID, stuckDispatched.ID, moving.ID} {
+	// Age everything except `fresh` past the 1h TTL. The aged in_transit proves status
+	// (not just age) gates the sweep — a moving robot is never abandoned; the aged
+	// queued/sourcing prove D18-Q4 — pre-dispatch waiting is sacred no matter how old.
+	for _, id := range []int64{stuckStaged.ID, stuckDispatched.ID, waitingQueued.ID, waitingSourcing.ID, moving.ID} {
 		if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, id); err != nil {
 			t.Fatalf("backdate %d: %v", id, err)
 		}
@@ -173,22 +173,77 @@ func TestAbandonStuckOrders(t *testing.T) {
 
 	n, err := svc.AbandonStuckOrders(time.Hour)
 	testutil.MustNoErr(t, err, "AbandonStuckOrders")
-	if n != 4 {
-		t.Errorf("abandoned count = %d, want 4", n)
+	if n != 2 {
+		t.Errorf("abandoned count = %d, want 2 (only the runtime-stuck staged + dispatched)", n)
 	}
 	got := map[int64]bool{}
 	for _, id := range abandoned {
 		got[id] = true
 	}
-	if !got[stuckHeld.ID] || !got[stuckStaged.ID] || !got[stuckSourcing.ID] || !got[stuckDispatched.ID] {
-		t.Errorf("stuck orders not abandoned: held=%v staged=%v sourcing=%v dispatched=%v",
-			got[stuckHeld.ID], got[stuckStaged.ID], got[stuckSourcing.ID], got[stuckDispatched.ID])
+	if !got[stuckStaged.ID] || !got[stuckDispatched.ID] {
+		t.Errorf("runtime-stuck orders not abandoned: staged=%v dispatched=%v",
+			got[stuckStaged.ID], got[stuckDispatched.ID])
+	}
+	if got[waitingQueued.ID] || got[waitingSourcing.ID] {
+		t.Errorf("pre-dispatch waiting abandoned (must be sacred, D18-Q4): queued=%v sourcing=%v",
+			got[waitingQueued.ID], got[waitingSourcing.ID])
 	}
 	if got[fresh.ID] {
 		t.Error("fresh queued order should not be abandoned")
 	}
 	if got[moving.ID] {
 		t.Error("aged in_transit order should NOT be abandoned (actively moving robot)")
+	}
+}
+
+// TestPreDispatchNotSwept is the focused D18-Q4 regression guard: pre-dispatch waiting
+// states are exempt from the destructive AbandonStuckOrders sweep — demand is
+// operator-driven and never evaporates, so a queued/sourcing order holds INDEFINITELY no
+// matter how long it waits. A genuinely runtime-stuck order (dispatched, robot never
+// moved) is still swept.
+func TestPreDispatchNotSwept(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	svc := newReconService(t, db)
+
+	mk := func(uuid string, status protocol.Status) *orders.Order {
+		o := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: "complex", Status: status, SourceNode: "ALN_003", DeliveryNode: "SMN_001"}
+		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
+		return o
+	}
+	waitingQueued := mk("q4-queued", "queued")        // waiting for the scanner — sacred
+	waitingSourcing := mk("q4-sourcing", "sourcing")  // holding partials, retrying — sacred
+	runtimeStuck := mk("q4-dispatched", "dispatched") // handed to fleet, never moved — swept
+
+	for _, id := range []int64{waitingQueued.ID, waitingSourcing.ID, runtimeStuck.ID} {
+		if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '10 hours' WHERE id = $1`, id); err != nil {
+			t.Fatalf("backdate %d: %v", id, err)
+		}
+	}
+
+	var abandoned []int64
+	svc.abandonOrder = func(o *orders.Order, reason string) error {
+		abandoned = append(abandoned, o.ID)
+		return nil
+	}
+
+	n, err := svc.AbandonStuckOrders(time.Hour)
+	testutil.MustNoErr(t, err, "AbandonStuckOrders")
+
+	got := map[int64]bool{}
+	for _, id := range abandoned {
+		got[id] = true
+	}
+	if got[waitingQueued.ID] || got[waitingSourcing.ID] {
+		t.Errorf("pre-dispatch waiting abandoned (must be sacred, D18-Q4): queued=%v sourcing=%v",
+			got[waitingQueued.ID], got[waitingSourcing.ID])
+	}
+	if !got[runtimeStuck.ID] {
+		t.Error("runtime-stuck dispatched order was NOT abandoned — a robot that never moved must still be swept")
+	}
+	if n != 1 {
+		t.Errorf("abandoned count = %d, want 1 (only the dispatched runtime-stuck order)", n)
 	}
 }
 

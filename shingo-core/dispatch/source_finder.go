@@ -2,7 +2,7 @@ package dispatch
 
 // source_finder.go — the one shared source-finding seam behind BOTH intake
 // planning (planRetrieve / planRetrieveEmpty / planMove) and the fulfillment
-// scanner's replay path. One pure seam both callers share.
+// scanner's replay path. Design locked: SYNTH-round1 (D35) + the D27 pure seam.
 //
 // Why it exists: the scanner's inline finder had drifted from the intake
 // planners — it dropped the dedicated-loader-pool and group-scoped-empty tiers
@@ -35,8 +35,8 @@ import (
 
 // Intent distinguishes what kind of bin the caller needs. It is keyed on the
 // order's data, never on OrderType==Complex or StepsJSON — a simple order is the
-// one-need case; the Allocator loops the same finder over a complex order's
-// distinct source needs.
+// one-need case; post-1c the Allocator loops the same finder over a complex
+// order's distinct source needs.
 type Intent int
 
 const (
@@ -143,10 +143,11 @@ func (f *SourceFinder) debug(format string, args ...any) {
 // bugs the collapse fixes; keep them exact.
 func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResult {
 	payloadCode := order.PayloadCode
-	// Move-shaped: a node-local source relocates the bin AT a concrete source
-	// node (tier 4) and never scans plant-wide. Stage 4 keys this on the sourcing
-	// intent data (SourceIntentLocal), stamped at intake, not on OrderType.
-	moveShaped := order.SourceIntent == SourceIntentLocal
+	// Move-shaped: a move relocates the bin AT a concrete source node (tier 4)
+	// and never scans plant-wide. Keying on OrderTypeMove is data-shape, not the
+	// forbidden OrderType==Complex / StepsJSON key. post-1c the complex Allocator
+	// will pass this as a per-need field instead.
+	moveShaped := order.OrderType == OrderTypeMove
 
 	// Destination resolved once — excludeNodeID (prevent same-node retrieve) and
 	// preferZone (zone-preferring empty fallback). Kills the four open-coded

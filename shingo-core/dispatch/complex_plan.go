@@ -14,10 +14,11 @@ import (
 // preview the order, lets tests cover the planning math without a DB, and
 // gives one inspectable structure to log for incident postmortems.
 //
-// Build with BuildComplexPlan, then apply with ApplyComplexPlan, which
-// re-walks the resolved steps over live bin state to claim each pickup and
-// write the durable order/bin links. DispatchPreparedComplex runs both and
-// ships the resulting fleet blocks.
+// Build with BuildComplexPlan, then reserveComplexPlan soft-holds a distinct
+// source bin per pickup (reconciling against what the order already holds) and
+// confirmComplexPlan commits the complete set to hard claims plus the durable
+// order/bin links. DispatchPreparedComplex runs all three and ships the resulting
+// fleet blocks.
 type ComplexPlan struct {
 	// SourceNode is the first actionable (pickup/dropoff) step's node;
 	// DeliveryNode is the last. Match the values stored on the order row.
@@ -84,7 +85,7 @@ type PlannedBinClaim struct {
 // processNode is the order's source node — the outgoing bin at that node is
 // the one that receives the operator's RemainingUOP signal at apply time.
 //
-// Bin selection mirrors the live claim path (ApplyComplexPlan): for each
+// Bin selection mirrors the live reserve path (reserveComplexPlan): for each
 // pickup step, walk the candidate bins and take the first one where
 // BinUnavailableReason returns "". A step with no usable candidate adds an
 // entry to plan.Skips with the same per-bin reject summary the inline path
@@ -173,38 +174,45 @@ func selectClaim(candidates []*bins.Bin, payloadCode string) (*bins.Bin, []strin
 	return nil, rejects
 }
 
-// distinctSourceNeeds returns the pickup steps that require sourcing a NEW bin —
-// the order's distinct source needs — with relay re-grabs removed. A swap's step
-// list re-picks the same bin as it relays through staging (BuildSingleSwapSteps:
-// 4 pickup actions, 2 distinct bins), so the pickup-action count overstates the
-// bins the order must actually find.
+// pickupNeed is one pickup step the plan-time reserve considers: its index in the
+// original step list (recorded in order_bins.step_index so junction rows stay
+// stably ordered) and whether it is a POTENTIAL relay re-grab (an earlier step
+// dropped at this node).
 //
-// A pickup at node N is a relay re-grab (the order re-collecting a bin it earlier
-// parked at N) iff an EARLIER step is a dropoff at N: at reserve time N is empty
-// (the bin hasn't relayed there yet) and the order already holds that bin, so the
-// re-grab is silently skipped — not a miss. A pickup at N with no earlier
-// same-order dropoff(N) is a TRUE source, and an empty N there is a real miss.
-//
-// Pure over the resolved step list — no live node state, which is exactly why it
-// is correct at reserve time (staging nodes are still empty then). The dispatch
-// reserve keys on this to distinguish "genuinely missing a distinct bin" (hold
-// and keep trying) from "expected empty staging re-grab" (skip). See
-// distinct_bin_pure_test.go for the swap-relay fixture.
-func distinctSourceNeeds(steps []resolvedStep) []resolvedStep {
+// D5's relay is "an earlier dropoff at N AND N empty at reserve time (the bin
+// hasn't relayed there yet)". potentialRelay carries the first, pure half —
+// derivable from the step list alone. The reserve resolves the second half with
+// live node state: a potential-relay node that STILL holds a bin is the real
+// source it is (a swap's evac: the line still holds the old bin), not a skipped
+// relay; only a potential-relay node that is empty at reserve is an actual
+// re-grab. Splitting the rule this way keeps the pure half unit-testable without a
+// DB while the reserve owns the live half — and leaves exactly one relay
+// discriminator (this) in the tree.
+type pickupNeed struct {
+	stepIndex      int
+	step           resolvedStep
+	potentialRelay bool
+}
+
+// complexPickups returns every pickup step with its index and potential-relay
+// flag — the full set the plan-time reserve walks, and the SINGLE relay
+// discriminator in the tree. A pickup at N is a potential relay re-grab iff an
+// EARLIER step drops at N (the order parked a bin there to re-collect); the
+// reserve confirms an ACTUAL relay only when N is also empty at reserve. Pure over
+// the step list — no live node state — which is why the fixtures in
+// distinct_bin_pure_test.go can pin it without a DB.
+func complexPickups(steps []resolvedStep) []pickupNeed {
 	dropped := make(map[string]bool, len(steps))
-	var needs []resolvedStep
-	for _, s := range steps {
+	var out []pickupNeed
+	for i, s := range steps {
 		switch s.Action {
 		case protocol.ActionDropoff:
 			if s.Node != "" {
 				dropped[s.Node] = true
 			}
 		case protocol.ActionPickup:
-			if s.Node != "" && dropped[s.Node] {
-				continue // relay re-grab of a bin this order already holds
-			}
-			needs = append(needs, s)
+			out = append(out, pickupNeed{stepIndex: i, step: s, potentialRelay: s.Node != "" && dropped[s.Node]})
 		}
 	}
-	return needs
+	return out
 }

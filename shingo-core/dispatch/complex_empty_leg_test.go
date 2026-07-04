@@ -12,16 +12,16 @@ import (
 	"shingocore/store/orders"
 )
 
-// TestApplyComplexPlan_EmptyLegClaimsEmptyCarrier is the produce-node fix:
-// a complex swap stores the produced full and fetches an EMPTY carrier to
-// refill the press. The empty pickup leg (step.Empty) must claim an empty
-// carrier, NOT a payload-matching full sitting in the same source — the
-// Hopkinsville bug where the press kept being handed full bins.
+// TestReserveConfirm_EmptyLegClaimsEmptyCarrier is the produce-node fix, ported to
+// the 1c reserve/confirm split (D39): a complex swap stores the produced full and
+// fetches an EMPTY carrier to refill the press. The empty pickup leg (step.Empty)
+// must reserve+claim an empty carrier, NOT a payload-matching full sitting in the
+// same source — the Hopkinsville bug where the press kept being handed full bins.
 //
-// Source node holds BOTH a full PART-A bin and an empty carrier. Pre-fix,
-// claimFirstAvailable would take whichever came first (BinUnavailableReason
-// accepts both); the fix filters the empty leg to empties.
-func TestApplyComplexPlan_EmptyLegClaimsEmptyCarrier(t *testing.T) {
+// Source node holds BOTH a full PART-A bin and an empty carrier. The empty-leg
+// filter lives in reserveComplexPlan.findAvailableForNeed (emptyBinsOnly), so the
+// reserve selects the empty and confirm claims exactly it.
+func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storeNode, lineNode, bp := setupTestData(t, db)
@@ -63,8 +63,15 @@ func TestApplyComplexPlan_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 		{Action: "dropoff", Node: lineNode.Name},
 	}
 	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, order.ProcessNode)
-	if err := d.ApplyComplexPlan(order, plan, bp.Code, nil); err != nil {
-		t.Fatalf("ApplyComplexPlan: %v", err)
+	assigned, outcome, rerr := d.reserveComplexPlan(order, plan)
+	if rerr != nil {
+		t.Fatalf("reserveComplexPlan: %v", rerr)
+	}
+	if outcome != reserveComplete {
+		t.Fatalf("reserveComplexPlan outcome = %v, want reserveComplete — line full and src empty are both available", outcome)
+	}
+	if cerr := d.confirmComplexPlan(order, plan, assigned); cerr != nil {
+		t.Fatalf("confirmComplexPlan: %v", cerr)
 	}
 
 	// The empty carrier is claimed by this order; the full at the same source is NOT.

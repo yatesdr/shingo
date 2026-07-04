@@ -17,11 +17,12 @@ import (
 	"shingocore/store/reservations"
 )
 
-// reservationClaimTTL is the maximum time a pending reservation may exist
-// before the Expire reaper reclaims it. Acquire→Confirm is milliseconds
-// in 1a (one function call), so a pending row older than this TTL is almost
-// certainly a crash-leak. Must be kept shorter than the rolling-restart
-// window so the reaper clears leaked holds before old binaries serve traffic.
+// reservationClaimTTL is the expires_at value stamped at Acquire time. As of 1c it is NO
+// LONGER a reaping key: reservations.ReapOrphaned keys on the owning order's liveness, not
+// age (D18-Q4), so a hold under a live order survives regardless of this stamp. It is
+// retained only because reservations.expires_at is NOT NULL (v42) and nothing else supplies
+// a value — no reaper reads it. Do NOT resurrect an age-based reap against it: an order in
+// sourcing legitimately holds its reservations for minutes-to-hours while it waits.
 const reservationClaimTTL = 60 * time.Second
 
 // BinManifestService manages bin manifest lifecycle mutations.
@@ -477,6 +478,46 @@ func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP
 		return claimErr
 	}
 	return reservations.Confirm(s.db, orderID, binID)
+}
+
+// ConfirmClaim commits an ALREADY-RESERVED bin to a hard claim, then confirms the
+// reservation (pending → confirmed). It is the apply-as-confirm half of the 1c
+// plan-time split: the pending reservation was placed earlier by reserveComplexPlan,
+// so ConfirmClaim does NOT Acquire — it runs the same demoted-CAS claim SQL as
+// ClaimForDispatch (seatbelt: claimed_by IS NULL AND EXISTS a pending reservation,
+// D2/D17) and then Confirms.
+//
+// If the claim SQL affects 0 rows — the pending reservation vanished (TTL-reaped
+// between reserve and confirm) or the bin was claimed by another order — it
+// returns the claim error so the caller surfaces claim_failed and requeues. It
+// never re-acquires or proceeds without a reservation. Unlike ClaimForDispatch it
+// does NOT release on failure: the reservation belongs to the plan-time reserve
+// step, and the caller's reconcile owns keep/release on the next tick.
+func (s *BinManifestService) ConfirmClaim(binID, orderID int64, remainingUOP *int) error {
+	var claimErr error
+	if remainingUOP != nil && *remainingUOP <= 0 {
+		claimErr = s.ClearAndClaim(binID, orderID)
+	} else if remainingUOP != nil {
+		claimErr = s.SyncUOPAndClaim(binID, orderID, *remainingUOP)
+	} else {
+		claimErr = s.db.ClaimBin(binID, orderID)
+	}
+	if claimErr != nil {
+		return claimErr
+	}
+	return reservations.Confirm(s.db, orderID, binID)
+}
+
+// ReserveForDispatch places a pending reservation on binID for orderID — the
+// plan-time soft hold the 1c reserve/reconcile acquires before it can confirm.
+// Returns reservations.ErrReservationConflict when an active reservation already
+// exists on the bin (the caller treats it as a lost race and retries next tick).
+// It uses the same TTL as ClaimForDispatch; commit 5 retires age-based reaping in
+// favor of owner-liveness, so until then a held partial is reaped at the TTL and
+// re-acquired on the next tick (accepted churn, D37).
+func (s *BinManifestService) ReserveForDispatch(binID, orderID int64) error {
+	expiresAt := clock.Now().Add(reservationClaimTTL)
+	return reservations.Acquire(s.db, orderID, binID, "reserveComplexPlan", "", expiresAt)
 }
 
 // SyncOrClearForReleased applies the operator's release-time remainingUOP value

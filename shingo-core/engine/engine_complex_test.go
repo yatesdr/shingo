@@ -463,17 +463,14 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 	}
 
 	// Second order must NOT have claimed the bin — that's the load-bearing
-	// invariant this test guards (no ghost robot, no double-claim). Phase 4
-	// of bin-transit-state changed the failure shape: order1's dispatch
-	// puts an in-flight order at LINE1-IN, so order2 hits the dropoff-
-	// capacity gate (queued) rather than failing immediately at bin claim.
-	// On scanner replay (after order1 confirms / fails / cancels) order2
-	// will reach ApplyComplexPlan, find no bin, and fail. Either terminal
-	// state (failed) or transient state (queued, awaiting retry) is
-	// acceptable for this test — what matters is the bin and the second
-	// order are NOT double-claimed.
-	if order2.Status != dispatch.StatusFailed && order2.Status != dispatch.StatusQueued {
-		t.Errorf("order2 status = %q, want failed or queued (no bin available after first order claimed it)", order2.Status)
+	// invariant this test guards (no ghost robot, no double-claim). The parking
+	// SHAPE has evolved: Phase 4 queued order2 at the dropoff-capacity gate;
+	// commit 4 (D39) makes the reserve find the sole bin already taken and hold
+	// order2 in `sourcing` (hold-and-retry — the contested bin frees when order1
+	// completes). Any of failed / queued / sourcing is acceptable — what matters
+	// is that the bin and order2 are NOT double-claimed.
+	if order2.Status != dispatch.StatusFailed && order2.Status != dispatch.StatusQueued && order2.Status != dispatch.StatusSourcing {
+		t.Errorf("order2 status = %q, want failed/queued/sourcing (no bin available after order1 claimed it)", order2.Status)
 	}
 	if order2.BinID != nil {
 		t.Errorf("order2 should have BinID=nil, got %d", *order2.BinID)

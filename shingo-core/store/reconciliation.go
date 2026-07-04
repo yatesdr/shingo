@@ -25,6 +25,23 @@ func (db *DB) ReleaseOrphanedClaims() (int, error) {
 	return reconciliation.ReleaseOrphanedClaims(db.DB)
 }
 
-func (db *DB) ExpireReservations() (int, error) {
-	return reservations.Expire(db.DB)
+// ReapOrphanedReservations reaps reservation rows whose owning order is terminal or gone
+// (owner-liveness, D18-Q4) — the 1c replacement for the retired age-based Expire.
+func (db *DB) ReapOrphanedReservations() (int, error) {
+	return reservations.ReapOrphaned(db.DB)
+}
+
+// ListReservationsByOrder returns the order's held reservations (pending +
+// confirmed) — the read the 1c plan-time reconcile uses to recognize its own
+// holds before deciding keep / release / acquire.
+func (db *DB) ListReservationsByOrder(orderID int64) ([]reservations.Reservation, error) {
+	return reservations.ListByOrder(db.DB, orderID)
+}
+
+// ReleaseReservation deletes a single pending-only reservation for (orderID, binID)
+// — used by the reserve/reconcile to drop a stray hold that no longer matches a
+// need when no claim is involved. When the hold was confirmed (a claim exists),
+// use the coupled ReleaseClaimForBin instead so claim + reservation go together.
+func (db *DB) ReleaseReservation(orderID, binID int64) error {
+	return reservations.Release(db.DB, orderID, binID)
 }

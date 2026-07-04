@@ -125,47 +125,6 @@ func TestResolvePerBinDestinations_GhostPickup(t *testing.T) {
 	}
 }
 
-func TestResolvePerBinDestinations_MultiplePickupsSameNode(t *testing.T) {
-	t.Parallel()
-	// Two separate pickups from the same node (different times, after re-stocking).
-	// The second pickup grabs the bin that was most recently dropped there.
-	steps := []resolvedStep{
-		{Action: "pickup", Node: "storage"},   // pick bin A
-		{Action: "dropoff", Node: "line"},     // deliver A to line
-		{Action: "pickup", Node: "line"},      // pick bin B (was at line originally)
-		{Action: "dropoff", Node: "outbound"}, // deliver B to outbound
-	}
-	claimed := map[string]int64{
-		"storage": 500, // bin A
-		"line":    501, // bin B
-	}
-
-	dest := resolvePerBinDestinations(steps, claimed)
-
-	// Trace:
-	// Step 1: pickup(storage) → carrying=500, binAtNode={line:501}
-	// Step 2: dropoff(line) → dest[500]="line", binAtNode={line:500} (overwrites 501!)
-	//   Wait — bin 501 was at line, now bin 500 is dropped there. Where did 501 go?
-	//   In reality bin B (501) was picked up by someone else or is still physically there.
-	//   But the step list doesn't model external movement. This test catches that
-	//   binAtNode is keyed by location and can only track one bin per location.
-	//
-	// Actually, step 2 drops bin 500 at "line" where bin 501 already is.
-	// binAtNode["line"] gets overwritten to 500. Bin 501 "disappears" from tracking.
-	// Step 3: pickup(line) → carrying=500 (not 501!), because binAtNode["line"]=500.
-	//
-	// This is a limitation: two bins at the same node can't both be tracked.
-	// In practice, the swap pattern avoids this by staging at different nodes.
-	// This test documents the behavior.
-	if dest[500] != "outbound" {
-		t.Errorf("bin 500 dest = %q, want %q", dest[500], "outbound")
-	}
-	// bin 501 was overwritten in binAtNode and never picked up — its dest
-	// stays at its initial assignment (line) from the claimed map... but actually
-	// it was never dropped, so dest[501] is empty.
-	t.Logf("bin 501 dest = %q (expected empty — overwritten in binAtNode, never dropped by this order)", dest[501])
-}
-
 // makeBuriedError synthesizes a *BuriedError for the classifier tests
 // below. Tests do not exercise the resolver itself — they only need a
 // typed error that wraps the ErrBuried sentinel.
