@@ -58,15 +58,32 @@ func IsSlotAccessible(db *sql.DB, slotNodeID int64) (bool, error) {
 	return count == 0, nil
 }
 
-// FindStoreSlotInLane finds the deepest empty slot in a lane for back-to-front packing.
-// Returns *Node, but the WHERE clause checks the bins and orders tables — kept here
-// because the return type is owned by nodes/.
+// FindStoreSlotInLane finds the deepest empty, UNRESERVED slot in a lane for
+// back-to-front packing. Returns *Node, but the WHERE clause checks the bins,
+// reservations, and orders tables — kept here because the return type is owned by
+// nodes/.
+//
+// Deepest-UNRESERVED (1d): the reservations NOT EXISTS makes a slot another order
+// has soft-reserved (pending) or hard-claimed-and-confirmed invisible here, so two
+// stores pack into distinct tiered slots. The bin-emptiness guard stays (a store
+// wants a physically empty slot). The orders.delivery_node string-proxy STAYS too,
+// NOT retired: the reservation read does NOT subsume it — simple store orders set
+// delivery_node but do NOT reserve their slot in 1d (that's the #115/#117 gap
+// deferred to unification, D26/D43), so the proxy is still the only guard against a
+// complex store picking a slot a simple store is heading to. (Equivalence check
+// result: gap found → proxy kept. Retire it when simple-store reserves its slot.)
 func FindStoreSlotInLane(db *sql.DB, laneID int64) (*Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s
 		WHERE n.parent_id = $1
 		  AND n.is_synthetic = false
 		  AND n.claimed_by IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)
+		  AND NOT EXISTS (
+			SELECT 1 FROM reservations r
+			WHERE r.node_id = n.id
+			  AND r.resource_kind = 'slot'
+			  AND r.state IN ('pending','confirmed')
+		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM orders o
 			WHERE o.delivery_node = n.name

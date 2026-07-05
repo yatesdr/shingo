@@ -474,6 +474,14 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool {
 				return schema.IndexExists(q, "uq_reservations_bin_active")
 			}},
+		// v44: reservation resource_kind (bin|slot|mouth) + node_id target + per-kind
+		// partial unique indexes — the 1d slot-reservation substrate. Additive and
+		// dormant (bin path keeps working via the 'bin' DEFAULT); folds the D45
+		// riders (state CHECK, expires_at nullable, reason column dropped). The
+		// resource_kind column is the self-heal marker.
+		{44, "reservations resource_kind + node_id + per-kind indexes (1d slot substrate)",
+			v44ReservationsSlotKind,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "reservations", "resource_kind") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1323,6 +1331,64 @@ func v43ReservationsBinActiveIndex(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_reservations_bin_active
 		ON reservations (bin_id) WHERE state IN ('pending','confirmed')`)
 	return err
+}
+
+// v44ReservationsSlotKind is the 1d slot-reservation substrate: a resource_kind
+// discriminator (bin|slot|mouth) + a nullable node_id target + per-kind partial
+// unique indexes, so a slot reservation is a soft row keyed on node_id exactly as
+// a bin reservation is keyed on bin_id. Additive and DORMANT — no code reads or
+// writes slot/mouth rows yet (the bin path keeps working via resource_kind's 'bin'
+// DEFAULT, which backfills every existing row). NO mouth index in 1d (D43: the
+// schema accepts a mouth row, but its granularity is the lane phase's call).
+//
+// It also folds the D45 schema riders: a `state` domain CHECK (a typo previously
+// ESCAPED the partial index silently), expires_at made nullable (retired as a
+// reaping key — owner-liveness reaping keys on order liveness, D18-Q4), and the
+// always-” `reason` column dropped.
+//
+// NOTE ON THE PARTIAL-INDEX PREDICATES: `state IN ('pending','confirmed')` covers
+// EVERY row today — release is a hard DELETE (reservations.Release/ReleaseBy*),
+// never a state transition to a terminal value, so no released rows linger. The
+// predicate is kept future-proof (and is now redundant-but-harmless alongside the
+// state CHECK); do not read it as evidence that other states exist on disk.
+func v44ReservationsSlotKind(tx *sql.Tx) error {
+	stmts := []string{
+		// Discriminator; DEFAULT 'bin' backfills existing rows to the bin kind.
+		`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS resource_kind TEXT NOT NULL DEFAULT 'bin'`,
+		// Slot/mouth target; nullable (a bin row leaves it NULL). RESTRICT FK: a
+		// reserved node cannot be admin-deleted out from under the hold (documented).
+		`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS node_id BIGINT REFERENCES nodes(id)`,
+		// bin_id is no longer mandatory — slot/mouth rows carry node_id instead.
+		`ALTER TABLE reservations ALTER COLUMN bin_id DROP NOT NULL`,
+		// expires_at retired as a reaping key; nullable and no longer written.
+		`ALTER TABLE reservations ALTER COLUMN expires_at DROP NOT NULL`,
+		// reason was always '' — drop it.
+		`ALTER TABLE reservations DROP COLUMN IF EXISTS reason`,
+		// Kind domain.
+		`ALTER TABLE reservations DROP CONSTRAINT IF EXISTS reservations_resource_kind_check`,
+		`ALTER TABLE reservations ADD CONSTRAINT reservations_resource_kind_check CHECK (resource_kind IN ('bin','slot','mouth'))`,
+		// Exactly-one-of the target columns, keyed by kind.
+		`ALTER TABLE reservations DROP CONSTRAINT IF EXISTS reservations_kind_target_check`,
+		`ALTER TABLE reservations ADD CONSTRAINT reservations_kind_target_check CHECK (
+			(resource_kind = 'bin' AND bin_id IS NOT NULL AND node_id IS NULL)
+			OR (resource_kind IN ('slot','mouth') AND node_id IS NOT NULL AND bin_id IS NULL))`,
+		// State domain (D45 rider).
+		`ALTER TABLE reservations DROP CONSTRAINT IF EXISTS reservations_state_check`,
+		`ALTER TABLE reservations ADD CONSTRAINT reservations_state_check CHECK (state IN ('pending','confirmed'))`,
+		// Rescope the bin active-uniqueness index to bin rows only.
+		`DROP INDEX IF EXISTS uq_reservations_bin_active`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_reservations_bin_active
+			ON reservations (bin_id) WHERE resource_kind='bin' AND state IN ('pending','confirmed')`,
+		// Per-node active-uniqueness for slot rows — the slot dual of the bin index.
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_reservations_slot_active
+			ON reservations (node_id) WHERE resource_kind='slot' AND state IN ('pending','confirmed')`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v44 reservations slot kind: %w", err)
+		}
+	}
+	return nil
 }
 
 func migrateBinsCommandCenter(tx *sql.Tx) error {

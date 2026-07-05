@@ -102,6 +102,19 @@ linters:
           msg: "Direct bins.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation, orphaning a confirmed reservation and bricking the bin (uq_reservations_bin_active). Use the coupled inverse db.ReleaseClaimForBin / db.ReleaseClaimByOrder (store/orders.go)."
         - pattern: 'binsstore\.Unclaim'
           msg: "Direct binsstore.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation. Use db.ReleaseClaimForBin / db.ReleaseClaimByOrder (store/orders.go)."
+        # Slot-claim seatbelt guard (D47). nodes.ClaimSlot / db.ClaimSlot — the
+        # un-seatbelted slot CAS — were deleted (1d commit 4 removed their only
+        # production caller, the hard slot loop). The live slot claim is the
+        # reservation-guarded ClaimSlotTx via db.ConfirmSlotClaim (reserve → guarded
+        # claim → confirm, one tx). These patterns stop a raw slot claim from being
+        # reintroduced — the slot twin of the db.ClaimBin guard above. The `\b` keeps
+        # `nodes.ClaimSlot` from prefix-matching `nodes.ClaimSlotTx` (the sanctioned
+        # path). Fixture setup uses testdb.ClaimSlotForTest (a raw claim, in testdb —
+        # covered by the blanket _test.go carveout under exclusions.rules).
+        - pattern: 'nodes\.ClaimSlot\b'
+          msg: "Direct nodes.ClaimSlot is the un-seatbelted slot CAS (deleted D47). Claim a slot through db.ConfirmSlotClaim (reserve→guarded claim→confirm); in tests use testdb.ClaimSlotForTest."
+        - pattern: 'db\.ClaimSlot\b'
+          msg: "Direct db.ClaimSlot bypasses the slot reservation seatbelt (deleted D47). Use db.ConfirmSlotClaim; in tests use testdb.ClaimSlotForTest."
         # Note on swap-mode constants: forbidigo can only match identifier
         # expressions (selector exprs like `db.UpdateOrderStatus`), not
         # string literals. The swap-mode raw-string guard is enforced by

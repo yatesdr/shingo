@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"sort"
 
 	"github.com/google/uuid"
 
@@ -183,15 +182,17 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 // gating it deadlocks). Mirrors engine.isStorageSlot's parent-type rule minus
 // the synthetic-root cases — NGRP/LANE dropoffs are handled by step
 // re-resolution / ResolutionCapacity before this point.
-func (d *Dispatcher) isConcreteStorageDropoff(deliveryNode string) bool {
+// (Free function — shared by the Dispatcher's dropoff-capacity gate and the
+// Allocator's slotNeeds; it needs only the store handle.)
+func isConcreteStorageDropoff(db *store.DB, deliveryNode string) bool {
 	if deliveryNode == "" {
 		return false
 	}
-	node, err := d.db.GetNodeByDotName(deliveryNode)
+	node, err := db.GetNodeByDotName(deliveryNode)
 	if err != nil || node == nil || node.IsSynthetic || node.ParentID == nil {
 		return false
 	}
-	parent, err := d.db.GetNode(*node.ParentID)
+	parent, err := db.GetNode(*node.ParentID)
 	if err != nil || parent == nil {
 		return false
 	}
@@ -355,7 +356,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// reResolveComplexSteps / ResolutionCapacity. Stay queued by returning an
 	// error — the scanner keeps the order queued and replays it on the next
 	// slot-vacancy tick (same contract as the claim_failed branch below).
-	if d.isConcreteStorageDropoff(order.DeliveryNode) {
+	if isConcreteStorageDropoff(d.db, order.DeliveryNode) {
 		if blocked, reason := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
 			d.setQueueReason(order, reason, "dropoff-capacity")
 			d.dbg("complex: order %d queued — concrete storage dropoff %s blocked: %s", order.ID, order.DeliveryNode, reason)
@@ -363,69 +364,27 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		}
 	}
 
-	// Claim each storage drop-off slot atomically — the store dual of the bin
-	// claim, and the single sync point that stops two orders released
-	// near-simultaneously from dispatching a bin into the same slot (the
-	// Hopkinsville #115/#117 race). The CAS admits exactly one winner per slot;
-	// reserve-at-dispatch by design, so a queued order holds no slot. On a lost
-	// claim we revert the step to its NGRP origin so the next scanner tick
-	// re-resolves to a free slot (selection skips claimed slots) and requeue; a
-	// fixed concrete drop-off with no NGRP origin stays queued until the slot
-	// frees. Claimed slots are released on terminal by UnclaimOrderSlots, riding
-	// the same cleanup hooks as the bin claim. ClaimSlot is owner-idempotent, so
-	// slots already held by this order survive a requeue/replay without
-	// livelock. Only STORAGE/STAGING slots are claimed — LINE/production
-	// drop-offs must not be (a two-robot supply leg delivers to a line a sibling
-	// evac clears; gating it would deadlock), same role gate as the capacity
-	// check above.
+	// Reserve each concrete storage drop-off SLOT (the destination dual of the bin
+	// reserve) — the reservation-native replacement for the retired hard-claim slot
+	// loop (1d, D4 split-brain fix). An incomplete order now holds its slots as
+	// revocable RESERVATIONS across ticks, NOT hard nodes.claimed_by. Runs BEFORE the
+	// bin reserve (SLOTS-BEFORE-BINS + D40 relay: a slot must be held before the bin
+	// leg reads its emptiness). A fungible NGRP slot conflict reverts-and-re-resolves
+	// (the escape valve, preserved); a fixed-concrete conflict holds (Wait) — both
+	// requeue in the order's entry status (queued first pass, sourcing on retry).
 	//
-	// CANONICAL ORDER (D18-Q5): claim the slots in ascending node-ID order, NOT step
-	// order. Two orders whose FIXED-concrete drop-offs overlap in opposite step order
-	// would otherwise cross-hold — A grabs S1 and waits on S2 while B grabs S2 and waits
-	// on S1: a true ABBA slot deadlock, now UNBOUNDED since commit 5 stopped the stuck-
-	// sweep from abandoning pre-dispatch orders. One global claim order makes the loser
-	// fail its FIRST contended slot before holding anything the winner needs, so it backs
-	// off cleanly (holding none) and retries. Fungible/NGRP slots re-resolve on contention
-	// and don't strictly need this; sorting them too is harmless. SLOTS-BEFORE-BINS: this
-	// whole loop runs to completion (or requeues) BEFORE reserveComplexPlan touches a bin
-	// — do not interleave the two claim classes, or a slot↔bin cross-type cycle becomes
-	// possible. Each class fully ordered before the next is what keeps that cycle closed.
-	type slotClaim struct {
-		stepIndex int
-		node      *nodes.Node
-	}
-	var slotClaims []slotClaim
-	for i := range resolvedSteps {
-		s := resolvedSteps[i]
-		if s.Action != protocol.ActionDropoff || s.Node == "" || !d.isConcreteStorageDropoff(s.Node) {
-			continue
-		}
-		node, nerr := d.db.GetNodeByDotName(s.Node)
-		if nerr != nil || node == nil {
-			continue // claim/dispatch path below surfaces a clearer error
-		}
-		slotClaims = append(slotClaims, slotClaim{stepIndex: i, node: node})
-	}
-	sort.Slice(slotClaims, func(a, b int) bool { return slotClaims[a].node.ID < slotClaims[b].node.ID })
-	for _, sc := range slotClaims {
-		if cerr := d.db.ClaimSlot(sc.node.ID, order.ID); cerr != nil {
-			reason := fmt.Sprintf("drop-off slot %s claimed by another order", resolvedSteps[sc.stepIndex].Node)
-			if resolvedSteps[sc.stepIndex].Group != "" {
-				// Revert to the NGRP so reResolveComplexSteps re-picks a free
-				// slot on the next tick; persist so the choice isn't redone blind.
-				resolvedSteps[sc.stepIndex].Node = resolvedSteps[sc.stepIndex].Group
-				if j, mErr := json.Marshal(resolvedSteps); mErr == nil {
-					if uErr := d.db.UpdateOrderStepsJSON(order.ID, string(j)); uErr != nil {
-						log.Printf("dispatch: update steps_json after slot-claim loss for order %d: %v", order.ID, uErr)
-					} else {
-						order.StepsJSON = string(j)
-					}
-				}
-			}
-			d.setQueueReason(order, reason, "slot-claim")
-			d.dbg("complex: order %d held — %s", order.ID, reason)
-			return fmt.Errorf("slot claim: %s", reason)
-		}
+	// The commit-6 canonical node-ID sort is gone WITH the loop: the ABBA class
+	// dissolves at the soft-acquire layer, where a loser backs off holding only
+	// revocable slot reservations, not a hard claim (D43). Removing the loop and its
+	// insurance together honors D41's "never revert 6 while the loop exists".
+	if slotOutcome, serr := d.allocator.reserveComplexSlots(order, resolvedSteps); serr != nil {
+		log.Printf("dispatch: complex order %d slot reserve error: %v", order.ID, serr)
+		return serr
+	} else if slotOutcome != reserveComplete {
+		const reason = "awaiting destination slots"
+		d.setQueueReason(order, reason, "slot-reserve")
+		d.dbg("complex: order %d held — incomplete slot reserve, retrying next tick", order.ID)
+		return fmt.Errorf("complex order %d slot reserve incomplete", order.ID)
 	}
 
 	// 1c reserve/confirm (commit 4, D39). MoveToSourcing at the START of the reserve
@@ -459,7 +418,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// the order is already `sourcing` before it holds anything, so a crash leaves a
 	// `sourcing` order whose pending holds the reaper reclaims (TTL in commit 4,
 	// owner-liveness in commit 5) — not a `queued` order stranded with claimed bins.
-	assigned, outcome, rerr := d.reserveComplexPlan(order, plan)
+	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
 	if rerr != nil {
 		log.Printf("dispatch: complex order %d reserve error: %v", order.ID, rerr)
 		return rerr
@@ -483,7 +442,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// live re-walk). A claim_failed (a pending hold reaped, or a bin claimed by
 	// another order between reserve and confirm) requeues the attempt; a malformed
 	// order (no source pickup) fails.
-	if cerr := d.confirmComplexPlan(order, plan, assigned); cerr != nil {
+	if cerr := d.allocator.confirmComplexPlan(order, plan, assigned); cerr != nil {
 		var pe *planningError
 		if errors.As(cerr, &pe) && pe.Code == codeClaimFailed {
 			d.setQueueReason(order, codeClaimFailed, "claim-failed")

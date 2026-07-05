@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	"shingocore/internal/testdb"
-	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 func mkSlotOrder(t *testing.T, sdb *sql.DB, uuid string) int64 {
@@ -33,90 +33,42 @@ func mkSlotNode(t *testing.T, sdb *sql.DB, name string) int64 {
 	return n.ID
 }
 
-// TestClaimSlot_CASSemantics covers the store dual of the bin claim: a slot is
-// claimable by exactly one order, re-claims by the owner are idempotent (so a
-// requeue/replay doesn't livelock), and a different order is rejected until the
-// slot is unclaimed.
-func TestClaimSlot_CASSemantics(t *testing.T) {
+// (D47) TestClaimSlot_CASSemantics and TestClaimSlot_RefusesOccupiedSlot were
+// deleted with nodes.ClaimSlot: the CAS/owner-idempotency/occupied-refusal behavior
+// now lives on the seatbelted path and is covered by TestConfirmSlotClaim_* below
+// (owner-idempotent heal, refuses-without-reservation, refuses-occupied, one-tx).
+
+// TestUnclaimOrderSlots releases every slot an order holds — the terminal-cleanup
+// path (mirrors UnclaimOrderBins). Setup uses the sanctioned testdb.ClaimSlotForTest
+// raw claim; the assertion reads claimed_by directly (the deleted ClaimSlot's CAS is
+// no longer available to prove re-claimability).
+func TestUnclaimOrderSlots(t *testing.T) {
 	t.Parallel()
-	sdb := testdb.Open(t).DB
+	db := testdb.Open(t)
 
-	slot := mkSlotNode(t, sdb, "SMN_02")
-	orderA := mkSlotOrder(t, sdb, "order-a")
-	orderB := mkSlotOrder(t, sdb, "order-b")
+	s1 := mkSlotNode(t, db.DB, "SMN_10")
+	s2 := mkSlotNode(t, db.DB, "SMN_11")
+	order := mkSlotOrder(t, db.DB, "order-multi")
+	testdb.ClaimSlotForTest(t, db, s1, order)
+	testdb.ClaimSlotForTest(t, db, s2, order)
 
-	if err := nodes.ClaimSlot(sdb, slot, orderA); err != nil {
-		t.Fatalf("A claim free slot: %v", err)
-	}
-	if err := nodes.ClaimSlot(sdb, slot, orderB); err == nil {
-		t.Fatal("B claimed a slot already held by A; want error")
-	}
-	// Owner re-claim is idempotent.
-	if err := nodes.ClaimSlot(sdb, slot, orderA); err != nil {
-		t.Fatalf("A re-claim own slot (idempotent): %v", err)
-	}
-	if err := nodes.UnclaimSlot(sdb, slot); err != nil {
-		t.Fatalf("unclaim slot: %v", err)
-	}
-	if err := nodes.ClaimSlot(sdb, slot, orderB); err != nil {
-		t.Fatalf("B claim after unclaim: %v", err)
-	}
-}
-
-// TestClaimSlot_RefusesOccupiedSlot: a slot physically holding a bin cannot be
-// claimed (the NOT EXISTS bins guard in the CAS).
-func TestClaimSlot_RefusesOccupiedSlot(t *testing.T) {
-	t.Parallel()
-	sdb := testdb.Open(t).DB
-
-	slot := mkSlotNode(t, sdb, "SMN_07")
-	bt := &bins.BinType{Code: "TOTE", Description: "Tote"}
-	if err := bins.CreateType(sdb, bt); err != nil {
-		t.Fatalf("create bin type: %v", err)
-	}
-	b := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-OCC", NodeID: &slot, Status: "available"}
-	if err := bins.Create(sdb, b); err != nil {
-		t.Fatalf("create bin: %v", err)
-	}
-	order := mkSlotOrder(t, sdb, "order-occ")
-	if err := nodes.ClaimSlot(sdb, slot, order); err == nil {
-		t.Fatal("claimed an occupied slot; want error")
-	}
-}
-
-// TestClaimSlot_UnclaimOrderSlots releases every slot an order holds — the
-// terminal-cleanup path (mirrors UnclaimOrderBins).
-func TestClaimSlot_UnclaimOrderSlots(t *testing.T) {
-	t.Parallel()
-	sdb := testdb.Open(t).DB
-
-	s1 := mkSlotNode(t, sdb, "SMN_10")
-	s2 := mkSlotNode(t, sdb, "SMN_11")
-	order := mkSlotOrder(t, sdb, "order-multi")
-	if err := nodes.ClaimSlot(sdb, s1, order); err != nil {
-		t.Fatalf("claim s1: %v", err)
-	}
-	if err := nodes.ClaimSlot(sdb, s2, order); err != nil {
-		t.Fatalf("claim s2: %v", err)
-	}
-	if err := nodes.UnclaimOrderSlots(sdb, order); err != nil {
+	if err := nodes.UnclaimOrderSlots(db.DB, order); err != nil {
 		t.Fatalf("UnclaimOrderSlots: %v", err)
 	}
-
-	other := mkSlotOrder(t, sdb, "order-other")
-	if err := nodes.ClaimSlot(sdb, s1, other); err != nil {
-		t.Fatalf("claim s1 after UnclaimOrderSlots: %v", err)
-	}
-	if err := nodes.ClaimSlot(sdb, s2, other); err != nil {
-		t.Fatalf("claim s2 after UnclaimOrderSlots: %v", err)
+	for _, id := range []int64{s1, s2} {
+		n, _ := nodes.Get(db.DB, id)
+		if n.ClaimedBy != nil {
+			t.Errorf("slot %d claimed_by=%v after UnclaimOrderSlots, want nil", id, *n.ClaimedBy)
+		}
 	}
 }
 
-// TestRace_ClaimSlot_SingleWinner is the Hopkinsville #115/#117 characterization:
-// N orders race to claim the SAME slot concurrently — exactly one wins, the rest
-// get a clean error (and re-resolve elsewhere). Run under -race; the DB-level
-// CAS is the single-claimant guarantee.
-func TestRace_ClaimSlot_SingleWinner(t *testing.T) {
+// TestRace_AcquireSlot_SingleWinner is the Hopkinsville #115/#117 characterization,
+// now at the reservation layer (1d): N orders race to RESERVE the SAME slot
+// concurrently — exactly one wins via uq_reservations_slot_active, the rest get a
+// clean ErrReservationConflict (and re-resolve elsewhere). Run under -race; the slot
+// reservation index is the single-winner guarantee (ClaimSlotTx then confirms it).
+func TestRace_AcquireSlot_SingleWinner(t *testing.T) {
 	t.Parallel()
 	sdb := testdb.Open(t).DB
 
@@ -135,7 +87,7 @@ func TestRace_ClaimSlot_SingleWinner(t *testing.T) {
 		go func(orderID int64) {
 			defer wg.Done()
 			<-start
-			if err := nodes.ClaimSlot(sdb, slot, orderID); err == nil {
+			if err := reservations.AcquireSlot(sdb, orderID, slot, "test"); err == nil {
 				atomic.AddInt64(&wins, 1)
 			}
 		}(orderIDs[i])
@@ -145,5 +97,110 @@ func TestRace_ClaimSlot_SingleWinner(t *testing.T) {
 
 	if wins != 1 {
 		t.Fatalf("expected exactly 1 winner for contended slot, got %d", wins)
+	}
+}
+
+// ── the slot seatbelt (ClaimSlotTx + db.ConfirmSlotClaim) ─────────────────────
+// ClaimSlotTx carries EXISTS(pending slot reservation) on the owner-idempotent CAS +
+// NOT EXISTS bins; ConfirmSlotClaim = claim+confirm in one tx. This is the sole
+// slot-claim path (the un-seatbelted nodes.ClaimSlot was deleted in D47).
+
+// TestConfirmSlotClaim_RefusesWithoutReservation: the demoted-CAS seatbelt refuses
+// a slot claim with no pending slot reservation — the slot dual of the bin seatbelt.
+func TestConfirmSlotClaim_RefusesWithoutReservation(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	slot := mkSlotNode(t, db.DB, "CS-NORESV")
+	order := mkSlotOrder(t, db.DB, "cs-noresv-o")
+
+	if err := db.ConfirmSlotClaim(slot, order); err == nil {
+		t.Fatal("ConfirmSlotClaim without a pending slot reservation must fail (seatbelt), got nil")
+	}
+	n, _ := nodes.Get(db.DB, slot)
+	if n.ClaimedBy != nil {
+		t.Errorf("claimed_by = %v, want nil — no slot claim without a reservation", *n.ClaimedBy)
+	}
+}
+
+// TestConfirmSlotClaim_OwnerIdempotentHeal is the slot mirror of the D46 bin
+// wedge-heal: a slot already claimed_by the order with its reservation still
+// PENDING (claim committed, confirm didn't) heals on the next ConfirmSlotClaim —
+// owner-idempotent CAS (claimed_by=$order) + the seatbelt satisfied by the pending
+// row. Retains owner-idempotency the brief requires.
+func TestConfirmSlotClaim_OwnerIdempotentHeal(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	slot := mkSlotNode(t, db.DB, "CS-HEAL")
+	order := mkSlotOrder(t, db.DB, "cs-heal-o")
+
+	if err := reservations.AcquireSlot(db.DB, order, slot, "test"); err != nil {
+		t.Fatalf("AcquireSlot: %v", err)
+	}
+	// Seed the wedge: claim the slot (raw fixture claim) but leave the reservation
+	// pending — claim committed, confirm never ran.
+	testdb.ClaimSlotForTest(t, db, slot, order)
+	if err := db.ConfirmSlotClaim(slot, order); err != nil {
+		t.Fatalf("ConfirmSlotClaim of a claimed-but-pending slot must heal, got %v", err)
+	}
+	held, _ := reservations.ListByOrder(db.DB, order)
+	if len(held) != 1 || held[0].State != reservations.StateConfirmed {
+		t.Fatalf("slot reservation = %+v, want exactly one confirmed after heal", held)
+	}
+}
+
+// TestConfirmSlotClaim_RefusesOccupiedSlot: occupancy IS read at confirm (the
+// NOT EXISTS bins guard stays, D43 6/1) even though it is NOT read at reserve (D29).
+// A slot physically holding a bin is refused at confirm, and neither half commits.
+func TestConfirmSlotClaim_RefusesOccupiedSlot(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	node := sd.StorageNode
+	_ = testdb.CreateBinAtNode(t, db, "PART-A", node.ID, "CS-OCC-BIN") // occupy the node
+	order := testdb.CreateOrder(t, db)
+
+	if err := reservations.AcquireSlot(db.DB, order.ID, node.ID, "test"); err != nil {
+		t.Fatalf("AcquireSlot (reserve succeeds on an occupied node — D29): %v", err)
+	}
+	if err := db.ConfirmSlotClaim(node.ID, order.ID); err == nil {
+		t.Fatal("ConfirmSlotClaim on an OCCUPIED slot must be refused at confirm (NOT EXISTS bins), got nil")
+	}
+	n, _ := nodes.Get(db.DB, node.ID)
+	if n.ClaimedBy != nil {
+		t.Errorf("occupied slot claimed_by = %v, want nil", *n.ClaimedBy)
+	}
+}
+
+// TestConfirmSlotClaim_OneTx: the hard claim and the reservation pending→confirmed
+// flip commit together or not at all (mirrors D46's claimAndConfirm). Both on
+// success; neither on the seatbelt-refused failure path.
+func TestConfirmSlotClaim_OneTx(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	slot := mkSlotNode(t, db.DB, "CS-ONETX")
+	order := mkSlotOrder(t, db.DB, "cs-onetx-o")
+
+	// Failure path (no reservation → claim refused → neither half commits).
+	if err := db.ConfirmSlotClaim(slot, order); err == nil {
+		t.Fatal("ConfirmSlotClaim without reservation must fail")
+	}
+	if n, _ := nodes.Get(db.DB, slot); n.ClaimedBy != nil {
+		t.Fatalf("failure path left claimed_by = %v, want nil (neither)", *n.ClaimedBy)
+	}
+
+	// Success path (both the claim and the confirmed reservation land).
+	if err := reservations.AcquireSlot(db.DB, order, slot, "test"); err != nil {
+		t.Fatalf("AcquireSlot: %v", err)
+	}
+	if err := db.ConfirmSlotClaim(slot, order); err != nil {
+		t.Fatalf("ConfirmSlotClaim: %v", err)
+	}
+	n, _ := nodes.Get(db.DB, slot)
+	if n.ClaimedBy == nil || *n.ClaimedBy != order {
+		t.Fatalf("success path claimed_by = %v, want order %d (both)", n.ClaimedBy, order)
+	}
+	held, _ := reservations.ListByOrder(db.DB, order)
+	if len(held) != 1 || held[0].State != reservations.StateConfirmed {
+		t.Fatalf("success path reservation = %+v, want one confirmed (both)", held)
 	}
 }

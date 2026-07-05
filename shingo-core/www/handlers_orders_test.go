@@ -8,11 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"shingo/protocol/debuglog"
 	"shingo/protocol/testutil"
-	"shingo/shared/clock"
 	"shingocore/config"
 	"shingocore/engine"
 	"shingocore/fleet"
@@ -298,7 +296,7 @@ func TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim(t *testing.T) 
 	// released too, not just claimed_by — else the confirmed row bricks the bin).
 	testdb.RequireBinUnclaimed(t, db, bin.ID)
 	probe := testdb.CreateOrder(t, db)
-	if err := reservations.Acquire(db, probe.ID, bin.ID, "test", "reacquire", clock.Now().Add(time.Minute)); err != nil {
+	if err := reservations.Acquire(db, probe.ID, bin.ID, "test"); err != nil {
 		t.Errorf("bin not re-acquirable after spot-submit rollback: %v (reservation leaked?)", err)
 	}
 }

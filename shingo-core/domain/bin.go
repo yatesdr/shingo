@@ -45,9 +45,13 @@ type Bin struct {
 	NodeName    string `json:"node_name"`
 	UOPCapacity int    `json:"uop_capacity,omitempty"` // JOIN from payloads.uop_capacity
 	// HasPendingReservation is populated by BinJoinQuery from the reservations
-	// table. True when another order holds a pending (pre-claim) reservation on
-	// this bin. BinUnavailableReason checks this field so the dispatch loop
-	// never offers a reserved bin as a claim candidate.
+	// table. True when ANY order holds a pending (pre-claim) reservation on this
+	// bin — owner-blind, so it may be this order's own hold (the reserve reconcile
+	// loads its own holds separately, before consulting this). BinUnavailableReason
+	// checks this field so the dispatch loop never offers a reserved bin as a claim
+	// candidate. Pending-ONLY is sufficient because a confirmed reservation coincides
+	// with a hard claimed_by (structural since D46's one-tx claim+confirm), which the
+	// separate claimed_by check already covers.
 	HasPendingReservation bool `json:"has_pending_reservation,omitempty"`
 }
 

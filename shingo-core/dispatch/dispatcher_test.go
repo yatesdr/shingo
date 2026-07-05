@@ -978,3 +978,28 @@ func TestHandleOrderRedirect_NoSourceNode(t *testing.T) {
 		t.Fatal("expected error reply in outbox, got 0 messages")
 	}
 }
+
+// TestAllocator_ConstructedAndWired is the commit-5 smoke test: NewDispatcher wires
+// the extracted Allocator with the dispatcher's own store, bin-manifest service, and
+// debug logger, and DispatchPreparedComplex delegates the reserve/confirm to it.
+// (Behavioral delegation is covered by the full reserve/confirm suite, which now
+// calls d.allocator.reserveComplexPlan / confirmComplexPlan / reserveComplexSlots.)
+func TestAllocator_ConstructedAndWired(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	if d.allocator == nil {
+		t.Fatal("NewDispatcher did not construct the allocator")
+	}
+	if d.allocator.db != db {
+		t.Error("allocator.db is not the dispatcher's store handle")
+	}
+	if d.allocator.binManifest != d.binManifest {
+		t.Error("allocator.binManifest is not the dispatcher's bin-manifest service")
+	}
+	if d.allocator.dbg == nil {
+		t.Error("allocator.dbg is nil — debug logging not wired")
+	}
+}

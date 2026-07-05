@@ -67,10 +67,16 @@ func (e *planningError) Error() string {
 	if e == nil {
 		return ""
 	}
+	msg := e.Detail
 	if e.Err != nil {
-		return e.Err.Error()
+		msg = e.Err.Error()
 	}
-	return e.Detail
+	// Code is a persisted, compared contract (see the type doc) — carry it in the
+	// error text so a logged/wrapped planningError names its code.
+	if e.Code != "" {
+		return fmt.Sprintf("%s: %s", e.Code, msg)
+	}
+	return msg
 }
 
 func (e *planningError) Unwrap() error {

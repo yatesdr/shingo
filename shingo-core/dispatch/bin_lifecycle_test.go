@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -289,7 +288,7 @@ func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 				// guard now requires. On a lost race another order already
 				// holds the active (unique-per-bin) reservation, so re-Find —
 				// the reserved bin is now excluded — and take the next.
-				if rerr := reservations.Acquire(db, orderID, found.ID, "test", "race-claim", time.Now().Add(time.Hour)); rerr != nil {
+				if rerr := reservations.Acquire(db, orderID, found.ID, "test"); rerr != nil {
 					continue
 				}
 				if cerr := db.ClaimBin(found.ID, orderID); cerr != nil {
@@ -734,7 +733,7 @@ func TestIsConcreteStorageDropoff_RoleGate(t *testing.T) {
 		{"missing node", "NO-SUCH-NODE", false},
 	}
 	for _, c := range cases {
-		if got := d.isConcreteStorageDropoff(c.node); got != c.want {
+		if got := isConcreteStorageDropoff(d.db, c.node); got != c.want {
 			t.Errorf("%s: isConcreteStorageDropoff(%q) = %v, want %v", c.name, c.node, got, c.want)
 		}
 	}

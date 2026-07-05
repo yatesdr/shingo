@@ -52,6 +52,10 @@ func (db *DB) ApplyMultiBinArrival(instructions []orders.BinArrivalInstruction) 
 		if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, inst.ToNodeID); err != nil {
 			return fmt.Errorf("release destination slot claim node %d: %w", inst.ToNodeID, err)
 		}
+		// ...and its slot reservation, same tx (the slot dual of ReleaseByBin, 1d).
+		if err := reservations.ReleaseByNode(tx, inst.ToNodeID); err != nil {
+			return fmt.Errorf("release slot reservation on arrival node %d: %w", inst.ToNodeID, err)
+		}
 		if inst.Staged {
 			if _, err := tx.Exec(`UPDATE bins SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW() WHERE id=$2`,
 				helpers.NullableTime(inst.ExpiresAt), inst.BinID); err != nil {

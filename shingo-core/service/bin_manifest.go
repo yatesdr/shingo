@@ -9,21 +9,12 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
 
 	"shingocore/domain"
 	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/reservations"
 )
-
-// reservationClaimTTL is the expires_at value stamped at Acquire time. As of 1c it is NO
-// LONGER a reaping key: reservations.ReapOrphaned keys on the owning order's liveness, not
-// age (D18-Q4), so a hold under a live order survives regardless of this stamp. It is
-// retained only because reservations.expires_at is NOT NULL (v42) and nothing else supplies
-// a value — no reaper reads it. Do NOT resurrect an age-based reap against it: an order in
-// sourcing legitimately holds its reservations for minutes-to-hours while it waits.
-const reservationClaimTTL = 60 * time.Second
 
 // BinManifestService manages bin manifest lifecycle mutations.
 // All manifest changes flow through this service so that validation,
@@ -469,13 +460,12 @@ func (s *BinManifestService) syncUOPAndClaimTx(tx *sql.Tx, binID, orderID int64,
 //     (pending → confirmed) in ONE transaction — both or neither (D45).
 //  3. On ANY failure after Acquire → Release (best-effort; Expire is the backstop).
 func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP *int) error {
-	expiresAt := clock.Now().Add(reservationClaimTTL)
-	if err := reservations.Acquire(s.db, orderID, binID, "ClaimForDispatch", "", expiresAt); err != nil {
+	if err := reservations.Acquire(s.db, orderID, binID, "ClaimForDispatch"); err != nil {
 		return err // ErrReservationConflict or transient DB error — both surface as codeClaimFailed
 	}
 	if err := s.claimAndConfirm(binID, orderID, remainingUOP); err != nil {
 		if rErr := reservations.Release(s.db, orderID, binID); rErr != nil {
-			log.Printf("dispatch: ClaimForDispatch release reservation order=%d bin=%d: %v", orderID, binID, rErr)
+			log.Printf("dispatch: reservation-release failed (ClaimForDispatch rollback) order=%d bin=%d: %v", orderID, binID, rErr)
 		}
 		return err
 	}
@@ -563,12 +553,10 @@ func (s *BinManifestService) ConfirmHeldReservation(orderID, binID int64) error 
 // plan-time soft hold the 1c reserve/reconcile acquires before it can confirm.
 // Returns reservations.ErrReservationConflict when an active reservation already
 // exists on the bin (the caller treats it as a lost race and retries next tick).
-// It uses the same TTL as ClaimForDispatch; commit 5 retires age-based reaping in
-// favor of owner-liveness, so until then a held partial is reaped at the TTL and
-// re-acquired on the next tick (accepted churn, D37).
+// The hold has no expiry: reaping keys on the owning order's liveness, so a held
+// partial survives across ticks until the order sources or terminalizes (D18-Q4).
 func (s *BinManifestService) ReserveForDispatch(binID, orderID int64) error {
-	expiresAt := clock.Now().Add(reservationClaimTTL)
-	return reservations.Acquire(s.db, orderID, binID, "reserveComplexPlan", "", expiresAt)
+	return reservations.Acquire(s.db, orderID, binID, "reserveComplexPlan")
 }
 
 // SyncOrClearForReleased applies the operator's release-time remainingUOP value

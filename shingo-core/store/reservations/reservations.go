@@ -4,6 +4,12 @@
 // Acquire → Confirm → Release is the per-dispatch lifecycle.
 // ReapOrphaned reclaims rows whose owning order is terminal/gone (owner-liveness backstop).
 //
+// RELEASE IS A HARD DELETE. Release/ReleaseByOrder/ReleaseByBin/ReleaseByNode and
+// ReapOrphaned all DELETE rows — a reservation never transitions to a terminal
+// state. So every row on disk is 'pending' or 'confirmed', which is why the partial
+// unique indexes' `state IN ('pending','confirmed')` predicate matches every row
+// (kept future-proof, and since v44 also pinned by a CHECK).
+//
 // Phase-0 stub bodies are replaced here. The v43 migration must have run
 // before any Acquire call: the partial unique index uq_reservations_bin_active
 // is what makes Acquire exactly-one-winner.
@@ -21,7 +27,6 @@ package reservations
 import (
 	"database/sql"
 	"fmt"
-	"time"
 
 	"shingo/protocol"
 )
@@ -41,22 +46,67 @@ type Queryer interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }
 
-// Reservation is one row of the order's held reservations, as returned by
-// ListByOrder. State is "pending" or "confirmed".
-type Reservation struct {
-	BinID int64
-	State string
+// Compile-time proof of what the doc comments promise — a signature drift on the
+// concrete DB handles becomes a build error, not a runtime one.
+var (
+	_ Execer  = (*sql.DB)(nil)
+	_ Execer  = (*sql.Tx)(nil)
+	_ Queryer = (*sql.DB)(nil)
+	_ Queryer = (*sql.Tx)(nil)
+)
+
+// State is a reservation's lifecycle state. No longer free-text: v44 adds a CHECK
+// pinning the column to these values, so a typo can no longer silently escape the
+// partial unique index (D45).
+type State string
+
+const (
+	StatePending   State = "pending"
+	StateConfirmed State = "confirmed"
+)
+
+// Kind is the resource a reservation covers — the resource_kind column's domain
+// (v44). 'mouth' is accepted by the schema but has no dedicated code path in 1d.
+type Kind string
+
+const (
+	KindBin  Kind = "bin"
+	KindSlot Kind = "slot"
+)
+
+// Ref is the kind-agnostic identity of a reserved resource: a bin (Kind=bin,
+// ID=bins.id) or a slot (Kind=slot, ID=nodes.id). Every primitive keys on a Ref —
+// the seed of the future Claim/Handle aggregate (D45 §4). The exactly-one-of CHECK
+// + per-kind partial indexes make (Kind, ID) a row's identity. Callers build one
+// with BinRef/SlotRef so a call site reads its kind at a glance.
+type Ref struct {
+	Kind Kind
+	ID   int64
 }
 
-// ErrReservationConflict is returned by Acquire when another order already
-// holds an active (pending or confirmed) reservation on the requested bin.
-// Callers should treat this as a transient race: the losing order requeues
-// and the scanner retries on the next tick.
-var ErrReservationConflict = fmt.Errorf("reservations: bin already reserved (race)")
+// BinRef / SlotRef construct the two Refs 1d uses.
+func BinRef(binID int64) Ref   { return Ref{Kind: KindBin, ID: binID} }
+func SlotRef(nodeID int64) Ref { return Ref{Kind: KindSlot, ID: nodeID} }
 
-// Acquire inserts a reservation row for (orderID, binID) in state "pending".
-// expiresAt is the absolute deadline after which Expire may reclaim the hold
-// if the Confirm step was never reached (crash-leak backstop).
+// Reservation is one row of the order's held reservations, as returned by
+// ListByOrder. Exactly one of BinID/NodeID is set, per Kind (the other is 0).
+type Reservation struct {
+	Kind   Kind
+	BinID  int64 // bins.id for a bin reservation; 0 for slot/mouth
+	NodeID int64 // nodes.id for a slot/mouth reservation; 0 for bin
+	State  State
+}
+
+// ErrReservationConflict is returned by Acquire/AcquireSlot when another order
+// already holds an active (pending or confirmed) reservation on the requested
+// resource (bin or slot). Callers should treat this as a transient race: the
+// losing order requeues and the scanner retries on the next tick.
+var ErrReservationConflict = fmt.Errorf("reservations: resource already reserved (race)")
+
+// Acquire inserts a bin reservation row for (orderID, binID) in state "pending".
+// reservedBy is the actor tag for forensics. (The former reason + expiresAt params
+// are gone in v44 — reason was always "", and expires_at is retired as a reaping
+// key: reaping keys on the owner's liveness, not age, D18-Q4.)
 //
 // Returns ErrReservationConflict when an active (pending or confirmed)
 // reservation already exists on binID. The unique index uq_reservations_bin_active
@@ -67,12 +117,37 @@ var ErrReservationConflict = fmt.Errorf("reservations: bin already reserved (rac
 // report their own held bins as "missing" every tick. A conflict on a bin the
 // caller does NOT already hold is a genuine race lost to another order.
 // Returns any other non-nil error for transient DB failures.
-func Acquire(db Execer, orderID, binID int64, reservedBy, reason string, expiresAt time.Time) error {
+func Acquire(db Execer, orderID, binID int64, reservedBy string) error {
+	return acquire(db, orderID, BinRef(binID), reservedBy)
+}
+
+// AcquireSlot is Acquire for a destination slot: a pending slot reservation on
+// nodeID. Conflict via uq_reservations_slot_active (one active slot row per node).
+// Occupancy is NOT consulted here — a slot that physically holds a bin is still
+// reservable (D29); the NOT EXISTS(bins) check lives at confirm/claim time only.
+func AcquireSlot(db Execer, orderID, nodeID int64, reservedBy string) error {
+	return acquire(db, orderID, SlotRef(nodeID), reservedBy)
+}
+
+// acquire inserts a pending reservation for ref. Kind-agnostic: the resource_kind
+// is a parameter and the target column is routed by it in SQL (no per-kind Go
+// branching). ON CONFLICT DO NOTHING catches EITHER per-kind partial unique index,
+// so a lost race on a bin or a slot both surface as ErrReservationConflict.
+//
+// The bare ON CONFLICT DO NOTHING (no conflict target) is LOAD-BEARING: only
+// uq_reservations_{bin,slot}_active can fire here today, so a 0-rows result means
+// "reserved by someone active". A future author adding any OTHER unique constraint
+// to this table would have its violations silently folded into a false
+// ErrReservationConflict — handle such a constraint's conflict deliberately.
+func acquire(db Execer, orderID int64, ref Ref, reservedBy string) error {
 	result, err := db.Exec(
-		`INSERT INTO reservations (order_id, bin_id, state, reserved_by, reason, expires_at)
-		 VALUES ($1, $2, 'pending', $3, $4, $5)
+		`INSERT INTO reservations (order_id, resource_kind, bin_id, node_id, state, reserved_by)
+		 VALUES ($1, $2,
+		   CASE WHEN $2 = 'bin' THEN $3::bigint END,
+		   CASE WHEN $2 <> 'bin' THEN $3::bigint END,
+		   'pending', $4)
 		 ON CONFLICT DO NOTHING`,
-		orderID, binID, reservedBy, reason, expiresAt,
+		orderID, string(ref.Kind), ref.ID, reservedBy,
 	)
 	if err != nil {
 		return fmt.Errorf("reservations acquire: %w", err)
@@ -80,20 +155,33 @@ func Acquire(db Execer, orderID, binID int64, reservedBy, reason string, expires
 	n, _ := result.RowsAffected()
 	if n == 0 {
 		// ON CONFLICT DO NOTHING suppressed the insert — another order already
-		// holds an active reservation on this bin via the uq_reservations_bin_active index.
+		// holds an active reservation on this resource via its per-kind index.
 		return ErrReservationConflict
 	}
 	return nil
 }
 
-// Confirm transitions the (orderID, binID) reservation from "pending" to
-// "confirmed", recording that the physical bin claim succeeded. A no-op if
-// the row is already confirmed (idempotent for retry safety).
+// Confirm transitions the (orderID, binID) bin reservation from "pending" to
+// "confirmed", recording that the physical bin claim succeeded. A no-op if the
+// row is already confirmed (idempotent for retry safety).
 func Confirm(db Execer, orderID, binID int64) error {
+	return confirm(db, orderID, BinRef(binID))
+}
+
+// ConfirmSlot is Confirm for a slot reservation (pending → confirmed on nodeID).
+func ConfirmSlot(db Execer, orderID, nodeID int64) error {
+	return confirm(db, orderID, SlotRef(nodeID))
+}
+
+// confirm flips ref's pending row to confirmed. resource_kind=$2 scopes the match
+// to one kind, so COALESCE(bin_id, node_id)=$3 reads the correct target column
+// (the other is NULL for that kind) — kind-agnostic, no branching.
+func confirm(db Execer, orderID int64, ref Ref) error {
 	_, err := db.Exec(
 		`UPDATE reservations SET state='confirmed'
-		 WHERE order_id=$1 AND bin_id=$2 AND state='pending'`,
-		orderID, binID,
+		 WHERE order_id=$1 AND resource_kind=$2 AND state='pending'
+		   AND COALESCE(bin_id, node_id)=$3`,
+		orderID, string(ref.Kind), ref.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("reservations confirm: %w", err)
@@ -101,12 +189,23 @@ func Confirm(db Execer, orderID, binID int64) error {
 	return nil
 }
 
-// Release deletes the reservation for (orderID, binID), freeing the bin for
-// future reservations. Safe to call even when no row exists (idempotent).
+// Release deletes the (orderID, binID) bin reservation, freeing the bin for future
+// reservations. Safe to call even when no row exists (idempotent).
 func Release(db Execer, orderID, binID int64) error {
+	return release(db, orderID, BinRef(binID))
+}
+
+// ReleaseSlot is Release for a slot reservation (deletes the order's row on nodeID).
+func ReleaseSlot(db Execer, orderID, nodeID int64) error {
+	return release(db, orderID, SlotRef(nodeID))
+}
+
+// release deletes ref's row for the order. Same kind-scoped COALESCE match as confirm.
+func release(db Execer, orderID int64, ref Ref) error {
 	_, err := db.Exec(
-		`DELETE FROM reservations WHERE order_id=$1 AND bin_id=$2`,
-		orderID, binID,
+		`DELETE FROM reservations
+		 WHERE order_id=$1 AND resource_kind=$2 AND COALESCE(bin_id, node_id)=$3`,
+		orderID, string(ref.Kind), ref.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("reservations release: %w", err)
@@ -140,13 +239,28 @@ func ReleaseByBin(db Execer, binID int64) error {
 	return nil
 }
 
-// ListByOrder returns all reservations held by orderID, both pending and
-// confirmed. The 1c plan-time reconcile loads its own holds with this BEFORE
-// deciding what to keep / release / acquire — the owner-aware step that dodges
-// the per-bin unique-index self-conflict documented on Acquire.
+// ReleaseByNode deletes any reservation on nodeID — the slot dual of ReleaseByBin.
+// Called at the delivered moment (commit 4) in the same tx that clears the slot's
+// nodes.claimed_by, so a slot's reservation lives exactly as long as its hard
+// claim. Node-keyed because the arrival path is node-centric, and the
+// uq_reservations_slot_active index guarantees at most one active slot row per node.
+func ReleaseByNode(db Execer, nodeID int64) error {
+	_, err := db.Exec(`DELETE FROM reservations WHERE node_id=$1`, nodeID)
+	if err != nil {
+		return fmt.Errorf("reservations release-by-node: %w", err)
+	}
+	return nil
+}
+
+// ListByOrder returns all reservations held by orderID — both kinds, both states.
+// The 1c plan-time reconcile loads its own holds with this BEFORE deciding what to
+// keep / release / acquire — the owner-aware step that dodges the per-resource
+// unique-index self-conflict documented on Acquire. Kind-threaded: each row carries
+// its Kind, and exactly one of BinID/NodeID is set (the other is 0) so the reconcile
+// can match a slot row by node and a bin row by bin.
 func ListByOrder(db Queryer, orderID int64) ([]Reservation, error) {
 	rows, err := db.Query(
-		`SELECT bin_id, state FROM reservations WHERE order_id=$1 ORDER BY bin_id`,
+		`SELECT resource_kind, bin_id, node_id, state FROM reservations WHERE order_id=$1 ORDER BY id`,
 		orderID,
 	)
 	if err != nil {
@@ -156,9 +270,12 @@ func ListByOrder(db Queryer, orderID int64) ([]Reservation, error) {
 	var out []Reservation
 	for rows.Next() {
 		var r Reservation
-		if err := rows.Scan(&r.BinID, &r.State); err != nil {
+		var binID, nodeID sql.NullInt64
+		if err := rows.Scan(&r.Kind, &binID, &nodeID, &r.State); err != nil {
 			return nil, fmt.Errorf("reservations list-by-order scan: %w", err)
 		}
+		r.BinID = binID.Int64   // 0 when NULL (slot/mouth rows)
+		r.NodeID = nodeID.Int64 // 0 when NULL (bin rows)
 		out = append(out, r)
 	}
 	return out, rows.Err()

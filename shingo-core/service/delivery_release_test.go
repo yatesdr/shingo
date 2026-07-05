@@ -10,10 +10,8 @@ package service
 
 import (
 	"testing"
-	"time"
 
 	"shingo/protocol/testutil"
-	"shingo/shared/clock"
 	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -30,7 +28,7 @@ func TestDeliveryReleasesReservationAndSlot(t *testing.T) {
 	reAcquirable := func(t *testing.T, binID int64) {
 		t.Helper()
 		probe := testdb.CreateOrder(t, db)
-		if err := reservations.Acquire(db, probe.ID, binID, "test", "reacq", clock.Now().Add(time.Minute)); err != nil {
+		if err := reservations.Acquire(db, probe.ID, binID, "test"); err != nil {
 			t.Errorf("bin %d not re-acquirable after delivery: %v (reservation leaked?)", binID, err)
 		}
 	}
@@ -47,7 +45,7 @@ func TestDeliveryReleasesReservationAndSlot(t *testing.T) {
 		bin := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-DEL-1")
 		order := testdb.CreateOrder(t, db)
 		testutil.MustNoErr(t, svc.ClaimForDispatch(bin.ID, order.ID, nil), "ClaimForDispatch")
-		testutil.MustNoErr(t, db.ClaimSlot(destSlot.ID, order.ID), "ClaimSlot")
+		testdb.ClaimSlotForTest(t, db, destSlot.ID, order.ID)
 
 		if _, err := binSvc.ApplyArrival(bin.ID, destSlot.ID, false, nil); err != nil {
 			t.Fatalf("ApplyArrival: %v", err)
@@ -72,8 +70,8 @@ func TestDeliveryReleasesReservationAndSlot(t *testing.T) {
 		order := testdb.CreateOrder(t, db)
 		testutil.MustNoErr(t, svc.ClaimForDispatch(binA.ID, order.ID, nil), "claim A")
 		testutil.MustNoErr(t, svc.ClaimForDispatch(binB.ID, order.ID, nil), "claim B")
-		testutil.MustNoErr(t, db.ClaimSlot(slotA.ID, order.ID), "ClaimSlot A")
-		testutil.MustNoErr(t, db.ClaimSlot(slotB.ID, order.ID), "ClaimSlot B")
+		testdb.ClaimSlotForTest(t, db, slotA.ID, order.ID)
+		testdb.ClaimSlotForTest(t, db, slotB.ID, order.ID)
 
 		testutil.MustNoErr(t, db.ApplyMultiBinArrival([]orders.BinArrivalInstruction{
 			{BinID: binA.ID, ToNodeID: slotA.ID},

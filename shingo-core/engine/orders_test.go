@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
-	"shingo/shared/clock"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
@@ -201,7 +200,7 @@ func TestCreateDirectOrder_FleetDispatchFails(t *testing.T) {
 		t.Errorf("bin claimed_by = %v after dispatch-failure rollback, want nil", got.ClaimedBy)
 	}
 	probe := testdb.CreateOrder(t, db)
-	if err := reservations.Acquire(db, probe.ID, bin.ID, "test", "reacquire", clock.Now().Add(time.Minute)); err != nil {
+	if err := reservations.Acquire(db, probe.ID, bin.ID, "test"); err != nil {
 		t.Errorf("bin not re-acquirable after dispatch-failure rollback: %v (reservation leaked?)", err)
 	}
 }

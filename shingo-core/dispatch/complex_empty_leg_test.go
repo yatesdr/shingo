@@ -63,14 +63,14 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 		{Action: "dropoff", Node: lineNode.Name},
 	}
 	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, order.ProcessNode)
-	assigned, outcome, rerr := d.reserveComplexPlan(order, plan)
+	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
 	if rerr != nil {
 		t.Fatalf("reserveComplexPlan: %v", rerr)
 	}
 	if outcome != reserveComplete {
 		t.Fatalf("reserveComplexPlan outcome = %v, want reserveComplete — line full and src empty are both available", outcome)
 	}
-	if cerr := d.confirmComplexPlan(order, plan, assigned); cerr != nil {
+	if cerr := d.allocator.confirmComplexPlan(order, plan, assigned); cerr != nil {
 		t.Fatalf("confirmComplexPlan: %v", cerr)
 	}
 

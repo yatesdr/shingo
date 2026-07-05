@@ -13,10 +13,8 @@ package service
 
 import (
 	"testing"
-	"time"
 
 	"shingo/protocol/testutil"
-	"shingo/shared/clock"
 	"shingocore/internal/testdb"
 	"shingocore/store/reservations"
 )
@@ -30,7 +28,7 @@ func TestReleaseClaim_ClearsClaimAndReservation(t *testing.T) {
 	reAcquirable := func(t *testing.T, binID int64) {
 		t.Helper()
 		probe := testdb.CreateOrder(t, db)
-		if err := reservations.Acquire(db, probe.ID, binID, "test", "reacquire", clock.Now().Add(time.Minute)); err != nil {
+		if err := reservations.Acquire(db, probe.ID, binID, "test"); err != nil {
 			t.Errorf("bin %d not re-acquirable after release: %v (confirmed reservation row leaked?)", binID, err)
 		}
 	}

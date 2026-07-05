@@ -292,14 +292,3 @@ func planUsedExposeMode(children []*orders.Order) bool {
 	}
 	return true
 }
-
-// firstChildBinID returns the bin ID claimed by the lowest-sequence
-// compound child whose StepType is "unbury" — for expose mode, every
-// child is an unbury, and the target bin's ID is whatever the
-// parent's reshuffle plan was built around. We could thread the
-// target bin through the call chain, but reading it from the
-// compound's recorded plan is more robust against future refactors
-// adding steps.
-//
-// Actually unused here — keeping the caller simple by passing
-// targetBinID + expectedFromNode through transferLaneLockToComplexParent.

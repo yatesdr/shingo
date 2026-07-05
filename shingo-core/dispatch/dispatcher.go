@@ -25,6 +25,7 @@ type Dispatcher struct {
 	replies          *ReplySender
 	planner          *PlanningService
 	binManifest      *service.BinManifestService
+	allocator        *Allocator
 	restoreListeners *restoreRegistry
 	laneHolds        *laneHoldRegistry
 	DebugLog         func(string, ...any)
@@ -47,6 +48,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
 	d.replies = newReplySender(db, dispatchTopic, stationID, d.dbg)
 	d.planner = newPlanningService(db, resolver, d.laneLock, binManifest, d.lifecycle, d.dbg, d.CreateCompoundOrder)
+	d.allocator = newAllocator(db, binManifest, d.dbg)
 	return d
 }
 

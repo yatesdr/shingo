@@ -23,7 +23,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
 	"shingocore/config"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -451,7 +450,7 @@ func CreateOrder(t *testing.T, db *store.DB, opts ...func(*orders.Order)) *order
 // order. orderID must reference a real order (see CreateOrder).
 func ClaimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
 	t.Helper()
-	if err := reservations.Acquire(db, orderID, binID, "test", "test-claim", clock.Now().Add(time.Hour)); err != nil {
+	if err := reservations.Acquire(db, orderID, binID, "test"); err != nil {
 		t.Fatalf("testdb.ClaimBinForTest Acquire(bin=%d order=%d): %v", binID, orderID, err)
 	}
 	if err := db.ClaimBin(binID, orderID); err != nil {
@@ -462,6 +461,19 @@ func ClaimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
 	}
 }
 
+// ClaimSlotForTest sets nodes.claimed_by directly for fixture setup — the raw slot
+// claim the (D47-deleted) nodes.ClaimSlot / db.ClaimSlot used to provide. It is the
+// sanctioned test-only bypass of the slot seatbelt (forbidigo carveout), for tests
+// that just need a slot already claimed by an order. The PRODUCTION path is reserve
+// (AcquireSlot) → db.ConfirmSlotClaim; use that when a test needs the coupled slot
+// reservation too. orderID must reference a real order (see CreateOrder).
+func ClaimSlotForTest(t *testing.T, db *store.DB, nodeID, orderID int64) {
+	t.Helper()
+	if _, err := db.DB.Exec(`UPDATE nodes SET claimed_by=$1, updated_at=NOW() WHERE id=$2`, orderID, nodeID); err != nil {
+		t.Fatalf("testdb.ClaimSlotForTest(node=%d order=%d): %v", nodeID, orderID, err)
+	}
+}
+
 // ReserveBin acquires a pending reservation for orderID on binID and nothing
 // else — for tests that then exercise a GUARDED claim primitive directly
 // (svc.ClearAndClaim / SyncUOPAndClaim / db.ClaimBin), which need a pending
@@ -469,7 +481,7 @@ func ClaimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
 // a real order (see CreateOrder).
 func ReserveBin(t *testing.T, db *store.DB, orderID, binID int64) {
 	t.Helper()
-	if err := reservations.Acquire(db, orderID, binID, "test", "test-reserve", clock.Now().Add(time.Hour)); err != nil {
+	if err := reservations.Acquire(db, orderID, binID, "test"); err != nil {
 		t.Fatalf("testdb.ReserveBin Acquire(bin=%d order=%d): %v", binID, orderID, err)
 	}
 }

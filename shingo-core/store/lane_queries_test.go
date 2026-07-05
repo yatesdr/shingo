@@ -9,7 +9,31 @@ import (
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
+
+// TestFindStoreSlot_SkipsReservedSlot: FindStoreSlotInLane is deepest-UNRESERVED —
+// a slot another order has reserved (even while physically empty + unclaimed) is
+// skipped, so two stores pack into distinct tiered slots (1d).
+func TestFindStoreSlot_SkipsReservedSlot(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	laneID, _, slot2ID, slot3ID := laneFixture(t, db, "RSV")
+	o := testdb.CreateOrder(t, db)
+
+	// Reserve the deepest slot (slot3, depth 3) — empty and unclaimed, but held.
+	if err := reservations.AcquireSlot(db.DB, o.ID, slot3ID, "test"); err != nil {
+		t.Fatalf("AcquireSlot: %v", err)
+	}
+	got, err := db.FindStoreSlotInLane(laneID)
+	if err != nil {
+		t.Fatalf("FindStoreSlotInLane: %v", err)
+	}
+	if got.ID != slot2ID {
+		t.Fatalf("store slot = %d (depth %v), want slot2=%d — the reserved deepest slot must be skipped",
+			got.ID, got.Depth, slot2ID)
+	}
+}
 
 // laneFixture builds a NGRP > LANE > 3 slots hierarchy and returns the lane ID
 // plus the three slot IDs (front→back).

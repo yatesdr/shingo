@@ -17,7 +17,8 @@ import (
 // transition (e.g. crash mid-transaction).
 func TestReleaseOrphanedClaims_ReleasesSlotClaims(t *testing.T) {
 	t.Parallel()
-	sdb := testdb.Open(t).DB
+	db := testdb.Open(t)
+	sdb := db.DB
 
 	slot := &nodes.Node{Name: "SMN_RECON", Enabled: true}
 	if err := nodes.Create(sdb, slot); err != nil {
@@ -27,9 +28,7 @@ func TestReleaseOrphanedClaims_ReleasesSlotClaims(t *testing.T) {
 	if err := orders.Create(sdb, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := nodes.ClaimSlot(sdb, slot.ID, order.ID); err != nil {
-		t.Fatalf("claim slot: %v", err)
-	}
+	testdb.ClaimSlotForTest(t, db, slot.ID, order.ID)
 	// Negative: while the owning order is still non-terminal (queued), the sweep must NOT
 	// touch its claim — only terminal orders' claims are orphaned. A legitimately-queued
 	// order that holds a claim mid-dispatch must not lose it. (This pins the leg the retired
@@ -54,12 +53,8 @@ func TestReleaseOrphanedClaims_ReleasesSlotClaims(t *testing.T) {
 		t.Fatalf("expected >=1 released claim, got %d", released)
 	}
 
-	// Slot is claimable again by a live order.
-	other := &orders.Order{EdgeUUID: "recon-other", StationID: "edge.1", OrderType: "complex", Status: "queued", Quantity: 1}
-	if err := orders.Create(sdb, other); err != nil {
-		t.Fatalf("create other order: %v", err)
-	}
-	if err := nodes.ClaimSlot(sdb, slot.ID, other.ID); err != nil {
-		t.Fatalf("claim slot after sweep: %v", err)
+	// The swept slot's claim is cleared — free for a live order to re-claim.
+	if n, _ := nodes.Get(sdb, slot.ID); n.ClaimedBy != nil {
+		t.Errorf("slot claimed_by=%v after sweep, want nil (released)", *n.ClaimedBy)
 	}
 }

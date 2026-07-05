@@ -71,27 +71,37 @@ func ScanNodes(rows *sql.Rows) ([]*Node, error) {
 	return nodes, rows.Err()
 }
 
-// ClaimSlot atomically claims a destination slot for an order — the store
-// dual of bins.Claim. A slot can be claimed by at most one order at a time,
-// so two orders dispatched against the same empty supermarket slot cannot both
-// win: the loser gets a non-nil error and re-resolves to another slot (same
-// contract as the bin claim_failed path). The NOT EXISTS guard refuses a slot
-// that already physically holds a bin. Returns an error when the slot is held
-// by a DIFFERENT order, occupied, or does not exist.
+// (D47) ClaimSlot — the un-seatbelted slot CAS — was deleted: 1d commit 4 removed
+// its only production caller (the hard slot loop). The live slot-claim path is the
+// reservation-guarded ClaimSlotTx, reached via db.ConfirmSlotClaim (reserve → claim
+// → confirm in one tx). A forbidigo rule guards against reintroducing a raw slot
+// claim; tests needing a claimed-slot fixture use testdb.ClaimSlotForTest.
+
+// ClaimSlotTx is the reservation-guarded slot claim used by ConfirmSlotClaim — the
+// slot mirror of bins.ClaimTx (D46). It ADDS the demoted-CAS seatbelt to the
+// owner-idempotent CAS + NOT EXISTS(bins) guard: EXISTS a pending slot reservation
+// for (order, node), so a slot can only be hard-claimed under a live plan-time
+// reservation (the 1d D4 split-brain fix). Runs inside the caller's tx so the claim
+// and the reservation confirm commit atomically. Owner-idempotent (claimed_by=$1),
+// so a claimed-but-pending slot heals on retry instead of wedging.
 //
-// Owner-idempotent: a re-claim by the SAME order succeeds (claimed_by=$1), so a
-// dispatch attempt that requeues and replays does not livelock against slots it
-// already holds.
-func ClaimSlot(db *sql.DB, nodeID, orderID int64) error {
-	res, err := db.Exec(`UPDATE nodes SET claimed_by=$1, updated_at=NOW()
+// The legacy ClaimSlot above (the still-live hard-claim loop path) deliberately
+// does NOT carry the reservation clause in 1d commit 3 — the loop never reserves —
+// and is retired WITH that loop in commit 4, at which point this is the only
+// slot-claim path. Seatbelts only ever gain clauses; ClaimSlot is not weakened.
+func ClaimSlotTx(tx *sql.Tx, nodeID, orderID int64) error {
+	res, err := tx.Exec(`UPDATE nodes SET claimed_by=$1, updated_at=NOW()
 		WHERE id=$2 AND (claimed_by IS NULL OR claimed_by=$1)
-		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = $2)`, orderID, nodeID)
+		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = $2)
+		  AND EXISTS (SELECT 1 FROM reservations
+		              WHERE order_id=$1 AND node_id=$2
+		                AND resource_kind='slot' AND state='pending')`, orderID, nodeID)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("slot %d is already claimed, occupied, or does not exist", nodeID)
+		return fmt.Errorf("slot %d claim refused: already claimed, occupied, or no pending reservation", nodeID)
 	}
 	return nil
 }

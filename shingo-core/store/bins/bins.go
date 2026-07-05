@@ -35,6 +35,9 @@ type Bin = domain.Bin
 // The 27th column (has_pending_reservation) is populated from the
 // reservations table so BinUnavailableReason can filter reserved bins
 // without a separate round-trip. ScanBin reads it into HasPendingReservation.
+// Pending-ONLY is sufficient: a confirmed reservation coincides with a hard
+// claimed_by (structural since D46's one-tx claim+confirm), which b.claimed_by
+// already covers — so this projector never needs to see 'confirmed'.
 const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node_id, b.status, b.claimed_by, b.staged_at, b.staged_expires_at,
 	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.delta_epoch, b.manifest_confirmed,
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,

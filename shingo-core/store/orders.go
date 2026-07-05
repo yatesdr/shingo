@@ -307,11 +307,18 @@ func (db *DB) ReleaseClaimForBin(binID, orderID int64) error {
 	return tx.Commit()
 }
 
-// ReleaseClaimByOrder is the multi-bin inverse: it clears claimed_by for every
-// bin this order holds AND releases all its reservations in one transaction. The
-// coupled replacement for UnclaimOrderBins on rollback / re-queue paths that
-// abandon an order's claims without going terminal (which would otherwise leak
-// the confirmed reservations). Idempotent.
+// ReleaseClaimByOrder is the multi-resource inverse: it clears claimed_by for
+// every bin AND every slot this order holds, deletes its order_bins junction rows,
+// and releases all its reservations (both kinds) in one transaction. The coupled
+// replacement for UnclaimOrderBins on rollback / re-queue paths that abandon an
+// order's claims without going terminal (which would otherwise leak the confirmed
+// reservations). Idempotent.
+//
+// Release-set unification (D45 §3.5): this now releases the SAME set as
+// TerminalizeOrder (minus the terminal-only _TRANSIT anomaly stamp). Before 1d it
+// cleared only bins + reservations; once slots are reservation-backed and hard-
+// claimed via ConfirmSlotClaim, dropping the bin claims without the slot claims +
+// order_bins would strand them — the gap this commit makes real, so it closes it.
 func (db *DB) ReleaseClaimByOrder(orderID int64) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -321,6 +328,14 @@ func (db *DB) ReleaseClaimByOrder(orderID int64) error {
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
 		return err
 	}
+	// Slot claims too (store dual of the bin release above).
+	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
+		return err
+	}
+	// Both reservation kinds — ReleaseByOrder is order-keyed and kind-agnostic.
 	if err := reservations.ReleaseByOrder(tx, orderID); err != nil {
 		return err
 	}

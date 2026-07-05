@@ -65,7 +65,9 @@ func BinUnavailableReason(b *bins.Bin, payloadCode string) string {
 		return fmt.Sprintf("already claimed by order %d", *b.ClaimedBy)
 	}
 	if b.HasPendingReservation {
-		return "pending reservation held by another order"
+		// Owner-blind: HasPendingReservation is EXISTS(pending) on the bin, which
+		// includes THIS order's own hold, so don't claim "another order".
+		return "pending reservation held"
 	}
 	if b.Locked {
 		return "locked for active handling"

@@ -644,6 +644,13 @@ func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, toNodeID); err != nil {
 		return false, fmt.Errorf("release destination slot claim node %d: %w", toNodeID, err)
 	}
+	// ...and its slot RESERVATION, in the SAME tx (the slot dual of the bin
+	// ReleaseByBin above, 1d): a slot's reservation lives exactly as long as its
+	// hard claim, so the slot frees for re-reservation at delivery. No-op for a
+	// LINE delivery (never slot-reserved).
+	if err := reservations.ReleaseByNode(tx, toNodeID); err != nil {
+		return false, fmt.Errorf("release slot reservation on arrival node %d: %w", toNodeID, err)
+	}
 	if staged {
 		// nullableTime: pass UTC time or nil, mirroring helpers.NullableTime
 		// from the (internal) store helpers package — inlined here because

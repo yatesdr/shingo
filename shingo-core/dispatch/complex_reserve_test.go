@@ -7,6 +7,7 @@ package dispatch
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -38,7 +39,7 @@ func reservesExactly(res []reservations.Reservation, binIDs ...int64) bool {
 func stateOf(res []reservations.Reservation, binID int64) string {
 	for _, r := range res {
 		if r.BinID == binID {
-			return r.State
+			return string(r.State)
 		}
 	}
 	return ""
@@ -92,7 +93,7 @@ func TestReserveReconcileKeepsOwnHolds(t *testing.T) {
 	testdb.ReserveBin(t, db, order.ID, binA.ID)
 
 	planAB := BuildComplexPlan(stepsAB, d.snapshotPickupBins(stepsAB), bp.Code, nodeA.Name)
-	_, outcome, err := d.reserveComplexPlan(order, planAB)
+	_, outcome, err := d.allocator.reserveComplexPlan(order, planAB)
 	testutil.MustNoErr(t, err, "reserve AB")
 	if outcome != reserveComplete {
 		t.Fatalf("outcome = %v, want reserveComplete (A kept, B acquired)", outcome)
@@ -115,7 +116,7 @@ func TestReserveReconcileKeepsOwnHolds(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: lineNode.Name},
 	}
 	planC := BuildComplexPlan(stepsC, d.snapshotPickupBins(stepsC), bp.Code, nodeC.Name)
-	_, outcome2, err := d.reserveComplexPlan(order, planC)
+	_, outcome2, err := d.allocator.reserveComplexPlan(order, planC)
 	testutil.MustNoErr(t, err, "reserve C")
 	if outcome2 != reserveComplete {
 		t.Fatalf("outcome2 = %v, want reserveComplete", outcome2)
@@ -151,7 +152,7 @@ func TestPartialHoldRetriesToComplete(t *testing.T) {
 	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name)
 
 	// Tick 1: only A available (B's node empty, and A is reserved so it's not moot).
-	_, outcome1, err := d.reserveComplexPlan(order, plan)
+	_, outcome1, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve tick 1")
 	if outcome1 != reserveHolding {
 		t.Fatalf("tick 1 outcome = %v, want reserveHolding", outcome1)
@@ -165,12 +166,12 @@ func TestPartialHoldRetriesToComplete(t *testing.T) {
 	binB := testdb.CreateBinAtNode(t, db, bp.Code, nodeB.ID, "PH-BIN-B")
 
 	// Tick 2: both available → complete → confirm claims both.
-	assigned2, outcome2, err := d.reserveComplexPlan(order, plan)
+	assigned2, outcome2, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve tick 2")
 	if outcome2 != reserveComplete {
 		t.Fatalf("tick 2 outcome = %v, want reserveComplete", outcome2)
 	}
-	if cerr := d.confirmComplexPlan(order, plan, assigned2); cerr != nil {
+	if cerr := d.allocator.confirmComplexPlan(order, plan, assigned2); cerr != nil {
 		t.Fatalf("confirm: %v", cerr)
 	}
 	claimed, _ := db.ListBinsByClaim(order.ID)
@@ -205,7 +206,7 @@ func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 	order := mkComplexOrder(t, db, "confirm-zero-1", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
 	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name)
 
-	assigned, outcome, err := d.reserveComplexPlan(order, plan)
+	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve")
 	if outcome != reserveComplete {
 		t.Fatalf("outcome = %v, want reserveComplete", outcome)
@@ -214,7 +215,7 @@ func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 	// Simulate the pending reservation vanishing (TTL reap) between reserve and confirm.
 	testutil.MustNoErr(t, db.ReleaseReservation(order.ID, binA.ID), "reap pending")
 
-	cerr := d.confirmComplexPlan(order, plan, assigned)
+	cerr := d.allocator.confirmComplexPlan(order, plan, assigned)
 	var pe *planningError
 	if !errors.As(cerr, &pe) || pe.Code != codeClaimFailed {
 		t.Fatalf("confirm after reap: got %v, want a codeClaimFailed planningError", cerr)
@@ -226,13 +227,13 @@ func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 
 	// Rider (a): re-reserve + confirm, then confirm AGAIN — the already-confirmed,
 	// claimed-by-us bin is skipped (idempotent), not a false claim_failed.
-	assigned2, _, err := d.reserveComplexPlan(order, plan)
+	assigned2, _, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "re-reserve")
-	testutil.MustNoErr(t, d.confirmComplexPlan(order, plan, assigned2), "first confirm")
+	testutil.MustNoErr(t, d.allocator.confirmComplexPlan(order, plan, assigned2), "first confirm")
 	// Re-derive the assignment (now the reservation is confirmed) and confirm again.
-	assigned3, _, err := d.reserveComplexPlan(order, plan)
+	assigned3, _, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve for idempotent confirm")
-	if cerr := d.confirmComplexPlan(order, plan, assigned3); cerr != nil {
+	if cerr := d.allocator.confirmComplexPlan(order, plan, assigned3); cerr != nil {
 		t.Fatalf("idempotent confirm of an already-claimed-by-us bin must NOT fail: %v", cerr)
 	}
 }
@@ -275,12 +276,12 @@ func TestConfirmHealsClaimedButPendingBin(t *testing.T) {
 		t.Fatalf("seed reservation = %q, want pending (the wedge half-state)", stateOf(seed, binA.ID))
 	}
 
-	assigned, outcome, err := d.reserveComplexPlan(order, plan)
+	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve")
 	if outcome != reserveComplete {
 		t.Fatalf("outcome = %v, want reserveComplete", outcome)
 	}
-	if cerr := d.confirmComplexPlan(order, plan, assigned); cerr != nil {
+	if cerr := d.allocator.confirmComplexPlan(order, plan, assigned); cerr != nil {
 		t.Fatalf("confirm of a claimed-but-pending bin must SUCCEED (heal the wedge), got %v", cerr)
 	}
 
@@ -335,7 +336,7 @@ func TestConfirmPartialFailureConverges(t *testing.T) {
 	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name)
 
 	// ── Tick 1: reserve all three, then force the confirm to fail on need #2. ──
-	assigned1, outcome1, err := d.reserveComplexPlan(order, plan)
+	assigned1, outcome1, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve tick 1")
 	if outcome1 != reserveComplete {
 		t.Fatalf("tick 1 outcome = %v, want reserveComplete", outcome1)
@@ -344,7 +345,7 @@ func TestConfirmPartialFailureConverges(t *testing.T) {
 	// sees 0 rows (seatbelt) and fails AFTER binA (#1) has been confirmed+claimed.
 	testutil.MustNoErr(t, db.ReleaseReservation(order.ID, binB.ID), "reap binB reservation")
 
-	cerr := d.confirmComplexPlan(order, plan, assigned1)
+	cerr := d.allocator.confirmComplexPlan(order, plan, assigned1)
 	var pe *planningError
 	if !errors.As(cerr, &pe) || pe.Code != codeClaimFailed {
 		t.Fatalf("tick 1 confirm: got %v, want a codeClaimFailed planningError (requeue)", cerr)
@@ -363,12 +364,12 @@ func TestConfirmPartialFailureConverges(t *testing.T) {
 	}
 
 	// ── Tick 2: re-reserve (re-acquires B) and confirm converges the whole set. ──
-	assigned2, outcome2, err := d.reserveComplexPlan(order, plan)
+	assigned2, outcome2, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve tick 2")
 	if outcome2 != reserveComplete {
 		t.Fatalf("tick 2 outcome = %v, want reserveComplete", outcome2)
 	}
-	if cerr := d.confirmComplexPlan(order, plan, assigned2); cerr != nil {
+	if cerr := d.allocator.confirmComplexPlan(order, plan, assigned2); cerr != nil {
 		t.Fatalf("tick 2 confirm must converge, got %v", cerr)
 	}
 
@@ -418,7 +419,7 @@ func TestReserveMootWhenAllSourcesEmpty(t *testing.T) {
 	order := mkComplexOrder(t, db, "moot-1", empty.Name, empty.Name, lineNode.Name, bp.Code, steps)
 	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, empty.Name)
 
-	_, outcome, err := d.reserveComplexPlan(order, plan)
+	_, outcome, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve")
 	if outcome != reserveMoot {
 		t.Fatalf("outcome = %v, want reserveMoot (no bin at any source, work is void)", outcome)
@@ -460,7 +461,7 @@ func TestReservePresentButTakenHoldsNotMoot(t *testing.T) {
 	order := mkComplexOrder(t, db, "pbt-1", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
 	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name)
 
-	assigned, outcome, err := d.reserveComplexPlan(order, plan)
+	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve")
 	if outcome != reserveHolding {
 		t.Fatalf("outcome = %v, want reserveHolding — a present-but-taken bin is sourceable, must NOT moot-skip", outcome)
@@ -500,7 +501,7 @@ func TestStagingRegrabsNotTreatedAsMissing(t *testing.T) {
 	order := mkComplexOrder(t, db, "regrab-1", src.Name, src.Name, lineNode.Name, bp.Code, steps)
 	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, src.Name)
 
-	assigned, outcome, err := d.reserveComplexPlan(order, plan)
+	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve")
 	if outcome != reserveComplete {
 		t.Fatalf("outcome = %v, want reserveComplete — the empty staging pickup is a re-grab, not a miss", outcome)
@@ -536,5 +537,118 @@ func TestMoveToSourcingIdempotent(t *testing.T) {
 	term.Status = StatusConfirmed
 	if err := d.lifecycle.MoveToSourcing(term, "test", "x"); err == nil {
 		t.Error("MoveToSourcing(confirmed→sourcing) must be rejected as illegal, got nil")
+	}
+}
+
+// ── commit 4: the reconcile wire (D4 split-brain fix) ─────────────────────────
+
+// TestComplexHoldingSlotsAsReservationsAcrossTicks is the D4 split-brain PIN. An
+// incomplete complex order (its source bin not yet available) holds its destination
+// slot as a revocable RESERVATION while it sits in `sourcing` — NOT as a hard
+// nodes.claimed_by. Pre-1d the hard-claim slot loop set nodes.claimed_by at dispatch
+// even while the order held bins only as reservations across ticks: bins soft, slots
+// hard — the split-brain. Now both halves are reservations until the complete set
+// confirms together.
+func TestComplexHoldingSlotsAsReservationsAcrossTicks(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// A concrete storage-dropoff slot (child of an NGRP) and an EMPTY source node.
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "NGRP type")
+	grp := &nodes.Node{Name: "SBR-NGRP", Enabled: true, IsSynthetic: true, NodeTypeID: &grpType.ID}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create NGRP")
+	slot := &nodes.Node{Name: "SBR-SLOT", Enabled: true, ParentID: &grp.ID}
+	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")
+	src := &nodes.Node{Name: "SBR-SRC", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(src), "create src")
+	// A bin at src that is already TAKEN by another order — the bin need is
+	// present-but-taken, so the order HOLDS and retries (not moot-skips, which would
+	// correctly release the slot). This exercises the sourcing-with-partials state.
+	takenBin := testdb.CreateBinAtNode(t, db, bp.Code, src.ID, "SBR-TAKEN")
+	other := testdb.CreateOrder(t, db)
+	testdb.ClaimBinForTest(t, db, takenBin.ID, other.ID)
+
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: src.Name},
+		{Action: protocol.ActionDropoff, Node: slot.Name},
+	}
+	order := mkComplexOrder(t, db, "split-brain-1", src.Name, src.Name, slot.Name, bp.Code, steps)
+
+	// Dispatch: the slot reserve completes, the bin reserve is incomplete (empty
+	// source) → the order HOLDS in sourcing.
+	if derr := d.DispatchPreparedComplex(order); derr == nil {
+		t.Fatal("order dispatched; expected a hold (bin source empty)")
+	}
+
+	// THE PIN: the slot is held as a RESERVATION, not a hard claim, while sourcing.
+	slotN, _ := db.GetNode(slot.ID)
+	if slotN.ClaimedBy != nil {
+		t.Fatalf("slot claimed_by=%d while SOURCING — the D4 split-brain: an incomplete order must hold slots as RESERVATIONS, not hard nodes.claimed_by", *slotN.ClaimedBy)
+	}
+	held, _ := db.ListReservationsByOrder(order.ID)
+	slotReserved := false
+	for _, r := range held {
+		if r.Kind == reservations.KindSlot && r.NodeID == slot.ID {
+			slotReserved = true
+		}
+	}
+	if !slotReserved {
+		t.Fatalf("order holds no slot reservation on %s while sourcing; held=%+v", slot.Name, held)
+	}
+	if got, _ := db.GetOrder(order.ID); got.Status != StatusSourcing {
+		t.Errorf("order status=%q, want sourcing (holding partials)", got.Status)
+	}
+}
+
+// TestSlotConflictRevertsToNGRP pins the escape valve: a FUNGIBLE dropoff (a concrete
+// slot carrying its NGRP group) whose slot is already reserved by another order
+// reverts its step Node back to the group, so the next tick re-resolves to a free
+// child. Fixed-concrete dropoffs (no group) instead hold — that contrast is the ABBA
+// port above.
+func TestSlotConflictRevertsToNGRP(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "NGRP type")
+	grp := &nodes.Node{Name: "RVT-NGRP", Enabled: true, IsSynthetic: true, NodeTypeID: &grpType.ID}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create NGRP")
+	slot := &nodes.Node{Name: "RVT-SLOT", Enabled: true, ParentID: &grp.ID}
+	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")
+
+	// Another order already holds the slot's reservation.
+	other := testdb.CreateOrder(t, db)
+	testutil.MustNoErr(t, db.ReserveSlot(slot.ID, other.ID), "other reserves slot")
+
+	// Our order's dropoff resolved to the (taken) concrete slot but carries its NGRP
+	// group — fungible, so a conflict reverts to the group.
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: "RVT-SRC"},
+		{Action: protocol.ActionDropoff, Node: slot.Name, Group: grp.Name},
+	}
+	order := mkComplexOrder(t, db, "revert-1", "RVT-SRC", "RVT-SRC", slot.Name, bp.Code, steps)
+
+	outcome, err := d.allocator.reserveComplexSlots(order, steps)
+	testutil.MustNoErr(t, err, "reserve slots")
+	if outcome != reserveHolding {
+		t.Fatalf("outcome = %v, want reserveHolding (fungible slot conflict)", outcome)
+	}
+	// The step reverted to the NGRP group in-place for the next tick's re-resolution.
+	if steps[1].Node != grp.Name {
+		t.Fatalf("step Node = %q, want reverted to NGRP %q (escape valve)", steps[1].Node, grp.Name)
+	}
+	// ...and persisted.
+	if got, _ := db.GetOrder(order.ID); !strings.Contains(got.StepsJSON, grp.Name) {
+		t.Errorf("persisted StepsJSON did not record the revert to %s: %s", grp.Name, got.StepsJSON)
+	}
+	// The other order's reservation is untouched.
+	oHeld, _ := db.ListReservationsByOrder(other.ID)
+	if len(oHeld) != 1 || oHeld[0].NodeID != slot.ID {
+		t.Errorf("other order's slot reservation disturbed: %+v", oHeld)
 	}
 }

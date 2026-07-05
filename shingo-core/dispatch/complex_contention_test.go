@@ -72,7 +72,7 @@ func TestReserveComplexPlan_ConcurrentContention(t *testing.T) {
 			defer wg.Done()
 			<-ready // released simultaneously to maximise the race window
 			plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, srcNode.Name)
-			_, outcomes[i], errs[i] = d.reserveComplexPlan(order, plan)
+			_, outcomes[i], errs[i] = d.allocator.reserveComplexPlan(order, plan)
 		}()
 	}
 	close(ready)
