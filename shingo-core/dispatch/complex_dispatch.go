@@ -110,6 +110,13 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		ProcessNode:  p.ProcessNode,
 		StepsJSON:    string(stepsJSON),
 		QueueReason:  queueReason,
+		// Durable two-robot swap linkage: persist the supply sibling's UUID
+		// in the CreateOrder INSERT itself, so a two-robot evac's pointer to
+		// its supply is written atomically with the order and can never be
+		// lost by a failed post-create link step (the old ALN_003 fail-open).
+		// "" for non-swap orders. The bidirectional back-link (supply→evac) is
+		// still reconciled below / on-read.
+		SiblingOrderUUID: p.SiblingOrderUUID,
 	}
 
 	if err := d.db.CreateOrder(order); err != nil {
@@ -127,12 +134,15 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		log.Printf("dispatch: complex order %d queued at intake — %s", order.ID, queueReason)
 	}
 
-	// Two-robot swap pairing: the removal (evac) leg carries its supply
-	// sibling's UUID. Link both rows now — before EmitOrderQueued triggers
-	// the synchronous scanner — so the dispatch hold sees the pairing at the
-	// removal leg's intake, ahead of the line-bin claim. The sibling row
-	// already exists (supply is created first). Best-effort: a link failure
-	// degrades to "no hold", it never blocks intake.
+	// Two-robot swap pairing, back-link reconcile: the forward pointer
+	// (evac→supply) is already persisted atomically in CreateOrder above, so
+	// the starvation hold no longer depends on this call succeeding. This call
+	// additionally records the supply's back-link (supply→evac) — bidirectional
+	// via LinkSiblingsByEdgeUUID's CASE — so either leg can find its peer, which
+	// the peer-death handler needs. Runs before EmitOrderQueued triggers the
+	// synchronous scanner. The supply row already exists (supply is created
+	// first). Best-effort on the BACK-link only: a failure here leaves the
+	// durable forward link intact and is healed on-read next tick.
 	if p.SiblingOrderUUID != "" {
 		if _, err := d.db.LinkOrderSiblingsByEdgeUUID(order.EdgeUUID, p.SiblingOrderUUID); err != nil {
 			log.Printf("dispatch: link complex order %d sibling %s: %v", order.ID, p.SiblingOrderUUID, err)
@@ -209,11 +219,24 @@ func isConcreteStorageDropoff(db *store.DB, deliveryNode string) bool {
 func (d *Dispatcher) swapRemovalLegHeld(order *orders.Order) (bool, string) {
 	sibUUID, err := d.db.OrderSiblingUUID(order.ID)
 	if err != nil {
+		// Transient DB read error — fail OPEN. Never freeze a robot on a flaky
+		// read; the next scanner tick re-evaluates.
 		log.Printf("dispatch: swap-hold sibling lookup for order %d: %v", order.ID, err)
 		return false, ""
 	}
 	if sibUUID == "" {
-		return false, "" // not a swap leg
+		// Not a swap leg. The sibling pointer is written ATOMICALLY in the
+		// evac's CreateOrder INSERT (domain.Order.SiblingOrderUUID), so a
+		// two-robot evac can no longer reach here with an empty pointer because
+		// a post-create link step failed — an empty pointer now reliably means
+		// "no sibling". We deliberately do NOT fall back to a node-role
+		// fail-closed (gate every ProcessNode!="" && Delivery!=ProcessNode
+		// order): that NODE shape is shared by the sequential changeover
+		// removal (swap_dispatch.go BuildSequentialRemovalSteps drops at
+		// OutboundDestination, not the line) which legitimately has no supply
+		// sibling — failing it closed would freeze every sequential removal
+		// forever.
+		return false, ""
 	}
 	// The removal leg delivers AWAY from its line node; the supply leg
 	// delivers TO the line (DeliveryNode == ProcessNode). Only the removal
@@ -226,6 +249,17 @@ func (d *Dispatcher) swapRemovalLegHeld(order *orders.Order) (bool, string) {
 		// Supply row should exist (created first, linked at intake); hold
 		// rather than strand the line if it is somehow missing.
 		return true, "swap: awaiting supply sibling"
+	}
+	// On-read repair of the bidirectional link: if the supply's back-link
+	// (supply→evac) is missing — e.g. the intake back-link write failed, or the
+	// supply row arrived after the evac — heal it now that both rows exist, so
+	// the peer-death handler can find this evac from the supply side. Idempotent
+	// and gated on "actually missing" so we don't re-touch the rows on the happy
+	// path.
+	if sib.SiblingOrderUUID != order.EdgeUUID {
+		if _, rerr := d.db.LinkOrderSiblingsByEdgeUUID(order.EdgeUUID, sibUUID); rerr != nil {
+			log.Printf("dispatch: swap-hold back-link repair for order %d sib %s: %v", order.ID, sibUUID, rerr)
+		}
 	}
 	claimed, err := d.db.ListBinsByClaim(sib.ID)
 	if err != nil {
@@ -587,6 +621,9 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 		DeliveryNode: deliveryNode,
 		ProcessNode:  p.ProcessNode,
 		StepsJSON:    string(stepsJSON),
+		// Persist the swap sibling on the buried path too (durable forward
+		// link) — same contract as the main intake path above.
+		SiblingOrderUUID: p.SiblingOrderUUID,
 	}
 	if err := d.db.CreateOrder(order); err != nil {
 		log.Printf("dispatch: create complex parent for buried reshuffle: %v", err)

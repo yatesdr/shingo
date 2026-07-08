@@ -44,4 +44,11 @@ type Order struct {
 	WaitIndex       int                `json:"wait_index"`
 	QueueReason     string             `json:"queue_reason,omitempty"`
 	SkipAutoConfirm bool               `json:"skip_auto_confirm"`
+	// SiblingOrderUUID is the edge UUID of the paired leg in a two-robot
+	// swap — the supply's UUID recorded on the evac row (and vice-versa).
+	// Written ATOMICALLY in the CreateOrder INSERT so a two-robot evac's
+	// link to its supply can never be lost by a failed post-create link
+	// step; the swapRemovalLegHeld starvation gate depends on it to avoid
+	// the ALN_003 line-strand. "" for every non-swap order.
+	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
 }

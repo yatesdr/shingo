@@ -115,9 +115,15 @@ func (e *Engine) wireEventHandlers() {
 		}
 
 		if order, err := e.db.GetOrder(ev.OrderID); err == nil {
-			// If child of a compound order, handle parent failure
+			// If child of a compound order, handle parent failure. Otherwise a
+			// top-level order failing may be a two-robot swap leg — unwind its
+			// sibling so a half-swap can't strand/collide the line (ALN_003
+			// post-dispatch window; HandleSwapPeerTerminal self-gates on the
+			// durable sibling link, so it is a no-op for non-swap orders).
 			if order.ParentOrderID != nil && e.dispatcher != nil {
 				e.dispatcher.HandleChildOrderFailure(*order.ParentOrderID, ev.OrderID)
+			} else if e.dispatcher != nil {
+				e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, dispatch.SwapTerminalFailed)
 			}
 			e.maybeCreateReturnOrder(order, "failed")
 		}
@@ -144,6 +150,13 @@ func (e *Engine) wireEventHandlers() {
 			} else {
 				e.dbg("skip notification sent to edge: station=%s uuid=%s", ev.StationID, ev.EdgeUUID)
 			}
+		}
+
+		// A skipped two-robot swap SUPPLY is a lost replacement — unwind the evac
+		// so it cannot strand the line. A skipped EVAC is moot (the resident was
+		// already gone) and the handler treats it as a clean no-op.
+		if e.dispatcher != nil {
+			e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, dispatch.SwapTerminalSkipped)
 		}
 	}, EventOrderSkipped)
 
@@ -185,6 +198,14 @@ func (e *Engine) wireEventHandlers() {
 			e.logFn("engine: order %d was %s before cancel, skipping auto-return (bin at destination)", ev.OrderID, ev.PreviousStatus)
 		} else if order, err := e.db.GetOrder(ev.OrderID); err == nil {
 			e.maybeCreateReturnOrder(order, "cancelled")
+		}
+
+		// If a two-robot swap leg was cancelled (operator terminate, fleet fault,
+		// or this handler cancelling the sibling), unwind its peer so a half-swap
+		// can't strand/collide the line. Self-gates on the durable sibling link;
+		// the peer's own re-entrant call terminates on the IsTerminal guard.
+		if e.dispatcher != nil {
+			e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, dispatch.SwapTerminalCancelled)
 		}
 	}, EventOrderCancelled)
 

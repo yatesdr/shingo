@@ -541,24 +541,27 @@ func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope,
 		log.Printf("dispatch: update order %d source_node: %v", order.ID, err)
 	}
 
-	// Round-3 Item C: dropoff-capacity gate AFTER source claim. Sequencing
-	// matters — putting the gate before source claim would queue orders
-	// that have a bin available but a destination that's currently full,
-	// which is correct in isolation but breaks the existing changeover
-	// pattern: operators clear a line with N store orders, each expecting
-	// to claim one bin and dispatch when capacity opens up. With the gate
-	// before the claim, all N orders sit queued without bin claims, so
-	// the fulfillment scanner re-races every replay; with the gate after,
-	// each order owns its bin and waits politely for storage to open.
-	// Mirrors the pattern from planRetrieve/planRetrieveEmpty/planMove,
-	// only those run the gate first because their source claim is a
-	// separate code path. The gate uses the order ID as
-	// excludeOrderID so this order's own pending state doesn't
-	// self-collide.
-	if blocked, reason := CheckDropoffCapacity(s.db, destNode.Name, order.ID); blocked {
-		s.dbg("store: order %d queued — %s", order.ID, reason)
-		if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
-			log.Printf("dispatch: set queue_reason for order %d: %v", order.ID, err)
+	// Destination-slot claim AFTER the source claim (#115/#117). Sequencing
+	// matters — claiming the destination before the source would strand orders
+	// that have a bin available but a destination currently full, breaking the
+	// changeover pattern where operators clear a line with N store orders, each
+	// expecting to own one bin and dispatch when storage opens. Claiming after
+	// keeps "each order owns its bin and waits politely for storage to open."
+	//
+	// This REPLACES the old CheckDropoffCapacity READ (which two concurrent
+	// stores could both pass, then both drop into the same slot) with an atomic
+	// pending slot reservation: exactly one store wins the reservation, the loser
+	// gets an error and requeues (keeping its bin), and the scanner re-secures on
+	// replay. Reserve-ONLY, not a hard claim — a hard claim would drop the node
+	// out of FindStorageDestination and terminal-fail sibling stores that must
+	// instead wait, so a full-lane wait stays a requeue, never a terminal fail
+	// (the active inbound-fill re-trigger is a separate, deferred item). See
+	// claimStoreSlot.
+	if err := claimStoreSlot(s.db, order, destNode); err != nil {
+		const reason = "destination slot unavailable, awaiting free storage"
+		s.dbg("store: order %d queued — %s (%v)", order.ID, reason, err)
+		if serr := s.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+			log.Printf("dispatch: set queue_reason for order %d: %v", order.ID, serr)
 		}
 		return &PlanningResult{Queued: true}, nil
 	}

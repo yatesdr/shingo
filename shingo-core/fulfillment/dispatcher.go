@@ -27,6 +27,14 @@ type Dispatcher interface {
 	// scanner doesn't need to do recovery here. The error return lets
 	// the scanner log + skip; it's not actionable beyond that.
 	DispatchPreparedComplex(order *orders.Order) error
+
+	// SecureStoreSlot atomically claims a queued store order's destination slot
+	// (reserve → confirm under the NOT-EXISTS-bins seatbelt) before the fleet
+	// dispatch, so a store never drops into a slot another store already owns
+	// (#115/#117). The winner claimed it at intake; a store that lost the intake
+	// race (or whose slot filled) gets a non-nil error here — the scanner then
+	// requeues it, keeping its bin, and re-attempts on the next tick.
+	SecureStoreSlot(order *orders.Order) error
 }
 
 // Lifecycle is the narrow lifecycle surface the scanner depends on.

@@ -23,6 +23,7 @@ func (s *stubDispatcher) DispatchPreparedComplex(o *orders.Order) error {
 	s.preparedCalls = append(s.preparedCalls, o.ID)
 	return s.preparedErr
 }
+func (s *stubDispatcher) SecureStoreSlot(*orders.Order) error { return nil }
 
 func newTestScannerWithDispatcher(t *testing.T, f *fakeStore, d Dispatcher) *Scanner {
 	t.Helper()

@@ -93,6 +93,11 @@ func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
 	panic("recordingDispatcher: complex path not expected in this test")
 }
 
+// SecureStoreSlot is a no-op success in the recording fake — the store slot
+// claim is exercised end-to-end in the dispatch package's docker tests; here we
+// only assert the scanner's dispatch orchestration.
+func (d *recordingDispatcher) SecureStoreSlot(*orders.Order) error { return nil }
+
 // newTestScanner wires a scanner whose finder always waits and whose dispatcher
 // is nil — for the pre-finder branches (cancelled, in-flight, dest occupied,
 // empty-payload guard) that never reach dispatch. failFn t.Errorf's on any call

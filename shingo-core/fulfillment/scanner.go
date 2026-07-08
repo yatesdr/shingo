@@ -388,6 +388,15 @@ func (s *Scanner) dispatchClaimedStore(order *orders.Order) bool {
 		s.logFn("fulfillment: store order %d dest node %q not found: %v", order.ID, order.DeliveryNode, err)
 		return false
 	}
+	// #115/#117: (re)secure the destination slot atomically before dispatching.
+	// The winner claimed it at intake; a store that lost the intake race — or
+	// whose slot filled — must NOT drop here. Requeue and wait politely, keeping
+	// the claimed bin; the reserve→confirm re-attempts on the next tick.
+	if err := s.dispatcher.SecureStoreSlot(order); err != nil {
+		s.setQueueReason(order, "awaiting free storage slot")
+		s.debugLog("fulfillment: store order %d holding — destination slot not secured: %v", order.ID, err)
+		return false
+	}
 	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "store dispatching held bin"); err != nil {
 		s.logFn("fulfillment: store order %d → sourcing: %v", order.ID, err)
 	}
