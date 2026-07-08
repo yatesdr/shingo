@@ -1640,6 +1640,9 @@ func TestLaneLock_HeldThroughComplexParentPickup_ExposeMode(t *testing.T) {
 		StationID: "line-1",
 		OrderType: OrderTypeComplex,
 		Status:    StatusQueued,
+		// A production complex reshuffle parent carries its step plan; the compound
+		// terminal routing (IsCoordinated) keys on StepsJSON to resume vs complete.
+		StepsJSON: `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"DST"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
 
@@ -1692,6 +1695,9 @@ func TestLaneLock_ReleasedOnCompoundComplete_TargetNodeMode(t *testing.T) {
 		StationID: "line-1",
 		OrderType: OrderTypeComplex,
 		Status:    StatusQueued,
+		// A production complex reshuffle parent carries its step plan; the compound
+		// terminal routing (IsCoordinated) keys on StepsJSON to resume vs complete.
+		StepsJSON: `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"DST"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
 
@@ -1729,6 +1735,9 @@ func TestLaneLock_ExposeMode_ReleasedOnParentCancel(t *testing.T) {
 		StationID: "line-1",
 		OrderType: OrderTypeComplex,
 		Status:    StatusQueued,
+		// A production complex reshuffle parent carries its step plan; the compound
+		// terminal routing (IsCoordinated) keys on StepsJSON to resume vs complete.
+		StepsJSON: `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"DST"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
 
@@ -1765,6 +1774,9 @@ func TestLaneLock_ExposeMode_ReleasedOnParentFail(t *testing.T) {
 		StationID: "line-1",
 		OrderType: OrderTypeComplex,
 		Status:    StatusQueued,
+		// A production complex reshuffle parent carries its step plan; the compound
+		// terminal routing (IsCoordinated) keys on StepsJSON to resume vs complete.
+		StepsJSON: `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"DST"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
 
@@ -1912,6 +1924,9 @@ func TestLaneLockExtension_RowDeletedOnTerminal(t *testing.T) {
 		StationID: "line-1",
 		OrderType: OrderTypeComplex,
 		Status:    StatusQueued,
+		// A production complex reshuffle parent carries its step plan; the compound
+		// terminal routing (IsCoordinated) keys on StepsJSON to resume vs complete.
+		StepsJSON: `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"DST"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
 
@@ -2017,6 +2032,9 @@ func TestLaneLockExtension_RowDeletedOnBinTransit(t *testing.T) {
 		StationID: "line-1",
 		OrderType: OrderTypeComplex,
 		Status:    StatusQueued,
+		// A production complex reshuffle parent carries its step plan; the compound
+		// terminal routing (IsCoordinated) keys on StepsJSON to resume vs complete.
+		StepsJSON: `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"DST"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
 

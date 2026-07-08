@@ -310,7 +310,7 @@ func TestMoveReplayNotStructurallyFailed(t *testing.T) {
 
 	finder := NewSourceFinder(db, nil, nil)
 	// Payload-less move: relocates the physical bin AT the source node.
-	order := &orders.Order{ID: 5, OrderType: OrderTypeMove, SourceNode: "MOVE-SRC", DeliveryNode: "MOVE-DEST", PayloadCode: ""}
+	order := &orders.Order{ID: 5, OrderType: OrderTypeMove, SourceIntent: SourceIntentLocal, SourceNode: "MOVE-SRC", DeliveryNode: "MOVE-DEST", PayloadCode: ""}
 
 	res := finder.FindSource(order, IntentFull)
 	if res.Outcome != OutcomeFound {
@@ -335,6 +335,59 @@ func TestMoveReplayNotStructurallyFailed(t *testing.T) {
 	if db.fifoCalls != 0 {
 		t.Errorf("move must not fall through to plant-wide FIFO: %d calls", db.fifoCalls)
 	}
+}
+
+// Stage 4 re-homing: the move-shape decision is keyed on the SourceIntent data
+// stamped at intake (SourceIntentLocal), NOT on OrderType. These two subcases
+// carry the identical OrderTypeMove order shape and differ only in SourceIntent,
+// so the field alone drives the outcome: WITH the intent the finder sources
+// node-locally and never widens; WITHOUT it the same order is retrieve-shaped
+// and falls through to the plant-wide FIFO scan. Before Stage 4
+// (moveShaped := order.OrderType == OrderTypeMove) the second subcase would have
+// stayed node-local and this test would fail — that is the red-before-green.
+func TestFindSourceMoveShapeKeyedOnSourceIntent(t *testing.T) {
+	// SourceIntentLocal → move-shaped: no bin at the source queues scoped and
+	// never touches the plant-wide FIFO scan.
+	t.Run("local_intent_sources_node_local", func(t *testing.T) {
+		db := newFakeFinderDB()
+		srcID := int64(700)
+		db.addNode(&nodes.Node{ID: srcID, Name: "SRC"})
+		db.addNode(&nodes.Node{ID: 99, Name: "DEST"})
+		db.fifoBin = &bins.Bin{ID: 900, PayloadCode: "X"} // must never be chosen
+		finder := NewSourceFinder(db, nil, nil)
+		order := &orders.Order{ID: 1, OrderType: OrderTypeMove, SourceIntent: SourceIntentLocal, SourceNode: "SRC", DeliveryNode: "DEST", PayloadCode: "X"}
+		res := finder.FindSource(order, IntentFull)
+		if res.Outcome != OutcomeWait {
+			t.Fatalf("no bin at source: got %v, want OutcomeWait", res.Outcome)
+		}
+		if db.fifoCalls != 0 {
+			t.Errorf("move-shaped must not widen to plant-wide FIFO: %d calls", db.fifoCalls)
+		}
+	})
+
+	// No SourceIntent → retrieve-shaped: the identical OrderTypeMove order now
+	// falls through to the plant-wide FIFO scan. The type no longer decides.
+	t.Run("no_intent_widens_to_plant_wide", func(t *testing.T) {
+		db := newFakeFinderDB()
+		srcID := int64(700)
+		fifoNodeID := int64(800)
+		db.addNode(&nodes.Node{ID: srcID, Name: "SRC"})
+		db.addNode(&nodes.Node{ID: 99, Name: "DEST"})
+		db.addNode(&nodes.Node{ID: fifoNodeID, Name: "FIFO-SLOT"})
+		db.fifoBin = &bins.Bin{ID: 901, PayloadCode: "X", NodeID: &fifoNodeID}
+		finder := NewSourceFinder(db, nil, nil)
+		order := &orders.Order{ID: 2, OrderType: OrderTypeMove, SourceNode: "SRC", DeliveryNode: "DEST", PayloadCode: "X"}
+		res := finder.FindSource(order, IntentFull)
+		if res.Outcome != OutcomeFound {
+			t.Fatalf("retrieve-shaped: got %v, want OutcomeFound", res.Outcome)
+		}
+		if db.fifoCalls == 0 {
+			t.Errorf("without SourceIntentLocal the finder must widen to plant-wide FIFO")
+		}
+		if res.Bin == nil || res.Bin.ID != 901 {
+			t.Errorf("bin: got %v, want plant-wide FIFO bin 901", res.Bin)
+		}
+	})
 }
 
 // Empty-intent buried result routes to reshuffle (planRetrieveEmpty's :421 path).
@@ -404,7 +457,7 @@ func TestIntakeAndReplayAgree(t *testing.T) {
 			name: "move_no_bin_waits_not_terminal",
 			build: func(db *fakeFinderDB) (*fakeResolver, *orders.Order, Intent) {
 				db.addNode(&nodes.Node{ID: 20, Name: "MSRC"})
-				return nil, &orders.Order{ID: 13, OrderType: OrderTypeMove, SourceNode: "MSRC", PayloadCode: "X"}, IntentFull
+				return nil, &orders.Order{ID: 13, OrderType: OrderTypeMove, SourceIntent: SourceIntentLocal, SourceNode: "MSRC", PayloadCode: "X"}, IntentFull
 			},
 			wantOutcome: OutcomeWait, wantNoFIFO: true,
 		},

@@ -181,15 +181,17 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		}
 
 		// All children reached a terminal status with none failed -> compound
-		// order is complete. Route on parent.OrderType:
-		//   - OrderTypeComplex: a buried-bin reshuffle for a complex parent.
-		//     ResumeCompound transitions Reshuffling → Queued so the scanner
-		//     re-resolves the parent's original pickup step against the
-		//     now-accessible slot. Do NOT call CompleteOrder — the parent
-		//     hasn't finished yet, it's resuming.
-		//   - everything else (simple-retrieve compounds, restock
-		//     compounds for the dual-mode reshuffle): CompleteCompound
-		//     transitions Reshuffling → Confirmed and fires fireCompleted.
+		// order is complete. Route on whether the parent has its OWN work to
+		// resume after the reshuffle — Stage 4 keys this on the coordinated-plan
+		// signal (IsCoordinated == parent carries a step plan), not OrderType:
+		//   - coordinated parent (a complex order carries StepsJSON): a buried-bin
+		//     reshuffle whose parent still owes its original pickup. ResumeCompound
+		//     transitions Reshuffling → Queued so the scanner re-resolves that
+		//     pickup against the now-accessible slot. Do NOT call CompleteOrder —
+		//     the parent hasn't finished, it's resuming.
+		//   - plain parent (simple-retrieve compounds, restock compounds for the
+		//     dual-mode reshuffle — no step plan): CompleteCompound transitions
+		//     Reshuffling → Confirmed and fires fireCompleted.
 		//
 		// Sequencing dependency on fulfillment.RunOnce being synchronous
 		// — see lifecycle.go's {Reshuffling, Queued} actionMap entry.
@@ -206,7 +208,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		//   - non-complex parents (simple-retrieve, restore): unlock
 		//     immediately (existing behavior).
 		if parent != nil {
-			if parent.OrderType == OrderTypeComplex {
+			if IsCoordinated(parent) {
 				if err := d.lifecycle.ResumeCompound(parent); err != nil {
 					log.Printf("dispatch: resume compound order %d: %v", parentOrderID, err)
 				}
@@ -220,7 +222,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			}
 		}
 
-		if parent != nil && parent.OrderType == OrderTypeComplex && planUsedExposeMode(children) {
+		if parent != nil && IsCoordinated(parent) && planUsedExposeMode(children) {
 			d.extendLaneLockForExposeMode(parentOrderID, parent, children)
 		} else {
 			d.unlockLaneForCompound(parentOrderID)

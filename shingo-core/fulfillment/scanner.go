@@ -164,94 +164,102 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Use the fresh copy for all subsequent operations.
 	order = current
 
-	// Precision point 2 (commit 3b): the widened scan set surfaces orders in
-	// `sourcing`, but only COMPLEX orders are re-entrant from there today —
-	// DispatchPreparedComplex re-resolves its steps and reclaims idempotently
-	// (the same replay it already runs from `queued`). A simple retrieve / move /
-	// store re-sourced from `sourcing` could double-claim (it may already hold a
-	// bin from an interrupted attempt), so scope the sourcing re-attempt to
-	// complex until commit 4's reserve-reconcile makes simple re-sourcing
-	// idempotent. Simple orders are still processed normally from `queued`.
-	if current.Status != protocol.StatusQueued && current.OrderType != protocol.OrderTypeComplex {
+	// Stage-3 tripwire: a simple-family order must never carry a persisted step
+	// plan, or the IsCoordinated discriminator below inverts (a plain order routed
+	// to the role gate + fast-path). Loud construction-bug log; the OrderType read
+	// is a legitimate assertion (Stage-5 forbidigo carve-out).
+	//
+	// The old sourcing-reentry guard that lived here (scope sourcing re-attempts
+	// to complex only, since simple re-sourcing could double-claim) is GONE: plain
+	// orders now re-enter idempotently — a held bin is reused, never re-found (see
+	// the BinID branch below) — so a `sourcing` plain order safely re-dispatches.
+	dispatch.AssertSimpleHasNoSteps(order)
+
+	// Compound children (reshuffle legs) are dispatched by the compound machinery
+	// (AdvanceCompoundOrder), sequentially, never by the scanner — skip them so a
+	// scanner tick can't race that sequential dispatch. Keyed off the parent link
+	// (a data property), not OrderType. A compound child is the only order carrying
+	// a ParentOrderID.
+	if order.ParentOrderID != nil {
 		return false
 	}
 
-	// Dropoff-capacity gate applies to SIMPLE orders only (retrieve,
-	// move, retrieve_empty). Complex orders bypass entirely — their
-	// resolved step plan is the gate. CheckDropoffCapacity blocks
-	// any order whose destination has a bin currently sitting there,
-	// but in two-robot consume the supply leg's destination (the
-	// line) is by definition occupied by the bin a sibling evac
-	// order is about to remove. Same shape for press-index, single-
-	// robot swap, and any pattern where a complex order coordinates
-	// with the destination's resident bin. Pre-fix the gate ran a
-	// `pickupBeforeDropoffAt` bypass, but that only covered the
-	// single-order swap pattern (same order picks up at the
-	// destination); two-robot supply orders don't pick up at the
-	// line and were left blocked. Plant 2026-05: two-robot supply
-	// stuck queued.
-	//
-	// Simple orders keep the gate — single-leg, no choreography, the
-	// gate prevents robot collisions on a shared destination.
-	//
-	// A7 (commit 3b): pass order.ID, not 0. The in-flight tally counts
-	// `sourcing` orders, and with the scan set widened to include `sourcing`
-	// a self-retrying order would count its OWN in-flight row and block itself
-	// forever. Self-exclusion by order.ID prevents that (matches every
-	// intake-side gate, which already passes order.ID).
-	if order.OrderType != protocol.OrderTypeComplex {
-		if blocked, reason := dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
-			if order.QueueReason != reason {
-				if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
-					s.logFn("fulfillment: set queue_reason for order %d: %v", order.ID, err)
-				}
-			}
-			return false
-		}
+	// Narrowed re-entrancy guard (the part of the old :175 that does NOT dissolve):
+	// a PLAIN order in `sourcing` with no claimed bin is mid intake-plan — planX
+	// moves to sourcing BEFORE it claims — or crashed pre-claim. Processing it here
+	// would race the concurrent intake finder/claim and, for a store, wrongly
+	// finder-source it (a store has no payload to find). The HELD-bin case (BinID
+	// set) IS safe and re-dispatches idempotently below — that is the part that
+	// dissolves (the length-1 idempotency covers reuse, not this mid-plan race).
+	// Coordinated orders re-resolve + reclaim idempotently in DispatchPreparedComplex,
+	// so they are never skipped.
+	if order.Status == protocol.StatusSourcing && order.BinID == nil && !dispatch.IsCoordinated(order) {
+		return false
 	}
 
-	// Type-switch: complex orders flow through the dispatcher's prepared
-	// path (resolved steps already on the order from intake). Simple
-	// retrieve / retrieve_empty paths use the per-order bin-finding
-	// logic below — unchanged from pre-Phase-4 except for the now-shared
-	// capacity gate above.
-	if order.OrderType == protocol.OrderTypeComplex {
+	// ── Dispatch discriminator (Stage 3) ──
+	// Dispatch no longer branches on OrderType; it keys on plan provenance.
+	// IsCoordinated == the order carries an Edge-authored coordinated plan
+	// (StepsJSON). Coordinated orders take the role gate (isConcreteStorageDropoff)
+	// + the unconditional line/process-node fast-path INSIDE DispatchPreparedComplex
+	// (complex_dispatch.go:359 + the 2b05dce comment) — unchanged. Plain
+	// single-transport orders take the full occupancy gate + node-driven reserve
+	// below. This preserves today's exact split (StepsJSON!="" ⟺ OrderType==Complex)
+	// while stopping the type read — including the no-wait complex changeover
+	// orders (BuildReleaseSteps / StageSteps / StagedDeliverSteps / SequentialBackfill),
+	// which stay coordinated (role gate + fast-path + their hard slot claim).
+	if dispatch.IsCoordinated(order) {
 		if err := s.dispatcher.DispatchPreparedComplex(order); err != nil {
-			s.logFn("fulfillment: complex order %d dispatch failed: %v", order.ID, err)
+			s.logFn("fulfillment: coordinated order %d dispatch failed: %v", order.ID, err)
 			return false
 		}
-		// Clear stale queue_reason on success (DispatchPreparedComplex
-		// also clears it after Lifecycle.Dispatch, but be defensive
-		// against the rare path where it doesn't run to completion).
+		// Clear stale queue_reason on success (DispatchPreparedComplex also clears
+		// it, but be defensive against the rare path that doesn't run to completion).
 		if order.QueueReason != "" {
 			s.db.SetOrderQueueReason(order.ID, "")
 		}
 		return true
 	}
 
-	// Store orders hold the bin they claimed at intake: planStore claims BEFORE
-	// its capacity gate, then queues holding the claim (and terminal-fails if it
-	// couldn't claim), so a queued store always owns its bin. Dispatch that bin;
-	// never re-source. Re-finding would claim a second, wrong bin — FindSourceFIFO
-	// excludes claimed bins, so it can't even return the order's own — or wedge
-	// while still holding the first. [A5: the scanner had no store branch]
-	if order.OrderType == protocol.OrderTypeStore {
-		return s.dispatchClaimedStore(order)
+	// ── PLAIN (single-transport) path ──
+	// Full occupancy gate, relocated off the type split: a plain order is ALWAYS
+	// full-gated. A simple retrieve to an occupied line stays gated — the fast-path
+	// is structurally unreachable here (it lives only in the coordinated branch),
+	// so it can't leak onto a single-transport order (the round-7 requirement).
+	// order.ID self-exclusion (A7): the in-flight tally counts `sourcing` orders,
+	// so a self-retrying order must not count its own row.
+	if blocked, reason := dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
+		if order.QueueReason != reason {
+			if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
+				s.logFn("fulfillment: set queue_reason for order %d: %v", order.ID, err)
+			}
+		}
+		return false
+	}
+
+	// Source: an order already holding its bin — a store (claimed at intake) or a
+	// retrieve/move re-entered from `sourcing` — dispatches the held bin and never
+	// re-finds. This is the length-1 idempotency that let the sourcing-reentry
+	// guard dissolve: re-entry reuses the claimed bin (FindSource is not consulted,
+	// no second bin). Otherwise fall through to find + claim via the shared
+	// SourceFinder. The ★ node-driven destination reserve happens just before each
+	// dispatch (in dispatchHeldBin here, and after the source claim in the finder
+	// path below) — after the malformed-order guards, so an invalid order fails
+	// without acquiring a reservation.
+	if order.BinID != nil {
+		return s.dispatchHeldBin(order)
 	}
 
 	payloadCode := order.PayloadCode
-	// retrieve_empty and move are exempt. An empty is a generic carrier, so the
-	// operator-agnostic loader request ("REQUEST EMPTY" on a manual_swap bin
-	// loader) legitimately ships a blank payload_code; the empty finder sources
-	// any compatible empty and leaves the order queued when none is available.
-	// A payload-less MOVE is a direct relocation of the physical bin AT the
-	// source node — the finder's concrete-node tier claims it regardless of
-	// payload. Firing the guard for either turned a legitimate wait into a hard
-	// "cannot match a source bin" failure: retrieve_empty spammed Springfield's
-	// SMN_001 loader board, and a payload-less move was terminally failed the
-	// moment its destination freed [A6]. A blank RETRIEVE stays a construction
-	// bug (queued without the key the fulfiller needs).
-	if payloadCode == "" && order.OrderType != protocol.OrderTypeRetrieveEmpty && order.OrderType != protocol.OrderTypeMove {
+	// Empty-carrier and node-local sources are exempt from the payload key. An
+	// empty is a generic carrier, so the operator-agnostic loader request
+	// ("REQUEST EMPTY") legitimately ships a blank payload_code; a node-local
+	// (move) source relocates the physical bin AT the source node — the finder's
+	// concrete-node tier claims it regardless of payload. Firing the guard for
+	// either turned a legitimate wait into a hard "cannot match a source bin"
+	// failure [A6]. A blank payload on a full-payload (retrieve) source stays a
+	// construction bug. Stage 4: keyed on SourceIntent data, not OrderType.
+	if payloadCode == "" && order.SourceIntent != dispatch.SourceIntentEmpty && order.SourceIntent != dispatch.SourceIntentLocal {
 		// Empty PayloadCode on a retrieve/move order is a construction
 		// bug — the order was queued without the key the fulfiller
 		// needs. Returning silently here would leave the order forever
@@ -273,7 +281,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// a closed outcome and, on Found, the bin AND its node together (which
 	// deleted the old post-claim source-node re-resolve + its rollback).
 	intent := dispatch.IntentFull
-	if order.OrderType == protocol.OrderTypeRetrieveEmpty {
+	if order.SourceIntent == dispatch.SourceIntentEmpty {
 		intent = dispatch.IntentEmpty
 	}
 	res := s.finder.FindSource(order, intent)
@@ -344,6 +352,19 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		return false
 	}
 
+	// ★ Node-driven destination reserve (reserve-only) after the source claim,
+	// before dispatch: a move to a concrete storage slot reserves it (closing the
+	// move race that previously had only the capacity read); a no-op for a line
+	// dest. On conflict, keep the just-claimed bin and requeue — next tick the
+	// order re-enters as a held-bin dispatch (BinID set) and retries the reserve.
+	if err := s.dispatcher.ReserveStorageDropoff(order); err != nil {
+		s.setQueueReason(order, "awaiting free storage slot")
+		if qerr := s.lifecycle.Queue(order, "fulfillment", "destination slot contended"); qerr != nil {
+			s.logFn("fulfillment: order %d → queued after reserve conflict: %v", order.ID, qerr)
+		}
+		return false
+	}
+
 	// Dispatch to fleet — use DispatchDirect which handles fleet creation.
 	// On failure, DispatchDirect sets status to failed. We override back to queued
 	// since this is a transient fleet issue, not a permanent failure.
@@ -365,50 +386,54 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	return true
 }
 
-// dispatchClaimedStore dispatches a queued store order using the bin it already
-// claimed at intake (planStore). It never re-finds or re-claims — a store owns
-// its bin across retries. On a transient fleet failure it re-queues WITHOUT
-// releasing the claim (unlike a retrieve, whose bin is re-found next tick).
-func (s *Scanner) dispatchClaimedStore(order *orders.Order) bool {
+// dispatchHeldBin dispatches a plain order that already holds its source bin —
+// a store (claimed at intake by planStore) or a retrieve/move that reached
+// `sourcing` on a prior tick — using the held bin. It never re-finds or
+// re-claims (re-finding would claim a second, wrong bin — FindSource excludes
+// claimed bins). This is the idempotent reuse that lets the sourcing-reentry
+// guard dissolve. On a transient fleet failure it re-queues WITHOUT releasing
+// the claim (the same bin re-dispatches next tick). The destination reserve was
+// already node-driven by the plain path before this call.
+func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	if order.BinID == nil {
-		// planStore terminal-fails when it can't claim, so a queued store always
-		// holds a bin. A nil here is a construction bug — surface it, don't
-		// dispatch a store with no bin (handleOrderCompleted would skip the
-		// arrival update and the bin's location would go stale).
-		s.logFn("fulfillment: store order %d reached the scanner with no claimed bin (planStore should have failed it); skipping", order.ID)
+		// The plain path only routes here when order.BinID != nil, so a nil here
+		// is a construction bug — surface it, don't dispatch with no bin.
+		s.logFn("fulfillment: order %d reached dispatchHeldBin with no claimed bin; skipping", order.ID)
 		return false
 	}
 	sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
 	if err != nil {
-		s.logFn("fulfillment: store order %d source node %q not found: %v", order.ID, order.SourceNode, err)
+		s.logFn("fulfillment: held-bin order %d source node %q not found: %v", order.ID, order.SourceNode, err)
 		return false
 	}
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
-		s.logFn("fulfillment: store order %d dest node %q not found: %v", order.ID, order.DeliveryNode, err)
+		s.logFn("fulfillment: held-bin order %d dest node %q not found: %v", order.ID, order.DeliveryNode, err)
 		return false
 	}
-	// #115/#117: (re)secure the destination slot atomically before dispatching.
-	// The winner claimed it at intake; a store that lost the intake race — or
-	// whose slot filled — must NOT drop here. Requeue and wait politely, keeping
-	// the claimed bin; the reserve→confirm re-attempts on the next tick.
-	if err := s.dispatcher.SecureStoreSlot(order); err != nil {
+	// ★ (Re)secure the destination slot reserve-only before dispatch (node-driven;
+	// a no-op for non-storage dests). Owner-idempotent, so a store that reserved at
+	// intake passes through; a loser (or a slot that filled) requeues holding its
+	// bin, never dropping into an occupied slot (#115/#117, generalized).
+	if err := s.dispatcher.ReserveStorageDropoff(order); err != nil {
 		s.setQueueReason(order, "awaiting free storage slot")
-		s.debugLog("fulfillment: store order %d holding — destination slot not secured: %v", order.ID, err)
-		return false
-	}
-	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "store dispatching held bin"); err != nil {
-		s.logFn("fulfillment: store order %d → sourcing: %v", order.ID, err)
-	}
-	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
-	if err != nil {
-		s.logFn("fulfillment: store order %d fleet dispatch failed, re-queuing (claim kept): %v", order.ID, err)
-		if err := s.lifecycle.Queue(order, "fulfillment", "fleet unavailable, re-queued"); err != nil {
-			s.logFn("fulfillment: store order %d → queued: %v", order.ID, err)
+		if s.debugLog != nil {
+			s.debugLog("fulfillment: held-bin order %d holding — destination slot not secured: %v", order.ID, err)
 		}
 		return false
 	}
-	s.logFn("fulfillment: store order %d fulfilled — bin %d (%s -> %s) vendor=%s",
+	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dispatching held bin"); err != nil {
+		s.logFn("fulfillment: held-bin order %d → sourcing: %v", order.ID, err)
+	}
+	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
+	if err != nil {
+		s.logFn("fulfillment: held-bin order %d fleet dispatch failed, re-queuing (claim kept): %v", order.ID, err)
+		if err := s.lifecycle.Queue(order, "fulfillment", "fleet unavailable, re-queued"); err != nil {
+			s.logFn("fulfillment: held-bin order %d → queued: %v", order.ID, err)
+		}
+		return false
+	}
+	s.logFn("fulfillment: held-bin order %d fulfilled — bin %d (%s -> %s) vendor=%s",
 		order.ID, *order.BinID, sourceNode.Name, destNode.Name, vendorOrderID)
 	s.notifyEdgeDispatched(order, sourceNode, vendorOrderID)
 	return true

@@ -115,6 +115,22 @@ linters:
           msg: "Direct nodes.ClaimSlot is the un-seatbelted slot CAS (deleted D47). Claim a slot through db.ConfirmSlotClaim (reserve→guarded claim→confirm); in tests use testdb.ClaimSlotForTest."
         - pattern: 'db\.ClaimSlot\b'
           msg: "Direct db.ClaimSlot bypasses the slot reservation seatbelt (deleted D47). Use db.ConfirmSlotClaim; in tests use testdb.ClaimSlotForTest."
+        # Order-builder Stage 5: OrderType is DATA, not a control-flow key.
+        # dispatch + fulfillment must not branch on an order's .OrderType —
+        # route on plan provenance (IsCoordinated), SourceIntent, or the
+        # resolvedStep plan data the order-builder stages moved that logic onto.
+        # This guard is SCOPED to shingo-core/dispatch + fulfillment by the
+        # `path-except` exclusion below (the shared config runs on all three
+        # modules, and protocol/edge read OrderType legitimately). Legitimate
+        # touch-points inside the scope (wire→internal normalization + telemetry,
+        # the intake handler map, the emit interface, SourceIntentForType, and the
+        # AssertSimpleHasNoSteps tripwire) are carved out by path, below.
+        # `\b` after OrderType keeps this from matching the OrderType* constants
+        # (protocol.OrderTypeMove etc.); a bare `OrderType:` struct-literal key
+        # has no leading dot and never matches.
+        - pattern: '\.OrderType\b'
+          msg: "OrderType is data, not a control-flow key: dispatch/fulfillment must route on plan provenance (IsCoordinated), SourceIntent, or resolvedStep data — not order.OrderType. See order-builder Stage 5."
+
         # Note on swap-mode constants: forbidigo can only match identifier
         # expressions (selector exprs like `db.UpdateOrderStatus`), not
         # string literals. The swap-mode raw-string guard is enforced by
@@ -219,8 +235,15 @@ linters:
           - forbidigo
       # 3. Child-intake validation failures in compound order creation
       #    (missing source/dest node) — failure is the intended initial
-      #    state, not a transition.
+      #    state, not a transition. SCOPED to the state-machine message
+      #    (was whole-file): compound.go is one of the two files Stage 4
+      #    re-homed OrderType reads OUT of, so it must stay under the Stage-5
+      #    OrderType guard — a whole-file forbidigo exemption would leave a
+      #    future order.OrderType dispatch read uncaught in exactly the file we
+      #    refactored. It trips forbidigo only via 3 FailOrderAtomic calls, so
+      #    excusing just that message keeps the OrderType/claim/slot guards live.
       - path: "shingo-core/dispatch/compound\\.go"
+        text: "bypass the state machine"
         linters:
           - forbidigo
       # 4. Passthrough wrappers around db.UpdateOrderStatus and
@@ -256,10 +279,20 @@ linters:
       # 7. Sanctioned source-finder callers (db.FindSourceBinFIFO /
       #    db.FindEmptyCompatibleBin guard, commit 3a). source_finder.go IS the
       #    shared seam — its own plant-wide-fallback calls are the ones everyone
-      #    else routes through. complex_steps.go holds the last inline copy
-      #    (resolveStepNode); it is a visible, TODO(post-1c)-marked exception until
-      #    the post-1c unification folds it into the finder.
+      #    else routes through. SCOPED to the source-seam message (was whole-file):
+      #    source_finder.go is the other file Stage 4 re-homed OrderType reads out
+      #    of (the moveShaped read → SourceIntent), so it must stay under the
+      #    Stage-5 OrderType guard. It trips forbidigo only via its 3 plant-wide
+      #    fallback calls, so excusing just that message keeps the OrderType/claim/
+      #    slot guards live on the rest of the file.
+      #    complex_steps.go holds the last inline copy (resolveStepNode); it is a
+      #    visible, TODO(post-1c)-marked exception until the post-1c unification
+      #    folds it into the finder. It stays whole-file exempt: it has no
+      #    order.OrderType field reads (its type logic is a local orderType var
+      #    holding a constant, which the '\.OrderType\b' pattern cannot match), so
+      #    scoping it would add no OrderType coverage.
       - path: "shingo-core/dispatch/source_finder\\.go"
+        text: "bypass the shared source seam"
         linters:
           - forbidigo
       - path: "shingo-core/dispatch/complex_steps\\.go"
@@ -273,6 +306,42 @@ linters:
       - path: "shingo-edge/store/orders\\.go"
         linters:
           - forbidigo
+
+      # ---- Order-builder Stage 5: OrderType control-flow guard ----------------
+      # The forbidigo pattern '\.OrderType\b' (in settings above) forbids
+      # branching on an order's type. Two exclusions shape it; both key on the
+      # guard's message so ONLY this rule is relaxed — the state-machine / claim /
+      # slot forbidigo guards still apply to every file below.
+      #
+      # 10a. Scope to the shingo-core/dispatch + fulfillment packages proper. The
+      #      pattern lives in the shared config CI runs against all three modules,
+      #      and protocol + edge read OrderType legitimately; path-except turns the
+      #      rule OFF wherever the path does NOT match. The `[^/]+\.go$` tail keeps
+      #      it to the top-level files of those two packages — the dispatch DECISION
+      #      layer — and off the type-aware resolver primitives beneath them
+      #      (dispatch/binresolver, dispatch/binsource), whose Resolve/Source
+      #      signatures legitimately take an orderType argument.
+      - linters:
+          - forbidigo
+        text: "OrderType is data, not a control-flow key"
+        path-except: "shingo-core/(dispatch|fulfillment)/[^/]+\\.go$"
+      # 10b. Legitimate OrderType touch-points INSIDE the scope:
+      #        dispatcher.go        — wire p.OrderType telemetry + the
+      #                               RegisterPlanner(protocol.OrderType) type param
+      #        emitter.go           — EmitOrderReceived(protocol.OrderType) type param
+      #        order_provenance.go  — SourceIntentForType label→data conversion +
+      #                               the AssertSimpleHasNoSteps tripwire switch
+      #        planning_service.go  — the intake handler map key
+      #                               s.handlers[order.OrderType] (data-driven
+      #                               dispatch, the pattern we WANT) + its
+      #                               unknown-type error string
+      #      (lifecycle_service.go, compound.go, source_finder.go, complex_steps.go
+      #      are already fully forbidigo-exempt via #2/#3/#7 above.)
+      - linters:
+          - forbidigo
+        text: "OrderType is data, not a control-flow key"
+        path: "shingo-core/dispatch/(dispatcher|emitter|order_provenance|planning_service)\\.go"
+
       # Test files build fixtures by direct DB writes. Permanent.
       - path: ".*_test\\.go"
         linters:

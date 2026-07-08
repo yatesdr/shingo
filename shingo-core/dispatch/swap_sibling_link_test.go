@@ -19,7 +19,7 @@ import (
 // best-effort LinkOrderSiblingsByEdgeUUID, log-and-continue) never recorded it.
 //
 // This is the ALN_003 fail-open: pre-fix, a failed intake link left
-// sibling_order_uuid = '' → swapRemovalLegHeld read it as "not a swap leg" →
+// sibling_order_uuid empty → swapRemovalLegHeld read it as "not a swap leg" →
 // the evac PULLED the line bin with no supply hold → line stranded.
 //
 // The test models the failed-link case by creating the evac via CreateOrder

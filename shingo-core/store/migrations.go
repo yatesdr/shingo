@@ -482,6 +482,15 @@ func (db *DB) runVersionedMigrations() error {
 		{44, "reservations resource_kind + node_id + per-kind indexes (1d slot substrate)",
 			v44ReservationsSlotKind,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "reservations", "resource_kind") }},
+
+		// v45 adds orders.source_intent — the order-builder Stage-4 data home for
+		// the sourcing reads that used to branch on OrderType (retrieve_empty's
+		// empty-carrier intent, move's node-local sourcing, the empty-payload
+		// guard). Backfills existing rows from order_type so in-flight orders keep
+		// the right intent across the deploy window.
+		{45, "add orders.source_intent (order-builder sourcing data home)",
+			v45OrderSourceIntent,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "source_intent") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -980,6 +989,23 @@ func v25SlotClaiming(tx *sql.Tx) error {
 
 func v26OrderSiblingUUID(tx *sql.Tx) error {
 	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS sibling_order_uuid TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+func v45OrderSourceIntent(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS source_intent TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	// Backfill from order_type so in-flight orders keep the right sourcing intent
+	// across the deploy window; new orders are stamped at intake. Mirrors
+	// dispatch.SourceIntentForType exactly: retrieve_empty→empty, move→local,
+	// everything else (retrieve, store, complex, …)→'' (full/default). Store is
+	// deliberately NOT 'local' — it self-sources and must stay non-exempt from
+	// the scanner payload guard.
+	_, err := tx.Exec(`UPDATE orders SET source_intent = CASE order_type
+		WHEN 'retrieve_empty' THEN 'empty'
+		WHEN 'move' THEN 'local'
+		ELSE '' END`)
 	return err
 }
 

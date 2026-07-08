@@ -93,10 +93,10 @@ func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
 	panic("recordingDispatcher: complex path not expected in this test")
 }
 
-// SecureStoreSlot is a no-op success in the recording fake — the store slot
-// claim is exercised end-to-end in the dispatch package's docker tests; here we
-// only assert the scanner's dispatch orchestration.
-func (d *recordingDispatcher) SecureStoreSlot(*orders.Order) error { return nil }
+// ReserveStorageDropoff is a no-op success in the recording fake — the node-
+// driven reserve is exercised end-to-end in the dispatch package's docker tests;
+// here we only assert the scanner's dispatch orchestration.
+func (d *recordingDispatcher) ReserveStorageDropoff(*orders.Order) error { return nil }
 
 // newTestScanner wires a scanner whose finder always waits and whose dispatcher
 // is nil — for the pre-finder branches (cancelled, in-flight, dest occupied,
@@ -255,6 +255,7 @@ func TestScanner_TryFulfill_RetrieveEmpty_FinderWaits_StaysQueued(t *testing.T) 
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 5, "dest-05")
 	order.OrderType = protocol.OrderTypeRetrieveEmpty
+	order.SourceIntent = dispatch.SourceIntentEmpty // Stage 4: intent now data, set at intake
 	finder := waitFinder("no empty bin available")
 	s := newTestScanner(t, f)
 	s.finder = finder // finder is white-box accessible in-package
@@ -277,7 +278,8 @@ func TestScanner_TryFulfill_RetrieveEmpty_BlankPayload_ReachesFinder(t *testing.
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 9, "dest-09")
 	order.OrderType = protocol.OrderTypeRetrieveEmpty
-	order.PayloadCode = "" // blank is legitimate here
+	order.SourceIntent = dispatch.SourceIntentEmpty // Stage 4: intent now data, set at intake
+	order.PayloadCode = ""                          // blank is legitimate here
 	finder := waitFinder("no empty bin available")
 	s := newTestScanner(t, f)
 	s.finder = finder
@@ -300,6 +302,7 @@ func TestScanner_TryFulfill_PayloadlessMove_ReachesFinder(t *testing.T) {
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 15, "dest-15")
 	order.OrderType = protocol.OrderTypeMove
+	order.SourceIntent = dispatch.SourceIntentLocal // Stage 4: intent now data, set at intake
 	order.PayloadCode = ""
 	order.SourceNode = "MOVE-SRC"
 	finder := waitFinder("no available bin at MOVE-SRC")
@@ -443,6 +446,8 @@ func TestScannerRetriesSourcingOrder(t *testing.T) {
 		f.nodesByDot["LINE_01"] = &nodes.Node{ID: 7, Name: "LINE_01"}
 		order := &orders.Order{
 			ID: 42, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeComplex,
+			// Production complex orders always carry a step plan (IsCoordinated keys on it).
+			StepsJSON:    `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"LINE_01"}]`,
 			DeliveryNode: "LINE_01", PayloadCode: "PN-X",
 		}
 		f.queued = append(f.queued, order)
@@ -456,27 +461,38 @@ func TestScannerRetriesSourcingOrder(t *testing.T) {
 		}
 	})
 
-	t.Run("simple sourcing order is scoped out", func(t *testing.T) {
+	// Stage 3: the old :175 guard scoped simple `sourcing` orders OUT (they could
+	// double-claim on re-source). That guard is gone; a simple order re-entered
+	// from `sourcing` while HOLDING its bin now reuses it — the finder is never
+	// consulted, no second bin is claimed (the length-1 idempotency). This is the
+	// fake-level companion to the docker length-1 test.
+	t.Run("simple sourcing order with a held bin reuses it (idempotent, no re-find)", func(t *testing.T) {
 		f := newFakeStore()
-		finder := foundFinder(88, "src-x") // would dispatch if the finder were consulted
-		s := newTestScanner(t, f)
-		s.finder = finder
+		finder := foundFinder(88, "src-x") // must NOT be consulted — the bin is already held
+		dispatcher := &recordingDispatcher{}
+		s := newScannerWith(t, f, finder, dispatcher, nil)
 		f.nodesByDot["dest-x"] = &nodes.Node{ID: 100, Name: "dest-x"}
+		f.nodesByDot["src-held"] = &nodes.Node{ID: 101, Name: "src-held"}
+		heldBin := int64(55)
 		order := &orders.Order{
 			ID: 43, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeRetrieve,
-			DeliveryNode: "dest-x", PayloadCode: "PN-X",
+			BinID:      &heldBin, // already holds its bin — must be reused, never re-found
+			SourceNode: "src-held", DeliveryNode: "dest-x", PayloadCode: "PN-X",
 		}
 		f.queued = append(f.queued, order)
 		f.ordersByID[43] = order
 
-		if got := s.RunOnce(); got != 0 {
-			t.Fatalf("RunOnce: got %d, want 0 (simple sourcing order scoped out)", got)
+		if got := s.RunOnce(); got != 1 {
+			t.Fatalf("RunOnce: got %d, want 1 (held-bin sourcing order dispatches, no re-find)", got)
 		}
 		if len(finder.calls) != 0 {
-			t.Errorf("a simple sourcing order must not consult the finder: %+v", finder.calls)
+			t.Errorf("a held-bin order must NOT consult the finder (length-1 idempotency): %+v", finder.calls)
 		}
 		if len(f.claimedBins) != 0 {
-			t.Errorf("a simple sourcing order must not claim: %v", f.claimedBins)
+			t.Errorf("a held-bin order must not claim a second bin: %v", f.claimedBins)
+		}
+		if len(dispatcher.directCalls) != 1 || dispatcher.directCalls[0].orderID != 43 {
+			t.Errorf("DispatchDirect calls = %+v, want one for order 43", dispatcher.directCalls)
 		}
 	})
 }

@@ -28,13 +28,14 @@ type Dispatcher interface {
 	// the scanner log + skip; it's not actionable beyond that.
 	DispatchPreparedComplex(order *orders.Order) error
 
-	// SecureStoreSlot atomically claims a queued store order's destination slot
-	// (reserve → confirm under the NOT-EXISTS-bins seatbelt) before the fleet
-	// dispatch, so a store never drops into a slot another store already owns
-	// (#115/#117). The winner claimed it at intake; a store that lost the intake
-	// race (or whose slot filled) gets a non-nil error here — the scanner then
-	// requeues it, keeping its bin, and re-attempts on the next tick.
-	SecureStoreSlot(order *orders.Order) error
+	// ReserveStorageDropoff node-drives the plain-path destination-slot reserve
+	// (reserve-only) before the fleet dispatch: if the dropoff is a concrete
+	// storage slot it is reserved so two plain orders never drop into the same
+	// slot (#115/#117, generalized in Stage 3 from store to every plain family);
+	// a no-op for lines/consume points. A non-nil error means the slot is not
+	// (yet) ours — the scanner requeues, keeping the bin, and re-attempts next
+	// tick. Owner-idempotent.
+	ReserveStorageDropoff(order *orders.Order) error
 }
 
 // Lifecycle is the narrow lifecycle surface the scanner depends on.

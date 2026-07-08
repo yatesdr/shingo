@@ -23,7 +23,7 @@ func (s *stubDispatcher) DispatchPreparedComplex(o *orders.Order) error {
 	s.preparedCalls = append(s.preparedCalls, o.ID)
 	return s.preparedErr
 }
-func (s *stubDispatcher) SecureStoreSlot(*orders.Order) error { return nil }
+func (s *stubDispatcher) ReserveStorageDropoff(*orders.Order) error { return nil }
 
 func newTestScannerWithDispatcher(t *testing.T, f *fakeStore, d Dispatcher) *Scanner {
 	t.Helper()
@@ -52,9 +52,12 @@ func TestScanner_ComplexOrder_DispatchedWhenCapacityGreen(t *testing.T) {
 	f.nodesByDot["LINE_01"] = dest
 
 	order := &orders.Order{
-		ID:           42,
-		Status:       protocol.StatusQueued,
-		OrderType:    protocol.OrderTypeComplex,
+		ID:        42,
+		Status:    protocol.StatusQueued,
+		OrderType: protocol.OrderTypeComplex,
+		// Production complex orders always carry a step plan; the Stage-3
+		// discriminator (IsCoordinated) keys on StepsJSON presence.
+		StepsJSON:    `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"LINE_01"}]`,
 		DeliveryNode: "LINE_01",
 		PayloadCode:  "PN-X",
 	}
@@ -99,9 +102,12 @@ func TestScanner_ComplexOrder_BypassesCapacityGate(t *testing.T) {
 	f.binsAtNode = map[int64]int{7: 1}
 
 	order := &orders.Order{
-		ID:           99,
-		Status:       protocol.StatusQueued,
-		OrderType:    protocol.OrderTypeComplex,
+		ID:        99,
+		Status:    protocol.StatusQueued,
+		OrderType: protocol.OrderTypeComplex,
+		// Production complex orders always carry a step plan; the Stage-3
+		// discriminator (IsCoordinated) keys on StepsJSON presence.
+		StepsJSON:    `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"LINE_01"}]`,
 		DeliveryNode: "LINE_01",
 		PayloadCode:  "PN-X",
 	}

@@ -76,6 +76,9 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		PayloadDesc:     p.PayloadDesc,
 		PayloadCode:     payloadCode,
 		SkipAutoConfirm: p.SkipAutoConfirm,
+		// Stage 4: stamp the sourcing intent as data at intake (label→data
+		// carve-out) so the finder + scanner read it, not the type.
+		SourceIntent: SourceIntentForType(orderType),
 	}
 	if payloadCode != "" {
 		if _, err := s.db.GetPayloadByCode(payloadCode); err != nil {
@@ -127,6 +130,10 @@ func (s *LifecycleService) CreateStorageWaybillOrder(stationID string, p *protoc
 		Status:      StatusPending,
 		SourceNode:  p.SourceNode,
 		PayloadDesc: p.PayloadDesc,
+		// Stage 4: a store self-sources in planStore (never via the finder), so
+		// SourceIntentForType maps it to the default "" — no finder sourcing
+		// intent — which keeps the scanner's payload guard behavior-neutral.
+		SourceIntent: SourceIntentForType(p.OrderType),
 	}
 	if err := s.db.CreateOrder(order); err != nil {
 		return nil, lifecycleErr("internal_error", err.Error(), err)

@@ -40,6 +40,7 @@ const (
 const (
 	NodeClassNGRP = "NGRP" // synthetic parent grouping lanes / direct nodes
 	NodeClassLANE = "LANE" // depth-ordered slot lane
+	NodeClassSTOR = "STOR" // standalone storage node (FindStorageDestination target)
 )
 
 // AuditActorUI is the audit-trail actor recorded for web-UI-initiated actions

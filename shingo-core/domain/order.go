@@ -51,4 +51,9 @@ type Order struct {
 	// step; the swapRemovalLegHeld starvation gate depends on it to avoid
 	// the ALN_003 line-strand. "" for every non-swap order.
 	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
+	// SourceIntent classifies how a plain order sources its bin (full / empty /
+	// node-local) — the Stage-4 data home replacing the OrderType reads in the
+	// source finder + scanner. Set once at intake; "" (full) for retrieves and
+	// for orders that don't source through the finder. See dispatch.SourceIntent*.
+	SourceIntent string `json:"source_intent,omitempty"`
 }

@@ -18,6 +18,14 @@ type PlanningResult struct {
 	DestNode   *nodes.Node
 	Handled    bool
 	Queued     bool // order should be queued — inventory not available
+
+	// Plan is the order-builder plan (a resolvedStep list) emitted at intake for
+	// a family that has been plan-shaped. Order-builder foundation Stage 1+: it
+	// is EMITTED here but NOT yet consumed by dispatch — the order still flows
+	// through its existing transport tail. A differential test pins that the plan
+	// is fleet-equivalent to that tail. nil for not-yet-shaped families and for
+	// non-dispatch dispositions (queued/handled), which carry no plan.
+	Plan []resolvedStep
 }
 
 type planningError struct {
@@ -276,7 +284,15 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 	if err != nil {
 		return nil, &planningError{Code: codeNode, Detail: err.Error(), Err: err}
 	}
-	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
+	// Order-builder Stage 1: emit the plan alongside the existing result. Dispatch
+	// still runs the transport tail (dispatchToFleet) below — the plan is shadow
+	// data a differential test compares against that tail. sourceNode is the
+	// concrete resolved pickup; destNode the concrete delivery.
+	return &PlanningResult{
+		SourceNode: sourceNode,
+		DestNode:   destNode,
+		Plan:       buildTransportPlan(sourceNode.Name, destNode.Name, false),
+	}, nil
 }
 
 // planRetrieveEmpty is registered against OrderTypeRetrieveEmpty. The env
@@ -328,7 +344,13 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 	if err != nil {
 		return nil, &planningError{Code: codeNode, Detail: err.Error(), Err: err}
 	}
-	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
+	// Stage 2: emit the plan with an EMPTY pickup — the empty-carrier intent that
+	// was OrderType==RetrieveEmpty now survives as resolvedStep.Empty step data.
+	return &PlanningResult{
+		SourceNode: sourceNode,
+		DestNode:   destNode,
+		Plan:       buildTransportPlan(sourceNode.Name, destNode.Name, true),
+	}, nil
 }
 
 func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *BuriedError) (*PlanningResult, *planningError) {
@@ -468,7 +490,29 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 	if sourceNode.ID == destNode.ID {
 		return nil, &planningError{Code: codeSameNode, Detail: fmt.Sprintf("source and destination are the same node (%s)", sourceNode.Name)}
 	}
-	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
+	// Stage 3: node-driven reserve — closes the move-to-storage race. Pre-Stage-3
+	// planMove protected its destination with only a CheckDropoffCapacity READ
+	// (the same latent #115/#117 race the store had before C2); now a move to a
+	// concrete storage slot reserves it reserve-only. No-op for a line dest. The
+	// order already holds its source bin, so on conflict it queues politely.
+	if err := reserveStorageDropoff(s.db, order); err != nil {
+		const reason = "destination slot unavailable, awaiting free storage"
+		s.dbg("move: order %d queued — %s (%v)", order.ID, reason, err)
+		if serr := s.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+			log.Printf("dispatch: set queue_reason for order %d: %v", order.ID, serr)
+		}
+		return &PlanningResult{Queued: true}, nil
+	}
+	// Stage 2: emit the plan. sourceNode/destNode are the CONCRETE resolved
+	// endpoints — destNode has already been resolved from any synthetic NGRP to a
+	// concrete child above, so the plan's dropoff is the concrete node, not the
+	// group. Terminal branches (missing source, same node) return before here and
+	// carry no plan.
+	return &PlanningResult{
+		SourceNode: sourceNode,
+		DestNode:   destNode,
+		Plan:       buildTransportPlan(sourceNode.Name, destNode.Name, false),
+	}, nil
 }
 
 func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
@@ -557,7 +601,10 @@ func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope,
 	// instead wait, so a full-lane wait stays a requeue, never a terminal fail
 	// (the active inbound-fill re-trigger is a separate, deferred item). See
 	// claimStoreSlot.
-	if err := claimStoreSlot(s.db, order, destNode); err != nil {
+	// Stage 3: node-driven reserve (was the store-specific claimStoreSlot). The
+	// store's dest is a STOR node → isStorageDropoff → reserve-only claim, same as
+	// C2. Generalized so move/retrieve share the identical intake reserve.
+	if err := reserveStorageDropoff(s.db, order); err != nil {
 		const reason = "destination slot unavailable, awaiting free storage"
 		s.dbg("store: order %d queued — %s (%v)", order.ID, reason, err)
 		if serr := s.db.SetOrderQueueReason(order.ID, reason); serr != nil {
@@ -566,5 +613,12 @@ func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope,
 		return &PlanningResult{Queued: true}, nil
 	}
 
-	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
+	// Stage 2: emit the plan alongside the existing result. The dest slot was just
+	// secured through C2's claimStoreSlot (reserve-only) above — the plan captures
+	// the resolved (source, dest); it does not re-gate or re-claim.
+	return &PlanningResult{
+		SourceNode: sourceNode,
+		DestNode:   destNode,
+		Plan:       buildTransportPlan(sourceNode.Name, destNode.Name, false),
+	}, nil
 }

@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS orders (
     wait_index      INTEGER NOT NULL DEFAULT 0,
     queue_reason    TEXT NOT NULL DEFAULT '',
     skip_auto_confirm BOOLEAN NOT NULL DEFAULT false,
-    sibling_order_uuid TEXT NOT NULL DEFAULT ''
+    sibling_order_uuid TEXT NOT NULL DEFAULT '',
+    source_intent   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);

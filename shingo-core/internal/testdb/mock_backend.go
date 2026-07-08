@@ -10,9 +10,20 @@ import (
 // Use NewFailingBackend() for tests that expect fleet errors, or
 // NewSuccessBackend() for tests that need successful fleet operations.
 type MockBackend struct {
-	fail   bool
-	orders map[string]fleet.TransportOrderResult
+	fail          bool
+	orders        map[string]fleet.TransportOrderResult
+	transportReqs []fleet.TransportOrderRequest
+	stagedReqs    []fleet.StagedOrderRequest
 }
+
+// TransportRequests returns the TransportOrderRequests seen by
+// CreateTransportOrder, in call order. Used by differential tests that compare
+// the simple-transport fleet request against a plan's block list.
+func (m *MockBackend) TransportRequests() []fleet.TransportOrderRequest { return m.transportReqs }
+
+// StagedRequests returns the StagedOrderRequests seen by CreateStagedOrder, in
+// call order.
+func (m *MockBackend) StagedRequests() []fleet.StagedOrderRequest { return m.stagedReqs }
 
 // NewFailingBackend returns a MockBackend where all operations return errors.
 func NewFailingBackend() *MockBackend {
@@ -40,6 +51,7 @@ func (m *MockBackend) CreateTransportOrder(req fleet.TransportOrderRequest) (fle
 	}
 	result := fleet.TransportOrderResult{VendorOrderID: req.OrderID}
 	m.orders[req.OrderID] = result
+	m.transportReqs = append(m.transportReqs, req)
 	return result, nil
 }
 
@@ -76,6 +88,7 @@ func (m *MockBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.Tra
 	}
 	result := fleet.TransportOrderResult{VendorOrderID: req.OrderID}
 	m.orders[req.OrderID] = result
+	m.stagedReqs = append(m.stagedReqs, req)
 	return result, nil
 }
 
