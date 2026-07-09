@@ -58,7 +58,7 @@ type CapacityDB interface {
 // excluded from the count to prevent self-collision when a gate checks
 // capacity from inside the order's own dispatch/retry path. Every real
 // caller now passes its order.ID: the intake planners always did, and the
-// fulfillment scanner must too since commit 3b widened its retry set to
+// fulfillment scanner must too since its retry set was widened to
 // include `sourcing` orders (which the in-flight tally counts) — passing 0
 // there would let a self-retrying order block itself forever. Pass 0 only
 // from preview paths that have no order row yet.

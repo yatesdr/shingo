@@ -186,9 +186,10 @@ func (s *ReconciliationService) AutoConfirmStuckDeliveredOrders(timeout time.Dur
 //
 // Scope = protocol.IsStuckSweepCandidate ({dispatched, staged}). in_transit is excluded (an
 // actively moving robot is not stuck). PRE-DISPATCH WAITING (queued/sourcing) is excluded
-// per D18-Q4: demand is operator-driven and never evaporates, so a waiting order holds
-// INDEFINITELY and is never abandoned on a timer — a wait of days is legitimate, and give-up
-// is an operator decision. This is the 1c narrowing of the old
+// per the operator-driven-demand rule: demand is operator-driven and never
+// evaporates, so a waiting order holds INDEFINITELY and is never abandoned on a
+// timer — a wait of days is legitimate, and give-up is an operator decision. This
+// is the narrowing of the old
 // {queued,staged,sourcing,dispatched} set: a swap removal leg whose supply never arrives now
 // WAITS (the sibling gate holds it in queued/sourcing) rather than being auto-cancelled at
 // ~1h; the operator cancels if it is truly abandoned.

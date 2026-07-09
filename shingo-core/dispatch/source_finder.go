@@ -35,8 +35,8 @@ import (
 
 // Intent distinguishes what kind of bin the caller needs. It is keyed on the
 // order's data, never on OrderType==Complex or StepsJSON — a simple order is the
-// one-need case; post-1c the Allocator loops the same finder over a complex
-// order's distinct source needs.
+// one-need case; the Allocator loops the same finder over a complex order's
+// distinct source needs.
 type Intent int
 
 const (

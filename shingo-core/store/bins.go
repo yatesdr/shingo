@@ -45,10 +45,6 @@ func (db *DB) NodeTileStates() (map[int64]bins.NodeTileState, error) {
 	return bins.NodeTileStates(db.DB)
 }
 
-// MoveBin moves a bin to a new node. Returns an error if the bin is already
-// at the destination.
-func (db *DB) MoveBin(binID, toNodeID int64) error { return bins.Move(db.DB, binID, toNodeID) }
-
 // MoveBinClearingStaging moves a bin and, when clearStaging is set, clears a
 // stale staged status in the same transaction (guarded — no-op on a
 // non-staged bin). See bins.MoveAndClearStaging.
@@ -62,7 +58,7 @@ func (db *DB) ListAvailableBins() ([]*bins.Bin, error) { return bins.ListAvailab
 // ClaimBin marks a bin as claimed by an order.
 func (db *DB) ClaimBin(binID, orderID int64) error { return bins.Claim(db.DB, binID, orderID) }
 
-// (D45) The bare db.UnclaimBin / db.UnclaimOrderBins wrappers were removed:
+// The bare db.UnclaimBin / db.UnclaimOrderBins wrappers were removed:
 // clearing claimed_by WITHOUT releasing the coupled reservation orphans a
 // confirmed reservation and bricks the bin via uq_reservations_bin_active. Use
 // the coupled inverses ReleaseClaimForBin / ReleaseClaimByOrder (store/orders.go)

@@ -71,11 +71,11 @@ linters:
         # which holds a revocable reservation across the decide→do gap; a bare
         # db.ClaimBin reopens the claim race. This is the guard that would have
         # caught the five production claim sites that slipped ClaimForDispatch
-        # during 1a. Sanctioned callers (ClaimForDispatch itself + the test
-        # helper) are carved out in exclusions.rules #6 below.
+        # before the seatbelt landed. Sanctioned callers (ClaimForDispatch itself
+        # + the test helper) are carved out in exclusions.rules #6 below.
         - pattern: 'db\.ClaimBin'
           msg: "Direct ClaimBin calls bypass reservation-sourcing (reserve→claim→confirm, which closes the decide→do claim gap). Claim through service.BinManifestService.ClaimForDispatch; in tests use testdb.ClaimBinForTest."
-        # Source-finder collapse guard (commit 3a). The plant-wide bin finders are
+        # Source-finder collapse guard. The plant-wide bin finders are
         # the LAST tier of dispatch.SourceFinder; calling them directly re-opens the
         # intake↔scanner-replay drift the collapse fixed (dropped loader-pool and
         # group-scoped-empty scoping → wrong-source-on-replay). Route source finding
@@ -87,7 +87,7 @@ linters:
           msg: "Direct FindSourceBinFIFO calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
         - pattern: 'db\.FindEmptyCompatibleBin'
           msg: "Direct FindEmptyCompatibleBin(InGroup) calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
-        # Unclaim-inverse guard (D45). Clearing bins.claimed_by WITHOUT releasing
+        # Unclaim-inverse guard. Clearing bins.claimed_by WITHOUT releasing
         # the coupled reservation orphans a confirmed reservation and bricks the bin
         # via uq_reservations_bin_active — the exact failure the coupled release
         # helpers exist to prevent. The db.UnclaimBin / db.UnclaimOrderBins / service
@@ -102,9 +102,9 @@ linters:
           msg: "Direct bins.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation, orphaning a confirmed reservation and bricking the bin (uq_reservations_bin_active). Use the coupled inverse db.ReleaseClaimForBin / db.ReleaseClaimByOrder (store/orders.go)."
         - pattern: 'binsstore\.Unclaim'
           msg: "Direct binsstore.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation. Use db.ReleaseClaimForBin / db.ReleaseClaimByOrder (store/orders.go)."
-        # Slot-claim seatbelt guard (D47). nodes.ClaimSlot / db.ClaimSlot — the
-        # un-seatbelted slot CAS — were deleted (1d commit 4 removed their only
-        # production caller, the hard slot loop). The live slot claim is the
+        # Slot-claim seatbelt guard. nodes.ClaimSlot / db.ClaimSlot — the
+        # un-seatbelted slot CAS — were deleted (the hard slot loop, their only
+        # production caller, was removed). The live slot claim is the
         # reservation-guarded ClaimSlotTx via db.ConfirmSlotClaim (reserve → guarded
         # claim → confirm, one tx). These patterns stop a raw slot claim from being
         # reintroduced — the slot twin of the db.ClaimBin guard above. The `\b` keeps
@@ -112,9 +112,9 @@ linters:
         # path). Fixture setup uses testdb.ClaimSlotForTest (a raw claim, in testdb —
         # covered by the blanket _test.go carveout under exclusions.rules).
         - pattern: 'nodes\.ClaimSlot\b'
-          msg: "Direct nodes.ClaimSlot is the un-seatbelted slot CAS (deleted D47). Claim a slot through db.ConfirmSlotClaim (reserve→guarded claim→confirm); in tests use testdb.ClaimSlotForTest."
+          msg: "Direct nodes.ClaimSlot is the un-seatbelted slot CAS (deleted). Claim a slot through db.ConfirmSlotClaim (reserve→guarded claim→confirm); in tests use testdb.ClaimSlotForTest."
         - pattern: 'db\.ClaimSlot\b'
-          msg: "Direct db.ClaimSlot bypasses the slot reservation seatbelt (deleted D47). Use db.ConfirmSlotClaim; in tests use testdb.ClaimSlotForTest."
+          msg: "Direct db.ClaimSlot bypasses the slot reservation seatbelt (deleted). Use db.ConfirmSlotClaim; in tests use testdb.ClaimSlotForTest."
         # Order-builder Stage 5: OrderType is DATA, not a control-flow key.
         # dispatch + fulfillment must not branch on an order's .OrderType —
         # route on plan provenance (IsCoordinated), SourceIntent, or the
@@ -130,6 +130,25 @@ linters:
         # has no leading dot and never matches.
         - pattern: '\.OrderType\b'
           msg: "OrderType is data, not a control-flow key: dispatch/fulfillment must route on plan provenance (IsCoordinated), SourceIntent, or resolvedStep data — not order.OrderType. See order-builder Stage 5."
+
+        # Raw bin-move guard. The one-bin-per-physical-node occupancy discipline
+        # fail-closes in service.BinService.Move; the arrival writers reconcile
+        # stale ghosts via helpers.EvictStaleGhostBinsTx. A raw bin move bypasses
+        # BOTH. Plant-verified 2026-07-08: the vendor fleet does NOT physically
+        # block a double-drop's RECORD (only the physical placement), so that
+        # service-layer occupancy fail-close is the only bin-on-bin backstop —
+        # route bin moves through service.BinService.Move. Sanctioned store-level
+        # delegates that BinService.Move composes are carved out in
+        # exclusions.rules below (keyed on the "occupancy fail-close" message so
+        # only THIS guard is relaxed there). The un-reconciled db.MoveBin twin was
+        # deleted outright (zero production callers). The `\b` keeps bins.Move
+        # from prefix-matching bins.MoveAndClearStaging (its own entry).
+        - pattern: 'bins\.Move\b'
+          msg: "Direct bins.Move bypasses the service-layer occupancy fail-close (BinService.Move) and the arrival ghost-reconciliation. Route bin moves through service.BinService.Move."
+        - pattern: 'db\.MoveBinClearingStaging'
+          msg: "Direct db.MoveBinClearingStaging bypasses the service-layer occupancy fail-close (BinService.Move). Route bin moves through service.BinService.Move."
+        - pattern: 'bins\.MoveAndClearStaging'
+          msg: "Direct bins.MoveAndClearStaging bypasses the service-layer occupancy fail-close (BinService.Move). Route bin moves through service.BinService.Move."
 
         # Note on swap-mode constants: forbidigo can only match identifier
         # expressions (selector exprs like `db.UpdateOrderStatus`), not
@@ -277,7 +296,7 @@ linters:
         linters:
           - forbidigo
       # 7. Sanctioned source-finder callers (db.FindSourceBinFIFO /
-      #    db.FindEmptyCompatibleBin guard, commit 3a). source_finder.go IS the
+      #    db.FindEmptyCompatibleBin guard). source_finder.go IS the
       #    shared seam — its own plant-wide-fallback calls are the ones everyone
       #    else routes through. SCOPED to the source-seam message (was whole-file):
       #    source_finder.go is the other file Stage 4 re-homed OrderType reads out
@@ -286,7 +305,7 @@ linters:
       #    fallback calls, so excusing just that message keeps the OrderType/claim/
       #    slot guards live on the rest of the file.
       #    complex_steps.go holds the last inline copy (resolveStepNode); it is a
-      #    visible, TODO(post-1c)-marked exception until the post-1c unification
+      #    visible, TODO-marked exception until the dispatch-path unification
       #    folds it into the finder. It stays whole-file exempt: it has no
       #    order.OrderType field reads (its type logic is a local orderType var
       #    holding a constant, which the '\.OrderType\b' pattern cannot match), so
@@ -341,6 +360,25 @@ linters:
           - forbidigo
         text: "OrderType is data, not a control-flow key"
         path: "shingo-core/dispatch/(dispatcher|emitter|order_provenance|planning_service)\\.go"
+
+      # ---- Raw bin-move carveouts (forbidigo) -------------------------------
+      # The sanctioned store-level delegates that service.BinService.Move
+      # composes ARE the route every other caller is steered to:
+      #   store/bins.go        — db.MoveBinClearingStaging wrapper +
+      #                          its bins.MoveAndClearStaging primitive call
+      #   service/bin_service.go — BinService.Move, the occupancy fail-close
+      #                          itself, calls db.MoveBinClearingStaging
+      # Scoped to the guard's message so only the raw-bin-move rule is relaxed in
+      # these two files — the state-machine / claim / slot / OrderType guards stay
+      # live. Removable if the move helpers are ever folded into BinService.
+      - path: "shingo-core/store/bins\\.go"
+        text: "occupancy fail-close"
+        linters:
+          - forbidigo
+      - path: "shingo-core/service/bin_service\\.go"
+        text: "occupancy fail-close"
+        linters:
+          - forbidigo
 
       # Test files build fixtures by direct DB writes. Permanent.
       - path: ".*_test\\.go"

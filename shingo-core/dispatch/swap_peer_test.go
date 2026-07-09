@@ -89,7 +89,7 @@ func TestSwapPeerTerminal_EvacFails_CancelsLiveSupply(t *testing.T) {
 // evac already DELIVERED (line's resident removed) and the supply then dies. The
 // evac is terminal-success so it can't be cancelled; the handler surfaces the
 // half-swap (audit) instead of silently stranding the line, and does NOT
-// re-create anything (D18-Q4).
+// re-create anything (re-issue is operator-driven).
 func TestSwapPeerTerminal_SupplyFails_EvacDelivered_Surfaces(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

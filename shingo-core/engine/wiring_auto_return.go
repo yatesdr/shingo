@@ -17,15 +17,23 @@ import (
 
 // autoReturnEnabled gates maybeCreateReturnOrder. SHORT-CIRCUITED 2026-04-14:
 // auto-return has not been observed to complete successfully in production.
-// The created store orders sit in `pending` status indefinitely because
-// EventOrderReceived is audit-only and the fulfillment scanner doesn't process
-// store-type orders. The bin claim from the never-dispatched return order
-// strands the bin until the orphan claim sweep runs.
+// Root cause (corrected 2026-07-08): the return order is INSERTed directly at
+// StatusPending (createSingleReturnOrder below), which is OUTSIDE the fulfillment
+// scanner's acquiring set — the scanner lists only {queued, sourcing}
+// (protocol.IsAcquiring / store/orders.ListAcquiring) with NO order_type
+// predicate, so a `pending` order is never picked up regardless of type. The
+// earlier "scanner doesn't process store-type orders" diagnosis was wrong: the
+// scanner's plain path DOES dispatch a held-bin store. EventOrderReceived is
+// audit-only, so nothing promotes the order and its bin claim strands the bin
+// until the orphan-claim sweep runs.
 //
-// Re-enable only after the dispatch path for internally-created store orders
-// is verified end-to-end. See shingobugs414-stephen-questions.md for the full
-// investigation. Function body preserved so this can be flipped back with a
-// single edit if/when the underlying issue is fixed.
+// Re-enable needs more than flipping this flag (2026-07-08 review rounds): create
+// the order at a promoted status AND resolve its destination — it targets the
+// group ROOT PARENT so a resolver can pick a slot, but no path between creation
+// and dispatch resolves a group→concrete slot (FindStorageDestination runs only
+// at intake planning) and ReserveStorageDropoff no-ops on a synthetic/group node.
+// Verify end-to-end first. See shingobugs414-stephen-questions.md. Function body
+// preserved so this can be flipped back once that path is built.
 const autoReturnEnabled = false
 
 // maybeCreateReturnOrder creates STORE orders to return bins to their origins

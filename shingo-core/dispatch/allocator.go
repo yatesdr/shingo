@@ -14,26 +14,26 @@ import (
 	"shingocore/store/reservations"
 )
 
-// allocator.go — the reservation Allocator (D16). Extracted from the Dispatcher in
-// 1d commit 5: it owns the plan-time reserve/confirm reconcile for BOTH resource
-// kinds (bin pickups + destination slots). The Dispatcher keeps the gates,
-// re-resolution, lifecycle/MoveToSourcing, fleet dispatch, compound orchestration,
-// and queue_reason; it delegates the reserve/confirm to d.allocator. Pure lift — no
-// behavior change.
+// allocator.go — the reservation Allocator. It owns the plan-time reserve/confirm
+// reconcile for BOTH resource kinds (bin pickups + destination slots). The Dispatcher
+// keeps the gates, re-resolution, lifecycle/MoveToSourcing, fleet dispatch, compound
+// orchestration, and queue_reason; it delegates the reserve/confirm to d.allocator.
+// Pure lift from the Dispatcher — no behavior change.
 //
-// The 1c reserve/confirm split (commit 4, D39): the old ApplyComplexPlan claimed a
-// complex order's bins in one live re-walk. Now the plan is durable across ticks —
+// The reserve/confirm split: the old ApplyComplexPlan claimed a complex order's bins
+// in one live re-walk. Now the plan is durable across ticks —
 // reserveComplexPlan/reserveComplexSlots soft-hold the order's distinct source bins
 // and destination slots (reconciling against what it already holds), the order stays
 // `sourcing` while any distinct need is still missing, and confirmComplexPlan commits
-// the COMPLETE reserved set to hard claims (apply-as-confirm — no live re-walk). GO is
-// gated on a complete set (D5): a robot never starts a job it can't finish; give-up is
-// operator-driven (D18-Q4), never a timer.
+// the COMPLETE reserved set to hard claims (apply-as-confirm — no live re-walk).
+// Dispatch is gated on a complete set (the relay rule): a robot never starts a job it
+// can't finish; give-up is operator-driven (demand never evaporates), never a timer.
+// See docs/reservations.md.
 
 // Allocator reserves and confirms a complex order's resources against live state. It
 // holds only what the reconcile needs — the store, the bin-manifest service, and a
-// debug logger — so the future kind-agnostic Claim aggregate (D45 §4) is a lift from
-// here, not from the whole Dispatcher.
+// debug logger — so a future kind-agnostic Claim aggregate would be a lift from here,
+// not from the whole Dispatcher.
 type Allocator struct {
 	db          *store.DB
 	binManifest *service.BinManifestService
@@ -63,14 +63,15 @@ const (
 	reserveComplete reserveOutcome = iota
 	// reserveHolding — a need is still missing but its source is sourceable
 	// eventually (bins present-but-taken, or a node that may be restocked/relayed
-	// into) — hold the partials and retry (D5/D18-Q4).
+	// into) — hold the partials and retry (demand is operator-driven, so a
+	// sourceable need is worth waiting for).
 	reserveHolding
 	// reserveMoot — the order reserved NOTHING and every missing need's node is
 	// genuinely empty (no bins). This is the old "no_source_bin" case (e.g. a swap
 	// evac whose line bin was removed to quality hold before dispatch): the work is
 	// void, so skip it (Edge's HandleOrderSkipped advances the linked changeover
-	// task) rather than hold forever. A moot evac is not "demand," so D18-Q4's
-	// hold-and-retry does not apply.
+	// task) rather than hold forever. A moot evac is not "demand," so the
+	// operator-driven hold-and-retry does not apply.
 	reserveMoot
 )
 
@@ -100,8 +101,8 @@ type slotNeed struct {
 // slotNeeds returns the concrete storage-dropoff slots an order must reserve —
 // exactly the set the retired ClaimSlot loop iterated (isConcreteStorageDropoff
 // dropoffs, staging/relay included). Ordering is step order; the reconcile does not
-// need the canonical node-ID sort the hard loop used (the ABBA class dissolves at
-// the soft-acquire layer, D43 — a loser backs off holding revocable reservations).
+// need the canonical node-ID sort the hard loop used — the ABBA class dissolves at
+// the soft-acquire layer, where a loser backs off holding revocable reservations.
 func (a *Allocator) slotNeeds(steps []resolvedStep) []slotNeed {
 	var out []slotNeed
 	for i := range steps {
@@ -115,8 +116,8 @@ func (a *Allocator) slotNeeds(steps []resolvedStep) []slotNeed {
 }
 
 // reserveComplexPlan reconciles the order's held reservations against its distinct
-// source needs (D5) and returns the per-need bin assignment plus complete=true iff
-// EVERY distinct need is covered.
+// source needs (the relay rule) and returns the per-need bin assignment plus
+// complete=true iff EVERY distinct need is covered.
 //
 //   - keep:    a held bin still matching a need — reused, no re-Acquire.
 //   - acquire: a fresh available bin for an unmatched need — Acquired now.
@@ -163,10 +164,11 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 			return nil, reserveHolding, ferr
 		}
 		if bin == nil {
-			// D5 relay = potential relay (earlier dropoff at N) AND node empty at
-			// reserve. An empty potential-relay node is the relay target (its bin
-			// hasn't relayed there yet) — skip, not a miss. A node WITH bins is a
-			// real source (bin!=nil would have reserved it), so bin==nil with bins
+			// Relay rule: a potential relay (earlier dropoff at N) AND the node
+			// empty at reserve. An empty potential-relay node is the relay target
+			// (its bin hasn't relayed there yet) — skip, not a miss. A node WITH
+			// bins is a real source (bin!=nil would have reserved it), so bin==nil
+			// with bins
 			// present means present-but-taken → a genuine miss.
 			if pk.potentialRelay && !nodeHadBins {
 				continue
@@ -223,11 +225,11 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 }
 
 // reserveComplexSlots is the destination-slot reconcile — the reservation dual of
-// the retired hard-claim slot loop, and the slot leg of the 1c owner-aware reconcile
-// (D4 split-brain fix: an incomplete order now holds its slots as revocable
+// the retired hard-claim slot loop, and the slot leg of the owner-aware reconcile
+// (the split-brain fix: an incomplete order now holds its slots as revocable
 // RESERVATIONS across ticks, not hard nodes.claimed_by). It runs BEFORE the bin
 // reserve so a relay/staging slot is held before the bin leg reads its emptiness
-// (D40): a slot another order can't reserve can't take a stray resident, which is
+// — a slot another order can't reserve can't take a stray resident, which is
 // what makes "empty at reserve" a stable relay signal.
 //
 // Per concrete storage-dropoff need it keeps a held slot reservation (owner-aware,
@@ -353,7 +355,7 @@ func (a *Allocator) resolveHeldReservations(rows []reservations.Reservation) []*
 		}
 		out = append(out, hb)
 	}
-	// Watch item (D45 §5): the bin (node, empty-status) match key rests on the
+	// Watch item: the bin (node, empty-status) match key rests on the
 	// one-bin-per-node occupancy invariant. If two held BIN holds resolve to the same
 	// (node, empty), the key is ambiguous — log it (debug) so a violation is visible.
 	seen := make(map[string]bool, len(out))
@@ -408,7 +410,7 @@ func matchHeldSlot(held []*heldReservation, nodeName string) *heldReservation {
 // filter) — the reconcile uses it to tell "genuinely empty node" (contributes to
 // a moot outcome) from "bins present but unavailable" (sourceable, hold + retry).
 //
-// WATCH ITEM (D45 §5): this reads LIVE node occupancy (ListBinsByNode), so its
+// WATCH ITEM: this reads LIVE node occupancy (ListBinsByNode), so its
 // nodeHadBins result — and therefore the moot/hold decision it feeds — is only
 // non-racy because the whole reserve/confirm runs under the fulfillment scanner's
 // scanMu (Scanner.RunOnce serializes scan(), fulfillment/scanner.go). Do NOT call
@@ -466,7 +468,7 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 	// under the seatbelt (owner-idempotent + NOT EXISTS bins + EXISTS pending slot
 	// reservation) and confirms the reservation in ONE tx. Slots-before-bins keeps a
 	// slot↔bin cross-type claim cycle from forming. A slot already claimed by THIS
-	// order (a prior tick) is confirmed-in-place, never re-claimed — the D46 honest
+	// order (a prior tick) is confirmed-in-place, never re-claimed — the honest
 	// skip at the slot level. A conflict (slot taken between reserve and confirm)
 	// returns codeClaimFailed so the caller requeues, exactly like a bin.
 	for _, sn := range a.slotNeeds(steps) {
@@ -491,7 +493,7 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 	var claimed []claimedBin
 	for _, rp := range assigned {
 		// Is the bin ALREADY hard-claimed by THIS order? A prior tick may have
-		// claimed it and crashed/errored before confirming its reservation (the D45
+		// claimed it and crashed/errored before confirming its reservation (the
 		// wedge half-state: claimed_by=order, reservation still pending). Check by
 		// DATA, not by rp.confirmed — a claimed-but-pending bin is still ours.
 		claimedByUs := false

@@ -465,8 +465,8 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 	// Second order must NOT have claimed the bin — that's the load-bearing
 	// invariant this test guards (no ghost robot, no double-claim). The parking
 	// SHAPE has evolved: Phase 4 queued order2 at the dropoff-capacity gate;
-	// commit 4 (D39) makes the reserve find the sole bin already taken and hold
-	// order2 in `sourcing` (hold-and-retry — the contested bin frees when order1
+	// the reserve/confirm split makes the reserve find the sole bin already taken
+	// and hold order2 in `sourcing` (hold-and-retry — the contested bin frees when order1
 	// completes). Any of failed / queued / sourcing is acceptable — what matters
 	// is that the bin and order2 are NOT double-claimed.
 	if order2.Status != dispatch.StatusFailed && order2.Status != dispatch.StatusQueued && order2.Status != dispatch.StatusSourcing {

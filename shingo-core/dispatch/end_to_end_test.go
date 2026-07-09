@@ -104,7 +104,7 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 	}
 
 	// After the order completes, the claim is RELEASED (TerminalizeOrder on the
-	// confirmed transition / Rule-B at delivery). A claim persisting here was the
+	// confirmed transition / the delivery-release rule). A claim persisting here was the
 	// leak the terminal chokepoint closed — so assert it's gone, not held.
 	completedBin, err := db.GetBin(bin.ID)
 	if err != nil {

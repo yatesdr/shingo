@@ -213,7 +213,7 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 		return
 	}
 	if evicted {
-		e.logFn("WARN: delivery of bin %d to %s evicted a stale bin record there — a successful delivery proved the slot empty; the stale bin is at _TRANSIT, recover via the anomalies page", *order.BinID, order.DeliveryNode)
+		e.logFn("WARN: delivery of bin %d to %s evicted a stale bin record there — a delivery cannot physically complete onto an occupied slot, so the completed delivery proves the slot was empty; the stale bin is at _TRANSIT, recover via the anomalies page", *order.BinID, order.DeliveryNode)
 	}
 
 	// Re-read bin for the event payload (post-ApplyArrival state). The
@@ -308,9 +308,14 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 		return
 	}
 
-	if err := e.db.ApplyMultiBinArrival(instructions); err != nil {
+	evictedGhosts, err := e.db.ApplyMultiBinArrival(instructions)
+	if err != nil {
 		e.logFn("engine: multi-bin delivery arrival for order %d: %v", order.ID, err)
 		return
+	}
+	for _, ghostID := range evictedGhosts {
+		e.logFn("WARN: multi-bin delivery for order %d evicted a stale bin record (bin %d) to _TRANSIT — a delivery cannot physically complete onto an occupied slot; recover via the anomalies page",
+			order.ID, ghostID)
 	}
 
 	for i, inst := range instructions {
@@ -435,7 +440,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		return
 	}
 	if evicted {
-		e.logFn("WARN: delivery of bin %d to %s evicted a stale bin record there — a successful delivery proved the slot empty; the stale bin is at _TRANSIT, recover via the anomalies page", *order.BinID, order.DeliveryNode)
+		e.logFn("WARN: delivery of bin %d to %s evicted a stale bin record there — a delivery cannot physically complete onto an occupied slot, so the completed delivery proves the slot was empty; the stale bin is at _TRANSIT, recover via the anomalies page", *order.BinID, order.DeliveryNode)
 	}
 
 	// Emit bin contents changed
@@ -537,9 +542,14 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 		return
 	}
 
-	if err := e.db.ApplyMultiBinArrival(instructions); err != nil {
+	evictedGhosts, err := e.db.ApplyMultiBinArrival(instructions)
+	if err != nil {
 		e.logFn("engine: multi-bin arrival for order %d: %v", order.ID, err)
 		return
+	}
+	for _, ghostID := range evictedGhosts {
+		e.logFn("WARN: multi-bin arrival for order %d evicted a stale bin record (bin %d) to _TRANSIT — a delivery cannot physically complete onto an occupied slot; recover via the anomalies page",
+			order.ID, ghostID)
 	}
 
 	// Emit BinUpdatedEvent only for bins that actually moved

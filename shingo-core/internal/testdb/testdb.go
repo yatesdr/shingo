@@ -462,7 +462,7 @@ func ClaimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
 }
 
 // ClaimSlotForTest sets nodes.claimed_by directly for fixture setup — the raw slot
-// claim the (D47-deleted) nodes.ClaimSlot / db.ClaimSlot used to provide. It is the
+// claim the deleted nodes.ClaimSlot / db.ClaimSlot used to provide. It is the
 // sanctioned test-only bypass of the slot seatbelt (forbidigo carveout), for tests
 // that just need a slot already claimed by an order. The PRODUCTION path is reserve
 // (AcquireSlot) → db.ConfirmSlotClaim; use that when a test needs the coupled slot

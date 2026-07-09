@@ -279,9 +279,9 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// terminal, won't reach us through the scanner. Anything calling this
 	// directly (engine recovery, future call sites) must still respect the
 	// invariant — proceeding on a non-acquiring order would re-dispatch a parent
-	// mid-reshuffle or race a post-resume. Commit 3b widened the accepted set
-	// from queued to acquiring so a complex order that reached `sourcing` but
-	// didn't finish dispatching is retried. Return nil so the caller treats a
+	// mid-reshuffle or race a post-resume. The acquiring set was widened
+	// from queued-only to {queued, sourcing} so a complex order that reached
+	// `sourcing` but didn't finish dispatching is retried. Return nil so the caller treats a
 	// non-acquiring order as a no-op, not an error.
 	if !protocol.IsAcquiring(order.Status) {
 		d.dbg("complex: DispatchPreparedComplex called with status=%s (want queued/sourcing); skipping", order.Status)
@@ -400,17 +400,19 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 
 	// Reserve each concrete storage drop-off SLOT (the destination dual of the bin
 	// reserve) — the reservation-native replacement for the retired hard-claim slot
-	// loop (1d, D4 split-brain fix). An incomplete order now holds its slots as
+	// loop (the split-brain fix). An incomplete order now holds its slots as
 	// revocable RESERVATIONS across ticks, NOT hard nodes.claimed_by. Runs BEFORE the
-	// bin reserve (SLOTS-BEFORE-BINS + D40 relay: a slot must be held before the bin
-	// leg reads its emptiness). A fungible NGRP slot conflict reverts-and-re-resolves
-	// (the escape valve, preserved); a fixed-concrete conflict holds (Wait) — both
-	// requeue in the order's entry status (queued first pass, sourcing on retry).
+	// bin reserve (slots-before-bins + the relay rule: a slot must be held before
+	// the bin leg reads its emptiness). A fungible NGRP slot conflict
+	// reverts-and-re-resolves (the escape valve, preserved); a fixed-concrete
+	// conflict holds (Wait) — both requeue in the order's entry status (queued
+	// first pass, sourcing on retry).
 	//
-	// The commit-6 canonical node-ID sort is gone WITH the loop: the ABBA class
-	// dissolves at the soft-acquire layer, where a loser backs off holding only
-	// revocable slot reservations, not a hard claim (D43). Removing the loop and its
-	// insurance together honors D41's "never revert 6 while the loop exists".
+	// The canonical node-ID sort is gone WITH the loop: the ABBA class dissolves at
+	// the soft-acquire layer, where a loser backs off holding only revocable slot
+	// reservations, not a hard claim. Removing the loop and its insurance together
+	// honors the rule that the slot-ordering must not be reverted without restoring
+	// a sweep for slot-wedged orders.
 	if slotOutcome, serr := d.allocator.reserveComplexSlots(order, resolvedSteps); serr != nil {
 		log.Printf("dispatch: complex order %d slot reserve error: %v", order.ID, serr)
 		return serr
@@ -421,9 +423,9 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return fmt.Errorf("complex order %d slot reserve incomplete", order.ID)
 	}
 
-	// 1c reserve/confirm (commit 4, D39). MoveToSourcing at the START of the reserve
-	// attempt: the order stays `sourcing` while it holds partials and the scanner
-	// retries it (commit 3's widening, complex scope). Idempotent — a retried order
+	// Reserve/confirm. MoveToSourcing at the START of the reserve attempt: the
+	// order stays `sourcing` while it holds partials and the scanner retries it
+	// (the acquiring-set widening, complex scope). Idempotent — a retried order
 	// re-enters sourcing→sourcing every tick, which MoveToSourcing skips. The gates
 	// above (swap-hold, capacity, slot-claim) run first and park a blocked order in
 	// its entry status (queued first pass, sourcing on retry); both are retried by
@@ -442,16 +444,15 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	plan := BuildComplexPlan(resolvedSteps, d.snapshotPickupBins(resolvedSteps), order.PayloadCode, processNode)
 
 	// Reserve = reconcile held reservations against the distinct source needs and
-	// soft-hold the gaps (reserveComplexPlan). Runs AFTER the canonical slot-claim loop
-	// above, never interleaved with it (SLOTS-BEFORE-BINS, D18-Q5) — one claim class fully
-	// ordered before the next is what prevents a slot↔bin cross-type deadlock cycle. GO is
-	// gated on a COMPLETE distinct-bin set (D5): an incomplete order holds its partials and
-	// stays `sourcing` for the
-	// scanner to retry — a robot never starts a job it can't finish, and give-up is
-	// operator-driven, never a timer (D18-Q4). There is no orphaned-hold window now:
-	// the order is already `sourcing` before it holds anything, so a crash leaves a
-	// `sourcing` order whose pending holds the reaper reclaims (TTL in commit 4,
-	// owner-liveness in commit 5) — not a `queued` order stranded with claimed bins.
+	// soft-hold the gaps (reserveComplexPlan). Runs AFTER the slot-claim loop above,
+	// never interleaved with it (slots-before-bins) — one claim class fully ordered
+	// before the next is what prevents a slot↔bin cross-type deadlock cycle. Dispatch
+	// is gated on a COMPLETE distinct-bin set (the relay rule): an incomplete order
+	// holds its partials and stays `sourcing` for the scanner to retry — a robot never
+	// starts a job it can't finish, and give-up is operator-driven, never a timer.
+	// There is no orphaned-hold window now: the order is already `sourcing` before it
+	// holds anything, so a crash leaves a `sourcing` order whose pending holds the
+	// owner-liveness reaper reclaims — not a `queued` order stranded with claimed bins.
 	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
 	if rerr != nil {
 		log.Printf("dispatch: complex order %d reserve error: %v", order.ID, rerr)
@@ -462,7 +463,8 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		// Reserved nothing and every source node is empty — the work is void (e.g. a
 		// swap evac whose line bin was removed to quality hold before dispatch). Skip
 		// so Edge's HandleOrderSkipped advances the linked changeover task, rather
-		// than hold forever: a moot evac is not demand (D18-Q4).
+		// than hold forever: a moot evac is not demand (operator-driven hold-and-retry
+		// does not apply).
 		d.skipOrderInternal(order, codeNoSourceBin, fmt.Sprintf("complex order %d: no bin at any source node", order.ID))
 		return fmt.Errorf("complex order %d moot — skipped", order.ID)
 	case reserveHolding:
@@ -537,7 +539,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 // Best-effort: a failed write is logged and swallowed (queue_reason is advisory
 // HMI/queue metadata, never a correctness gate), leaving the in-memory field
 // matching the persisted value. This replaces ~13 copies of the guard+write+log
-// block, several of which forgot the in-memory sync (D45).
+// block, several of which forgot the in-memory sync.
 func (d *Dispatcher) setQueueReason(order *orders.Order, reason, where string) {
 	if order.QueueReason == reason {
 		return

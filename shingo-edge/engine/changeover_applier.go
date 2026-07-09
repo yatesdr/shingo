@@ -51,9 +51,24 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	// Evac leg carries the supply leg's UUID so Core can pair them at intake.
 	supplyUUID := ""
 	if supplyID != nil {
-		if so, gerr := e.db.GetOrder(*supplyID); gerr == nil && so != nil {
-			supplyUUID = so.UUID
+		so, gerr := e.db.GetOrder(*supplyID)
+		if gerr != nil || so == nil {
+			// The supply was created but we can't read back its UUID, so we cannot
+			// stamp the evac's sibling pointer. Creating the evac anyway yields an
+			// UNLINKED two-robot pair at Core — silently disabling BOTH the swap
+			// starvation hold (dispatch.swapRemovalLegHeld) and the peer-death
+			// handler (dispatch.HandleSwapPeerTerminal), the exact ALN_003
+			// fail-open. Fail this node task like the create-order errors above
+			// rather than ship a half-linked swap; the rest of the plan proceeds
+			// (per-node log-and-continue contract).
+			log.Printf("changeover: auto-create orders for %s (%s): refetch supply order %d for sibling link: %v — operator must handle manually",
+				action.NodeName, action.Situation, *supplyID, gerr)
+			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskError); err != nil {
+				log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
+			}
+			return
 		}
+		supplyUUID = so.UUID
 	}
 	if action.EvacOrder != nil {
 		id, err := e.createPlannedOrder(nodeID, action.EvacOrder, supplyUUID)

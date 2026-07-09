@@ -251,7 +251,7 @@ func TestOrderService_ClaimBin(t *testing.T) {
 		t.Errorf("ClaimedBy = %v, want %d", got.ClaimedBy, o.ID)
 	}
 
-	// The bare UnclaimBin inverse was removed in D45 (it orphaned the coupled
+	// The bare UnclaimBin inverse was removed (it orphaned the coupled
 	// reservation and bricked the bin). Release now goes through the coupled
 	// ReleaseClaimForBin, which is covered by the claim_release / delivery tests.
 }

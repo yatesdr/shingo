@@ -100,10 +100,11 @@ func TestApplyArrival(t *testing.T) {
 
 // TestApplyArrival_EvictsStaleGhostOnOccupiedPhysicalNode verifies that a
 // delivery onto a physical node that shingo still records as holding a
-// different bin is proof (RDS faults on delivery to an occupied single-bin
-// slot) that the recorded bin is a stale ghost. ApplyArrival must place the
-// arriving bin and evict the ghost to _TRANSIT (unclaimed + anomaly), never
-// reject the newcomer — and report evicted=true so the caller can alert.
+// different bin is proof (a delivery cannot physically complete onto an
+// occupied slot, so the completed delivery proves the slot was empty) that the
+// recorded bin is a stale ghost. ApplyArrival must place the arriving bin and
+// evict the ghost to _TRANSIT (unclaimed + anomaly), never reject the
+// newcomer — and report evicted=true so the caller can alert.
 func TestApplyArrival_EvictsStaleGhostOnOccupiedPhysicalNode(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

@@ -153,8 +153,8 @@ func (s *Scanner) scan() int {
 }
 
 func (s *Scanner) tryFulfill(order *orders.Order) bool {
-	// Re-check status. The scan set is {queued, sourcing} (commit 3b), so
-	// re-verify the order is still acquiring (not cancelled/failed/dispatched
+	// Re-check status. The scan set is {queued, sourcing} (the acquiring set),
+	// so re-verify the order is still acquiring (not cancelled/failed/dispatched
 	// between listing and processing).
 	current, err := s.db.GetOrder(order.ID)
 	if err != nil || !protocol.IsAcquiring(current.Status) {
@@ -311,11 +311,11 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// OutcomeFound.
 	bin, sourceNode := res.Bin, res.Node
 
-	// D37: MoveToSourcing BEFORE the claim (commit-4 normalization — the intake
+	// MoveToSourcing BEFORE the claim (the normalized timing — the intake
 	// planners and the complex path both move-before-claim, so the simple family
 	// matches). On claim failure the simple order MUST re-queue (sourcing→queued):
-	// simple orders park in `queued` in 1c, and the scanner's complex-only scope
-	// guard never retries one left in `sourcing` — that would be a permanent wedge.
+	// simple orders park in `queued`, and the scanner's complex-only scope guard
+	// never retries one left in `sourcing` — that would be a permanent wedge.
 	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin found, claiming"); err != nil {
 		s.logFn("fulfillment: order %d → sourcing: %v", order.ID, err)
 	}

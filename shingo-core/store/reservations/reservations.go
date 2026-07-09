@@ -14,12 +14,13 @@
 // before any Acquire call: the partial unique index uq_reservations_bin_active
 // is what makes Acquire exactly-one-winner.
 //
-// REAPING IS OWNER-LIVENESS, NOT AGE (1c — D18-Q4 / D7). The 1a reaper used expires_at
+// REAPING IS OWNER-LIVENESS, NOT AGE. An earlier reaper used expires_at
 // (a short ~60s TTL) as a proxy for "orphaned", valid only because Acquire→Confirm was
-// milliseconds then. In 1c an order in 'sourcing' legitimately holds its reservations for
-// minutes-to-hours (or days) while it waits for a source to appear — so age is no longer a
-// proxy for orphaned. ReapOrphaned keys on the OWNING ORDER's liveness instead: a hold is
-// reclaimed only when its order is terminal or gone, never on age. The expires_at column is
+// milliseconds then. Once reserve-at-plan-time landed, an order in 'sourcing' legitimately
+// holds its reservations for minutes-to-hours (or days) while it waits for a source to
+// appear — so age is no longer a proxy for orphaned. ReapOrphaned keys on the OWNING
+// ORDER's liveness instead: a hold is reclaimed only when its order is terminal or gone,
+// never on age (demand is operator-driven and never evaporates). The expires_at column is
 // still stamped at Acquire (it is NOT NULL) but is no longer read by any reaper — vestigial
 // pending a schema drop. Do NOT re-introduce an age-based reap.
 package reservations
@@ -57,7 +58,7 @@ var (
 
 // State is a reservation's lifecycle state. No longer free-text: v44 adds a CHECK
 // pinning the column to these values, so a typo can no longer silently escape the
-// partial unique index (D45).
+// partial unique index.
 type State string
 
 const (
@@ -66,7 +67,7 @@ const (
 )
 
 // Kind is the resource a reservation covers — the resource_kind column's domain
-// (v44). 'mouth' is accepted by the schema but has no dedicated code path in 1d.
+// (v44). 'mouth' is accepted by the schema but has no dedicated code path yet.
 type Kind string
 
 const (
@@ -76,15 +77,15 @@ const (
 
 // Ref is the kind-agnostic identity of a reserved resource: a bin (Kind=bin,
 // ID=bins.id) or a slot (Kind=slot, ID=nodes.id). Every primitive keys on a Ref —
-// the seed of the future Claim/Handle aggregate (D45 §4). The exactly-one-of CHECK
-// + per-kind partial indexes make (Kind, ID) a row's identity. Callers build one
-// with BinRef/SlotRef so a call site reads its kind at a glance.
+// the seed of a future kind-agnostic Claim/Handle aggregate. The exactly-one-of
+// CHECK + per-kind partial indexes make (Kind, ID) a row's identity. Callers build
+// one with BinRef/SlotRef so a call site reads its kind at a glance.
 type Ref struct {
 	Kind Kind
 	ID   int64
 }
 
-// BinRef / SlotRef construct the two Refs 1d uses.
+// BinRef / SlotRef construct the two Refs in use (bin and slot).
 func BinRef(binID int64) Ref   { return Ref{Kind: KindBin, ID: binID} }
 func SlotRef(nodeID int64) Ref { return Ref{Kind: KindSlot, ID: nodeID} }
 
@@ -106,13 +107,13 @@ var ErrReservationConflict = fmt.Errorf("reservations: resource already reserved
 // Acquire inserts a bin reservation row for (orderID, binID) in state "pending".
 // reservedBy is the actor tag for forensics. (The former reason + expiresAt params
 // are gone in v44 — reason was always "", and expires_at is retired as a reaping
-// key: reaping keys on the owner's liveness, not age, D18-Q4.)
+// key: reaping keys on the owner's liveness, not age.)
 //
 // Returns ErrReservationConflict when an active (pending or confirmed)
 // reservation already exists on binID. The unique index uq_reservations_bin_active
 // is keyed on bin_id ALONE, so this fires even when THIS SAME order already holds
 // the bin — re-Acquiring your own hold conflicts on its own row. Callers that
-// retry across ticks (the 1c plan-time reserve/reconcile) MUST therefore
+// retry across ticks (the plan-time reserve/reconcile) MUST therefore
 // load-held-first and skip Acquire for bins they already hold, or they will
 // report their own held bins as "missing" every tick. A conflict on a bin the
 // caller does NOT already hold is a genuine race lost to another order.
@@ -124,7 +125,7 @@ func Acquire(db Execer, orderID, binID int64, reservedBy string) error {
 // AcquireSlot is Acquire for a destination slot: a pending slot reservation on
 // nodeID. Conflict via uq_reservations_slot_active (one active slot row per node).
 // Occupancy is NOT consulted here — a slot that physically holds a bin is still
-// reservable (D29); the NOT EXISTS(bins) check lives at confirm/claim time only.
+// reservable; the NOT EXISTS(bins) check lives at confirm/claim time only.
 func AcquireSlot(db Execer, orderID, nodeID int64, reservedBy string) error {
 	return acquire(db, orderID, SlotRef(nodeID), reservedBy)
 }
@@ -240,7 +241,7 @@ func ReleaseByBin(db Execer, binID int64) error {
 }
 
 // ReleaseByNode deletes any reservation on nodeID — the slot dual of ReleaseByBin.
-// Called at the delivered moment (commit 4) in the same tx that clears the slot's
+// Called at the delivered moment in the same tx that clears the slot's
 // nodes.claimed_by, so a slot's reservation lives exactly as long as its hard
 // claim. Node-keyed because the arrival path is node-centric, and the
 // uq_reservations_slot_active index guarantees at most one active slot row per node.
@@ -253,7 +254,7 @@ func ReleaseByNode(db Execer, nodeID int64) error {
 }
 
 // ListByOrder returns all reservations held by orderID — both kinds, both states.
-// The 1c plan-time reconcile loads its own holds with this BEFORE deciding what to
+// The plan-time reconcile loads its own holds with this BEFORE deciding what to
 // keep / release / acquire — the owner-aware step that dodges the per-resource
 // unique-index self-conflict documented on Acquire. Kind-threaded: each row carries
 // its Kind, and exactly one of BinID/NodeID is set (the other is 0) so the reconcile
@@ -282,7 +283,7 @@ func ListByOrder(db Queryer, orderID int64) ([]Reservation, error) {
 }
 
 // ReapOrphaned deletes reservation rows — in BOTH states — whose owning order is
-// terminal or no longer exists. This is the 1c owner-liveness reaper (D18-Q4 / D7):
+// terminal or no longer exists. This is the owner-liveness reaper:
 // reclamation keys on the OWNER being dead, NEVER on the hold's age. A hold under a live,
 // non-terminal order is sacred no matter how long it has been held — an order in sourcing
 // legitimately waits minutes-to-hours (or days) for its source to appear; demand is

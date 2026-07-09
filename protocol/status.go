@@ -165,7 +165,7 @@ func (s Status) IsRuntimeStuckCandidate() bool { return IsRuntimeStuckCandidate(
 // has-it-but-nothing-is-moving set: dispatched (handed to the fleet, the robot may never
 // have started) and staged (a robot parked holding a bin). It deliberately EXCLUDES
 // in_transit (an actively moving robot is not stuck) and ALL pre-dispatch waiting states
-// (pending/sourcing/queued) — D18-Q4: demand is operator-driven and never evaporates, so
+// (pending/sourcing/queued) — demand is operator-driven and never evaporates, so
 // a waiting order holds INDEFINITELY and is never abandoned on a timer.
 //
 // Narrower than both IsVendorActive (which also includes in_transit) and the informational
@@ -270,7 +270,7 @@ func RuntimeStuckCandidateStatusSQLList() string { return runtimeStuckCandidateS
 
 // StuckSweepStatusSQLList returns 'dispatched','staged' — the runtime states the
 // destructive AbandonStuckOrders sweep may auto-cancel. Excludes in_transit and all
-// pre-dispatch waiting (D18-Q4). Use in `status IN (StuckSweepStatusSQLList())`.
+// pre-dispatch waiting (demand is operator-driven). Use in `status IN (StuckSweepStatusSQLList())`.
 func StuckSweepStatusSQLList() string { return stuckSweepStatusSQLList }
 
 // OperatorVisibleStatusSQLList returns the statuses that should still

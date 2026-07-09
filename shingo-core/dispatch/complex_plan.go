@@ -179,8 +179,8 @@ func selectClaim(candidates []*bins.Bin, payloadCode string) (*bins.Bin, []strin
 // stably ordered) and whether it is a POTENTIAL relay re-grab (an earlier step
 // dropped at this node).
 //
-// D5's relay is "an earlier dropoff at N AND N empty at reserve time (the bin
-// hasn't relayed there yet)". potentialRelay carries the first, pure half —
+// The relay rule is "an earlier dropoff at N AND N empty at reserve time (the
+// bin hasn't relayed there yet)". potentialRelay carries the first, pure half —
 // derivable from the step list alone. The reserve resolves the second half with
 // live node state: a potential-relay node that STILL holds a bin is the real
 // source it is (a swap's evac: the line still holds the old bin), not a skipped

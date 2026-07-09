@@ -41,7 +41,7 @@ func TestLineChangeover_WithMissingBin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get QH node: %v", err)
 	}
-	testutil.MustNoErr(t, db.MoveBin(bins[0].ID, qhNode.ID), "move bin 0 to QH")
+	testutil.MustNoErr(t, db.MoveBinClearingStaging(bins[0].ID, qhNode.ID, false), "move bin 0 to QH")
 	t.Logf("bin %d moved to QUALITY-HOLD-1 (simulating prior move order)", bins[0].ID)
 
 	// Verify: only 2 bins remain at the line

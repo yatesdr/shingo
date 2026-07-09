@@ -254,7 +254,7 @@ func TestClaim_And_Unclaim(t *testing.T) {
 
 // TestClaimRejectsWithoutReservation pins the demoted-CAS seatbelt at the SQL
 // level, independent of the Go callers: a bin with NO active reservation cannot be
-// claimed even by a well-formed order. This is the invariant the D45
+// claimed even by a well-formed order. This is the invariant the
 // owner-idempotent CAS change (claimed_by IS NULL OR claimed_by=$1) must NOT
 // weaken — the EXISTS(pending reservation) leg still gates every claim, so a bare
 // claim without a reservation affects 0 rows and errors. Guards against a future

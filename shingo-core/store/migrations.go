@@ -475,11 +475,11 @@ func (db *DB) runVersionedMigrations() error {
 				return schema.IndexExists(q, "uq_reservations_bin_active")
 			}},
 		// v44: reservation resource_kind (bin|slot|mouth) + node_id target + per-kind
-		// partial unique indexes — the 1d slot-reservation substrate. Additive and
-		// dormant (bin path keeps working via the 'bin' DEFAULT); folds the D45
+		// partial unique indexes — the slot-reservation substrate. Additive and
+		// dormant (bin path keeps working via the 'bin' DEFAULT); folds the schema
 		// riders (state CHECK, expires_at nullable, reason column dropped). The
 		// resource_kind column is the self-heal marker.
-		{44, "reservations resource_kind + node_id + per-kind indexes (1d slot substrate)",
+		{44, "reservations resource_kind + node_id + per-kind indexes (slot substrate)",
 			v44ReservationsSlotKind,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "reservations", "resource_kind") }},
 
@@ -1359,17 +1359,17 @@ func v43ReservationsBinActiveIndex(tx *sql.Tx) error {
 	return err
 }
 
-// v44ReservationsSlotKind is the 1d slot-reservation substrate: a resource_kind
+// v44ReservationsSlotKind is the slot-reservation substrate: a resource_kind
 // discriminator (bin|slot|mouth) + a nullable node_id target + per-kind partial
 // unique indexes, so a slot reservation is a soft row keyed on node_id exactly as
 // a bin reservation is keyed on bin_id. Additive and DORMANT — no code reads or
 // writes slot/mouth rows yet (the bin path keeps working via resource_kind's 'bin'
-// DEFAULT, which backfills every existing row). NO mouth index in 1d (D43: the
-// schema accepts a mouth row, but its granularity is the lane phase's call).
+// DEFAULT, which backfills every existing row). NO mouth index (the schema accepts
+// a mouth row, but its granularity is the lane phase's call).
 //
-// It also folds the D45 schema riders: a `state` domain CHECK (a typo previously
+// It also folds the schema riders: a `state` domain CHECK (a typo previously
 // ESCAPED the partial index silently), expires_at made nullable (retired as a
-// reaping key — owner-liveness reaping keys on order liveness, D18-Q4), and the
+// reaping key — owner-liveness reaping keys on order liveness), and the
 // always-” `reason` column dropped.
 //
 // NOTE ON THE PARTIAL-INDEX PREDICATES: `state IN ('pending','confirmed')` covers
@@ -1398,7 +1398,7 @@ func v44ReservationsSlotKind(tx *sql.Tx) error {
 		`ALTER TABLE reservations ADD CONSTRAINT reservations_kind_target_check CHECK (
 			(resource_kind = 'bin' AND bin_id IS NOT NULL AND node_id IS NULL)
 			OR (resource_kind IN ('slot','mouth') AND node_id IS NOT NULL AND bin_id IS NULL))`,
-		// State domain (D45 rider).
+		// State domain CHECK.
 		`ALTER TABLE reservations DROP CONSTRAINT IF EXISTS reservations_state_check`,
 		`ALTER TABLE reservations ADD CONSTRAINT reservations_state_check CHECK (state IN ('pending','confirmed'))`,
 		// Rescope the bin active-uniqueness index to bin rows only.

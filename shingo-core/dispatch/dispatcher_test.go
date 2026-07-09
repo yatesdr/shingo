@@ -272,13 +272,13 @@ func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
 		Quantity:     1.0,
 	})
 
-	// Behavior change (commit 3a): a move whose concrete source node has no
+	// Behavior change: a move whose concrete source node has no
 	// available matching bin now QUEUES for scanner retry instead of terminally
 	// failing with no_payload. planMove routes through the shared SourceFinder,
 	// whose "no candidate at the node" is an OutcomeWait — hold-and-retry, per the
-	// A6 fix direction and 1c's operator-driven give-up (a move sources the same
-	// node on replay; the bin may simply not have arrived yet). Was: failed=1,
-	// code=no_payload.
+	// move-no-source fix direction and the operator-driven give-up rule (a move
+	// sources the same node on replay; the bin may simply not have arrived yet).
+	// Was: failed=1, code=no_payload.
 	if len(emitter.failed) != 0 {
 		t.Fatalf("failed events = %d, want 0 (a move with no source bin now queues, not fails)", len(emitter.failed))
 	}

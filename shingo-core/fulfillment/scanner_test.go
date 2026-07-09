@@ -336,7 +336,7 @@ func TestScanner_TryFulfill_Retrieve_FinderWaits_Skipped(t *testing.T) {
 	}
 }
 
-// D37: with commit 4's MoveToSourcing flipped BEFORE the claim, a simple order
+// With MoveToSourcing flipped BEFORE the claim, a simple order
 // whose claim fails must RE-QUEUE (sourcing→queued) so the complex-only scope
 // guard retries it — leaving it in `sourcing` would wedge it. Status trail:
 // Sourcing (before claim) then Queued (claim-fail re-queue).
@@ -357,7 +357,7 @@ func TestScannerSimpleClaimFailRequeues(t *testing.T) {
 	if len(f.statusUpdates) != 2 ||
 		f.statusUpdates[0].Status != string(protocol.StatusSourcing) ||
 		f.statusUpdates[1].Status != string(protocol.StatusQueued) {
-		t.Fatalf("status trail on claim fail: got %v, want [Sourcing, Queued] (D37 re-queue)", f.statusUpdates)
+		t.Fatalf("status trail on claim fail: got %v, want [Sourcing, Queued] (simple-order re-queue)", f.statusUpdates)
 	}
 }
 
@@ -430,7 +430,7 @@ func TestStoreReplayDispatchesOwnClaimedBin(t *testing.T) {
 	}
 }
 
-// ── commit 3b: widened scan set {queued, sourcing} ──────────────────
+// ── widened scan set {queued, sourcing} ──────────────────
 
 // A complex order sitting in `sourcing` (the widened scan set) is re-attempted —
 // DispatchPreparedComplex's entry guard accepts IsAcquiring. A SIMPLE order in
@@ -499,8 +499,9 @@ func TestScannerRetriesSourcingOrder(t *testing.T) {
 
 // A7: the scanner's capacity gate self-excludes — it passes order.ID, not 0, so
 // the in-flight tally (which counts `sourcing`) can't count the order's own row.
-// In 3b simple sourcing orders are scoped out before the gate, so this pins the
-// mechanism a QUEUED order threads; commit 4 makes it load-bearing once sourcing
+// With the widened set, simple sourcing orders are scoped out before the gate,
+// so this pins the mechanism a QUEUED order threads; the reserve/confirm split
+// makes it load-bearing once sourcing
 // orders reach the gate.
 func TestScannerCapacityGatePassesOrderID(t *testing.T) {
 	t.Parallel()

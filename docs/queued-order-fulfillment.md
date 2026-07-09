@@ -15,13 +15,15 @@ All order types, not just retrieve_empty. A retrieve for payload "NF1-Knockdown"
 ## Order Lifecycle
 
 ```
-Current:   pending -> sourcing -> [found] -> dispatched -> in_transit -> delivered -> confirmed
-                               -> [not found] -> FAILED
-
-Proposed:  pending -> sourcing -> [found] -> dispatched -> in_transit -> delivered -> confirmed
-                               -> [not found] -> QUEUED -> [bin available] -> sourcing -> dispatched -> ...
-                               -> [not found] -> QUEUED -> [cancelled by operator] -> cancelled
+pending -> sourcing -> [found] -> dispatched -> in_transit -> delivered -> confirmed
+        -> [not found] -> QUEUED -> [bin available] -> sourcing -> dispatched -> ...
+                      -> [cancelled by operator] -> cancelled
 ```
+
+`queued` and `sourcing` together form the **acquiring** set — the statuses the
+fulfillment scanner retries. `IsAcquiring(s)` / `AcquiringStatusSQLList()` in
+`protocol/status.go` define it; the scanner's re-check and the complex dispatch
+entry guard both gate on it. See `[[order-builder-dispatch]]`.
 
 ## New Status: `queued`
 
@@ -65,34 +67,39 @@ File: `store/orders.go`
 
 ### 4. Fulfillment Scanner
 
-File: `engine/fulfillment_scanner.go` (new)
+File: `fulfillment/scanner.go`
 
 **Trigger points** (event-driven):
 - `EventBinUpdated` (action: "moved" to storage, "cleared") -- bin became available
-- `EventOrderCompleted` -- completing an order unclaims a bin
-- `EventOrderCancelled` -- unclaimed bin
-- `EventOrderFailed` -- unclaimed bin
+- `EventOrderCompleted` -- completing an order releases a bin's reservation
+- `EventOrderCancelled` -- reservation released
+- `EventOrderFailed` -- reservation released
 
 **Safety sweep:** Every 60 seconds, full scan. Catches anything events missed.
 
 **Startup:** Run once on Core start to pick up queued orders from before shutdown.
 
-**Concurrency:** Mutex-guarded. Only one scan at a time. Events during scan are coalesced.
+**Concurrency:** Mutex-guarded (`scan-mu`). Only one scan at a time. Events during scan are coalesced.
 
-**Algorithm:**
+**How fulfillment works (reservation reconcile, not atomic claim):**
+Source resolution is **not** inlined in the scanner. Both intake planning and
+scanner replay call the shared `dispatch.SourceFinder` (`source_finder.go`),
+which runs the same tier cascade for both paths so replay cannot drift from
+intake (see `[[order-builder-dispatch]]`). The actual hold on a source is a
+**reservation**, set via `Acquire` at plan time and `Confirm` at dispatch time;
+a `sourcing` order retries by **reconciling** its existing reservations
+(keep held, release moved, acquire newly needed) rather than re-claiming from
+scratch. See `[[reservations]]`.
+
 ```
-1. List all queued orders, sorted by created_at ASC (FIFO)
-2. For each queued order:
-   a. Get payloadCode from order
-   b. Determine order type:
-      - retrieve_empty: FindEmptyCompatibleBin(payloadCode, preferZone)
-      - retrieve: FindSourceBinFIFO(payloadCode) or resolve via NGRP if pickup node set
-   c. If no bin found: skip (stays queued)
-   d. ClaimBin(bin.ID, order.ID): if fails (race), skip
-   e. Update order: bin_id, source_node, status -> "sourcing"
-   f. Dispatch to fleet via DispatchDirect
-   g. Send OrderAck + OrderWaybill to Edge
-   h. If fleet dispatch fails: unclaim bin, set back to queued
+1. List acquiring orders ({queued, sourcing}), sorted by priority DESC, created_at ASC
+2. For each order:
+   a. Resolve source via SourceFinder (shared with intake)
+   b. Allocator.reconcile: keep/release/acquire reservations vs the plan's needs
+   c. If a source can't be secured: skip (stays queued/sourcing; retry next tick)
+   d. Confirm reservations + claim via the reservation-guarded seatbelt (ClaimForDispatch)
+   e. Dispatch to fleet
+   f. If fleet dispatch fails: release reservations, set back to queued
 3. Return count fulfilled
 ```
 
@@ -166,7 +173,9 @@ When `tryAutoRequestEmpty` fires and Core queues:
 
 **Concurrent scans:** Mutex prevents races. Events coalesced.
 
-**Two orders, one bin:** FIFO -- oldest wins. `ClaimBin` is atomic.
+**Two orders, one bin:** FIFO -- oldest wins. The loser loses the `Acquire` race
+(`ErrReservationConflict` from the partial unique index) and requeues; the
+scanner retries it next tick.
 
 **Order cancelled mid-fulfill:** Scanner checks status before dispatch. Claim released if cancelled.
 

@@ -50,7 +50,7 @@ A physical container that can be tracked, moved, and stored. The bin is the prim
 | `bin_type_id` | Physical container class |
 | `node_id` | Current floor location (nullable — bin may be in transit) |
 | `status` | Lifecycle state (see [Bin Statuses](#bin-statuses)) |
-| `claimed_by` | Order ID that has claimed this bin for transport (nullable) |
+| `claimed_by` | Order ID that has claimed this bin for transport (nullable). Set atomically with a `confirmed` **reservation** (see [Reservations](#reservations)) — the two never drift apart. |
 | `payload_code` | Assigned payload template code (empty if unloaded) |
 | `manifest` | JSON list of parts and quantities (actual contents) |
 | `uop_remaining` | Production cycles of material left |
@@ -135,6 +135,36 @@ A transport request to move a bin between nodes.
 | `parent_order_id` | Parent compound order (for reshuffle child orders) |
 | `sequence` | Step sequence within a compound order |
 
+### Reservations
+
+A soft, revocable hold recording that an order intends to use a resource (a
+source **bin** or a destination **slot**), set *before* any hard column
+(`claimed_by`) is written. Reservations close the gap between resolving a
+source and claiming it, and let an incomplete order retry by reconciling its
+holds rather than re-shopping. See [reservations.md](reservations.md) for the
+full mechanism.
+
+| Field | Description |
+|-------|-------------|
+| `order_id` | The order that holds the reservation |
+| `resource_kind` | `bin` (a source bin) or `slot` (a destination node); `mouth` is schema-accepted but unused |
+| `bin_id` | `bins.id` when `resource_kind = 'bin'` (NULL otherwise) |
+| `node_id` | `nodes.id` when `resource_kind = 'slot'` (NULL otherwise) |
+| `state` | `pending` (held, not yet shipped) or `confirmed` (shipped — the claim moved with it) |
+| `reserved_by` | Actor tag for forensics |
+
+Lifecycle: **Acquire** (write `pending`) → **Confirm** (`pending → confirmed`,
+paired with the hard-column write in one transaction) → **Release** (a hard
+`DELETE`; a reservation never reaches a terminal state). The partial unique
+indexes — `uq_reservations_bin_active` on `bin_id`, `uq_reservations_slot_active`
+on `node_id` — make Acquire exactly-one-winner, so two orders can't both hold
+the same resource. Rows are reaped when their owning order is terminal or gone
+(owner-liveness, never age). Migrations v42–v44.
+
+**Relationships:**
+- Belongs to one **Order**
+- Targets exactly one resource: one **Bin** (`resource_kind = 'bin'`) **or** one **Node** (`resource_kind = 'slot'`), enforced by a `CHECK`
+
 ---
 
 ## Statuses
@@ -154,7 +184,8 @@ A transport request to move a bin between nodes.
 | Status | Description |
 |--------|-------------|
 | `pending` | Created, awaiting dispatch |
-| `sourcing` | Resolver is finding source or destination |
+| `sourcing` | Resolver is finding source or destination; an order in `sourcing` holds its sources as soft **reservations** and retries each scanner tick |
+| `queued` | Awaiting inventory — Core accepted the order but cannot fulfill it yet; retried by the fulfillment scanner when inventory appears |
 | `dispatched` | Sent to fleet backend |
 | `in_transit` | Robot is moving the bin |
 | `delivered` | Robot has placed the bin at destination |
@@ -162,6 +193,9 @@ A transport request to move a bin between nodes.
 | `completed` | Fully done |
 | `failed` | Fleet or system error |
 | `cancelled` | Cancelled by station or operator |
+
+`queued` and `sourcing` together form the **acquiring** set — the statuses the
+fulfillment scanner retries (`IsAcquiring` in `protocol/status.go`).
 
 ### Manifest Confirmation
 
@@ -198,7 +232,10 @@ When multiple bins match a retrieve request, the system picks the one with the o
 A bin is eligible for retrieval only when all three conditions are met:
 1. `manifest_confirmed = true` — contents have been verified
 2. `status = 'available'` — bin is in normal operating state
-3. `claimed_by IS NULL` — bin is not already claimed by another order
+3. No active **reservation** held by another order — the bin is not already
+   reserved or claimed. Reservations (`resource_kind = 'bin'`) are the primary
+   hold; `claimed_by` is the confirmed-claim mirror, set atomically with the
+   `confirmed` reservation. See [reservations.md](reservations.md).
 
 ### Node Hierarchy
 
@@ -261,7 +298,8 @@ node_types --< nodes --< node_properties
 orders --< order_history
   |
   |---> nodes (source_node_id, dest_node_id)
-  +---> bins
+  |---> bins
+  +--< reservations (resource_kind bin→bins / slot→nodes)
 
 corrections ---> nodes, bins
 cms_transactions ---> nodes, bins, orders

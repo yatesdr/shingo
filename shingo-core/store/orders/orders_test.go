@@ -754,7 +754,7 @@ func TestListAcquiring(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	id2 := mk("q2", "queued")
 	time.Sleep(10 * time.Millisecond)
-	id3 := mk("s1", "sourcing") // widened set includes sourcing (commit 3b)
+	id3 := mk("s1", "sourcing") // acquiring set includes sourcing
 	mk("p", "pending")          // not acquiring
 	mk("c", "confirmed")        // not acquiring
 

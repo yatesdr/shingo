@@ -71,24 +71,24 @@ func ScanNodes(rows *sql.Rows) ([]*Node, error) {
 	return nodes, rows.Err()
 }
 
-// (D47) ClaimSlot — the un-seatbelted slot CAS — was deleted: 1d commit 4 removed
-// its only production caller (the hard slot loop). The live slot-claim path is the
+// ClaimSlot — the un-seatbelted slot CAS — was deleted when the hard slot loop
+// (its only production caller) was removed. The live slot-claim path is the
 // reservation-guarded ClaimSlotTx, reached via db.ConfirmSlotClaim (reserve → claim
 // → confirm in one tx). A forbidigo rule guards against reintroducing a raw slot
 // claim; tests needing a claimed-slot fixture use testdb.ClaimSlotForTest.
 
 // ClaimSlotTx is the reservation-guarded slot claim used by ConfirmSlotClaim — the
-// slot mirror of bins.ClaimTx (D46). It ADDS the demoted-CAS seatbelt to the
+// slot mirror of bins.ClaimTx. It ADDS the demoted-CAS seatbelt to the
 // owner-idempotent CAS + NOT EXISTS(bins) guard: EXISTS a pending slot reservation
 // for (order, node), so a slot can only be hard-claimed under a live plan-time
-// reservation (the 1d D4 split-brain fix). Runs inside the caller's tx so the claim
+// reservation (the split-brain fix). Runs inside the caller's tx so the claim
 // and the reservation confirm commit atomically. Owner-idempotent (claimed_by=$1),
 // so a claimed-but-pending slot heals on retry instead of wedging.
 //
 // The legacy ClaimSlot above (the still-live hard-claim loop path) deliberately
-// does NOT carry the reservation clause in 1d commit 3 — the loop never reserves —
-// and is retired WITH that loop in commit 4, at which point this is the only
-// slot-claim path. Seatbelts only ever gain clauses; ClaimSlot is not weakened.
+// does NOT carry the reservation clause — the loop never reserves — and is retired
+// WITH that loop, at which point this is the only slot-claim path. Seatbelts only
+// ever gain clauses; ClaimSlot is not weakened.
 func ClaimSlotTx(tx *sql.Tx, nodeID, orderID int64) error {
 	res, err := tx.Exec(`UPDATE nodes SET claimed_by=$1, updated_at=NOW()
 		WHERE id=$2 AND (claimed_by IS NULL OR claimed_by=$1)

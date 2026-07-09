@@ -18,7 +18,7 @@ import (
 // The set below is exactly what the scanner needs — no more, no less: the
 // methods it calls directly on s.db, PLUS the CapacityDB set that
 // CheckDropoffCapacity(s.db, …) requires (GetNodeByDotName, CountBinsByNode,
-// CountInFlightOrdersByDeliveryNodeExcluding, ListChildNodes). After the 3a
+// CountInFlightOrdersByDeliveryNodeExcluding, ListChildNodes). After the
 // SourceFinder collapse the finder owns source lookup and returns the bin's node,
 // so the plant-wide finders and the node-by-id read left this interface.
 //
@@ -28,7 +28,7 @@ import (
 // unit-testable in isolation.
 type Store interface {
 	// Order reads. ListAcquiringOrders is the scanner's scan set — orders in
-	// {queued, sourcing} (widened from queued-only in commit 3b).
+	// {queued, sourcing} (the acquiring set, widened from queued-only).
 	ListAcquiringOrders() ([]*orders.Order, error)
 	GetOrder(id int64) (*orders.Order, error)
 	// CapacityDB: the capacity gate self-excludes the caller's own order.
@@ -57,7 +57,7 @@ type Store interface {
 
 // Trimmed to this interface's "no more, no less" contract as the scanner's
 // surface shrank:
-//   - 3a (SourceFinder collapse): ClaimBin, UnclaimOrderBins, UpdateOrderStatus,
+//   - SourceFinder collapse: ClaimBin, UnclaimOrderBins, UpdateOrderStatus,
 //     FailOrderAtomic — the scanner claims via Claimer.ClaimForDispatch, rolls
 //     back via ReleaseClaimByOrder, transitions via Lifecycle, fails via failFn.
 //   - 3-cleanup: FindSourceBinFIFO + FindEmptyCompatibleBin (the finder owns

@@ -41,7 +41,7 @@ type ReconciliationStore interface {
 	GetOrder(id int64) (*orders.Order, error)
 
 	// ReapOrphanedReservations reaps reservation rows (pending AND confirmed) whose
-	// owning order is terminal or gone — the 1c owner-liveness backstop behind
+	// owning order is terminal or gone — the owner-liveness backstop behind
 	// TerminalizeOrder. Never age-based: a hold under a live order is sacred. Returns
 	// the count of rows deleted.
 	ReapOrphanedReservations() (int, error)

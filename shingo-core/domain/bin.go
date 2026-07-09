@@ -50,8 +50,8 @@ type Bin struct {
 	// loads its own holds separately, before consulting this). BinUnavailableReason
 	// checks this field so the dispatch loop never offers a reserved bin as a claim
 	// candidate. Pending-ONLY is sufficient because a confirmed reservation coincides
-	// with a hard claimed_by (structural since D46's one-tx claim+confirm), which the
-	// separate claimed_by check already covers.
+	// with a hard claimed_by (structural, since the one-tx claim+confirm moves them
+	// together), which the separate claimed_by check already covers.
 	HasPendingReservation bool `json:"has_pending_reservation,omitempty"`
 }
 

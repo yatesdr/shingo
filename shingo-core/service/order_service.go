@@ -88,7 +88,7 @@ func (s *OrderService) ClaimBin(binID, orderID int64) error {
 // reservation). The manual-order rollback uses it instead of a bare claimed_by
 // clear so that, once the claim routes through ClaimForDispatch, a dispatch
 // failure can't orphan the confirmed reservation and brick the bin. (The bare
-// Unclaim wrappers were removed in D45 — this is their only sanctioned inverse.)
+// Unclaim wrappers were removed — this is their only sanctioned inverse.)
 func (s *OrderService) ReleaseClaimForBin(binID, orderID int64) error {
 	return s.db.ReleaseClaimForBin(binID, orderID)
 }

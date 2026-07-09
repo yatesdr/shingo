@@ -13,7 +13,7 @@ import (
 )
 
 // TestReserveConfirm_EmptyLegClaimsEmptyCarrier is the produce-node fix, ported to
-// the 1c reserve/confirm split (D39): a complex swap stores the produced full and
+// the reserve/confirm split: a complex swap stores the produced full and
 // fetches an EMPTY carrier to refill the press. The empty pickup leg (step.Empty)
 // must reserve+claim an empty carrier, NOT a payload-matching full sitting in the
 // same source — the Hopkinsville bug where the press kept being handed full bins.

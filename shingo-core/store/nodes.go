@@ -31,13 +31,13 @@ func (db *DB) SetNodeParent(nodeID, parentID int64) error {
 }
 func (db *DB) ClearNodeParent(nodeID int64) error { return nodes.ClearParent(db.DB, nodeID) }
 
-// (D47) db.ClaimSlot deleted with nodes.ClaimSlot — the live slot-claim path is
+// db.ClaimSlot deleted with nodes.ClaimSlot — the live slot-claim path is
 // ConfirmSlotClaim below (reserve → guarded claim → confirm, one tx).
 
 // ConfirmSlotClaim commits an ALREADY-RESERVED slot to a hard claim and confirms
 // the reservation (pending→confirmed) in ONE transaction — the slot mirror of
-// BinManifestService.claimAndConfirm (D46). The pending slot reservation was placed
-// earlier by the reserve reconcile (commit 4); ConfirmSlotClaim does NOT acquire. It
+// BinManifestService.claimAndConfirm. The pending slot reservation was placed
+// earlier by the reserve reconcile; ConfirmSlotClaim does NOT acquire. It
 // runs the seatbelted, owner-idempotent ClaimSlotTx (claimed_by IS NULL OR =order,
 // NOT EXISTS bins, EXISTS a pending slot reservation) then ConfirmSlot — both writes
 // commit together or neither, so a transient failure between them can never leave the

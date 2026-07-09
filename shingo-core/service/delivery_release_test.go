@@ -1,7 +1,7 @@
 //go:build docker
 
-// delivery_release_test.go — Rule-B: delivery releases the reservation AND the
-// destination slot (commit 3). TerminalizeOrder is the terminal backstop, so
+// delivery_release_test.go — the delivery-release rule: delivery releases the
+// reservation AND the destination slot. TerminalizeOrder is the terminal backstop, so
 // without these DIRECT tests, deleting the delivery-time releases would leave the
 // suite green while silently re-opening the Delivered->Confirmed window that the
 // chokepoint work set out to close. Each assertion is RED if its release is cut.
@@ -73,10 +73,11 @@ func TestDeliveryReleasesReservationAndSlot(t *testing.T) {
 		testdb.ClaimSlotForTest(t, db, slotA.ID, order.ID)
 		testdb.ClaimSlotForTest(t, db, slotB.ID, order.ID)
 
-		testutil.MustNoErr(t, db.ApplyMultiBinArrival([]orders.BinArrivalInstruction{
+		_, err := db.ApplyMultiBinArrival([]orders.BinArrivalInstruction{
 			{BinID: binA.ID, ToNodeID: slotA.ID},
 			{BinID: binB.ID, ToNodeID: slotB.ID},
-		}), "ApplyMultiBinArrival")
+		})
+		testutil.MustNoErr(t, err, "ApplyMultiBinArrival")
 
 		for _, p := range []struct{ bin, slot int64 }{{binA.ID, slotA.ID}, {binB.ID, slotB.ID}} {
 			if n := countRes(t, p.bin); n != 0 {

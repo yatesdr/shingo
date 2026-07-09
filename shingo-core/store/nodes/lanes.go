@@ -63,13 +63,13 @@ func IsSlotAccessible(db *sql.DB, slotNodeID int64) (bool, error) {
 // reservations, and orders tables — kept here because the return type is owned by
 // nodes/.
 //
-// Deepest-UNRESERVED (1d): the reservations NOT EXISTS makes a slot another order
+// Deepest-UNRESERVED: the reservations NOT EXISTS makes a slot another order
 // has soft-reserved (pending) or hard-claimed-and-confirmed invisible here, so two
 // stores pack into distinct tiered slots. The bin-emptiness guard stays (a store
 // wants a physically empty slot). The orders.delivery_node string-proxy STAYS too,
 // NOT retired: the reservation read does NOT subsume it — simple store orders set
-// delivery_node but do NOT reserve their slot in 1d (that's the #115/#117 gap
-// deferred to unification, D26/D43), so the proxy is still the only guard against a
+// delivery_node but do NOT reserve their slot (that's the #115/#117 gap deferred to
+// the dispatch-path unification), so the proxy is still the only guard against a
 // complex store picking a slot a simple store is heading to. (Equivalence check
 // result: gap found → proxy kept. Retire it when simple-store reserves its slot.)
 func FindStoreSlotInLane(db *sql.DB, laneID int64) (*Node, error) {

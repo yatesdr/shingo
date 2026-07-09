@@ -218,7 +218,7 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 		return
 	}
 	if evicted {
-		e.logFn("WARN: intermediate store of bin %d at %s evicted a stale bin record there — a successful delivery proved the slot empty; the stale bin is at _TRANSIT, recover via the anomalies page", binID, ev.Location)
+		e.logFn("WARN: intermediate store of bin %d at %s evicted a stale bin record there — a delivery cannot physically complete onto an occupied slot, so the completed delivery proves the slot was empty; the stale bin is at _TRANSIT, recover via the anomalies page", binID, ev.Location)
 	}
 
 	e.dbg("transit: bin %d stored at %s on dropoff (order %d, block %s) — slot now reflects the physical bin",

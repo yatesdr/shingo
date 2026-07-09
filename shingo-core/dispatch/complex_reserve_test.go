@@ -2,7 +2,8 @@
 
 package dispatch
 
-// Tests for the 1c reserve/confirm split (commit 4, D39) against real Postgres.
+// Tests for the reserve/confirm split (plan-time reserve + apply-as-confirm)
+// against real Postgres.
 
 import (
 	"encoding/json"
@@ -127,8 +128,9 @@ func TestReserveReconcileKeepsOwnHolds(t *testing.T) {
 	}
 }
 
-// TestPartialHoldRetriesToComplete pins the D5 GO gate: a complex order needing
-// {A,B} with only A present holds A and reports reserveHolding (NOT complete, NOT
+// TestPartialHoldRetriesToComplete pins the dispatch GO gate (the relay rule):
+// a complex order needing {A,B} with only A present holds A and reports
+// reserveHolding (NOT complete, NOT
 // dispatched); once B appears the next reserve completes and confirm claims both.
 func TestPartialHoldRetriesToComplete(t *testing.T) {
 	t.Parallel()
@@ -238,7 +240,7 @@ func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 	}
 }
 
-// TestConfirmHealsClaimedButPendingBin is the D45 wedge pin. It reproduces the
+// TestConfirmHealsClaimedButPendingBin is the wedge pin. It reproduces the
 // exact half-state a transient DB error / core restart leaves between the two
 // separate writes ConfirmClaim used to make — the hard claim COMMITTED but the
 // reservation confirm NOT run — and asserts the next confirm HEALS it instead of
@@ -426,12 +428,12 @@ func TestReserveMootWhenAllSourcesEmpty(t *testing.T) {
 	}
 }
 
-// TestReservePresentButTakenHoldsNotMoot pins the moot/hold boundary (Rider 2, D40):
-// the moot-skip route fires ONLY when every unmet need is a concrete node verified
+// TestReservePresentButTakenHoldsNotMoot pins the moot/hold boundary: the
+// moot-skip route fires ONLY when every unmet need is a concrete node verified
 // genuinely EMPTY. A node that HOLDS a bin claimed by ANOTHER order is present-but-
 // taken — sourceable once that order finishes — so the reserve HOLDS and retries
-// (D18-Q4), never skips the changeover as moot. This is the exact contrast to
-// TestReserveMootWhenAllSourcesEmpty (empty node → moot).
+// (operator-driven demand, never aged out), never skips the changeover as moot.
+// This is the exact contrast to TestReserveMootWhenAllSourcesEmpty (empty node → moot).
 //
 // The sibling hold case — a group/NGRP-scoped need that can't resolve (a momentarily-
 // empty supermarket) — is structurally UNREACHABLE at the reserve: reResolveComplexSteps
@@ -476,7 +478,7 @@ func TestReservePresentButTakenHoldsNotMoot(t *testing.T) {
 	}
 }
 
-// TestStagingRegrabsNotTreatedAsMissing pins D5's relay rule end-to-end at the
+// TestStagingRegrabsNotTreatedAsMissing pins the relay rule end-to-end at the
 // reserve: a plan that re-picks a bin at staging (a later pickup at a node it
 // dropped to earlier) reserves only the DISTINCT source; the empty staging node is
 // a re-grab, not a missing need, so the order completes with just its real bin.
@@ -540,12 +542,13 @@ func TestMoveToSourcingIdempotent(t *testing.T) {
 	}
 }
 
-// ── commit 4: the reconcile wire (D4 split-brain fix) ─────────────────────────
+// ── the reconcile wire (the split-brain fix) ─────────────────────────
 
-// TestComplexHoldingSlotsAsReservationsAcrossTicks is the D4 split-brain PIN. An
+// TestComplexHoldingSlotsAsReservationsAcrossTicks is the split-brain PIN. An
 // incomplete complex order (its source bin not yet available) holds its destination
 // slot as a revocable RESERVATION while it sits in `sourcing` — NOT as a hard
-// nodes.claimed_by. Pre-1d the hard-claim slot loop set nodes.claimed_by at dispatch
+// nodes.claimed_by. Before the slot substrate the hard-claim slot loop set
+// nodes.claimed_by at dispatch
 // even while the order held bins only as reservations across ticks: bins soft, slots
 // hard — the split-brain. Now both halves are reservations until the complete set
 // confirms together.
@@ -586,7 +589,7 @@ func TestComplexHoldingSlotsAsReservationsAcrossTicks(t *testing.T) {
 	// THE PIN: the slot is held as a RESERVATION, not a hard claim, while sourcing.
 	slotN, _ := db.GetNode(slot.ID)
 	if slotN.ClaimedBy != nil {
-		t.Fatalf("slot claimed_by=%d while SOURCING — the D4 split-brain: an incomplete order must hold slots as RESERVATIONS, not hard nodes.claimed_by", *slotN.ClaimedBy)
+		t.Fatalf("slot claimed_by=%d while SOURCING — the split-brain: an incomplete order must hold slots as RESERVATIONS, not hard nodes.claimed_by", *slotN.ClaimedBy)
 	}
 	held, _ := db.ListReservationsByOrder(order.ID)
 	slotReserved := false

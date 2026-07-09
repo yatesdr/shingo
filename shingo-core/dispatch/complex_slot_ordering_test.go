@@ -12,17 +12,17 @@ import (
 	"shingocore/store/reservations"
 )
 
-// TestSlotClaim_NoABBADeadlock is the acquire-level port (1d commit 4) of the
-// commit-6 canonical-sort pin. The hard-claim slot loop and its node-ID sort are
-// gone; the ABBA class dissolves at the soft-acquire layer instead. Two orders whose
-// FIXED-concrete storage drop-offs are {S1, S2} in opposite step order can no longer
-// cross-hold HARD claims: a slot is hard-claimed (ConfirmSlotClaim) only AFTER the
-// whole slot set is reserved, so a blocked order reserves what it can (revocable) and
-// backs off WITHOUT ever hard-claiming the far slot. No order holds a hard claim
-// while blocked — the unbounded-deadlock ingredient the canonical sort prevented is
+// TestSlotClaim_NoABBADeadlock is the acquire-level port of the canonical-sort pin.
+// The hard-claim slot loop and its node-ID sort are gone; the ABBA class dissolves
+// at the soft-acquire layer instead. Two orders whose FIXED-concrete storage
+// drop-offs are {S1, S2} in opposite step order can no longer cross-hold HARD
+// claims: a slot is hard-claimed (ConfirmSlotClaim) only AFTER the whole slot set
+// is reserved, so a blocked order reserves what it can (revocable) and backs off
+// WITHOUT ever hard-claiming the far slot. No order holds a hard claim while
+// blocked — the unbounded-deadlock ingredient the canonical sort prevented is
 // simply absent, without any ordering.
 //
-// It also pins SLOTS-BEFORE-BINS: the blocked order returns at the slot reserve leg
+// It also pins slots-before-bins: the blocked order returns at the slot reserve leg
 // holding ZERO bin reservations — bins are never touched before slots are secured.
 func TestSlotClaim_NoABBADeadlock(t *testing.T) {
 	t.Parallel()
@@ -77,12 +77,12 @@ func TestSlotClaim_NoABBADeadlock(t *testing.T) {
 		t.Fatalf("A's holds = %+v, want exactly a slot reservation on S1=%d", aHeld, s1.ID)
 	}
 
-	// SLOTS-BEFORE-BINS: B returned at the slot reserve leg, so it holds ZERO BIN
+	// Slots-before-bins: B returned at the slot reserve leg, so it holds ZERO BIN
 	// reservations (it may hold a revocable slot reservation on S2 — that's the point).
 	bHeld, _ := db.ListReservationsByOrder(orderB.ID)
 	for _, r := range bHeld {
 		if r.Kind == reservations.KindBin {
-			t.Fatal("order B holds a bin reservation — bins must not be touched before slots are secured (SLOTS-BEFORE-BINS)")
+			t.Fatal("order B holds a bin reservation — bins must not be touched before slots are secured (slots-before-bins)")
 		}
 	}
 

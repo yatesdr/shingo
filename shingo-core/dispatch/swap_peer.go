@@ -33,7 +33,7 @@ const (
 // the supply legitimately proceeds; only a genuine evac failure/cancel leaves the
 // resident on the line where the supply's drop would collide.
 //
-// Guards (per the D18-Q4 / atomic-transition contract):
+// Guards (per the operator-driven-demand / atomic-transition contract):
 //   - re-checks IsTerminal on the peer (mirrors HandleChildOrderFailure) so a
 //     near-simultaneous double-terminal never acts on an already-dead peer;
 //   - BOUNDED — a single cancel or a single surface, never a re-creation loop;
@@ -91,7 +91,7 @@ func (d *Dispatcher) resolveSwapPeer(peer, dead *orders.Order, reason string) {
 	// Peer already terminal. If it physically delivered (its bin moved) the
 	// half-swap already happened with its sibling now dead — surface so the
 	// operator rebalances the line. We deliberately do NOT auto-re-create a
-	// replacement supply (D18-Q4: give-up / re-issue is operator-driven, and an
+	// replacement supply (give-up / re-issue is operator-driven, and an
 	// auto-re-create risks a spin loop against an empty supermarket).
 	if peer.Status == protocol.StatusDelivered || peer.Status == protocol.StatusConfirmed {
 		log.Printf("dispatch: two-robot swap HALF-COMPLETED — order %d is %s but sibling %d is %s; line needs operator rebalance (%s)",

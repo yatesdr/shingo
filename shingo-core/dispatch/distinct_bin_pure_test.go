@@ -1,7 +1,7 @@
-// distinct_bin_pure_test.go — the relay distinct-bin discriminator (commit 2,
-// completed in commit 4/D40). complexPickups is the SINGLE relay-discriminator in
-// the tree: it flags each pickup's POTENTIAL relay status (an earlier same-order
-// dropoff at the node) purely from the resolved step list. The reserve layers the
+// distinct_bin_pure_test.go — the relay distinct-bin discriminator.
+// complexPickups is the SINGLE relay-discriminator in the tree: it flags each
+// pickup's POTENTIAL relay status (an earlier same-order dropoff at the node)
+// purely from the resolved step list. The reserve layers the
 // live-emptiness test on top (complex_reserve.go). These pure fixtures pin the
 // step-list half without a DB.
 

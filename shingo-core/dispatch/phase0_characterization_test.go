@@ -53,7 +53,7 @@ func TestPhase0_DispositionTriad_ClaimFailed(t *testing.T) {
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	d.SetPostFindHook(func() {
 		// Reserve the bin between Find and Claim so the inbound order's Acquire
-		// conflicts — the reservation is the race point post-1a (was the CAS).
+		// conflicts — the reservation is the race point (previously the CAS).
 		testdb.ReserveBin(t, db, stealer.ID, bin.ID)
 		d.SetPostFindHook(nil) // fire once only
 	})

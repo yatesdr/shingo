@@ -69,7 +69,7 @@ func (c *Client) SetPriority(id string, priority int) error {
 
 // MarkComplete marks an incremental order as complete (no more blocks will be added).
 //
-// (D47) RDS vendor-client API surface mapping to the real /markComplete endpoint —
+// RDS vendor-client API surface mapping to the real /markComplete endpoint —
 // currently exercised only by tests, but KEPT (not dead internal code): it is the
 // "no more blocks" signal the incremental/staged-order path (lane coordination,
 // D33/D34's ReleaseOrder+AddBlocks append) plausibly needs soon. Do not delete

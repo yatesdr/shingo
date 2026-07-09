@@ -67,7 +67,19 @@ A transport request to move a bin between nodes. Orders flow from Shingo Edge to
 | 6 River Systems | Task |
 | VDA 5050 | Order (same) |
 
-Order statuses: `pending`, `sourcing`, `dispatched`, `in_transit`, `delivered`, `confirmed`, `completed`, `failed`, `cancelled`.
+Order statuses: `pending`, `sourcing`, `queued`, `dispatched`, `in_transit`, `delivered`, `confirmed`, `completed`, `failed`, `cancelled`.
+
+### Reservation
+
+A soft, revocable hold recording that an order intends to use a resource — a source **bin** or a destination **slot** — set *before* the bin is claimed. Reservations are what let Core hold an unfulfillable order (`queued`/`sourcing`) and retry as inventory appears, rather than failing the order. Reclaimed when the owning order ends; never time-based. See [reservations.md](reservations.md).
+
+### Slot
+
+A physical destination node a bin can be delivered to (a storage slot, staging location, or line-side position). A **slot reservation** is the destination-side mirror of a bin reservation: a soft hold on a node, confirmed atomically with the slot claim.
+
+### Sourcing
+
+The order status while Core is locating a source bin or destination. An order in `sourcing` holds its sources as reservations and is retried each scanner tick; `sourcing` is not "stuck" — demand is operator-driven. Together `queued` and `sourcing` are the **acquiring** set.
 
 ### Zone
 

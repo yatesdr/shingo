@@ -425,8 +425,8 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 	// and can't drift. The finder is pure; the claim happens here.
 	//
 	// Behavior changes vs the old inline branches (intended, ratified with the
-	// A6 fix direction — a queued move should hold-and-retry, not spuriously
-	// terminal-fail):
+	// move-no-source fix direction — a queued move should hold-and-retry, not
+	// spuriously terminal-fail):
 	//   - the concrete-node tier is find-first-available-then-claim (was
 	//     claimFirstAvailable's within-call multi-try); a claim race re-queues
 	//     via claim_failed and the next scanner tick picks another candidate.

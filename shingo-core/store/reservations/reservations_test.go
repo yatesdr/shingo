@@ -110,9 +110,9 @@ func TestReservations_ConcurrentAcquire(t *testing.T) {
 	}
 }
 
-// TestReapOrphaned_OwnerLiveness pins the 1c reaper contract (D18-Q4 / D7): holds are
+// TestReapOrphaned_OwnerLiveness pins the owner-liveness reaper contract: holds are
 // reaped on OWNER LIVENESS, never age. A hold aged far past the retired 60s TTL SURVIVES
-// while its order is non-terminal (sourcing) — this is the D37 churn window closing. Once
+// while its order is non-terminal (sourcing) — the reaping churn window is closed. Once
 // the order goes terminal, BOTH its pending and confirmed holds are reaped on the next
 // sweep — the backstop behind TerminalizeOrder (which releases in-tx) for crashed/bypassed
 // paths.
@@ -147,7 +147,7 @@ func TestReapOrphaned_OwnerLiveness(t *testing.T) {
 		t.Fatalf("ReapOrphaned (live order): %v", err)
 	}
 	if n != 0 {
-		t.Fatalf("reaped %d rows under a live sourcing order — holds are sacred no matter how old (D18-Q4)", n)
+		t.Fatalf("reaped %d rows under a live sourcing order — holds are sacred no matter how old (owner-liveness, not age)", n)
 	}
 	if held, _ := reservations.ListByOrder(db, o.ID); len(held) != 2 {
 		t.Fatalf("held = %d after live sweep, want 2 (both survive)", len(held))
@@ -438,9 +438,10 @@ func TestV44_CheckRejectsMalformedRows(t *testing.T) {
 // ── commit 2: slot store surface (kind-agnostic) ─────────────────────────────
 
 // TestAcquireSlot_ExactlyOneWinner pins two things: a slot reservation is
-// one-active-per-node (the slot dual of the bin index), AND — the D29 make-or-break
-// — a slot is reservable even while it PHYSICALLY HOLDS A BIN. Occupancy is NOT read
-// at reserve time; a restock slot is full at plan time and round-trips empty→full.
+// one-active-per-node (the slot dual of the bin index), AND — the make-or-break
+// property — a slot is reservable even while it PHYSICALLY HOLDS A BIN. Occupancy
+// is NOT read at reserve time; a restock slot is full at plan time and round-trips
+// empty→full.
 func TestAcquireSlot_ExactlyOneWinner(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -452,7 +453,7 @@ func TestAcquireSlot_ExactlyOneWinner(t *testing.T) {
 	o2 := testdb.CreateOrder(t, db)
 
 	if err := reservations.AcquireSlot(db, o1.ID, node.ID, "test"); err != nil {
-		t.Fatalf("AcquireSlot on an OCCUPIED node must succeed (D29 — occupancy not read at reserve): %v", err)
+		t.Fatalf("AcquireSlot on an OCCUPIED node must succeed (occupancy is not read at reserve): %v", err)
 	}
 	if err := reservations.AcquireSlot(db, o2.ID, node.ID, "test"); err != reservations.ErrReservationConflict {
 		t.Fatalf("second AcquireSlot on the same node: want ErrReservationConflict, got %v", err)

@@ -2,7 +2,7 @@
 
 package dispatch
 
-// Concurrency test (ported to the 1c reserve/confirm split, D39): two orders
+// Concurrency test for the reserve/confirm split: two orders
 // reserveComplexPlan the same single-bin source at once. The reservations unique
 // index (per bin) admits exactly one — the winner reserves the bin and completes;
 // the loser sees ErrReservationConflict, counts the bin missing (incomplete, NOT

@@ -89,6 +89,33 @@ greppable.
 | `BeginReshuffle(ord, reason)` | `pending → reshuffling` | `Dispatcher.CreateCompoundOrder` |
 | `MarkPending(ord, reason)` | (initial write) | Order intake — `Create*Order` methods only. Bypasses `transition()` validation since there's no source status. |
 
+## Reservation lifecycle (alongside order status)
+
+While an order moves through the status machine above, its **reservations**
+(the soft holds on its source bins and destination slots) run a parallel,
+simpler lifecycle of their own. The two are coupled but not identical — see
+[reservations.md](../reservations.md) for the full mechanism.
+
+| Reservation state | When |
+|-------------------|------|
+| `pending` | written at plan time (`Acquire`/`AcquireSlot`) — the order holds the resource but hasn't shipped |
+| `confirmed` | flipped at dispatch (`Confirm`/`ConfirmSlot`), in the same transaction that writes the hard claim |
+| *(deleted)* | released the moment the order no longer needs the resource — at delivery, terminal, or a re-resolution that moved the source |
+
+Reservation states are **not** order statuses and don't go through
+`transition()`. Key couplings:
+
+- A `sourcing` or `queued` order holds its sources as `pending` reservations
+  and retries each scanner tick by **reconciling** them (keep held, release
+  moved, acquire newly needed) — it does not re-shop from scratch. The
+  `queued ↔ sourcing` edges in the order table above are what make this retry
+  possible.
+- `ReleaseByOrder` fires from the terminal chokepoint (`TerminalizeOrder`), so
+  no reservation outlives its owning order.
+- `ReapOrphaned` is the owner-liveness backstop: a hold is reclaimed only when
+  its order is terminal or gone — **never on age**. Pre-dispatch orders
+  (`queued`, `sourcing`) are therefore exempt from the stuck-order sweep.
+
 ## Bypass paths
 
 The following code paths legitimately do NOT route through

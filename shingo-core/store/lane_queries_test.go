@@ -14,7 +14,7 @@ import (
 
 // TestFindStoreSlot_SkipsReservedSlot: FindStoreSlotInLane is deepest-UNRESERVED —
 // a slot another order has reserved (even while physically empty + unclaimed) is
-// skipped, so two stores pack into distinct tiered slots (1d).
+// skipped, so two stores pack into distinct tiered slots.
 func TestFindStoreSlot_SkipsReservedSlot(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

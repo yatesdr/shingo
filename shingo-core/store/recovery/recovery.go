@@ -82,6 +82,14 @@ func RepairConfirmedOrderCompletion(db *sql.DB, orderID, binID, toNodeID int64, 
 	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'confirmed', 'order completion repaired')`, orderID); err != nil {
 		return fmt.Errorf("insert history: %w", err)
 	}
+	// Reconcile occupancy in the same tx before placing the repaired bin — the
+	// same stale-ghost eviction the arrival writers perform (ApplyArrival /
+	// ApplyMultiBinArrival). Without it this repair silently co-locates onto a
+	// node that already records another bin. Any evicted ghost is stamped
+	// anomaly_at and surfaces on the operator anomalies page.
+	if _, err := helpers.EvictStaleGhostBinsTx(tx, toNodeID, binID); err != nil {
+		return fmt.Errorf("reconcile stale ghost at node %d: %w", toNodeID, err)
+	}
 	if _, err := tx.Exec(`UPDATE bins SET node_id=$1, claimed_by=NULL, updated_at=NOW() WHERE id=$2`, toNodeID, binID); err != nil {
 		return fmt.Errorf("move bin: %w", err)
 	}

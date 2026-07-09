@@ -314,11 +314,12 @@ func (db *DB) ReleaseClaimForBin(binID, orderID int64) error {
 // order's claims without going terminal (which would otherwise leak the confirmed
 // reservations). Idempotent.
 //
-// Release-set unification (D45 §3.5): this now releases the SAME set as
-// TerminalizeOrder (minus the terminal-only _TRANSIT anomaly stamp). Before 1d it
-// cleared only bins + reservations; once slots are reservation-backed and hard-
-// claimed via ConfirmSlotClaim, dropping the bin claims without the slot claims +
-// order_bins would strand them — the gap this commit makes real, so it closes it.
+// Release-set unification: this now releases the SAME set as
+// TerminalizeOrder (minus the terminal-only _TRANSIT anomaly stamp). Before the
+// slot substrate it cleared only bins + reservations; once slots are
+// reservation-backed and hard-claimed via ConfirmSlotClaim, dropping the bin
+// claims without the slot claims + order_bins would strand them — the gap this
+// commit makes real, so it closes it.
 func (db *DB) ReleaseClaimByOrder(orderID int64) error {
 	tx, err := db.Begin()
 	if err != nil {

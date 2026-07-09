@@ -33,7 +33,7 @@ func mkSlotNode(t *testing.T, sdb *sql.DB, name string) int64 {
 	return n.ID
 }
 
-// (D47) TestClaimSlot_CASSemantics and TestClaimSlot_RefusesOccupiedSlot were
+// TestClaimSlot_CASSemantics and TestClaimSlot_RefusesOccupiedSlot were
 // deleted with nodes.ClaimSlot: the CAS/owner-idempotency/occupied-refusal behavior
 // now lives on the seatbelted path and is covered by TestConfirmSlotClaim_* below
 // (owner-idempotent heal, refuses-without-reservation, refuses-occupied, one-tx).
@@ -64,7 +64,7 @@ func TestUnclaimOrderSlots(t *testing.T) {
 }
 
 // TestRace_AcquireSlot_SingleWinner is the Hopkinsville #115/#117 characterization,
-// now at the reservation layer (1d): N orders race to RESERVE the SAME slot
+// now at the reservation layer: N orders race to RESERVE the SAME slot
 // concurrently — exactly one wins via uq_reservations_slot_active, the rest get a
 // clean ErrReservationConflict (and re-resolve elsewhere). Run under -race; the slot
 // reservation index is the single-winner guarantee (ClaimSlotTx then confirms it).
@@ -103,7 +103,7 @@ func TestRace_AcquireSlot_SingleWinner(t *testing.T) {
 // ── the slot seatbelt (ClaimSlotTx + db.ConfirmSlotClaim) ─────────────────────
 // ClaimSlotTx carries EXISTS(pending slot reservation) on the owner-idempotent CAS +
 // NOT EXISTS bins; ConfirmSlotClaim = claim+confirm in one tx. This is the sole
-// slot-claim path (the un-seatbelted nodes.ClaimSlot was deleted in D47).
+// slot-claim path (the un-seatbelted nodes.ClaimSlot was deleted).
 
 // TestConfirmSlotClaim_RefusesWithoutReservation: the demoted-CAS seatbelt refuses
 // a slot claim with no pending slot reservation — the slot dual of the bin seatbelt.
@@ -122,7 +122,7 @@ func TestConfirmSlotClaim_RefusesWithoutReservation(t *testing.T) {
 	}
 }
 
-// TestConfirmSlotClaim_OwnerIdempotentHeal is the slot mirror of the D46 bin
+// TestConfirmSlotClaim_OwnerIdempotentHeal is the slot mirror of the bin
 // wedge-heal: a slot already claimed_by the order with its reservation still
 // PENDING (claim committed, confirm didn't) heals on the next ConfirmSlotClaim —
 // owner-idempotent CAS (claimed_by=$order) + the seatbelt satisfied by the pending
@@ -149,7 +149,8 @@ func TestConfirmSlotClaim_OwnerIdempotentHeal(t *testing.T) {
 }
 
 // TestConfirmSlotClaim_RefusesOccupiedSlot: occupancy IS read at confirm (the
-// NOT EXISTS bins guard stays, D43 6/1) even though it is NOT read at reserve (D29).
+// NOT EXISTS bins guard stays) even though it is NOT read at reserve — an
+// occupied slot is reservable, just not claimable.
 // A slot physically holding a bin is refused at confirm, and neither half commits.
 func TestConfirmSlotClaim_RefusesOccupiedSlot(t *testing.T) {
 	t.Parallel()
@@ -160,7 +161,7 @@ func TestConfirmSlotClaim_RefusesOccupiedSlot(t *testing.T) {
 	order := testdb.CreateOrder(t, db)
 
 	if err := reservations.AcquireSlot(db.DB, order.ID, node.ID, "test"); err != nil {
-		t.Fatalf("AcquireSlot (reserve succeeds on an occupied node — D29): %v", err)
+		t.Fatalf("AcquireSlot (reserve succeeds on an occupied node — occupancy is not read at reserve): %v", err)
 	}
 	if err := db.ConfirmSlotClaim(node.ID, order.ID); err == nil {
 		t.Fatal("ConfirmSlotClaim on an OCCUPIED slot must be refused at confirm (NOT EXISTS bins), got nil")
@@ -172,7 +173,7 @@ func TestConfirmSlotClaim_RefusesOccupiedSlot(t *testing.T) {
 }
 
 // TestConfirmSlotClaim_OneTx: the hard claim and the reservation pending→confirmed
-// flip commit together or not at all (mirrors D46's claimAndConfirm). Both on
+// flip commit together or not at all (mirrors the bin claimAndConfirm). Both on
 // success; neither on the seatbelt-refused failure path.
 func TestConfirmSlotClaim_OneTx(t *testing.T) {
 	t.Parallel()

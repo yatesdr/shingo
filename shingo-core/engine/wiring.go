@@ -378,8 +378,8 @@ func (e *Engine) wireEventHandlers() {
 	// Only pushes if the order is still acquiring (queued or sourcing — the
 	// scanner didn't dispatch) and carries a non-empty blocking reason; orders
 	// the scanner dispatched transition out of the acquiring set, suppressing
-	// the push. Widened from queued-only in commit 3b so a `sourcing` order's
-	// block reason still reaches Edge (its actual status rides along).
+	// the push. Widened from queued-only to the acquiring set so a `sourcing`
+	// order's block reason still reaches Edge (its actual status rides along).
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
 		ev := evt.Payload
 		if ev.EdgeUUID == "" || ev.StationID == "" {

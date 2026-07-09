@@ -588,42 +588,18 @@ func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	}
 	defer tx.Rollback()
 
-	// Stale-state reconciliation. A successful arrival is physical proof
-	// the slot is empty: RDS faults on a delivery to an occupied single-bin
-	// position, so a completed delivery means any different bin shingo still
-	// records here is a stale ghost (an untracked manual move left the record
-	// behind). Evict the ghost to _TRANSIT, unclaimed + anomaly_at, so it
-	// surfaces in ListAnomalies and is recoverable via RecoverTransitAnomaly —
-	// never reject the newcomer, which the delivery just proved is the real
-	// bin. Synthetic nodes (LANE/NGRP/_TRANSIT) hold many bins by design and
-	// are exempt (mirrors ensurePhysicalNodeEmpty). The _TRANSIT lookup is
-	// lazy — only on the rare collision, not on every arrival.
-	evicted := false
-	var occupied bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM bins WHERE node_id=$1 AND id<>$2 AND status<>'retired')`,
-		toNodeID, binID).Scan(&occupied); err != nil {
-		return false, fmt.Errorf("check destination occupancy node %d: %w", toNodeID, err)
+	// Stale-ghost reconciliation, shared with ApplyMultiBinArrival via
+	// EvictStaleGhostsTx so the single-bin and multi-bin arrival paths cannot
+	// drift. A completed delivery is physical proof the slot was empty, so a
+	// different bin still recorded at this destination is a stale ghost — evicted
+	// to _TRANSIT (unclaimed + anomaly_at) so it surfaces in ListAnomalies and is
+	// recoverable via RecoverTransitAnomaly; the newcomer is never rejected.
+	// Synthetic nodes are exempt (handled inside the helper).
+	evictedGhosts, err := s.db.EvictStaleGhostsTx(tx, toNodeID, binID)
+	if err != nil {
+		return false, err
 	}
-	if occupied {
-		node, err := s.db.GetNode(toNodeID)
-		if err != nil {
-			return false, fmt.Errorf("lookup destination node %d: %w", toNodeID, err)
-		}
-		if !node.IsSynthetic {
-			transit, err := s.db.GetNodeByName(domain.TransitNodeName)
-			if err != nil {
-				return false, fmt.Errorf("lookup transit node %q: %w", domain.TransitNodeName, err)
-			}
-			res, err := tx.Exec(`UPDATE bins SET node_id=$1, claimed_by=NULL, anomaly_at=NOW(), updated_at=NOW()
-				WHERE node_id=$2 AND id<>$3 AND status<>'retired'`, transit.ID, toNodeID, binID)
-			if err != nil {
-				return false, fmt.Errorf("evict stale bin(s) from node %d: %w", toNodeID, err)
-			}
-			if n, _ := res.RowsAffected(); n > 0 {
-				evicted = true
-			}
-		}
-	}
+	evicted := len(evictedGhosts) > 0
 
 	if _, err := tx.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2`, toNodeID, binID); err != nil {
 		return false, fmt.Errorf("move bin: %w", err)
@@ -645,7 +621,7 @@ func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt 
 		return false, fmt.Errorf("release destination slot claim node %d: %w", toNodeID, err)
 	}
 	// ...and its slot RESERVATION, in the SAME tx (the slot dual of the bin
-	// ReleaseByBin above, 1d): a slot's reservation lives exactly as long as its
+	// ReleaseByBin above): a slot's reservation lives exactly as long as its
 	// hard claim, so the slot frees for re-reservation at delivery. No-op for a
 	// LINE delivery (never slot-reserved).
 	if err := reservations.ReleaseByNode(tx, toNodeID); err != nil {

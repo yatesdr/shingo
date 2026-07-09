@@ -33,6 +33,21 @@ binary (no TTL) and emerges naturally:
 `bins.anomaly_at` is an optional sort key for the operator's anomaly
 view; the binary signal is what fires alerts.
 
+### Reservation layer
+
+`claimed_by` is the **confirmed-claim mirror** of a reservation, not the
+whole ownership story. A bin a `sourcing` order intends to pick up is held by a
+**reservation** (a soft, revocable row) *before* `claimed_by` is set; the claim
+is written atomically with the reservation's `pending → confirmed` flip. So:
+
+- While an order is `sourcing`/`queued`, its sources are held as `pending`
+  reservations — `claimed_by` may still be NULL, but the bin is not free.
+- `claimed_by` and the reservation move together (one transaction); they never
+  drift apart. Clearing `claimed_by` releases the reservation in the same write.
+- The capacity gate and in-flight tally described below are the *destination*
+  side; source ownership is the reservation substrate. See
+  [reservations.md](reservations.md) for the reserve→claim→confirm lifecycle.
+
 ### Queue Reason
 
 Free-text column on `orders` describing why an order is sitting in
@@ -225,10 +240,13 @@ A few load-bearing predicates that govern this surface:
 ```
 "this order still owns the bin"     bin.claimed_by == order.id
                                     (was: bin.NodeID == sourceNode.ID — broke under transit)
+                                    Note: a sourcing order may own the bin as a
+                                    pending RESERVATION before claimed_by is set.
 
 "bin is in flight"                  bin.NodeID == _TRANSIT_id
 
 "bin can be re-claimed by another"  bin.claimed_by IS NULL AND
+                                    no active reservation holds it AND
                                     bin's node has is_synthetic=false
 
 "anomaly state"                     bin.NodeID == _TRANSIT_id AND
