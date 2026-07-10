@@ -46,16 +46,9 @@ func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderRe
 // treated as occupied by isOccupied — safe default that suppresses both
 // the downgrade and any paired-prime emission so a Core blip can't
 // dispatch phantom deliveries.
-//
-// Simple swap mode short-circuits to the head-only occupied=true
-// map: BuildConsumePlan ignores occupancy on that path anyway.
 func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
 	occ := map[string]bool{}
 	if claim == nil {
-		return occ
-	}
-	if claim.SwapMode == protocol.SwapModeSimple {
-		occ[claim.CoreNodeName] = true
 		return occ
 	}
 	names := []string{claim.CoreNodeName}

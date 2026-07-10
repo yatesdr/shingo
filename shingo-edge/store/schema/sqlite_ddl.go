@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     style_id                INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
     core_node_name          TEXT NOT NULL,
     role                    TEXT NOT NULL DEFAULT 'consume',
-    swap_mode               TEXT NOT NULL DEFAULT 'simple',
+    swap_mode               TEXT NOT NULL,
     payload_code            TEXT NOT NULL DEFAULT '',
     uop_capacity            INTEGER NOT NULL DEFAULT 0,
     reorder_point           INTEGER NOT NULL DEFAULT 0,

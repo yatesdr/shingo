@@ -55,7 +55,7 @@ func TestBuildConsumePlan_SimpleMode(t *testing.T) {
 		t.Errorf("simple move endpoints = %q→%q, want FILLED-STORAGE→CONSUME-NODE", plan.SimpleSource, plan.SimpleDest)
 	}
 	if plan.DowngradedFromSwapMode != "" {
-		t.Errorf("DowngradedFromSwapMode should be empty for native simple mode; got %q", plan.DowngradedFromSwapMode)
+		t.Errorf("DowngradedFromSwapMode should be empty on the occupied-head bare-move fallback; got %q", plan.DowngradedFromSwapMode)
 	}
 	if !plan.AutoConfirm {
 		t.Errorf("AutoConfirm = false, want true (passed in)")

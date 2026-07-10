@@ -422,7 +422,7 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 		StyleID:      sid,
 		CoreNodeName: "node-1",
 		Role:         "consume",
-		SwapMode:     "simple",
+		SwapMode:     "single_robot",
 		PayloadCode:  "BIN-A",
 		UOPCapacity:  100,
 		ReorderPoint: 10,
@@ -460,7 +460,7 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 		StyleID:      sid,
 		CoreNodeName: "node-1",
 		Role:         "consume",
-		SwapMode:     "simple",
+		SwapMode:     "single_robot",
 		PayloadCode:  "BIN-B",
 		UOPCapacity:  200,
 		ReorderPoint: 20,
@@ -512,6 +512,23 @@ func TestApiConfig_UpsertStyleNodeClaim_MissingCoreNodeName(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "core_node_name is required")
+}
+
+func TestApiConfig_UpsertStyleNodeClaim_RejectsRetiredSimple(t *testing.T) {
+	h, router := newAdminRouter(t)
+	cookie := authCookie(t, h)
+
+	pid := seedProcess(t, "SimpleRejectLine")
+	sid := seedStyle(t, "SimpleRejectStyle", pid)
+
+	// The retired "simple" mode is no longer configurable — the store allowlist
+	// rejects it and the handler maps that rejection to 400 (not a raw 500).
+	body := processes.NodeClaimInput{
+		StyleID: sid, CoreNodeName: "node-x", Role: "consume",
+		SwapMode: "simple", PayloadCode: "BIN-Z",
+	}
+	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
+	assertStatus(t, resp, http.StatusBadRequest)
 }
 
 // ═══════════════════════════════════════════════════════════════════════

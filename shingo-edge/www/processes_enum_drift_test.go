@@ -10,26 +10,30 @@ import (
 	"shingo/protocol"
 )
 
-// TestProcessesTemplateSwapModeOptions pins the <option value="..."> set
-// in the Swap Mode dropdown to protocol.AllSwapModes() — MINUS manual_swap.
-// Removing a swap mode from the protocol without removing its <option> (or
-// vice versa) fails this test in CI.
+// TestProcessesTemplateSwapModeOptions pins the <option value="..."> set in the
+// Swap Mode dropdown to protocol.ConfigurableSwapModes() — MINUS manual_swap,
+// PLUS the hidden historical "simple". Adding/removing a configurable mode
+// without matching the dropdown (or vice versa) fails this test in CI.
 //
-// "simple" is included as a hidden option — it's the default swap mode
-// for bare delivery (no swap choreography). New claims default to
-// single_robot in the editor, so "simple" is not user-selectable, but
-// existing claims with swap_mode="simple" must still render in edit mode.
+// "simple" is retired as a configurable claim mode: the store upsert allowlist
+// rejects it (it survives only as a runtime CycleMode descriptor, never a
+// persisted claim mode). It stays in the dropdown ONLY as a hidden <option> so
+// an existing swap_mode="simple" row still renders when an old claim is opened
+// in edit mode; it is not user-selectable.
 //
 // manual_swap is intentionally EXCLUDED from the dropdown (commit 0ef5b95):
 // bin loaders / unloaders are Core-owned topology and resolve at runtime via
 // the loader aggregate (SynthClaim), so they are no longer authored or edited
 // in this editor. Existing manual_swap claims still render read-only in the
-// claims list, but the Swap Mode dropdown drops the option. Every OTHER swap
-// mode must still match the protocol enum, so the drift guard holds for them.
+// claims list, but the Swap Mode dropdown drops the option. Every OTHER
+// configurable mode must still match the protocol enum, so the drift guard
+// holds for them.
 func TestProcessesTemplateSwapModeOptions(t *testing.T) {
 	got := readSelectOptions(t, "claims-add-swap")
-	want := make([]string, 0, len(protocol.AllSwapModes()))
-	for _, m := range protocol.AllSwapModes() {
+	// Hidden historical option (retired mode, still rendered for old rows) plus
+	// every configurable mode except manual_swap (Core-owned; see docstring).
+	want := []string{string(protocol.SwapModeSimple)}
+	for _, m := range protocol.ConfigurableSwapModes() {
 		if m == protocol.SwapModeManualSwap {
 			continue // not authored in the editor — see docstring
 		}

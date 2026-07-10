@@ -358,7 +358,7 @@ func TestRegression_TickDuringTwoRobotSwap(t *testing.T) {
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 60), "seed runtime")
 	// Promote claim to two_robot so the supply-bin guard is exercised.
 	claim, _ := db.GetStyleNodeClaimByNode(styleID, "TR-SWAP-NODE")
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: claim.StyleID, CoreNodeName: claim.CoreNodeName,
 		Role: claim.Role, SwapMode: "two_robot",
 		PayloadCode: claim.PayloadCode, UOPCapacity: claim.UOPCapacity,
@@ -586,12 +586,12 @@ func seedRunoutScenario(t *testing.T, db *store.DB, prefix string) (processID, n
 	toStyleID, _ = db.CreateStyle(prefix+"-TO", prefix+" to", processID)
 	db.SetActiveStyle(processID, &fromStyleID)
 
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: prefix + "-NODE",
 		Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-OLD", UOPCapacity: 100,
 	})
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: prefix + "-NODE",
 		Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-NEW", UOPCapacity: 100,
@@ -613,12 +613,12 @@ func seedTwoStyleNode(t *testing.T, db *store.DB, prefix string) (processID, nod
 	styleX, _ = db.CreateStyle(prefix+"-X", prefix+" X", processID)
 	styleY, _ = db.CreateStyle(prefix+"-Y", prefix+" Y", processID)
 
-	claimX, _ = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimX, _ = upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: styleX, CoreNodeName: prefix + "-NODE",
 		Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-X", UOPCapacity: 200,
 	})
-	claimY, _ = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimY, _ = upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: styleY, CoreNodeName: prefix + "-NODE",
 		Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-Y", UOPCapacity: 150,

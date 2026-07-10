@@ -247,7 +247,7 @@ Fields:
 - `uop_capacity`
 - `reorder_point`
 - `auto_reorder_enabled`
-- `cycle_mode` (`simple`, `sequential`, `single_robot`, `two_robot`)
+- `cycle_mode` (`sequential`, `single_robot`, `two_robot`, `two_robot_press_index`, `manual_swap`; `simple` is the runtime node-empty downgrade descriptor, not an operator-selectable mode)
 - `retrieve_empty`
 - `requires_manifest_confirmation`
 - `allows_partial_return`

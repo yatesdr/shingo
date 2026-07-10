@@ -102,7 +102,7 @@ func TestScenario_SwapFinalizeStampsCoreBinWithoutOrderRow(t *testing.T) {
 	if err := edge.DB.SetActiveStyle(processID, &styleID); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}
-	claimID, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err := upsertClaimLegacySimple(edge.DB, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        produceNodeName,
 		Role:                "produce",

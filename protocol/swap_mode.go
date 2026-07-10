@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"database/sql/driver"
+	"errors"
 )
 
 // SwapMode is the typed canonical changeover/dispatch swap mode for a
@@ -13,6 +14,10 @@ type SwapMode string
 // Canonical swap-mode constants shared by core and edge. Wire/DB values
 // are byte-identical to the raw strings these replace.
 const (
+	// SwapModeSimple is retained as a CycleMode descriptor for the node-empty
+	// downgrade (a claim with an empty head collapses to a delivery move tagged
+	// "simple"); it is no longer a configurable claim mode — UpsertClaim and
+	// plantspec.Validate reject it. See ConfigurableSwapModes.
 	SwapModeSimple             SwapMode = "simple"
 	SwapModeSingleRobot        SwapMode = "single_robot"
 	SwapModeTwoRobot           SwapMode = "two_robot"
@@ -52,6 +57,30 @@ func (m SwapMode) Value() (driver.Value, error) {
 func AllSwapModes() []SwapMode {
 	return []SwapMode{
 		SwapModeSimple,
+		SwapModeSingleRobot,
+		SwapModeTwoRobot,
+		SwapModeTwoRobotPressIndex,
+		SwapModeSequential,
+		SwapModeManualSwap,
+	}
+}
+
+// ErrInvalidSwapMode marks a claim rejected because its swap_mode is missing or
+// not configurable — blank, the retired "simple", the in-memory-only
+// "press_position" marker, a typo, or a stale import value. It's a client input
+// problem, so HTTP handlers map it to 400 rather than 500. Callers wrap it with
+// %w; the StyleService and store layers forward the error verbatim, so
+// errors.Is sees it end to end.
+var ErrInvalidSwapMode = errors.New("invalid swap_mode")
+
+// ConfigurableSwapModes returns every swap mode that may be persisted on a
+// style node claim: AllSwapModes minus SwapModeSimple. Simple is retired as a
+// configurable mode — it survives ONLY as a runtime CycleMode descriptor for
+// the node-empty downgrade, never as a stored claim mode. The claim-upsert
+// allowlist, the editor's Swap Mode dropdown, and its drift test all key on
+// this set so they can never disagree about what is selectable.
+func ConfigurableSwapModes() []SwapMode {
+	return []SwapMode{
 		SwapModeSingleRobot,
 		SwapModeTwoRobot,
 		SwapModeTwoRobotPressIndex,

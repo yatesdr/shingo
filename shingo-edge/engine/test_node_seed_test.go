@@ -71,7 +71,7 @@ func seedReconcilerNode(t *testing.T, db *store.DB, prefix, payloadCode string) 
 		t.Fatalf("create style: %v", err)
 	}
 	db.SetActiveStyle(processID, &styleID)
-	claimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID:      styleID,
 		CoreNodeName: prefix + "-NODE",
 		Role:         "consume",

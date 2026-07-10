@@ -72,7 +72,7 @@ func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing
 		t.Fatalf("set active style: %v", err)
 	}
 	for _, nodeName := range []string{"NODE-A", "NODE-B"} {
-		if _, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		if _, err := upsertClaimLegacySimple(edge.DB, processes.NodeClaimInput{
 			StyleID: fromStyleID, CoreNodeName: nodeName,
 			Role: "consume", SwapMode: "simple",
 			PayloadCode: "OLD-" + nodeName, UOPCapacity: 100,
@@ -82,7 +82,7 @@ func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing
 		}); err != nil {
 			t.Fatalf("upsert from claim %s: %v", nodeName, err)
 		}
-		if _, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		if _, err := upsertClaimLegacySimple(edge.DB, processes.NodeClaimInput{
 			StyleID: toStyleID, CoreNodeName: nodeName,
 			Role: "consume", SwapMode: "simple",
 			PayloadCode: "NEW-" + nodeName, UOPCapacity: 200,

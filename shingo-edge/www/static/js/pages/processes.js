@@ -607,7 +607,12 @@ function claimFieldVisibility(role, swap) {
     // role is now constrained to consume|produce; the legacy "changeover"
     // role was removed during the UI consistency refactor and is no
     // longer present in either the protocol or the editor's dropdown.
-    const showPair = !isManual;
+    //
+    // The A/B (paired-node) fieldset is only meaningful for the two modes whose
+    // engine dispatch reads PairedCoreNode/SecondPairedCoreNode: sequential
+    // (A/B cycling) and two_robot_press_index. single_robot and two_robot use
+    // staging, not paired nodes, so the fieldset must NOT render for them.
+    const showPair = swap === 'sequential' || isPressIndex;
     return {
         'claims-add-payload-group':           !isManual,
         'claims-add-allowed-group':           false,
@@ -1070,7 +1075,7 @@ function editClaim(claim) {
         id: claim.id,
         coreNodeName: claim.core_node_name,
         role: claim.role || 'consume',
-        swapMode: claim.swap_mode || 'simple',
+        swapMode: claim.swap_mode || '',
         payloadCode: claim.payload_code || '',
         uopCapacity: claim.uop_capacity || 0,
         reorderPoint: claim.reorder_point || 0,

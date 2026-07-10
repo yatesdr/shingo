@@ -257,7 +257,7 @@ func TestLoadablePayloads_NotGatedByActiveStyle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create inactive style: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: inactive, CoreNodeName: "LOADER",
 		Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeManualSwap,
 		PayloadCode: "PART-B", AllowedPayloadCodes: []string{"PART-B"},
@@ -286,9 +286,12 @@ func TestLoadablePayloads_NotGatedByActiveStyle(t *testing.T) {
 	}
 }
 
-// seedSimpleClaim seeds a process/node/style/claim with SwapMode "simple" so
-// that PushEmptyOut's manual_swap guard can be exercised.
-func seedSimpleClaim(t *testing.T, db *store.DB, prefix string, role protocol.ClaimRole) (nodeID int64) {
+// seedLegacySimpleClaim seeds a process/node/style/claim carrying the retired
+// "simple" swap mode as a legacy DB row (via upsertClaimLegacySimple). "simple"
+// is no longer a configurable mode after the ingress lockdown, but legacy rows
+// still exist and hit the surviving bare-move / nil-dispatch path — this seeds
+// one so PushEmptyOut's guard can be exercised on it.
+func seedLegacySimpleClaim(t *testing.T, db *store.DB, prefix string, role protocol.ClaimRole) (nodeID int64) {
 	t.Helper()
 	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" simple", "active_production", "", "", false, false)
 	if err != nil {
@@ -311,7 +314,7 @@ func seedSimpleClaim(t *testing.T, db *store.DB, prefix string, role protocol.Cl
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID:      styleID,
 		CoreNodeName: prefix + "-SIMPLE-NODE",
 		Role:         role,
@@ -378,7 +381,7 @@ func TestPushEmptyOut_NonManualSwapNode_ReturnsError(t *testing.T) {
 	srv := fakeCoreBinServer(t, true, "")
 
 	db := testEngineDB(t)
-	nodeID := seedSimpleClaim(t, db, "SMP", "consume")
+	nodeID := seedLegacySimpleClaim(t, db, "SMP", "consume")
 
 	eng := testEngine(t, db)
 	eng.coreClient = NewCoreClient(srv.URL)

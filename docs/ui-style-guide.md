@@ -1098,13 +1098,17 @@ Scheduled removals live in `docs/ui-deprecations.md`:
 ```markdown
 ## Pending removal
 
-### `swap_mode = "simple"` — RESTORED (valid mode, hidden from UI)
+### `swap_mode = "simple"` — RETIRED as a configurable mode (descriptor only)
 - **Hidden in UI:** 2026-04
-- **Restored:** 2026-05
-- **Status:** "simple" is a valid SwapMode constant. It is hidden from the
-  UI dropdown but the store normalizes to it and the engine uses it
-  internally. The engine uses `protocol.SwapModeSimple` as the result tag
-  for simple-delivery dispatches (see consume_plan.go).
+- **Retired as configurable:** 2026-07 (ingress lockdown)
+- **Status:** "simple" is no longer a configurable claim mode. `UpsertClaim`
+  and `plantspec.Validate` reject it, and the store no longer normalizes a
+  blank swap_mode to it (blank now fails loud). It survives ONLY as the runtime
+  `protocol.SwapModeSimple` CycleMode descriptor — the node-empty downgrade tag
+  and the bare-move result tag (see consume_plan.go / operator_stations.go). A
+  hidden `<option value="simple">` remains in the dropdown solely so an existing
+  legacy row still renders when opened in edit mode. The allowlist, the
+  dropdown, and its drift test all key on `protocol.ConfigurableSwapModes()`.
 
 ### `claim.keep_staged` column
 - **UI removed:** 2026-03

@@ -73,7 +73,7 @@ func TestScenario_ReleaseIsChangeoverIndependent(t *testing.T) {
 		t.Fatalf("set active style: %v", err)
 	}
 	// Node A: from-claim and to-claim differ → changeover creates Phase-3 swap orders.
-	if _, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimLegacySimple(edge.DB, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "NODE-A",
 		Role: "consume", SwapMode: "simple",
 		PayloadCode: "OLD-A", UOPCapacity: 100,
@@ -81,7 +81,7 @@ func TestScenario_ReleaseIsChangeoverIndependent(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert from claim A: %v", err)
 	}
-	if _, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimLegacySimple(edge.DB, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "NODE-A",
 		Role: "consume", SwapMode: "simple",
 		PayloadCode: "NEW-A", UOPCapacity: 200,
@@ -91,7 +91,7 @@ func TestScenario_ReleaseIsChangeoverIndependent(t *testing.T) {
 	}
 	// Node B: same payload across both styles → changeover task lands as "unchanged".
 	for _, sid := range []int64{fromStyleID, toStyleID} {
-		if _, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		if _, err := upsertClaimLegacySimple(edge.DB, processes.NodeClaimInput{
 			StyleID: sid, CoreNodeName: "NODE-B",
 			Role: "consume", SwapMode: "simple",
 			PayloadCode: "STABLE-B", UOPCapacity: 100,

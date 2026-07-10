@@ -1,11 +1,13 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/store/catalog"
@@ -1255,15 +1257,23 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
-	// Insert with defaults (role blanks → "consume", swap_mode blank → "simple").
-	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	// swap_mode is required — a blank now fails loud (the retired "simple"
+	// default was dropped with the ingress lockdown).
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N1", PayloadCode: "PL-1",
+	}); !errors.Is(err, protocol.ErrInvalidSwapMode) {
+		t.Fatalf("blank swap_mode: want ErrInvalidSwapMode, got %v", err)
+	}
+
+	// Insert with an explicit configurable mode (role blank → "consume").
+	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL-1",
 	})
 	if err != nil {
 		t.Fatalf("upsert insert: %v", err)
 	}
 	got, _ := db.GetStyleNodeClaim(id)
-	if got.Role != "consume" || got.SwapMode != "simple" {
+	if got.Role != "consume" || got.SwapMode != "single_robot" {
 		t.Errorf("defaults: role=%q swap_mode=%q", got.Role, got.SwapMode)
 	}
 	if got.Sequence != 1 {
@@ -1272,7 +1282,7 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 
 	// Second insert on a different node — sequence auto-increments.
 	id2, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N2", Role: "produce", PayloadCode: "PL-2",
+		StyleID: sid, CoreNodeName: "N2", Role: "produce", SwapMode: "single_robot", PayloadCode: "PL-2",
 	})
 	got2, _ := db.GetStyleNodeClaim(id2)
 	if got2.Sequence != 2 {
@@ -1281,7 +1291,7 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 
 	// Upsert on existing (styleID + coreNodeName match) — returns same id, updates fields.
 	id3, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N1", Role: "produce", PayloadCode: "PL-1-v2",
+		StyleID: sid, CoreNodeName: "N1", Role: "produce", SwapMode: "single_robot", PayloadCode: "PL-1-v2",
 		AllowedPayloadCodes: []string{"PL-1-v2", "PL-FALLBACK"},
 	})
 	if err != nil {
@@ -1405,7 +1415,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 
 	// Default (unset) persists as 0.
 	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N1", PayloadCode: "PL",
+		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL",
 	})
 	if err != nil {
 		t.Fatalf("insert default: %v", err)
@@ -1417,7 +1427,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 
 	// Explicit value on update survives.
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N1", PayloadCode: "PL",
+		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL",
 		LinesideSoftThreshold: 12,
 	}); err != nil {
 		t.Fatalf("update with threshold: %v", err)
@@ -1435,7 +1445,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 
 	// Explicit value on fresh insert (different node) also survives.
 	id2, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N2", PayloadCode: "PL2",
+		StyleID: sid, CoreNodeName: "N2", SwapMode: "single_robot", PayloadCode: "PL2",
 		LinesideSoftThreshold: 5,
 	})
 	if err != nil {
@@ -1452,7 +1462,7 @@ func TestStyleNodeClaims_Delete(t *testing.T) {
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 	id, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N", PayloadCode: "PL",
+		StyleID: sid, CoreNodeName: "N", SwapMode: "single_robot", PayloadCode: "PL",
 	})
 	testutil.MustNoErr(t, db.DeleteStyleNodeClaim(id), "delete")
 	if _, err := db.GetStyleNodeClaim(id); err == nil {
@@ -1480,7 +1490,7 @@ func TestCloneStyle_CopiesClaimsVerbatim(t *testing.T) {
 	pid, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
 
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: baseID, CoreNodeName: "IN", Role: "consume", PayloadCode: "RAW-1", UOPCapacity: 100,
+		StyleID: baseID, CoreNodeName: "IN", Role: "consume", SwapMode: "single_robot", PayloadCode: "RAW-1", UOPCapacity: 100,
 	}); err != nil {
 		t.Fatalf("seed consume claim: %v", err)
 	}
@@ -1532,7 +1542,7 @@ func TestGenerateStyles_BatchAppliesPerNodeOverrides(t *testing.T) {
 	_, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
 	for _, n := range []string{"OUT_L", "OUT_R"} {
 		if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-			StyleID: baseID, CoreNodeName: n, Role: "produce", PayloadCode: "BASE-" + n, UOPCapacity: 1,
+			StyleID: baseID, CoreNodeName: n, Role: "produce", SwapMode: "single_robot", PayloadCode: "BASE-" + n, UOPCapacity: 1,
 		}); err != nil {
 			t.Fatalf("seed %s: %v", n, err)
 		}

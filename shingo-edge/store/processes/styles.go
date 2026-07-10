@@ -132,6 +132,10 @@ func cloneStyleTx(tx *sql.Tx, src *Style, name, description string) (int64, erro
 	if err != nil {
 		return 0, err
 	}
+	// swap_mode is copied verbatim. This trusts that live claims already hold a
+	// real (configurable) mode: the upsert allowlist has rejected "simple" since
+	// the ingress lockdown, and the pre-merge diagnostic confirmed zero simple
+	// rows — so there is nothing stale to re-validate on the copy.
 	_, err = tx.Exec(`INSERT INTO style_node_claims (style_id, `+cloneClaimColumns+`)
 		SELECT ?, `+cloneClaimColumns+` FROM style_node_claims WHERE style_id = ?`,
 		newID, src.ID)

@@ -319,7 +319,7 @@ func seedManualSwapClaim(t *testing.T, db *store.DB, prefix string, role protoco
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	claimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        prefix + "-MSWAP-NODE",
 		Role:                role,
@@ -526,7 +526,7 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 	}{
 		{
 			name:  "simple_consume_zeroes",
-			setup: setup{swapMode: "", role: "consume", releaseSide: "single"},
+			setup: setup{swapMode: "simple", role: "consume", releaseSide: "single"},
 			disp:  DispositionCaptureLineside,
 			want:  want{runtimeUOP: 0},
 		},
@@ -563,13 +563,13 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 			// (mirrors the RemainingUOP synced to Core); the next bin's
 			// count arrives on its OrderDelivered envelope.
 			name:  "send_partial_back_preserves",
-			setup: setup{swapMode: "", role: "consume", releaseSide: "single"},
+			setup: setup{swapMode: "simple", role: "consume", releaseSide: "single"},
 			disp:  DispositionSendPartialBack,
 			want:  want{runtimeUOP: seededUOP},
 		},
 		{
 			name:  "produce_role_preserves",
-			setup: setup{swapMode: "", role: "produce", releaseSide: "single"},
+			setup: setup{swapMode: "simple", role: "produce", releaseSide: "single"},
 			disp:  DispositionCaptureLineside,
 			want:  want{runtimeUOP: seededUOP},
 		},
@@ -615,7 +615,7 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 				claimInput.PairedCoreNode = coreNode + "-PAIR"
 				claimInput.OutboundDestination = "REL-MODE-OUTBOUND"
 			}
-			claimID, err := db.UpsertStyleNodeClaim(claimInput)
+			claimID, err := upsertClaimLegacySimple(db, claimInput)
 			if err != nil {
 				t.Fatalf("upsert claim: %v", err)
 			}

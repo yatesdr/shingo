@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"shingo/protocol"
@@ -30,7 +31,9 @@ import (
 // refactor; changeovers are now driven by swap_mode + EvacuateOnChangeover.)
 //
 // SwapMode controls the choreography:
-//   - "simple":      bare delivery move, no swap choreography
+//   - "simple":      RETIRED as a configurable claim mode — UpsertClaim no
+//     longer accepts it. Survives only as a runtime CycleMode descriptor for
+//     the node-empty downgrade (see protocol.SwapModeSimple).
 //   - "sequential":  backfill while current bin is in transit
 //   - "single_robot": inbound + outbound staging for single-robot swap
 //   - "two_robot":   dual-robot swap with inbound staging
@@ -132,19 +135,23 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	if in.Role != protocol.ClaimRoleProduce {
 		in.Role = protocol.ClaimRoleConsume
 	}
+	// swap_mode is required — fail loud on blank rather than silently pick a
+	// mode. The editor defaults new claims to single_robot, so the normal path
+	// never hits this; a blank here is a non-UI caller (import, stale API poke).
+	// No mode is a safe default: two_robot needs inbound staging and
+	// single_robot needs inbound+outbound staging, so any default would only
+	// trade a mode error for a more misleading staging error.
 	if in.SwapMode == "" {
-		in.SwapMode = protocol.SwapModeSimple
+		return 0, fmt.Errorf("%w: swap_mode is required", protocol.ErrInvalidSwapMode)
 	}
-	// SwapMode allowlist. "press_position" used by the per-position
-	// fan-out post-processor is in-memory only and must never be
-	// persisted; the allowlist also rejects typos and stale values
-	// from imports.
-	switch in.SwapMode {
-	case protocol.SwapModeSimple, protocol.SwapModeSingleRobot, protocol.SwapModeTwoRobot,
-		protocol.SwapModeTwoRobotPressIndex, protocol.SwapModeSequential, protocol.SwapModeManualSwap:
-		// allowed
-	default:
-		return 0, fmt.Errorf("unknown swap_mode %q", in.SwapMode)
+	// SwapMode allowlist, keyed on protocol.ConfigurableSwapModes() so it can
+	// never drift from the editor dropdown or its drift test. The retired
+	// "simple" is deliberately absent — it survives only as a runtime CycleMode
+	// descriptor, never a persisted claim mode. "press_position" (the
+	// per-position fan-out marker) is in-memory only and must never persist; the
+	// allowlist also rejects typos and stale import values.
+	if !slices.Contains(protocol.ConfigurableSwapModes(), in.SwapMode) {
+		return 0, fmt.Errorf("%w: %q is not a configurable swap_mode", protocol.ErrInvalidSwapMode, in.SwapMode)
 	}
 	// manual_swap claims require OutboundDestination — without it the
 	// post-swap bin has nowhere to go and the node deadlocks.

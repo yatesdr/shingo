@@ -92,10 +92,10 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		AutoConfirm: autoConfirm,
 	}
 
-	// Node-empty downgrade: nothing physically present to swap out, so
-	// any non-simple mode collapses to a delivery move.
+	// Node-empty downgrade: nothing physically present to swap out, so the
+	// swap collapses to a plain delivery move regardless of mode.
 	headOccupied := isOccupied(occupancy, claim.CoreNodeName)
-	if claim.SwapMode != protocol.SwapModeSimple && !headOccupied {
+	if !headOccupied {
 		if claim.InboundSource == "" {
 			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
 		}
@@ -127,7 +127,9 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		return nil, err
 	}
 	if dispatch == nil {
-		// Default (simple / unrecognised) branch — issue a bare move.
+		// Bare-move fallback: BuildSwapDispatch returned nil (an unrecognised or
+		// unconfigured mode, or a legacy "simple" row with an occupied head).
+		// Issue a single delivery move.
 		if claim.InboundSource == "" {
 			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
 		}

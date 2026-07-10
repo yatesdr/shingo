@@ -7,6 +7,7 @@ package www
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -248,7 +249,14 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	}
 	id, err := h.engine.StyleService().UpsertClaim(in)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		// A swap_mode rejection (blank, the retired "simple", a typo, a stale
+		// import value) is a client input problem — surface it as 400 with the
+		// store's message. Genuine DB faults stay 500.
+		status := http.StatusInternalServerError
+		if errors.Is(err, protocol.ErrInvalidSwapMode) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
 		return
 	}
 	// Operator-driven flag is loader-wide (keyed by core_node_name) and

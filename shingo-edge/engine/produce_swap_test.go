@@ -41,7 +41,13 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (pr
 	}
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &styleID), "set active style")
 
-	claimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	// A blank swap mode is the legacy simple-produce default (blank historically
+	// coerced to "simple"); map it explicitly so the seed routes through the
+	// legacy-simple test shim (upsertClaimLegacySimple) below.
+	if swapMode == "" {
+		swapMode = protocol.SwapModeSimple
+	}
+	claimID, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        "PRODUCE-NODE",
 		Role:                "produce",
@@ -393,7 +399,7 @@ func TestProduceFinalize_RejectsConsumeNode(t *testing.T) {
 	eng := testEngine(t, db)
 
 	// Override claim to consume role
-	_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID:      styleID,
 		CoreNodeName: "PRODUCE-NODE",
 		Role:         "consume",
@@ -533,7 +539,7 @@ func TestReleaseStagedOrders_RejectsNonTwoRobot(t *testing.T) {
 
 	// Flip the claim's swap mode out from under the runtime. Both order IDs
 	// remain tracked, but ReleaseStagedOrders should refuse.
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        "PRODUCE-NODE",
 		Role:                "produce",

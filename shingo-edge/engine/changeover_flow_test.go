@@ -34,7 +34,7 @@ func seedDropScenario(t *testing.T, db *store.DB) (processID, nodeID, fromStyleI
 	toStyleID, _ = db.CreateStyle("DROP-TO", "drop to", processID)
 	db.SetActiveStyle(processID, &fromStyleID)
 
-	fcID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	fcID, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "DROP-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-DROP", UOPCapacity: 100, InboundSource: "SRC-DROP",
 		OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST-DROP",
@@ -73,31 +73,31 @@ func seedMultiNodeScenario(t *testing.T, db *store.DB) (processID int64, nodes m
 	db.SetActiveStyle(processID, &fromStyleID)
 
 	// From-style claims: SWAP (full staging), UNCHANGED, DROP (full staging)
-	swapFC, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	swapFC, _ := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "NODE-SWAP", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-OLD", UOPCapacity: 100, InboundSource: "SRC-OLD",
 		OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST-OLD",
 	})
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "NODE-UNCHANGED", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "SRC-SAME",
 	})
-	dropFC, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	dropFC, _ := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "NODE-DROP", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-DROP", UOPCapacity: 100, InboundSource: "SRC-DROP",
 		OutboundStaging: "OUT-STAGE-DROP", OutboundDestination: "DEST-DROP",
 	})
 
 	// To-style claims: SWAP (new payload, full staging), UNCHANGED (same), ADD (new node)
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "NODE-SWAP", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-NEW", UOPCapacity: 200, InboundSource: "SRC-NEW", InboundStaging: "IN-STAGE",
 	})
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "NODE-UNCHANGED", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "SRC-SAME",
 	})
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "NODE-ADD", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-ADD", UOPCapacity: 50, InboundSource: "SRC-ADD", InboundStaging: "IN-STAGE-ADD",
 	})
@@ -123,11 +123,11 @@ func seedNoChangeScenario(t *testing.T, db *store.DB) (processID, nodeID, fromSt
 	toStyleID, _ = db.CreateStyle("NC-TO", "to", processID)
 	db.SetActiveStyle(processID, &fromStyleID)
 
-	fcID, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	fcID, _ := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "NC-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "SRC",
 	})
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "NC-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "SRC",
 	})
@@ -342,7 +342,7 @@ func TestChangeoverFlow_DoubleChangeover(t *testing.T) {
 
 	// Create a third style for the second changeover
 	styleC, _ := db.CreateStyle("Style-P3-C", "third style", processID)
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: styleC, CoreNodeName: "P3-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-C", UOPCapacity: 300, InboundSource: "SRC-C", InboundStaging: "IN-STAGING",
 	})
@@ -552,12 +552,12 @@ func TestChangeoverFlow_PartialCompletion(t *testing.T) {
 		nodeIDs[i], _ = db.CreateProcessNode(processes.NodeInput{
 			ProcessID: processID, CoreNodeName: name, Code: suffix, Name: name, Sequence: i + 1, Enabled: true,
 		})
-		fcID, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		fcID, _ := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 			StyleID: fromStyleID, CoreNodeName: name, Role: "consume", SwapMode: "simple",
 			PayloadCode: "OLD-" + suffix, UOPCapacity: 100, InboundSource: "SRC-OLD",
 			OutboundStaging: "OUT-" + suffix, OutboundDestination: "DEST-" + suffix,
 		})
-		db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		upsertClaimLegacySimple(db, processes.NodeClaimInput{
 			StyleID: toStyleID, CoreNodeName: name, Role: "consume", SwapMode: "simple",
 			PayloadCode: "NEW-" + suffix, UOPCapacity: 200, InboundSource: "SRC-NEW", InboundStaging: "IN-" + suffix,
 		})
@@ -699,13 +699,13 @@ func TestChangeoverFlow_KeepStagedWithEvacuate(t *testing.T) {
 	toStyleID, _ := db.CreateStyle("KS-EV-TO", "to", processID)
 	db.SetActiveStyle(processID, &fromStyleID)
 
-	fcID, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	fcID, _ := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "KS-EV-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "SRC",
 		InboundStaging: "STAGING", OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST",
 		KeepStaged: true, EvacuateOnChangeover: true,
 	})
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "KS-EV-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-SAME", UOPCapacity: 200, InboundSource: "SRC",
 		InboundStaging: "STAGING", EvacuateOnChangeover: true,
@@ -772,13 +772,13 @@ func TestChangeoverFlow_KeepStagedToNoKeep(t *testing.T) {
 	toStyleID, _ := db.CreateStyle("KS2NK-TO", "to", processID)
 	db.SetActiveStyle(processID, &fromStyleID)
 
-	fcID, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	fcID, _ := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "KS2NK-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-OLD", UOPCapacity: 100, InboundSource: "SRC-OLD",
 		InboundStaging: "STAGING", OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST",
 		KeepStaged: true,
 	})
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "KS2NK-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-NEW", UOPCapacity: 200, InboundSource: "SRC-NEW",
 		InboundStaging: "STAGING",
@@ -819,14 +819,14 @@ func TestChangeoverFlow_KeepStagedMissingStaging(t *testing.T) {
 	toStyleID, _ := db.CreateStyle("KSMS-TO", "to", processID)
 	db.SetActiveStyle(processID, &fromStyleID)
 
-	fcID, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	fcID, _ := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "KSMS-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-OLD", UOPCapacity: 100, InboundSource: "SRC-OLD",
 		OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST",
 		KeepStaged: true,
 		// InboundStaging not set — can't stage
 	})
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "KSMS-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-NEW", UOPCapacity: 200, InboundSource: "SRC-NEW",
 		// InboundStaging not set

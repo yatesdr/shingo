@@ -108,7 +108,7 @@ func seedClaim(t *testing.T, db *store.DB, styleID int64, coreNode, payloadCode 
 		StyleID:      styleID,
 		CoreNodeName: coreNode,
 		Role:         "consume",
-		SwapMode:     "simple",
+		SwapMode:     "single_robot",
 		PayloadCode:  payloadCode,
 	})
 	if err != nil {

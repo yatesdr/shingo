@@ -4,10 +4,12 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free), same as shingo-edge
 
+	"shingo/protocol"
 	"shingocore/plantspec"
 	"shingocore/store/nodes"
 )
@@ -189,6 +191,13 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		sid, ok := styleIDs[c.Style]
 		if !ok {
 			return fmt.Errorf("claim %s/%s: style %q not seeded", c.CoreNode, c.Style, c.Style)
+		}
+		// The raw INSERT bypasses shingo-edge's UpsertClaim allowlist (seeddev
+		// can't import the edge module), so mirror the same swap_mode gate here:
+		// reject blank / retired "simple" / typos before the write rather than
+		// persist a mode the runtime can't dispatch.
+		if !slices.Contains(protocol.ConfigurableSwapModes(), protocol.SwapMode(c.SwapMode)) {
+			return fmt.Errorf("claim %s/%s: swap_mode %q is not configurable (simple is retired; use a real mode)", c.CoreNode, c.Style, c.SwapMode)
 		}
 		if _, err := db.Exec(`
 			INSERT OR IGNORE INTO style_node_claims

@@ -93,7 +93,7 @@ func TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup(t *testi
 	if err := edge.DB.SetActiveStyle(processID, &fromStyleID); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}
-	fromClaimID, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	fromClaimID, err := upsertClaimLegacySimple(edge.DB, processes.NodeClaimInput{
 		StyleID:             fromStyleID,
 		CoreNodeName:        "P3-NODE",
 		Role:                "consume",
@@ -107,7 +107,7 @@ func TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup(t *testi
 	if err != nil {
 		t.Fatalf("upsert from claim: %v", err)
 	}
-	if _, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimLegacySimple(edge.DB, processes.NodeClaimInput{
 		StyleID:        toStyleID,
 		CoreNodeName:   "P3-NODE",
 		Role:           "consume",

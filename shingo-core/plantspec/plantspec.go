@@ -120,7 +120,7 @@ type Claim struct {
 	CoreNode            string `yaml:"core_node"`
 	Style               string `yaml:"style"`
 	Role                string `yaml:"role"`      // produce|consume
-	SwapMode            string `yaml:"swap_mode"` // simple|sequential|single_robot|two_robot|two_robot_press_index|manual_swap
+	SwapMode            string `yaml:"swap_mode"` // sequential|single_robot|two_robot|two_robot_press_index|manual_swap (simple retired — runtime descriptor only)
 	Payload             string `yaml:"payload"`
 	UOPCapacity         int64  `yaml:"uop_capacity"`
 	ReorderPoint        int64  `yaml:"reorder_point"`

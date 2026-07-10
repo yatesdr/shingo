@@ -162,7 +162,7 @@ func seedDropScenarioEvacuate(t *testing.T, db *store.DB) (processID, nodeID, fr
 	toStyleID, _ = db.CreateStyle("DROPE-TO", "drop evac to", processID)
 	db.SetActiveStyle(processID, &fromStyleID)
 
-	fcID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	fcID, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "DROPE-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-DROP", UOPCapacity: 100, InboundSource: "SRC-DROP",
 		OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST-DROP",

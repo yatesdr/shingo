@@ -44,7 +44,7 @@ CREATE TABLE process_nodes (
   UNIQUE(process_id, code));
 CREATE TABLE style_node_claims (
   id INTEGER PRIMARY KEY AUTOINCREMENT, style_id INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
-  core_node_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'consume', swap_mode TEXT NOT NULL DEFAULT 'simple',
+  core_node_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'consume', swap_mode TEXT NOT NULL,
   payload_code TEXT NOT NULL DEFAULT '', uop_capacity INTEGER NOT NULL DEFAULT 0,
   reorder_point INTEGER NOT NULL DEFAULT 0, auto_reorder INTEGER NOT NULL DEFAULT 1,
   inbound_staging TEXT NOT NULL DEFAULT '', outbound_staging TEXT NOT NULL DEFAULT '',

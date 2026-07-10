@@ -200,6 +200,12 @@ func (p *Plant) Validate() error {
 		// both staging nodes for ALL multi-step modes, which wrongly rejected
 		// press_index / two_robot / sequential.)
 		switch protocol.SwapMode(c.SwapMode) {
+		case protocol.SwapModeSimple:
+			// "simple" is retired as a configurable mode (the Edge upsert
+			// allowlist rejects it too); it survives only as a runtime downgrade
+			// descriptor. Reject at spec time so Core validation and Edge upsert
+			// agree on what is configurable.
+			add("%s: swap_mode \"simple\" is retired; use single_robot / two_robot / two_robot_press_index / sequential, or a Core-owned manual_swap loader", where)
 		case protocol.SwapModeSingleRobot:
 			if c.InboundStaging == "" || c.OutboundStaging == "" {
 				add("%s: single_robot requires inbound_staging and outbound_staging (distinct nodes)", where)

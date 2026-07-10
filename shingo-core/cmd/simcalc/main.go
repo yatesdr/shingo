@@ -451,6 +451,9 @@ func sizeFromTransit(plant *plantspec.Plant, rate map[string]float64, transit st
 // step builders in engine/material_orders.go.
 func fleetMovesPerSwap(mode string) (crossings float64, robots int) {
 	switch protocol.SwapMode(mode) {
+	// SwapModeSimple is the runtime result-tag / node-empty downgrade descriptor
+	// (or a legacy row), not an operator-configurable mode — but a downgraded
+	// cycle still costs its single delivery crossing, so it is costed here.
 	case protocol.SwapModeSimple:
 		return 1, 1 // one floor crossing (old out / new in folded)
 	case protocol.SwapModeSequential:

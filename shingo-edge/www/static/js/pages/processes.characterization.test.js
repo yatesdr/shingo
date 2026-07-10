@@ -331,7 +331,9 @@ function expectedVisibility(role, swap) {
     const isManual = swap === 'manual_swap';
     const isPressIndex = swap === 'two_robot_press_index';
     const usesStaging = swap === 'single_robot' || swap === 'two_robot';
-    const showPair = !isManual;
+    // A/B fieldset shows only for the paired-node modes (sequential + press
+    // index); single_robot / two_robot use staging, not paired nodes.
+    const showPair = swap === 'sequential' || isPressIndex;
 
     return {
         'claims-add-payload-group': !isManual,
