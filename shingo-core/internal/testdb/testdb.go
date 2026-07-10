@@ -346,9 +346,10 @@ type StandardData struct {
 // one payload (PART-A), and one bin type (DEFAULT).
 func SetupStandardData(t *testing.T, db *store.DB) *StandardData {
 	t.Helper()
-	// STORAGE-A1 must be a STOR node: FindStorageDestination only consolidates
-	// onto / falls back to STOR-typed nodes, so an untyped storage fixture is
-	// invisible to the finder. STOR is a plant-config type (seed_core's
+	// STORAGE-A1 must be a STOR node: store-destination handling keys on the STOR
+	// type — isStorageDropoff (and the Stage-3 slot reservation it gates) only
+	// treats STOR-typed nodes as storage slots, so an untyped storage fixture
+	// wouldn't reserve/claim as storage. STOR is a plant-config type (seed_core's
 	// ensureNodeType) that migrations don't ship (only LANE/NGRP) and tests
 	// don't plant-seed, so create it if absent. LINE1-IN stays untyped — a line
 	// node is not a storage destination.

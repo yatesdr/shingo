@@ -499,28 +499,6 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 	return true
 }
 
-// matchProduceIngest matches an ingest order completion at a produce node.
-// Core has just received the bin's manifest; this row's Apply clears the
-// runtime order pointers so the next produce cycle starts clean.
-//
-// Cache state is owned elsewhere (resetProduceRuntime at FinalizeProduceNode
-// and handleNodeOrderDelivered when the next empty bin lands). Confirm is
-// a no-op for cache.
-func matchProduceIngest(ctx *orderCompletionCtx) bool {
-	if ctx.order.OrderType != orders.TypeIngest {
-		return false
-	}
-	claim := ctx.Claim()
-	return claim != nil && claim.Role == protocol.ClaimRoleProduce
-}
-
-func applyProduceIngest(e *Engine, ctx *orderCompletionCtx) bool {
-	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
-		log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
-	}
-	return true
-}
-
 // handleNormalReplenishment handles standard retrieve/complex order completion.
 // Cache binding is owned by handleNodeOrderDelivered — the delivered
 // bin's authoritative UOP arrives on its OrderDelivered envelope and

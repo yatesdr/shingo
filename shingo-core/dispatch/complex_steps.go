@@ -172,9 +172,10 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 		}
 		return node.Name, "", nil
 	}
-	// Global fallback: when Edge sends no node, resolve using the payload
-	// code — same approach simple orders use via FindSourceBinFIFO (retrieve)
-	// and FindStorageDestination (store).
+	// Global fallback: when Edge sends no node, resolve the pickup SOURCE using
+	// the payload code (FindSourceBinFIFO / FindEmptyCompatibleBin). Blank
+	// dropoffs are deferred and short-circuited by the callers, so they never
+	// reach here — there is no dropoff fallback.
 	if payloadCode != "" {
 		switch step.Action {
 		case protocol.ActionPickup:
@@ -206,16 +207,6 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 				return "", "", fmt.Errorf("resolve node for source bin %d: %w", bin.ID, err)
 			}
 			d.dbg("resolveStepNode: global fallback pickup → %s (bin %d)", node.Name, bin.ID)
-			return node.Name, "", nil
-		case protocol.ActionDropoff:
-			// Global fallback with no source context — pass 0 to
-			// disable the source-exclusion. Same shape as the
-			// FindSourceBinFIFO call above.
-			node, err := d.db.FindStorageDestination(payloadCode, 0)
-			if err != nil {
-				return "", "", fmt.Errorf("no storage destination for payload %q: %w", payloadCode, err)
-			}
-			d.dbg("resolveStepNode: global fallback dropoff → %s", node.Name)
 			return node.Name, "", nil
 		}
 	}

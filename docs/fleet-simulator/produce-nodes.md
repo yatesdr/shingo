@@ -22,7 +22,7 @@ go test -v -run "TestProduce|TestWiring|TestHandlePayloadCatalog" ./engine/ -tim
 
 | TC | Description | Status |
 |----|-------------|--------|
-| TC-66a | Produce simple — FinalizeProduceNode creates ingest order, resets UOP to 0 | PASS |
+| TC-66a | Produce finalize — sends ingest to Core (manifest-only, no local order), resets UOP to 0 | PASS |
 | TC-66b | Produce sequential — ingest + complex removal order created | PASS |
 | TC-66c | Produce single_robot — 10-step complex swap order created | PASS |
 | TC-66d | Produce two_robot — two coordinated complex orders, both tracked in runtime | PASS |
@@ -94,18 +94,17 @@ DELETE FROM payload_catalog WHERE id NOT IN (<activeIDs>)
 
 **Scenario:** Produce nodes fill empty bins. When the operator finalizes a bin (locks the UOP count), the system must manifest the bin at Core via an ingest order, then dispatch the appropriate swap choreography based on the claim's swap mode.
 
-**Expected behavior:** All four swap modes create an ingest order first, then:
+**Expected behavior:** Every produce finalize sends an ingest first — a manifest-only inventory write; Core records + confirms the count and creates no local order — and resets runtime UOP to 0. A produce node now *requires* a swap mode (bare "simple" produce was retired; `BuildProducePlan` fails loud on a missing mode), so the choreography after the ingest is always one of:
 
-- **Simple** — bare ingest, no swap. Runtime UOP resets to 0.
 - **Sequential** — ingest + complex removal order. Backfill auto-created by wiring when removal goes in_transit (same as consume).
 - **Single_robot** — ingest + 10-step all-in-one complex swap order.
 - **Two_robot** — ingest + two coordinated complex orders (OrderA for fetch-and-stage, OrderB for remove-filled). Both tracked in runtime.
 
 Finalization is rejected if UOP is zero (nothing to finalize) or the node's role is not `produce`.
 
-**Result:** PASS. 7 tests in `engine/produce_swap_test.go`.
+**Result:** PASS. 6 finalize tests in `engine/produce_swap_test.go`.
 
-**Test:** `shingoedge/engine/produce_swap_test.go` -- `TestProduceSimple_FinalizeIngest`, `TestProduceSequential_RemovalThenBackfill`, `TestProduceSingleRobot_TenStepSwap`, `TestProduceTwoRobot_BothOrdersCreated`, `TestProduceFinalize_RejectsZeroUOP`, `TestProduceFinalize_RejectsConsumeNode`
+**Test:** `shingoedge/engine/produce_swap_test.go` -- `TestProduceSwap_FinalizeSendsIngestNoLocalOrder`, `TestProduceSequential_RemovalThenBackfill`, `TestProduceSingleRobot_TenStepSwap`, `TestProduceTwoRobot_BothOrdersCreated`, `TestProduceFinalize_RejectsZeroUOP`, `TestProduceFinalize_RejectsConsumeNode`
 
 ---
 
@@ -115,7 +114,7 @@ Finalization is rejected if UOP is zero (nothing to finalize) or the node's role
 
 **Expected behavior:**
 
-- Ingest completion (produce): UOP → 0, order IDs cleared. No auto-request (bin still at node in simple mode; swap orders already in flight for other modes).
+- Ingest completion (produce): UOP → 0, order IDs cleared. No auto-request — the swap choreography (sequential / single_robot / two_robot) already has its removal/complex orders in flight.
 - Retrieve/complex completion (produce): UOP → 0 (empty bin received, starts counting from zero).
 - Retrieve/complex completion (consume): UOP → capacity (full bin received).
 - Counter delta (produce): UOP increments (counting UP toward capacity).

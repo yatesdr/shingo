@@ -19,7 +19,7 @@ import (
 // Coverage additions for orders.Manager.
 //
 // PR 3.1 — order creation family (CreateRetrieveOrder, CreateMoveOrder,
-//   CreateMoveOrderWithUOP, CreateComplexOrder, CreateIngestOrder). Every
+//   CreateMoveOrderWithUOP, CreateComplexOrder). Every
 //   happy path is asserted
 //   against both DB state AND the outbox envelope that was queued, since
 //   the whole reason enqueueAndAutoSubmit is non-trivial is that the two
@@ -321,38 +321,6 @@ func TestCreateComplexOrder_PersistsStepsAndQueuesEnvelope(t *testing.T) {
 	}
 	if req.Quantity != 2 || req.OrderUUID != order.UUID {
 		t.Errorf("complex request header: %+v", req)
-	}
-}
-
-func TestCreateIngestOrder_QueuesIngestEnvelope(t *testing.T) {
-	t.Parallel()
-	db := testManagerDB(t)
-	mgr := NewManager(db, testEmitter{}, "edge")
-
-	manifest := []protocol.IngestManifestItem{{PartNumber: "P1", Quantity: 2}}
-	producedAt := time.Now().UTC().Format(time.RFC3339)
-
-	order, err := mgr.CreateIngestOrder(nil, "PL-X", "BIN-1", "SRC-I", 10, manifest, true, producedAt, false)
-	if err != nil {
-		t.Fatalf("CreateIngestOrder: %v", err)
-	}
-	if order.OrderType != TypeIngest || order.Status != StatusSubmitted {
-		t.Errorf("order: type=%q status=%q", order.OrderType, order.Status)
-	}
-	if order.PayloadCode != "PL-X" || !order.AutoConfirm {
-		t.Errorf("payload_code=%q auto_confirm=%v", order.PayloadCode, order.AutoConfirm)
-	}
-
-	var req protocol.OrderIngestRequest
-	decodeOnlyOutboxPayload(t, db, protocol.TypeOrderIngest, &req)
-	if req.PayloadCode != "PL-X" || req.BinLabel != "BIN-1" || req.Quantity != 10 {
-		t.Errorf("ingest envelope: %+v", req)
-	}
-	if len(req.Manifest) != 1 || req.Manifest[0].PartNumber != "P1" {
-		t.Errorf("manifest: %+v", req.Manifest)
-	}
-	if req.ProducedAt != producedAt {
-		t.Errorf("ProducedAt: got %q, want %q", req.ProducedAt, producedAt)
 	}
 }
 

@@ -61,7 +61,7 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 // Rationale: the allow-list table is sparsely populated in practice. A
 // pre-2026-04-27 hard INNER JOIN on this table starved orders for
 // payloads with no rules even when compatible empty bins existed. Every
-// other reader (FindStorageDestination, SetManifest writes) ignores the
+// other reader (FindSourceFIFO, SetManifest writes) ignores the
 // table entirely. Advisory enforcement matches that prior practice while
 // preserving the constraint for plants that DO populate the table.
 const PayloadBinTypeAdvisoryClause = `
@@ -524,8 +524,8 @@ func UnclaimByOrder(db *sql.DB, orderID int64) {
 // payload_bin_types is treated as an allow-list — rows say "this payload IS
 // allowed in this bin type." Absence of rows for a payload means "no
 // restrictions configured" → any bin works. This matches how every other
-// reader treats the table (FindSourceFIFO, FindStorageDestination, SetManifest
-// all ignore it) and how the admin UI populates it. The previous form used
+// reader treats the table (FindSourceFIFO, SetManifest both ignore it) and
+// how the admin UI populates it. The previous form used
 // hard INNER JOINs to payload_bin_types/payloads which eliminated all
 // candidates when no rules existed — the cause of the 2026-04-27 starvation.
 // FindEmptyCompatibleInGroup is FindEmptyCompatible scoped to descendants of

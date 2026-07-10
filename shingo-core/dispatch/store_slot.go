@@ -18,8 +18,8 @@ import (
 // loser gets a non-nil error and its caller requeues, keeping its bin.
 //
 // Deliberately reserve-ONLY (no ConfirmSlotClaim hard claim): a hard claim sets
-// nodes.claimed_by, which drops the node out of FindStorageDestination's pool
-// and would terminal-fail sibling stores that must instead WAIT (the changeover
+// nodes.claimed_by, which makes the node look taken to the sibling stores
+// and would terminal-fail the ones that must instead WAIT (the changeover
 // N-store polite-wait — plants routinely issue more store orders than there are
 // free slots, and the extras hold their bins until a slot frees). The pending
 // reservation keeps the node findable, so a sibling that resolves the same slot
@@ -80,8 +80,8 @@ func orderHoldsSlotReservation(db *store.DB, orderID, nodeID int64) bool {
 // isStorageDropoff reports whether a delivery node is a concrete storage slot a
 // plain order exclusively occupies — the node fact that drives the ★ Stage-3
 // reservation. Broader than isConcreteStorageDropoff on purpose: a store's
-// destination is a standalone STOR-typed node (FindStorageDestination targets
-// snt.code='STOR'), which is frequently top-level (ParentID == nil) and so
+// destination is a standalone STOR-typed node (snt.code='STOR'), which is
+// frequently top-level (ParentID == nil) and so
 // isConcreteStorageDropoff-false — gating C2's reserve on the bare predicate
 // would stop reserving the store's own destination. This union covers the
 // standalone STOR node AND deep-lane / NGRP-child slots; it excludes lines and

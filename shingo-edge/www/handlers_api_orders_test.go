@@ -267,13 +267,14 @@ func TestApiOrders_CreateIngestOrder_Success(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/orders/ingest", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var order storeorders.Order
-	decodeJSON(t, resp, &order)
-	if order.OrderType != orders.TypeIngest {
-		t.Errorf("order type: got %q, want %q", order.OrderType, orders.TypeIngest)
+	// Manifest-only backfill: the ack echoes the accepted stamp; no order is created.
+	var ack map[string]any
+	decodeJSON(t, resp, &ack)
+	if ack["accepted"] != true {
+		t.Errorf("ack accepted: got %v, want true", ack["accepted"])
 	}
-	if order.PayloadCode != "BIN-INGEST" {
-		t.Errorf("payload_code: got %q, want BIN-INGEST", order.PayloadCode)
+	if ack["payload_code"] != "BIN-INGEST" || ack["bin_label"] != "BIN-0001" {
+		t.Errorf("ack echo: %+v", ack)
 	}
 }
 

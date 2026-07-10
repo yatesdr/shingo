@@ -229,15 +229,25 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 // call so handlers that ship the bin's row to Edge can include it in
 // their response.
 func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uopOverride int) (int64, error) {
+	manifestJSON, uop, err := s.resolveTemplateManifest(payloadCode, uopOverride)
+	if err != nil {
+		return 0, err
+	}
+	return s.SetForProduction(binID, manifestJSON, payloadCode, uop)
+}
+
+// resolveTemplateManifest resolves a payload template into a marshalled manifest
+// JSON and the UOP to write (uopOverride, or the template's UOPCapacity when
+// uopOverride is 0). Shared by SetFromTemplate and RecordProducedBinFromTemplate.
+func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOverride int) (string, int, error) {
 	p, err := s.db.GetPayloadByCode(payloadCode)
 	if err != nil {
-		return 0, fmt.Errorf("payload template %q: %w", payloadCode, err)
+		return "", 0, fmt.Errorf("payload template %q: %w", payloadCode, err)
 	}
 	items, err := s.db.ListPayloadManifest(p.ID)
 	if err != nil {
-		return 0, fmt.Errorf("payload manifest: %w", err)
+		return "", 0, fmt.Errorf("payload manifest: %w", err)
 	}
-
 	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(items))}
 	for i, item := range items {
 		manifest.Items[i] = domain.ManifestEntry{
@@ -247,15 +257,13 @@ func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uo
 	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
-		return 0, fmt.Errorf("marshal manifest: %w", err)
+		return "", 0, fmt.Errorf("marshal manifest: %w", err)
 	}
-
 	uop := uopOverride
 	if uop == 0 {
 		uop = p.UOPCapacity
 	}
-
-	return s.SetForProduction(binID, string(manifestJSON), payloadCode, uop)
+	return string(manifestJSON), uop, nil
 }
 
 // SetForProduction sets a bin's manifest and UOP from a payload template,
@@ -271,6 +279,21 @@ func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payload
 	}
 	defer tx.Rollback()
 
+	newEpoch, err := s.setForProductionTx(tx, binID, manifestJSON, payloadCode, uop)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return newEpoch, nil
+}
+
+// setForProductionTx is SetForProduction's body against a caller-provided tx, so
+// the manifest write can commit in the SAME transaction as the confirm (see
+// RecordProducedBin). Writes the OpSetForProduction audit row and bumps the
+// delta_epoch; returns the new epoch.
+func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifestJSON, payloadCode string, uop int) (int64, error) {
 	before, err := readBinUOPInTx(tx, binID)
 	if err != nil {
 		return 0, err
@@ -294,9 +317,6 @@ func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payload
 		nil, payloadCode, "", uopCtx); err != nil {
 		return 0, err
 	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
 	return newEpoch, nil
 }
 
@@ -312,6 +332,17 @@ func (s *BinManifestService) Confirm(binID int64, producedAt string) error {
 	}
 	defer tx.Rollback()
 
+	if err := s.confirmTx(tx, binID, producedAt); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// confirmTx is Confirm's body against a caller-provided tx, so a produce
+// finalize can set-and-confirm atomically (see RecordProducedBin). Writes the
+// OpManifestConfirmed audit row; loaded_at resolves to producedAt when present,
+// server time when blank.
+func (s *BinManifestService) confirmTx(tx *sql.Tx, binID int64, producedAt string) error {
 	before, err := readBinUOPInTx(tx, binID)
 	if err != nil {
 		return err
@@ -327,12 +358,45 @@ func (s *BinManifestService) Confirm(binID int64, producedAt string) error {
 	if err != nil {
 		return err
 	}
-	if err := audit.AppendBinUOP(tx, binID, before, uop,
+	return audit.AppendBinUOP(tx, binID, before, uop,
 		audit.OpManifestConfirmed, "service/bin_manifest.go:Confirm",
-		nil, payloadCode, "", uopCtx); err != nil {
+		nil, payloadCode, "", uopCtx)
+}
+
+// RecordProducedBin writes a produced bin's manifest AND confirms it in ONE
+// transaction: the set-for-production write (payload + count + manifest,
+// OpSetForProduction audit + epoch bump) and the confirm (manifest_confirmed +
+// OpManifestConfirmed audit, loaded_at from producedAt or server time) commit
+// together or not at all.
+//
+// The ingest apply path uses this so a confirm failure can no longer leave a
+// counted-but-unconfirmed bin — a stranded state, since manifest_confirmed is a
+// hard gate for a full bin to be a drain/retrieve source (kanban never sees an
+// unconfirmed bin).
+func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloadCode string, uop int, producedAt string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := s.setForProductionTx(tx, binID, manifestJSON, payloadCode, uop); err != nil {
+		return err
+	}
+	if err := s.confirmTx(tx, binID, producedAt); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// RecordProducedBinFromTemplate is RecordProducedBin for the no-manifest ingest
+// path: it resolves the payload template (like SetFromTemplate) then sets and
+// confirms the bin in one transaction.
+func (s *BinManifestService) RecordProducedBinFromTemplate(binID int64, payloadCode string, uopOverride int, producedAt string) error {
+	manifestJSON, uop, err := s.resolveTemplateManifest(payloadCode, uopOverride)
+	if err != nil {
+		return err
+	}
+	return s.RecordProducedBin(binID, manifestJSON, payloadCode, uop, producedAt)
 }
 
 // Unconfirm clears a bin's manifest confirmation flag. Absorbed from

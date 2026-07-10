@@ -161,6 +161,13 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, order)
 }
 
+// apiCreateIngestOrder is a MANUAL manifest backfill / debug tool — the only
+// way to stamp a bin's produced manifest from outside the produce-finalize
+// flow (operator scanned a real tote). It is identity-safe: it requires a
+// bin_label and Core resolves the bin BY LABEL. It is fire-and-forget: a 200
+// means the manifest report was ACCEPTED into the durable outbox, NOT that
+// Core recorded it (Core processes asynchronously and does not reply on
+// success). Not a product/order endpoint — no order is created.
 func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProcessNodeID int64                         `json:"process_node_id"`
@@ -192,18 +199,20 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 	}
 
 	producedAt := time.Now().UTC().Format(time.RFC3339)
-	order, err := h.engine.OrderManager().CreateIngestOrder(
-		processNodeID, req.PayloadCode, req.BinLabel, req.SourceNode,
-		req.Quantity, req.Manifest,
-		h.engine.AppConfig().Web.AutoConfirm,
-		producedAt,
-		false, // manual/HTTP ingest stays a full store (operator scanned a real bin)
-	)
-	if err != nil {
+	if err := h.engine.OrderManager().QueueIngestManifest(
+		req.PayloadCode, req.BinLabel, req.SourceNode,
+		req.Quantity, req.Manifest, producedAt,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, order)
+	// Ack: accepted into the outbox, not a durable Core confirmation.
+	writeJSON(w, map[string]any{
+		"bin_label":    req.BinLabel,
+		"payload_code": req.PayloadCode,
+		"quantity":     req.Quantity,
+		"accepted":     true,
+	})
 }
 
 // --- Order Actions ---

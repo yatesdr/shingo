@@ -64,6 +64,6 @@ go test -v -run "TestBinManifestService|TestFullDepletion|TestPartialConsumption
 
 **Bug found and fixed:** `DecrementBinUOP` was dead code — never called by any path. Removed. The new `SyncUOPAndClaim` replaces it with an atomic operation.
 
-**Bug found and fixed:** `tryAutoRequestEmpty` was incorrectly called on produce node ingest completion. This function is bin_loader-only — it calls `RequestEmptyBin` which gates on `role == "bin_loader"`. Removed the call; produce nodes don't auto-request after ingest because simple mode still has the filled bin at the node, and swap modes already have complex orders in flight.
+**Bug found and fixed:** `tryAutoRequestEmpty` was incorrectly called on produce node ingest completion. This function is bin_loader-only — it calls `RequestEmptyBin` which gates on `role == "bin_loader"`. Removed the call; produce nodes don't auto-request after ingest — the swap choreography already has its removal/complex orders in flight.
 
 **Test:** `shingocore/dispatch/bin_lifecycle_test.go` — `TestFullDepletion_ClearsManifest`, `TestPartialConsumption_SyncsUOP`, `TestConcurrentRetrieveEmpty_GhostBin`; `shingocore/dispatch/planning_test.go` — `TestExtractRemainingUOP_*`

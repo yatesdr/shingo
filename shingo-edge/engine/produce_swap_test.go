@@ -176,45 +176,11 @@ func TestDelivered_ComplexOrderBindsActiveBin(t *testing.T) {
 	}
 }
 
-func TestProduceSimple_FinalizeIngest(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	_, nodeID, _, _ := seedProduceNode(t, db, "")
-	eng := testEngine(t, db)
-
-	result, err := eng.FinalizeProduceNode(nodeID)
-	if err != nil {
-		t.Fatalf("FinalizeProduceNode: %v", err)
-	}
-	if result.CycleMode != "simple" {
-		t.Errorf("CycleMode = %q, want %q", result.CycleMode, "simple")
-	}
-	if result.Order == nil {
-		t.Fatal("expected an ingest order")
-	}
-	if result.Order.OrderType != orders.TypeIngest {
-		t.Errorf("OrderType = %q, want %q", result.Order.OrderType, orders.TypeIngest)
-	}
-	if result.ProcessNodeID != nodeID {
-		t.Errorf("ProcessNodeID = %d, want %d", result.ProcessNodeID, nodeID)
-	}
-
-	// Runtime should be reset to UOP=0
-	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOPCached != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 after finalize", runtime.RemainingUOPCached)
-	}
-	// Active order should be set
-	if runtime.ActiveOrderID == nil {
-		t.Error("ActiveOrderID should be set after finalize")
-	}
-}
-
-// TestProduceSwap_FinalizeSendsManifestOnlyIngestNoLocalOrder verifies that a
+// TestProduceSwap_FinalizeSendsIngestNoLocalOrder verifies that a
 // swap-mode produce finalize must NOT mint a local ingest order (the phantom
 // the operator-abort fan-out used to cancel into a "not_found"), yet Core must
 // still receive the manifest-only ingest stamp via the fire-and-forget outbox.
-func TestProduceSwap_FinalizeSendsManifestOnlyIngestNoLocalOrder(t *testing.T) {
+func TestProduceSwap_FinalizeSendsIngestNoLocalOrder(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "sequential")
@@ -231,7 +197,7 @@ func TestProduceSwap_FinalizeSendsManifestOnlyIngestNoLocalOrder(t *testing.T) {
 		t.Fatalf("list orders: %v", err)
 	}
 	for _, o := range all {
-		if o.OrderType == orders.TypeIngest {
+		if o.OrderType == protocol.OrderTypeIngest {
 			t.Errorf("swap finalize created local ingest order #%d (phantom should be gone)", o.ID)
 		}
 	}
@@ -250,9 +216,6 @@ func TestProduceSwap_FinalizeSendsManifestOnlyIngestNoLocalOrder(t *testing.T) {
 		testutil.MustNoErr(t, json.Unmarshal(m.Payload, &env), "unmarshal envelope")
 		var req protocol.OrderIngestRequest
 		testutil.MustNoErr(t, env.DecodePayload(&req), "decode ingest payload")
-		if !req.ManifestOnly {
-			t.Error("ingest stamp ManifestOnly = false, want true (swap carries the bin)")
-		}
 		if req.PayloadCode != "WIDGET-A" {
 			t.Errorf("ingest stamp PayloadCode = %q, want WIDGET-A", req.PayloadCode)
 		}
@@ -296,13 +259,13 @@ func TestProduceSequential_RemovalThenBackfill(t *testing.T) {
 	// Swap modes no longer create a local ingest order — the swap's complex
 	// order carries the bin and the manifest is sent fire-and-forget. (The
 	// outbox stamp is covered by
-	// TestProduceSwap_FinalizeSendsManifestOnlyIngestNoLocalOrder.)
+	// TestProduceSwap_FinalizeSendsIngestNoLocalOrder.)
 	allOrders, err := db.ListOrders()
 	if err != nil {
 		t.Fatalf("list orders: %v", err)
 	}
 	for _, o := range allOrders {
-		if o.OrderType == orders.TypeIngest {
+		if o.OrderType == protocol.OrderTypeIngest {
 			t.Errorf("swap finalize created a local ingest order #%d (phantom should be gone)", o.ID)
 		}
 	}

@@ -10,7 +10,6 @@ const (
 	TypeStore    = protocol.OrderTypeStore
 	TypeMove     = protocol.OrderTypeMove
 	TypeComplex  = protocol.OrderTypeComplex
-	TypeIngest   = protocol.OrderTypeIngest
 )
 
 // Order statuses aliased from protocol.

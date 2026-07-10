@@ -32,25 +32,13 @@ func produceFixtures(swapMode protocol.SwapMode) (*processes.Node, *processes.Ru
 	return node, runtime, produceClaim(swapMode)
 }
 
-func TestBuildProducePlan_SimpleMode(t *testing.T) {
+func TestBuildProducePlan_NoSwapModeErrors(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := produceFixtures("")
 
-	plan, err := BuildProducePlan(node, runtime, claim, true, fixedNow)
-	if err != nil {
-		t.Fatalf("BuildProducePlan: %v", err)
-	}
-	if !plan.SimpleOnly {
-		t.Errorf("SimpleOnly = false, want true for simple mode")
-	}
-	if plan.Dispatch != nil {
-		t.Errorf("simple mode should have no Dispatch; got %+v", plan.Dispatch)
-	}
-	if len(plan.Manifest) != 1 || plan.Manifest[0].Quantity != 50 || plan.Manifest[0].PartNumber != "WIDGET-A" {
-		t.Errorf("manifest mismatch: %+v", plan.Manifest)
-	}
-	if plan.ProducedAtRFC3339 != "2026-04-29T14:00:00Z" {
-		t.Errorf("ProducedAt = %q, want fixed timestamp", plan.ProducedAtRFC3339)
+	// Produce with no swap mode (retired simple-produce) must fail loud.
+	if _, err := BuildProducePlan(node, runtime, claim, fixedNow); err == nil {
+		t.Fatal("BuildProducePlan: want error for a produce claim with no swap mode")
 	}
 }
 
@@ -58,12 +46,9 @@ func TestBuildProducePlan_Sequential(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := produceFixtures("sequential")
 
-	plan, err := BuildProducePlan(node, runtime, claim, false, fixedNow)
+	plan, err := BuildProducePlan(node, runtime, claim, fixedNow)
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
-	}
-	if plan.SimpleOnly {
-		t.Errorf("sequential should not be SimpleOnly")
 	}
 	if plan.Dispatch == nil {
 		t.Fatalf("sequential must have a Dispatch")
@@ -83,7 +68,7 @@ func TestBuildProducePlan_TwoRobotPressIndex_OK(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := produceFixtures("two_robot_press_index")
 
-	plan, err := BuildProducePlan(node, runtime, claim, true, fixedNow)
+	plan, err := BuildProducePlan(node, runtime, claim, fixedNow)
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
@@ -100,7 +85,7 @@ func TestBuildProducePlan_PreconditionErrors(t *testing.T) {
 	node, runtime, claim := produceFixtures("")
 
 	t.Run("nil_claim", func(t *testing.T) {
-		if _, err := BuildProducePlan(node, runtime, nil, true, fixedNow); err == nil {
+		if _, err := BuildProducePlan(node, runtime, nil, fixedNow); err == nil {
 			t.Fatalf("expected error for nil claim")
 		}
 	})
@@ -108,7 +93,7 @@ func TestBuildProducePlan_PreconditionErrors(t *testing.T) {
 	t.Run("wrong_role", func(t *testing.T) {
 		c := *claim
 		c.Role = protocol.ClaimRoleConsume
-		if _, err := BuildProducePlan(node, runtime, &c, true, fixedNow); err == nil {
+		if _, err := BuildProducePlan(node, runtime, &c, fixedNow); err == nil {
 			t.Fatalf("expected error for non-produce role")
 		}
 	})
@@ -116,7 +101,7 @@ func TestBuildProducePlan_PreconditionErrors(t *testing.T) {
 	t.Run("zero_uop", func(t *testing.T) {
 		r := *runtime
 		r.RemainingUOPCached = 0
-		if _, err := BuildProducePlan(node, &r, claim, true, fixedNow); err == nil {
+		if _, err := BuildProducePlan(node, &r, claim, fixedNow); err == nil {
 			t.Fatalf("expected error for zero RemainingUOP")
 		}
 	})

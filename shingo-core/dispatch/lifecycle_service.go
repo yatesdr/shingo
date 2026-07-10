@@ -173,21 +173,25 @@ func (s *LifecycleService) resolveIngestBin(p *protocol.OrderIngestRequest) (*bi
 	return atNode[0], nil
 }
 
-// ApplyIngestManifest records a produce-finalize on the target bin (manifest +
-// UOP + confirm) and reports whether the bin still needs a store move. It no
-// longer creates any order: swap-mode (ManifestOnly) is manifest-and-done, and
-// simple-mode produce is re-homed by HandleOrderIngest as a COORDINATED store —
-// the plain-store family it used to mint was removed. Returns the bin's current
-// node as sourceNode when needStore is true.
-func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) (sourceNode, payloadCode string, needStore bool, _ *lifecycleError) {
+// ApplyIngestManifest records a produce-finalize on the target bin: an audited
+// inventory manifest write (manifest + UOP + confirm via BinManifestService).
+// It creates no order and dispatches nothing — ingest is manifest-only. Returns
+// a lifecycleError on failure, nil on success.
+func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *lifecycleError {
 	tmpl, err := s.db.GetPayloadByCode(p.PayloadCode)
 	if err != nil {
-		return "", "", false, lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", p.PayloadCode), err)
+		return lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", p.PayloadCode), err)
 	}
 	bin, binErr := s.resolveIngestBin(p)
 	if binErr != nil {
-		return "", "", false, binErr
+		return binErr
 	}
+	// Set the manifest AND confirm it in ONE transaction: a confirm failure must
+	// not leave a counted-but-unconfirmed bin. manifest_confirmed is a hard gate
+	// for a full bin to be a drain/retrieve source, so a stranded unconfirmed bin
+	// is invisible to kanban. The epoch bump is discarded (this Core-internal path
+	// has no Edge response to thread it through; Edge relearns on its next periodic
+	// bin-state refresh).
 	if len(p.Manifest) > 0 {
 		manifest := bins.Manifest{Items: make([]bins.ManifestEntry, len(p.Manifest))}
 		for i, item := range p.Manifest {
@@ -205,65 +209,28 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) (
 		if uop <= 0 {
 			uop = tmpl.UOPCapacity
 		}
-		// Epoch return is discarded here — the lifecycle service is
-		// running a Core-internal ingest path with no Edge response to
-		// thread the new epoch through. Edge picks up the new epoch on
-		// its next periodic bin-state refresh.
-		if _, err := s.binManifest.SetForProduction(bin.ID, string(manifestJSON), p.PayloadCode, uop); err != nil {
-			return "", "", false, lifecycleErr("internal_error", err.Error(), err)
+		if err := s.binManifest.RecordProducedBin(bin.ID, string(manifestJSON), p.PayloadCode, uop, p.ProducedAt); err != nil {
+			return lifecycleErr("internal_error", err.Error(), err)
 		}
 	} else {
-		// Item 19 of the bin-as-truth refactor: route through
-		// BinManifestService.SetFromTemplate so the 0→capacity initial
-		// fill audits via bin_uop_audit. Pre-Item-19 this path called
-		// *store.DB.SetBinManifestFromTemplate directly, bypassing
-		// audit; the resulting timeline gap made forensics confusing
-		// because freshly-loaded bins appeared in bin_uop_audit only
-		// at the first downstream delta — missing the load itself.
-		if _, err := s.binManifest.SetFromTemplate(bin.ID, p.PayloadCode, 0); err != nil {
-			return "", "", false, lifecycleErr("internal_error", err.Error(), err)
+		// Item 19 of the bin-as-truth refactor: route through the audited
+		// BinManifestService so the 0→capacity initial fill surfaces in
+		// bin_uop_audit. Pre-Item-19 this path called the lower-level
+		// SetBinManifestFromTemplate directly, bypassing audit; the resulting
+		// timeline gap made forensics confusing because freshly-loaded bins
+		// appeared in bin_uop_audit only at the first downstream delta.
+		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, p.PayloadCode, 0, p.ProducedAt); err != nil {
+			return lifecycleErr("internal_error", err.Error(), err)
 		}
 	}
-	if err := s.binManifest.Confirm(bin.ID, p.ProducedAt); err != nil {
-		log.Printf("dispatch: confirm bin %d manifest: %v", bin.ID, err)
-	}
-	// loaded_at is resolved and stored by Confirm/ConfirmManifest above
-	// (server time when ProducedAt is empty); log the requested value
-	// rather than recomputing a second, possibly-divergent timestamp.
+
 	loadedAtLabel := p.ProducedAt
 	if loadedAtLabel == "" {
 		loadedAtLabel = "(server time)"
 	}
-	s.dbg("ingest: set manifest on bin=%d, payload=%s, loaded_at=%s", bin.ID, p.PayloadCode, loadedAtLabel)
-
-	// Swap-mode produce ships ManifestOnly: the bin's count is now recorded, and
-	// the swap is already carrying that bin to the supermarket. Minting a store
-	// move here would fight the swap for the bin, and the routeless order would
-	// let FindStorageDestination relocate it onto some other node (incl. another
-	// press output). Stop at the manifest; simple-mode produce (no swap) falls
-	// through to the coordinated store move.
-	if p.ManifestOnly {
-		s.dbg("ingest: manifest-only bin=%d at %s — swap carries the move, no store order", bin.ID, p.SourceNode)
-		return "", p.PayloadCode, false, nil
-	}
-
-	// Simple-mode produce: the freshly-filled bin needs a store move to its
-	// warehouse home. Report the bin's CURRENT node as the pickup source so
-	// HandleOrderIngest can mint a coordinated [pickup@source, dropoff@storage]
-	// order. Prefer the bin's actual node over the wire source_node so a
-	// label-based manual ingest (which may omit source_node) still routes. The
-	// bin is left UNCLAIMED — the coordinated dispatch path reserves and claims it.
-	src := p.SourceNode
-	if bin.NodeID != nil {
-		if node, nerr := s.db.GetNode(*bin.NodeID); nerr == nil && node != nil {
-			src = node.Name
-		}
-	}
-	if src == "" {
-		return "", "", false, lifecycleErr("bin_error", "ingest bin has no source location to store from",
-			errors.New("ingest: no source node"))
-	}
-	return src, p.PayloadCode, true, nil
+	s.dbg("ingest: manifest recorded + confirmed bin=%d payload=%s at %s loaded_at=%s",
+		bin.ID, p.PayloadCode, p.SourceNode, loadedAtLabel)
+	return nil
 }
 
 // CancelOrder and ConfirmReceipt now live in lifecycle.go and route

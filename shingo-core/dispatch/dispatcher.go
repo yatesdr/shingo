@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/google/uuid"
 
@@ -328,59 +329,25 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 	d.dispatchToFleet(order, env, sourceNode, newDest)
 }
 
-// HandleOrderIngest processes an ingest request: records the produce-finalize on
-// the target bin and, for simple-mode produce, dispatches the store move.
+// HandleOrderIngest processes an ingest request: an audited manifest-only write
+// that records + confirms the produced count on the target bin. It dispatches
+// nothing — the produce-store leg went with the retired simple-produce mode.
 func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.OrderIngestRequest) {
 	stationID := env.Src.Station
 	d.dbg("ingest: station=%s uuid=%s payload=%s bin=%s source=%s", stationID, p.OrderUUID, p.PayloadCode, p.BinLabel, p.SourceNode)
 
-	sourceNode, payloadCode, needStore, lifecycleErr := d.lifecycle.ApplyIngestManifest(p)
-	if lifecycleErr != nil {
+	// Ingest is manifest-only: Core records the produced count via the audited
+	// manifest write; there is nothing to dispatch.
+	if lifecycleErr := d.lifecycle.ApplyIngestManifest(p); lifecycleErr != nil {
+		// A rejected produce-finalize is an inventory-integrity event: the
+		// operator finished a bin but Core did not record it. The Edge-side
+		// SendError alone leaves nothing in the Core log with debug off, so the
+		// dropped count is unforensicable after the fact. Log it loudly first.
+		log.Printf("dispatch: ingest REJECTED station=%s uuid=%s payload=%s bin=%s source=%s: [%s] %s",
+			stationID, p.OrderUUID, p.PayloadCode, p.BinLabel, p.SourceNode, lifecycleErr.Code, lifecycleErr.Detail)
 		d.replies.SendError(env, p.OrderUUID, lifecycleErr.Code, lifecycleErr.Detail)
 		return
 	}
-	if !needStore {
-		// Manifest-only ingest (swap-mode produce): the bin's count is recorded
-		// and the swap moves it — nothing to dispatch.
-		return
-	}
-	d.dispatchProduceStore(env, p, sourceNode, payloadCode)
-}
-
-// dispatchProduceStore re-homes a simple-mode produce ingest as a COORDINATED
-// [pickup@source, dropoff@storage] order — the same proven multi-leg shape a
-// changeover release runs (BuildReleaseSteps). The plain-store family that used
-// to carry this move was removed (it never completed a single order in
-// production); routing through the coordinated intake gives the produce bin a
-// reserve-only, polite-waiting storage dropoff via the shared complex machinery.
-func (d *Dispatcher) dispatchProduceStore(env *protocol.Envelope, p *protocol.OrderIngestRequest, sourceNode, payloadCode string) {
-	srcNode, err := d.db.GetNodeByDotName(sourceNode)
-	if err != nil || srcNode == nil {
-		d.replies.SendError(env, p.OrderUUID, "invalid_node", fmt.Sprintf("ingest source node %q not found", sourceNode))
-		return
-	}
-	// Storage destination via the same consolidation-aware resolver the
-	// coordinated dropoff path uses (FindStorageDestination); exclude the source
-	// so a produce node never resolves its own slot as the dropoff. A full/occupied
-	// concrete slot still queues politely under the coordinated capacity gate.
-	dest, err := d.db.FindStorageDestination(payloadCode, srcNode.ID)
-	if err != nil || dest == nil {
-		d.dbg("ingest: no storage destination for %s from %s: %v", payloadCode, sourceNode, err)
-		d.replies.SendError(env, p.OrderUUID, "no_storage", "no available storage node found")
-		return
-	}
-	complexReq := &protocol.ComplexOrderRequest{
-		OrderUUID:   p.OrderUUID,
-		PayloadCode: payloadCode,
-		PayloadDesc: fmt.Sprintf("ingest %s bin %s", payloadCode, p.BinLabel),
-		Quantity:    p.Quantity,
-		Steps: []protocol.ComplexOrderStep{
-			{Action: protocol.ActionPickup, Node: sourceNode},
-			{Action: protocol.ActionDropoff, Node: dest.Name},
-		},
-	}
-	d.dbg("ingest: coordinated store %s → %s for %s", sourceNode, dest.Name, p.OrderUUID)
-	d.HandleComplexOrderRequest(env, complexReq)
 }
 
 func (d *Dispatcher) failOrder(order *orders.Order, env *protocol.Envelope, errorCode, detail string) {

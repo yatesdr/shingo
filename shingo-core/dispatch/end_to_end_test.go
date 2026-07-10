@@ -1247,30 +1247,28 @@ func TestHandleOrderIngest(t *testing.T) {
 		},
 	})
 
-	// Should have received the order
-	if len(emitter.received) != 1 {
-		t.Fatalf("received events = %d, want 1", len(emitter.received))
+	// Ingest is a manifest-only inventory write: it records AND confirms the
+	// bin's manifest (atomically) and dispatches NOTHING — no order, no event,
+	// no claim.
+	if len(emitter.received) != 0 {
+		t.Fatalf("received events = %d, want 0 (ingest mints no order)", len(emitter.received))
 	}
 
-	// Bin should have manifest set
 	gotBin, _ := db.GetBin(bin.ID)
 	if gotBin.PayloadCode != bp.Code {
 		t.Errorf("bin payload_code = %q, want %q", gotBin.PayloadCode, bp.Code)
 	}
+	if gotBin.UOPRemaining != 100 {
+		t.Errorf("bin UOPRemaining = %d, want 100 (operator-measured count)", gotBin.UOPRemaining)
+	}
 	if !gotBin.ManifestConfirmed {
-		t.Error("bin manifest should be confirmed after ingest")
+		t.Error("bin manifest should be confirmed after ingest (set-and-confirm are atomic)")
 	}
-	if gotBin.ClaimedBy == nil {
-		t.Fatal("bin should be claimed after ingest")
+	if gotBin.ClaimedBy != nil {
+		t.Errorf("manifest-only ingest must not claim the bin, got claimed_by=%v", gotBin.ClaimedBy)
 	}
-
-	// Manifest items should be created
-	order, _ := db.GetOrderByUUID("uuid-ingest-1")
-	if order == nil {
-		t.Fatal("order not found")
-	}
-	if order.BinID == nil || *order.BinID != bin.ID {
-		t.Errorf("order BinID = %v, want %d", order.BinID, bin.ID)
+	if order, _ := db.GetOrderByUUID("uuid-ingest-1"); order != nil {
+		t.Errorf("ingest must not create an order, got %+v", order)
 	}
 }
 

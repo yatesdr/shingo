@@ -20,17 +20,11 @@ type ProducePlan struct {
 	// RFC3339 timestamp embedded on the ingest order.
 	Manifest          []protocol.IngestManifestItem
 	ProducedAtRFC3339 string
-	AutoConfirmIngest bool
 
-	// Dispatch is the shared swap-mode dispatch for sequential / single_robot
-	// / two_robot / two_robot_press_index. Nil when SimpleOnly is true (no
-	// complex orders, just the ingest).
+	// Dispatch is the shared swap-mode dispatch for sequential / single_robot /
+	// two_robot / two_robot_press_index. Produce always has a swap mode now, so
+	// Dispatch is always set — BuildProducePlan errors on a claim with no swap.
 	Dispatch *SwapDispatch
-
-	// SimpleOnly is true for produce simple mode — only the ingest order is
-	// dispatched, no complex orders. CycleMode in that case is "simple"
-	// (Dispatch.CycleMode otherwise).
-	SimpleOnly bool
 }
 
 // BuildProducePlan validates the (node, runtime, claim) triple and composes
@@ -38,12 +32,11 @@ type ProducePlan struct {
 // fleet, or order-manager calls.
 //
 // now is the wall clock used for ProducedAt; tests inject a fixed value for
-// determinism. autoConfirm is the e.cfg.Web.AutoConfirm signal — surfaced
-// as a parameter so the planner stays config-free.
+// determinism.
 //
 // Validation errors are returned verbatim (no additional wrapping) so
 // apply-time error surfaces stay diff-stable.
-func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, autoConfirm bool, now time.Time) (*ProducePlan, error) {
+func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, now time.Time) (*ProducePlan, error) {
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
@@ -63,7 +56,6 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 			},
 		},
 		ProducedAtRFC3339: now.UTC().Format(time.RFC3339),
-		AutoConfirmIngest: autoConfirm,
 	}
 
 	dispatch, err := BuildSwapDispatch(node, claim)
@@ -71,9 +63,11 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		return nil, err
 	}
 	if dispatch == nil {
-		plan.SimpleOnly = true
-	} else {
-		plan.Dispatch = dispatch
+		// Produce is always a swap now — simple-mode produce (bare ingest, no
+		// swap) was retired. A nil dispatch means a legacy claim with no swap
+		// mode configured; fail loud rather than mint a bare manifest cycle.
+		return nil, fmt.Errorf("node %s: produce requires a swap mode (simple produce retired)", node.Name)
 	}
+	plan.Dispatch = dispatch
 	return plan, nil
 }

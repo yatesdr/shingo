@@ -497,6 +497,65 @@ func TestBinManifestService_Confirm(t *testing.T) {
 	}
 }
 
+// TestBinManifestService_RecordProducedBin_AtomicCountAndConfirm pins the
+// manifest atomicity fix: RecordProducedBin sets the manifest AND confirms it in
+// one transaction, so a produce finalize never leaves a counted-but-unconfirmed
+// bin (invisible to kanban — manifest_confirmed gates drain/retrieve sources).
+// The count, the
+// confirm, and both audit rows land together.
+func TestBinManifestService_RecordProducedBin_AtomicCountAndConfirm(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-RPB-1", "", 0)
+
+	manifest := `{"items":[{"catid":"WIDGET","qty":50}]}`
+	testutil.MustNoErr(t, svc.RecordProducedBin(bin.ID, manifest, "WIDGET-X", 200, "2026-03-30T12:00:00Z"), "RecordProducedBin")
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 200 {
+		t.Errorf("UOPRemaining = %d, want 200 (count recorded)", got.UOPRemaining)
+	}
+	if !got.ManifestConfirmed {
+		t.Error("ManifestConfirmed = false, want true — count and confirm must land together")
+	}
+	if got.LoadedAt == nil {
+		t.Error("LoadedAt = nil, want non-nil after confirm")
+	}
+	var nSet, nConfirmed int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+		bin.ID, string(audit.OpSetForProduction)).Scan(&nSet), "count set-for-production audit")
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+		bin.ID, string(audit.OpManifestConfirmed)).Scan(&nConfirmed), "count manifest-confirmed audit")
+	if nSet != 1 || nConfirmed != 1 {
+		t.Errorf("audit rows: OpSetForProduction=%d OpManifestConfirmed=%d, want 1 each (one atomic tx)", nSet, nConfirmed)
+	}
+}
+
+// TestBinManifestService_RecordProducedBin_RollsBackOnError pins the no-half-
+// state guarantee: when RecordProducedBin errors (here: a nonexistent bin) the
+// whole transaction rolls back — no count, no confirm, no audit rows. There is
+// never a counted-but-unconfirmed bin.
+func TestBinManifestService_RecordProducedBin_RollsBackOnError(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	const ghostBin int64 = 999999
+	if err := svc.RecordProducedBin(ghostBin, `{"items":[]}`, "WIDGET-X", 200, ""); err == nil {
+		t.Fatal("RecordProducedBin on a nonexistent bin: want error, got nil")
+	}
+	var n int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit WHERE bin_id=$1`, ghostBin).Scan(&n),
+		"count audit rows for failed record")
+	if n != 0 {
+		t.Errorf("audit rows after a failed record = %d, want 0 (rolled back, no half-state)", n)
+	}
+}
+
 func TestBinManifestService_Unconfirm(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

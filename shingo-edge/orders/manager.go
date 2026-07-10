@@ -344,36 +344,6 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 	return m.db.GetOrder(orderID)
 }
 
-// CreateIngestOrder creates a new ingest order for originating a payload on a bin at a produce station.
-// producedAt is an RFC3339 timestamp from the Edge capturing the moment the operator finalized the bin.
-func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, autoConfirm bool, producedAt string, manifestOnly bool) (*orders.Order, error) {
-	orderUUID := uuid.New().String()
-
-	orderID, err := m.db.CreateOrder(orderUUID, TypeIngest,
-		processNodeID, false,
-		quantity, "", "", sourceNode, "", autoConfirm, payloadCode)
-	if err != nil {
-		return nil, fmt.Errorf("create ingest order: %w", err)
-	}
-
-	env, envErr := m.sender.build(protocol.TypeOrderIngest, &protocol.OrderIngestRequest{
-		OrderUUID:    orderUUID,
-		PayloadCode:  payloadCode,
-		BinLabel:     binLabel,
-		SourceNode:   sourceNode,
-		Quantity:     quantity,
-		Manifest:     manifest,
-		ProducedAt:   producedAt,
-		ManifestOnly: manifestOnly,
-	})
-	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
-
-	m.DebugLog.Log("create: type=%s id=%d uuid=%s payload=%s bin=%s", TypeIngest, orderID, orderUUID, payloadCode, binLabel)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeIngest, nil, processNodeID)
-
-	return m.db.GetOrder(orderID)
-}
-
 // QueueIngestManifest sends a manifest-only ingest stamp to Core WITHOUT
 // minting a local order. Swap-mode produce finalize uses this: the swap's
 // complex order carries the bin, and the ingest exists only to stamp Core's
@@ -386,14 +356,13 @@ func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel,
 // still delivered (durable outbox, idempotent SetForProduction at Core).
 func (m *Manager) QueueIngestManifest(payloadCode, binLabel, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, producedAt string) error {
 	return m.sender.Queue(protocol.TypeOrderIngest, &protocol.OrderIngestRequest{
-		OrderUUID:    uuid.New().String(),
-		PayloadCode:  payloadCode,
-		BinLabel:     binLabel,
-		SourceNode:   sourceNode,
-		Quantity:     quantity,
-		Manifest:     manifest,
-		ProducedAt:   producedAt,
-		ManifestOnly: true,
+		OrderUUID:   uuid.New().String(),
+		PayloadCode: payloadCode,
+		BinLabel:    binLabel,
+		SourceNode:  sourceNode,
+		Quantity:    quantity,
+		Manifest:    manifest,
+		ProducedAt:  producedAt,
 	})
 }
 

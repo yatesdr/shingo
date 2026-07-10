@@ -15,38 +15,6 @@ import (
 // TestWiring_IngestCompletion_ResetsProduceUOP verifies that when an ingest
 // order completes for a produce node, the runtime UOP is reset to 0, order
 // IDs are cleared, and the node is ready for the next empty bin.
-func TestWiring_IngestCompletion_ResetsProduceUOP(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	_, nodeID, _, claimID := seedProduceNode(t, db, "")
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-
-	// Create an ingest order as if FinalizeProduceNode had been called
-	orderID, err := db.CreateOrder("uuid-ingest-1", orders.TypeIngest,
-		&nodeID, false, 1, "", "", "PRODUCE-NODE", "", true, "")
-	if err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
-	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
-	db.SetProcessNodeRuntime(nodeID, &claimID, 50)
-
-	emitOrderCompleted(eng, orderID, "uuid-ingest-1", orders.TypeIngest, &nodeID)
-
-	// Cache assertion removed: ingest completion no longer touches
-	// RemainingUOPCached under the new contract — produce cache binding
-	// happens at FinalizeProduceNode (operator click) and at the next
-	// empty bin's delivery. Confirm only clears order pointers.
-	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.ActiveOrderID != nil {
-		t.Error("ActiveOrderID should be nil after ingest completion")
-	}
-	if runtime.StagedOrderID != nil {
-		t.Error("StagedOrderID should be nil after ingest completion")
-	}
-}
-
 // TestWiring_RetrieveCompletion_ProduceResetsToZero verifies that when a
 // retrieve/complex order completes for a produce node, UOP resets to 0
 // (not to capacity, which is the consume-node behavior).

@@ -368,20 +368,23 @@ type OrderStaged struct {
 
 // --- Origination payloads: Edge -> Core ---
 
-// OrderIngestRequest submits a newly filled bin for storage.
-// Core sets the bin manifest and dispatches a store order.
+// OrderIngestRequest reports a produced (filled) bin so Core records its
+// manifest. It is a manifest-only inventory write: Core sets AND confirms the
+// bin's payload + count and dispatches nothing — there is no store order (that
+// leg went with the retired simple-produce mode).
+//
+// Bin identity resolves two ways: a non-empty BinLabel is looked up directly
+// (manual/HTTP ingest — an operator scanned a real tote); a blank BinLabel
+// falls back to SourceNode, and Core resolves the bin from what is parked at
+// that node (headless produce-finalize, which tracks the bin by id, not label).
 type OrderIngestRequest struct {
 	OrderUUID   string               `json:"order_uuid"`
 	PayloadCode string               `json:"payload_code"`
-	BinLabel    string               `json:"bin_label"`
+	BinLabel    string               `json:"bin_label"` // optional: blank => resolve the bin by SourceNode
 	SourceNode  string               `json:"source_node"`
-	Quantity    int64                `json:"quantity"`
+	Quantity    int64                `json:"quantity"` // operator-measured produced count (UOP); 0 => payload capacity
 	Manifest    []IngestManifestItem `json:"manifest,omitempty"`
 	ProducedAt  string               `json:"produced_at,omitempty"` // RFC3339 timestamp from Edge at cell completion
-	// ManifestOnly: record the bin's count and stop — do NOT mint a store
-	// transport order. Set by swap-mode produce, where the swap already carries
-	// the bin. Simple-mode produce leaves it false so the ingest still stores.
-	ManifestOnly bool `json:"manifest_only,omitempty"`
 }
 
 // IngestManifestItem describes a single item in an ingest manifest.

@@ -20,7 +20,7 @@ When an Edge station creates a material order, the node names from the StyleNode
 
 1. **Explicit Node**: The step specifies a concrete node name → Core calls `GetNodeByDotName()` to validate it exists, then checks if it's a synthetic NGRP. If not, uses it directly.
 2. **Node Group (NGRP)**: The step specifies an NGRP name → Core's GroupResolver applies the configured algorithm (FIFO, FAVL, LKND, DPTH) to select a concrete physical slot within the group.
-3. **Global Fallback**: The step has no node name (empty string) → Core resolves via `payloadCode` using `FindSourceBinFIFO()` (for retrieval) or `FindStorageDestination()` (for storage).
+3. **Global Fallback (pickup only)**: The step has no node name (empty string) → Core resolves the pickup *source* from `payloadCode` — `FindSourceBinFIFO()` for a full carrier, `FindEmptyCompatibleBin()` for an empty one. There is no storage/dropoff fallback: a blank dropoff is a deferred destination that the step-resolver callers short-circuit and place after intake, so it never reaches this tier.
 
 This pipeline is transparent to Edge — a StyleNodeClaim's `InboundSource` can be a physical node (`SMN_004`), a node group (`SYN_Supermarket_1`), or blank. Core handles all three cases identically through `resolveStepNode()`.
 

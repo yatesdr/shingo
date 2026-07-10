@@ -62,8 +62,7 @@ func matchAlways(*orderCompletionCtx) bool { return true }
 //  4. changeover_release     — Order A → direct (non-staged) delivery
 //  5. loader_empty_in        — L1 confirm fires L2 (filled-out)
 //  6. manual_swap            — Move order on a manual_swap node
-//  7. produce_ingest         — Ingest order on a produce node
-//  8. normal_replenishment   — terminal fallback (retrieve/complex)
+//  7. normal_replenishment   — terminal fallback (retrieve/complex)
 //
 // The unloader empty-out (U2) is NOT a completion case: it is driven by the
 // operator's CLEAR tap (ClearBin → createUnloaderEmptyOut), not by a U1 retrieve
@@ -79,7 +78,6 @@ var completionChain = []completionCase{
 	{Name: "changeover_release", Match: matchChangeoverRelease, Apply: applyChangeoverRelease},
 	{Name: "loader_empty_in", Match: matchLoaderEmptyIn, Apply: applyLoaderEmptyIn},
 	{Name: string(protocol.SwapModeManualSwap), Match: matchManualSwap, Apply: applyManualSwap},
-	{Name: "produce_ingest", Match: matchProduceIngest, Apply: applyProduceIngest},
 	{Name: "normal_replenishment", Match: matchAlways, Apply: applyNormalReplenishmentTerminal},
 }
 

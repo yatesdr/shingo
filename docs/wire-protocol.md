@@ -158,7 +158,7 @@ Type strings use dotted notation: `{category}.{action}`. Two categories exist fo
 | `order.redirect` | `shingo.orders` | Edge -> Core | [OrderRedirect](#orderredirect) | Change delivery destination mid-flight |
 | `order.release` | `shingo.orders` | Edge -> Core | [OrderRelease](#orderrelease) | Resume a staged (dwelling) order |
 | `order.storage_waybill` | `shingo.orders` | Edge -> Core | [OrderStorageWaybill](#orderstoragewaybill) | Store order submission (return to warehouse) |
-| `order.ingest` | `shingo.orders` | Edge -> Core | [OrderIngestRequest](#orderingestrequest) | Submit a filled bin for storage |
+| `order.ingest` | `shingo.orders` | Edge -> Core | [OrderIngestRequest](#orderingestrequest) | Record a filled bin's manifest (inventory write; dispatches no order) |
 | `order.ack` | `shingo.dispatch` | Core -> Edge | [OrderAck](#orderack) | Order accepted, source material located |
 | `order.waybill` | `shingo.dispatch` | Core -> Edge | [OrderWaybill](#orderwaybill) | Robot assigned and dispatched |
 | `order.update` | `shingo.dispatch` | Core -> Edge | [OrderUpdate](#orderupdate) | Status change or ETA update |
@@ -851,7 +851,9 @@ Signals that a staged (dwelling) order should resume execution. Sent by the oper
 
 #### OrderIngestRequest
 
-Submits a newly filled bin for storage. Core sets the bin manifest from the payload template and dispatches a store order to move the bin to the warehouse.
+Reports a produced (filled) bin so Core records its inventory manifest. This is a **manifest-only** write: Core sets *and confirms* the bin's payload and produced count in one transaction, and dispatches **nothing** — no store order is created (that leg was removed with the retired simple-produce mode). It is fire-and-forget: Core processes the request asynchronously and does not reply on success; a failure is logged Core-side and returned as an `order.error`.
+
+Bin identity resolves two ways: a non-empty `bin_label` is looked up directly (manual ingest — an operator scanned a real tote); a blank `bin_label` falls back to `source_node`, and Core resolves the bin from what is parked at that node (headless produce-finalize, which tracks the bin by id, not label).
 
 ```json
 {
@@ -868,11 +870,11 @@ Submits a newly filled bin for storage. Core sets the bin manifest from the payl
 
 | Field | JSON Key | Type | Required | Description |
 |---|---|---|---|---|
-| Order UUID | `order_uuid` | string | Yes | Client-generated UUID v4. |
+| Order UUID | `order_uuid` | string | Yes | Client-generated UUID v4. Correlation id only — ingest creates no order. |
 | Payload Code | `payload_code` | string | Yes | Payload type for manifest lookup. |
-| Bin Label | `bin_label` | string | Yes | QR label of the bin to ingest. |
-| Source Node | `source_node` | string | Yes | Where the filled bin is located. |
-| Quantity | `quantity` | integer | Yes | Number of items or units. |
+| Bin Label | `bin_label` | string | No | QR label of the bin to ingest. Blank => Core resolves the bin by `source_node`. |
+| Source Node | `source_node` | string | Cond. | Where the filled bin is parked. Required when `bin_label` is blank (Core resolves identity from it). |
+| Quantity | `quantity` | integer | No | Operator-measured produced count (UOP). 0 => the payload's capacity. |
 | Manifest | `manifest` | IngestManifestItem[] | No | Explicit manifest items. If omitted, core uses the payload template. |
 
 **IngestManifestItem:**
