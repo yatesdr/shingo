@@ -97,7 +97,6 @@ func agreementCases() []agreementCase {
 		{protocol.TypeOrderCancel, &protocol.OrderCancel{}, "HandleOrderCancel"},
 		{protocol.TypeOrderReceipt, &protocol.OrderReceipt{}, "HandleOrderReceipt"},
 		{protocol.TypeOrderRedirect, &protocol.OrderRedirect{}, "HandleOrderRedirect"},
-		{protocol.TypeOrderStorageWaybill, &protocol.OrderStorageWaybill{}, "HandleOrderStorageWaybill"},
 		{protocol.TypeComplexOrderRequest, &protocol.ComplexOrderRequest{}, "HandleComplexOrderRequest"},
 		{protocol.TypeOrderRelease, &protocol.OrderRelease{}, "HandleOrderRelease"},
 		{protocol.TypeOrderIngest, &protocol.OrderIngestRequest{}, "HandleOrderIngest"},
@@ -123,7 +122,6 @@ func registerAllTypesOnRouter(r *router.Router[string], h *countingHandler) {
 	router.Register(r, protocol.TypeOrderCancel, h.HandleOrderCancel)
 	router.Register(r, protocol.TypeOrderReceipt, h.HandleOrderReceipt)
 	router.Register(r, protocol.TypeOrderRedirect, h.HandleOrderRedirect)
-	router.Register(r, protocol.TypeOrderStorageWaybill, h.HandleOrderStorageWaybill)
 	router.Register(r, protocol.TypeComplexOrderRequest, h.HandleComplexOrderRequest)
 	router.Register(r, protocol.TypeOrderRelease, h.HandleOrderRelease)
 	router.Register(r, protocol.TypeOrderIngest, h.HandleOrderIngest)
@@ -166,9 +164,6 @@ func (h *countingHandler) HandleOrderReceipt(*protocol.Envelope, *protocol.Order
 }
 func (h *countingHandler) HandleOrderRedirect(*protocol.Envelope, *protocol.OrderRedirect) {
 	h.incr("HandleOrderRedirect")
-}
-func (h *countingHandler) HandleOrderStorageWaybill(*protocol.Envelope, *protocol.OrderStorageWaybill) {
-	h.incr("HandleOrderStorageWaybill")
 }
 func (h *countingHandler) HandleComplexOrderRequest(*protocol.Envelope, *protocol.ComplexOrderRequest) {
 	h.incr("HandleComplexOrderRequest")

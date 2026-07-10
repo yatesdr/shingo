@@ -38,11 +38,6 @@ func (f *fakeDispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol
 	f.lastEnv = env
 	f.lastPayload = p
 }
-func (f *fakeDispatcher) HandleOrderStorageWaybill(env *protocol.Envelope, p *protocol.OrderStorageWaybill) {
-	f.calls = append(f.calls, "HandleOrderStorageWaybill")
-	f.lastEnv = env
-	f.lastPayload = p
-}
 func (f *fakeDispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.OrderIngestRequest) {
 	f.calls = append(f.calls, "HandleOrderIngest")
 	f.lastEnv = env
@@ -60,7 +55,7 @@ func (f *fakeDispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.
 }
 
 // TestDispatcherInterface_SatisfiedByFake confirms that a pure in-test fake
-// conforming to the eight Handle* methods satisfies Dispatcher. This is the
+// conforming to the seven Handle* methods satisfies Dispatcher. This is the
 // main value the narrow interface provides: swapping in a test double for
 // CoreHandler without spinning up a real *dispatch.Dispatcher.
 func TestDispatcherInterface_SatisfiedByFake(t *testing.T) {
@@ -102,11 +97,11 @@ func TestDispatcherInterface_SatisfiedByRealDispatcher(t *testing.T) {
 	}
 }
 
-// TestDispatcherInterface_HasAllEightOrderHandlers uses reflection to assert
-// the interface declares exactly the eight Handle* order methods. If anyone
+// TestDispatcherInterface_HasAllSevenOrderHandlers uses reflection to assert
+// the interface declares exactly the seven Handle* order methods. If anyone
 // renames, drops, or adds a method without updating this test or the compile
 // assertion, the divergence is caught here.
-func TestDispatcherInterface_HasAllEightOrderHandlers(t *testing.T) {
+func TestDispatcherInterface_HasAllSevenOrderHandlers(t *testing.T) {
 	t.Parallel()
 	want := []string{
 		"HandleComplexOrderRequest",
@@ -116,7 +111,6 @@ func TestDispatcherInterface_HasAllEightOrderHandlers(t *testing.T) {
 		"HandleOrderReceipt",
 		"HandleOrderRelease",
 		"HandleOrderRequest",
-		"HandleOrderStorageWaybill",
 	}
 
 	// reflect.TypeOf on a nil interface value yields nil, so use a pointer
@@ -161,7 +155,6 @@ func TestDispatcher_FakeDispatchesEachPayload(t *testing.T) {
 	d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: "oc-1"})
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{OrderUUID: "rec-1"})
 	d.HandleOrderRedirect(env, &protocol.OrderRedirect{OrderUUID: "red-1"})
-	d.HandleOrderStorageWaybill(env, &protocol.OrderStorageWaybill{OrderUUID: "wb-1"})
 	d.HandleOrderIngest(env, &protocol.OrderIngestRequest{OrderUUID: "ig-1"})
 	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{OrderUUID: "cx-1"})
 	d.HandleOrderRelease(env, &protocol.OrderRelease{OrderUUID: "rl-1"})
@@ -171,7 +164,6 @@ func TestDispatcher_FakeDispatchesEachPayload(t *testing.T) {
 		"HandleOrderCancel",
 		"HandleOrderReceipt",
 		"HandleOrderRedirect",
-		"HandleOrderStorageWaybill",
 		"HandleOrderIngest",
 		"HandleComplexOrderRequest",
 		"HandleOrderRelease",
@@ -190,7 +182,7 @@ func TestDispatcher_FakeDispatchesEachPayload(t *testing.T) {
 }
 
 // TestDispatcher_IncompleteFakeDoesNotSatisfy is a negative check: a struct
-// that only implements seven of the eight methods must NOT satisfy Dispatcher.
+// that only implements six of the seven methods must NOT satisfy Dispatcher.
 // Verified via reflect.Type.Implements so the test compiles even when the
 // candidate is intentionally incomplete.
 func TestDispatcher_IncompleteFakeDoesNotSatisfy(t *testing.T) {

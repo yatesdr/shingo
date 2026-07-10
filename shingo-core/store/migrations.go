@@ -491,6 +491,16 @@ func (db *DB) runVersionedMigrations() error {
 		{45, "add orders.source_intent (order-builder sourcing data home)",
 			v45OrderSourceIntent,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "source_intent") }},
+
+		// v46 adds orders.coordinated — the dispatch-provenance discriminator
+		// (whether an order carries an Edge-authored multi-leg plan). It REPLACES
+		// IsCoordinated's StepsJSON != "" heuristic, which becomes unsound once F1
+		// persists simple plans to steps_json. Stamped at Core intake going forward;
+		// backfilled from steps_json so in-flight orders keep today's exact
+		// classification across the deploy window (no order changes routing).
+		{46, "add orders.coordinated (dispatch-provenance discriminator)",
+			v46OrderCoordinated,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "coordinated") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1006,6 +1016,20 @@ func v45OrderSourceIntent(tx *sql.Tx) error {
 		WHEN 'retrieve_empty' THEN 'empty'
 		WHEN 'move' THEN 'local'
 		ELSE '' END`)
+	return err
+}
+
+func v46OrderCoordinated(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS coordinated BOOLEAN NOT NULL DEFAULT false`); err != nil {
+		return err
+	}
+	// Backfill = (steps_json != '') — reproduces IsCoordinated's pre-column
+	// semantics EXACTLY (StepsJSON != "" ⟺ coordinated), so no in-flight order
+	// changes its dispatch tail across the deploy. New orders are stamped at intake
+	// (complex intake → true, everything else → false). Idempotent: a re-run
+	// recomputes the same value; steps_json is NOT NULL DEFAULT '' so the guard is
+	// just defensive.
+	_, err := tx.Exec(`UPDATE orders SET coordinated = (steps_json IS NOT NULL AND steps_json != '')`)
 	return err
 }
 

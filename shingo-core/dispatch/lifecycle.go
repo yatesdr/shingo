@@ -12,10 +12,10 @@
 // signatures (the new typed methods replace the implementations, not the
 // public API).
 //
-// Side effects that need engine-level callbacks (sendToEdge,
-// maybeCreateReturnOrder, etc.) stay on the EventBus — actions emit
-// events via the existing Emitter interface; engine wiring subscribes
-// and reacts. This keeps the dispatch package self-contained.
+// Side effects that need engine-level callbacks (sendToEdge, swap-peer
+// unwind, etc.) stay on the EventBus — actions emit events via the
+// existing Emitter interface; engine wiring subscribes and reacts. This
+// keeps the dispatch package self-contained.
 
 package dispatch
 
@@ -67,7 +67,7 @@ type Event struct {
 //
 // Actions are kept dispatch-internal — they may use s.db, s.backend,
 // s.emitter, but not engine-level callbacks. Engine-side side effects
-// (sendToEdge, maybeCreateReturnOrder) react to emitted events via the
+// (sendToEdge, swap-peer unwind) react to emitted events via the
 // EventBus subscription pattern.
 type Action func(s *LifecycleService, ord *orders.Order, ev Event) error
 

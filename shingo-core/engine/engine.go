@@ -154,6 +154,12 @@ func New(c Config) *Engine {
 		}
 		return nil
 	}
+	// advanceCompound re-drives a compound (reshuffle) parent stranded in
+	// `reshuffling` with all children terminal — the liveness backstop. Late-bound
+	// (e.dispatcher is created in Start()); the closure reads it at call time.
+	e.reconciliation.advanceCompound = func(parentID int64) error {
+		return e.dispatcher.AdvanceCompoundOrder(parentID)
+	}
 	e.recovery = newRecoveryService(e)
 	e.binManifest = service.NewBinManifestService(e.db)
 	e.binService = service.NewBinService(e.db, e.binManifest)

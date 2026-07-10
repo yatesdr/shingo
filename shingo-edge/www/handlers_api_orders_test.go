@@ -34,7 +34,6 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 
 		// Order creation
 		r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
-		r.Post("/orders/store", h.apiCreateStoreOrder)
 		r.Post("/orders/move", h.apiCreateMoveOrder)
 		r.Post("/orders/complex", h.apiCreateComplexOrder)
 		r.Post("/orders/ingest", h.apiCreateIngestOrder)
@@ -52,19 +51,18 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Order creation — apiCreateRetrieveOrder, apiCreateStoreOrder,
-// apiCreateMoveOrder, apiCreateComplexOrder, apiCreateIngestOrder
+// Order creation — apiCreateRetrieveOrder, apiCreateMoveOrder,
+// apiCreateComplexOrder, apiCreateIngestOrder
 //
-// All five endpoints share the same parse-body → call-engine → return-order
+// All four endpoints share the same parse-body → call-engine → return-order
 // shape. The table-driven TestApiOrders_CreateOrder_InvalidJSON covers the
 // decode-error path for every endpoint in one sweep; per-endpoint tests
 // exercise the happy path plus any endpoint-specific validation.
 //
-// DB call sites exercised: DB.CreateOrder (x5 types),
+// DB call sites exercised: DB.CreateOrder (x4 types),
 // DB.UpdateOrderStepsJSON (complex), DB.GetOrder (auto-submit),
 // DB.EnqueueOutbox (auto-submit), DB.UpdateOrderStatus (auto-submit
-// transition), DB.InsertOrderHistory (auto-submit),
-// DB.UpdateOrderFinalCount + DB.UpdateOrderStatus (store submit).
+// transition), DB.InsertOrderHistory (auto-submit).
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiOrders_CreateRetrieveOrder_Success(t *testing.T) {
@@ -187,42 +185,6 @@ func TestApiOrders_CreateRetrieveOrder_BatchMissingFields(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/orders/retrieve", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "payload_code and delivery_node required for batch")
-}
-
-func TestApiOrders_CreateStoreOrder_Success(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
-
-	body := map[string]any{
-		"quantity":    7,
-		"source_node": "CELL-1",
-	}
-	resp := doRequest(t, router, "POST", "/api/orders/store", body, nil)
-	assertStatus(t, resp, http.StatusOK)
-
-	var order storeorders.Order
-	decodeJSON(t, resp, &order)
-	if order.ID == 0 {
-		t.Fatal("expected non-zero order id")
-	}
-	if order.OrderType != orders.TypeStore {
-		t.Errorf("order type: got %q, want %q", order.OrderType, orders.TypeStore)
-	}
-
-	// Verify DB state: SubmitStoreOrder set final_count + count_confirmed
-	// and transitioned to submitted.
-	stored, err := testDB.GetOrder(order.ID)
-	if err != nil {
-		t.Fatalf("GetOrder: %v", err)
-	}
-	if stored.FinalCount == nil || *stored.FinalCount != 7 {
-		t.Errorf("final_count: got %v, want 7", stored.FinalCount)
-	}
-	if !stored.CountConfirmed {
-		t.Error("expected count_confirmed=true after create store order")
-	}
-	if stored.Status != orders.StatusSubmitted {
-		t.Errorf("status: got %q, want %q", stored.Status, orders.StatusSubmitted)
-	}
 }
 
 func TestApiOrders_CreateMoveOrder_Success(t *testing.T) {
@@ -354,7 +316,6 @@ func TestApiOrders_CreateOrder_InvalidJSON(t *testing.T) {
 		path string
 	}{
 		{"retrieve", "/api/orders/retrieve"},
-		{"store", "/api/orders/store"},
 		{"move", "/api/orders/move"},
 		{"complex", "/api/orders/complex"},
 		{"ingest", "/api/orders/ingest"},
@@ -597,8 +558,7 @@ func TestApiOrders_ReleaseOrder_SendPartialBackDispositionFlows(t *testing.T) {
 func TestApiOrders_SubmitOrder_Success(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	// Use a retrieve order (store orders require count confirmation, which
-	// is its own code path exercised in CreateStoreOrder tests).
+	// Use a retrieve order — a straightforward pending → submitted transition.
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusPending)
 
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/submit", nil, nil)

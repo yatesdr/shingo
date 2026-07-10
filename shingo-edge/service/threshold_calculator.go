@@ -172,9 +172,9 @@ func (s *ThresholdCalculatorService) Calculate(req CalculateRequest) (CalculateR
 	if v, err := orders.MedianL2LoadSeconds(s.db.DB, req.PayloadCode, req.DateRange); err == nil {
 		in.L2LoadSeconds = v
 	}
-	if v, err := orders.AvgL2TransitSeconds(s.db.DB, req.PayloadCode, req.DateRange); err == nil {
-		in.L2TransitSeconds = v
-	}
+	// L2 (store) transit was keyed on the plain-store family, removed here — no
+	// store orders exist, so this auto-fetch always returned 0. L2TransitSeconds
+	// stays an operator-editable modal input, now defaulting to 0.
 	if v, err := orders.P95MarketToCellSeconds(s.db.DB, req.PayloadCode, req.DateRange); err == nil {
 		in.MarketToCellSeconds = v
 	}
@@ -187,7 +187,10 @@ func (s *ThresholdCalculatorService) Calculate(req CalculateRequest) (CalculateR
 		dateRangeDays = 1
 	}
 	samplesL1, _ := orders.CountCompletedOrdersInWindow(s.db.DB, "retrieve_empty", "confirmed", req.PayloadCode, req.DateRange)
-	samplesL2, _ := orders.CountCompletedOrdersInWindow(s.db.DB, "store", "delivered", req.PayloadCode, req.DateRange)
+	// L2 (store) coverage was keyed on the removed plain-store family — no store
+	// deliveries exist, so this count was always 0. Kept as 0 so confidence scoring
+	// is unchanged (store never contributed a positive coverage sample).
+	samplesL2 := 0
 	samplesRetrieve, _ := orders.CountCompletedOrdersInWindow(s.db.DB, "retrieve", "delivered", req.PayloadCode, req.DateRange)
 
 	confidence := scoreConfidence(dateRangeDays, samplesL1, samplesL2, samplesRetrieve)

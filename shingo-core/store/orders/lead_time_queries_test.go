@@ -18,7 +18,7 @@ import (
 // TestLeadTimeHelpers_Fidelity seeds one known window of order_history and
 // asserts every Core lead-time helper computes the exact expected duration —
 // the one-window fidelity check for the Edge→Core calculator port. The numbers
-// are the ground truth both implementations must reproduce (mean for L1/L2
+// are the ground truth both implementations must reproduce (mean for L1
 // transit + L1 queue, median for L2 load, p95 for market→cell).
 func TestLeadTimeHelpers_Fidelity(t *testing.T) {
 	t.Parallel()
@@ -56,8 +56,6 @@ func TestLeadTimeHelpers_Fidelity(t *testing.T) {
 	seed("B", "retrieve_empty", "PART-A", []ev{
 		{"queued", 100 * s}, {"acknowledged", 120 * s}, {"in_transit", 125 * s}, {"delivered", 145 * s}, {"confirmed", 180 * s},
 	})
-	// store C: L2 transit 30s.
-	seed("C", "store", "PART-A", []ev{{"in_transit", 200 * s}, {"delivered", 230 * s}})
 	// retrieve D: market→cell 40s.
 	seed("D", "retrieve", "PART-A", []ev{{"in_transit", 300 * s}, {"delivered", 340 * s}})
 	// a different payload that must NOT leak into PART-A results.
@@ -77,17 +75,12 @@ func TestLeadTimeHelpers_Fidelity(t *testing.T) {
 	check("AvgL1TransitSeconds", tr, err, 15) // (10+20)/2
 	ld, err := orders.MedianL2LoadSeconds(db, "PART-A", win)
 	check("MedianL2LoadSeconds", ld, err, 27.5) // median(20,35)
-	l2, err := orders.AvgL2TransitSeconds(db, "PART-A", win)
-	check("AvgL2TransitSeconds", l2, err, 30)
 	mc, err := orders.P95MarketToCellSeconds(db, "PART-A", win)
 	check("P95MarketToCellSeconds", mc, err, 40)
 
 	// confidence-coverage counts.
 	if n, err := orders.CountCompletedOrdersInWindow(db, "retrieve_empty", "confirmed", "PART-A", win); err != nil || n != 2 {
 		t.Errorf("count retrieve_empty/confirmed = %d,%v, want 2", n, err)
-	}
-	if n, err := orders.CountCompletedOrdersInWindow(db, "store", "delivered", "PART-A", win); err != nil || n != 1 {
-		t.Errorf("count store/delivered = %d,%v, want 1", n, err)
 	}
 	if n, err := orders.CountCompletedOrdersInWindow(db, "retrieve", "delivered", "PART-A", win); err != nil || n != 1 {
 		t.Errorf("count retrieve/delivered = %d,%v, want 1", n, err)

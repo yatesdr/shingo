@@ -67,6 +67,53 @@ func TestNewReconciliationService_WiresDeps(t *testing.T) {
 	}
 }
 
+// ── reshuffle liveness backstop ─────────────────────────────────────
+
+// TestAdvanceStuckReshuffleParents_ReDrivesOnlyStranded verifies the query selects
+// a compound parent stranded in `reshuffling` with ALL children terminal (incl. the
+// cancelled-child vector) and re-drives it, while leaving a parent with an in-flight
+// child and a childless parent untouched.
+func TestAdvanceStuckReshuffleParents_ReDrivesOnlyStranded(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := newReconService(t, db)
+
+	var advanced []int64
+	svc.advanceCompound = func(parentID int64) error {
+		advanced = append(advanced, parentID)
+		return nil
+	}
+
+	mkParent := func(uuid string) int64 {
+		p := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeRetrieve, Status: protocol.StatusReshuffling, Quantity: 1}
+		testutil.MustNoErr(t, db.CreateOrder(p), "create parent "+uuid)
+		return p.ID
+	}
+	mkChild := func(uuid string, parentID int64, status protocol.Status) {
+		c := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeMove, Status: status, ParentOrderID: &parentID, Quantity: 1}
+		testutil.MustNoErr(t, db.CreateOrder(c), "create child "+uuid)
+	}
+
+	// Stranded: all children terminal, one cancelled (the vector with no event arm).
+	stranded := mkParent("resh-stranded")
+	mkChild("resh-stranded-c1", stranded, protocol.StatusConfirmed)
+	mkChild("resh-stranded-c2", stranded, protocol.StatusCancelled)
+
+	// In-flight child — NOT stranded, must not be selected.
+	inflight := mkParent("resh-inflight")
+	mkChild("resh-inflight-c1", inflight, protocol.StatusConfirmed)
+	mkChild("resh-inflight-c2", inflight, protocol.StatusInTransit)
+
+	// Childless reshuffling parent — no children to be terminal, must not be selected.
+	mkParent("resh-childless")
+
+	n, err := svc.AdvanceStuckReshuffleParents()
+	testutil.MustNoErr(t, err, "AdvanceStuckReshuffleParents")
+	if n != 1 || len(advanced) != 1 || advanced[0] != stranded {
+		t.Fatalf("advanced = %v (n=%d), want exactly [%d] (only the all-terminal parent)", advanced, n, stranded)
+	}
+}
+
 // ── Summary — fresh DB ──────────────────────────────────────────────
 
 func TestReconciliationService_Summary_FreshDB(t *testing.T) {

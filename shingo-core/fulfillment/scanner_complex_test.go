@@ -55,8 +55,9 @@ func TestScanner_ComplexOrder_DispatchedWhenCapacityGreen(t *testing.T) {
 		ID:        42,
 		Status:    protocol.StatusQueued,
 		OrderType: protocol.OrderTypeComplex,
-		// Production complex orders always carry a step plan; the Stage-3
-		// discriminator (IsCoordinated) keys on StepsJSON presence.
+		// Production complex orders are stamped coordinated at intake; the Stage-3
+		// discriminator (IsCoordinated) reads the Coordinated column, not StepsJSON.
+		Coordinated:  true,
 		StepsJSON:    `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"LINE_01"}]`,
 		DeliveryNode: "LINE_01",
 		PayloadCode:  "PN-X",
@@ -105,8 +106,9 @@ func TestScanner_ComplexOrder_BypassesCapacityGate(t *testing.T) {
 		ID:        99,
 		Status:    protocol.StatusQueued,
 		OrderType: protocol.OrderTypeComplex,
-		// Production complex orders always carry a step plan; the Stage-3
-		// discriminator (IsCoordinated) keys on StepsJSON presence.
+		// Production complex orders are stamped coordinated at intake; the Stage-3
+		// discriminator (IsCoordinated) reads the Coordinated column, not StepsJSON.
+		Coordinated:  true,
 		StepsJSON:    `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"LINE_01"}]`,
 		DeliveryNode: "LINE_01",
 		PayloadCode:  "PN-X",

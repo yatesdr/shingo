@@ -158,12 +158,6 @@ func (h *CoreHandler) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Or
 	h.dispatcher.HandleOrderRedirect(env, p)
 }
 
-func (h *CoreHandler) HandleOrderStorageWaybill(env *protocol.Envelope, p *protocol.OrderStorageWaybill) {
-	log.Printf("core_handler: storage waybill from %s: uuid=%s", env.Src.Station, p.OrderUUID)
-	h.dbg("-> storage_waybill from=%s uuid=%s", env.Src.Station, p.OrderUUID)
-	h.dispatcher.HandleOrderStorageWaybill(env, p)
-}
-
 func (h *CoreHandler) HandleComplexOrderRequest(env *protocol.Envelope, p *protocol.ComplexOrderRequest) {
 	log.Printf("core_handler: complex order from %s: uuid=%s steps=%d", env.Src.Station, p.OrderUUID, len(p.Steps))
 	h.dbg("-> complex_order from=%s uuid=%s steps=%d", env.Src.Station, p.OrderUUID, len(p.Steps))

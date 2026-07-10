@@ -446,7 +446,9 @@ func TestScannerRetriesSourcingOrder(t *testing.T) {
 		f.nodesByDot["LINE_01"] = &nodes.Node{ID: 7, Name: "LINE_01"}
 		order := &orders.Order{
 			ID: 42, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeComplex,
-			// Production complex orders always carry a step plan (IsCoordinated keys on it).
+			// Production complex orders are stamped coordinated at intake (IsCoordinated
+			// reads the Coordinated column, not StepsJSON).
+			Coordinated:  true,
 			StepsJSON:    `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"LINE_01"}]`,
 			DeliveryNode: "LINE_01", PayloadCode: "PN-X",
 		}

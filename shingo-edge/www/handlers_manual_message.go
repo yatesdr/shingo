@@ -150,14 +150,6 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 		}
 		env, err = protocol.NewEnvelope(protocol.TypeOrderRedirect, src, dst, &p)
 
-	case "order.storage_waybill":
-		var p protocol.OrderStorageWaybill
-		if e := json.Unmarshal(req.Payload, &p); e != nil {
-			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
-			return
-		}
-		env, err = protocol.NewEnvelope(protocol.TypeOrderStorageWaybill, src, dst, &p)
-
 	default:
 		writeError(w, http.StatusBadRequest, "unknown message type: "+req.Type)
 		return

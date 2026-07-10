@@ -145,11 +145,22 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		if listErr != nil {
 			log.Printf("dispatch: list children for compound %d: %v", parentOrderID, listErr)
 		}
-		hasFailed := false
+		// A child that FAILED or was CANCELLED means the reshuffle's housekeeping did
+		// NOT complete, so the parent must fail — NOT take the success branch below.
+		// Owner-visible decision (2026-07-09): a cancelled reshuffle leg fails the
+		// compound. Rationale: a coordinated parent that resumed would re-run its
+		// original pickup against a still-buried bin (re-reshuffle / livelock risk);
+		// a plain-retrieve parent that "completed" would be wrongly marked Confirmed
+		// though its retrieve never ran. A cancelled leg reaches here from the
+		// AbandonStuck sweep, a fleet-fault sibling teardown, or (with the liveness
+		// backstop) a lone cancelled last child. SKIPPED stays success — a skipped
+		// leg is a moot no-op, not an incomplete one. Revisit if a legitimately
+		// skippable-but-cancelled leg is ever introduced.
+		hasFailedOrCancelled := false
 		allTerminal := true
 		for _, c := range children {
-			if c.Status == StatusFailed {
-				hasFailed = true
+			if c.Status == StatusFailed || c.Status == StatusCancelled {
+				hasFailedOrCancelled = true
 			}
 			if !protocol.IsTerminal(c.Status) {
 				allTerminal = false
@@ -162,8 +173,8 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			log.Printf("dispatch: load parent compound order %d: %v", parentOrderID, pErr)
 		}
 
-		if hasFailed {
-			log.Printf("dispatch: compound order %d has failed children — marking parent failed", parentOrderID)
+		if hasFailedOrCancelled {
+			log.Printf("dispatch: compound order %d has failed/cancelled children — marking parent failed", parentOrderID)
 			if parent != nil {
 				if err := d.lifecycle.Fail(parent, parent.StationID, "reshuffle_failed", reshuffleFailDetail); err != nil {
 					log.Printf("dispatch: fail compound order %d: %v", parentOrderID, err)

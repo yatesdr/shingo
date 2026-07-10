@@ -76,6 +76,18 @@ func (e *Engine) Start() {
 		e.logFn("engine: recover pending_lane_extensions: %v", err)
 	}
 
+	// Boot-time reshuffle liveness backstop: re-drive any compound (reshuffle) parent
+	// left in `reshuffling` with all children terminal. A crash between the last
+	// child's terminal transition and AdvanceCompoundOrder — or a cancelled child (no
+	// child→parent event arm) — would otherwise strand it forever. The periodic
+	// reconcile Loop repeats this; running it once at boot recovers pre-restart
+	// strands immediately. Non-fatal.
+	if n, err := e.reconciliation.AdvanceStuckReshuffleParents(); err != nil {
+		e.logFn("engine: boot advance stuck reshuffle parents: %v", err)
+	} else if n > 0 {
+		e.logFn("engine: boot re-drove %d stuck reshuffle parents", n)
+	}
+
 	// Seed one full-plant dashboard per type if a type has none yet (refactor
 	// #5), so the hub + floor kiosk are useful out of the box. Idempotent +
 	// non-fatal; never clobbers operator-created boards.

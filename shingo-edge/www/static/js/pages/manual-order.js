@@ -67,12 +67,11 @@ import { api, createSSE, delegateActions, toast } from '/static/js/shingoedge.js
 // Field visibility per order type:
 //   move:     pickup, delivery
 //   retrieve: process node (optional), delivery, staging (optional)
-//   store:    process node (optional), pickup
 //   complex:  process node (optional), production (delivery label), staging
 function updateOrderForm() {
     var t = document.getElementById('mo-type').value;
     var showNode    = t !== 'move';
-    var showPickup  = t === 'move' || t === 'store';
+    var showPickup  = t === 'move';
     var showDeliv   = t === 'move' || t === 'retrieve' || t === 'complex';
     var showStaging = t === 'retrieve' || t === 'complex';
 
@@ -104,8 +103,6 @@ function autofillNodeDefaults() {
     var t = document.getElementById('mo-type').value;
     if (t === 'retrieve') {
         document.getElementById('mo-delivery').value = coreNode;
-    } else if (t === 'store') {
-        document.getElementById('mo-pickup').value = coreNode;
     }
 }
 

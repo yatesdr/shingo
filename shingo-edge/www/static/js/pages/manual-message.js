@@ -26,7 +26,7 @@ var _fieldDefs = {
     'node.list_request': [],
     'order.request': [
         { id: 'order_uuid', label: 'Order UUID', type: 'text', value: function(){ return crypto.randomUUID(); } },
-        { id: 'order_type', label: 'Order Type', type: 'select', options: ['retrieve','store','move'], value: 'retrieve' },
+        { id: 'order_type', label: 'Order Type', type: 'select', options: ['retrieve','move'], value: 'retrieve' },
         { id: 'payload_desc', label: 'Payload Description', type: 'text', value: '' },
         { id: 'quantity', label: 'Quantity', type: 'number', value: '1' },
         { id: 'delivery_node', label: 'Delivery Node', type: 'nodeselect', value: '' },
@@ -47,12 +47,6 @@ var _fieldDefs = {
     'order.redirect': [
         { id: 'order_uuid', label: 'Order UUID', type: 'orderselect', value: '' },
         { id: 'new_delivery_node', label: 'New Delivery Node', type: 'nodeselect', value: '' }
-    ],
-    'order.storage_waybill': [
-        { id: 'order_uuid', label: 'Order UUID', type: 'orderselect', value: '' },
-        { id: 'payload_desc', label: 'Payload Description', type: 'text', value: '' },
-        { id: 'source_node', label: 'Source Node', type: 'nodeselect', value: '' },
-        { id: 'final_count', label: 'Final Count', type: 'number', value: '0' }
     ]
 };
 
@@ -126,8 +120,6 @@ function buildPayload() {
             return { order_uuid: getFieldValue('order_uuid'), receipt_type: getFieldValue('receipt_type'), final_count: getFieldValue('final_count') };
         case 'order.redirect':
             return { order_uuid: getFieldValue('order_uuid'), new_delivery_node: getFieldValue('new_delivery_node') };
-        case 'order.storage_waybill':
-            return { order_uuid: getFieldValue('order_uuid'), payload_desc: getFieldValue('payload_desc'), source_node: getFieldValue('source_node'), final_count: getFieldValue('final_count') };
         default:
             return {};
     }

@@ -734,8 +734,8 @@ func isNoBinFailure(reason string) bool {
 //     "no available slot in node group %s"
 //   - dispatch/binresolver/group_resolver.go:298,323
 //     "no bin of requested payload in node group %s"
-//   - dispatch/planning_service.go:552 "no available bin at %s"
-//     (planStore source-side; the source line has no claimable bin
+//   - dispatch/source_finder.go OutcomeWait "no available bin at %s"
+//     (move/retrieve source-side; the source line has no claimable bin
 //     so the changeover's drop can't physically run — practically
 //     a capacity-style condition from the operator's POV)
 //

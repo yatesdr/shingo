@@ -244,11 +244,11 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Transport types: move, retrieve, retrieve_empty, store. retrieve_empty
-	// is now a first-class OrderType — pass it through as-is. (Pre-cleanup
-	// this site translated retrieve_empty → retrieve + RetrieveEmpty bool;
-	// lifecycle_service still normalizes the bool form for old edge callers,
-	// but core's own forms emit the typed value directly.)
+	// Transport types: move, retrieve, retrieve_empty. retrieve_empty is now a
+	// first-class OrderType — pass it through as-is. (Pre-cleanup this site
+	// translated retrieve_empty → retrieve + RetrieveEmpty bool; lifecycle_service
+	// still normalizes the bool form for old edge callers, but core's own forms
+	// emit the typed value directly.)
 	orderType := protocol.OrderType(req.OrderType)
 
 	// Batch retrieve: create N independent orders
@@ -510,28 +510,13 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 		return
 	}
 
-	baseUUID := uuid.New().String()[:8]
-	storeUUID := fmt.Sprintf("manual-swap-s-%s", baseUUID)
-	retrieveUUID := fmt.Sprintf("manual-swap-r-%s", baseUUID)
+	// The evac (store) half of the manual spot-swap was removed with the plain-store
+	// family; this affordance now just delivers a fresh bin to the target node. A
+	// full evac+deliver swap is available through the coordinated (complex) order path.
+	retrieveUUID := fmt.Sprintf("manual-swap-r-%s", uuid.New().String()[:8])
 
 	src := protocol.Address{Role: protocol.RoleCore, Station: "core-spot"}
 	dst := protocol.Address{Role: protocol.RoleCore}
-
-	// Store order: pickup from target node
-	storeReq := &protocol.OrderRequest{
-		OrderUUID:   storeUUID,
-		OrderType:   protocol.OrderTypeStore,
-		Quantity:    1,
-		SourceNode:  targetNode,
-		Priority:    priority,
-		PayloadDesc: desc,
-	}
-	storeEnv, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, storeReq)
-	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.engine.Dispatcher().HandleOrderRequest(storeEnv, storeReq)
 
 	// Retrieve order: deliver to target node with payload
 	retrieveReq := &protocol.OrderRequest{
@@ -550,13 +535,9 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 	}
 	h.engine.Dispatcher().HandleOrderRequest(retrieveEnv, retrieveReq)
 
-	// Read back both orders
+	// Read back the retrieve order
 	svc := h.engine.OrderService()
 	resp := map[string]any{}
-	if o, err := svc.GetOrderByUUID(storeUUID); err == nil {
-		resp["store_order_id"] = o.ID
-		resp["store_status"] = o.Status
-	}
 	if o, err := svc.GetOrderByUUID(retrieveUUID); err == nil {
 		resp["retrieve_order_id"] = o.ID
 		resp["retrieve_status"] = o.Status

@@ -8,11 +8,10 @@ const (
 	TypeData = "data"
 
 	// Edge -> Core (published on orders topic)
-	TypeOrderRequest        = "order.request"
-	TypeOrderCancel         = "order.cancel"
-	TypeOrderReceipt        = "order.receipt"
-	TypeOrderRedirect       = "order.redirect"
-	TypeOrderStorageWaybill = "order.storage_waybill"
+	TypeOrderRequest  = "order.request"
+	TypeOrderCancel   = "order.cancel"
+	TypeOrderReceipt  = "order.receipt"
+	TypeOrderRedirect = "order.redirect"
 
 	// Edge -> Core: complex order lifecycle
 	TypeComplexOrderRequest = "order.complex_request"
@@ -141,7 +140,6 @@ func AllTypes() []string {
 		TypeOrderCancel,
 		TypeOrderReceipt,
 		TypeOrderRedirect,
-		TypeOrderStorageWaybill,
 		TypeComplexOrderRequest,
 		TypeOrderRelease,
 		TypeOrderIngest,

@@ -187,12 +187,12 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Narrowed re-entrancy guard (the part of the old :175 that does NOT dissolve):
 	// a PLAIN order in `sourcing` with no claimed bin is mid intake-plan — planX
 	// moves to sourcing BEFORE it claims — or crashed pre-claim. Processing it here
-	// would race the concurrent intake finder/claim and, for a store, wrongly
-	// finder-source it (a store has no payload to find). The HELD-bin case (BinID
-	// set) IS safe and re-dispatches idempotently below — that is the part that
-	// dissolves (the length-1 idempotency covers reuse, not this mid-plan race).
-	// Coordinated orders re-resolve + reclaim idempotently in DispatchPreparedComplex,
-	// so they are never skipped.
+	// would race the concurrent intake finder/claim. The HELD-bin case (BinID set)
+	// IS safe and re-dispatches idempotently below — that is the part that dissolves
+	// (the length-1 idempotency covers reuse, not this mid-plan race). Coordinated
+	// orders re-resolve + reclaim idempotently in DispatchPreparedComplex, so they
+	// are never skipped. The plain/coordinated discriminator is now the
+	// order.Coordinated provenance column (IsCoordinated), not StepsJSON.
 	if order.Status == protocol.StatusSourcing && order.BinID == nil && !dispatch.IsCoordinated(order) {
 		return false
 	}
@@ -387,8 +387,8 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 }
 
 // dispatchHeldBin dispatches a plain order that already holds its source bin —
-// a store (claimed at intake by planStore) or a retrieve/move that reached
-// `sourcing` on a prior tick — using the held bin. It never re-finds or
+// a retrieve/move that reached `sourcing` on a prior tick — using the held bin.
+// It never re-finds or
 // re-claims (re-finding would claim a second, wrong bin — FindSource excludes
 // claimed bins). This is the idempotent reuse that lets the sourcing-reentry
 // guard dissolve. On a transient fleet failure it re-queues WITHOUT releasing

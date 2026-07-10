@@ -125,7 +125,6 @@ func (e *Engine) wireEventHandlers() {
 			} else if e.dispatcher != nil {
 				e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, dispatch.SwapTerminalFailed)
 			}
-			e.maybeCreateReturnOrder(order, "failed")
 		}
 	}, EventOrderFailed)
 
@@ -192,13 +191,12 @@ func (e *Engine) wireEventHandlers() {
 			}
 		}
 
-		// Skip auto-return for orders that were already delivered/confirmed.
-		// The bin is at the destination, not at the pickup node.
-		if dispatch.IsPostDelivery(protocol.Status(ev.PreviousStatus)) {
-			e.logFn("engine: order %d was %s before cancel, skipping auto-return (bin at destination)", ev.OrderID, ev.PreviousStatus)
-		} else if order, err := e.db.GetOrder(ev.OrderID); err == nil {
-			e.maybeCreateReturnOrder(order, "cancelled")
-		}
+		// Auto-return (minting a store order to send the bin back to its origin on
+		// cancel/fail) was removed with the plain-store family — it was dormant
+		// (never completed in production) and store was the wrong vehicle. The bin's
+		// claim is released by the standard terminal teardown; the physical bin stays
+		// where the robot left it until an operator moves it. The requirement (return
+		// a bin on cancel/fail) is preserved as a future COORDINATED return-order build.
 
 		// If a two-robot swap leg was cancelled (operator terminate, fleet fault,
 		// or this handler cancelling the sibling), unwind its peer so a half-swap

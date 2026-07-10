@@ -50,9 +50,6 @@ func (s *LifecycleService) Transition(orderID int64, newStatus protocol.Status, 
 		}
 		return fmt.Errorf("invalid transition from %s to %s", order.Status, newStatus)
 	}
-	if order.OrderType == TypeStore && newStatus == StatusSubmitted && !order.CountConfirmed {
-		return fmt.Errorf("store order requires count confirmation before submitting")
-	}
 	return s.applyTransition(order, newStatus, detail, false)
 }
 

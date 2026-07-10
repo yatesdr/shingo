@@ -100,42 +100,6 @@ func (h *Handlers) createRetrieveBatch(w http.ResponseWriter, payloadCode, deliv
 	})
 }
 
-func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ProcessNodeID int64  `json:"process_node_id"`
-		Quantity      int64  `json:"quantity"`
-		SourceNode    string `json:"source_node"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	var processNodeID *int64
-	if req.ProcessNodeID > 0 {
-		processNodeID = &req.ProcessNodeID
-		if node, err := h.engine.ProcessService().GetNode(*processNodeID); err == nil && req.SourceNode == "" {
-			req.SourceNode = node.CoreNodeName
-		}
-	}
-
-	order, err := h.engine.OrderManager().CreateStoreOrder(
-		processNodeID, req.Quantity, req.SourceNode,
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Auto-set count and submit so the order actually gets sent to core.
-	if err := h.engine.OrderManager().SubmitStoreOrder(order.ID, req.Quantity); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSONWithTrigger(w, r, order, "refreshMaterial")
-}
-
 func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProcessNodeID int64  `json:"process_node_id"`

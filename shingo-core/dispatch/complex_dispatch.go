@@ -109,7 +109,10 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		DeliveryNode: deliveryNode,
 		ProcessNode:  p.ProcessNode,
 		StepsJSON:    string(stepsJSON),
-		QueueReason:  queueReason,
+		// Provenance stamp: complex intake is coordinated. The dispatch
+		// discriminator (IsCoordinated) reads this column, not StepsJSON.
+		Coordinated: true,
+		QueueReason: queueReason,
 		// Durable two-robot swap linkage: persist the supply sibling's UUID
 		// in the CreateOrder INSERT itself, so a two-robot evac's pointer to
 		// its supply is written atomically with the order and can never be
@@ -623,6 +626,8 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 		DeliveryNode: deliveryNode,
 		ProcessNode:  p.ProcessNode,
 		StepsJSON:    string(stepsJSON),
+		// Provenance stamp: complex intake (buried path) is coordinated.
+		Coordinated: true,
 		// Persist the swap sibling on the buried path too (durable forward
 		// link) — same contract as the main intake path above.
 		SiblingOrderUUID: p.SiblingOrderUUID,

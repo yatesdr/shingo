@@ -370,7 +370,6 @@ func main() {
 		protocol.TypeOrderCancel,
 		protocol.TypeOrderReceipt,
 		protocol.TypeOrderRedirect,
-		protocol.TypeOrderStorageWaybill,
 		protocol.TypeComplexOrderRequest,
 		protocol.TypeOrderRelease,
 		protocol.TypeOrderIngest,
@@ -384,7 +383,6 @@ func main() {
 	router.Register(protoRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
 	router.Register(protoRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
 	router.Register(protoRouter, protocol.TypeOrderRedirect, coreHandler.HandleOrderRedirect)
-	router.Register(protoRouter, protocol.TypeOrderStorageWaybill, coreHandler.HandleOrderStorageWaybill)
 	router.Register(protoRouter, protocol.TypeComplexOrderRequest, coreHandler.HandleComplexOrderRequest)
 	router.Register(protoRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
 	router.Register(protoRouter, protocol.TypeOrderIngest, coreHandler.HandleOrderIngest)

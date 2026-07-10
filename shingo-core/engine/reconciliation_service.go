@@ -32,6 +32,12 @@ type ReconciliationService struct {
 	// sibling). Late-bound to dispatch.LifecycleService.CancelOrder in
 	// engine.New, same wiring rationale as confirmDelivered above.
 	abandonOrder func(order *orders.Order, reason string) error
+	// advanceCompound re-drives a compound (reshuffle) parent whose children
+	// are all terminal. Late-bound to dispatch.Dispatcher.AdvanceCompoundOrder
+	// in engine.New. The liveness backstop for reshuffle parents stranded in
+	// `reshuffling` when a child→parent terminal event was missed (crash) or
+	// never fired (the cancelled-child vector has no child→parent event arm).
+	advanceCompound func(parentID int64) error
 }
 
 func newReconciliationService(db ReconciliationStore, logFn LogFunc) *ReconciliationService {
@@ -98,6 +104,11 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 				} else if n > 0 {
 					s.logFn("engine: abandoned %d stuck orders", n)
 				}
+			}
+			if n, err := s.AdvanceStuckReshuffleParents(); err != nil {
+				s.logFn("engine: advance stuck reshuffle parents error: %v", err)
+			} else if n > 0 {
+				s.logFn("engine: re-drove %d stuck reshuffle parents", n)
 			}
 			if n, err := s.db.ReapOrphanedReservations(); err != nil {
 				s.logFn("engine: reap orphaned reservations error: %v", err)
@@ -176,6 +187,68 @@ func (s *ReconciliationService) AutoConfirmStuckDeliveredOrders(timeout time.Dur
 	}
 
 	return confirmed, nil
+}
+
+// AdvanceStuckReshuffleParents is the liveness backstop for compound (reshuffle)
+// parents left in `reshuffling` after ALL their children reached a terminal status —
+// a state that should be transient (a child→parent terminal event re-drives the
+// parent) but strands FOREVER when that event is missed: a Core crash between the
+// last child's terminal transition and AdvanceCompoundOrder, or the cancelled-child
+// vector, which has no child→parent event arm at all. For each such parent it
+// re-drives AdvanceCompoundOrder, which resumes (coordinated) / completes (plain) /
+// fails (a failed-or-cancelled child) the parent per the children's terminal states.
+// Idempotent: a parent advanced out of `reshuffling` is not re-selected next pass.
+func (s *ReconciliationService) AdvanceStuckReshuffleParents() (int, error) {
+	rows, err := s.db.Query(`
+		SELECT p.id
+		FROM orders p
+		WHERE p.status = 'reshuffling'
+		  AND EXISTS (SELECT 1 FROM orders c WHERE c.parent_order_id = p.id)
+		  AND NOT EXISTS (
+			SELECT 1 FROM orders c
+			WHERE c.parent_order_id = p.id
+			  AND c.status NOT IN ('confirmed', 'failed', 'cancelled', 'skipped')
+		  )
+		ORDER BY p.id
+		LIMIT 100`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var parentIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return 0, err
+		}
+		parentIDs = append(parentIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	if s.advanceCompound == nil {
+		// Unwired callback — never the production path (engine.New sets it), but bare
+		// unit fixtures may omit it. Log + no-op rather than panic.
+		if len(parentIDs) > 0 {
+			s.logFn("engine: reshuffle-liveness skipped (%d stuck parents): advanceCompound callback not wired", len(parentIDs))
+		}
+		return 0, nil
+	}
+
+	advanced := 0
+	for _, id := range parentIDs {
+		if err := s.advanceCompound(id); err != nil {
+			s.logFn("engine: re-drive stuck reshuffle parent %d: %v (skipping this pass; loop retries)", id, err)
+			continue
+		}
+		s.logFn("engine: re-drove stuck reshuffle parent %d (all children terminal)", id)
+		s.db.RecordRecoveryAction("advance_stuck_reshuffle", "order", id,
+			"re-drove compound parent stranded in reshuffling with all children terminal", "system")
+		advanced++
+	}
+	return advanced, nil
 }
 
 // AbandonStuckOrders cancels RUNTIME-stuck orders that have sat without progress past the

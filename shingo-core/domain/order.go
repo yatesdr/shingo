@@ -56,4 +56,12 @@ type Order struct {
 	// source finder + scanner. Set once at intake; "" (full) for retrieves and
 	// for orders that don't source through the finder. See dispatch.SourceIntent*.
 	SourceIntent string `json:"source_intent,omitempty"`
+	// Coordinated is the dispatch-provenance discriminator: true iff the order
+	// carries an Edge-authored coordinated (multi-leg) plan and must take the
+	// coordinated dispatch tail (role gate + complex reserve/confirm); false for a
+	// plain single-transport order. Stamped ONCE at Core intake — complex intake
+	// stamps true, every other intake stamps false (the zero value). It REPLACES
+	// the StepsJSON != "" heuristic IsCoordinated used, which becomes unsound once
+	// F1 persists simple plans to StepsJSON. See dispatch.IsCoordinated.
+	Coordinated bool `json:"coordinated"`
 }

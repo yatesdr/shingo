@@ -448,9 +448,8 @@ function manualOrderTransportTypeChanged() {
     // Move: pickup + delivery
     // Retrieve: delivery + payload
     // Retrieve Empty: delivery + payload
-    // Store: pickup + payload
     pickup.style.display = (t === 'retrieve' || t === 'retrieve_empty') ? 'none' : '';
-    delivery.style.display = (t === 'store') ? 'none' : '';
+    delivery.style.display = '';
     payload.style.display = (t === 'move') ? 'none' : '';
   }
 
@@ -488,10 +487,10 @@ function submitManualOrder() {
       if (!body.delivery_node) { status.textContent = 'Delivery node is required'; status.style.color = 'var(--danger)'; return; }
     } else {
       if (t !== 'retrieve' && t !== 'retrieve_empty') body.source_node = document.getElementById('mo-source').value;
-      if (t !== 'store') body.delivery_node = document.getElementById('mo-delivery').value;
+      body.delivery_node = document.getElementById('mo-delivery').value;
       if (t !== 'move') body.payload_code = document.getElementById('mo-payload').value;
 
-      if ((t === 'move' || t === 'store') && !body.source_node) {
+      if (t === 'move' && !body.source_node) {
         status.textContent = 'Source node is required'; status.style.color = 'var(--danger)'; return;
       }
       if ((t === 'move' || t === 'retrieve' || t === 'retrieve_empty') && !body.delivery_node) {

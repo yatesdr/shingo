@@ -23,14 +23,13 @@ type Dispatcher interface {
 	HandleOrderCancel(env *protocol.Envelope, p *protocol.OrderCancel)
 	HandleOrderReceipt(env *protocol.Envelope, p *protocol.OrderReceipt)
 	HandleOrderRedirect(env *protocol.Envelope, p *protocol.OrderRedirect)
-	HandleOrderStorageWaybill(env *protocol.Envelope, p *protocol.OrderStorageWaybill)
 	HandleOrderIngest(env *protocol.Envelope, p *protocol.OrderIngestRequest)
 	HandleComplexOrderRequest(env *protocol.Envelope, p *protocol.ComplexOrderRequest)
 	HandleOrderRelease(env *protocol.Envelope, p *protocol.OrderRelease)
 }
 
 // Compile-time check that *dispatch.Dispatcher satisfies the narrow
-// Dispatcher interface. If dispatch renames or drops any of the eight
+// Dispatcher interface. If dispatch renames or drops any of the
 // order handlers, this assertion fails before the build errors out
 // in core_handler.go — which would otherwise surface as a confusing
 // interface-conversion error at engine wiring time.

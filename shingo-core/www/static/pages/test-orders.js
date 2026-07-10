@@ -38,12 +38,11 @@ function formatRoute(order) {
 // --- Kafka order field visibility ---
 // move:     source, delivery, payload
 // retrieve: delivery, payload (no source)
-// store:    source (no delivery, no payload)
 function updateKafkaFields() {
   var t = document.getElementById('k-order-type').value;
-  document.getElementById('k-source-wrap').style.display   = (t === 'move' || t === 'store') ? '' : 'none';
+  document.getElementById('k-source-wrap').style.display   = (t === 'move') ? '' : 'none';
   document.getElementById('k-delivery-wrap').style.display  = (t === 'move' || t === 'retrieve') ? '' : 'none';
-  document.getElementById('k-pt-wrap').style.display        = (t !== 'store') ? '' : 'none';
+  document.getElementById('k-pt-wrap').style.display        = '';
 }
 
 var scenePoints = []; // cached scene data
@@ -230,7 +229,7 @@ async function submitKafkaOrder() {
     quantity: parseInt(document.getElementById('k-quantity').value) || 1,
     priority: parseInt(document.getElementById('k-priority').value) || 0
   };
-  if (body.order_type !== 'store' && !body.payload_code) { toast('Payload is required', 'info'); return; }
+  if (!body.payload_code) { toast('Payload is required', 'info'); return; }
   try {
     var res = await fetch('/api/test-orders/submit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     var data = await res.json();

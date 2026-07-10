@@ -109,15 +109,6 @@ type OrderRedirect struct {
 	NewDeliveryNode string `json:"new_delivery_node"`
 }
 
-// OrderStorageWaybill submits a store order.
-type OrderStorageWaybill struct {
-	OrderUUID   string    `json:"order_uuid"`
-	OrderType   OrderType `json:"order_type"`
-	PayloadDesc string    `json:"payload_desc,omitempty"`
-	SourceNode  string    `json:"source_node"`
-	FinalCount  int64     `json:"final_count"`
-}
-
 // --- Order payloads: Core -> Edge ---
 
 // OrderAck confirms order acceptance.

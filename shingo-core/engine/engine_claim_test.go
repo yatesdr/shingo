@@ -10,6 +10,7 @@ import (
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
+	"shingocore/store/nodes"
 )
 
 // --- TC-ClaimBin: Silent Claim Overwrite ---
@@ -49,155 +50,22 @@ func TestClaimBin_SilentOverwrite(t *testing.T) {
 	}
 }
 
-// --- TC-23a: Operator tries to move a claimed bin via a second store order ---
-// Scenario: verifies that store orders cannot steal bins from active orders.
-//
-// Line has 3 bins. Bin 0 is already claimed by an active store order (robot
-// in transit to move it). The operator creates another store order at the same
-// line. The second order should skip the claimed bin and only take unclaimed ones.
-func TestMoveBin_StoreOrderCannotStealClaimedBin(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	_, _, lineNode, _ := setupThreeBinLine(t, db)
-
-	sim := simulator.New()
-	eng := newTestEngine(t, db, sim)
-	d := eng.Dispatcher()
-	env := testEnvelope()
-
-	// Claim bin 0 via a store order (simulates an active move-to-QH order)
-	d.HandleOrderStorageWaybill(env, &protocol.OrderStorageWaybill{
-		OrderUUID:  "active-23a",
-		OrderType:  dispatch.OrderTypeStore,
-		SourceNode: lineNode.Name,
-	})
-
-	activeOrder := testdb.RequireOrder(t, db, "active-23a")
-	if activeOrder.BinID == nil {
-		t.Fatal("active order should have claimed a bin")
-	}
-	claimedBinID := *activeOrder.BinID
-	t.Logf("active order %d claimed bin %d", activeOrder.ID, claimedBinID)
-
-	// Drive robot to in-transit (bin is claimed, robot is moving)
-	if activeOrder.VendorOrderID != "" {
-		sim.DriveState(activeOrder.VendorOrderID, "RUNNING")
-	}
-
-	// Now operator creates another store order at the same line
-	d.HandleOrderStorageWaybill(env, &protocol.OrderStorageWaybill{
-		OrderUUID:  "second-23a",
-		OrderType:  dispatch.OrderTypeStore,
-		SourceNode: lineNode.Name,
-	})
-
-	secondOrder := testdb.RequireOrder(t, db, "second-23a")
-
-	// The second order should NOT have claimed the same bin
-	if secondOrder.BinID != nil && *secondOrder.BinID == claimedBinID {
-		t.Errorf("BUG: second store order claimed bin %d which is already claimed by active order %d",
-			claimedBinID, activeOrder.ID)
-	}
-
-	// Verify the active order's bin claim is still intact
-	testdb.AssertBinClaimedBy(t, db, claimedBinID, activeOrder.ID)
-
-	// The second order should have claimed one of the OTHER unclaimed bins
-	if secondOrder.BinID != nil {
-		t.Logf("second order claimed bin %d (not the in-flight bin) — correct", *secondOrder.BinID)
-	} else {
-		t.Logf("second order has no bin — may have failed (check status: %s)", secondOrder.Status)
-	}
-}
-
-// --- TC-25: Store order correctly claims staged bin at core node ---
-// Investigated and DISMISSED as a false positive. Original concern was that
-// planStore/planMove could "poach" a staged bin at a lineside core node.
-//
-// Analysis: physical constraint — a core node holds exactly ONE bin. After a
-// retrieve delivers a bin (staged, unclaimed), the only bin at that node IS
-// the bin the operator wants to act on. Store and move orders targeting a
-// core node as source SHOULD claim the staged bin — that's how the operator
-// releases it (store-back, quality hold move, partial release, etc.).
-// Filtering out staged bins would break these legitimate operator workflows.
-//
-// Setup: retrieve delivers bin to line. Bin is staged and unclaimed.
-// A store order targets line as source (operator releasing the bin).
-// Expected: store order SHOULD claim the staged bin — correct behavior.
-func TestStoreOrder_ClaimsStagedBinAtCoreNode(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
-	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-STAGED-25")
-
-	sim := simulator.New()
-	eng := newTestEngine(t, db, sim)
-	d := eng.Dispatcher()
-	env := testEnvelope()
-
-	// Retrieve order delivers bin to line
-	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:    "retrieve-25",
-		OrderType:    dispatch.OrderTypeRetrieve,
-		PayloadCode:  bp.Code,
-		DeliveryNode: lineNode.Name,
-		Quantity:     1,
-	})
-
-	order := testdb.RequireOrder(t, db, "retrieve-25")
-
-	// Drive to completion
-	sim.DriveSimpleLifecycle(order.VendorOrderID)
-	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
-		OrderUUID:   "retrieve-25",
-		ReceiptType: "confirmed",
-		FinalCount:  1,
-	})
-
-	// Verify bin is at line, staged, unclaimed
-	testdb.RequireBinAtNode(t, db, bin.ID, lineNode.ID)
-	bin = testdb.RequireBin(t, db, bin.ID)
-	if bin.Status != "staged" {
-		t.Fatalf("bin status should be 'staged' at lineside, got %q", bin.Status)
-	}
-	if bin.ClaimedBy != nil {
-		t.Fatalf("bin should be unclaimed after ApplyBinArrival, got claimed_by=%d", *bin.ClaimedBy)
-	}
-
-	// Store order targets line node as source — operator releasing the bin
-	// (e.g. store-back, quality hold, partial release). This SHOULD succeed.
-	d.HandleOrderStorageWaybill(env, &protocol.OrderStorageWaybill{
-		OrderUUID:  "store-release-25",
-		OrderType:  dispatch.OrderTypeStore,
-		SourceNode: lineNode.Name,
-	})
-
-	storeOrder := testdb.RequireOrder(t, db, "store-release-25")
-
-	// KEY CHECK: store order SHOULD claim the staged bin — it's the only bin
-	// at the node and the operator is intentionally releasing it.
-	if storeOrder.BinID == nil || *storeOrder.BinID != bin.ID {
-		t.Errorf("store order should have claimed staged bin %d at %s, got bin_id=%v (status=%s)",
-			bin.ID, lineNode.Name, storeOrder.BinID, storeOrder.Status)
-	} else {
-		t.Logf("store order %d correctly claimed staged bin %d at %s for operator release",
-			storeOrder.ID, bin.ID, lineNode.Name)
-	}
-}
-
 // --- TC-24: Complex order bin poaching ---
 // Regression: complex orders never call ClaimBin, leaving the bin's
 // claimed_by field NULL even while a robot is physically carrying it.
-// A concurrent store order can claim the same bin.
+// A concurrent order could then claim the same bin.
 //
 // This is most realistic with empty bins: a complex order moves an empty
-// bin from storage to a line, and while the robot is in transit, a store
-// order targets the same storage node and claims the in-flight bin.
+// bin from storage to a line, and while the robot is in transit, another
+// order sources the same payload and claims the in-flight bin.
 //
 // Setup: 1 bin at storage. Complex order picks it up (robot RUNNING).
-// Then a store order tries to clear a bin from the same storage node.
-// Expected (current behavior): store order claims the same bin — BUG.
-// Expected (fixed): store order fails or picks a different bin.
+// Then a retrieve order for the same payload tries to source a bin.
+// Expected (current behavior): retrieve claims the same bin — BUG.
+// Expected (fixed): retrieve finds no free bin and does not poach.
+//
+// (Originally the poacher was a plain store order; store dispatch was
+// removed, so this drives a retrieve — the same source-claim-exclusion path.)
 func TestComplexOrder_BinPoachingPrevention(t *testing.T) {
 	t.Parallel()
 	// complex orders now claim bins at dispatch, preventing poaching.
@@ -244,23 +112,30 @@ func TestComplexOrder_BinPoachingPrevention(t *testing.T) {
 	// Verify the bin is claimed by the complex order
 	testdb.RequireBinClaimedBy(t, db, bin.ID, complexOrder.ID)
 
-	// Now: a store order arrives targeting the same storage node.
-	// Because the bin is claimed, the store order must NOT get it.
-	d.HandleOrderStorageWaybill(env, &protocol.OrderStorageWaybill{
-		OrderUUID:  "store-poach-24",
-		OrderType:  dispatch.OrderTypeStore,
-		SourceNode: storageNode.Name,
+	// Now: a retrieve order for the same payload arrives. Its only candidate
+	// source is the bin at storage the complex order is carrying; because that
+	// bin is claimed, the retrieve must NOT poach it. It delivers to a fresh
+	// line node so its own dropoff-capacity gate is clear and it is forced
+	// through source-finding (the complex order is already inbound to lineNode).
+	line2 := &nodes.Node{Name: "LINE2-IN", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(line2), "create second line node")
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "retrieve-poach-24",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: line2.Name,
+		Quantity:     1,
 	})
 
-	storeOrder := testdb.RequireOrder(t, db, "store-poach-24")
+	poachOrder := testdb.RequireOrder(t, db, "retrieve-poach-24")
 
-	// KEY CHECK: store order must NOT have claimed the bin the robot is carrying
-	if storeOrder.BinID != nil && *storeOrder.BinID == bin.ID {
-		t.Errorf("BUG: store order %d claimed bin %d which is being carried by complex order %d",
-			storeOrder.ID, bin.ID, complexOrder.ID)
+	// KEY CHECK: the retrieve must NOT have claimed the bin the robot is carrying
+	if poachOrder.BinID != nil && *poachOrder.BinID == bin.ID {
+		t.Errorf("BUG: retrieve order %d claimed bin %d which is being carried by complex order %d",
+			poachOrder.ID, bin.ID, complexOrder.ID)
 	} else {
-		t.Logf("store order correctly did not poach bin %d (status=%s, bin_id=%v)",
-			bin.ID, storeOrder.Status, storeOrder.BinID)
+		t.Logf("retrieve order correctly did not poach bin %d (status=%s, bin_id=%v)",
+			bin.ID, poachOrder.Status, poachOrder.BinID)
 	}
 }
 

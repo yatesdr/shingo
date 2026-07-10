@@ -25,12 +25,12 @@ import (
 //     dbg-log the replay if a logger was provided.
 //   - newly recorded: forward.
 //
-// Compose with router.UseFor scoped to the 8 order-channel envelope
+// Compose with router.UseFor scoped to the order-channel envelope
 // Types (TypeOrderRequest, TypeOrderCancel, TypeOrderReceipt,
-// TypeOrderRedirect, TypeOrderStorageWaybill, TypeComplexOrderRequest,
-// TypeOrderRelease, TypeOrderIngest — the Types CoreHandler's dedup
-// decorator gated pre-migration). TypeData and the reply-channel Types
-// pass through ungated, matching pre-decorator behaviour.
+// TypeOrderRedirect, TypeComplexOrderRequest, TypeOrderRelease,
+// TypeOrderIngest — the Types CoreHandler's dedup decorator gated
+// pre-migration). TypeData and the reply-channel Types pass through
+// ungated, matching pre-decorator behaviour.
 //
 // dbg is optional; pass nil to silence the duplicate-ignored log line.
 func NewInboxDedup(db *store.DB, dbg func(string, ...any)) router.Middleware {

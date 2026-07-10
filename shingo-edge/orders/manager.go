@@ -160,32 +160,6 @@ func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 	return m.db.GetOrder(orderID)
 }
 
-// CreateStoreOrder creates a new store order (for returning payloads to warehouse).
-func (m *Manager) CreateStoreOrder(processNodeID *int64, quantity int64, sourceNode string) (*orders.Order, error) {
-	orderUUID := uuid.New().String()
-
-	orderID, err := m.db.CreateOrder(orderUUID, TypeStore,
-		processNodeID, false,
-		quantity, "", "", sourceNode, "", false, "")
-	if err != nil {
-		return nil, fmt.Errorf("create store order: %w", err)
-	}
-
-	m.DebugLog.Log("create: type=%s id=%d uuid=%s source=%s", TypeStore, orderID, orderUUID, sourceNode)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeStore, nil, processNodeID)
-	return m.db.GetOrder(orderID)
-}
-
-// SubmitStoreOrder sets the final count, marks count as confirmed, and submits
-// the store order in one atomic operation. This is the correct way to submit a
-// store order when the count is known at creation time (e.g., from API).
-func (m *Manager) SubmitStoreOrder(orderID int64, finalCount int64) error {
-	if err := m.db.UpdateOrderFinalCount(orderID, finalCount, true); err != nil {
-		return fmt.Errorf("set final count: %w", err)
-	}
-	return m.SubmitOrder(orderID)
-}
-
 // CreateMoveOrder creates a new move order (e.g., quality hold).
 // autoConfirm threads through to the order row so Manager.handleDelivered
 // can self-confirm instead of stranding the order at "delivered" when no
@@ -619,7 +593,6 @@ func (m *Manager) RedirectOrder(orderID int64, newDeliveryNode string) (*orders.
 }
 
 // SubmitOrder transitions a pending order to submitted and enqueues it.
-// For store orders, it also builds and enqueues the storage waybill.
 func (m *Manager) SubmitOrder(orderID int64) error {
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
@@ -627,29 +600,6 @@ func (m *Manager) SubmitOrder(orderID int64) error {
 	}
 
 	m.DebugLog.Log("submit: id=%d uuid=%s type=%s", orderID, order.UUID, order.OrderType)
-
-	// For store orders, build and enqueue the waybill BEFORE transitioning.
-	// If enqueue fails, the order stays pending so the operator can retry.
-	if order.OrderType == TypeStore {
-		var finalCount int64
-		if order.FinalCount != nil {
-			finalCount = *order.FinalCount
-		}
-		desc, _ := m.lookupPayloadMeta(order.ProcessNodeID, "")
-		env, err := m.sender.build(protocol.TypeOrderStorageWaybill, &protocol.OrderStorageWaybill{
-			OrderUUID:   order.UUID,
-			OrderType:   TypeStore,
-			PayloadDesc: desc,
-			SourceNode:  order.SourceNode,
-			FinalCount:  finalCount,
-		})
-		if err != nil {
-			return fmt.Errorf("build storage waybill: %w", err)
-		}
-		if err := m.enqueueEnvelope(env); err != nil {
-			return fmt.Errorf("enqueue storage waybill: %w", err)
-		}
-	}
 
 	return m.TransitionOrder(orderID, StatusSubmitted, "submitted to dispatch")
 }

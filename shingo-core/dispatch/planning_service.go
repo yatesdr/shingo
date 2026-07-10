@@ -41,10 +41,6 @@ type planningError struct {
 // BinUnavailableReason or an explicit claimed_by==nil guard, so a non-nil error
 // or raced==true at those sites specifically indicates a SQL CAS miss, not an
 // operator configuration problem.
-//
-// Do NOT use for planStore: that path's inline loop deliberately produces
-// codeNoBin (terminal) regardless of whether the CAS failed or the bin was
-// pre-filtered. See the TODO(Phase1) comment in planStore.
 func asPlanningError(err error, detail string) *planningError {
 	return &planningError{Code: codeClaimFailed, Detail: detail, Err: err}
 }
@@ -160,7 +156,6 @@ func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock,
 	s.Register(OrderTypeRetrieve, s.planRetrieve)
 	s.Register(OrderTypeRetrieveEmpty, s.planRetrieveEmpty)
 	s.Register(OrderTypeMove, s.planMove)
-	s.Register(OrderTypeStore, s.planStore)
 	return s
 }
 
@@ -508,114 +503,6 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 	// concrete child above, so the plan's dropoff is the concrete node, not the
 	// group. Terminal branches (missing source, same node) return before here and
 	// carry no plan.
-	return &PlanningResult{
-		SourceNode: sourceNode,
-		DestNode:   destNode,
-		Plan:       buildTransportPlan(sourceNode.Name, destNode.Name, false),
-	}, nil
-}
-
-func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
-	if err := s.lifecycle.MoveToSourcing(order, "planner", "finding storage destination"); err != nil {
-		log.Printf("dispatch: planStore order %d → sourcing: %v", order.ID, err)
-	}
-
-	// Round-3 follow-up: resolve sourceNode BEFORE FindStorageDestination
-	// so we can exclude it from the consolidation pick. Pre-fix the
-	// consolidation branch happily returned the source itself when the
-	// source still held the bin being stored — produced same-node store
-	// orders that pre-Item-C dispatched as ghost moves and post-Item-C
-	// queued forever (the destination was always "occupied" by the
-	// bin we were trying to move).
-	originalDeliveryNode := order.DeliveryNode
-	var (
-		sourceNode *nodes.Node
-		err        error
-	)
-	if order.SourceNode != "" {
-		sourceNode, err = s.db.GetNodeByDotName(order.SourceNode)
-		if err != nil {
-			return nil, &planningError{Code: codeInvalidNode, Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
-		}
-	} else if originalDeliveryNode != "" {
-		sourceNode, err = s.db.GetNodeByDotName(originalDeliveryNode)
-		if err != nil {
-			return nil, &planningError{Code: codeInvalidNode, Detail: fmt.Sprintf("node %q not found", originalDeliveryNode), Err: err}
-		}
-	}
-	if sourceNode == nil {
-		return nil, &planningError{Code: codeMissingSource, Detail: "store order requires a source location"}
-	}
-
-	destNode, err := s.db.FindStorageDestination(payloadCode, sourceNode.ID)
-	if err != nil {
-		return nil, &planningError{Code: codeNoStorage, Detail: "no available storage node found", Err: err}
-	}
-	s.dbg("store: selected destination=%s for order %d", destNode.Name, order.ID)
-	order.DeliveryNode = destNode.Name
-	if err := s.db.UpdateOrderDeliveryNode(order.ID, destNode.Name); err != nil {
-		log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
-	}
-	if order.BinID == nil {
-		bins, _ := s.db.ListBinsByNode(sourceNode.ID)
-		for _, bin := range bins {
-			if bin.ClaimedBy == nil {
-				// Store orders: plain claim, no manifest change.
-				if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, nil); err == nil {
-					order.BinID = &bin.ID
-					if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
-						log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
-					}
-					s.dbg("store: claimed bin=%d at %s", bin.ID, sourceNode.Name)
-					break
-				}
-			}
-		}
-	}
-	if order.BinID == nil {
-		// TODO(Phase1): decide claim semantics before routing through the seam.
-		// planStore's loop guards with `if bin.ClaimedBy == nil` before calling
-		// ClaimForDispatch, so a CAS failure here is either a race (same TOCTOU
-		// window as other paths) or a pre-filter miss — the two are indistinguishable
-		// without a raced-flag. For now the terminal codeNoBin is preserved; Phase 1
-		// can add a raced flag here once the seam has reservation semantics.
-		return nil, &planningError{Code: codeNoBin, Detail: fmt.Sprintf("no available bin at %s", sourceNode.Name)}
-	}
-	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
-		log.Printf("dispatch: update order %d source_node: %v", order.ID, err)
-	}
-
-	// Destination-slot claim AFTER the source claim (#115/#117). Sequencing
-	// matters — claiming the destination before the source would strand orders
-	// that have a bin available but a destination currently full, breaking the
-	// changeover pattern where operators clear a line with N store orders, each
-	// expecting to own one bin and dispatch when storage opens. Claiming after
-	// keeps "each order owns its bin and waits politely for storage to open."
-	//
-	// This REPLACES the old CheckDropoffCapacity READ (which two concurrent
-	// stores could both pass, then both drop into the same slot) with an atomic
-	// pending slot reservation: exactly one store wins the reservation, the loser
-	// gets an error and requeues (keeping its bin), and the scanner re-secures on
-	// replay. Reserve-ONLY, not a hard claim — a hard claim would drop the node
-	// out of FindStorageDestination and terminal-fail sibling stores that must
-	// instead wait, so a full-lane wait stays a requeue, never a terminal fail
-	// (the active inbound-fill re-trigger is a separate, deferred item). See
-	// claimStoreSlot.
-	// Stage 3: node-driven reserve (was the store-specific claimStoreSlot). The
-	// store's dest is a STOR node → isStorageDropoff → reserve-only claim, same as
-	// C2. Generalized so move/retrieve share the identical intake reserve.
-	if err := reserveStorageDropoff(s.db, order); err != nil {
-		const reason = "destination slot unavailable, awaiting free storage"
-		s.dbg("store: order %d queued — %s (%v)", order.ID, reason, err)
-		if serr := s.db.SetOrderQueueReason(order.ID, reason); serr != nil {
-			log.Printf("dispatch: set queue_reason for order %d: %v", order.ID, serr)
-		}
-		return &PlanningResult{Queued: true}, nil
-	}
-
-	// Stage 2: emit the plan alongside the existing result. The dest slot was just
-	// secured through C2's claimStoreSlot (reserve-only) above — the plan captures
-	// the resolved (source, dest); it does not re-gate or re-claim.
 	return &PlanningResult{
 		SourceNode: sourceNode,
 		DestNode:   destNode,

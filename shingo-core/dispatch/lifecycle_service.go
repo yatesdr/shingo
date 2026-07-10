@@ -122,29 +122,6 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	return order, payloadCode, nil
 }
 
-func (s *LifecycleService) CreateStorageWaybillOrder(stationID string, p *protocol.OrderStorageWaybill) (*orders.Order, *lifecycleError) {
-	order := &orders.Order{
-		EdgeUUID:    p.OrderUUID,
-		StationID:   stationID,
-		OrderType:   p.OrderType,
-		Status:      StatusPending,
-		SourceNode:  p.SourceNode,
-		PayloadDesc: p.PayloadDesc,
-		// Stage 4: a store self-sources in planStore (never via the finder), so
-		// SourceIntentForType maps it to the default "" — no finder sourcing
-		// intent — which keeps the scanner's payload guard behavior-neutral.
-		SourceIntent: SourceIntentForType(p.OrderType),
-	}
-	if err := s.db.CreateOrder(order); err != nil {
-		return nil, lifecycleErr("internal_error", err.Error(), err)
-	}
-	if err := s.db.UpdateOrderStatus(order.ID, string(StatusPending), "store order received"); err != nil {
-		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
-	}
-	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, "", p.SourceNode)
-	return order, nil
-}
-
 // resolveIngestBin finds the bin an ingest should manifest.
 //
 // Two callers, two ways to identify the bin:
@@ -196,14 +173,20 @@ func (s *LifecycleService) resolveIngestBin(p *protocol.OrderIngestRequest) (*bi
 	return atNode[0], nil
 }
 
-func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.OrderIngestRequest) (*orders.Order, string, *lifecycleError) {
+// ApplyIngestManifest records a produce-finalize on the target bin (manifest +
+// UOP + confirm) and reports whether the bin still needs a store move. It no
+// longer creates any order: swap-mode (ManifestOnly) is manifest-and-done, and
+// simple-mode produce is re-homed by HandleOrderIngest as a COORDINATED store —
+// the plain-store family it used to mint was removed. Returns the bin's current
+// node as sourceNode when needStore is true.
+func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) (sourceNode, payloadCode string, needStore bool, _ *lifecycleError) {
 	tmpl, err := s.db.GetPayloadByCode(p.PayloadCode)
 	if err != nil {
-		return nil, "", lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", p.PayloadCode), err)
+		return "", "", false, lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", p.PayloadCode), err)
 	}
 	bin, binErr := s.resolveIngestBin(p)
 	if binErr != nil {
-		return nil, "", binErr
+		return "", "", false, binErr
 	}
 	if len(p.Manifest) > 0 {
 		manifest := bins.Manifest{Items: make([]bins.ManifestEntry, len(p.Manifest))}
@@ -227,7 +210,7 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 		// thread the new epoch through. Edge picks up the new epoch on
 		// its next periodic bin-state refresh.
 		if _, err := s.binManifest.SetForProduction(bin.ID, string(manifestJSON), p.PayloadCode, uop); err != nil {
-			return nil, "", lifecycleErr("internal_error", err.Error(), err)
+			return "", "", false, lifecycleErr("internal_error", err.Error(), err)
 		}
 	} else {
 		// Item 19 of the bin-as-truth refactor: route through
@@ -238,7 +221,7 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 		// because freshly-loaded bins appeared in bin_uop_audit only
 		// at the first downstream delta — missing the load itself.
 		if _, err := s.binManifest.SetFromTemplate(bin.ID, p.PayloadCode, 0); err != nil {
-			return nil, "", lifecycleErr("internal_error", err.Error(), err)
+			return "", "", false, lifecycleErr("internal_error", err.Error(), err)
 		}
 	}
 	if err := s.binManifest.Confirm(bin.ID, p.ProducedAt); err != nil {
@@ -255,38 +238,32 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 
 	// Swap-mode produce ships ManifestOnly: the bin's count is now recorded, and
 	// the swap is already carrying that bin to the supermarket. Minting a store
-	// order here would fight the swap for the (claimed) bin, and the routeless
-	// order would let FindStorageDestination relocate it onto some other node
-	// (incl. another press output). Stop at the manifest; simple-mode produce
-	// (no swap) falls through to the real store move.
+	// move here would fight the swap for the bin, and the routeless order would
+	// let FindStorageDestination relocate it onto some other node (incl. another
+	// press output). Stop at the manifest; simple-mode produce (no swap) falls
+	// through to the coordinated store move.
 	if p.ManifestOnly {
 		s.dbg("ingest: manifest-only bin=%d at %s — swap carries the move, no store order", bin.ID, p.SourceNode)
-		return nil, p.PayloadCode, nil
+		return "", p.PayloadCode, false, nil
 	}
 
-	order := &orders.Order{
-		EdgeUUID:    p.OrderUUID,
-		StationID:   stationID,
-		OrderType:   OrderTypeStore,
-		Status:      StatusPending,
-		Quantity:    p.Quantity,
-		SourceNode:  p.SourceNode,
-		PayloadDesc: fmt.Sprintf("ingest %s bin %s", p.PayloadCode, p.BinLabel),
-		BinID:       &bin.ID,
+	// Simple-mode produce: the freshly-filled bin needs a store move to its
+	// warehouse home. Report the bin's CURRENT node as the pickup source so
+	// HandleOrderIngest can mint a coordinated [pickup@source, dropoff@storage]
+	// order. Prefer the bin's actual node over the wire source_node so a
+	// label-based manual ingest (which may omit source_node) still routes. The
+	// bin is left UNCLAIMED — the coordinated dispatch path reserves and claims it.
+	src := p.SourceNode
+	if bin.NodeID != nil {
+		if node, nerr := s.db.GetNode(*bin.NodeID); nerr == nil && node != nil {
+			src = node.Name
+		}
 	}
-	if err := s.db.CreateOrder(order); err != nil {
-		return nil, "", lifecycleErr("internal_error", err.Error(), err)
+	if src == "" {
+		return "", "", false, lifecycleErr("bin_error", "ingest bin has no source location to store from",
+			errors.New("ingest: no source node"))
 	}
-	if err := s.db.UpdateOrderStatus(order.ID, string(StatusPending), "ingest order received"); err != nil {
-		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
-	}
-	// Reserve-then-claim through ClaimForDispatch (the demoted-CAS claim primitive
-	// requires a pending reservation). nil UOP = plain claim.
-	if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, nil); err != nil {
-		log.Printf("dispatch: claim bin %d for order %d: %v", bin.ID, order.ID, err)
-	}
-	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeStore, p.PayloadCode, "")
-	return order, p.PayloadCode, nil
+	return src, p.PayloadCode, true, nil
 }
 
 // CancelOrder and ConfirmReceipt now live in lifecycle.go and route

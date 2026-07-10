@@ -16,7 +16,6 @@
 //	l1_queue_seconds       queued → acknowledged    (mean,   retrieve_empty)
 //	l1_transit_seconds     in_transit → delivered   (mean,   retrieve_empty)
 //	l2_load_seconds        delivered → confirmed    (median, retrieve_empty)
-//	l2_transit_seconds     in_transit → delivered   (mean,   store)
 //	market_to_cell_seconds in_transit → delivered   (p95,    retrieve)
 //
 // Column note: Core order_history names the status column `status`; the Edge
@@ -55,12 +54,6 @@ func AvgL1TransitSeconds(db *sql.DB, payloadCode string, r LeadTimeRange) (float
 // operator-driven segment and is exposed to long-tail outliers.
 func MedianL2LoadSeconds(db *sql.DB, payloadCode string, r LeadTimeRange) (float64, error) {
 	return pctlTransition(db, 0.5, "delivered", "confirmed", payloadCode, "retrieve_empty", r)
-}
-
-// AvgL2TransitSeconds returns the mean in_transit → delivered seconds for L2
-// store orders.
-func AvgL2TransitSeconds(db *sql.DB, payloadCode string, r LeadTimeRange) (float64, error) {
-	return avgTransition(db, "in_transit", "delivered", payloadCode, "store", r)
 }
 
 // P95MarketToCellSeconds returns the 95th-percentile in_transit → delivered

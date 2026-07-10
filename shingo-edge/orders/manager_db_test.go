@@ -18,9 +18,9 @@ import (
 // ═══════════════════════════════════════════════════════════════════════
 // Coverage additions for orders.Manager.
 //
-// PR 3.1 — order creation family (CreateRetrieveOrder, CreateStoreOrder,
-//   SubmitStoreOrder, CreateMoveOrder, CreateMoveOrderWithUOP,
-//   CreateComplexOrder, CreateIngestOrder). Every happy path is asserted
+// PR 3.1 — order creation family (CreateRetrieveOrder, CreateMoveOrder,
+//   CreateMoveOrderWithUOP, CreateComplexOrder, CreateIngestOrder). Every
+//   happy path is asserted
 //   against both DB state AND the outbox envelope that was queued, since
 //   the whole reason enqueueAndAutoSubmit is non-trivial is that the two
 //   must stay consistent.
@@ -253,63 +253,6 @@ func TestCreateRetrieveOrder_PayloadMetaFromStyleClaim(t *testing.T) {
 	}
 	if req.PayloadDesc != "Auto Test Payload" {
 		t.Errorf("envelope PayloadDesc: got %q, want %q", req.PayloadDesc, "Auto Test Payload")
-	}
-}
-
-func TestCreateStoreOrder_DoesNotAutoSubmit(t *testing.T) {
-	t.Parallel()
-	db := testManagerDB(t)
-	mgr := NewManager(db, testEmitter{}, "edge")
-
-	order, err := mgr.CreateStoreOrder(nil, 0, "NODE-X")
-	if err != nil {
-		t.Fatalf("CreateStoreOrder: %v", err)
-	}
-	if order.OrderType != TypeStore {
-		t.Errorf("OrderType: got %q, want %q", order.OrderType, TypeStore)
-	}
-	if order.Status != StatusPending {
-		t.Errorf("Status: got %q, want %q (store orders wait for count)", order.Status, StatusPending)
-	}
-	if order.SourceNode != "NODE-X" {
-		t.Errorf("SourceNode: got %q, want NODE-X", order.SourceNode)
-	}
-	msgs, _ := db.ListPendingOutbox(10)
-	if len(msgs) != 0 {
-		t.Errorf("outbox: got %d msgs, want 0 (store doesn't auto-submit at create)", len(msgs))
-	}
-}
-
-func TestSubmitStoreOrder_EmitsWaybillAndTransitions(t *testing.T) {
-	t.Parallel()
-	db := testManagerDB(t)
-	mgr := NewManager(db, testEmitter{}, "edge")
-
-	order, err := mgr.CreateStoreOrder(nil, 0, "SRC-NODE")
-	if err != nil {
-		t.Fatalf("CreateStoreOrder: %v", err)
-	}
-
-	testutil.MustNoErr(t, mgr.SubmitStoreOrder(order.ID, 42), "SubmitStoreOrder")
-
-	updated, err := db.GetOrder(order.ID)
-	if err != nil {
-		t.Fatalf("GetOrder: %v", err)
-	}
-	if updated.Status != StatusSubmitted {
-		t.Errorf("Status: got %q, want %q", updated.Status, StatusSubmitted)
-	}
-	if updated.FinalCount == nil || *updated.FinalCount != 42 {
-		t.Errorf("FinalCount: %v, want 42", updated.FinalCount)
-	}
-	if !updated.CountConfirmed {
-		t.Error("CountConfirmed: got false, want true")
-	}
-
-	var wb protocol.OrderStorageWaybill
-	decodeOnlyOutboxPayload(t, db, protocol.TypeOrderStorageWaybill, &wb)
-	if wb.OrderUUID != order.UUID || wb.SourceNode != "SRC-NODE" || wb.FinalCount != 42 {
-		t.Errorf("waybill fields wrong: %+v", wb)
 	}
 }
 
@@ -1253,12 +1196,6 @@ func TestSubmitOrder_RetrieveDoesNotBuildWaybill(t *testing.T) {
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusSubmitted {
 		t.Errorf("Status: got %q, want submitted", o.Status)
-	}
-	msgs, _ := db.ListPendingOutbox(10)
-	for _, m := range msgs {
-		if m.MsgType == protocol.TypeOrderStorageWaybill {
-			t.Errorf("unexpected storage waybill for retrieve SubmitOrder")
-		}
 	}
 }
 

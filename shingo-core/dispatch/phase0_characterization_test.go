@@ -84,53 +84,6 @@ func TestPhase0_DispositionTriad_ClaimFailed(t *testing.T) {
 	}
 }
 
-// TestPhase0_DispositionTriad_NoBin_PlanStore pins that planStore's no-available-bin
-// path produces codeNoBin (terminal FAIL), NOT codeClaimFailed (transient QUEUE).
-//
-// This is the planStore exclusion from asPlanningError (Phase-0 item 4). The inline
-// loop in planStore uses `if bin.ClaimedBy == nil` before calling ClaimForDispatch;
-// when all bins are already claimed the loop exits without any CAS attempt and the
-// order fails terminally with codeNoBin.
-//
-// If this test flips to emitter.queued != 0 it means planStore was accidentally
-// routed through asPlanningError, changing the terminal→transient semantics of a
-// claim failure in the store path.
-func TestPhase0_DispositionTriad_NoBin_PlanStore(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
-
-	// Create a bin at the source node and pre-claim it. planStore's inline loop
-	// skips bins with ClaimedBy != nil, so this leaves order.BinID == nil → codeNoBin.
-	bin := testdb.CreateBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-CHAR-STORE")
-	stealer := &orders.Order{
-		EdgeUUID: "char-store-stealer", StationID: "x",
-		OrderType: OrderTypeRetrieve, Status: StatusQueued, Quantity: 1,
-		DeliveryNode: lineNode.Name,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(stealer), "create stealer order")
-	testdb.ClaimBinForTest(t, db, bin.ID, stealer.ID)
-
-	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
-	d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
-		OrderUUID:   "char-no-bin-store",
-		OrderType:   OrderTypeStore,
-		PayloadCode: bp.Code,
-		SourceNode:  lineNode.Name,
-		Quantity:    1.0,
-	})
-
-	if len(emitter.queued) > 0 {
-		t.Fatal("planStore codeNoBin must FAIL (terminal), not QUEUE (transient)")
-	}
-	if len(emitter.failed) == 0 {
-		t.Fatal("expected order to fail with codeNoBin; no failure event emitted")
-	}
-	if emitter.failed[0].errorCode != codeNoBin {
-		t.Errorf("error code = %q, want %q", emitter.failed[0].errorCode, codeNoBin)
-	}
-}
-
 // TestPhase0_DispositionTriad_NoSourceBin_Complex pins that ApplyComplexPlan returns
 // codeNoSourceBin (terminal SKIP) when every pickup node is empty.
 //

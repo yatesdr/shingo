@@ -299,7 +299,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 			// Orders (create, lifecycle, manual)
 			r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
-			r.Post("/orders/store", h.apiCreateStoreOrder)
 			r.Post("/orders/move", h.apiCreateMoveOrder)
 			r.Post("/orders/complex", h.apiCreateComplexOrder)
 			r.Post("/orders/ingest", h.apiCreateIngestOrder)

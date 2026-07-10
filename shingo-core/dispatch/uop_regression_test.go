@@ -184,7 +184,7 @@ func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 }
 
 // TestRegression_ProduceIngestUsesRuntimeNotTemplate pins the Phase 0d fix:
-// CreateIngestStoreOrder must write the operator-measured runtime UOP value
+// the produce-ingest path (ApplyIngestManifest) must write the operator-measured runtime UOP value
 // (carried in OrderIngestRequest.Quantity from Edge's produce_plan.go) to
 // bins.uop_remaining — NOT the payload template's UOPCapacity. The pre-fix
 // code at dispatch/lifecycle_service.go:139 used tmpl.UOPCapacity, so a

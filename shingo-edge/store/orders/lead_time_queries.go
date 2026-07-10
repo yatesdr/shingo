@@ -78,12 +78,6 @@ func MedianL2LoadSeconds(db *sql.DB, payloadCode string, r DateRange) (float64, 
 	return medianStateTransition(db, "delivered", "confirmed", payloadCode, r, "retrieve_empty")
 }
 
-// AvgL2TransitSeconds returns the mean elapsed seconds from
-// in_transit → delivered for L2 store / store-out orders.
-func AvgL2TransitSeconds(db *sql.DB, payloadCode string, r DateRange) (float64, error) {
-	return avgStateTransition(db, "in_transit", "delivered", payloadCode, r, "store")
-}
-
 // P95MarketToCellSeconds returns the 95th-percentile retrieve duration
 // (in_transit → delivered) for consume-side retrieves. p95 (not mean)
 // handles reshuffle outliers, per the v6 brief's calculator spec.

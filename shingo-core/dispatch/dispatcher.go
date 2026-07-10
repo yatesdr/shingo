@@ -328,72 +328,59 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 	d.dispatchToFleet(order, env, sourceNode, newDest)
 }
 
-// HandleOrderStorageWaybill processes a storage waybill from ShinGo Edge.
-func (d *Dispatcher) HandleOrderStorageWaybill(env *protocol.Envelope, p *protocol.OrderStorageWaybill) {
-	stationID := env.Src.Station
-	d.dbg("storage waybill: station=%s uuid=%s type=%s source=%s", stationID, p.OrderUUID, p.OrderType, p.SourceNode)
-
-	order, lifecycleErr := d.lifecycle.CreateStorageWaybillOrder(stationID, p)
-	if lifecycleErr != nil {
-		d.dbg("create store order: %v", lifecycleErr.Err)
-		d.replies.SendError(env, p.OrderUUID, lifecycleErr.Code, lifecycleErr.Detail)
-		return
-	}
-	result, planErr := d.planner.Plan(order, env, "")
-	if planErr != nil {
-		if planErr.Transient() {
-			d.dbg("store waybill: %s for order %s — transient contention, queuing", planErr.Code, p.OrderUUID)
-			d.queueOrder(order, env, "")
-			return
-		}
-		d.failOrder(order, env, planErr.Code, planErr.Detail)
-		return
-	}
-	if result == nil || result.Handled {
-		return
-	}
-	if result.Queued {
-		d.queueOrder(order, env, "")
-		return
-	}
-	d.dispatchToFleet(order, env, result.SourceNode, result.DestNode)
-}
-
-// HandleOrderIngest processes an ingest request: sets manifest on a bin and dispatches storage.
+// HandleOrderIngest processes an ingest request: records the produce-finalize on
+// the target bin and, for simple-mode produce, dispatches the store move.
 func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.OrderIngestRequest) {
 	stationID := env.Src.Station
-	payloadCode := p.PayloadCode
-	d.dbg("ingest: station=%s uuid=%s payload=%s bin=%s source=%s", stationID, p.OrderUUID, payloadCode, p.BinLabel, p.SourceNode)
+	d.dbg("ingest: station=%s uuid=%s payload=%s bin=%s source=%s", stationID, p.OrderUUID, p.PayloadCode, p.BinLabel, p.SourceNode)
 
-	order, payloadCode, lifecycleErr := d.lifecycle.CreateIngestStoreOrder(stationID, p)
+	sourceNode, payloadCode, needStore, lifecycleErr := d.lifecycle.ApplyIngestManifest(p)
 	if lifecycleErr != nil {
 		d.replies.SendError(env, p.OrderUUID, lifecycleErr.Code, lifecycleErr.Detail)
 		return
 	}
-	if order == nil {
+	if !needStore {
 		// Manifest-only ingest (swap-mode produce): the bin's count is recorded
-		// and the swap moves it — nothing to plan or dispatch.
+		// and the swap moves it — nothing to dispatch.
 		return
 	}
+	d.dispatchProduceStore(env, p, sourceNode, payloadCode)
+}
 
-	result, planErr := d.planner.Plan(order, env, payloadCode)
-	if planErr != nil {
-		if planErr.Transient() {
-			d.dbg("ingest: %s for order %s — transient contention, queuing", planErr.Code, p.OrderUUID)
-			d.queueOrder(order, env, payloadCode)
-			return
-		}
-		d.failOrder(order, env, planErr.Code, planErr.Detail)
+// dispatchProduceStore re-homes a simple-mode produce ingest as a COORDINATED
+// [pickup@source, dropoff@storage] order — the same proven multi-leg shape a
+// changeover release runs (BuildReleaseSteps). The plain-store family that used
+// to carry this move was removed (it never completed a single order in
+// production); routing through the coordinated intake gives the produce bin a
+// reserve-only, polite-waiting storage dropoff via the shared complex machinery.
+func (d *Dispatcher) dispatchProduceStore(env *protocol.Envelope, p *protocol.OrderIngestRequest, sourceNode, payloadCode string) {
+	srcNode, err := d.db.GetNodeByDotName(sourceNode)
+	if err != nil || srcNode == nil {
+		d.replies.SendError(env, p.OrderUUID, "invalid_node", fmt.Sprintf("ingest source node %q not found", sourceNode))
 		return
 	}
-	if result == nil || result.Handled {
+	// Storage destination via the same consolidation-aware resolver the
+	// coordinated dropoff path uses (FindStorageDestination); exclude the source
+	// so a produce node never resolves its own slot as the dropoff. A full/occupied
+	// concrete slot still queues politely under the coordinated capacity gate.
+	dest, err := d.db.FindStorageDestination(payloadCode, srcNode.ID)
+	if err != nil || dest == nil {
+		d.dbg("ingest: no storage destination for %s from %s: %v", payloadCode, sourceNode, err)
+		d.replies.SendError(env, p.OrderUUID, "no_storage", "no available storage node found")
 		return
 	}
-	if result.Queued {
-		d.queueOrder(order, env, payloadCode)
-		return
+	complexReq := &protocol.ComplexOrderRequest{
+		OrderUUID:   p.OrderUUID,
+		PayloadCode: payloadCode,
+		PayloadDesc: fmt.Sprintf("ingest %s bin %s", payloadCode, p.BinLabel),
+		Quantity:    p.Quantity,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionPickup, Node: sourceNode},
+			{Action: protocol.ActionDropoff, Node: dest.Name},
+		},
 	}
-	d.dispatchToFleet(order, env, result.SourceNode, result.DestNode)
+	d.dbg("ingest: coordinated store %s → %s for %s", sourceNode, dest.Name, p.OrderUUID)
+	d.HandleComplexOrderRequest(env, complexReq)
 }
 
 func (d *Dispatcher) failOrder(order *orders.Order, env *protocol.Envelope, errorCode, detail string) {
