@@ -237,6 +237,35 @@ linters:
         linters:
           - depguard
 
+      # store-sub-pkg-isolation is a PRODUCTION guardrail: it stops a store
+      # sub-package (e.g. store/bins) from importing a sibling aggregate
+      # (e.g. store/orders), because cross-aggregate orchestration belongs at
+      # the outer store/ level. Test files were never in scope until the
+      # docker-tagged lint pass landed (the //go:build docker tests are the
+      # only Go in these dirs that the default-config pass didn't compile) —
+      # which surfaced 23 depguard hits that are ALL test fixtures:
+      #   - 17 black-box self-imports (e.g. store/admin/admin_test.go,
+      #     package admin_test, importing shingocore/store/admin): a package
+      #     testing its own exported surface — the standard Go idiom, and a
+      #     shape production code can never have (a package never imports
+      #     itself). No code fix exists.
+      #   - 6 cross-import fixtures (e.g. store/bins/bins_test.go importing
+      #     store/nodes): a *_test binary reaching for a type to build a
+      #     fixture. It never ships, so it cannot create the dependency-
+      #     direction tangle the rule guards against.
+      # Production code in every store sub-package is clean (verified: no
+      # non-test file in store/<sub>/ imports a sibling aggregate; the only
+      # cross-package import is the allow-listed shingocore/store/internal/
+      # helpers). Carving the tests out costs zero production protection —
+      # it scopes the rule to its documented intent, same principle as the
+      # www *_test.go carveout above and the blanket *_test.go forbidigo
+      # carveout below ("test files need store types to build fixtures").
+      # Permanent: a *_test package importing the package(s) it exercises is
+      # inherent to black-box testing.
+      - path: "shingo-(core|edge)/store/[^/]+/.*_test\\.go"
+        linters:
+          - depguard
+
       # ---- State-machine bypass carveouts (forbidigo) ----------------------
       # Each entry below names a file that legitimately bypasses
       # LifecycleService.transition. Document the reason inline before

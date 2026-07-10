@@ -308,7 +308,7 @@ func TestScanPayloads_EmptyRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("payloads.List: %v", err)
 	}
-	if list != nil && len(list) != 0 {
+	if len(list) != 0 {
 		t.Errorf("expected nil/empty slice, got %v", list)
 	}
 }

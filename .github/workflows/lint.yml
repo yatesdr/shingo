@@ -31,8 +31,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # All four Go modules. integration was missing from the original
+      # matrix even though it carries //go:build docker test files —
+      # adding it here closes that coverage gap (it lints clean today,
+      # both passes).
       matrix:
-        module: [protocol, shingo-core, shingo-edge]
+        module: [protocol, shingo-core, shingo-edge, integration]
     steps:
       - uses: actions/checkout@v4
 
@@ -49,12 +53,28 @@ jobs:
           # header. Bump in lockstep when upgrading the linter.
           version: v2.11.4
           working-directory: ${{ matrix.module }}
-          # --config points at the repo-root .golangci.yml so all three
+          # --config points at the repo-root .golangci.yml so all four
           # modules share the same depguard + forbidigo rules.
           # --issues-exit-code=1 is the default but stated explicitly
           # so a future flag-default change can't silently turn lint
           # into a non-blocking warning.
-          args: --config=${{ github.workspace }}/.golangci.yml --issues-exit-code=1 ./...
+          #
+          # --build-tags docker is what CLOSED THE GAP: the default-
+          # config pass compiles only the default build tag, so every
+          # //go:build docker test file (the testcontainers/Postgres
+          # tests) was invisible to CI lint until 2026-07. A single
+          # docker pass is used INSTEAD of a separate default pass
+          # because the docker tag is purely additive here: there are
+          # ZERO //go:build !docker alternate files in the repo, so the
+          # docker build set is a strict superset of the default one
+          # (it adds the docker-tagged files without swapping any
+          # default-tagged alternates). That invariant is load-bearing:
+          # if a !docker alternate is ever introduced, a single
+          # docker-tagged pass would MISS the default-tagged file it
+          # shadows — at that point add a second default-config pass.
+          # (Run `grep -rn '//go:build !docker' --include='*.go' .` to
+          # re-verify the invariant when changing this.)
+          args: --build-tags docker --config=${{ github.workspace }}/.golangci.yml --issues-exit-code=1 ./...
           # GOMODCACHE + analysis cache are enabled by default in v7.
           # The opt-out switches are skip-cache / skip-save-cache; we
           # leave both at default (caching on).

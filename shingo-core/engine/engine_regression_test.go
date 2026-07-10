@@ -245,7 +245,8 @@ func TestRegression_MultiBinMovesOnDelivered(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	order = testdb.RequireOrderStatus(t, db, "regr-multibin-1", "delivered")
+	// Drive to delivered (the call itself asserts the status; order isn't read after).
+	testdb.RequireOrderStatus(t, db, "regr-multibin-1", "delivered")
 
 	// KEY ASSERTION: both bins should have moved to their resolved destinations.
 	// Step simulation: newBin (storage→inbound→line), oldBin (line→outbound-staging→outbound-dest)

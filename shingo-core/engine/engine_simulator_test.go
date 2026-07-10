@@ -45,7 +45,8 @@ func TestSimulator_FullLifecycle(t *testing.T) {
 	// Step 3: Drive FINISHED — handleVendorStatusChange calls handleOrderDelivered
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	order = testdb.RequireOrderStatus(t, db, "lc-1", "delivered")
+	// Delivered (the call asserts the status; order is refetched at the confirmed step).
+	testdb.RequireOrderStatus(t, db, "lc-1", "delivered")
 
 	// Step 4: Simulate Edge receipt — triggers handleOrderCompleted → ApplyBinArrival
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -149,5 +150,6 @@ func TestSimulator_StagedComplexOrderRelease(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	order = testdb.RequireOrderStatus(t, db, "staged-tc2", "delivered")
+	// Delivered (the call asserts the status; order isn't read after).
+	testdb.RequireOrderStatus(t, db, "staged-tc2", "delivered")
 }

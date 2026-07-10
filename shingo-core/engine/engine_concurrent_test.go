@@ -511,7 +511,9 @@ func TestStagingExpiry_DoesNotExpireActiveClaim(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
-	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC37")
+	// createTestBinAtNode's returned bin is refetched below after delivery
+	// (line ~546 via db.GetBin), so its initial value is never read.
+	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC37")
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -543,7 +545,7 @@ func TestStagingExpiry_DoesNotExpireActiveClaim(t *testing.T) {
 		FinalCount:  1,
 	})
 
-	bin, err = db.GetBin(*order.BinID)
+	bin, err := db.GetBin(*order.BinID)
 	if err != nil {
 		t.Fatalf("get bin after delivery: %v", err)
 	}

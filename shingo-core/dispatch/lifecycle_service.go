@@ -186,12 +186,12 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 	if binErr != nil {
 		return binErr
 	}
-	// Set the manifest AND confirm it in ONE transaction: a confirm failure must
-	// not leave a counted-but-unconfirmed bin. manifest_confirmed is a hard gate
-	// for a full bin to be a drain/retrieve source, so a stranded unconfirmed bin
-	// is invisible to kanban. The epoch bump is discarded (this Core-internal path
-	// has no Edge response to thread it through; Edge relearns on its next periodic
-	// bin-state refresh).
+	// Set the manifest AND confirm it in ONE transaction (DEF-2): a confirm
+	// failure must not leave a counted-but-unconfirmed bin. manifest_confirmed is
+	// a hard gate for a full bin to be a drain/retrieve source, so a stranded
+	// unconfirmed bin is invisible to kanban. The epoch bump is discarded (this
+	// Core-internal path has no Edge response to thread it through; Edge relearns
+	// on its next periodic bin-state refresh).
 	if len(p.Manifest) > 0 {
 		manifest := bins.Manifest{Items: make([]bins.ManifestEntry, len(p.Manifest))}
 		for i, item := range p.Manifest {

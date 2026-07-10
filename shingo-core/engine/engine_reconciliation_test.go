@@ -27,7 +27,9 @@ func TestOrphanedBinClaim_ReconciliationDetectsAndFixes(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
-	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC80")
+	// createTestBinAtNode's returned bin is refetched below (line ~62 via
+	// testdb.RequireBin), so its initial value is never read.
+	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC80")
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -59,7 +61,7 @@ func TestOrphanedBinClaim_ReconciliationDetectsAndFixes(t *testing.T) {
 		t.Fatalf("manual fail order: %v", err)
 	}
 	// Bin should still be claimed (the bug state)
-	bin = testdb.RequireBin(t, db, *order.BinID)
+	bin := testdb.RequireBin(t, db, *order.BinID)
 	if bin.ClaimedBy == nil {
 		t.Fatal("bin should still be claimed (simulating leaked claim)")
 	}
