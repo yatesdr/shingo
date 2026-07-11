@@ -500,15 +500,16 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return fmt.Errorf("no actionable blocks")
 	}
 
-	req := fleet.StagedOrderRequest{
+	req := fleet.CreateOrderRequest{
 		OrderID:    vendorOrderID,
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
 		Priority:   order.Priority,
 		RobotGroup: d.robotGroupForPayload(order.PayloadCode),
+		Complete:   false, // staged: a multi-wait complex order dwells (Complete=false) until its final segment is released
 	}
 	d.dbg("complex: creating staged order %s with %d initial blocks (hasWait=%v)", vendorOrderID, len(blocks), hasWait)
-	if _, err := d.backend.CreateStagedOrder(req); err != nil {
+	if _, err := d.backend.CreateOrder(req); err != nil {
 		log.Printf("dispatch: fleet create staged order failed: %v", err)
 		d.failOrderInternal(order, "fleet_failed", err.Error())
 		return err

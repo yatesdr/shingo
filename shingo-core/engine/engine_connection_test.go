@@ -68,18 +68,15 @@ func (f *fakeReconnectFleet) ForceComplete(string) error { return nil }
 
 // --- fleet.Backend stubs (unused by the handler under test) ---
 
-func (f *fakeReconnectFleet) CreateTransportOrder(fleet.TransportOrderRequest) (fleet.TransportOrderResult, error) {
+func (f *fakeReconnectFleet) CreateOrder(fleet.CreateOrderRequest) (fleet.TransportOrderResult, error) {
 	return fleet.TransportOrderResult{}, nil
 }
-func (f *fakeReconnectFleet) CancelOrder(string) error           { return nil }
-func (f *fakeReconnectFleet) SetOrderPriority(string, int) error { return nil }
-func (f *fakeReconnectFleet) Ping() error                        { return nil }
-func (f *fakeReconnectFleet) Name() string                       { return "fakeReconnect" }
-func (f *fakeReconnectFleet) MapState(string) string             { return "" }
-func (f *fakeReconnectFleet) IsTerminalState(string) bool        { return false }
-func (f *fakeReconnectFleet) CreateStagedOrder(fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
-	return fleet.TransportOrderResult{}, nil
-}
+func (f *fakeReconnectFleet) CancelOrder(string) error                            { return nil }
+func (f *fakeReconnectFleet) SetOrderPriority(string, int) error                  { return nil }
+func (f *fakeReconnectFleet) Ping() error                                         { return nil }
+func (f *fakeReconnectFleet) Name() string                                        { return "fakeReconnect" }
+func (f *fakeReconnectFleet) MapState(string) string                              { return "" }
+func (f *fakeReconnectFleet) IsTerminalState(string) bool                         { return false }
 func (f *fakeReconnectFleet) ReleaseOrder(string, []fleet.OrderBlock, bool) error { return nil }
 func (f *fakeReconnectFleet) Reconfigure(fleet.ReconfigureParams)                 {}
 

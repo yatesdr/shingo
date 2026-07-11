@@ -21,7 +21,7 @@ type countingBackend struct {
 	cancels int
 }
 
-func (m *countingBackend) CreateTransportOrder(req fleet.TransportOrderRequest) (fleet.TransportOrderResult, error) {
+func (m *countingBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.TransportOrderResult, error) {
 	return fleet.TransportOrderResult{}, fmt.Errorf("mock: not connected")
 }
 func (m *countingBackend) CancelOrder(vendorOrderID string) error {
@@ -36,9 +36,6 @@ func (m *countingBackend) Name() string                            { return "cou
 func (m *countingBackend) MapState(vendorState string) string      { return vendorState }
 func (m *countingBackend) IsTerminalState(vendorState string) bool { return false }
 func (m *countingBackend) Reconfigure(cfg fleet.ReconfigureParams) {}
-func (m *countingBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
-	return fleet.TransportOrderResult{}, fmt.Errorf("mock: not connected")
-}
 func (m *countingBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock, complete bool) error {
 	return nil
 }

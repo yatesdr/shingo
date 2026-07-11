@@ -99,11 +99,14 @@ func makeOrder(t *testing.T, db *store.DB, uuid, vendorID string, priority int) 
 // SetOrderPriority/CancelOrder calls find it. Returns the vendor id used.
 func registerVendorOrder(t *testing.T, sim *simulator.SimulatorBackend, vendorID, fromLoc, toLoc string, priority int) {
 	t.Helper()
-	if _, err := sim.CreateTransportOrder(fleet.TransportOrderRequest{
-		OrderID:  vendorID,
-		FromLoc:  fromLoc,
-		ToLoc:    toLoc,
+	if _, err := sim.CreateOrder(fleet.CreateOrderRequest{
+		OrderID: vendorID,
+		Blocks: []fleet.OrderBlock{
+			{BlockID: vendorID + "_load", Location: fromLoc, BinTask: "JackLoad"},
+			{BlockID: vendorID + "_unload", Location: toLoc, BinTask: "JackUnload"},
+		},
 		Priority: priority,
+		Complete: true,
 	}); err != nil {
 		t.Fatalf("register vendor order: %v", err)
 	}

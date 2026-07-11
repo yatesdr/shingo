@@ -10,9 +10,16 @@ import (
 
 func mkTransport(t *testing.T, s *SimulatorBackend, ext string) string {
 	t.Helper()
-	res, err := s.CreateTransportOrder(fleet.TransportOrderRequest{ExternalID: ext, FromLoc: "A", ToLoc: "B"})
+	res, err := s.CreateOrder(fleet.CreateOrderRequest{
+		ExternalID: ext,
+		Blocks: []fleet.OrderBlock{
+			{BlockID: ext + "_load", Location: "A", BinTask: "JackLoad"},
+			{BlockID: ext + "_unload", Location: "B", BinTask: "JackUnload"},
+		},
+		Complete: true,
+	})
 	if err != nil {
-		t.Fatalf("CreateTransportOrder(%s): %v", ext, err)
+		t.Fatalf("CreateOrder(%s): %v", ext, err)
 	}
 	return res.VendorOrderID
 }

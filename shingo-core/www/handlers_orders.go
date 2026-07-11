@@ -341,16 +341,17 @@ func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc str
 	}
 
 	vendorOrderID := fmt.Sprintf("sg-%d-%s", order.ID, uuid.New().String()[:8])
-	req := fleet.StagedOrderRequest{
+	req := fleet.CreateOrderRequest{
 		OrderID:    vendorOrderID,
 		ExternalID: orderUUID,
 		Blocks: []fleet.OrderBlock{
 			{BlockID: "B1", Location: destNode.Name},
 		},
 		Priority: priority,
+		Complete: false, // a spot send_to dwells (staged) at the destination until released
 	}
 
-	if _, err := h.engine.Fleet().CreateStagedOrder(req); err != nil {
+	if _, err := h.engine.Fleet().CreateOrder(req); err != nil {
 		// Terminal write must release the order's holds atomically — a raw
 		// UpdateStatus("failed") is refused by the store guard and would leak.
 		if ferr := orders.FailAtomic(order.ID, "fleet error: "+err.Error()); ferr != nil {

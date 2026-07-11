@@ -32,8 +32,8 @@ type Dispatcher struct {
 	DebugLog         func(string, ...any)
 
 	// postFindHook is a test-only seam fired by the fulfillment scanner between
-	// Find and Claim (the single claim point post F1 claim-move). Nil in
-	// production; set via SetPostFindHook for deterministic concurrency tests.
+	// Find and Claim (the single claim point after the claim-move to the scanner).
+	// Nil in production; set via SetPostFindHook for deterministic concurrency tests.
 	postFindHook func()
 }
 
@@ -106,13 +106,13 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	if result == nil || result.Handled {
 		return
 	}
-	// F1 claim-move: every simple order is status-first queued — the scanner is the
-	// single claim point (planTransport validated + resolved but never claimed or
-	// dispatched inline). queueOrder emits EmitOrderQueued, which synchronously runs
-	// the fulfillment scanner (wiring.go), so an immediately-sourceable order still
-	// acks dispatched on return and an unsourceable one waits — exactly complex's
-	// existing shape. The shadow plan + endpoints on result are F2 substrate, not
-	// consumed here.
+	// The claim-move to the scanner: every simple order is status-first queued —
+	// the scanner is the single claim point (planTransport validated + resolved but
+	// never claimed or dispatched inline). queueOrder emits EmitOrderQueued, which
+	// synchronously runs the fulfillment scanner (wiring.go), so an immediately-
+	// sourceable order still acks dispatched on return and an unsourceable one waits
+	// — exactly complex's existing shape. The shadow plan + endpoints on result are
+	// substrate for the unified-create follow-up, not consumed here.
 	d.queueOrder(order, env, payloadCode)
 }
 
@@ -158,25 +158,36 @@ func (d *Dispatcher) robotGroupForPayload(payloadCode string) string {
 }
 
 // dispatchToFleetCore contains the shared fleet dispatch sequence: generate
-// vendor order ID, create transport order, update vendor state, transition
-// lifecycle, emit event. Both dispatchToFleet (Kafka/envelope path) and
-// DispatchDirect (UI/scanner path) call this core.
+// vendor order ID, build the plan-shaped blocks, create the fleet order (no-wait,
+// Complete=true single-shot), update vendor state, transition lifecycle, emit
+// event. Both dispatchToFleet (Kafka/envelope path) and DispatchDirect
+// (UI/scanner path) call this core.
+//
+// A simple order's plan [pickup@src, dropoff@dst] is a 2-block no-wait staged
+// order — the same shape the complex tail builds, just Complete=true. The blocks
+// come from buildTransportPlan (the plan-builder the simple planner emits) via
+// stepsToBlocks, so simple and complex share one create primitive (CreateOrder);
+// the only difference is the Complete flag. blockId/goodsId differ from the old
+// dedicated transport primitive, but SEER acts only on location + binTask
+// (blockId/goodsId are cosmetic) — both preserved here.
 func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 
-	req := fleet.TransportOrderRequest{
+	plan := buildTransportPlan(sourceNode.Name, destNode.Name, order.SourceIntent == SourceIntentEmpty)
+	blocks := stepsToBlocks(vendorOrderID, plan, 0)
+	req := fleet.CreateOrderRequest{
 		OrderID:    vendorOrderID,
 		ExternalID: order.EdgeUUID,
-		FromLoc:    sourceNode.Name,
-		ToLoc:      destNode.Name,
+		Blocks:     blocks,
 		Priority:   order.Priority,
 		RobotGroup: d.robotGroupForPayload(order.PayloadCode),
+		Complete:   true, // no-wait: the fleet completes the order once its 2 blocks finish
 	}
 
 	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s to=%s priority=%d",
 		order.ID, vendorOrderID, sourceNode.Name, destNode.Name, order.Priority)
 
-	if _, err := d.backend.CreateTransportOrder(req); err != nil {
+	if _, err := d.backend.CreateOrder(req); err != nil {
 		d.dbg("fleet create order failed: %v", err)
 		return "", err
 	}
@@ -367,8 +378,8 @@ func (d *Dispatcher) failOrder(order *orders.Order, env *protocol.Envelope, erro
 }
 
 // SetPostFindHook installs a test-only hook the fulfillment scanner fires between
-// Find and Claim — the single claim point after the F1 claim-move. Used for
-// deterministic concurrency testing (a claim race must re-queue, never drop).
+// Find and Claim — the single claim point after the claim-move to the scanner. Used
+// for deterministic concurrency testing (a claim race must re-queue, never drop).
 func (d *Dispatcher) SetPostFindHook(fn func()) {
 	d.postFindHook = fn
 }

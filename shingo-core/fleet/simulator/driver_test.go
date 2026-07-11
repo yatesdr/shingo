@@ -88,12 +88,13 @@ func TestDriverStagedOrderWaitsForRelease(t *testing.T) {
 	cfg := config.SimConfig{TransitTime: 5 * time.Second, JitterPct: 0, FailRate: 0}
 	d, s, m, em := newTestDriver(t, cfg, 3)
 
-	res, err := s.CreateStagedOrder(fleet.StagedOrderRequest{
+	res, err := s.CreateOrder(fleet.CreateOrderRequest{
 		ExternalID: "staged",
 		Blocks:     []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad"}},
+		Complete:   false,
 	})
 	if err != nil {
-		t.Fatalf("CreateStagedOrder: %v", err)
+		t.Fatalf("CreateOrder: %v", err)
 	}
 	vid := res.VendorOrderID
 
@@ -131,11 +132,12 @@ func TestReleaseOrderIdempotentForSettledOrder(t *testing.T) {
 
 	// Settled (terminal) order still in the map → no-op. Create, cancel (→ STOPPED),
 	// then release.
-	res, err := s.CreateStagedOrder(fleet.StagedOrderRequest{
+	res, err := s.CreateOrder(fleet.CreateOrderRequest{
 		ExternalID: "settled", Blocks: []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad"}},
+		Complete: false,
 	})
 	if err != nil {
-		t.Fatalf("CreateStagedOrder: %v", err)
+		t.Fatalf("CreateOrder: %v", err)
 	}
 	if err := s.CancelOrder(res.VendorOrderID); err != nil {
 		t.Fatalf("CancelOrder: %v", err)

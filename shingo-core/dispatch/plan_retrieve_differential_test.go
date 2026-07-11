@@ -15,12 +15,11 @@ import (
 )
 
 // TestStage1_RetrievePlanDifferential_Dispatch pins that the plan emitted for a
-// retrieve at intake is behavior-neutral vs the existing transport tail: same
-// source bin, same node sequence + task kinds, same dispatch disposition. The
-// comparison is SEMANTIC (block locations/tasks vs the real TransportOrderRequest
-// FromLoc/ToLoc), never a struct-equal on the fleet request — the two builders
-// legitimately produce different request TYPES (TransportOrderRequest vs
-// StagedOrderRequest), which Stage 3 reconciles.
+// retrieve at intake is behavior-neutral vs the unified create tail: same
+// source bin, same node sequence + task kinds, Complete=true. The comparison is
+// SEMANTIC (block locations/tasks vs the fleet request's blocks), never a
+// struct-equal on the fleet request — blockId/goodsId differences are cosmetic
+// (only location + binTask drive SEER).
 func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -42,8 +41,9 @@ func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	// Intake planning — emits the shadow plan and QUEUES (F1 claim-move: the scanner
-	// is the single claimer, so intake resolves + queues but does not claim).
+	// Intake planning — emits the shadow plan and QUEUES (the claim-move to the
+	// scanner: the scanner is the single claimer, so intake resolves + queues but
+	// does not claim).
 	result, perr := d.planner.planTransport(order, testEnvelope(), bp.Code)
 	if perr != nil {
 		t.Fatalf("planTransport: %s", perr.Detail)
@@ -65,27 +65,35 @@ func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 	}
 
 	// Differential: the scanner (mirrored) claims the staged bin and dispatches;
-	// capture the real fleet request and assert the plan's blocks are fleet-
-	// equivalent (same node sequence + SEER task kinds).
+	// capture the unified create request and assert the plan's blocks are fleet-
+	// equivalent (same node sequence + SEER task kinds) and Complete=true (no-wait).
 	dispatched := dispatchSimpleViaScanner(t, d, db, order.EdgeUUID)
 	if dispatched.BinID == nil || *dispatched.BinID != src.ID {
 		t.Fatalf("scanner claimed source bin = %v, want %d", dispatched.BinID, src.ID)
 	}
-	reqs := backend.TransportRequests()
+	reqs := backend.CreateRequests()
 	if len(reqs) != 1 {
-		t.Fatalf("claim-moved dispatch produced %d transport requests, want 1", len(reqs))
+		t.Fatalf("claim-moved dispatch produced %d create requests, want 1", len(reqs))
 	}
 	req := reqs[0]
+	if !req.Complete {
+		t.Fatal("simple no-wait dispatch must create Complete=true, got false")
+	}
 
 	blocks := stepsToBlocks("v-diff", result.Plan, 0)
 	if len(blocks) != 2 {
 		t.Fatalf("plan produced %d blocks, want 2", len(blocks))
 	}
-	if blocks[0].Location != req.FromLoc || blocks[0].BinTask != seerrds.BinTaskForAction(protocol.ActionPickup) {
-		t.Fatalf("plan pickup block = {loc=%s task=%s}, want {loc=%s task=JackLoad}", blocks[0].Location, blocks[0].BinTask, req.FromLoc)
+	if len(req.Blocks) != 2 {
+		t.Fatalf("fleet request produced %d blocks, want 2", len(req.Blocks))
 	}
-	if blocks[1].Location != req.ToLoc || blocks[1].BinTask != seerrds.BinTaskForAction(protocol.ActionDropoff) {
-		t.Fatalf("plan dropoff block = {loc=%s task=%s}, want {loc=%s task=JackUnload}", blocks[1].Location, blocks[1].BinTask, req.ToLoc)
+	if blocks[0].Location != req.Blocks[0].Location || blocks[0].BinTask != seerrds.BinTaskForAction(protocol.ActionPickup) {
+		t.Fatalf("plan pickup block = {loc=%s task=%s}, fleet = {loc=%s task=%s}, want loc match + JackLoad",
+			blocks[0].Location, blocks[0].BinTask, req.Blocks[0].Location, req.Blocks[0].BinTask)
+	}
+	if blocks[1].Location != req.Blocks[1].Location || blocks[1].BinTask != seerrds.BinTaskForAction(protocol.ActionDropoff) {
+		t.Fatalf("plan dropoff block = {loc=%s task=%s}, fleet = {loc=%s task=%s}, want loc match + JackUnload",
+			blocks[1].Location, blocks[1].BinTask, req.Blocks[1].Location, req.Blocks[1].BinTask)
 	}
 }
 

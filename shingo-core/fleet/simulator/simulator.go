@@ -125,9 +125,13 @@ func (s *SimulatorBackend) EvictTerminalBefore(cutoff time.Time) int {
 
 // --- fleet.Backend implementation ---
 
-// CreateTransportOrder stores a complete two-block order (JackLoad at source,
-// JackUnload at destination), matching the behavior of the real SEER RDS adapter.
-func (s *SimulatorBackend) CreateTransportOrder(req fleet.TransportOrderRequest) (fleet.TransportOrderResult, error) {
+// CreateOrder is the single fleet create primitive (fleet.Backend). It stores an
+// order with the request's blocks; req.Complete selects the lifecycle — true =
+// the order completes once its blocks finish (no-wait, single-shot, the former
+// transport shape); false = staged, with blocks appended later via ReleaseOrder
+// (the former staged shape). Models both so the docker race suite exercises the
+// same lifecycle split real SEER sees.
+func (s *SimulatorBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.TransportOrderResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -145,38 +149,7 @@ func (s *SimulatorBackend) CreateTransportOrder(req fleet.TransportOrderRequest)
 		externalID:    req.ExternalID,
 		state:         "CREATED",
 		priority:      req.Priority,
-		complete:      true,
-		blocks: []simulatedBlock{
-			{blockID: vendorID + "_load", location: req.FromLoc, binTask: "JackLoad"},
-			{blockID: vendorID + "_unload", location: req.ToLoc, binTask: "JackUnload"},
-		},
-	}
-	s.orders[vendorID] = order
-	s.orderSeq = append(s.orderSeq, vendorID)
-	return fleet.TransportOrderResult{VendorOrderID: vendorID}, nil
-}
-
-// CreateStagedOrder stores an incomplete (staged) order with the blocks from
-// the request. The order remains incomplete until ReleaseOrder is called.
-func (s *SimulatorBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.opts.failOnCreate {
-		return fleet.TransportOrderResult{}, fmt.Errorf("simulator: injected staged create failure")
-	}
-
-	vendorID := req.OrderID
-	if vendorID == "" {
-		vendorID = fmt.Sprintf("sim-%d", s.seq.Add(1))
-	}
-
-	order := &simulatedOrder{
-		vendorOrderID: vendorID,
-		externalID:    req.ExternalID,
-		state:         "CREATED",
-		priority:      req.Priority,
-		complete:      false, // staged: not yet complete
+		complete:      req.Complete,
 	}
 	for _, b := range req.Blocks {
 		order.blocks = append(order.blocks, simulatedBlock{

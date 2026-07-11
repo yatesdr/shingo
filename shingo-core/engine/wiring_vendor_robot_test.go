@@ -66,11 +66,12 @@ func TestVendorStatus_RobotID_FirstAssignment(t *testing.T) {
 		t.Errorf("robot_id: got %q, want %q", got.RobotID, "AMB-42")
 	}
 
-	// Verify a waybill carrying the assigned robot was sent. NOTE: post the F1
-	// claim-move a simple order dispatches through the fulfillment scanner, which
-	// emits a route waybill at dispatch (robot_id empty — no robot yet), matching
-	// the scanner's long-standing behavior for queued orders. The robot-assignment
-	// waybill (this test's subject) is a SECOND waybill, so scan for the one that
+	// Verify a waybill carrying the assigned robot was sent. NOTE: post the
+	// claim-move to the scanner a simple order dispatches through the fulfillment
+	// scanner, which emits a route waybill at dispatch (robot_id empty — no robot
+	// yet), matching the scanner's long-standing behavior for queued orders. The
+	// robot-assignment waybill (this test's subject) is a SECOND waybill, so scan
+	// for the one that
 	// carries AMB-42 rather than asserting on the first waybill found.
 	outbox, _ := db.ListPendingOutbox(50)
 	var foundWaybillWithRobot bool
@@ -240,5 +241,62 @@ func TestVendorStatus_RobotID_NarrowWrite_SameStatusNewRobot(t *testing.T) {
 	}
 	if got2.VendorOrderID != got1.VendorOrderID {
 		t.Errorf("vendor_order_id changed on narrow write: was %q, now %q (should be untouched)", got1.VendorOrderID, got2.VendorOrderID)
+	}
+}
+
+// TestSimpleDispatch_EmitsAckAndWaybill is the gate (red-before-green) for the
+// fleet-create collapse. Routing the simple no-wait dispatch through the unified
+// CreateOrder primitive inside dispatchToFleetCore (the scanner's DispatchDirect
+// path) MUST preserve the scanner's dispatch-time Edge notifications —
+// notifyEdgeDispatched emits a TypeOrderAck + TypeOrderWaybill on dispatch.
+// Routing simple through the complex tail (DispatchPreparedComplex) instead would
+// emit only EmitOrderDispatched (tracker-only, wiring.go:65-78) and silently DROP
+// the dispatch-time ack+waybill.
+//
+// The fleet mock is blind to the outbox (ack+waybill are outbox messages, not
+// fleet calls), so this asserts at the outbox level — the one place a regression
+// is visible. A green here means the collapse preserved the Edge contract.
+func TestSimpleDispatch_EmitsAckAndWaybill(t *testing.T) {
+	t.Parallel()
+	db, _, _, order := dispatchRetrieveOrderWithRobot(t)
+
+	// The order dispatched through the scanner (CreateOrder, Complete=true); the
+	// dispatch-time ack + waybill must be in the outbox addressed to its station.
+	outbox, _ := db.ListPendingOutbox(50)
+	var (
+		gotAck     bool
+		gotWaybill bool
+	)
+	for _, msg := range outbox {
+		if msg.MsgType != protocol.TypeOrderAck && msg.MsgType != protocol.TypeOrderWaybill {
+			continue
+		}
+		if msg.StationID != order.StationID {
+			continue
+		}
+		var env protocol.Envelope
+		if err := json.Unmarshal(msg.Payload, &env); err != nil {
+			continue
+		}
+		switch msg.MsgType {
+		case protocol.TypeOrderAck:
+			var ack protocol.OrderAck
+			if json.Unmarshal(env.Payload, &ack) == nil && ack.OrderUUID == order.EdgeUUID {
+				gotAck = true
+			}
+		case protocol.TypeOrderWaybill:
+			var wb protocol.OrderWaybill
+			if json.Unmarshal(env.Payload, &wb) == nil && wb.OrderUUID == order.EdgeUUID {
+				gotWaybill = true
+			}
+		}
+	}
+	if !gotAck {
+		t.Error("expected a dispatch-time TypeOrderAck in the outbox for the simple order — " +
+			"the collapse must preserve notifyEdgeDispatched (routing through DispatchPreparedComplex drops it)")
+	}
+	if !gotWaybill {
+		t.Error("expected a dispatch-time TypeOrderWaybill in the outbox for the simple order — " +
+			"the collapse must preserve notifyEdgeDispatched (routing through DispatchPreparedComplex drops it)")
 	}
 }

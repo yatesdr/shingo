@@ -2,7 +2,7 @@ package dispatch
 
 // source_finder.go — the one shared source-finding seam behind BOTH intake
 // planning (planRetrieve / planRetrieveEmpty / planMove) and the fulfillment
-// scanner's replay path. Design locked: SYNTH-round1 (D35) + the D27 pure seam.
+// scanner's replay path. One pure seam both callers share.
 //
 // Why it exists: the scanner's inline finder had drifted from the intake
 // planners — it dropped the dedicated-loader-pool and group-scoped-empty tiers

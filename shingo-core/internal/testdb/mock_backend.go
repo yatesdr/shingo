@@ -10,20 +10,16 @@ import (
 // Use NewFailingBackend() for tests that expect fleet errors, or
 // NewSuccessBackend() for tests that need successful fleet operations.
 type MockBackend struct {
-	fail          bool
-	orders        map[string]fleet.TransportOrderResult
-	transportReqs []fleet.TransportOrderRequest
-	stagedReqs    []fleet.StagedOrderRequest
+	fail       bool
+	orders     map[string]fleet.TransportOrderResult
+	createReqs []fleet.CreateOrderRequest
 }
 
-// TransportRequests returns the TransportOrderRequests seen by
-// CreateTransportOrder, in call order. Used by differential tests that compare
-// the simple-transport fleet request against a plan's block list.
-func (m *MockBackend) TransportRequests() []fleet.TransportOrderRequest { return m.transportReqs }
-
-// StagedRequests returns the StagedOrderRequests seen by CreateStagedOrder, in
-// call order.
-func (m *MockBackend) StagedRequests() []fleet.StagedOrderRequest { return m.stagedReqs }
+// CreateRequests returns the CreateOrderRequests seen by CreateOrder, in call
+// order. This is the unified capture (the single create primitive) and the one
+// differential tests should assert on — it preserves the Complete value that
+// distinguishes the no-wait (Complete=true) and staged (Complete=false) lifecycles.
+func (m *MockBackend) CreateRequests() []fleet.CreateOrderRequest { return m.createReqs }
 
 // NewFailingBackend returns a MockBackend where all operations return errors.
 func NewFailingBackend() *MockBackend {
@@ -36,7 +32,7 @@ func NewSuccessBackend() *MockBackend {
 	return &MockBackend{orders: make(map[string]fleet.TransportOrderResult)}
 }
 
-// Orders returns a copy of the orders created via CreateTransportOrder or CreateStagedOrder.
+// Orders returns a copy of the orders created via CreateOrder.
 func (m *MockBackend) Orders() map[string]fleet.TransportOrderResult {
 	out := make(map[string]fleet.TransportOrderResult, len(m.orders))
 	for k, v := range m.orders {
@@ -45,13 +41,13 @@ func (m *MockBackend) Orders() map[string]fleet.TransportOrderResult {
 	return out
 }
 
-func (m *MockBackend) CreateTransportOrder(req fleet.TransportOrderRequest) (fleet.TransportOrderResult, error) {
+func (m *MockBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.TransportOrderResult, error) {
 	if m.fail {
 		return fleet.TransportOrderResult{}, fmt.Errorf("mock: not connected")
 	}
 	result := fleet.TransportOrderResult{VendorOrderID: req.OrderID}
 	m.orders[req.OrderID] = result
-	m.transportReqs = append(m.transportReqs, req)
+	m.createReqs = append(m.createReqs, req)
 	return result, nil
 }
 
@@ -81,16 +77,6 @@ func (m *MockBackend) Name() string { return "mock" }
 func (m *MockBackend) MapState(vendorState string) string { return "dispatched" }
 
 func (m *MockBackend) IsTerminalState(vendorState string) bool { return false }
-
-func (m *MockBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
-	if m.fail {
-		return fleet.TransportOrderResult{}, fmt.Errorf("mock: not connected")
-	}
-	result := fleet.TransportOrderResult{VendorOrderID: req.OrderID}
-	m.orders[req.OrderID] = result
-	m.stagedReqs = append(m.stagedReqs, req)
-	return result, nil
-}
 
 func (m *MockBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock, complete bool) error {
 	if m.fail {

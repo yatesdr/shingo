@@ -18,19 +18,29 @@ import (
 
 // assertFleetEquivalent pins the SEMANTIC equivalence a differential needs: the
 // plan's stepsToBlocks output has the same node sequence + SEER task kinds as the
-// real transport request the old tail sent (pickup→JackLoad@FromLoc,
-// dropoff→JackUnload@ToLoc) — NOT a struct-equal on the request.
-func assertFleetEquivalent(t *testing.T, plan []resolvedStep, req fleet.TransportOrderRequest) {
+// fleet request the unified tail sent (pickup→JackLoad@blocks[0].Location,
+// dropoff→JackUnload@blocks[1].Location), and a no-wait simple order is created
+// Complete=true. NOT a struct-equal on the request (blockId/goodsId differences
+// are cosmetic — only location + binTask drive SEER).
+func assertFleetEquivalent(t *testing.T, plan []resolvedStep, req fleet.CreateOrderRequest) {
 	t.Helper()
+	if !req.Complete {
+		t.Fatalf("simple no-wait dispatch must create Complete=true, got false")
+	}
 	blocks := stepsToBlocks("v-diff", plan, 0)
 	if len(blocks) != 2 {
 		t.Fatalf("plan produced %d blocks, want 2", len(blocks))
 	}
-	if blocks[0].Location != req.FromLoc || blocks[0].BinTask != seerrds.BinTaskForAction(protocol.ActionPickup) {
-		t.Fatalf("pickup block = {loc=%s task=%s}, want {loc=%s task=JackLoad}", blocks[0].Location, blocks[0].BinTask, req.FromLoc)
+	if len(req.Blocks) != 2 {
+		t.Fatalf("fleet request produced %d blocks, want 2", len(req.Blocks))
 	}
-	if blocks[1].Location != req.ToLoc || blocks[1].BinTask != seerrds.BinTaskForAction(protocol.ActionDropoff) {
-		t.Fatalf("dropoff block = {loc=%s task=%s}, want {loc=%s task=JackUnload}", blocks[1].Location, blocks[1].BinTask, req.ToLoc)
+	if blocks[0].Location != req.Blocks[0].Location || blocks[0].BinTask != seerrds.BinTaskForAction(protocol.ActionPickup) {
+		t.Fatalf("pickup block = plan{loc=%s task=%s} fleet{loc=%s task=%s}, want loc match + JackLoad",
+			blocks[0].Location, blocks[0].BinTask, req.Blocks[0].Location, req.Blocks[0].BinTask)
+	}
+	if blocks[1].Location != req.Blocks[1].Location || blocks[1].BinTask != seerrds.BinTaskForAction(protocol.ActionDropoff) {
+		t.Fatalf("dropoff block = plan{loc=%s task=%s} fleet{loc=%s task=%s}, want loc match + JackUnload",
+			blocks[1].Location, blocks[1].BinTask, req.Blocks[1].Location, req.Blocks[1].BinTask)
 	}
 }
 
@@ -62,8 +72,9 @@ func TestStage2_RetrieveEmptyPlanDifferential_Dispatch(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("planTransport: %s", perr.Detail)
 	}
-	// F1 claim-move: planTransport emits the shadow plan and QUEUES — the scanner is
-	// the single claimer, so intake no longer claims or dispatches inline.
+	// The claim-move to the scanner: planTransport emits the shadow plan and QUEUES
+	// — the scanner is the single claimer, so intake no longer claims or dispatches
+	// inline.
 	if !result.Queued {
 		t.Fatal("retrieve_empty must queue for the scanner (claim-moved), not dispatch inline")
 	}
@@ -83,9 +94,9 @@ func TestStage2_RetrieveEmptyPlanDifferential_Dispatch(t *testing.T) {
 	if dispatched.BinID == nil || *dispatched.BinID != empty.ID {
 		t.Fatalf("scanner claimed bin = %v, want empty %d", dispatched.BinID, empty.ID)
 	}
-	reqs := backend.TransportRequests()
+	reqs := backend.CreateRequests()
 	if len(reqs) != 1 {
-		t.Fatalf("claim-moved dispatch produced %d transport requests, want 1", len(reqs))
+		t.Fatalf("claim-moved dispatch produced %d create requests, want 1", len(reqs))
 	}
 	assertFleetEquivalent(t, result.Plan, reqs[0])
 }
@@ -121,7 +132,7 @@ func TestStage2_MovePlanDifferential_Dispatch(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("planTransport: %s", perr.Detail)
 	}
-	// F1 claim-move: planTransport emits the shadow plan and QUEUES.
+	// The claim-move to the scanner: planTransport emits the shadow plan and QUEUES.
 	if !result.Queued {
 		t.Fatal("move with source + free dest must queue for the scanner (claim-moved)")
 	}
@@ -137,9 +148,9 @@ func TestStage2_MovePlanDifferential_Dispatch(t *testing.T) {
 	if dispatched.BinID == nil || *dispatched.BinID != mvBin.ID {
 		t.Fatalf("scanner claimed bin = %v, want move bin %d", dispatched.BinID, mvBin.ID)
 	}
-	reqs := backend.TransportRequests()
+	reqs := backend.CreateRequests()
 	if len(reqs) != 1 {
-		t.Fatalf("claim-moved dispatch produced %d transport requests, want 1", len(reqs))
+		t.Fatalf("claim-moved dispatch produced %d create requests, want 1", len(reqs))
 	}
 	assertFleetEquivalent(t, result.Plan, reqs[0])
 }
@@ -213,9 +224,10 @@ func TestStage2_MovePlanDifferential_NGRPDest(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("planTransport (NGRP dest): %s", perr.Detail)
 	}
-	// F1 claim-move: planTransport queues. The move's synthetic-NGRP-dest resolution
-	// stays at intake (the scanner dispatches to order.DeliveryNode verbatim), so the
-	// concrete child must already be on the shadow plan + the order's delivery node.
+	// The claim-move to the scanner: planTransport queues. The move's synthetic-
+	// NGRP-dest resolution stays at intake (the scanner dispatches to
+	// order.DeliveryNode verbatim), so the concrete child must already be on the
+	// shadow plan + the order's delivery node.
 	if !result.Queued {
 		t.Fatal("move to an NGRP with a free child must queue for the scanner (claim-moved)")
 	}

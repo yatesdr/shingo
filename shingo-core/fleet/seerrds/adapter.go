@@ -42,27 +42,25 @@ func New(cfg Config) *Adapter {
 
 // --- fleet.Backend ---
 
-func (a *Adapter) CreateTransportOrder(req fleet.TransportOrderRequest) (fleet.TransportOrderResult, error) {
-	// Use block-based order with explicit binTasks (JackLoad/JackUnload)
-	// All robots in this deployment use jack load/unload operations
-	loadBlockID := req.OrderID + "_load"
-	unloadBlockID := req.OrderID + "_unload"
-
-	blocks := []rds.Block{
-		{
-			BlockID:   loadBlockID,
-			Location:  req.FromLoc,
-			BinTask:   "JackLoad", // Explicitly use JackLoad for pickup
+// CreateOrder is the single fleet create primitive (fleet.Backend). It posts a
+// block-based /setOrder: each block carries its Location + BinTask (the only two
+// per-block fields SEER acts on), plus a synthetic GoodsID (orderID+"_goods") per
+// block — a placeholder that only matters if SEER goods-binding is active (a
+// separate manual path, unused in the live order flow; SEER auto-generates one
+// if blank). req.Complete selects the lifecycle: true = the fleet completes the
+// order once its blocks finish (no-wait, single-shot); false = staged, with
+// further blocks appended later via ReleaseOrder.
+func (a *Adapter) CreateOrder(req fleet.CreateOrderRequest) (fleet.TransportOrderResult, error) {
+	goodsID := req.OrderID + "_goods"
+	blocks := make([]rds.Block, len(req.Blocks))
+	for i, b := range req.Blocks {
+		blocks[i] = rds.Block{
+			BlockID:   b.BlockID,
+			Location:  b.Location,
+			BinTask:   b.BinTask,
 			Operation: "",
-			GoodsID:   req.OrderID + "_goods",
-		},
-		{
-			BlockID:   unloadBlockID,
-			Location:  req.ToLoc,
-			BinTask:   "JackUnload", // Explicitly use JackUnload for dropoff
-			Operation: "",
-			GoodsID:   req.OrderID + "_goods",
-		},
+			GoodsID:   goodsID,
+		}
 	}
 
 	rdsReq := &rds.SetOrderRequest{
@@ -70,7 +68,7 @@ func (a *Adapter) CreateTransportOrder(req fleet.TransportOrderRequest) (fleet.T
 		ExternalID: req.ExternalID,
 		Group:      req.RobotGroup, // SEER robot-dispatch group; "" omitted → vendor default assignment
 		Blocks:     blocks,
-		Complete:   true, // Complete order after both blocks
+		Complete:   req.Complete,
 		Priority:   req.Priority,
 	}
 	if err := a.client.CreateOrder(rdsReq); err != nil {
@@ -105,25 +103,6 @@ func (a *Adapter) MapState(vendorState string) string {
 
 func (a *Adapter) IsTerminalState(vendorState string) bool {
 	return IsTerminalState(vendorState)
-}
-
-func (a *Adapter) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
-	blocks := make([]rds.Block, len(req.Blocks))
-	for i, b := range req.Blocks {
-		blocks[i] = rds.Block{BlockID: b.BlockID, Location: b.Location, BinTask: b.BinTask}
-	}
-	rdsReq := &rds.SetOrderRequest{
-		ID:         req.OrderID,
-		ExternalID: req.ExternalID,
-		Group:      req.RobotGroup, // SEER robot-dispatch group; "" omitted → vendor default assignment
-		Blocks:     blocks,
-		Complete:   false,
-		Priority:   req.Priority,
-	}
-	if err := a.client.CreateOrder(rdsReq); err != nil {
-		return fleet.TransportOrderResult{}, err
-	}
-	return fleet.TransportOrderResult{VendorOrderID: req.OrderID}, nil
 }
 
 func (a *Adapter) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock, complete bool) error {
