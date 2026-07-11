@@ -86,9 +86,10 @@ func openSeededEdge(t *testing.T) (*sql.DB, string, *plantspec.Plant) {
 	if _, err := db.Exec(edgeDDL); err != nil {
 		t.Fatalf("apply edge DDL: %v", err)
 	}
-	plant, err := plantspec.Load("../../../plants/demo.yaml")
+	// Stable fixture, not plants/demo.yaml — see TestSeedCore_DemoPlant for the rationale.
+	plant, err := plantspec.Load("testdata/seed-fixture.yaml")
 	if err != nil {
-		t.Fatalf("load demo plant: %v", err)
+		t.Fatalf("load seed fixture: %v", err)
 	}
 	if err := plant.Validate(); err != nil {
 		t.Fatalf("validate demo plant: %v", err)

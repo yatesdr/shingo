@@ -15,10 +15,11 @@ func TestShippedDemoPlantValid(t *testing.T) {
 }
 
 // The demo plant must seed all three loader TYPES so each is exercisable end to end:
-// MULTI-WINDOW (PLK_LOADER, 3 windows), SINGLE-WINDOW (PLK_X1, its own anchor), and
-// DEDICATED-POSITIONS (PLK_DECK, two BRKT positions = the same-payload-two-position
-// fixture step 3 targets). Plus the dedicated-loader buffer zone (step 7). Guards the
-// plant against losing that coverage.
+// MULTI-WINDOW (a shared_window loader keyed on a synthetic id, ≥2 windows), SINGLE-
+// WINDOW (a shared_window loader anchored at its own real node), and DEDICATED-
+// POSITIONS (a dedicated_positions loader, ≥2 same-payload positions + a buffer zone).
+// Guards the demo against losing that coverage. Assertions are SHAPE-based (each type
+// present), not count-based, so tuning the demo (window/position counts) doesn't trip it.
 func TestShippedDemoPlantLoaderTypes(t *testing.T) {
 	p, err := Load("../../plants/demo.yaml")
 	if err != nil {
@@ -30,15 +31,17 @@ func TestShippedDemoPlantLoaderTypes(t *testing.T) {
 		byNode[c.CoreNode] = c
 	}
 
-	// MULTI-WINDOW: three windows of PLK_LOADER.
+	// MULTI-WINDOW: a synthetic shared_window loader with ≥2 window_of claims.
+	var multiLoader string
 	windows := 0
 	for _, c := range p.Claims {
-		if c.WindowOf == "PLK_LOADER" {
+		if c.WindowOf != "" {
+			multiLoader = c.WindowOf
 			windows++
 		}
 	}
-	if windows != 3 {
-		t.Fatalf("multi-window PLK_LOADER: want 3 windows, got %d", windows)
+	if windows < 2 {
+		t.Fatalf("multi-window loader %q: want ≥2 windows, got %d", multiLoader, windows)
 	}
 
 	// SINGLE-WINDOW: PLK_X1 is its own loader (no window_of / home_of).
