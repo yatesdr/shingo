@@ -102,7 +102,8 @@ CREATE TABLE IF NOT EXISTS orders (
     skip_auto_confirm BOOLEAN NOT NULL DEFAULT false,
     sibling_order_uuid TEXT NOT NULL DEFAULT '',
     source_intent   TEXT NOT NULL DEFAULT '',
-    coordinated     BOOLEAN NOT NULL DEFAULT false
+    coordinated     BOOLEAN NOT NULL DEFAULT false,
+    remaining_uop   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);

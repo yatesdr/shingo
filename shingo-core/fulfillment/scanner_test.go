@@ -97,6 +97,7 @@ func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
 // driven reserve is exercised end-to-end in the dispatch package's docker tests;
 // here we only assert the scanner's dispatch orchestration.
 func (d *recordingDispatcher) ReserveStorageDropoff(*orders.Order) error { return nil }
+func (d *recordingDispatcher) PostFindHook()                             {}
 
 // newTestScanner wires a scanner whose finder always waits and whose dispatcher
 // is nil — for the pre-finder branches (cancelled, in-flight, dest occupied,

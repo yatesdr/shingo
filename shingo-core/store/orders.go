@@ -108,6 +108,10 @@ func (db *DB) UpdateOrderDeliveryNode(id int64, deliveryNode string) error {
 	return orders.UpdateDeliveryNode(db.DB, id, deliveryNode)
 }
 
+func (db *DB) UpdateOrderRemainingUOP(id int64, remainingUOP *int) error {
+	return orders.UpdateRemainingUOP(db.DB, id, remainingUOP)
+}
+
 func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
 	return orders.UpdateStepsJSON(db.DB, id, stepsJSON)
 }

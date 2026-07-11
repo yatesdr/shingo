@@ -136,6 +136,9 @@ func TestFullDepletion_ClearsManifest(t *testing.T) {
 	env.Payload, _ = json.Marshal(protocol.Data{Body: body})
 
 	d.HandleOrderRequest(env, orderReq)
+	// The claim-move to the scanner: the scanner (mirrored) is the single claim
+	// point and seeds the manifest clear from the persisted remaining_uop=0.
+	dispatchSimpleViaScanner(t, d, db, "uuid-dep-1")
 
 	// Verify bin's manifest is cleared AND bin is claimed
 	got, _ := db.GetBin(bin.ID)
@@ -189,6 +192,12 @@ func TestPartialConsumption_SyncsUOP(t *testing.T) {
 	env.Payload, _ = json.Marshal(protocol.Data{Body: body})
 
 	d.HandleOrderRequest(env, orderReq)
+	// The claim-move to the scanner: intake persists remaining_uop and queues; the
+	// scanner (mirrored here) is the single claim point and seeds the manifest sync
+	// from it. This is the end-to-end proof the operator's release-correction count
+	// survives the claim-move — the differential tests pin fleet route, not the
+	// manifest.
+	dispatchSimpleViaScanner(t, d, db, "uuid-prt-1")
 
 	got, _ := db.GetBin(bin.ID)
 

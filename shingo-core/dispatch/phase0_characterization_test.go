@@ -10,7 +10,7 @@ package dispatch
 //
 // They are NOT design intent — they pin what the code does today, including the
 // sourcing-flip asymmetry between simple and complex paths (tech debt documented
-// in each test). See SYNTH-round2.md for the context that produced this file.
+// in each test).
 
 import (
 	"encoding/json"
@@ -193,6 +193,10 @@ func TestPhase0_UOPBranch_PostState(t *testing.T) {
 				DeliveryNode: lineNode.Name,
 				Quantity:     1.0,
 			})
+			// The claim-move to the scanner: intake persists remaining_uop; the
+			// scanner (mirrored) seeds the claim's manifest sync from it (nil/0/>0
+			// branches).
+			dispatchSimpleViaScanner(t, d, db, "char-uop-"+tc.name)
 
 			testdb.AssertOrderStatus(t, db, "char-uop-"+tc.name, StatusDispatched)
 
@@ -268,14 +272,18 @@ func TestPhase0_StatusAtClaimTime(t *testing.T) {
 
 		d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 		d.SetPostFindHook(func() {
-			// postFindHook fires after Find, before ClaimForDispatch in planRetrieve.
-			// MoveToSourcing already ran at planning_service.go:192.
+			// The claim-move to the scanner: the postFindHook now fires in the
+			// fulfillment scanner (the single claim point), between MoveToSourcing and
+			// ClaimForDispatch — mirrored by dispatchSimpleViaScanner. The order is in
+			// `sourcing` at
+			// claim time, as before, but the claim moved OFF intake.
 			if o, err := db.GetOrderByUUID(uuid); err == nil {
 				capturedStatus = string(o.Status)
 			}
 			d.SetPostFindHook(nil) // fire once
 		})
 
+		// Intake now only queues; the scanner (mirrored) is the single claimer.
 		d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
 			OrderUUID:    uuid,
 			OrderType:    OrderTypeRetrieve,
@@ -283,14 +291,14 @@ func TestPhase0_StatusAtClaimTime(t *testing.T) {
 			DeliveryNode: lineNode.Name,
 			Quantity:     1.0,
 		})
+		dispatchSimpleViaScanner(t, d, db, uuid)
 
 		testdb.AssertOrderStatus(t, db, uuid, StatusDispatched) // succeeded overall
 
-		// CHANGE-DETECTOR: simple path is in "sourcing" at claim time because
-		// MoveToSourcing fires before ClaimForDispatch (planning_service.go:192 vs :290).
+		// The simple path is in "sourcing" at claim time because MoveToSourcing fires
+		// before ClaimForDispatch — now at the SCANNER (the claim-move), not intake.
 		if capturedStatus != string(StatusSourcing) {
-			t.Errorf("status at claim time (simple path) = %q, want %q — "+
-				"CHANGE-DETECTOR: if this changed, the sourcing-flip tech debt was addressed; update this test",
+			t.Errorf("status at claim time (simple path) = %q, want %q (MoveToSourcing before claim, now at the scanner)",
 				capturedStatus, string(StatusSourcing))
 		}
 	})

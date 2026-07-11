@@ -30,6 +30,11 @@ type Dispatcher struct {
 	restoreListeners *restoreRegistry
 	laneHolds        *laneHoldRegistry
 	DebugLog         func(string, ...any)
+
+	// postFindHook is a test-only seam fired by the fulfillment scanner between
+	// Find and Claim (the single claim point post F1 claim-move). Nil in
+	// production; set via SetPostFindHook for deterministic concurrency tests.
+	postFindHook func()
 }
 
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {
@@ -48,7 +53,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	}
 	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
 	d.replies = newReplySender(db, dispatchTopic, stationID, d.dbg)
-	d.planner = newPlanningService(db, resolver, d.laneLock, binManifest, d.lifecycle, d.dbg, d.CreateCompoundOrder)
+	d.planner = newPlanningService(db, resolver, d.laneLock, d.dbg, d.CreateCompoundOrder)
 	d.allocator = newAllocator(db, binManifest, d.dbg)
 	return d
 }
@@ -101,11 +106,14 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	if result == nil || result.Handled {
 		return
 	}
-	if result.Queued {
-		d.queueOrder(order, env, payloadCode)
-		return
-	}
-	d.dispatchToFleet(order, env, result.SourceNode, result.DestNode)
+	// F1 claim-move: every simple order is status-first queued — the scanner is the
+	// single claim point (planTransport validated + resolved but never claimed or
+	// dispatched inline). queueOrder emits EmitOrderQueued, which synchronously runs
+	// the fulfillment scanner (wiring.go), so an immediately-sourceable order still
+	// acks dispatched on return and an unsourceable one waits — exactly complex's
+	// existing shape. The shadow plan + endpoints on result are F2 substrate, not
+	// consumed here.
+	d.queueOrder(order, env, payloadCode)
 }
 
 func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, payloadCode string) {
@@ -358,10 +366,20 @@ func (d *Dispatcher) failOrder(order *orders.Order, env *protocol.Envelope, erro
 	d.sendError(env, order.EdgeUUID, errorCode, detail)
 }
 
-// SetPostFindHook installs a test-only hook called between Find and Claim in
-// the planning service. Used for deterministic concurrency testing.
+// SetPostFindHook installs a test-only hook the fulfillment scanner fires between
+// Find and Claim — the single claim point after the F1 claim-move. Used for
+// deterministic concurrency testing (a claim race must re-queue, never drop).
 func (d *Dispatcher) SetPostFindHook(fn func()) {
-	d.planner.postFindHook = fn
+	d.postFindHook = fn
+}
+
+// PostFindHook fires the installed find→claim hook (a no-op when none is set).
+// Satisfies fulfillment.Dispatcher so the scanner can invoke it at its single
+// claim point without importing the test seam directly.
+func (d *Dispatcher) PostFindHook() {
+	if d.postFindHook != nil {
+		d.postFindHook()
+	}
 }
 
 // LaneLock returns the dispatcher's lane lock for external use.

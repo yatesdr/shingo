@@ -64,10 +64,7 @@ func TestPlanRetrieve_DedicatedLoaderPool_HomeFullNoBuffer_SourcesHome(t *testin
 		DeliveryNode: lineNode.Name, SourceNode: pos[0].Name, Quantity: 1.0,
 	})
 
-	order, err := db.GetOrderByUUID("home-full-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := dispatchSimpleViaScanner(t, d, db, "home-full-1")
 	if order.BinID == nil || *order.BinID != homeFull.ID {
 		t.Fatalf("sourced bin %v, want the home full %d", order.BinID, homeFull.ID)
 	}
@@ -94,10 +91,7 @@ func TestPlanRetrieve_DedicatedLoaderPool_OlderFullBeatsNewerPartial(t *testing.
 		DeliveryNode: lineNode.Name, SourceNode: pos.Name, Quantity: 1.0,
 	})
 
-	order, err := db.GetOrderByUUID("older-full-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := dispatchSimpleViaScanner(t, d, db, "older-full-1")
 	if order.BinID == nil || *order.BinID != olderFull.ID {
 		t.Fatalf("sourced bin %v, want the OLDER full %d (Drain is plain FIFO; newer partial %d must wait)",
 			order.BinID, olderFull.ID, newerPartial.ID)
@@ -127,10 +121,7 @@ func TestPlanRetrieve_DedicatedLoaderPool_MultiHomeSamePayload(t *testing.T) {
 		DeliveryNode: lineNode.Name, SourceNode: pos[0].Name, Quantity: 1.0,
 	})
 
-	order, err := db.GetOrderByUUID("multi-home-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := dispatchSimpleViaScanner(t, d, db, "multi-home-1")
 	if order.BinID == nil || *order.BinID != olderAtP2.ID {
 		t.Fatalf("sourced bin %v, want the older bin %d at the sibling home", order.BinID, olderAtP2.ID)
 	}
@@ -172,10 +163,7 @@ func TestPlanRetrieve_SharedWindowLoader_LayoutGatedFromPool(t *testing.T) {
 		DeliveryNode: lineNode.Name, SourceNode: window.Name, Quantity: 1.0,
 	})
 
-	order, err := db.GetOrderByUUID("shared-window-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := dispatchSimpleViaScanner(t, d, db, "shared-window-1")
 	// Gated correctly → fell through to the global finder → claimed the global bin.
 	// If the window had wrongly entered Source, the empty pool would have QUEUED
 	// (BinID nil) instead.

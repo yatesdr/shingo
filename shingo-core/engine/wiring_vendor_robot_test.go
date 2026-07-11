@@ -66,27 +66,33 @@ func TestVendorStatus_RobotID_FirstAssignment(t *testing.T) {
 		t.Errorf("robot_id: got %q, want %q", got.RobotID, "AMB-42")
 	}
 
-	// Verify waybill was sent (outbox should contain an order.waybill message)
+	// Verify a waybill carrying the assigned robot was sent. NOTE: post the F1
+	// claim-move a simple order dispatches through the fulfillment scanner, which
+	// emits a route waybill at dispatch (robot_id empty — no robot yet), matching
+	// the scanner's long-standing behavior for queued orders. The robot-assignment
+	// waybill (this test's subject) is a SECOND waybill, so scan for the one that
+	// carries AMB-42 rather than asserting on the first waybill found.
 	outbox, _ := db.ListPendingOutbox(50)
-	var foundWaybill bool
+	var foundWaybillWithRobot bool
 	for _, msg := range outbox {
-		if msg.MsgType == protocol.TypeOrderWaybill && msg.StationID == order.StationID {
-			foundWaybill = true
-			// Decode payload and verify robot ID
-			var env protocol.Envelope
-			if err := json.Unmarshal(msg.Payload, &env); err == nil {
-				var wb protocol.OrderWaybill
-				if err := json.Unmarshal(env.Payload, &wb); err == nil {
-					if wb.RobotID != "AMB-42" {
-						t.Errorf("waybill robot_id: got %q, want %q", wb.RobotID, "AMB-42")
-					}
-				}
-			}
+		if msg.MsgType != protocol.TypeOrderWaybill || msg.StationID != order.StationID {
+			continue
+		}
+		var env protocol.Envelope
+		if err := json.Unmarshal(msg.Payload, &env); err != nil {
+			continue
+		}
+		var wb protocol.OrderWaybill
+		if err := json.Unmarshal(env.Payload, &wb); err != nil {
+			continue
+		}
+		if wb.RobotID == "AMB-42" {
+			foundWaybillWithRobot = true
 			break
 		}
 	}
-	if !foundWaybill {
-		t.Error("expected waybill in outbox for first robot assignment")
+	if !foundWaybillWithRobot {
+		t.Error("expected a waybill carrying robot_id AMB-42 after first robot assignment")
 	}
 }
 

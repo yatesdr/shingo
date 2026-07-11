@@ -53,6 +53,7 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		Quantity:     1.0,
 	})
+	dispatchSimpleViaScanner(t, d, db, "retrieve-uuid-1")
 
 	// Verify order was created
 	if len(emitter.received) != 1 {
@@ -137,6 +138,7 @@ func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		Quantity:     1.0,
 	})
+	dispatchSimpleViaScanner(t, d, db, "move-uuid-1")
 
 	if len(emitter.received) != 1 {
 		t.Fatalf("received events = %d, want 1", len(emitter.received))
@@ -218,6 +220,7 @@ func TestDispatcher_MoveOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 		DeliveryNode: supermarket.Name,
 		Quantity:     1.0,
 	})
+	dispatchSimpleViaScanner(t, d, db, "l2-sat-1")
 
 	// The operator's action must NOT fail: no sendError (no HMI toast), the
 	// order exists, and it is queued with a reason.
@@ -247,6 +250,7 @@ func TestDispatcher_MoveOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 		DeliveryNode: supermarket.Name,
 		Quantity:     1.0,
 	})
+	dispatchSimpleViaScanner(t, d, db, "l2-sat-2")
 	order2, err := db.GetOrderByUUID("l2-sat-2")
 	if err != nil {
 		t.Fatalf("get order2: %v", err)
@@ -388,6 +392,7 @@ func TestDispatcher_CancelOrder(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		Quantity:     1.0,
 	})
+	dispatchSimpleViaScanner(t, d, db, "cancel-uuid-1")
 
 	order := testdb.RequireOrder(t, db, "cancel-uuid-1")
 
@@ -519,6 +524,7 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 		DeliveryNode: parentNode.Name,
 		Quantity:     1.0,
 	})
+	dispatchSimpleViaScanner(t, d, db, "syn-retrieve-1")
 
 	// Verify order was dispatched (not failed)
 	if len(emitter.failed) > 0 {
@@ -601,6 +607,7 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 		DeliveryNode: zone.Name,
 		Quantity:     1,
 	})
+	dispatchSimpleViaScanner(t, d, db, "multi-1")
 	// Order 2: payload A -> PRESS-A1
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
 		OrderUUID:    "multi-2",
@@ -609,6 +616,7 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 		DeliveryNode: zone.Name,
 		Quantity:     1,
 	})
+	dispatchSimpleViaScanner(t, d, db, "multi-2")
 	// Order 3: payload B -> PRESS-A1
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
 		OrderUUID:    "multi-3",
@@ -617,6 +625,7 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 		DeliveryNode: zone.Name,
 		Quantity:     1,
 	})
+	dispatchSimpleViaScanner(t, d, db, "multi-3")
 
 	if len(emitter.failed) > 0 {
 		t.Fatalf("unexpected failures: %d (first: %s)", len(emitter.failed), emitter.failed[0].errorCode)
@@ -653,6 +662,7 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 		DeliveryNode: zone.Name,
 		Quantity:     1,
 	})
+	dispatchSimpleViaScanner(t, d, db, "multi-4")
 
 	// Resolution fails before order creation, so check emitter errors
 	if len(emitter.failed) <= failsBefore {
@@ -714,6 +724,7 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 		RetrieveEmpty: true,
 		Quantity:      1,
 	})
+	dispatchSimpleViaScanner(t, d, db, "empty-1")
 
 	if len(emitter.failed) > 0 {
 		t.Fatalf("order should not fail, got: %s", emitter.failed[0].errorCode)
@@ -786,6 +797,7 @@ func TestRetrieveEmpty_LaneSourceScopesToLane(t *testing.T) {
 		RetrieveEmpty: true,
 		Quantity:      1,
 	})
+	dispatchSimpleViaScanner(t, d, db, "lane-empty-src-1")
 
 	if len(emitter.failed) > 0 {
 		t.Fatalf("order should not fail, got: %s", emitter.failed[0].errorCode)
@@ -1055,6 +1067,7 @@ func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
 		DeliveryNode: "DOT-ZONE.SLOT-X",
 		Quantity:     1,
 	})
+	dispatchSimpleViaScanner(t, d, db, "dot-1")
 
 	if len(emitter.failed) > 0 {
 		t.Fatalf("order should not fail, got: %s", emitter.failed[0].errorCode)
@@ -1094,6 +1107,7 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		Quantity:     1.0,
 	})
+	dispatchSimpleViaScanner(t, d, db, "fleet-fail-1")
 
 	// Order should be received then failed
 	if len(emitter.received) != 1 {
@@ -1191,6 +1205,7 @@ func TestHandleRetrieve_BinTracking(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		Quantity:     1.0,
 	})
+	dispatchSimpleViaScanner(t, d, db, "uuid-bin-track")
 
 	order := testdb.RequireOrder(t, db, "uuid-bin-track")
 
@@ -1304,6 +1319,7 @@ func TestDispatcher_RetrieveOrder_NGRPSource(t *testing.T) {
 		DeliveryNode: sc.LineNode.Name,
 		Quantity:     1,
 	})
+	dispatchSimpleViaScanner(t, d2, db, "retrieve-ngrp-1")
 
 	order := testdb.RequireOrderStatus(t, db, "retrieve-ngrp-1", StatusDispatched)
 
@@ -1363,6 +1379,7 @@ func TestDispatcher_MoveOrder_NGRPSource(t *testing.T) {
 		DeliveryNode: sc.LineNode.Name,
 		Quantity:     1.0,
 	})
+	dispatchSimpleViaScanner(t, d2, db, "move-ngrp-1")
 
 	// Verify the order was dispatched (not failed)
 	order := testdb.RequireOrderStatus(t, db, "move-ngrp-1", StatusDispatched)

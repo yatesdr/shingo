@@ -174,6 +174,93 @@ func submitComplexAndDispatch(t *testing.T, d *Dispatcher, db *store.DB, env *pr
 	return o
 }
 
+// dispatchSimpleViaScanner is the dispatcher-only harness's stand-in for the
+// fulfillment scanner's PLAIN path — the simple-order twin of
+// submitComplexAndDispatch above. The claim-move made the scanner the single
+// claimer for simple orders (as Phase 4b did for complex): intake now only queues,
+// and the claim + reserve + dispatch happen in fulfillment.Scanner.tryFulfill. That
+// scanner lives in the fulfillment package, which imports dispatch, so
+// newTestDispatcher (no engine bus) cannot wire one. This mirrors the scanner's
+// plain branch — find → claim with the order's persisted RemainingUOP → node-driven
+// reserve → DispatchDirect — so dispatch-package tests can still assert the
+// end-to-end simple dispatch the scanner performs in production.
+//
+// It is a NO-OP replay when the order is not a fresh, bin-less, pre-dispatch simple
+// order (already dispatched, terminal, or a reshuffle parent), and it returns the
+// order untouched when the source is not yet available (wait/reshuffle/structural),
+// so a caller testing the wait disposition sees the order still acquiring.
+func dispatchSimpleViaScanner(t *testing.T, d *Dispatcher, db *store.DB, orderUUID string) *orders.Order {
+	t.Helper()
+	o, err := db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		t.Fatalf("get order %s: %v", orderUUID, err)
+	}
+	if !protocol.IsAcquiring(o.Status) && o.Status != protocol.StatusPending {
+		return o // already dispatched / terminal / handled — nothing to replay
+	}
+	if o.BinID != nil {
+		return o // already holds its bin (a prior replay) — the scanner would dispatchHeldBin
+	}
+	// Mirror the scanner's full occupancy gate: a capacity-blocked order stays
+	// queued (the scanner returns false without claiming), so this is a no-op for
+	// an order whose dropoff is occupied/in-flight — exactly what the caller of a
+	// capacity-gate test expects.
+	if blocked, _ := CheckDropoffCapacity(d.db, o.DeliveryNode, o.ID); blocked {
+		return o
+	}
+	intent := IntentFull
+	if o.SourceIntent == SourceIntentEmpty {
+		intent = IntentEmpty
+	}
+	res := d.planner.finder.FindSource(o, intent)
+	if res.Outcome != OutcomeFound {
+		return o // wait / reshuffle / structural — leave acquiring for the caller to assert
+	}
+	bin, sourceNode := res.Bin, res.Node
+	if err := d.lifecycle.MoveToSourcing(o, "test-scanner", "bin found, claiming"); err != nil {
+		t.Fatalf("scanner-mirror move-to-sourcing %s: %v", orderUUID, err)
+	}
+	d.PostFindHook() // fire the claim-race seam at the same point the scanner does
+	o, err = db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		t.Fatalf("scanner-mirror re-get after sourcing %s: %v", orderUUID, err)
+	}
+	// Claim with the persisted RemainingUOP — the operator's release-correction
+	// count the scanner seeds the manifest sync from (nil for retrieve/empty).
+	if err := d.binManifest.ClaimForDispatch(bin.ID, o.ID, o.RemainingUOP); err != nil {
+		t.Fatalf("scanner-mirror claim %s: %v", orderUUID, err)
+	}
+	if err := db.UpdateOrderBinID(o.ID, bin.ID); err != nil {
+		t.Fatalf("scanner-mirror update bin_id %s: %v", orderUUID, err)
+	}
+	if err := db.UpdateOrderSourceNode(o.ID, sourceNode.Name); err != nil {
+		t.Fatalf("scanner-mirror update source_node %s: %v", orderUUID, err)
+	}
+	o, err = db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		t.Fatalf("scanner-mirror re-get %s: %v", orderUUID, err)
+	}
+	destNode, err := db.GetNodeByDotName(o.DeliveryNode)
+	if err != nil {
+		t.Fatalf("scanner-mirror dest node %q: %v", o.DeliveryNode, err)
+	}
+	if err := d.ReserveStorageDropoff(o); err != nil {
+		t.Fatalf("scanner-mirror reserve dropoff %s: %v", orderUUID, err)
+	}
+	if _, err := d.DispatchDirect(o, sourceNode, destNode); err != nil {
+		// Mirror the scanner: a fleet failure is a real disposition, not a test
+		// abort. DispatchDirect already transitioned the order (failed); return the
+		// current state so the caller can assert the fleet-failure outcome.
+		o, _ = db.GetOrderByUUID(orderUUID)
+		return o
+	}
+	o, err = db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		t.Fatalf("scanner-mirror re-get after dispatch %s: %v", orderUUID, err)
+	}
+	return o
+}
+
 func testEnvelope() *protocol.Envelope {
 	return testdb.Envelope()
 }
@@ -336,11 +423,22 @@ func TestHandleOrderRequest_UsesRegisteredPlanner(t *testing.T) {
 	if len(emitter.received) != 1 {
 		t.Fatalf("received events = %d, want 1", len(emitter.received))
 	}
-	if len(emitter.failed) != 1 {
-		t.Fatalf("failed events = %d, want 1 because mock backend refuses dispatch", len(emitter.failed))
+	// The registered custom planner ran — its side effect (source_node → storage)
+	// proves HandleOrderRequest routed to it. The claim-move to the scanner: intake
+	// QUEUES the planner's result (the scanner is the single dispatch point), so
+	// there is no inline fleet dispatch and thus no fleet_failed here.
+	order, err := db.GetOrderByUUID("uuid-custom")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
 	}
-	if emitter.failed[0].errorCode != "fleet_failed" {
-		t.Fatalf("error code = %q, want fleet_failed", emitter.failed[0].errorCode)
+	if order.SourceNode != storageNode.Name {
+		t.Fatalf("custom planner did not run: source_node = %q, want %q", order.SourceNode, storageNode.Name)
+	}
+	if order.Status != StatusQueued {
+		t.Fatalf("status = %q, want %q (intake queues; scanner dispatches)", order.Status, StatusQueued)
+	}
+	if len(emitter.failed) != 0 {
+		t.Fatalf("failed events = %d, want 0 (no inline dispatch at intake post claim-move)", len(emitter.failed))
 	}
 }
 

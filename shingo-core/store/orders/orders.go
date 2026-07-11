@@ -38,7 +38,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop`
 
 // adminListExcludeTypeFilter excludes Core-internal housekeeping
 // order types from admin-facing list queries. Today the only excluded
@@ -54,13 +54,14 @@ const adminListExcludeTypeFilter = `order_type != 'reshuffle_restore'`
 func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
 	var parentOrderID, binID sql.NullInt64
+	var remainingUOP sql.NullInt64
 
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason,
-		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &o.SourceIntent, &o.Coordinated)
+		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &o.SourceIntent, &o.Coordinated, &remainingUOP)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +70,10 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	}
 	if binID.Valid {
 		o.BinID = &binID.Int64
+	}
+	if remainingUOP.Valid {
+		v := int(remainingUOP.Int64)
+		o.RemainingUOP = &v
 	}
 	return &o, nil
 }
@@ -206,6 +211,16 @@ func UpdateSourceNode(db *sql.DB, id int64, sourceNode string) error {
 func UpdateDeliveryNode(db *sql.DB, id int64, deliveryNode string) error {
 	_, err := db.Exec(`UPDATE orders SET delivery_node=$1, updated_at=$3 WHERE id=$2`,
 		deliveryNode, id, clock.Now().UTC())
+	return err
+}
+
+// UpdateRemainingUOP rewrites the remaining_uop field — the operator's declared
+// release-correction count carried to the (scanner-side) bin claim. nil clears it
+// to NULL (plain claim, no manifest sync). Written at intake by planTransport so
+// the scanner, which has no envelope, can seed the same atomic claim+sync.
+func UpdateRemainingUOP(db *sql.DB, id int64, remainingUOP *int) error {
+	_, err := db.Exec(`UPDATE orders SET remaining_uop=$1, updated_at=$3 WHERE id=$2`,
+		helpers.NullableInt(remainingUOP), id, clock.Now().UTC())
 	return err
 }
 

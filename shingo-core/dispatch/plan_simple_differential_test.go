@@ -53,35 +53,39 @@ func TestStage2_RetrieveEmptyPlanDifferential_Dispatch(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, backend)
 
 	order := &orders.Order{
-		EdgeUUID: "re-diff-1", StationID: "ST", OrderType: OrderTypeRetrieveEmpty, Status: StatusPending,
+		EdgeUUID: "re-diff-1", StationID: "ST", OrderType: OrderTypeRetrieveEmpty, Status: StatusPending, SourceIntent: SourceIntentEmpty,
 		Quantity: 1, PayloadCode: bp.Code, DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	result, perr := d.planner.planRetrieveEmpty(order, testEnvelope(), bp.Code)
+	result, perr := d.planner.planTransport(order, testEnvelope(), bp.Code)
 	if perr != nil {
-		t.Fatalf("planRetrieveEmpty: %s", perr.Detail)
+		t.Fatalf("planTransport: %s", perr.Detail)
 	}
-	if result.Queued {
-		t.Fatal("retrieve_empty with an available empty must dispatch, not queue")
-	}
-	if order.BinID == nil || *order.BinID != empty.ID {
-		t.Fatalf("claimed bin = %v, want empty %d", order.BinID, empty.ID)
+	// F1 claim-move: planTransport emits the shadow plan and QUEUES — the scanner is
+	// the single claimer, so intake no longer claims or dispatches inline.
+	if !result.Queued {
+		t.Fatal("retrieve_empty must queue for the scanner (claim-moved), not dispatch inline")
 	}
 	want := []resolvedStep{
 		{Action: protocol.ActionPickup, Node: result.SourceNode.Name, Empty: true},
 		{Action: protocol.ActionDropoff, Node: result.DestNode.Name},
 	}
 	if !reflect.DeepEqual(result.Plan, want) {
-		t.Fatalf("emitted plan = %+v, want %+v", result.Plan, want)
+		t.Fatalf("emitted shadow plan = %+v, want %+v", result.Plan, want)
 	}
 	if !result.Plan[0].Empty {
 		t.Fatal("retrieve_empty pickup must carry Empty=true (intent survives as step data, not OrderType)")
 	}
-	d.dispatchToFleet(order, testEnvelope(), result.SourceNode, result.DestNode)
+	// The scanner (mirrored) claims the empty and dispatches. Assert the claim-moved
+	// dispatch claims the right bin and is fleet-equivalent to the shadow plan.
+	dispatched := dispatchSimpleViaScanner(t, d, db, order.EdgeUUID)
+	if dispatched.BinID == nil || *dispatched.BinID != empty.ID {
+		t.Fatalf("scanner claimed bin = %v, want empty %d", dispatched.BinID, empty.ID)
+	}
 	reqs := backend.TransportRequests()
 	if len(reqs) != 1 {
-		t.Fatalf("old tail produced %d transport requests, want 1", len(reqs))
+		t.Fatalf("claim-moved dispatch produced %d transport requests, want 1", len(reqs))
 	}
 	assertFleetEquivalent(t, result.Plan, reqs[0])
 }
@@ -108,29 +112,34 @@ func TestStage2_MovePlanDifferential_Dispatch(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, backend)
 
 	order := &orders.Order{
-		EdgeUUID: "mv-diff-1", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending,
+		EdgeUUID: "mv-diff-1", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
 		Quantity: 1, PayloadCode: bp.Code, SourceNode: srcNode.Name, DeliveryNode: dstNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	result, perr := d.planner.planMove(order, testEnvelope(), bp.Code)
+	result, perr := d.planner.planTransport(order, testEnvelope(), bp.Code)
 	if perr != nil {
-		t.Fatalf("planMove: %s", perr.Detail)
+		t.Fatalf("planTransport: %s", perr.Detail)
 	}
-	if result.Queued {
-		t.Fatal("move with source + free dest must dispatch, not queue")
+	// F1 claim-move: planTransport emits the shadow plan and QUEUES.
+	if !result.Queued {
+		t.Fatal("move with source + free dest must queue for the scanner (claim-moved)")
 	}
 	want := []resolvedStep{
 		{Action: protocol.ActionPickup, Node: result.SourceNode.Name},
 		{Action: protocol.ActionDropoff, Node: dstNode.Name},
 	}
 	if !reflect.DeepEqual(result.Plan, want) {
-		t.Fatalf("emitted plan = %+v, want %+v", result.Plan, want)
+		t.Fatalf("emitted shadow plan = %+v, want %+v", result.Plan, want)
 	}
-	d.dispatchToFleet(order, testEnvelope(), result.SourceNode, result.DestNode)
+	// The scanner (mirrored) claims + dispatches; assert fleet-equivalent to the plan.
+	dispatched := dispatchSimpleViaScanner(t, d, db, order.EdgeUUID)
+	if dispatched.BinID == nil || *dispatched.BinID != mvBin.ID {
+		t.Fatalf("scanner claimed bin = %v, want move bin %d", dispatched.BinID, mvBin.ID)
+	}
 	reqs := backend.TransportRequests()
 	if len(reqs) != 1 {
-		t.Fatalf("old tail produced %d transport requests, want 1", len(reqs))
+		t.Fatalf("claim-moved dispatch produced %d transport requests, want 1", len(reqs))
 	}
 	assertFleetEquivalent(t, result.Plan, reqs[0])
 }
@@ -145,12 +154,12 @@ func TestStage2_MovePlanDifferential_SameNode(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	order := &orders.Order{
-		EdgeUUID: "mv-diff-2", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending,
+		EdgeUUID: "mv-diff-2", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
 		Quantity: 1, PayloadCode: bp.Code, SourceNode: lineNode.Name, DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	result, perr := d.planner.planMove(order, testEnvelope(), bp.Code)
+	result, perr := d.planner.planTransport(order, testEnvelope(), bp.Code)
 	if perr == nil {
 		t.Fatal("same-node move must fail (source == dest)")
 	}
@@ -195,26 +204,35 @@ func TestStage2_MovePlanDifferential_NGRPDest(t *testing.T) {
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", &DefaultResolver{DB: db})
 
 	order := &orders.Order{
-		EdgeUUID: "mv-diff-3", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending,
+		EdgeUUID: "mv-diff-3", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
 		Quantity: 1, PayloadCode: bp.Code, SourceNode: srcNode.Name, DeliveryNode: grp.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	result, perr := d.planner.planMove(order, testEnvelope(), bp.Code)
+	result, perr := d.planner.planTransport(order, testEnvelope(), bp.Code)
 	if perr != nil {
-		t.Fatalf("planMove (NGRP dest): %s", perr.Detail)
+		t.Fatalf("planTransport (NGRP dest): %s", perr.Detail)
 	}
-	if result.Queued {
-		t.Fatal("move to an NGRP with a free child must dispatch, not queue")
+	// F1 claim-move: planTransport queues. The move's synthetic-NGRP-dest resolution
+	// stays at intake (the scanner dispatches to order.DeliveryNode verbatim), so the
+	// concrete child must already be on the shadow plan + the order's delivery node.
+	if !result.Queued {
+		t.Fatal("move to an NGRP with a free child must queue for the scanner (claim-moved)")
 	}
 	if result.DestNode.Name != child.Name {
 		t.Fatalf("dest resolved to %s, want concrete child %s", result.DestNode.Name, child.Name)
 	}
-	if len(result.Plan) != 2 {
-		t.Fatalf("emitted plan has %d steps, want 2", len(result.Plan))
+	if len(result.Plan) != 2 || result.Plan[1].Node != child.Name {
+		t.Fatalf("plan dropoff = %+v, want concrete child %s (never the NGRP)", result.Plan, child.Name)
 	}
-	if result.Plan[1].Node != child.Name {
-		t.Fatalf("plan dropoff = %s, want concrete child %s (never the NGRP)", result.Plan[1].Node, child.Name)
+	// The resolved concrete dest must be persisted so the scanner dispatches to the
+	// child, not the group.
+	persisted, err := db.GetOrderByUUID(order.EdgeUUID)
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if persisted.DeliveryNode != child.Name {
+		t.Fatalf("persisted delivery_node = %s, want concrete child %s", persisted.DeliveryNode, child.Name)
 	}
 }
 
@@ -227,12 +245,12 @@ func TestStage2_MovePlanDifferential_MissingSource(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	order := &orders.Order{
-		EdgeUUID: "mv-diff-4", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending,
+		EdgeUUID: "mv-diff-4", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
 		Quantity: 1, PayloadCode: bp.Code, SourceNode: "", DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	result, perr := d.planner.planMove(order, testEnvelope(), bp.Code)
+	result, perr := d.planner.planTransport(order, testEnvelope(), bp.Code)
 	if perr == nil {
 		t.Fatal("move with no source_node must fail")
 	}

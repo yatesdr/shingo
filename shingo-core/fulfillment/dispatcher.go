@@ -36,6 +36,13 @@ type Dispatcher interface {
 	// (yet) ours — the scanner requeues, keeping the bin, and re-attempts next
 	// tick. Owner-idempotent.
 	ReserveStorageDropoff(order *orders.Order) error
+
+	// PostFindHook fires between the scanner's Find and Claim. A no-op in
+	// production (nil hook); concurrency tests install one via
+	// Dispatcher.SetPostFindHook to make a claim race deterministic. It lives on
+	// this interface because the claim-move made the scanner the single claimer,
+	// so the find→claim window it guards is here, not at intake.
+	PostFindHook()
 }
 
 // Lifecycle is the narrow lifecycle surface the scanner depends on.

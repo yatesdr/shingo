@@ -43,26 +43,34 @@ func SourceIntentForType(t protocol.OrderType) string {
 //
 // The signal is now the order.Coordinated COLUMN, stamped once at intake (complex
 // intake → true, every other intake → false; backfilled from steps_json). It used
-// to be StepsJSON != "", but that heuristic is unsound the moment F1 persists a
-// simple plan to steps_json — a plain order and a coordinated changeover leg can
+// to be StepsJSON != "", but that heuristic is unsound the moment a simple plan
+// persists to steps_json — a plain order and a coordinated changeover leg can
 // be byte-identical plans ([pickup@line, dropoff@storage]), so no structural
 // predicate separates them; only provenance does. The column IS that provenance.
+//
+// The organizing principle this discriminator expresses: a simple order is
+// add-only — it owns exactly one bin and has no incumbent-moving (evac) leg — so
+// it WAITS at both ends (source empty → wait, dest occupied → wait). An order is
+// coordinated exactly when resolving a conflict needs a second leg to move another
+// bin. IsCoordinated is really hasEvacLeg.
 func IsCoordinated(order *orders.Order) bool {
 	return order.Coordinated
 }
 
-// AssertSimpleHasNoSteps is the tripwire protecting the dispatch discriminator: a
-// plain-class order (a simple single-transport type) must never be classified
-// coordinated, or the discriminator inverts and routes it to the coordinated tail
-// (role gate + complex reserve/confirm — the round-7 leak). It fails loudly.
+// AssertSimpleNotCoordinated is the tripwire protecting the dispatch
+// discriminator: a plain-class order (a simple single-transport type) must never
+// be classified coordinated, or the discriminator inverts and routes it to the
+// coordinated tail (role gate + complex reserve/confirm — the round-7 leak). It
+// fails loudly.
 //
-// Post-provenance-column this keys on order.Coordinated, NOT StepsJSON: F1 persists
-// simple plans to steps_json, so steps-presence is no longer a proxy for
-// coordinated and the old StepsJSON check would fire falsely on every persisted
-// simple plan. The OrderType read here is a legitimate ASSERTION, not control flow
-// (a Stage-5 forbidigo carve-out) — a plain-family label stamped coordinated is a
+// It keys on order.Coordinated, NOT StepsJSON: steps-presence is not a proxy for
+// coordinated (a plain order may carry a plan; the column is the provenance), so a
+// StepsJSON check would misfire. The name says "NotCoordinated" because that is the
+// invariant — the old "HasNoSteps" name lied, since the body has always checked the
+// column. The OrderType read here is a legitimate ASSERTION, not control flow (a
+// Stage-5 forbidigo carve-out) — a plain-family label stamped coordinated is a
 // construction bug we want surfaced.
-func AssertSimpleHasNoSteps(order *orders.Order) {
+func AssertSimpleNotCoordinated(order *orders.Order) {
 	switch order.OrderType {
 	case OrderTypeRetrieve, OrderTypeRetrieveEmpty, OrderTypeMove:
 		if order.Coordinated {

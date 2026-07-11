@@ -164,16 +164,18 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Use the fresh copy for all subsequent operations.
 	order = current
 
-	// Stage-3 tripwire: a simple-family order must never carry a persisted step
-	// plan, or the IsCoordinated discriminator below inverts (a plain order routed
-	// to the role gate + fast-path). Loud construction-bug log; the OrderType read
-	// is a legitimate assertion (Stage-5 forbidigo carve-out).
+	// Stage-3 tripwire: a simple-family order must never be classified coordinated,
+	// or the IsCoordinated discriminator below inverts (a plain order routed to the
+	// role gate + fast-path). The invariant is the order.Coordinated COLUMN, not
+	// steps-presence — a plain order MAY carry a plan; provenance is what separates
+	// it from a coordinated leg. Loud construction-bug log; the OrderType read is a
+	// legitimate assertion (Stage-5 forbidigo carve-out).
 	//
 	// The old sourcing-reentry guard that lived here (scope sourcing re-attempts
 	// to complex only, since simple re-sourcing could double-claim) is GONE: plain
 	// orders now re-enter idempotently — a held bin is reused, never re-found (see
 	// the BinID branch below) — so a `sourcing` plain order safely re-dispatches.
-	dispatch.AssertSimpleHasNoSteps(order)
+	dispatch.AssertSimpleNotCoordinated(order)
 
 	// Compound children (reshuffle legs) are dispatched by the compound machinery
 	// (AdvanceCompoundOrder), sequentially, never by the scanner — skip them so a
@@ -184,18 +186,20 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		return false
 	}
 
-	// Narrowed re-entrancy guard (the part of the old :175 that does NOT dissolve):
-	// a PLAIN order in `sourcing` with no claimed bin is mid intake-plan — planX
-	// moves to sourcing BEFORE it claims — or crashed pre-claim. Processing it here
-	// would race the concurrent intake finder/claim. The HELD-bin case (BinID set)
-	// IS safe and re-dispatches idempotently below — that is the part that dissolves
-	// (the length-1 idempotency covers reuse, not this mid-plan race). Coordinated
-	// orders re-resolve + reclaim idempotently in DispatchPreparedComplex, so they
-	// are never skipped. The plain/coordinated discriminator is now the
-	// order.Coordinated provenance column (IsCoordinated), not StepsJSON.
-	if order.Status == protocol.StatusSourcing && order.BinID == nil && !dispatch.IsCoordinated(order) {
-		return false
-	}
+	// The old re-entrancy guard here — skip a PLAIN order in `sourcing` with no
+	// claimed bin — is RETIRED by the single-claimer change. It existed only
+	// because simple had TWO bin-claimers (the intake planner AND this scanner), so
+	// the scanner had to avoid pouncing while intake was mid-claim. Now intake
+	// never claims (planTransport validates/resolves + queues; the scanner is the
+	// single claimer, the model complex has always used), so that race is gone —
+	// simple and complex carry the SAME guards here (none), the symmetry that
+	// proves the
+	// two-claimer smell is gone. Keeping the guard would be actively WRONG: the only
+	// way a plain order now reaches `sourcing` with no bin is a crash between this
+	// scanner's own MoveToSourcing and its claim, and skipping it forever would wedge
+	// a recoverable order. sourcing→queued and queued→sourcing are both legal
+	// (protocol/types.go) and IsAcquiring={queued,sourcing}, so a crashed-in-sourcing
+	// order is re-scanned and the scanner's own claim is idempotent.
 
 	// ── Dispatch discriminator (Stage 3) ──
 	// Dispatch no longer branches on OrderType; it keys on plan provenance.
@@ -290,7 +294,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.setQueueReason(order, res.QueueReason)
 		return false
 	case dispatch.OutcomeReshuffle:
-		// D27: the scanner does NOT spawn reshuffle compounds on replay yet
+		// The scanner does NOT spawn reshuffle compounds on replay yet
 		// (tracked fast-follow — reshuffle planning still lives at intake). Stay
 		// queued so the next tick re-evaluates once the lane clears; surface why.
 		s.setQueueReason(order, "source bin buried; awaiting reshuffle")
@@ -320,8 +324,23 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.logFn("fulfillment: order %d → sourcing: %v", order.ID, err)
 	}
 
+	// Test seam: the deterministic claim-race hook fires at claim time (order now
+	// in `sourcing`), between Find and Claim. Post the claim-move the intake
+	// planner no longer claims, so this is the ONE find→claim window — a no-op in
+	// production, injected by concurrency tests to prove a claim race re-queues
+	// (never drops).
+	// Guarded because some scanner unit tests wire a nil dispatcher for the claim-
+	// fail path that never reaches dispatch; production always has a dispatcher.
+	if s.dispatcher != nil {
+		s.dispatcher.PostFindHook()
+	}
+
 	// Claim the bin (reserve-then-claim; the guard requires a pending reservation).
-	if err := s.claimer.ClaimForDispatch(bin.ID, order.ID, nil); err != nil {
+	// RemainingUOP is the operator's declared release-correction count, persisted on
+	// the order at intake (planTransport) so this single claim point — which has no
+	// envelope — seeds the same atomic claim+manifest-sync a move used to get at
+	// intake. nil for retrieve/retrieve_empty (a plain claim).
+	if err := s.claimer.ClaimForDispatch(bin.ID, order.ID, order.RemainingUOP); err != nil {
 		if s.debugLog != nil {
 			s.debugLog("fulfillment: claim bin %d for order %d failed: %v", bin.ID, order.ID, err)
 		}

@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -29,17 +27,20 @@ import (
 // guarantee the TOCTOU race in the planning path.
 // =============================================================================
 
-// --- TestConcurrent_ClaimRaceDeterministic ---
-// Uses PostFindHook to guarantee the TOCTOU race between Find and Claim.
+// --- TestConcurrent_ClaimSerialized_NoDoubleClaim ---
+// Post the claim-move to the scanner the bin claim happens in the fulfillment
+// scanner under scanMu, driven by the synchronous EmitOrderQueued→scan. So two
+// concurrent orders for the SAME bin can never both be in the find→claim window:
+// scanMu serializes
+// their scans. Exactly one claims + dispatches; the other scans, finds no bin, and
+// re-queues (a WAIT, never a double-claim, never a terminal fail).
 //
-// Setup: 1 bin at storage. Two orders target the same bin.
-// Goroutine 1 hits the hook after Find, pauses. Goroutine 2 starts
-// and finds the same bin. Goroutine 2 claims the bin. Goroutine 1
-// resumes and tries to claim -- gets claim_failed -> queued.
-//
-// This test is 100% deterministic. The hook guarantees both goroutines
-// enter the TOCTOU window simultaneously.
-func TestConcurrent_ClaimRaceDeterministic(t *testing.T) {
+// This REPLACES the old two-goroutine "TOCTOU at intake" race this file used to
+// force with a PostFindHook: that race is architecturally gone because intake no
+// longer claims (only the scanner does, serialized). The deterministic
+// claim-fail→requeue path is now covered directly at the scanner in
+// fulfillment.TestScannerSimpleClaimFailRequeues.
+func TestConcurrent_ClaimSerialized_NoDoubleClaim(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RACE")
@@ -48,100 +49,41 @@ func TestConcurrent_ClaimRaceDeterministic(t *testing.T) {
 	eng := newTestEngine(t, db, sim)
 	d := eng.Dispatcher()
 
-	// Flow:
-	//   G1: HandleOrderRequest → Find → hook fires → signal g1Found → wait for g2Done → resume Claim (fails)
-	//   G2: wait for g1Found → HandleOrderRequest → Find → Claim (succeeds) → signal g2Done
-	//
-	// This guarantees G2 claims the bin while G1 is paused between Find and Claim,
-	// so G1's subsequent Claim returns claim_failed, which queues the order.
-	g1Found := make(chan struct{})
-	g2Done := make(chan struct{})
-	var hookCalled atomic.Int32
-
-	timeout := time.After(10 * time.Second)
-
-	d.SetPostFindHook(func() {
-		// Only synchronize on the FIRST call (G1's Find).
-		// Subsequent calls (G2's Find) pass through without blocking.
-		if hookCalled.Add(1) == 1 {
-			select {
-			case g1Found <- struct{}{}: // signal: G1 found the bin, pausing before Claim
-			case <-timeout:
-				t.Error("timeout: G1 blocked sending g1Found signal")
-				return
-			}
-			select {
-			case <-g2Done: // wait for G2 to claim first
-			case <-timeout:
-				t.Error("timeout: G1 blocked waiting for g2Done")
-				return
-			}
-		}
-	})
-
+	// Two concurrent retrieves competing for the single bin. No hook: scanMu is the
+	// serializer now, so the outcome is deterministic regardless of interleaving.
 	var wg sync.WaitGroup
 	wg.Add(2)
-
-	// Goroutine 1: calls HandleOrderRequest directly. Hook fires between Find
-	// and Claim, pausing G1 until G2 has claimed the bin.
-	go func() {
-		defer wg.Done()
-		d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
-			OrderUUID:    "race-order-0",
-			OrderType:    dispatch.OrderTypeRetrieve,
-			PayloadCode:  bp.Code,
-			DeliveryNode: lineNode.Name,
-			Quantity:     1,
-		})
-	}()
-
-	// Goroutine 2: waits for G1 to find the bin, then dispatches and claims it.
-	go func() {
-		defer wg.Done()
-		select {
-		case <-g1Found: // wait for G1's hook signal
-		case <-timeout:
-			t.Error("timeout: G2 blocked waiting for g1Found")
-			return
-		}
-		d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
-			OrderUUID:    "race-order-1",
-			OrderType:    dispatch.OrderTypeRetrieve,
-			PayloadCode:  bp.Code,
-			DeliveryNode: lineNode.Name,
-			Quantity:     1,
-		})
-		select {
-		case g2Done <- struct{}{}: // let G1 resume its Claim
-		case <-timeout:
-			t.Error("timeout: G2 blocked sending g2Done signal")
-			return
-		}
-	}()
-
+	for i := 0; i < 2; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
+				OrderUUID:    fmt.Sprintf("race-order-%d", i),
+				OrderType:    dispatch.OrderTypeRetrieve,
+				PayloadCode:  bp.Code,
+				DeliveryNode: lineNode.Name,
+				Quantity:     1,
+			})
+		}()
+	}
 	wg.Wait()
 
-	// Check results
 	orderA, err := db.GetOrderByUUID("race-order-0")
-	if err != nil {
-		t.Fatalf("get order A: %v", err)
-	}
+	testutil.MustNoErr(t, err, "get order A")
 	orderB, err := db.GetOrderByUUID("race-order-1")
-	if err != nil {
-		t.Fatalf("get order B: %v", err)
-	}
+	testutil.MustNoErr(t, err, "get order B")
 
 	t.Logf("order A: status=%s bin=%v vendor=%s", orderA.Status, orderA.BinID, orderA.VendorOrderID)
 	t.Logf("order B: status=%s bin=%v vendor=%s", orderB.Status, orderB.BinID, orderB.VendorOrderID)
 
-	// Neither order should be permanently failed
+	// A lost claim is a WAIT, not a fail — neither order may be permanently failed.
 	for _, order := range []*orders.Order{orderA, orderB} {
 		if order.Status == dispatch.StatusFailed {
-			t.Errorf("BUG: order permanently failed after deterministic TOCTOU race — should be queued")
+			t.Errorf("BUG: order %s permanently failed under concurrency — a lost claim must re-queue", order.EdgeUUID)
 		}
 	}
 
-	// Exactly one should have claimed the bin
+	// Exactly one claimed the bin — scanMu serialized the claims, no double-claim.
 	claimed := 0
 	for _, order := range []*orders.Order{orderA, orderB} {
 		if order.BinID != nil {
@@ -149,7 +91,7 @@ func TestConcurrent_ClaimRaceDeterministic(t *testing.T) {
 		}
 	}
 	if claimed != 1 {
-		t.Errorf("expected exactly 1 order to claim the bin, got %d", claimed)
+		t.Errorf("expected exactly 1 order to claim the bin (scanMu serializes claims), got %d", claimed)
 	}
 }
 

@@ -62,6 +62,17 @@ type Order struct {
 	// plain single-transport order. Stamped ONCE at Core intake — complex intake
 	// stamps true, every other intake stamps false (the zero value). It REPLACES
 	// the StepsJSON != "" heuristic IsCoordinated used, which becomes unsound once
-	// F1 persists simple plans to StepsJSON. See dispatch.IsCoordinated.
+	// simple plans persist to StepsJSON. See dispatch.IsCoordinated.
 	Coordinated bool `json:"coordinated"`
+	// RemainingUOP is the operator's declared release-correction count, carried
+	// from intake to the bin claim. It is NOT a transport property — it is the
+	// count an operator declared at a Material-page Release (edge
+	// CreateMoveOrderWithUOP → OrderRequest.RemainingUOP) that seeds the bin's
+	// manifest sync at claim. The claim-move from intake to the scanner, which has
+	// no envelope, means the value rides on the order row. nil = no sync (plain
+	// claim); >0 syncs; <=0 clears. In practice only a move carries it (retrieve
+	// carries none; an empty carrier forces nil). Bridge field: the unified-create
+	// follow-up carries the count in the persisted plan and this retires. See
+	// dispatch.planTransport.
+	RemainingUOP *int `json:"remaining_uop,omitempty"`
 }

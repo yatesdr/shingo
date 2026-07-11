@@ -96,7 +96,7 @@ func TestDeadlockGate_PlainRetrieveToOccupiedLine_Gated(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	result, perr := d.planner.planRetrieve(order, testEnvelope(), bp.Code)
+	result, perr := d.planner.planTransport(order, testEnvelope(), bp.Code)
 	if perr != nil {
 		t.Fatalf("planRetrieve: %s", perr.Detail)
 	}

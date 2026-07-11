@@ -187,6 +187,9 @@ func TestSimulator_SimpleRetrieveOrder(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		Quantity:     1,
 	})
+	// The claim-move to the scanner: intake queues; the scanner (mirrored) claims +
+	// dispatches.
+	dispatchSimpleViaScanner(t, d, db, "retrieve-tc3")
 
 	// Verify: order was dispatched
 	order, err := db.GetOrderByUUID("retrieve-tc3")
@@ -282,6 +285,9 @@ func TestSimulator_FleetFailure_NoVendorOrderID(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		Quantity:     1,
 	})
+	// The claim-move to the scanner: the scanner (mirrored) is the single dispatch
+	// point; the fleet rejects creation, so DispatchDirect fails the order.
+	dispatchSimpleViaScanner(t, d, db, "retrieve-fail-tc5")
 
 	order, err := db.GetOrderByUUID("retrieve-fail-tc5")
 	if err != nil {

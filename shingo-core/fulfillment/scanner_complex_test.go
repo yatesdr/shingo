@@ -24,6 +24,7 @@ func (s *stubDispatcher) DispatchPreparedComplex(o *orders.Order) error {
 	return s.preparedErr
 }
 func (s *stubDispatcher) ReserveStorageDropoff(*orders.Order) error { return nil }
+func (s *stubDispatcher) PostFindHook()                             {}
 
 func newTestScannerWithDispatcher(t *testing.T, f *fakeStore, d Dispatcher) *Scanner {
 	t.Helper()

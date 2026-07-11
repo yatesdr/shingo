@@ -42,40 +42,38 @@ func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	// Intake planning — emits the plan and claims the source bin.
-	result, perr := d.planner.planRetrieve(order, testEnvelope(), bp.Code)
+	// Intake planning — emits the shadow plan and QUEUES (F1 claim-move: the scanner
+	// is the single claimer, so intake resolves + queues but does not claim).
+	result, perr := d.planner.planTransport(order, testEnvelope(), bp.Code)
 	if perr != nil {
-		t.Fatalf("planRetrieve: %s", perr.Detail)
+		t.Fatalf("planTransport: %s", perr.Detail)
 	}
-
-	// Disposition unchanged: dispatch (not queued), endpoints resolved, source
-	// bin is the one we staged.
-	if result.Queued {
-		t.Fatal("retrieve with an available source must dispatch, not queue")
+	if !result.Queued {
+		t.Fatal("retrieve with an available source must queue for the scanner (claim-moved)")
 	}
 	if result.SourceNode == nil || result.DestNode == nil {
-		t.Fatal("dispatch result must carry source + dest nodes")
-	}
-	if order.BinID == nil || *order.BinID != src.ID {
-		t.Fatalf("claimed source bin = %v, want %d", order.BinID, src.ID)
+		t.Fatal("shadow plan result must carry source + dest nodes")
 	}
 
-	// The emitted plan is the canonical two-step retrieve.
+	// The emitted shadow plan is the canonical two-step retrieve.
 	wantPlan := []resolvedStep{
 		{Action: protocol.ActionPickup, Node: result.SourceNode.Name},
 		{Action: protocol.ActionDropoff, Node: result.DestNode.Name},
 	}
 	if !reflect.DeepEqual(result.Plan, wantPlan) {
-		t.Fatalf("emitted plan = %+v, want %+v", result.Plan, wantPlan)
+		t.Fatalf("emitted shadow plan = %+v, want %+v", result.Plan, wantPlan)
 	}
 
-	// Differential: dispatch the SAME order through the old transport tail and
-	// capture the real fleet request; assert the plan's blocks are fleet-
+	// Differential: the scanner (mirrored) claims the staged bin and dispatches;
+	// capture the real fleet request and assert the plan's blocks are fleet-
 	// equivalent (same node sequence + SEER task kinds).
-	d.dispatchToFleet(order, testEnvelope(), result.SourceNode, result.DestNode)
+	dispatched := dispatchSimpleViaScanner(t, d, db, order.EdgeUUID)
+	if dispatched.BinID == nil || *dispatched.BinID != src.ID {
+		t.Fatalf("scanner claimed source bin = %v, want %d", dispatched.BinID, src.ID)
+	}
 	reqs := backend.TransportRequests()
 	if len(reqs) != 1 {
-		t.Fatalf("old tail produced %d transport requests, want 1", len(reqs))
+		t.Fatalf("claim-moved dispatch produced %d transport requests, want 1", len(reqs))
 	}
 	req := reqs[0]
 
@@ -117,9 +115,9 @@ func TestStage1_RetrievePlanDifferential_GatedNoPlan(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	result, perr := d.planner.planRetrieve(order, testEnvelope(), bp.Code)
+	result, perr := d.planner.planTransport(order, testEnvelope(), bp.Code)
 	if perr != nil {
-		t.Fatalf("planRetrieve: %s", perr.Detail)
+		t.Fatalf("planTransport: %s", perr.Detail)
 	}
 	if !result.Queued {
 		t.Fatal("retrieve to an occupied destination must queue")

@@ -501,6 +501,19 @@ func (db *DB) runVersionedMigrations() error {
 		{46, "add orders.coordinated (dispatch-provenance discriminator)",
 			v46OrderCoordinated,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "coordinated") }},
+
+		// v47 adds orders.remaining_uop — the operator's declared release-correction
+		// count, carried from intake to the single claim point. The claim moves from
+		// intake to the scanner, and the scanner has no envelope; a move's
+		// manifest-sync count (CreateMoveOrderWithUOP → OrderRequest.RemainingUOP)
+		// therefore rides on the order row so the scanner can seed the same atomic
+		// claim+sync. NULLABLE with no default: NULL is the "no sync" semantic (plain
+		// claim), matching the *int nil the claim path already understands. No
+		// backfill — in-flight orders already claimed at intake, so a NULL is exactly
+		// right for them. Bridge column: retires when F2 carries the count in the plan.
+		{47, "add orders.remaining_uop (operator release-correction count for the moved claim)",
+			v47OrderRemainingUOP,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "remaining_uop") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1016,6 +1029,14 @@ func v45OrderSourceIntent(tx *sql.Tx) error {
 		WHEN 'retrieve_empty' THEN 'empty'
 		WHEN 'move' THEN 'local'
 		ELSE '' END`)
+	return err
+}
+
+func v47OrderRemainingUOP(tx *sql.Tx) error {
+	// NULLABLE, no default: NULL = "no sync" (plain claim), a positive value syncs
+	// the bin manifest at the (now scanner-side) claim. No backfill — in-flight
+	// orders claimed at intake before this deploy, so NULL is correct for them.
+	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS remaining_uop INTEGER`)
 	return err
 }
 
