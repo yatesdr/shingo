@@ -60,6 +60,16 @@ type CreateOrderRequest struct {
 	Blocks     []OrderBlock
 	Priority   int
 	RobotGroup string // SEER robot-dispatch group (→ rds.SetOrderRequest.Group); "" = vendor default
+	// KeyRoute is the create-time robot-routing hint (→ rds.SetOrderRequest.KeyRoute):
+	// an ordered list of scene key points (AdvancedPoints, a.k.a. LMs) that steer
+	// SEER's robot assignment at create time — e.g. approach the source via LM10,
+	// leave the destination via LM11. Empty/nil = SEER auto-picks (today's behavior).
+	// Create-time only (AddBlocksRequest carries no keyRoute), so no mid-order
+	// rerouting. The populator (which fills this from each node's designated
+	// approach/leave LMs) is a separate follow-on; for now every caller leaves it
+	// nil. NOTE: an LM that does not exist or is unreachable makes SEER terminate the
+	// order immediately — validation lands with the populator, not in the conduit.
+	KeyRoute []string
 	// Complete marks the order finished once its blocks complete (no-wait,
 	// single-shot). false leaves it staged so blocks can be appended later via
 	// ReleaseOrder (multi-wait / lane-dwell orders). This field is the lane-

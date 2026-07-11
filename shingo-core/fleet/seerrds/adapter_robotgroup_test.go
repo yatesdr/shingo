@@ -77,3 +77,51 @@ func TestCreateOrder_StampsRobotGroup(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateOrder_ThreadsKeyRoute pins the keyRoute conduit on the unified create
+// primitive: a KeyRoute on the request must land in rds.SetOrderRequest.KeyRoute
+// (SEER's create-time robot-routing hint), and an unset KeyRoute must stay empty
+// (json:"keyRoute,omitempty" omits it on the wire — no regression; empty keyRoute
+// == SEER auto-picks, today's behavior). The populator (filling KeyRoute from each
+// node's designated LMs) is a separate follow-on; this pins only the conduit.
+func TestCreateOrder_ThreadsKeyRoute(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		route []string
+		want  []string
+	}{
+		{"explicit key route threads to the wire", []string{"LM10", "LM11"}, []string{"LM10", "LM11"}},
+		{"nil key route stays empty (SEER auto-picks)", nil, nil},
+		{"empty key route stays empty", []string{}, nil},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv, captured := captureSetOrder(t)
+			defer srv.Close()
+
+			adapter := New(Config{BaseURL: srv.URL, Timeout: 5 * time.Second, DebugLog: func(string, ...any) {}})
+			if _, err := adapter.CreateOrder(fleet.CreateOrderRequest{
+				OrderID:    "sg-2-bbb",
+				ExternalID: "uuid-2",
+				Blocks:     []fleet.OrderBlock{{BlockID: "b1", Location: "LINE-01", BinTask: "JackLoad"}},
+				KeyRoute:   tc.route,
+				Complete:   true,
+			}); err != nil {
+				t.Fatalf("CreateOrder: %v", err)
+			}
+			got := captured()
+			// Decode normalizes an absent keyRoute to a nil slice; compare len + elements.
+			if len(got.KeyRoute) != len(tc.want) {
+				t.Fatalf("SetOrderRequest.KeyRoute length = %d (%v), want %d (%v)", len(got.KeyRoute), got.KeyRoute, len(tc.want), tc.want)
+			}
+			for i, lm := range tc.want {
+				if got.KeyRoute[i] != lm {
+					t.Errorf("SetOrderRequest.KeyRoute[%d] = %q, want %q", i, got.KeyRoute[i], lm)
+				}
+			}
+		})
+	}
+}

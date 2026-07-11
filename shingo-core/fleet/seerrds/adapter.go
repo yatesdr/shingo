@@ -67,6 +67,7 @@ func (a *Adapter) CreateOrder(req fleet.CreateOrderRequest) (fleet.TransportOrde
 		ID:         req.OrderID,
 		ExternalID: req.ExternalID,
 		Group:      req.RobotGroup, // SEER robot-dispatch group; "" omitted → vendor default assignment
+		KeyRoute:   req.KeyRoute,   // create-time robot-routing hint; nil omitted → SEER auto-picks
 		Blocks:     blocks,
 		Complete:   req.Complete,
 		Priority:   req.Priority,
