@@ -44,6 +44,11 @@ type simOperator struct {
 	releasing  map[int64]bool // orders with a swap-ready release scheduled/in-flight
 	flipping   map[int64]bool // A/B active nodes with a cutover scheduled/in-flight
 	confirming map[int64]bool // delivered swap legs with a confirm scheduled/in-flight
+
+	// marketSlots caches the combined market's storage-slot node names for the
+	// negative-bin sweep (clearNegativeBins). Populated lazily; read only by the
+	// single reconcile goroutine, so no lock is needed.
+	marketSlots []string
 }
 
 // StartSimOperator wires the sim operator to the EventBus. Sim builds only;
@@ -71,6 +76,16 @@ func (e *Engine) StartSimOperator(ctx context.Context, simCfg config.SimConfig, 
 	e.Events.SubscribeTypes(op.onOrderCreated, EventOrderCreated)
 	e.logFn("[sim] sim operator started (loader_auto_load=%s unloader_auto_clear=%s swap_release=%s)",
 		op.loaderDelay(), op.unloaderDelay(), swapReleaseDelay)
+
+	// Reconciliation sweep (restart-safety). The SubscribeTypes handlers above
+	// only fire on LIVE transitions, so any order already mid-choreography when
+	// this operator starts — e.g. after an edge restart — is invisible to them
+	// and orphans: its swap never releases/confirms, the consumer never
+	// resupplies, and the loop wedges. runReconcileLoop re-derives pending
+	// operator actions from current DB state on startup and on a periodic tick,
+	// routing them through the same idempotent schedule* helpers, so a restart
+	// mid-loop resumes cleanly instead of deadlocking.
+	go op.runReconcileLoop()
 }
 
 func (op *simOperator) loaderDelay() time.Duration {
@@ -176,7 +191,7 @@ func (op *simOperator) runConfirm(orderID, nodeID int64) {
 	op.e.logFn("[sim] operator auto-confirm delivered leg order %d at %s", orderID, node.CoreNodeName)
 }
 
-// schedule dedupes by node and spawns the delayed worker. Never blocks, so it's
+// schedule dedupes by node and spawns the LOAD/CLEAR worker. It is
 // safe on the synchronous EventBus. A second delivery to a node already in the
 // delay window is dropped — engine validation is the backstop if it slips
 // through.
@@ -254,17 +269,143 @@ const swapReleaseDelay = 3 * time.Second
 // spawns a delayed worker, then returns.
 func (op *simOperator) onStatusChanged(ev Event) {
 	d, ok := ev.Payload.(OrderStatusChangedEvent)
-	if !ok || d.NewStatus != "staged" {
+	if !ok {
 		return
 	}
+	if d.NewStatus == "staged" {
+		op.scheduleRelease(d.OrderID)
+	}
+}
+
+// scheduleRelease dedupes by order and spawns the swap-ready release worker.
+// Called from both the live staged-transition event and the reconciliation
+// sweep, so it must be idempotent — the releasing map guarantees at most one
+// runRelease per order.
+func (op *simOperator) scheduleRelease(orderID int64) {
 	op.mu.Lock()
-	if op.releasing[d.OrderID] {
+	if op.releasing[orderID] {
 		op.mu.Unlock()
 		return
 	}
-	op.releasing[d.OrderID] = true
+	op.releasing[orderID] = true
 	op.mu.Unlock()
-	go op.runRelease(d.OrderID)
+	go op.runRelease(orderID)
+}
+
+// reconcileInterval is how often the restart-safety sweep re-derives pending
+// operator actions from current state. The sim clock's ticker scales it by live
+// speed, matching the other operator delays.
+const reconcileInterval = 10 * time.Second
+
+// runReconcileLoop drives reconcile() once immediately (the restart-safety net)
+// then on every reconcileInterval tick until ctx is done.
+func (op *simOperator) runReconcileLoop() {
+	op.reconcile()
+	t := op.clk.NewTicker(reconcileInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-op.ctx.Done():
+			return
+		case <-t.C():
+			op.reconcile()
+		}
+	}
+}
+
+// reconcile scans current non-terminal orders and drives any pending operator
+// action through the same idempotent schedule* helpers the live-event handlers
+// use. This is what makes the operator restart-safe: on startup (and periodically
+// thereafter) it acts on orders that were already staged/delivered before this
+// process existed — which the event subscriptions, being live-only, never see.
+// The dedupe maps make redundant calls (event + sweep) harmless no-ops.
+func (op *simOperator) reconcile() {
+	active, err := op.e.db.ListActiveOrders()
+	if err != nil {
+		op.e.debugFn("[sim] reconcile: list active orders: %v", err)
+		return
+	}
+	pending := 0
+	for i := range active {
+		o := active[i]
+		switch o.Status {
+		case protocol.StatusStaged:
+			op.scheduleRelease(o.ID)
+			pending++
+		case protocol.StatusDelivered:
+			if o.ProcessNodeID != nil {
+				op.schedule(*o.ProcessNodeID)              // LOAD/CLEAR for manual_swap nodes
+				op.scheduleConfirm(o.ID, *o.ProcessNodeID) // confirm delivered-at-line legs
+				pending++
+			}
+		}
+	}
+	if pending > 0 {
+		op.e.debugFn("[sim] reconcile: drove %d pending order(s)", pending)
+	}
+	// Negative-bin sweep: partials are fine in the combined market, but negative-UOP
+	// bins must not circulate — reset them to clean empties. See clearNegativeBins.
+	op.clearNegativeBins()
+}
+
+// negBinMarket is the plant's combined storage market group the negative-bin sweep
+// scans. DEVIATION/ASSUMPTION (SB 2026-07-12): hardcoded to the demo's combined market
+// name. If the plant renames/splits its market group, update this (or make it
+// sim-config-driven). Untested — no sim run this session.
+const negBinMarket = "SYN_MARKET"
+
+// clearNegativeBins resets any negative-UOP bin sitting in the combined market to a
+// clean empty (payload cleared, uop 0). Rationale (SB, 2026-07-12): the combined market
+// tolerates PARTIAL bins, but a NEGATIVE bin (an over-consumed carrier, e.g. a weld
+// overpack of -1/-2) must not re-enter circulation as supply or foul the empty pool.
+// This is the (deleted) consume-clear helper's valid goal at a robust seam: poll
+// observable market state instead of the fragile EventOrderStatusChanged trigger that
+// fired 0. Runs from reconcile() (single goroutine) so marketSlots needs no lock.
+func (op *simOperator) clearNegativeBins() {
+	if !op.e.coreClient.Available() {
+		return
+	}
+	if op.marketSlots == nil {
+		op.marketSlots = op.collectMarketSlots()
+	}
+	if len(op.marketSlots) == 0 {
+		return
+	}
+	bins, err := op.e.coreClient.FetchNodeBins(op.marketSlots)
+	if err != nil || len(bins) == 0 {
+		return
+	}
+	cleared := 0
+	for i := range bins {
+		if bins[i].UOPRemaining < 0 {
+			if err := op.e.coreClient.ClearBin(bins[i].NodeName, ""); err == nil {
+				cleared++
+			}
+		}
+	}
+	if cleared > 0 {
+		op.e.logFn("[sim] operator cleared %d negative bin(s) in %s (reset to clean empties)", cleared, negBinMarket)
+	}
+}
+
+// collectMarketSlots enumerates the leaf storage-slot node names under the combined
+// market group. FetchNodeChildren(market) returns the lanes (and any direct slots);
+// each lane's children are its slots. A child with no children of its own is treated
+// as a direct slot, so this is robust without depending on the node-type string.
+func (op *simOperator) collectMarketSlots() []string {
+	var slots []string
+	lanes, _ := op.e.coreClient.FetchNodeChildren(negBinMarket)
+	for _, lane := range lanes {
+		laneSlots, _ := op.e.coreClient.FetchNodeChildren(lane.Name)
+		if len(laneSlots) == 0 {
+			slots = append(slots, lane.Name) // direct slot child of the group
+			continue
+		}
+		for _, s := range laneSlots {
+			slots = append(slots, s.Name)
+		}
+	}
+	return slots
 }
 
 // runRelease dwells for the operator-reaction delay, then pushes the release.
