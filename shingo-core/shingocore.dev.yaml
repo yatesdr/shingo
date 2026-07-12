@@ -75,28 +75,24 @@ staging:
 sim:
   enabled: true
   seed: 1                           # fixed for reproducible dev runs (0 = derive+log)
-  speed: 10.0                       # time multiplier (running clock): 10× wall. Change live in the dev top-strip / POST /api/sim/speed. Set sim.epoch for fast-forward.
-  # epoch: 2026-05-11T00:00:00Z     # FAST-FORWARD HISTORY: uncomment (set ~30d ago) + raise speed.
-                                    # The clock starts in the past and catches up to wall-now, then runs 1× live —
-                                    # generating ~a month of real dashboard history in a few hours.
-  # anchor_wall: 2026-06-10T00:00:00Z  # SHARED wall anchor — set to the RUN-START wall time, IDENTICAL in core+edge.
-                                    # Keeps the two fast-forward clocks in lockstep (sim-now = epoch + speed×(now−anchor));
-                                    # without it core/edge drift by boot-skew × speed and cross-process messages expire,
-                                    # stalling the swap loop. Both epoch AND anchor_wall MUST match edge. Rebuild after
-                                    # editing (configs are baked into the image): docker compose build core edge.
-  # Finite fleet + realistic transit. Production-plant scale: Springfield runs ~7
-  # AMRs, Hopkinsville 10, at ~42–86% utilization (door-to-door ~0.1 m/s; median
-  # two-robot weld occupancy ~855s). 5s transit made robots a non-constraint (1
-  # erlang → any fleet works) and is unrealistic. This demo plant is denser than a
-  # real one (27 swap-producing claims vs ~10-15 at a real plant), so it needs more
-  # robots to stay fed: fleet 20 @ 45-60s transit. simcalc estimates ~12-16 erlang
-  # of loaded-leg demand there; 20 robots targets ~0.7-0.8 util with headroom for
-  # downtime bunching. Validated empirically: 12 @ 60-90s starved (queue_wait
-  # mounted to 5h+, throughput ~0.7 orders/min). (simcalc overcounts vs real plants
-  # — it models no robot reuse — so this is tuned to measured throughput, not the
-  # raw estimator.)
-  transit_min: 45s
-  transit_max: 60s
+  speed: 10.0                       # time multiplier. Change live in the dev top-strip / POST /api/sim/speed.
+  # Synced fast-forward (zero core↔edge drift). In running-clock mode (no epoch) each
+  # binary stamps its own boot-now as the clock epoch, so core+edge drift by boot-skew ×
+  # speed and cross-process coordination messages expire (the 2026-07-12 loop-degradation
+  # root cause — 400+ expired-message drops). Setting epoch + an IDENTICAL anchor_wall in
+  # BOTH configs puts them in SimSyncedFastForward (NewSimClockAnchored), locked to one
+  # shared anchor: sim-now = epoch + speed×(wallNow−anchor), identical on both sides. The
+  # epoch is a few minutes in the past so the sim fast-forwards briefly then runs 10× live.
+  # Both epoch AND anchor_wall MUST match shingoedge.dev.yaml EXACTLY. Rebuild after edit.
+  epoch: 2026-07-12T02:30:00Z
+  anchor_wall: 2026-07-12T02:30:00Z
+  # Finite fleet + fast transit. The demo's swap choreography (4 transits per supply
+  # cycle) must complete before the consume bin drains from reorder_point to zero.
+  # At 6 UOP/min and reorder_point 15 (panels), the drain window is ~150s; at 4×15-20s
+  # transit the supply cycle is ~60-80s — comfortable headroom. 45-60s transit starved
+  # every consume cell (supply cycle 180-240s >> drain window 80s). fleet 20 @ 15-20s.
+  transit_min: 15s
+  transit_max: 20s
   fleet_size: 20
   jitter_pct: 0.2
   fail_rate: 0.0

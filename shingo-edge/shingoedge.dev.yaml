@@ -36,19 +36,22 @@ sim:
   enabled: true
   seed: 1
   speed: 10.0                       # running clock: 10× wall. Change live in the dev top-strip / POST /api/sim/speed. Must match core.
-  # epoch: 2026-05-11T00:00:00Z     # FAST-FORWARD HISTORY: must MATCH shingocore.dev.yaml sim.epoch (set ~30d ago).
-  # anchor_wall: 2026-06-10T00:00:00Z  # SHARED wall anchor — must MATCH shingocore.dev.yaml sim.anchor_wall EXACTLY
-                                    # (the run-start wall time). Keeps core+edge fast-forward clocks in lockstep so
-                                    # cross-process messages don't expire and stall the swap loop. Rebuild after editing.
+  # Synced fast-forward (zero core↔edge drift) — MUST match shingocore.dev.yaml EXACTLY.
+  # See that file for the rationale: running-clock mode drifts (boot-skew × speed → expired
+  # message drops); epoch + this shared anchor lock both clocks to one timeline.
+  epoch: 2026-07-12T02:30:00Z
+  anchor_wall: 2026-07-12T02:30:00Z
   # plc_name/tag_name MUST exactly match the reporting_points the seed tool
   # creates. This list is the source of truth for those names.
-  # Rate parity (P0): welds tick 10s (6/min). PRESS-1 ticks 5s (12/min) because it
-  # feeds TWO PANEL-LH consumers (WELD-1 + WELD-3 @ 6/min each); a single 6/min press
-  # would starve them. Verify with `make dev-rates` (the fill/starve helper).
+  # Rate parity (the anti-starvation core): each press feeds exactly one weld, so press
+  # rate = weld rate = 6/min (10s tick, 1 uop/tick). The supermarket is pure decoupling
+  # headroom — it sits mid-level, neither pinning full (no overfill jam) nor draining dry
+  # (no weld starvation). BRKT has no PLC (loader-fed; WELD-2 drains it at 6/min). Verify
+  # with `make dev-rates` (the fill/starve helper).
   processes:
     - plc_name: PRESS-1
       tag_name: PRESS-1_COUNTER
-      tick_interval: 5s
+      tick_interval: 10s
       uop_per_tick: 1
     - plc_name: PRESS-2
       tag_name: PRESS-2_COUNTER
@@ -62,26 +65,15 @@ sim:
       tag_name: WELD-2_COUNTER
       tick_interval: 10s
       uop_per_tick: 1
+    # Component-leg drains (loader-fed, 6/min each): WELD-3 drains CLIP (single-window
+    # loader leg), WELD-4 drains STUD (dedicated loader leg). Same rate as the loaders
+    # supply so the component markets stay mid-level.
     - plc_name: WELD-3
       tag_name: WELD-3_COUNTER
       tick_interval: 10s
       uop_per_tick: 1
-    # New de-confounded component lines (1:1 press→weld, 6/min): PRESS-3→WELD-4 (CLIP
-    # via PLK_X1 single-window), PRESS-4→WELD-5 (STUD via PLK_DECK dedicated).
-    - plc_name: PRESS-3
-      tag_name: PRESS-3_COUNTER
-      tick_interval: 10s
-      uop_per_tick: 1
-    - plc_name: PRESS-4
-      tag_name: PRESS-4_COUNTER
-      tick_interval: 10s
-      uop_per_tick: 1
     - plc_name: WELD-4
       tag_name: WELD-4_COUNTER
-      tick_interval: 10s
-      uop_per_tick: 1
-    - plc_name: WELD-5
-      tag_name: WELD-5_COUNTER
       tick_interval: 10s
       uop_per_tick: 1
   operators:
@@ -116,19 +108,7 @@ sim:
         availability: 0.85
         min_mttr: 5m
         max_mttr: 30m
-      - plc_name: PRESS-3
-        availability: 0.85
-        min_mttr: 5m
-        max_mttr: 30m
-      - plc_name: PRESS-4
-        availability: 0.85
-        min_mttr: 5m
-        max_mttr: 30m
       - plc_name: WELD-4
-        availability: 0.85
-        min_mttr: 5m
-        max_mttr: 30m
-      - plc_name: WELD-5
         availability: 0.85
         min_mttr: 5m
         max_mttr: 30m
