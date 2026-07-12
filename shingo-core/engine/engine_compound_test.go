@@ -511,12 +511,17 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 //  1. Unbury blocker-1 (depth 1) → shuffle-1
 //  2. Unbury blocker-2 (depth 2) → shuffle-2
 //  3. Retrieve target (depth 3) → line node
-//  4. Restock blocker-2 → depth 2 (deepest-first)
-//  5. Restock blocker-1 → depth 1
+//  4. Restock blocker-2 → depth 3 (the target's vacated slot)
+//  5. Restock blocker-1 → depth 2 (blocker-2's vacated slot)
+//
+// Restock is a slot ROTATION, not a return-to-origin: restockDestinations packs
+// blockers one slot deeper than they started, so the lane ends with depths 2..N
+// filled and depth 1 (the mouth) empty — no air bubbles. FIFO is unaffected
+// because FindSourceFIFO keys on loaded_at age, not slot depth.
 //
 // This is the full two-robot swap pattern. The test verifies:
 // - All 5 children created and dispatched sequentially
-// - Target arrives at line, blockers restocked to original positions
+// - Target arrives at line, blockers packed deepest-first (depths 2 and 3)
 // - All claims released, lane lock freed, parent completed
 func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 	t.Parallel()
@@ -594,14 +599,15 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 		t.Logf("target bin at line — correct")
 	}
 
-	// Verify blockers restocked to original slots (deepest-first restocking)
+	// Verify blockers packed deepest-first: each restocks one slot deeper than it
+	// started, leaving the mouth (slots[0]) empty. Not a return-to-origin.
 	blocker1, _ = db.GetBin(blocker1.ID)
 	blocker2, _ = db.GetBin(blocker2.ID)
-	if blocker1.NodeID == nil || *blocker1.NodeID != slots[0].ID {
-		t.Errorf("blocker1 at node %v, want slots[0] (%d)", blocker1.NodeID, slots[0].ID)
+	if blocker1.NodeID == nil || *blocker1.NodeID != slots[1].ID {
+		t.Errorf("blocker1 at node %v, want slots[1] (%d)", blocker1.NodeID, slots[1].ID)
 	}
-	if blocker2.NodeID == nil || *blocker2.NodeID != slots[1].ID {
-		t.Errorf("blocker2 at node %v, want slots[1] (%d)", blocker2.NodeID, slots[1].ID)
+	if blocker2.NodeID == nil || *blocker2.NodeID != slots[2].ID {
+		t.Errorf("blocker2 at node %v, want slots[2] (%d)", blocker2.NodeID, slots[2].ID)
 	}
 	if blocker1.Status != "available" || blocker2.Status != "available" {
 		t.Errorf("blocker statuses: blocker1=%s blocker2=%s, want both available", blocker1.Status, blocker2.Status)

@@ -26,20 +26,21 @@ func TestDevYAMLParses(t *testing.T) {
 	if cfg.WarLink.Mode != "poll" {
 		t.Errorf("warlink.mode = %q, want poll", cfg.WarLink.Mode)
 	}
-	// Expanded plant: 9 sim processes (PRESS-1/2/3/4, WELD-1/2/3/4/5) — the two new
-	// component lines (CLIP→WELD-4, STUD→WELD-5) added PRESS-3/4 + WELD-4/5 so each
-	// loader type feeds a real cell. Manual_swap loaders/unloaders don't tick.
-	if len(cfg.Sim.Processes) != 9 {
-		t.Fatalf("sim.processes = %d, want 9", len(cfg.Sim.Processes))
+	// 6 sim processes (PRESS-1/2, WELD-1/2/3/4). The SYN_MARKET combine collapsed the
+	// separate per-type markets into one mixed-fill market, which retired the extra
+	// component lines (and their PRESS-3/4 + WELD-5). Manual_swap loaders/unloaders
+	// don't tick.
+	if len(cfg.Sim.Processes) != 6 {
+		t.Fatalf("sim.processes = %d, want 6", len(cfg.Sim.Processes))
 	}
 	p0 := cfg.Sim.Processes[0]
 	if p0.PLCName != "PRESS-1" || p0.TagName != "PRESS-1_COUNTER" {
 		t.Errorf("process[0] = %s/%s, want PRESS-1/PRESS-1_COUNTER", p0.PLCName, p0.TagName)
 	}
-	// PRESS-1 ticks 5s (12/min) — 2× the 10s line rate — because it feeds TWO
-	// PANEL-LH consumers (WELD-1 + WELD-3). Rate-balance fix; verify via `make dev-rates`.
-	if p0.TickInterval != 5*time.Second || p0.UOPPerTick != 1 {
-		t.Errorf("process[0] timing = %v/%d, want 5s/1", p0.TickInterval, p0.UOPPerTick)
+	// Every process now ticks at the flat 10s line rate (6/min) — the rate retune that
+	// came with the market combine. Verify via `make dev-rates`.
+	if p0.TickInterval != 10*time.Second || p0.UOPPerTick != 1 {
+		t.Errorf("process[0] timing = %v/%d, want 10s/1", p0.TickInterval, p0.UOPPerTick)
 	}
 	if !cfg.Sim.Operators.Enabled || cfg.Sim.Operators.LoaderAutoLoad != 5*time.Second {
 		t.Errorf("operators = %+v, want enabled + 5s load", cfg.Sim.Operators)
