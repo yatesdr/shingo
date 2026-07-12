@@ -53,6 +53,33 @@ type reshuffleBlocker struct {
 	depth int
 }
 
+// restockDestinations packs blockers back into the lane deepest-first (no bubbles)
+// by slot rotation, instead of returning each to its original slot. Post-unbury +
+// retrieve the lane's empty slots are exactly the blockers' original slots (depths
+// 1..N-1) plus the target's slot (depth N). Assigning each blocker the next-deeper
+// slot fills depths 2..N and leaves depth 1 (the mouth) empty — physically realistic
+// (a robot places into the reachable mouth; it can't skip past an empty slot) and
+// bubble-free. FIFO is unaffected: FindSourceFIFO keys on loaded_at age, not slot
+// depth, so moving a bin to a different slot doesn't change its pick order.
+//
+// blockers are shallowest-first (findBuriedBlockers via ListLaneSlots depth ASC).
+// Returns one destination node per blocker, indexed to match the blockers slice.
+func restockDestinations(blockers []reshuffleBlocker, targetSlot *nodes.Node) []*nodes.Node {
+	n := len(blockers)
+	if n == 0 {
+		return nil
+	}
+	dests := make([]*nodes.Node, n)
+	// The deepest blocker (index n-1, depth N-1) restocks to the target's slot (depth N).
+	dests[n-1] = targetSlot
+	// Each shallower blocker restocks one deeper than itself — i.e. to the slot of
+	// the next-deeper blocker. After this, depths 2..N are filled, depth 1 is empty.
+	for i := 0; i < n-1; i++ {
+		dests[i] = blockers[i+1].slot
+	}
+	return dests
+}
+
 // findBuriedBlockers returns every occupied lane slot shallower than
 // targetDepth. Shared between PlanReshuffle, PlanReshuffleUnburyOnly,
 // and PlanReshuffleToTarget.
@@ -134,14 +161,17 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 	})
 	seq++
 
-	// Step 3: Restock blockers back to lane (deepest-first = reverse order)
+	// Step 3: Restock blockers back to the lane deepest-first (slot rotation — no
+	// bubbles). restockDestinations packs each blocker one slot deeper than itself so
+	// the lane ends with depths 2..N filled and the mouth (depth 1) empty.
+	restockDests := restockDestinations(blockers, targetSlot)
 	for i := len(blockers) - 1; i >= 0; i-- {
 		plan.Steps = append(plan.Steps, ReshuffleStep{
 			Sequence: seq,
 			StepType: protocol.StepRestock,
 			BinID:    blockers[i].bin.ID,
 			FromNode: shuffleSlots[i],
-			ToNode:   blockers[i].slot,
+			ToNode:   restockDests[i],
 		})
 		seq++
 	}
@@ -149,6 +179,24 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 	return plan, nil
 }
 
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║  !! KNOWN ISSUE -- READ BEFORE REFACTORING THE RESHUFFLE PATH !!           ║
+// ║                                                                           ║
+// ║  This complex-order path moves blockers OUT to shuffle slots and, by      ║
+// ║  DEFAULT, NEVER restocks them: reshuffle_restore_blockers defaults OFF,   ║
+// ║  so (per ReshuffleRestoreBlockersEnabled) "blockers stay in shuffle slots ║
+// ║  and lane geometry shifts." Over a running loop that leaves permanent     ║
+// ║  AIR BUBBLES / drifted lane geometry — supermarkets that never re-compact.║
+// ║                                                                           ║
+// ║  The simple-retrieve path (PlanReshuffle) does NOT have this problem: it  ║
+// ║  restocks blockers deepest-first via restockDestinations (bubble-free).   ║
+// ║  The ASYMMETRY is the bug. When you refactor this: make the complex path  ║
+// ║  recompact deepest-first too (reuse restockDestinations), or make         ║
+// ║  restore-blockers the default — so BOTH paths keep lanes packed.          ║
+// ║  Surfaced empirically on the dev sim (air bubbles in every supermarket).  ║
+// ║  See GitHub-root shingo-sim-approach-2026-07-11.md.                       ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+//
 // PlanReshuffleUnburyOnly creates a plan that only moves blockers out
 // of the way, leaving the target bin in its original lane slot.
 // Complex-order reshuffles use this variant in "expose mode" — the

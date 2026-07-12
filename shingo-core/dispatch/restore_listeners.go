@@ -431,6 +431,14 @@ func (d *Dispatcher) dispatchRestoreCompound(entry *restoreEntry) error {
 		Lane:       nil,
 	}
 	seq := 1
+	// TODO(reshuffle-refactor): restock packs to each blocker's ORIGINAL slot here, which
+	// leaves bubbles (the target's freed slot stays empty; blockers' own slots fill at their
+	// original depths). PlanReshuffle above was fixed to pack deepest-first via slot rotation
+	// (see restockDestinations in reshuffle.go). This restore path needs the same treatment
+	// but requires the target's slot, which isn't captured in restoreEntry today (and the
+	// persisted persistedRestockPlan would need a TargetSlotName field for crash recovery).
+	// Deferred to the reshuffle refactor — expose-mode restore is off by default
+	// (restore_blockers toggle), so the demo plant doesn't exercise this path.
 	for i := len(entry.blockers) - 1; i >= 0; i-- {
 		b := entry.blockers[i]
 		plan.Steps = append(plan.Steps, ReshuffleStep{

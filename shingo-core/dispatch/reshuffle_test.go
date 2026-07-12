@@ -191,6 +191,64 @@ func TestPlanReshuffle_MultipleBlockers(t *testing.T) {
 	}
 }
 
+// TestPlanReshuffle_RestockPacksDeepest pins the no-bubble restock behavior: blockers
+// restock to the NEXT-DEEPER slot (slot rotation), not their original slot, so the lane
+// ends with depths 2..N filled and the mouth (depth 1) empty. FIFO is unaffected (it keys
+// on loaded_at age, not slot depth). With blockers at depths 1+2 and the target at depth 3:
+// the depth-2 blocker restocks to the target's old slot (depth 3); the depth-1 blocker
+// restocks to the depth-2 slot. Depths 2+3 filled, depth 1 empty — no bubbles.
+func TestPlanReshuffle_RestockPacksDeepest(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
+	// slots[0]=depth1, slots[1]=depth2, slots[2]=depth3.
+
+	blocker1 := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-B1") // depth 1
+	blocker2 := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-B2") // depth 2
+	target := createTestBinAtNode(t, db, bp.Code, slots[2].ID, "BIN-TGT")  // depth 3
+
+	plan, err := PlanReshuffle(db, target, slots[2], lane, grp.ID)
+	if err != nil {
+		t.Fatalf("PlanReshuffle: %v", err)
+	}
+	// Steps: [0]unbury B1, [1]unbury B2, [2]retrieve TGT, [3]restock B2, [4]restock B1.
+	var restockB2, restockB1 *ReshuffleStep
+	for i := range plan.Steps {
+		s := &plan.Steps[i]
+		if s.StepType != protocol.StepRestock {
+			continue
+		}
+		if s.BinID == blocker2.ID {
+			restockB2 = s
+		}
+		if s.BinID == blocker1.ID {
+			restockB1 = s
+		}
+	}
+	if restockB2 == nil || restockB1 == nil {
+		t.Fatalf("missing restock steps: B2=%v B1=%v", restockB2, restockB1)
+	}
+	// Deepest blocker (B2, was depth 2) restocks to the TARGET's slot (depth 3) — not its
+	// own original slot. This is the bug fix: old behavior restocked to slots[1] (depth 2),
+	// leaving the freed target slot empty → a bubble at depth 3.
+	if restockB2.ToNode == nil || restockB2.ToNode.ID != slots[2].ID {
+		t.Errorf("restock B2 destination = %v, want target slot %s (depth 3, no bubble)", nodeName(restockB2.ToNode), slots[2].Name)
+	}
+	// Shallower blocker (B1, was depth 1) restocks to the next-deeper blocker's original
+	// slot (depth 2) — not its own depth-1 slot. Old behavior restocked to slots[0] (depth 1).
+	if restockB1.ToNode == nil || restockB1.ToNode.ID != slots[1].ID {
+		t.Errorf("restock B1 destination = %v, want slot %s (depth 2, packed behind B2)", nodeName(restockB1.ToNode), slots[1].Name)
+	}
+}
+
+// nodeName is a small helper for readable assertion failures (nil-safe).
+func nodeName(n *nodes.Node) string {
+	if n == nil {
+		return "<nil>"
+	}
+	return n.Name
+}
+
 func TestPlanReshuffle_NoShuffleSlots(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
