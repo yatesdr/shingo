@@ -53,6 +53,17 @@ func (e *Engine) Start() {
 	// Wire event handlers
 	e.wireEventHandlers()
 
+	// Start the fleet driver goroutine AFTER event handlers are wired.
+	// The sim driver emits FINISHED events immediately; without this gate
+	// handleVendorStatusChanged is never called and bins enter _TRANSIT
+	// permanently (Item 3, sim startup race). Backends without a
+	// deferred-start driver simply don't implement this interface.
+	if ds, ok := e.fleet.(fleet.DriverStarter); ok {
+		if err := ds.StartDriver(context.Background()); err != nil {
+			e.logFn("engine: start driver: %v", err)
+		}
+	}
+
 	// Load active vendor orders into tracker
 	e.loadActiveOrders()
 

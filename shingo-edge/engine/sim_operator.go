@@ -394,9 +394,9 @@ func (op *simOperator) clearNegativeBins() {
 // as a direct slot, so this is robust without depending on the node-type string.
 func (op *simOperator) collectMarketSlots() []string {
 	var slots []string
-	lanes, _ := op.e.coreClient.FetchNodeChildren(negBinMarket)
+	lanes, _ := op.e.coreClient.FetchNodeChildren(negBinMarket, true)
 	for _, lane := range lanes {
-		laneSlots, _ := op.e.coreClient.FetchNodeChildren(lane.Name)
+		laneSlots, _ := op.e.coreClient.FetchNodeChildren(lane.Name, false)
 		if len(laneSlots) == 0 {
 			slots = append(slots, lane.Name) // direct slot child of the group
 			continue

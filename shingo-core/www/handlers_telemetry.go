@@ -193,6 +193,8 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 }
 
 // apiTelemetryNodeChildren returns the direct physical (non-synthetic) children of an NGRP node.
+// When ?include_synthetic=true, synthetic children (LANE nodes) are included — used by
+// Edge's sim operator to enumerate all storage slots under a market group.
 // GET /api/telemetry/node/{name}/children
 func (h *Handlers) apiTelemetryNodeChildren(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
@@ -200,6 +202,7 @@ func (h *Handlers) apiTelemetryNodeChildren(w http.ResponseWriter, r *http.Reque
 		h.jsonOK(w, []struct{}{})
 		return
 	}
+	includeSynthetic := r.URL.Query().Get("include_synthetic") == "true"
 	nodes := h.engine.NodeService()
 	node, err := nodes.GetByDotName(name)
 	if err != nil {
@@ -217,7 +220,7 @@ func (h *Handlers) apiTelemetryNodeChildren(w http.ResponseWriter, r *http.Reque
 	}
 	var result []childInfo
 	for _, c := range children {
-		if !c.IsSynthetic {
+		if includeSynthetic || !c.IsSynthetic {
 			result = append(result, childInfo{
 				Name:     node.Name + "." + c.Name,
 				NodeType: c.NodeTypeCode,

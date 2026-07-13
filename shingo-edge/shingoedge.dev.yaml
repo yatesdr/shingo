@@ -59,22 +59,22 @@ sim:
       uop_per_tick: 1
     - plc_name: WELD-1
       tag_name: WELD-1_COUNTER
-      tick_interval: 10s
+      tick_interval: 12s
       uop_per_tick: 1
     - plc_name: WELD-2
       tag_name: WELD-2_COUNTER
-      tick_interval: 10s
+      tick_interval: 12s
       uop_per_tick: 1
-    # Component-leg drains (loader-fed, 6/min each): WELD-3 drains CLIP (single-window
-    # loader leg), WELD-4 drains STUD (dedicated loader leg). Same rate as the loaders
-    # supply so the component markets stay mid-level.
+    # Component-leg drains (loader-fed, 5/min each): WELD-3 drains CLIP (single-window
+    # loader leg), WELD-4 drains STUD (dedicated loader leg). Slower than the press
+    # loaders (6/min) so the component markets stay biased toward recovery.
     - plc_name: WELD-3
       tag_name: WELD-3_COUNTER
-      tick_interval: 10s
+      tick_interval: 12s
       uop_per_tick: 1
     - plc_name: WELD-4
       tag_name: WELD-4_COUNTER
-      tick_interval: 10s
+      tick_interval: 12s
       uop_per_tick: 1
   operators:
     enabled: true

@@ -438,7 +438,7 @@ func TestCoreClient_NoBaseURL_GracefulDegrade(t *testing.T) {
 	if m, err := c.FetchPayloadManifest("WIDGET"); m != nil || err != nil {
 		t.Errorf("FetchPayloadManifest with no base-url = (%v,%v), want (nil,nil)", m, err)
 	}
-	if ch, err := c.FetchNodeChildren("NGRP"); ch != nil || err != nil {
+	if ch, err := c.FetchNodeChildren("NGRP", false); ch != nil || err != nil {
 		t.Errorf("FetchNodeChildren with no base-url = (%v,%v), want (nil,nil)", ch, err)
 	}
 	if bins, err := c.FetchNodeBins([]string{"N1"}); bins != nil || err != nil {
@@ -548,7 +548,7 @@ func TestCoreClient_FetchNodeChildren(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewCoreClient(srv.URL)
-	got, err := c.FetchNodeChildren("NGRP")
+	got, err := c.FetchNodeChildren("NGRP", false)
 	if err != nil {
 		t.Fatalf("FetchNodeChildren: %v", err)
 	}
@@ -557,7 +557,7 @@ func TestCoreClient_FetchNodeChildren(t *testing.T) {
 	}
 
 	// Empty node name short-circuits.
-	if got, err := c.FetchNodeChildren(""); got != nil || err != nil {
+	if got, err := c.FetchNodeChildren("", false); got != nil || err != nil {
 		t.Errorf("empty name should short-circuit, got (%v,%v)", got, err)
 	}
 }
@@ -569,7 +569,7 @@ func TestCoreClient_FetchNodeChildren_Non200(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewCoreClient(srv.URL)
-	got, err := c.FetchNodeChildren("NGRP")
+	got, err := c.FetchNodeChildren("NGRP", false)
 	if got != nil || err != nil {
 		t.Errorf("Non-200 should return (nil,nil), got (%v,%v)", got, err)
 	}
@@ -582,7 +582,7 @@ func TestCoreClient_FetchNodeChildren_BadJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewCoreClient(srv.URL)
-	got, err := c.FetchNodeChildren("NGRP")
+	got, err := c.FetchNodeChildren("NGRP", false)
 	if got != nil || err != nil {
 		t.Errorf("bad-json should return (nil,nil), got (%v,%v)", got, err)
 	}

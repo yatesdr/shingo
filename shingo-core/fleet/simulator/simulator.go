@@ -60,6 +60,11 @@ type SimulatorBackend struct {
 	clk      clock.Clock           // stamps terminalAt + (via driver) times transitions
 	emitter  fleet.TrackerEmitter  // set by InitTracker
 	resolver fleet.OrderIDResolver // set by InitTracker
+	// driver holds the *Driver in sim builds. Typed `any` so the package still
+	// compiles without the sim tag, where nothing assigns or reads it — which is
+	// exactly why `unused` fires here on the default build. CI lints untagged, so
+	// the suppression is load-bearing, not cosmetic.
+	driver any //nolint:unused // set by NewDriverFromConfig / read by typedDriver, both sim-tagged (driver_lifecycle_sim.go)
 }
 
 // New creates a SimulatorBackend with the given options.
@@ -270,6 +275,7 @@ func mapStateInternal(vendorState string) string {
 }
 
 // Compile-time interface check: SimulatorBackend must satisfy fleet.TrackingBackend.
+// fleet.DriverStarter is checked in driver_lifecycle_sim.go (sim-only).
 var _ fleet.TrackingBackend = (*SimulatorBackend)(nil)
 
 // --- fleet.TrackingBackend implementation ---

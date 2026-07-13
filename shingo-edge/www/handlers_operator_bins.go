@@ -165,7 +165,7 @@ func (h *Handlers) apiNodeChildren(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []struct{}{})
 		return
 	}
-	children, _ := h.engine.CoreAPI().FetchNodeChildren(name)
+	children, _ := h.engine.CoreAPI().FetchNodeChildren(name, false)
 	if children == nil {
 		children = []engine.NodeChildInfo{}
 	}

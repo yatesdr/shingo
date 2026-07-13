@@ -115,13 +115,19 @@ type NodeChildInfo struct {
 	NodeType string `json:"node_type"`
 }
 
-// FetchNodeChildren returns the direct physical children of an NGRP node.
-// Returns nil if Core is unavailable or the node has no physical children.
-func (c *CoreClient) FetchNodeChildren(nodeName string) ([]NodeChildInfo, error) {
+// FetchNodeChildren returns the direct children of an NGRP node.
+// When includeSynthetic is true, synthetic children (e.g. LANE nodes) are included;
+// otherwise only physical non-synthetic children are returned (the existing default).
+// Returns nil if Core is unavailable or the node has no matching children.
+func (c *CoreClient) FetchNodeChildren(nodeName string, includeSynthetic bool) ([]NodeChildInfo, error) {
 	if c.baseURL == "" || nodeName == "" {
 		return nil, nil
 	}
-	resp, err := c.http.Get(c.baseURL + "/api/telemetry/node/" + url.PathEscape(nodeName) + "/children")
+	reqURL := c.baseURL + "/api/telemetry/node/" + url.PathEscape(nodeName) + "/children"
+	if includeSynthetic {
+		reqURL += "?include_synthetic=true"
+	}
+	resp, err := c.http.Get(reqURL)
 	if err != nil {
 		return nil, nil
 	}

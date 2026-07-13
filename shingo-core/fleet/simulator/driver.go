@@ -73,10 +73,11 @@ type Driver struct {
 	elapsed     time.Duration // ∫ dt since the first step
 }
 
-// newDriver builds a Driver from sim config. Exposed (unexported) so tests can
-// construct one and call step() directly with a manual clock — fully
-// synchronous and deterministic, no goroutine.
-func newDriver(sim *SimulatorBackend, cfg config.SimConfig, clk clock.Clock, rng *rand.Rand) *Driver {
+// NewDriver builds a Driver from sim config. Exported so callers can construct
+// one, store it, and defer the goroutine launch until engine wiring completes
+// (see Item 3, sim startup race). Tests can call step() directly with a manual
+// clock — fully synchronous and deterministic, no goroutine.
+func NewDriver(sim *SimulatorBackend, cfg config.SimConfig, clk clock.Clock, rng *rand.Rand) *Driver {
 	transit := cfg.TransitTime
 	if transit <= 0 {
 		transit = 5 * time.Second
@@ -106,10 +107,12 @@ func newDriver(sim *SimulatorBackend, cfg config.SimConfig, clk clock.Clock, rng
 }
 
 // StartDriver constructs the driver and runs its tick loop until ctx is done.
-// The loop is a single goroutine — the deadline model means we don't need one
-// goroutine per order — so a plain goroutine + ctx suffices (no errgroup).
+// DEPRECATED for engine wiring: prefer SimulatorBackend.NewDriverFromConfig +
+// SimulatorBackend.StartDriver so the goroutine launch is deferred past engine
+// event-handler wiring (Item 3, sim startup race). Retained for tests that
+// need a one-shot create+start.
 func StartDriver(ctx context.Context, sim *SimulatorBackend, cfg config.SimConfig, clk clock.Clock, rng *rand.Rand) *Driver {
-	d := newDriver(sim, cfg, clk, rng)
+	d := NewDriver(sim, cfg, clk, rng)
 	go d.run(ctx)
 	return d
 }

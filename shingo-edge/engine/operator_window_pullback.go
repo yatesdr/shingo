@@ -52,7 +52,7 @@ func (e *Engine) FetchMarketBins(nodeID int64) ([]MarketBinInfo, error) {
 		return nil, fmt.Errorf("node %s has no outbound_destination configured", node.Name)
 	}
 
-	children, err := e.coreClient.FetchNodeChildren(claim.OutboundDestination)
+	children, err := e.coreClient.FetchNodeChildren(claim.OutboundDestination, false)
 	if err != nil || len(children) == 0 {
 		return nil, nil
 	}
@@ -109,7 +109,7 @@ func (e *Engine) PullFromMarket(nodeID int64, sourceCoreName string) error {
 	}
 
 	// Verify the source is a child of this loader's outbound destination.
-	children, err := e.coreClient.FetchNodeChildren(claim.OutboundDestination)
+	children, err := e.coreClient.FetchNodeChildren(claim.OutboundDestination, false)
 	if err != nil {
 		return fmt.Errorf("pull from market: fetch market children: %w", err)
 	}

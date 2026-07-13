@@ -40,7 +40,7 @@ func newTestDriver(t *testing.T, cfg config.SimConfig, seed int64) (*Driver, *Si
 	em := &captureEmitter{}
 	s := New(WithClock(m))
 	s.InitTracker(em, seqResolver{})
-	d := newDriver(s, cfg, m, rand.New(rand.NewSource(seed)))
+	d := NewDriver(s, cfg, m, rand.New(rand.NewSource(seed)))
 	return d, s, m, em
 }
 

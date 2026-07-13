@@ -1,6 +1,9 @@
 package fleet
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Backend is the vendor-neutral interface for fleet management systems.
 // Implementations wrap vendor-specific APIs (Seer RDS, MiR, Locus, etc.).
@@ -75,6 +78,15 @@ type CreateOrderRequest struct {
 	// ReleaseOrder (multi-wait / lane-dwell orders). This field is the lane-
 	// coordination (Part B) on-ramp.
 	Complete bool
+}
+
+// DriverStarter is an optional interface implemented by fleet backends whose
+// driver goroutine must launch AFTER the engine's event handlers are wired
+// (the sim driver, which emits FINISHED events immediately, would fire into
+// a dead handler before wireEventHandlers). Backends that don't need deferred
+// start simply omit it; the engine checks with a type assertion.
+type DriverStarter interface {
+	StartDriver(ctx context.Context) error
 }
 
 // TransportOrderResult contains the result of a successful order creation.

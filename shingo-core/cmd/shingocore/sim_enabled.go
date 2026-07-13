@@ -62,9 +62,9 @@ func newSimBackend(ctx context.Context, cfg *config.Config) (fleet.TrackingBacke
 	rng := rand.New(rand.NewSource(seed))
 
 	sim := simulator.New(simulator.WithClock(clk))
-	simulator.StartDriver(ctx, sim, cfg.Sim, clk, rng)
+	sim.NewDriverFromConfig(cfg.Sim, clk, rng)
 
-	log.Printf("[sim] fleet simulator + driver started (seed=%d transit=%s jitter=%.0f%% fail_rate=%.2f)",
+	log.Printf("[sim] fleet simulator ready (seed=%d transit=%s jitter=%.0f%% fail_rate=%.2f) — driver starts after engine wiring",
 		seed, cfg.Sim.TransitTime, cfg.Sim.JitterPct*100, cfg.Sim.FailRate)
 	// The simulator implements RobotLister (T2.4). Scene-sync is intentionally
 	// unimplemented — SceneSync treats the backend scene as authoritative and
