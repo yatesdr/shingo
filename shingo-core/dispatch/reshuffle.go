@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"shingo/protocol"
@@ -388,12 +389,12 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 		if excluded[c.Name] {
 			continue
 		}
-		cnt, _ := db.CountBinsByNode(c.ID)
-		if cnt == 0 {
-			available = append(available, c)
-			if len(available) >= count {
-				return available, nil
-			}
+		if !shuffleSlotFree(db, c) {
+			continue
+		}
+		available = append(available, c)
+		if len(available) >= count {
+			return available, nil
 		}
 	}
 
@@ -424,18 +425,68 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 			if !acc {
 				continue
 			}
-			cnt, _ := db.CountBinsByNode(slot.ID)
-			if cnt == 0 {
-				available = append(available, slot)
-				if len(available) >= count {
-					return available, nil
-				}
+			if !shuffleSlotFree(db, slot) {
+				continue
+			}
+			available = append(available, slot)
+			if len(available) >= count {
+				return available, nil
 			}
 		}
 	}
 
 	if len(available) < count {
-		return nil, fmt.Errorf("need %d shuffle slots but only %d available", count, len(available))
+		return nil, fmt.Errorf("%w: need %d shuffle slots but only %d available", ErrNoShuffleSlot, count, len(available))
 	}
 	return available, nil
 }
+
+// shuffleSlotFree reports whether a dig may park a blocker in this node.
+//
+// Shuffle slots are a GROUP-scoped shared resource, but the lane lock is keyed on
+// the lane being dug (planBuriedReshuffle → laneLock.TryLock(buried.LaneID)). Two
+// digs in DIFFERENT lanes therefore take different locks, both proceed, and then
+// compete for the same shuffle slots. This used to test "is the node empty RIGHT
+// NOW" (CountBinsByNode == 0) and nothing else — so a slot with another dig's
+// blocker already in flight to it looked free. Both digs picked it, the second
+// blocker landed on the first, and ApplyArrival's EvictStaleGhostsTx threw the
+// first bin to _TRANSIT. Observed on the houseserver sim 2026-07-13: lane 1 and
+// lane 2 each unburied into SMN_008 + SMN_009 three seconds apart, orphaning two
+// bins and leaving lane 1's restore compound with nothing to restock (D83a).
+//
+// CheckDropoffCapacity is the gate every OTHER dropoff in the system passes
+// through, and it already tests exactly what was missing: occupied, OR an order
+// in flight inbound. The unbury legs carry delivery_node, so they are counted --
+// the information was always there, findShuffleSlots just never asked. Reusing the
+// gate (rather than reserving shuffle slots) is deliberate: a real span/mouth
+// reservation for the dig is Track 3's open entry gate, and this must not
+// pre-empt that design.
+//
+// ClaimedBy is checked too, mirroring what the storage resolver already does for
+// ordinary slots (group_resolver.go's "slot already claimed by another order's
+// dispatch").
+//
+// Tightening this makes "no free shuffle slot" MORE frequent — which is safe only
+// because that outcome now WAITS instead of failing terminally (ErrNoShuffleSlot,
+// same commit). The two changes are a pair; do not keep one without the other.
+func shuffleSlotFree(db *store.DB, n *nodes.Node) bool {
+	if n.ClaimedBy != nil {
+		return false
+	}
+	blocked, _ := CheckDropoffCapacity(db, n.Name, 0)
+	return !blocked
+}
+
+// ErrNoShuffleSlot means the reshuffle has nowhere to park its blockers RIGHT
+// NOW. This is congestion, not a fault: a shuffle slot frees the moment any
+// other order clears one, so the order must WAIT and retry, never fail.
+//
+// It used to fail terminally — findShuffleSlots returned a bare error, planning
+// mapped it to codeReshuffle, and codeReshuffle was not in Transient(). Sim order
+// 21 on the 2026-07-10 houseserver run died exactly this way ("cannot plan
+// reshuffle: need 1 slot, 0 available"), which is what surfaced it. That is
+// inconsistent with the D18-Q4 wait-not-fail principle the simple path upholds,
+// and D79's reshuffle-disposition rider assigned the fix to this fast-follow:
+// once the scanner can spawn reshuffles on replay, a buried retrieve retries
+// across ticks (waits for a slot) instead of one-shot-failing at intake.
+var ErrNoShuffleSlot = errors.New("no free shuffle slot")

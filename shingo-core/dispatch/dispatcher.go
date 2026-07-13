@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
@@ -115,6 +116,63 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	// substrate for the unified-create follow-up, not consumed here.
 	d.queueOrder(order, env, payloadCode)
 }
+
+// PlanBuriedReshuffle plans and dispatches the reshuffle compound for an order
+// whose source resolved BURIED on scanner replay. It is the replay-side twin of
+// the intake path in planTransport.
+//
+// Reshuffle planning cannot live at intake alone. planTransport runs exactly once
+// (PlanningService.Register wires it to the three simple order types and nothing
+// re-invokes it), but burial is a condition that arises over TIME: an order that
+// queued with an accessible source — behind a full destination, or behind
+// inventory — can be buried by a later store while it waits. The fulfillment
+// scanner is the only thing that looks at it again, so without a planner here
+// that order re-queues forever and nothing in the system will ever unbury its
+// lane.
+//
+// PRECONDITION: the caller must have cleared the dropoff-capacity gate. A
+// simple-retrieve reshuffle compound IS the delivery — PlanReshuffle's retrieve
+// step leaves ToNode nil and compound.go backfills the parent's DeliveryNode —
+// and compound children are dispatched by AdvanceCompoundOrder, which never
+// re-checks capacity. So planning a reshuffle COMMITS the delivery, and may only
+// be done against a destination already known clear. Scanner.tryFulfill checks
+// CheckDropoffCapacity before it resolves the source, which is exactly that.
+//
+// Do NOT advance the compound after this returns: createCompound already
+// dispatched the first child. Stacking a second advance is the 2026-05-27
+// three-robots-in-one-corridor failure (see planBuriedReshuffle).
+//
+// An ErrReshuffleWait error means requeue and retry; anything else is structural
+// and fails the order, matching intake's disposition on a non-transient planErr.
+func (d *Dispatcher) PlanBuriedReshuffle(order *orders.Order, buried *BuriedError) error {
+	if _, pe := d.planner.planBuriedReshuffle(order, buried); pe != nil {
+		if pe.Transient() {
+			return fmt.Errorf("%w: %s", ErrReshuffleWait, pe.Detail)
+		}
+		return pe
+	}
+	return nil
+}
+
+// ErrReshuffleWait reports planning-time CONGESTION rather than a fault: the
+// reshuffle cannot be planned RIGHT NOW, but will be plannable once other work
+// clears. Two causes, both routine:
+//
+//   - the lane is mid-reshuffle for ANOTHER order (lane_locked) — the ordinary
+//     shape when two queued orders are buried in the same lane;
+//   - there is no free shuffle slot to park the blockers in (no_shuffle_slot) —
+//     a slot frees as soon as any other order releases one.
+//
+// Callers WAIT and retry. They must NOT fail the order: "no room to dig right
+// now" is not a broken lane (D18-Q4 wait-not-fail). The no-shuffle-slot half used
+// to fail terminally at intake — sim order 21 on the 2026-07-10 houseserver run
+// died that way — and D79's reshuffle-disposition rider assigned the fix here,
+// because it is only actually FIXED once the scanner can re-plan on a later tick.
+//
+// A sentinel (rather than an exported predicate over the unexported
+// planningError) so callers outside the package — and their tests — can both
+// match it with errors.Is and construct it.
+var ErrReshuffleWait = errors.New("reshuffle not plannable yet")
 
 func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, payloadCode string) {
 	if err := d.lifecycle.Queue(order, "dispatcher", "awaiting inventory"); err != nil {

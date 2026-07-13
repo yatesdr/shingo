@@ -37,6 +37,19 @@ type Dispatcher interface {
 	// tick. Owner-idempotent.
 	ReserveStorageDropoff(order *orders.Order) error
 
+	// PlanBuriedReshuffle plans the reshuffle compound for a source that resolved
+	// BURIED on replay, making the order its own compound parent (→ reshuffling).
+	//
+	// This is on the scanner's surface because reshuffle planning cannot live at
+	// intake alone: planTransport runs once, but a queued order's lane can be buried
+	// by a later store while it waits, and the scanner is the only thing that looks
+	// at the order again. The scanner must clear the dropoff gate first — the
+	// compound carries the delivery leg, so planning one commits the delivery.
+	//
+	// A transient error (lane locked by another reshuffle) means requeue and retry;
+	// anything else is structural and fails the order.
+	PlanBuriedReshuffle(order *orders.Order, buried *dispatch.BuriedError) error
+
 	// PostFindHook fires between the scanner's Find and Claim. A no-op in
 	// production (nil hook); concurrency tests install one via
 	// Dispatcher.SetPostFindHook to make a claim race deterministic. It lives on

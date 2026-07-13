@@ -1,6 +1,7 @@
 package fulfillment
 
 import (
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -294,10 +295,52 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.setQueueReason(order, res.QueueReason)
 		return false
 	case dispatch.OutcomeReshuffle:
-		// The scanner does NOT spawn reshuffle compounds on replay yet
-		// (tracked fast-follow — reshuffle planning still lives at intake). Stay
-		// queued so the next tick re-evaluates once the lane clears; surface why.
-		s.setQueueReason(order, "source bin buried; awaiting reshuffle")
+		// Plan the reshuffle HERE, not only at intake. planTransport runs once, at
+		// intake, but burial arises over TIME: an order that queued with an accessible
+		// source — behind a full destination, or behind inventory — can be buried by a
+		// later store while it waits. This scanner is the only thing that looks at it
+		// again. Before this arm existed the order re-queued forever ("awaiting
+		// reshuffle") and nothing in the system would ever unbury its lane.
+		//
+		// The dropoff gate above is the PRECONDITION, not an incidental ordering: a
+		// simple-retrieve reshuffle compound IS the delivery, so it may only be planned
+		// against a destination known clear. That holds here — same tick, same
+		// goroutine, under scanMu. Once the parent flips to `reshuffling` it also
+		// counts as in-flight inbound to its own delivery_node
+		// (CountInFlightByDeliveryNode excludes only `queued` and terminal), so the
+		// destination stays reserved against other orders for the whole compound.
+		//
+		// Return false and never advance the compound: createCompound already
+		// dispatched the first child, and the parent has left the acquiring set
+		// (queued → reshuffling, IsAcquiring={queued,sourcing}), so no later pass
+		// re-plans it. Two orders buried in the SAME lane in one pass are serialized by
+		// planBuriedReshuffle's lane lock — the second gets ErrReshuffleWait.
+		//
+		// Being able to re-plan on a LATER tick is also what finally makes the buried
+		// path wait-not-fail (D18-Q4). "No free shuffle slot" is congestion, and at
+		// intake it had nowhere to go but a terminal fail (sim order 21, 2026-07-10).
+		// Here it just waits: ErrReshuffleWait keeps the order queued, and the next
+		// tick tries again once a slot frees.
+		if err := s.dispatcher.PlanBuriedReshuffle(order, res.Buried); err != nil {
+			if errors.Is(err, dispatch.ErrReshuffleWait) {
+				// Congestion — the lane is busy, or no shuffle slot is free right now.
+				// Stay queued and retry next tick. NEVER fail: the lane is not broken,
+				// it is crowded.
+				s.setQueueReason(order, "source bin buried; waiting to reshuffle ("+err.Error()+")")
+				return false
+			}
+			// Structural — real lane geometry (no parent group, bad target slot). Route
+			// through failFn so the standard EventOrderFailed chain fires, the same
+			// disposition intake gives a non-transient planning error.
+			if s.failFn != nil {
+				s.failFn(order.ID, "reshuffle", err.Error())
+			} else {
+				s.logFn("fulfillment: order %d reshuffle plan failed but failFn not wired — order left queued, fix scanner construction: %v",
+					order.ID, err)
+			}
+			return false
+		}
+		s.logFn("fulfillment: order %d source buried — reshuffle compound planned on replay", order.ID)
 		return false
 	case dispatch.OutcomeStructural:
 		// Terminal (permanent/config). Route through failFn so the standard

@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 
@@ -56,6 +57,9 @@ const (
 	codeNoBin         = "no_bin"
 	codeNoStorage     = "no_storage"
 	codeNoSourceBin   = "no_source_bin"
+	// codeNoShuffleSlot is TRANSIENT: the reshuffle has nowhere to park blockers
+	// right now. See ErrNoShuffleSlot + the D79 reshuffle-disposition rider.
+	codeNoShuffleSlot = "no_shuffle_slot"
 )
 
 func (e *planningError) Error() string {
@@ -97,7 +101,7 @@ func (e *planningError) Transient() bool {
 		return false
 	}
 	switch e.Code {
-	case codeClaimFailed, codeLaneLocked:
+	case codeClaimFailed, codeLaneLocked, codeNoShuffleSlot:
 		return true
 	}
 	return false
@@ -230,7 +234,7 @@ func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bi
 // The claim-move to the scanner: intake does NOT claim the bin — the fulfillment
 // scanner is the SINGLE claim point (the model complex has run since birth:
 // status-first queued → scanner claims at dispatch). planTransport validates,
-// gates capacity, resolves the source, resolves a move's concrete dest, then
+// resolves the source, gates capacity, resolves a move's concrete dest, then
 // QUEUES; the scanner re-finds + claims + reserves + dispatches. Source resolution
 // STAYS at intake for two dispositions the scanner cannot produce: a BURIED source
 // pivots to a reshuffle compound (reshuffle planning lives at intake — the scanner
@@ -282,6 +286,15 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 	// Phase 4 of bin-transit-state: shared dropoff-capacity gate. Self-exclusion
 	// (order.ID) keeps the order's own pending row out of the in-flight tally.
 	// Blocked → queue; the scanner replays when slot vacancy fires.
+	//
+	// This gate MUST stay above source resolution. A simple-retrieve reshuffle
+	// compound IS the delivery — PlanReshuffle's retrieve step leaves ToNode nil so
+	// compound.go defaults it to the parent's DeliveryNode — and compound children
+	// are dispatched by AdvanceCompoundOrder, which never re-checks capacity (the
+	// scanner skips anything carrying a ParentOrderID). So resolving the source
+	// first lets a buried retrieve plan a compound that drives a bin into an
+	// occupied line, laundering the deadlock_gate_test invariant through the
+	// compound machinery. Gate first, then resolve.
 	if blocked, reason := CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
 		s.dbg("transport: order %d queued — %s", order.ID, reason)
 		if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
@@ -290,12 +303,18 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 		return &PlanningResult{Queued: true}, nil
 	}
 
-	// Resolve the source through the shared SourceFinder — but do NOT claim (the
-	// claim-move to the scanner: the scanner is the single claimer). We resolve here
-	// for the two intake-only dispositions the scanner cannot produce: a buried
-	// source pivots to a reshuffle compound (resolveSource → planBuriedReshuffle),
-	// and a wait/structural outcome sets the queue reason / terminal error. The bin
-	// is discarded — the scanner re-finds and claims authoritatively.
+	// Resolve the source through the shared SourceFinder. The dispositions live in
+	// resolveSource so intake and scanner-replay cannot drift on them. In particular
+	// OutcomeReshuffle returns Handled=true: planBuriedReshuffle has already made
+	// THIS order the compound parent (BeginReshuffle → Reshuffling), so the
+	// dispatcher must NOT queue it. Queuing it would transition the live compound
+	// parent Reshuffling → Queued, and the later CompleteCompound would then attempt
+	// the invalid Queued → Confirmed and strand the retrieve forever.
+	//
+	// Intake is not the only reshuffle planner: an order whose source is accessible
+	// here but buried by the time its destination frees is replanned by the
+	// fulfillment scanner, which resolves the source behind its own copy of this
+	// gate. See Scanner.tryFulfill's OutcomeReshuffle arm.
 	intent := IntentFull
 	if isEmpty {
 		intent = IntentEmpty
@@ -360,6 +379,14 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 	}
 	plan, err := PlanReshuffle(s.db, buried.Bin, buried.Slot, lane, *lane.ParentID)
 	if err != nil {
+		// "No free shuffle slot" is CONGESTION, not a fault — a slot frees as soon
+		// as any other order clears one. It must wait and retry, never fail (D18-Q4
+		// wait-not-fail; the D79 reshuffle-disposition rider, surfaced by sim order
+		// 21). Every other planning failure here is real lane geometry and stays
+		// terminal.
+		if errors.Is(err, ErrNoShuffleSlot) {
+			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
+		}
 		return nil, &planningError{Code: codeReshuffle, Detail: fmt.Sprintf("cannot plan reshuffle: %v", err), Err: err}
 	}
 	if !s.laneLock.TryLock(buried.LaneID, order.ID) {

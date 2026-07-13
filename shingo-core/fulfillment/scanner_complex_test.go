@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/dispatch"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -25,6 +26,9 @@ func (s *stubDispatcher) DispatchPreparedComplex(o *orders.Order) error {
 }
 func (s *stubDispatcher) ReserveStorageDropoff(*orders.Order) error { return nil }
 func (s *stubDispatcher) PostFindHook()                             {}
+func (s *stubDispatcher) PlanBuriedReshuffle(*orders.Order, *dispatch.BuriedError) error {
+	panic("scanner complex-order branch should not plan a reshuffle")
+}
 
 func newTestScannerWithDispatcher(t *testing.T, f *fakeStore, d Dispatcher) *Scanner {
 	t.Helper()

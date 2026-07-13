@@ -73,6 +73,11 @@ func foundFinder(binID int64, nodeName string) *fakeFinder {
 type recordingDispatcher struct {
 	directCalls []directCall
 	directErr   error
+
+	// reshuffleCalls records orders the scanner asked to reshuffle on replay;
+	// reshuffleErr drives the transient-vs-structural disposition.
+	reshuffleCalls []int64
+	reshuffleErr   error
 }
 
 type directCall struct {
@@ -98,6 +103,11 @@ func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
 // here we only assert the scanner's dispatch orchestration.
 func (d *recordingDispatcher) ReserveStorageDropoff(*orders.Order) error { return nil }
 func (d *recordingDispatcher) PostFindHook()                             {}
+
+func (d *recordingDispatcher) PlanBuriedReshuffle(o *orders.Order, _ *dispatch.BuriedError) error {
+	d.reshuffleCalls = append(d.reshuffleCalls, o.ID)
+	return d.reshuffleErr
+}
 
 // newTestScanner wires a scanner whose finder always waits and whose dispatcher
 // is nil — for the pre-finder branches (cancelled, in-flight, dest occupied,
