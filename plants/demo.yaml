@@ -58,6 +58,7 @@ zones:
   - name: SYN_MARKET
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    reshuffle_restore_blockers: on
     lanes:
       # Lane_01 = PANEL-A, seeded full (3 bins). Depth-3 bin backdated oldest → FIFO must
       # reshuffle to it once the mouth drains (the headline reshuffle driver).

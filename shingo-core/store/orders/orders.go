@@ -40,14 +40,14 @@ type History = domain.OrderHistory
 // reuse the column list.
 const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop`
 
-// adminListExcludeTypeFilter excludes Core-internal housekeeping
-// order types from admin-facing list queries. Today the only excluded
-// type is reshuffle_restore (the synthetic parent for the post-
-// pickup restock compound — never operator-actionable). Embedded into
-// List, ListFiltered, and ListActive so the operator UI doesn't have
-// to render a new order type. If a "show housekeeping orders" toggle
-// is added later, callers can opt into the full query.
-const adminListExcludeTypeFilter = `order_type != 'reshuffle_restore'`
+// Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
+// CountActive) return EVERY order type. They used to exclude reshuffle_restore —
+// the synthetic parent of the post-pickup restock compound — on the grounds that
+// it is never operator-actionable. It is, however, operator-DIAGNOSABLE: those
+// synthetics can strand at `reshuffling`, and the reconciliation sweeps that
+// resolve them are much easier to trust when their subjects are visible. If a
+// "hide housekeeping orders" toggle is ever wanted, it belongs in the UI, not
+// baked into the store.
 
 // ScanOrder reads a single orders row.
 // Exported for cross-aggregate readers at the outer store/ level.
@@ -271,9 +271,9 @@ func List(db *sql.DB, status string, limit int) ([]*Order, error) {
 	var rows *sql.Rows
 	var err error
 	if status != "" {
-		rows, err = db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status=$1 AND %s ORDER BY id DESC LIMIT $2`, SelectCols, adminListExcludeTypeFilter), status, limit)
+		rows, err = db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status=$1 ORDER BY id DESC LIMIT $2`, SelectCols), status, limit)
 	} else {
-		rows, err = db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE %s ORDER BY id DESC LIMIT $1`, SelectCols, adminListExcludeTypeFilter), limit)
+		rows, err = db.Query(fmt.Sprintf(`SELECT %s FROM orders ORDER BY id DESC LIMIT $1`, SelectCols), limit)
 	}
 	if err != nil {
 		return nil, err
@@ -296,7 +296,7 @@ func ListFiltered(db *sql.DB, f Filter) ([]*Order, error) {
 	if f.Limit <= 0 {
 		f.Limit = 100
 	}
-	query := fmt.Sprintf(`SELECT %s FROM orders WHERE %s`, SelectCols, adminListExcludeTypeFilter)
+	query := fmt.Sprintf(`SELECT %s FROM orders WHERE true`, SelectCols)
 	args := []any{}
 	n := 0
 
@@ -337,7 +337,7 @@ func ListFiltered(db *sql.DB, f Filter) ([]*Order, error) {
 
 // ListActive returns all orders in non-terminal statuses.
 func ListActive(db *sql.DB) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN (%s) AND %s ORDER BY id DESC`, SelectCols, protocol.TerminalStatusSQLList(), adminListExcludeTypeFilter))
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN (%s) ORDER BY id DESC`, SelectCols, protocol.TerminalStatusSQLList()))
 	if err != nil {
 		return nil, err
 	}
@@ -350,8 +350,8 @@ func ListActive(db *sql.DB) ([]*Order, error) {
 // Backs the dashboard "in flight" KPI (plan §3.A / §15.A).
 func CountActive(db *sql.DB) (int, error) {
 	var n int
-	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE status NOT IN (%s) AND %s`,
-		protocol.TerminalStatusSQLList(), adminListExcludeTypeFilter)).Scan(&n)
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE status NOT IN (%s)`,
+		protocol.TerminalStatusSQLList())).Scan(&n)
 	return n, err
 }
 
@@ -359,8 +359,8 @@ func CountActive(db *sql.DB) (int, error) {
 // ordered oldest-first for the task board display.
 func ListActiveBoard(db *sql.DB) ([]*Order, error) {
 	rows, err := db.Query(fmt.Sprintf(
-		`SELECT %s FROM orders WHERE status NOT IN (%s) AND robot_id != '' AND %s ORDER BY created_at ASC`,
-		SelectCols, protocol.TerminalStatusSQLList(), adminListExcludeTypeFilter))
+		`SELECT %s FROM orders WHERE status NOT IN (%s) AND robot_id != '' ORDER BY created_at ASC`,
+		SelectCols, protocol.TerminalStatusSQLList()))
 	if err != nil {
 		return nil, err
 	}
@@ -406,8 +406,8 @@ func ListActiveBoardFiltered(db *sql.DB, stations []string) ([]*Order, error) {
 		args[i] = s
 	}
 	query := fmt.Sprintf(
-		`SELECT %s FROM orders WHERE status NOT IN (%s) AND robot_id != '' AND %s AND station_id IN (%s) ORDER BY created_at ASC`,
-		SelectCols, protocol.TerminalStatusSQLList(), adminListExcludeTypeFilter, strings.Join(placeholders, ","))
+		`SELECT %s FROM orders WHERE status NOT IN (%s) AND robot_id != '' AND station_id IN (%s) ORDER BY created_at ASC`,
+		SelectCols, protocol.TerminalStatusSQLList(), strings.Join(placeholders, ","))
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err

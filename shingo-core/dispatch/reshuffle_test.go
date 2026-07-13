@@ -1559,10 +1559,16 @@ func TestReshuffleRestoreParent_NotVisibleToScanner(t *testing.T) {
 	}
 }
 
-// TestReshuffleRestoreParent_ExcludedFromAdminList: synthetic parent
-// does not appear in admin-list queries (List / ListActive /
-// ListFiltered).
-func TestReshuffleRestoreParent_ExcludedFromAdminList(t *testing.T) {
+// TestReshuffleRestoreParent_VisibleInAdminList: the reshuffle_restore synthetic
+// parent DOES appear in admin-list queries.
+//
+// This inverts the old contract. The type used to be filtered out of List /
+// ListActive on the grounds that it is never operator-ACTIONABLE. But it is
+// operator-DIAGNOSABLE: a restore synthetic can strand at `reshuffling` when its
+// listener never fires, and the reconciliation sweeps that resolve that
+// (ResolveOrphanedReshuffleRestores, RecoverPendingRestocks) are only trustworthy
+// if their subjects can be seen. Hiding it made a stuck restock invisible.
+func TestReshuffleRestoreParent_VisibleInAdminList(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	syn := &orders.Order{
@@ -1574,20 +1580,25 @@ func TestReshuffleRestoreParent_ExcludedFromAdminList(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(syn), "create synthetic")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(syn.ID, string(StatusReshuffling), "test"), "set Reshuffling")
 
-	// List (no status filter).
-	all, _ := db.ListOrders("", 100)
-	for _, o := range all {
-		if o.OrderType == OrderTypeReshuffleRestore {
-			t.Errorf("ListOrders returned synthetic %d (admin filter should exclude)", o.ID)
+	found := func(os []*orders.Order) bool {
+		for _, o := range os {
+			if o.ID == syn.ID && o.OrderType == OrderTypeReshuffleRestore {
+				return true
+			}
 		}
+		return false
 	}
 
-	// ListActive.
-	active, _ := db.ListActiveOrders()
-	for _, o := range active {
-		if o.OrderType == OrderTypeReshuffleRestore {
-			t.Errorf("ListActiveOrders returned synthetic %d (admin filter should exclude)", o.ID)
-		}
+	all, err := db.ListOrders("", 100)
+	testutil.MustNoErr(t, err, "ListOrders")
+	if !found(all) {
+		t.Errorf("ListOrders omitted reshuffle_restore synthetic %d — a stranded restock must be visible to operators", syn.ID)
+	}
+
+	active, err := db.ListActiveOrders()
+	testutil.MustNoErr(t, err, "ListActiveOrders")
+	if !found(active) {
+		t.Errorf("ListActiveOrders omitted reshuffle_restore synthetic %d — it is non-terminal and stuck; that is exactly when it must show", syn.ID)
 	}
 }
 

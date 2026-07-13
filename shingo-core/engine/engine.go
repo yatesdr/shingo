@@ -160,11 +160,18 @@ func New(c Config) *Engine {
 	e.reconciliation.advanceCompound = func(parentID int64) error {
 		return e.dispatcher.AdvanceCompoundOrder(parentID)
 	}
+	// resolveRestoreSynthetic resolves stranded reshuffle_restore synthetics
+	// with zero children — complementary to advanceCompound (all-children
+	// terminal). Late-bound (e.dispatcher is created in Start()).
+	e.reconciliation.resolveRestoreSynthetic = func(syntheticParentID int64, edgeUUID string) error {
+		return e.dispatcher.ResolveOrphanedRestoreSynthetic(syntheticParentID, edgeUUID)
+	}
 	e.recovery = newRecoveryService(e)
 	e.binManifest = service.NewBinManifestService(e.db)
 	e.binService = service.NewBinService(e.db, e.binManifest)
 	e.orderService = service.NewOrderService(e.db, e.fleet)
 	e.nodeService = service.NewNodeService(e.db)
+
 	e.auditService = service.NewAuditService(e.db)
 	e.demandService = service.NewDemandService(e.db)
 	e.payloadService = service.NewPayloadService(e.db)

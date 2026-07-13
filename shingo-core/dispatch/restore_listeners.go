@@ -1,7 +1,9 @@
 package dispatch
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -26,9 +28,11 @@ type persistedBlocker struct {
 }
 
 type persistedRestockPlan struct {
-	LaneID   int64              `json:"lane_id"`
-	GroupID  int64              `json:"group_id"`
-	Blockers []persistedBlocker `json:"blockers"`
+	LaneID         int64              `json:"lane_id"`
+	GroupID        int64              `json:"group_id"`
+	TargetSlotID   int64              `json:"target_slot_id"`
+	TargetSlotName string             `json:"target_slot_name"`
+	Blockers       []persistedBlocker `json:"blockers"`
 }
 
 // restoreBlocker captures one blocker's original (lane) position and
@@ -49,9 +53,10 @@ type restoreEntry struct {
 	syntheticParent  *orders.Order
 	complexParentID  int64
 	targetBinID      int64
-	expectedFromNode int64 // node ID we expect to see the bin LEAVING
-	laneID           int64 // for unlocking on listener fire
-	groupID          int64 // for the restock plan
+	expectedFromNode int64       // node ID we expect to see the bin LEAVING
+	laneID           int64       // for unlocking on listener fire
+	groupID          int64       // for the restock plan
+	targetSlot       *nodes.Node // target bin's original lane slot — used by restockDestinations for bubble-free packing
 	blockers         []restoreBlocker
 }
 
@@ -192,6 +197,7 @@ func (d *Dispatcher) scheduleRestoreIfEnabled(
 		expectedFromNode: expectedFromNode,
 		laneID:           laneID,
 		groupID:          groupID,
+		targetSlot:       plan.TargetSlot,
 		blockers:         blockers,
 	}
 	if !d.restoreListeners.Register(entry) {
@@ -219,6 +225,10 @@ func (d *Dispatcher) persistPendingRestock(entry *restoreEntry) error {
 	pp := persistedRestockPlan{
 		LaneID:  entry.laneID,
 		GroupID: entry.groupID,
+	}
+	if entry.targetSlot != nil {
+		pp.TargetSlotID = entry.targetSlot.ID
+		pp.TargetSlotName = entry.targetSlot.Name
 	}
 	for _, b := range entry.blockers {
 		pb := persistedBlocker{BinID: b.bin.ID}
@@ -249,8 +259,9 @@ func (d *Dispatcher) persistPendingRestock(entry *restoreEntry) error {
 // RecoverPendingRestocks runs at Core boot. Scans the pending_restocks
 // table; for each row whose complex parent is still in a non-terminal
 // status, re-registers an in-memory listener. Rows whose parent is
-// terminal (cancelled, failed, confirmed) are deleted — those
-// listeners would never fire.
+// terminal (cancelled, failed, confirmed) resolve the synthetic parent
+// via resolveTerminalRestoreParent rather than leaving it stranded at
+// `reshuffling` with no listener.
 //
 // Called once from the engine startup path (after the dispatcher is
 // constructed but before event subscriptions start firing).
@@ -272,11 +283,9 @@ func (d *Dispatcher) RecoverPendingRestocks() error {
 			continue
 		}
 		if protocol.IsTerminal(parent.Status) {
-			log.Printf("dispatch: recover pending_restock %d: complex parent %d already terminal (%s); deleting row",
-				row.ID, parent.ID, parent.Status)
-			if dErr := d.db.DeletePendingRestockByComplexParent(row.ComplexParentID); dErr != nil {
-				log.Printf("dispatch: delete stale pending_restock for complex %d: %v", row.ComplexParentID, dErr)
-			}
+			log.Printf("dispatch: recover pending_restock %d: complex parent %d already terminal (%s); resolving synthetic %d",
+				row.ID, parent.ID, parent.Status, row.SyntheticParentID)
+			d.resolveTerminalRestoreParent(row.SyntheticParentID, row.ComplexParentID)
 			continue
 		}
 		var pp persistedRestockPlan
@@ -306,6 +315,10 @@ func (d *Dispatcher) RecoverPendingRestocks() error {
 				shuffle:  &nodes.Node{ID: pb.ShuffleNodeID, Name: pb.ShuffleName},
 			})
 		}
+		var targetSlot *nodes.Node
+		if pp.TargetSlotID != 0 {
+			targetSlot = &nodes.Node{ID: pp.TargetSlotID, Name: pp.TargetSlotName}
+		}
 		entry := &restoreEntry{
 			syntheticParent:  syn,
 			complexParentID:  row.ComplexParentID,
@@ -313,6 +326,7 @@ func (d *Dispatcher) RecoverPendingRestocks() error {
 			expectedFromNode: row.ExpectedFromNodeID,
 			laneID:           pp.LaneID,
 			groupID:          pp.GroupID,
+			targetSlot:       targetSlot,
 			blockers:         blockers,
 		}
 		if !d.restoreListeners.Register(entry) {
@@ -370,12 +384,14 @@ func (d *Dispatcher) HandleBinEnteredTransit(binID, fromNodeID int64) {
 	}
 }
 
-// HandleComplexParentTerminal is called when a complex parent reaches
-// Cancelled or Failed before the bin-transit event arrives. Drops
-// the listener; no restock runs (parent didn't pick up, so leaving
-// the lane in its post-unbury state is correct). Also deletes the
-// persisted pending_restocks row so Core boot recovery doesn't
-// re-register a stale listener.
+// HandleComplexParentTerminal is called when a complex parent reaches a
+// terminal status (Cancelled, Failed, Skipped, Completed) before the bin-
+// transit event arrives — or after, for the Completed path where the listener
+// was never consumed (expectedFromNode mismatch). Drops the listener; no
+// restock runs.
+//
+// Delegates to resolveTerminalRestoreParent for the lifecycle decision
+// (confirm or cancel the synthetic parent + delete the pending_restocks row).
 func (d *Dispatcher) HandleComplexParentTerminal(complexParentID int64) {
 	if d.restoreListeners == nil {
 		return
@@ -391,12 +407,70 @@ func (d *Dispatcher) HandleComplexParentTerminal(complexParentID int64) {
 		}
 		return
 	}
-	// Cancel the synthetic parent so its row doesn't sit at Reshuffling forever.
+
+	d.resolveTerminalRestoreParent(entry.syntheticParent.ID, complexParentID)
+}
+
+// resolveTerminalRestoreParent resolves a synthetic reshuffle_restore parent
+// when its complex parent is terminal — confirm (parent completed) or cancel
+// (parent failed/cancelled). The persisted pending_restocks row is deleted on
+// successful resolution so boot recovery won't re-register a stale listener.
+//
+// Called from three paths:
+//   - HandleComplexParentTerminal (live event handler, has an in-memory entry)
+//   - RecoverPendingRestocks (boot recovery, no in-memory entry)
+//   - ResolveOrphanedRestoreSynthetic (periodic sweep, defense-in-depth)
+//
+// The synthetic parent ID is enough — the complex parent ID is only needed
+// for the pending_restocks delete (keyed on complex_parent_id).
+func (d *Dispatcher) resolveTerminalRestoreParent(syntheticParentID, complexParentID int64) {
+	syn, err := d.db.GetOrder(syntheticParentID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows) || (err == nil && syn == nil):
+		// The synthetic genuinely does not exist — there is nothing to resolve, and
+		// leaving the row would make boot recovery re-register a listener for an
+		// order that is gone. Safe to drop.
+		log.Printf("dispatch: resolve restore parent %d: synthetic %d does not exist; deleting pending_restock for complex %d",
+			syntheticParentID, syntheticParentID, complexParentID)
+		if dErr := d.db.DeletePendingRestockByComplexParent(complexParentID); dErr != nil {
+			log.Printf("dispatch: delete pending_restock on synthetic-gone for complex %d: %v", complexParentID, dErr)
+		}
+		return
+	case err != nil:
+		// The lookup FAILED. That is not evidence the synthetic is gone, and
+		// pending_restocks is the only durable record of this restock — deleting it
+		// on a transient DB error destroys the recovery path (R04-3). Keep the row
+		// and let boot recovery or the periodic sweep retry.
+		log.Printf("dispatch: resolve restore parent %d: synthetic lookup failed (%v); keeping pending_restock for complex %d",
+			syntheticParentID, err, complexParentID)
+		return
+	}
+
+	parent, pErr := d.db.GetOrder(complexParentID)
+	if pErr == nil && parent != nil && parent.Status == protocol.StatusConfirmed {
+		// Parent completed — work happened, listener just never matched.
+		_ = d.lifecycle.CompleteCompound(syn)
+		updated, err := d.db.GetOrder(syn.ID)
+		if err != nil {
+			log.Printf("dispatch: re-check synthetic parent %d after confirm for complex %d: %v", syn.ID, complexParentID, err)
+			return
+		}
+		if !protocol.IsTerminal(updated.Status) {
+			log.Printf("dispatch: synthetic parent %d not terminal after confirm (status %s) for complex %d; keeping pending_restock for recovery", syn.ID, updated.Status, complexParentID)
+			return
+		}
+		if err := d.db.DeletePendingRestockByComplexParent(complexParentID); err != nil {
+			log.Printf("dispatch: delete pending_restock on parent confirmed for complex %d: %v", complexParentID, err)
+		}
+		d.dbg("complex: restore-blockers deregistered for complex %d (parent confirmed, synthetic confirmed)", complexParentID)
+		return
+	}
+
+	// Parent cancelled / failed / skipped / unresolvable — didn't pick up.
 	// CancelOrder is best-effort (it only logs on a failed transition), so
 	// re-check the persisted status rather than assume success — only drop the
 	// durable recovery row once the synthetic parent is actually terminal;
-	// otherwise keep it so boot recovery can resolve a still-stuck parent.
-	syn := entry.syntheticParent
+	// otherwise keep it so the next pass can retry.
 	d.lifecycle.CancelOrder(syn, syn.StationID, "complex parent terminated before pickup")
 	updated, err := d.db.GetOrder(syn.ID)
 	if err != nil {
@@ -413,40 +487,109 @@ func (d *Dispatcher) HandleComplexParentTerminal(complexParentID int64) {
 	d.dbg("complex: restore-blockers deregistered for complex %d (parent terminal)", complexParentID)
 }
 
+// ResolveOrphanedRestoreSynthetic resolves a stranded reshuffle_restore
+// synthetic parent by looking up its associated complex parent and applying
+// the terminal resolution. Called from the ReconciliationService periodic
+// sweep as defense-in-depth for the gap between "delete pending_restocks row"
+// and "resolve synthetic parent." The complex parent ID is parsed from
+// edge_uuid, which has format "restore-<complexParentID>-<binID>" (set in
+// scheduleRestoreIfEnabled). If the complex parent is missing or still
+// non-terminal, returns ErrRestoreParentNotResolvable so the sweep can
+// distinguish "skip, retry later" from "resolved."
+//
+// The edge_uuid format dependency is intentional — the sweep and the format
+// string live in the same package. See scheduleRestoreIfEnabled.
+func (d *Dispatcher) ResolveOrphanedRestoreSynthetic(syntheticParentID int64, edgeUUID string) error {
+	// Parse complex parent ID from edge_uuid: "restore-%d-%d"
+	var complexParentID int64
+	if _, err := fmt.Sscanf(edgeUUID, "restore-%d-", &complexParentID); err != nil || complexParentID == 0 {
+		return fmt.Errorf("%w: cannot parse complex parent from edge_uuid %q: %v",
+			ErrRestoreParentNotResolvable, edgeUUID, err)
+	}
+
+	parent, err := d.db.GetOrder(complexParentID)
+	if err != nil {
+		return fmt.Errorf("lookup complex parent %d: %w", complexParentID, err)
+	}
+	if parent == nil || !protocol.IsTerminal(parent.Status) {
+		// Parent gone or still live — can't resolve yet. Not an error,
+		// just not actionable this pass.
+		return fmt.Errorf("%w: complex parent %d not terminal (status=%s)",
+			ErrRestoreParentNotResolvable, complexParentID, parent.Status)
+	}
+
+	d.resolveTerminalRestoreParent(syntheticParentID, complexParentID)
+	return nil
+}
+
+// ErrRestoreParentNotResolvable is returned by ResolveOrphanedRestoreSynthetic
+// when the complex parent is missing or non-terminal — the sweep should skip
+// and retry next pass rather than treat it as a permanent failure.
+var ErrRestoreParentNotResolvable = fmt.Errorf("restore parent not resolvable")
+
 // dispatchRestoreCompound builds a deepest-first restock plan and
 // dispatches it as children of the already-created synthetic parent.
 // Called from HandleBinEnteredTransit when both bin ID and FromNodeID
 // match the pending entry.
+//
+// Restocks blockers deepest-first via slot rotation (restockDestinations,
+// same algorithm the simple-retrieve PlanReshuffle uses) so the lane ends
+// with depths 2..N filled and the mouth (depth 1) empty — bubble-free.
 func (d *Dispatcher) dispatchRestoreCompound(entry *restoreEntry) error {
-	// Deepest-first: reverse the blockers (which were captured in
-	// shallowest-first order from the unbury plan). The restore
-	// compound has no single "target bin" — it's an N-bin restock —
-	// so TargetBin is set to the parent's target (the bin whose
-	// pickup triggered this) for traceability only. CreateCompoundOrder
-	// reads it only for the BeginReshuffle log line; the children's
-	// BinIDs come from the steps themselves.
 	plan := &ReshufflePlan{
 		TargetBin:  &bins.Bin{ID: entry.targetBinID},
-		TargetSlot: nil,
+		TargetSlot: entry.targetSlot,
 		Lane:       nil,
 	}
+
+	// Convert restoreBlockers to reshuffleBlockers so restockDestinations
+	// can compute the packed (deepest-first, bubble-free) destination list.
+	// Blockers are in shallowest-first order from the unbury plan.
+	rb := make([]reshuffleBlocker, len(entry.blockers))
+	for i, b := range entry.blockers {
+		rb[i] = reshuffleBlocker{
+			bin:  b.bin,
+			slot: b.original, // original lane-slot position
+		}
+	}
+	// Get packed destinations: deepest blocker → target's old slot (depth N),
+	// each shallower blocker → next-deeper blocker's original slot (depth 2..N-1),
+	// mouth (depth 1) stays empty. Matches PlanReshuffle's bubble-free restock.
+	//
+	// restockDestinations puts targetSlot at dests[n-1], so a nil targetSlot would
+	// dispatch the deepest restock leg with a nil destination. That happens for
+	// pending_restocks rows persisted before TargetSlotID existed, which boot
+	// recovery re-registers with targetSlot=nil. Fall back to each blocker's own
+	// original slot: it leaves the mouth bubble the packing avoids, but it is a
+	// valid lane state and every leg has a real destination.
+	var dests []*nodes.Node
+	if entry.targetSlot != nil {
+		dests = restockDestinations(rb, entry.targetSlot)
+	} else {
+		log.Printf("dispatch: restore compound for complex %d has no target slot (pre-TargetSlotID pending_restock); restocking to original slots", entry.complexParentID)
+		dests = make([]*nodes.Node, len(rb))
+		for i := range rb {
+			dests[i] = rb[i].slot
+		}
+	}
+
+	// Execute deepest-first (reverse order).
 	seq := 1
-	// TODO(reshuffle-refactor): restock packs to each blocker's ORIGINAL slot here, which
-	// leaves bubbles (the target's freed slot stays empty; blockers' own slots fill at their
-	// original depths). PlanReshuffle above was fixed to pack deepest-first via slot rotation
-	// (see restockDestinations in reshuffle.go). This restore path needs the same treatment
-	// but requires the target's slot, which isn't captured in restoreEntry today (and the
-	// persisted persistedRestockPlan would need a TargetSlotName field for crash recovery).
-	// Deferred to the reshuffle refactor — expose-mode restore is off by default
-	// (restore_blockers toggle), so the demo plant doesn't exercise this path.
 	for i := len(entry.blockers) - 1; i >= 0; i-- {
 		b := entry.blockers[i]
+		if dests[i] == nil {
+			// No recoverable destination for this blocker — dispatching a leg with a
+			// nil ToNode would panic downstream. Skip it and leave the bin parked at
+			// its shuffle node for the operator rather than emit a malformed order.
+			log.Printf("dispatch: restore compound for complex %d: blocker bin %d has no restock destination; skipping leg", entry.complexParentID, b.bin.ID)
+			continue
+		}
 		plan.Steps = append(plan.Steps, ReshuffleStep{
 			Sequence: seq,
 			StepType: protocol.StepRestock,
 			BinID:    b.bin.ID,
 			FromNode: b.shuffle,
-			ToNode:   b.original,
+			ToNode:   dests[i],
 		})
 		seq++
 	}

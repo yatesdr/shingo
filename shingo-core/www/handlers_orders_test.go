@@ -377,11 +377,16 @@ func TestSubmitSpotRetrieveSpecific_BinAlreadyClaimed(t *testing.T) {
 	}
 }
 
-// TestReshuffleRestoreParent_ExcludedFromAdminList locks §12.2 Surface 8:
-// a synthetic ReshuffleRestore parent must NOT appear in apiListOrders
-// (or any admin-facing list query). The SQL filter
-// adminListExcludeTypeFilter in store/orders/orders.go enforces this.
-func TestReshuffleRestoreParent_ExcludedFromAdminList(t *testing.T) {
+// TestReshuffleRestoreParent_VisibleInAdminList is the HTTP-layer dual of
+// dispatch's TestReshuffleRestoreParent_VisibleInAdminList, and it INVERTS the
+// old §12.2 Surface 8 contract.
+//
+// The synthetic ReshuffleRestore parent used to be stripped from apiListOrders by
+// a SQL filter in store/orders, because it is never operator-ACTIONABLE. But it is
+// operator-DIAGNOSABLE: the synthetic can strand at `reshuffling` when its restore
+// listener never fires, and hiding it meant a stuck restock was invisible in the
+// one place an operator would look. The store filter is gone; the API returns it.
+func TestReshuffleRestoreParent_VisibleInAdminList(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 
@@ -404,9 +409,8 @@ func TestReshuffleRestoreParent_ExcludedFromAdminList(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(normal), "create normal")
 
-	// Hit the API list endpoint (no status filter — returns recent
-	// orders across all statuses, capped at limit). The admin SQL
-	// filter strips synthetic restore parents server-side.
+	// Hit the API list endpoint (no status filter — returns recent orders across
+	// all statuses, capped at limit). Both order types must come back.
 	req := httptest.NewRequest(http.MethodGet, "/api/orders", nil)
 	rr := httptest.NewRecorder()
 	h.apiListOrders(rr, req)
@@ -428,8 +432,9 @@ func TestReshuffleRestoreParent_ExcludedFromAdminList(t *testing.T) {
 			sawNormal = true
 		}
 	}
-	if sawSynthetic {
-		t.Error("synthetic ReshuffleRestore parent must be filtered out of admin list")
+	if !sawSynthetic {
+		t.Errorf("ReshuffleRestore synthetic missing from the admin list — a restock stranded at "+
+			"`reshuffling` must be visible to the operator, not filtered away; body=%s", rr.Body.String())
 	}
 	if !sawNormal {
 		t.Errorf("normal retrieve order should appear in admin list (regression check); body=%s", rr.Body.String())

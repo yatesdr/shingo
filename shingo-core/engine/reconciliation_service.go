@@ -38,6 +38,12 @@ type ReconciliationService struct {
 	// `reshuffling` when a child→parent terminal event was missed (crash) or
 	// never fired (the cancelled-child vector has no child→parent event arm).
 	advanceCompound func(parentID int64) error
+	// resolveRestoreSynthetic resolves a stranded reshuffle_restore synthetic
+	// parent with zero children. Late-bound to dispatch.Dispatcher.
+	// ResolveOrphanedRestoreSynthetic in engine.New. Complementary to
+	// advanceCompound — this handles the zero-children case (listener never
+	// fired) while advanceCompound handles the all-children-terminal case.
+	resolveRestoreSynthetic func(syntheticParentID int64, edgeUUID string) error
 }
 
 func newReconciliationService(db ReconciliationStore, logFn LogFunc) *ReconciliationService {
@@ -109,6 +115,11 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 				s.logFn("engine: advance stuck reshuffle parents error: %v", err)
 			} else if n > 0 {
 				s.logFn("engine: re-drove %d stuck reshuffle parents", n)
+			}
+			if n, err := s.ResolveOrphanedReshuffleRestores(); err != nil {
+				s.logFn("engine: resolve orphaned reshuffle restores error: %v", err)
+			} else if n > 0 {
+				s.logFn("engine: resolved %d orphaned reshuffle restore parents", n)
 			}
 			if n, err := s.db.ReapOrphanedReservations(); err != nil {
 				s.logFn("engine: reap orphaned reservations error: %v", err)
@@ -249,6 +260,64 @@ func (s *ReconciliationService) AdvanceStuckReshuffleParents() (int, error) {
 		advanced++
 	}
 	return advanced, nil
+}
+
+// ResolveOrphanedReshuffleRestores finds synthetic reshuffle_restore orders
+// stranded at `reshuffling` with ZERO children — the listener was never
+// consumed so dispatchRestoreCompound never ran. Complementary case to
+// AdvanceStuckReshuffleParents (which catches parents whose children ALL
+// EXIST and are terminal).
+//
+// Defense-in-depth: the primary fix resolves stranded synthetics at boot
+// (RecoverPendingRestocks) and on live terminal events
+// (HandleComplexParentTerminal). This catches the gap between "delete
+// pending_restocks row" and "resolve synthetic parent" a crash could expose.
+func (s *ReconciliationService) ResolveOrphanedReshuffleRestores() (int, error) {
+	if s.resolveRestoreSynthetic == nil {
+		return 0, nil
+	}
+
+	rows, err := s.db.Query(`
+		SELECT id, edge_uuid
+		FROM orders
+		WHERE order_type = 'reshuffle_restore'
+		  AND status = 'reshuffling'
+		  AND NOT EXISTS (SELECT 1 FROM orders c WHERE c.parent_order_id = orders.id)
+		ORDER BY id
+		LIMIT 100`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var syntheticIDs []int64
+	var edgeUUIDs []string
+	for rows.Next() {
+		var id int64
+		var uuid string
+		if err := rows.Scan(&id, &uuid); err != nil {
+			return 0, err
+		}
+		syntheticIDs = append(syntheticIDs, id)
+		edgeUUIDs = append(edgeUUIDs, uuid)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	resolved := 0
+	for i, id := range syntheticIDs {
+		err := s.resolveRestoreSynthetic(id, edgeUUIDs[i])
+		if err != nil {
+			s.logFn("engine: orphan restore %d (%s): %v (skipping this pass)", id, edgeUUIDs[i], err)
+			continue
+		}
+		s.logFn("engine: resolved orphaned reshuffle restore %d (%s)", id, edgeUUIDs[i])
+		s.db.RecordRecoveryAction("resolve_orphan_restore", "order", id,
+			"resolved stranded reshuffle_restore parent with zero children", "system")
+		resolved++
+	}
+	return resolved, nil
 }
 
 // AbandonStuckOrders cancels RUNTIME-stuck orders that have sat without progress past the

@@ -57,6 +57,15 @@ type Zone struct {
 	RetrieveAlgorithm string `yaml:"retrieve_algorithm"`
 	StoreAlgorithm    string `yaml:"store_algorithm"`
 	Lanes             []Lane `yaml:"lanes"`
+	// ReshuffleRestoreBlockers, when "on", enables the restore-blockers
+	// behaviour for complex-order reshuffles in this zone: after the parent
+	// picks up the unburied target bin, blockers are moved back to their
+	// original lane slots via a synthetic-parent restock compound. When
+	// empty or "off" (default), blockers stay in shuffle slots and lane
+	// geometry shifts, creating permanent air bubbles in a running loop.
+	// Stored as a node property on the NGRP; runtime read by
+	// dispatch.ReshuffleRestoreBlockersEnabled.
+	ReshuffleRestoreBlockers string `yaml:"reshuffle_restore_blockers,omitempty"`
 }
 
 // Lane is a LANE node under a zone; its slots carry an explicit depth so buried
