@@ -41,6 +41,7 @@ type orderProgress struct {
 	hasRobot    bool      // holds a robot from the finite fleet (G16)
 	queuedSince time.Time // non-zero while waiting for a free robot (G16)
 	staged      bool      // driven to WAITING (status "staged") at a wait dwell
+	heldAt      string    // non-empty while stalled at an occupied position (log-once)
 }
 
 // Driver advances simulated orders through their lifecycle on a clock tick,
@@ -259,13 +260,20 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 
 		// The final block of a complete order is represented by FINISHED, whose
 		// delivery the engine records via handleOrderDelivered (T2.2 rationale).
+		// It is still a physical placement, so it takes the same occupancy hold.
 		if ov.Complete && p.blockIndex == len(blocks)-1 {
+			if d.holdForPosition(now, vid, blocks[p.blockIndex].Location, blocks[p.blockIndex].BinTask, p) {
+				return
+			}
 			d.sim.DriveState(vid, "FINISHED")
 			d.markDone(p)
 			return
 		}
 
 		b := blocks[p.blockIndex]
+		if d.holdForPosition(now, vid, b.Location, b.BinTask, p) {
+			return
+		}
 		d.sim.CompleteBlock(vid, b.BlockID, b.Location, b.BinTask)
 		p.blockIndex++
 		p.deadline = d.nextDeadline(now)
@@ -420,4 +428,47 @@ func (d *Driver) gcProgress() {
 			delete(d.progress, vid)
 		}
 	}
+}
+
+// holdForPosition enforces the plant's one-bin-per-node invariant: a robot cannot
+// complete a block at a position already holding a bin its order does not own — it
+// STALLS there until the position clears. Returns true if the order is held this
+// tick (caller must not advance it).
+//
+// Without this the driver completes every block on a timer, so a two-robot swap
+// "delivers" the empty onto the press before the other robot has lifted the full
+// bin out. That is physically impossible in a plant (the robot cannot lower a bin
+// onto an occupied position, so the block never FINISHes), but Core has no way to
+// know the fleet lied: a completed delivery is proof the slot was empty, so the bin
+// still recorded there must be a stale ghost — and Core evicts a perfectly good bin.
+// Chased at length on 2026-07-13; the bug was here, not in Core.
+//
+// The stall is the POINT, not a side effect: a robot parked at an occupied position
+// is exactly the real failure class (the Hopkinsville swap deadlock), which the
+// timer-only driver could never reproduce. If an order holds forever, the sim has
+// found a genuine deadlock — surface it, don't paper over it.
+//
+// No gate installed (unit tests, non-engine callers) = old timer-only behaviour.
+func (d *Driver) holdForPosition(now time.Time, vid, location, binTask string, p *orderProgress) bool {
+	g := d.sim.PositionGate()
+	if g == nil || location == "" {
+		return false
+	}
+	ok, blockedBy := g.CanEnterPosition(vid, location, binTask)
+	if ok {
+		if p.heldAt != "" {
+			log.Printf("[sim] order %s resumed at %s (position cleared)", vid, p.heldAt)
+			p.heldAt = ""
+		}
+		return false
+	}
+	if p.heldAt != location {
+		log.Printf("[sim] order %s HOLDING at %s — %s (a robot cannot place onto an occupied position)",
+			vid, location, blockedBy)
+		p.heldAt = location
+	}
+	// Re-check on the next tick. Deliberately does NOT draw from the PRNG, so the
+	// seeded draw sequence stays identical for any order that never has to hold.
+	p.deadline = now.Add(time.Second)
+	return true
 }

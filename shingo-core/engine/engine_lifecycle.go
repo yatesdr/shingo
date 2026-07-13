@@ -53,6 +53,15 @@ func (e *Engine) Start() {
 	// Wire event handlers
 	e.wireEventHandlers()
 
+	// Teach the fleet backend the plant's one-bin-per-node invariant. Only the
+	// simulator implements PositionGated — a real fleet gets this from physics.
+	// Without it the sim completes blocks on a timer and "delivers" onto occupied
+	// positions, which cannot happen in a plant and makes Core evict good bins as
+	// stale ghosts (2026-07-13 press-swap chase).
+	if pg, ok := e.fleet.(fleet.PositionGated); ok {
+		pg.SetPositionGate(e)
+	}
+
 	// Start the fleet driver goroutine AFTER event handlers are wired.
 	// The sim driver emits FINISHED events immediately; without this gate
 	// handleVendorStatusChanged is never called and bins enter _TRANSIT

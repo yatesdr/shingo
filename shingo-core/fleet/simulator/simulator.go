@@ -60,6 +60,7 @@ type SimulatorBackend struct {
 	clk      clock.Clock           // stamps terminalAt + (via driver) times transitions
 	emitter  fleet.TrackerEmitter  // set by InitTracker
 	resolver fleet.OrderIDResolver // set by InitTracker
+	posGate  fleet.PositionGate    // set by SetPositionGate; nil = no occupancy model
 	// driver holds the *Driver in sim builds. Typed `any` so the package still
 	// compiles without the sim tag, where nothing assigns or reads it — which is
 	// exactly why `unused` fires here on the default build. CI lints untagged, so
@@ -287,6 +288,25 @@ func (s *SimulatorBackend) InitTracker(emitter fleet.TrackerEmitter, resolver fl
 	defer s.mu.Unlock()
 	s.emitter = emitter
 	s.resolver = resolver
+}
+
+// SetPositionGate installs the one-bin-per-node occupancy model (fleet.PositionGated).
+// Without it the driver completes every block on a timer and will "deliver" onto an
+// occupied node — physically impossible in a plant, and it makes Core evict a good
+// bin as a stale ghost. Nil gate = old timer-only behaviour (what unit tests use).
+func (s *SimulatorBackend) SetPositionGate(g fleet.PositionGate) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.posGate = g
+}
+
+// PositionGate returns the installed gate, or nil when no occupancy model is
+// wired (unit tests, non-engine callers) — the driver then falls back to the old
+// timer-only behaviour.
+func (s *SimulatorBackend) PositionGate() fleet.PositionGate {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.posGate
 }
 
 // Tracker returns a no-op OrderTracker. The simulator does not need a poller —

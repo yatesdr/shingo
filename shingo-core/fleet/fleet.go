@@ -80,6 +80,43 @@ type CreateOrderRequest struct {
 	Complete bool
 }
 
+// PositionGate answers whether a robot may complete a block at a location right
+// now. A plant node holds EXACTLY ONE BIN, so a robot physically cannot place a
+// bin onto a position that already holds someone else's — it stalls there until
+// the position clears. A real fleet gets that for free from physics: the block
+// simply never reports FINISHED.
+//
+// The simulator has no physics. Without this it completes every block on a timer,
+// so it will happily "deliver" onto an occupied node — an event that cannot occur
+// in a plant. Core then does the only correct thing with an impossible input
+// (a completed delivery proves the slot was empty, so the conflicting record must
+// be a stale ghost) and evicts a perfectly good bin. That is not a Core bug; it is
+// the sim lying. See the 2026-07-13 two-robot press-swap chase.
+//
+// Only a PLACEMENT can be blocked. A pickup is the robot REMOVING the bin that is
+// there, and a wait is it standing next to one -- neither can be obstructed by
+// occupancy, and holding them deadlocks the robot against the very bin it came for.
+// (Learned the hard way: ownership alone does not distinguish the two, because
+// ApplyArrival clears a bin's claim when it lands, so a compound restock leg
+// arrives to collect a bin that is no longer claimed by anyone.)
+//
+// Implemented by the engine (which owns bins and nodes) — the fleet package stays
+// vendor-neutral. Real backends do not implement PositionGated and are unaffected.
+type PositionGate interface {
+	// CanEnterPosition reports whether vendorOrderID's robot may complete a block
+	// with binTask at location now. ok=false means HOLD — retry on a later tick.
+	// blockedBy is a human-readable reason for the sim log. Only placements are
+	// ever held; the implementation decides what counts as one.
+	CanEnterPosition(vendorOrderID, location, binTask string) (ok bool, blockedBy string)
+}
+
+// PositionGated is the optional setter a backend exposes to receive a
+// PositionGate. Only the simulator implements it; the engine wires itself in via
+// a type assertion, exactly as it does for DriverStarter.
+type PositionGated interface {
+	SetPositionGate(g PositionGate)
+}
+
 // DriverStarter is an optional interface implemented by fleet backends whose
 // driver goroutine must launch AFTER the engine's event handlers are wired
 // (the sim driver, which emits FINISHED events immediately, would fire into
