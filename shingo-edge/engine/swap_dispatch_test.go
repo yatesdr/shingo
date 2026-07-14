@@ -112,8 +112,13 @@ func TestBuildSwapDispatch_Sequential(t *testing.T) {
 	if d.RequiresActiveSwapGuard {
 		t.Errorf("sequential should not require swap guard")
 	}
-	if d.DeliveryNodeA != "" {
-		t.Errorf("sequential's DeliveryNodeA should be empty (Core resolves from steps); got %q", d.DeliveryNodeA)
+	// Sequential's A-leg is the REMOVAL: it ends at the outbound destination, not
+	// at the process node. DeliveryNodeA is derived from the steps, so it names
+	// where the leg actually ends. (The order row still stores "" — AutoConfirmA
+	// blanks it in dispatchComplexLeg — but the dispatch must not claim the leg
+	// delivers to the press.)
+	if d.DeliveryNodeA != "OUT-DEST" {
+		t.Errorf("sequential's A-leg is a removal ending at the outbound destination; DeliveryNodeA = %q, want OUT-DEST", d.DeliveryNodeA)
 	}
 }
 
@@ -126,8 +131,12 @@ func TestBuildSwapDispatch_SingleRobot_OK(t *testing.T) {
 	if d.CycleMode != "single_robot" {
 		t.Errorf("CycleMode = %q, want single_robot", d.CycleMode)
 	}
-	if d.DeliveryNodeA != "CORE-NODE" {
-		t.Errorf("DeliveryNodeA = %q, want CORE-NODE", d.DeliveryNodeA)
+	// The single-robot A-leg drops a fresh bin at the press MID-sequence but ENDS
+	// at the outbound destination (it carries the spent bin out last). The old
+	// assertion of CORE-NODE encoded the bug: it asserted the leg delivers to the
+	// press, and wiring_delivered's gate believed it.
+	if d.DeliveryNodeA != "OUT-DEST" {
+		t.Errorf("single_robot's A-leg ends at the outbound destination; DeliveryNodeA = %q, want OUT-DEST", d.DeliveryNodeA)
 	}
 	if d.StepsB != nil {
 		t.Errorf("single_robot is single-order; StepsB should be nil")
@@ -180,6 +189,52 @@ func TestBuildSwapDispatch_TwoRobot_MissingStaging(t *testing.T) {
 	c.InboundStaging = ""
 	if _, err := BuildSwapDispatch(dispatchNode(), c); err == nil {
 		t.Fatalf("expected error for missing inbound staging")
+	}
+}
+
+// TestBuildSwapDispatch_TwoRobotPressIndex_OK is the happy path this mode never
+// had — the gap that let the HK 2026-07-14 misbind ship. The R1 (A) leg clears
+// the press and then stages a fresh carrier at the PAIRED INDEX node, so it ends
+// at CORE-NODE-BACK. DeliveryNodeA must say so: naming the press instead is what
+// made wiring_delivered bind an empty tote to the press and drove its tile to 0.
+func TestBuildSwapDispatch_TwoRobotPressIndex_OK(t *testing.T) {
+	t.Parallel()
+	d, err := BuildSwapDispatch(dispatchNode(), dispatchClaim("two_robot_press_index"))
+	if err != nil {
+		t.Fatalf("BuildSwapDispatch: %v", err)
+	}
+	if d.CycleMode != "two_robot_press_index" {
+		t.Errorf("CycleMode = %q, want two_robot_press_index", d.CycleMode)
+	}
+	if d.DeliveryNodeA != "CORE-NODE-BACK" {
+		t.Errorf("R1 stages the fresh carrier at the paired index node; DeliveryNodeA = %q, want CORE-NODE-BACK (naming the press is the misbind bug)", d.DeliveryNodeA)
+	}
+	if d.DeliveryNodeA == "CORE-NODE" {
+		t.Errorf("DeliveryNodeA must never be the process node for press-index — that is the HK misbind")
+	}
+	// R2 is the leg that actually puts a bin on the press.
+	if got := finalDropoff(d.StepsB); got != "CORE-NODE" {
+		t.Errorf("R2 final dropoff = %q, want CORE-NODE (R2 indexes the staged bin onto the press)", got)
+	}
+	if !d.AutoConfirmB {
+		t.Errorf("press-index R2 is auto-confirmed; AutoConfirmB = false, want true")
+	}
+	if !d.RequiresActiveSwapGuard {
+		t.Errorf("press-index must require swap guard")
+	}
+}
+
+// Three-position index: R1's fresh carrier feeds the SECOND paired node.
+func TestBuildSwapDispatch_TwoRobotPressIndex_ThreePosition(t *testing.T) {
+	t.Parallel()
+	c := dispatchClaim("two_robot_press_index")
+	c.SecondPairedCoreNode = "CORE-NODE-C"
+	d, err := BuildSwapDispatch(dispatchNode(), c)
+	if err != nil {
+		t.Fatalf("BuildSwapDispatch: %v", err)
+	}
+	if d.DeliveryNodeA != "CORE-NODE-C" {
+		t.Errorf("3-position R1 ends at the second paired node; DeliveryNodeA = %q, want CORE-NODE-C", d.DeliveryNodeA)
 	}
 }
 

@@ -27,8 +27,14 @@ type SwapDispatch struct {
 	// line bin for order.BinID at claim time and at release-time fallback.
 	ProcessNode string
 
-	StepsA        []protocol.ComplexOrderStep
-	DeliveryNodeA string // empty when Core resolves from steps
+	StepsA []protocol.ComplexOrderStep
+	// DeliveryNodeA is Leg A's actual final dropoff, derived from StepsA — never
+	// assumed to be the process node. It was previously hardcoded to
+	// claim.CoreNodeName, which is a lie for any mode whose A-leg ends somewhere
+	// else: a press-index R1 ends at the paired INDEX node, and a single-robot
+	// A-leg ends at the outbound destination. Storing the press there is what let
+	// wiring_delivered's gate bind the wrong bin (HK 2026-07-14).
+	DeliveryNodeA string
 	AutoConfirmA  bool
 
 	StepsB       []protocol.ComplexOrderStep
@@ -66,7 +72,26 @@ func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		markInboundEmpty(disp.StepsA, claim.InboundSource)
 		markInboundEmpty(disp.StepsB, claim.InboundSource)
 	}
+	// Derive Leg A's delivery node from its own steps rather than asserting it is
+	// the process node. The per-mode builders are the single source of truth for
+	// where a leg ends; anything that restates it by hand can drift out of step
+	// with them, and did — see DeliveryNodeA.
+	disp.DeliveryNodeA = finalDropoff(disp.StepsA)
 	return disp, nil
+}
+
+// finalDropoff returns the node of the LAST dropoff step, i.e. where a
+// single-bin order's bin comes to rest. Shared with wiring_delivered's
+// finalDropoffNode so the producer and the delivery gate can't disagree about
+// what "this leg's destination" means. Empty when there are no dropoff steps.
+func finalDropoff(steps []protocol.ComplexOrderStep) string {
+	dest := ""
+	for _, s := range steps {
+		if s.Action == protocol.ActionDropoff && s.Node != "" {
+			dest = s.Node
+		}
+	}
+	return dest
 }
 
 // markInboundEmpty flags every pickup at inboundSource as an empty leg. The
@@ -96,10 +121,9 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 			return nil, fmt.Errorf("node %s: single-robot swap requires inbound and outbound staging nodes", node.Name)
 		}
 		return &SwapDispatch{
-			CycleMode:     protocol.SwapModeSingleRobot,
-			ProcessNode:   claim.CoreNodeName,
-			StepsA:        BuildSingleSwapSteps(claim),
-			DeliveryNodeA: claim.CoreNodeName,
+			CycleMode:   protocol.SwapModeSingleRobot,
+			ProcessNode: claim.CoreNodeName,
+			StepsA:      BuildSingleSwapSteps(claim),
 		}, nil
 
 	case protocol.SwapModeTwoRobot:
@@ -111,7 +135,6 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 			CycleMode:               protocol.SwapModeTwoRobot,
 			ProcessNode:             claim.CoreNodeName,
 			StepsA:                  stepsA,
-			DeliveryNodeA:           claim.CoreNodeName,
 			StepsB:                  stepsB,
 			AutoConfirmB:            true,
 			RequiresActiveSwapGuard: true,
@@ -129,7 +152,6 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 			CycleMode:               protocol.SwapModeTwoRobotPressIndex,
 			ProcessNode:             claim.CoreNodeName,
 			StepsA:                  stepsR1,
-			DeliveryNodeA:           claim.CoreNodeName,
 			StepsB:                  stepsR2,
 			AutoConfirmB:            true,
 			RequiresActiveSwapGuard: true,
