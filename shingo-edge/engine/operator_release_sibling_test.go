@@ -75,9 +75,15 @@ func seedTwoRobotPair(t *testing.T, db *store.DB, nodeID int64, prefix string, s
 		t.Fatalf("promote claim to %s: %v", swapMode, err)
 	}
 
+	// A DELIVERS to the node (supply); B carries the spent bin away (evac).
+	// isSupplyOrderInTwoRobotSwap reads the STEPS to tell them apart — it used to
+	// read delivery_node, which is wrong in both directions for press-index (the evac
+	// leg stored the process node, and the real supply leg is auto-confirmed so its
+	// delivery_node is blanked).
 	orderA := stageOrderForConsumeNode(t, db, nodeID, prefix+"-A")
 	orderB := stageOrderForConsumeNode(t, db, nodeID, prefix+"-B")
-	testutil.MustNoErr(t, db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST"), "update orderB delivery_node")
+	redirectLegAway(t, db, orderB, node.CoreNodeName, "TR-EVAC-DEST")
+
 	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB), "track A+B on runtime")
 	testutil.MustNoErr(t, db.LinkOrderSiblings(orderA, orderB), "link siblings")
 	return orderA, orderB

@@ -216,9 +216,11 @@ func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
 		t.Fatalf("promote claim: %v", err)
 	}
 
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "get node")
 	orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-supply-A")
 	orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-supply-B")
-	_ = db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST")
+	redirectLegAway(t, db, orderB, node.CoreNodeName, "TR-EVAC-DEST")
 	bidA := int64(2001)
 	bidB := int64(2002)
 	_ = db.UpdateOrderBinID(orderA, &bidA)

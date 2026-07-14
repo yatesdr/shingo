@@ -26,8 +26,24 @@ func stageOrderForConsumeNode(t *testing.T, db *store.DB, nodeID int64, uuid str
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	// A complex order's destination lives in its STEPS — createComplexOrder always
+	// persists them, so an order without them isn't a real one. Steps agree with the
+	// delivery_node set above: this leg DELIVERS to the node.
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID,
+		`[{"action":"pickup","node":"TR-SOURCE"},{"action":"dropoff","node":"`+node.CoreNodeName+`"}]`), "steps (delivers to node)")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusStaged)), "transition to staged")
 	return orderID
+}
+
+// redirectLegAway turns a staged leg into an EVAC: it picks the spent bin up FROM
+// the node and carries it to dest. Sets delivery_node and steps together — they
+// must agree, because isSupplyOrderInTwoRobotSwap and the delivered gate both read
+// the steps to decide where a leg ends.
+func redirectLegAway(t *testing.T, db *store.DB, orderID int64, coreNodeName, dest string) {
+	t.Helper()
+	testutil.MustNoErr(t, db.UpdateOrderDeliveryNode(orderID, dest), "redirect delivery_node")
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID,
+		`[{"action":"pickup","node":"`+coreNodeName+`"},{"action":"dropoff","node":"`+dest+`"}]`), "redirect steps")
 }
 
 // TestReleaseOrderWithLineside_ZeroesUOPAndCapturesBuckets verifies the
@@ -636,14 +652,14 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 			case "supply":
 				orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-A")
 				orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-B")
-				_ = db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST")
+				redirectLegAway(t, db, orderB, coreNode, "TR-EVAC-DEST")
 				testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB), "track A+B on runtime")
 				testutil.MustNoErr(t, db.LinkOrderSiblings(orderA, orderB), "link siblings")
 				releaseOrderID = orderA
 			case "evac":
 				orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-A")
 				orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-B")
-				_ = db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST")
+				redirectLegAway(t, db, orderB, coreNode, "TR-EVAC-DEST")
 				testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB), "track A+B on runtime")
 				testutil.MustNoErr(t, db.LinkOrderSiblings(orderA, orderB), "link siblings")
 				releaseOrderID = orderB

@@ -406,8 +406,21 @@ func buildProtocolDisposition(disp ReleaseDisposition, runtime *processes.Runtim
 //     at order-creation time via LinkOrderSiblings).
 //   - claim.SwapMode must be "two_robot" or "two_robot_press_index"
 //     (the modes that have a supply/evac choreography).
-//   - order.DeliveryNode must equal node.CoreNodeName (supply delivers AT
-//     the slot; evac departs FROM it).
+//   - the leg's FINAL DROPOFF must be this node (supply delivers AT the slot;
+//     evac departs FROM it).
+//
+// The last test reads the order's steps, NOT order.DeliveryNode. That field was
+// wrong in both directions for press-index and this classifier believed it:
+//
+//   - R1 (the evac — it lifts the spent bin OFF the press) stored the press as
+//     its delivery node, so it was misread as the SUPPLY leg;
+//   - R2 (the real supply — it sets a bin ON the press) is auto-confirmed, and
+//     dispatchComplexLeg blanks delivery_node for auto-confirm legs, so it could
+//     NEVER be recognised as supply.
+//
+// The steps say plainly where a leg ends, so ask them. Same principle as the
+// delivery gate in wiring_delivered.go, and the same shared finalDropoff helper —
+// a leg has one destination and one place that decides it.
 //
 // Pre-2026-05-04, this function read runtime.ActiveOrderID /
 // StagedOrderID to discriminate. That signal decayed: handler_bin_picked_up
@@ -429,7 +442,12 @@ func (e *Engine) isSupplyOrderInTwoRobotSwap(order *storeorders.Order, node *pro
 	if order.SiblingOrderID == nil {
 		return false
 	}
-	return order.DeliveryNode == node.CoreNodeName
+	stepsJSON, err := e.db.GetOrderStepsJSON(order.ID)
+	if err != nil {
+		e.logRelease("supply-leg check: order %d — cannot load steps: %v (treating as evac)", order.ID, err)
+		return false
+	}
+	return finalDropoffNode(stepsJSON) == node.CoreNodeName
 }
 
 // resolveReleaseClaim returns the claim whose capacity the release
