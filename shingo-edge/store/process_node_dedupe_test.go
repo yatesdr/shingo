@@ -222,3 +222,96 @@ func TestCollapseDuplicateProcessNodes_UnboundNodesAreNotDuplicates(t *testing.T
 		t.Fatalf("inserting a third unbound node was rejected — the unique index must be PARTIAL (WHERE core_node_name <> ''): %v", err)
 	}
 }
+
+// TestCollapseDuplicateProcessNodes_MigratesInactiveLinesideBuckets pins the
+// collision guard's scope.
+//
+// The unique index on node_lineside_bucket is PARTIAL — UNIQUE(node_id,
+// part_number) WHERE state='active' — so only ACTIVE buckets can collide. The
+// guard used to test just the survivor's side: "does the survivor hold an active
+// bucket for this part?" If it did, EVERY bucket on the dead row for that part
+// was refused the move and then deleted, including inactive ones that could never
+// have collided with anything. Those carry closed-out operator part counts.
+//
+// Active collision → dropped (the survivor's row is the live one). Inactive →
+// migrated, always.
+func TestCollapseDuplicateProcessNodes_MigratesInactiveLinesideBuckets(t *testing.T) {
+	db := testDB(t)
+	_, live, orphanWithBin, _ := seedDupProcessNodes(t, db)
+
+	if _, err := db.Exec(`INSERT INTO styles (id, process_id, name) VALUES (1, 1, 'STYLE-A')`); err != nil {
+		t.Fatalf("seed style: %v", err)
+	}
+	mkBucket := func(id, nodeID int64, part, state string, qty int) {
+		if _, err := db.Exec(`INSERT INTO node_lineside_bucket (id, node_id, style_id, part_number, qty, state)
+			VALUES (?, ?, 1, ?, ?, ?)`, id, nodeID, part, qty, state); err != nil {
+			t.Fatalf("seed bucket %d: %v", id, err)
+		}
+	}
+	// The survivor already holds the live count for PART-A.
+	mkBucket(100, live, "PART-A", "active", 40)
+	// The orphan holds a colliding ACTIVE bucket for the same part (must drop) …
+	mkBucket(101, orphanWithBin, "PART-A", "active", 7)
+	// … and a CLOSED one for the same part, which collides with nothing (must move).
+	mkBucket(102, orphanWithBin, "PART-A", "captured", 25)
+
+	if err := db.collapseDuplicateProcessNodes(); err != nil {
+		t.Fatalf("collapse: %v", err)
+	}
+
+	var node int64
+	if err := db.QueryRow(`SELECT node_id FROM node_lineside_bucket WHERE id = 102`).Scan(&node); err != nil {
+		t.Fatalf("the INACTIVE bucket was deleted — it is partial-index-exempt and could never have collided: %v", err)
+	}
+	if node != live {
+		t.Errorf("inactive bucket node_id = %d, want %d (the survivor)", node, live)
+	}
+
+	// The active collision is gone, and the survivor's own row is untouched.
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket WHERE id = 101`).Scan(&n); err != nil {
+		t.Fatalf("count colliding bucket: %v", err)
+	}
+	if n != 0 {
+		t.Error("the colliding ACTIVE bucket should have been dropped — the survivor's row is the live count")
+	}
+	var qty int
+	if err := db.QueryRow(`SELECT qty FROM node_lineside_bucket WHERE id = 100`).Scan(&qty); err != nil {
+		t.Fatalf("survivor bucket missing: %v", err)
+	}
+	if qty != 40 {
+		t.Errorf("survivor bucket qty = %d, want 40 (untouched)", qty)
+	}
+}
+
+// A collapse that cannot finish must leave the database exactly as it was. The
+// group's repoints and deletes are one transaction, because this runs unattended
+// at edge startup against a live plant DB and a half-collapsed node is a shape
+// nobody has reasoned about.
+func TestCollapseDuplicateProcessNodes_GroupIsAtomic(t *testing.T) {
+	db := testDB(t)
+	_, _, orphanWithBin, _ := seedDupProcessNodes(t, db)
+
+	// Make the very last statement of the group's collapse fail: a trigger that
+	// rejects the DELETE of the process_nodes row itself. Everything before it
+	// (orders/changeover/lineside repoints, runtime delete) will have run.
+	if _, err := db.Exec(`CREATE TRIGGER block_pn_delete BEFORE DELETE ON process_nodes
+		BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	if err := db.collapseDuplicateProcessNodes(); err == nil {
+		t.Fatal("collapse should have failed — the trigger aborts the node delete")
+	}
+
+	// The orphan's runtime row was deleted BEFORE the failing statement. If the
+	// group weren't transactional it would be gone for good, and its 28,670 held
+	// ticks with it, while the node it belonged to still sat there.
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM process_node_runtime_states WHERE process_node_id = ?`, orphanWithBin).Scan(&n); err != nil {
+		t.Fatalf("count runtime: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("orphan runtime rows = %d, want 1 — a failed collapse must roll back whole, not leave the node stripped of its state", n)
+	}
+}

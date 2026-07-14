@@ -1104,10 +1104,6 @@ func (db *DB) collapseDuplicateProcessNodes() error {
 	if err != nil {
 		return err
 	}
-	type dupGroup struct {
-		processID    int64
-		coreNodeName string
-	}
 	var groups []dupGroup
 	for rows.Next() {
 		var g dupGroup
@@ -1123,102 +1119,8 @@ func (db *DB) collapseDuplicateProcessNodes() error {
 	}
 
 	for _, g := range groups {
-		var survivor int64
-		if err := db.QueryRow(`
-			SELECT pn.id FROM process_nodes pn
-			LEFT JOIN process_node_runtime_states r ON r.process_node_id = pn.id
-			WHERE pn.process_id = ? AND pn.core_node_name = ?
-			ORDER BY (pn.operator_station_id IS NOT NULL) DESC,
-			         COALESCE(r.updated_at, '') DESC,
-			         pn.id ASC
-			LIMIT 1`, g.processID, g.coreNodeName).Scan(&survivor); err != nil {
-			return fmt.Errorf("collapse %s: pick survivor: %w", g.coreNodeName, err)
-		}
-
-		deadRows, err := db.Query(`
-			SELECT id FROM process_nodes
-			WHERE process_id = ? AND core_node_name = ? AND id <> ?`,
-			g.processID, g.coreNodeName, survivor)
-		if err != nil {
+		if err := db.collapseProcessNodeGroup(g); err != nil {
 			return err
-		}
-		var dead []int64
-		for deadRows.Next() {
-			var id int64
-			if err := deadRows.Scan(&id); err != nil {
-				deadRows.Close()
-				return err
-			}
-			dead = append(dead, id)
-		}
-		deadRows.Close()
-		if err := deadRows.Err(); err != nil {
-			return err
-		}
-
-		for _, d := range dead {
-			// Say out loud what is being thrown away.
-			var pending, uop int
-			var binID sql.NullInt64
-			_ = db.QueryRow(`SELECT pending_uop_delta, remaining_uop_cached, active_bin_id
-				FROM process_node_runtime_states WHERE process_node_id = ?`, d).Scan(&pending, &uop, &binID)
-			log.Printf("migrate: collapsing duplicate process_node %d (%s, process %d) into %d — discarding runtime: pending_uop_delta=%d remaining_uop_cached=%d active_bin_id=%v (phantom: these ticks were double-counted onto the survivor)",
-				d, g.coreNodeName, g.processID, survivor, pending, uop, binID)
-
-			// A dead row that is itself bound to a station means the node was SHARED by
-			// two live stations, and one of them is about to lose it from its board.
-			// That config was already broken — both rows drew every PLC tick — so
-			// collapsing is right, but it is a visible change to an operator's screen
-			// and must not happen quietly.
-			var deadStation sql.NullInt64
-			_ = db.QueryRow(`SELECT operator_station_id FROM process_nodes WHERE id = ?`, d).Scan(&deadStation)
-			if deadStation.Valid {
-				log.Printf("migrate: WARNING — %s was shared by operator stations %d and (survivor) — station %d LOSES this node from its board. The shared config was double-counting its PLC ticks; re-add the node to that station if it is still wanted there.",
-					g.coreNodeName, deadStation.Int64, deadStation.Int64)
-			}
-
-			// orders.process_node_id — no uniqueness, straight repoint.
-			if _, err := db.Exec(`UPDATE orders SET process_node_id = ? WHERE process_node_id = ?`, survivor, d); err != nil {
-				return fmt.Errorf("collapse %s: repoint orders: %w", g.coreNodeName, err)
-			}
-
-			// changeover_node_tasks — UNIQUE(process_changeover_id, process_node_id).
-			// Move only what won't collide; the survivor's row wins the rest.
-			if _, err := db.Exec(`
-				UPDATE changeover_node_tasks SET process_node_id = ?
-				WHERE process_node_id = ?
-				  AND NOT EXISTS (SELECT 1 FROM changeover_node_tasks s
-				                  WHERE s.process_node_id = ?
-				                    AND s.process_changeover_id = changeover_node_tasks.process_changeover_id)`,
-				survivor, d, survivor); err != nil {
-				return fmt.Errorf("collapse %s: repoint changeover tasks: %w", g.coreNodeName, err)
-			}
-			if _, err := db.Exec(`DELETE FROM changeover_node_tasks WHERE process_node_id = ?`, d); err != nil {
-				return err
-			}
-
-			// node_lineside_bucket — UNIQUE(node_id, part_number) WHERE state='active'.
-			if _, err := db.Exec(`
-				UPDATE node_lineside_bucket SET node_id = ?
-				WHERE node_id = ?
-				  AND NOT EXISTS (SELECT 1 FROM node_lineside_bucket s
-				                  WHERE s.node_id = ?
-				                    AND s.part_number = node_lineside_bucket.part_number
-				                    AND s.state = 'active')`,
-				survivor, d, survivor); err != nil {
-				return fmt.Errorf("collapse %s: repoint lineside buckets: %w", g.coreNodeName, err)
-			}
-			if _, err := db.Exec(`DELETE FROM node_lineside_bucket WHERE node_id = ?`, d); err != nil {
-				return err
-			}
-
-			// Runtime is UNIQUE per node — the survivor already has the real one.
-			if _, err := db.Exec(`DELETE FROM process_node_runtime_states WHERE process_node_id = ?`, d); err != nil {
-				return err
-			}
-			if _, err := db.Exec(`DELETE FROM process_nodes WHERE id = ?`, d); err != nil {
-				return fmt.Errorf("collapse %s: delete duplicate %d: %w", g.coreNodeName, d, err)
-			}
 		}
 	}
 
@@ -1233,6 +1135,225 @@ func (db *DB) collapseDuplicateProcessNodes() error {
 		return fmt.Errorf("enforce UNIQUE(process_id, core_node_name): %w", err)
 	}
 	return nil
+}
+
+// dupGroup is one (process, core node) that has more than one process_nodes row.
+type dupGroup struct {
+	processID    int64
+	coreNodeName string
+}
+
+// collapseProcessNodeGroup merges one duplicate group down to a single row,
+// ATOMICALLY. Every repoint and delete for the group is one transaction: this
+// runs unattended at edge startup against a live plant database, and a collapse
+// that dies halfway — orders repointed, node still present, or worse — is a shape
+// nobody has ever reasoned about. Either the whole group collapses or the
+// database is exactly as it was and the next startup tries again.
+//
+// Survivor: the station-bound row wins (it is the one the HMI reads); then the
+// freshest runtime; then the lowest id.
+//
+// What is destroyed is announced, and only after the commit that destroyed it —
+// logging a discard that then rolled back would be a lie in the one record anyone
+// has of it.
+func (db *DB) collapseProcessNodeGroup(g dupGroup) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("collapse %s: begin: %w", g.coreNodeName, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit has succeeded
+
+	var survivor int64
+	if err := tx.QueryRow(`
+		SELECT pn.id FROM process_nodes pn
+		LEFT JOIN process_node_runtime_states r ON r.process_node_id = pn.id
+		WHERE pn.process_id = ? AND pn.core_node_name = ?
+		ORDER BY (pn.operator_station_id IS NOT NULL) DESC,
+		         COALESCE(r.updated_at, '') DESC,
+		         pn.id ASC
+		LIMIT 1`, g.processID, g.coreNodeName).Scan(&survivor); err != nil {
+		return fmt.Errorf("collapse %s: pick survivor: %w", g.coreNodeName, err)
+	}
+
+	dead, err := scanIDs(tx.Query(`
+		SELECT id FROM process_nodes
+		WHERE process_id = ? AND core_node_name = ? AND id <> ?`,
+		g.processID, g.coreNodeName, survivor))
+	if err != nil {
+		return fmt.Errorf("collapse %s: list duplicates: %w", g.coreNodeName, err)
+	}
+
+	// Accumulated here, printed after the commit.
+	var discards []string
+
+	for _, d := range dead {
+		var pending, uop int
+		var binID sql.NullInt64
+		_ = tx.QueryRow(`SELECT pending_uop_delta, remaining_uop_cached, active_bin_id
+			FROM process_node_runtime_states WHERE process_node_id = ?`, d).Scan(&pending, &uop, &binID)
+		discards = append(discards, fmt.Sprintf(
+			"migrate: collapsed duplicate process_node %d (%s, process %d) into %d — discarded runtime: pending_uop_delta=%d remaining_uop_cached=%d active_bin_id=%v (phantom: these ticks were double-counted onto the survivor)",
+			d, g.coreNodeName, g.processID, survivor, pending, uop, binID))
+
+		// A dead row that is itself bound to a station means the node was SHARED by
+		// two live stations, and one of them is about to lose it from its board.
+		// That config was already broken — both rows drew every PLC tick — so
+		// collapsing is right, but it is a visible change to an operator's screen
+		// and must not happen quietly.
+		var deadStation sql.NullInt64
+		_ = tx.QueryRow(`SELECT operator_station_id FROM process_nodes WHERE id = ?`, d).Scan(&deadStation)
+		if deadStation.Valid {
+			discards = append(discards, fmt.Sprintf(
+				"migrate: WARNING — %s was shared by operator stations %d and (survivor) — station %d LOSES this node from its board. The shared config was double-counting its PLC ticks; re-add the node to that station if it is still wanted there.",
+				g.coreNodeName, deadStation.Int64, deadStation.Int64))
+		}
+
+		// orders.process_node_id — no uniqueness, straight repoint.
+		if _, err := tx.Exec(`UPDATE orders SET process_node_id = ? WHERE process_node_id = ?`, survivor, d); err != nil {
+			return fmt.Errorf("collapse %s: repoint orders: %w", g.coreNodeName, err)
+		}
+
+		// changeover_node_tasks — UNIQUE(process_changeover_id, process_node_id).
+		// Move only what won't collide; the survivor's row wins the rest.
+		if _, err := tx.Exec(`
+			UPDATE changeover_node_tasks SET process_node_id = ?
+			WHERE process_node_id = ?
+			  AND NOT EXISTS (SELECT 1 FROM changeover_node_tasks s
+			                  WHERE s.process_node_id = ?
+			                    AND s.process_changeover_id = changeover_node_tasks.process_changeover_id)`,
+			survivor, d, survivor); err != nil {
+			return fmt.Errorf("collapse %s: repoint changeover tasks: %w", g.coreNodeName, err)
+		}
+		// Whatever is still pointing at the dead row collided with the survivor's
+		// own task and is about to be dropped. Name it — an operator's changeover
+		// state vanishing without a line in the log is not something you can debug
+		// after the fact.
+		lost, err := scanTaskLosses(tx.Query(`SELECT id, process_changeover_id, state
+			FROM changeover_node_tasks WHERE process_node_id = ?`, d))
+		if err != nil {
+			return fmt.Errorf("collapse %s: read colliding changeover tasks: %w", g.coreNodeName, err)
+		}
+		for _, l := range lost {
+			discards = append(discards, fmt.Sprintf(
+				"migrate: dropped changeover_node_task %d (changeover %d, state=%q) from duplicate node %d (%s) — the survivor %d already holds a task for that changeover",
+				l.id, l.changeoverID, l.state, d, g.coreNodeName, survivor))
+		}
+		if _, err := tx.Exec(`DELETE FROM changeover_node_tasks WHERE process_node_id = ?`, d); err != nil {
+			return fmt.Errorf("collapse %s: delete changeover tasks: %w", g.coreNodeName, err)
+		}
+
+		// node_lineside_bucket — UNIQUE(node_id, part_number) WHERE state='active'.
+		//
+		// The guard tests the MOVING row's state as well as the survivor's. The
+		// index is partial on state='active', so an INACTIVE bucket cannot collide
+		// with anything and must always migrate. Without that clause it was matched
+		// by a survivor's active row of the same part number, refused the move, and
+		// then deleted — throwing away closed-out part counts that were never in
+		// anyone's way.
+		if _, err := tx.Exec(`
+			UPDATE node_lineside_bucket SET node_id = ?
+			WHERE node_id = ?
+			  AND NOT EXISTS (SELECT 1 FROM node_lineside_bucket s
+			                  WHERE s.node_id = ?
+			                    AND s.part_number = node_lineside_bucket.part_number
+			                    AND s.state = 'active'
+			                    AND node_lineside_bucket.state = 'active')`,
+			survivor, d, survivor); err != nil {
+			return fmt.Errorf("collapse %s: repoint lineside buckets: %w", g.coreNodeName, err)
+		}
+		// What survives that UPDATE is an ACTIVE bucket the survivor already has a
+		// row for. These carry operator-captured part quantities — say what is lost.
+		buckets, err := scanBucketLosses(tx.Query(`SELECT id, part_number, qty, state
+			FROM node_lineside_bucket WHERE node_id = ?`, d))
+		if err != nil {
+			return fmt.Errorf("collapse %s: read colliding lineside buckets: %w", g.coreNodeName, err)
+		}
+		for _, b := range buckets {
+			discards = append(discards, fmt.Sprintf(
+				"migrate: dropped lineside bucket %d (part=%s qty=%d state=%q) from duplicate node %d (%s) — the survivor %d already holds an active bucket for that part; re-count it lineside if the quantity was real",
+				b.id, b.part, b.qty, b.state, d, g.coreNodeName, survivor))
+		}
+		if _, err := tx.Exec(`DELETE FROM node_lineside_bucket WHERE node_id = ?`, d); err != nil {
+			return fmt.Errorf("collapse %s: delete lineside buckets: %w", g.coreNodeName, err)
+		}
+
+		// Runtime is UNIQUE per node — the survivor already has the real one.
+		if _, err := tx.Exec(`DELETE FROM process_node_runtime_states WHERE process_node_id = ?`, d); err != nil {
+			return fmt.Errorf("collapse %s: delete runtime: %w", g.coreNodeName, err)
+		}
+		if _, err := tx.Exec(`DELETE FROM process_nodes WHERE id = ?`, d); err != nil {
+			return fmt.Errorf("collapse %s: delete duplicate %d: %w", g.coreNodeName, d, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("collapse %s: commit: %w", g.coreNodeName, err)
+	}
+	for _, line := range discards {
+		log.Print(line)
+	}
+	return nil
+}
+
+type taskLoss struct {
+	id           int64
+	changeoverID int64
+	state        string
+}
+
+type bucketLoss struct {
+	id    int64
+	part  string
+	qty   int
+	state string
+}
+
+func scanIDs(rows *sql.Rows, qErr error) ([]int64, error) {
+	if qErr != nil {
+		return nil, qErr
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func scanTaskLosses(rows *sql.Rows, qErr error) ([]taskLoss, error) {
+	if qErr != nil {
+		return nil, qErr
+	}
+	defer rows.Close()
+	var out []taskLoss
+	for rows.Next() {
+		var l taskLoss
+		if err := rows.Scan(&l.id, &l.changeoverID, &l.state); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+func scanBucketLosses(rows *sql.Rows, qErr error) ([]bucketLoss, error) {
+	if qErr != nil {
+		return nil, qErr
+	}
+	defer rows.Close()
+	var out []bucketLoss
+	for rows.Next() {
+		var b bucketLoss
+		if err := rows.Scan(&b.id, &b.part, &b.qty, &b.state); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 // ── Compatibility wrappers (kept for migration_test.go) ─────────────
