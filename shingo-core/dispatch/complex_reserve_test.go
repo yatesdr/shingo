@@ -16,6 +16,7 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 	"shingocore/store/reservations"
 )
 
@@ -653,5 +654,99 @@ func TestSlotConflictRevertsToNGRP(t *testing.T) {
 	oHeld, _ := db.ListReservationsByOrder(other.ID)
 	if len(oHeld) != 1 || oHeld[0].NodeID != slot.ID {
 		t.Errorf("other order's slot reservation disturbed: %+v", oHeld)
+	}
+}
+
+// TestPartialReserveNeverDispatches_PayloadMismatchAtProcessNode is the
+// regression pin for the Hopkinsville 2026-07-14 incident. The invariant it
+// guards — "a complex order with an unclaimable pickup must HOLD, never dispatch
+// a partial" — is enforced today only by reserveComplexPlan's outcome switch, and
+// nothing tested it. The build HK was running (pre-reserve/confirm, 4bae260) had
+// no such gate: it only failed on len(claimed)==0, so a 1-of-2 claim logged a
+// warning and shipped.
+//
+// The shape: a two_robot_press_index R1 leg has TWO pickups — the spent bin on the
+// press, and a fresh empty from the market. Someone re-stamped the press bin's
+// payload (PIA16 press, bin tagged PIA15), so its pickup could not be claimed
+// while the market pickup could. On the old build that produced a SINGLE-bin
+// order whose order.BinID pointed at the EMPTY TOTE instead of the press bin —
+// which is what made Core ship a non-nil BinID on the delivery envelope, which is
+// what let Edge's gate bind an empty carrier to the press and drive its tile to 0.
+//
+// So the assertions are not just "outcome == reserveHolding". They pin the damage:
+// the order must not be stamped with the wrong bin, and confirm must not run.
+func TestPartialReserveNeverDispatches_PayloadMismatchAtProcessNode(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// The press (process node) and the market.
+	press := &nodes.Node{Name: "PMM-PRESS", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(press), "press node")
+	market := &nodes.Node{Name: "PMM-MARKET", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "market node")
+
+	// A DIFFERENT payload — this is the mis-stamp. The bin sitting on the press
+	// carries it, so it cannot be claimed for an order whose payload is bp.Code.
+	other := &payloads.Payload{Code: "PART-WRONG", Description: "mis-stamped", UOPCapacity: 1000}
+	testutil.MustNoErr(t, db.CreatePayload(other), "other payload")
+
+	pressBin := testdb.CreateBinAtNode(t, db, other.Code, press.ID, "PMM-PRESS-BIN") // unclaimable
+	marketBin := testdb.CreateBinAtNode(t, db, bp.Code, market.ID, "PMM-MARKET-BIN") // claimable
+
+	// R1: clear the press → store it → fetch a fresh carrier → stage it.
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: press.Name},
+		{Action: protocol.ActionDropoff, Node: lineNode.Name},
+		{Action: protocol.ActionPickup, Node: market.Name},
+		{Action: protocol.ActionDropoff, Node: lineNode.Name},
+	}
+	order := mkComplexOrder(t, db, "pmm-1", press.Name, press.Name, lineNode.Name, bp.Code, steps)
+
+	// Drive the REAL dispatch entry point, not the allocator directly — the whole
+	// point is that the reserve outcome must stop the order before it confirms and
+	// ships. Calling reserveComplexPlan here would assert nothing about dispatch.
+	err := d.DispatchPreparedComplex(order)
+	if err == nil {
+		t.Fatal("DispatchPreparedComplex returned nil — a partial reserve must NOT dispatch; the order has to hold and retry")
+	}
+
+	// It held for the right reason: the press bin is present but unclaimable, which
+	// is sourceable (someone can fix the payload), not moot.
+	held, gerr := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, gerr, "reload order")
+	if !protocol.IsAcquiring(held.Status) {
+		t.Errorf("status = %s, want an acquiring status (queued/sourcing) — a held order must stay retryable, not fail or skip", held.Status)
+	}
+
+	// THE DAMAGE. On the pre-reserve/confirm build this is where it went wrong: with
+	// only the market pickup claimed, order.BinID fell back to "the first claimed
+	// bin" — the EMPTY CARRIER. That non-nil BinID is what made Core ship a
+	// single-bin delivery envelope, which is what let Edge's gate bind an empty tote
+	// to the press and drive its UOP tile to 0 (HK 2026-07-14).
+	if held.BinID != nil {
+		t.Errorf("order.BinID = %d after a partial reserve, want nil — stamping the market carrier here is exactly what shipped an empty tote as the press's bin", *held.BinID)
+	}
+	obs, _ := db.ListOrderBins(order.ID)
+	if len(obs) != 0 {
+		t.Errorf("order_bins rows = %d, want 0 — a held order has claimed nothing", len(obs))
+	}
+
+	// No robot was sent.
+	if vendor := held.VendorOrderID; vendor != "" {
+		t.Errorf("vendor order %q created — a robot must never start a job it cannot finish", vendor)
+	}
+
+	// Neither bin is hard-claimed: confirm never ran. The market bin may hold a soft
+	// reservation (that is the point of holding partials across ticks), but a claim
+	// is a commitment and must not exist.
+	pb, _ := db.GetBin(pressBin.ID)
+	if pb.ClaimedBy != nil {
+		t.Errorf("press bin claimed by %d — a payload-mismatched bin must never be claimed", *pb.ClaimedBy)
+	}
+	mb, _ := db.GetBin(marketBin.ID)
+	if mb.ClaimedBy != nil {
+		t.Errorf("market bin hard-claimed by %d — reserveHolding must leave it a soft reservation, not a claim", *mb.ClaimedBy)
 	}
 }
