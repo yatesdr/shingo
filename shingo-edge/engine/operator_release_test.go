@@ -269,14 +269,17 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 	// Simulate counter drained to 87 (any value < capacity) before delivery.
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 87), "seed drained runtime")
 
-	// DeliveryNode must equal the seeded node's CoreNodeName for
-	// binArrivingAt to fire. BinID set so resolveReplenishUOP returns
-	// claim capacity.
+	// The steps' FINAL DROPOFF must be the seeded node for binArrivingAt to
+	// fire — a complex order's destination lives in its steps, not in
+	// delivery_node (createComplexOrder always persists them). BinID set so
+	// resolveReplenishUOP returns claim capacity.
 	orderID, err := db.CreateOrder("uuid-idemp", orders.TypeComplex,
 		&nodeID, false, 1, "LSD-IDEMP-NODE", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID,
+		`[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"LSD-IDEMP-NODE"}]`), "set steps")
 	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
 	deliveredBin := int64(404)
 	db.UpdateOrderBinID(orderID, &deliveredBin)

@@ -87,6 +87,11 @@ func TestRegression_11_DeliveryOrderStillResetsLineUOP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	// A complex order's destination lives in its steps, not delivery_node —
+	// createComplexOrder always persists them, so a fixture without them isn't a
+	// real order. The delivered gate resolves the final dropoff from here.
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID,
+		`[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"REG11D-NODE"}]`), "set steps")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "set order confirmed")
 	deliveredBin := int64(202)
 	db.UpdateOrderBinID(orderID, &deliveredBin)
@@ -129,6 +134,8 @@ func TestRegression_DeliveryResetsToCapacityWithBin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID,
+		`[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"ITEM8-NODE"}]`), "set steps")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "set order confirmed")
 	deliveredBin := int64(303)
 	db.UpdateOrderBinID(orderID, &deliveredBin)

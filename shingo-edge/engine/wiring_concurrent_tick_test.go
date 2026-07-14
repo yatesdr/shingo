@@ -535,6 +535,10 @@ func TestRegression_ChangeoverBackToStyle_ResetsToCapacityPostItem8(t *testing.T
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	// A complex order's destination lives in its steps (createComplexOrder always
+	// persists them); the delivered gate resolves the final dropoff from here.
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID,
+		`[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"BACK-NODE"}]`), "set steps")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "confirm order")
 	returnedBin := int64(7777)
 	_ = db.UpdateOrderBinID(orderID, &returnedBin)

@@ -63,22 +63,44 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if err != nil {
 		return
 	}
-	// Did the bin actually land at this process node? Simple orders carry the
-	// destination in DeliveryNode. Complex orders (press swaps, etc.) leave it
-	// blank — their per-leg destinations live in steps_json — so for a complex
-	// order we check that its final dropoff step targets this node. This keeps
-	// the removal-shaped filter intact (a leg ending at a supermarket has a
-	// final dropoff != this node, so it still no-ops) while letting a swap that
-	// delivers a fresh bin to a producing cell bind the active bin. Without it,
-	// every complex delivery to a producing node failed to bind active_bin_id
-	// and PLC ticks parked in pending_uop_delta forever (HK PLN_04, 2026-06-17).
-	deliveredHere := order.DeliveryNode == node.CoreNodeName
-	if !deliveredHere && order.DeliveryNode == "" && order.OrderType == protocol.OrderTypeComplex {
-		if stepsJSON, sErr := e.db.GetOrderStepsJSON(order.ID); sErr != nil {
+	// Did the bin actually land at this process node?
+	//
+	// Only single-bin orders reach here (BinID nil returned above), so a complex
+	// order's ONE bin ends at its LAST dropoff step — unambiguous, and the only
+	// thing that answers "where did this bin land". Resolve it from steps_json.
+	//
+	// order.DeliveryNode is NOT usable for a complex order and must not be
+	// consulted. A complex order has many dropoffs, so a single per-order
+	// destination field is lossy by construction; worse, Edge stamps swap legs
+	// with the order's PROCESS node (swap_dispatch.go DeliveryNodeA), which for a
+	// press-index R1 leg names the press while the bin it carries is staged at the
+	// paired index node. This gate used to short-circuit on that field and only
+	// fall back to steps_json when it was blank — which the swap path guarantees it
+	// is not, making the correct branch dead code. At HK on 2026-07-14 that bound
+	// an EMPTY tote (0 UOP, landed at PLN_02) to PLN_01's runtime, and the press
+	// tile read 0/10560 while the bin physically on it held 850.
+	//
+	// The removal-shaped filter is preserved: a leg ending at a supermarket has a
+	// final dropoff != this node, so it still no-ops.
+	var deliveredHere bool
+	if order.OrderType == protocol.OrderTypeComplex {
+		stepsJSON, sErr := e.db.GetOrderStepsJSON(order.ID)
+		if sErr != nil {
 			log.Printf("delivered: order %d — cannot load steps to resolve complex destination: %v", order.ID, sErr)
-		} else {
-			deliveredHere = finalDropoffNode(stepsJSON) == node.CoreNodeName
+			return
 		}
+		dest := finalDropoffNode(stepsJSON)
+		if dest == "" {
+			// createComplexOrder always persists steps, so this is unreachable in
+			// practice — say so rather than silently never binding the node's bin,
+			// because the symptom (ticks piling up in pending_uop_delta) is miles
+			// from the cause.
+			log.Printf("delivered: order %d (complex) has no resolvable final dropoff — steps missing or dropoff-less; runtime cache NOT bound for node %s", order.ID, node.CoreNodeName)
+			return
+		}
+		deliveredHere = dest == node.CoreNodeName
+	} else {
+		deliveredHere = order.DeliveryNode == node.CoreNodeName
 	}
 	if !deliveredHere {
 		return
@@ -171,9 +193,11 @@ func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 
 // finalDropoffNode returns the node of the last "dropoff" step in a complex
 // order's step list, or "" if the steps can't be parsed or contain no dropoff.
-// Complex orders don't populate Order.DeliveryNode (their destinations live in
-// steps_json), so the final dropoff is how the delivery handler learns where
-// the bin actually came to rest.
+// A complex order carries its destinations in steps_json, and only single-bin
+// orders reach the delivery gate — so the final dropoff is exactly where that
+// bin came to rest. Decodes and defers to finalDropoff, the same helper the
+// swap-dispatch producer uses, so the two can't drift apart on what a leg's
+// destination means.
 func finalDropoffNode(stepsJSON string) string {
 	if stepsJSON == "" {
 		return ""
@@ -182,11 +206,5 @@ func finalDropoffNode(stepsJSON string) string {
 	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
 		return ""
 	}
-	dest := ""
-	for _, s := range steps {
-		if s.Action == protocol.ActionDropoff && s.Node != "" {
-			dest = s.Node
-		}
-	}
-	return dest
+	return finalDropoff(steps)
 }
