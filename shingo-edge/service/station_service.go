@@ -1,6 +1,7 @@
 package service
 
 import (
+	"log"
 	"strings"
 
 	"shingo/protocol"
@@ -72,14 +73,33 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 		return err
 	}
 
-	existing, err := s.db.ListProcessNodesByStation(stationID)
+	// Two different sets, deliberately.
+	//
+	// stationNodes — what THIS station currently owns. Only these may be detached
+	// by the removal pass below; widening that pass to the whole process would rip
+	// nodes out from under sibling stations.
+	stationNodes, err := s.db.ListProcessNodesByStation(stationID)
 	if err != nil {
 		return err
 	}
 
-	existingMap := map[string]processes.Node{}
-	for _, n := range existing {
-		existingMap[n.CoreNodeName] = n
+	// byCoreName — every node under the PROCESS. The reuse-or-create decision has
+	// to be process-global: a Core node already modelled in this process (orphaned,
+	// or currently owned by a sibling station) must be ADOPTED, never re-created.
+	// Making this decision from the station-local set is what let one Core node
+	// spawn three process_nodes rows at HK (PLN_01 → ids 1, 13, 17): each rebind
+	// that didn't already own the node minted a fresh row, and GenerateUniqueCode
+	// suffixed the code (pln-01, pln-01-2, pln-01-3) to satisfy the only constraint
+	// there was, UNIQUE(process_id, code). Every copy then carried its own runtime
+	// row and drew its own copy of every PLC tick, because findActiveClaim resolves
+	// a claim by core_node_name rather than by node id — so all three matched.
+	processNodes, err := s.db.ListProcessNodesByProcess(station.ProcessID)
+	if err != nil {
+		return err
+	}
+	byCoreName := map[string]processes.Node{}
+	for _, n := range processNodes {
+		byCoreName[n.CoreNodeName] = n
 	}
 
 	// Normalize input: trim and deduplicate, preserving order.
@@ -94,9 +114,21 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 	}
 
 	for i, name := range clean {
-		if _, exists := existingMap[name]; exists {
-			if _, err := s.db.Exec(`UPDATE process_nodes SET sequence=?, enabled=1, updated_at=datetime('now')
-				WHERE operator_station_id=? AND core_node_name=?`, i+1, stationID, name); err != nil {
+		if n, exists := byCoreName[name]; exists {
+			// Adopt in place. UNIQUE(process_id, core_node_name) means a Core node
+			// has exactly ONE row per process, so finding it on another station is a
+			// MOVE, not a conflict — and it has to be a move, or we are back to
+			// minting duplicates. Re-point it, re-sequence it, re-enable it.
+			if n.OperatorStationID == nil {
+				log.Printf("station: adopting orphaned process_node %d (%s) onto station %d", n.ID, name, stationID)
+			} else if *n.OperatorStationID != stationID {
+				log.Printf("station: moving process_node %d (%s) from station %d to station %d", n.ID, name, *n.OperatorStationID, stationID)
+			}
+			if _, err := s.db.Exec(`UPDATE process_nodes SET operator_station_id=?, sequence=?, enabled=1, updated_at=datetime('now')
+				WHERE id=?`, stationID, i+1, n.ID); err != nil {
+				return err
+			}
+			if _, err := s.db.EnsureProcessNodeRuntime(n.ID); err != nil {
 				return err
 			}
 			continue
@@ -117,7 +149,7 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 		}
 	}
 
-	for _, n := range existing {
+	for _, n := range stationNodes {
 		if desired[n.CoreNodeName] {
 			continue
 		}

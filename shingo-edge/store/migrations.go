@@ -20,6 +20,9 @@
 package store
 
 import (
+	"database/sql"
+	"fmt"
+	"log"
 	"strings"
 
 	"shingoedge/store/schema"
@@ -174,6 +177,12 @@ func (db *DB) migrate() error {
 		return err
 	}
 	if err := db.renameRemainingUOPCached(); err != nil {
+		return err
+	}
+	// Runs AFTER the process_nodes column migrations (it reads core_node_name and
+	// operator_station_id) and creates the UNIQUE(process_id, core_node_name) index
+	// once the rows can satisfy it.
+	if err := db.collapseDuplicateProcessNodes(); err != nil {
 		return err
 	}
 
@@ -1042,6 +1051,186 @@ CREATE TABLE IF NOT EXISTS changeover_node_tasks (
 );
 `)
 		return err
+	}
+	return nil
+}
+
+// collapseDuplicateProcessNodes merges process_nodes rows that share a
+// (process_id, core_node_name) down to one, then enforces that shape with a
+// UNIQUE index so they can't come back.
+//
+// How the duplicates happened: SetNodes decided "reuse or create?" from the
+// STATION-local node set, so re-adding a Core node to a station that didn't
+// already own a row for it minted a fresh row instead of adopting the existing
+// one. GenerateUniqueCode then suffixed the code (pln-01, pln-01-2, pln-01-3) to
+// satisfy the only constraint the table had — UNIQUE(process_id, code) — while
+// core_node_name was left free to duplicate. HK carried three PLN_01 rows.
+//
+// Why it matters: findActiveClaim resolves a claim by core_node_name, not by node
+// id, so EVERY duplicate matched the same active claim and handleCounterDelta
+// (which iterates all nodes in the process) applied each PLC tick to all of them.
+// One press stroke counted three times: once on the live row, once against a bin
+// the orphan still pointed at, and once into a bin-less row where it piled up in
+// pending_uop_delta forever (HK: 28,670).
+//
+// Survivor: the station-bound row wins (it is the one the HMI reads); then the
+// freshest runtime; then the lowest id. Referrers are repointed at it. The dead
+// rows' runtime state is DISCARDED, not replayed — a duplicate's counts are
+// phantom by construction (they double-counted a stroke that the survivor already
+// booked), and a bin-less row's pending_uop_delta never had a bin to replay onto.
+// Anything discarded is logged rather than dropped silently.
+//
+// Idempotent: a no-op on a database with no duplicates.
+func (db *DB) collapseDuplicateProcessNodes() error {
+	exists, err := schema.TableExists(db.DB, "process_nodes")
+	if err != nil || !exists {
+		return err
+	}
+	if hasCol, cErr := schema.TableHasColumn(db.DB, "process_nodes", "core_node_name"); cErr != nil || !hasCol {
+		return cErr
+	}
+
+	// core_node_name is NOT NULL DEFAULT '' and nothing validates it — CreateNode
+	// only trims, and apiCreateProcessNode decodes straight into it — so a node can
+	// legitimately exist UNBOUND (no Core node yet). Two unbound rows are NOT
+	// duplicates of each other: they are distinct nodes that merely share the empty
+	// string. Grouping them would delete real nodes, discard their runtime and
+	// repoint their orders onto an unrelated survivor. Exclude them here, and make
+	// the index below partial on the same predicate so unbound nodes stay possible.
+	rows, err := db.Query(`
+		SELECT process_id, core_node_name FROM process_nodes
+		WHERE core_node_name <> ''
+		GROUP BY process_id, core_node_name HAVING COUNT(*) > 1`)
+	if err != nil {
+		return err
+	}
+	type dupGroup struct {
+		processID    int64
+		coreNodeName string
+	}
+	var groups []dupGroup
+	for rows.Next() {
+		var g dupGroup
+		if err := rows.Scan(&g.processID, &g.coreNodeName); err != nil {
+			rows.Close()
+			return err
+		}
+		groups = append(groups, g)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, g := range groups {
+		var survivor int64
+		if err := db.QueryRow(`
+			SELECT pn.id FROM process_nodes pn
+			LEFT JOIN process_node_runtime_states r ON r.process_node_id = pn.id
+			WHERE pn.process_id = ? AND pn.core_node_name = ?
+			ORDER BY (pn.operator_station_id IS NOT NULL) DESC,
+			         COALESCE(r.updated_at, '') DESC,
+			         pn.id ASC
+			LIMIT 1`, g.processID, g.coreNodeName).Scan(&survivor); err != nil {
+			return fmt.Errorf("collapse %s: pick survivor: %w", g.coreNodeName, err)
+		}
+
+		deadRows, err := db.Query(`
+			SELECT id FROM process_nodes
+			WHERE process_id = ? AND core_node_name = ? AND id <> ?`,
+			g.processID, g.coreNodeName, survivor)
+		if err != nil {
+			return err
+		}
+		var dead []int64
+		for deadRows.Next() {
+			var id int64
+			if err := deadRows.Scan(&id); err != nil {
+				deadRows.Close()
+				return err
+			}
+			dead = append(dead, id)
+		}
+		deadRows.Close()
+		if err := deadRows.Err(); err != nil {
+			return err
+		}
+
+		for _, d := range dead {
+			// Say out loud what is being thrown away.
+			var pending, uop int
+			var binID sql.NullInt64
+			_ = db.QueryRow(`SELECT pending_uop_delta, remaining_uop_cached, active_bin_id
+				FROM process_node_runtime_states WHERE process_node_id = ?`, d).Scan(&pending, &uop, &binID)
+			log.Printf("migrate: collapsing duplicate process_node %d (%s, process %d) into %d — discarding runtime: pending_uop_delta=%d remaining_uop_cached=%d active_bin_id=%v (phantom: these ticks were double-counted onto the survivor)",
+				d, g.coreNodeName, g.processID, survivor, pending, uop, binID)
+
+			// A dead row that is itself bound to a station means the node was SHARED by
+			// two live stations, and one of them is about to lose it from its board.
+			// That config was already broken — both rows drew every PLC tick — so
+			// collapsing is right, but it is a visible change to an operator's screen
+			// and must not happen quietly.
+			var deadStation sql.NullInt64
+			_ = db.QueryRow(`SELECT operator_station_id FROM process_nodes WHERE id = ?`, d).Scan(&deadStation)
+			if deadStation.Valid {
+				log.Printf("migrate: WARNING — %s was shared by operator stations %d and (survivor) — station %d LOSES this node from its board. The shared config was double-counting its PLC ticks; re-add the node to that station if it is still wanted there.",
+					g.coreNodeName, deadStation.Int64, deadStation.Int64)
+			}
+
+			// orders.process_node_id — no uniqueness, straight repoint.
+			if _, err := db.Exec(`UPDATE orders SET process_node_id = ? WHERE process_node_id = ?`, survivor, d); err != nil {
+				return fmt.Errorf("collapse %s: repoint orders: %w", g.coreNodeName, err)
+			}
+
+			// changeover_node_tasks — UNIQUE(process_changeover_id, process_node_id).
+			// Move only what won't collide; the survivor's row wins the rest.
+			if _, err := db.Exec(`
+				UPDATE changeover_node_tasks SET process_node_id = ?
+				WHERE process_node_id = ?
+				  AND NOT EXISTS (SELECT 1 FROM changeover_node_tasks s
+				                  WHERE s.process_node_id = ?
+				                    AND s.process_changeover_id = changeover_node_tasks.process_changeover_id)`,
+				survivor, d, survivor); err != nil {
+				return fmt.Errorf("collapse %s: repoint changeover tasks: %w", g.coreNodeName, err)
+			}
+			if _, err := db.Exec(`DELETE FROM changeover_node_tasks WHERE process_node_id = ?`, d); err != nil {
+				return err
+			}
+
+			// node_lineside_bucket — UNIQUE(node_id, part_number) WHERE state='active'.
+			if _, err := db.Exec(`
+				UPDATE node_lineside_bucket SET node_id = ?
+				WHERE node_id = ?
+				  AND NOT EXISTS (SELECT 1 FROM node_lineside_bucket s
+				                  WHERE s.node_id = ?
+				                    AND s.part_number = node_lineside_bucket.part_number
+				                    AND s.state = 'active')`,
+				survivor, d, survivor); err != nil {
+				return fmt.Errorf("collapse %s: repoint lineside buckets: %w", g.coreNodeName, err)
+			}
+			if _, err := db.Exec(`DELETE FROM node_lineside_bucket WHERE node_id = ?`, d); err != nil {
+				return err
+			}
+
+			// Runtime is UNIQUE per node — the survivor already has the real one.
+			if _, err := db.Exec(`DELETE FROM process_node_runtime_states WHERE process_node_id = ?`, d); err != nil {
+				return err
+			}
+			if _, err := db.Exec(`DELETE FROM process_nodes WHERE id = ?`, d); err != nil {
+				return fmt.Errorf("collapse %s: delete duplicate %d: %w", g.coreNodeName, d, err)
+			}
+		}
+	}
+
+	// The constraint that should have existed all along. PARTIAL — unbound nodes
+	// (core_node_name = '') are exempt, because they are not duplicates of each
+	// other and a process may hold several. Created here rather than in the
+	// canonical DDL because it cannot be built until the collapse above has run:
+	// schema.Apply would fail on any database that still has duplicates.
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_process_nodes_process_core_name
+		ON process_nodes(process_id, core_node_name)
+		WHERE core_node_name <> ''`); err != nil {
+		return fmt.Errorf("enforce UNIQUE(process_id, core_node_name): %w", err)
 	}
 	return nil
 }
