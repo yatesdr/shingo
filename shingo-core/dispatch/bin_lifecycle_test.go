@@ -66,8 +66,13 @@ func TestSwapRemovalLegHeld_UntilSupplyClaims(t *testing.T) {
 	removal, err := db.GetOrderByUUID("swap-removal")
 	testutil.MustNoErr(t, err, "get removal leg")
 
-	// Gate fires: supply has no claimed bin.
-	if held, _ := d.swapRemovalLegHeld(removal); !held {
+	// Gate fires: this removal leg takes the line's bin and has only one pickup
+	// (it cannot fetch its own replacement), and the supply has no claimed bin.
+	removalSteps, ok := decodeSteps(removal.StepsJSON)
+	if !ok {
+		t.Fatal("removal leg has no readable steps — intake contract changed")
+	}
+	if held, _ := d.swapRemovalLegHeld(removal, removalSteps); !held {
 		t.Fatal("removal leg should be held while supply sibling has no claimed bin")
 	}
 	// DispatchPreparedComplex must stay queued without claiming the line bin.
@@ -89,7 +94,7 @@ func TestSwapRemovalLegHeld_UntilSupplyClaims(t *testing.T) {
 		t.Fatalf("claim super bin for supply: %v", err)
 	}
 	removal, _ = db.GetOrderByUUID("swap-removal")
-	if held, _ := d.swapRemovalLegHeld(removal); held {
+	if held, _ := d.swapRemovalLegHeld(removal, removalSteps); held {
 		t.Error("removal leg should no longer be held once supply has a claimed bin")
 	}
 }

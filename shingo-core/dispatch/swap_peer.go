@@ -54,10 +54,25 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 		return
 	}
 
-	// Same discriminator as swapRemovalLegHeld: the removal (evac) leg delivers
-	// AWAY from its line node; the supply leg delivers TO the line
-	// (DeliveryNode == ProcessNode).
-	deadIsEvac := dead.ProcessNode != "" && dead.DeliveryNode != dead.ProcessNode
+	// Same discriminator as swapRemovalLegHeld — legTakesLineBin: the evac lifts
+	// the line's bin and does not put one back; the supply sets one down.
+	//
+	// This was `DeliveryNode != ProcessNode`, which mis-reads a 3-position
+	// press-index R2: it drops a bin on the line and then carries on to re-index
+	// the next position, so it ENDS away from the line while being the supply. A
+	// SKIPPED supply then took the evac branch below and returned as a "moot
+	// evac" no-op — so the real evac proceeded, pulled the line's bin, and nothing
+	// was coming to replace it. That is the strand this handler exists to prevent.
+	//
+	// If the steps can't be read we deliberately do NOT take the evac branch: its
+	// skip path is a silent no-op, and a silent no-op is the one outcome that can
+	// strand a line. Treating an unknown shape as the supply always resolves the
+	// peer, which at worst cancels a swap that could have continued.
+	steps, ok := decodeSteps(dead.StepsJSON)
+	if !ok {
+		log.Printf("dispatch: swap peer-terminal for order %d — cannot read steps; treating as supply (resolve the peer) rather than risk a silent moot-evac no-op", dead.ID)
+	}
+	deadIsEvac := ok && legTakesLineBin(steps, dead.ProcessNode)
 
 	if deadIsEvac {
 		// A moot (skipped) evac is a clean no-op — the line's resident was

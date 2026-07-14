@@ -212,14 +212,41 @@ func isConcreteStorageDropoff(db *store.DB, deliveryNode string) bool {
 	return parent.NodeTypeCode == protocol.NodeClassLANE || parent.NodeTypeCode == protocol.NodeClassNGRP
 }
 
-// swapRemovalLegHeld reports whether `order` is the removal (evac) leg of a
-// two-robot swap whose supply sibling has not yet claimed a replacement
-// bin. While true the removal leg must not claim/pull the line bin — the
-// line keeps its current bin until a replacement is secured (ALN_003
-// swap-starvation, 2026-06-03). Returns (false, "") for non-swap orders,
-// supply legs, and removal legs whose supply sibling already holds a claim.
+// swapRemovalLegHeld reports whether `order` is a removal (evac) leg that
+// depends on a supply sibling which has not yet claimed a replacement bin. While
+// true the leg must not claim/pull the line bin — the line keeps its current bin
+// until a replacement is secured (ALN_003 swap-starvation, 2026-06-03). Returns
+// (false, "") for non-swap orders, supply legs, self-sufficient removal legs, and
+// removal legs whose supply sibling already holds a claim.
 // Fail-open on lookup errors: never freeze a robot on a transient failure.
-func (d *Dispatcher) swapRemovalLegHeld(order *orders.Order) (bool, string) {
+//
+// The gate is: the leg TAKES THE LINE BIN and does not SECURE ITS OWN
+// REPLACEMENT. Both are read from the leg's steps — see swap_leg_role.go.
+//
+// It used to be `DeliveryNode != ProcessNode`, which is not the same question and
+// deadlocked press-index. Core's DeliveryNode is derived from the steps by
+// extractEndpoints (last pickup-or-dropoff), so a press-index R1 — which ends by
+// staging a fresh carrier at the index node — always looked like it "delivers
+// away from the line", i.e. like a removal leg needing help. It isn't: R1 fetches
+// that carrier itself. The failure was live and permanent:
+//
+//  1. R1 arrives, fails its first claim (dry supermarket, or a re-stamped payload
+//     on the press bin — the state complex_reserve_test's partial-reserve pin
+//     covers) and stays queued. It escaped this gate only because its sibling
+//     pointer was still empty.
+//  2. R2 arrives. Intake back-links BOTH rows (LinkSiblingsByEdgeUUID's
+//     bidirectional CASE), so R1 now has a sibling.
+//  3. R1 is re-evaluated: evac-shaped, sibling present, sibling holds no claim →
+//     HELD, pending R2's claim.
+//  4. R2's only pickup is the index position — which is empty, because filling it
+//     is R1's job. R2 can never claim.
+//
+// R1 waits on R2; R2 waits on R1. Nothing breaks the cycle. Asking "does this leg
+// bring its own replacement?" exempts R1 by what it does, not by where it ends.
+//
+// The two_robot evac (one pickup, at the line) is still held — that is the
+// ALN_003 guard and it must not regress.
+func (d *Dispatcher) swapRemovalLegHeld(order *orders.Order, steps []resolvedStep) (bool, string) {
 	sibUUID, err := d.db.OrderSiblingUUID(order.ID)
 	if err != nil {
 		// Transient DB read error — fail OPEN. Never freeze a robot on a flaky
@@ -229,40 +256,49 @@ func (d *Dispatcher) swapRemovalLegHeld(order *orders.Order) (bool, string) {
 	}
 	if sibUUID == "" {
 		// Not a swap leg. The sibling pointer is written ATOMICALLY in the
-		// evac's CreateOrder INSERT (domain.Order.SiblingOrderUUID), so a
-		// two-robot evac can no longer reach here with an empty pointer because
+		// second leg's CreateOrder INSERT (domain.Order.SiblingOrderUUID), so a
+		// two-robot leg can no longer reach here with an empty pointer because
 		// a post-create link step failed — an empty pointer now reliably means
 		// "no sibling". We deliberately do NOT fall back to a node-role
-		// fail-closed (gate every ProcessNode!="" && Delivery!=ProcessNode
-		// order): that NODE shape is shared by the sequential changeover
-		// removal (swap_dispatch.go BuildSequentialRemovalSteps drops at
+		// fail-closed (gate every leg that pulls the line bin): that STEP shape
+		// is shared by the sequential changeover removal
+		// (swap_dispatch.go BuildSequentialRemovalSteps drops at
 		// OutboundDestination, not the line) which legitimately has no supply
 		// sibling — failing it closed would freeze every sequential removal
 		// forever.
 		return false, ""
 	}
-	// The removal leg delivers AWAY from its line node; the supply leg
-	// delivers TO the line (DeliveryNode == ProcessNode). Only the removal
-	// leg is gated; an empty ProcessNode (no distinct line node) is not.
-	if order.ProcessNode == "" || order.DeliveryNode == order.ProcessNode {
+	sib, sibErr := d.db.GetOrderByUUID(sibUUID)
+
+	// On-read repair of the bidirectional link: if the peer's back-link is
+	// missing — e.g. the intake back-link write failed, or this row arrived
+	// before its peer — heal it now that both rows exist, so the peer-death
+	// handler can find either leg from the other. Idempotent and gated on
+	// "actually missing" so we don't re-touch the rows on the happy path.
+	//
+	// This runs BEFORE the shape test, for EVERY swap leg, deliberately: healing
+	// the link is not the hold gate's business. It used to sit below the gate, so
+	// it only ever ran for legs the gate considered removals — which now excludes
+	// press-index entirely (R1 is self-sufficient, R2 is a supply), and would have
+	// silently dropped the repair for that whole mode.
+	if sibErr == nil && sib != nil && sib.SiblingOrderUUID != order.EdgeUUID {
+		if _, rerr := d.db.LinkOrderSiblingsByEdgeUUID(order.EdgeUUID, sibUUID); rerr != nil {
+			log.Printf("dispatch: swap back-link repair for order %d sib %s: %v", order.ID, sibUUID, rerr)
+		}
+	}
+
+	// Only a leg that pulls the line's bin can strand the line, and only one that
+	// cannot fetch its own replacement needs a sibling to do it.
+	if !legTakesLineBin(steps, order.ProcessNode) {
 		return false, ""
 	}
-	sib, err := d.db.GetOrderByUUID(sibUUID)
-	if err != nil || sib == nil {
+	if legSecuresOwnReplacement(steps) {
+		return false, ""
+	}
+	if sibErr != nil || sib == nil {
 		// Supply row should exist (created first, linked at intake); hold
 		// rather than strand the line if it is somehow missing.
 		return true, "swap: awaiting supply sibling"
-	}
-	// On-read repair of the bidirectional link: if the supply's back-link
-	// (supply→evac) is missing — e.g. the intake back-link write failed, or the
-	// supply row arrived after the evac — heal it now that both rows exist, so
-	// the peer-death handler can find this evac from the supply side. Idempotent
-	// and gated on "actually missing" so we don't re-touch the rows on the happy
-	// path.
-	if sib.SiblingOrderUUID != order.EdgeUUID {
-		if _, rerr := d.db.LinkOrderSiblingsByEdgeUUID(order.EdgeUUID, sibUUID); rerr != nil {
-			log.Printf("dispatch: swap-hold back-link repair for order %d sib %s: %v", order.ID, sibUUID, rerr)
-		}
 	}
 	claimed, err := d.db.ListBinsByClaim(sib.ID)
 	if err != nil {
@@ -367,15 +403,19 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// widening) — a resolution-time read, so the swap supply leg is never gated.
 	d.placeForDedicatedLoader(order, resolvedSteps)
 
-	// Two-robot swap removal-leg hold: don't let the removal (evac) leg
-	// claim/pull the line bin until the supply sibling has secured a
-	// replacement bin. Stops a swap from stranding the line when the
+	// Two-robot swap removal-leg hold: don't let a removal (evac) leg that
+	// cannot fetch its own replacement claim/pull the line bin until its supply
+	// sibling has secured one. Stops a swap from stranding the line when the
 	// supermarket is empty (ALN_003 swap-starvation, 2026-06-03). Stay
 	// queued — the scanner replays on EventBinUpdated when the supply leg
 	// claims, clearing the gate. The sibling pointer is set at intake (the
-	// removal leg carries it on its ComplexOrderRequest), so it is present
+	// second leg carries it on its ComplexOrderRequest), so it is present
 	// here even on the synchronous intake-dispatch path.
-	if held, reason := d.swapRemovalLegHeld(order); held {
+	//
+	// Reads the RESOLVED steps, not the raw ones: NGRP names have been resolved
+	// to concrete nodes by now, and the line node is concrete either way, so the
+	// pickup/dropoff shape the gate depends on is stable across resolution.
+	if held, reason := d.swapRemovalLegHeld(order, resolvedSteps); held {
 		d.setQueueReason(order, reason, "swap-hold")
 		d.dbg("complex: order %d held — %s", order.ID, reason)
 		return fmt.Errorf("swap removal hold: %s", reason)

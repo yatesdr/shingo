@@ -3,8 +3,10 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
@@ -55,6 +57,9 @@ func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: lineNode.Name, DeliveryNode: superNode.Name, ProcessNode: lineNode.Name,
 		SiblingOrderUUID: "swap-supply-dl",
+		// A two_robot evac shape: it takes the line's bin and has a single pickup,
+		// so it cannot fetch its own replacement — the gate's subject.
+		StepsJSON: twoRobotEvacSteps(t, lineNode.Name, superNode.Name),
 	}
 	testutil.MustNoErr(t, db.CreateOrder(evac), "create evac leg")
 
@@ -68,9 +73,27 @@ func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 	// The gate must HOLD (fail closed) because the supply has no claimed bin —
 	// NOT fail open as it did pre-fix when the link was lost.
 	evac, _ = db.GetOrderByUUID("swap-removal-dl")
-	if held, _ := d.swapRemovalLegHeld(evac); !held {
+	evacSteps, ok := decodeSteps(evac.StepsJSON)
+	if !ok {
+		t.Fatal("evac has no readable steps")
+	}
+	if held, _ := d.swapRemovalLegHeld(evac, evacSteps); !held {
 		t.Fatal("evac must be held while supply has no claimed bin, even though the intake link step never ran")
 	}
+}
+
+// twoRobotEvacSteps is the classic removal shape: hold at the line, lift its bin,
+// carry it to the supermarket. One pickup, at the line — so it cannot fetch its
+// own replacement and the hold gate applies to it.
+func twoRobotEvacSteps(t *testing.T, lineName, destName string) string {
+	t.Helper()
+	j, err := json.Marshal([]resolvedStep{
+		{Action: protocol.ActionWait, Node: lineName},
+		{Action: protocol.ActionPickup, Node: lineName},
+		{Action: protocol.ActionDropoff, Node: destName},
+	})
+	testutil.MustNoErr(t, err, "marshal evac steps")
+	return string(j)
 }
 
 // TestSwapSibling_ReverseBacklinkRepairedOnRead pins the on-read repair: when
@@ -102,6 +125,7 @@ func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: lineNode.Name, DeliveryNode: superNode.Name, ProcessNode: lineNode.Name,
 		SiblingOrderUUID: "swap-supply-rb",
+		StepsJSON:        twoRobotEvacSteps(t, lineNode.Name, superNode.Name),
 	}
 	testutil.MustNoErr(t, db.CreateOrder(evac), "create evac leg")
 
@@ -112,7 +136,8 @@ func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 
 	// Processing the evac triggers the on-read repair.
 	evac, _ = db.GetOrderByUUID("swap-removal-rb")
-	_, _ = d.swapRemovalLegHeld(evac)
+	evacSteps, _ := decodeSteps(evac.StepsJSON)
+	_, _ = d.swapRemovalLegHeld(evac, evacSteps)
 
 	// The supply's back-link is now healed.
 	healed, err := db.OrderSiblingUUID(supply.ID)
