@@ -125,7 +125,7 @@ A transport request to move a bin between nodes.
 | `order_type` | `retrieve`, `store`, or `move` |
 | `status` | Lifecycle state (see [Order Statuses](#order-statuses)) |
 | `source_node` | Source node name |
-| `delivery_node` | Destination node name |
+| `delivery_node` | Destination node name — see the caveat below |
 | `vendor_order_id` | Fleet backend's order ID |
 | `vendor_state` | Fleet backend's current state string |
 | `robot_id` | Assigned robot |
@@ -134,6 +134,47 @@ A transport request to move a bin between nodes.
 | `bin_id` | Which bin is being moved |
 | `parent_order_id` | Parent compound order (for reshuffle child orders) |
 | `sequence` | Step sequence within a compound order |
+
+#### `delivery_node` — read this before using it
+
+It means what you expect for a **simple** order: one bin, one destination.
+
+For a **complex** order (swaps, changeovers — anything with a `steps_json`) it does
+not, and there are two separate traps.
+
+**1. Edge and Core have different columns with the same name.** Edge does not send
+a delivery node for a complex order — `ComplexOrderRequest` has no such field. Core
+derives its own at intake from the steps, via `extractEndpoints` (the last
+pickup-or-dropoff). So `edge.orders.delivery_node` and `core.orders.delivery_node`
+are independent values that happen to share a name. Never reason from one about the
+other.
+
+**2. Neither one identifies a leg's role, and both have been misread as if they
+did.** A complex leg has several dropoffs, so a single destination field cannot say
+where its bin came to rest. Auto-confirmed legs store `''` outright. And a leg that
+does store something names where the *robot* finished, which is not where the *bin*
+did — a 3-position press-index R2 sets the fresh bin on the press and then carries
+on to re-index the next position, so it "ends" at the index node while being the leg
+that supplied the press.
+
+Every decision that used to consult the column now reads the leg's steps instead:
+
+| Question | Where it is answered |
+|---|---|
+| Did this bin land at my node? | `finalDropoffNode(steps)` — Edge `wiring_delivered.go` |
+| Is this leg the supply or the evac? | `legPlacesBinAt(steps, node)` — Edge `swap_leg_role.go` |
+| Must this leg wait for its sibling to claim? | `legTakesLineBin` + `legSecuresOwnReplacement` — Core `swap_leg_role.go` |
+| Should the sim operator sign for this leg? | `legTouchesNode(steps, node)` — Edge `sim_operator.go` |
+
+Core's `delivery_node` is still **load-bearing for robot routing**:
+`patchRedirectSegments` rewrites a staged order's final dropoff to it so a redirect
+reaches the robot. That works because every leg the Edge builds ends on a dropoff
+(pinned by `TestSwapBuilders_EveryLegEndsOnADropoff`). Do not redefine what the
+column holds without reading that first.
+
+One site still infers role positionally and is knowingly wrong for press-index:
+`ResolveSwapPair` (Edge `station_views.go`). It is masked by the produce-role
+release path and is marked for the planned `leg_role` field.
 
 ### Reservations
 

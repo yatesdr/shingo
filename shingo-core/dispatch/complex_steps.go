@@ -213,7 +213,30 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 	return "", "", fmt.Errorf("step requires either node or payload_code for resolution")
 }
 
-// extractEndpoints returns the pickup (first actionable) and delivery (last actionable) nodes.
+// extractEndpoints returns the pickup (first actionable) and delivery (last
+// actionable) nodes. "Actionable" means pickup or dropoff — a wait is skipped.
+//
+// This is where Core's order.DeliveryNode comes from. Edge does NOT send one:
+// ComplexOrderRequest has no delivery-node field, so Core derives it here at
+// intake and again on re-resolve. Core's delivery_node and the Edge's column of
+// the same name are independent values; do not reason from one about the other.
+//
+// It is load-bearing for ROBOT ROUTING, not just display: patchRedirectSegments
+// (complex_release.go) rewrites the final segment's last dropoff to
+// order.DeliveryNode so a redirect issued while the order was staged actually
+// reaches the robot. Redefining what this returns re-aims a robot.
+//
+// It is NOT a leg's role, and two dispatch predicates used to think it was —
+// swapRemovalLegHeld and deadIsEvac, both of which deadlocked or mis-read
+// press-index because a leg can end somewhere other than where its bin ends.
+// Role comes from the steps: see legTakesLineBin (swap_leg_role.go).
+//
+// The INVARIANT it silently relies on: every leg the Edge builds ends on a
+// DROPOFF, so "last actionable" and "last dropoff" coincide and the routing patch
+// above rewrites a dropoff to itself on the happy path. A builder that ended a leg
+// on a pickup would make this return a pickup node and the patch would re-aim the
+// robot's final drop at it. Edge pins that invariant directly —
+// TestSwapBuilders_EveryLegEndsOnADropoff (material_orders_invariant_test.go).
 func extractEndpoints(steps []resolvedStep) (pickup, delivery string) {
 	for _, s := range steps {
 		if s.Action == protocol.ActionPickup || s.Action == protocol.ActionDropoff {

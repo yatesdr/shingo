@@ -256,15 +256,20 @@ func (d *Dispatcher) swapRemovalLegHeld(order *orders.Order, steps []resolvedSte
 	}
 	if sibUUID == "" {
 		// Not a swap leg. The sibling pointer is written ATOMICALLY in the
-		// second leg's CreateOrder INSERT (domain.Order.SiblingOrderUUID), so a
-		// two-robot leg can no longer reach here with an empty pointer because
-		// a post-create link step failed — an empty pointer now reliably means
-		// "no sibling". We deliberately do NOT fall back to a node-role
-		// fail-closed (gate every leg that pulls the line bin): that STEP shape
-		// is shared by the sequential changeover removal
-		// (swap_dispatch.go BuildSequentialRemovalSteps drops at
-		// OutboundDestination, not the line) which legitimately has no supply
-		// sibling — failing it closed would freeze every sequential removal
+		// second-created leg's CreateOrder INSERT (domain.Order.SiblingOrderUUID)
+		// and back-linked onto the first at that leg's intake, so a two-robot leg
+		// can no longer reach here with an empty pointer because a post-create
+		// link step failed — an empty pointer now reliably means "no sibling".
+		//
+		// (Which leg is created second is a per-mode detail and NOT a role:
+		// two_robot creates the supply first, press-index creates the evac first.
+		// Roles come from the steps — see legTakesLineBin.)
+		//
+		// We deliberately do NOT fall back to a fail-closed on the step shape
+		// alone (gate every leg that pulls the line bin): that shape is shared by
+		// the sequential changeover removal (Edge's BuildSequentialRemovalSteps
+		// drops at OutboundDestination, not the line) which legitimately has no
+		// supply sibling — failing it closed would freeze every sequential removal
 		// forever.
 		return false, ""
 	}

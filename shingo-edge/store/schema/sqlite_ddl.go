@@ -72,6 +72,19 @@ CREATE TABLE IF NOT EXISTS orders (
     process_node_id INTEGER REFERENCES process_nodes(id) ON DELETE SET NULL,
     retrieve_empty  INTEGER NOT NULL DEFAULT 1,
     quantity        INTEGER NOT NULL DEFAULT 0,
+    -- delivery_node: authoritative for SIMPLE orders (one bin, one destination).
+    --
+    -- For COMPLEX orders it is effectively a DISPLAY value and nothing
+    -- correctness-critical reads it any more. A complex leg has many dropoffs, so
+    -- one destination field cannot say where its bin came to rest; auto-confirm
+    -- legs store '' outright; and the swap legs that do store something name the
+    -- node the ROBOT ends at, not the node the BIN ends at. Every decision that
+    -- used to consult it — the delivered gate, the supply/evac classifier, the sim
+    -- operator's confirm scope — now reads steps_json (see swap_leg_role.go).
+    --
+    -- It is NOT the same value as Core's orders.delivery_node. Edge does not send
+    -- one: ComplexOrderRequest has no such field, and Core derives its own from
+    -- the steps (extractEndpoints). Two columns, one name, independent values.
     delivery_node   TEXT NOT NULL DEFAULT '',
     staging_node    TEXT NOT NULL DEFAULT '',
     source_node     TEXT NOT NULL DEFAULT '',

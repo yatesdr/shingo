@@ -265,12 +265,21 @@ type ComplexOrderRequest struct {
 	Priority    int                `json:"priority,omitempty"`
 	ProcessNode string             `json:"process_node,omitempty"`
 	Steps       []ComplexOrderStep `json:"steps"`
-	// SiblingOrderUUID is the edge UUID of the paired leg in a two-robot
-	// swap (supply ↔ evac). Set on the removal/evac leg — created second, so
-	// it knows the supply leg's UUID; empty for non-swap orders and the
-	// first-created leg. Core links both order rows on ingest (the other leg
-	// already exists), so the dispatch hold can see the pairing at intake,
-	// before the removal leg's synchronous dispatch claims the line bin.
+	// SiblingOrderUUID is the edge UUID of the paired leg in a two-robot swap.
+	// It rides the SECOND-created leg — the only one that can know the other's
+	// UUID — and is empty for non-swap orders and for the first-created leg.
+	//
+	// Which ROLE that is depends on the mode, so do not read a role into it:
+	// two_robot creates the supply first and the evac second, but
+	// two_robot_press_index creates the EVAC first (R1 clears the press) and the
+	// SUPPLY second (R2 indexes the fresh bin onto it). The pointer says
+	// "these two legs are a pair", nothing more; a leg's role comes from its
+	// steps (see legTakesLineBin in Core's dispatch package).
+	//
+	// Core links both order rows on ingest — bidirectionally, via
+	// LinkSiblingsByEdgeUUID — so either leg can find the other, and the
+	// dispatch hold can see the pairing at intake, before a removal leg's
+	// synchronous dispatch claims the line bin.
 	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
 	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
 	RemainingUOP *int `json:"remaining_uop,omitempty"`

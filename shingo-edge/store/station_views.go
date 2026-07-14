@@ -184,6 +184,26 @@ func resolveEvacOrderID(db *DB, runtime *processes.RuntimeState, task *processes
 // Returns an error when no evac can be resolved or when the resolved
 // pair is single-leg (one half has no sibling). Single-leg flows
 // (drops, manual single, sequential) must use per-order release.
+//
+// ── KNOWN WRONG FOR PRESS-INDEX. Marked for the leg_role conversion. ──
+//
+// This maps role POSITIONALLY: staged→evac, active→supply. That mapping is a
+// two_robot assumption (leg A is the supply, leg B is the evac) and it is
+// INVERTED for two_robot_press_index, where R1 — the first leg — is the EVAC (it
+// clears the press) and R2 is the SUPPLY (it indexes the fresh bin on).
+//
+// It is masked today: the live press-index claims are produce-role, and the
+// produce release path returns before the evac/supply distinction is used. It is
+// a live bug the moment a consume-role press-index claim exists.
+//
+// Deliberately NOT fixed here. This is the fourth site that infers a leg's role,
+// after the Edge classifier and Core's two dispatch predicates — all three of
+// which now read the leg's STEPS (legPlacesBinAt / legTakesLineBin). This one
+// cannot: it resolves from runtime pointers and a node task, and never loads the
+// orders' steps at all. Fixing it in place would mean a fourth independent
+// re-derivation of the same fact; it is the case that earns the `leg_role` field
+// on the order, which is the next phase. Until then it is wrong, contained, and
+// written down.
 func ResolveSwapPair(db *DB, runtime *processes.RuntimeState, task *processes.NodeTask) (evacID, supplyID *int64, err error) {
 	if runtime != nil {
 		if runtime.StagedOrderID != nil {

@@ -208,10 +208,18 @@ type OrderFaultedEvent struct {
 // StatusDelivered. Carries the BinID Core resolved at delivery time so
 // the delivered handler can look up the bin's authoritative
 // uop_remaining and bind the slot's runtime cache to it. ProcessNodeID
-// is the dispatch-time process node hint; the delivered handler still
-// gates on order.DeliveryNode == process_node.CoreNodeName because
-// removal-shaped orders (e.g., Order B in two-robot consume) attach to
-// the process node for tracking but deliver to the supermarket.
+// is the dispatch-time process node hint — it is a TRACKING pointer, not
+// a destination: removal-shaped orders (e.g. the evac leg of a two-robot
+// swap) attach to the process node but deliver to the supermarket, so the
+// delivered handler still has to decide whether the bin landed here.
+//
+// It decides that from the order's STEPS for a complex order —
+// finalDropoffNode(steps_json), the last dropoff, which is where a
+// single-bin order's one bin comes to rest — and from delivery_node for a
+// simple order, where that column is unambiguous. It does NOT compare
+// delivery_node for complex orders: they have many dropoffs, so one
+// per-order destination field cannot say where any particular bin ended up,
+// and the swap legs stamp it with values that name neither (HK 2026-07-14).
 type OrderDeliveredEvent struct {
 	eventbus.PayloadBase
 	OrderID       int64              `json:"order_id"`
