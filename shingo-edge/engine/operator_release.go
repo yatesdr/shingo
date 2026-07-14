@@ -153,11 +153,19 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 
 	// Two-robot supply-order detection. The per-order release path
 	// (apiReleaseOrder, /api/orders/{id}/release) doesn't know whether the
-	// order being released is the supply (Order A) or the evac (Order B),
-	// so it forwards the operator's chosen disposition either way. We
-	// discriminate server-side via the durable sibling pointer set at
-	// order-creation time — see isSupplyOrderInTwoRobotSwap.
-	isSupply := e.isSupplyOrderInTwoRobotSwap(order, node, toClaim)
+	// order being released is the supply or the evac leg, so it forwards the
+	// operator's chosen disposition either way. We discriminate server-side
+	// from the leg's steps — see isSupplyOrderInTwoRobotSwap.
+	//
+	// Refuse the release if the leg cannot be classified: the operator retries,
+	// which is recoverable. Guessing is not — guess "evac" and Core wipes the
+	// manifest of a bin that is about to feed the line (ALN_002).
+	isSupply, err := e.isSupplyOrderInTwoRobotSwap(order, node, toClaim)
+	if err != nil {
+		e.logRelease("order=%d node=%s disposition=%q — refusing release: %v",
+			orderID, node.Name, string(disp.Mode), err)
+		return err
+	}
 
 	// Side-cycle trigger (U1 only): fires when the operator declares a
 	// produce-side bin full (capture_lineside) on the line side of a
@@ -395,10 +403,10 @@ func buildProtocolDisposition(disp ReleaseDisposition, runtime *processes.Runtim
 }
 
 // isSupplyOrderInTwoRobotSwap reports whether the given order is the
-// supply leg (Order A) of a two-robot swap pair. Used by
-// ReleaseOrderWithLineside to suppress manifest sync for Order A — the
-// supply bin coming from the supermarket should never have its manifest
-// cleared at release time, only the evac bin (Order B) at the line should.
+// supply leg of a two-robot swap pair. Used by ReleaseOrderWithLineside to
+// suppress manifest sync for the supply leg — the fresh bin coming from the
+// supermarket should never have its manifest cleared at release time, only
+// the evac bin at the line should.
 //
 // Identification uses durable order data only:
 //
@@ -406,21 +414,23 @@ func buildProtocolDisposition(disp ReleaseDisposition, runtime *processes.Runtim
 //     at order-creation time via LinkOrderSiblings).
 //   - claim.SwapMode must be "two_robot" or "two_robot_press_index"
 //     (the modes that have a supply/evac choreography).
-//   - the leg's FINAL DROPOFF must be this node (supply delivers AT the slot;
-//     evac departs FROM it).
+//   - the leg must PLACE A BIN AT this node — legPlacesBinAt: a dropoff at the
+//     node with no LATER pickup from it. The supply leg leaves a bin on the
+//     slot; the evac leg takes one off.
 //
-// The last test reads the order's steps, NOT order.DeliveryNode. That field was
-// wrong in both directions for press-index and this classifier believed it:
+// The last test reads the order's steps, NOT order.DeliveryNode. That field
+// cannot answer the question and never could:
 //
-//   - R1 (the evac — it lifts the spent bin OFF the press) stored the press as
-//     its delivery node, so it was misread as the SUPPLY leg;
-//   - R2 (the real supply — it sets a bin ON the press) is auto-confirmed, and
-//     dispatchComplexLeg blanks delivery_node for auto-confirm legs, so it could
-//     NEVER be recognised as supply.
+//   - press-index R1 (the evac — it lifts the spent bin OFF the press) stored
+//     the press as its delivery node, so it was misread as the SUPPLY leg;
+//   - press-index R2 (the real supply — it sets a bin ON the press) is
+//     auto-confirmed, and dispatchComplexLeg blanks delivery_node for
+//     auto-confirm legs, so no value in that column could ever name it.
 //
-// The steps say plainly where a leg ends, so ask them. Same principle as the
-// delivery gate in wiring_delivered.go, and the same shared finalDropoff helper —
-// a leg has one destination and one place that decides it.
+// Nor is "where does the leg END?" the right question — that was the previous
+// fix and it is still wrong for a 3-position press-index R2, which sets a bin on
+// the press mid-sequence and then carries on to re-index the next position. Ask
+// where the BIN comes to rest, not the robot. See legPlacesBinAt.
 //
 // Pre-2026-05-04, this function read runtime.ActiveOrderID /
 // StagedOrderID to discriminate. That signal decayed: handler_bin_picked_up
@@ -430,24 +440,33 @@ func buildProtocolDisposition(disp ReleaseDisposition, runtime *processes.Runtim
 // negative on consume ticks. Plant incident on ALN_002 (bin 12 reached
 // uop_remaining=-20). The sibling pointer is durable across that event.
 //
-// Returns false on any DB read error (defensive — better to allow the
-// release than block it on a transient lookup failure).
-func (e *Engine) isSupplyOrderInTwoRobotSwap(order *storeorders.Order, node *processes.Node, claim *processes.NodeClaim) bool {
+// A steps-read failure is returned, not swallowed. It used to return false —
+// "better to allow the release than block it" — which was doubly wrong: this
+// function does not gate the release (it only selects a disposition, at the
+// three call sites below), and false means EVAC, which is the branch that wipes
+// the manifest. An unclassifiable leg is refused instead. The trade is real but
+// one-sided: erring toward supply costs a U1 unloader-full signal, while erring
+// toward evac empties a bin the line is about to need — and that is the
+// incident class (ALN_002).
+func (e *Engine) isSupplyOrderInTwoRobotSwap(order *storeorders.Order, node *processes.Node, claim *processes.NodeClaim) (bool, error) {
 	if order == nil || node == nil || claim == nil {
-		return false
+		return false, nil
 	}
 	if !claim.SwapMode.IsTwoRobot() {
-		return false
+		return false, nil
 	}
 	if order.SiblingOrderID == nil {
-		return false
+		return false, nil
 	}
 	stepsJSON, err := e.db.GetOrderStepsJSON(order.ID)
 	if err != nil {
-		e.logRelease("supply-leg check: order %d — cannot load steps: %v (treating as evac)", order.ID, err)
-		return false
+		return false, fmt.Errorf("supply-leg check: order %d: load steps: %w", order.ID, err)
 	}
-	return finalDropoffNode(stepsJSON) == node.CoreNodeName
+	placesBin, err := legPlacesBinAtJSON(stepsJSON, node.CoreNodeName)
+	if err != nil {
+		return false, fmt.Errorf("supply-leg check: order %d: %w", order.ID, err)
+	}
+	return placesBin, nil
 }
 
 // resolveReleaseClaim returns the claim whose capacity the release

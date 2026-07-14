@@ -236,6 +236,23 @@ func TestBuildSwapDispatch_TwoRobotPressIndex_ThreePosition(t *testing.T) {
 	if d.DeliveryNodeA != "CORE-NODE-C" {
 		t.Errorf("3-position R1 ends at the second paired node; DeliveryNodeA = %q, want CORE-NODE-C", d.DeliveryNodeA)
 	}
+	// R2 is still the leg that puts a bin on the press — but in 3-position it
+	// carries on afterwards to re-index C into B, so it ENDS at the index node.
+	// Its final dropoff therefore says "index", while the bin it supplied is
+	// sitting on the press. That gap is exactly why the supply/evac classifier
+	// asks legPlacesBinAt and not "where did the leg end".
+	if got := finalDropoff(d.StepsB); got != "CORE-NODE-BACK" {
+		t.Errorf("3-position R2 ends at the paired index node; finalDropoff(StepsB) = %q, want CORE-NODE-BACK", got)
+	}
+	if !legPlacesBinAt(d.StepsB, "CORE-NODE") {
+		t.Errorf("3-position R2 must still PLACE a bin on the press — it drops one there mid-sequence and never picks it back up")
+	}
+	if legPlacesBinAt(d.StepsA, "CORE-NODE") {
+		t.Errorf("3-position R1 lifts the spent bin OFF the press and never replaces it — it must not read as the supply leg")
+	}
+	if !d.AutoConfirmB {
+		t.Errorf("press-index R2 is auto-confirmed; AutoConfirmB = false, want true")
+	}
 }
 
 func TestBuildSwapDispatch_TwoRobotPressIndex_MissingFields(t *testing.T) {
