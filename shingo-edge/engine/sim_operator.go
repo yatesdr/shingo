@@ -10,6 +10,7 @@ import (
 	"shingo/protocol"
 	"shingo/shared/clock"
 	"shingoedge/config"
+	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
 
@@ -148,9 +149,25 @@ func (op *simOperator) scheduleConfirm(orderID, nodeID int64) {
 // Scope guards keep it to exactly the legs that need it:
 //   - manual_swap loader/unloader nodes are LOAD/CLEAR-driven (skip_auto_confirm);
 //     never auto-confirmed here.
-//   - removal legs deliver to the supermarket, not the line node, so
-//     DeliveryNode != CoreNodeName filters them out (they auto-confirm already).
+//   - an AUTO-CONFIRM leg signs itself off on FINISHED. It needs no receipt, and
+//     issuing one races its own transition.
+//   - the leg must actually do something at this node.
 //   - re-checks status==delivered after the dwell so a racing confirm is a no-op.
+//
+// The node test reads STEPS for a complex order, not delivery_node. That column
+// cannot answer it: an auto-confirmed leg's is blanked outright, and a
+// press-index R1's names the index node it stages at rather than the press it
+// serves. The old test (DeliveryNode == CoreNodeName) therefore skipped exactly
+// the legs that most need a receipt — press-index R1 and single-robot A, neither
+// of which auto-confirms — and they would sit `delivered` forever, with
+// CanAcceptOrders reporting "active/staged order in progress" until the cell
+// overfilled (the PLN_003 shape this function exists to prevent).
+//
+// "Touches this node" is the right question, and it is weaker than "leaves a bin
+// here" on purpose: press-index R1 serves the press by CLEARING it, so it leaves
+// no bin behind and still needs signing off. Simple orders keep using
+// delivery_node, which is unambiguous for them — the same split the delivered
+// gate makes in wiring_delivered.go.
 func (op *simOperator) runConfirm(orderID, nodeID int64) {
 	defer func() {
 		op.mu.Lock()
@@ -169,8 +186,11 @@ func (op *simOperator) runConfirm(orderID, nodeID int64) {
 	if err != nil || order == nil {
 		return
 	}
-	if order.DeliveryNode != node.CoreNodeName {
-		return // only legs that bind a bin AT this node (resupply / A/B backfill)
+	if order.AutoConfirm {
+		return // signs itself off on FINISHED; a receipt here would race it
+	}
+	if !op.legServesNode(order, node.CoreNodeName) {
+		return
 	}
 
 	select {
@@ -189,6 +209,43 @@ func (op *simOperator) runConfirm(orderID, nodeID int64) {
 		return
 	}
 	op.e.logFn("[sim] operator auto-confirm delivered leg order %d at %s", orderID, node.CoreNodeName)
+}
+
+// legServesNode reports whether this order is one the operator at coreNodeName
+// would sign for. A complex leg is judged by its STEPS (see runConfirm); a simple
+// order by its delivery node, which says exactly where its one bin goes.
+func (op *simOperator) legServesNode(order *storeorders.Order, coreNodeName string) bool {
+	if order.OrderType != protocol.OrderTypeComplex {
+		return order.DeliveryNode == coreNodeName
+	}
+	stepsJSON, err := op.e.db.GetOrderStepsJSON(order.ID)
+	if err != nil {
+		op.e.debugFn("[sim] operator confirm: order %d — cannot load steps: %v", order.ID, err)
+		return false
+	}
+	steps, err := decodeSteps(stepsJSON)
+	if err != nil {
+		op.e.debugFn("[sim] operator confirm: order %d — %v", order.ID, err)
+		return false
+	}
+	return legTouchesNode(steps, coreNodeName)
+}
+
+// legTouchesNode reports whether the leg does anything at node at all — waits,
+// picks up, or drops off. Weaker than legPlacesBinAt, and deliberately so: it
+// answers "is this node part of this leg's job?", not "does the bin end up here".
+// Press-index R1 serves the press by CLEARING it, so it leaves no bin behind and
+// still needs signing off.
+func legTouchesNode(steps []protocol.ComplexOrderStep, node string) bool {
+	if node == "" {
+		return false
+	}
+	for _, s := range steps {
+		if s.Node == node {
+			return true
+		}
+	}
+	return false
 }
 
 // schedule dedupes by node and spawns the LOAD/CLEAR worker. It is

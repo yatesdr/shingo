@@ -60,12 +60,20 @@ func legPlacesBinAt(steps []protocol.ComplexOrderStep, node string) bool {
 // Errors are returned, never swallowed: a leg whose steps can't be read cannot
 // be classified, and guessing "evac" is what wipes a supply bin's manifest.
 func legPlacesBinAtJSON(stepsJSON, node string) (bool, error) {
+	steps, err := decodeSteps(stepsJSON)
+	if err != nil {
+		return false, err
+	}
+	return legPlacesBinAt(steps, node), nil
+}
+
+func decodeSteps(stepsJSON string) ([]protocol.ComplexOrderStep, error) {
 	if stepsJSON == "" {
-		return false, fmt.Errorf("no steps stored")
+		return nil, fmt.Errorf("no steps stored")
 	}
 	var steps []protocol.ComplexOrderStep
 	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
-		return false, fmt.Errorf("decode steps: %w", err)
+		return nil, fmt.Errorf("decode steps: %w", err)
 	}
-	return legPlacesBinAt(steps, node), nil
+	return steps, nil
 }
