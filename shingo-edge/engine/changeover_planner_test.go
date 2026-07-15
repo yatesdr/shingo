@@ -549,6 +549,150 @@ func TestPlanNodeAction_PressIndex_SameBinType_RoutesToStandardDispatch(t *testi
 	}
 }
 
+// TestPlanNodeAction_PressIndex_BlankStaging_RoutesToFallback pins the HK
+// production bug as it stands at 801e941: a same-bin-type press-index Swap whose
+// to-claim has no InboundStaging is diverted by the staging-fallback gate to a
+// supply-only retrieve — the R1/R2 choreography never builds. This is why P400
+// stalls (the retrieve tries to land an empty on a seat nothing cleared).
+// Commit C adds press-index to directTripChangeoverMode, after which this SAME
+// input builds R1+R2 with LogTag "swap"; this test's expectation flips there,
+// making the un-gate visible in that commit's diff.
+func TestPlanNodeAction_PressIndex_BlankStaging_RoutesToFallback(t *testing.T) {
+	t.Parallel()
+	from := fullSwapClaim("N1", "PART-A", "consume")
+	from.SwapMode = "two_robot_press_index"
+	from.PairedCoreNode = "N1B"
+	to := fullSwapClaim("N1", "PART-B", "consume")
+	to.SwapMode = "two_robot_press_index"
+	to.InboundStaging = "" // the HK condition: press-index needs no staging, but the gate diverts on its absence
+	diff := ChangeoverNodeDiff{
+		CoreNodeName: "N1",
+		Situation:    SituationSwap,
+		FromClaim:    &from,
+		ToClaim:      &to,
+	}
+	node := &processes.Node{ID: 42, Name: "N1"}
+	action := planNodeAction(diff, node, false, nil)
+
+	if action.Err != nil {
+		t.Fatalf("unexpected planning error: %v", action.Err)
+	}
+	if action.LogTag != "fallback_retrieve" {
+		t.Fatalf("LogTag = %q, want fallback_retrieve (press-index blank-staging is gated to the retrieve fallback today)", action.LogTag)
+	}
+	if action.SupplyOrder == nil || action.SupplyOrder.Retrieve == nil {
+		t.Fatal("expected a supply-only Retrieve order from the fallback path")
+	}
+	if action.SupplyOrder.Complex != nil {
+		t.Error("fallback must not build a complex swap order")
+	}
+	if action.EvacOrder != nil {
+		t.Error("fallback path builds no evac leg")
+	}
+}
+
+// TestPlanNodeAction_TwoRobot_SlotAssignment is the neutrality anchor for the
+// role-declared-legs change (commit B). two_robot is the mode where the
+// positional StepsA=supply / StepsB=evac mapping happens to equal the
+// steps-based role, so commit B must leave this assignment BYTE-identical. If
+// this test changes, role-naming perturbed the one mode it must not.
+func TestPlanNodeAction_TwoRobot_SlotAssignment(t *testing.T) {
+	t.Parallel()
+	from := fullSwapClaim("N1", "PART-A", "consume")
+	from.SwapMode = "two_robot"
+	to := fullSwapClaim("N1", "PART-B", "consume")
+	to.SwapMode = "two_robot"
+	diff := ChangeoverNodeDiff{
+		CoreNodeName: "N1",
+		Situation:    SituationSwap,
+		FromClaim:    &from,
+		ToClaim:      &to,
+	}
+	node := &processes.Node{ID: 42, Name: "N1"}
+	action := planNodeAction(diff, node, false, nil)
+
+	if action.Err != nil {
+		t.Fatalf("unexpected planning error: %v", action.Err)
+	}
+	if action.LogTag != "swap" {
+		t.Errorf("LogTag = %q, want swap", action.LogTag)
+	}
+	// Supply leg = the resupply robot: fetch new from source, stage, deliver to line.
+	if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil {
+		t.Fatal("expected supply complex order")
+	}
+	sup := action.SupplyOrder.Complex
+	if last := sup.Steps[len(sup.Steps)-1]; last.Action != "dropoff" || last.Node != "N1" {
+		t.Errorf("supply leg final step = %+v, want dropoff at N1 (delivers new bin to the line)", last)
+	}
+	if sup.DeliveryNode != "N1" {
+		t.Errorf("supply DeliveryNode = %q, want N1 (the line node it delivers to)", sup.DeliveryNode)
+	}
+	if sup.PayloadCode != "" {
+		t.Errorf("supply PayloadCode = %q, want empty (fresh bin, backfilled to target style)", sup.PayloadCode)
+	}
+	// Evac leg = the removal robot: wait at line, lift old bin, carry to outbound.
+	if action.EvacOrder == nil || action.EvacOrder.Complex == nil {
+		t.Fatal("expected evac complex order")
+	}
+	evac := action.EvacOrder.Complex
+	if len(evac.Steps) < 2 || evac.Steps[1].Action != "pickup" || evac.Steps[1].Node != "N1" {
+		t.Errorf("evac leg steps = %+v, want pickup at N1 as second step (removal leg)", evac.Steps)
+	}
+	if evac.PayloadCode != "PART-A" {
+		t.Errorf("evac PayloadCode = %q, want PART-A (from-style; ALN_001 removal-claim fix)", evac.PayloadCode)
+	}
+}
+
+// TestPlanNodeAction_PressIndex_WithStaging_SlotContent pins the slot INVERSION
+// that stalls press-index, as it stands at 801e941. With staging populated the
+// gate lets the builder run, and assignDispatch maps StepsA(R1)->SupplyOrder and
+// StepsB(R2)->EvacOrder positionally. But R1 is the leg that CLEARS the press
+// (steps-role evac) and R2 is the leg that indexes the fresh bin on (steps-role
+// supply) — the mapping is inverted (swap_leg_role.go:28-36 table). Commit B
+// assigns by role; the two step-content assertions below FLIP there, and that
+// diff is the fix.
+func TestPlanNodeAction_PressIndex_WithStaging_SlotContent(t *testing.T) {
+	t.Parallel()
+	from := fullSwapClaim("N1", "PART-A", "consume")
+	from.SwapMode = "two_robot_press_index"
+	from.PairedCoreNode = "N1B"
+	to := fullSwapClaim("N1", "PART-B", "consume")
+	to.SwapMode = "two_robot_press_index"
+	diff := ChangeoverNodeDiff{
+		CoreNodeName: "N1",
+		Situation:    SituationSwap,
+		FromClaim:    &from,
+		ToClaim:      &to,
+	}
+	node := &processes.Node{ID: 42, Name: "N1"}
+	action := planNodeAction(diff, node, false, nil)
+
+	if action.Err != nil {
+		t.Fatalf("unexpected planning error: %v", action.Err)
+	}
+	if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil ||
+		action.EvacOrder == nil || action.EvacOrder.Complex == nil {
+		t.Fatal("expected both R1 and R2 complex orders")
+	}
+	// CURRENT (inverted): R1 — the removal leg (pickup at the front/CoreNodeName) —
+	// sits in the SUPPLY slot. Commit B moves it to the EVAC slot.
+	if s := action.SupplyOrder.Complex.Steps; len(s) < 2 || s[1].Action != "pickup" || s[1].Node != "N1" {
+		t.Errorf("supply slot steps = %+v, want R1 (pickup at N1 as 2nd step) — pins the inversion; commit B flips this", s)
+	}
+	// CURRENT (inverted): R2 — the index/supply leg (waits at the back/PairedCoreNode) —
+	// sits in the EVAC slot.
+	if s := action.EvacOrder.Complex.Steps; len(s) < 1 || s[0].Action != "wait" || s[0].Node != "N1B" {
+		t.Errorf("evac slot steps = %+v, want R2 (wait at N1B first) — pins the inversion; commit B flips this", s)
+	}
+	// The DeliveryNodeA lie (HK 2026-07-14): R1's stored delivery node is the front
+	// node, though its bin actually comes to rest at the back (N1B). Commit B derives
+	// it from steps and this stops being N1.
+	if dn := action.SupplyOrder.Complex.DeliveryNode; dn != "N1" {
+		t.Errorf("supply DeliveryNode = %q, want N1 (the hardcoded value); pins the 07-14 misbind lie", dn)
+	}
+}
+
 // The press-index different-bin-type case is handled by the per-
 // position fan-out post-processor in changeover.go before the planner
 // sees the diff list. Tests for that fan-out live in
