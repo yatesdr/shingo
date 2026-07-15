@@ -3,8 +3,10 @@
 package dispatch
 
 import (
+	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
@@ -97,5 +99,98 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 	}
 	if srcBinID != emptyAtSrc.ID {
 		t.Errorf("order_bins source-leg bin = %d, want empty carrier %d", srcBinID, emptyAtSrc.ID)
+	}
+}
+
+// TestDispatcher_ComplexOrder_QueuesOnDryEmptyPool is the produce-side dual of
+// TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP. A produce swap's empty-fetch
+// leg (step.Empty) resolves a fresh EMPTY carrier from an NGRP pool. When that pool
+// is momentarily dry, resolveStepNode returns "cannot resolve empty in group X".
+//
+// Pre-fix that error was classified ResolutionFatal and terminal-rejected at intake
+// — no Core row, no retry — so a transiently-dry empty pool aborted the produce swap
+// and left its supply sibling to half-strand the press (2026-07-14 sim run). The
+// consume-side full dual ("no available slot / no bin of requested payload in node
+// group") already queued-and-retried; this pins the symmetry: dry empty pool at
+// intake → QUEUED (retryable), and it dispatches once an empty returns to the pool.
+func TestDispatcher_ComplexOrder_QueuesOnDryEmptyPool(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storeNode, lineNode, bp := setupTestData(t, db)
+
+	syntheticType, err := db.GetNodeTypeByCode("NGRP")
+	if err != nil {
+		t.Fatalf("get NGRP type: %v", err)
+	}
+
+	// The empty-carrier supermarket the press pulls fresh carriers from — an NGRP
+	// with one child slot, holding NO empty. A FULL bin sits in the slot, which the
+	// empty filter (COALESCE(payload_code,'')='') deliberately skips: this proves
+	// the shortfall is "no EMPTY here", not "group is empty / has no children".
+	pool := &nodes.Node{Name: "EMPTY-POOL-NGRP", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(pool), "create empty pool")
+	slot := &nodes.Node{Name: "POOL-SLOT", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(slot), "create pool slot")
+	testutil.MustNoErr(t, db.SetNodeParent(slot.ID, pool.ID), "parent slot")
+	// A genuine FULL bin occupies the slot — payload set via the manifest path
+	// (CreateBin does not persist a struct PayloadCode). The empty filter
+	// (COALESCE(payload_code,'')='') skips it, so this proves the shortfall is
+	// "no EMPTY carrier here", not "the group is empty / has no children".
+	full := &bins.Bin{BinTypeID: 1, Label: "POOL-FULL", NodeID: &slot.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(full), "create full bin in pool")
+	testutil.MustNoErr(t, db.SetBinManifest(full.ID, `{"items":[{"catid":"PART-A","qty":40}]}`, bp.Code, 40), "fill the bin")
+	testutil.MustNoErr(t, db.ConfirmBinManifest(full.ID, ""), "confirm full")
+
+	// The produced full on the line — the first leg (which CAN source) picks it up.
+	_ = testdb.CreateBinAtNode(t, db, bp.Code, lineNode.ID, "LINE-FULL")
+
+	backend := testdb.NewTrackingBackend()
+	emitter := &mockEmitter{}
+	resolver := &DefaultResolver{DB: db}
+	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+	env := testEnvelope()
+
+	// A produce swap shape: clear the press full → store it → fetch a fresh EMPTY
+	// from the (dry) pool → stage it back at the line. The empty pickup is step 3.
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "empty-dry-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		ProcessNode: lineNode.Name,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: lineNode.Name},
+			{Action: "dropoff", Node: storeNode.Name},
+			{Action: "pickup", Node: pool.Name, Empty: true},
+			{Action: "dropoff", Node: lineNode.Name},
+		},
+	})
+
+	// The order must exist at Core in queued state — NOT rejected via sendError.
+	order, err := db.GetOrderByUUID("empty-dry-1")
+	if err != nil {
+		t.Fatalf("get order: %v — a dry empty pool must create the order QUEUED, not reject it at intake", err)
+	}
+	if order.Status != StatusQueued {
+		t.Errorf("status = %q, want %q (a dry empty pool is sourceable-eventually — it must queue)", order.Status, StatusQueued)
+	}
+	if !strings.Contains(order.QueueReason, "cannot resolve empty in group") &&
+		!strings.Contains(order.QueueReason, "no empty carrier in group") {
+		t.Errorf("queue_reason = %q, want the empty-resolver message so the operator sees why it waits", order.QueueReason)
+	}
+
+	// An empty carrier returns to the pool → the queued order dispatches on replay
+	// (the scanner drives this on EventBinUpdated; here we call it directly).
+	empty := &bins.Bin{BinTypeID: 1, Label: "POOL-EMPTY", NodeID: &slot.ID, Status: "available", PayloadCode: ""}
+	testutil.MustNoErr(t, db.CreateBin(empty), "add empty carrier to pool")
+
+	if derr := d.DispatchPreparedComplex(order); derr != nil {
+		t.Fatalf("DispatchPreparedComplex after an empty returned: %v — the queued order must dispatch on retry, not stay stuck", derr)
+	}
+	order, err = db.GetOrderByUUID("empty-dry-1")
+	if err != nil {
+		t.Fatalf("re-read order: %v", err)
+	}
+	if order.Status != StatusDispatched {
+		t.Errorf("after replay status = %q, want %q (empty returned → swap proceeds)", order.Status, StatusDispatched)
 	}
 }

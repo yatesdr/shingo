@@ -92,10 +92,12 @@ type ResolutionErrorClass int
 const (
 	// ResolutionOK is the zero value, returned when err == nil.
 	ResolutionOK ResolutionErrorClass = iota
-	// ResolutionCapacity covers the NGRP-saturated and
-	// NGRP-empty shapes ("no available slot in node group N", "no
-	// bin of requested payload in node group N"). Intake queues the
-	// order with queue_reason = err.Error(); the scanner replays.
+	// ResolutionCapacity covers the momentarily-unsourceable NGRP shapes,
+	// both directions of a swap: a saturated dropoff group ("no available
+	// slot in node group N", "no bin of requested payload in node group N")
+	// and a dry empty-fetch pool ("cannot resolve empty in group N", "no
+	// empty carrier in group N"). Intake queues the order with
+	// queue_reason = err.Error(); the scanner replays when the shortfall clears.
 	ResolutionCapacity
 	// ResolutionBuried wraps *BuriedError. Intake routes through
 	// the reshuffle planner; simple-retrieve planning calls
@@ -150,9 +152,27 @@ func classifyResolutionError(err error) (ResolutionErrorClass, any) {
 	// Capacity-shaped errors (untyped fmt.Errorf strings from the
 	// resolver). resolveStepNode wraps with "cannot resolve group X:
 	// <original>" — the substring survives.
+	//
+	// Two shapes per direction, because a swap has both:
+	//   - consume/full retrieve, dropoff into a saturated group:
+	//     "no available slot in node group", "no bin of requested payload in node group"
+	//   - produce/empty fetch, the "bring a fresh carrier to fill the press" leg
+	//     resolving against a momentarily DRY empty pool (resolveStepNode's
+	//     step.Empty branch): "cannot resolve empty in group", "no empty carrier in group".
+	// Both are sourceable-eventually — an empty returns to the pool, a slot frees —
+	// so both QUEUE and retry rather than terminal-reject at intake. The empty pair
+	// was missed when the empty-fetch leg was added (0b665a4d, after this classifier
+	// already existed for the full pair), so a dry pool aborted produce swaps and
+	// half-stranded the press until an operator intervened (2026-07-14 sim run).
+	//
+	// Still substring-matched, like the rest of this classifier — the resolver
+	// returns plain fmt.Errorf for all four with no typed sentinel. Typing them is
+	// the deferred cleanup noted above; do it for all four together, not piecemeal.
 	msg := err.Error()
 	if strings.Contains(msg, "no available slot in node group") ||
-		strings.Contains(msg, "no bin of requested payload in node group") {
+		strings.Contains(msg, "no bin of requested payload in node group") ||
+		strings.Contains(msg, "cannot resolve empty in group") ||
+		strings.Contains(msg, "no empty carrier in group") {
 		return ResolutionCapacity, nil
 	}
 	// DB-layer wraps that aren't structural or capacity.

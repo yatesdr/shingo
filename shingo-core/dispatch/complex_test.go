@@ -164,6 +164,13 @@ func TestClassifyResolutionError_AllShapes(t *testing.T) {
 		{"capacity slot", errors.New("no available slot in node group ASRS"), ResolutionCapacity, false},
 		{"capacity payload", errors.New("no bin of requested payload in node group ASRS"), ResolutionCapacity, false},
 		{"capacity wrapped", fmt.Errorf("step 0: cannot resolve group ASRS: %w", errors.New("no available slot in node group ASRS")), ResolutionCapacity, false},
+		// Produce-side empty-fetch duals: a dry empty pool is sourceable-eventually
+		// (an empty returns), so it must QUEUE like the full pair, not terminal-reject.
+		// The first wraps the resolver's sql.ErrNoRows (resolveStepNode's step.Empty
+		// branch); the second is the clean nil-bin shape.
+		{"capacity empty dry pool", fmt.Errorf("cannot resolve empty in group %s: %w", "SYN_MARKET", errors.New("sql: no rows in result set")), ResolutionCapacity, false},
+		{"capacity empty none", errors.New("no empty carrier in group SYN_MARKET"), ResolutionCapacity, false},
+		{"capacity empty wrapped", fmt.Errorf("step 3: %w", fmt.Errorf("cannot resolve empty in group %s: %w", "SYN_MARKET", errors.New("sql: no rows in result set"))), ResolutionCapacity, false},
 		{"transient list children", errors.New("list children of NGRP: connection refused"), ResolutionTransient, false},
 		{"transient get depth", errors.New("get target depth: connection refused"), ResolutionTransient, false},
 		{"fatal unknown", errors.New("something else entirely"), ResolutionFatal, false},
