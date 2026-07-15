@@ -157,14 +157,20 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 
 	disp := BuildSwapChangeoverSteps(from, to, "", "")
 
-	if disp.StepsA == nil || disp.StepsB == nil {
-		t.Fatalf("two_robot: expected both StepsA and StepsB, got A=%v B=%v", disp.StepsA, disp.StepsB)
+	if disp.Roles == nil {
+		t.Fatal("two_robot: expected role-declared legs (supply + evac)")
 	}
-	if !disp.AutoConfirmA || !disp.AutoConfirmB {
+	// two_robot: the supply leg (resupply robot) is Order A; the evac leg
+	// (removal robot) is Order B — position happens to equal role for this mode.
+	stepsA, stepsB := disp.Roles.supply.steps, disp.Roles.evac.steps
+	if stepsA == nil || stepsB == nil {
+		t.Fatalf("two_robot: expected both legs, got supply=%v evac=%v", stepsA, stepsB)
+	}
+	if !disp.Roles.supply.autoConfirm || !disp.Roles.evac.autoConfirm {
 		t.Error("two_robot: expected both legs to auto-confirm (the wait IS the gate)")
 	}
-	if disp.DeliveryNodeA != "CORE" {
-		t.Errorf("Order A delivery node: got %q, want CORE", disp.DeliveryNodeA)
+	if disp.Roles.supply.deliveryNode != "CORE" {
+		t.Errorf("supply leg delivery node: got %q, want CORE", disp.Roles.supply.deliveryNode)
 	}
 
 	wantA := []protocol.ComplexOrderStep{
@@ -174,16 +180,16 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "CORE"},
 	}
-	if len(disp.StepsA) != len(wantA) {
-		t.Fatalf("Order A: expected %d steps, got %d", len(wantA), len(disp.StepsA))
+	if len(stepsA) != len(wantA) {
+		t.Fatalf("supply leg: expected %d steps, got %d", len(wantA), len(stepsA))
 	}
-	for i, s := range disp.StepsA {
+	for i, s := range stepsA {
 		if s != wantA[i] {
-			t.Errorf("Order A step %d: got %+v, want %+v", i, s, wantA[i])
+			t.Errorf("supply leg step %d: got %+v, want %+v", i, s, wantA[i])
 		}
 	}
-	if w := countWaits(disp.StepsA); w != 1 {
-		t.Errorf("two_robot Swap Order A: expected 1 wait, got %d", w)
+	if w := countWaits(stepsA); w != 1 {
+		t.Errorf("two_robot Swap supply leg: expected 1 wait, got %d", w)
 	}
 
 	wantB := []protocol.ComplexOrderStep{
@@ -191,12 +197,12 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 		{Action: "pickup", Node: "CORE"},
 		{Action: "dropoff", Node: "DEST"},
 	}
-	if len(disp.StepsB) != len(wantB) {
-		t.Fatalf("Order B: expected %d steps, got %d", len(wantB), len(disp.StepsB))
+	if len(stepsB) != len(wantB) {
+		t.Fatalf("evac leg: expected %d steps, got %d", len(wantB), len(stepsB))
 	}
-	for i, s := range disp.StepsB {
+	for i, s := range stepsB {
 		if s != wantB[i] {
-			t.Errorf("Order B step %d: got %+v, want %+v", i, s, wantB[i])
+			t.Errorf("evac leg step %d: got %+v, want %+v", i, s, wantB[i])
 		}
 	}
 }
@@ -221,25 +227,30 @@ func TestBuildEvacuateChangeoverSteps_TwoRobot(t *testing.T) {
 	swap := BuildSwapChangeoverSteps(from, to, "", "")
 	evac := BuildEvacuateChangeoverSteps(from, to, "", "")
 
-	// Order A: only the shared "ready" wait, same as Swap.
-	if w := countWaits(evac.StepsA); w != 1 {
-		t.Errorf("Order A: expected 1 wait (ready only — no second tooling-done gate), got %d", w)
+	if swap.Roles == nil || evac.Roles == nil {
+		t.Fatal("two_robot: expected role-declared legs on both swap and evacuate")
 	}
-	if len(evac.StepsA) != len(swap.StepsA) {
-		t.Fatalf("Order A length: evac=%d swap=%d, expected match", len(evac.StepsA), len(swap.StepsA))
+	// Supply leg: only the shared "ready" wait, same as Swap.
+	evacSupply, swapSupply := evac.Roles.supply.steps, swap.Roles.supply.steps
+	if w := countWaits(evacSupply); w != 1 {
+		t.Errorf("supply leg: expected 1 wait (ready only — no second tooling-done gate), got %d", w)
 	}
-	for i := range evac.StepsA {
-		if evac.StepsA[i] != swap.StepsA[i] {
-			t.Errorf("Order A step %d: evac=%+v swap=%+v, expected match", i, evac.StepsA[i], swap.StepsA[i])
+	if len(evacSupply) != len(swapSupply) {
+		t.Fatalf("supply leg length: evac=%d swap=%d, expected match", len(evacSupply), len(swapSupply))
+	}
+	for i := range evacSupply {
+		if evacSupply[i] != swapSupply[i] {
+			t.Errorf("supply leg step %d: evac=%+v swap=%+v, expected match", i, evacSupply[i], swapSupply[i])
 		}
 	}
 
-	// Order B unchanged from Swap.
-	if w := countWaits(evac.StepsB); w != 1 {
-		t.Errorf("Order B: expected 1 wait, got %d", w)
+	// Evac leg unchanged from Swap.
+	evacEvac, swapEvac := evac.Roles.evac.steps, swap.Roles.evac.steps
+	if w := countWaits(evacEvac); w != 1 {
+		t.Errorf("evac leg: expected 1 wait, got %d", w)
 	}
-	if len(evac.StepsB) != len(swap.StepsB) {
-		t.Fatalf("Order B length mismatch: evac=%d swap=%d", len(evac.StepsB), len(swap.StepsB))
+	if len(evacEvac) != len(swapEvac) {
+		t.Fatalf("evac leg length mismatch: evac=%d swap=%d", len(evacEvac), len(swapEvac))
 	}
 }
 
@@ -261,6 +272,13 @@ func TestBuildSwapChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 
 	disp := BuildSwapChangeoverSteps(from, to, "", "")
 
+	if disp.Roles == nil {
+		t.Fatal("press-index: expected role-declared legs")
+	}
+	// R1 clears the press → evac leg; R2 indexes the fresh bin on → supply leg.
+	// This is the role assignment the positional mapping got backwards.
+	r1, r2 := disp.Roles.evac.steps, disp.Roles.supply.steps
+
 	wantR1 := []protocol.ComplexOrderStep{
 		{Action: "wait", Node: "FRONT"},
 		{Action: "pickup", Node: "FRONT"},
@@ -268,13 +286,17 @@ func TestBuildSwapChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 		{Action: "pickup", Node: "MARKET"},
 		{Action: "dropoff", Node: "BACK"},
 	}
-	if len(disp.StepsA) != len(wantR1) {
-		t.Fatalf("R1: expected %d steps, got %d", len(wantR1), len(disp.StepsA))
+	if len(r1) != len(wantR1) {
+		t.Fatalf("R1 (evac): expected %d steps, got %d", len(wantR1), len(r1))
 	}
-	for i, s := range disp.StepsA {
+	for i, s := range r1 {
 		if s != wantR1[i] {
 			t.Errorf("R1 step %d: got %+v, want %+v", i, s, wantR1[i])
 		}
+	}
+	// The evac leg's delivery node is Core-derived (blank), not the front node.
+	if dn := disp.Roles.evac.deliveryNode; dn != "" {
+		t.Errorf("evac (R1) delivery node = %q, want empty (Core derives the back position); a front node is the HK 07-14 lie", dn)
 	}
 
 	wantR2 := []protocol.ComplexOrderStep{
@@ -282,10 +304,10 @@ func TestBuildSwapChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 		{Action: "pickup", Node: "BACK"},
 		{Action: "dropoff", Node: "FRONT"},
 	}
-	if len(disp.StepsB) != len(wantR2) {
-		t.Fatalf("R2: expected %d steps, got %d", len(wantR2), len(disp.StepsB))
+	if len(r2) != len(wantR2) {
+		t.Fatalf("R2 (supply): expected %d steps, got %d", len(wantR2), len(r2))
 	}
-	for i, s := range disp.StepsB {
+	for i, s := range r2 {
 		if s != wantR2[i] {
 			t.Errorf("R2 step %d: got %+v, want %+v", i, s, wantR2[i])
 		}
@@ -310,9 +332,14 @@ func TestBuildSwapChangeoverSteps_PressIndex_3Pos(t *testing.T) {
 
 	disp := BuildSwapChangeoverSteps(from, to, "", "")
 
+	if disp.Roles == nil {
+		t.Fatal("press-index: expected role-declared legs")
+	}
+	r1, r2 := disp.Roles.evac.steps, disp.Roles.supply.steps
+
 	wantR1Last := protocol.ComplexOrderStep{Action: "dropoff", Node: "BACK"}
-	if disp.StepsA[len(disp.StepsA)-1] != wantR1Last {
-		t.Errorf("R1 last step: got %+v, want %+v", disp.StepsA[len(disp.StepsA)-1], wantR1Last)
+	if r1[len(r1)-1] != wantR1Last {
+		t.Errorf("R1 last step: got %+v, want %+v", r1[len(r1)-1], wantR1Last)
 	}
 
 	wantR2 := []protocol.ComplexOrderStep{
@@ -322,10 +349,10 @@ func TestBuildSwapChangeoverSteps_PressIndex_3Pos(t *testing.T) {
 		{Action: "pickup", Node: "BACK"},
 		{Action: "dropoff", Node: "MID"},
 	}
-	if len(disp.StepsB) != len(wantR2) {
-		t.Fatalf("R2: expected %d steps, got %d", len(wantR2), len(disp.StepsB))
+	if len(r2) != len(wantR2) {
+		t.Fatalf("R2: expected %d steps, got %d", len(wantR2), len(r2))
 	}
-	for i, s := range disp.StepsB {
+	for i, s := range r2 {
 		if s != wantR2[i] {
 			t.Errorf("R2 step %d: got %+v, want %+v", i, s, wantR2[i])
 		}
@@ -348,15 +375,20 @@ func TestBuildEvacuateChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 	}
 	disp := BuildEvacuateChangeoverSteps(from, to, "", "")
 
-	if w := countWaits(disp.StepsA); w != 2 {
+	if disp.Roles == nil {
+		t.Fatal("press-index: expected role-declared legs")
+	}
+	r1 := disp.Roles.evac.steps // R1 clears the press → evac leg
+
+	if w := countWaits(r1); w != 2 {
 		t.Errorf("R1: expected 2 waits (ready + tooling done), got %d", w)
 	}
 	// Sequence: wait(FRONT), pickup(FRONT), dropoff(DEST), wait(""), pickup(MARKET), dropoff(BACK)
-	if len(disp.StepsA) != 6 {
-		t.Fatalf("R1: expected 6 steps, got %d", len(disp.StepsA))
+	if len(r1) != 6 {
+		t.Fatalf("R1: expected 6 steps, got %d", len(r1))
 	}
-	if disp.StepsA[3].Action != "wait" || disp.StepsA[3].Node != "" {
-		t.Errorf("R1 step 3: expected bare tooling-done wait, got %+v", disp.StepsA[3])
+	if r1[3].Action != "wait" || r1[3].Node != "" {
+		t.Errorf("R1 step 3: expected bare tooling-done wait, got %+v", r1[3])
 	}
 }
 

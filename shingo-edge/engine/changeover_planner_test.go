@@ -644,14 +644,15 @@ func TestPlanNodeAction_TwoRobot_SlotAssignment(t *testing.T) {
 	}
 }
 
-// TestPlanNodeAction_PressIndex_WithStaging_SlotContent pins the slot INVERSION
-// that stalls press-index, as it stands at 801e941. With staging populated the
-// gate lets the builder run, and assignDispatch maps StepsA(R1)->SupplyOrder and
-// StepsB(R2)->EvacOrder positionally. But R1 is the leg that CLEARS the press
-// (steps-role evac) and R2 is the leg that indexes the fresh bin on (steps-role
-// supply) — the mapping is inverted (swap_leg_role.go:28-36 table). Commit B
-// assigns by role; the two step-content assertions below FLIP there, and that
-// diff is the fix.
+// TestPlanNodeAction_PressIndex_WithStaging_SlotContent pins that press-index
+// legs are assigned by ROLE, not by StepsA/StepsB position. R1 clears the press
+// (steps-role evac) and R2 indexes the fresh bin on (steps-role supply) — the
+// inverse of the positional order (swap_leg_role.go:28-36 table). Before commit
+// B this test pinned the inversion (R1 in the supply slot, R2 in the evac slot,
+// plus the hardcoded DeliveryNodeA=CoreNodeName lie); the assertions below are
+// the flipped, corrected version, and that diff is the stall fix. With the evac
+// slot now holding R1 — whose pickup(A) is at CoreNodeName — the release defer's
+// location gate passes and R2 is released (no release-path change).
 func TestPlanNodeAction_PressIndex_WithStaging_SlotContent(t *testing.T) {
 	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
@@ -675,21 +676,21 @@ func TestPlanNodeAction_PressIndex_WithStaging_SlotContent(t *testing.T) {
 		action.EvacOrder == nil || action.EvacOrder.Complex == nil {
 		t.Fatal("expected both R1 and R2 complex orders")
 	}
-	// CURRENT (inverted): R1 — the removal leg (pickup at the front/CoreNodeName) —
-	// sits in the SUPPLY slot. Commit B moves it to the EVAC slot.
-	if s := action.SupplyOrder.Complex.Steps; len(s) < 2 || s[1].Action != "pickup" || s[1].Node != "N1" {
-		t.Errorf("supply slot steps = %+v, want R1 (pickup at N1 as 2nd step) — pins the inversion; commit B flips this", s)
+	// EVAC slot = R1, the removal leg: it waits at and picks up from the front
+	// (CoreNodeName), which is what lets the release defer's location gate fire.
+	if s := action.EvacOrder.Complex.Steps; len(s) < 2 || s[1].Action != "pickup" || s[1].Node != "N1" {
+		t.Errorf("evac slot steps = %+v, want R1 (pickup at N1 as 2nd step)", s)
 	}
-	// CURRENT (inverted): R2 — the index/supply leg (waits at the back/PairedCoreNode) —
-	// sits in the EVAC slot.
-	if s := action.EvacOrder.Complex.Steps; len(s) < 1 || s[0].Action != "wait" || s[0].Node != "N1B" {
-		t.Errorf("evac slot steps = %+v, want R2 (wait at N1B first) — pins the inversion; commit B flips this", s)
+	// SUPPLY slot = R2, the index leg: it waits at and picks up from the back
+	// (PairedCoreNode) and places the tote on the front.
+	if s := action.SupplyOrder.Complex.Steps; len(s) < 1 || s[0].Action != "wait" || s[0].Node != "N1B" {
+		t.Errorf("supply slot steps = %+v, want R2 (wait at N1B first)", s)
 	}
-	// The DeliveryNodeA lie (HK 2026-07-14): R1's stored delivery node is the front
-	// node, though its bin actually comes to rest at the back (N1B). Commit B derives
-	// it from steps and this stops being N1.
-	if dn := action.SupplyOrder.Complex.DeliveryNode; dn != "N1" {
-		t.Errorf("supply DeliveryNode = %q, want N1 (the hardcoded value); pins the 07-14 misbind lie", dn)
+	// The evac leg (R1) no longer carries a hardcoded delivery node — Core
+	// derives its true destination (the back position) from the steps. This is
+	// the HK 2026-07-14 misbind fix: the old code stored the front node here.
+	if dn := action.EvacOrder.Complex.DeliveryNode; dn != "" {
+		t.Errorf("evac DeliveryNode = %q, want empty (Core-derived from steps); a stored front node is the 07-14 lie", dn)
 	}
 }
 

@@ -266,6 +266,48 @@ type ChangeoverDispatch struct {
 
 	StepsB       []protocol.ComplexOrderStep
 	AutoConfirmB bool
+
+	// Roles, when non-nil, declares the two coordinated swap legs by ROLE
+	// instead of by StepsA/StepsB position. Only the two-leg swap builders
+	// that know the choreography — two_robot and two_robot_press_index — set
+	// it. When set, assignDispatch reads Roles and ignores the positional
+	// StepsA/StepsB fields.
+	//
+	// It exists because the positional mapping (StepsA->supply, StepsB->evac)
+	// is a two_robot assumption that is INVERTED for press-index, where R1
+	// clears the press (evac) and R2 indexes the fresh bin on (supply).
+	// Letting the builder declare the role removes every place a consumer could
+	// infer it from field order and get press-index wrong. Single-order modes
+	// (sequential swap, press_position) and the legacy single_robot stage+swap
+	// shape carry no clean evac/supply split, so they keep using StepsA/StepsB.
+	// See swap_leg_role.go legPlacesBinAt for the steps-based definition of each
+	// role.
+	Roles *changeoverSwapLegs
+}
+
+// changeoverSwapLegs carries a coordinated two-robot swap's legs keyed by
+// ROLE, not by creation order. evac lifts the line's spent bin off; supply
+// places the incoming bin on the line. The builder assigns the roles because
+// it alone knows the choreography.
+type changeoverSwapLegs struct {
+	evac   changeoverLeg
+	supply changeoverLeg
+}
+
+// changeoverLeg is one leg of a role-declared swap dispatch. deliveryNode is
+// the leg's final resting node, derived from its steps (finalDropoff); it is
+// left empty on the evac leg, whose destination Core derives from the steps.
+type changeoverLeg struct {
+	steps        []protocol.ComplexOrderStep
+	deliveryNode string
+	autoConfirm  bool
+}
+
+// rejected reports whether a builder produced no dispatch (its "I rejected
+// this claim" signal). Empty StepsA covers the positional builders; a nil
+// Roles covers the role-declared two-leg builders.
+func (d ChangeoverDispatch) rejected() bool {
+	return d.StepsA == nil && d.Roles == nil
 }
 
 // BuildSwapChangeoverSteps builds the changeover swap dispatch (no tool
@@ -394,11 +436,13 @@ func buildTwoRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) Change
 		buildStep("dropoff", fromClaim.OutboundDestination), // straight to final
 	}
 	return ChangeoverDispatch{
-		StepsA:        stepsA,
-		DeliveryNodeA: toClaim.CoreNodeName,
-		AutoConfirmA:  true,
-		StepsB:        stepsB,
-		AutoConfirmB:  true,
+		Roles: &changeoverSwapLegs{
+			// stepsA fetches new material and delivers it to the line — supply.
+			supply: changeoverLeg{steps: stepsA, deliveryNode: finalDropoff(stepsA), autoConfirm: true},
+			// stepsB waits at the line, lifts the old bin, carries it to
+			// outbound — evac. Core derives its delivery node from the steps.
+			evac: changeoverLeg{steps: stepsB, autoConfirm: true},
+		},
 	}
 }
 
@@ -449,11 +493,16 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 		}
 	}
 	return ChangeoverDispatch{
-		StepsA:        r1,
-		DeliveryNodeA: fromClaim.CoreNodeName,
-		AutoConfirmA:  true,
-		StepsB:        r2,
-		AutoConfirmB:  true,
+		Roles: &changeoverSwapLegs{
+			// R1 lifts the spent tote off the front and refills the back — evac.
+			// Its delivery node is left blank for Core to derive from the steps
+			// (the back position); the old hardcoded fromClaim.CoreNodeName was
+			// a lie — R1's bin comes to rest at the back, not the front, which
+			// is what bound the wrong bin at HK 2026-07-14.
+			evac: changeoverLeg{steps: r1, autoConfirm: true},
+			// R2 indexes the fresh tote onto the front — supply.
+			supply: changeoverLeg{steps: r2, deliveryNode: finalDropoff(r2), autoConfirm: true},
+		},
 	}
 }
 

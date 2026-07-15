@@ -133,11 +133,11 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			inactive, active = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
 		}
 		disp := BuildSwapChangeoverSteps(diff.FromClaim, diff.ToClaim, inactive, active)
-		// Empty StepsA is the builder's "I rejected this claim" signal.
-		// Per-mode field validation above already catches the known
-		// rejection cases with operator-readable diagnostics; this is
-		// the last-resort message for an unanticipated rejection.
-		if disp.StepsA == nil {
+		// An empty dispatch (no StepsA and no Roles) is the builder's "I
+		// rejected this claim" signal. Per-mode field validation above already
+		// catches the known rejection cases with operator-readable diagnostics;
+		// this is the last-resort message for an unanticipated rejection.
+		if disp.rejected() {
 			action.Err = fmt.Errorf("cannot build swap steps for node %s (mode %q)", node.Name, diff.FromClaim.SwapMode)
 			return action
 		}
@@ -180,7 +180,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			einactive, eactive = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
 		}
 		disp := BuildEvacuateChangeoverSteps(diff.FromClaim, diff.ToClaim, einactive, eactive)
-		if disp.StepsA == nil {
+		if disp.rejected() {
 			action.Err = fmt.Errorf("cannot build evacuate steps for node %s (mode %q)", node.Name, diff.FromClaim.SwapMode)
 			return action
 		}
@@ -324,6 +324,18 @@ func planKeepStagedAction(action changeover.NodeAction, fromClaim, toClaim *proc
 // 2026-06-01 ALN_001. Mirrors the SituationDrop path, which already passes
 // FromClaim.PayloadCode for the same reason.
 func assignDispatch(action *changeover.NodeAction, processNode, evacPayloadCode string, d ChangeoverDispatch) {
+	if d.Roles != nil {
+		// Role-declared two-leg swap: the builder told us which leg clears the
+		// line (evac) and which supplies it (supply), so nothing here infers a
+		// role from field order. This is what makes the press-index slot
+		// inversion unrepresentable. The evac leg carries the from-style payload
+		// so it can claim the outgoing bin at the line (ALN_001); its delivery
+		// node stays blank for Core to derive from its steps.
+		s, e := d.Roles.supply, d.Roles.evac
+		action.SupplyOrder = complexSpec(s.deliveryNode, processNode, s.steps, s.autoConfirm)
+		action.EvacOrder = complexSpecWithPayload(e.deliveryNode, processNode, e.steps, e.autoConfirm, evacPayloadCode)
+		return
+	}
 	if d.StepsA != nil {
 		action.SupplyOrder = complexSpec(d.DeliveryNodeA, processNode, d.StepsA, d.AutoConfirmA)
 	}

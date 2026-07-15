@@ -269,12 +269,14 @@ type ComplexOrderRequest struct {
 	// It rides the SECOND-created leg — the only one that can know the other's
 	// UUID — and is empty for non-swap orders and for the first-created leg.
 	//
-	// Which ROLE that is depends on the mode, so do not read a role into it:
-	// two_robot creates the supply first and the evac second, but
-	// two_robot_press_index creates the EVAC first (R1 clears the press) and the
-	// SUPPLY second (R2 indexes the fresh bin onto it). The pointer says
-	// "these two legs are a pair", nothing more; a leg's role comes from its
-	// steps (see legTakesLineBin in Core's dispatch package).
+	// Which ROLE the pointer-carrying (second-created) leg is is NOT fixed —
+	// it varies by mode and by the creating path, so do not read a role into
+	// it. two_robot creates the supply leg first and the evac leg second; a
+	// press-index CHANGEOVER does the same (supply first, evac second), but a
+	// steady-state press-index swap creates the evac leg (R1, which clears the
+	// press) first. The pointer says "these two legs are a pair", nothing more;
+	// a leg's role comes from its steps (see legTakesLineBin in Core's dispatch
+	// package).
 	//
 	// Core links both order rows on ingest — bidirectionally, via
 	// LinkSiblingsByEdgeUUID — so either leg can find the other, and the
