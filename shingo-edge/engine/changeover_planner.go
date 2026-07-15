@@ -52,11 +52,17 @@ func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fal
 // OutboundStaging park). Sequential is direct-trip by design (it
 // mirrors steady-state's pickup-source → dropoff-line pattern); the
 // per-position synthesized claim used by the press-index fan-out is
-// also direct-trip. Modes outside this set use the staging hop and
-// fall through to planFallbackStagingAction when their staging
-// fields are missing.
+// also direct-trip; and same-bin-type two_robot_press_index is direct-
+// trip too — R1 evacuates straight to OutboundDestination and refills the
+// back position from InboundSource, R2 indexes between positions, and
+// neither uses an InboundStaging hop (requiredChangeoverFields omits it
+// for this mode). Modes outside this set use the staging hop and fall
+// through to planFallbackStagingAction when their staging fields are
+// missing.
 func directTripChangeoverMode(swapMode protocol.SwapMode) bool {
-	return swapMode == protocol.SwapModeSequential || swapMode == pressPositionSwapMode
+	return swapMode == protocol.SwapModeSequential ||
+		swapMode == protocol.SwapModeTwoRobotPressIndex ||
+		swapMode == pressPositionSwapMode
 }
 
 // resolveSequentialActivePull computes inactive/active node names for a
@@ -94,17 +100,17 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			action.Err = fmt.Errorf("swap requires both from and to claims")
 			return action
 		}
-		// Direct-trip modes (sequential, per-position press-index) don't
-		// use a staging hop, so they bypass the staging-fallback gate.
-		// two_robot and two_robot_press_index don't use OutboundStaging
-		// (evac goes straight to OutboundDestination), so they only
-		// require InboundStaging. single_robot (and the default
-		// fallthrough) use both InboundStaging and OutboundStaging.
-		// KeepStaged is a single_robot/two_robot/two_robot_press_index
-		// concept; sequential and per-position skip that gate too.
+		// Direct-trip modes (sequential, per-position press-index, and
+		// same-bin-type two_robot_press_index) don't use a staging hop, so
+		// they bypass this gate entirely via directTripChangeoverMode above.
+		// two_robot still stages its supply leg's new bin, so it requires
+		// InboundStaging (but not OutboundStaging — its evac goes straight to
+		// OutboundDestination); single_robot (and the default fallthrough)
+		// require both. KeepStaged is a single_robot/two_robot concept;
+		// direct-trip modes skip it too.
 		if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
 			switch diff.FromClaim.SwapMode {
-			case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex: // .IsTwoRobot()
+			case protocol.SwapModeTwoRobot:
 				if diff.ToClaim.InboundStaging == "" {
 					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
 				}
@@ -156,7 +162,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		}
 		if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
 			switch diff.FromClaim.SwapMode {
-			case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex: // .IsTwoRobot()
+			case protocol.SwapModeTwoRobot:
 				if diff.ToClaim.InboundStaging == "" {
 					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
 				}
@@ -332,7 +338,17 @@ func assignDispatch(action *changeover.NodeAction, processNode, evacPayloadCode 
 		// so it can claim the outgoing bin at the line (ALN_001); its delivery
 		// node stays blank for Core to derive from its steps.
 		s, e := d.Roles.supply, d.Roles.evac
-		action.SupplyOrder = complexSpec(s.deliveryNode, processNode, s.steps, s.autoConfirm)
+		// The evac leg removes the old line bin, so it always carries the
+		// from-style payload. The supply leg carries it only when it too picks
+		// up an old bin — press-index's R2 indexes an existing tote, so it does;
+		// two_robot's supply fetches a fresh bin, so it doesn't (blank ->
+		// backfilled to the target style). Getting this wrong reopens ALN_001:
+		// an old-tote pickup filtered for the new payload finds no bin.
+		supplyPayload := ""
+		if s.carriesFromPayload {
+			supplyPayload = evacPayloadCode
+		}
+		action.SupplyOrder = complexSpecWithPayload(s.deliveryNode, processNode, s.steps, s.autoConfirm, supplyPayload)
 		action.EvacOrder = complexSpecWithPayload(e.deliveryNode, processNode, e.steps, e.autoConfirm, evacPayloadCode)
 		return
 	}

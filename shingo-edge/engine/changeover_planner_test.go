@@ -549,22 +549,23 @@ func TestPlanNodeAction_PressIndex_SameBinType_RoutesToStandardDispatch(t *testi
 	}
 }
 
-// TestPlanNodeAction_PressIndex_BlankStaging_RoutesToFallback pins the HK
-// production bug as it stands at 801e941: a same-bin-type press-index Swap whose
-// to-claim has no InboundStaging is diverted by the staging-fallback gate to a
-// supply-only retrieve — the R1/R2 choreography never builds. This is why P400
-// stalls (the retrieve tries to land an empty on a seat nothing cleared).
-// Commit C adds press-index to directTripChangeoverMode, after which this SAME
-// input builds R1+R2 with LogTag "swap"; this test's expectation flips there,
-// making the un-gate visible in that commit's diff.
-func TestPlanNodeAction_PressIndex_BlankStaging_RoutesToFallback(t *testing.T) {
+// TestPlanNodeAction_PressIndex_BlankStaging_BuildsSwap is the flip of the
+// commit-A characterization test of the same input: press-index is now in
+// directTripChangeoverMode, so a blank-staging Swap no longer diverts to the
+// retrieve fallback — it builds the R1/R2 choreography (LogTag "swap"). This is
+// the change that un-stalls HK P400. Both legs carry the from-style payload so
+// each can claim the OLD tote it picks up (R1 at the front, R2 at the back);
+// without it the removal filters for the new payload and holds at sourcing
+// (ALN_001). The refill pickup is NOT payload-stamped (consume here; produce is
+// covered separately) — for consume it fetches a new full bin normally.
+func TestPlanNodeAction_PressIndex_BlankStaging_BuildsSwap(t *testing.T) {
 	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.SwapMode = "two_robot_press_index"
 	from.PairedCoreNode = "N1B"
 	to := fullSwapClaim("N1", "PART-B", "consume")
 	to.SwapMode = "two_robot_press_index"
-	to.InboundStaging = "" // the HK condition: press-index needs no staging, but the gate diverts on its absence
+	to.InboundStaging = "" // HK: no staging — but press-index is now direct-trip, so no fallback
 	diff := ChangeoverNodeDiff{
 		CoreNodeName: "N1",
 		Situation:    SituationSwap,
@@ -577,18 +578,67 @@ func TestPlanNodeAction_PressIndex_BlankStaging_RoutesToFallback(t *testing.T) {
 	if action.Err != nil {
 		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
-	if action.LogTag != "fallback_retrieve" {
-		t.Fatalf("LogTag = %q, want fallback_retrieve (press-index blank-staging is gated to the retrieve fallback today)", action.LogTag)
+	if action.LogTag != "swap" {
+		t.Fatalf("LogTag = %q, want swap (press-index is direct-trip; must not divert to fallback)", action.LogTag)
 	}
-	if action.SupplyOrder == nil || action.SupplyOrder.Retrieve == nil {
-		t.Fatal("expected a supply-only Retrieve order from the fallback path")
+	if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil ||
+		action.EvacOrder == nil || action.EvacOrder.Complex == nil {
+		t.Fatal("expected both R1 (evac) and R2 (supply) complex orders")
 	}
-	if action.SupplyOrder.Complex != nil {
-		t.Error("fallback must not build a complex swap order")
+	// Both legs pick up an OLD (from-style) tote, so both must carry PART-A.
+	if p := action.EvacOrder.Complex.PayloadCode; p != "PART-A" {
+		t.Errorf("evac (R1) payload = %q, want PART-A (front tote is from-style)", p)
 	}
-	if action.EvacOrder != nil {
-		t.Error("fallback path builds no evac leg")
+	if p := action.SupplyOrder.Complex.PayloadCode; p != "PART-A" {
+		t.Errorf("supply (R2) payload = %q, want PART-A (back tote is from-style; blank reopens ALN_001)", p)
 	}
+	// consume refill is a normal full retrieve — the InboundSource pickup on R1
+	// is NOT flagged Empty (that flag is produce-only; see the produce test).
+	if s := pickupAt(action.EvacOrder.Complex.Steps, to.InboundSource); s == nil || s.Empty {
+		t.Errorf("consume R1 refill at %q: want present and Empty=false, got %+v", to.InboundSource, s)
+	}
+}
+
+// TestPlanNodeAction_PressIndex_Produce_RefillIsEmpty pins markInboundEmpty on
+// the changeover path (P400 is produce). R1's refill pickup at InboundSource
+// must be Empty so it fetches a fresh empty carrier rather than hunting a full
+// payload-matched bin in the empty pool ("no bin of requested payload"). The old
+// front-tote pickup is NOT flagged — it must keep the from-style payload.
+func TestPlanNodeAction_PressIndex_Produce_RefillIsEmpty(t *testing.T) {
+	t.Parallel()
+	from := fullSwapClaim("N1", "PART-A", "produce")
+	from.SwapMode = "two_robot_press_index"
+	from.PairedCoreNode = "N1B"
+	to := fullSwapClaim("N1", "PART-B", "produce")
+	to.SwapMode = "two_robot_press_index"
+	diff := ChangeoverNodeDiff{
+		CoreNodeName: "N1",
+		Situation:    SituationSwap,
+		FromClaim:    &from,
+		ToClaim:      &to,
+	}
+	node := &processes.Node{ID: 42, Name: "N1"}
+	action := planNodeAction(diff, node, false, nil)
+	if action.Err != nil {
+		t.Fatalf("unexpected planning error: %v", action.Err)
+	}
+	r1 := action.EvacOrder.Complex.Steps
+	if s := pickupAt(r1, to.InboundSource); s == nil || !s.Empty {
+		t.Errorf("produce R1 refill at %q: want Empty=true, got %+v", to.InboundSource, s)
+	}
+	if s := pickupAt(r1, "N1"); s == nil || s.Empty {
+		t.Errorf("produce R1 front pickup at N1: want Empty=false (keeps from-payload), got %+v", s)
+	}
+}
+
+// pickupAt returns the first pickup step at node, or nil.
+func pickupAt(steps []protocol.ComplexOrderStep, node string) *protocol.ComplexOrderStep {
+	for i := range steps {
+		if steps[i].Action == "pickup" && steps[i].Node == node {
+			return &steps[i]
+		}
+	}
+	return nil
 }
 
 // TestPlanNodeAction_TwoRobot_SlotAssignment is the neutrality anchor for the

@@ -301,6 +301,14 @@ type changeoverLeg struct {
 	steps        []protocol.ComplexOrderStep
 	deliveryNode string
 	autoConfirm  bool
+	// carriesFromPayload marks a leg whose line/press pickup is an OLD
+	// (from-style) bin, so its order must be stamped with the from-style
+	// payload to claim it. The evac leg always removes the old line bin
+	// (assignDispatch stamps it unconditionally); this flag is for the supply
+	// leg, which carries an old bin only for press-index (R2 indexes an
+	// existing tote) — two_robot's supply fetches fresh material, so it stays
+	// blank (backfilled to the target style). See assignDispatch, ALN_001.
+	carriesFromPayload bool
 }
 
 // rejected reports whether a builder produced no dispatch (its "I rejected
@@ -492,6 +500,16 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 			{Action: "dropoff", Node: fromClaim.CoreNodeName},
 		}
 	}
+	// A produce node's refill fetches a fresh EMPTY carrier, not a full
+	// payload-matched bin. R1's pickup at InboundSource defaults to a full
+	// retrieve, so without this a produce press-index changeover hunts a full
+	// bin in the empty pool and the dispatch fails ("no bin of requested
+	// payload"). Flag only the InboundSource pickup Empty (its payload filter
+	// is dropped); R1's other pickup — the old front tote — keeps the from-style
+	// payload it needs (§ carriesFromPayload below). Mirrors swap_dispatch.go:71.
+	if toClaim.Role == protocol.ClaimRoleProduce && toClaim.InboundSource != "" {
+		markInboundEmpty(r1, toClaim.InboundSource)
+	}
 	return ChangeoverDispatch{
 		Roles: &changeoverSwapLegs{
 			// R1 lifts the spent tote off the front and refills the back — evac.
@@ -500,8 +518,12 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 			// a lie — R1's bin comes to rest at the back, not the front, which
 			// is what bound the wrong bin at HK 2026-07-14.
 			evac: changeoverLeg{steps: r1, autoConfirm: true},
-			// R2 indexes the fresh tote onto the front — supply.
-			supply: changeoverLeg{steps: r2, deliveryNode: finalDropoff(r2), autoConfirm: true},
+			// R2 indexes the fresh tote onto the front — supply. It picks up an
+			// OLD (from-style) tote at the back position, so it carries the
+			// from-style payload; without it the removal filters for the new
+			// payload and finds no bin (ALN_001), the same defect the evac slot
+			// already guards on two_robot.
+			supply: changeoverLeg{steps: r2, deliveryNode: finalDropoff(r2), autoConfirm: true, carriesFromPayload: true},
 		},
 	}
 }
