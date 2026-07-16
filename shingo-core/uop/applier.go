@@ -201,16 +201,94 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 	var (
 		havePayloadCode string
 		valueBefore     int
+		anomalyFlagged  bool
 	)
-	err = tx.QueryRow(`SELECT payload_code, uop_remaining FROM bins WHERE id=$1`,
-		d.BinID).Scan(&havePayloadCode, &valueBefore)
+	err = tx.QueryRow(`SELECT payload_code, uop_remaining, anomaly_at IS NOT NULL FROM bins WHERE id=$1`,
+		d.BinID).Scan(&havePayloadCode, &valueBefore, &anomalyFlagged)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("BinUOPDelta target bin %d does not exist", d.BinID)
 	}
 	if err != nil {
 		return fmt.Errorf("read bin %d: %w", d.BinID, err)
 	}
+
+	// Produce-tick identity binding: a produce tick is physical proof of what
+	// the press is filling the bin with — stronger evidence than any label
+	// typed at a load screen — and a produce count must never freeze on a
+	// label disagreement (HK 2026-07-16: stale hand-typed labels on the
+	// press fronts froze counting for 480+544 parts after cutover). Two
+	// cases when the wire payload differs from the bin's label:
+	//
+	//   - count == 0: routine first-delta bind. The designed blank fresh
+	//     carrier (or a stale label on an empty carrier) takes the produced
+	//     payload. Quiet audit row; no anomaly.
+	//   - count != 0: the tote already holds units under another label —
+	//     rebind to what is physically being produced, KEEP COUNTING (the
+	//     tote's unit total stays correct), and flag the bin anomaly with an
+	//     observation row recording the old label and the units aboard at
+	//     the flip. The anomaly is a "cycle count me later" marker for the
+	//     mixed contents — it gates nothing (anomaly_at feeds no claim or
+	//     dispatch predicate).
+	//
+	// Deliberately NO delta_epoch bump in either case: there is no retired
+	// count stream to fence off, and a bump opens a stale-epoch drop window
+	// until Edge's next bin-state refresh (observed live 2026-07-16 14:02Z).
+	// Non-produce reasons keep the hard reject below — a consume drain
+	// against a wrong-labeled bin is the ALN_001 corruption case.
+	if d.Reason == protocol.ReasonProduceTick && d.PayloadCode != "" &&
+		havePayloadCode != d.PayloadCode {
+		if valueBefore == 0 {
+			if _, err := tx.Exec(`UPDATE bins SET payload_code=$1 WHERE id=$2`, d.PayloadCode, d.BinID); err != nil {
+				return fmt.Errorf("bind payload on first delta bin=%d: %w", d.BinID, err)
+			}
+			metadata, merr := json.Marshal(struct {
+				OldPayload string `json:"old_payload"`
+				SequenceID int64  `json:"sequence_id"`
+			}{havePayloadCode, d.SequenceID})
+			if merr != nil {
+				return fmt.Errorf("marshal first-delta-bind audit metadata bin=%d: %w", d.BinID, merr)
+			}
+			if err := audit.AppendBinUOPOverride(tx, d.BinID, valueBefore, valueBefore,
+				audit.OpPayloadBoundFirstDelta, "service/inventory_delta_service.go:firstDeltaBind",
+				nil, d.PayloadCode, d.Station, metadata); err != nil {
+				return err
+			}
+		} else {
+			// Anomaly write rides the rebind UPDATE — same tx, same row; a
+			// separate s.db write here would block on this tx's own row lock.
+			if _, err := tx.Exec(`UPDATE bins SET payload_code=$1, anomaly_at=COALESCE(anomaly_at, NOW()) WHERE id=$2`,
+				d.PayloadCode, d.BinID); err != nil {
+				return fmt.Errorf("rebind payload with inventory bin=%d: %w", d.BinID, err)
+			}
+			metadata, merr := json.Marshal(struct {
+				OldPayload        string `json:"old_payload"`
+				InventoryAtRebind int    `json:"inventory_at_rebind"`
+				SequenceID        int64  `json:"sequence_id"`
+				Delta             int    `json:"delta"`
+			}{havePayloadCode, valueBefore, d.SequenceID, d.Delta})
+			if merr != nil {
+				return fmt.Errorf("marshal rebind audit metadata bin=%d: %w", d.BinID, merr)
+			}
+			if err := audit.AppendBinUOPOverride(tx, d.BinID, valueBefore, valueBefore,
+				audit.OpPayloadReboundWithInventory, "service/inventory_delta_service.go:reboundWithInventory",
+				nil, d.PayloadCode, d.Station, metadata); err != nil {
+				return err
+			}
+			log.Printf("BinUOPDelta payload REBOUND with inventory bin=%d %q→%q units_aboard=%d seq=%d — counting continues; bin flagged for cycle count",
+				d.BinID, havePayloadCode, d.PayloadCode, valueBefore, d.SequenceID)
+		}
+		havePayloadCode = d.PayloadCode
+	}
+
 	if d.PayloadCode != "" && havePayloadCode != "" && d.PayloadCode != havePayloadCode {
+		// Non-produce mismatch: dropping the count is correct — never let a
+		// consume/capture delta land on inventory it doesn't describe
+		// (ALN_001). But make the drop VISIBLE: pre-fix the only signal was
+		// this returned error in the core_handler log. The observability
+		// writes go through s.db, NOT this tx — the return below rolls the
+		// tx back so the dedup seq stays unconsumed (replay semantics
+		// unchanged), and the tx holds no bins-row lock on this path.
+		s.recordRejectedDelta(d, havePayloadCode, valueBefore, anomalyFlagged)
 		return fmt.Errorf("BinUOPDelta payload mismatch bin=%d wire=%q have=%q",
 			d.BinID, d.PayloadCode, havePayloadCode)
 	}
@@ -279,6 +357,42 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 		return fmt.Errorf("commit BinUOPDelta bin=%d: %w", d.BinID, err)
 	}
 	return nil
+}
+
+// recordRejectedDelta makes a payload-mismatch drop visible: one
+// bin_uop_audit observation row PER dropped delta (before == after, the
+// dropped quantity in metadata — the same shape as OpStaleEpochDropped, so
+// the discrepancy ledger can reconstruct the missing total for a later
+// cycle count), plus the bin's anomaly flag, set once, so the bins page
+// shows a bin whose counts are being refused.
+//
+// Runs on s.db, outside the caller's transaction — the reject path rolls
+// that tx back deliberately (a rejected delta must not consume its dedup
+// sequence). Best-effort: a failed observability write logs and never
+// masks the reject itself. This path can never gate dispatch or the press:
+// anomaly_at is a visibility timestamp, read by the bins page only — it
+// feeds no claim predicate (BinUnavailableReason does not read it).
+func (s *InventoryDeltaService) recordRejectedDelta(d *protocol.BinUOPDelta, havePayloadCode string, valueBefore int, anomalyFlagged bool) {
+	metadata, err := json.Marshal(struct {
+		WirePayload string `json:"wire_payload"`
+		BinPayload  string `json:"bin_payload"`
+		SequenceID  int64  `json:"sequence_id"`
+		Delta       int    `json:"delta"`
+	}{d.PayloadCode, havePayloadCode, d.SequenceID, d.Delta})
+	if err != nil {
+		log.Printf("marshal rejected-delta audit metadata bin=%d: %v", d.BinID, err)
+		return
+	}
+	if err := audit.AppendBinUOPOverride(s.db.DB, d.BinID, valueBefore, valueBefore,
+		audit.OpPayloadMismatchDropped, "service/inventory_delta_service.go:payloadMismatch",
+		nil, d.PayloadCode, d.Station, metadata); err != nil {
+		log.Printf("audit rejected delta bin=%d: %v", d.BinID, err)
+	}
+	if !anomalyFlagged {
+		if err := s.db.MarkBinAnomaly(d.BinID); err != nil {
+			log.Printf("mark anomaly for rejected delta bin=%d: %v", d.BinID, err)
+		}
+	}
 }
 
 // ApplyLinesideBucketDelta applies a LinesideBucketDelta against the

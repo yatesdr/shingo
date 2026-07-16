@@ -79,6 +79,35 @@ const (
 	// instead of vanishing silently. metadata carries
 	// {wire_epoch, bin_epoch, sequence_id, delta}.
 	OpStaleEpochDropped = "stale_epoch_dropped"
+
+	// OpPayloadBoundFirstDelta tags the routine first-delta identity bind: a
+	// produce bin at exactly zero count took its payload_code from the first
+	// produce_tick that landed on it (the designed blank fresh carrier, or a
+	// stale label on an empty carrier — HK 2026-07-16). An observation row
+	// (before_uop == after_uop; the paired count change is the normal
+	// bin_uop_delta row committed in the same tx); metadata carries
+	// {old_payload, sequence_id}. payload_code holds the newly bound payload.
+	OpPayloadBoundFirstDelta = "payload_bound_first_delta"
+
+	// OpPayloadReboundWithInventory tags a produce_tick rebind on a bin that
+	// still held units under another label: the label flips to what the
+	// press is physically producing, counting CONTINUES (the tote's unit
+	// total stays correct), and the bin is anomaly-flagged for a later cycle
+	// count of the mixed contents. metadata carries
+	// {old_payload, inventory_at_rebind, sequence_id, delta}; payload_code
+	// holds the new label. Surfaces in the discrepancy ledger.
+	OpPayloadReboundWithInventory = "payload_rebound_with_inventory"
+
+	// OpPayloadMismatchDropped tags a non-produce BinUOPDelta the applier
+	// REJECTED on payload mismatch (wire vs bin label, both non-blank) — a
+	// consume/capture delta must never land on inventory it doesn't describe
+	// (ALN_001). One observation row per dropped delta — before_uop ==
+	// after_uop, the dropped quantity in metadata {wire_payload, bin_payload,
+	// sequence_id, delta} — so the discrepancy ledger can reconstruct the
+	// total lost while the condition persisted. Mirrors OpStaleEpochDropped's
+	// shape. The bin is also anomaly-flagged (once) so the drop is visible on
+	// the bins page, not only in the core_handler log (HK 2026-07-16).
+	OpPayloadMismatchDropped = "payload_mismatch_dropped"
 )
 
 // ReleaseFamilyOps is the canonical set of ops that retire a bin's manifest —
@@ -322,7 +351,10 @@ func ListBinUOPOverridesByStation(db *sql.DB, station string, limit, offset int)
 // ListBinUOPDiscrepancies returns the discrepancy ledger, newest first.
 // It is a view over bin_uop_audit — no separate table — surfacing rows where
 // the tracked count diverged from physical reality:
-//   - stale_epoch_dropped: a delta the applier dropped (lost production signal);
+//   - stale_epoch_dropped / payload_mismatch_dropped: a delta the applier
+//     dropped (lost production/consumption signal);
+//   - payload_rebound_with_inventory: a produce bin's label flipped while it
+//     held units under the old label — mixed contents, cycle count needed;
 //   - after_uop < 0: over-consume / negative remaining ("needs reconcile");
 //   - released_empty / released_underpack (incl. the no-owner fallback) where
 //     the bin still carried counted parts at release (before_uop > after_uop) —
@@ -340,12 +372,13 @@ func ListBinUOPDiscrepancies(db *sql.DB, limit, offset int) ([]BinUOPRow, error)
 	}
 	rows, err := db.Query(`SELECT `+binUOPSelectCols+`
 		FROM bin_uop_audit
-		WHERE op = $1
+		WHERE op IN ($1, $2, $3)
 		   OR after_uop < 0
-		   OR (op IN ($2, $3, $4) AND COALESCE(before_uop, 0) > after_uop)
+		   OR (op IN ($4, $5, $6) AND COALESCE(before_uop, 0) > after_uop)
 		ORDER BY applied_at DESC, id DESC
-		LIMIT $5 OFFSET $6`,
-		OpStaleEpochDropped, OpReleasedEmpty, OpReleasedEmptyFallback, OpReleasedUnderpack,
+		LIMIT $7 OFFSET $8`,
+		OpStaleEpochDropped, OpPayloadMismatchDropped, OpPayloadReboundWithInventory,
+		OpReleasedEmpty, OpReleasedEmptyFallback, OpReleasedUnderpack,
 		limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list bin_uop_audit discrepancies: %w", err)

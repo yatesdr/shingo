@@ -745,3 +745,212 @@ func TestApplyBinUOPDelta_CaptureReductionZeroOnEmptyBinIsIdempotent(t *testing.
 			got.DeltaEpoch, preEpoch)
 	}
 }
+
+// TestApplyBinUOPDelta_FirstDeltaBindsBlankProduceBin pins the routine
+// half of produce-tick identity binding: the designed blank fresh carrier
+// takes its payload from the first produce tick that lands on it, the
+// count applies in the same tx, a payload_bound_first_delta observation
+// row records the bind, and — load-bearing — the delta_epoch does NOT
+// move (there is no retired count stream to fence; a bump would open the
+// stale-epoch drop window observed live at HK 2026-07-16 14:02Z).
+func TestApplyBinUOPDelta_FirstDeltaBindsBlankProduceBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-BIND-BLANK", "", 0)
+	preEpoch := bin.DeltaEpoch
+
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(
+		makeBinDelta(bin.ID, "PART-NEW", 3, 1, protocol.ReasonProduceTick)), "apply first produce tick")
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != "PART-NEW" {
+		t.Errorf("PayloadCode = %q, want %q (first delta binds identity)", got.PayloadCode, "PART-NEW")
+	}
+	if got.UOPRemaining != 3 {
+		t.Errorf("UOPRemaining = %d, want 3 (count applies with the bind)", got.UOPRemaining)
+	}
+	if got.DeltaEpoch != preEpoch {
+		t.Errorf("DeltaEpoch = %d, want %d unchanged (bind must NOT bump epoch)", got.DeltaEpoch, preEpoch)
+	}
+
+	var old string
+	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload' FROM bin_uop_audit
+		WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpPayloadBoundFirstDelta).Scan(&old), "read bind audit row")
+	if old != "" {
+		t.Errorf("audit old_payload = %q, want blank (bin was a fresh carrier)", old)
+	}
+
+	var anomaly bool
+	_ = db.QueryRow(`SELECT anomaly_at IS NOT NULL FROM bins WHERE id=$1`, bin.ID).Scan(&anomaly)
+	if anomaly {
+		t.Error("anomaly flagged on a routine zero-count bind; want unflagged")
+	}
+}
+
+// TestApplyBinUOPDelta_FirstDeltaRebindsStaleLabelAtZero pins the HK
+// 2026-07-16 case directly: a hand-typed stale label on a zero-count
+// carrier is overwritten by the first produce tick — the count applies
+// instead of freezing, and the audit row preserves the old label.
+func TestApplyBinUOPDelta_FirstDeltaRebindsStaleLabelAtZero(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-BIND-STALE", "PART-OLD", 0)
+
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(
+		makeBinDelta(bin.ID, "PART-NEW", 2, 1, protocol.ReasonProduceTick)), "apply produce tick over stale label")
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != "PART-NEW" || got.UOPRemaining != 2 {
+		t.Errorf("post-state payload=%q uop=%d, want PART-NEW/2 (stale label rebinds, count applies)",
+			got.PayloadCode, got.UOPRemaining)
+	}
+
+	var old string
+	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload' FROM bin_uop_audit
+		WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpPayloadBoundFirstDelta).Scan(&old), "read bind audit row")
+	if old != "PART-OLD" {
+		t.Errorf("audit old_payload = %q, want PART-OLD", old)
+	}
+}
+
+// TestApplyBinUOPDelta_ProduceRebindWithInventoryKeepsCounting pins the
+// mixed-contents rule: a produce tick against a bin still holding units
+// under another label RELABELS the bin, KEEPS COUNTING (the tote's unit
+// total stays correct), flags the anomaly for a later cycle count, and
+// records the old label + units aboard in a
+// payload_rebound_with_inventory observation row. A produce count must
+// never freeze on a label disagreement.
+func TestApplyBinUOPDelta_ProduceRebindWithInventoryKeepsCounting(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-REBIND-INV", "PART-OLD", 480)
+	preEpoch := bin.DeltaEpoch
+
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(
+		makeBinDelta(bin.ID, "PART-NEW", 3, 1, protocol.ReasonProduceTick)), "apply produce tick with inventory aboard")
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != "PART-NEW" || got.UOPRemaining != 483 {
+		t.Errorf("post-state payload=%q uop=%d, want PART-NEW/483 (rebind + count continues)",
+			got.PayloadCode, got.UOPRemaining)
+	}
+	if got.DeltaEpoch != preEpoch {
+		t.Errorf("DeltaEpoch = %d, want %d unchanged (rebind must NOT bump epoch)", got.DeltaEpoch, preEpoch)
+	}
+
+	var anomaly bool
+	testutil.MustNoErr(t, db.QueryRow(`SELECT anomaly_at IS NOT NULL FROM bins WHERE id=$1`, bin.ID).Scan(&anomaly), "read anomaly flag")
+	if !anomaly {
+		t.Error("anomaly not flagged; mixed-contents rebind must mark the bin for a cycle count")
+	}
+
+	var old string
+	var aboard int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload', (metadata->>'inventory_at_rebind')::int
+		FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpPayloadReboundWithInventory).Scan(&old, &aboard), "read rebind audit row")
+	if old != "PART-OLD" || aboard != 480 {
+		t.Errorf("rebind audit old=%q aboard=%d, want PART-OLD/480", old, aboard)
+	}
+
+	// A second tick is now a clean match — no second rebind row.
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(
+		makeBinDelta(bin.ID, "PART-NEW", 2, 2, protocol.ReasonProduceTick)), "apply follow-up tick")
+	var rebindRows int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+		bin.ID, audit.OpPayloadReboundWithInventory).Scan(&rebindRows)
+	if rebindRows != 1 {
+		t.Errorf("rebind audit rows = %d, want 1 (follow-up ticks match the new label)", rebindRows)
+	}
+}
+
+// TestApplyBinUOPDelta_ConsumeMismatchStillRejectsButLoudly pins two
+// things: (1) the ALN_001 guard is intact for non-produce reasons — a
+// consume drain never lands on inventory it doesn't describe and never
+// relabels the bin; (2) the drop is no longer silent — the bin is
+// anomaly-flagged and each dropped delta writes a
+// payload_mismatch_dropped observation row carrying the dropped
+// quantity, so the discrepancy ledger can reconstruct the loss. The
+// dedup seq must stay unconsumed (tx rollback), so the same envelope
+// applies cleanly after the label is corrected.
+func TestApplyBinUOPDelta_ConsumeMismatchStillRejectsButLoudly(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CONS-MIS", "PART-OLD", 100)
+
+	d := makeBinDelta(bin.ID, "PART-NEW", -5, 1, protocol.ReasonConsumeTick)
+	if err := svc.ApplyBinUOPDelta(d); err == nil {
+		t.Fatal("expected consume payload-mismatch error, got nil")
+	}
+	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-NEW", -3, 2, protocol.ReasonConsumeTick)); err == nil {
+		t.Fatal("expected second consume payload-mismatch error, got nil")
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != "PART-OLD" || got.UOPRemaining != 100 {
+		t.Errorf("post-state payload=%q uop=%d, want PART-OLD/100 (consume never rebinds or applies on mismatch)",
+			got.PayloadCode, got.UOPRemaining)
+	}
+
+	var anomaly bool
+	testutil.MustNoErr(t, db.QueryRow(`SELECT anomaly_at IS NOT NULL FROM bins WHERE id=$1`, bin.ID).Scan(&anomaly), "read anomaly flag")
+	if !anomaly {
+		t.Error("anomaly not flagged; rejected deltas must be visible on the bins page")
+	}
+
+	var droppedRows int
+	var droppedSum int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*), COALESCE(SUM((metadata->>'delta')::int), 0)
+		FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+		bin.ID, audit.OpPayloadMismatchDropped).Scan(&droppedRows, &droppedSum), "read dropped observation rows")
+	if droppedRows != 2 || droppedSum != -8 {
+		t.Errorf("dropped rows/sum = %d/%d, want 2/-8 (one observation per drop, quantities reconstructible)",
+			droppedRows, droppedSum)
+	}
+
+	// Fix the label; the ORIGINAL envelope must now apply — proof the
+	// rejected attempt rolled back without consuming its dedup seq.
+	_, err := db.Exec(`UPDATE bins SET payload_code='PART-NEW' WHERE id=$1`, bin.ID)
+	testutil.MustNoErr(t, err, "correct label")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "replay original envelope after label fix")
+	got2, _ := db.GetBin(bin.ID)
+	if got2.UOPRemaining != 95 {
+		t.Errorf("UOPRemaining after replay = %d, want 95", got2.UOPRemaining)
+	}
+}
+
+// TestApplyBinUOPDelta_ConsumeTickNeverBindsBlankBin pins the produce-only
+// scope of identity binding: a consume tick against a blank bin applies
+// (blank matches anything — unchanged behavior) but must NOT write a
+// label. A consume bin arriving blank is an anomaly worth seeing, not one
+// to paper over.
+func TestApplyBinUOPDelta_ConsumeTickNeverBindsBlankBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CONS-BLANK", "", 0)
+
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(
+		makeBinDelta(bin.ID, "PART-A", -1, 1, protocol.ReasonConsumeTick)), "apply consume tick on blank bin")
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != "" {
+		t.Errorf("PayloadCode = %q, want blank (consume never binds identity)", got.PayloadCode)
+	}
+	if got.UOPRemaining != -1 {
+		t.Errorf("UOPRemaining = %d, want -1 (blank passes the guard, delta applies)", got.UOPRemaining)
+	}
+}
