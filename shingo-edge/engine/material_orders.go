@@ -264,6 +264,14 @@ type ChangeoverDispatch struct {
 	DeliveryNodeA string
 	AutoConfirmA  bool
 
+	// CarriesFromPayloadA stamps StepsA with the from-style payload code. Set it
+	// when StepsA opens by lifting an OLD bin off the line: without the stamp the
+	// order's payload is left blank, Core backfills it to the target style, and
+	// the pickup filters for a bin that isn't there (ALN_001). Legs declared via
+	// Roles carry the same signal per-leg (changeoverLeg.carriesFromPayload);
+	// this is the single-order equivalent.
+	CarriesFromPayloadA bool
+
 	StepsB       []protocol.ComplexOrderStep
 	AutoConfirmB bool
 
@@ -567,11 +575,25 @@ func buildPressIndexPerPositionSwap(fromClaim, toClaim *processes.NodeClaim) Cha
 		buildStep("pickup", toClaim.InboundSource),          // fetch new bin
 		{Action: "dropoff", Node: pos},                      // deliver new bin
 	}
+	// A produce node's refill fetches a fresh EMPTY carrier, not a full
+	// payload-matched bin. Without this the InboundSource pickup defaults to a
+	// full retrieve and hunts a full bin in the empty pool ("no bin of requested
+	// payload"). Marking it Empty also drops that leg's payload filter, which is
+	// what lets this single order carry the from-style payload for the evac
+	// pickup above and still fetch a to-style carrier here. Mirrors
+	// buildPressIndexChangeoverSwap's R1.
+	if toClaim.Role == protocol.ClaimRoleProduce && toClaim.InboundSource != "" {
+		markInboundEmpty(steps, toClaim.InboundSource)
+	}
 	return ChangeoverDispatch{
 		StepsA:        steps,
 		DeliveryNodeA: pos,
 		AutoConfirmA:  true,
-		StepsB:        nil,
+		// The opening pickup lifts the OLD bin off the position, so the order
+		// carries the from-style payload. Safe alongside the Empty refill above,
+		// whose own payload filter is dropped.
+		CarriesFromPayloadA: true,
+		StepsB:              nil,
 	}
 }
 

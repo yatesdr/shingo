@@ -666,7 +666,7 @@ func TestFanOutCrossMode_PressIndex3PosToSingleRobot_SynthesizesBackMiddleDrops(
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs)
+	out := FanOutPressIndexCrossMode(diffs, nil)
 
 	// FRONT (already covered) + MIDDLE + BACK = 3 diffs total.
 	if len(out) != 3 {
@@ -722,7 +722,7 @@ func TestFanOutCrossMode_SingleRobotToPressIndex3Pos_SynthesizesBackMiddleAdds(t
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs)
+	out := FanOutPressIndexCrossMode(diffs, nil)
 
 	if len(out) != 3 {
 		t.Fatalf("expected 3 diffs (front + 2 synthesized adds), got %d", len(out))
@@ -770,7 +770,7 @@ func TestFanOutCrossMode_PressIndex3PosToTwoRobot_SynthesizesBackMiddleDrops(t *
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs)
+	out := FanOutPressIndexCrossMode(diffs, nil)
 
 	if len(out) != 3 {
 		t.Fatalf("expected 3 diffs, got %d", len(out))
@@ -798,7 +798,7 @@ func TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_SynthesizesAddForNewPosi
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs)
+	out := FanOutPressIndexCrossMode(diffs, nil)
 
 	if len(out) != 2 {
 		t.Fatalf("expected 2 diffs (front untouched + back add), got %d", len(out))
@@ -840,7 +840,7 @@ func TestFanOutCrossMode_PressIndex3PosToPressIndex2Pos_SynthesizesDropForRetire
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs)
+	out := FanOutPressIndexCrossMode(diffs, nil)
 
 	if len(out) != 2 {
 		t.Fatalf("expected 2 diffs (front + back drop), got %d", len(out))
@@ -869,7 +869,7 @@ func TestFanOutCrossMode_NotCrossMode_NoExtraDiffs(t *testing.T) {
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationUnchanged, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs)
+	out := FanOutPressIndexCrossMode(diffs, nil)
 
 	if len(out) != 1 {
 		t.Errorf("expected diffs unchanged, got %d (cross-mode fan-out must skip when both sides reference each position)", len(out))
@@ -894,7 +894,7 @@ func TestFanOutCrossMode_AfterSameModeFanOut_NoOverlap(t *testing.T) {
 		t.Fatalf("same-mode fan-out setup: expected 3 per-position diffs, got %d", len(diffs))
 	}
 	// Cross-mode fan-out then runs and should add nothing.
-	out := FanOutPressIndexCrossMode(diffs)
+	out := FanOutPressIndexCrossMode(diffs, nil)
 	if len(out) != 3 {
 		t.Errorf("expected cross-mode fan-out to add nothing on top of same-mode fan-out, got %d diffs", len(out))
 	}
@@ -911,7 +911,7 @@ func TestFanOutCrossMode_PressIndexFullDrop_FansOutExtensions(t *testing.T) {
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationDrop, FromClaim: &from, ToClaim: nil},
 	}
-	out := FanOutPressIndexCrossMode(diffs)
+	out := FanOutPressIndexCrossMode(diffs, nil)
 	if len(out) != 3 {
 		t.Fatalf("expected 3 diffs (front drop + middle drop + back drop), got %d", len(out))
 	}
@@ -937,7 +937,7 @@ func TestFanOutCrossMode_SynthesizedClaimRetainsParentID(t *testing.T) {
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs)
+	out := FanOutPressIndexCrossMode(diffs, nil)
 	for _, d := range out {
 		if d.CoreNodeName == "FRONT" {
 			continue // unchanged
@@ -951,5 +951,113 @@ func TestFanOutCrossMode_SynthesizedClaimRetainsParentID(t *testing.T) {
 					return d.FromClaim.ID
 				}())
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Front-node move with a shared back seat (Hopkinsville #27, 2026-07-16)
+// ---------------------------------------------------------------------------
+
+// hkFrontMoveDiffs reproduces HK changeover #27: style 8 (totes) claims PLN_01
+// paired to PLN_02; style 6 (knockdowns) claims PLN_03 paired to the SAME
+// PLN_02. The front node MOVES, so no CoreNodeName is shared and
+// DiffStyleClaims emits Drop + Add — never a Swap. The same-mode fan-out needs
+// Swap/Evacuate with both claims on one diff, so it cannot fire. posMap in the
+// cross-mode pass is the only place PLN_02's two sides meet.
+func hkFrontMoveDiffs(fromPayload, toPayload string) ([]ChangeoverNodeDiff, *processes.NodeClaim, *processes.NodeClaim) {
+	from := pressIndexFanOutClaim(fromPayload, "PLN_01", "PLN_02", "")
+	to := pressIndexFanOutClaim(toPayload, "PLN_03", "PLN_02", "")
+	return []ChangeoverNodeDiff{
+		{CoreNodeName: "PLN_01", Situation: SituationDrop, FromClaim: &from},
+		{CoreNodeName: "PLN_03", Situation: SituationAdd, ToClaim: &to},
+	}, &from, &to
+}
+
+// The regression. Before the fix PLN_02 got no diff, no order, and no error —
+// the empty totes sat on both back seats until operators fork-trucked them.
+func TestFanOutCrossMode_FrontNodeMoves_SharedBackSeat_DifferentBinType_SynthesizesSwap(t *testing.T) {
+	t.Parallel()
+	diffs, _, _ := hkFrontMoveDiffs("LK41", "PC3C")
+	binTypes := map[string]string{"LK41": "TOTE-2415", "PC3C": "45x48 KD"}
+
+	got := findDiff(FanOutPressIndexCrossMode(diffs, binTypes), "PLN_02")
+	if got == nil {
+		t.Fatal("PLN_02 got no diff — the back seat strands with no order and no error (HK #27)")
+	}
+	if got.Situation != SituationSwap {
+		t.Errorf("PLN_02 Situation = %q, want SituationSwap (evac the tote, refill a knockdown)", got.Situation)
+	}
+	if got.FromClaim == nil || got.ToClaim == nil {
+		t.Fatalf("per-position swap needs both claims, got from=%v to=%v", got.FromClaim, got.ToClaim)
+	}
+	if got.FromClaim.PayloadCode != "LK41" || got.ToClaim.PayloadCode != "PC3C" {
+		t.Errorf("PLN_02 payloads = %q → %q, want LK41 → PC3C",
+			got.FromClaim.PayloadCode, got.ToClaim.PayloadCode)
+	}
+	// Synthesized claims must be re-homed to the position and marked
+	// press_position, or the planner routes them back into the press-index
+	// branch and demands a PairedCoreNode the position doesn't have.
+	for _, c := range []*processes.NodeClaim{got.FromClaim, got.ToClaim} {
+		if c.CoreNodeName != "PLN_02" {
+			t.Errorf("synthesized claim CoreNodeName = %q, want PLN_02", c.CoreNodeName)
+		}
+		if c.SwapMode != pressPositionSwapMode {
+			t.Errorf("synthesized claim SwapMode = %q, want %q", c.SwapMode, pressPositionSwapMode)
+		}
+		if c.PairedCoreNode != "" {
+			t.Errorf("synthesized claim must not keep PairedCoreNode, got %q", c.PairedCoreNode)
+		}
+	}
+}
+
+// Same front-node move, same bin type: the back seat keeps its bin — the new
+// style's press indexes the same geometry. Fanning out here would send a
+// perfectly good staged empty to the market.
+func TestFanOutCrossMode_FrontNodeMoves_SharedBackSeat_SameBinType_NoFanOut(t *testing.T) {
+	t.Parallel()
+	diffs, _, _ := hkFrontMoveDiffs("LK41", "LK42")
+	binTypes := map[string]string{"LK41": "TOTE-2415", "LK42": "TOTE-2415"}
+
+	if d := findDiff(FanOutPressIndexCrossMode(diffs, binTypes), "PLN_02"); d != nil {
+		t.Fatalf("same bin type must not fan out the shared back seat, got %+v", d)
+	}
+}
+
+// An unresolved bin type is an UNKNOWN signal, not a mismatch — leave the
+// position alone rather than route a same-bin-type press through evac+refill.
+// refusePressIndexWhenCoreUnavailable is what keeps this unreachable in prod.
+func TestFanOutCrossMode_FrontNodeMoves_SharedBackSeat_UnknownBinType_NoFanOut(t *testing.T) {
+	t.Parallel()
+	diffs, _, _ := hkFrontMoveDiffs("LK41", "PC3C")
+	binTypes := map[string]string{"LK41": "TOTE-2415"} // PC3C unresolved
+
+	if d := findDiff(FanOutPressIndexCrossMode(diffs, binTypes), "PLN_02"); d != nil {
+		t.Fatalf("unknown bin type must not fan out the shared back seat, got %+v", d)
+	}
+}
+
+// The same-mode pass owns any position it touched; this pass must not emit a
+// second diff for it. Shared FRONT node + different bin types is the same-mode
+// case, so PLN_02 is already covered when cross-mode runs.
+func TestFanOutCrossMode_SharedFrontNode_DifferentBinType_NoDoubleEmit(t *testing.T) {
+	t.Parallel()
+	from := pressIndexFanOutClaim("LK41", "PLN_01", "PLN_02", "")
+	to := pressIndexFanOutClaim("PC3C", "PLN_01", "PLN_02", "")
+	binTypes := map[string]string{"LK41": "TOTE-2415", "PC3C": "45x48 KD"}
+	diffs := []ChangeoverNodeDiff{
+		{CoreNodeName: "PLN_01", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
+	}
+
+	diffs = FanOutPressIndexDifferentBinType(diffs, binTypes)
+	out := FanOutPressIndexCrossMode(diffs, binTypes)
+
+	var n int
+	for _, d := range out {
+		if d.CoreNodeName == "PLN_02" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("PLN_02 got %d diffs, want exactly 1 (same-mode pass owns it)", n)
 	}
 }

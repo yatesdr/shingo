@@ -161,27 +161,42 @@ func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []Chan
 	}
 	binTypes := e.binTypeSnapshot(diffs)
 	diffs = FanOutPressIndexDifferentBinType(diffs, binTypes)
-	diffs = FanOutPressIndexCrossMode(diffs)
+	diffs = FanOutPressIndexCrossMode(diffs, binTypes)
 	return diffs, nil
 }
 
 // refusePressIndexWhenCoreUnavailable returns an operator-readable error
-// when Core is unavailable AND any diff is a press-index Swap/Evacuate.
-// Without Core's bin-type catalog, the per-position fan-out can't
-// detect different-bin-type changeovers and silently falls back to the
-// same-bin-type choreography (wrong robots, wrong steps).
+// when Core is unavailable AND any diff touches a press-index claim.
+// Without Core's bin-type catalog, both fan-out passes can't detect
+// different-bin-type changeovers and silently fall back to the
+// same-bin-type choreography (wrong robots, wrong steps) or to no
+// fan-out at all (bins stranded on the press with no order and no error).
+//
+// Scoped to any non-Unchanged situation on EITHER side, not just
+// Swap/Evacuate on the from-side: the cross-mode pass reads bin types for
+// extension positions carried on Drop and Add diffs too. HK #27 produced
+// ONLY Drop and Add, so the old Swap/Evacuate-scoped gate would have
+// waved through exactly the changeover that needed it.
 func (e *Engine) refusePressIndexWhenCoreUnavailable(diffs []ChangeoverNodeDiff) error {
 	if e.coreClient != nil && e.coreClient.Available() {
 		return nil
 	}
 	for _, d := range diffs {
-		if (d.Situation != SituationSwap && d.Situation != SituationEvacuate) ||
-			d.FromClaim == nil || d.FromClaim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		if d.Situation == SituationUnchanged {
+			continue
+		}
+		if !isPressIndexClaim(d.FromClaim) && !isPressIndexClaim(d.ToClaim) {
 			continue
 		}
 		return fmt.Errorf("changeover refused: Core unavailable; cannot determine bin types for press-index changeover at %s", d.CoreNodeName)
 	}
 	return nil
+}
+
+// isPressIndexClaim reports whether a claim is a two-robot press-index claim.
+// nil-safe: a missing claim (Drop's to-side, Add's from-side) is not one.
+func isPressIndexClaim(c *processes.NodeClaim) bool {
+	return c != nil && c.SwapMode == protocol.SwapModeTwoRobotPressIndex
 }
 
 // PreviewChangeoverPlan returns the order plan that StartProcessChangeover would

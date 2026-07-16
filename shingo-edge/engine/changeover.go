@@ -147,6 +147,32 @@ func FanOutPressIndexDifferentBinType(diffs []ChangeoverNodeDiff, binTypes map[s
 	return out
 }
 
+// binTypesDiffer reports whether two claims' payloads resolve to different bin
+// type codes. The press's index motion can only shift bins across positions when
+// the geometry matches, so this is the predicate that decides whether a position
+// can ride the index or must be independently evac+refilled.
+//
+// An unresolved code on either side ("" — no catalog entry, or Core didn't
+// answer) is an UNKNOWN signal, not a mismatch: press geometry rarely changes
+// between styles, so missing catalog data is far more likely than an actual
+// change. Callers treat unknown as "same" and leave the position alone. That
+// fallback is only safe because refusePressIndexWhenCoreUnavailable rejects the
+// changeover outright when Core can't answer — without that gate this silently
+// strands bins.
+//
+// Both fan-out passes share this predicate; it must not be reimplemented at
+// either call site.
+func binTypesDiffer(from, to *processes.NodeClaim, binTypes map[string]string) bool {
+	if from == nil || to == nil {
+		return false
+	}
+	fromBT, toBT := binTypes[from.PayloadCode], binTypes[to.PayloadCode]
+	if fromBT == "" || toBT == "" {
+		return false
+	}
+	return fromBT != toBT
+}
+
 // shouldFanOutPressIndex reports whether the diff is a press-index
 // changeover whose bin types differ between from and to. Only those
 // expand into per-position diffs.
@@ -160,15 +186,7 @@ func shouldFanOutPressIndex(d ChangeoverNodeDiff, binTypes map[string]string) bo
 	if d.FromClaim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		return false
 	}
-	fromBT := binTypes[d.FromClaim.PayloadCode]
-	toBT := binTypes[d.ToClaim.PayloadCode]
-	if fromBT == "" || toBT == "" {
-		// Unknown signal: fall back to same-bin-type, no fan-out.
-		// Press geometry rarely changes between styles, so missing
-		// catalog data is far more likely than an actual mismatch.
-		return false
-	}
-	return fromBT != toBT
+	return binTypesDiffer(d.FromClaim, d.ToClaim, binTypes)
 }
 
 // fanOutPositions expands one press-index diff into up to three
@@ -289,6 +307,14 @@ func synthesizePressPositionClaim(parent *processes.NodeClaim, coreNodeName stri
 //     didn't fire), but position counts differ (e.g. 3-pos to 2-pos).
 //     Synthesize Drop for the dropped position; Add for the added
 //     position.
+//   - Shared extension position across a FRONT-NODE MOVE, different bin
+//     types: both styles are press-index and both name the same back
+//     seat, but their front nodes differ (PLN_01 → PLN_03, both paired
+//     to PLN_02). No CoreNodeName is shared, so DiffStyleClaims emits
+//     Drop + Add and the same-mode fan-out — which needs Swap/Evacuate
+//     and both claims on ONE diff — never fires. posMap is the only
+//     place the two sides of that position meet. Synthesize a per-
+//     position Swap so it gets evac+refill. (HK #27, 2026-07-16.)
 //
 // Runs AFTER FanOutPressIndexDifferentBinType. This pass only acts on
 // positions NOT in the existing diff list (after the same-mode
@@ -296,19 +322,20 @@ func synthesizePressPositionClaim(parent *processes.NodeClaim, coreNodeName stri
 // always wins for any position it touches; this pass picks up the
 // leftovers.
 //
-// Synthesized diffs route through the existing SituationDrop and
-// SituationAdd branches in planNodeAction, which don't read SwapMode
-// (the per-position synthesized claim's SwapMode = press_position is
-// cosmetic for these branches). Drop calls BuildReleaseSteps using
+// Synthesized diffs route through the existing SituationDrop,
+// SituationAdd and SituationSwap branches in planNodeAction. Drop and
+// Add don't read SwapMode (the per-position claim's SwapMode =
+// press_position is cosmetic there): Drop calls BuildReleaseSteps using
 // OutboundDestination; Add calls planFallbackStagingAction which uses
 // InboundSource (and InboundStaging if set; synthesized claims clear
 // InboundStaging so the direct-Retrieve fallback fires, delivering to
-// the position node directly).
+// the position node directly). Swap DOES read it, routing to
+// buildPressIndexPerPositionSwap — the single-order evac+refill.
 //
 // Diff list ordering: appended after the input diffs in stable order
 // (sorted by position name) so test assertions are deterministic and
 // log output is predictable.
-func FanOutPressIndexCrossMode(diffs []ChangeoverNodeDiff) []ChangeoverNodeDiff {
+func FanOutPressIndexCrossMode(diffs []ChangeoverNodeDiff, binTypes map[string]string) []ChangeoverNodeDiff {
 	covered := make(map[string]struct{}, len(diffs))
 	for _, d := range diffs {
 		covered[d.CoreNodeName] = struct{}{}
@@ -370,13 +397,31 @@ func FanOutPressIndexCrossMode(diffs []ChangeoverNodeDiff) []ChangeoverNodeDiff 
 		s := posMap[pos]
 		switch {
 		case s.fromClaim != nil && s.toClaim != nil:
-			// Both styles' press-index extension fields reference
-			// this position. Same-bin-type case (the same-mode pass
-			// didn't fire): the position stays in place, bins
-			// handled by the press's index motion at the front-
-			// position swap. Different-bin-type would already have
-			// been handled by the same-mode fan-out.
-			// No fan-out needed.
+			// Both styles' press-index extension fields reference this
+			// position.
+			//
+			// Same bin type: the position stays in place and its bin is
+			// handled by the press's index motion at the front-position
+			// swap. Nothing to do.
+			//
+			// Different bin type: the position needs its own evac+refill —
+			// the index can't shift geometries. It is NOT safe to assume the
+			// same-mode fan-out already covered it: that pass only fires on
+			// Swap/Evacuate, and a changeover that MOVES the front node
+			// between styles (PLN_01 → PLN_03, both paired to PLN_02) diffs
+			// as Drop + Add, so no single diff ever holds both sides of this
+			// position. THIS pass is the only place the two sides meet, via
+			// posMap. Hopkinsville 2026-07-16 (changeover #27, tote →
+			// knockdown) stranded both back seats on exactly that assumption.
+			if !binTypesDiffer(s.fromClaim, s.toClaim, binTypes) {
+				continue
+			}
+			added = append(added, ChangeoverNodeDiff{
+				CoreNodeName: pos,
+				Situation:    SituationSwap,
+				FromClaim:    synthesizePressPositionClaim(s.fromClaim, pos),
+				ToClaim:      synthesizePressPositionClaim(s.toClaim, pos),
+			})
 		case s.fromClaim != nil:
 			// From-side has it; nobody on the to-side claims it.
 			// Synthesize Drop — bin leaves to OutboundDestination.

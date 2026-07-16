@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 )
 
@@ -964,5 +965,90 @@ func TestBuildKeepStagedDeliverSteps_MissingInboundSource(t *testing.T) {
 
 	if steps[0].Action != "pickup" || steps[0].Node != "" {
 		t.Errorf("step 0: expected pickup with empty node (fallback), got %+v", steps[0])
+	}
+}
+
+// A produce position's refill must fetch an EMPTY carrier. Without the Empty
+// flag the InboundSource pickup defaults to a full retrieve and hunts a
+// payload-matched full in the empty pool ("no bin of requested payload").
+// Marking it Empty also drops that leg's payload filter, which is what lets the
+// single order carry the from-style payload for the evac pickup.
+func TestBuildPressIndexPerPositionSwap_ProduceRefillIsEmpty(t *testing.T) {
+	t.Parallel()
+	from := &processes.NodeClaim{
+		CoreNodeName:        "PLN_02",
+		PayloadCode:         "LK41",
+		Role:                protocol.ClaimRoleProduce,
+		SwapMode:            pressPositionSwapMode,
+		InboundSource:       "MARKET",
+		OutboundDestination: "DEST",
+	}
+	to := &processes.NodeClaim{
+		CoreNodeName:        "PLN_02",
+		PayloadCode:         "PC3C",
+		Role:                protocol.ClaimRoleProduce,
+		SwapMode:            pressPositionSwapMode,
+		InboundSource:       "MARKET",
+		OutboundDestination: "DEST",
+	}
+	disp := buildPressIndexPerPositionSwap(from, to)
+
+	for _, s := range disp.StepsA {
+		switch {
+		case s.Action == "pickup" && s.Node == "MARKET":
+			if !s.Empty {
+				t.Error("InboundSource pickup must be Empty for a produce refill")
+			}
+		case s.Action == "pickup" && s.Node == "PLN_02":
+			if s.Empty {
+				t.Error("the evac pickup lifts the OLD bin and must keep its payload filter")
+			}
+		}
+	}
+}
+
+// The opening pickup lifts the OLD bin off the position, so the order must
+// carry the from-style payload. Without the stamp the payload is left blank,
+// Core backfills it to the target style, and the pickup filters for a bin that
+// isn't there (ALN_001).
+func TestBuildPressIndexPerPositionSwap_CarriesFromPayload(t *testing.T) {
+	t.Parallel()
+	from := &processes.NodeClaim{
+		CoreNodeName: "PLN_02", PayloadCode: "LK41", SwapMode: pressPositionSwapMode,
+		InboundSource: "MARKET", OutboundDestination: "DEST",
+	}
+	to := &processes.NodeClaim{
+		CoreNodeName: "PLN_02", PayloadCode: "PC3C", SwapMode: pressPositionSwapMode,
+		InboundSource: "MARKET", OutboundDestination: "DEST",
+	}
+	if !buildPressIndexPerPositionSwap(from, to).CarriesFromPayloadA {
+		t.Error("CarriesFromPayloadA must be set: the evac pickup needs the from-style payload")
+	}
+}
+
+// assignDispatch must put the from-style payload on the single-order shape when
+// the builder asks for it, and must leave it blank when it doesn't (stage-first
+// shapes rely on the blank backfilling to the target style).
+func TestAssignDispatch_StepsA_PayloadStampFollowsCarriesFromPayloadA(t *testing.T) {
+	t.Parallel()
+	steps := []protocol.ComplexOrderStep{{Action: "pickup", Node: "PLN_02"}}
+
+	var carries changeover.NodeAction
+	assignDispatch(&carries, "PLN_02", "LK41", ChangeoverDispatch{
+		StepsA: steps, DeliveryNodeA: "PLN_02", CarriesFromPayloadA: true,
+	})
+	if carries.SupplyOrder == nil || carries.SupplyOrder.Complex == nil {
+		t.Fatal("expected a complex supply order")
+	}
+	if got := carries.SupplyOrder.Complex.PayloadCode; got != "LK41" {
+		t.Errorf("PayloadCode = %q, want LK41 (the from-style payload)", got)
+	}
+
+	var plain changeover.NodeAction
+	assignDispatch(&plain, "PLN_02", "LK41", ChangeoverDispatch{
+		StepsA: steps, DeliveryNodeA: "PLN_02",
+	})
+	if got := plain.SupplyOrder.Complex.PayloadCode; got != "" {
+		t.Errorf("PayloadCode = %q, want blank when the builder doesn't claim an old bin", got)
 	}
 }

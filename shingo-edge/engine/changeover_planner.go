@@ -353,7 +353,15 @@ func assignDispatch(action *changeover.NodeAction, processNode, evacPayloadCode 
 		return
 	}
 	if d.StepsA != nil {
-		action.SupplyOrder = complexSpec(d.DeliveryNodeA, processNode, d.StepsA, d.AutoConfirmA)
+		// Single-order shapes stamp the from-style payload only when they open by
+		// lifting an OLD bin off the line (press_position's evac+refill). The
+		// stage-first shapes don't, and must keep the blank that backfills to the
+		// target style.
+		payloadA := ""
+		if d.CarriesFromPayloadA {
+			payloadA = evacPayloadCode
+		}
+		action.SupplyOrder = complexSpecWithPayload(d.DeliveryNodeA, processNode, d.StepsA, d.AutoConfirmA, payloadA)
 	}
 	if d.StepsB != nil {
 		action.EvacOrder = complexSpecWithPayload("", processNode, d.StepsB, d.AutoConfirmB, evacPayloadCode)
