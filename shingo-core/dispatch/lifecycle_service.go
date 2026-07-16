@@ -219,7 +219,7 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 		// SetBinManifestFromTemplate directly, bypassing audit; the resulting
 		// timeline gap made forensics confusing because freshly-loaded bins
 		// appeared in bin_uop_audit only at the first downstream delta.
-		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, p.PayloadCode, 0, p.ProducedAt); err != nil {
+		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, p.PayloadCode, nil, p.ProducedAt); err != nil {
 			return lifecycleErr("internal_error", err.Error(), err)
 		}
 	}

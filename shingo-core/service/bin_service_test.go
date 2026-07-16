@@ -432,7 +432,7 @@ func TestBinService_LoadPayload_RequiresPayloadCode(t *testing.T) {
 	svc := newBinSvc(db)
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-EMPTY", "", 0)
-	if _, err := svc.LoadPayload(bin.ID, "", 0); err == nil {
+	if _, err := svc.LoadPayload(bin.ID, "", nil); err == nil {
 		t.Fatal("expected LoadPayload with empty payload code to fail")
 	}
 }
@@ -444,7 +444,7 @@ func TestBinService_LoadPayload_RejectsUnknownPayload(t *testing.T) {
 	svc := newBinSvc(db)
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-UNK", "", 0)
-	_, err := svc.LoadPayload(bin.ID, "DOES-NOT-EXIST", 0)
+	_, err := svc.LoadPayload(bin.ID, "DOES-NOT-EXIST", nil)
 	if err == nil {
 		t.Fatal("expected LoadPayload with unknown payload to fail")
 	}
@@ -469,7 +469,8 @@ func TestBinService_LoadPayload_AppliesTemplate(t *testing.T) {
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item), "create payload manifest item")
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-OK", "", 0)
-	if _, err := svc.LoadPayload(bin.ID, sd.Payload.Code, 25); err != nil {
+	twentyFive := 25
+	if _, err := svc.LoadPayload(bin.ID, sd.Payload.Code, &twentyFive); err != nil {
 		t.Fatalf("LoadPayload: %v", err)
 	}
 
@@ -496,7 +497,7 @@ func TestBinService_LoadPayload_RejectsIncompatibleBinType(t *testing.T) {
 	testutil.MustNoErr(t, db.SetPayloadBinTypes(sd.Payload.ID, []int64{otherBT.ID}), "SetPayloadBinTypes")
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-INCOMPAT", "", 0)
-	_, err := svc.LoadPayload(bin.ID, sd.Payload.Code, 0)
+	_, err := svc.LoadPayload(bin.ID, sd.Payload.Code, nil)
 	if err == nil {
 		t.Fatal("expected LoadPayload to reject payload not compatible with bin type")
 	}
@@ -513,7 +514,7 @@ func TestBinService_LoadPayload_AllowsWhenAllowlistEmpty(t *testing.T) {
 
 	// No SetPayloadBinTypes → empty allow-list → unrestricted (advisory semantics).
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-EMPTYCOMPAT", "", 0)
-	if _, err := svc.LoadPayload(bin.ID, sd.Payload.Code, 0); err != nil {
+	if _, err := svc.LoadPayload(bin.ID, sd.Payload.Code, nil); err != nil {
 		t.Fatalf("LoadPayload with empty compat list should succeed: %v", err)
 	}
 }

@@ -1074,8 +1074,8 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-TMPL-1", "INITIAL", 0)
 
-	// Apply the template — uopOverride=0 falls back to template's UOPCapacity.
-	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, 0); err != nil {
+	// Apply the template — nil uopOverride falls back to template's UOPCapacity.
+	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, nil); err != nil {
 		t.Fatalf("SetFromTemplate"+": %v", err)
 	}
 
@@ -1100,12 +1100,31 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 	}
 
 	// Override uopOverride.
-	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, 50); err != nil {
+	fifty := 50
+	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, &fifty); err != nil {
 		t.Fatalf("SetFromTemplate override"+": %v", err)
 	}
 	got2, _ := db.GetBin(bin.ID)
 	if got2.UOPRemaining != 50 {
 		t.Errorf("UOPRemaining after override = %d, want 50", got2.UOPRemaining)
+	}
+
+	// Explicit ZERO is a real declaration ("labeled but empty"), not a
+	// fall-back-to-capacity sentinel (HK 2026-07-16: the int-zero sentinel
+	// forced hand-labeled empties to phantom full-capacity counts).
+	zero := 0
+	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, &zero); err != nil {
+		t.Fatalf("SetFromTemplate explicit zero: %v", err)
+	}
+	got3, _ := db.GetBin(bin.ID)
+	if got3.UOPRemaining != 0 {
+		t.Errorf("UOPRemaining after explicit zero = %d, want 0", got3.UOPRemaining)
+	}
+
+	// Negative overrides are rejected.
+	neg := -1
+	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, &neg); err == nil {
+		t.Error("SetFromTemplate with negative override: want error, got nil")
 	}
 }
 

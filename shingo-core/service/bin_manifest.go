@@ -221,14 +221,19 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 // freshly-loaded bin's 0→capacity initial fill alongside the
 // downstream consume / capture deltas.
 //
-// uopOverride of 0 falls back to the template's UOPCapacity. Non-zero
+// uopOverride nil falls back to the template's UOPCapacity. Non-nil
 // uopOverride lets callers (produce ingest, partial-fill operator
-// loads) record an actual count rather than the template default.
+// loads) record an actual count rather than the template default —
+// including an explicit ZERO, the operator's "this carrier is labeled
+// but empty" declaration. The previous int-zero sentinel could not
+// express that, which is how HK 2026-07-16 ended up with hand-labeled
+// empties carrying phantom full-capacity counts that then had to be
+// chased with cycle counts.
 //
 // Returns the new delta_epoch from the underlying SetForProduction
 // call so handlers that ship the bin's row to Edge can include it in
 // their response.
-func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uopOverride int) (int64, error) {
+func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uopOverride *int) (int64, error) {
 	manifestJSON, uop, err := s.resolveTemplateManifest(payloadCode, uopOverride)
 	if err != nil {
 		return 0, err
@@ -237,9 +242,9 @@ func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uo
 }
 
 // resolveTemplateManifest resolves a payload template into a marshalled manifest
-// JSON and the UOP to write (uopOverride, or the template's UOPCapacity when
-// uopOverride is 0). Shared by SetFromTemplate and RecordProducedBinFromTemplate.
-func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOverride int) (string, int, error) {
+// JSON and the UOP to write (*uopOverride, or the template's UOPCapacity when
+// uopOverride is nil). Shared by SetFromTemplate and RecordProducedBinFromTemplate.
+func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOverride *int) (string, int, error) {
 	p, err := s.db.GetPayloadByCode(payloadCode)
 	if err != nil {
 		return "", 0, fmt.Errorf("payload template %q: %w", payloadCode, err)
@@ -259,9 +264,12 @@ func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOver
 	if err != nil {
 		return "", 0, fmt.Errorf("marshal manifest: %w", err)
 	}
-	uop := uopOverride
-	if uop == 0 {
-		uop = p.UOPCapacity
+	uop := p.UOPCapacity
+	if uopOverride != nil {
+		if *uopOverride < 0 {
+			return "", 0, fmt.Errorf("uop override %d is negative", *uopOverride)
+		}
+		uop = *uopOverride
 	}
 	return string(manifestJSON), uop, nil
 }
@@ -390,8 +398,8 @@ func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloa
 
 // RecordProducedBinFromTemplate is RecordProducedBin for the no-manifest ingest
 // path: it resolves the payload template (like SetFromTemplate) then sets and
-// confirms the bin in one transaction.
-func (s *BinManifestService) RecordProducedBinFromTemplate(binID int64, payloadCode string, uopOverride int, producedAt string) error {
+// confirms the bin in one transaction. uopOverride nil = template capacity.
+func (s *BinManifestService) RecordProducedBinFromTemplate(binID int64, payloadCode string, uopOverride *int, producedAt string) error {
 	manifestJSON, uop, err := s.resolveTemplateManifest(payloadCode, uopOverride)
 	if err != nil {
 		return err

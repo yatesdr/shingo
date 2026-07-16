@@ -460,9 +460,13 @@ func (h *Handlers) binUnlock(b *domain.Bin, _ json.RawMessage) error {
 }
 
 func (h *Handlers) binLoadPayload(b *domain.Bin, params json.RawMessage) error {
+	// UOPOverride is *int so an explicit zero survives the wire: absent =
+	// template capacity; present (0 included) = the operator's declared
+	// count. The old int-zero sentinel forced every "labeled but empty"
+	// load to full capacity (HK 2026-07-16).
 	var p struct {
 		PayloadCode string `json:"payload_code"`
-		UOPOverride int    `json:"uop_override"`
+		UOPOverride *int   `json:"uop_override"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
 		return fmt.Errorf("invalid params: %w", err)

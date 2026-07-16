@@ -236,9 +236,11 @@ func (s *BinService) Unlock(binID int64) error {
 
 // LoadPayload validates that the payload code exists, that the payload's
 // bin-type allow-list (if any) admits this bin's type, and sets the bin's
-// manifest from the payload template. uopOverride of 0 uses the template's
-// UOP capacity. Item 19: routes through BinManifestService.SetFromTemplate
-// so the operator load-payload action audits via bin_uop_audit.
+// manifest from the payload template. uopOverride nil uses the template's
+// UOP capacity; non-nil is the operator's declared count — explicit zero
+// included ("labeled but empty"). Item 19: routes through
+// BinManifestService.SetFromTemplate so the operator load-payload action
+// audits via bin_uop_audit.
 //
 // Compat semantics mirror PayloadBinTypeAdvisoryClause used by FindSourceFIFO
 // / FindEmptyCompatible: payload_bin_types is treated as an allow-list when
@@ -247,7 +249,7 @@ func (s *BinService) Unlock(binID int64) error {
 // Returns the new delta_epoch from SetFromTemplate so handlers shipping
 // the bin row back to Edge can include it on the wire (Edge needs the
 // fresh epoch before its next BinUOPDelta — see protocol/payloads.go).
-func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride int) (int64, error) {
+func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride *int) (int64, error) {
 	if payloadCode == "" {
 		return 0, fmt.Errorf("payload_code is required")
 	}

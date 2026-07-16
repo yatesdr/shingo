@@ -191,7 +191,7 @@ function renderContents(data) {
       html += '<option value="' + esc(p.code) + '">' + esc(p.code) + '</option>';
     });
     html += '</select></div>';
-    html += '<div class="form-group"><label>UOP Override</label><input type="number" id="bd-load-uop" min="0" style="width:80px" placeholder="auto"></div>';
+    html += '<div class="form-group"><label>Count (blank = full)</label><input type="number" id="bd-load-uop" min="0" style="width:110px" placeholder="full pack"></div>';
     html += '<button class="btn btn-primary btn-sm" data-action="loadPayload">Load</button>';
     html += '</div></div>';
 
@@ -351,8 +351,17 @@ function doBinAction(action, params) {
 function loadPayload() {
   var code = document.getElementById('bd-load-payload').value;
   if (!code) { toast('Select a payload', 'info'); return; }
-  var uop = parseInt(document.getElementById('bd-load-uop').value) || 0;
-  doBinAction('load_payload', { payload_code: code, uop_override: uop });
+  // Blank = template capacity (full pack). An explicit value — 0 included —
+  // is the operator's declared count and must survive as-is; the old
+  // `parseInt(...) || 0` collapsed a typed "0" into "use capacity".
+  var raw = document.getElementById('bd-load-uop').value.trim();
+  var params = { payload_code: code };
+  if (raw !== '') {
+    var uop = parseInt(raw, 10);
+    if (isNaN(uop) || uop < 0) { toast('Count must be 0 or more', 'info'); return; }
+    params.uop_override = uop;
+  }
+  doBinAction('load_payload', params);
 }
 
 async function clearBin() {
