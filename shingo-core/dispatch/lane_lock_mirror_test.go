@@ -103,6 +103,51 @@ func TestLaneLockMirror_UnlockByOwnerClearsRows(t *testing.T) {
 	}
 }
 
+// TestLaneLockRestart_DigHoldSurvives simulates a Core restart mid-dig: the
+// durable dig row outlives the in-memory map, RestoreLaneHolds rebuilds the hold
+// at boot (no per-order re-acquire, no lost-race window), and a competitor stays
+// out afterward — in all three modes and through the in-memory path.
+func TestLaneLockRestart_DigHoldSurvives(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	testdb.SetupStandardData(t, db)
+	lane := mirrorLane(t, db, "LANE-RESTART", 3)
+	parent := testdb.CreateOrder(t, db)
+	competitor := testdb.CreateOrder(t, db)
+
+	// A dig was in flight before the crash: its durable row exists.
+	if err := reservations.AcquireLanes(db.DB, parent.ID, reservations.ModeDig, "test", lane); err != nil {
+		t.Fatalf("seed dig hold: %v", err)
+	}
+
+	// Fresh Core boot: a new dispatcher whose in-memory lock map starts empty
+	// (NewDispatcher does not restore — the engine does, at boot).
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	if d.laneLock.IsLocked(lane) {
+		t.Fatal("fresh dispatcher must start with an empty lock map (pre-restore)")
+	}
+
+	if err := d.RestoreLaneHolds(); err != nil {
+		t.Fatalf("RestoreLaneHolds: %v", err)
+	}
+	if !d.laneLock.IsLocked(lane) {
+		t.Fatal("lane not restored as held after RestoreLaneHolds")
+	}
+	if got := d.laneLock.LockedBy(lane); got != parent.ID {
+		t.Fatalf("restored owner = %d, want parent %d", got, parent.ID)
+	}
+	// A competitor stays out — the durable dig row excludes every mode.
+	for _, mode := range []reservations.Mode{reservations.ModeInbound, reservations.ModeOutbound, reservations.ModeDig} {
+		if err := reservations.AcquireLanes(db.DB, competitor.ID, mode, "test", lane); err != reservations.ErrReservationConflict {
+			t.Fatalf("competitor %s into restored dig lane: want conflict, got %v", mode, err)
+		}
+	}
+	// The in-memory competitor path is refused too.
+	if d.laneLock.TryLock(lane, competitor.ID) {
+		t.Fatal("competitor TryLock on restored dig lane must fail")
+	}
+}
+
 // TestLaneLockMirror_ForeignUnlockLeavesRow: a wrong-owner Unlock is refused and
 // the dig row (and the in-memory hold) stay put — G3, end to end through the
 // mirror.

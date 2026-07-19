@@ -86,12 +86,20 @@ func (e *Engine) Start() {
 		e.logFn("engine: recover pending_restocks: %v", err)
 	}
 
-	// Recover pending lane-lock-extension listeners from the
-	// pending_lane_extensions table (post-v7 cleanup). Same shape as
-	// the restore-blockers recovery above — without it a Core restart
-	// during the post-compound / pre-pickup window would lose the
-	// listener and the lane stays held forever (or worse, becomes
-	// orphaned with no listener to release it).
+	// Restore lane holds from the durable dig mouth rows FIRST, before any
+	// dispatch runs: the rows are the restart authority now, so a bulk rebuild
+	// re-establishes every held lane at once (no per-order re-acquire, no
+	// lost-race window). Non-fatal — a fresh DB simply has no rows.
+	if err := e.dispatcher.RestoreLaneHolds(); err != nil {
+		e.logFn("engine: restore lane holds: %v", err)
+	}
+
+	// Recover pending lane-lock-extension LISTENERS from the
+	// pending_lane_extensions table (post-v7 cleanup): the release-on-pickup
+	// arm, whose parameters (target bin, expected from-node) are not in the
+	// dig row. Without it a Core restart during the post-compound / pre-pickup
+	// window would lose the listener and the lane stays held until the parent
+	// terminates.
 	if err := e.dispatcher.RecoverPendingLaneExtensions(); err != nil {
 		e.logFn("engine: recover pending_lane_extensions: %v", err)
 	}

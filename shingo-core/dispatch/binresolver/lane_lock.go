@@ -2,6 +2,7 @@ package binresolver
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"sync"
 
@@ -118,6 +119,28 @@ func (l *LaneLock) LockedBy(laneID int64) int64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.lanes[laneID]
+}
+
+// RebuildFromRows repopulates the in-memory map from the durable dig mouth rows —
+// the boot step that makes the rows the restart authority. It REPLACES the
+// per-order re-acquire the old boot recovery did: a single bulk read cannot lose
+// a lane to a race the way a per-order TryLock could, so the old lost-race window
+// is gone. Called once at boot, before any dispatch runs. A no-op without a db.
+func (l *LaneLock) RebuildFromRows() error {
+	if l.db == nil {
+		return nil
+	}
+	holds, err := reservations.ListDigHolds(l.db)
+	if err != nil {
+		return fmt.Errorf("lanelock rebuild: %w", err)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lanes = make(map[int64]int64, len(holds))
+	for _, h := range holds {
+		l.lanes[h.LaneID] = h.OrderID
+	}
+	return nil
 }
 
 // CheckDivergence compares the in-memory lane holds against the durable dig mouth
