@@ -129,6 +129,7 @@ type Sim struct {
 	opts      Options
 	flags     Flags
 	mouthGate bool // when true, lane entry is gated by mode + deepest-first discipline (§2)
+	capacity1 bool // with mouthGate: one robot per lane (the baseline the soak compares against)
 	robots    map[string]*Robot
 	order     []string          // robot ids, stable order for deterministic ticking
 	occ       map[string]string // cell key → robot id (lane cells only)
@@ -165,6 +166,11 @@ func New(scene *Scene, opts Options) *Sim {
 // entry-order air bubble green while exercising same-kind sharing. (See
 // admitToLane + laneClearToExit.)
 func (s *Sim) SetMouthGate(on bool) { s.mouthGate = on }
+
+// SetLaneCapacity1 restricts a mouth-gated lane to ONE robot at a time — the
+// conservative baseline, disabling same-kind co-occupancy. Used by the soak to
+// measure what mode-share concurrency buys over capacity-1.
+func (s *Sim) SetLaneCapacity1(on bool) { s.capacity1 = on }
 
 // SetFlags overrides the vendor-unknown flag defaults (for the soak matrix).
 func (s *Sim) SetFlags(f Flags) { s.flags = f }
@@ -381,6 +387,17 @@ func (s *Sim) admitToLane(r *Robot, next cell) bool {
 		return true // r doesn't actually work this lane — nothing to gate
 	}
 	myDepth := s.currentTargetDepth(r, lane)
+
+	// Capacity-1 baseline (comparison mode): one robot works the lane at a time,
+	// so it must be clear of every other robot before entry.
+	if s.capacity1 {
+		for _, id := range s.order {
+			o := s.robots[id]
+			if o.ID != r.ID && o.pos.inLane() && o.pos.Lane == lane {
+				return false
+			}
+		}
+	}
 
 	// Against robots already inside the lane: same-kind shares, mixed/dig waits,
 	// and no entrant may pass or reach an occupant.

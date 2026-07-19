@@ -1,6 +1,10 @@
 package scenesim
 
-import "testing"
+import (
+	"fmt"
+	"math/rand"
+	"testing"
+)
 
 // robotsInLane counts robots physically inside a lane right now.
 func robotsInLane(sim *Sim, lane string) int {
@@ -47,6 +51,60 @@ func TestModeShare_PressPairCoOccupy(t *testing.T) {
 	}
 	for _, v := range vios {
 		t.Errorf("checker fired on a legal same-kind co-occupancy: %s: %s", v.Checker, v.Detail)
+	}
+}
+
+// runSoakSeed drives one deterministic random store stream over a slots-wide
+// lane under the mouth gate (share = mode-share vs capacity-1) and returns the
+// ticks to drain; it flags non-settle or any violation via violCount.
+func runSoakSeed(t *testing.T, seed, slots int, share bool, violCount *int) int {
+	t.Helper()
+	rng := rand.New(rand.NewSource(int64(seed)))
+	sc := wideLaneScene(t, slots)
+	sim := New(sc, Options{Watchdog: 120})
+	sim.SetMouthGate(true)
+	sim.SetLaneCapacity1(!share)
+
+	n := 1 + rng.Intn(slots)
+	targets := rng.Perm(slots)[:n]
+	for i, slotIdx := range targets {
+		rid := fmt.Sprintf("R%d", i)
+		if err := sim.AddRobot(rid, "AISLE"); err != nil {
+			t.Fatalf("seed %d AddRobot: %v", seed, err)
+		}
+		req := storeReq(fmt.Sprintf("o%d-%d", seed, i), "LINE", fmt.Sprintf("S%d", slotIdx))
+		if err := sim.Submit(rid, req, false); err != nil {
+			t.Fatalf("seed %d Submit: %v", seed, err)
+		}
+	}
+	ticks, vios, settled := sim.RunUntilIdle(4000)
+	if !settled || len(vios) > 0 {
+		*violCount++
+	}
+	return ticks
+}
+
+// TestModeShare_ThroughputVsCapacity1: over the same 200 random store streams,
+// BOTH admission modes stay clean, and mode-share drains no slower than capacity-1
+// (usually faster, from same-kind co-occupancy). This is the menu-pinning
+// evidence — what sharing buys over the conservative one-at-a-time baseline.
+func TestModeShare_ThroughputVsCapacity1(t *testing.T) {
+	const seeds = 200
+	const slots = 4
+	var shareTicks, capTicks, shareViol, capViol int
+	for seed := range seeds {
+		shareTicks += runSoakSeed(t, seed, slots, true, &shareViol)
+		capTicks += runSoakSeed(t, seed, slots, false, &capViol)
+	}
+	if shareViol > 0 || capViol > 0 {
+		t.Fatalf("soak violations: mode-share=%d capacity-1=%d seeds (both must be clean)", shareViol, capViol)
+	}
+	pct := 100 * float64(shareTicks) / float64(capTicks)
+	t.Logf("throughput over %d seeds (%d-slot lane): mode-share=%d ticks vs capacity-1=%d ticks (%.1f%% of baseline)",
+		seeds, slots, shareTicks, capTicks, pct)
+	if shareTicks > capTicks {
+		t.Errorf("mode-share (%d ticks) drained SLOWER than capacity-1 (%d ticks) — sharing must never cost throughput",
+			shareTicks, capTicks)
 	}
 }
 
