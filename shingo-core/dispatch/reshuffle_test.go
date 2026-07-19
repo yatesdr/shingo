@@ -82,9 +82,9 @@ func TestPlanReshuffle_SingleBlocker(t *testing.T) {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
 
-	// Verify 3 steps: unbury A, retrieve B, restock A
-	if len(plan.Steps) != 3 {
-		t.Fatalf("steps = %d, want 3", len(plan.Steps))
+	// Verify 2 steps: unbury A, retrieve B (no restock — blockers lie)
+	if len(plan.Steps) != 2 {
+		t.Fatalf("steps = %d, want 2", len(plan.Steps))
 	}
 
 	// Step 1: unbury A (depth 1 -> shuffle)
@@ -108,17 +108,6 @@ func TestPlanReshuffle_SingleBlocker(t *testing.T) {
 	if plan.Steps[1].Sequence != 2 {
 		t.Errorf("step 2 sequence = %d, want 2", plan.Steps[1].Sequence)
 	}
-
-	// Step 3: restock A (shuffle -> depth 1)
-	if plan.Steps[2].StepType != "restock" {
-		t.Errorf("step 3 type = %q, want %q", plan.Steps[2].StepType, "restock")
-	}
-	if plan.Steps[2].BinID != blockerA.ID {
-		t.Errorf("step 3 bin = %d, want %d", plan.Steps[2].BinID, blockerA.ID)
-	}
-	if plan.Steps[2].Sequence != 3 {
-		t.Errorf("step 3 sequence = %d, want 3", plan.Steps[2].Sequence)
-	}
 }
 
 func TestPlanReshuffle_MultipleBlockers(t *testing.T) {
@@ -140,9 +129,10 @@ func TestPlanReshuffle_MultipleBlockers(t *testing.T) {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
 
-	// Verify 5 steps: unbury depth 1, unbury depth 2, retrieve depth 3, restock depth 2, restock depth 1
-	if len(plan.Steps) != 5 {
-		t.Fatalf("steps = %d, want 5", len(plan.Steps))
+	// Verify 3 steps: unbury depth 1, unbury depth 2, retrieve depth 3
+	// (no restock — blockers lie where the unbury parked them).
+	if len(plan.Steps) != 3 {
+		t.Fatalf("steps = %d, want 3", len(plan.Steps))
 	}
 
 	// Unbury steps: shallowest first (depth 1, then depth 2)
@@ -168,85 +158,12 @@ func TestPlanReshuffle_MultipleBlockers(t *testing.T) {
 		t.Errorf("step 3 bin = %d, want %d (target)", plan.Steps[2].BinID, target.ID)
 	}
 
-	// Restock steps: deepest-first (depth 2, then depth 1)
-	if plan.Steps[3].StepType != "restock" {
-		t.Errorf("step 4 type = %q, want %q", plan.Steps[3].StepType, "restock")
-	}
-	if plan.Steps[3].BinID != blocker2.ID {
-		t.Errorf("step 4 bin = %d, want %d (depth 2 restock first)", plan.Steps[3].BinID, blocker2.ID)
-	}
-
-	if plan.Steps[4].StepType != "restock" {
-		t.Errorf("step 5 type = %q, want %q", plan.Steps[4].StepType, "restock")
-	}
-	if plan.Steps[4].BinID != blocker1.ID {
-		t.Errorf("step 5 bin = %d, want %d (depth 1 restock last)", plan.Steps[4].BinID, blocker1.ID)
-	}
-
 	// Verify sequences
 	for i, step := range plan.Steps {
 		if step.Sequence != i+1 {
 			t.Errorf("step %d sequence = %d, want %d", i+1, step.Sequence, i+1)
 		}
 	}
-}
-
-// TestPlanReshuffle_RestockPacksDeepest pins the no-bubble restock behavior: blockers
-// restock to the NEXT-DEEPER slot (slot rotation), not their original slot, so the lane
-// ends with depths 2..N filled and the mouth (depth 1) empty. FIFO is unaffected (it keys
-// on loaded_at age, not slot depth). With blockers at depths 1+2 and the target at depth 3:
-// the depth-2 blocker restocks to the target's old slot (depth 3); the depth-1 blocker
-// restocks to the depth-2 slot. Depths 2+3 filled, depth 1 empty — no bubbles.
-func TestPlanReshuffle_RestockPacksDeepest(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-	// slots[0]=depth1, slots[1]=depth2, slots[2]=depth3.
-
-	blocker1 := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-B1") // depth 1
-	blocker2 := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-B2") // depth 2
-	target := createTestBinAtNode(t, db, bp.Code, slots[2].ID, "BIN-TGT")  // depth 3
-
-	plan, err := PlanReshuffle(db, target, slots[2], lane, grp.ID)
-	if err != nil {
-		t.Fatalf("PlanReshuffle: %v", err)
-	}
-	// Steps: [0]unbury B1, [1]unbury B2, [2]retrieve TGT, [3]restock B2, [4]restock B1.
-	var restockB2, restockB1 *ReshuffleStep
-	for i := range plan.Steps {
-		s := &plan.Steps[i]
-		if s.StepType != protocol.StepRestock {
-			continue
-		}
-		if s.BinID == blocker2.ID {
-			restockB2 = s
-		}
-		if s.BinID == blocker1.ID {
-			restockB1 = s
-		}
-	}
-	if restockB2 == nil || restockB1 == nil {
-		t.Fatalf("missing restock steps: B2=%v B1=%v", restockB2, restockB1)
-	}
-	// Deepest blocker (B2, was depth 2) restocks to the TARGET's slot (depth 3) — not its
-	// own original slot. This is the bug fix: old behavior restocked to slots[1] (depth 2),
-	// leaving the freed target slot empty → a bubble at depth 3.
-	if restockB2.ToNode == nil || restockB2.ToNode.ID != slots[2].ID {
-		t.Errorf("restock B2 destination = %v, want target slot %s (depth 3, no bubble)", nodeName(restockB2.ToNode), slots[2].Name)
-	}
-	// Shallower blocker (B1, was depth 1) restocks to the next-deeper blocker's original
-	// slot (depth 2) — not its own depth-1 slot. Old behavior restocked to slots[0] (depth 1).
-	if restockB1.ToNode == nil || restockB1.ToNode.ID != slots[1].ID {
-		t.Errorf("restock B1 destination = %v, want slot %s (depth 2, packed behind B2)", nodeName(restockB1.ToNode), slots[1].Name)
-	}
-}
-
-// nodeName is a small helper for readable assertion failures (nil-safe).
-func nodeName(n *nodes.Node) string {
-	if n == nil {
-		return "<nil>"
-	}
-	return n.Name
 }
 
 func TestPlanReshuffle_NoShuffleSlots(t *testing.T) {
@@ -363,8 +280,8 @@ func TestCompoundOrderCreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListChildOrders: %v", err)
 	}
-	if len(children) != 3 {
-		t.Fatalf("child count = %d, want 3", len(children))
+	if len(children) != 2 {
+		t.Fatalf("child count = %d, want 2 (unbury + retrieve; no restock)", len(children))
 	}
 
 	// Verify child orders have correct parent_order_id
@@ -379,7 +296,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 	for _, child := range children {
 		seqSeen[child.Sequence] = true
 	}
-	for _, seq := range []int{1, 2, 3} {
+	for _, seq := range []int{1, 2} {
 		if !seqSeen[seq] {
 			t.Errorf("missing child with sequence %d", seq)
 		}
@@ -400,15 +317,6 @@ func TestCompoundOrderCreation(t *testing.T) {
 			// Retrieve: pickup from target slot, delivery to parent's delivery
 			if child.SourceNode == "" {
 				t.Error("child seq 2 (retrieve) has empty source node")
-			}
-		}
-		if child.Sequence == 3 {
-			// Restock: pickup from shuffle slot, delivery back to lane slot
-			if child.SourceNode == "" {
-				t.Error("child seq 3 (restock) has empty source node")
-			}
-			if child.DeliveryNode == "" {
-				t.Error("child seq 3 (restock) has empty delivery node")
 			}
 		}
 	}
@@ -987,31 +895,6 @@ func TestReshuffleTargetNodes_LaneOverridesGroup(t *testing.T) {
 	}
 }
 
-// TestReshuffleRestoreBlockers_LaneOverridesGroup pins the restore-blockers
-// per-lane override: explicit on/off on the lane wins, unset lane inherits.
-func TestReshuffleRestoreBlockers_LaneOverridesGroup(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, _, _, _ := setupNodeGroupWithShuffle(t, db)
-
-	// Group on, lane unset → inherit on.
-	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleRestoreBlockers, "on"), "group on")
-	if !ReshuffleRestoreBlockersEnabled(db, lane.ID, grp.ID) {
-		t.Error("lane unset + group on → want true")
-	}
-
-	// Lane explicit off → overrides group on.
-	testutil.MustNoErr(t, db.SetNodeProperty(lane.ID, PropReshuffleRestoreBlockers, "off"), "lane off")
-	if ReshuffleRestoreBlockersEnabled(db, lane.ID, grp.ID) {
-		t.Error("lane off → want false even though group on")
-	}
-
-	// laneID=0 → group value.
-	if !ReshuffleRestoreBlockersEnabled(db, 0, grp.ID) {
-		t.Error("laneID=0 + group on → want true")
-	}
-}
-
 // TestCreateCompoundOrder_RetrieveWithExplicitToNode locks §12.2
 // Surface 5: a compound built from a PlanReshuffleToTarget plan must
 // land the retrieve child's DeliveryNode at the target node, NOT at
@@ -1069,212 +952,6 @@ func TestCreateCompoundOrder_RetrieveWithExplicitToNode(t *testing.T) {
 // §12.2 Surface 12: Persistent pending_restocks (v7).
 // ────────────────────────────────────────────────────────────────────────
 
-// TestPendingRestocks_PersistedAtRegistration: scheduling a listener
-// writes a pending_restocks row with the correct keys.
-func TestPendingRestocks_PersistedAtRegistration(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleRestoreBlockers, "on"), "set toggle")
-
-	parent := &orders.Order{
-		EdgeUUID:  "uuid-pr-persist",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-PR-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-PR-TGT")
-	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	testutil.MustNoErr(t, d.CreateCompoundOrder(parent, plan), "CreateCompoundOrder")
-	d.scheduleRestoreIfEnabled(parent, grp.ID, lane.ID, plan, slots[1].ID)
-
-	row, err := db.GetPendingRestockByComplexParent(parent.ID)
-	if err != nil {
-		t.Fatalf("GetPendingRestockByComplexParent: %v", err)
-	}
-	if row.TargetBinID != target.ID {
-		t.Errorf("TargetBinID = %d, want %d", row.TargetBinID, target.ID)
-	}
-	if row.ExpectedFromNodeID != slots[1].ID {
-		t.Errorf("ExpectedFromNodeID = %d, want %d", row.ExpectedFromNodeID, slots[1].ID)
-	}
-	if row.RestockPlanJSON == "" {
-		t.Error("RestockPlanJSON is empty")
-	}
-}
-
-// TestPendingRestocks_DeletedAfterRestockFires: when the bin-transit
-// event fires, the row is deleted.
-func TestPendingRestocks_DeletedAfterRestockFires(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleRestoreBlockers, "on"), "set toggle")
-
-	parent := &orders.Order{
-		EdgeUUID:  "uuid-pr-fire",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-PR-F-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-PR-F-TGT")
-	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	testutil.MustNoErr(t, d.CreateCompoundOrder(parent, plan), "CreateCompoundOrder")
-	d.scheduleRestoreIfEnabled(parent, grp.ID, lane.ID, plan, slots[1].ID)
-
-	if _, err := db.GetPendingRestockByComplexParent(parent.ID); err != nil {
-		t.Fatalf("row missing before fire: %v", err)
-	}
-
-	d.HandleBinEnteredTransit(target.ID, slots[1].ID)
-
-	if _, err := db.GetPendingRestockByComplexParent(parent.ID); err == nil {
-		t.Error("pending_restock row still present after fire — DELETE missing")
-	}
-}
-
-// TestPendingRestocks_DeletedOnParentCancel: parent cancel deletes
-// the row.
-func TestPendingRestocks_DeletedOnParentCancel(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleRestoreBlockers, "on"), "set toggle")
-
-	parent := &orders.Order{
-		EdgeUUID:  "uuid-pr-cancel",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-PR-C-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-PR-C-TGT")
-	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	testutil.MustNoErr(t, d.CreateCompoundOrder(parent, plan), "CreateCompoundOrder")
-	d.scheduleRestoreIfEnabled(parent, grp.ID, lane.ID, plan, slots[1].ID)
-
-	d.HandleComplexParentTerminal(parent.ID)
-
-	if _, err := db.GetPendingRestockByComplexParent(parent.ID); err == nil {
-		t.Error("pending_restock row still present after parent cancel")
-	}
-}
-
-// TestPendingRestocks_RecoveredOnCoreBoot: pre-populate a row with a
-// non-terminal complex parent, call RecoverPendingRestocks, assert
-// the in-memory listener was re-registered.
-func TestPendingRestocks_RecoveredOnCoreBoot(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	_, _, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-
-	parent := &orders.Order{
-		EdgeUUID:  "uuid-pr-recover",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusReshuffling, // non-terminal
-	}
-	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(parent.ID, string(StatusReshuffling), "fixture"), "set Reshuffling")
-
-	syn := &orders.Order{
-		EdgeUUID:  "uuid-pr-recover-syn",
-		StationID: "line-1",
-		OrderType: OrderTypeReshuffleRestore,
-		Status:    StatusReshuffling,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(syn), "create synthetic")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(syn.ID, string(StatusReshuffling), "fixture"), "set syn Reshuffling")
-
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-PR-R-TGT")
-	planJSON := `{"lane_id":1,"group_id":1,"blockers":[{"bin_id":99,"original_node_id":2,"original_name":"orig","shuffle_node_id":3,"shuffle_name":"shuf"}]}`
-	_, err := db.InsertPendingRestock(&store.PendingRestock{
-		ComplexParentID:    parent.ID,
-		SyntheticParentID:  syn.ID,
-		TargetBinID:        target.ID,
-		ExpectedFromNodeID: slots[1].ID,
-		RestockPlanJSON:    planJSON,
-	})
-	if err != nil {
-		t.Fatalf("InsertPendingRestock: %v", err)
-	}
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	if err := d.RecoverPendingRestocks(); err != nil {
-		t.Fatalf("RecoverPendingRestocks: %v", err)
-	}
-
-	// In-memory listener should now match the target bin.
-	entry, ok := d.restoreListeners.byBin[target.ID]
-	if !ok {
-		t.Fatal("restore listener not re-registered for target bin")
-	}
-	if entry.complexParentID != parent.ID {
-		t.Errorf("recovered entry complexParentID = %d, want %d", entry.complexParentID, parent.ID)
-	}
-}
-
-// TestPendingRestocks_StaleRowsSkipped: row for a terminal complex
-// parent is deleted; no listener registered.
-func TestPendingRestocks_StaleRowsSkipped(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-
-	parent := &orders.Order{
-		EdgeUUID:  "uuid-pr-stale",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusCancelled, // terminal
-	}
-	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-	testdb.SeedOrderStatus(t, db, parent.ID, string(StatusCancelled), "fixture")
-
-	syn := &orders.Order{
-		EdgeUUID:  "uuid-pr-stale-syn",
-		StationID: "line-1",
-		OrderType: OrderTypeReshuffleRestore,
-		Status:    StatusReshuffling,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(syn), "create synthetic")
-
-	_, err := db.InsertPendingRestock(&store.PendingRestock{
-		ComplexParentID:    parent.ID,
-		SyntheticParentID:  syn.ID,
-		TargetBinID:        9999,
-		ExpectedFromNodeID: 9998,
-		RestockPlanJSON:    `{"lane_id":1,"group_id":1,"blockers":[]}`,
-	})
-	if err != nil {
-		t.Fatalf("InsertPendingRestock: %v", err)
-	}
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	if err := d.RecoverPendingRestocks(); err != nil {
-		t.Fatalf("RecoverPendingRestocks: %v", err)
-	}
-
-	if _, ok := d.restoreListeners.byBin[9999]; ok {
-		t.Error("stale row registered an in-memory listener — should have been skipped")
-	}
-	if _, err := db.GetPendingRestockByComplexParent(parent.ID); err == nil {
-		t.Error("stale row not deleted by recovery sweep")
-	}
-}
-
 // ────────────────────────────────────────────────────────────────────────
 // §12.2 Surface 13: CreateCompoundChildrenOnly helper (v7).
 // ────────────────────────────────────────────────────────────────────────
@@ -1293,11 +970,11 @@ func TestCreateCompoundChildrenOnly_DoesNotCallBeginReshuffle(t *testing.T) {
 	syn := &orders.Order{
 		EdgeUUID:  "uuid-cco-syn",
 		StationID: "line-1",
-		OrderType: OrderTypeReshuffleRestore,
+		OrderType: OrderTypeComplex,
 		Status:    StatusPending,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(syn), "create synthetic")
-	// Set directly to Reshuffling (mirrors scheduleRestoreIfEnabled).
+	// Set directly to Reshuffling (a compound parent already mid-reshuffle).
 	testutil.MustNoErr(t, db.UpdateOrderStatus(syn.ID, string(StatusReshuffling), "fixture"), "set Reshuffling")
 	syn, _ = db.GetOrder(syn.ID)
 
@@ -1356,251 +1033,6 @@ func TestCreateCompoundOrder_StillCallsBeginReshuffle(t *testing.T) {
 // ────────────────────────────────────────────────────────────────────────
 // §12.2 Surface 10: restore-blockers listener (toggle ON).
 // ────────────────────────────────────────────────────────────────────────
-
-// TestRestoreBlockers_ListenerFiresOnBinEnteredTransit verifies the
-// listener fires when the configured target bin leaves the expected
-// node and dispatches a synthetic-parent restock compound.
-func TestRestoreBlockers_ListenerFiresOnBinEnteredTransit(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-
-	// Enable restore-blockers on the group.
-	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleRestoreBlockers, "on"), "set toggle")
-
-	// Parent complex order
-	parent := &orders.Order{
-		EdgeUUID:  "uuid-restore-fires",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-
-	// One blocker, one target.
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-RB-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-RB-TGT")
-
-	plan, err := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-	if err != nil {
-		t.Fatalf("PlanReshuffleUnburyOnly: %v", err)
-	}
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	testutil.MustNoErr(t, d.CreateCompoundOrder(parent, plan), "CreateCompoundOrder")
-
-	// Arm the restore listener as the dispatcher's intake path would.
-	expectedFromNode := slots[1].ID // expose mode: original lane slot
-	d.scheduleRestoreIfEnabled(parent, grp.ID, lane.ID, plan, expectedFromNode)
-
-	// Fire the bin-transit event for the target bin leaving the
-	// expected slot. The listener should dispatch a restock compound.
-	d.HandleBinEnteredTransit(target.ID, slots[1].ID)
-
-	// A synthetic-parent restore order should now exist.
-	all, _ := db.ListOrdersByStation("line-1", 100)
-	var synthetic *orders.Order
-	for _, o := range all {
-		if o.OrderType == OrderTypeReshuffleRestore {
-			synthetic = o
-			break
-		}
-	}
-	if synthetic == nil {
-		t.Fatal("synthetic ReshuffleRestore parent not created after bin-transit")
-	}
-
-	// The restock children should exist.
-	children, _ := db.ListChildOrders(synthetic.ID)
-	if len(children) != 1 {
-		t.Errorf("restock children = %d, want 1", len(children))
-	}
-}
-
-// TestRestoreBlockers_ListenerIdempotency: firing the bin-transit
-// event twice creates only one restock compound.
-func TestRestoreBlockers_ListenerIdempotency(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleRestoreBlockers, "on"), "set toggle")
-
-	parent := &orders.Order{
-		EdgeUUID:  "uuid-restore-idemp",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-IDM-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-IDM-TGT")
-
-	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	testutil.MustNoErr(t, d.CreateCompoundOrder(parent, plan), "CreateCompoundOrder")
-	d.scheduleRestoreIfEnabled(parent, grp.ID, lane.ID, plan, slots[1].ID)
-
-	// Fire twice.
-	d.HandleBinEnteredTransit(target.ID, slots[1].ID)
-	d.HandleBinEnteredTransit(target.ID, slots[1].ID)
-
-	// Count synthetic parents — must be exactly one.
-	all, _ := db.ListOrdersByStation("line-1", 100)
-	count := 0
-	for _, o := range all {
-		if o.OrderType == OrderTypeReshuffleRestore {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("synthetic parents = %d, want 1 (listener must be one-shot)", count)
-	}
-}
-
-// TestRestoreBlockers_ListenerDeregistersOnCancel: cancelling the
-// complex parent BEFORE the bin-transit event drops the listener;
-// no restock fires.
-func TestRestoreBlockers_ListenerDeregistersOnCancel(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleRestoreBlockers, "on"), "set toggle")
-
-	parent := &orders.Order{
-		EdgeUUID:  "uuid-restore-cancel",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-CC-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-CC-TGT")
-	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	testutil.MustNoErr(t, d.CreateCompoundOrder(parent, plan), "CreateCompoundOrder")
-	d.scheduleRestoreIfEnabled(parent, grp.ID, lane.ID, plan, slots[1].ID)
-
-	// Cancel the complex parent — dispatcher handler drops listener.
-	d.HandleComplexParentTerminal(parent.ID)
-
-	// Now fire the bin-transit event. Should NOT trigger a restock
-	// because the listener was deregistered.
-	d.HandleBinEnteredTransit(target.ID, slots[1].ID)
-
-	all, _ := db.ListOrdersByStation("line-1", 100)
-	for _, o := range all {
-		if o.OrderType == OrderTypeReshuffleRestore && o.Status != StatusCancelled {
-			t.Errorf("synthetic parent %d not cancelled after parent terminal: status=%s",
-				o.ID, o.Status)
-		}
-	}
-}
-
-// TestRestoreBlockers_OffDefault: with the toggle off, no synthetic
-// parent is created even when the bin-transit event would match.
-func TestRestoreBlockers_OffDefault(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-	// Note: explicitly do NOT set the toggle — default is off.
-
-	parent := &orders.Order{
-		EdgeUUID:  "uuid-restore-off",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-OFF-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-OFF-TGT")
-	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	testutil.MustNoErr(t, d.CreateCompoundOrder(parent, plan), "CreateCompoundOrder")
-	d.scheduleRestoreIfEnabled(parent, grp.ID, lane.ID, plan, slots[1].ID)
-	d.HandleBinEnteredTransit(target.ID, slots[1].ID)
-
-	all, _ := db.ListOrdersByStation("line-1", 100)
-	for _, o := range all {
-		if o.OrderType == OrderTypeReshuffleRestore {
-			t.Errorf("synthetic parent created with toggle off: order %d", o.ID)
-		}
-	}
-}
-
-// TestReshuffleRestoreParent_NotVisibleToScanner: synthetic parent
-// at StatusReshuffling does not appear in the scanner's acquiring scan set
-// (Reshuffling is neither queued nor sourcing).
-func TestReshuffleRestoreParent_NotVisibleToScanner(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	syn := &orders.Order{
-		EdgeUUID:  "uuid-syn-visible-scanner",
-		StationID: "line-1",
-		OrderType: OrderTypeReshuffleRestore,
-		Status:    StatusReshuffling,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(syn), "create synthetic")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(syn.ID, string(StatusReshuffling), "test"), "set Reshuffling")
-
-	queued, err := db.ListAcquiringOrders()
-	if err != nil {
-		t.Fatalf("ListAcquiringOrders: %v", err)
-	}
-	for _, o := range queued {
-		if o.OrderType == OrderTypeReshuffleRestore {
-			t.Errorf("synthetic restore parent %d returned by ListAcquiringOrders", o.ID)
-		}
-	}
-}
-
-// TestReshuffleRestoreParent_VisibleInAdminList: the reshuffle_restore synthetic
-// parent DOES appear in admin-list queries.
-//
-// This inverts the old contract. The type used to be filtered out of List /
-// ListActive on the grounds that it is never operator-ACTIONABLE. But it is
-// operator-DIAGNOSABLE: a restore synthetic can strand at `reshuffling` when its
-// listener never fires, and the reconciliation sweeps that resolve that
-// (ResolveOrphanedReshuffleRestores, RecoverPendingRestocks) are only trustworthy
-// if their subjects can be seen. Hiding it made a stuck restock invisible.
-func TestReshuffleRestoreParent_VisibleInAdminList(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	syn := &orders.Order{
-		EdgeUUID:  "uuid-syn-admin",
-		StationID: "line-1",
-		OrderType: OrderTypeReshuffleRestore,
-		Status:    StatusReshuffling,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(syn), "create synthetic")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(syn.ID, string(StatusReshuffling), "test"), "set Reshuffling")
-
-	found := func(os []*orders.Order) bool {
-		for _, o := range os {
-			if o.ID == syn.ID && o.OrderType == OrderTypeReshuffleRestore {
-				return true
-			}
-		}
-		return false
-	}
-
-	all, err := db.ListOrders("", 100)
-	testutil.MustNoErr(t, err, "ListOrders")
-	if !found(all) {
-		t.Errorf("ListOrders omitted reshuffle_restore synthetic %d — a stranded restock must be visible to operators", syn.ID)
-	}
-
-	active, err := db.ListActiveOrders()
-	testutil.MustNoErr(t, err, "ListActiveOrders")
-	if !found(active) {
-		t.Errorf("ListActiveOrders omitted reshuffle_restore synthetic %d — it is non-terminal and stuck; that is exactly when it must show", syn.ID)
-	}
-}
 
 // TestCreateCompoundOrder_RetrieveInheritsParentDeliveryNode is the
 // belt-and-suspenders companion to the test above. Simple-retrieve

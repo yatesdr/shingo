@@ -325,34 +325,30 @@ func (e *Engine) wireEventHandlers() {
 		if e.dispatcher == nil {
 			return
 		}
-		e.dispatcher.HandleBinEnteredTransit(evt.Payload.BinID, evt.Payload.FromNodeID)
 		e.dispatcher.HandleBinTransitForLaneLock(evt.Payload.BinID, evt.Payload.FromNodeID)
 	}, EventBinEnteredTransit)
 
-	// Parent terminal: drop both listeners so the lock isn't stuck
-	// and the synthetic-restock parent is cancelled. All four terminal
-	// statuses are wired:
+	// Parent terminal: drop the lane-lock release listener so the lane
+	// isn't stuck held if the parent terminates before its pickup. All
+	// four terminal statuses are wired:
 	//
 	//   - Cancelled / Failed: explicit cleanup paths.
 	//   - Skipped: a complex parent that gets skipped at Queued (e.g.,
 	//     ApplyComplexPlan returns no_source_bin because the unburied
 	//     target was moved or anomalied between unbury completion and
 	//     scanner pickup) needs the same cleanup — no pickup happens,
-	//     so the bin-transit listener will never fire.
-	//   - Completed: defensive idempotent sweep. In the normal happy
-	//     path the bin-transit listener already consumed the in-memory
-	//     entry and deleted the DB row before the parent reached
-	//     Confirmed, so this is a no-op. Covers the rare path where
-	//     an admin / recovery action force-confirms a parent past the
-	//     pickup leg.
+	//     so the bin-transit release will never fire.
+	//   - Completed: defensive idempotent sweep. On the normal happy
+	//     path the bin-transit release already fired before the parent
+	//     reached Confirmed, so this is a no-op. Covers the rare path
+	//     where an admin / recovery action force-confirms a parent past
+	//     the pickup leg.
 	//
-	// Both handlers are safe to call on a parent with no entry —
-	// they no-op when nothing matches.
+	// Safe to call on a parent with no hold — it no-ops when nothing matches.
 	terminal := func(orderID int64) {
 		if e.dispatcher == nil {
 			return
 		}
-		e.dispatcher.HandleComplexParentTerminal(orderID)
 		e.dispatcher.HandleComplexParentTerminalForLaneLock(orderID)
 	}
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {

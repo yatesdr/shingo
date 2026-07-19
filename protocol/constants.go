@@ -15,7 +15,6 @@ type StepType string
 const (
 	StepUnbury   StepType = "unbury"   // lift a blocking bin out of a lane
 	StepRetrieve StepType = "retrieve" // fetch the target bin
-	StepRestock  StepType = "restock"  // return an unburied bin to its slot
 )
 
 // Step action constants name the coarse leg kind on a ComplexOrderStep /

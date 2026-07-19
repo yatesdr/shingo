@@ -394,14 +394,6 @@ const (
 	OrderTypeMove          OrderType = "move"           // generic move; no manifest semantics
 	OrderTypeComplex       OrderType = "complex"        // multi-step order composed of sub-steps
 	OrderTypeIngest        OrderType = "ingest"         // edge-legacy: no longer minted (manifest-only ingest write); kept for historical order rows
-	// OrderTypeReshuffleRestore is a Core-internal housekeeping order
-	// that wraps the post-pickup restock compound for the complex-order
-	// buried-bin reshuffle "restore blockers" toggle. Never created by
-	// edge; not dispatched to edge; filtered out of the admin orders
-	// list. The synthetic-parent type exists so the restock compound
-	// has a parent row to satisfy AdvanceCompoundOrder, since the
-	// compound machinery keys off ParentOrderID != nil.
-	OrderTypeReshuffleRestore OrderType = "reshuffle_restore"
 )
 
 // StationBroadcast is the wildcard station value that matches all edge instances.

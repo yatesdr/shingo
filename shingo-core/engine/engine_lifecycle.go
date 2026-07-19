@@ -76,16 +76,6 @@ func (e *Engine) Start() {
 	// Load active vendor orders into tracker
 	e.loadActiveOrders()
 
-	// Recover pending restore-blockers listeners from the
-	// pending_restocks table (v7). The in-memory restoreRegistry is
-	// volatile; without this a Core restart between unbury completion
-	// and bin pickup would strand blockers in shuffle slots forever.
-	// Errors are logged but non-fatal — fresh-install DBs don't yet
-	// have the table and that's fine on the no-restore-needed path.
-	if err := e.dispatcher.RecoverPendingRestocks(); err != nil {
-		e.logFn("engine: recover pending_restocks: %v", err)
-	}
-
 	// Restore lane holds from the durable dig mouth rows FIRST, before any
 	// dispatch runs: the rows are the restart authority now, so a bulk rebuild
 	// re-establishes every held lane at once (no per-order re-acquire, no

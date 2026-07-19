@@ -11,7 +11,6 @@ const (
 	OrderTypeMove             = protocol.OrderTypeMove
 	OrderTypeStore            = protocol.OrderTypeStore
 	OrderTypeComplex          = protocol.OrderTypeComplex
-	OrderTypeReshuffleRestore = protocol.OrderTypeReshuffleRestore
 )
 
 // Order statuses aliased from protocol for local use.

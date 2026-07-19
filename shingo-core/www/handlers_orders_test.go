@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"shingo/protocol/debuglog"
@@ -377,66 +376,3 @@ func TestSubmitSpotRetrieveSpecific_BinAlreadyClaimed(t *testing.T) {
 	}
 }
 
-// TestReshuffleRestoreParent_VisibleInAdminList is the HTTP-layer dual of
-// dispatch's TestReshuffleRestoreParent_VisibleInAdminList, and it INVERTS the
-// old §12.2 Surface 8 contract.
-//
-// The synthetic ReshuffleRestore parent used to be stripped from apiListOrders by
-// a SQL filter in store/orders, because it is never operator-ACTIONABLE. But it is
-// operator-DIAGNOSABLE: the synthetic can strand at `reshuffling` when its restore
-// listener never fires, and hiding it meant a stuck restock was invisible in the
-// one place an operator would look. The store filter is gone; the API returns it.
-func TestReshuffleRestoreParent_VisibleInAdminList(t *testing.T) {
-	t.Parallel()
-	h, db := testHandlers(t)
-
-	// Insert one synthetic restore parent and one normal retrieve so
-	// we can confirm the filter only excludes the synthetic type.
-	syn := &orders.Order{
-		EdgeUUID:  "uuid-syn-www",
-		StationID: "line-1",
-		OrderType: "reshuffle_restore",
-		Status:    "reshuffling",
-	}
-	testutil.MustNoErr(t, db.CreateOrder(syn), "create synthetic")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(syn.ID, "reshuffling", "test"), "set Reshuffling")
-
-	normal := &orders.Order{
-		EdgeUUID:  "uuid-normal-www",
-		StationID: "line-1",
-		OrderType: "retrieve",
-		Status:    "queued",
-	}
-	testutil.MustNoErr(t, db.CreateOrder(normal), "create normal")
-
-	// Hit the API list endpoint (no status filter — returns recent orders across
-	// all statuses, capped at limit). Both order types must come back.
-	req := httptest.NewRequest(http.MethodGet, "/api/orders", nil)
-	rr := httptest.NewRecorder()
-	h.apiListOrders(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("apiListOrders status = %d, want 200; body=%s", rr.Code, rr.Body.String())
-	}
-	var listResp []map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &listResp); err != nil {
-		t.Fatalf("decode body: %v; body=%s", err, rr.Body.String())
-	}
-	sawSynthetic := false
-	sawNormal := false
-	for _, o := range listResp {
-		switch o["edge_uuid"] {
-		case "uuid-syn-www":
-			sawSynthetic = true
-		case "uuid-normal-www":
-			sawNormal = true
-		}
-	}
-	if !sawSynthetic {
-		t.Errorf("ReshuffleRestore synthetic missing from the admin list — a restock stranded at "+
-			"`reshuffling` must be visible to the operator, not filtered away; body=%s", rr.Body.String())
-	}
-	if !sawNormal {
-		t.Errorf("normal retrieve order should appear in admin list (regression check); body=%s", rr.Body.String())
-	}
-}

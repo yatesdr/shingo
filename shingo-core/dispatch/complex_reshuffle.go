@@ -167,20 +167,6 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 	}
 	d.dbg("complex: compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
 
-	// Arm restore-blockers via scheduleRestoreIfEnabled (default-off per group).
-	// The "expected from-node" the listener watches for depends on the reshuffle
-	// mode: in expose mode the parent picks the bin up from its original lane
-	// slot (buried.Slot.ID); in target-node mode it picks up from the target
-	// node. Identify the mode by scanning the plan for a retrieve step
-	// (protocol.StepRetrieve) — present in target-node mode, absent in expose
-	// mode — and take its ToNode when found.
-	expectedFromNode := buried.Slot.ID
-	for _, s := range plan.Steps {
-		if s.StepType == protocol.StepRetrieve && s.ToNode != nil {
-			expectedFromNode = s.ToNode.ID
-		}
-	}
-	d.scheduleRestoreIfEnabled(order, groupID, buried.LaneID, plan, expectedFromNode)
 }
 
 // handleComplexBuriedOnReplay handles a burial discovered by the
@@ -257,20 +243,6 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 	}
 	d.dbg("complex: replay compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
 
-	// Arm restore-blockers via scheduleRestoreIfEnabled (default-off per group).
-	// The "expected from-node" the listener watches for depends on the reshuffle
-	// mode: in expose mode the parent picks the bin up from its original lane
-	// slot (buried.Slot.ID); in target-node mode it picks up from the target
-	// node. Identify the mode by scanning the plan for a retrieve step
-	// (protocol.StepRetrieve) — present in target-node mode, absent in expose
-	// mode — and take its ToNode when found.
-	expectedFromNode := buried.Slot.ID
-	for _, s := range plan.Steps {
-		if s.StepType == protocol.StepRetrieve && s.ToNode != nil {
-			expectedFromNode = s.ToNode.ID
-		}
-	}
-	d.scheduleRestoreIfEnabled(order, groupID, buried.LaneID, plan, expectedFromNode)
 }
 
 // pickEmptyReshuffleTarget walks the configured target-node names in

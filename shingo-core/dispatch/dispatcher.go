@@ -30,10 +30,9 @@ type Dispatcher struct {
 	allocator     *Allocator
 	// finder is the shared source-finding seam (see source_finder.go). Owned
 	// here so every sourcing consumer resolves through the SAME instance.
-	finder           *SourceFinder
-	restoreListeners *restoreRegistry
-	laneHolds        *laneHoldRegistry
-	DebugLog         func(string, ...any)
+	finder    *SourceFinder
+	laneHolds *laneHoldRegistry
+	DebugLog  func(string, ...any)
 
 	// postFindHook is a test-only seam fired by the fulfillment scanner between
 	// Find and Claim (the single claim point after the claim-move to the scanner).
@@ -52,7 +51,6 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 		stationID:        stationID,
 		dispatchTopic:    dispatchTopic,
 		binManifest:      binManifest,
-		restoreListeners: newRestoreRegistry(),
 		laneHolds:        newLaneHoldRegistry(),
 	}
 	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
