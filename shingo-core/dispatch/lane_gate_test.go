@@ -54,6 +54,64 @@ func TestAcquireLanesForOrder_GatedByConfig(t *testing.T) {
 	}
 }
 
+// TestLaneDispatchPriority_DeeperFirst: a store into a mouth-enforced lane gets an
+// RDS priority from its target slot depth. RDS serves the LARGEST priority first
+// (vendor manual: "a larger number indicates a higher order priority"), so the
+// DEEPER slot must get the LARGER value to be dispatched into the single-file lane
+// first: priority = base + slot depth. The direction invariant (deeper > shallower)
+// is asserted explicitly, not just the arithmetic. A non-mouth group, a non-lane
+// node, and nil are all no-ops (the caller keeps order.Priority — byte-identical).
+func TestLaneDispatchPriority_DeeperFirst(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	// gatedLane builds S0 (depth 0) + S1 (depth 1).
+	_, laneID, s0 := gatedLane(t, db, "PRIO", "mouth")
+	slots, err := db.ListLaneSlots(laneID)
+	if err != nil {
+		t.Fatalf("list lane slots: %v", err)
+	}
+	var deepest *nodes.Node // depth 1
+	for _, s := range slots {
+		if dpt, _ := db.GetSlotDepth(s.ID); dpt == 1 {
+			deepest = s
+		}
+	}
+	if deepest == nil {
+		t.Fatal("fixture should have a depth-1 slot")
+	}
+
+	// Deeper slot (depth 1) → base + 1 (the LARGER value → served first).
+	deepP, ok := d.laneDispatchPriority(deepest)
+	if !ok || deepP != laneShareBasePriority+1 {
+		t.Errorf("deepest slot: got priority=%d ok=%v, want %d", deepP, ok, laneShareBasePriority+1)
+	}
+	// Shallower slot (depth 0) → base.
+	shallowP, ok := d.laneDispatchPriority(s0)
+	if !ok || shallowP != laneShareBasePriority {
+		t.Errorf("shallow slot: got priority=%d ok=%v, want %d", shallowP, ok, laneShareBasePriority)
+	}
+	// The rationale that actually matters: larger wins at RDS, so a deeper target
+	// MUST outrank a shallower one. If this ever flips, deeper-first is broken.
+	if deepP <= shallowP {
+		t.Errorf("deeper slot priority (%d) must be LARGER than shallower (%d) — larger wins at RDS", deepP, shallowP)
+	}
+
+	// Non-mouth group → no override.
+	_, _, noneS0 := gatedLane(t, db, "PRIO-NONE", "")
+	if _, ok := d.laneDispatchPriority(noneS0); ok {
+		t.Error("non-mouth lane must not override priority")
+	}
+	// Non-lane node and nil → no override.
+	if _, ok := d.laneDispatchPriority(lineNode(t, db, "PRIO-LINE")); ok {
+		t.Error("non-lane node must not override priority")
+	}
+	if _, ok := d.laneDispatchPriority(nil); ok {
+		t.Error("nil node must not override priority")
+	}
+}
+
 // TestLaneGateRelease_InboundAndOutbound: the §4 early handoff — a store's
 // inbound hold frees when it drops, a retrieve's outbound hold frees when its bin
 // transits out.

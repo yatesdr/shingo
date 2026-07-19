@@ -265,17 +265,24 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// F4c: expand the load leg into the payload's configured binTask sequence
 	// (nil for an unconfigured payload → byte-identical single JackLoad block).
 	blocks := stepsToBlocks(vendorOrderID, plan, 0, d.loadSequenceForPayload(order.PayloadCode))
+	// Deeper-first lane sequencing (gated): a store into a mouth-enforced lane gets
+	// an RDS priority from its target slot depth, so co-admitted stores enter the
+	// single-file lane back-to-front. Off / non-lane → order.Priority (byte-identical).
+	priority := order.Priority
+	if p, ok := d.laneDispatchPriority(destNode); ok {
+		priority = p
+	}
 	req := fleet.CreateOrderRequest{
 		OrderID:    vendorOrderID,
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
-		Priority:   order.Priority,
+		Priority:   priority,
 		RobotGroup: d.robotGroupForPayload(order.PayloadCode),
 		Complete:   true, // no-wait: the fleet completes the order once its 2 blocks finish
 	}
 
 	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s to=%s priority=%d",
-		order.ID, vendorOrderID, sourceNode.Name, destNode.Name, order.Priority)
+		order.ID, vendorOrderID, sourceNode.Name, destNode.Name, priority)
 
 	// Last look before the irreversible step. `order` is a snapshot that may be
 	// many DB calls old by now, and CreateOrder physically commits a robot — one

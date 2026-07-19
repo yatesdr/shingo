@@ -33,6 +33,22 @@ const PropLaneEnforcement = "lane_enforcement"
 // laneGateReservedBy tags the mouth rows the gate writes, for forensics.
 const laneGateReservedBy = "lanegate"
 
+// laneShareBasePriority is the RDS priority floor for a robot entering a
+// mouth-enforced lane; the relevant slot's depth is added on top. RDS serves the
+// LARGEST priority first — the vendor manual is explicit: "a larger number
+// indicates a higher order priority" (reference/RDSCore HTTP API_Aivison_20260430.pdf,
+// setOrder priority field; the RDS team's conventional "priority": 10 is a boost) —
+// so a deeper store target gets a LARGER value and is dispatched into the
+// single-file lane ahead of the shallower stores stacking in behind it.
+//
+// Honest note on the base (owner-approved): under larger-wins, any positive base
+// makes a lane entry outrank default-priority (0) work — and also the conventional
+// priority-10 boosts. That is intended, NOT a yield: these orders were already
+// admitted and dispatched; the value only SEQUENCES lane entries by depth, and it
+// does so ahead of unprioritized work. ◆ open: if an operator boost should beat
+// routine lane sequencing, drop the base below 10 (still > 0) — flagged for owner.
+const laneShareBasePriority = 30
+
 // laneEnforcementMode reads the enforcement mode configured on a lane group
 // (NGRP). Any unset or unrecognized value is none — off, byte-identical to today.
 func (d *Dispatcher) laneEnforcementMode(groupID int64) LaneEnforcementMode {
@@ -44,6 +60,37 @@ func (d *Dispatcher) laneEnforcementMode(groupID int64) LaneEnforcementMode {
 	default:
 		return LaneEnforceNone
 	}
+}
+
+// laneDispatchPriority returns the depth-sequenced RDS priority for a robot
+// entering a mouth-enforced lane at its DROPOFF (destNode) — the inbound leg — and
+// ok=false otherwise (so the caller keeps order.Priority; byte-identical when no
+// group enforces the mouth). Larger wins at RDS, so a deeper target slot gets a
+// LARGER value: priority = base + targetSlotDepth. Stateless — a pure function of
+// the slot's depth — so co-admitted stores sequence back-to-front with no per-lane
+// counter and no reset (a fresh store into an emptied lane resolves to the deepest
+// slot again → the largest value again).
+//
+// This is the destination-lane (inbound) leg. Per the owner scope ruling, lane-
+// entry priority covers ALL lane entries: the source-lane (outbound, shallowest-
+// source-first) mirror, two-lane orders (a value per leg), and complex/coordinated
+// orders are SEQUENCED FOLLOW-UPS — not permanent gaps (see the phase log).
+func (d *Dispatcher) laneDispatchPriority(destNode *nodes.Node) (int, bool) {
+	if destNode == nil {
+		return 0, false
+	}
+	lane, err := d.db.LaneForNode(destNode.ID)
+	if err != nil || lane == nil || lane.ParentID == nil {
+		return 0, false // not a lane slot, or a lane with no group
+	}
+	if d.laneEnforcementMode(*lane.ParentID) != LaneEnforceMouth {
+		return 0, false // group not mouth-enforced → byte-identical
+	}
+	targetDepth, err := d.db.GetSlotDepth(destNode.ID)
+	if err != nil {
+		return 0, false
+	}
+	return laneShareBasePriority + targetDepth, true
 }
 
 // laneHold is a (lane, mode) an order must hold to work that lane: outbound when
