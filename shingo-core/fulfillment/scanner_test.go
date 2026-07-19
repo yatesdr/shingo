@@ -95,6 +95,11 @@ type recordingDispatcher struct {
 	// reshuffleErr drives the transient-vs-structural disposition.
 	reshuffleCalls []int64
 	reshuffleErr   error
+
+	// laneConflict makes AcquireLanesForOrder report the lane contended (the P4
+	// mouth-gate park branch); releaseLaneCalls counts fleet-fail lane releases.
+	laneConflict     bool
+	releaseLaneCalls int
 }
 
 // confirmCall records one Rule-1 confirm-at-dispatch: the order, the bin, and the
@@ -137,7 +142,18 @@ func (d *recordingDispatcher) ConfirmForDispatch(o *orders.Order, binID int64, s
 	d.confirmCalls = append(d.confirmCalls, confirmCall{orderID: o.ID, binID: binID, source: src.Name, dest: dst.Name})
 	return d.confirmErr
 }
-func (d *recordingDispatcher) PostFindHook() {}
+
+// AcquireLanesForOrder / ReleaseLanesForOrder: the lane mouth gate is OFF in
+// these mock-based tests (admit everything), so behavior is byte-identical to
+// pre-P4. laneConflict lets a test force the contended branch.
+func (d *recordingDispatcher) AcquireLanesForOrder(int64, *nodes.Node, *nodes.Node) (bool, string, string, error) {
+	if d.laneConflict {
+		return false, "lane-held-traffic", "LANE-X", nil
+	}
+	return true, "", "", nil
+}
+func (d *recordingDispatcher) ReleaseLanesForOrder(int64) error { d.releaseLaneCalls++; return nil }
+func (d *recordingDispatcher) PostFindHook()                    {}
 
 func (d *recordingDispatcher) PlanBuriedReshuffle(o *orders.Order, _ *dispatch.BuriedError) error {
 	d.reshuffleCalls = append(d.reshuffleCalls, o.ID)

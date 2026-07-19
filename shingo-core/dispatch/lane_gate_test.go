@@ -12,6 +12,47 @@ import (
 	"shingocore/store/reservations"
 )
 
+// TestAcquireLanesForOrder_GatedByConfig exercises the exported scanner wrapper:
+// a free mouth lane admits, a different-mode order conflicts (with the operator
+// cause + a lane name for the sentence), and a non-mouth group is a no-op.
+func TestAcquireLanesForOrder_GatedByConfig(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	_, _, slot := gatedLane(t, db, "AFO-MOUTH", "mouth")
+	line := lineNode(t, db, "AFO-LINE")
+	a := testdb.CreateOrder(t, db)
+	b := testdb.CreateOrder(t, db)
+
+	// Store into the free mouth lane (line → slot, inbound): admitted.
+	admitted, _, _, err := d.AcquireLanesForOrder(a.ID, line, slot)
+	if err != nil || !admitted {
+		t.Fatalf("free lane: admitted=%v err=%v, want admitted", admitted, err)
+	}
+	// Retrieve from the same lane (slot → line, outbound): different mode → conflict.
+	admitted, cause, laneName, err := d.AcquireLanesForOrder(b.ID, slot, line)
+	if err != nil {
+		t.Fatalf("conflict acquire err: %v", err)
+	}
+	if admitted {
+		t.Fatal("outbound into an inbound-held lane must not be admitted")
+	}
+	if cause != "lane-held-traffic" {
+		t.Errorf("cause = %q, want lane-held-traffic", cause)
+	}
+	if laneName == "" {
+		t.Error("expected a contended-lane name for the queue sentence")
+	}
+
+	// A non-mouth group is a no-op — admitted with no hold (byte-identical).
+	_, _, noneSlot := gatedLane(t, db, "AFO-NONE", "")
+	admitted, _, _, err = d.AcquireLanesForOrder(a.ID, line, noneSlot)
+	if err != nil || !admitted {
+		t.Fatalf("non-mouth group: admitted=%v err=%v, want admitted no-op", admitted, err)
+	}
+}
+
 // gatedLane builds a group (NGRP) with the given lane_enforcement value, a LANE
 // under it, and two depth-ordered slots (so the lane is not depth-1 exempt). It
 // returns the group id, lane id, and the shallow slot node. enforcement "" leaves

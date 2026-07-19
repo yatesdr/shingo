@@ -155,3 +155,51 @@ func (d *Dispatcher) causeForLaneHolds(orderID int64, holds []laneHold) string {
 	}
 	return "lane-held-traffic"
 }
+
+// AcquireLanesForOrder takes the mouth holds a plain order needs before it
+// dispatches — outbound on its source lane, inbound on its destination lane, for
+// lanes whose group is configured for mouth enforcement. The scanner calls it
+// just before the fleet commit; on a conflict it returns admitted=false plus the
+// operator cause and the contended lane's name, and the scanner parks the order
+// in sourcing under WAITING_FOR_SLOT holding its soft reservations (Rule 1).
+//
+// admitted=true with empty cause/lane means there was nothing to gate (no
+// mouth-enforced lane on the order's path), so an unconfigured plant is a no-op
+// and behavior is byte-identical. A non-nil error is a transient DB failure.
+func (d *Dispatcher) AcquireLanesForOrder(orderID int64, sourceNode, destNode *nodes.Node) (admitted bool, cause, laneName string, err error) {
+	holds, err := d.resolveOrderLaneHolds(sourceNode, destNode)
+	if err != nil {
+		return false, "", "", err
+	}
+	if len(holds) == 0 {
+		return true, "", "", nil // nothing gated — byte-identical to today
+	}
+	admitted, err = d.acquireOrderLanes(orderID, holds)
+	if err != nil {
+		return false, "", "", err
+	}
+	if admitted {
+		return true, "", "", nil
+	}
+	return false, d.causeForLaneHolds(orderID, holds), d.laneDisplayName(holds), nil
+}
+
+// laneDisplayName returns a human name for the first contended lane, for the
+// "Waiting for a slot at ‹lane›" queue sentence.
+func (d *Dispatcher) laneDisplayName(holds []laneHold) string {
+	if len(holds) == 0 {
+		return ""
+	}
+	if n, err := d.db.GetNode(holds[0].laneID); err == nil && n != nil {
+		return n.Name
+	}
+	return ""
+}
+
+// ReleaseLanesForOrder drops all of an order's mouth holds. Used on a fleet-
+// dispatch failure rollback: the robot never committed, so the hold taken by
+// AcquireLanesForOrder must not linger and block the lane. Owner-scoped; a no-op
+// when the order holds none.
+func (d *Dispatcher) ReleaseLanesForOrder(orderID int64) error {
+	return reservations.ReleaseLanesByOwner(d.db.DB, orderID)
+}
