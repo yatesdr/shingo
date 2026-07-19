@@ -48,7 +48,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 		backend:          backend,
 		emitter:          emitter,
 		resolver:         resolver,
-		laneLock:         NewLaneLock(),
+		laneLock:         NewLaneLockWithDB(db.DB),
 		stationID:        stationID,
 		dispatchTopic:    dispatchTopic,
 		binManifest:      binManifest,

@@ -195,6 +195,47 @@ func ReleaseLane(db Execer, owner, laneID int64) error {
 	return nil
 }
 
+// ReleaseLanesByOwner deletes all of owner's mouth rows (any mode, any lane) —
+// the row dual of LaneLock.UnlockByOwner's cleanup path. Idempotent.
+func ReleaseLanesByOwner(db Execer, owner int64) error {
+	_, err := db.Exec(
+		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind='mouth'`, owner)
+	if err != nil {
+		return fmt.Errorf("reservations release-lanes-by-owner: %w", err)
+	}
+	return nil
+}
+
+// DigHold is one active dig mouth row: the lane node and its owning order.
+type DigHold struct {
+	LaneID  int64
+	OrderID int64
+}
+
+// ListDigHolds returns every active dig mouth hold across all lanes — the bulk
+// read the LaneLock repopulates its in-memory cache from at boot (making the rows
+// the restart-durable authority), and the read the divergence check compares
+// against.
+func ListDigHolds(q Queryer) ([]DigHold, error) {
+	rows, err := q.Query(
+		`SELECT node_id, order_id FROM reservations
+		 WHERE resource_kind='mouth' AND mode=$1 AND state IN ('pending','confirmed')
+		 ORDER BY node_id`, string(ModeDig))
+	if err != nil {
+		return nil, fmt.Errorf("reservations list-dig-holds: %w", err)
+	}
+	defer rows.Close()
+	var out []DigHold
+	for rows.Next() {
+		var h DigHold
+		if err := rows.Scan(&h.LaneID, &h.OrderID); err != nil {
+			return nil, fmt.Errorf("reservations list-dig-holds scan: %w", err)
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 // laneDepth1Exempt reports whether laneID is a single-slot (depth-1) lane, which
 // is exempt from mouth rows: its one slot's reservation already serializes it
 // (§8). Counts the lane's real (non-synthetic) child slots — a lane with 0 or 1
