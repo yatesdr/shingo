@@ -602,17 +602,23 @@ func (db *DB) runVersionedMigrations() error {
 				return schema.ColumnExists(q, "payloads", "advanced_load_sequence") &&
 					schema.TableExists(q, "load_sequences")
 			}},
-		// ⚠ NUMBERING COLLISION AHEAD — READ BEFORE REBASING THE LANE CAMPAIGN.
+		// NUMBERING COLLISION — RESOLVED 2026-07-30. Kept as a record, not a warning.
 		//
-		// v51 is taken HERE, on main. The unpushed lane campaign (refactor-phase1,
-		// held back per the Springfield merge brief §5) also carries a v51 and a
-		// v52 — the durable lane rows and the pending_restocks drop. Those two
-		// MUST be renumbered to v52 and v53 when that branch rebases onto main.
-		// The migration list is keyed by integer, so two v51s do not conflict at
-		// compile time: the second one silently never runs against a database
-		// that already recorded 51, and the schema diverges per-plant depending
-		// on which build reached it first. Renumber at rebase; do not merge the
-		// campaign without checking this line.
+		// v51 is taken HERE, on main. The lane campaign (refactor-phase1) also
+		// carried a v51 and a v52 — the reservations mode column and the
+		// pending_restocks drop. When that branch was transplanted onto main those
+		// two were renumbered to v69 and v70 (NOT to v52/v53 as the original note
+		// predicted: main had run on to v68 by then). Both now sit at the tail of
+		// this list.
+		//
+		// Why it mattered: the list is keyed by integer, so two v51s would not
+		// conflict at compile time. The second would silently never run against a
+		// database that had already recorded 51, and the schema would diverge
+		// per-plant depending on which build reached it first.
+		//
+		// The standing rule this leaves behind: a migration number is claimed the
+		// moment it lands on main. A long-lived branch must renumber to the tail
+		// at transplant time, and no-resurrect tests pin the retired numbers.
 		{51, "add process_styles.is_active (running style from the plant-claims feed)",
 			v51ProcessStyleActive,
 			func(q schema.Querier) bool {
@@ -623,12 +629,12 @@ func (db *DB) runVersionedMigrations() error {
 		// lineside term both ways (ledger vs Edge reports) and log
 		// firing-decision disagreements — SHADOW, deciding off the ledger.
 		//
-		// ⚠ NUMBERING: v52 is taken HERE on branch monitor-collapse-r1. Sibling
-		// lanes E and G (this round) may also add migrations, and the unpushed
-		// lane campaign already carries a v51/v52 to renumber (see the v51
-		// collision note above). This migration is a pure additive CREATE TABLE
-		// with no dependency on any constraint, so it renumbers trivially on
-		// merge — order it after any dedup/data migration if one is added.
+		// NUMBERING: v52 was claimed HERE on branch monitor-collapse-r1, and the
+		// lane campaign's competing v52 (the pending_restocks drop) was renumbered
+		// to v70 at transplant, 2026-07-30 — see the resolved collision note above
+		// v51. This migration is a pure additive CREATE TABLE with no dependency on
+		// any constraint, so it would have renumbered trivially had it been the one
+		// to move; it did not have to.
 		{52, "add edge_lineside_reports (R1 shadow read-model for the lineside term)",
 			v52EdgeLinesideReports,
 			func(q schema.Querier) bool { return schema.TableExists(q, "edge_lineside_reports") }},
@@ -840,6 +846,20 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool {
 				return schema.TableExists(q, "supply_refusals")
 			}},
+
+		// v69 adds the lane-mouth substrate to reservations: a nullable mode tag
+		// (inbound|outbound|dig, carried only by mouth rows) + a plain read index
+		// on (resource_kind, node_id). Additive and dormant — v44 already made
+		// 'mouth' a legal kind with a node_id target and no unique mouth index, so
+		// this only supplies the mode column the admission rule reads and the index
+		// it reads through. The mode column is the self-heal marker.
+		//
+		// Carried the number 51 on refactor-phase1 and was renumbered to 69 when
+		// that branch was transplanted onto main (2026-07-30) — see the renumber
+		// note above v51.
+		{69, "add reservations.mode + (resource_kind,node_id) read index (lane-mouth substrate)",
+			v69ReservationsMouthMode,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "reservations", "mode") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2138,6 +2158,39 @@ func v51ProcessStyleActive(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v51 process_styles.is_active: %w", err)
+		}
+	}
+	return nil
+}
+
+// v69ReservationsMouthMode adds the lane-mouth substrate to reservations: a
+// nullable mode discriminator (carried only by mouth rows) and a plain read
+// index. Additive and DORMANT — no production code writes mouth rows yet.
+//
+// The v44 substrate already did most of the work: 'mouth' is a legal
+// resource_kind, node_id is a nullable target, and there is deliberately NO
+// unique index on mouth rows — so several active mouth rows per lane (mode
+// sharing) is already schema-legal. This migration only supplies the two things
+// that were still missing:
+//
+//   - mode: inbound | outbound | dig, nullable. A bin or slot row never sets it
+//     (leaves it NULL); a mouth row always carries one. The CHECK pins the domain
+//     without coupling to resource_kind, so a NULL-mode bin/slot row passes and a
+//     mouth row with an out-of-domain mode fails.
+//   - idx_reservations_kind_node: a PLAIN (non-unique) index on
+//     (resource_kind, node_id) for the per-lane "active mouth rows" read the
+//     admission rule runs. Non-unique by design — mode sharing needs multiple
+//     active mouth rows on one lane node.
+func v69ReservationsMouthMode(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS mode TEXT`,
+		`ALTER TABLE reservations DROP CONSTRAINT IF EXISTS reservations_mode_check`,
+		`ALTER TABLE reservations ADD CONSTRAINT reservations_mode_check CHECK (mode IS NULL OR mode IN ('inbound','outbound','dig'))`,
+		`CREATE INDEX IF NOT EXISTS idx_reservations_kind_node ON reservations (resource_kind, node_id)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v69 reservations mouth mode: %w", err)
 		}
 	}
 	return nil

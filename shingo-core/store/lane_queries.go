@@ -30,6 +30,18 @@ func (db *DB) IsSlotAccessible(slotNodeID int64) (bool, error) {
 	return nodes.IsSlotAccessible(db.DB, slotNodeID)
 }
 
+// LaneForNode returns the LANE node that directly parents nodeID, or nil if
+// nodeID is not a direct child slot of a lane (the mouth-gate lane resolution).
+func (db *DB) LaneForNode(nodeID int64) (*nodes.Node, error) {
+	return nodes.LaneForNode(db.DB, nodeID)
+}
+
+// AuditLaneGeometry returns startup warnings about single-file lane geometry the
+// one-hop parent walk cannot see (§8).
+func (db *DB) AuditLaneGeometry() ([]string, error) {
+	return nodes.AuditLaneGeometry(db.DB)
+}
+
 // FindSourceBinInLane finds the shallowest accessible unclaimed bin in a
 // lane matching the given payload code. Cross-aggregate composition
 // (bins ↔ nodes).
