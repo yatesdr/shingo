@@ -141,15 +141,22 @@ func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (
 	if err != nil || len(slots) < 2 {
 		return false, "", err // depth-1 (or unreadable) lane — nothing to order
 	}
-	slotNames := make([]string, 0, len(slots))
-	depthByName := make(map[string]int, len(slots))
+	// The active-set query matches order.delivery_node by string, but delivery_node
+	// can be written BARE ("SMN_001", from a node's .Name — engine/orders.go) or
+	// DOT-qualified ("LANE.SMN_001", resolved via GetByDotName — the complex path
+	// flows step nodes through it). Match BOTH forms so a dotted row is never
+	// invisible to the gate (which would silently admit — the fail-open F1 flagged).
+	lanePrefix := lane.Name + "."
+	slotNames := make([]string, 0, 2*len(slots))
+	depthByName := make(map[string]int, 2*len(slots))
 	for _, s := range slots {
-		slotNames = append(slotNames, s.Name)
 		dep, dErr := d.db.GetSlotDepth(s.ID)
 		if dErr != nil {
 			return false, "", dErr
 		}
+		slotNames = append(slotNames, s.Name, lanePrefix+s.Name)
 		depthByName[s.Name] = dep
+		depthByName[lanePrefix+s.Name] = dep
 	}
 
 	active, err := d.db.ActiveLaneStores(slotNames)
