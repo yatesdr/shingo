@@ -156,6 +156,9 @@ function loadNodeDetail(nodeID, isSynthetic) {
           if (abox) abox.checked = (p.value !== 'off');
           var actrls = document.getElementById('nf-asrs-controls');
           if (actrls) actrls.classList.toggle('hide', p.value === 'off');
+        } else if (p.key === 'resolve_around') {
+          var rabox = document.getElementById('nf-resolve-around');
+          if (rabox) rabox.checked = (p.value === 'on');
         }
       });
 
@@ -357,6 +360,10 @@ function saveAlgorithmProperties() {
   var asrsBox = document.getElementById('nf-asrs-enabled');
   apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'asrs_enabled', value: (asrsBox && asrsBox.checked) ? 'on' : 'off'})
     .catch(function(err) { console.error('saveAlgorithmProperties asrs_enabled', err); });
+  // Resolve-around: per-group lane-preference arm (default off).
+  var raBox = document.getElementById('nf-resolve-around');
+  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'resolve_around', value: (raBox && raBox.checked) ? 'on' : 'off'})
+    .catch(function(err) { console.error('saveAlgorithmProperties resolve_around', err); });
   var retrieveAlgo = document.getElementById('nf-retrieve-algo').value;
   var storeAlgo = document.getElementById('nf-store-algo').value;
   apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'retrieve_algorithm', value: retrieveAlgo})

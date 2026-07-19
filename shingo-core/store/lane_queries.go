@@ -11,6 +11,7 @@ import (
 
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
 
 // ListLaneSlots returns all child nodes of a lane, ordered by depth
@@ -40,6 +41,30 @@ func (db *DB) LaneForNode(nodeID int64) (*nodes.Node, error) {
 // one-hop parent walk cannot see (§8).
 func (db *DB) AuditLaneGeometry() ([]string, error) {
 	return nodes.AuditLaneGeometry(db.DB)
+}
+
+// LaneAcceptsInbound reports whether a lane currently has no mouth hold that
+// would block an inbound (store) share. It is compatible when every active mouth
+// row is inbound — same-mode sharing is legal (§2) — and incompatible when any
+// row is outbound or a dig. An empty lane is compatible. This mirrors the mouth
+// gate's own admit rule (reservations/mouth.go admitMouth) for the inbound case.
+//
+// This is the read behind resolve-around: the store finder prefers a lane whose
+// mouth is currently free so the order need not stall there. It is advisory only
+// — a hint for ranking, taken without the lane's advisory lock; the mouth gate
+// still arbitrates the actual admission, so a race here only costs one less-ideal
+// lane choice, never a correctness violation.
+func (db *DB) LaneAcceptsInbound(laneID int64) (bool, error) {
+	holds, err := reservations.ActiveMouthRows(db.DB, laneID)
+	if err != nil {
+		return false, err
+	}
+	for _, h := range holds {
+		if h.Mode != reservations.ModeInbound {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // FindSourceBinInLane finds the shallowest accessible unclaimed bin in a
