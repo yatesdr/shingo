@@ -110,6 +110,8 @@ type Robot struct {
 	idle    bool
 	waiting bool // parked on a Wait block until ReleaseWait
 
+	approach int // coarse travel distance: extra aisle hops before the first lane entry (experiment)
+
 	blockedBy string // set each tick to the robot blocking our next step ("" = free/moving)
 }
 
@@ -125,11 +127,12 @@ type Options struct {
 // Sim is the scene-physics simulator: robots executing orders over a Scene under
 // single-file lane occupancy, advanced one Tick at a time.
 type Sim struct {
-	scene     *Scene
-	opts      Options
-	flags     Flags
-	mouthGate bool // when true, lane entry is gated by mode + deepest-first discipline (§2)
-	capacity1 bool // with mouthGate: one robot per lane (the baseline the soak compares against)
+	scene        *Scene
+	opts         Options
+	flags        Flags
+	mouthGate    bool // when true, lane entry is gated by mode + deepest-first discipline (§2)
+	capacity1    bool // with mouthGate: one robot per lane (the baseline the soak compares against)
+	priorityOnly bool // with mouthGate: model production-as-landed — mode gate only, NO deepest-first hold
 	robots    map[string]*Robot
 	order     []string          // robot ids, stable order for deterministic ticking
 	occ       map[string]string // cell key → robot id (lane cells only)
@@ -171,6 +174,26 @@ func (s *Sim) SetMouthGate(on bool) { s.mouthGate = on }
 // conservative baseline, disabling same-kind co-occupancy. Used by the soak to
 // measure what mode-share concurrency buys over capacity-1.
 func (s *Sim) SetLaneCapacity1(on bool) { s.capacity1 = on }
+
+// SetPriorityOnly models the CURRENT production arms as landed: the mode-based
+// mouth gate (same-kind co-occupy, mixed/dig excluded) and single-file physics,
+// but WITHOUT the deepest-first admission hold. In production the deepest-first
+// ordering is only the RDS priority HINT — which influences the START/assignment
+// order of orders (modeled here by submit order), NOT the arrival of an already-
+// moving robot — not a hard mouth hold. That hold is exactly what tiered entry
+// would add; leaving it OFF is how the wall experiment tests whether priority
+// alone prevents the wall. Requires the mouth gate on; no effect otherwise.
+func (s *Sim) SetPriorityOnly(on bool) { s.priorityOnly = on }
+
+// SetRobotApproach sets a robot's coarse travel distance — extra aisle hops it
+// burns before it first reaches a lane mouth (0 = adjacent). This lets the
+// experiment vary robot start positions so a later-spawned but CLOSER robot can
+// still win the race to the mouth (the crux of the wall). Harness knob only.
+func (s *Sim) SetRobotApproach(robotID string, hops int) {
+	if r := s.robots[robotID]; r != nil {
+		r.approach = hops
+	}
+}
 
 // SetFlags overrides the vendor-unknown flag defaults (for the soak matrix).
 func (s *Sim) SetFlags(f Flags) { s.flags = f }
@@ -421,17 +444,24 @@ func (s *Sim) admitToLane(r *Robot, next cell) bool {
 	// (currentTargetDepth scans forward), not just its current block — else a fast
 	// shallow store could reach the mouth and drop before a slower deep store, still
 	// picking, has even declared its lane target.
-	for _, id := range s.order {
-		o := s.robots[id]
-		if o.ID == r.ID || o.idle || o.order == nil || o.pos.inLane() {
-			continue
-		}
-		om, ok := s.orderLaneMode(o, lane)
-		if !ok || om != myMode || myMode == "dig" {
-			continue // o doesn't work this lane in my mode
-		}
-		if s.currentTargetDepth(o, lane) > myDepth {
-			return false
+	//
+	// SKIPPED under priorityOnly: production has no such hold — the deepest-first
+	// ordering there is only the RDS priority start-hint (modeled via submit order),
+	// which cannot hold an already-moving shallower robot. This is the arm the wall
+	// experiment leaves out to test whether priority alone suffices.
+	if !s.priorityOnly {
+		for _, id := range s.order {
+			o := s.robots[id]
+			if o.ID == r.ID || o.idle || o.order == nil || o.pos.inLane() {
+				continue
+			}
+			om, ok := s.orderLaneMode(o, lane)
+			if !ok || om != myMode || myMode == "dig" {
+				continue // o doesn't work this lane in my mode
+			}
+			if s.currentTargetDepth(o, lane) > myDepth {
+				return false
+			}
 		}
 	}
 	return true
@@ -493,6 +523,17 @@ func (s *Sim) ensurePath(r *Robot, dst cell) {
 		return
 	}
 	r.path = s.planPath(r.pos, dst)
+	// Coarse travel distance: before a robot first enters a lane from outside, burn
+	// `approach` aisle hops (self-steps on its current node), so a later-but-closer
+	// robot can still reach the mouth first. One-shot — consumed on this approach.
+	if r.approach > 0 && dst.inLane() && !r.pos.inLane() {
+		lead := make([]cell, r.approach)
+		for i := range lead {
+			lead[i] = r.pos
+		}
+		r.path = append(lead, r.path...)
+		r.approach = 0
+	}
 	r.hop = 0
 }
 
@@ -547,6 +588,19 @@ func (s *Sim) AllIdle() bool {
 		}
 	}
 	return true
+}
+
+// BusyCount returns how many robots still have unfinished work. At the end of a
+// store-only run this is the number of robots left STUCK — walled behind a bin
+// they can never pass in the single-file lane — so it counts walled stores.
+func (s *Sim) BusyCount() int {
+	n := 0
+	for _, r := range s.robots {
+		if !r.idle {
+			n++
+		}
+	}
+	return n
 }
 
 // RunUntilIdle ticks until all robots are idle or maxTicks is reached. Returns
