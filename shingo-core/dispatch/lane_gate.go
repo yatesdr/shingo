@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"errors"
+	"log"
 
 	"shingocore/store/nodes"
 	"shingocore/store/reservations"
@@ -202,4 +203,55 @@ func (d *Dispatcher) laneDisplayName(holds []laneHold) string {
 // when the order holds none.
 func (d *Dispatcher) ReleaseLanesForOrder(orderID int64) error {
 	return reservations.ReleaseLanesByOwner(d.db.DB, orderID)
+}
+
+// laneOwnerFor resolves the order that OWNS a lane mouth row for a block: the
+// order itself for a plain order, or its complex parent for a compound child
+// (children never own rows, §2). So a child's block progress releases the
+// parent-owned hold.
+func (d *Dispatcher) laneOwnerFor(orderID int64) int64 {
+	o, err := d.db.GetOrder(orderID)
+	if err != nil || o == nil || o.ParentOrderID == nil {
+		return orderID
+	}
+	return *o.ParentOrderID
+}
+
+// HandleTransitForLaneGate releases the owner's mouth hold on the lane a picked
+// bin just LEFT (§4 pickup / early handoff). Fired on EventBinEnteredTransit,
+// routed to the compound parent for a child. A no-op when the from-node is not a
+// lane or no mouth row is held — byte-identical when the gate is off.
+func (d *Dispatcher) HandleTransitForLaneGate(orderID, fromNodeID int64) {
+	if fromNodeID == 0 {
+		return
+	}
+	owner := d.laneOwnerFor(orderID)
+	node, err := d.db.GetNode(fromNodeID)
+	if err != nil || node == nil {
+		return
+	}
+	if err := d.releaseOrderLaneFor(owner, node); err != nil {
+		log.Printf("lanegate: release hold for order %d (owner %d) on transit from node %d: %v",
+			orderID, owner, fromNodeID, err)
+	}
+}
+
+// ReleaseInboundLaneForOrder releases the owner's mouth hold on the lane an order
+// just DROPPED into (§4 dropoff / early handoff). Fired from the store block-
+// completion handler BEFORE the delivery-node early-return, routed to the compound
+// parent for a child. A no-op when the drop node is not a lane or no mouth row is
+// held.
+func (d *Dispatcher) ReleaseInboundLaneForOrder(orderID int64, dropNodeName string) {
+	if dropNodeName == "" {
+		return
+	}
+	owner := d.laneOwnerFor(orderID)
+	node, err := d.db.GetNodeByDotName(dropNodeName)
+	if err != nil || node == nil {
+		return
+	}
+	if err := d.releaseOrderLaneFor(owner, node); err != nil {
+		log.Printf("lanegate: release hold for order %d (owner %d) on dropoff at %s: %v",
+			orderID, owner, dropNodeName, err)
+	}
 }

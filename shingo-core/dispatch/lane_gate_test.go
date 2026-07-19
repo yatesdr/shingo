@@ -9,6 +9,7 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
 
@@ -50,6 +51,66 @@ func TestAcquireLanesForOrder_GatedByConfig(t *testing.T) {
 	admitted, _, _, err = d.AcquireLanesForOrder(a.ID, line, noneSlot)
 	if err != nil || !admitted {
 		t.Fatalf("non-mouth group: admitted=%v err=%v, want admitted no-op", admitted, err)
+	}
+}
+
+// TestLaneGateRelease_InboundAndOutbound: the §4 early handoff — a store's
+// inbound hold frees when it drops, a retrieve's outbound hold frees when its bin
+// transits out.
+func TestLaneGateRelease_InboundAndOutbound(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	_, laneID, slot := gatedLane(t, db, "RELG", "mouth")
+	line := lineNode(t, db, "RELG-LINE")
+	store := testdb.CreateOrder(t, db)
+	retrieve := testdb.CreateOrder(t, db)
+
+	if adm, _, _, _ := d.AcquireLanesForOrder(store.ID, line, slot); !adm {
+		t.Fatal("store must be admitted on a free lane")
+	}
+	if gateMouthRows(t, db, laneID) != 1 {
+		t.Fatal("inbound row must exist after acquire")
+	}
+	d.ReleaseInboundLaneForOrder(store.ID, slot.Name)
+	if n := gateMouthRows(t, db, laneID); n != 0 {
+		t.Fatalf("inbound row not released on dropoff = %d, want 0", n)
+	}
+
+	if adm, _, _, _ := d.AcquireLanesForOrder(retrieve.ID, slot, line); !adm {
+		t.Fatal("retrieve must be admitted after the store released")
+	}
+	if gateMouthRows(t, db, laneID) != 1 {
+		t.Fatal("outbound row must exist after acquire")
+	}
+	d.HandleTransitForLaneGate(retrieve.ID, slot.ID)
+	if n := gateMouthRows(t, db, laneID); n != 0 {
+		t.Fatalf("outbound row not released on transit = %d, want 0", n)
+	}
+}
+
+// TestLaneGateRelease_ChildRoutesToParent: a compound child's block progress
+// releases the PARENT-owned mouth row (children never own rows, §2).
+func TestLaneGateRelease_ChildRoutesToParent(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	_, laneID, slot := gatedLane(t, db, "RELG-CHILD", "mouth")
+	line := lineNode(t, db, "RELG-CHILD-LINE")
+	parent := testdb.CreateOrder(t, db)
+	child := testdb.CreateOrder(t, db, func(o *orders.Order) { o.ParentOrderID = &parent.ID })
+
+	// The parent owns the inbound hold.
+	if adm, _, _, _ := d.AcquireLanesForOrder(parent.ID, line, slot); !adm {
+		t.Fatal("parent must be admitted")
+	}
+	if gateMouthRows(t, db, laneID) != 1 {
+		t.Fatal("parent inbound row must exist")
+	}
+	// The CHILD drops; the release must route to the parent's row.
+	d.ReleaseInboundLaneForOrder(child.ID, slot.Name)
+	if n := gateMouthRows(t, db, laneID); n != 0 {
+		t.Fatalf("child dropoff did not release the parent-owned hold = %d, want 0", n)
 	}
 }
 

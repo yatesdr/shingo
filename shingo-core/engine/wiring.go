@@ -326,6 +326,9 @@ func (e *Engine) wireEventHandlers() {
 			return
 		}
 		e.dispatcher.HandleBinTransitForLaneLock(evt.Payload.BinID, evt.Payload.FromNodeID)
+		// Lane mouth gate (§4): release the order's hold on the lane its bin just
+		// left, as soon as the bin physically clears (a no-op when the gate is off).
+		e.dispatcher.HandleTransitForLaneGate(evt.Payload.OrderID, evt.Payload.FromNodeID)
 	}, EventBinEnteredTransit)
 
 	// Parent terminal: drop the lane-lock release listener so the lane
