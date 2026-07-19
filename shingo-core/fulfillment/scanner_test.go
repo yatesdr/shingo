@@ -100,6 +100,8 @@ type recordingDispatcher struct {
 	// mouth-gate park branch); releaseLaneCalls counts fleet-fail lane releases.
 	laneConflict     bool
 	releaseLaneCalls int
+	laneEntryPark    bool   // tiered-entry gate: park the store (deeper/group holds the lane)
+	laneEntryCause   string // the operator cause when laneEntryPark is set
 }
 
 // confirmCall records one Rule-1 confirm-at-dispatch: the order, the bin, and the
@@ -153,7 +155,10 @@ func (d *recordingDispatcher) AcquireLanesForOrder(int64, *nodes.Node, *nodes.No
 	return true, "", "", nil
 }
 func (d *recordingDispatcher) ReleaseLanesForOrder(int64) error { d.releaseLaneCalls++; return nil }
-func (d *recordingDispatcher) PostFindHook()                    {}
+func (d *recordingDispatcher) AdmitLaneEntry(*orders.Order, *nodes.Node) (bool, string, error) {
+	return d.laneEntryPark, d.laneEntryCause, nil
+}
+func (d *recordingDispatcher) PostFindHook() {}
 
 func (d *recordingDispatcher) PlanBuriedReshuffle(o *orders.Order, _ *dispatch.BuriedError) error {
 	d.reshuffleCalls = append(d.reshuffleCalls, o.ID)

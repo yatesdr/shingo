@@ -43,6 +43,30 @@ func (db *DB) AuditLaneGeometry() ([]string, error) {
 	return nodes.AuditLaneGeometry(db.DB)
 }
 
+// NodeStyleOrigins returns the (process, style) pairs that claim a node in the
+// plant-claims mirror (style_claims), as canonical "process|style" strings. Empty
+// when the node has no style claim — loaders/unloaders are structurally excluded
+// from the mirror, so they resolve to no origin. This backs the tiered-entry
+// same-origin classifier (two orders share an origin iff their demand nodes'
+// pair sets are equal and non-empty).
+func (db *DB) NodeStyleOrigins(nodeName string) ([]string, error) {
+	rows, err := db.DB.Query(
+		`SELECT DISTINCT process_id, style_id FROM style_claims WHERE core_node_name = $1`, nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("node style origins %s: %w", nodeName, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p, s string
+		if err := rows.Scan(&p, &s); err != nil {
+			return nil, fmt.Errorf("node style origins %s scan: %w", nodeName, err)
+		}
+		out = append(out, p+"|"+s)
+	}
+	return out, rows.Err()
+}
+
 // LaneAcceptsInbound reports whether a lane currently has no mouth hold that
 // would block an inbound (store) share. It is compatible when every active mouth
 // row is inbound — same-mode sharing is legal (§2) — and incompatible when any

@@ -32,7 +32,10 @@ func (s *stubDispatcher) AcquireLanesForOrder(int64, *nodes.Node, *nodes.Node) (
 	return true, "", "", nil // gate off — the complex branch does not gate lanes here
 }
 func (s *stubDispatcher) ReleaseLanesForOrder(int64) error { return nil }
-func (s *stubDispatcher) PostFindHook()                    {}
+func (s *stubDispatcher) AdmitLaneEntry(*orders.Order, *nodes.Node) (bool, string, error) {
+	return false, "", nil // gate off — admit everything
+}
+func (s *stubDispatcher) PostFindHook() {}
 func (s *stubDispatcher) PlanBuriedReshuffle(*orders.Order, *dispatch.BuriedError) error {
 	panic("scanner complex-order branch should not plan a reshuffle")
 }

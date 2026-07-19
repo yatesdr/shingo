@@ -268,6 +268,12 @@ func (db *DB) CountActiveOrdersByDeliveryNode(nodeName string) (int, error) {
 	return orders.CountActiveByDeliveryNode(db.DB, nodeName)
 }
 
+// ActiveLaneStores returns non-terminal orders whose delivery_node is one of the
+// given slot names — the active stores targeting a lane (tiered-entry gate input).
+func (db *DB) ActiveLaneStores(slotNames []string) ([]*orders.Order, error) {
+	return orders.ActiveByDeliveryNodes(db.DB, slotNames)
+}
+
 // CountActiveOrders returns the number of non-terminal orders (dashboard
 // "in flight" KPI).
 func (db *DB) CountActiveOrders() (int, error) {

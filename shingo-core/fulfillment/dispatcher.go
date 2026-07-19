@@ -56,6 +56,13 @@ type Dispatcher interface {
 	// linger after the robot failed to commit.
 	ReleaseLanesForOrder(orderID int64) error
 
+	// AdmitLaneEntry is the tiered depth-ordered entry gate: park=true means a
+	// deeper cross-origin store (or an active cross-origin group) holds the order's
+	// lane, so it must wait (dispatch-time only — the scanner re-evaluates on the
+	// next pass). park=false for every non-lane / non-mouth-enforced destination
+	// (byte-identical when the gate is off).
+	AdmitLaneEntry(order *orders.Order, destNode *nodes.Node) (park bool, cause string, err error)
+
 	// PlanBuriedReshuffle plans the reshuffle compound for a source that resolved
 	// BURIED on replay, making the order its own compound parent (→ reshuffling).
 	//

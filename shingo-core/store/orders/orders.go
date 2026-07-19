@@ -477,6 +477,29 @@ func ListActive(db *sql.DB) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
+// ActiveByDeliveryNodes returns non-terminal orders whose delivery_node is one of
+// the given names — the active stores targeting a lane (the tiered-entry gate's
+// input). Empty names → no orders.
+func ActiveByDeliveryNodes(db *sql.DB, names []string) ([]*Order, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(names))
+	args := make([]any, len(names))
+	for i, n := range names {
+		ph[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = n
+	}
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT %s FROM orders WHERE delivery_node IN (%s) AND status NOT IN (%s) ORDER BY id`,
+		SelectCols, strings.Join(ph, ", "), protocol.TerminalStatusSQLList()), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanOrders(rows)
+}
+
 // CountActive returns the number of orders in non-terminal statuses, using
 // the same WHERE clause as ListActive so the count matches the list exactly.
 // Backs the dashboard "in flight" KPI (plan §3.A / §15.A).
