@@ -125,13 +125,14 @@ type Options struct {
 // Sim is the scene-physics simulator: robots executing orders over a Scene under
 // single-file lane occupancy, advanced one Tick at a time.
 type Sim struct {
-	scene  *Scene
-	opts   Options
-	flags  Flags
-	robots map[string]*Robot
-	order  []string          // robot ids, stable order for deterministic ticking
-	occ    map[string]string // cell key → robot id (lane cells only)
-	bins   map[string]bool   // slot name → a dropped bin sits there (persists; walls deeper slots)
+	scene     *Scene
+	opts      Options
+	flags     Flags
+	mouthGate bool // when true, lane entry is gated by mode + deepest-first discipline (§2)
+	robots    map[string]*Robot
+	order     []string          // robot ids, stable order for deterministic ticking
+	occ       map[string]string // cell key → robot id (lane cells only)
+	bins      map[string]bool   // slot name → a dropped bin sits there (persists; walls deeper slots)
 
 	tick         int
 	lastProgress int // tick of the last observed state change (deadlock watchdog)
@@ -154,6 +155,13 @@ func New(scene *Scene, opts Options) *Sim {
 		bins:   map[string]bool{},
 	}
 }
+
+// SetMouthGate turns the lane mouth gate on (the arm under test in S2). Off (the
+// default) the sim reproduces today's ungated physics — the S1 wounds. On, the
+// sim models the conservative capacity-1 mouth: one robot works a single-file
+// lane at a time, entrants ordered deepest-target-first. That turns the head-on
+// deadlock and the entry-order air bubble green. (See admitToLane.)
+func (s *Sim) SetMouthGate(on bool) { s.mouthGate = on }
 
 // SetFlags overrides the vendor-unknown flag defaults (for the soak matrix).
 func (s *Sim) SetFlags(f Flags) { s.flags = f }
@@ -275,6 +283,14 @@ func (s *Sim) Tick() []Violation {
 		// this is what makes a walled-off deep slot physical.
 		next := r.path[0]
 		if next.inLane() {
+			// Mouth gate: a FRESH entry into a lane (from a plain node onto the
+			// mouth) is gated by mode + deepest-first discipline. Held robots wait
+			// outside the lane; they do not set blockedBy (they are not trapped by
+			// a specific robot, so they don't form a deadlock cycle) — the holder
+			// they wait on is making progress, which the watchdog sees.
+			if !r.pos.inLane() && !s.admitToLane(r, next) {
+				continue
+			}
 			if holder, occupied := s.occ[next.key()]; occupied && holder != id {
 				r.blockedBy = holder // trapped behind another robot
 				continue
@@ -330,6 +346,69 @@ func (s *Sim) cellSlot(c cell) string {
 		return ""
 	}
 	return lane.Slots[c.Index]
+}
+
+// admitToLane decides whether robot r may enter lane next.Lane now (called only
+// on a fresh entry from a plain node). Returns true when the gate is off.
+//
+// With the gate on it models the CONSERVATIVE (capacity-1) mouth: only one robot
+// works a single-file lane at a time. A robot may enter only when the lane is
+// clear of other robots, which by construction prevents BOTH the head-on cross
+// (an exiting robot meeting an entering one) AND the mixed-mode collision (a
+// store entering while a swap/dig holds the lane). Among robots waiting to enter,
+// the DEEPEST target goes first, so bins pack back-to-front and no entry-order
+// air bubble forms. (Same-kind in-lane CONCURRENCY — two robots traversing at
+// once — is a throughput refinement the sim does not model; the safety-critical
+// wounds are what this gate proves.)
+func (s *Sim) admitToLane(r *Robot, next cell) bool {
+	if !s.mouthGate {
+		return true
+	}
+	lane := next.Lane
+	if _, ok := s.orderLaneMode(r, lane); !ok {
+		return true // r doesn't actually work this lane — nothing to gate
+	}
+	myDepth := s.currentTargetDepth(r, lane)
+
+	// Capacity-1: the lane must be clear of other robots.
+	for _, id := range s.order {
+		o := s.robots[id]
+		if o.ID != r.ID && o.pos.inLane() && o.pos.Lane == lane {
+			return false
+		}
+	}
+
+	// Deepest-first: yield to a robot still outside that targets a DEEPER slot and
+	// is heading into this lane now, so the deep bind enters first.
+	for _, id := range s.order {
+		o := s.robots[id]
+		if o.ID == r.ID || o.idle || o.order == nil || o.pos.inLane() || o.block >= len(o.order.Blocks) {
+			continue
+		}
+		if s.scene.slotLane[o.order.Blocks[o.block].Location] != lane {
+			continue // o isn't heading into this lane right now
+		}
+		if s.currentTargetDepth(o, lane) > myDepth {
+			return false
+		}
+	}
+	return true
+}
+
+// currentTargetDepth is the depth of r's current block if it targets lane, else
+// the first pending in-lane block's depth, else -1.
+func (s *Sim) currentTargetDepth(r *Robot, lane string) int {
+	if r.order == nil {
+		return -1
+	}
+	for i := r.block; i < len(r.order.Blocks); i++ {
+		loc := r.order.Blocks[i].Location
+		if s.scene.slotLane[loc] == lane {
+			d, _ := s.scene.SlotDepth(loc)
+			return d
+		}
+	}
+	return -1
 }
 
 // targetCell resolves a block location to a cell (a lane slot or a plain node).
