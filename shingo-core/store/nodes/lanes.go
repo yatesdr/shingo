@@ -89,6 +89,19 @@ func FindStoreSlotInLane(db *sql.DB, laneID int64) (*Node, error) {
 			WHERE o.delivery_node = n.name
 			  AND o.status NOT IN (%s)
 		  )
+		  AND NOT EXISTS (
+			-- Accessibility guard (mirrors IsSlotAccessible): a slot is only a
+			-- valid pick if no OCCUPIED slot sits shallower in the same lane. The
+			-- deepest-empty slot can otherwise be stranded behind a shallow bubble
+			-- (an occupied slot with empties behind it), and a robot entering at
+			-- the mouth could never reach it.
+			SELECT 1 FROM nodes sib
+			JOIN bins bb ON bb.node_id = sib.id
+			WHERE sib.parent_id = n.parent_id
+			  AND sib.depth IS NOT NULL
+			  AND n.depth IS NOT NULL
+			  AND sib.depth < n.depth
+		  )
 		ORDER BY COALESCE(n.depth, 0) DESC
 		LIMIT 1`, SelectCols, FromClause, protocol.TerminalStatusSQLList()), laneID)
 	n, err := ScanNode(row)
