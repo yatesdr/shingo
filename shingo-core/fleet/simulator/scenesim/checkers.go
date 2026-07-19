@@ -48,7 +48,16 @@ func (s *Sim) checkReachability() []Violation {
 		if r.pos.inLane() && r.pos.Lane == lane && r.pos.Index >= depth {
 			continue
 		}
-		for i := range depth {
+		// Only slots AHEAD of the robot can wall it. A bin BEHIND a robot already
+		// in the lane (shallower than its current cell) was passed and cannot block
+		// it — checking from the mouth would falsely flag a deep robot whose shallow
+		// neighbor dropped behind it. A robot not yet in the lane must clear from
+		// the mouth (start 0).
+		start := 0
+		if r.pos.inLane() && r.pos.Lane == lane {
+			start = r.pos.Index + 1
+		}
+		for i := start; i < depth; i++ {
 			slot := s.scene.lanes[lane].Slots[i]
 			if s.bins[slot] {
 				v = append(v, Violation{
