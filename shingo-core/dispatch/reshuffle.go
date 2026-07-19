@@ -277,7 +277,6 @@ func ReshuffleTargetNodes(db *store.DB, laneID, groupID int64) []string {
 	return out
 }
 
-
 // findShuffleSlots locates empty accessible slots for temporary shuffle storage.
 // Pass 1: direct physical children of the group (always accessible).
 // Pass 2: accessible empty slots in regular lanes.

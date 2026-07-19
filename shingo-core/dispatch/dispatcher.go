@@ -43,15 +43,15 @@ type Dispatcher struct {
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {
 	binManifest := service.NewBinManifestService(db)
 	d := &Dispatcher{
-		db:               db,
-		backend:          backend,
-		emitter:          emitter,
-		resolver:         resolver,
-		laneLock:         NewLaneLockWithDB(db.DB),
-		stationID:        stationID,
-		dispatchTopic:    dispatchTopic,
-		binManifest:      binManifest,
-		laneHolds:        newLaneHoldRegistry(),
+		db:            db,
+		backend:       backend,
+		emitter:       emitter,
+		resolver:      resolver,
+		laneLock:      NewLaneLockWithDB(db.DB),
+		stationID:     stationID,
+		dispatchTopic: dispatchTopic,
+		binManifest:   binManifest,
+		laneHolds:     newLaneHoldRegistry(),
 	}
 	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
 	d.replies = newReplySender(db, dispatchTopic, stationID, d.dbg)

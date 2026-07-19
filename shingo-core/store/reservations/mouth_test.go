@@ -202,8 +202,14 @@ func TestMouth_ConcurrentRaceOneWinner(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 	wg.Add(2)
-	go func() { defer wg.Done(); errs[0] = reservations.AcquireLanes(db.DB, a.ID, reservations.ModeInbound, "test", lane) }()
-	go func() { defer wg.Done(); errs[1] = reservations.AcquireLanes(db.DB, b.ID, reservations.ModeOutbound, "test", lane) }()
+	go func() {
+		defer wg.Done()
+		errs[0] = reservations.AcquireLanes(db.DB, a.ID, reservations.ModeInbound, "test", lane)
+	}()
+	go func() {
+		defer wg.Done()
+		errs[1] = reservations.AcquireLanes(db.DB, b.ID, reservations.ModeOutbound, "test", lane)
+	}()
 	wg.Wait()
 
 	wins, conflicts := 0, 0
@@ -287,8 +293,16 @@ func TestMouth_TerminalizeOrderDeletesRow(t *testing.T) {
 	if err := reservations.AcquireLanes(db.DB, a.ID, reservations.ModeInbound, "test", lane); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	if err := db.TerminalizeOrder(a.ID, protocol.StatusConfirmed, ""); err != nil {
+	// TerminalizeOrder became a compare-and-swap on main (it reports whether THIS
+	// call landed the terminal write). The order is live and uncontended here, so
+	// a declined swap would mean the terminal path never ran — and the row-count
+	// assertion below would then be passing for the wrong reason.
+	swapped, err := db.TerminalizeOrder(a.ID, protocol.StatusConfirmed, "")
+	if err != nil {
 		t.Fatalf("TerminalizeOrder: %v", err)
+	}
+	if !swapped {
+		t.Fatal("TerminalizeOrder declined the swap on a live, uncontended order")
 	}
 	if got := mouthCount(t, db, lane); got != 0 {
 		t.Fatalf("mouth rows after TerminalizeOrder = %d, want 0", got)

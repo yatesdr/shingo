@@ -76,6 +76,15 @@ func (e *Engine) Start() {
 	// Load active vendor orders into tracker
 	e.loadActiveOrders()
 
+	// One-shot: cancel any leftover reshuffle_restore housekeeping orders from
+	// the retired restore-blockers subsystem (blockers lie now). No-op on a clean
+	// DB and idempotent across restarts. Non-fatal.
+	if n, err := e.db.RetireReshuffleRestoreOrders(); err != nil {
+		e.logFn("engine: retire reshuffle_restore orders: %v", err)
+	} else if n > 0 {
+		e.logFn("engine: retired %d leftover reshuffle_restore order(s)", n)
+	}
+
 	// Restore lane holds from the durable dig mouth rows FIRST, before any
 	// dispatch runs: the rows are the restart authority now, so a bulk rebuild
 	// re-establishes every held lane at once (no per-order re-acquire, no

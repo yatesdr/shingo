@@ -320,19 +320,20 @@ func (db *DB) runVersionedMigrations() error {
 					schema.ColumnExists(q, "inventory_delta_dedup", "epoch")
 			}},
 
-		// v23 (complex-order buried-reshuffle scope, v7) adds the
-		// pending_restocks table. Closes the crash-recovery gap left
-		// by the v6 in-memory restoreRegistry: when the restore-
-		// blockers toggle is on, the planned restock state is
-		// persisted at listener-registration time so a Core restart
-		// can re-register the listener instead of dropping it on the
-		// floor (and leaving blockers in shuffle slots forever).
+		// v23 (complex-order buried-reshuffle scope, v7) added the
+		// pending_restocks table for the restore-blockers subsystem. That
+		// subsystem is RETIRED — blockers lie now — and v52 drops the table.
 		//
-		// One row per registered listener; deleted on listener fire,
-		// parent cancel, parent fail, and stale-row sweep at boot.
-		{23, "add pending_restocks table for crash-safe restore listeners",
+		// v23's body still creates the table so the migration history stays
+		// intact, but its verify is now ALWAYS-TRUE on purpose: keying it on
+		// TableExists would make the self-heal RESURRECT the retired table on
+		// every boot after v52 drops it (verify fails → re-run v23 → re-create).
+		// A retired table's ABSENCE is the correct state, so v23's application is
+		// tracked by schema_migrations alone. The framework must never resurrect a
+		// retired table.
+		{23, "add pending_restocks table for crash-safe restore listeners (retired at v52)",
 			v23PendingRestocks,
-			func(q schema.Querier) bool { return schema.TableExists(q, "pending_restocks") }},
+			func(schema.Querier) bool { return true }},
 
 		// v24 (post-v7 cleanup) adds the pending_lane_extensions table.
 		// Same shape as pending_restocks but for the lane-lock
@@ -860,6 +861,22 @@ func (db *DB) runVersionedMigrations() error {
 		{69, "add reservations.mode + (resource_kind,node_id) read index (lane-mouth substrate)",
 			v69ReservationsMouthMode,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "reservations", "mode") }},
+
+		// v70 retires the restore-blockers subsystem's table. pending_restocks is
+		// no code's concern anymore (the subsystem is deleted; blockers lie). DROP
+		// IF EXISTS so a fresh DB (which created it at v23) and a deployed DB (which
+		// may hold rows) both end without it. Paired with v23's now-always-true
+		// verify so the self-heal never resurrects it. The self-heal marker is the
+		// table's ABSENCE.
+		//
+		// Carried the number 52 on refactor-phase1 and was renumbered to 70 when
+		// that branch was transplanted onto main (2026-07-30) — see the renumber
+		// note above v51. This entry is LAST in the list on purpose:
+		// latestMigrationVersion is read off the final element, so leaving it at 52
+		// would have driven the recorded head version BACKWARDS from 68.
+		{70, "drop pending_restocks (retire the restore-blockers subsystem)",
+			v70DropPendingRestocks,
+			func(q schema.Querier) bool { return !schema.TableExists(q, "pending_restocks") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2218,6 +2235,19 @@ func v52EdgeLinesideReports(tx *sql.Tx) error {
 		return fmt.Errorf("v52 edge_lineside_reports: %w", err)
 	}
 	return nil
+}
+
+// v70DropPendingRestocks retires the restore-blockers subsystem's table. The
+// subsystem is deleted (blockers lie), so the table is dead storage on every
+// environment. DROP IF EXISTS is a no-op on a DB that never had it. See v23's
+// verify note: it is deliberately always-true so this drop is never undone by
+// the self-heal.
+//
+// Carried the number 52 on refactor-phase1; renumbered to 70 at transplant
+// (2026-07-30) — main had taken 52 for edge_lineside_reports and run on to 68.
+func v70DropPendingRestocks(tx *sql.Tx) error {
+	_, err := tx.Exec(`DROP TABLE IF EXISTS pending_restocks`)
+	return err
 }
 
 // v23PendingRestocks creates the crash-safe restore-listener registry.

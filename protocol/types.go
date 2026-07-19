@@ -394,6 +394,12 @@ const (
 	OrderTypeMove          OrderType = "move"           // generic move; no manifest semantics
 	OrderTypeComplex       OrderType = "complex"        // multi-step order composed of sub-steps
 	OrderTypeIngest        OrderType = "ingest"         // edge-legacy: no longer minted (manifest-only ingest write); kept for historical order rows
+	// OrderTypeReshuffleRestore is the RETIRED restore-blockers housekeeping type.
+	// The subsystem that minted it is deleted (blockers lie now) and no order is
+	// ever created with it again — the constant is kept ONLY so historical rows
+	// (and the one-shot retirement sweep) display and match a name rather than a
+	// raw string.
+	OrderTypeReshuffleRestore OrderType = "reshuffle_restore"
 )
 
 // StationBroadcast is the wildcard station value that matches all edge instances.

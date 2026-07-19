@@ -77,6 +77,71 @@ func (db *DB) ListChildOrders(parentOrderID int64) ([]*orders.Order, error) {
 	return orders.ListChildren(db.DB, parentOrderID)
 }
 
+// RetireReshuffleRestoreOrders cancels any non-terminal reshuffle_restore
+// housekeeping orders (and their non-terminal children) left over from the
+// retired restore-blockers subsystem. One-shot and idempotent: a clean DB — or a
+// second run — finds none and returns 0. Cancellation goes through the terminal
+// chokepoint (TerminalizeOrder) so any holds are released the same way a normal
+// cancel releases them; a raw status write would trip the state-machine guard.
+// Returns the number of orders cancelled. Called once at boot.
+func (db *DB) RetireReshuffleRestoreOrders() (int, error) {
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT id FROM orders WHERE order_type=$1 AND status IN (%s) ORDER BY id`,
+		protocol.NonTerminalStatusSQLList()), string(protocol.OrderTypeReshuffleRestore))
+	if err != nil {
+		return 0, fmt.Errorf("retire reshuffle_restore: list: %w", err)
+	}
+	var parents []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("retire reshuffle_restore: scan: %w", err)
+		}
+		parents = append(parents, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	const detail = "retired: restore-blockers subsystem removed"
+	cancelled := 0
+	for _, pid := range parents {
+		children, cErr := db.ListChildOrders(pid)
+		if cErr != nil {
+			return cancelled, fmt.Errorf("retire reshuffle_restore: children of %d: %w", pid, cErr)
+		}
+		for _, c := range children {
+			if protocol.IsTerminal(c.Status) {
+				continue
+			}
+			// TerminalizeOrder is a compare-and-swap on "still live" and reports
+			// whether THIS call is the one that landed it. The IsTerminal check
+			// above reads a snapshot, so an order can go terminal underneath us —
+			// a concurrent operator cancel is the everyday case. A declined swap
+			// is not an error and is not our cancellation, so it is not counted:
+			// the returned tally means "orders this sweep terminated", which is
+			// what makes the second run report 0.
+			swapped, tErr := db.TerminalizeOrder(c.ID, protocol.StatusCancelled, detail)
+			if tErr != nil {
+				return cancelled, fmt.Errorf("retire reshuffle_restore: cancel child %d: %w", c.ID, tErr)
+			}
+			if swapped {
+				cancelled++
+			}
+		}
+		swapped, tErr := db.TerminalizeOrder(pid, protocol.StatusCancelled, detail)
+		if tErr != nil {
+			return cancelled, fmt.Errorf("retire reshuffle_restore: cancel parent %d: %w", pid, tErr)
+		}
+		if swapped {
+			cancelled++
+		}
+	}
+	return cancelled, nil
+}
+
 // GetNextChildOrder returns the next pending child order for a parent.
 func (db *DB) GetNextChildOrder(parentOrderID int64) (*orders.Order, error) {
 	return orders.GetNextChild(db.DB, parentOrderID)
