@@ -657,25 +657,28 @@ func TestSlotConflictRevertsToNGRP(t *testing.T) {
 	}
 }
 
-// TestPartialReserveNeverDispatches_PayloadMismatchAtProcessNode is the
-// regression pin for the Hopkinsville 2026-07-14 incident. The invariant it
-// guards — "a complex order with an unclaimable pickup must HOLD, never dispatch
-// a partial" — is enforced today only by reserveComplexPlan's outcome switch, and
-// nothing tested it. The build HK was running (pre-reserve/confirm, 4bae260) had
-// no such gate: it only failed on len(claimed)==0, so a 1-of-2 claim logged a
-// warning and shipped.
+// TestEvacMismatchedPressBin_DispatchesCompleteAndSurfaces is the reworked
+// Hopkinsville 2026-07-14 pin. The original incident was a PARTIAL dispatch: a
+// two_robot_press_index R1 leg has two pickups — the spent bin on the press and a
+// fresh carrier from the market — and someone re-stamped the press bin's payload
+// (PIA16 press, bin tagged PIA15). Under a payload-filtered pickup only the market
+// bin claimed, so order.BinID fell back to that EMPTY CARRIER, Core shipped a
+// single-bin envelope, and Edge bound the empty tote to the press and drove its
+// UOP tile to 0.
 //
-// The shape: a two_robot_press_index R1 leg has TWO pickups — the spent bin on the
-// press, and a fresh empty from the market. Someone re-stamped the press bin's
-// payload (PIA16 press, bin tagged PIA15), so its pickup could not be claimed
-// while the market pickup could. On the old build that produced a SINGLE-bin
-// order whose order.BinID pointed at the EMPTY TOTE instead of the press bin —
-// which is what made Core ship a non-nil BinID on the delivery envelope, which is
-// what let Edge's gate bind an empty carrier to the press and drive its tile to 0.
+// The real invariant that damage violated is "never ship a partial / wrong-bin
+// order", NOT "never touch a mismatched bin". An evac's job is to remove whatever
+// is resident, so the removal binds the press bin BY NODE regardless of its
+// payload — which makes the order COMPLETE (both pickups bound to the RIGHT bins),
+// so there is no fallback-to-empty-carrier BinID at all. Holding on the mismatch
+// (the old behavior) was the wrong lever: it wedges forever on a benign off-style
+// leftover (SPR ALN_006) and stops the line over a mislabel a robot could finish.
+// The mismatch is instead SURFACED (audit + log) for operator follow-up.
 //
-// So the assertions are not just "outcome == reserveHolding". They pin the damage:
-// the order must not be stamped with the wrong bin, and confirm must not run.
-func TestPartialReserveNeverDispatches_PayloadMismatchAtProcessNode(t *testing.T) {
+// So this pins the new contract: the evac binds the resident bin, the order
+// dispatches complete with the press pickup bound to the PRESS bin (never the
+// carrier), and the mismatch is surfaced.
+func TestEvacMismatchedPressBin_DispatchesCompleteAndSurfaces(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, lineNode, bp := setupTestData(t, db)
@@ -704,49 +707,58 @@ func TestPartialReserveNeverDispatches_PayloadMismatchAtProcessNode(t *testing.T
 	}
 	order := mkComplexOrder(t, db, "pmm-1", press.Name, press.Name, lineNode.Name, bp.Code, steps)
 
-	// Drive the REAL dispatch entry point, not the allocator directly — the whole
-	// point is that the reserve outcome must stop the order before it confirms and
-	// ships. Calling reserveComplexPlan here would assert nothing about dispatch.
-	err := d.DispatchPreparedComplex(order)
-	if err == nil {
-		t.Fatal("DispatchPreparedComplex returned nil — a partial reserve must NOT dispatch; the order has to hold and retry")
+	// Drive the REAL dispatch entry point. The evac must BIND the resident
+	// off-payload press bin (remove whatever is there), so the order dispatches
+	// COMPLETE instead of shipping a 1-of-2 partial that stamps the empty market
+	// carrier as the press's bin (the original damage).
+	if derr := d.DispatchPreparedComplex(order); derr != nil {
+		t.Fatalf("DispatchPreparedComplex returned %v — an evac must bind the resident bin regardless of its payload, not wedge on a mismatch", derr)
 	}
-
-	// It held for the right reason: the press bin is present but unclaimable, which
-	// is sourceable (someone can fix the payload), not moot.
-	held, gerr := db.GetOrder(order.ID)
+	got, gerr := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, gerr, "reload order")
-	if !protocol.IsAcquiring(held.Status) {
-		t.Errorf("status = %s, want an acquiring status (queued/sourcing) — a held order must stay retryable, not fail or skip", held.Status)
-	}
 
-	// THE DAMAGE. On the pre-reserve/confirm build this is where it went wrong: with
-	// only the market pickup claimed, order.BinID fell back to "the first claimed
-	// bin" — the EMPTY CARRIER. That non-nil BinID is what made Core ship a
-	// single-bin delivery envelope, which is what let Edge's gate bind an empty tote
-	// to the press and drive its UOP tile to 0 (HK 2026-07-14).
-	if held.BinID != nil {
-		t.Errorf("order.BinID = %d after a partial reserve, want nil — stamping the market carrier here is exactly what shipped an empty tote as the press's bin", *held.BinID)
-	}
-	obs, _ := db.ListOrderBins(order.ID)
-	if len(obs) != 0 {
-		t.Errorf("order_bins rows = %d, want 0 — a held order has claimed nothing", len(obs))
-	}
-
-	// No robot was sent.
-	if vendor := held.VendorOrderID; vendor != "" {
-		t.Errorf("vendor order %q created — a robot must never start a job it cannot finish", vendor)
-	}
-
-	// Neither bin is hard-claimed: confirm never ran. The market bin may hold a soft
-	// reservation (that is the point of holding partials across ticks), but a claim
-	// is a commitment and must not exist.
+	// COMPLETE, not partial: both pickups bound their bins.
 	pb, _ := db.GetBin(pressBin.ID)
-	if pb.ClaimedBy != nil {
-		t.Errorf("press bin claimed by %d — a payload-mismatched bin must never be claimed", *pb.ClaimedBy)
+	if pb.ClaimedBy == nil || *pb.ClaimedBy != order.ID {
+		t.Fatalf("press bin claimed_by = %v, want evac order %d — the removal must bind the resident bin by node, payload-agnostic", pb.ClaimedBy, order.ID)
 	}
 	mb, _ := db.GetBin(marketBin.ID)
-	if mb.ClaimedBy != nil {
-		t.Errorf("market bin hard-claimed by %d — reserveHolding must leave it a soft reservation, not a claim", *mb.ClaimedBy)
+	if mb.ClaimedBy == nil || *mb.ClaimedBy != order.ID {
+		t.Fatalf("market bin claimed_by = %v, want evac order %d — a complete reserve claims BOTH pickups", mb.ClaimedBy, order.ID)
+	}
+
+	// THE ANTI-DAMAGE: the press pickup is bound to the PRESS bin, never the empty
+	// carrier. On the old build order.BinID fell back to the market tote, which is
+	// what drove the press UOP tile to 0. A complete bind records the right bin
+	// against the press pickup.
+	obs, _ := db.ListOrderBins(order.ID)
+	if len(obs) != 2 {
+		t.Fatalf("order_bins rows = %d, want 2 — a complete evac records both pickups; a 1-of-2 partial is exactly the HK damage", len(obs))
+	}
+	var pressRowBin int64 = -1
+	for _, ob := range obs {
+		if ob.NodeName == press.Name {
+			pressRowBin = ob.BinID
+		}
+	}
+	if pressRowBin != pressBin.ID {
+		t.Fatalf("press pickup bound bin %d, want the resident press bin %d — never the empty carrier (HK 2026-07-14 drove the press to 0 by stamping the market tote here)", pressRowBin, pressBin.ID)
+	}
+
+	// It dispatched — the whole point is no wedge.
+	if got.VendorOrderID == "" {
+		t.Error("no vendor order created — a complete evac must dispatch, not hold")
+	}
+
+	// And the mismatch was SURFACED, not silently swallowed.
+	entries, _ := db.ListEntityAudit("bin", pressBin.ID)
+	surfaced := false
+	for _, e := range entries {
+		if e.Action == "evac_payload_mismatch" {
+			surfaced = true
+		}
+	}
+	if !surfaced {
+		t.Error("no evac_payload_mismatch audit entry — an off-payload evac must surface the anomaly for operator follow-up")
 	}
 }

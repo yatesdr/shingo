@@ -159,7 +159,14 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		//    BinUnavailableReason — owner-blind is CORRECT here: it skips every
 		//    reserved bin (ours and others'), so we only ever Acquire an UNreserved
 		//    bin, which cannot self-conflict.
-		bin, nodeHadBins, ferr := a.findAvailableForNeed(pk.step, order.PayloadCode)
+		//
+		//    A removal/evac pickup (at the order's own line node) binds by NODE,
+		//    payload-agnostic: it clears whatever bin is resident, whose style may
+		//    legitimately differ from the node's active-style tag (a stale leftover
+		//    — SPR ALN_006, 2026-07). A supply fetch at any other node stays
+		//    payload-filtered.
+		removal := isRemovalPickup(pk.step, order.ProcessNode)
+		bin, nodeHadBins, ferr := a.findAvailableForNeed(pk.step, order.PayloadCode, removal)
 		if ferr != nil {
 			return nil, reserveHolding, ferr
 		}
@@ -187,6 +194,19 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		}
 		if aerr != nil {
 			return nil, reserveHolding, fmt.Errorf("reserve order=%d bin=%d: %w", order.ID, bin.ID, aerr)
+		}
+		// Surface — never silently swallow — a removal that binds a bin whose payload
+		// differs from the order's tag. Binding it is correct (the evac clears
+		// whatever is resident, no wedge), but an off-payload resident bin is an
+		// anomaly worth an operator's eyes: a stale off-style leftover, or a
+		// mis-stamped bin (HK 2026-07-14). Proceed AND alert — never fail the order
+		// over it, and never rewrite the bin to match (account by its real payload).
+		if removal && bin.PayloadCode != "" && order.PayloadCode != "" && bin.PayloadCode != order.PayloadCode {
+			log.Printf("dispatch: order %d evac at %s binds off-payload bin %d (bin=%q order=%q) — proceeding, surfacing mismatch",
+				order.ID, pk.step.Node, bin.ID, bin.PayloadCode, order.PayloadCode)
+			a.db.AppendAudit("bin", bin.ID, "evac_payload_mismatch", "",
+				fmt.Sprintf("complex order %d evac at %s bound resident bin payload %q (order tag %q) — mismatch surfaced, evac proceeds",
+					order.ID, pk.step.Node, bin.PayloadCode, order.PayloadCode), "system")
 		}
 		a.db.AppendAudit("bin", bin.ID, "reserved", "",
 			fmt.Sprintf("complex order %d reserve at %s", order.ID, pk.step.Node), "system")
@@ -402,10 +422,24 @@ func matchHeldSlot(held []*heldReservation, nodeName string) *heldReservation {
 	return nil
 }
 
+// isRemovalPickup reports whether a complex pickup is the evac/removal of the
+// order's own line position — a pickup AT the order's process node. Such a pickup
+// takes whatever bin is resident (a line position holds exactly one), so it must
+// bind by node, not by the order's payload tag: the resident bin's style can
+// legitimately differ from the node's active style (a stale leftover from a prior
+// run), and filtering the removal by that tag wedges the evac forever (SPR
+// ALN_006, 2026-07). A pickup at any OTHER node (a supply fetch from a
+// supermarket) stays payload-filtered.
+func isRemovalPickup(step resolvedStep, processNode string) bool {
+	return processNode != "" && step.Action == protocol.ActionPickup && step.Node == processNode
+}
+
 // findAvailableForNeed returns the first UNRESERVED, claimable bin at the need's
-// node (empty carrier for an empty leg, else a payload match) — the same per-step
-// selection the old live claim path made, minus the claim. Returns nil when the
-// node has no available bin yet (the reconcile counts it missing and retries).
+// node. Selection: a removal/evac pickup (at the order's line node) binds ANY
+// resident bin, payload-agnostic; an empty leg binds an empty carrier; otherwise a
+// payload match — the same per-step selection the old live claim path made, minus
+// the claim. Returns nil when the node has no available bin yet (the reconcile
+// counts it missing and retries).
 // nodeHadBins reports whether the node held ANY bins (before the empty/payload
 // filter) — the reconcile uses it to tell "genuinely empty node" (contributes to
 // a moot outcome) from "bins present but unavailable" (sourceable, hold + retry).
@@ -416,7 +450,7 @@ func matchHeldSlot(held []*heldReservation, nodeName string) *heldReservation {
 // scanMu (Scanner.RunOnce serializes scan(), fulfillment/scanner.go). Do NOT call
 // the reserve reconcile from a non-serialized path, or two ticks could read
 // occupancy across each other and mis-classify a moot vs a present-but-taken node.
-func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string) (bin *binsstore.Bin, nodeHadBins bool, err error) {
+func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string, removal bool) (bin *binsstore.Bin, nodeHadBins bool, err error) {
 	node, err := a.db.GetNodeByDotName(step.Node)
 	if err != nil || node == nil {
 		return nil, false, nil // node unresolvable → treat as empty (miss), retry next tick
@@ -428,7 +462,15 @@ func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string) 
 	nodeHadBins = len(bins) > 0
 	candidates := bins
 	claimPayload := payloadCode
-	if step.Empty {
+	switch {
+	case removal:
+		// Evac/removal: clear whatever bin is resident, regardless of its payload.
+		// The line holds exactly one bin, and its style may legitimately differ
+		// from the node's active-style tag (a stale leftover). Filtering the removal
+		// by that tag is what wedged SPR ALN_006 (2026-07). Account by the bin's
+		// real payload downstream — never rewrite the bin to match the order.
+		claimPayload = ""
+	case step.Empty:
 		// Empty pickup leg (produce's "bring an empty to fill"): an empty carrier,
 		// dropping the payload context — same filter as the old claim path.
 		candidates = emptyBinsOnly(bins)

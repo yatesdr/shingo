@@ -56,6 +56,38 @@ func legTakesLineBin(steps []resolvedStep, processNode string) bool {
 	return tookBin
 }
 
+// legPlacesLineBin reports whether the leg drives a bin ONTO the line node and
+// does not also lift one off: a dropoff at processNode with no pickup at
+// processNode. That is the supply/index shape — the leg that fills the shared
+// line position, and so must not commit until whatever occupies that position
+// has been cleared. The mirror of legTakesLineBin, same both sides of the wire.
+//
+// Verified against the Edge builders (material_orders.go):
+//
+//	two_robot A (supply)   dropoff(LINE), no pickup(LINE)         → TRUE  (filler)
+//	press-index R2 (2&3)   pickup(B), dropoff(LINE)               → TRUE  (filler/index)
+//	press-index R1 (2&3)   pickup(LINE), dropoff(OUT/IN/B|C)      → false (evac)
+//	two_robot B (evac)     pickup(LINE), no dropoff(LINE)         → false (evac)
+//	single_robot           pickup(LINE) AND dropoff(LINE)         → false (self-contained)
+func legPlacesLineBin(steps []resolvedStep, processNode string) bool {
+	if processNode == "" {
+		return false
+	}
+	placedBin := false
+	for _, s := range steps {
+		if s.Node != processNode {
+			continue
+		}
+		switch s.Action {
+		case protocol.ActionDropoff:
+			placedBin = true
+		case protocol.ActionPickup:
+			return false // it also lifts the line's bin — evac / self-contained, not a pure filler
+		}
+	}
+	return placedBin
+}
+
 // legSecuresOwnReplacement reports whether the leg fetches a bin from somewhere
 // other than the line — i.e. it brings a replacement INTO the swap itself and so
 // does not depend on a sibling to secure one.

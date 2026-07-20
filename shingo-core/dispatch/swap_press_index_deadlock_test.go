@@ -98,7 +98,7 @@ func TestSwapHold_PressIndexR1_NotHeldOnItsSibling(t *testing.T) {
 	if !ok {
 		t.Fatal("R1 has no readable steps")
 	}
-	if held, reason := d.swapRemovalLegHeld(r1, steps); held {
+	if held, reason := d.swapLegHeld(r1, steps); held {
 		t.Fatalf("R1 held (%s) — it collects its own carrier (second pickup at the market) and can never be unblocked by R2, "+
 			"whose only source is the index position R1 was going to fill. This is the deadlock.", reason)
 	}
@@ -151,8 +151,128 @@ func TestSwapHold_TwoRobotEvac_StillHeldUntilSupplyClaims(t *testing.T) {
 	if !ok {
 		t.Fatal("evac has no readable steps")
 	}
-	if held, _ := d.swapRemovalLegHeld(evac, steps); !held {
+	if held, _ := d.swapLegHeld(evac, steps); !held {
 		t.Fatal("two_robot evac must stay held while its supply holds no claim — it has a single pickup, at the line, " +
 			"so it removes the line's bin with no replacement secured (ALN_003 swap-starvation)")
+	}
+}
+
+// TestSwapHold_PressIndexR2_HeldUntilEvacDispatched is the HOP anti-collision half
+// of the unified gate. The index leg (R2) drives a fresh bin ONTO the press front;
+// if its evac sibling (R1) is starved and queued, R2 must not dispatch, or it
+// drives into a still-occupied position (two bins on the line — HOP 2026-07). Once
+// R1 is committed to the fleet — it will clear the front, and the fleet sequences
+// R2's dropoff after R1's pickup — R2 is released.
+func TestSwapHold_PressIndexR2_HeldUntilEvacDispatched(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, press, bp := setupTestData(t, db)
+
+	market := &nodes.Node{Name: "PI2-MARKET", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "create market")
+	indexB := &nodes.Node{Name: "PI2-INDEX-B", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(indexB), "create index B")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// R1 — the evac. Two pickups (press bin + fresh carrier): it secures its own
+	// replacement. No bins exist, so it fails its claim and stays queued/starved.
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "pi2-r1", PayloadCode: bp.Code, Quantity: 1, ProcessNode: press.Name,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionWait, Node: press.Name},
+			{Action: protocol.ActionPickup, Node: press.Name},
+			{Action: protocol.ActionDropoff, Node: market.Name},
+			{Action: protocol.ActionPickup, Node: market.Name},
+			{Action: protocol.ActionDropoff, Node: indexB.Name},
+		},
+	})
+	r1, err := db.GetOrderByUUID("pi2-r1")
+	testutil.MustNoErr(t, err, "get R1")
+	if !protocol.IsAcquiring(r1.Status) {
+		t.Fatalf("precondition: R1 status = %q, want queued/sourcing (starved evac)", r1.Status)
+	}
+
+	// R2 — the index leg. pickup(B) -> dropoff(press): it PLACES a bin on the line.
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "pi2-r2", PayloadCode: bp.Code, Quantity: 1, ProcessNode: press.Name,
+		SiblingOrderUUID: "pi2-r1",
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionWait, Node: indexB.Name},
+			{Action: protocol.ActionPickup, Node: indexB.Name},
+			{Action: protocol.ActionDropoff, Node: press.Name},
+		},
+	})
+	r2, err := db.GetOrderByUUID("pi2-r2")
+	testutil.MustNoErr(t, err, "get R2")
+	r2Steps, ok := decodeSteps(r2.StepsJSON)
+	if !ok {
+		t.Fatal("R2 has no readable steps")
+	}
+
+	// HELD: R1 (evac) is starved/queued, so R2 must not drive its index onto the
+	// still-occupied front.
+	if held, _ := d.swapLegHeld(r2, r2Steps); !held {
+		t.Fatal("index leg R2 must be held while its evac sibling R1 is queued/starved — " +
+			"dispatching it drives a bin onto an un-evacuated press front (HOP 2026-07)")
+	}
+
+	// R1 commits to the fleet (dispatched): it will clear the front, and the fleet
+	// sequences R2's dropoff after R1's pickup. R2 is released.
+	if _, err := db.DB.Exec(`UPDATE orders SET status=$1 WHERE id=$2`, string(StatusDispatched), r1.ID); err != nil {
+		t.Fatalf("advance R1 to dispatched: %v", err)
+	}
+	if held, reason := d.swapLegHeld(r2, r2Steps); held {
+		t.Fatalf("index leg R2 still held (%s) after its evac sibling dispatched — "+
+			"the clearer is committed and the fleet sequences the handoff", reason)
+	}
+}
+
+// TestSwapHold_TwoRobotSupply_NotHeld pins the deadlock-avoidance boundary of the
+// index anti-collision arm. A two_robot SUPPLY also places a bin on the line, but
+// its sibling is a plain evac that is ITSELF held on the supply (ALN_003). Holding
+// the supply too would be a mutual wait — neither could ever claim. The gate must
+// exempt it, because its evac sibling does not secure its own replacement.
+func TestSwapHold_TwoRobotSupply_NotHeld(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, line, bp := setupTestData(t, db)
+
+	market := &nodes.Node{Name: "TR2-MARKET", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "create market")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// Supply: pickup(market) -> dropoff(line). Places a bin on the line. Created
+	// first, so it carries no sibling yet.
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "tr2-supply", PayloadCode: bp.Code, Quantity: 1, ProcessNode: line.Name,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionPickup, Node: market.Name},
+			{Action: protocol.ActionDropoff, Node: line.Name},
+		},
+	})
+
+	// Evac: single pickup at the line. Carries the sibling pointer, so intake
+	// back-links the supply — the supply now has a sibling to evaluate against.
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "tr2-evac", PayloadCode: bp.Code, Quantity: 1, ProcessNode: line.Name,
+		SiblingOrderUUID: "tr2-supply",
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionWait, Node: line.Name},
+			{Action: protocol.ActionPickup, Node: line.Name},
+			{Action: protocol.ActionDropoff, Node: market.Name},
+		},
+	})
+
+	supply, err := db.GetOrderByUUID("tr2-supply")
+	testutil.MustNoErr(t, err, "get supply")
+	supplySteps, ok := decodeSteps(supply.StepsJSON)
+	if !ok {
+		t.Fatal("supply has no readable steps")
+	}
+	if held, reason := d.swapLegHeld(supply, supplySteps); held {
+		t.Fatalf("two_robot supply held (%s) — its evac sibling is the one held (ALN_003); "+
+			"holding both is the mutual-wait deadlock the index arm must avoid", reason)
 	}
 }

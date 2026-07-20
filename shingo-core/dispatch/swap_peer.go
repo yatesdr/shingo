@@ -23,7 +23,7 @@ const (
 // durable sibling link (sibling_order_uuid, made reliable in the durable-link
 // commit), NOT a compound parent, identifies the peer.
 //
-// This closes the ALN_003 POST-DISPATCH window: swapRemovalLegHeld is only a
+// This closes the ALN_003 POST-DISPATCH window: swapLegHeld is only a
 // dispatch-time admission gate (it stops the evac pulling before the supply has
 // claimed) and nothing re-runs it once a leg is in flight. If a leg then dies,
 // this handler unwinds the other.
@@ -54,7 +54,7 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 		return
 	}
 
-	// Same discriminator as swapRemovalLegHeld — legTakesLineBin: the evac lifts
+	// Same discriminator as swapLegHeld — legTakesLineBin: the evac lifts
 	// the line's bin and does not put one back; the supply sets one down.
 	//
 	// This was `DeliveryNode != ProcessNode`, which mis-reads a 3-position

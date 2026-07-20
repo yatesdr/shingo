@@ -60,7 +60,7 @@ type Order struct {
 	// swap — the supply's UUID recorded on the evac row (and vice-versa).
 	// Written ATOMICALLY in the CreateOrder INSERT so a two-robot evac's
 	// link to its supply can never be lost by a failed post-create link
-	// step; the swapRemovalLegHeld starvation gate depends on it to avoid
+	// step; the swapLegHeld starvation gate depends on it to avoid
 	// the ALN_003 line-strand. "" for every non-swap order.
 	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
 	// SourceIntent classifies how a plain order sources its bin (full / empty /

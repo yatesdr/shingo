@@ -21,7 +21,7 @@ import (
 // best-effort LinkOrderSiblingsByEdgeUUID, log-and-continue) never recorded it.
 //
 // This is the ALN_003 fail-open: pre-fix, a failed intake link left
-// sibling_order_uuid empty → swapRemovalLegHeld read it as "not a swap leg" →
+// sibling_order_uuid empty → swapLegHeld read it as "not a swap leg" →
 // the evac PULLED the line bin with no supply hold → line stranded.
 //
 // The test models the failed-link case by creating the evac via CreateOrder
@@ -77,7 +77,7 @@ func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 	if !ok {
 		t.Fatal("evac has no readable steps")
 	}
-	if held, _ := d.swapRemovalLegHeld(evac, evacSteps); !held {
+	if held, _ := d.swapLegHeld(evac, evacSteps); !held {
 		t.Fatal("evac must be held while supply has no claimed bin, even though the intake link step never ran")
 	}
 }
@@ -137,7 +137,7 @@ func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 	// Processing the evac triggers the on-read repair.
 	evac, _ = db.GetOrderByUUID("swap-removal-rb")
 	evacSteps, _ := decodeSteps(evac.StepsJSON)
-	_, _ = d.swapRemovalLegHeld(evac, evacSteps)
+	_, _ = d.swapLegHeld(evac, evacSteps)
 
 	// The supply's back-link is now healed.
 	healed, err := db.OrderSiblingUUID(supply.ID)

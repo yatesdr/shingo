@@ -43,7 +43,7 @@ func TestDeadlockGate_CoordinatedToOccupiedLine_NotGated(t *testing.T) {
 	testutil.MustNoErr(t, db.ConfirmBinManifest(srcBin.ID, ""), "confirm")
 
 	// Coordinated (StepsJSON), no wait, delivering TO the occupied line, no sibling
-	// link (so swapRemovalLegHeld is not the reason it could hold).
+	// link (so swapLegHeld is not the reason it could hold).
 	order := &orders.Order{
 		EdgeUUID: "coord-occ-line", StationID: "line-1", OrderType: OrderTypeComplex,
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,

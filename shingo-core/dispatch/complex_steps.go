@@ -227,7 +227,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 // reaches the robot. Redefining what this returns re-aims a robot.
 //
 // It is NOT a leg's role, and two dispatch predicates used to think it was —
-// swapRemovalLegHeld and deadIsEvac, both of which deadlocked or mis-read
+// swapLegHeld and deadIsEvac, both of which deadlocked or mis-read
 // press-index because a leg can end somewhere other than where its bin ends.
 // Role comes from the steps: see legTakesLineBin (swap_leg_role.go).
 //

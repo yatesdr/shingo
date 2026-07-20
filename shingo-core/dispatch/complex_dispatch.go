@@ -225,41 +225,42 @@ func isConcreteStorageDropoff(db *store.DB, deliveryNode string) bool {
 	return parent.NodeTypeCode == protocol.NodeClassLANE || parent.NodeTypeCode == protocol.NodeClassNGRP
 }
 
-// swapRemovalLegHeld reports whether `order` is a removal (evac) leg that
-// depends on a supply sibling which has not yet claimed a replacement bin. While
-// true the leg must not claim/pull the line bin — the line keeps its current bin
-// until a replacement is secured (ALN_003 swap-starvation, 2026-06-03). Returns
-// (false, "") for non-swap orders, supply legs, self-sufficient removal legs, and
-// removal legs whose supply sibling already holds a claim.
-// Fail-open on lookup errors: never freeze a robot on a transient failure.
+// swapLegHeld reports whether a coordinated-swap leg must stay queued because its
+// commit on the shared LINE node is unsafe until its sibling has done its part.
+// One gate, two faces of the same invariant — never let one leg physically commit
+// on the shared node while its partner cannot satisfy the precondition that makes
+// that commit safe. Returns (false, "") for non-swap orders and any leg whose
+// commit is already safe. Fail-open on lookup errors: never freeze a robot on a
+// transient failure.
 //
-// The gate is: the leg TAKES THE LINE BIN and does not SECURE ITS OWN
-// REPLACEMENT. Both are read from the leg's steps — see swap_leg_role.go.
+// The two faces, both keyed on what the leg does to its ProcessNode (the shared
+// line position), read from the steps — see swap_leg_role.go:
 //
-// It used to be `DeliveryNode != ProcessNode`, which is not the same question and
-// deadlocked press-index. Core's DeliveryNode is derived from the steps by
-// extractEndpoints (last pickup-or-dropoff), so a press-index R1 — which ends by
-// staging a fresh carrier at the index node — always looked like it "delivers
-// away from the line", i.e. like a removal leg needing help. It isn't: R1 fetches
-// that carrier itself. The failure was live and permanent:
+//   - EVAC anti-strand (ALN_003, 2026-06-03): a leg that TAKES the line bin and
+//     does NOT secure its own replacement is held until its supply sibling has
+//     CLAIMED a replacement — else it pulls the line's bin with nothing coming and
+//     strands the line empty.
 //
-//  1. R1 arrives, fails its first claim (dry supermarket, or a re-stamped payload
-//     on the press bin — the state complex_reserve_test's partial-reserve pin
-//     covers) and stays queued. It escaped this gate only because its sibling
-//     pointer was still empty.
-//  2. R2 arrives. Intake back-links BOTH rows (LinkSiblingsByEdgeUUID's
-//     bidirectional CASE), so R1 now has a sibling.
-//  3. R1 is re-evaluated: evac-shaped, sibling present, sibling holds no claim →
-//     HELD, pending R2's claim.
-//  4. R2's only pickup is the index position — which is empty, because filling it
-//     is R1's job. R2 can never claim.
+//   - INDEX anti-collision (HOP press-index, 2026-07): a leg that PLACES a bin on
+//     the line is held until its clearer sibling has DISPATCHED to clear that
+//     position first — else it drives into a still-occupied node (two bins on one
+//     line position). Scoped to a self-sufficient evac sibling
+//     (legSecuresOwnReplacement) so it can never mutual-hold the evac case: a
+//     two_robot supply's sibling is a plain evac already held on the supply, and
+//     holding both would deadlock.
 //
-// R1 waits on R2; R2 waits on R1. Nothing breaks the cycle. Asking "does this leg
-// bring its own replacement?" exempts R1 by what it does, not by where it ends.
+// The directions are asymmetric on purpose. A press-index evac (R1) stages the
+// fresh carrier the index leg (R2) later collects, so R1 must be free to run
+// first — holding R1 on R2 is the permanent deadlock
+// TestSwapHold_PressIndexR1_NotHeldOnItsSibling pins shut. Only the FILLER waits;
+// the CLEARER never does.
 //
-// The two_robot evac (one pickup, at the line) is still held — that is the
-// ALN_003 guard and it must not regress.
-func (d *Dispatcher) swapRemovalLegHeld(order *orders.Order, steps []resolvedStep) (bool, string) {
+// Role is read from the steps, not geometry. It used to be
+// `DeliveryNode != ProcessNode`, a different question: Core derives DeliveryNode
+// from the steps (extractEndpoints = last pickup-or-dropoff), so a press-index R1
+// — ending by staging a carrier at the index node — looked like a removal leg
+// needing help. It isn't; it fetches that carrier itself.
+func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (bool, string) {
 	sibUUID, err := d.db.OrderSiblingUUID(order.ID)
 	if err != nil {
 		// Transient DB read error — fail OPEN. Never freeze a robot on a flaky
@@ -305,28 +306,71 @@ func (d *Dispatcher) swapRemovalLegHeld(order *orders.Order, steps []resolvedSte
 		}
 	}
 
-	// Only a leg that pulls the line's bin can strand the line, and only one that
-	// cannot fetch its own replacement needs a sibling to do it.
-	if !legTakesLineBin(steps, order.ProcessNode) {
-		return false, ""
+	takesLine := legTakesLineBin(steps, order.ProcessNode)
+	placesLine := legPlacesLineBin(steps, order.ProcessNode)
+
+	// EVAC anti-strand: a leg that lifts the line's bin but cannot fetch its own
+	// replacement waits for its supply sibling to claim, or the line strands.
+	if takesLine && !legSecuresOwnReplacement(steps) {
+		if sibErr != nil || sib == nil {
+			// Supply row should exist (created first, linked at intake); hold
+			// rather than strand the line if it is somehow missing.
+			return true, "swap: awaiting supply sibling"
+		}
+		claimed, err := d.db.ListBinsByClaim(sib.ID)
+		if err != nil {
+			log.Printf("dispatch: swap-hold claim check for order %d sib %d: %v", order.ID, sib.ID, err)
+			return false, ""
+		}
+		if len(claimed) > 0 {
+			return false, "" // supply secured a replacement — release the hold
+		}
+		return true, "swap: holding removal leg until supply sibling claims a bin"
 	}
-	if legSecuresOwnReplacement(steps) {
-		return false, ""
+
+	// INDEX anti-collision: a leg that drops a bin onto the line waits until its
+	// clearer sibling is committed to clearing that position first. Only when the
+	// sibling is a self-sufficient evac — otherwise this is a two_robot supply
+	// whose evac sibling is the one held (above), and holding both deadlocks.
+	if placesLine && !takesLine {
+		if sibErr != nil || sib == nil {
+			// Absent/unreadable peer: fail OPEN. The clearer (evac) is created
+			// first on this path, so it is normally present; never freeze on a
+			// flaky read, and never hold a filler we cannot confirm is paired with
+			// a self-sufficient evac.
+			return false, ""
+		}
+		sibSteps, ok := decodeSteps(sib.StepsJSON)
+		if !ok || !legSecuresOwnReplacement(sibSteps) {
+			// Sibling is not a self-sufficient evac (the two_robot supply case, or
+			// an unreadable peer) — its evac sibling is held on us; do not mutual-hold.
+			return false, ""
+		}
+		if swapClearerCommitted(sib) {
+			return false, "" // evac is committed to clearing the line — release
+		}
+		return true, "swap: holding index leg until evac sibling clears the line"
 	}
-	if sibErr != nil || sib == nil {
-		// Supply row should exist (created first, linked at intake); hold
-		// rather than strand the line if it is somehow missing.
-		return true, "swap: awaiting supply sibling"
+
+	return false, ""
+}
+
+// swapClearerCommitted reports whether the evac/clearer sibling has committed to
+// the fleet and will clear the shared line position — it holds a vendor order and
+// is en route or done, so the fleet manager can sequence the filler's dropoff
+// after the clearer's pickup (and peer-death handling covers a post-dispatch
+// fault). Read from dispatch state, NOT a live claim, so the hold releases
+// correctly even after the clearer completes and drops its claim. The acquiring
+// states (queued/sourcing) it is held FROM and the failure states where it will
+// not clear the line both read as not-committed; a faulted clearer may recover,
+// so the filler stays held.
+func swapClearerCommitted(sib *orders.Order) bool {
+	switch sib.Status {
+	case StatusDispatched, StatusInTransit, StatusStaged, StatusDelivered, StatusConfirmed:
+		return true
+	default:
+		return false
 	}
-	claimed, err := d.db.ListBinsByClaim(sib.ID)
-	if err != nil {
-		log.Printf("dispatch: swap-hold claim check for order %d sib %d: %v", order.ID, sib.ID, err)
-		return false, ""
-	}
-	if len(claimed) > 0 {
-		return false, "" // supply secured a replacement — release the hold
-	}
-	return true, "swap: holding removal leg until supply sibling claims a bin"
 }
 
 func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
@@ -435,10 +479,10 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// Reads the RESOLVED steps, not the raw ones: NGRP names have been resolved
 	// to concrete nodes by now, and the line node is concrete either way, so the
 	// pickup/dropoff shape the gate depends on is stable across resolution.
-	if held, reason := d.swapRemovalLegHeld(order, resolvedSteps); held {
+	if held, reason := d.swapLegHeld(order, resolvedSteps); held {
 		d.setQueueReason(order, protocol.QueueWaitingForPartner, "swap-hold", QueueParams{Sibling: order.SiblingOrderUUID})
 		d.dbg("complex: order %d held — %s", order.ID, reason)
-		return fmt.Errorf("swap removal hold: %s", reason)
+		return fmt.Errorf("swap hold: %s", reason)
 	}
 
 	// #1 (regression 2b05dce): restore the dropoff-capacity gate for complex
@@ -530,9 +574,15 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		d.skipOrderInternal(order, codeNoSourceBin, fmt.Sprintf("complex order %d: no bin at any source node", order.ID))
 		return fmt.Errorf("complex order %d moot — skipped", order.ID)
 	case reserveHolding:
+		// Only claim "partial set already held" when the order actually holds part
+		// of its set. Holding NOTHING (zero reserved, blocked on every need) is a
+		// different operator situation and must not render as a partial hold — that
+		// was the SPR ALN_006 lie: "sourcing / partial set already held" while the
+		// order held zero reservations and made no progress.
+		holdingPartials := len(assigned) > 0
 		d.setQueueReason(order, protocol.QueueWaitingForMaterial, "reserve-holding",
-			QueueParams{Payload: order.PayloadCode, Partial: true})
-		d.dbg("complex: order %d incomplete reserve — holding partials, retrying next tick", order.ID)
+			QueueParams{Payload: order.PayloadCode, Partial: holdingPartials})
+		d.dbg("complex: order %d incomplete reserve — holding %d partial(s), retrying next tick", order.ID, len(assigned))
 		return fmt.Errorf("complex order %d reserve incomplete", order.ID)
 	}
 

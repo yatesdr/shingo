@@ -72,7 +72,7 @@ func TestSwapRemovalLegHeld_UntilSupplyClaims(t *testing.T) {
 	if !ok {
 		t.Fatal("removal leg has no readable steps — intake contract changed")
 	}
-	if held, _ := d.swapRemovalLegHeld(removal, removalSteps); !held {
+	if held, _ := d.swapLegHeld(removal, removalSteps); !held {
 		t.Fatal("removal leg should be held while supply sibling has no claimed bin")
 	}
 	// DispatchPreparedComplex must stay queued without claiming the line bin.
@@ -94,8 +94,62 @@ func TestSwapRemovalLegHeld_UntilSupplyClaims(t *testing.T) {
 		t.Fatalf("claim super bin for supply: %v", err)
 	}
 	removal, _ = db.GetOrderByUUID("swap-removal")
-	if held, _ := d.swapRemovalLegHeld(removal, removalSteps); held {
+	if held, _ := d.swapLegHeld(removal, removalSteps); held {
 		t.Error("removal leg should no longer be held once supply has a claimed bin")
+	}
+}
+
+// TestEvacBindsResidentOffStyleBin pins the SPR ALN_006 fix: an evac/removal
+// pickup binds whatever bin is resident at its line node, even when that bin's
+// payload differs from the order's (active-style) tag. Before the fix the reserve
+// filtered the removal by order.PayloadCode, so a stale off-style leftover bin
+// never matched — the evac wedged in `sourcing` forever holding zero reservations.
+// The bin's recorded payload is left untouched: accounting is by the bin's real
+// payload, never rewritten to the order's tag.
+func TestEvacBindsResidentOffStyleBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	superNode := &nodes.Node{Name: "EVAC-OFFSTYLE-SUPER", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(superNode), "create super node")
+
+	// The resident bin at the line is an OFF-STYLE leftover — its payload differs
+	// from bp.Code, which is the order's active-style tag. UOP 0 (consumed), like
+	// the real SPR bin.
+	const offStyle = "63144-6TA1A.10"
+	residentBin := &bins.Bin{BinTypeID: 1, Label: "EVAC-RESIDENT", NodeID: &lineNode.ID, Status: "staged"}
+	testutil.MustNoErr(t, db.CreateBin(residentBin), "create resident bin")
+	testutil.MustNoErr(t, db.SetBinManifest(residentBin.ID, `{"items":[{"catid":"PART-OLD","qty":0}]}`, offStyle, 0), "set off-style manifest")
+	testutil.MustNoErr(t, db.ConfirmBinManifest(residentBin.ID, ""), "confirm manifest")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// Evac leg: wait/pickup at the line, dropoff at the supermarket, tagged with
+	// the active-style payload (bp.Code), NOT the resident bin's off-style payload.
+	// No sibling, so the swap hold does not apply — this isolates the bind.
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "evac-offstyle", PayloadCode: bp.Code, Quantity: 1, ProcessNode: lineNode.Name,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionWait, Node: lineNode.Name},
+			{Action: protocol.ActionPickup, Node: lineNode.Name},
+			{Action: protocol.ActionDropoff, Node: superNode.Name},
+		},
+	})
+	order, err := db.GetOrderByUUID("evac-offstyle")
+	testutil.MustNoErr(t, err, "get evac order")
+
+	if derr := d.DispatchPreparedComplex(order); derr != nil {
+		t.Fatalf("evac dispatch returned %v — the removal must bind the resident off-style bin, not wedge on a payload mismatch", derr)
+	}
+
+	got, err := db.GetBin(residentBin.ID)
+	testutil.MustNoErr(t, err, "re-read resident bin")
+	if got.ClaimedBy == nil || *got.ClaimedBy != order.ID {
+		t.Fatalf("resident off-style bin claimed_by = %v, want evac order %d — the removal must bind by node, payload-agnostic", got.ClaimedBy, order.ID)
+	}
+	if got.PayloadCode != offStyle {
+		t.Fatalf("resident bin payload_code = %q, want %q unchanged — the manifest must not be rewritten to the order's tag", got.PayloadCode, offStyle)
 	}
 }
 

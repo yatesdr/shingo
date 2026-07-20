@@ -56,7 +56,7 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 			// The supply was created but we can't read back its UUID, so we cannot
 			// stamp the evac's sibling pointer. Creating the evac anyway yields an
 			// UNLINKED two-robot pair at Core — silently disabling BOTH the swap
-			// starvation hold (dispatch.swapRemovalLegHeld) and the peer-death
+			// starvation hold (dispatch.swapLegHeld) and the peer-death
 			// handler (dispatch.HandleSwapPeerTerminal), the exact ALN_003
 			// fail-open. Fail this node task like the create-order errors above
 			// rather than ship a half-linked swap; the rest of the plan proceeds
