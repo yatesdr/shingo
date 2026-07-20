@@ -407,7 +407,7 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 		return nil, &planningError{Code: codeLaneLocked, Detail: "lane locked concurrently"}
 	}
 	if err := s.createCompound(order, plan); err != nil {
-		s.laneLock.Unlock(buried.LaneID)
+		s.laneLock.Unlock(buried.LaneID, order.ID)
 		return nil, &planningError{Code: codeReshuffle, Detail: fmt.Sprintf("cannot create compound order: %v", err), Err: err}
 	}
 	// createCompound already transitioned the parent to Reshuffling via

@@ -134,7 +134,7 @@ func (d *Dispatcher) extendLaneLockForComplexParent(complexParent *orders.Order,
 		// the lock so it doesn't sit indefinitely. The lane is held
 		// by this complex parent (we verified via LockedBy above), so
 		// a plain Unlock is correct — no other caller can hold it.
-		d.laneLock.Unlock(laneID)
+		d.laneLock.Unlock(laneID, complexParent.ID)
 		log.Printf("dispatch: duplicate lane-hold registration for complex %d; releasing lock", complexParent.ID)
 		return
 	}
@@ -170,7 +170,7 @@ func (d *Dispatcher) HandleBinTransitForLaneLock(binID, fromNodeID int64) {
 	// ConsumeByBin is the synchronization point: only one caller per
 	// bin survives the consume, and that caller is the unambiguous
 	// owner of the lock the entry references. Plain Unlock is safe.
-	d.laneLock.Unlock(entry.laneID)
+	d.laneLock.Unlock(entry.laneID, entry.complexParentID)
 	if err := d.db.DeletePendingLaneExtensionByComplexParent(entry.complexParentID); err != nil {
 		log.Printf("dispatch: delete pending_lane_extension on fire for complex %d: %v", entry.complexParentID, err)
 	}
@@ -200,7 +200,7 @@ func (d *Dispatcher) HandleComplexParentTerminalForLaneLock(complexParentID int6
 	// ConsumeByComplexParent is the synchronization point — only one
 	// caller per complex-parent ID consumes the entry. Plain Unlock
 	// is safe here for the same reason as HandleBinTransitForLaneLock.
-	d.laneLock.Unlock(entry.laneID)
+	d.laneLock.Unlock(entry.laneID, entry.complexParentID)
 	if err := d.db.DeletePendingLaneExtensionByComplexParent(complexParentID); err != nil {
 		log.Printf("dispatch: delete pending_lane_extension on parent terminal for complex %d: %v", complexParentID, err)
 	}

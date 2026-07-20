@@ -759,7 +759,7 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 	}
 
 	if err := d.CreateCompoundOrder(order, plan); err != nil {
-		d.laneLock.Unlock(buried.LaneID)
+		d.laneLock.Unlock(buried.LaneID, order.ID)
 		d.failOrderInternal(order, "reshuffle_error",
 			fmt.Sprintf("cannot create compound order: %v", err))
 		return
@@ -856,7 +856,7 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 		return
 	}
 	if err := d.CreateCompoundOrder(order, plan); err != nil {
-		d.laneLock.Unlock(buried.LaneID)
+		d.laneLock.Unlock(buried.LaneID, order.ID)
 		d.failOrderInternal(order, "reshuffle_error",
 			fmt.Sprintf("cannot create compound order on replay: %v", err))
 		return

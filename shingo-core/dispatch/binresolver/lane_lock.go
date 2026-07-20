@@ -1,6 +1,9 @@
 package binresolver
 
-import "sync"
+import (
+	"log"
+	"sync"
+)
 
 // LaneLock prevents concurrent reshuffle operations on the same lane.
 type LaneLock struct {
@@ -23,10 +26,21 @@ func (l *LaneLock) TryLock(laneID, orderID int64) bool {
 	return true
 }
 
-// Unlock releases the lock on a lane.
-func (l *LaneLock) Unlock(laneID int64) {
+// Unlock releases the lane IF it is held by orderID. A release aimed at a lane
+// held by a DIFFERENT order — the G3 foreign-release class — is REFUSED and
+// logged; a caller passing the wrong owner can no longer free another order's
+// lane. Releasing an unheld lane stays a harmless no-op. The structural fix
+// (owner-scoped reservation rows) arrives at P2; this owner-check kills the class
+// for every caller during the migration window and surfaces any that still pass
+// the wrong owner.
+func (l *LaneLock) Unlock(laneID, orderID int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if owner, ok := l.lanes[laneID]; ok && owner != orderID {
+		log.Printf("lanelock: refused foreign release of lane %d by order %d (held by %d)",
+			laneID, orderID, owner)
+		return
+	}
 	delete(l.lanes, laneID)
 }
 

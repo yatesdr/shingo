@@ -300,7 +300,7 @@ func TestLaneLock_PreventsConcurrent(t *testing.T) {
 	}
 
 	// Unlock
-	ll.Unlock(laneID)
+	ll.Unlock(laneID, 1)
 
 	// IsLocked -> false
 	if ll.IsLocked(laneID) {

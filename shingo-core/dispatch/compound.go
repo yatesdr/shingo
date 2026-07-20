@@ -393,7 +393,7 @@ func (d *Dispatcher) unlockLaneForCompound(parentOrderID int64) {
 			if child.SourceNode != "" {
 				sourceNode, err := d.db.GetNodeByDotName(child.SourceNode)
 				if err == nil && sourceNode.ParentID != nil {
-					d.laneLock.Unlock(*sourceNode.ParentID)
+					d.laneLock.Unlock(*sourceNode.ParentID, parentOrderID)
 					return
 				}
 			}
