@@ -377,8 +377,58 @@ trap 'rm -f "$DEPLOY_MARKER"' EXIT
 # ----------------------------------------------------------------------
 # Stop existing edge
 # ----------------------------------------------------------------------
+# Stop through systemd FIRST when the unit owns the process.
+#
+# The unit is Restart=always/RestartSec=5s. A raw `kill` is an UNEXPECTED exit
+# as far as systemd is concerned, so the restart policy fires ~5s later and
+# relaunches /opt/shingo/shingoedge — which at that point is still the OLD
+# binary, because the swap happens further down this script. The relaunched
+# old process then satisfies the `systemctl start` and `is-active` checks at
+# the end, and the install reports success while the previous build runs.
+# That is exactly what happened at Springfield on 2026-07-20 (the auto-restart
+# beat the binary swap by ~1s); see INCIDENT-springfield-stale-binary-deploy.
+#
+# `systemctl stop` is an INTENTIONAL exit, so the restart policy does not fire.
+# Order matters: stop the unit before touching the binary, and only raw-kill a
+# process systemd does not own.
+if [ "$UNIT_EXISTS" = "yes" ]; then
+    if systemctl is-active --quiet shingo-edge || [ -n "$EDGE_PID" ]; then
+        if confirm "Stop shingo-edge.service?"; then
+            echo "==> Stopping shingo-edge.service..."
+            systemctl stop shingo-edge || true
+            # Edge can be slow to shut down (the HTTP server has hit
+            # "shutdown: context deadline exceeded"), so give systemd room to
+            # finish; it escalates to SIGKILL itself per the unit's TimeoutStopSec.
+            for i in $(seq 1 45); do
+                systemctl is-active --quiet shingo-edge || break
+                sleep 1
+            done
+            if systemctl is-active --quiet shingo-edge; then
+                echo "ERROR: shingo-edge.service still active after 45s; aborting"
+                echo "       before swapping the binary (a swap now would race the"
+                echo "       restart policy and leave the old build running)."
+                exit 1
+            fi
+            echo "    service stopped"
+        else
+            echo "Aborted; edge still running."
+            exit 0
+        fi
+    fi
+fi
+
+# Re-detect after the unit stop: anything still alive is NOT managed by the
+# unit (a stray or legacy foreground launch), so systemd will not restart it
+# and a raw kill is safe.
+EDGE_PID=""
+for pid in $(pgrep -f 'shingoedge|go run.*shingoedge' 2>/dev/null || true); do
+    [ -r "/proc/$pid/cmdline" ] || continue
+    EDGE_PID="$pid"
+    break
+done
+
 if [ -n "$EDGE_PID" ]; then
-    if confirm "Stop running edge (pid=$EDGE_PID)?"; then
+    if confirm "Stop stray (non-unit) edge process pid=$EDGE_PID?"; then
         echo "==> Sending SIGTERM to pid=$EDGE_PID..."
         kill "$EDGE_PID" || true
         for i in $(seq 1 10); do
@@ -394,18 +444,6 @@ if [ -n "$EDGE_PID" ]; then
     else
         echo "Aborted; edge still running."
         exit 0
-    fi
-fi
-
-if [ "$UNIT_EXISTS" = "yes" ]; then
-    if systemctl is-active --quiet shingo-edge; then
-        if confirm "Stop running shingo-edge.service?"; then
-            systemctl stop shingo-edge
-            echo "    service stopped"
-        else
-            echo "Aborted."
-            exit 0
-        fi
     fi
 fi
 
@@ -580,6 +618,48 @@ if [ "$ACTIVE" != "yes" ]; then
     journalctl -u shingo-edge -n 50 --no-pager || true
     exit 1
 fi
+
+# "active" is not the same as "running the binary we just installed". A process
+# relaunched from the pre-swap inode is still active, and reports healthy on
+# every other signal (HMI 200, Kafka connected, PLCs up) while executing the
+# previous build. Verify what is ACTUALLY executing via /proc/<pid>/exe: after
+# the binary is replaced, a stale process's exe link resolves to the unlinked
+# inode and Linux marks it "(deleted)".
+echo "==> Verifying the running process is the binary we installed..."
+RUN_PID=$(systemctl show shingo-edge -p MainPID --value 2>/dev/null || echo "")
+if [ -z "$RUN_PID" ] || [ "$RUN_PID" = "0" ]; then
+    echo "ERROR: could not determine shingo-edge MainPID; cannot verify the build."
+    exit 1
+fi
+RUN_EXE=$(readlink "/proc/$RUN_PID/exe" 2>/dev/null || echo "")
+case "$RUN_EXE" in
+    *"(deleted)"*)
+        echo "ERROR: shingo-edge (pid=$RUN_PID) is running a DELETED binary:"
+        echo "       $RUN_EXE"
+        echo "       The service was relaunched before the binary swap — this is the"
+        echo "       stale-binary deploy failure. Run: systemctl restart shingo-edge"
+        exit 1
+        ;;
+    /opt/shingo/shingoedge) : ;;
+    "")
+        echo "ERROR: could not read /proc/$RUN_PID/exe; cannot verify the build."
+        exit 1
+        ;;
+    *)
+        echo "ERROR: shingo-edge (pid=$RUN_PID) is running an unexpected binary:"
+        echo "       $RUN_EXE (expected /opt/shingo/shingoedge)"
+        exit 1
+        ;;
+esac
+# Same inode, not just the same path — catches a swap that happened between the
+# start and this check.
+if ! [ "/proc/$RUN_PID/exe" -ef /opt/shingo/shingoedge ]; then
+    echo "ERROR: shingo-edge (pid=$RUN_PID) exe is not the installed binary"
+    echo "       (path matches but inode differs — stale process)."
+    echo "       Run: systemctl restart shingo-edge"
+    exit 1
+fi
+echo "    verified: pid=$RUN_PID running /opt/shingo/shingoedge"
 
 # Service is back up — clear the deploy marker so crash alerts resume.
 rm -f "$DEPLOY_MARKER"
