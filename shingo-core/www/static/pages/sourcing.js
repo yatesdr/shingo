@@ -60,25 +60,56 @@ if (root) {
   if (!restored && tabs.length) select(tabs[0].dataset.process, { remember: false });
 
   // ── Live updates ────────────────────────────────────────────────────────
-  // A sourceability verdict is a function of (claims, available bin pool), so
-  // the pool signals are what actually invalidate this page: bin-update and
-  // inventory-update. There is no dedicated verdict event today — the monitor
-  // publishes deltas to Edge over Kafka but does not broadcast to Core's SSE
-  // hub — so this refreshes on the INPUTS rather than on the verdict itself.
-  // That is a coarser trigger than ideal: it can reload when a bin moved in a
-  // way that changed no verdict. A `sourcing-update` topic emitted where the
-  // monitor already detects changed verdicts would be the precise signal.
-  //
-  // The page is server-rendered, so refreshing means re-requesting it. Reloads
-  // are debounced because a burst of bin moves is one logical change to this
-  // view, and the selected process is preserved above.
+  // The page is server-rendered, so refreshing means re-requesting it. Every
+  // trigger below coalesces through one timer: whichever fires first wins, and
+  // a second trigger inside the window is absorbed rather than queued.
   let pending = null;
-  function scheduleReload() {
+  function scheduleReload(delayMs) {
     if (pending) return;
-    pending = setTimeout(() => { window.location.reload(); }, 1500);
+    pending = setTimeout(() => { window.location.reload(); }, delayMs);
   }
 
-  onSSE('connected', scheduleReload);
-  onSSE('bin-update', scheduleReload);
-  onSSE('inventory-update', scheduleReload);
+  // PRIMARY — sourcing-update fires only when a sourceability VERDICT moved.
+  // That is precisely what this page displays, so it reloads promptly on it.
+  const VERDICT_MS = 2000;
+  onSSE('sourcing-update', () => scheduleReload(VERDICT_MS));
+
+  // FALLBACK — bin/inventory movement, coalesced hard.
+  //
+  // These are kept, but slowly, and the reasoning matters: sourcing-update
+  // covers every VERDICT change, but the page also renders per-claim Free/Held
+  // counts and those move when a bin does WITHOUT changing any verdict (free
+  // 5→4, still green). So they still earn their place — for number drift only,
+  // which is not urgent.
+  //
+  // The window is 30s rather than the ~5s first considered. This is a
+  // throttle, not a debounce: it fires at most once per window, so 5s would
+  // still permit 12 reloads a minute on a plant where bins move constantly —
+  // the strobing this is meant to end. Anything worth seeing sooner arrives on
+  // sourcing-update.
+  const DRIFT_MS = 30000;
+  onSSE('bin-update', () => scheduleReload(DRIFT_MS));
+  onSSE('inventory-update', () => scheduleReload(DRIFT_MS));
+
+  // RECONNECT ONLY — never on first connect.
+  //
+  // This page shipped with onSSE('connected', reload), which is an infinite
+  // loop: load → SSE connects → connected fires → reload → connects again.
+  // The page pulsed forever on an idle plant (field-observed at Springfield).
+  // A reload is only warranted after a connection was LOST, because events
+  // missed while disconnected may have changed a verdict; the first connect of
+  // a fresh page has missed nothing — the server just rendered it.
+  let everConnected = false;
+  let droppedSinceConnect = false;
+  onSSE('disconnected', () => {
+    if (everConnected) droppedSinceConnect = true;
+  });
+  onSSE('connected', () => {
+    if (everConnected && droppedSinceConnect) {
+      droppedSinceConnect = false;
+      scheduleReload(VERDICT_MS);
+      return;
+    }
+    everConnected = true;
+  });
 }

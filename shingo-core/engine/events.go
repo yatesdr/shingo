@@ -46,6 +46,14 @@ const (
 	// the SSE `cell-heartbeat` so the /missions Cells D section and the
 	// /heartbeat kiosk pulse live without polling.
 	EventCellTick
+	// EventSourcingUpdated — emitted by the sourceability monitor when a
+	// verdict actually CHANGED, not on every recompute. SetupEngineListeners
+	// rebroadcasts it as the SSE `sourcing-update` so the /sourcing page
+	// refreshes on the thing it displays rather than on the pool reads that
+	// feed it. The periodic full recompute publishes a wire snapshot every
+	// cycle regardless of change; this event deliberately does NOT follow that,
+	// or an idle plant would pulse the page on a timer.
+	EventSourcingUpdated
 )
 
 // --- Event payloads ---
@@ -170,6 +178,14 @@ type LinesideBucketAppliedEvent struct {
 	PayloadCode  string
 	Delta        int
 	Reason       protocol.LinesideBucketDeltaReason
+}
+
+// SourcingUpdatedEvent carries how many (process, style) verdicts moved. The
+// page reloads its whole read model, so it needs no detail — the count exists
+// so the SSE payload is not empty and so a log line can say what fired.
+type SourcingUpdatedEvent struct {
+	eventbus.PayloadBase
+	Changed int
 }
 
 type NodeUpdatedEvent struct {

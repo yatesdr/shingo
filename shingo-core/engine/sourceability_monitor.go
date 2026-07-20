@@ -200,6 +200,24 @@ func (m *SourceabilityMonitor) recomputeKeys(keys []plantclaims.ProcessKey) {
 	if len(changed) > 0 && m.publishFn != nil {
 		m.publishFn(toReport(changed, false))
 	}
+	m.emitSourcingUpdated(len(changed))
+}
+
+// emitSourcingUpdated tells the Core SSE layer that a verdict MOVED. It is the
+// precise signal the /sourcing page refreshes on: the page displays verdicts, so
+// it should react to a verdict changing and to nothing else.
+//
+// No change, no event. That is the whole point — the page previously refreshed
+// on bin-update/inventory-update, the pool reads that FEED a verdict, so a bin
+// moving anywhere on the plant refreshed a page whose content had not changed.
+func (m *SourceabilityMonitor) emitSourcingUpdated(changed int) {
+	if changed <= 0 || m.eng == nil || m.eng.Events == nil {
+		return
+	}
+	m.eng.Events.Emit(Event{
+		Type:    EventSourcingUpdated,
+		Payload: SourcingUpdatedEvent{Changed: changed},
+	})
 }
 
 // recomputeAll scores every configured style and REPLACES the state map (so
@@ -221,6 +239,22 @@ func (m *SourceabilityMonitor) recomputeAll() {
 
 	m.mu.Lock()
 	prevCount := len(m.state)
+	// Diff BEFORE replacing. The full recompute publishes a wire snapshot every
+	// periodic cycle whether or not anything moved (a late-joining edge needs
+	// it), but the SSE event must not follow that cadence: an idle plant would
+	// refresh the page on a timer forever. Count real verdict movement instead,
+	// including styles that disappeared from the mirror.
+	changed := 0
+	for k, s := range newState {
+		if old, existed := m.state[k]; !existed || wireChanged(old, s) {
+			changed++
+		}
+	}
+	for k := range m.state {
+		if _, still := newState[k]; !still {
+			changed++
+		}
+	}
 	m.state = newState
 	m.index = newIndex
 	m.recomputes++
@@ -237,6 +271,7 @@ func (m *SourceabilityMonitor) recomputeAll() {
 	if m.publishFn != nil && (len(states) > 0 || prevCount > 0) {
 		m.publishFn(toReport(states, true))
 	}
+	m.emitSourcingUpdated(changed)
 }
 
 // wireChanged reports whether the operator-visible verdict changed between two

@@ -244,6 +244,15 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		h.Broadcast("node-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": ev.Action}))
 	}, engine.EventNodeUpdated)
 
+	// sourcing-update fires only when a sourceability VERDICT moved, never on a
+	// plain recompute. It is what the /sourcing page refreshes on; the page used
+	// to key off bin-update, which is a pool read that feeds a verdict rather
+	// than the verdict itself, so a bin moving anywhere refreshed a page whose
+	// content was identical.
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.SourcingUpdatedEvent]) {
+		h.Broadcast("sourcing-update", sseJSON(map[string]any{"changed": evt.Payload.Changed}))
+	}, engine.EventSourcingUpdated)
+
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
 		h.Broadcast("system-status", `{"fleet":"connected"}`)
 	}, engine.EventFleetConnected)
