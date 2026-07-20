@@ -59,10 +59,12 @@ function load(opts) {
     const root = makeEl({});
     root.querySelectorAll = (sel) => (sel === '.src-rrow' ? tabs : panes);
 
+    const docListeners = {};
     const ctxObj = {
         console,
         document: {
             getElementById: (id) => (id === 'src-root' ? root : null),
+            addEventListener: (ev, fn) => { (docListeners[ev] = docListeners[ev] || []).push(fn); },
             activeElement: null,
         },
         sessionStorage: {
@@ -94,6 +96,14 @@ function load(opts) {
                 t.fn();
             }
             now = end;
+        },
+        // Simulate a click on an unlock-panel blocked-style link.
+        clickGoto(process) {
+            const link = {
+                dataset: { gotoProcess: process },
+                closest(sel) { return sel === '[data-goto-process]' ? link : null; },
+            };
+            (docListeners.click || []).forEach(fn => fn({ target: link, preventDefault() {} }));
         },
         reloads: () => reloads,
         session: () => store,
@@ -162,6 +172,15 @@ console.log('sourcing: bin churn is coalesced hard, not strobed');
     check('200 bin updates → no reload at 5s', h.reloads() === 0, 'got ' + h.reloads());
     h.tick(30000);
     check('one reload after the drift window', h.reloads() === 1, 'got ' + h.reloads());
+}
+
+console.log('sourcing: unlock-panel link selects the blocked process');
+{
+    const h = load({ processes: ['SNF2', 'P42 NF1'] });
+    h.clickGoto('P42 NF1');
+    const visible = h.panes.filter(p => !p.hidden).map(p => p.dataset.process);
+    check('goto link selects the target pane', visible.length === 1 && visible[0] === 'P42 NF1',
+        'got ' + JSON.stringify(visible));
 }
 
 console.log('sourcing: selected process survives a reload');

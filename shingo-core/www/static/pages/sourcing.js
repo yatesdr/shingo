@@ -37,6 +37,24 @@ if (root) {
     t.addEventListener('click', () => select(t.dataset.process));
   }
 
+  // Blocked-style links in the unlock-impact panel jump to the process's pane.
+  // The target may live in the collapsed not-set-up tail, so open any <details>
+  // ancestor of its rail row first, then select it. Delegated so it survives the
+  // SSE reload (the whole page re-renders).
+  document.addEventListener('click', (e) => {
+    const link = e.target.closest('[data-goto-process]');
+    if (!link) return;
+    e.preventDefault();
+    const proc = link.dataset.gotoProcess;
+    const row = tabs.find((t) => t.dataset.process === proc);
+    if (row && typeof row.closest === 'function') {
+      const details = row.closest('details');
+      if (details) details.open = true;
+    }
+    select(proc);
+    if (root.scrollIntoView) root.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
   // role="tablist" implies arrow-key movement; a rail that traps keyboard users
   // on the first process is worse than no roles at all.
   root.addEventListener('keydown', (e) => {

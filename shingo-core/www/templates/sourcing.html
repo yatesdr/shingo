@@ -76,6 +76,12 @@
      material is GOING, dimmer than where it currently IS. */
   .src-feeds { font-size:0.72rem; color:var(--text-muted); margin-top:0.1rem; }
 
+  /* Unlock-impact panel. */
+  .src-unlock { margin-bottom:0.9rem; }
+  .src-unlock h3 { font-size:0.95rem; }
+  .src-blocked-links a { color:var(--accent); text-decoration:none; }
+  .src-blocked-links a:hover { text-decoration:underline; }
+
   /* Plant summary strip above the rail. */
   .src-summary { display:flex; flex-wrap:wrap; gap:0.5rem 1rem; margin:0 0 0.9rem; align-items:center; }
   .src-summary .item { display:inline-flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text); }
@@ -122,6 +128,30 @@
   <span class="item"><span class="src-dot {{template "srcdot" .Status}}"></span><span class="n">{{.Count}}</span> {{template "srcstatelabel" .Status}}</span>
   {{end}}
 </div>
+
+{{/* Unlock-impact panel: what to fill first, ranked by how many changeovers it
+     frees. Promoted above the fold from the old buried replenishment list. */}}
+{{if .View.UnlockImpact}}
+<div class="card src-unlock">
+  <h3>Fill these first</h3>
+  <p class="text-muted">Missing payloads, ranked by how many changeovers each would unblock.</p>
+  <table class="src-tbl">
+    <thead><tr><th>Payload</th><th>Free</th><th>Unblocks</th><th>Blocked changeovers</th></tr></thead>
+    <tbody>
+    {{range .View.UnlockImpact}}
+      <tr>
+        <td>{{.Payload}}</td>
+        <td class="src-zero">{{.Free}}</td>
+        <td><strong>{{.Blocks}}</strong> changeover{{if ne .Blocks 1}}s{{end}} across {{.Processes}} process{{if ne .Processes 1}}es{{end}}</td>
+        <td class="src-blocked-links">
+          {{range $i, $b := .Blocked}}{{if $i}} &middot; {{end}}<a href="#pane-{{$b.ProcessID}}" data-goto-process="{{$b.ProcessID}}">{{$b.ProcessID}} / {{$b.StyleID}}</a>{{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
 
 <div class="src-two" id="src-root">
   <div class="src-rail" role="tablist" aria-label="Processes">
@@ -248,10 +278,13 @@
 </div>
 {{end}}
 
+{{/* The time-to-empty replenishment queue (at-risk axis) lands here when the
+     yellow tier is enabled — it is dark today and TTE is banked. Only surfaced
+     while enabled so a dark plant does not carry an empty section. */}}
+{{if and .View.YellowEnabled .View.Queue}}
 <div class="card mt-2">
-  <h3>Replenishment queue</h3>
+  <h3>Running low</h3>
   <p class="text-muted">Lines closest to empty fill first.</p>
-  {{if .View.Queue}}
   <table>
     <thead><tr><th>Time to empty</th><th>Payload</th><th>Line</th><th>Process / Style</th></tr></thead>
     <tbody>
@@ -260,8 +293,8 @@
     {{end}}
     </tbody>
   </table>
-  {{else}}<p class="text-muted">{{if .View.YellowEnabled}}No lines are projected to empty within the horizon.{{else}}The at-risk tier is disabled &mdash; enable it (<code>sourceability.enable_at_risk</code>) after validating the consumption-rate window to see time-to-empty and the fill queue.{{end}}</p>{{end}}
 </div>
+{{end}}
 
 <script type="module" src="/static/pages/sourcing.js?v={{cacheBust}}"></script>
 {{end}}

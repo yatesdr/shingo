@@ -1,6 +1,10 @@
 package engine
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/sourceability"
+)
 
 // Pure tests for the sourcing page's chip and ordering helpers — no DB, so they
 // run everywhere. These are the round-2 layout rules: the chip shows the RUNNING
@@ -60,5 +64,48 @@ func TestStatusSeverity_WorstFirst(t *testing.T) {
 	// An unknown status sorts after everything real, never before.
 	if statusSeverity("something_new") <= statusSeverity("not_configured") {
 		t.Error("an unknown status must sort last, not ahead of a known one")
+	}
+}
+
+func TestBuildUnlockImpact_RanksByChangeoversUnblocked(t *testing.T) {
+	// P1 blocks two changeovers across two processes; P2 blocks one. The
+	// higher-impact payload sorts first — that is the "fill this first" order.
+	blockedBy := map[string][]BlockedStyleRef{
+		"P1": {{ProcessID: "SNF2", StyleID: "A"}, {ProcessID: "SNF3", StyleID: "B"}},
+		"P2": {{ProcessID: "SNF2", StyleID: "C"}},
+	}
+	pool := map[string]sourceability.PoolBreakdown{"P1": {Free: 0}, "P2": {Free: 0}}
+
+	rows := buildUnlockImpact(blockedBy, pool)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[0].Payload != "P1" || rows[0].Blocks != 2 || rows[0].Processes != 2 {
+		t.Errorf("row[0] = %+v, want P1 blocking 2 across 2", rows[0])
+	}
+	if rows[1].Payload != "P2" || rows[1].Blocks != 1 || rows[1].Processes != 1 {
+		t.Errorf("row[1] = %+v, want P2 blocking 1 across 1", rows[1])
+	}
+	// The blocked refs are present so the panel can link to them, and sorted
+	// stably (process then style).
+	if rows[0].Blocked[0].ProcessID != "SNF2" || rows[0].Blocked[1].ProcessID != "SNF3" {
+		t.Errorf("blocked refs not sorted by process: %+v", rows[0].Blocked)
+	}
+}
+
+func TestBuildUnlockImpact_DistinctProcessCount(t *testing.T) {
+	// A payload blocking three changeovers that all live in ONE process is a
+	// smaller unlock than the count of changeovers implies — Processes must be
+	// the DISTINCT count, not the changeover count.
+	blockedBy := map[string][]BlockedStyleRef{
+		"P1": {
+			{ProcessID: "SNF2", StyleID: "A"},
+			{ProcessID: "SNF2", StyleID: "B"},
+			{ProcessID: "SNF2", StyleID: "C"},
+		},
+	}
+	rows := buildUnlockImpact(blockedBy, map[string]sourceability.PoolBreakdown{})
+	if rows[0].Blocks != 3 || rows[0].Processes != 1 {
+		t.Errorf("row = %+v, want 3 changeovers across 1 process", rows[0])
 	}
 }

@@ -147,6 +147,62 @@ type SourcingQueueRow struct {
 	TTEDisplay string
 }
 
+// BlockedStyleRef names one changeover a missing payload is blocking, so the
+// unlock row can link to it.
+type BlockedStyleRef struct {
+	ProcessID string
+	StyleID   string
+}
+
+// UnlockImpactRow is one missing payload and what filling it would unblock: the
+// changeovers it currently blocks and how many distinct processes those span.
+// This is the "fill this first" signal — a payload that blocks six changeovers
+// across four processes is worth more than one that blocks a single style.
+type UnlockImpactRow struct {
+	Payload string
+	Free    int
+	// Blocked is every (process, style) this payload keeps red — Blocks is its
+	// length, Processes the distinct process count among them.
+	Blocked   []BlockedStyleRef
+	Blocks    int
+	Processes int
+}
+
+// buildUnlockImpact turns the per-style missing-payload lists into per-payload
+// unlock rows, sorted by how many changeovers each unblocks (then by payload for
+// a stable order). blockedBy maps a missing payload to the styles it blocks; it
+// is accumulated only from RED styles, which by definition have claims, so a
+// dropped claim-less Default never contributes.
+func buildUnlockImpact(blockedBy map[string][]BlockedStyleRef, pool map[string]sourceability.PoolBreakdown) []UnlockImpactRow {
+	rows := make([]UnlockImpactRow, 0, len(blockedBy))
+	for payload, blocked := range blockedBy {
+		procs := map[string]struct{}{}
+		for _, b := range blocked {
+			procs[b.ProcessID] = struct{}{}
+		}
+		sort.Slice(blocked, func(i, j int) bool {
+			if blocked[i].ProcessID != blocked[j].ProcessID {
+				return blocked[i].ProcessID < blocked[j].ProcessID
+			}
+			return blocked[i].StyleID < blocked[j].StyleID
+		})
+		rows = append(rows, UnlockImpactRow{
+			Payload:   payload,
+			Free:      pool[payload].Free,
+			Blocked:   blocked,
+			Blocks:    len(blocked),
+			Processes: len(procs),
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Blocks != rows[j].Blocks {
+			return rows[i].Blocks > rows[j].Blocks // most-unlocking first
+		}
+		return rows[i].Payload < rows[j].Payload
+	})
+	return rows
+}
+
 // formatTTE renders a time-to-empty for the page. Empty for a non-positive
 // value (no projection).
 func formatTTE(sec float64) string {
@@ -187,6 +243,9 @@ type SourceabilityPageView struct {
 	// NotConfiguredCount is how many processes collapse into the not-set-up tail
 	// of the rail, so the collapsed row can be labelled with a count.
 	NotConfiguredCount int
+	// UnlockImpact is the top-of-page panel: missing payloads ordered by how many
+	// changeovers filling each would unblock. Empty when nothing is blocked.
+	UnlockImpact []UnlockImpactRow
 }
 
 // StateCount is one chip status and how many processes are in it.
@@ -221,8 +280,18 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 
 	byProcess := map[string]*SourcingProcessView{}
 	var queue []SourcingQueueRow
+	// Missing payload → the changeovers it blocks. Accumulated from red styles
+	// only (which have claims), so a dropped claim-less Default never appears.
+	blockedBy := map[string][]BlockedStyleRef{}
 
 	for _, st := range snapshot {
+		if st.Status == sourceability.StatusRed {
+			for _, payload := range st.Missing {
+				blockedBy[payload] = append(blockedBy[payload],
+					BlockedStyleRef{ProcessID: st.ProcessID, StyleID: st.StyleID})
+			}
+		}
+
 		tteByNode := make(map[string]float64, len(st.AtRisk))
 		for _, r := range st.AtRisk {
 			tteByNode[r.NodeName] = r.TimeToEmpty.Seconds()
@@ -332,6 +401,9 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 	// Replenishment queue: lowest time-to-empty fills first.
 	sort.Slice(queue, func(i, j int) bool { return queue[i].TTESeconds < queue[j].TTESeconds })
 	view.Queue = queue
+
+	// Unlock-impact panel: missing payloads by how much filling each unblocks.
+	view.UnlockImpact = buildUnlockImpact(blockedBy, pool)
 
 	return view, nil
 }

@@ -28,7 +28,12 @@ func TestHandleSourcing_RendersDefault(t *testing.T) {
 	if !strings.Contains(body, "Sourcing") {
 		t.Error("rendered page missing the title")
 	}
-	if !strings.Contains(body, "at-risk tier is disabled") {
-		t.Error("expected the yellow-dark queue note in the default render")
+	// The page must render without panicking through the two-pane template and
+	// its sub-templates (chip, state label, dot). A structural marker that is
+	// present regardless of data proves the whole template tree parsed and
+	// executed — the old assertion keyed on the at-risk queue note, which was
+	// removed when the buried queue was promoted into the unlock panel.
+	if !strings.Contains(body, "src-two") && !strings.Contains(body, "No process styles are being tracked yet") {
+		t.Error("expected either the two-pane layout or the empty-state message")
 	}
 }
