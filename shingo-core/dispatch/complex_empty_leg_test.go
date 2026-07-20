@@ -173,9 +173,13 @@ func TestDispatcher_ComplexOrder_QueuesOnDryEmptyPool(t *testing.T) {
 	if order.Status != StatusQueued {
 		t.Errorf("status = %q, want %q (a dry empty pool is sourceable-eventually — it must queue)", order.Status, StatusQueued)
 	}
-	if !strings.Contains(order.QueueReason, "cannot resolve empty in group") &&
-		!strings.Contains(order.QueueReason, "no empty carrier in group") {
-		t.Errorf("queue_reason = %q, want the empty-resolver message so the operator sees why it waits", order.QueueReason)
+	// A dry empty pool queues under the structured material-wait code (the resolver
+	// message is captured as the engineer-only cause, not the operator sentence).
+	if order.QueueCode != string(protocol.QueueWaitingForMaterial) {
+		t.Errorf("queue_code = %q, want %q (dry empty pool → material wait)", order.QueueCode, protocol.QueueWaitingForMaterial)
+	}
+	if !strings.Contains(order.QueueReason, "Waiting for material") {
+		t.Errorf("queue_reason = %q, want the generated material-wait sentence", order.QueueReason)
 	}
 
 	// An empty carrier returns to the pool → the queued order dispatches on replay

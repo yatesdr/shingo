@@ -335,10 +335,17 @@ func TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 		t.Errorf("status = %q, want %q (capacity-blocked complex order must queue)", order.Status, StatusQueued)
 	}
 	if order.QueueReason == "" {
-		t.Errorf("queue_reason empty; expected the resolver message so the operator sees why the order is waiting")
+		t.Errorf("queue_reason empty; expected a sentence so the operator sees why the order is waiting")
 	}
-	if !strings.Contains(order.QueueReason, "no available slot in node group") {
-		t.Errorf("queue_reason = %q, want it to contain 'no available slot in node group ...'", order.QueueReason)
+	// A saturated storage dropoff queues under the structured slot-wait code (the
+	// resolver message is captured as the engineer-only cause, not the operator
+	// sentence). Assert the code + the generated sentence rather than the raw
+	// resolver text.
+	if order.QueueCode != string(protocol.QueueWaitingForSlot) {
+		t.Errorf("queue_code = %q, want %q (saturated dropoff → slot wait)", order.QueueCode, protocol.QueueWaitingForSlot)
+	}
+	if !strings.Contains(order.QueueReason, "Waiting for a slot at") {
+		t.Errorf("queue_reason = %q, want the generated slot-wait sentence", order.QueueReason)
 	}
 	// Field-notes Note 8 regression: complex orders historically persisted
 	// payload_code="" because complex_dispatch.go didn't assign PayloadCode

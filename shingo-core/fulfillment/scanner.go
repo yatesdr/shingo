@@ -355,43 +355,81 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// OutcomeFound.
 	bin, sourceNode := res.Bin, res.Node
 
-	// MoveToSourcing BEFORE the claim (the normalized timing — the intake
-	// planners and the complex path both move-before-claim, so the simple family
-	// matches). On claim failure the simple order MUST re-queue (sourcing→queued):
-	// simple orders park in `queued`, and the scanner's complex-only scope guard
-	// never retries one left in `sourcing` — that would be a permanent wedge.
-	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin found, claiming"); err != nil {
+	// MoveToSourcing BEFORE acquiring anything (the normalized timing — the intake
+	// planners and the complex path both move-before-hold). A soft-holding order
+	// lives in `sourcing` while it waits; the requeue paths below retarget to
+	// `sourcing` (NEVER `queued`) so the order stays in the acquiring set and the
+	// scanner retries it, holding its soft reservations across ticks.
+	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin found, soft-holding"); err != nil {
 		s.logFn("fulfillment: order %d → sourcing: %v", order.ID, err)
 	}
 
-	// Test seam: the deterministic claim-race hook fires at claim time (order now
-	// in `sourcing`), between Find and Claim. Post the claim-move the intake
-	// planner no longer claims, so this is the ONE find→claim window — a no-op in
-	// production, injected by concurrency tests to prove a claim race re-queues
+	// Test seam: the deterministic claim-race hook fires at acquire time (order now
+	// in `sourcing`), between Find and the soft reserve. Post the claim-move the
+	// intake planner no longer claims, so this is the ONE find→acquire window — a
+	// no-op in production, injected by concurrency tests to prove a race re-queues
 	// (never drops).
-	// Guarded because some scanner unit tests wire a nil dispatcher for the claim-
+	// Guarded because some scanner unit tests wire a nil dispatcher for the
 	// fail path that never reaches dispatch; production always has a dispatcher.
 	if s.dispatcher != nil {
 		s.dispatcher.PostFindHook()
 	}
 
-	// Claim the bin (reserve-then-claim; the guard requires a pending reservation).
-	// RemainingUOP is the operator's declared release-correction count, persisted on
-	// the order at intake (planTransport) so this single claim point — which has no
-	// envelope — seeds the same atomic claim+manifest-sync a move used to get at
-	// intake. nil for retrieve/retrieve_empty (a plain claim).
-	if err := s.claimer.ClaimForDispatch(bin.ID, order.ID, order.RemainingUOP); err != nil {
-		if s.debugLog != nil {
-			s.debugLog("fulfillment: claim bin %d for order %d failed: %v", bin.ID, order.ID, err)
+	// ── Rule 1: soft until complete ───────────────────────────────────────
+	// Slot FIRST, then bin — the same global order the complex path uses
+	// (complex_dispatch slots → bins → confirm→fleet). Both are SOFT here (pending
+	// reservations, no hard claimed_by); the hard claim for BOTH lands at dispatch,
+	// in one confirm step, immediately before the fleet call. A soft-holding order
+	// that hits any of the requeue branches below parks in `sourcing`, KEEPS its
+	// soft holds, and is retried next tick (re-entering via the BinID branch, which
+	// reuses — never re-finds — its own held bin).
+
+	// Resolve destination BEFORE the slot reserve so the reserve targets a real
+	// node. A storage dropoff reserves its slot soft (ReserveStorageDropoff); a line
+	// dest is a no-op. On conflict, park in sourcing under waiting_for_slot — no
+	// bin has been acquired yet, so there is nothing to release.
+	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
+	if err != nil {
+		s.logFn("fulfillment: dest node %q not found for order %d: %v", order.DeliveryNode, order.ID, err)
+		// Destination node can't be resolved right now — re-queue and retry. Park
+		// under waiting_for_material (the order can't proceed to delivery) so the
+		// row carries a fresh code instead of the stale reason from a prior wait.
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "dest-node-unresolved",
+			dispatch.QueueParams{Payload: order.PayloadCode, Destination: order.DeliveryNode})
+		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dest unresolved, retrying"); err != nil {
+			s.logFn("fulfillment: order %d → sourcing after dest resolve fail: %v", order.ID, err)
 		}
-		// The bin was claimed by a concurrent order in the Find→Claim window — the
-		// order IS waiting on material again, so park it under that code (the race
-		// is the cause). Without this the stale reason from a prior wait would
-		// persist on the row, since Queue() doesn't touch queue_reason.
+		return false
+	}
+	if err := s.dispatcher.ReserveStorageDropoff(order); err != nil {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, "slot-reserved",
+			dispatch.QueueParams{Destination: order.DeliveryNode})
+		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "destination slot contended"); qerr != nil {
+			s.logFn("fulfillment: order %d → sourcing after reserve conflict: %v", order.ID, qerr)
+		}
+		return false
+	}
+
+	// Bin SOFT-acquire: a pending reservation (no hard claim). On a lost race the
+	// bin was reserved by a concurrent order — park under waiting_for_material and
+	// retry. On success, stamp BinID NOW: an order holding a pending bin reservation
+	// re-enters via the BinID branch next tick and reuses THIS bin (the owner-aware
+	// keep arm — the finders exclude pending-reserved bins owner-blind, so re-finding
+	// would shop a second bin and double-source). RemainingUOP is the operator's
+	// release-correction count, persisted at intake; it is threaded through the
+	// confirm at dispatch (nil for retrieve/retrieve_empty = a plain claim).
+	if err := s.claimer.ReserveForDispatch(bin.ID, order.ID); err != nil {
+		if s.debugLog != nil {
+			s.debugLog("fulfillment: soft-reserve bin %d for order %d failed: %v", bin.ID, order.ID, err)
+		}
+		// The bin was reserved by a concurrent order in the Find→Reserve window —
+		// the order IS waiting on material again, so park it under that code (the
+		// race is the cause). The slot soft-reserve above is retained; it is
+		// owner-aware and harmless to hold across the retry.
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "lock-race",
 			dispatch.QueueParams{Payload: order.PayloadCode})
-		if qerr := s.lifecycle.Queue(order, "fulfillment", "claim contention, re-queued"); qerr != nil {
-			s.logFn("fulfillment: order %d → queued after claim fail: %v", order.ID, qerr)
+		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin race, retrying"); qerr != nil {
+			s.logFn("fulfillment: order %d → sourcing after reserve fail: %v", order.ID, qerr)
 		}
 		return false
 	}
@@ -404,41 +442,25 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.logFn("fulfillment: update source_node for order %d: %v", order.ID, err)
 	}
 
-	// Resolve destination.
-	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
-	if err != nil {
-		s.logFn("fulfillment: dest node %q not found for order %d: %v", order.DeliveryNode, order.ID, err)
-		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
-			s.logFn("fulfillment: release claim for order %d on dest-node rollback: %v", order.ID, rerr)
-		}
-		// Destination node can't be resolved right now — re-queue and retry. Park
-		// under waiting_for_material (the order can't proceed to delivery) so the
-		// row carries a fresh code instead of the stale reason from a prior wait.
-		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "dest-node-unresolved",
-			dispatch.QueueParams{Payload: order.PayloadCode, Destination: order.DeliveryNode})
-		if err := s.lifecycle.Queue(order, "fulfillment", "awaiting inventory"); err != nil {
-			s.logFn("fulfillment: order %d → queued: %v", order.ID, err)
-		}
-		return false
-	}
-
-	// ★ Node-driven destination reserve (reserve-only) after the source claim,
-	// before dispatch: a move to a concrete storage slot reserves it (closing the
-	// move race that previously had only the capacity read); a no-op for a line
-	// dest. On conflict, keep the just-claimed bin and requeue — next tick the
-	// order re-enters as a held-bin dispatch (BinID set) and retries the reserve.
-	if err := s.dispatcher.ReserveStorageDropoff(order); err != nil {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, "slot-reserved",
-			dispatch.QueueParams{Destination: order.DeliveryNode})
-		if qerr := s.lifecycle.Queue(order, "fulfillment", "destination slot contended"); qerr != nil {
-			s.logFn("fulfillment: order %d → queued after reserve conflict: %v", order.ID, qerr)
+	// Confirm-at-dispatch: hard-claim BOTH the slot (if a storage dropoff) AND the
+	// bin, in one step, immediately before the fleet call. Slots-before-bins (the
+	// complex order). On failure the order keeps its soft holds and parks in
+	// sourcing under the failing leg's code; next tick it re-enters via the BinID
+	// branch and re-confirms (owner-idempotent).
+	if err := s.dispatcher.ConfirmForDispatch(order, bin.ID, sourceNode, destNode); err != nil {
+		s.logFn("fulfillment: confirm-at-dispatch for order %d failed: %v", order.ID, err)
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "claim-failed",
+			dispatch.QueueParams{Payload: order.PayloadCode})
+		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "confirm failed, retrying"); qerr != nil {
+			s.logFn("fulfillment: order %d → sourcing after confirm fail: %v", order.ID, qerr)
 		}
 		return false
 	}
 
 	// Dispatch to fleet — use DispatchDirect which handles fleet creation.
-	// On failure, DispatchDirect sets status to failed. We override back to queued
-	// since this is a transient fleet issue, not a permanent failure.
+	// On failure, DispatchDirect sets status to failed. We override back to sourcing
+	// since this is a transient fleet issue, not a permanent failure, and release
+	// the now-hard claim so the requeue re-soft-acquires next tick.
 	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
 		s.logFn("fulfillment: fleet dispatch failed for order %d, re-queuing: %v", order.ID, err)
@@ -446,11 +468,10 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 			s.logFn("fulfillment: release claim for order %d on fleet-fail rollback: %v", order.ID, rerr)
 		}
 		// Fleet rejected the dispatch — a transient robot-system issue. Park under
-		// fleet_unavailable so the row carries that code (previously this path set
-		// NO reason, so a stale reason from an earlier wait persisted on the row).
+		// fleet_unavailable so the row carries that code.
 		s.setQueueReason(order, protocol.QueueFleetUnavailable, "fleet-error", dispatch.QueueParams{})
-		if err := s.lifecycle.Queue(order, "fulfillment", "fleet unavailable, re-queued"); err != nil {
-			s.logFn("fulfillment: order %d → queued: %v", order.ID, err)
+		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
+			s.logFn("fulfillment: order %d → sourcing after fleet fail: %v", order.ID, err)
 		}
 		return false
 	}
@@ -462,13 +483,13 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 }
 
 // dispatchHeldBin dispatches a plain order that already holds its source bin —
-// a retrieve/move that reached `sourcing` on a prior tick — using the held bin.
-// It never re-finds or
-// re-claims (re-finding would claim a second, wrong bin — FindSource excludes
-// claimed bins). This is the idempotent reuse that lets the sourcing-reentry
-// guard dissolve. On a transient fleet failure it re-queues WITHOUT releasing
-// the claim (the same bin re-dispatches next tick). The destination reserve was
-// already node-driven by the plain path before this call.
+// a retrieve/move that soft-acquired its bin on a prior tick and parked in
+// `sourcing`. It never re-finds or re-acquires (re-finding would shop a second
+// bin — the finders exclude pending-reserved bins owner-blind, so the held bin's
+// own reservation hides it). This is the owner-aware keep arm: the order's OWN
+// held bin is reused. On a transient fleet failure it parks in `sourcing`,
+// KEEPS its soft hold, and retries next tick (the same bin re-confirms and
+// re-dispatches, owner-idempotent).
 func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	if order.BinID == nil {
 		// The plain path only routes here when order.BinID != nil, so a nil here
@@ -501,14 +522,31 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dispatching held bin"); err != nil {
 		s.logFn("fulfillment: held-bin order %d → sourcing: %v", order.ID, err)
 	}
+	// Confirm-at-dispatch: the held bin is still SOFT (pending reservation from the
+	// prior tick). Hard-claim the slot (if a storage dropoff) AND the bin here, one
+	// step, before the fleet call — same Rule-1 step as the fresh path. On failure
+	// keep the soft holds and park in sourcing; next tick re-confirms.
+	if err := s.dispatcher.ConfirmForDispatch(order, *order.BinID, sourceNode, destNode); err != nil {
+		s.logFn("fulfillment: held-bin order %d confirm-at-dispatch failed, re-queuing (hold kept): %v", order.ID, err)
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "claim-failed",
+			dispatch.QueueParams{Payload: order.PayloadCode})
+		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "confirm failed, retrying"); qerr != nil {
+			s.logFn("fulfillment: held-bin order %d → sourcing after confirm fail: %v", order.ID, qerr)
+		}
+		return false
+	}
 	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
-		s.logFn("fulfillment: held-bin order %d fleet dispatch failed, re-queuing (claim kept): %v", order.ID, err)
-		// Same fleet_unavailable code as the plain-path fleet failure (held-bin
-		// variant keeps the claim; both are transient robot-system issues).
+		s.logFn("fulfillment: held-bin order %d fleet dispatch failed, re-queuing (claim released): %v", order.ID, err)
+		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
+			s.logFn("fulfillment: release claim for held-bin order %d on fleet-fail rollback: %v", order.ID, rerr)
+		}
+		// Same fleet_unavailable code as the plain-path fleet failure; both are
+		// transient robot-system issues. The hard claim is released so the order
+		// re-soft-acquires next tick.
 		s.setQueueReason(order, protocol.QueueFleetUnavailable, "fleet-error", dispatch.QueueParams{})
-		if err := s.lifecycle.Queue(order, "fulfillment", "fleet unavailable, re-queued"); err != nil {
-			s.logFn("fulfillment: held-bin order %d → queued: %v", order.ID, err)
+		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
+			s.logFn("fulfillment: held-bin order %d → sourcing after fleet fail: %v", order.ID, err)
 		}
 		return false
 	}

@@ -55,7 +55,8 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 	var srcBinID int64
 	for _, b := range srcBins {
 		// Reservation-aware (1b): skip bins another order has reserved but not yet
-		// claimed, so ClaimForDispatch below doesn't lose the Acquire race.
+		// claimed, so the ReserveForDispatch soft-acquire below doesn't lose the
+		// race. The hard claim lands later, at ConfirmForDispatch.
 		if b.ClaimedBy == nil && !b.HasPendingReservation {
 			srcBinID = b.ID
 			break
@@ -81,25 +82,34 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 	if err := e.db.CreateOrder(order); err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
 	}
-	if err := e.binManifest.ClaimForDispatch(srcBinID, order.ID, nil); err != nil {
-		// A reservation conflict is a transient race (another order reserved the
-		// bin between the read above and this Acquire), not a permanent failure;
-		// tag it so the caller can retry rather than surface a hard 500.
+	// Rule 1: soft-acquire the bin (a pending reservation), then hard-claim it at
+	// dispatch. A reservation conflict is a transient race (another order reserved
+	// the bin between the read above and this Acquire), not a permanent failure;
+	// tag it so the caller can retry rather than surface a hard 500.
+	if err := e.binManifest.ReserveForDispatch(srcBinID, order.ID); err != nil {
 		if errors.Is(err, reservations.ErrReservationConflict) {
-			return nil, fmt.Errorf("claim bin %d: transient reservation conflict, retry: %w", srcBinID, err)
+			return nil, fmt.Errorf("reserve bin %d: transient reservation conflict, retry: %w", srcBinID, err)
 		}
-		return nil, fmt.Errorf("claim bin %d: %w", srcBinID, err)
+		return nil, fmt.Errorf("reserve bin %d: %w", srcBinID, err)
 	}
 	if err := e.dispatcher.Lifecycle().MarkPending(order, req.Desc); err != nil {
 		e.logFn("engine: mark direct order %d pending: %v", order.ID, err)
 	}
 
+	// Confirm-at-dispatch: hard-claim the destination slot (if a storage dropoff)
+	// and the bin in one step, immediately before the fleet call.
+	if err := e.dispatcher.ConfirmForDispatch(order, srcBinID, sourceNode, destNode); err != nil {
+		if rerr := e.db.ReleaseReservation(order.ID, srcBinID); rerr != nil {
+			e.logFn("engine: release reservation for bin %d after confirm failure: %v", srcBinID, rerr)
+		}
+		return nil, fmt.Errorf("confirm bin %d at dispatch: %w", srcBinID, err)
+	}
+
 	vendorOrderID, err := e.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
-		// Coupled rollback: clear the claim AND release the reservation, so once
-		// the claim above routes through ClaimForDispatch this can't orphan a
-		// confirmed reservation. (DispatchDirect already Fail'd the order, which
-		// released it — this is the idempotent belt.)
+		// Coupled rollback: clear the hard claim AND release the reservation, so a
+		// failed dispatch can't orphan a confirmed reservation. (DispatchDirect
+		// already Fail'd the order, which released it — this is the idempotent belt.)
 		if uerr := e.db.ReleaseClaimForBin(srcBinID, order.ID); uerr != nil {
 			e.logFn("engine: release claim for bin %d after dispatch failure: %v", srcBinID, uerr)
 		}

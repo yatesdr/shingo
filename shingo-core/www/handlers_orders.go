@@ -507,17 +507,25 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		return
 	}
 
-	// Reserve-then-claim through ClaimForDispatch (the guard requires a pending
-	// reservation); rollback below releases it if dispatch fails.
-	if err := h.engine.BinManifest().ClaimForDispatch(bin.ID, order.ID, nil); err != nil {
-		h.jsonError(w, "failed to claim bin: "+err.Error(), http.StatusInternalServerError)
+	// Rule 1: soft-acquire the bin (a pending reservation), then hard-claim it at
+	// dispatch via ConfirmForDispatch (which also claims a storage dropoff slot).
+	// Rollback below releases the reservation if dispatch fails.
+	if err := h.engine.BinManifest().ReserveForDispatch(bin.ID, order.ID); err != nil {
+		h.jsonError(w, "failed to reserve bin: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.engine.Dispatcher().ConfirmForDispatch(order, bin.ID, sourceNode, destNode); err != nil {
+		if rerr := orders.ReleaseReservation(order.ID, bin.ID); rerr != nil {
+			log.Printf("www: release reservation for bin %d after confirm failure: %v", bin.ID, rerr)
+		}
+		h.jsonError(w, "failed to claim bin at dispatch: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if _, err := h.engine.Dispatcher().DispatchDirect(order, sourceNode, destNode); err != nil {
-		// Coupled rollback: clear the claim AND release the reservation, so once
-		// the claim above routes through ClaimForDispatch this can't leak a
-		// confirmed reservation.
+		// Coupled rollback: clear the hard claim AND release the reservation, so a
+		// failed dispatch can't leak a confirmed reservation.
 		if rerr := orders.ReleaseClaimForBin(bin.ID, order.ID); rerr != nil {
 			log.Printf("www: release claim for bin %d after dispatch failure: %v", bin.ID, rerr)
 		}

@@ -93,6 +93,15 @@ func (s *OrderService) ReleaseClaimForBin(binID, orderID int64) error {
 	return s.db.ReleaseClaimForBin(binID, orderID)
 }
 
+// ReleaseReservation releases the order's SOFT pending bin reservation only — the
+// rollback for a bin soft-acquired but not yet hard-claimed at dispatch (Rule 1:
+// soft until complete). No claimed_by column is touched because none was written
+// yet. Used by the manual-order paths when a step between the soft reserve and the
+// confirm-at-dispatch fails.
+func (s *OrderService) ReleaseReservation(orderID, binID int64) error {
+	return s.db.ReleaseReservation(orderID, binID)
+}
+
 // --- Queries --------------------------------------------------------------
 
 // GetOrder loads an order by ID. Absorbed from engine_db_methods.go as

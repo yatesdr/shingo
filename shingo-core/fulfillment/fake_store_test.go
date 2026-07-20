@@ -30,6 +30,8 @@ type fakeStore struct {
 	errCountInFlight   error
 	errCountBinsByNode error
 	errClaimBin        error
+	errReserveBin      error // soft-acquire (ReserveForDispatch) failure
+	errConfirmBin      error // confirm-at-dispatch (ConfirmClaim) failure
 
 	// getNodeByDotNameFn, when non-nil, replaces the default map lookup for
 	// GetNodeByDotName — lets a test make specific names resolve or fail.
@@ -41,14 +43,18 @@ type fakeStore struct {
 	onListQueuedOrders func()
 
 	// Recorded mutations — every test asserts on these.
-	claimedBins        [][2]int64 // (binID, orderID)
-	unclaimedOrderIDs  []int64
-	binIDUpdates       [][2]int64 // (orderID, binID)
-	sourceNodeUpdates  []sourceNodeUpdate
-	statusUpdates      []statusUpdate
-	queueReasons       []queueReasonUpdate
-	capacityExcludeIDs []int64 // excludeID passed to each capacity-gate in-flight count
-	childrenByParent   map[int64][]*nodes.Node
+	claimedBins          [][2]int64 // (binID, orderID) — hard claims via ClaimForDispatch
+	reservedBins         [][2]int64 // (binID, orderID) — soft pending reservations (ReserveForDispatch)
+	confirmedBins        [][2]int64 // (binID, orderID) — confirm-at-dispatch (ConfirmClaim)
+	confirmedSlots       [][2]int64 // (nodeID, orderID) — confirm-at-dispatch slot claim (ConfirmSlotClaim)
+	releasedReservations []int64    // orderIDs whose soft bin reservation was released
+	unclaimedOrderIDs    []int64
+	binIDUpdates         [][2]int64 // (orderID, binID)
+	sourceNodeUpdates    []sourceNodeUpdate
+	statusUpdates        []statusUpdate
+	queueReasons         []queueReasonUpdate
+	capacityExcludeIDs   []int64 // excludeID passed to each capacity-gate in-flight count
+	childrenByParent     map[int64][]*nodes.Node
 }
 
 type queueReasonUpdate struct {
@@ -135,15 +141,56 @@ func (f *fakeStore) CountBinsByNode(nodeID int64) (int, error) {
 	return f.binsAtNode[nodeID], nil
 }
 
-// ClaimForDispatch is the reserve-then-claim path the scanner uses — records to
-// the claimedBins signal and honors errClaimBin, so claim/no-claim assertions and
-// error-injection tests keep working. The fakeStore doubles as the
-// fulfillment.Claimer in the test scanner constructors.
+// ClaimForDispatch is the legacy reserve-then-claim path. The scanner plain path
+// no longer uses it (it soft-reserves then confirms at dispatch), but the synchronous
+// direct/spot order paths still do during the transition, so the fake keeps modeling
+// it — records to claimedBins and honors errClaimBin.
 func (f *fakeStore) ClaimForDispatch(binID, orderID int64, _ *int) error {
 	if f.errClaimBin != nil {
 		return f.errClaimBin
 	}
 	f.claimedBins = append(f.claimedBins, [2]int64{binID, orderID})
+	return nil
+}
+
+// ReserveForDispatch is the soft-acquire path — places a pending reservation
+// (no hard claimed_by). The scanner plain path calls this once it has found a bin
+// and secured the slot, BEFORE dispatch. Records to reservedBins and honors
+// errReserveBin (inject ErrReservationConflict to simulate a lost race).
+func (f *fakeStore) ReserveForDispatch(binID, orderID int64) error {
+	if f.errReserveBin != nil {
+		return f.errReserveBin
+	}
+	f.reservedBins = append(f.reservedBins, [2]int64{binID, orderID})
+	return nil
+}
+
+// ConfirmClaim is the confirm-at-dispatch hard claim — flips the pending
+// reservation to confirmed and records the bin as hard-claimed. Called by the
+// scanner (and the direct/spot paths) immediately before the fleet dispatch.
+// Records to confirmedBins and honors errConfirmBin (inject to simulate a reaped
+// pending reservation / claim_failed).
+func (f *fakeStore) ConfirmClaim(binID, orderID int64, _ *int) error {
+	if f.errConfirmBin != nil {
+		return f.errConfirmBin
+	}
+	f.confirmedBins = append(f.confirmedBins, [2]int64{binID, orderID})
+	return nil
+}
+
+// ConfirmSlotClaim is the slot dual of ConfirmClaim — hard-claims the destination
+// slot at dispatch. Only called for a concrete storage dropoff. Records to
+// confirmedSlots.
+func (f *fakeStore) ConfirmSlotClaim(nodeID, orderID int64) error {
+	f.confirmedSlots = append(f.confirmedSlots, [2]int64{nodeID, orderID})
+	return nil
+}
+
+// ReleaseReservation releases the order's soft pending bin reservation — the
+// rollback path for a soft-acquired bin when the order requeues before dispatch
+// (no hard claim exists yet to clear).
+func (f *fakeStore) ReleaseReservation(orderID, _ int64) error {
+	f.releasedReservations = append(f.releasedReservations, orderID)
 	return nil
 }
 

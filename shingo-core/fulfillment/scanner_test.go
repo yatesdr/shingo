@@ -86,10 +86,24 @@ type recordingDispatcher struct {
 	// reserve conflict requeue on both the plain and held-bin paths.
 	reserveErr error
 
+	// confirmCalls records each ConfirmForDispatch (the Rule-1 confirm-at-dispatch
+	// step); confirmErr drives the confirm-failure requeue.
+	confirmCalls []confirmCall
+	confirmErr   error
+
 	// reshuffleCalls records orders the scanner asked to reshuffle on replay;
 	// reshuffleErr drives the transient-vs-structural disposition.
 	reshuffleCalls []int64
 	reshuffleErr   error
+}
+
+// confirmCall records one Rule-1 confirm-at-dispatch: the order, the bin, and the
+// resolved source/dest nodes (so tests can assert slot-vs-line dest routing).
+type confirmCall struct {
+	orderID int64
+	binID   int64
+	source  string
+	dest    string
 }
 
 type directCall struct {
@@ -115,6 +129,13 @@ func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
 // dispatch package's docker tests.
 func (d *recordingDispatcher) ReserveStorageDropoff(*orders.Order) error {
 	return d.reserveErr
+}
+
+// ConfirmForDispatch records the Rule-1 confirm-at-dispatch step and honors
+// confirmErr so the confirm-failure requeue is exercisable here.
+func (d *recordingDispatcher) ConfirmForDispatch(o *orders.Order, binID int64, src, dst *nodes.Node) error {
+	d.confirmCalls = append(d.confirmCalls, confirmCall{orderID: o.ID, binID: binID, source: src.Name, dest: dst.Name})
+	return d.confirmErr
 }
 func (d *recordingDispatcher) PostFindHook() {}
 
@@ -368,59 +389,76 @@ func TestScanner_TryFulfill_Retrieve_FinderWaits_Skipped(t *testing.T) {
 	}
 }
 
-// With MoveToSourcing flipped BEFORE the claim, a simple order
-// whose claim fails must RE-QUEUE (sourcing→queued) so the complex-only scope
-// guard retries it — leaving it in `sourcing` would wedge it. Status trail:
-// Sourcing (before claim) then Queued (claim-fail re-queue).
-func TestScannerSimpleClaimFailRequeues(t *testing.T) {
+// Under Rule 1 (soft until complete), a simple order whose bin SOFT-ACQUIRE fails
+// (a lost reservation race) requeues to SOURCING — never queued — and records NO
+// hard claim. Status trail: Sourcing (before acquire) then Sourcing (race requeue,
+// idempotent self-transition recorded). The queue code is waiting_for_material
+// (lock-race). This is the soft-reserve analog of the old claim-fail requeue.
+func TestScannerSimpleSoftReserveFailRequeuesToSourcing(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 7, "dest-07")
-	f.errClaimBin = errors.New("already claimed by another scanner")
-	s := newTestScanner(t, f)
-	s.finder = foundFinder(42, "src-07")
+	f.errReserveBin = errors.New("reservation conflict: bin held by another order")
+	dispatcher := &recordingDispatcher{}
+	s := newScannerWith(t, f, foundFinder(42, "src-07"), dispatcher, func(int64, string, string) {})
 
 	if got := s.RunOnce(); got != 0 {
-		t.Fatalf("RunOnce: got %d, want 0 (claim contention)", got)
+		t.Fatalf("RunOnce: got %d, want 0 (soft-reserve race)", got)
 	}
 	if len(f.claimedBins) != 0 {
-		t.Errorf("failed claim should not record a claim: %v", f.claimedBins)
+		t.Errorf("a failed soft-reserve must not record a hard claim: %v", f.claimedBins)
 	}
-	if len(f.statusUpdates) != 2 ||
-		f.statusUpdates[0].Status != string(protocol.StatusSourcing) ||
-		f.statusUpdates[1].Status != string(protocol.StatusQueued) {
-		t.Fatalf("status trail on claim fail: got %v, want [Sourcing, Queued] (simple-order re-queue)", f.statusUpdates)
+	if len(f.confirmedBins) != 0 {
+		t.Errorf("a failed soft-reserve must not confirm: %v", f.confirmedBins)
+	}
+	if len(dispatcher.confirmCalls) != 0 {
+		t.Errorf("confirm-at-dispatch must not run when the soft reserve failed: %+v", dispatcher.confirmCalls)
+	}
+	if len(f.queueReasons) == 0 || f.queueReasons[len(f.queueReasons)-1].Code != string(protocol.QueueWaitingForMaterial) {
+		t.Fatalf("queue_code on soft-reserve fail = %v, want waiting_for_material (lock-race)", f.queueReasons)
+	}
+	for _, u := range f.statusUpdates {
+		if u.Status != string(protocol.StatusSourcing) {
+			t.Fatalf("status trail on soft-reserve fail must stay in sourcing, got %v", f.statusUpdates)
+		}
 	}
 }
 
-// After a successful claim, a failed destination lookup must release the claim
-// and re-queue (status trail Sourcing → Queued). The finder returns the source
-// node, so there is no post-claim source-node re-resolve anymore.
-func TestScanner_TryFulfill_DestNodeLookupFails_UnclaimsAndRequeues(t *testing.T) {
+// Under Rule 1, destination is resolved BEFORE the bin is acquired (slot-first).
+// So an unresolvable destination requeues WITHOUT acquiring or claiming a bin — no
+// hard claim is stranded while the order waits. Status trail: Sourcing (entry) then
+// Sourcing (requeue). Queue code: waiting_for_material (dest-node-unresolved).
+func TestScanner_TryFulfill_DestNodeLookupFails_RequeuesNoBinAcquired(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
-	// dest-09 is intentionally NOT registered: the capacity gate treats the
-	// lookup miss as "not blocked" (passes), then the post-claim dest resolve
-	// fails and the scanner rolls back.
+	// dest-09 is intentionally NOT registered: the capacity gate treats the lookup
+	// miss as "not blocked" (passes), then the dest resolve fails and the scanner
+	// requeues BEFORE acquiring a bin.
 	order := &orders.Order{ID: 9, Status: protocol.StatusQueued, PayloadCode: "PN-123", DeliveryNode: "dest-09"}
 	f.queued = append(f.queued, order)
 	f.ordersByID[9] = order
-	s := newTestScanner(t, f)
-	s.finder = foundFinder(44, "src-09")
+	dispatcher := &recordingDispatcher{}
+	s := newScannerWith(t, f, foundFinder(44, "src-09"), dispatcher, func(int64, string, string) {})
 
 	if got := s.RunOnce(); got != 0 {
-		t.Fatalf("RunOnce: got %d, want 0 (dest lookup failed after claim)", got)
+		t.Fatalf("RunOnce: got %d, want 0 (dest lookup failed before acquire)", got)
 	}
-	if len(f.claimedBins) != 1 {
-		t.Fatalf("bin should have been claimed before dest lookup: got %v", f.claimedBins)
+	if len(f.reservedBins) != 0 {
+		t.Errorf("dest-fail must happen BEFORE any bin acquire: reservedBins=%v", f.reservedBins)
 	}
-	if len(f.unclaimedOrderIDs) != 1 || f.unclaimedOrderIDs[0] != 9 {
-		t.Errorf("unclaim should run for order 9: got %v", f.unclaimedOrderIDs)
+	if len(f.claimedBins) != 0 {
+		t.Errorf("dest-fail must record no hard claim: %v", f.claimedBins)
 	}
-	if len(f.statusUpdates) != 2 ||
-		f.statusUpdates[0].Status != string(protocol.StatusSourcing) ||
-		f.statusUpdates[1].Status != string(protocol.StatusQueued) {
-		t.Fatalf("status trail: got %v, want [Sourcing, Queued]", f.statusUpdates)
+	if len(f.unclaimedOrderIDs) != 0 {
+		t.Errorf("dest-fail before acquire has no claim to release: %v", f.unclaimedOrderIDs)
+	}
+	if len(f.queueReasons) == 0 || f.queueReasons[len(f.queueReasons)-1].Code != string(protocol.QueueWaitingForMaterial) {
+		t.Fatalf("queue_code on dest-fail = %v, want waiting_for_material", f.queueReasons)
+	}
+	for _, u := range f.statusUpdates {
+		if u.Status != string(protocol.StatusSourcing) {
+			t.Fatalf("status trail on dest-fail must stay in sourcing, got %v", f.statusUpdates)
+		}
 	}
 }
 

@@ -515,7 +515,16 @@ func (s *BinManifestService) syncUOPAndClaimTx(tx *sql.Tx, binID, orderID int64,
 }
 
 // ClaimForDispatch selects the correct bin operation based on remaining UOP
-// and executes it atomically. Used by all dispatch paths that claim bins.
+// and executes it atomically. It is the FUSED reserve-then-confirm convenience:
+// Acquire + claim + Confirm in one call.
+//
+// NOTE: this fused form hard-claims the bin at the moment it runs, so it is NOT
+// used by the dispatch paths — under Rule 1 (soft until complete) every dispatch
+// path soft-acquires the bin with ReserveForDispatch while it waits and
+// hard-claims it at dispatch with ConfirmClaim, so no order holds a hard bin
+// claim before its dispatch step. ClaimForDispatch survives as a primitive for
+// tests that want the fused op in one call; production callers must use the
+// soft-reserve + confirm-at-dispatch pair instead.
 //
 //   - remainingUOP == nil: plain claim (no manifest change)
 //   - *remainingUOP <= 0: clear manifest + claim (depleted; <= 0 covers the

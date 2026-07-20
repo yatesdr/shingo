@@ -37,6 +37,13 @@ type Dispatcher interface {
 	// tick. Owner-idempotent.
 	ReserveStorageDropoff(order *orders.Order) error
 
+	// ConfirmForDispatch is the Rule-1 confirm-at-dispatch step: hard-claim the
+	// destination slot (if a storage dropoff) AND the source bin, in one step,
+	// immediately before the fleet call. Called only after a soft-acquired bin and
+	// (where applicable) a soft-reserved slot. On failure the order parks in
+	// sourcing and retries. Owner-idempotent across legs.
+	ConfirmForDispatch(order *orders.Order, binID int64, sourceNode, destNode *nodes.Node) error
+
 	// PlanBuriedReshuffle plans the reshuffle compound for a source that resolved
 	// BURIED on replay, making the order its own compound parent (→ reshuffling).
 	//
@@ -80,12 +87,24 @@ type BinFinder interface {
 	FindSource(order *orders.Order, intent dispatch.Intent) dispatch.SourceResult
 }
 
-// Claimer is the reserve-then-claim primitive the scanner uses to claim a source
-// bin (Acquire -> claim -> Confirm). A one-method consumer interface (matching
-// Dispatcher/Lifecycle/BinFinder) so scanner_test.go can stub it without pulling
-// in service; *service.BinManifestService satisfies it structurally.
+// Claimer is the soft-reserve/confirm primitive pair the scanner uses to hold and
+// then hard-claim a source bin. Under Rule 1 (soft until complete) the scanner plain
+// path SOFT-ACQUIRES the bin (ReserveForDispatch — a pending reservation, no hard
+// claimed_by) while it waits, then CONFIRMS it (ConfirmClaim — flips pending→confirmed
+// and writes the hard claim, one tx) at dispatch, immediately before the fleet call.
+// *service.BinManifestService satisfies this structurally; scanner_test.go stubs it
+// via the fakeStore.
 type Claimer interface {
-	ClaimForDispatch(binID, orderID int64, remainingUOP *int) error
+	// ReserveForDispatch places a pending reservation on binID for orderID — the
+	// soft hold the plain path takes once it has found a bin and secured the slot.
+	// Returns reservations.ErrReservationConflict on a lost race (another order
+	// reserved the bin); the scanner parks the order in sourcing and retries.
+	ReserveForDispatch(binID, orderID int64) error
+	// ConfirmClaim commits an ALREADY-RESERVED bin to a hard claim and confirms its
+	// reservation (pending → confirmed) in one transaction. The dispatch-time half
+	// of Rule 1. A failure (pending reservation reaped, or bin claimed by another
+	// order) surfaces as claim_failed — the order keeps its soft hold and retries.
+	ConfirmClaim(binID, orderID int64, remainingUOP *int) error
 }
 
 // Compile-time checks that the concrete dispatch types satisfy the

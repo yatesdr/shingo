@@ -68,19 +68,20 @@ func TestScanner_RequeuePaths_SetQueueCode(t *testing.T) {
 		assertQueueReason(t, f, want)
 	})
 
-	// --- Claim contention: claimer fails, order requeues waiting on material ---
-	t.Run("claim contention sets waiting_for_material", func(t *testing.T) {
+	// --- Bin soft-acquire race: ReserveForDispatch fails (another order reserved
+	// the bin in the find→reserve window), order requeues waiting on material. ---
+	t.Run("bin reserve race sets waiting_for_material", func(t *testing.T) {
 		f := newFakeStore()
 		order := seedQueuedRetrieve(f, 12, "LINE-C")
 		order.PayloadCode = "PN-CLAIM"
 		f.nodesByDot["LINE-C"] = &nodes.Node{ID: 103, Name: "LINE-C"}
-		f.errClaimBin = errClaim
+		f.errReserveBin = errClaim // soft-reserve fails — the Rule-1 analog of the old claim race
 		finder := foundFinderWith(40, "SRC-C")
 		s := newScannerWith(t, f, finder, &recordingDispatcher{}, nil)
 		s.RunOnce()
 
-		// The plain path's dropoff gate runs before the claim; with no in-flight
-		// and no bins it passes. The claim then fails and requeues under material.
+		// The plain path resolves dest + reserves the slot soft FIRST, then tries to
+		// soft-acquire the bin; the race fails and requeues under material (lock-race).
 		found := false
 		for _, qr := range f.queueReasons {
 			if qr.OrderID == 12 && qr.Code == string(protocol.QueueWaitingForMaterial) &&
@@ -89,7 +90,7 @@ func TestScanner_RequeuePaths_SetQueueCode(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatalf("claim-contention requeue did not record waiting_for_material/lock-race; got %v", f.queueReasons)
+			t.Fatalf("soft-reserve race did not record waiting_for_material/lock-race; got %v", f.queueReasons)
 		}
 	})
 
