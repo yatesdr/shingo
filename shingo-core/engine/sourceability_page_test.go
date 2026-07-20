@@ -94,3 +94,55 @@ func TestSourceabilityPage_GridClaimsAndQueue(t *testing.T) {
 		t.Errorf("style Z missing = %v, want [BIN-Z]", z.Missing)
 	}
 }
+
+// TestSourceabilityPage_DropsClaimlessDefault proves the round-2 rule: a
+// "Default" style with no claims is dropped from the page (plant-spec noise),
+// while a non-Default claimless style still surfaces as not_configured so the
+// operator knows to configure it.
+func TestSourceabilityPage_DropsClaimlessDefault(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, _, _ := setupTestData(t, db)
+	createTestBinAtNode(t, db, "BIN-A", storageNode.ID, "free-a")
+
+	// SNF2: a real style A (has a claim), a claimless "Default", and a claimless
+	// non-Default "Empty".
+	styles := []plantclaims.StyleRow{
+		{ProcessID: "SNF2", StyleID: "A"},
+		{ProcessID: "SNF2", StyleID: "Default"},
+		{ProcessID: "SNF2", StyleID: "Empty"},
+	}
+	claims := []plantclaims.ClaimRow{
+		{ProcessID: "SNF2", StyleID: "A", CoreNodeName: storageNode.Name, PayloadCode: "BIN-A"},
+	}
+	testutil.MustNoErr(t, plantclaims.ReplaceProcess(db.DB, "SNF2", styles, claims, 0), "seed mirror")
+
+	eng := newTestEngine(t, db, simulator.New())
+	eng.SourceabilityMonitor().recomputeAll()
+	view, err := eng.SourceabilityPage()
+	testutil.MustNoErr(t, err, "page")
+
+	var proc *SourcingProcessView
+	for i := range view.Processes {
+		if view.Processes[i].ProcessID == "SNF2" {
+			proc = &view.Processes[i]
+		}
+	}
+	if proc == nil {
+		t.Fatalf("no SNF2 process")
+	}
+
+	seen := map[string]bool{}
+	for _, s := range proc.Styles {
+		seen[s.StyleID] = true
+	}
+	if seen["Default"] {
+		t.Error("claimless Default must be dropped from the page")
+	}
+	if !seen["Empty"] {
+		t.Error("a claimless NON-Default style must still surface (as not_configured)")
+	}
+	if !seen["A"] {
+		t.Error("the real style A must be present")
+	}
+}

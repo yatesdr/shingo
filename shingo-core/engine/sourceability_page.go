@@ -68,6 +68,48 @@ type SourcingProcessView struct {
 	Blocked int
 }
 
+// processChipStatus is the verdict the process chip shows. It is the RUNNING
+// style's own status — whether the process can sustain what it is running now —
+// which is the single most useful signal for a process and the one the owner
+// asked the chip to carry.
+//
+// Falls back to the worst-across-styles roll-up when Core has no running style
+// (an older Edge, or none set) or when the running style has no view because it
+// was the dropped Default placeholder. In the Default case the fallback lands on
+// not_configured, which is the honest state: the process is running a style with
+// no claims.
+func processChipStatus(pv *SourcingProcessView) string {
+	if pv.RunningStyle != "" {
+		for _, s := range pv.Styles {
+			if s.StyleID == pv.RunningStyle {
+				return s.Status
+			}
+		}
+	}
+	return rollUpStatus(pv.Styles)
+}
+
+// statusSeverity ranks a verdict for the rail's worst-first sort:
+// blocked → at-risk → sourcing → no-data → not-set-up. "no-data" has no real
+// status feeding it today (the verdict enum is green/yellow/red/not_configured),
+// but it is ranked so the ordering is total if one is ever added.
+func statusSeverity(status string) int {
+	switch status {
+	case string(sourceability.StatusRed):
+		return 0
+	case string(sourceability.StatusYellow):
+		return 1
+	case string(sourceability.StatusGreen):
+		return 2
+	case "no_data":
+		return 3
+	case string(sourceability.StatusNotConfigured):
+		return 4
+	default:
+		return 5
+	}
+}
+
 // rollUpStatus reduces a process's style verdicts to the one shown on the rail.
 // Worst-first: a red anywhere means something is blocked, and that is what an
 // operator scanning the rail needs to see. A process whose styles are all
@@ -136,6 +178,21 @@ type SourceabilityPageView struct {
 	// Per-process absence is a different thing and is carried by
 	// SourcingProcessView.RunningStyle being empty.
 	RunningStyleKnown bool
+	// StateSummary is how many processes sit in each chip status, worst-first,
+	// for the plant summary strip above the rail (e.g. "4 blocked · 2 sourcing ·
+	// 7 not set up"). Ordered here rather than as a map so the template renders
+	// a stable severity order instead of Go's alphabetical map-key sort. States
+	// with a zero count are omitted.
+	StateSummary []StateCount
+	// NotConfiguredCount is how many processes collapse into the not-set-up tail
+	// of the rail, so the collapsed row can be labelled with a count.
+	NotConfiguredCount int
+}
+
+// StateCount is one chip status and how many processes are in it.
+type StateCount struct {
+	Status string
+	Count  int
 }
 
 // SourceabilityPage assembles the sourcing page's read model. Pure reads: the
@@ -204,6 +261,17 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 			sv.Claims = append(sv.Claims, cv)
 		}
 
+		// Drop the "Default" placeholder when it carries no claims. "Default" is
+		// a real styles row on Edge (from the plant spec / RoboShop import — no
+		// shingo code creates one; verified across shingo-core and shingo-edge),
+		// but on this plant every "Default" style has zero claims and is never a
+		// genuine changeover target. A NON-Default style with no claims still
+		// surfaces as "not set up" so the operator knows to configure it;
+		// Default-with-no-claims is plant-spec noise, so it is dropped.
+		if st.StyleID == "Default" && len(sv.Claims) == 0 {
+			continue
+		}
+
 		pv := byProcess[st.ProcessID]
 		if pv == nil {
 			pv = &SourcingProcessView{ProcessID: st.ProcessID}
@@ -218,7 +286,7 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 		if pv.RunningStyle != "" {
 			view.RunningStyleKnown = true
 		}
-		pv.Status = rollUpStatus(pv.Styles)
+		pv.Status = processChipStatus(pv)
 		for _, s := range pv.Styles {
 			switch s.Status {
 			case string(sourceability.StatusRed):
@@ -229,7 +297,37 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 		}
 		view.Processes = append(view.Processes, *pv)
 	}
-	sort.Slice(view.Processes, func(i, j int) bool { return view.Processes[i].ProcessID < view.Processes[j].ProcessID })
+
+	// Rail order is by severity, worst first: an operator scanning the rail
+	// should hit the blocked processes before the healthy ones. Ties break by
+	// name for a stable order. The template collapses the not-set-up tail into
+	// one expandable row, but they still sort last here.
+	sort.Slice(view.Processes, func(i, j int) bool {
+		si, sj := statusSeverity(view.Processes[i].Status), statusSeverity(view.Processes[j].Status)
+		if si != sj {
+			return si < sj
+		}
+		return view.Processes[i].ProcessID < view.Processes[j].ProcessID
+	})
+
+	// Plant summary: how many processes sit in each state, worst-first for the
+	// strip above the rail. Also the collapsed-tail count.
+	counts := map[string]int{}
+	for _, pv := range view.Processes {
+		counts[pv.Status]++
+	}
+	view.NotConfiguredCount = counts[string(sourceability.StatusNotConfigured)]
+	for _, status := range []string{
+		string(sourceability.StatusRed),
+		string(sourceability.StatusYellow),
+		string(sourceability.StatusGreen),
+		"no_data",
+		string(sourceability.StatusNotConfigured),
+	} {
+		if n := counts[status]; n > 0 {
+			view.StateSummary = append(view.StateSummary, StateCount{Status: status, Count: n})
+		}
+	}
 
 	// Replenishment queue: lowest time-to-empty fills first.
 	sort.Slice(queue, func(i, j int) bool { return queue[i].TTESeconds < queue[j].TTESeconds })

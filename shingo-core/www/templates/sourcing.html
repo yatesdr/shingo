@@ -22,8 +22,11 @@
   .src-running { color:var(--text); font-variant-numeric:tabular-nums; }
   .src-now { font-size:1.05rem; font-weight:650; margin-top:0.1rem; font-variant-numeric:tabular-nums; }
 
-  /* Pane */
-  .src-pane { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:0.9rem 1.1rem; }
+  /* Pane — sticks beside the rail so scrolling a long rail never scrolls the
+     detail away and leaves the right side blank (field-observed). align-self
+     start keeps it from stretching to the grid row height. */
+  .src-pane { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:0.9rem 1.1rem;
+              position:sticky; top:0.75rem; align-self:start; max-height:calc(100vh - 1.5rem); overflow-y:auto; }
   .src-pane h3 { display:flex; align-items:center; gap:0.55rem; font-size:0.95rem; }
   .src-k { font-size:0.68rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em; margin-top:1rem; }
 
@@ -73,6 +76,23 @@
      material is GOING, dimmer than where it currently IS. */
   .src-feeds { font-size:0.72rem; color:var(--text-muted); margin-top:0.1rem; }
 
+  /* Plant summary strip above the rail. */
+  .src-summary { display:flex; flex-wrap:wrap; gap:0.5rem 1rem; margin:0 0 0.9rem; align-items:center; }
+  .src-summary .item { display:inline-flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text); }
+  .src-summary .n { font-weight:700; font-variant-numeric:tabular-nums; }
+  .src-dot { width:0.6rem; height:0.6rem; border-radius:50%; display:inline-block; }
+  .src-dot-green  { background:var(--success); }
+  .src-dot-yellow { background:var(--warning); }
+  .src-dot-red    { background:var(--danger); }
+  .src-dot-nodata { background:var(--info); }
+  .src-dot-unset  { background:var(--status-pending-dot); }
+
+  /* Collapsed not-set-up tail: one row that expands the rest of the rail. */
+  .src-collapse { border-top:1px solid var(--border); }
+  .src-collapse > summary { padding:0.7rem 0.85rem; cursor:pointer; font-size:0.8rem; color:var(--text-muted); list-style:none; }
+  .src-collapse > summary::-webkit-details-marker { display:none; }
+  .src-collapse > summary:hover { background:var(--elev-raised); }
+
   /* No-JS: every pane is visible and stacked. JS adds .src-js to switch to
      one-at-a-time, so the page is usable before the script runs. */
   .src-js .src-pane[hidden] { display:none; }
@@ -95,9 +115,19 @@
 {{if not .View.Processes}}
   <p class="text-muted">No process styles are being tracked yet.</p>
 {{else}}
+
+{{/* Plant summary strip — process counts by state, worst-first. */}}
+<div class="src-summary">
+  {{range .View.StateSummary}}
+  <span class="item"><span class="src-dot {{template "srcdot" .Status}}"></span><span class="n">{{.Count}}</span> {{template "srcstatelabel" .Status}}</span>
+  {{end}}
+</div>
+
 <div class="src-two" id="src-root">
   <div class="src-rail" role="tablist" aria-label="Processes">
+    {{/* Configured processes first, already severity-sorted by the builder. */}}
     {{range $i, $p := .View.Processes}}
+    {{if ne $p.Status "not_configured"}}
     <button class="src-rrow" role="tab" type="button"
             data-process="{{$p.ProcessID}}" aria-selected="{{if eq $i 0}}true{{else}}false{{end}}"
             aria-controls="pane-{{$p.ProcessID}}">
@@ -108,23 +138,47 @@
              means Core does not know, and a placeholder dash there would read
              as a style rather than as an absence. */}}
         {{if $p.RunningStyle}}<span class="src-rmeta src-running">{{$p.RunningStyle}}</span>{{end}}
-        <span class="src-rmeta">
-          {{if eq $p.Status "not_configured"}}no claims configured
-          {{else}}{{$p.Ready}} ready &middot; {{$p.Blocked}} blocked{{end}}
-        </span>
+        <span class="src-rmeta">{{$p.Ready}} ready &middot; {{$p.Blocked}} blocked</span>
       </span>
       {{template "srcchip" $p.Status}}
     </button>
+    {{end}}
+    {{end}}
+
+    {{/* The not-set-up tail collapses into one expandable row at the bottom —
+         it is noise most of the time (a plant with many unconfigured processes
+         should not bury its blocked ones under them). */}}
+    {{if .View.NotConfiguredCount}}
+    <details class="src-collapse">
+      <summary>{{.View.NotConfiguredCount}} not set up &mdash; show</summary>
+      {{range $p := .View.Processes}}
+      {{if eq $p.Status "not_configured"}}
+      <button class="src-rrow" role="tab" type="button"
+              data-process="{{$p.ProcessID}}" aria-selected="false"
+              aria-controls="pane-{{$p.ProcessID}}">
+        <span>
+          <span class="src-rname">{{$p.ProcessID}}</span>
+          {{if $p.RunningStyle}}<span class="src-rmeta src-running">{{$p.RunningStyle}}</span>{{end}}
+          <span class="src-rmeta">no claims configured</span>
+        </span>
+        {{template "srcchip" $p.Status}}
+      </button>
+      {{end}}
+      {{end}}
+    </details>
     {{end}}
   </div>
 
   {{range $i, $p := .View.Processes}}
   <div class="src-pane" id="pane-{{$p.ProcessID}}" role="tabpanel"
        data-process="{{$p.ProcessID}}"{{if ne $i 0}} hidden{{end}}>
-    <h3>{{$p.ProcessID}} {{template "srcchip" $p.Status}}</h3>
+    <h3>
+      {{$p.ProcessID}} {{template "srcchip" $p.Status}}
+      {{if ne $p.Status "not_configured"}}<span class="src-rmeta" style="margin-left:auto">{{$p.Ready}} ready &middot; {{$p.Blocked}} blocked</span>{{end}}
+    </h3>
 
     {{if $p.RunningStyle}}
-    <div class="src-k">Running now</div>
+    <div class="src-k">Running now &mdash; verdict shown above</div>
     <div class="src-now">{{$p.RunningStyle}}</div>
     {{end}}
 
@@ -220,4 +274,22 @@
   {{else if eq . "red"}}<span class="badge badge-sm src-v src-v-red">&#10005; Blocked</span>
   {{else if eq . "not_configured"}}<span class="badge badge-sm src-v src-v-unset">&#9675; Not set up</span>
   {{else}}<span class="badge badge-sm src-v src-v-nodata">&#9888; No data</span>{{end}}
+{{end}}
+
+{{/* Plain state label for the summary strip. */}}
+{{define "srcstatelabel"}}
+  {{- if eq . "green"}}sourcing
+  {{- else if eq . "yellow"}}at risk
+  {{- else if eq . "red"}}blocked
+  {{- else if eq . "not_configured"}}not set up
+  {{- else}}no data{{end -}}
+{{end}}
+
+{{/* Dot color class matching the chip hue, for the summary strip. */}}
+{{define "srcdot"}}
+  {{- if eq . "green"}}src-dot-green
+  {{- else if eq . "yellow"}}src-dot-yellow
+  {{- else if eq . "red"}}src-dot-red
+  {{- else if eq . "not_configured"}}src-dot-unset
+  {{- else}}src-dot-nodata{{end -}}
 {{end}}
