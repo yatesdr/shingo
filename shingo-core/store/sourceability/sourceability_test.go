@@ -98,11 +98,36 @@ func TestCompute_AllowedSetFallbackSatisfies(t *testing.T) {
 	}
 }
 
-func TestCompute_StyleWithNoClaimsIsGreen(t *testing.T) {
+// A style with no claims reports NOT_CONFIGURED, never green. It used to report
+// green: with zero claims it satisfied every claim it had, fell through the
+// missing check, and emerged as "can change over" — the system's strongest
+// claim, derived from the complete absence of configuration.
+func TestCompute_StyleWithNoClaimsIsNotConfigured(t *testing.T) {
 	k := key("SNF2", "EMPTY")
 	got := byKey(Compute(Inputs{Styles: []plantclaims.ProcessKey{k}}, Config{}, now))[k]
-	if got.Status != StatusGreen {
-		t.Fatalf("status = %q, want green (no claims)", got.Status)
+	if got.Status != StatusNotConfigured {
+		t.Fatalf("status = %q, want not_configured (no claims)", got.Status)
+	}
+	if got.Status == StatusGreen {
+		t.Fatal("an unconfigured style must never report green — it is unknown, not capable")
+	}
+	if len(got.Missing) != 0 {
+		t.Errorf("Missing = %v, want empty — nothing is missing, nothing is configured", got.Missing)
+	}
+}
+
+// Enabling the at-risk tier must not turn an unconfigured style into a verdict:
+// there are no claims to project a time-to-empty for, so the gate is irrelevant
+// and the status stays not_configured either way.
+func TestCompute_NoClaimsStaysNotConfiguredWithYellowEnabled(t *testing.T) {
+	k := key("SNF2", "EMPTY")
+	cfg := Config{YellowEnabled: true, Horizon: time.Hour}
+	got := byKey(Compute(Inputs{Styles: []plantclaims.ProcessKey{k}}, cfg, now))[k]
+	if got.Status != StatusNotConfigured {
+		t.Fatalf("status = %q, want not_configured regardless of the at-risk gate", got.Status)
+	}
+	if len(got.AtRisk) != 0 {
+		t.Errorf("AtRisk = %v, want empty — no claims means no lines to project", got.AtRisk)
 	}
 }
 

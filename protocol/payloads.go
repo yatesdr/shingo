@@ -1068,7 +1068,12 @@ type SourcingStateReport struct {
 type SourcingState struct {
 	ProcessID string `json:"process_id"`
 	StyleID   string `json:"style_id"`
-	// Status is "green", "yellow", or "red".
+	// Status is "green", "yellow", "red", or "not_configured".
+	//
+	// "not_configured" means the style has no sourceability claims, so there is
+	// no verdict — NOT that it is fine. It is never selectable. An older Edge
+	// that does not know the value must treat it as not-selectable rather than
+	// falling back to a capable state; the picker's default arm does that.
 	Status string `json:"status"`
 	// Missing lists the payloads no available bin could satisfy (RED only).
 	Missing []string `json:"missing,omitempty"`

@@ -33,6 +33,13 @@ type styleSourcingView struct {
 func styleSourcingViewFrom(s protocol.SourcingState) styleSourcingView {
 	v := styleSourcingView{Status: s.Status}
 	switch s.Status {
+	case "not_configured":
+		// No claims means no verdict, so the picker cannot offer it. Blocked for
+		// the same reason as red — unselectable — but the note says "not set up"
+		// rather than naming payloads, because none are configured to name.
+		v.Blocked = true
+		v.Status = "not set up"
+		v.Note = "no sourceability claims"
 	case "red":
 		v.Blocked = true
 		if len(s.Missing) > 0 {
@@ -46,6 +53,16 @@ func styleSourcingViewFrom(s protocol.SourcingState) styleSourcingView {
 		if len(payloads) > 0 {
 			v.Note = "low: " + strings.Join(payloads, ", ")
 		}
+	case "green":
+		// Selectable, no note — the only verdict that is affirmatively fine.
+	default:
+		// Fail CLOSED. Status is an open string on the wire, so an Edge running
+		// against a newer Core can receive a verdict it does not know — exactly
+		// what happened when not_configured was added. An unrecognised verdict
+		// is not permission to change over, so it blocks rather than falling
+		// through to selectable as it used to.
+		v.Blocked = true
+		v.Note = "unrecognised sourcing verdict — update Edge"
 	}
 	return v
 }

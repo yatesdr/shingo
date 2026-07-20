@@ -307,6 +307,10 @@ func toWire(s sourceability.StyleState) protocol.SourcingState {
 // design's operator-reads column.
 func reasonFor(s sourceability.StyleState) string {
 	switch s.Status {
+	case sourceability.StatusNotConfigured:
+		// Deliberately not phrased as a capability. The style has no claims, so
+		// the system knows nothing about whether it could be sourced.
+		return "Not set up — no sourceability claims configured for this style."
 	case sourceability.StatusRed:
 		return "Cannot change over — missing " + strings.Join(s.Missing, ", ") + "."
 	case sourceability.StatusYellow:

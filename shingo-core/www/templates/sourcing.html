@@ -6,6 +6,9 @@
   .src-chip.red    { background:var(--danger); color:#fff; }
   .src-chip.yellow { background:var(--warning); color:#fff; }
   .src-chip.green  { background:transparent; color:var(--text-muted); border:1px solid var(--border); }
+  /* not_configured is an ABSENCE of configuration, not a health state — slate
+     (the pending-status hue), never a success or alarm color. */
+  .src-chip.not_configured { background:transparent; color:var(--status-pending-dot); border:1px dashed var(--status-pending-dot); }
   .src-style { border-bottom:1px solid var(--border); }
   .src-style:last-child { border-bottom:none; }
   .src-style > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; padding:0.45rem 0; }
@@ -27,16 +30,25 @@
   <h3>{{.ProcessID}}</h3>
   {{range .Styles}}
   <details class="src-style" data-status="{{.Status}}"{{if eq .Status "red"}} open{{end}}>
+    {{/* Each fact once. The chip carries the STATUS; the line beside it carries
+         the DETAIL only. Rendering .Reason here too would restate the chip
+         ("Cannot change over" = red) and repeat the missing list verbatim.
+         .Reason is still generated and still crosses the wire — the operator
+         HMI displays it — it is just not duplicated on this page. */}}
     <summary>
-      <span class="src-chip {{.Status}}">{{.Status}}</span>
+      <span class="src-chip {{.Status}}">{{if eq .Status "not_configured"}}not set up{{else}}{{.Status}}{{end}}</span>
       <strong>{{.StyleID}}</strong>
-      <span class="text-muted">{{.Reason}}</span>
-      {{if .Missing}}<span class="src-missing">missing {{range $i, $m := .Missing}}{{if $i}}, {{end}}{{$m}}{{end}}</span>{{end}}
+      {{if eq .Status "not_configured"}}<span class="text-muted">no sourceability claims configured</span>
+      {{else if .Missing}}<span class="src-missing">missing {{range $i, $m := .Missing}}{{if $i}}, {{end}}{{$m}}{{end}}</span>{{end}}
     </summary>
     <div class="src-drill">
+      {{/* The time-to-empty column exists only when the at-risk tier is on.
+           With it dark nothing computes a projection, so the column rendered a
+           full height of em-dashes — a column of nothing, implying the data was
+           missing rather than switched off. */}}
       {{if .Claims}}
       <table>
-        <thead><tr><th>Node</th><th>Payload</th><th>Free</th><th>Held</th><th>Time to empty</th></tr></thead>
+        <thead><tr><th>Node</th><th>Payload</th><th>Free</th><th>Held</th>{{if $.View.YellowEnabled}}<th>Time to empty</th>{{end}}</tr></thead>
         <tbody>
         {{range .Claims}}
           <tr>
@@ -44,12 +56,12 @@
             <td>{{.Payload}}</td>
             <td{{if eq .Free 0}} class="src-missing"{{end}}>{{.Free}}</td>
             <td>{{.Held}}</td>
-            <td>{{if .HasTTE}}{{.TTEDisplay}}{{else}}&mdash;{{end}}</td>
+            {{if $.View.YellowEnabled}}<td>{{if .HasTTE}}{{.TTEDisplay}}{{else}}&mdash;{{end}}</td>{{end}}
           </tr>
         {{end}}
         </tbody>
       </table>
-      {{else}}<p class="text-muted">No sourceability claims for this style.</p>{{end}}
+      {{else}}<p class="text-muted">No sourceability claims for this style — nothing to net the pool against, so no verdict.</p>{{end}}
     </div>
   </details>
   {{end}}

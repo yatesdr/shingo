@@ -32,6 +32,16 @@ const (
 	// StatusRed: at least one payload has no available bin — the style cannot be
 	// changed over to until the missing payloads are replenished.
 	StatusRed Status = "red"
+	// StatusNotConfigured: the style has no sourceability claims, so there is
+	// nothing to net the pool against and no verdict to give.
+	//
+	// This used to report GREEN. A style with zero claims trivially satisfied
+	// every claim it had — none — so it fell through the missing check and came
+	// out "can change over", which is the strongest claim the system makes,
+	// derived from the complete absence of configuration. An unconfigured
+	// process is not capable; it is unknown. It never reports green and is never
+	// selectable in the changeover picker.
+	StatusNotConfigured Status = "not_configured"
 )
 
 // Config gates the at-risk (yellow) tier. The computation ALWAYS computes
@@ -84,7 +94,8 @@ type StyleState struct {
 // read.go and fills this struct; Compute consumes it purely.
 type Inputs struct {
 	// Styles is every configured (process, style) — including styles with no
-	// claims (trivially GREEN) — so an all-styles recompute reports every one.
+	// claims, which report NOT_CONFIGURED — so an all-styles recompute reports
+	// every one.
 	Styles []plantclaims.ProcessKey
 	// Claims are the sourceability claims grouped by (process, style).
 	Claims map[plantclaims.ProcessKey][]plantclaims.ClaimRow
@@ -118,6 +129,15 @@ func Compute(in Inputs, cfg Config, now time.Time) []StyleState {
 		sort.SliceStable(claims, func(i, j int) bool { return claims[i].Seq < claims[j].Seq })
 
 		st := StyleState{ProcessID: key.ProcessID, StyleID: key.StyleID, ComputedAt: now}
+
+		// No claims = nothing to net against. Report that, rather than letting
+		// the style fall through every check below and emerge GREEN on the
+		// strength of having satisfied zero requirements.
+		if len(claims) == 0 {
+			st.Status = StatusNotConfigured
+			out = append(out, st)
+			continue
+		}
 
 		// Working copy of the pool, seeded only with the payloads this style
 		// touches so the map stays small at plant scale.
