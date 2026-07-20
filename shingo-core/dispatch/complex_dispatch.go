@@ -87,9 +87,11 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 			// under the right operator category without re-sniffing the error.
 			resolvedSteps = stepsAsResolved(p.Steps)
 			queueCause = "intake-resolve"
-			queueCode = queueCodeForCapacity(payload.(capacityKind))
+			capDetail := capacityDetailFrom(payload)
+			queueCode = queueCodeForCapacity(capDetail.kindOf())
 			_, intakeDelivery := extractEndpoints(resolvedSteps)
-			queueReason = FormatQueueSentence(queueCode, QueueParams{Payload: payloadCode, Destination: intakeDelivery})
+			queueReason = FormatQueueSentence(queueCode,
+				queueParamsForCapacity(capDetail, payloadCode, intakeDelivery))
 		default:
 			// Structural / transient / fatal — terminal at intake.
 			d.sendError(env, p.OrderUUID, "resolution_failed", err.Error())
@@ -370,9 +372,10 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 			d.handleComplexBuriedOnReplay(order, buriedErr)
 			return rerr
 		case ResolutionCapacity:
-			code := queueCodeForCapacity(payload.(capacityKind))
+			capDetail := capacityDetailFrom(payload)
+			code := queueCodeForCapacity(capDetail.kindOf())
 			d.setQueueReason(order, code, "ngrp-resolve",
-				QueueParams{Payload: order.PayloadCode, Destination: order.DeliveryNode})
+				queueParamsForCapacity(capDetail, order.PayloadCode, order.DeliveryNode))
 			d.dbg("complex: order %d still capacity-blocked at NGRP resolution: %s", order.ID, code)
 			return rerr
 		default:

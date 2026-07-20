@@ -3,6 +3,7 @@ package dispatch
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"shingo/protocol"
@@ -123,26 +124,85 @@ const (
 // ResolutionCapacity, naming WHICH of the four capacity shapes matched. The four
 // shapes split into two operator-facing categories:
 //
-//   - CapacitySlot: a saturated dropoff group ("no available slot in node group",
-//     "no bin of requested payload in node group") → the order is waiting on a
-//     SLOT at its destination.
-//   - CapacityBin: a dry empty-fetch pool ("cannot resolve empty in group",
-//     "no empty carrier in group") → the order is waiting on MATERIAL (an empty
-//     carrier to fill).
+//   - capacitySlot: a saturated dropoff group ("no available slot in node
+//     group") → the order is waiting on a SLOT at its destination.
+//   - capacityPayload / capacityBin: the group is missing CONTENTS — a payload
+//     bin or an empty carrier → the order is waiting on MATERIAL.
 //
 // The split is what lets intake/ngrp resolution pick the right queue code
 // (waiting_for_slot vs waiting_for_material) without re-sniffing the same
 // substrings at the call site.
+//
+// capacityPayload used to share capacitySlot's branch, which is the F1 defect
+// from the 2026-07-20 Springfield study: "no bin of requested payload in node
+// group AMR Supermarket" is a MATERIAL shortage in the SUPERMARKET, but it was
+// coded waiting_for_slot and rendered "Waiting for a slot at ALN_003" — the
+// wrong problem at the wrong node. Every "Waiting for a slot" order on the floor
+// that morning was actually this. Splitting the kind changes the recorded
+// queue_code for that condition, which is intended.
 type capacityKind int
 
 const (
 	// capacityUnknown is the zero value — no capacity shape matched.
 	capacityUnknown capacityKind = iota
-	// capacitySlot: dropoff group is saturated (no free slot / no payload bin).
+	// capacitySlot: dropoff group has no free slot to drop into.
 	capacitySlot
+	// capacityPayload: the source group holds no bin of the requested payload.
+	capacityPayload
 	// capacityBin: empty-fetch pool is dry (no empty carrier available).
 	capacityBin
 )
+
+// capacityDetail is the ResolutionCapacity payload: the shape that matched plus
+// the context recoverable from the resolver's error text. The resolver returns
+// plain fmt.Errorf, so Group and Step are parsed here ONCE rather than re-sniffed
+// at each call site — the same reason the kind is returned typed.
+type capacityDetail struct {
+	Kind capacityKind
+	// Group is the node group named by the resolver ("AMR Supermarket").
+	// Empty when the message carried no group.
+	Group string
+	// Step is the zero-based step index of a multi-step order; HasStep says
+	// whether it was present, since step 0 is a real step.
+	Step    int
+	HasStep bool
+}
+
+// groupFromResolutionError pulls the node-group name out of a resolver error.
+// Both shapes end with the group name:
+//
+//	"no bin of requested payload in node group AMR Supermarket"
+//	"no available slot in node group AMR Supermarket"
+//
+// The outer wrap ("cannot resolve group X: ...") repeats it, so the LAST
+// occurrence is the innermost, most specific one.
+func groupFromResolutionError(msg string) string {
+	const marker = "node group "
+	i := strings.LastIndex(msg, marker)
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(msg[i+len(marker):])
+}
+
+// stepFromResolutionError pulls the leading "step N:" index that the complex
+// replay path prefixes onto a step failure.
+func stepFromResolutionError(msg string) (int, bool) {
+	const marker = "step "
+	if !strings.HasPrefix(msg, marker) {
+		return 0, false
+	}
+	rest := msg[len(marker):]
+	end := strings.IndexByte(rest, ':')
+	if end <= 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(rest[:end]))
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
 
 // classifyResolutionError inspects err and returns the typed class
 // plus the typed-payload pointer when the class carries one
@@ -199,13 +259,23 @@ func classifyResolutionError(err error) (ResolutionErrorClass, any) {
 	// is returned typed so a caller picks its queue code from the kind, not by
 	// re-sniffing the message.
 	msg := err.Error()
-	if strings.Contains(msg, "no available slot in node group") ||
-		strings.Contains(msg, "no bin of requested payload in node group") {
-		return ResolutionCapacity, capacitySlot
+	detail := func(k capacityKind) (ResolutionErrorClass, any) {
+		d := &capacityDetail{Kind: k, Group: groupFromResolutionError(msg)}
+		d.Step, d.HasStep = stepFromResolutionError(msg)
+		return ResolutionCapacity, d
+	}
+	// SLOT: the group has room-for-nothing. A genuine dropoff-capacity wait.
+	if strings.Contains(msg, "no available slot in node group") {
+		return detail(capacitySlot)
+	}
+	// MATERIAL: the group has room but not the CONTENTS. Kept separate from the
+	// slot shape above — see the capacityKind doc comment (F1).
+	if strings.Contains(msg, "no bin of requested payload in node group") {
+		return detail(capacityPayload)
 	}
 	if strings.Contains(msg, "cannot resolve empty in group") ||
 		strings.Contains(msg, "no empty carrier in group") {
-		return ResolutionCapacity, capacityBin
+		return detail(capacityBin)
 	}
 	// DB-layer wraps that aren't structural or capacity.
 	if strings.Contains(msg, "list children of") ||
@@ -217,10 +287,12 @@ func classifyResolutionError(err error) (ResolutionErrorClass, any) {
 }
 
 // queueCodeForCapacity maps a typed capacity kind to its operator-facing queue
-// code. A slot-shaped capacity error waits on a destination slot; a bin-shaped
-// one waits on material (an empty carrier). capacityUnknown falls back to
+// code. A slot-shaped capacity error waits on a destination slot; a payload- or
+// bin-shaped one waits on MATERIAL. capacityUnknown still parks under
 // waiting_for_material (the broader category) so an uncategorized capacity error
-// still parks under a real code rather than rendering empty.
+// gets a real code rather than rendering empty — but see queueParamsForCapacity,
+// which withholds the payload in that case so the sentence does not invent a
+// specificity the classifier did not earn.
 func queueCodeForCapacity(k capacityKind) protocol.QueueCode {
 	switch k {
 	case capacitySlot:
@@ -228,4 +300,56 @@ func queueCodeForCapacity(k capacityKind) protocol.QueueCode {
 	default:
 		return protocol.QueueWaitingForMaterial
 	}
+}
+
+// queueParamsForCapacity builds the sentence params for a classified capacity
+// error. It is the single place the F1 location rule is enforced: a payload
+// shortage names the GROUP it is short in, never the order's lineside delivery
+// node, because the operator has to go look in the group.
+//
+// For capacityUnknown the payload is deliberately withheld. Classification is
+// substring matching over untyped resolver errors, so an unrecognised message is
+// a real possibility — and "Waiting for material: 74368-6SA0A.06" would be a
+// confident claim derived from an unclassified error. It renders "Waiting for
+// material" instead (F7).
+// payloadCode and deliveryNode come from the order at replay, or from the parsed
+// envelope at intake where no order row exists yet — hence plain values rather
+// than an *orders.Order.
+func queueParamsForCapacity(d *capacityDetail, payloadCode, deliveryNode string) QueueParams {
+	if d == nil {
+		return QueueParams{}
+	}
+	p := QueueParams{Step: d.Step, HasStep: d.HasStep}
+	switch d.Kind {
+	case capacitySlot:
+		// A genuine dropoff-capacity wait: the group IS the destination here.
+		p.Destination = d.Group
+		if p.Destination == "" {
+			p.Destination = deliveryNode
+		}
+	case capacityPayload:
+		p.Payload = payloadCode
+		p.Group = d.Group
+	case capacityBin:
+		p.Kind = "empty"
+		p.Group = d.Group
+	default: // capacityUnknown — say only what we know.
+		p.Group = d.Group
+	}
+	return p
+}
+
+// capacityDetailFrom narrows the ResolutionCapacity payload. Older call sites
+// type-asserted a bare capacityKind; the payload is now a *capacityDetail.
+func capacityDetailFrom(payload any) *capacityDetail {
+	d, _ := payload.(*capacityDetail)
+	return d
+}
+
+// kindOf is the nil-safe kind accessor for a capacity payload.
+func (d *capacityDetail) kindOf() capacityKind {
+	if d == nil {
+		return capacityUnknown
+	}
+	return d.Kind
 }

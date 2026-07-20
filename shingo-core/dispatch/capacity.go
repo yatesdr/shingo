@@ -121,7 +121,14 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
 	}
 	if count > 0 {
-		return true, CapacityBlock{Cause: "dropoff-occupied", Params: params}
+		// Carry the count into the sentence. "A bin is sitting there" and "an
+		// order is already on its way" are different operator situations —
+		// go clear it, versus wait — and both used to render as the bare
+		// "Waiting for a slot at X". The discriminator existed only in
+		// queue_cause, which no surface renders and which never leaves Core.
+		p := params
+		p.BlockingBins = count
+		return true, CapacityBlock{Cause: "dropoff-occupied", Params: p}
 	}
 	inFlight, err := db.CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode, excludeOrderID)
 	if err != nil {
@@ -129,7 +136,9 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
 	}
 	if inFlight > 0 {
-		return true, CapacityBlock{Cause: "dropoff-inflight", Params: params}
+		p := params
+		p.InboundOrders = inFlight
+		return true, CapacityBlock{Cause: "dropoff-inflight", Params: p}
 	}
 	return false, CapacityBlock{}
 }

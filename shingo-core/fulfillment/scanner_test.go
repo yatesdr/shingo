@@ -452,8 +452,23 @@ func TestScanner_TryFulfill_DestNodeLookupFails_RequeuesNoBinAcquired(t *testing
 	if len(f.unclaimedOrderIDs) != 0 {
 		t.Errorf("dest-fail before acquire has no claim to release: %v", f.unclaimedOrderIDs)
 	}
-	if len(f.queueReasons) == 0 || f.queueReasons[len(f.queueReasons)-1].Code != string(protocol.QueueWaitingForMaterial) {
-		t.Fatalf("queue_code on dest-fail = %v, want waiting_for_material", f.queueReasons)
+	// A destination-node lookup failure is a DESTINATION problem, so it parks
+	// under waiting_for_slot with the "cannot be resolved" sentence. It used to
+	// park under waiting_for_material purely to refresh the row, which pointed
+	// the operator at inventory for a delivery-node failure — F6 in the
+	// 2026-07-20 queue-reason study.
+	if len(f.queueReasons) == 0 {
+		t.Fatalf("dest-fail must record a queue reason; got none")
+	}
+	last := f.queueReasons[len(f.queueReasons)-1]
+	if last.Code != string(protocol.QueueWaitingForSlot) {
+		t.Fatalf("queue_code on dest-fail = %q, want waiting_for_slot", last.Code)
+	}
+	if !strings.Contains(last.Reason, "cannot be resolved") {
+		t.Errorf("dest-fail sentence must say the destination cannot be resolved, got %q", last.Reason)
+	}
+	if strings.Contains(last.Reason, "material") {
+		t.Errorf("dest-fail sentence must not point the operator at material, got %q", last.Reason)
 	}
 	for _, u := range f.statusUpdates {
 		if u.Status != string(protocol.StatusSourcing) {

@@ -391,11 +391,14 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
 		s.logFn("fulfillment: dest node %q not found for order %d: %v", order.DeliveryNode, order.ID, err)
-		// Destination node can't be resolved right now — re-queue and retry. Park
-		// under waiting_for_material (the order can't proceed to delivery) so the
-		// row carries a fresh code instead of the stale reason from a prior wait.
-		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "dest-node-unresolved",
-			dispatch.QueueParams{Payload: order.PayloadCode, Destination: order.DeliveryNode})
+		// Destination node can't be resolved right now — re-queue and retry.
+		// This is a DESTINATION failure, so it parks under waiting_for_slot with
+		// DestUnresolved set, and the sentence says the node cannot be resolved.
+		// It used to park under waiting_for_material purely to refresh the row,
+		// which pointed the operator at inventory for a delivery-node lookup
+		// failure (F6 in the 2026-07-20 queue-reason study).
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, "dest-node-unresolved",
+			dispatch.QueueParams{Destination: order.DeliveryNode, DestUnresolved: true})
 		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dest unresolved, retrying"); err != nil {
 			s.logFn("fulfillment: order %d → sourcing after dest resolve fail: %v", order.ID, err)
 		}

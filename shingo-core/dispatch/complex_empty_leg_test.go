@@ -178,8 +178,18 @@ func TestDispatcher_ComplexOrder_QueuesOnDryEmptyPool(t *testing.T) {
 	if order.QueueCode != string(protocol.QueueWaitingForMaterial) {
 		t.Errorf("queue_code = %q, want %q (dry empty pool → material wait)", order.QueueCode, protocol.QueueWaitingForMaterial)
 	}
-	if !strings.Contains(order.QueueReason, "Waiting for material") {
-		t.Errorf("queue_reason = %q, want the generated material-wait sentence", order.QueueReason)
+	// The sentence names an EMPTY CARRIER, not the payload. This leg is the
+	// "bring a fresh carrier to fill the press" fetch: it is blocked on an empty
+	// returning to the pool, not on that payload arriving. It used to render
+	// "Waiting for material: <payload>" because the intake call site passed the
+	// order's payload for every capacity shape — a payload the order was not in
+	// fact waiting for.
+	if !strings.Contains(order.QueueReason, "Waiting for an empty bin") {
+		t.Errorf("queue_reason = %q, want the empty-carrier sentence", order.QueueReason)
+	}
+	if strings.Contains(order.QueueReason, bp.Code) {
+		t.Errorf("queue_reason = %q must not name payload %q — this leg waits on an empty carrier",
+			order.QueueReason, bp.Code)
 	}
 
 	// An empty carrier returns to the pool → the queued order dispatches on replay

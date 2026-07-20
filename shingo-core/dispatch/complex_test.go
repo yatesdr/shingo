@@ -166,7 +166,11 @@ func TestClassifyResolutionError_AllShapes(t *testing.T) {
 		// code (waiting_for_slot vs waiting_for_material) without re-sniffing the
 		// substring. Slot-shaped = a saturated dropoff group.
 		{"capacity slot", errors.New("no available slot in node group ASRS"), ResolutionCapacity, true, capacitySlot},
-		{"capacity payload", errors.New("no bin of requested payload in node group ASRS"), ResolutionCapacity, true, capacitySlot},
+		// A missing PAYLOAD bin is a material shortage in the source group, not a
+		// dropoff-capacity problem. It shared capacitySlot's branch until the
+		// 2026-07-20 study (F1) found every "Waiting for a slot at <lineside>" on
+		// the Springfield floor was actually this.
+		{"capacity payload is material, not slot", errors.New("no bin of requested payload in node group ASRS"), ResolutionCapacity, true, capacityPayload},
 		{"capacity wrapped", fmt.Errorf("step 0: cannot resolve group ASRS: %w", errors.New("no available slot in node group ASRS")), ResolutionCapacity, true, capacitySlot},
 		// Produce-side empty-fetch duals: a dry empty pool is sourceable-eventually
 		// (an empty returns), so it must QUEUE like the full pair, not terminal-reject.
@@ -194,15 +198,15 @@ func TestClassifyResolutionError_AllShapes(t *testing.T) {
 			if !c.wantTyped && payload != nil {
 				t.Errorf("class %v should have nil payload; got %T", class, payload)
 			}
-			// Capacity carries a typed kind; assert it so a mis-routed substring
-			// (slot text tagged bin, or vice versa) fails loudly.
+			// Capacity carries a typed detail; assert the kind so a mis-routed
+			// substring (slot text tagged bin, or vice versa) fails loudly.
 			if class == ResolutionCapacity {
-				kind, ok := payload.(capacityKind)
+				d, ok := payload.(*capacityDetail)
 				if !ok {
-					t.Fatalf("ResolutionCapacity payload is %T, want capacityKind", payload)
+					t.Fatalf("ResolutionCapacity payload is %T, want *capacityDetail", payload)
 				}
-				if kind != c.wantKind {
-					t.Errorf("capacity kind = %v, want %v", kind, c.wantKind)
+				if d.Kind != c.wantKind {
+					t.Errorf("capacity kind = %v, want %v", d.Kind, c.wantKind)
 				}
 			}
 		})
@@ -259,5 +263,72 @@ func TestEmptyBinsOnly(t *testing.T) {
 	}
 	if n := len(emptyBinsOnly(nil)); n != 0 {
 		t.Errorf("emptyBinsOnly(nil) returned %d, want 0", n)
+	}
+}
+
+// TestClassifyResolutionError_CarriesGroupAndStep pins the context the capacity
+// payload recovers from the resolver's untyped error text. The group is what F1
+// needs to name the right location, and the step index is what F5 needs to say
+// WHICH leg of a multi-step order is blocked — both were previously discarded.
+//
+// The message shape under test is the real one from Springfield 2026-07-20:
+//
+//	step 0: cannot resolve group AMR Supermarket: no bin of requested payload in
+//	node group AMR Supermarket
+func TestClassifyResolutionError_CarriesGroupAndStep(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		err       error
+		wantGroup string
+		wantStep  int
+		wantHas   bool
+	}{
+		{
+			name: "springfield shape — group and step both recovered",
+			err: fmt.Errorf("step 0: cannot resolve group AMR Supermarket: %w",
+				errors.New("no bin of requested payload in node group AMR Supermarket")),
+			wantGroup: "AMR Supermarket",
+			wantStep:  0,
+			wantHas:   true,
+		},
+		{
+			name:      "unwrapped — group only, no step",
+			err:       errors.New("no available slot in node group ASRS"),
+			wantGroup: "ASRS",
+			wantHas:   false,
+		},
+		{
+			name: "later step index",
+			err: fmt.Errorf("step 3: cannot resolve group SYN_MARKET: %w",
+				errors.New("no empty carrier in group SYN_MARKET")),
+			wantStep: 3,
+			wantHas:  true,
+		},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			class, payload := classifyResolutionError(c.err)
+			if class != ResolutionCapacity {
+				t.Fatalf("class = %v, want ResolutionCapacity", class)
+			}
+			d, ok := payload.(*capacityDetail)
+			if !ok {
+				t.Fatalf("payload is %T, want *capacityDetail", payload)
+			}
+			if c.wantGroup != "" && d.Group != c.wantGroup {
+				t.Errorf("Group = %q, want %q", d.Group, c.wantGroup)
+			}
+			if d.HasStep != c.wantHas {
+				t.Errorf("HasStep = %v, want %v", d.HasStep, c.wantHas)
+			}
+			if c.wantHas && d.Step != c.wantStep {
+				t.Errorf("Step = %d, want %d", d.Step, c.wantStep)
+			}
+		})
 	}
 }
