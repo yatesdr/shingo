@@ -11,14 +11,15 @@ import (
 type Config struct {
 	mu sync.RWMutex `yaml:"-"`
 
-	Database    DatabaseConfig    `yaml:"database"`
-	RDS         RDSConfig         `yaml:"rds"`
-	Web         WebConfig         `yaml:"web"`
-	Messaging   MessagingConfig   `yaml:"messaging"`
-	Staging     StagingConfig     `yaml:"staging"`
-	CountGroups CountGroupsConfig `yaml:"count_groups"`
-	FireAlarm   FireAlarmConfig   `yaml:"fire_alarm"`
-	Sim         SimConfig         `yaml:"sim"`
+	Database      DatabaseConfig      `yaml:"database"`
+	RDS           RDSConfig           `yaml:"rds"`
+	Web           WebConfig           `yaml:"web"`
+	Messaging     MessagingConfig     `yaml:"messaging"`
+	Staging       StagingConfig       `yaml:"staging"`
+	CountGroups   CountGroupsConfig   `yaml:"count_groups"`
+	FireAlarm     FireAlarmConfig     `yaml:"fire_alarm"`
+	Sim           SimConfig           `yaml:"sim"`
+	Sourceability SourceabilityConfig `yaml:"sourceability"`
 }
 
 // CountGroupsConfig configures the advanced-zone polling feature.
@@ -74,6 +75,21 @@ func (s SimConfig) Scaled(d time.Duration) time.Duration {
 		return d
 	}
 	return time.Duration(float64(d) / s.Speed)
+}
+
+// SourceabilityConfig tunes the plant-wide sourceability computation — the
+// always-on read that tells every process which styles it can change over to.
+type SourceabilityConfig struct {
+	// EnableAtRisk lets a satisfiable-but-projected-empty style report YELLOW.
+	// Default false: the plant sees green/red only until the owner validates the
+	// consumption-rate window on real audit data, then flips this on. The at-risk
+	// tier is always COMPUTED; this only controls whether it surfaces as a status.
+	EnableAtRisk bool `yaml:"enable_at_risk"`
+	// RateWindow is the look-back for the per-payload consumption rate that feeds
+	// time-to-empty. Default 30m.
+	RateWindow time.Duration `yaml:"rate_window"`
+	// Horizon: a line projecting empty within this window is at risk. Default 30m.
+	Horizon time.Duration `yaml:"horizon"`
 }
 
 type StagingConfig struct {
@@ -167,6 +183,11 @@ func Defaults() *Config {
 			SweepInterval:        5 * time.Minute,
 			AutoConfirmDelivered: 5 * time.Minute, // auto-confirm delivered orders after 5 minutes if no receipt from Edge
 			AbandonStuck:         time.Hour,       // cancel orders stuck queued/staged for 1h (ties up robots, clutters the board)
+		},
+		Sourceability: SourceabilityConfig{
+			EnableAtRisk: false, // green/red only until the owner validates the rate window on plant data
+			RateWindow:   30 * time.Minute,
+			Horizon:      30 * time.Minute,
 		},
 		Messaging: MessagingConfig{
 			Kafka: KafkaConfig{

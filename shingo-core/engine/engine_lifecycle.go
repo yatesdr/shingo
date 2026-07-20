@@ -174,6 +174,17 @@ func (e *Engine) Start() {
 		e.thresholdMonitor.Run(monCtx)
 	}
 
+	// Sourceability monitor: startup full recompute + periodic safety net,
+	// with change-driven debounced recomputes via the bus subscriptions.
+	if e.sourceabilityMonitor != nil {
+		srcCtx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-e.stopChan
+			cancel()
+		}()
+		e.sourceabilityMonitor.Run(srcCtx)
+	}
+
 	e.logFn("engine: started")
 }
 

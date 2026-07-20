@@ -88,6 +88,7 @@ type Engine struct {
 	partsService          *service.PartsService
 	heartbeatService      *service.HeartbeatService
 	thresholdMonitor      *ThresholdMonitor
+	sourceabilityMonitor  *SourceabilityMonitor
 	etaCache              *eta.Cache
 	stopChan              chan struct{}
 	stopOnce              sync.Once
@@ -188,6 +189,7 @@ func New(c Config) *Engine {
 	e.partsService = service.NewPartsService(e.db)
 	e.heartbeatService = service.NewHeartbeatService(e.db)
 	e.thresholdMonitor = NewThresholdMonitor(e)
+	e.sourceabilityMonitor = NewSourceabilityMonitor(e)
 	// Loader CRUD re-derives demand_registry + nudges the monitor on each edit.
 	e.loaderService = service.NewLoaderService(e.db, e.thresholdMonitor)
 	e.calculatorService = service.NewThresholdCalculatorService(e.db)
@@ -200,6 +202,12 @@ func New(c Config) *Engine {
 // thread the dependency without engine internals leaking elsewhere.
 func (e *Engine) ThresholdMonitor() *ThresholdMonitor {
 	return e.thresholdMonitor
+}
+
+// SourceabilityMonitor returns the plant-wide sourceability monitor so the
+// outbound feed and the Core sourcing page (later work) can read its state.
+func (e *Engine) SourceabilityMonitor() *SourceabilityMonitor {
+	return e.sourceabilityMonitor
 }
 
 func (e *Engine) dbg(format string, args ...any) {

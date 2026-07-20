@@ -17,7 +17,8 @@
             <select id="co-to-style" class="form-input">
                 <option value="">-- Select --</option>
                 {{range .Styles}}
-                <option value="{{.ID}}">{{.Name}}</option>
+                {{$src := index $.SourcingByStyle .Name}}
+                <option value="{{.ID}}"{{if $src.Blocked}} disabled{{end}}>{{.Name}}{{if $src.Status}} · {{$src.Status}}{{if $src.Note}} ({{$src.Note}}){{end}}{{end}}</option>
                 {{end}}
             </select>
         </div>

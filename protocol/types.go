@@ -141,6 +141,19 @@ const (
 	// and the active claim should advance.
 	SubjectBinPickedUp   = "transit.bin_picked_up"
 	SubjectUOPAdjustment = "inventory.uop_adjustment" // Core -> Edge
+
+	// SubjectSourcingState — Core → Edge: the plant-wide sourceability verdict
+	// per (process, style) — what each process can change over to right now. The
+	// outbound half of the plant.claims feed: Edge reports its claims up, Core
+	// computes sourceability and pushes the answer back down so HMI screens know
+	// before an operator presses CHANGE. A new SUBJECT on the existing
+	// shingo.dispatch topic (NOT a new topic — the SubjectLoopBelowThreshold
+	// precedent). Core publishes on status change plus a periodic full snapshot;
+	// Edge persists to SQLite so a reload needs no Core round-trip. Value schema
+	// is ADDITIVE-only; an older Edge that does not register this subject
+	// logs-and-ignores it (the SubjectRouter unknown-subject path), so the feed
+	// is a mixed-version no-op both directions.
+	SubjectSourcingState = "sourcing.state"
 )
 
 // AllTypes returns every envelope Type constant in this package. Used by
@@ -224,6 +237,7 @@ func EdgeInboundSubjects() []string {
 		SubjectCountGroupCommand,
 		SubjectBinPickedUp,
 		SubjectUOPAdjustment,
+		SubjectSourcingState,
 	}
 }
 

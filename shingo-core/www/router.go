@@ -415,6 +415,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			// Admin pages
 			r.Get("/test-orders", h.handleTestOrders)
 			r.Get("/payloads", h.handlePayloadsPage)
+			r.Get("/sourcing", h.handleSourcing)
 			r.Get("/bins", h.handleBins)
 			r.Get("/diagnostics", h.handleDiagnostics)
 			r.Get("/config", h.handleConfig)

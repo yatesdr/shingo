@@ -444,4 +444,21 @@ CREATE TABLE IF NOT EXISTS inventory_delta_seq (
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (scope_kind, scope_key, epoch)
 );
+
+-- Core's sourceability verdict per (process, style), pushed down on
+-- SubjectSourcingState. Persistent so an HMI reload / Edge reboot during a Core
+-- partition still shows the last-known changeover picture with no round-trip.
+-- status is the gated result ("green" | "yellow" | "red"); missing / at_risk are
+-- JSON arrays; reason is Core's generated sentence, displayed verbatim.
+CREATE TABLE IF NOT EXISTS sourcing_state (
+    process_id  TEXT NOT NULL,
+    style_id    TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'green',
+    missing     TEXT NOT NULL DEFAULT '[]',
+    at_risk     TEXT NOT NULL DEFAULT '[]',
+    reason      TEXT NOT NULL DEFAULT '',
+    computed_at TEXT NOT NULL DEFAULT '',
+    synced_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (process_id, style_id)
+);
 `

@@ -244,6 +244,11 @@ func (s *stubEngine) OrderService() *service.OrderService {
 	return service.NewOrderService(s.db)
 }
 
+func (s *stubEngine) SourcingStateForProcess(process string) []protocol.SourcingState {
+	states, _ := s.db.ListSourcingStateForProcess(process)
+	return states
+}
+
 // newTestHandlers builds *Handlers backed by the test DB, returning it along
 // with a fresh chi.Router that has the config-group routes registered.
 func newTestHandlers(t *testing.T) (*Handlers, *chi.Mux) {

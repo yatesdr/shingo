@@ -77,6 +77,10 @@ type ServiceAccess interface {
 	GetAllCachedRobots() []fleet.RobotStatus
 	GetNodeOccupancy() ([]engine.OccupancyEntry, error)
 	RobotGroups() ([]fleet.RobotGroup, error)
+	// SourceabilityPage returns the read model for the Core sourcing page — the
+	// gated per-(process, style) verdicts plus claim/pool drill-in context and
+	// the replenishment queue. A pure read of the monitor snapshot.
+	SourceabilityPage() (engine.SourceabilityPageView, error)
 	// ValidateAdvancedLoadSequence checks a payload's configured load-sequence
 	// task names against the RDS binTask keys of its assigned node locations. A
 	// pure read (no side effects): a missing key at a real location returns an

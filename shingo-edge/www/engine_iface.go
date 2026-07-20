@@ -59,6 +59,9 @@ type ServiceAccess interface {
 	CounterService() *service.CounterService
 	CatalogService() *service.CatalogService
 	OrderService() *service.OrderService
+	// SourcingStateForProcess returns the cached sourceability verdicts for a
+	// process (by Name) so the changeover picker can annotate each style.
+	SourcingStateForProcess(process string) []protocol.SourcingState
 }
 
 // EngineOrchestration is the wide interface for handlers that drive

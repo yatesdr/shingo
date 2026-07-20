@@ -419,6 +419,25 @@ func (e *Engine) wireEventHandlers() {
 		}, EventBinUpdated)
 	}
 
+	// ── Sourceability monitor ───────────────────────────────────────────
+	// Keeps the per-(process, style) sourceability answer fresh on change.
+	// A bin move (claimed / unclaimed / loaded / cleared) changes the
+	// available pool; a new order changes reservations. Both funnel through
+	// the payload → styles index and one debounced recompute. Payload-less
+	// order events (status/complete/cancel) are covered by the coincident bin
+	// events plus the periodic full recompute.
+	if e.sourceabilityMonitor != nil {
+		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
+			e.sourceabilityMonitor.onPayloadChanged(evt.Payload.PayloadCode)
+		}, EventBinUpdated)
+		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderReceivedEvent]) {
+			e.sourceabilityMonitor.onPayloadChanged(evt.Payload.PayloadCode)
+		}, EventOrderReceived)
+		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
+			e.sourceabilityMonitor.onPayloadChanged(evt.Payload.PayloadCode)
+		}, EventOrderQueued)
+	}
+
 	// â"€â"€ Count-group transitions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	// When the countgroup runner detects a debounced occupancy change
 	// (or fires the RDS-down fail-safe), ship a CountGroupCommand to

@@ -2,6 +2,7 @@ package www
 
 import (
 	"net/http"
+	"strings"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -19,6 +20,36 @@ type changeoverNodeView struct {
 	LastOrderError string             `json:"last_order_error,omitempty"`
 }
 
+// styleSourcingView is the changeover picker's per-style sourceability
+// annotation, keyed by style name. Status is the gated verdict; Blocked marks a
+// red style shown-but-unselectable; Note is the short operator hint (the missing
+// payloads for red, the running-low payloads for yellow).
+type styleSourcingView struct {
+	Status  string
+	Blocked bool
+	Note    string
+}
+
+func styleSourcingViewFrom(s protocol.SourcingState) styleSourcingView {
+	v := styleSourcingView{Status: s.Status}
+	switch s.Status {
+	case "red":
+		v.Blocked = true
+		if len(s.Missing) > 0 {
+			v.Note = "missing " + strings.Join(s.Missing, ", ")
+		}
+	case "yellow":
+		payloads := make([]string, 0, len(s.AtRisk))
+		for _, r := range s.AtRisk {
+			payloads = append(payloads, r.PayloadCode)
+		}
+		if len(payloads) > 0 {
+			v.Note = "low: " + strings.Join(payloads, ", ")
+		}
+	}
+	return v
+}
+
 // changeoverViewData holds the common data loaded for changeover views.
 type changeoverViewData struct {
 	Styles           []domain.Style
@@ -28,6 +59,10 @@ type changeoverViewData struct {
 	NodeTaskMap      map[int64][]changeoverNodeView
 	CentralNodeTasks []changeoverNodeView
 	AllNodesComplete bool
+	// SourcingByStyle annotates each selectable style with its sourceability
+	// verdict (keyed by style name). Read from Edge's local cache — no Core
+	// round-trip. Empty when the feed has no verdict for a style (no annotation).
+	SourcingByStyle map[string]styleSourcingView
 }
 
 func (h *Handlers) buildChangeoverViewData(activeProcess *domain.Process) changeoverViewData {
@@ -40,6 +75,12 @@ func (h *Handlers) buildChangeoverViewData(activeProcess *domain.Process) change
 	}
 
 	d.Styles, _ = h.engine.StyleService().ListByProcess(activeProcess.ID)
+	// Annotate each style with its sourceability verdict from Edge's local cache
+	// (the picker shows green/yellow selectable, red shown-but-blocked).
+	d.SourcingByStyle = map[string]styleSourcingView{}
+	for _, s := range h.engine.SourcingStateForProcess(activeProcess.Name) {
+		d.SourcingByStyle[s.StyleID] = styleSourcingViewFrom(s)
+	}
 	if activeProcess.ActiveStyleID != nil {
 		if s, err := h.engine.StyleService().Get(*activeProcess.ActiveStyleID); err == nil {
 			d.CurrentStyleName = s.Name
@@ -146,6 +187,7 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		"NodeTaskMap":       d.NodeTaskMap,
 		"CentralNodeTasks":  d.CentralNodeTasks,
 		"AllNodesComplete":  d.AllNodesComplete,
+		"SourcingByStyle":   d.SourcingByStyle,
 		"ChangeoverHistory": changeoverHistory,
 		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
@@ -174,6 +216,7 @@ func (h *Handlers) handleChangeoverPartial(w http.ResponseWriter, r *http.Reques
 		"NodeTaskMap":      d.NodeTaskMap,
 		"CentralNodeTasks": d.CentralNodeTasks,
 		"AllNodesComplete": d.AllNodesComplete,
+		"SourcingByStyle":  d.SourcingByStyle,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

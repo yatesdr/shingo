@@ -306,6 +306,13 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			adj.CoreNodeName, adj.BinID, adj.NewRemaining, adj.Actor)
 		eng.HandleUOPAdjustment(*adj)
 	})
+	// Sourceability feed from Core: the verdict per (process, style) — what each
+	// process can change over to. Edge persists it to SQLite so the changeover
+	// picker reads it with no Core round-trip. Registered here in the same place
+	// the subject joins EdgeInboundSubjects, so the boot coverage assertion holds.
+	router.RegisterSubject(subjectRouter, protocol.SubjectSourcingState, func(_ *protocol.Envelope, r *protocol.SourcingStateReport) {
+		eng.HandleSourcingState(*r)
+	})
 	// SubjectCountGroupCommand may be skipped above when cgHandler is nil
 	// (countgroup is an optional feature). The boot-time coverage assertion
 	// below is gated on the same condition so a non-countgroup edge doesn't

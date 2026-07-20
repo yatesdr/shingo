@@ -228,6 +228,7 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `catalog.payloads_request` | Edge -> Core | [CatalogPayloadsRequest](#catalogpayloadsrequest) | Edge requests payload catalog |
 | `catalog.payloads_response` | Core -> Edge | [CatalogPayloadsResponse](#catalogpayloadsresponse) | Core returns payload catalog |
 | `plant.claims` | Edge -> Core | [PlantClaimsReport](#plantclaimsreport) | Edge publishes its plant-spec claim set so Core can mirror what every process can source |
+| `sourcing.state` | Core -> Edge | [SourcingStateReport](#sourcingstatereport) | Core publishes each (process, style)'s sourceability verdict so HMI screens know what can be changed over to |
 
 New subjects can be added by defining a constant and a data schema -- no protocol interface changes required.
 
@@ -646,6 +647,73 @@ older Core ignores unknown fields, and an older Core that has not registered the
 | Allowed Payload Codes | `allowed_payload_codes` | string[] | No | The effective payload set this claim accepts. Usually just `[payload_code]`. |
 | UOP Capacity | `uop_capacity` | integer | No | Bin capacity (UOP) for the claim's payload — time-to-empty context. |
 | Reorder Point | `reorder_point` | integer | No | Role-dependent replenishment trigger (consume: UOP threshold; produce: bin-count floor). |
+
+#### SourcingStateReport
+
+Published by Core on the `sourcing.state` subject — the outbound half of the
+`plant.claims` feed. Core computes each `(process, style)`'s sourceability from
+the mirror and pushes the verdict down so HMI screens know what can be changed
+over to before an operator presses CHANGE. A **subject on the existing
+`shingo.dispatch` topic**, not a new topic.
+
+Core publishes:
+
+- a **change delta** (`snapshot: false`) carrying only the styles whose verdict
+  moved — on status / missing-list / at-risk-membership changes, and
+- a **full snapshot** (`snapshot: true`) on the startup and periodic recomputes,
+  so a late-joining or restarted Edge reads it and is current.
+
+Edge persists the feed to SQLite, so the changeover picker reads the last-known
+verdict with no Core round-trip at click time and it survives an HMI reload or an
+Edge reboot during a Core partition. Steady state publishes nothing (time-to-empty
+drift alone is not a change).
+
+`status` is the **gated** result: when the owner has not enabled the at-risk
+tier, a projected-empty style is published as `"green"` with `at_risk` omitted —
+so no screen ever shows an unvalidated yellow. The value schema is
+**additive-only**; an older Edge that has not registered the `sourcing.state`
+subject logs-and-drops the whole message (mixed-version no-op).
+
+```json
+{
+  "snapshot": true,
+  "states": [
+    {
+      "process_id": "SNF2",
+      "style_id": "SNF2-A",
+      "status": "red",
+      "missing": ["BIN-B", "BIN-C"],
+      "reason": "Cannot change over — missing BIN-B, BIN-C.",
+      "computed_at": "2026-07-18T20:00:00Z"
+    }
+  ]
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Snapshot | `snapshot` | boolean | No | `true` = a full replace (every style Core knows, so Edge drops stale rows); `false`/absent = a change delta (only the moved styles). |
+| States | `states` | SourcingState[] | Yes | The per-`(process, style)` verdicts. |
+
+**SourcingState:**
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Process ID | `process_id` | string | Yes | The process key (matches `plant.claims`' `process_id`). |
+| Style ID | `style_id` | string | Yes | The style key within the process. |
+| Status | `status` | string | Yes | `"green"`, `"yellow"`, or `"red"` — the gated verdict. |
+| Missing | `missing` | string[] | No | Payloads no available bin could satisfy (RED). |
+| At Risk | `at_risk` | SourcingAtRisk[] | No | Lines projecting empty within the horizon (yellow tier only). |
+| Reason | `reason` | string | No | The operator-facing sentence Core owns; the HMI displays it verbatim. |
+| Computed At | `computed_at` | string (ISO 8601) | Yes | When the verdict was computed. |
+
+**SourcingAtRisk:**
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Payload Code | `payload_code` | string | Yes | The payload projecting empty. |
+| Node | `node` | string | No | The line (node) the projection is for. |
+| Time To Empty Seconds | `time_to_empty_seconds` | number | Yes | Projected seconds until the line empties (lower = fill first). |
 
 ### Order Payloads: Edge -> Core
 

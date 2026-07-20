@@ -1049,3 +1049,40 @@ type PlantClaim struct {
 	// computation's fill-priority signal has the configured trigger.
 	ReorderPoint int `json:"reorder_point"`
 }
+
+// SourcingStateReport is the Core → Edge sourceability feed (SubjectSourcingState).
+// It carries the verdict for one or more (process, style) pairs. Snapshot marks a
+// full replace (every style Core knows, so Edge can drop stale rows); a change
+// delta (Snapshot=false) carries only the styles whose verdict just changed.
+// Value schema is ADDITIVE-only — an older Edge ignores unknown fields, and one
+// that does not register the subject logs-and-drops the whole message.
+type SourcingStateReport struct {
+	States   []SourcingState `json:"states"`
+	Snapshot bool            `json:"snapshot,omitempty"`
+}
+
+// SourcingState is one (process, style)'s sourceability verdict on the wire.
+// Status is the GATED result: when the owner has not enabled the at-risk tier a
+// yellow-computed style arrives here as "green" with AtRisk empty, so no screen
+// ever shows an unvalidated yellow.
+type SourcingState struct {
+	ProcessID string `json:"process_id"`
+	StyleID   string `json:"style_id"`
+	// Status is "green", "yellow", or "red".
+	Status string `json:"status"`
+	// Missing lists the payloads no available bin could satisfy (RED only).
+	Missing []string `json:"missing,omitempty"`
+	// AtRisk lists lines projecting empty within the horizon (yellow tier only).
+	AtRisk []SourcingAtRisk `json:"at_risk,omitempty"`
+	// Reason is the operator-facing generated sentence (Core owns the wording;
+	// the HMI displays it verbatim and never invents text).
+	Reason     string    `json:"reason,omitempty"`
+	ComputedAt time.Time `json:"computed_at"`
+}
+
+// SourcingAtRisk is one line's time-to-empty projection on the wire.
+type SourcingAtRisk struct {
+	PayloadCode        string  `json:"payload_code"`
+	Node               string  `json:"node,omitempty"`
+	TimeToEmptySeconds float64 `json:"time_to_empty_seconds"`
+}
