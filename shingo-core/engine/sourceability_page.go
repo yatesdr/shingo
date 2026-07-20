@@ -19,13 +19,26 @@ import (
 
 // SourcingClaimView is one claim's row in a style's drill-in.
 type SourcingClaimView struct {
-	Node       string
-	Payload    string
-	Free       int // dispatch-sourceable now (same predicate the computation nets)
-	Held       int // claimed / reserved / locked in the confirmed pool
-	HasTTE     bool
-	TTESeconds float64
-	TTEDisplay string // human-readable, e.g. "12m 30s"; empty when not at-risk
+	// FeedsNode is the consumption node this claim feeds — where the material is
+	// GOING. It is the claim's own node (c.CoreNodeName). Rendered as secondary
+	// "feeds X" text, distinct from where the material currently IS.
+	FeedsNode string
+	Payload   string
+	Free      int // dispatch-sourceable now (same predicate the computation nets)
+	Held      int // claimed / reserved / locked in the confirmed pool
+	// FreeLocations is where the free bins physically are, most-first — the
+	// answer to "Free 4, but 4 where?". Empty when Free is 0.
+	FreeLocations []engineNodeCount
+	HasTTE        bool
+	TTESeconds    float64
+	TTEDisplay    string // human-readable, e.g. "12m 30s"; empty when not at-risk
+}
+
+// engineNodeCount mirrors sourceability.NodeCount for the view layer (a free-bin
+// count at one physical node).
+type engineNodeCount struct {
+	Node  string
+	Count int
 }
 
 // SourcingStyleView is one style's chip + drill-in.
@@ -175,10 +188,13 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 		for _, c := range claims[plantclaims.ProcessKey{ProcessID: st.ProcessID, StyleID: st.StyleID}] {
 			pb := pool[c.PayloadCode]
 			cv := SourcingClaimView{
-				Node:    c.CoreNodeName,
-				Payload: c.PayloadCode,
-				Free:    pb.Free,
-				Held:    pb.Held,
+				FeedsNode: c.CoreNodeName,
+				Payload:   c.PayloadCode,
+				Free:      pb.Free,
+				Held:      pb.Held,
+			}
+			for _, nc := range pb.FreeByNode {
+				cv.FreeLocations = append(cv.FreeLocations, engineNodeCount{Node: nc.Node, Count: nc.Count})
 			}
 			if s, ok := tteByNode[c.CoreNodeName]; ok {
 				cv.HasTTE = true

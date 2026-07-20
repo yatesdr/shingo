@@ -74,6 +74,15 @@ func TestSourceabilityPage_GridClaimsAndQueue(t *testing.T) {
 	if a.Claims[0].Free != 1 || a.Claims[0].Held != 1 {
 		t.Errorf("BIN-A pool = free %d / held %d, want 1 / 1", a.Claims[0].Free, a.Claims[0].Held)
 	}
+	// The free bin's real LOCATION is surfaced, not the claim node. Both bins
+	// sit at storageNode; the free one must appear there with count 1, and the
+	// claim's own node is carried separately as where the material feeds.
+	if got := a.Claims[0].FreeLocations; len(got) != 1 || got[0].Node != storageNode.Name || got[0].Count != 1 {
+		t.Errorf("BIN-A free locations = %+v, want one %s ×1", got, storageNode.Name)
+	}
+	if a.Claims[0].FeedsNode != storageNode.Name {
+		t.Errorf("BIN-A feeds node = %q, want %q", a.Claims[0].FeedsNode, storageNode.Name)
+	}
 	if a.Claims[0].HasTTE {
 		t.Error("no TTE expected while the at-risk tier is dark")
 	}

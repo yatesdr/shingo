@@ -69,6 +69,9 @@
   .src-tbl tr:last-child td { border-bottom:none; }
   .src-zero { color:var(--danger); font-weight:700; }
   .src-none { color:var(--text-muted); }
+  /* Secondary "feeds X" line under the free-location list: this is where the
+     material is GOING, dimmer than where it currently IS. */
+  .src-feeds { font-size:0.72rem; color:var(--text-muted); margin-top:0.1rem; }
 
   /* No-JS: every pane is visible and stacked. JS adds .src-js to switch to
      one-at-a-time, so the page is usable before the script runs. */
@@ -132,7 +135,7 @@
     <table class="src-tbl">
       <thead>
         <tr>
-          <th>Style</th><th>Status</th><th>Payload</th><th>Stocking node</th>
+          <th>Style</th><th>Status</th><th>Payload</th><th>Free at</th>
           <th>Free</th><th>Held</th>
           {{/* Time-to-empty exists only when the at-risk tier is on. Dark, it
                rendered a column of em-dashes that read as missing data rather
@@ -159,17 +162,22 @@
             <td rowspan="{{len $s.Claims}}">{{template "srcchip" $s.Status}}</td>
             {{end}}
             <td>{{$c.Payload}}</td>
-            {{/* Shingo can only speak for its own records. "Missing from plant"
-                 would be a claim about the physical building — the part may
-                 well be sitting somewhere Shingo has no bin for. Say what is
-                 actually known: nothing AVAILABLE in Shingo's pool. And when
-                 Free is 0 but Held is not, bins do exist and are spoken for by
-                 other orders, which is a different situation and a different
-                 fix. */}}
+            {{/* WHERE the free bins physically are, most-first — the column used
+                 to render the CLAIM node (where material is going), which is not
+                 where an operator would go to find a bin. The claim node is kept
+                 as secondary "feeds X" text so both facts are on screen, each
+                 labelled as what it is.
+
+                 Shingo can only speak for its own records: "no available bin in
+                 Shingo", not "missing from plant" (the part may sit somewhere
+                 Shingo has no bin for). Free 0 with Held > 0 is a different
+                 situation — bins exist but are spoken for — and says so. */}}
             <td>
-              {{if gt $c.Free 0}}{{$c.Node}}
+              {{if $c.FreeLocations}}
+                {{range $k, $loc := $c.FreeLocations}}{{if $k}} &middot; {{end}}{{$loc.Node}} &times;{{$loc.Count}}{{end}}
               {{else if gt $c.Held 0}}<span class="src-none">none free &mdash; all held by other orders</span>
               {{else}}<span class="src-none">no available bin in Shingo</span>{{end}}
+              <div class="src-feeds">feeds {{$c.FeedsNode}}</div>
             </td>
             <td{{if eq $c.Free 0}} class="src-zero"{{end}}>{{$c.Free}}</td>
             <td>{{$c.Held}}</td>
