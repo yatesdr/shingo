@@ -81,11 +81,35 @@ if (root) {
   // The page is server-rendered, so refreshing means re-requesting it. Every
   // trigger below coalesces through one timer: whichever fires first wins, and
   // a second trigger inside the window is absorbed rather than queued.
+  //
+  // A reload is a full navigation, not JS work, so it cannot stall the main
+  // thread — but reloading a HIDDEN tab is pure waste: a backgrounded sourcing
+  // page reloading every 30s on bin churn burns server renders nobody is
+  // looking at, and a background tab churning under an attached debugger is the
+  // most likely thing behind the "renderer hangs during inspection" report.
+  // So when a reload comes due on a hidden tab, defer it and fire once when the
+  // operator returns — the page they come back to is current, and it never
+  // reloads while unwatched.
   let pending = null;
+  let deferredWhileHidden = false;
+  function reloadNow() {
+    if (document.hidden) {
+      deferredWhileHidden = true;
+      pending = null;
+      return;
+    }
+    window.location.reload();
+  }
   function scheduleReload(delayMs) {
     if (pending) return;
-    pending = setTimeout(() => { window.location.reload(); }, delayMs);
+    pending = setTimeout(reloadNow, delayMs);
   }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && deferredWhileHidden) {
+      deferredWhileHidden = false;
+      window.location.reload();
+    }
+  });
 
   // PRIMARY — sourcing-update fires only when a sourceability VERDICT moved.
   // That is precisely what this page displays, so it reloads promptly on it.

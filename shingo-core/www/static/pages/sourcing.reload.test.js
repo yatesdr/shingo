@@ -65,6 +65,7 @@ function load(opts) {
         document: {
             getElementById: (id) => (id === 'src-root' ? root : null),
             addEventListener: (ev, fn) => { (docListeners[ev] = docListeners[ev] || []).push(fn); },
+            hidden: !!opts.hidden,
             activeElement: null,
         },
         sessionStorage: {
@@ -96,6 +97,11 @@ function load(opts) {
                 t.fn();
             }
             now = end;
+        },
+        // Flip tab visibility and fire visibilitychange, as the browser does.
+        setHidden(hidden) {
+            ctxObj.document.hidden = hidden;
+            (docListeners.visibilitychange || []).forEach(fn => fn());
         },
         // Simulate a click on an unlock-panel blocked-style link.
         clickGoto(process) {
@@ -172,6 +178,26 @@ console.log('sourcing: bin churn is coalesced hard, not strobed');
     check('200 bin updates → no reload at 5s', h.reloads() === 0, 'got ' + h.reloads());
     h.tick(30000);
     check('one reload after the drift window', h.reloads() === 1, 'got ' + h.reloads());
+}
+
+console.log('sourcing: a hidden tab defers its reload until visible');
+{
+    const h = load({ hidden: true });
+    h.fire('connected');
+    h.fire('sourcing-update', { changed: 1 });
+    h.tick(3000);
+    check('hidden tab does not reload', h.reloads() === 0, 'got ' + h.reloads());
+    h.setHidden(false);
+    check('reloads once on return to foreground', h.reloads() === 1, 'got ' + h.reloads());
+}
+
+console.log('sourcing: a visible tab reloads as before');
+{
+    const h = load({ hidden: false });
+    h.fire('connected');
+    h.fire('sourcing-update', { changed: 1 });
+    h.tick(3000);
+    check('visible tab reloads promptly', h.reloads() === 1, 'got ' + h.reloads());
 }
 
 console.log('sourcing: unlock-panel link selects the blocked process');
