@@ -1,74 +1,180 @@
 {{define "content"}}
 <style>
-  /* Status chip + drill-in tweaks only; cards, tables, and utilities come from
-     the shared stylesheet. Colors are design tokens (theme-aware), not literals. */
-  .src-chip { display:inline-block; min-width:3rem; text-align:center; padding:0.1rem 0.55rem; border-radius:1rem; font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.03em; }
-  .src-chip.red    { background:var(--danger); color:#fff; }
-  .src-chip.yellow { background:var(--warning); color:#fff; }
-  .src-chip.green  { background:transparent; color:var(--text-muted); border:1px solid var(--border); }
-  /* not_configured is an ABSENCE of configuration, not a health state — slate
-     (the pending-status hue), never a success or alarm color. */
-  .src-chip.not_configured { background:transparent; color:var(--status-pending-dot); border:1px dashed var(--status-pending-dot); }
-  .src-style { border-bottom:1px solid var(--border); }
-  .src-style:last-child { border-bottom:none; }
-  .src-style > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; padding:0.45rem 0; }
-  .src-style > summary::-webkit-details-marker { display:none; }
-  .src-drill { overflow-x:auto; margin:0 0 0.6rem 0.4rem; }
-  .src-missing { color:var(--danger); font-weight:600; font-size:0.85rem; }
+  /* Direction B — two-pane. Every value is a design token: status hues carry
+     MEANING (success / warning / danger / info / pending-slate) and the indigo
+     accent is selection and interaction ONLY, never a status. */
+  .src-two { display:grid; grid-template-columns:290px 1fr; gap:0.9rem; align-items:start; }
+  @media (max-width: 820px) { .src-two { grid-template-columns:1fr; } }
+
+  /* Rail */
+  .src-rail { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+  .src-rrow { width:100%; text-align:left; background:none; border:none; border-bottom:1px solid var(--border);
+              padding:0.7rem 0.85rem; cursor:pointer; display:flex; justify-content:space-between;
+              gap:0.5rem; align-items:center; color:var(--text); font:inherit; }
+  .src-rrow:last-child { border-bottom:none; }
+  .src-rrow:hover { background:var(--elev-raised); }
+  .src-rrow[aria-selected="true"] { background:var(--elev-raised); box-shadow:inset 2px 0 0 var(--accent); }
+  .src-rrow:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  .src-rname { font-weight:650; font-size:0.87rem; }
+  .src-rmeta { font-size:0.72rem; color:var(--text-muted); margin-top:0.1rem; }
+
+  /* Pane */
+  .src-pane { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:0.9rem 1.1rem; }
+  .src-pane h3 { display:flex; align-items:center; gap:0.55rem; font-size:0.95rem; }
+  .src-k { font-size:0.68rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em; margin-top:1rem; }
+
+  /* Verdict chip. Builds on the SHARED .badge/.badge-sm component
+     (shared/status-classes.css) — only the verdict hue is page-local, because
+     sourcing verdicts are not order-lifecycle statuses and the guide says a
+     pattern earns a shared class once it appears in 3+ places. Icon + label so
+     the state survives a colorblind reader and a monochrome print; the hue is
+     reinforcement, never the signal. */
+  /* Signal weight rule: non-alert states stay CALM; only the alert state
+     (blocked) is loud. Backgrounds are mixed from the semantic token rather
+     than hardcoded per theme, so light/dark both resolve from one declaration
+     and cannot drift from tokens.css (color-mix is already the technique used
+     there for --chart-grid and --accent-glow). */
+  .src-v        { letter-spacing:0.03em; text-transform:uppercase; font-weight:700; }
+  .src-v-green  { background:color-mix(in srgb, var(--success) 14%, transparent);
+                  color:var(--success);
+                  border-color:color-mix(in srgb, var(--success) 38%, transparent); }
+  .src-v-yellow { background:color-mix(in srgb, var(--warning) 16%, transparent);
+                  color:var(--warning);
+                  border-color:color-mix(in srgb, var(--warning) 42%, transparent); }
+  /* The one loud state — a blocked changeover is the alarm on this page. */
+  .src-v-red    { background:color-mix(in srgb, var(--danger) 22%, transparent);
+                  color:var(--danger);
+                  border-color:color-mix(in srgb, var(--danger) 55%, transparent); }
+  /* No data is a DATA-QUALITY state, not a health state → --info, which
+     tokens.css keeps deliberately distinct from --primary in every theme. */
+  .src-v-nodata { background:color-mix(in srgb, var(--info) 14%, transparent);
+                  color:var(--info);
+                  border-color:color-mix(in srgb, var(--info) 38%, transparent); }
+  /* Not set up is an ABSENCE of configuration, not a health state → the
+     pending slate, and a dashed border so it reads as "nothing here yet"
+     without a second color. */
+  .src-v-unset  { background:transparent;
+                  color:var(--status-pending-dot);
+                  border-color:color-mix(in srgb, var(--status-pending-dot) 45%, transparent);
+                  border-style:dashed; }
+
+  .src-tbl { width:100%; border-collapse:collapse; margin-top:0.4rem; font-size:0.8rem; }
+  .src-tbl th { color:var(--text-muted); text-align:left; font-size:0.68rem; text-transform:uppercase;
+                letter-spacing:0.05em; padding:0.35rem 0.5rem; border-bottom:1px solid var(--border); }
+  .src-tbl td { padding:0.35rem 0.5rem; border-bottom:1px solid var(--border); font-variant-numeric:tabular-nums; }
+  .src-tbl tr:last-child td { border-bottom:none; }
+  .src-zero { color:var(--danger); font-weight:700; }
+  .src-none { color:var(--text-muted); }
+
+  /* No-JS: every pane is visible and stacked. JS adds .src-js to switch to
+     one-at-a-time, so the page is usable before the script runs. */
+  .src-js .src-pane[hidden] { display:none; }
 </style>
 
 <div class="flex-between mb-2">
   <h1>Sourcing</h1>
   <a class="btn btn-sm" href="/sourcing">Refresh</a>
 </div>
-<p class="text-muted">What every process can change over to right now — point-in-time; refresh to re-read.{{if not .View.RunningStyleKnown}} The running style isn't marked (Core has no active-style signal yet).{{end}}</p>
 
-{{if not .View.Processes}}<p class="text-muted">No process styles are being tracked yet.</p>{{end}}
+<p class="text-muted">
+  What every process can change over to right now.
+  {{if not .View.RunningStyleKnown}}
+  Core has no running-style signal, so no style is marked as currently running &mdash;
+  the plant-claims feed carries each process's styles and claims but no active flag.
+  {{end}}
+</p>
 
-{{range .View.Processes}}
-<div class="card">
-  <h3>{{.ProcessID}}</h3>
-  {{range .Styles}}
-  <details class="src-style" data-status="{{.Status}}"{{if eq .Status "red"}} open{{end}}>
-    {{/* Each fact once. The chip carries the STATUS; the line beside it carries
-         the DETAIL only. Rendering .Reason here too would restate the chip
-         ("Cannot change over" = red) and repeat the missing list verbatim.
-         .Reason is still generated and still crosses the wire — the operator
-         HMI displays it — it is just not duplicated on this page. */}}
-    <summary>
-      <span class="src-chip {{.Status}}">{{if eq .Status "not_configured"}}not set up{{else}}{{.Status}}{{end}}</span>
-      <strong>{{.StyleID}}</strong>
-      {{if eq .Status "not_configured"}}<span class="text-muted">no sourceability claims configured</span>
-      {{else if .Missing}}<span class="src-missing">missing {{range $i, $m := .Missing}}{{if $i}}, {{end}}{{$m}}{{end}}</span>{{end}}
-    </summary>
-    <div class="src-drill">
-      {{/* The time-to-empty column exists only when the at-risk tier is on.
-           With it dark nothing computes a projection, so the column rendered a
-           full height of em-dashes — a column of nothing, implying the data was
-           missing rather than switched off. */}}
-      {{if .Claims}}
-      <table>
-        <thead><tr><th>Node</th><th>Payload</th><th>Free</th><th>Held</th>{{if $.View.YellowEnabled}}<th>Time to empty</th>{{end}}</tr></thead>
-        <tbody>
-        {{range .Claims}}
+{{if not .View.Processes}}
+  <p class="text-muted">No process styles are being tracked yet.</p>
+{{else}}
+<div class="src-two" id="src-root">
+  <div class="src-rail" role="tablist" aria-label="Processes">
+    {{range $i, $p := .View.Processes}}
+    <button class="src-rrow" role="tab" type="button"
+            data-process="{{$p.ProcessID}}" aria-selected="{{if eq $i 0}}true{{else}}false{{end}}"
+            aria-controls="pane-{{$p.ProcessID}}">
+      <span>
+        <span class="src-rname">{{$p.ProcessID}}</span>
+        {{/* No current-style line: Core cannot know what is running. The rail
+             carries what it can stand behind — how many styles this process
+             could change over to, and how many are blocked. */}}
+        <span class="src-rmeta">
+          {{if eq $p.Status "not_configured"}}no claims configured
+          {{else}}{{$p.Ready}} ready &middot; {{$p.Blocked}} blocked{{end}}
+        </span>
+      </span>
+      {{template "srcchip" $p.Status}}
+    </button>
+    {{end}}
+  </div>
+
+  {{range $i, $p := .View.Processes}}
+  <div class="src-pane" id="pane-{{$p.ProcessID}}" role="tabpanel"
+       data-process="{{$p.ProcessID}}"{{if ne $i 0}} hidden{{end}}>
+    <h3>{{$p.ProcessID}} {{template "srcchip" $p.Status}}</h3>
+
+    <div class="src-k">Changeover</div>
+    {{if not $p.Styles}}
+      <p class="src-none">No styles tracked for this process.</p>
+    {{else}}
+    <table class="src-tbl">
+      <thead>
+        <tr>
+          <th>Style</th><th>Status</th><th>Payload</th><th>Stocking node</th>
+          <th>Free</th><th>Held</th>
+          {{/* Time-to-empty exists only when the at-risk tier is on. Dark, it
+               rendered a column of em-dashes that read as missing data rather
+               than a switched-off feature. */}}
+          {{if $.View.YellowEnabled}}<th>Time to empty</th>{{end}}
+        </tr>
+      </thead>
+      <tbody>
+      {{range $s := $p.Styles}}
+        {{if not $s.Claims}}
           <tr>
-            <td>{{.Node}}</td>
-            <td>{{.Payload}}</td>
-            <td{{if eq .Free 0}} class="src-missing"{{end}}>{{.Free}}</td>
-            <td>{{.Held}}</td>
-            {{if $.View.YellowEnabled}}<td>{{if .HasTTE}}{{.TTEDisplay}}{{else}}&mdash;{{end}}</td>{{end}}
+            <td>{{$s.StyleID}}</td>
+            <td>{{template "srcchip" $s.Status}}</td>
+            <td colspan="{{if $.View.YellowEnabled}}5{{else}}4{{end}}" class="src-none">
+              {{if eq $s.Status "not_configured"}}No sourceability claims &mdash; nothing to net the pool against, so no verdict.
+              {{else}}No payload change required.{{end}}
+            </td>
           </tr>
+        {{else}}
+          {{range $j, $c := $s.Claims}}
+          <tr>
+            {{if eq $j 0}}
+            <td rowspan="{{len $s.Claims}}">{{$s.StyleID}}</td>
+            <td rowspan="{{len $s.Claims}}">{{template "srcchip" $s.Status}}</td>
+            {{end}}
+            <td>{{$c.Payload}}</td>
+            {{/* Shingo can only speak for its own records. "Missing from plant"
+                 would be a claim about the physical building — the part may
+                 well be sitting somewhere Shingo has no bin for. Say what is
+                 actually known: nothing AVAILABLE in Shingo's pool. And when
+                 Free is 0 but Held is not, bins do exist and are spoken for by
+                 other orders, which is a different situation and a different
+                 fix. */}}
+            <td>
+              {{if gt $c.Free 0}}{{$c.Node}}
+              {{else if gt $c.Held 0}}<span class="src-none">none free &mdash; all held by other orders</span>
+              {{else}}<span class="src-none">no available bin in Shingo</span>{{end}}
+            </td>
+            <td{{if eq $c.Free 0}} class="src-zero"{{end}}>{{$c.Free}}</td>
+            <td>{{$c.Held}}</td>
+            {{if $.View.YellowEnabled}}<td>{{if $c.HasTTE}}{{$c.TTEDisplay}}{{else}}&mdash;{{end}}</td>{{end}}
+          </tr>
+          {{end}}
         {{end}}
-        </tbody>
-      </table>
-      {{else}}<p class="text-muted">No sourceability claims for this style — nothing to net the pool against, so no verdict.</p>{{end}}
-    </div>
-  </details>
+      {{end}}
+      </tbody>
+    </table>
+    {{end}}
+  </div>
   {{end}}
 </div>
 {{end}}
 
-<div class="card">
+<div class="card mt-2">
   <h3>Replenishment queue</h3>
   <p class="text-muted">Lines closest to empty fill first.</p>
   {{if .View.Queue}}
@@ -82,4 +188,16 @@
   </table>
   {{else}}<p class="text-muted">{{if .View.YellowEnabled}}No lines are projected to empty within the horizon.{{else}}The at-risk tier is disabled &mdash; enable it (<code>sourceability.enable_at_risk</code>) after validating the consumption-rate window to see time-to-empty and the fill queue.{{end}}</p>{{end}}
 </div>
+
+<script type="module" src="/static/pages/sourcing.js?v={{cacheBust}}"></script>
+{{end}}
+
+{{/* Status chip. Icon + label so the state survives a colorblind reader and a
+     monochrome print; the hue is reinforcement, not the signal. */}}
+{{define "srcchip"}}
+  {{if eq . "green"}}<span class="badge badge-sm src-v src-v-green">&#9679; Sourcing</span>
+  {{else if eq . "yellow"}}<span class="badge badge-sm src-v src-v-yellow">&#9650; At risk</span>
+  {{else if eq . "red"}}<span class="badge badge-sm src-v src-v-red">&#10005; Blocked</span>
+  {{else if eq . "not_configured"}}<span class="badge badge-sm src-v src-v-unset">&#9675; Not set up</span>
+  {{else}}<span class="badge badge-sm src-v src-v-nodata">&#9888; No data</span>{{end}}
 {{end}}

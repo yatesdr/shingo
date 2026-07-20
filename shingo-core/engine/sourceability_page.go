@@ -37,10 +37,46 @@ type SourcingStyleView struct {
 	Claims  []SourcingClaimView
 }
 
-// SourcingProcessView is one process's row of style chips.
+// SourcingProcessView is one process's rail entry and detail pane.
 type SourcingProcessView struct {
 	ProcessID string
 	Styles    []SourcingStyleView
+	// Status is the process-level roll-up shown on the rail: the worst verdict
+	// across its styles. It is a summary of what this process could change over
+	// to — NOT a statement about what it is running now, which Core cannot know
+	// (see SourceabilityPageView.RunningStyleKnown).
+	Status string
+	// Ready and Blocked count the styles this process can and cannot change over
+	// to. Unconfigured styles are in neither: they have no verdict.
+	Ready   int
+	Blocked int
+}
+
+// rollUpStatus reduces a process's style verdicts to the one shown on the rail.
+// Worst-first: a red anywhere means something is blocked, and that is what an
+// operator scanning the rail needs to see. A process whose styles are all
+// unconfigured reports not_configured rather than borrowing a health color it
+// has not earned.
+func rollUpStatus(styles []SourcingStyleView) string {
+	var sawGreen, sawYellow bool
+	for _, s := range styles {
+		switch s.Status {
+		case string(sourceability.StatusRed):
+			return string(sourceability.StatusRed)
+		case string(sourceability.StatusYellow):
+			sawYellow = true
+		case string(sourceability.StatusGreen):
+			sawGreen = true
+		}
+	}
+	switch {
+	case sawYellow:
+		return string(sourceability.StatusYellow)
+	case sawGreen:
+		return string(sourceability.StatusGreen)
+	default:
+		return string(sourceability.StatusNotConfigured)
+	}
 }
 
 // SourcingQueueRow is one at-risk line in the replenishment queue.
@@ -151,6 +187,15 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 
 	for _, pv := range byProcess {
 		sort.Slice(pv.Styles, func(i, j int) bool { return pv.Styles[i].StyleID < pv.Styles[j].StyleID })
+		pv.Status = rollUpStatus(pv.Styles)
+		for _, s := range pv.Styles {
+			switch s.Status {
+			case string(sourceability.StatusRed):
+				pv.Blocked++
+			case string(sourceability.StatusGreen), string(sourceability.StatusYellow):
+				pv.Ready++
+			}
+		}
 		view.Processes = append(view.Processes, *pv)
 	}
 	sort.Slice(view.Processes, func(i, j int) bool { return view.Processes[i].ProcessID < view.Processes[j].ProcessID })
