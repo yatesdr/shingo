@@ -53,8 +53,9 @@ func TestPlantClaims_MixedVersionNoOp(t *testing.T) {
 
 	// Capture log output — the old Core logs the no-handler notice and returns.
 	var buf bytes.Buffer
+	prevW := log.Writer()
 	log.SetOutput(&buf)
-	defer log.SetOutput(nil)
+	defer log.SetOutput(prevW)
 
 	oldCoreRouter.Dispatch(env, &data) // must NOT panic, must NOT dispatch
 
