@@ -373,6 +373,23 @@ func swapClearerCommitted(sib *orders.Order) bool {
 	}
 }
 
+// swapTerminalKind maps a terminal order status to the SwapTerminal* kind
+// HandleSwapPeerTerminal expects, or "" when the status is not a swap-relevant
+// terminal — the surviving-side race check skips the unwind for a non-terminal
+// or unmapped sibling.
+func swapTerminalKind(status protocol.Status) string {
+	switch status {
+	case StatusSkipped:
+		return SwapTerminalSkipped
+	case StatusFailed:
+		return SwapTerminalFailed
+	case StatusCancelled:
+		return SwapTerminalCancelled
+	default:
+		return ""
+	}
+}
+
 func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// Defense-in-depth: the fulfillment scanner's tryFulfill already gates on
 	// IsAcquiring ({queued, sourcing}) before calling here, so a parent in
@@ -466,6 +483,36 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// untouched (drains as today). NOT a dispatch gate (no isConcreteStorageDropoff
 	// widening) — a resolution-time read, so the swap supply leg is never gated.
 	d.placeForDedicatedLoader(order, resolvedSteps)
+
+	// Close the swap peer-terminal RACE (SPR 2424/2425, 2026-07). HandleSwapPeerTerminal
+	// unwinds a swap when one leg reaches a terminal state, but it fires from the
+	// DEAD leg's side — so if this leg did not exist yet when its sibling died (a
+	// supply created + skipped moot in the same tick, before its evac was created),
+	// that unwind found no peer and no-op'd, leaving this leg to hold forever on a
+	// dead sibling (swapLegHeld waits on a claim that will never come). Re-run the
+	// unwind now, from the surviving side, so a leg linked to an already-terminal
+	// sibling is resolved instead of wedged. Reuses the same handler and its
+	// per-role resolution: a moot-evac sibling that legitimately lets this supply
+	// proceed is a no-op there, so this leg falls through and dispatches.
+	if sibUUID, serr := d.db.OrderSiblingUUID(order.ID); serr == nil && sibUUID != "" {
+		if sib, gerr := d.db.GetOrderByUUID(sibUUID); gerr == nil && sib != nil && protocol.IsTerminal(sib.Status) {
+			if kind := swapTerminalKind(sib.Status); kind != "" {
+				// Heal the dead leg's back-link first (idempotent). The unwind
+				// resolves the peer FROM the dead leg's side, and the race is
+				// precisely that this link may not have existed when the dead leg
+				// first went terminal — so ensure it does now.
+				if sib.SiblingOrderUUID != order.EdgeUUID {
+					if _, rerr := d.db.LinkOrderSiblingsByEdgeUUID(order.EdgeUUID, sibUUID); rerr != nil {
+						log.Printf("dispatch: swap race back-link repair order %d sib %s: %v", order.ID, sibUUID, rerr)
+					}
+				}
+				d.HandleSwapPeerTerminal(sib.ID, kind)
+				if self, rerr := d.db.GetOrder(order.ID); rerr == nil && self != nil && protocol.IsTerminal(self.Status) {
+					return fmt.Errorf("complex order %d resolved by swap peer-terminal unwind: sibling %d already %s", order.ID, sib.ID, sib.Status)
+				}
+			}
+		}
+	}
 
 	// Two-robot swap removal-leg hold: don't let a removal (evac) leg that
 	// cannot fetch its own replacement claim/pull the line bin until its supply

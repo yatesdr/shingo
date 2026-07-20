@@ -146,3 +146,62 @@ func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 		t.Fatalf("supply back-link = %q, want %q (on-read repair did not heal it)", healed, "swap-removal-rb")
 	}
 }
+
+// TestSwapPeerTerminalRace_LiveLegResolvesDeadSibling pins the SPR 2424/2425 fix.
+// A swap's supply leg can be created AND skip (moot: supermarket empty) in the same
+// tick, BEFORE its evac leg exists. HandleSwapPeerTerminal fires from the supply's
+// side, finds no peer, and no-ops. The evac is then created linked to the already-
+// dead supply. It must NOT hold forever: DispatchPreparedComplex re-runs the unwind
+// from the surviving side (healing the back-link first), and the supply-skip
+// cancels the evac — a moot swap, nothing to replace.
+func TestSwapPeerTerminalRace_LiveLegResolvesDeadSibling(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	superNode := &nodes.Node{Name: "SWAP-SUPER-RACE", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(superNode), "create super node")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// Supply leg — already SKIPPED (moot) before the evac exists, and with NO
+	// back-link (the unwind that fired here found nothing to cancel).
+	supplySteps, err := json.Marshal([]resolvedStep{
+		{Action: protocol.ActionPickup, Node: superNode.Name},
+		{Action: protocol.ActionDropoff, Node: lineNode.Name},
+	})
+	testutil.MustNoErr(t, err, "marshal supply steps")
+	supply := &orders.Order{
+		EdgeUUID: "race-supply", StationID: "ST", OrderType: OrderTypeComplex,
+		Status: StatusSkipped, Quantity: 1, PayloadCode: bp.Code,
+		SourceNode: superNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
+		StepsJSON: string(supplySteps),
+	}
+	testutil.MustNoErr(t, db.CreateOrder(supply), "create skipped supply")
+
+	// A line bin is present, so ONLY a sibling gate could hold the evac.
+	lineBin := &bins.Bin{BinTypeID: 1, Label: "RACE-LINE-BIN", NodeID: &lineNode.ID, Status: "staged"}
+	testutil.MustNoErr(t, db.CreateBin(lineBin), "create line bin")
+
+	// Evac leg — created AFTER the supply already skipped, carrying only the forward
+	// sibling pointer (the supply's back-link is still missing, modelling the race).
+	evac := &orders.Order{
+		EdgeUUID: "race-evac", StationID: "ST", OrderType: OrderTypeComplex,
+		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,
+		SourceNode: lineNode.Name, DeliveryNode: superNode.Name, ProcessNode: lineNode.Name,
+		SiblingOrderUUID: "race-supply",
+		StepsJSON:        twoRobotEvacSteps(t, lineNode.Name, superNode.Name),
+	}
+	testutil.MustNoErr(t, db.CreateOrder(evac), "create evac")
+
+	// Dispatch the evac: instead of holding forever on the dead supply, the
+	// surviving-side unwind must resolve (cancel) it.
+	if derr := d.DispatchPreparedComplex(evac); derr == nil {
+		t.Fatal("evac dispatched with no error — a leg whose supply sibling already skipped must be resolved, not left to hold")
+	}
+	got, gerr := db.GetOrderByUUID("race-evac")
+	testutil.MustNoErr(t, gerr, "reload evac")
+	if !protocol.IsTerminal(got.Status) {
+		t.Fatalf("evac status = %q, want terminal (cancelled) — it must not wedge holding for a dead supply sibling (SPR 2424/2425)", got.Status)
+	}
+}
