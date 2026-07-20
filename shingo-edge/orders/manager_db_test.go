@@ -974,6 +974,56 @@ func TestApplyCoreStatusSnapshot_SourcingAndFaulted(t *testing.T) {
 	}
 }
 
+// TestApplyCoreStatus_ForcesFleetStatusOverSkippedIntermediate pins the SPR 2399
+// fix: a live fleet-status push force-adopts even when Core coalesced the burst
+// and dropped the intermediate step. The edge, still at `sourcing`, must adopt
+// in_transit — sourcing→in_transit is not a legal validated edge, and the old
+// validated path rejected it and silently froze the mirror behind a stale status
+// (which then hid the two-robot RELEASE, since swap_ready reads the stale status).
+func TestApplyCoreStatus_ForcesFleetStatusOverSkippedIntermediate(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-2399", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	if err := db.UpdateOrderStatus(oid, string(StatusSourcing)); err != nil {
+		t.Fatalf("seed sourcing: %v", err)
+	}
+
+	// Core dropped `dispatched` and pushes in_transit straight from sourcing.
+	if err := mgr.HandleCoreStatusPush("uuid-2399", StatusInTransit, "fleet state: RUNNING"); err != nil {
+		t.Fatalf("HandleCoreStatusPush in_transit: %v", err)
+	}
+	got, err := db.GetOrder(oid)
+	testutil.MustNoErr(t, err, "get order")
+	if got.Status != StatusInTransit {
+		t.Fatalf("edge status = %q, want in_transit — the fleet arm must force-adopt over the dropped `dispatched` step, not reject and freeze", got.Status)
+	}
+}
+
+// TestApplyCoreStatus_TerminalNotResurrected: a stale/out-of-order fleet push
+// after the edge already reached a terminal state must be ignored — forcing it
+// would resurrect a finished order.
+func TestApplyCoreStatus_TerminalNotResurrected(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-term", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	if err := db.UpdateOrderStatus(oid, string(StatusCancelled)); err != nil {
+		t.Fatalf("seed terminal: %v", err)
+	}
+
+	if err := mgr.HandleCoreStatusPush("uuid-term", StatusInTransit, "stale fleet push"); err != nil {
+		t.Fatalf("HandleCoreStatusPush: %v", err)
+	}
+	got, err := db.GetOrder(oid)
+	testutil.MustNoErr(t, err, "get order")
+	if got.Status != StatusCancelled {
+		t.Fatalf("terminal edge order moved to %q by a stale fleet push — must stay cancelled", got.Status)
+	}
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // lookupPayloadMeta — exercised via CreateMoveOrder, which threads the
 // (desc, code) pair into the OrderRequest envelope.

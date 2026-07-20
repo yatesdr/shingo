@@ -77,24 +77,41 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 // stale prior status (usually acknowledged) keeps rendering as "IN TRANSIT".
 //
 // Arms:
-//   - queued/sourcing/dispatched/in_transit/faulted → Transition to that
-//     status. Transition validates against the shared protocol table and
-//     no-ops same-status/terminal rows.
+//   - dispatched/in_transit/faulted (FLEET statuses) → FORCE-adopt, the way the
+//     boot-reconcile path does. The fleet (via Core) is authoritative on these;
+//     the edge adopts, it does not gate. Validating them here is what permanently
+//     desynced the mirror: when Core coalesces a fast dispatched→in_transit burst
+//     and drops the intermediate `dispatched` push, sourcing→in_transit is not a
+//     legal edge, so a validated transition is rejected and silently swallowed —
+//     and every later push (staged) is rejected in turn, freezing the order on a
+//     stale status while the robot is already staged (SPR order 2399, 2026-07). A
+//     stale/out-of-order fleet push onto an already-TERMINAL edge row is ignored
+//     rather than forced, so it can never resurrect a finished order.
+//   - queued/sourcing (pre-fleet PLANNING statuses) → validated Transition. The
+//     shared table already permits the legal re-plan edges (e.g. Dispatched→
+//     Sourcing for redirect); an arbitrary backward force is not warranted, since
+//     Core owns the fleet truth and the planner's queued/sourcing is advisory.
 //   - staged/delivered/confirmed/failed/cancelled/skipped → NO-OP here. Those
 //     statuses are owned by DEDICATED envelopes (order.staged, order.delivered,
 //     order.error, order.skipped, order.cancelled) that carry extra fields
-//     (bin snapshots, expiry, reason) this generic mapping does not have.
-//     Mapping them here would double-handle. The snapshot path keeps its own
-//     force arms for boot reconciliation.
+//     (bin snapshots, expiry, reason) this generic mapping does not have. Forcing
+//     the fleet arm above still unblocks them: once the edge force-adopts
+//     in_transit, the dedicated order.staged envelope's in_transit→staged
+//     transition is legal again.
 //
-// Error handling: a push that isn't a legal transition from Edge's current
-// status in the shared table (26 such (from,to) pairs exist by design) returns
-// an error. Both callers log-and-swallow it, so a status Core pushes that Edge
-// can't legally adopt is a graceful no-op — the same as the old discard
-// behavior, now centralized. No protocol.validTransitions edges are added.
+// Error handling: a planning-arm push that isn't a legal transition returns an
+// error; both callers log-and-swallow it, a graceful no-op. The fleet arm no
+// longer rejects — a dropped intermediate can no longer freeze the mirror.
 func (s *LifecycleService) ApplyCoreStatus(order *orders.Order, coreStatus protocol.Status, detail string) error {
 	switch coreStatus {
-	case StatusQueued, StatusSourcing, StatusDispatched, StatusInTransit, StatusFaulted:
+	case StatusDispatched, StatusInTransit, StatusFaulted:
+		if IsTerminal(order.Status) {
+			// A late/stale fleet push after the edge already reached a terminal
+			// state — never resurrect it; Core's terminal envelopes own that edge.
+			return nil
+		}
+		return s.ForceTransition(order.ID, coreStatus, detail)
+	case StatusQueued, StatusSourcing:
 		return s.Transition(order.ID, coreStatus, detail)
 	default:
 		// staged/delivered/terminal are owned by dedicated envelopes; unknown
