@@ -539,7 +539,8 @@ func (s *BinManifestService) syncUOPAndClaimTx(tx *sql.Tx, binID, orderID int64,
 //  2. claimAndConfirm: run the claim SQL (ClearAndClaim / SyncUOPAndClaim / ClaimBin,
 //     demoted-CAS guard requires reservation EXISTS) AND Confirm the reservation
 //     (pending → confirmed) in ONE transaction — both or neither. This atomicity
-//     is what closes the claim/confirm wedge (see docs/reservations.md).
+//     is what closes the claim/confirm wedge (see the repo-root
+//     docs/reservations.md).
 //  3. On ANY failure after Acquire → Release (best-effort; Expire is the backstop).
 func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP *int) error {
 	if err := reservations.Acquire(s.db, orderID, binID, "ClaimForDispatch"); err != nil {

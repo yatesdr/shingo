@@ -28,7 +28,7 @@ import (
 // the COMPLETE reserved set to hard claims (apply-as-confirm — no live re-walk).
 // Dispatch is gated on a complete set (the relay rule): a robot never starts a job it
 // can't finish; give-up is operator-driven (demand never evaporates), never a timer.
-// See docs/reservations.md.
+// See the repo-root docs/reservations.md.
 
 // Allocator reserves and confirms a complex order's resources against live state. It
 // holds only what the reconcile needs — the store, the bin-manifest service, and a
