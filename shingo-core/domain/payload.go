@@ -17,7 +17,15 @@ type Payload struct {
 	// orders for this payload (e.g. a "1500kg" group for heavy bins). It maps to
 	// rds.SetOrderRequest.Group at dispatch. Empty = unset = SEER's default
 	// assignment. Distinct from a destination node group (NGRP).
-	RobotGroup string    `json:"robot_group"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	RobotGroup string `json:"robot_group"`
+	// AdvancedLoadSequence names a configured load-sequence in the load_sequences
+	// registry. Empty = today's single default load block (byte-identical, no
+	// behavior change). A name set makes dispatch expand this payload's LOAD leg
+	// into one same-location RDS block per named binTask in the sequence (the
+	// quarter-child-cart interlock). The name IS the switch — there is no separate
+	// enable flag. Validated at config-save against the RDS binTask keys of the
+	// payload's assigned node locations (see engine.ValidateAdvancedLoadSequence).
+	AdvancedLoadSequence string    `json:"advanced_load_sequence"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }

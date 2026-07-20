@@ -18,6 +18,19 @@ func (db *DB) GetPayloadByCode(code string) (*payloads.Payload, error) {
 }
 func (db *DB) ListPayloads() ([]*payloads.Payload, error) { return payloads.List(db.DB) }
 
+// GetLoadSequence returns the load_sequences registry entry for name (the
+// ordered binTask-name list a payload's advanced_load_sequence selects), or
+// (nil, nil) when no such sequence is registered.
+func (db *DB) GetLoadSequence(name string) (*payloads.LoadSequence, error) {
+	return payloads.GetLoadSequence(db.DB, name)
+}
+
+// ListLoadSequenceNames returns every registered load-sequence name for the
+// payload-editor dropdown.
+func (db *DB) ListLoadSequenceNames() ([]string, error) {
+	return payloads.ListLoadSequenceNames(db.DB)
+}
+
 // ListBinTypesForPayload returns all bin types associated with a payload
 // template. Cross-aggregate (payloads ↔ bins): the function returns *bins.BinType
 // so it's owned by bins/, but the entry point lives in the payloads delegate.

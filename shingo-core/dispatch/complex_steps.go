@@ -337,21 +337,59 @@ func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, 
 	return
 }
 
-// stepsToBlocks converts resolved steps to fleet OrderBlocks.
-// blockOffset shifts the block numbering so that post-wait blocks don't
-// collide with pre-wait block IDs already submitted to RDS.
-func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int) []fleet.OrderBlock {
+// mintBlockID hand-authors a block ID unique within a vendor order. Uniqueness
+// is SEER's only contract on it (a duplicate is rejected 50001); every consumer
+// — poller, telemetry, block-completion, the differential harness — treats it as
+// opaque (D80e / F4c V0 finding 3). The default order-side shape is
+// "<vendorOrderID>-b<n>"; the advanced-load-sequence expansion suffixes "-<k>" on
+// the same base so the N same-location blocks stay distinct without renumbering
+// the rest of the order.
+func mintBlockID(vendorOrderID string, n int) string {
+	return fmt.Sprintf("%s-b%d", vendorOrderID, n)
+}
+
+// stepsToBlocks converts resolved steps to fleet OrderBlocks. blockOffset shifts
+// the block numbering so that post-wait blocks don't collide with pre-wait block
+// IDs already submitted to RDS.
+//
+// loadSeq is the advanced load sequence (F4c): when non-empty, the LOAD leg —
+// the first pickup step — is emitted as one same-location block per named binTask
+// in the sequence (in order), replacing the single default JackLoad block. This
+// is the only place the wire order gains extra blocks. Every other step (the
+// delivery, waits) and every non-configured order (loadSeq nil) is byte-identical
+// to before: the non-expanded path keeps the exact "<vendorOrderID>-b<offset+i+1>"
+// id it always had, so unchanged orders serialize identically.
+func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int, loadSeq []string) []fleet.OrderBlock {
 	var blocks []fleet.OrderBlock
+	loadExpanded := false
 	for i, s := range steps {
 		if s.Action == protocol.ActionWait && s.Node == "" {
 			// Bare wait (no node) is a split point only — not an RDS block.
 			continue
 		}
-		binTask := seerrds.BinTaskForAction(s.Action)
+		base := blockOffset + i + 1
+		// Expand the load leg (first pickup) for a configured payload. All four
+		// blocks carry the SAME location (the source); only the binTask differs,
+		// matching the vendor's working same-location Postman order.
+		if len(loadSeq) > 0 && !loadExpanded && s.Action == protocol.ActionPickup {
+			loadExpanded = true
+			for k, task := range loadSeq {
+				id := mintBlockID(vendorOrderID, base)
+				if k > 0 {
+					id = fmt.Sprintf("%s-%d", id, k)
+				}
+				blocks = append(blocks, fleet.OrderBlock{
+					BlockID:  id,
+					Location: s.Node,
+					BinTask:  task,
+				})
+			}
+			continue
+		}
 		blocks = append(blocks, fleet.OrderBlock{
-			BlockID:  fmt.Sprintf("%s-b%d", vendorOrderID, blockOffset+i+1),
+			BlockID:  mintBlockID(vendorOrderID, base),
 			Location: s.Node,
-			BinTask:  binTask,
+			BinTask:  seerrds.BinTaskForAction(s.Action),
 		})
 	}
 	return blocks

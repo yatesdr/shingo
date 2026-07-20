@@ -16,10 +16,16 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 	uop, _ := strconv.Atoi(r.FormValue("uop_capacity"))
 
 	p := &domain.Payload{
-		Code:        r.FormValue("code"),
-		Description: r.FormValue("description"),
-		UOPCapacity: uop,
-		RobotGroup:  r.FormValue("robot_group"),
+		Code:                 r.FormValue("code"),
+		Description:          r.FormValue("description"),
+		UOPCapacity:          uop,
+		RobotGroup:           r.FormValue("robot_group"),
+		AdvancedLoadSequence: r.FormValue("advanced_load_sequence"),
+	}
+
+	if _, err := h.engine.ValidateAdvancedLoadSequence(0, p.AdvancedLoadSequence); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	if err := h.engine.PayloadService().Create(p); err != nil {
@@ -52,6 +58,12 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 	p.Description = r.FormValue("description")
 	p.UOPCapacity, _ = strconv.Atoi(r.FormValue("uop_capacity"))
 	p.RobotGroup = r.FormValue("robot_group")
+	p.AdvancedLoadSequence = r.FormValue("advanced_load_sequence")
+
+	if _, err := h.engine.ValidateAdvancedLoadSequence(p.ID, p.AdvancedLoadSequence); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if err := h.engine.PayloadService().Update(p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -78,12 +90,13 @@ func (h *Handlers) handlePayloadDelete(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Code        string  `json:"code"`
-		Description string  `json:"description"`
-		UOPCapacity int     `json:"uop_capacity"`
-		RobotGroup  string  `json:"robot_group"`
-		BinTypeIDs  []int64 `json:"bin_type_ids"`
-		Manifest    []struct {
+		Code                 string  `json:"code"`
+		Description          string  `json:"description"`
+		UOPCapacity          int     `json:"uop_capacity"`
+		RobotGroup           string  `json:"robot_group"`
+		AdvancedLoadSequence string  `json:"advanced_load_sequence"`
+		BinTypeIDs           []int64 `json:"bin_type_ids"`
+		Manifest             []struct {
 			PartNumber string `json:"part_number"`
 			Quantity   int64  `json:"quantity"`
 		} `json:"manifest"`
@@ -93,10 +106,19 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	}
 
 	p := &domain.Payload{
-		Code:        req.Code,
-		Description: req.Description,
-		UOPCapacity: req.UOPCapacity,
-		RobotGroup:  req.RobotGroup,
+		Code:                 req.Code,
+		Description:          req.Description,
+		UOPCapacity:          req.UOPCapacity,
+		RobotGroup:           req.RobotGroup,
+		AdvancedLoadSequence: req.AdvancedLoadSequence,
+	}
+	// Config-time validation (fail loud on a real missing key, warn-and-save when
+	// unverifiable). A new payload has no assigned nodes yet, so this rejects only
+	// an unknown sequence name; a real key check happens on later edits / Check.
+	check, verr := h.engine.ValidateAdvancedLoadSequence(0, p.AdvancedLoadSequence)
+	if verr != nil {
+		h.jsonError(w, verr.Error(), http.StatusBadRequest)
+		return
 	}
 	if err := h.engine.PayloadService().Create(p); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -123,18 +145,25 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	h.jsonOK(w, p)
+	// Response is the payload with any "saved unverified" warnings appended.
+	// warnings is omitempty, so a clean save is byte-compatible with the prior
+	// bare-payload response (existing clients decode it straight into a payload).
+	h.jsonOK(w, struct {
+		*domain.Payload
+		Warnings []string `json:"warnings,omitempty"`
+	}{p, check.Warnings})
 }
 
 func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID          int64   `json:"id"`
-		Code        string  `json:"code"`
-		Description string  `json:"description"`
-		UOPCapacity int     `json:"uop_capacity"`
-		RobotGroup  string  `json:"robot_group"`
-		BinTypeIDs  []int64 `json:"bin_type_ids"`
-		Manifest    []struct {
+		ID                   int64   `json:"id"`
+		Code                 string  `json:"code"`
+		Description          string  `json:"description"`
+		UOPCapacity          int     `json:"uop_capacity"`
+		RobotGroup           string  `json:"robot_group"`
+		AdvancedLoadSequence string  `json:"advanced_load_sequence"`
+		BinTypeIDs           []int64 `json:"bin_type_ids"`
+		Manifest             []struct {
 			PartNumber string `json:"part_number"`
 			Quantity   int64  `json:"quantity"`
 		} `json:"manifest"`
@@ -153,6 +182,16 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	p.Description = req.Description
 	p.UOPCapacity = req.UOPCapacity
 	p.RobotGroup = req.RobotGroup
+	p.AdvancedLoadSequence = req.AdvancedLoadSequence
+
+	// Validate the (possibly new) sequence against this payload's assigned node
+	// locations BEFORE persisting: a real missing key rejects the save; an
+	// unverifiable case saves with warnings (flagged unverified).
+	check, verr := h.engine.ValidateAdvancedLoadSequence(p.ID, p.AdvancedLoadSequence)
+	if verr != nil {
+		h.jsonError(w, verr.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if err := h.engine.PayloadService().Update(p); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -176,7 +215,42 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	h.jsonSuccess(w)
+	// {"status":"ok"} plus any "saved unverified" warnings. warnings is omitempty
+	// so a clean save is byte-identical to the prior jsonSuccess response.
+	h.jsonOK(w, struct {
+		Status   string   `json:"status"`
+		Warnings []string `json:"warnings,omitempty"`
+	}{"ok", check.Warnings})
+}
+
+// apiListLoadSequences returns the registered advanced-load-sequence names for
+// the payload-editor dropdown (the empty "normal load" option is added by the UI).
+func (h *Handlers) apiListLoadSequences(w http.ResponseWriter, r *http.Request) {
+	names, err := h.engine.PayloadService().ListLoadSequenceNames()
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, map[string]any{"names": names})
+}
+
+// apiCheckLoadSequence re-runs config-time validation for a payload's selected
+// load sequence on demand (the "Check" button). id is optional (0 = a payload
+// not yet saved / with no nodes); sequence is the currently-selected name.
+// Unlike save it never rejects — it always reports the verified / missing /
+// warnings breakdown so the operator sees exactly which location is missing
+// which key.
+func (h *Handlers) apiCheckLoadSequence(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	seq := r.URL.Query().Get("sequence")
+	check, err := h.engine.ValidateAdvancedLoadSequence(id, seq)
+	if check == nil {
+		// A nil check means a real server-side failure (DB error), not a
+		// validation verdict — those come back on the check itself.
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, check)
 }
 
 func (h *Handlers) apiGetPayloadManifestTemplate(w http.ResponseWriter, r *http.Request) {

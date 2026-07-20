@@ -42,7 +42,8 @@
             data-code="{{.Code}}"
             data-notes="{{.Description}}"
             data-uop="{{.UOPCapacity}}"
-            data-robot-group="{{.RobotGroup}}">Edit</button>
+            data-robot-group="{{.RobotGroup}}"
+            data-load-sequence="{{.AdvancedLoadSequence}}">Edit</button>
           <form method="POST" action="/payloads/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete this payload?">
             <input type="hidden" name="id" value="{{.ID}}">
             <button type="submit" class="btn btn-danger btn-sm">Delete</button>
@@ -86,6 +87,15 @@
       <div class="form-group mb-1">
         <label>Robot Group <span class="tooltip-trigger" title="SEER robot-dispatch group for this payload's moves (e.g. a 1500kg group). Blank = vendor default. Suggestions come from the live fleet scene.">?</span></label>
         <input type="text" name="robot_group" id="plc-robot-group" list="robot-groups-list" placeholder="(vendor default)" autocomplete="off">
+      </div>
+      <div class="form-group mb-1">
+        <label>Advanced Load Sequence <span class="tooltip-trigger" title="Expands this payload's LOAD leg into a named binTask sequence at the load location (e.g. child-cart interlock). Blank = today's single load block. The named tasks must be configured in RDS at the payload's load locations — use Check to verify.">?</span></label>
+        <div style="display:flex;gap:0.4rem;align-items:center">
+          <select name="advanced_load_sequence" id="plc-load-sequence" style="flex:1">
+            <option value="">(normal load)</option>
+          </select>
+          <button type="button" class="btn btn-sm" data-action="checkPLCreateSequence">Check</button>
+        </div>
       </div>
       <div class="form-group mb-1">
         <label>Bin Types <span class="tooltip-trigger" title="Which bin types can hold this payload">?</span></label>
@@ -134,6 +144,15 @@
       <div class="form-group mb-1">
         <label>Robot Group <span class="tooltip-trigger" title="SEER robot-dispatch group for this payload's moves. Blank = vendor default. Suggestions come from the live fleet scene.">?</span></label>
         <input type="text" name="robot_group" id="pl-edit-robot-group" list="robot-groups-list" placeholder="(vendor default)" autocomplete="off">
+      </div>
+      <div class="form-group mb-1">
+        <label>Advanced Load Sequence <span class="tooltip-trigger" title="Expands this payload's LOAD leg into a named binTask sequence at the load location (e.g. child-cart interlock). Blank = today's single load block. The named tasks must be configured in RDS at the payload's load locations — use Check to verify.">?</span></label>
+        <div style="display:flex;gap:0.4rem;align-items:center">
+          <select name="advanced_load_sequence" id="pl-edit-load-sequence" style="flex:1">
+            <option value="">(normal load)</option>
+          </select>
+          <button type="button" class="btn btn-sm" data-action="checkPLEditSequence">Check</button>
+        </div>
       </div>
       <div class="form-group mb-1">
         <label>Bin Types</label>

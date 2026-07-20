@@ -329,6 +329,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/payloads/templates/update", h.apiUpdatePayloadTemplate)
 				r.Post("/payloads/templates/manifest", h.apiSavePayloadManifestTemplate)
 				r.Post("/payloads/templates/bin-types", h.apiSavePayloadBinTypes)
+				// Advanced load sequences: dropdown source + on-demand Check.
+				r.Get("/payloads/templates/sequences", h.apiListLoadSequences)
+				r.Get("/payloads/templates/check-sequence", h.apiCheckLoadSequence)
 
 				// Manifest items
 				r.Post("/payloads/manifest/create", h.apiCreateManifestItem)

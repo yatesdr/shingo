@@ -551,6 +551,20 @@ func (db *DB) runVersionedMigrations() error {
 				return schema.TableExists(q, "process_styles") &&
 					schema.TableExists(q, "style_claims")
 			}},
+
+		// v50 adds the advanced load sequence surface: a nullable
+		// advanced_load_sequence NAME on payloads (the switch — empty/NULL =
+		// today's single load block, byte-identical) and the load_sequences
+		// registry (sequence name → ordered binTask-name list). The registry is
+		// editable data, not constants: a plant names its RDS-side binTask keys
+		// differently, so the task list lives in a table. Seeded with one row
+		// (Child cart interlock → the four-name sequence from the evidence doc).
+		{50, "add payloads.advanced_load_sequence + load_sequences registry",
+			v50AdvancedLoadSequence,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "payloads", "advanced_load_sequence") &&
+					schema.TableExists(q, "load_sequences")
+			}},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1781,6 +1795,45 @@ func v49PlantClaimsMirror(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v49 plant-claims mirror: %w", err)
+		}
+	}
+	return nil
+}
+
+// v50AdvancedLoadSequence adds the advanced load sequence surface. Two parts:
+//
+//  1. payloads.advanced_load_sequence — a nullable NAME field. Empty/NULL =
+//     today's single load block (byte-identical, no behavior change). A name
+//     set selects a configured binTask-name sequence from load_sequences; the
+//     dispatch path expands the load leg into one same-location block per name.
+//
+//  2. load_sequences — the editable registry: one row per sequence name, with
+//     task_names a JSON array of binTask names in execution order. Data, not
+//     constants — a plant names its RDS-side binTask keys differently, so the
+//     list lives in a table an engineer edits, not in code. Seeded with the one
+//     sequence the quarter-child-cart feature needs (Child cart interlock → the
+//     four-name order from the working Postman order in the evidence doc).
+//
+// The seed is INSERT ... ON CONFLICT DO NOTHING so re-running is a no-op and an
+// engineer's edits to the seeded row are never clobbered.
+func v50AdvancedLoadSequence(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE payloads ADD COLUMN IF NOT EXISTS advanced_load_sequence TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS load_sequences (
+			name        TEXT PRIMARY KEY,
+			task_names  TEXT NOT NULL DEFAULT '[]',
+			updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		// Seed the one sequence the feature ships with. task_names is a JSON
+		// array in execution order; the plant may rename any key, so the seeded
+		// values are a starting point, not authoritative.
+		`INSERT INTO load_sequences (name, task_names) VALUES
+			('Child cart interlock', '["Go_AP1","Spin_90","load","Spin_inverse_90"]')
+		 ON CONFLICT (name) DO NOTHING`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v50 advanced load sequence: %w", err)
 		}
 	}
 	return nil

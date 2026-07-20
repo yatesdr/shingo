@@ -551,7 +551,10 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 
 	preWait, hasWait := splitAtWait(resolvedSteps)
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
-	blocks := stepsToBlocks(vendorOrderID, preWait, 0)
+	// Complex orders are not load-sequence expanded (nil): the F4c advanced load
+	// sequence is scoped to the simple transport path the child-cart delivery
+	// uses. Complex is "every other order kind" — byte-identical to before.
+	blocks := stepsToBlocks(vendorOrderID, preWait, 0, nil)
 	if len(blocks) == 0 {
 		d.failOrderInternal(order, "invalid_steps", "no actionable steps before wait")
 		return fmt.Errorf("no actionable blocks")

@@ -215,6 +215,30 @@ func (d *Dispatcher) robotGroupForPayload(payloadCode string) string {
 	return p.RobotGroup
 }
 
+// loadSequenceForPayload resolves the ordered binTask names for a payload's
+// configured advanced load sequence (F4c), or nil when the payload has none (the
+// field is empty), the payload is unknown, or the named sequence isn't in the
+// registry. A nil result means the load leg emits today's single JackLoad block,
+// unchanged. Like robotGroupForPayload it never blocks material flow: any lookup
+// failure degrades to nil — config-time validation and RDS's 50001 order-issue
+// rejection are the guards, not the dispatch hot path.
+func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
+	if payloadCode == "" {
+		return nil
+	}
+	p, err := d.db.GetPayloadByCode(payloadCode)
+	if err != nil || p == nil || p.AdvancedLoadSequence == "" {
+		return nil
+	}
+	seq, err := d.db.GetLoadSequence(p.AdvancedLoadSequence)
+	if err != nil || seq == nil {
+		d.dbg("load sequence %q for payload %q not resolvable (%v) — normal load",
+			p.AdvancedLoadSequence, payloadCode, err)
+		return nil
+	}
+	return seq.TaskNames
+}
+
 // dispatchToFleetCore contains the shared fleet dispatch sequence: generate
 // vendor order ID, build the plan-shaped blocks, create the fleet order (no-wait,
 // Complete=true single-shot), update vendor state, transition lifecycle, emit
@@ -232,7 +256,9 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 
 	plan := buildTransportPlan(sourceNode.Name, destNode.Name, order.SourceIntent == SourceIntentEmpty)
-	blocks := stepsToBlocks(vendorOrderID, plan, 0)
+	// F4c: expand the load leg into the payload's configured binTask sequence
+	// (nil for an unconfigured payload → byte-identical single JackLoad block).
+	blocks := stepsToBlocks(vendorOrderID, plan, 0, d.loadSequenceForPayload(order.PayloadCode))
 	req := fleet.CreateOrderRequest{
 		OrderID:    vendorOrderID,
 		ExternalID: order.EdgeUUID,

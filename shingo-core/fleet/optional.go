@@ -34,6 +34,29 @@ type RobotGroupLister interface {
 	GetRobotGroups() ([]RobotGroup, error)
 }
 
+// LocationTasks reports the binTask actions configured at one storage location,
+// as returned by a fleet backend's location/bin check (SEER /binCheck). TaskNames
+// is the set of binTask action names valid at Location — empty when the location
+// exists but has none, or when it doesn't exist. Exists/Valid mirror the vendor's
+// per-location existence + validity flags so callers can tell "no such location"
+// (couldn't verify) apart from "location present but missing a key" (a hard fail).
+type LocationTasks struct {
+	Location  string
+	Exists    bool
+	Valid     bool
+	TaskNames []string
+}
+
+// BinTaskChecker is the OPTIONAL backend capability for querying which binTask
+// actions are configured at given storage locations (SEER /binCheck). It backs
+// config-time validation of a payload's advanced load sequence: the configured
+// task names must exist at every location the payload loads at. Web/engine
+// callers type-assert Backend to this interface; backends without it (the
+// simulator) degrade to unverified — exactly like RobotGroupLister.
+type BinTaskChecker interface {
+	CheckLocationTasks(locations []string) ([]LocationTasks, error)
+}
+
 // VendorProxy exposes the vendor API base URL for raw proxy requests.
 type VendorProxy interface {
 	BaseURL() string

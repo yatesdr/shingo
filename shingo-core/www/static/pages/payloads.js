@@ -58,6 +58,80 @@ function loadRobotGroups() {
     .catch(function() { /* no suggestions; free-text entry still works */ });
 }
 
+// loadLoadSequences fills an advanced-load-sequence <select> with the registered
+// sequence names and selects `selected` (the saved value on edit). Best-effort,
+// like loadRobotGroups: on an error the select keeps just the "(normal load)"
+// option. A saved value that isn't in the registry (renamed, or the list failed
+// to load) is added as its own option so editing never silently drops it.
+function loadLoadSequences(selectId, selected) {
+  var sel = document.getElementById(selectId);
+  if (!sel) return;
+  function render(names) {
+    sel.innerHTML = '<option value="">(normal load)</option>';
+    var seen = false;
+    names.forEach(function(n) {
+      var opt = document.createElement('option');
+      opt.value = n; opt.textContent = n;
+      if (n === selected) { opt.selected = true; seen = true; }
+      sel.appendChild(opt);
+    });
+    if (selected && !seen) {
+      var opt = document.createElement('option');
+      opt.value = selected; opt.textContent = selected + ' (unregistered)';
+      opt.selected = true;
+      sel.appendChild(opt);
+    }
+    if (!selected) sel.value = '';
+  }
+  fetch('/api/payloads/templates/sequences')
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+      var data = (resp && resp.data) || resp || {};
+      render(data.names || []);
+    })
+    .catch(function() { render([]); });
+}
+
+// checkSequence runs config-time validation on demand (the Check button) and
+// reports the outcome: a missing key at a real location is an error, an
+// un-checkable case (no RDS / no assigned nodes) is an info "unverified", and a
+// clean pass is a success. It never changes the form — it only reports.
+function checkSequence(id, sequence) {
+  if (!sequence) { toast('Normal load (no advanced sequence)', 'info'); return; }
+  var url = '/api/payloads/templates/check-sequence?id=' + (id || 0) +
+    '&sequence=' + encodeURIComponent(sequence);
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+      var c = (resp && resp.data) || resp || {};
+      if (c.missing && c.missing.length) { toast('Missing: ' + c.missing.join('; '), 'error'); return; }
+      if (c.warnings && c.warnings.length) { toast('Unverified — ' + c.warnings.join('; '), 'info'); return; }
+      if (c.verified) { toast('Sequence verified at all load locations', 'success'); return; }
+      toast('Check complete', 'info');
+    })
+    .catch(function(err) { toast('Check failed: ' + err, 'error'); });
+}
+function checkPLCreateSequence() {
+  checkSequence(0, document.getElementById('plc-load-sequence').value);
+}
+function checkPLEditSequence() {
+  checkSequence(parseInt(document.getElementById('pl-edit-id').value) || 0,
+    document.getElementById('pl-edit-load-sequence').value);
+}
+
+// surfaceSaveWarnings toasts any "saved but unverified" warnings the server
+// returned, then navigates. Warnings delay the redirect briefly so they're
+// readable; a clean save navigates immediately.
+function surfaceSaveWarnings(data) {
+  var warnings = (data && data.data && data.data.warnings) || (data && data.warnings) || [];
+  if (warnings.length) {
+    toast('Saved unverified — ' + warnings.join('; '), 'info');
+    setTimeout(function() { location.href = '/payloads'; }, 2000);
+  } else {
+    location.href = '/payloads';
+  }
+}
+
 function openCreatePayloadModal() {
   document.getElementById('plc-code').value = '';
   document.getElementById('plc-uop').value = '0';
@@ -67,6 +141,7 @@ function openCreatePayloadModal() {
   var sel = document.getElementById('plc-bin-types');
   for (var i = 0; i < sel.options.length; i++) sel.options[i].selected = false;
   loadRobotGroups();
+  loadLoadSequences('plc-load-sequence', '');
   showModal('pl-create-modal');
 }
 function closePLCreateModal() {
@@ -80,6 +155,7 @@ function submitPLCreate(el, evt) {
     description: document.getElementById('plc-notes').value,
     uop_capacity: parseInt(document.getElementById('plc-uop').value) || 0,
     robot_group: document.getElementById('plc-robot-group').value.trim(),
+    advanced_load_sequence: document.getElementById('plc-load-sequence').value,
     bin_type_ids: getSelectedBinTypes('plc-bin-types'),
     manifest: collectManifestRows('plc-manifest-rows')
   };
@@ -92,7 +168,7 @@ function submitPLCreate(el, evt) {
   .then(function(r) { return r.json(); })
   .then(function(data) {
     if (data.error) { toast('Save failed: ' + data.error, 'error'); return; }
-    location.href = '/payloads';
+    surfaceSaveWarnings(data);
   })
   .catch(function(err) { toast('Save error: ' + err, 'error'); });
   return false;
@@ -108,6 +184,7 @@ function openEditPayloadModal(btn) {
   // Pre-fill from the saved value (server-rendered data attribute), NOT from
   // RDS — so editing works and the group is preserved even if RDS is down.
   document.getElementById('pl-edit-robot-group').value = d.robotGroup || '';
+  loadLoadSequences('pl-edit-load-sequence', d.loadSequence || '');
   document.getElementById('ple-manifest-rows').innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
   // Clear any stale bin-type selection synchronously so the modal opens with
   // nothing selected (matches the create modal); the async fetch below sets the
@@ -167,6 +244,7 @@ function submitPLEdit(el, evt) {
     description: document.getElementById('pl-edit-notes').value,
     uop_capacity: parseInt(document.getElementById('pl-edit-uop').value) || 0,
     robot_group: document.getElementById('pl-edit-robot-group').value.trim(),
+    advanced_load_sequence: document.getElementById('pl-edit-load-sequence').value,
     bin_type_ids: getSelectedBinTypes('ple-bin-types'),
     manifest: collectManifestRows('ple-manifest-rows')
   };
@@ -179,7 +257,7 @@ function submitPLEdit(el, evt) {
   .then(function(r) { return r.json(); })
   .then(function(data) {
     if (data.error) { toast('Save failed: ' + data.error, 'error'); return; }
-    location.href = '/payloads';
+    surfaceSaveWarnings(data);
   })
   .catch(function(err) { toast('Save error: ' + err, 'error'); });
   return false;
@@ -201,6 +279,8 @@ document.addEventListener('keydown', function(e) {
 // single-source.
 delegateActions(document.body, {
     addManifestRow,
+    checkPLCreateSequence,
+    checkPLEditSequence,
     closePLCreateModal,
     closePLEditModal,
     collectManifestRows,

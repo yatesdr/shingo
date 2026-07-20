@@ -166,7 +166,9 @@ func (d *Dispatcher) patchRedirectSegments(segment []resolvedStep, order *orders
 // the fleet backend, advances the wait index, and transitions the order
 // lifecycle. Called after manifest sync and segment extraction have succeeded.
 func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.Order, segment []resolvedStep, moreWaits bool, blockOffset int) {
-	blocks := stepsToBlocks(order.VendorOrderID, segment, blockOffset)
+	// Complex release segments are not load-sequence expanded (nil) — see
+	// dispatchComplex; F4c is scoped to the simple transport path.
+	blocks := stepsToBlocks(order.VendorOrderID, segment, blockOffset, nil)
 	complete := !moreWaits
 
 	d.dbg("complex release: order=%d vendor=%s wait_index=%d adding %d blocks complete=%v",

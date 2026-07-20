@@ -98,6 +98,15 @@ func (s *PayloadService) ListBinTypes(payloadID int64) ([]*bins.BinType, error) 
 	return s.db.ListBinTypesForPayload(payloadID)
 }
 
+// --- Advanced load sequences ----------------------------------------------
+
+// ListLoadSequenceNames returns every registered advanced-load-sequence name,
+// for the payload-editor dropdown. The empty ("normal load") option is added by
+// the UI, not stored.
+func (s *PayloadService) ListLoadSequenceNames() ([]string, error) {
+	return s.db.ListLoadSequenceNames()
+}
+
 // --- Node compatibility ---------------------------------------------------
 
 // ListCompatibleNodes returns the nodes that accept the given payload

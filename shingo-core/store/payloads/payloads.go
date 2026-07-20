@@ -24,14 +24,14 @@ type Payload = domain.Payload
 
 // SelectCols is exported so cross-aggregate readers (e.g. ListPayloadsForNode
 // at the outer store/ level) can reuse the column list.
-const SelectCols = `id, code, description, uop_capacity, robot_group, created_at, updated_at`
+const SelectCols = `id, code, description, uop_capacity, robot_group, advanced_load_sequence, created_at, updated_at`
 
 // ScanPayload reads a single payloads row. Exported for cross-aggregate
 // readers at the outer store/ level.
 func ScanPayload(row interface{ Scan(...any) error }) (*Payload, error) {
 	var p Payload
 	err := row.Scan(&p.ID, &p.Code, &p.Description,
-		&p.UOPCapacity, &p.RobotGroup, &p.CreatedAt, &p.UpdatedAt)
+		&p.UOPCapacity, &p.RobotGroup, &p.AdvancedLoadSequence, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -53,8 +53,8 @@ func ScanPayloads(rows *sql.Rows) ([]*Payload, error) {
 
 // Create inserts a new payload template and sets p.ID on success.
 func Create(db *sql.DB, p *Payload) error {
-	id, err := helpers.InsertID(db, `INSERT INTO payloads (code, description, uop_capacity, robot_group) VALUES ($1, $2, $3, $4) RETURNING id`,
-		p.Code, p.Description, p.UOPCapacity, p.RobotGroup)
+	id, err := helpers.InsertID(db, `INSERT INTO payloads (code, description, uop_capacity, robot_group, advanced_load_sequence) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		p.Code, p.Description, p.UOPCapacity, p.RobotGroup, p.AdvancedLoadSequence)
 	if err != nil {
 		return fmt.Errorf("create payload: %w", err)
 	}
@@ -64,8 +64,8 @@ func Create(db *sql.DB, p *Payload) error {
 
 // Update writes all payload columns by primary key.
 func Update(db *sql.DB, p *Payload) error {
-	_, err := db.Exec(`UPDATE payloads SET code=$1, description=$2, uop_capacity=$3, robot_group=$4, updated_at=NOW() WHERE id=$5`,
-		p.Code, p.Description, p.UOPCapacity, p.RobotGroup, p.ID)
+	_, err := db.Exec(`UPDATE payloads SET code=$1, description=$2, uop_capacity=$3, robot_group=$4, advanced_load_sequence=$5, updated_at=NOW() WHERE id=$6`,
+		p.Code, p.Description, p.UOPCapacity, p.RobotGroup, p.AdvancedLoadSequence, p.ID)
 	return err
 }
 

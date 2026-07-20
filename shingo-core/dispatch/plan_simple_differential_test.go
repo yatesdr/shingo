@@ -27,7 +27,7 @@ func assertFleetEquivalent(t *testing.T, plan []resolvedStep, req fleet.CreateOr
 	if !req.Complete {
 		t.Fatalf("simple no-wait dispatch must create Complete=true, got false")
 	}
-	blocks := stepsToBlocks("v-diff", plan, 0)
+	blocks := stepsToBlocks("v-diff", plan, 0, nil)
 	if len(blocks) != 2 {
 		t.Fatalf("plan produced %d blocks, want 2", len(blocks))
 	}

@@ -294,6 +294,31 @@ func (a *Adapter) GetRobotGroups() ([]fleet.RobotGroup, error) {
 	return groups, nil
 }
 
+// --- fleet.BinTaskChecker ---
+
+// CheckLocationTasks queries RDS (/binCheck) for the binTask actions configured
+// at each given storage location and maps them to vendor-neutral LocationTasks.
+// An RDS error propagates so config-time validation can degrade to "unverified"
+// (save allowed, warn) rather than falsely reject. Each result's TaskNames is the
+// set of binTask keys the location advertises; validation checks the configured
+// sequence names against it.
+func (a *Adapter) CheckLocationTasks(locations []string) ([]fleet.LocationTasks, error) {
+	results, err := a.client.CheckBins(locations)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]fleet.LocationTasks, 0, len(results))
+	for _, r := range results {
+		out = append(out, fleet.LocationTasks{
+			Location:  r.ID,
+			Exists:    r.Exist,
+			Valid:     r.Valid,
+			TaskNames: r.Status.TaskNames(), // nil-safe: Status is nil when the bin doesn't exist
+		})
+	}
+	return out, nil
+}
+
 // --- fleet.FireAlarmController ---
 
 func (a *Adapter) GetFireAlarmStatus() (*fleet.FireAlarmStatus, error) {

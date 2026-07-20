@@ -32,13 +32,25 @@ CREATE TABLE IF NOT EXISTS bin_types (
 );
 
 CREATE TABLE IF NOT EXISTS payloads (
-    id           BIGSERIAL PRIMARY KEY,
-    code         TEXT NOT NULL UNIQUE,
-    description  TEXT NOT NULL DEFAULT '',
-    uop_capacity INTEGER NOT NULL DEFAULT 0,
-    robot_group  TEXT NOT NULL DEFAULT '',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id                      BIGSERIAL PRIMARY KEY,
+    code                    TEXT NOT NULL UNIQUE,
+    description             TEXT NOT NULL DEFAULT '',
+    uop_capacity            INTEGER NOT NULL DEFAULT 0,
+    robot_group             TEXT NOT NULL DEFAULT '',
+    advanced_load_sequence  TEXT NOT NULL DEFAULT '',
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- load_sequences: the advanced-load-sequence registry. One row per sequence
+-- name; task_names is a JSON array of binTask names in execution order. Editable
+-- data (a plant names its RDS-side binTask keys differently); seeded by v50 with
+-- "Child cart interlock". A payload selects a sequence by name via
+-- payloads.advanced_load_sequence.
+CREATE TABLE IF NOT EXISTS load_sequences (
+    name        TEXT PRIMARY KEY,
+    task_names  TEXT NOT NULL DEFAULT '[]',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS bins (

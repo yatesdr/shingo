@@ -77,6 +77,12 @@ type ServiceAccess interface {
 	GetAllCachedRobots() []fleet.RobotStatus
 	GetNodeOccupancy() ([]engine.OccupancyEntry, error)
 	RobotGroups() ([]fleet.RobotGroup, error)
+	// ValidateAdvancedLoadSequence checks a payload's configured load-sequence
+	// task names against the RDS binTask keys of its assigned node locations. A
+	// pure read (no side effects): a missing key at a real location returns an
+	// error (reject the save); an un-checkable case (no RDS, no nodes) returns a
+	// check with warnings and err=nil (save allowed, flagged unverified).
+	ValidateAdvancedLoadSequence(payloadID int64, seqName string) (*engine.LoadSequenceCheck, error)
 	EtaCache() *eta.Cache
 	GetActiveOrdersWithRobotLocation() ([]engine.BoardOrder, error)
 	GetActiveOrdersWithRobotLocationFiltered(stations []string) ([]engine.BoardOrder, error)
