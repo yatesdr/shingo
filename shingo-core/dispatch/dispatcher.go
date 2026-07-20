@@ -240,11 +240,6 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		Priority:   order.Priority,
 		RobotGroup: d.robotGroupForPayload(order.PayloadCode),
 		Complete:   true, // no-wait: the fleet completes the order once its 2 blocks finish
-		// KeyRoute is left nil here: empty ⇒ SEER auto-picks (today's behavior).
-		// TODO(key-route-populator): populate KeyRoute from the source/dest nodes'
-		// designated approach/leave LMs (scene AdvancedPoints); validate each LM is
-		// a real AdvancedPoint or SEER terminates the order. The conduit is wired;
-		// this is the seam where that follow-on will fill it in.
 	}
 
 	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s to=%s priority=%d",

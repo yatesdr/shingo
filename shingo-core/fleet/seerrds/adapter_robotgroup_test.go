@@ -125,3 +125,43 @@ func TestCreateOrder_ThreadsKeyRoute(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateOrder_ThreadsKeyTask pins the keyTask conduit: a KeyTask on the
+// request must land verbatim in rds.SetOrderRequest.KeyTask (the manual's literal
+// "load"/"unload" robot-selection hint), and an empty KeyTask must stay empty
+// (json:"keyTask,omitempty" omits it on the wire — no regression).
+func TestCreateOrder_ThreadsKeyTask(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		task string
+		want string
+	}{
+		{"load hint threads to the wire", "load", "load"},
+		{"unload hint threads to the wire", "unload", "unload"},
+		{"empty task stays empty (SEER auto-picks)", "", ""},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv, captured := captureSetOrder(t)
+			defer srv.Close()
+
+			adapter := New(Config{BaseURL: srv.URL, Timeout: 5 * time.Second, DebugLog: func(string, ...any) {}})
+			if _, err := adapter.CreateOrder(fleet.CreateOrderRequest{
+				OrderID:    "sg-3-ccc",
+				ExternalID: "uuid-3",
+				Blocks:     []fleet.OrderBlock{{BlockID: "b1", Location: "LINE-01", BinTask: "JackLoad"}},
+				KeyTask:    tc.task,
+				Complete:   true,
+			}); err != nil {
+				t.Fatalf("CreateOrder: %v", err)
+			}
+			got := captured()
+			if got.KeyTask != tc.want {
+				t.Errorf("SetOrderRequest.KeyTask = %q, want %q", got.KeyTask, tc.want)
+			}
+		})
+	}
+}

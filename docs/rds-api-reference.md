@@ -38,8 +38,8 @@ Creates a multi-block order with explicit location, operation, and bin task per 
   "vehicle": "robot-1",            // optional, pin to specific robot
   "group": "group-a",             // optional, robot dispatch group
   "label": "label-x",             // optional, dispatch filter label
-  "keyRoute": ["P1", "P2"],       // optional, forced route
-  "keyTask": "JackLoad",          // optional, forced task
+  "keyRoute": ["P1", "P2"],       // optional, robot-selection assist (NOT a route constraint; see below)
+  "keyTask": "load",              // optional, robot-selection assist: "load" or "unload" (see below)
   "priority": 5,                  // optional, default 0
   "complete": true,               // true = no more blocks will be added
   "blocks": [
@@ -65,6 +65,22 @@ Creates a multi-block order with explicit location, operation, and bin task per 
   ]
 }
 ```
+
+**Robot-selection hints (`keyRoute`, `keyTask`):** These are optional fields that
+help RDS pick which robot to assign. Shingo leaves them blank on every order it
+builds, so RDS auto-assigns robots. The wire plumbing (`rds.SetOrderRequest` and
+the fleet adapter) carries both fields, so a future job that needs them can set
+them explicitly per order.
+
+- `keyRoute` â€” extra via-waypoints a specific job should pass through on the way
+  to its action points. Use only real map locations. `SELF_POSITION` is never
+  allowed, and any point that does not exist or is unreachable kills the waybill
+  at issue (RDS terminates it immediately).
+- `keyTask` â€” `"load"` or `"unload"`.
+
+**No-action waypoint block:** To force a stop at a location with no action, send
+a block with only `blockId` and `location` (leave `binTask` and `operation`
+blank). The robot stops there but runs no action or script.
 
 **Response:** Standard envelope.
 
@@ -239,7 +255,7 @@ Appends blocks to an existing incremental order (one created with complete: fals
 
 POST /markComplete
 
-Marks an incremental order as complete — no more blocks can be added.
+Marks an incremental order as complete ï¿½ no more blocks can be added.
 
 **Request:** { "id": "staged-001" }
 
@@ -763,9 +779,9 @@ Returns current license information.
 
 Shingo integrates with RDS through the shingo-core/rds client package and the shingo-core/fleet/seerrds adapter:
 
-- **ds.Client** — Low-level HTTP client (GET/POST helpers, response decoding, debug logging)
-- **seerrds.Adapter** — Implements Shingo's leet.TrackingBackend, leet.RobotLister, leet.NodeOccupancyProvider, and leet.VendorProxy interfaces
-- **ds.Poller** — Periodically polls active orders for state transitions and emits events through the engine pipeline
+- **ds.Client** ï¿½ Low-level HTTP client (GET/POST helpers, response decoding, debug logging)
+- **seerrds.Adapter** ï¿½ Implements Shingo's leet.TrackingBackend, leet.RobotLister, leet.NodeOccupancyProvider, and leet.VendorProxy interfaces
+- **ds.Poller** ï¿½ Periodically polls active orders for state transitions and emits events through the engine pipeline
 
 ### Key patterns
 
@@ -778,5 +794,5 @@ Shingo integrates with RDS through the shingo-core/rds client package and the sh
 
 ### Source PDFs
 
-- RDSCore _HTTP API_AIVISON .pdf — Full RDS Core HTTP API documentation (in repo root)
-- RDS UserManual-EN_AIVISON .pdf — RDS user manual (in repo root)
+- RDSCore _HTTP API_AIVISON .pdf ï¿½ Full RDS Core HTTP API documentation (in repo root)
+- RDS UserManual-EN_AIVISON .pdf ï¿½ RDS user manual (in repo root)
