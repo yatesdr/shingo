@@ -508,6 +508,18 @@ func (db *DB) migrate() error {
 	// when the HMI renders non-queued statuses.
 	db.Exec("ALTER TABLE orders ADD COLUMN queue_reason TEXT NOT NULL DEFAULT ''")
 
+	// NOTE on the `db.Exec("ALTER TABLE ... ADD COLUMN ...")` pattern used
+	// throughout this function: the error is discarded ON PURPOSE. Re-adding an
+	// existing column is the normal path on every already-migrated database, and
+	// SQLite offers no cheap way to distinguish "already there" from a real
+	// failure. The trade is that a genuine failure is indistinguishable from a
+	// successful no-op and migrate() returns nil either way.
+	//
+	// The backstop is verifySchema() (schema_assert.go), which runs immediately
+	// after this function in store.Open and fails startup listing every missing
+	// object. If you add an unconditional column here that the code depends on,
+	// add it to requiredColumns there too.
+
 	// v28: queue_code on orders — mirrors Core's orders.queue_code, the structured
 	// category behind the queue_reason sentence (one of protocol.QueueCode). Core
 	// ships it on the OrderUpdate push and the boot status snapshot so Edge can

@@ -74,6 +74,13 @@ func Open(path string) (*DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	// migrate() cannot report a failed ADD COLUMN (see schema_assert.go), and a
+	// stale binary migrates cleanly to its own older schema. Verify the result
+	// against what this build actually needs before handing the DB out.
+	if err := db.verifySchema(); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
 	return db, nil
 }
 
