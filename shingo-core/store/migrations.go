@@ -537,6 +537,20 @@ func (db *DB) runVersionedMigrations() error {
 				return schema.ColumnExists(q, "orders", "queue_code") &&
 					schema.ColumnExists(q, "orders", "queue_cause")
 			}},
+
+		// v49 creates the Core mirror for the plant-claims feed (Edge → Core
+		// subject plant.claims). process_styles holds the styles a process can
+		// run; style_claims holds the sourceability subset of each style's node
+		// claims (node, role, swap_mode, payload, capacity, reorder). Both are
+		// REPLACED per-process on every message, so a periodic full snapshot
+		// rebuilds late joiners (no Kafka compaction). The dirty index the
+		// recompute reads is built in code from the cache, not stored.
+		{49, "create process_styles + style_claims mirror for plant-claims feed",
+			v49PlantClaimsMirror,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "process_styles") &&
+					schema.TableExists(q, "style_claims")
+			}},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1717,6 +1731,56 @@ func v48OrderQueueCodeCause(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v48 orders queue_code/queue_cause: %w", err)
+		}
+	}
+	return nil
+}
+
+// v49PlantClaimsMirror creates the two Core mirror tables for the
+// plant-claims feed (Edge → Core subject plant.claims). process_styles is one
+// row per (process, style) Edge reports; style_claims is one row per
+// sourceability-relevant claim under that (process, style). Both are owned by
+// the feed: the handler DELETEs then re-INSERTs for a process on every
+// message, so the tables are a pure mirror of Edge's plant spec at a point in
+// time. config_gen lets the handler reject a stale (older) snapshot for a
+// process when a newer one already landed.
+//
+// No foreign keys to Edge-owned entities: process_id/style_id are opaque
+// Edge identifiers (names), mirrored verbatim. The dirty index the
+// recompute consumes (payload_code → set of (process, style)) is derived in
+// code from style_claims, not stored as a table.
+func v49PlantClaimsMirror(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS process_styles (
+			process_id   TEXT NOT NULL,
+			style_id     TEXT NOT NULL,
+			config_gen   BIGINT NOT NULL DEFAULT 0,
+			updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (process_id, style_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS style_claims (
+			process_id          TEXT NOT NULL,
+			style_id            TEXT NOT NULL,
+			core_node_name      TEXT NOT NULL,
+			role                TEXT NOT NULL,
+			swap_mode           TEXT NOT NULL,
+			payload_code        TEXT NOT NULL DEFAULT '',
+			allowed_payload_codes TEXT NOT NULL DEFAULT '[]',
+			uop_capacity        INTEGER NOT NULL DEFAULT 0,
+			reorder_point       INTEGER NOT NULL DEFAULT 0,
+			seq                 INTEGER NOT NULL DEFAULT 0
+		)`,
+		// Dirty-index lookup: which (process, style) rows need recompute when a
+		// payload changes. The primary payload is indexed; the allowed set is a
+		// JSON array the handler scans in code for the secondary matches.
+		`CREATE INDEX IF NOT EXISTS idx_style_claims_payload
+			ON style_claims (payload_code)`,
+		`CREATE INDEX IF NOT EXISTS idx_style_claims_process_style
+			ON style_claims (process_id, style_id)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v49 plant-claims mirror: %w", err)
 		}
 	}
 	return nil

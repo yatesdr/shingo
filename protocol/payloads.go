@@ -969,3 +969,83 @@ type UOPAdjustment struct {
 	// when Bound; zero on the Released / legacy-adjustment paths.
 	Epoch int64 `json:"epoch,omitempty"`
 }
+
+// PlantClaimsReport is the body of a SubjectPlantClaims data message
+// (Edge → Core). It carries the FULL claim set for one process: every style
+// the process can run and, per style, the (node, payload) assignments the
+// sourceability computation reads. Edge stays the source of truth for the
+// plant spec; this feed plumbs it onto Core so recomputes never depend on
+// Edge being up.
+//
+// One message = one process's complete picture. A full snapshot is a series
+// of these (one per process); a single-process change is one. Core replaces
+// its mirror for ProcessID on every message (the message is authoritative
+// for that process), so a periodic full snapshot rebuilds late joiners.
+//
+// Loaders/unloaders are EXCLUDED here — a manual_swap claim never appears in
+// Claims. They enter the computation as pool supply/demand via the loader
+// aggregate, not as style claims.
+//
+// Value schema is ADDITIVE-only. Future fields append with omitempty; an
+// older Core ignores unknown fields (forward-compatible), and an older Core
+// that does not register SubjectPlantClaims logs-and-drops the whole message
+// (mixed-version no-op).
+type PlantClaimsReport struct {
+	// ProcessID is the Edge plant-spec process identifier (the process's
+	// Name on Edge — e.g. "SNF2"). Core mirrors it verbatim as the cache
+	// key; it is the logical partition for the sourceability computation.
+	ProcessID string `json:"process_id"`
+	// Styles is the full set of styles this process can run, each with its
+	// claim list. A style with no sourceability-relevant claims still
+	// appears (empty Claims) so Core knows the style exists for an
+	// all-styles recompute.
+	Styles []PlantClaimsStyle `json:"styles"`
+	// ConfigGen is bumped by Edge on every plant-spec write. Core records
+	// it so a stale snapshot (an older ConfigGen arriving after a newer
+	// one) can be detected and ignored. Optional; zero means "not tracked"
+	// (Core accepts the message regardless).
+	ConfigGen int64 `json:"config_gen,omitempty"`
+}
+
+// PlantClaimsStyle is one style of a process in a PlantClaimsReport.
+type PlantClaimsStyle struct {
+	// StyleID is the Edge plant-spec style identifier (the style's Name on
+	// Edge within ProcessID). Together (ProcessID, StyleID) is the
+	// sourceability computation key.
+	StyleID string `json:"style_id"`
+	// Claims is the set of sourceability-relevant node claims for this
+	// style. Manual_swap (loader/unloader) claims are excluded at the
+	// publisher; only the material-flow claims the netting reads appear.
+	Claims []PlantClaim `json:"claims"`
+}
+
+// PlantClaim is one (node, payload) assignment under a style — the
+// sourceability subset of an Edge NodeClaim. Fields mirror ONLY what the
+// computation reads; everything else (staging, pairing, flags, reorder
+// source) stays on Edge and never crosses.
+type PlantClaim struct {
+	// CoreNodeName is the node the claim binds (Core's node-name key
+	// space). The netting nets bin/order/reservation state against this.
+	CoreNodeName string `json:"core_node_name"`
+	// Role is the material-flow direction: "consume" (node pulls material
+	// from upstream) or "produce" (node pushes material downstream).
+	Role ClaimRole `json:"role"`
+	// SwapMode is the changeover/dispatch mode for the claim. Carried so
+	// the computation can distinguish the flow modes; manual_swap never
+	// appears (excluded at the publisher).
+	SwapMode SwapMode `json:"swap_mode"`
+	// PayloadCode is the binding payload for non-manual_swap claims. For a
+	// single-payload claim this is the value the netting matches against.
+	PayloadCode string `json:"payload_code"`
+	// AllowedPayloadCodes is the effective payload set this claim accepts
+	// (ClaimAllowedPayloads on Edge). For most claims this is just
+	// [PayloadCode]; carried as the canonical set the netting reads.
+	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
+	// UOPCapacity is the bin capacity (UOP) for the claim's payload — the
+	// denominator context for time-to-empty. Read by the at-risk tier.
+	UOPCapacity int `json:"uop_capacity"`
+	// ReorderPoint is the role-dependent replenishment trigger (consume:
+	// UOP threshold; produce: bin-count floor). Carried so the
+	// computation's fill-priority signal has the configured trigger.
+	ReorderPoint int `json:"reorder_point"`
+}

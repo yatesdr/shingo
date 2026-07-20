@@ -56,6 +56,14 @@ type Handlers struct {
 	// loses no information (last writer wins on the snapshot view).
 	claimSyncCh   chan struct{}
 	claimSyncStop chan struct{}
+
+	// onPlantSpecChange is the plant-claims publisher's spec-change hook.
+	// Set by main after constructing the publisher; called from
+	// requestClaimSync so the plant-claims snapshot rides the same coalesced
+	// signal as the manual_swap claim sync (one publish per batch of edits,
+	// not one per edit). Optional; nil when the publisher is not wired
+	// (e.g. tests), in which case requestClaimSync skips it.
+	onPlantSpecChange func()
 }
 
 // NewRouter registers all HTTP endpoints for shingo-edge.
@@ -73,7 +81,7 @@ type Handlers struct {
 //
 // Auth boundary: h.adminMiddleware. Public = shop floor operator access (no login).
 // Handlers live in handlers_*.go files grouped by domain.
-func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Service) (http.Handler, func()) {
+func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Service) (*Handlers, http.Handler, func()) {
 	h := &Handlers{
 		engine:        eng, // ServiceAccess — narrow surface for CRUD handlers
 		orchestration: eng, // EngineOrchestration — wide surface for flow handlers
@@ -425,10 +433,19 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		})
 	})
 
-	return r, func() {
+	return h, r, func() {
 		h.eventHub.Stop()
 		close(h.claimSyncStop)
 	}
+}
+
+// SetPlantSpecChangeHook wires the plant-claims publisher's publish callback
+// so the coalesced spec-change signal (claimSyncLoop) re-publishes the
+// plant-claims snapshot on every style/claim edit. Optional; main calls it
+// after constructing the publisher. The hook fires inside claimSyncLoop's
+// recover wrapper, so a panic in the publisher cannot orphan the sync loop.
+func (h *Handlers) SetPlantSpecChangeHook(fn func()) {
+	h.onPlantSpecChange = fn
 }
 
 // claimSyncLoop owns SendClaimSync invocations. Multiple concurrent
@@ -460,6 +477,18 @@ func (h *Handlers) claimSyncLoop() {
 				}()
 				h.orchestration.SendClaimSync()
 			}()
+			// Re-publish the plant-claims snapshot on the same coalesced
+			// signal — spec edits changed what every process can source.
+			if h.onPlantSpecChange != nil {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("PANIC onPlantSpecChange: %v", r)
+						}
+					}()
+					h.onPlantSpecChange()
+				}()
+			}
 		}
 	}
 }

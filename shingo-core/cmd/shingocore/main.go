@@ -331,6 +331,7 @@ func main() {
 	router.RegisterSubject(subjectRouter, protocol.SubjectLinesideBucketDelta, coreDataService.HandleLinesideBucketDelta)
 	router.RegisterSubject(subjectRouter, protocol.SubjectProductionTick, coreDataService.HandleProductionTick)
 	router.RegisterSubject(subjectRouter, protocol.SubjectDowntimeEvent, coreDataService.HandleDowntimeEvent)
+	router.RegisterSubject(subjectRouter, protocol.SubjectPlantClaims, coreDataService.HandlePlantClaims)
 	// Fan projected ticks out to the engine event bus so the SSE layer can
 	// rebroadcast them as cell-heartbeat (Phase E). Set before the projection
 	// worker starts so it reads the emitter race-free.

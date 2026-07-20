@@ -672,7 +672,24 @@ func main() {
 	})
 
 	// ── HTTP server & shutdown ──────────────────────────────────────────
-	router, stopWeb := www.NewRouter(eng, dbg, backupSvc)
+	h, router, stopWeb := www.NewRouter(eng, dbg, backupSvc)
+
+	// ── Plant-claims publisher (sourceability feed, Edge → Core) ───────
+	// Publishes the plant-spec claim set so Core can mirror what every
+	// process can source. Start publishes one full snapshot immediately
+	// (boot), then periodic snapshots every few minutes (late-joiner
+	// rebuild). The spec-change hook re-publishes on every style/claim
+	// edit via the coalesced claim-sync signal.
+	plantClaims := messaging.NewPlantClaimsPublisher(db, stationID)
+	plantClaims.DebugLog = messaging.DebugLogFunc(dbg.Func("plant_claims"))
+	h.SetPlantSpecChangeHook(func() {
+		if err := plantClaims.PublishChanged(); err != nil {
+			log.Printf("plant_claims: spec-change publish: %v", err)
+		}
+	})
+	plantClaims.Start()
+	defer plantClaims.Stop()
+
 	addr := fmt.Sprintf("%s:%d", cfg.Web.Host, cfg.Web.Port)
 	srv := startHTTPServer(addr, router)
 

@@ -116,6 +116,22 @@ const (
 	// computed at query time) with explicit persisted start/end pairs.
 	SubjectDowntimeEvent = "production.downtime"
 
+	// SubjectPlantClaims — Edge → Core: the plant-spec claim set the
+	// sourceability computation reads (a new SUBJECT on the existing
+	// shingo.orders topic, NOT a new topic — follows the
+	// SubjectProductionTick precedent). Edge publishes the full claim set
+	// for one process keyed on the message, on every plant-spec change
+	// (style/claim edit), plus a periodic full snapshot and a full publish
+	// on boot/reconnect so a late-joining Core rebuilds its mirror. Carries
+	// PlantClaimsReport. Core mirrors into process_styles/style_claims and
+	// builds the dirty index. Loaders/unloaders (manual_swap claims) are
+	// EXCLUDED at the publisher — they enter the computation as pool
+	// supply/demand via the loader aggregate, never as style claims. Value
+	// schema is ADDITIVE-only (forward-compatible); an older Core that does
+	// not register this subject logs-and-ignores it (the SubjectRouter
+	// unknown-subject path), so the feed is a mixed-version no-op.
+	SubjectPlantClaims = "plant.claims"
+
 	// BinPickedUp — Core notifies Edge when a bin is physically picked
 	// up by a robot. Used by the SEND PARTIAL BACK flow: the operator
 	// releases a partial bin and the cell keeps cycling; ticks during
@@ -176,6 +192,7 @@ func CoreInboundSubjects() []string {
 		SubjectLinesideBucketDelta,
 		SubjectProductionTick,
 		SubjectDowntimeEvent,
+		SubjectPlantClaims,
 	}
 }
 

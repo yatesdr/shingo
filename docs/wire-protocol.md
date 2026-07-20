@@ -227,6 +227,7 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `tag.verify_response` | Core -> Edge | [TagVerifyResponse](#tagverifyresponse) | Core returns tag verification result |
 | `catalog.payloads_request` | Edge -> Core | [CatalogPayloadsRequest](#catalogpayloadsrequest) | Edge requests payload catalog |
 | `catalog.payloads_response` | Core -> Edge | [CatalogPayloadsResponse](#catalogpayloadsresponse) | Core returns payload catalog |
+| `plant.claims` | Edge -> Core | [PlantClaimsReport](#plantclaimsreport) | Edge publishes its plant-spec claim set so Core can mirror what every process can source |
 
 New subjects can be added by defining a constant and a data schema -- no protocol interface changes required.
 
@@ -568,6 +569,83 @@ Core returns the payload catalog. Used by edge to populate payload code dropdown
 | Code | `code` | string | Yes | Unique payload type code (e.g., `"BRK-ROTOR-KIT"`). |
 | Description | `description` | string | No | Human-readable description. |
 | UOP Capacity | `uop_capacity` | integer | Yes | Production cycles supported by a full load. |
+
+#### PlantClaimsReport
+
+Published by Edge on the `plant.claims` subject so Core can mirror the plant
+spec's claim set and continuously compute sourceability (what every process can
+source and change over to) without depending on Edge being up. Edge stays the
+source of truth for the plant spec; this feed plumbs it onto Core. This is a
+**subject on the existing `shingo.orders` topic**, not a new topic.
+
+One message is the FULL claim set for ONE process. Core replaces its mirror for
+that process on every message, so a series of messages (one per process) is a
+full snapshot. Edge publishes:
+
+- on every plant-spec change (style or claim edit),
+- a periodic full snapshot (every few minutes), and
+- a full snapshot on boot/reconnect.
+
+The periodic + boot snapshots are how a late-joining or restarted Core rebuilds
+its mirror — no Kafka compaction is used. The message carries a `config_gen`
+stamp; Core keeps the newest per process and ignores an older snapshot landing
+after a newer one (the out-of-order guard).
+
+Loaders/unloaders are **excluded**: a `manual_swap` claim never appears in
+`claims`. They enter the sourceability computation as pool supply/demand via the
+Core-owned loader aggregate, not as style claims.
+
+The value schema is **additive-only**. Future fields append with `omitempty`; an
+older Core ignores unknown fields, and an older Core that has not registered the
+`plant.claims` subject logs-and-drops the whole message (mixed-version no-op).
+
+```json
+{
+  "process_id": "SNF2",
+  "config_gen": 42,
+  "styles": [
+    {
+      "style_id": "SNF2-A",
+      "claims": [
+        {
+          "core_node_name": "STOR-01",
+          "role": "consume",
+          "swap_mode": "single_robot",
+          "payload_code": "BIN-A",
+          "allowed_payload_codes": ["BIN-A"],
+          "uop_capacity": 100,
+          "reorder_point": 20
+        }
+      ]
+    }
+  ]
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Process ID | `process_id` | string | Yes | The Edge plant-spec process identifier (the process's name, e.g. `"SNF2"`). Core mirrors it verbatim as the cache key. |
+| Config Gen | `config_gen` | integer | No | Bumped by Edge on every plant-spec write. Core keeps the newest per process and ignores an older snapshot landing after a newer one. Zero = not tracked. |
+| Styles | `styles` | PlantClaimsStyle[] | Yes | The full set of styles this process can run. A style with no sourceability-relevant claims appears with an empty `claims` array. |
+
+**PlantClaimsStyle:**
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Style ID | `style_id` | string | Yes | The Edge plant-spec style identifier (the style's name within `process_id`). Together `(process_id, style_id)` is the sourceability key. |
+| Claims | `claims` | PlantClaim[] | Yes | The sourceability-relevant node claims for this style. `manual_swap` (loader/unloader) claims are excluded at the publisher. |
+
+**PlantClaim:**
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Core Node Name | `core_node_name` | string | Yes | The node the claim binds (Core's node-name key space). |
+| Role | `role` | string | Yes | `"consume"` or `"produce"` — the material-flow direction. |
+| Swap Mode | `swap_mode` | string | Yes | The changeover/dispatch mode (e.g. `"single_robot"`, `"two_robot"`). `manual_swap` never appears. |
+| Payload Code | `payload_code` | string | No | The binding payload for the claim. |
+| Allowed Payload Codes | `allowed_payload_codes` | string[] | No | The effective payload set this claim accepts. Usually just `[payload_code]`. |
+| UOP Capacity | `uop_capacity` | integer | No | Bin capacity (UOP) for the claim's payload — time-to-empty context. |
+| Reorder Point | `reorder_point` | integer | No | Role-dependent replenishment trigger (consume: UOP threshold; produce: bin-count floor). |
 
 ### Order Payloads: Edge -> Core
 

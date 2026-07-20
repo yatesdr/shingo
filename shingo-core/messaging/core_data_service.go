@@ -15,6 +15,7 @@ import (
 	"shingocore/store/downtime"
 	"shingocore/store/heartbeat"
 	"shingocore/store/nodes"
+	"shingocore/store/plantclaims"
 )
 
 // heartbeatRetentionDays is the cell_part_events retention window (plan §12).
@@ -641,6 +642,56 @@ func (s *CoreDataService) HandleClaimSync(env *protocol.Envelope, sync *protocol
 	if s.thresholdMonitor != nil && len(changes) > 0 {
 		s.thresholdMonitor.OnThresholdChanges(changes)
 	}
+}
+
+// HandlePlantClaims mirrors a plant-claims report (Edge → Core) for one
+// process into process_styles/style_claims and rebuilds the dirty index for
+// that process. The message is authoritative for its process: the handler
+// replaces the process's rows wholesale on every message, so a periodic full
+// snapshot rebuilds late joiners (no Kafka compaction). Loaders/unloaders are
+// already excluded by the publisher (manual_swap claims never appear); nothing
+// here filters by swap_mode.
+//
+// ConfigGen is a stale-snapshot guard: if the mirror already holds a NEWER
+// config_gen for this process (an out-of-order older snapshot landing after a
+// newer one), the replace is a no-op. Zero ConfigGen means "not tracked" and
+// is always applied.
+func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *protocol.PlantClaimsReport) {
+	if report.ProcessID == "" {
+		log.Printf("core_handler: plant.claims from %s: empty process_id — ignored", env.Src.Station)
+		return
+	}
+
+	var styles []plantclaims.StyleRow
+	var claims []plantclaims.ClaimRow
+	for _, st := range report.Styles {
+		styles = append(styles, plantclaims.StyleRow{
+			ProcessID: report.ProcessID,
+			StyleID:   st.StyleID,
+			ConfigGen: report.ConfigGen,
+		})
+		for i, c := range st.Claims {
+			claims = append(claims, plantclaims.ClaimRow{
+				ProcessID:           report.ProcessID,
+				StyleID:             st.StyleID,
+				CoreNodeName:        c.CoreNodeName,
+				Role:                c.Role,
+				SwapMode:            c.SwapMode,
+				PayloadCode:         c.PayloadCode,
+				AllowedPayloadCodes: c.AllowedPayloadCodes,
+				UOPCapacity:         c.UOPCapacity,
+				ReorderPoint:        c.ReorderPoint,
+				Seq:                 i,
+			})
+		}
+	}
+
+	if err := s.db.ReplacePlantClaims(report.ProcessID, styles, claims, report.ConfigGen); err != nil {
+		log.Printf("core_handler: plant.claims mirror %s: %v", report.ProcessID, err)
+		return
+	}
+	log.Printf("core_handler: plant.claims mirrored %s: %d styles, %d claims (config_gen=%d)",
+		report.ProcessID, len(styles), len(claims), report.ConfigGen)
 }
 
 // StartDowntimeProjection launches the async downtime_events projection worker
