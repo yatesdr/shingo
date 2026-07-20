@@ -52,13 +52,28 @@ func (h *EdgeHandler) HandleOrderWaybill(env *protocol.Envelope, p *protocol.Ord
 func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.OrderUpdate) {
 	h.DebugLog.Log("order_update uuid=%s status=%s", p.OrderUUID, p.Status)
 	log.Printf("edge_handler: order update: uuid=%s status=%s", p.OrderUUID, p.Status)
-	replyType := orders.ReplyUpdate
-	if p.Status == string(protocol.StatusQueued) {
-		replyType = orders.ReplyQueued
+
+	// ETA side-write (into in_transit Core stamps an ETA on the update; Edge
+	// stores it and the HMI renders an ETA pill). Preserved exactly from the
+	// legacy ReplyUpdate arm — independent of the status write below.
+	if p.ETA != "" {
+		if err := h.orderMgr.SetOrderETA(p.OrderUUID, p.ETA); err != nil {
+			log.Printf("edge_handler: set eta for %s: %v", p.OrderUUID, err)
+		}
 	}
-	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, replyType, "", p.ETA, p.Detail); err != nil {
-		log.Printf("edge_handler: handle update for %s: %v", p.OrderUUID, err)
+
+	// Apply Core's pushed status to the Edge row through the ApplyCoreStatus
+	// mapping shared with boot reconciliation, instead of the legacy "branch on
+	// queued, discard everything else" — so sourcing/dispatched/faulted pushes
+	// now update the Edge row instead of leaving a stale acknowledged rendering
+	// as "IN TRANSIT". staged/delivered/terminal are no-ops here (dedicated
+	// envelopes own them); a push that isn't reachable from the current status
+	// returns an error that is logged and swallowed, matching the old discard
+	// behavior.
+	if err := h.orderMgr.HandleCoreStatusPush(p.OrderUUID, protocol.Status(p.Status), p.Detail); err != nil {
+		log.Printf("edge_handler: apply core status %s for %s: %v", p.Status, p.OrderUUID, err)
 	}
+
 	if p.QueueReason != "" {
 		if err := h.orderMgr.SetOrderQueueReason(p.OrderUUID, p.QueueReason); err != nil {
 			log.Printf("edge_handler: set queue_reason for %s: %v", p.OrderUUID, err)

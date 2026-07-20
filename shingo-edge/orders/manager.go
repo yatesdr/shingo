@@ -500,6 +500,18 @@ func (m *Manager) SetOrderQueueReason(uuid, reason string) error {
 	return m.db.SetOrderQueueReason(uuid, reason)
 }
 
+// SetOrderETA persists Core's ETA stamp for an order. Called from the edge
+// handler when an OrderUpdate carries an ETA field (Core stamps it on
+// transitions into in_transit). Independent of the status write so the HMI's
+// ETA pill can update even when the status push is a no-op in the mapping.
+func (m *Manager) SetOrderETA(uuid, eta string) error {
+	order, err := m.db.GetOrderByUUID(uuid)
+	if err != nil {
+		return err
+	}
+	return m.db.UpdateOrderETA(order.ID, eta)
+}
+
 // AbortOrder cancels a non-terminal order and enqueues a cancel message.
 // The cancel message is enqueued BEFORE the local transition so that Core
 // is guaranteed to receive the cancellation — preventing a robot from
@@ -657,6 +669,28 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 func (m *Manager) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatusSnapshot) error {
 	m.lifecycle.debug = m.DebugLog
 	return m.lifecycle.ApplyCoreStatusSnapshot(snapshot)
+}
+
+// ApplyCoreStatus is the Core→Edge status mapping — the one function used by
+// both the live-push path (HandleCoreStatusPush, driven by HandleOrderUpdate)
+// and the boot-reconcile path (ApplyCoreStatusSnapshot). See
+// LifecycleService.ApplyCoreStatus for the arm-by-arm mapping.
+func (m *Manager) ApplyCoreStatus(order *orders.Order, coreStatus protocol.Status, detail string) error {
+	m.lifecycle.debug = m.DebugLog
+	return m.lifecycle.ApplyCoreStatus(order, coreStatus, detail)
+}
+
+// HandleCoreStatusPush is the live-channel entry point for the total Core→Edge
+// status mapping. edge_handler.HandleOrderUpdate calls this with Core's pushed
+// status string (after handling the queued branch and ETA side-write). It
+// replaces the legacy "branch on queued, discard everything else" behavior.
+func (m *Manager) HandleCoreStatusPush(orderUUID string, coreStatus protocol.Status, detail string) error {
+	m.DebugLog.Log("core status push: uuid=%s status=%s", orderUUID, coreStatus)
+	order, err := m.db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		return fmt.Errorf("order %s not found: %w", orderUUID, err)
+	}
+	return m.ApplyCoreStatus(order, coreStatus, detail)
 }
 
 // HandleSkipped processes Core's terminal "the work was never needed"

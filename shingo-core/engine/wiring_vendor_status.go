@@ -104,6 +104,14 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// Defensive: fleet.MapState never returns StatusAcknowledged today,
 		// but handle for completeness in case a future fleet adapter reports
 		// a distinct ACK phase.
+		//
+		// This arm is dead in practice. fleet.MapState (fleet/seerrds/mappers.go)
+		// maps RDS states to dispatched/in_transit/staged/delivered/faulted/
+		// cancelled — never acknowledged. Core's vendor ladder starts at
+		// dispatched (CREATE/TO_BE_DISPATCHED → dispatched), so this is a
+		// never-fires guard against a future adapter change, not a live code
+		// path. Both `submitted` and `acknowledged` are Edge-lifecycle words in
+		// Core's vendor flow.
 		if err := lc.Acknowledge(order, "fleet"); err != nil {
 			e.logFn("engine: acknowledge order %d: %v", order.ID, err)
 		}

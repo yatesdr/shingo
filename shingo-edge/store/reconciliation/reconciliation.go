@@ -59,10 +59,9 @@ type Summary struct {
 func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	var anomalies []*Anomaly
 
-	// Edge sees a subset of the state machine (no 'sourcing' or 'dispatched',
-	// which are Core-only stages — see protocol/types.go), so the IN list is
-	// a superset of what edge data will actually carry. Safe to splice the
-	// shared predicate.
+	// Edge mirrors Core's full status vocabulary: sourcing/dispatched/faulted
+	// are stored on the Edge row, so the IN list matches what edge data actually
+	// carries. Safe to splice the shared predicate.
 	rows, err := db.Query(fmt.Sprintf(`SELECT id, uuid, status, updated_at
 		FROM orders
 		WHERE status IN (%s)

@@ -123,7 +123,6 @@ var actionMap = map[transitionKey][]Action{
 	{from: StatusPending, to: StatusCancelled}:      {fireCancelled},
 	{from: StatusSourcing, to: StatusCancelled}:     {fireCancelled},
 	{from: StatusQueued, to: StatusCancelled}:       {fireCancelled},
-	{from: StatusSubmitted, to: StatusCancelled}:    {fireCancelled},
 	{from: StatusAcknowledged, to: StatusCancelled}: {fireCancelled},
 	{from: StatusDispatched, to: StatusCancelled}:   {fireCancelled},
 	{from: StatusInTransit, to: StatusCancelled}:    {fireCancelled},
@@ -152,7 +151,6 @@ var actionMap = map[transitionKey][]Action{
 	{from: StatusPending, to: StatusFailed}:      {fireFailed},
 	{from: StatusSourcing, to: StatusFailed}:     {fireFailed},
 	{from: StatusQueued, to: StatusFailed}:       {fireFailed},
-	{from: StatusSubmitted, to: StatusFailed}:    {fireFailed},
 	{from: StatusAcknowledged, to: StatusFailed}: {fireFailed},
 	{from: StatusDispatched, to: StatusFailed}:   {fireFailed},
 	{from: StatusInTransit, to: StatusFailed}:    {fireFailed},
@@ -163,10 +161,9 @@ var actionMap = map[transitionKey][]Action{
 	// Skipped: dispatcher-side terminal for "the work was never needed".
 	// Only the pre-fleet statuses can reach this — once the fleet owns the
 	// order (Acknowledged onward) the resolution is fail or cancel.
-	{from: StatusPending, to: StatusSkipped}:   {fireSkipped},
-	{from: StatusSourcing, to: StatusSkipped}:  {fireSkipped},
-	{from: StatusSubmitted, to: StatusSkipped}: {fireSkipped},
-	{from: StatusQueued, to: StatusSkipped}:    {fireSkipped},
+	{from: StatusPending, to: StatusSkipped}:  {fireSkipped},
+	{from: StatusSourcing, to: StatusSkipped}: {fireSkipped},
+	{from: StatusQueued, to: StatusSkipped}:   {fireSkipped},
 }
 
 // transition is the shared driver. Validates (from, to) against

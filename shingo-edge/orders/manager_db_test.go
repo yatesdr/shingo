@@ -753,6 +753,227 @@ func TestApplyCoreStatusSnapshot_MissingOrder(t *testing.T) {
 	}
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// The Core→Edge status mapping (orders.ApplyCoreStatus).
+//
+// ApplyCoreStatus is the one function used by both the live-push path
+// (HandleOrderUpdate) and the boot-reconcile path (ApplyCoreStatusSnapshot).
+// It maps Core's pushed status vocabulary fully onto Edge — closing the gap
+// where Edge previously discarded sourcing/dispatched/faulted and only
+// branched on queued. These tests pin each arm.
+// ═══════════════════════════════════════════════════════════════════════
+
+// TestApplyCoreStatus_Sourcing_TransitionsRow asserts the central case: a
+// sourcing push from Core updates the Edge row to StatusSourcing. Previously
+// the push was discarded and the row stayed on acknowledged, so the HMI kept
+// showing a moving robot for an order still hunting bins.
+func TestApplyCoreStatus_Sourcing_TransitionsRow(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, err := db.CreateOrder("uuid-src", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	testutil.MustNoErr(t, err, "create")
+	// Edge's typical pre-dispatch lifecycle: pending → submitted → acknowledged
+	// (Core's intake ACK). acknowledged → sourcing is a valid shared-table edge.
+	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
+	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
+
+	order, err := db.GetOrder(oid)
+	testutil.MustNoErr(t, err, "get order")
+	testutil.MustNoErr(t, mgr.ApplyCoreStatus(order, StatusSourcing, "reserving"), "ApplyCoreStatus sourcing")
+
+	got, _ := db.GetOrder(oid)
+	if got.Status != StatusSourcing {
+		t.Errorf("sourcing push: status got %q, want %q", got.Status, StatusSourcing)
+	}
+}
+
+// TestApplyCoreStatus_Faulted_TransitionsRow asserts that a faulted push sets
+// StatusFaulted on Edge. Previously Edge had no writer for faulted and discarded
+// it, leaving the amber UI affordances unreachable.
+func TestApplyCoreStatus_Faulted_TransitionsRow(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-flt", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
+	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
+	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
+
+	order, _ := db.GetOrder(oid)
+	testutil.MustNoErr(t, mgr.ApplyCoreStatus(order, StatusFaulted, "RDS FAILED"), "ApplyCoreStatus faulted")
+
+	got, _ := db.GetOrder(oid)
+	if got.Status != StatusFaulted {
+		t.Errorf("faulted push: status got %q, want %q", got.Status, StatusFaulted)
+	}
+}
+
+// TestApplyCoreStatus_Dispatched_TransitionsRow covers the dispatched arm.
+// acknowledged → dispatched is a valid shared-table edge.
+func TestApplyCoreStatus_Dispatched_TransitionsRow(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-disp", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
+	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
+
+	order, _ := db.GetOrder(oid)
+	testutil.MustNoErr(t, mgr.ApplyCoreStatus(order, StatusDispatched, "fleet created"), "ApplyCoreStatus dispatched")
+
+	got, _ := db.GetOrder(oid)
+	if got.Status != StatusDispatched {
+		t.Errorf("dispatched push: status got %q, want %q", got.Status, StatusDispatched)
+	}
+}
+
+// TestApplyCoreStatus_Queued_UnchangedBehavior pins that the queued arm keeps
+// its existing behavior under the new mapping (the one status Edge branched on
+// before this mapping existed).
+func TestApplyCoreStatus_Queued_TransitionsRow(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-q2", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
+
+	order, _ := db.GetOrder(oid)
+	testutil.MustNoErr(t, mgr.ApplyCoreStatus(order, StatusQueued, "awaiting inventory"), "ApplyCoreStatus queued")
+
+	got, _ := db.GetOrder(oid)
+	if got.Status != StatusQueued {
+		t.Errorf("queued push: status got %q, want %q", got.Status, StatusQueued)
+	}
+}
+
+// TestApplyCoreStatus_StagedDeliveredTerminal_Noop pins that staged/delivered/
+// terminal statuses are NO-OPs in this mapping — dedicated envelopes
+// (order.staged, order.delivered, etc.) own them, and the mapping must NOT
+// double-handle. A staged push via the generic update path leaves the row alone
+// (the dedicated OrderStaged envelope does the real write).
+func TestApplyCoreStatus_StagedDeliveredTerminal_Noop(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	for _, tc := range []struct {
+		name string
+		to   protocol.Status
+	}{
+		{"staged", StatusStaged},
+		{"delivered", StatusDelivered},
+		{"confirmed", StatusConfirmed},
+		{"failed", StatusFailed},
+		{"cancelled", StatusCancelled},
+		{"skipped", StatusSkipped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			oid, _ := db.CreateOrder("uuid-noop-"+tc.name, TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+			_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
+			_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
+			_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
+
+			order, _ := db.GetOrder(oid)
+			// These are intentionally no-op in the generic mapping (must not error).
+			testutil.MustNoErr(t, mgr.ApplyCoreStatus(order, tc.to, "should noop"), "ApplyCoreStatus "+tc.name)
+
+			got, _ := db.GetOrder(oid)
+			if got.Status != StatusInTransit {
+				t.Errorf("%s push via the generic mapping should be a no-op: got %q, want in_transit", tc.name, got.Status)
+			}
+		})
+	}
+}
+
+// TestApplyCoreStatus_InvalidFromStatus_GracefulNoop pins that when the pushed
+// status is not reachable from Edge's current status in the shared table (e.g.
+// an in_transit order being told "queued"), the mapping must NOT hard-fail —
+// it returns the error and the caller swallows it, matching the old discard
+// behavior. 26 such (from,to) pairs exist by design; no table edges are added.
+func TestApplyCoreStatus_InvalidFromStatus_GracefulNoop(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-inv", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
+	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
+	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
+
+	order, _ := db.GetOrder(oid)
+	// in_transit → queued is NOT in the shared table. The mapping returns an
+	// error but the row is untouched (graceful, not a hard failure).
+	err := mgr.ApplyCoreStatus(order, StatusQueued, "late queue_reason")
+	if err == nil {
+		t.Fatal("expected invalid-transition error from in_transit→queued")
+	}
+	got, _ := db.GetOrder(oid)
+	if got.Status != StatusInTransit {
+		t.Errorf("invalid push should leave row untouched: got %q, want in_transit", got.Status)
+	}
+}
+
+// TestHandleCoreStatusPush_Sourcing_LivePush exercises the live-push path: the
+// path HandleOrderUpdate drives must apply a pushed sourcing status to the Edge
+// row. HandleCoreStatusPush is the entry point for the live channel; previously
+// only ReplyQueued changed status (HandleDispatchReply), so a sourcing push left
+// the row untouched.
+func TestHandleCoreStatusPush_Sourcing_LivePush(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-live-src", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
+	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
+
+	testutil.MustNoErr(t, mgr.HandleCoreStatusPush("uuid-live-src", StatusSourcing, "reserving"), "HandleCoreStatusPush sourcing")
+
+	got, _ := db.GetOrder(oid)
+	if got.Status != StatusSourcing {
+		t.Errorf("live sourcing push: status got %q, want sourcing", got.Status)
+	}
+}
+
+// TestApplyCoreStatusSnapshot_SourcingAndFaulted exercises the snapshot path:
+// after an Edge restart, a snapshot carrying sourcing/faulted reconciles the
+// row (previously the default arm returned nil and the row was untouched).
+func TestApplyCoreStatusSnapshot_SourcingAndFaulted(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		target protocol.Status
+	}{
+		{"sourcing", StatusSourcing},
+		{"faulted", StatusFaulted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testManagerDB(t)
+			mgr := NewManager(db, testEmitter{}, "edge")
+
+			oid, _ := db.CreateOrder("uuid-snap-"+tc.name, TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+			_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
+			_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
+			_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
+
+			if err := mgr.ApplyCoreStatusSnapshot(protocol.OrderStatusSnapshot{
+				OrderUUID: "uuid-snap-" + tc.name, Found: true, Status: string(tc.target),
+			}); err != nil {
+				t.Fatalf("ApplyCoreStatusSnapshot %s: %v", tc.name, err)
+			}
+			got, _ := db.GetOrder(oid)
+			if got.Status != tc.target {
+				t.Errorf("snapshot %s: got %q, want %q", tc.name, got.Status, tc.target)
+			}
+		})
+	}
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // lookupPayloadMeta — exercised via CreateMoveOrder, which threads the
 // (desc, code) pair into the OrderRequest envelope.

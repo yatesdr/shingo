@@ -64,6 +64,45 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 	return s.applyTransition(order, newStatus, detail, true)
 }
 
+// ApplyCoreStatus maps a status Core pushes onto the Edge order row. It is the
+// one function shared by the live-push path (HandleOrderUpdate →
+// HandleCoreStatusPush) and the boot-reconcile path (ApplyCoreStatusSnapshot),
+// so live and boot can never diverge. It replaces the older partial mapping
+// that branched on `queued` alone and discarded every other status.
+//
+// The operator is shown the truth of whichever machine owns the order at that
+// moment: pre-fleet statuses (queued/sourcing) reflect Core's planning, fleet
+// statuses (dispatched/in_transit/faulted) reflect the fleet. Mapping them all
+// here means Edge no longer discards sourcing/dispatched/faulted pushes while a
+// stale prior status (usually acknowledged) keeps rendering as "IN TRANSIT".
+//
+// Arms:
+//   - queued/sourcing/dispatched/in_transit/faulted → Transition to that
+//     status. Transition validates against the shared protocol table and
+//     no-ops same-status/terminal rows.
+//   - staged/delivered/confirmed/failed/cancelled/skipped → NO-OP here. Those
+//     statuses are owned by DEDICATED envelopes (order.staged, order.delivered,
+//     order.error, order.skipped, order.cancelled) that carry extra fields
+//     (bin snapshots, expiry, reason) this generic mapping does not have.
+//     Mapping them here would double-handle. The snapshot path keeps its own
+//     force arms for boot reconciliation.
+//
+// Error handling: a push that isn't a legal transition from Edge's current
+// status in the shared table (26 such (from,to) pairs exist by design) returns
+// an error. Both callers log-and-swallow it, so a status Core pushes that Edge
+// can't legally adopt is a graceful no-op — the same as the old discard
+// behavior, now centralized. No protocol.validTransitions edges are added.
+func (s *LifecycleService) ApplyCoreStatus(order *orders.Order, coreStatus protocol.Status, detail string) error {
+	switch coreStatus {
+	case StatusQueued, StatusSourcing, StatusDispatched, StatusInTransit, StatusFaulted:
+		return s.Transition(order.ID, coreStatus, detail)
+	default:
+		// staged/delivered/terminal are owned by dedicated envelopes; unknown
+		// statuses are ignored. No status write from this mapping.
+		return nil
+	}
+}
+
 func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protocol.Status, detail string, forced bool) error {
 	oldStatus := order.Status
 	if forced {
@@ -167,6 +206,13 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 		return s.ForceTransition(order.ID, StatusAcknowledged, detail)
 	case StatusQueued:
 		return s.ForceTransition(order.ID, StatusQueued, detail)
+	case StatusSourcing, StatusDispatched, StatusFaulted:
+		// The live-push mapping (ApplyCoreStatus) stores these, so a boot
+		// snapshot must reconcile them too — an edge restart while Core reports
+		// sourcing/faulted/dispatched would otherwise leave the mirror stuck on
+		// a stale status. Force, matching the other non-terminal snapshot arms
+		// (Core is authoritative at boot).
+		return s.ForceTransition(order.ID, snapStatus, detail)
 	case StatusReshuffling:
 		// Complex-order reshuffles can sit in Reshuffling for minutes
 		// while the compound runs. Without this arm an edge restart in

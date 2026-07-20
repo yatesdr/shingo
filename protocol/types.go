@@ -295,7 +295,9 @@ const StationBroadcast = "*"
 const Version = 1
 
 // validTransitions defines the canonical state machine for order status transitions.
-// Edge uses a subset (no sourcing/dispatched); Core uses the full set.
+// Core and Edge both use the full set. Edge mirrors Core's full status vocabulary:
+// sourcing/dispatched/faulted are stored on the Edge row by the orders.ApplyCoreStatus
+// mapping, so the operator sees the truth of whichever machine owns the order.
 //
 // IsTerminal is derived from this table: a status is terminal iff it has no
 // outgoing edges (no key in this map). Adding a new non-terminal status

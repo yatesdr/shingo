@@ -20,11 +20,27 @@
 
 'use strict';
 
+// WINDOW_ACTIVE_STATUSES is the set of order statuses still in the live
+// lifecycle (= !terminal), for the window-card active filter. This mirrors
+// order-status.js isActive exactly; the Go drift test
+// (shingo-edge/www/order_status_js_drift_test.go
+// TestWindowStateActiveStatusesAgreeWithProtocol) pins it to the protocol's
+// non-terminal set so it cannot silently drift.
+//
+// Exposed as a lex-sorted const so the drift test can read it. The previous
+// inlined list omitted sourcing, dispatched, submitted, faulted, and
+// reshuffling, so an order in any of those vanished from window cards (fell to
+// NO DEMAND) while the operator modal still counted it.
+export const WINDOW_ACTIVE_STATUSES = [
+    'acknowledged', 'delivered', 'dispatched', 'faulted', 'in_transit',
+    'pending', 'queued', 'reshuffling', 'sourcing', 'staged', 'submitted',
+];
+
 // isActiveStatus: an order still in the live lifecycle (non-terminal). Mirrors
-// order-status.js isActive, inlined so this module stays import-free for the vm test.
+// order-status.js isActive. Kept as the call site for readability; the const
+// above is the drift-pinned source of truth.
 export function isActiveStatus(s) {
-    return s === 'pending' || s === 'queued' || s === 'acknowledged' ||
-        s === 'in_transit' || s === 'staged' || s === 'delivered';
+    return WINDOW_ACTIVE_STATUSES.indexOf(s) !== -1;
 }
 
 // ROLE_WORDS centralizes every loader↔unloader wording difference. A loader awaits an
@@ -82,9 +98,12 @@ export function cardModel(entry, code) {
         (f.binEmpty && f.hasDemand && f.activeOrders.every(function (o) { return !o.payload_code; }));
     const payloadActive = hasPayloadDemand || (f.binEmpty && f.hasDemand);
     const payloadDelivered = payloadOrders.some(function (o) { return o.status === 'delivered'; });
-    const payloadInTransit = payloadOrders.some(function (o) {
-        return o.status === 'in_transit' || o.status === 'acknowledged';
-    });
+    // acknowledged is Core's intake ack (the fleet accepted the order,
+    // pre-sourcing) — it is NOT a moving robot. Keep it separate from in_transit
+    // so it renders as its own step, not "IN TRANSIT"; in_transit alone is the
+    // real transit bucket.
+    const payloadInTransit = payloadOrders.some(function (o) { return o.status === 'in_transit'; });
+    const payloadAcknowledged = payloadOrders.some(function (o) { return o.status === 'acknowledged'; });
     const loadNow = f.binEmpty && hasPayloadDemand;
     const canClearThisPayload = f.canClearLoaded && f.binPayload === code;
 
@@ -95,6 +114,7 @@ export function cardModel(entry, code) {
     else if (canClearThisPayload) { cls = 'os-board-delivered'; statusText = 'SWAP'; statusClass = 'os-board-tag-delivered'; }
     else if (f.canSwapEmpty) { cls = 'os-board-delivered'; statusText = 'SWAP'; statusClass = 'os-board-tag-delivered'; }
     else if (payloadInTransit) { cls = 'os-board-transit'; statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit'; }
+    else if (payloadAcknowledged) { cls = 'os-board-queued'; statusText = 'ACKNOWLEDGED'; statusClass = 'os-board-tag-queued'; }
     else if (loadNow) { cls = 'os-board-queued'; statusText = 'LOAD'; statusClass = 'os-board-tag-queued'; }
     else if (hasPayloadDemand) { cls = 'os-board-queued'; statusText = 'QUEUED'; statusClass = 'os-board-tag-queued'; }
     else if (f.canLoadEmpty) { cls = 'os-board-queued'; statusText = 'LOAD'; statusClass = 'os-board-tag-queued'; }
@@ -107,6 +127,7 @@ export function cardModel(entry, code) {
     else if (f.canSwapEmpty) detail = 'Empty bin parked — tap to swap';
     else if (f.binEmpty && (payloadInTransit || hasPayloadDemand)) detail = 'Empty bin at node — tap to load';
     else if (payloadInTransit) detail = 'Robot en route';
+    else if (payloadAcknowledged) detail = 'Order accepted — awaiting dispatch';
     else if (hasPayloadDemand) detail = 'Waiting for robot';
     else if (f.canLoadEmpty) detail = 'Empty bin parked — tap to load';
     else detail = 'No kanban signal';
@@ -142,7 +163,11 @@ export function headerModel(entry) {
     if (f.activeOrders.some(function (o) { return o.status === 'delivered'; })) {
         return { text: w.awaiting + ' ARRIVED', color: 'background:#2a3a1a;color:#cf6' };
     }
-    if (f.activeOrders.some(function (o) { return o.status === 'in_transit' || o.status === 'acknowledged'; })) {
+    // A robot actually en route (in_transit) is "ARRIVING"; an acknowledged
+    // order (fleet accepted, not yet moving) is NOT arriving, so it falls
+    // through to the "AWAITING" default rather than pretending a bin is on its
+    // way.
+    if (f.activeOrders.some(function (o) { return o.status === 'in_transit'; })) {
         return { text: w.awaiting + ' ARRIVING', color: 'background:#1a2a3a;color:#6cf' };
     }
     return { text: 'AWAITING ' + w.awaiting, color: 'background:#2a2a1a;color:#ff6' };

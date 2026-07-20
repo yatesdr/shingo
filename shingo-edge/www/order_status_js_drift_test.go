@@ -40,7 +40,7 @@ func TestOrderStatusJSAgreesWithProtocol(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.jsConst, func(t *testing.T) {
-			jsList := extractJSStatusArray(t, src, tc.jsConst)
+			jsList := extractJSStatusArray(t, path, src, tc.jsConst)
 			goList := splitSQLList(tc.goProjector())
 			sort.Strings(jsList)
 			sort.Strings(goList)
@@ -58,17 +58,48 @@ func TestOrderStatusJSAgreesWithProtocol(t *testing.T) {
 	}
 }
 
+// TestWindowStateActiveStatusesAgreeWithProtocol pins operator-window-state.js's
+// WINDOW_ACTIVE_STATUSES array against the protocol's non-terminal set.
+// operator-window-state.js used to inline a narrower hand-list of "active"
+// statuses than order-status.js's canonical isActive (= !terminal). Orders in
+// the missing statuses (sourcing, dispatched, submitted, faulted, reshuffling)
+// vanished from window cards (fell to NO DEMAND) while the operator modal still
+// counted them. This test keeps the inlined copy from silently drifting again.
+func TestWindowStateActiveStatusesAgreeWithProtocol(t *testing.T) {
+	path := filepath.Join("static", "operator-station", "operator-window-state.js")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	src := string(body)
+
+	jsList := extractJSStatusArray(t, path, src, "WINDOW_ACTIVE_STATUSES")
+	goList := splitSQLList(protocol.NonTerminalStatusSQLList())
+	sort.Strings(jsList)
+	sort.Strings(goList)
+	if len(jsList) != len(goList) {
+		t.Fatalf("WINDOW_ACTIVE_STATUSES: js len=%d (%v) vs go len=%d (%v) — the inlined active list must mirror !terminal",
+			len(jsList), jsList, len(goList), goList)
+	}
+	for i := range jsList {
+		if jsList[i] != goList[i] {
+			t.Errorf("WINDOW_ACTIVE_STATUSES mismatch at index %d: js=%q go=%q (js=%v go=%v)",
+				i, jsList[i], goList[i], jsList, goList)
+		}
+	}
+}
+
 // extractJSStatusArray finds a top-level `export const NAME = [ ... ];`
 // declaration and returns the string members. Fails the test if the
 // declaration isn't found — that's a stronger guarantee than returning
 // nil silently (a missing declaration is the drift we want to catch).
-func extractJSStatusArray(t *testing.T, src, name string) []string {
+func extractJSStatusArray(t *testing.T, path, src, name string) []string {
 	t.Helper()
 	// Multi-line tolerant: capture everything between [ and ].
 	re := regexp.MustCompile(`(?s)export\s+const\s+` + regexp.QuoteMeta(name) + `\s*=\s*\[(.*?)\]\s*;`)
 	m := re.FindStringSubmatch(src)
 	if m == nil {
-		t.Fatalf("could not find `export const %s = [...]` in order-status.js", name)
+		t.Fatalf("could not find `export const %s = [...]` in %s", name, path)
 	}
 	// Inner content: 'a', 'b', ...  (whitespace and newlines allowed).
 	tokenRe := regexp.MustCompile(`'([^']+)'`)

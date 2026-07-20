@@ -83,18 +83,34 @@ func TestActionMap_NoNilActions(t *testing.T) {
 	}
 }
 
-// TestActionMap_TerminalCoverage asserts every non-terminal status has
-// an emitCancelled and emitFailed action wired for its (from, Cancelled)
-// and (from, Failed) transitions. The action map is the contract for
-// "engine wiring receives a notification when an order terminates from
-// status X" — a missing entry means a class of terminations would
-// silently skip the notification path.
+// TestActionMap_TerminalCoverage asserts every non-terminal status that Core
+// can actually reach has an emitCancelled and emitFailed action wired for its
+// (from, Cancelled) and (from, Failed) transitions. The action map is the
+// contract for "engine wiring receives a notification when an order terminates
+// from status X" — a missing entry means a class of terminations would silently
+// skip the notification path.
+//
+// The status vocabulary is shared between Core and Edge (both validate against
+// protocol.validTransitions), but Core's planning machine never holds every
+// status in that table. coreUnreachableStatuses names the statuses that appear
+// in the shared table yet no Core code path ever writes to a Core order row —
+// they are Edge-lifecycle words. Core can never transition OUT of them, so
+// requiring a cancel/fail action for them would guard an impossible transition.
+// See docs/order-lifecycle.md ("Two machines, one enum") for the full picture.
+//
+// This is a NAMED EXEMPTION, not a loosened assertion: adding a genuinely
+// Core-reachable non-terminal status without cancel/fail actions still fails
+// this test. If a status moves from Edge-only to Core-reachable, remove it
+// from coreUnreachableStatuses AND add the missing action entries together.
 func TestActionMap_TerminalCoverage(t *testing.T) {
 	t.Parallel()
 	for fromStr := range protocol.AllValidTransitions() {
 		from := protocol.Status(fromStr)
-		// Every non-terminal status that allows a Cancelled transition
-		// must have an emitCancelled action.
+		if coreUnreachableStatuses[from] {
+			continue
+		}
+		// Every Core-reachable non-terminal status that allows a Cancelled
+		// transition must have an emitCancelled action.
 		if protocol.IsValidTransition(from, StatusCancelled) {
 			actions := actionMap[transitionKey{from, StatusCancelled}]
 			if len(actions) == 0 {
@@ -108,6 +124,22 @@ func TestActionMap_TerminalCoverage(t *testing.T) {
 			}
 		}
 	}
+}
+
+// coreUnreachableStatuses lists statuses present in the shared
+// protocol.validTransitions table that no Core code path ever writes to a Core
+// order row. They exist in the table because Edge validates its own lifecycle
+// against it, but Core's machine never holds them, so an actionMap entry keyed
+// on transitioning OUT of one could never fire.
+//
+//   - submitted: Edge's word for "the order envelope is in Edge's outbox." Core
+//     never produces a submitted row.
+//   - acknowledged: Core's vendor adapter maps fleet states via MapState, which
+//     never returns acknowledged (the ladder starts at dispatched). Core's only
+//     Acknowledge call site is a defensive, never-firing arm.
+var coreUnreachableStatuses = map[protocol.Status]bool{
+	StatusSubmitted:    true,
+	StatusAcknowledged: true,
 }
 
 // TestEvent_FieldsAreOptional documents the Event struct contract: all

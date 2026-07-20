@@ -150,7 +150,11 @@ export function renderModal(entry) {
             const activeOrders = (entry.orders || []).filter(o => isActive(o.status));
             const hasDemand = activeOrders.length > 0;
             const delivered = activeOrders.find(o => o.status === 'delivered');
-            const inTransit = activeOrders.find(o => o.status === 'in_transit' || o.status === 'acknowledged');
+            // Keep acknowledged separate from in_transit: a robot actually en
+            // route is "IN TRANSIT"; an acknowledged order (fleet accepted,
+            // pre-sourcing) is NOT in transit and gets its own summary line.
+            const inTransit = activeOrders.find(o => o.status === 'in_transit');
+            const acknowledged = activeOrders.find(o => o.status === 'acknowledged');
             const queued = activeOrders.filter(o => o.status === 'queued' || o.status === 'pending');
             // Loader can fill a parked empty bin even without a delivered L1
             // order. Post-2026-05-12, L1 retrieve_empty IS created when demand
@@ -188,6 +192,11 @@ export function renderModal(entry) {
                 html += '<span style="font-size:14px;font-weight:700;color:#ff6">[IN TRANSIT]</span>';
                 html += '<span style="color:#ff6;font-weight:600">Robot in transit</span>';
                 html += '</div>';
+            } else if (acknowledged) {
+                html += '<div style="background:#1a2a4a;border:1px solid #3a5a8a;border-radius:6px;padding:10px;margin-bottom:10px;display:flex;align-items:center;gap:8px">';
+                html += '<span style="font-size:14px;font-weight:700;color:#8af">[ACKNOWLEDGED]</span>';
+                html += '<span style="color:#8af;font-weight:600">Order accepted - awaiting dispatch</span>';
+                html += '</div>';
             }
             if (queued.length > 0) {
                 html += '<div style="color:#999;font-size:12px;margin-bottom:10px">' + queued.length + ' order' + (queued.length > 1 ? 's' : '') + ' queued</div>';
@@ -203,7 +212,11 @@ export function renderModal(entry) {
                 var nodeBinIsEmpty = !!(binState && binState.occupied && !binState.payload_code);
                 var isActive = payloadOrders.length > 0 || (nodeBinIsEmpty && hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
                 var payloadDelivered = payloadOrders.find(function(o) { return o.status === 'delivered'; });
-                var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit' || o.status === 'acknowledged'; });
+                // Keep acknowledged separate from in_transit: the card renders a
+                // real transit order as IN TRANSIT and an acknowledged order as
+                // its own ACKNOWLEDGED step, not a moving robot.
+                var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit'; });
+                var payloadAcknowledged = payloadOrders.find(function(o) { return o.status === 'acknowledged'; });
                 var payloadQueued = payloadOrders.find(function(o) { return o.status === 'queued' || o.status === 'pending' || o.status === 'submitted'; });
 
                 var parkedFullThisCode = parkedFullPayload === code;
@@ -243,6 +256,8 @@ export function renderModal(entry) {
                     cardBg = '#1a3a1a'; cardBorder = '#2a5a2a'; cardOpacity = '1'; cardCursor = 'default';
                 } else if (payloadInTransit) {
                     cardBg = '#2a2a1a'; cardBorder = '#5a5a2a'; cardOpacity = '1'; cardCursor = 'default';
+                } else if (payloadAcknowledged) {
+                    cardBg = '#1a2a4a'; cardBorder = '#3a5a8a'; cardOpacity = '1'; cardCursor = 'default';
                 } else if (isActive) {
                     cardBg = '#1a2a4a'; cardBorder = '#3a5a8a'; cardOpacity = '1'; cardCursor = 'default';
                 } else if (canRequest) {
@@ -285,6 +300,8 @@ export function renderModal(entry) {
                     html += 'BIN READY';
                 } else if (payloadInTransit) {
                     html += 'IN TRANSIT';
+                } else if (payloadAcknowledged) {
+                    html += 'ACKNOWLEDGED';
                 } else if (payloadQueued) {
                     html += 'QUEUED';
                 } else if (isActive) {
@@ -397,6 +414,19 @@ export function renderModal(entry) {
                         ? 'IN QUEUE: ' + inFlight.queue_reason
                         : 'IN QUEUE';
                     html += actionBtn(queueLabel, 'close', false, '');
+                } else if (inFlight.status === 'acknowledged') {
+                    // acknowledged is Core's intake ack, pre-sourcing — not a
+                    // moving robot. Show its own label instead of pretending a
+                    // robot is in transit.
+                    html += actionBtn('ACKNOWLEDGED', 'close', false, '');
+                } else if (inFlight.status === 'sourcing') {
+                    // Core is acquiring reservations/confirmations — same
+                    // pre-fleet family as queued; surface the queue_reason when
+                    // Core sent one.
+                    var sourceLabel = inFlight.queue_reason
+                        ? 'SOURCING: ' + inFlight.queue_reason
+                        : 'SOURCING';
+                    html += actionBtn(sourceLabel, 'close', false, '');
                 } else {
                     html += actionBtn('ROBOT IN TRANSIT', 'close', false, '');
                 }

@@ -25,7 +25,7 @@ const src = fs.readFileSync(path.join(__dirname, 'operator-window-state.js'), 'u
     .replace(/export\s+const\s+/g, 'const ');
 const ctx = vm.createContext({});
 vm.runInContext(src + '\nthis.cardModel = cardModel; this.headerModel = headerModel; this.nodeFacts = nodeFacts;', ctx);
-const cardModel = ctx.cardModel, headerModel = ctx.headerModel;
+const cardModel = ctx.cardModel, headerModel = ctx.headerModel, nodeFacts = ctx.nodeFacts;
 
 // entry builder: role + bin (none | empty | {payload}) + orders [{status, payload_code}]
 function entry(role, bin, orders) {
@@ -130,6 +130,46 @@ eq(headerModel(entry('produce', null, [])).text, 'AWAITING BIN', 'produce idle: 
 eq(headerModel(entry('consume', null, [{ status: 'in_transit', payload_code: 'ASSY' }])).text, 'FULL ARRIVING', 'consume in transit: header');
 eq(headerModel(entry('consume', { payload: 'ASSY' }, [])).text, 'FULL', 'consume full present: header');
 eq(headerModel(entry('consume', null, [])).text, 'AWAITING FULL', 'consume idle: header');
+
+// ─────────────────────────── acknowledged de-aliased from in_transit ───────────────────────────
+// acknowledged used to be bucketed with in_transit ("IN TRANSIT") while Core
+// ACKs at intake, pre-sourcing — the operator saw a moving robot for an order
+// still hunting bins. acknowledged must render as its OWN step, never as IN
+// TRANSIT, in both the card and the header.
+
+// 15. An acknowledged order is NOT in transit: card must not say IN TRANSIT.
+(function () {
+    const e = entry('produce', null, [{ status: 'acknowledged', payload_code: 'BRKT' }]);
+    const c = card(e, 'BRKT');
+    if (c.statusText === 'IN TRANSIT') { failed++; console.error('FAIL: acknowledged must not render IN TRANSIT (statusText=' + c.statusText + ')'); }
+    else { passed++; }
+    if (c.inTransit === true) { failed++; console.error('FAIL: acknowledged must not set inTransit flag'); }
+    else { passed++; }
+    // Header must not say ARRIVING for an acknowledged-only order.
+    const h = headerModel(e);
+    if (/ARRIVING/.test(h.text)) { failed++; console.error('FAIL: acknowledged header must not say ARRIVING (got ' + h.text + ')'); }
+    else { passed++; }
+})();
+
+// 16. in_transit still renders IN TRANSIT (the de-alias must not swallow the
+//     real transit state).
+(function () {
+    const c = card(entry('produce', null, [{ status: 'in_transit', payload_code: 'BRKT' }]), 'BRKT');
+    eq(c.statusText, 'IN TRANSIT', 'in_transit still renders IN TRANSIT');
+    eq(c.inTransit, true, 'in_transit sets inTransit flag');
+})();
+
+// 17. A sourcing order is ACTIVE: window-state's inlined active list used to
+//     exclude sourcing, so it vanished to NO DEMAND. After mirroring !terminal
+//     it must count as demand.
+(function () {
+    const e = entry('produce', null, [{ status: 'sourcing', payload_code: 'BRKT' }]);
+    const c = card(e, 'BRKT');
+    if (c.statusText === 'NO DEMAND') { failed++; console.error('FAIL: sourcing must not vanish to NO DEMAND'); }
+    else { passed++; }
+    const f = nodeFacts(e);
+    eq(f.activeOrders.length, 1, 'sourcing counts as an active order');
+})();
 
 // ── result ──
 if (failed > 0) { console.error('\n' + failed + ' failure(s), ' + passed + ' passed'); process.exit(1); }
