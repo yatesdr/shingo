@@ -390,3 +390,69 @@ func TestMigration_DropsDropViaStagingColumn(t *testing.T) {
 		}
 	})
 }
+
+// TestMigration_AddsQueueCodeColumn covers the queue_code column on orders — the
+// structured companion to queue_reason that mirrors Core's orders.queue_code. A
+// fresh DB gets it from the canonical DDL; a legacy DB (predating the column)
+// gets it from the idempotent ALTER ADD COLUMN in migrate(). Re-opening must be
+// a no-op (the column already exists).
+func TestMigration_AddsQueueCodeColumn(t *testing.T) {
+	t.Parallel()
+	t.Helper()
+
+	hasQueueCode := func(db *DB) bool {
+		var n int
+		testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders') WHERE name='queue_code'`).Scan(&n), "check queue_code")
+		return n == 1
+	}
+
+	t.Run("fresh_db_has_column", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "fresh.db")
+		db, err := Open(dbPath)
+		if err != nil {
+			t.Fatalf("open fresh db: %v", err)
+		}
+		defer db.Close()
+		if !hasQueueCode(db) {
+			t.Fatalf("fresh DB should have orders.queue_code column")
+		}
+	})
+
+	t.Run("reopen_is_idempotent", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "reopen.db")
+		db, err := Open(dbPath)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		testutil.MustNoErr(t, db.Close(), "close")
+		db, err = Open(dbPath) // re-run migrate()
+		if err != nil {
+			t.Fatalf("re-open: %v", err)
+		}
+		defer db.Close()
+		if !hasQueueCode(db) {
+			t.Fatalf("re-opened DB should still have orders.queue_code column")
+		}
+	})
+
+	t.Run("set_queue_reason_writes_both_columns", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "write.db")
+		db, err := Open(dbPath)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer db.Close()
+		// Seed an order row directly (the Edge schema's orders table).
+		_, err = db.Exec(`INSERT INTO orders (uuid, order_type, status) VALUES ('U-1', 'retrieve', 'queued')`)
+		if err != nil {
+			t.Fatalf("seed order: %v", err)
+		}
+		testutil.MustNoErr(t, db.SetOrderQueueReason("U-1", "Waiting for material: P1", "waiting_for_material"), "set queue reason")
+
+		var reason, code string
+		testutil.MustNoErr(t, db.QueryRow(`SELECT queue_reason, queue_code FROM orders WHERE uuid='U-1'`).Scan(&reason, &code), "read back")
+		if reason != "Waiting for material: P1" || code != "waiting_for_material" {
+			t.Fatalf("queue_reason=%q queue_code=%q, want both set", reason, code)
+		}
+	})
+}

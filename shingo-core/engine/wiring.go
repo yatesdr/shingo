@@ -372,7 +372,7 @@ func (e *Engine) wireEventHandlers() {
 	// â"€â"€ Queue-reason push â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	// Runs third for EventOrderQueued — after the sync scanner (1st) and
 	// the audit handler (2nd) above — so the scanner's latest
-	// SetOrderQueueReason call is visible when we read the order back.
+	// SetOrderQueueDetail call is visible when we read the order back.
 	// Only pushes if the order is still acquiring (queued or sourcing — the
 	// scanner didn't dispatch) and carries a non-empty blocking reason; orders
 	// the scanner dispatched transition out of the acquiring set, suppressing
@@ -395,6 +395,7 @@ func (e *Engine) wireEventHandlers() {
 			OrderUUID:   ev.EdgeUUID,
 			Status:      string(order.Status),
 			QueueReason: order.QueueReason,
+			QueueCode:   order.QueueCode,
 		}); err != nil {
 			e.logFn("engine: queue_reason update to edge: %v", err)
 		}

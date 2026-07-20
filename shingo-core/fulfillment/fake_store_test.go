@@ -3,6 +3,7 @@ package fulfillment
 import (
 	"errors"
 
+	"shingo/protocol"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -53,6 +54,8 @@ type fakeStore struct {
 type queueReasonUpdate struct {
 	OrderID int64
 	Reason  string
+	Code    string
+	Cause   string
 }
 
 type sourceNodeUpdate struct {
@@ -173,7 +176,7 @@ func (f *fakeStore) UpdateOrderStatus(id int64, status, detail string) error {
 	return nil
 }
 
-func (f *fakeStore) SetOrderQueueReason(id int64, reason string) error {
-	f.queueReasons = append(f.queueReasons, queueReasonUpdate{OrderID: id, Reason: reason})
+func (f *fakeStore) SetOrderQueueDetail(id int64, reason string, code protocol.QueueCode, cause string) error {
+	f.queueReasons = append(f.queueReasons, queueReasonUpdate{OrderID: id, Reason: reason, Code: string(code), Cause: cause})
 	return nil
 }

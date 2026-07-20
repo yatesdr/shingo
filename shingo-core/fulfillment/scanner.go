@@ -221,7 +221,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		// Clear stale queue_reason on success (DispatchPreparedComplex also clears
 		// it, but be defensive against the rare path that doesn't run to completion).
 		if order.QueueReason != "" {
-			s.db.SetOrderQueueReason(order.ID, "")
+			s.setQueueReason(order, "", "", dispatch.QueueParams{})
 		}
 		return true
 	}
@@ -233,12 +233,8 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// so it can't leak onto a single-transport order (the round-7 requirement).
 	// order.ID self-exclusion (A7): the in-flight tally counts `sourcing` orders,
 	// so a self-retrying order must not count its own row.
-	if blocked, reason := dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
-		if order.QueueReason != reason {
-			if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
-				s.logFn("fulfillment: set queue_reason for order %d: %v", order.ID, err)
-			}
-		}
+	if blocked, cap := dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 		return false
 	}
 
@@ -292,7 +288,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	res := s.finder.FindSource(order, intent)
 	switch res.Outcome {
 	case dispatch.OutcomeWait:
-		s.setQueueReason(order, res.QueueReason)
+		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
 		return false
 	case dispatch.OutcomeReshuffle:
 		// Plan the reshuffle HERE, not only at intake. planTransport runs once, at
@@ -326,7 +322,8 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 				// Congestion — the lane is busy, or no shuffle slot is free right now.
 				// Stay queued and retry next tick. NEVER fail: the lane is not broken,
 				// it is crowded.
-				s.setQueueReason(order, "source bin buried; waiting to reshuffle ("+err.Error()+")")
+				s.setQueueReason(order, protocol.QueueStorageRearranging, "reshuffle-congestion",
+					dispatch.QueueParams{Payload: order.PayloadCode})
 				return false
 			}
 			// Structural — real lane geometry (no parent group, bad target slot). Route
@@ -387,6 +384,12 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		if s.debugLog != nil {
 			s.debugLog("fulfillment: claim bin %d for order %d failed: %v", bin.ID, order.ID, err)
 		}
+		// The bin was claimed by a concurrent order in the Find→Claim window — the
+		// order IS waiting on material again, so park it under that code (the race
+		// is the cause). Without this the stale reason from a prior wait would
+		// persist on the row, since Queue() doesn't touch queue_reason.
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "lock-race",
+			dispatch.QueueParams{Payload: order.PayloadCode})
 		if qerr := s.lifecycle.Queue(order, "fulfillment", "claim contention, re-queued"); qerr != nil {
 			s.logFn("fulfillment: order %d → queued after claim fail: %v", order.ID, qerr)
 		}
@@ -408,6 +411,11 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
 			s.logFn("fulfillment: release claim for order %d on dest-node rollback: %v", order.ID, rerr)
 		}
+		// Destination node can't be resolved right now — re-queue and retry. Park
+		// under waiting_for_material (the order can't proceed to delivery) so the
+		// row carries a fresh code instead of the stale reason from a prior wait.
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "dest-node-unresolved",
+			dispatch.QueueParams{Payload: order.PayloadCode, Destination: order.DeliveryNode})
 		if err := s.lifecycle.Queue(order, "fulfillment", "awaiting inventory"); err != nil {
 			s.logFn("fulfillment: order %d → queued: %v", order.ID, err)
 		}
@@ -420,7 +428,8 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// dest. On conflict, keep the just-claimed bin and requeue — next tick the
 	// order re-enters as a held-bin dispatch (BinID set) and retries the reserve.
 	if err := s.dispatcher.ReserveStorageDropoff(order); err != nil {
-		s.setQueueReason(order, "awaiting free storage slot")
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, "slot-reserved",
+			dispatch.QueueParams{Destination: order.DeliveryNode})
 		if qerr := s.lifecycle.Queue(order, "fulfillment", "destination slot contended"); qerr != nil {
 			s.logFn("fulfillment: order %d → queued after reserve conflict: %v", order.ID, qerr)
 		}
@@ -436,6 +445,10 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
 			s.logFn("fulfillment: release claim for order %d on fleet-fail rollback: %v", order.ID, rerr)
 		}
+		// Fleet rejected the dispatch — a transient robot-system issue. Park under
+		// fleet_unavailable so the row carries that code (previously this path set
+		// NO reason, so a stale reason from an earlier wait persisted on the row).
+		s.setQueueReason(order, protocol.QueueFleetUnavailable, "fleet-error", dispatch.QueueParams{})
 		if err := s.lifecycle.Queue(order, "fulfillment", "fleet unavailable, re-queued"); err != nil {
 			s.logFn("fulfillment: order %d → queued: %v", order.ID, err)
 		}
@@ -478,7 +491,8 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// intake passes through; a loser (or a slot that filled) requeues holding its
 	// bin, never dropping into an occupied slot (#115/#117, generalized).
 	if err := s.dispatcher.ReserveStorageDropoff(order); err != nil {
-		s.setQueueReason(order, "awaiting free storage slot")
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, "slot-reserved",
+			dispatch.QueueParams{Destination: order.DeliveryNode})
 		if s.debugLog != nil {
 			s.debugLog("fulfillment: held-bin order %d holding — destination slot not secured: %v", order.ID, err)
 		}
@@ -490,6 +504,9 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
 		s.logFn("fulfillment: held-bin order %d fleet dispatch failed, re-queuing (claim kept): %v", order.ID, err)
+		// Same fleet_unavailable code as the plain-path fleet failure (held-bin
+		// variant keeps the claim; both are transient robot-system issues).
+		s.setQueueReason(order, protocol.QueueFleetUnavailable, "fleet-error", dispatch.QueueParams{})
 		if err := s.lifecycle.Queue(order, "fulfillment", "fleet unavailable, re-queued"); err != nil {
 			s.logFn("fulfillment: held-bin order %d → queued: %v", order.ID, err)
 		}
@@ -501,15 +518,25 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	return true
 }
 
-// setQueueReason records the block reason on the order iff it changed (avoids a
-// no-op write every tick a wait persists).
-func (s *Scanner) setQueueReason(order *orders.Order, reason string) {
-	if order.QueueReason == reason {
+// setQueueReason is the scanner's one door onto the queue-reason columns. It
+// generates the operator sentence from code+params (via the shared formatter),
+// then writes sentence+code+cause together — so a wait parked here always
+// records the structured code, never free text. No-ops when the sentence is
+// unchanged (avoids a re-touch every tick a wait persists, which can re-trigger
+// the scanner). cause is the engineer-only call-site tag; params carries the
+// values the sentence is built from and is discarded after formatting.
+func (s *Scanner) setQueueReason(order *orders.Order, code protocol.QueueCode, cause string, params dispatch.QueueParams) {
+	reason := dispatch.FormatQueueSentence(code, params)
+	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == cause {
 		return
 	}
-	if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
+	if err := s.db.SetOrderQueueDetail(order.ID, reason, code, cause); err != nil {
 		s.logFn("fulfillment: set queue_reason for order %d: %v", order.ID, err)
+		return
 	}
+	order.QueueReason = reason
+	order.QueueCode = string(code)
+	order.QueueCause = cause
 }
 
 // notifyEdgeDispatched sends the ack + waybill to Edge after a successful

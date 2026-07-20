@@ -38,11 +38,43 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		"Page":         "orders",
-		"Orders":       orders,
-		"FilterStatus": status,
+		"Page":            "orders",
+		"Orders":          orders,
+		"FilterStatus":    status,
+		"QueueCodeCounts": countQueueCodes(orders),
+		"QueueCodeLabels": queueCodeLabels(),
 	}
 	h.render(w, r, "orders.html", data)
+}
+
+// countQueueCodes tallies the active orders by their structured queue_code so the
+// orders page can show, at a glance, WHY the queued set is stuck — e.g. "3
+// waiting for material, 2 waiting for a slot". The code is the analytic dimension
+// behind the free-text queue_reason sentence; grouping here (rather than a SQL
+// GROUP BY) reuses the order list already loaded for the page. Empty/blank codes
+// (non-queued or pre-schema rows) bucket as "" and are omitted from the display.
+func countQueueCodes(orders []*domain.Order) map[string]int {
+	counts := make(map[string]int)
+	for _, o := range orders {
+		if !protocol.IsAcquiring(o.Status) {
+			continue
+		}
+		counts[o.QueueCode]++
+	}
+	return counts
+}
+
+// queueCodeLabels maps each queue code to a short display label for the orders
+// page summary. Single source for the operator-facing wording so a new code is
+// added in both the formatter and here together.
+func queueCodeLabels() map[string]string {
+	return map[string]string{
+		string(protocol.QueueWaitingForMaterial): "Waiting for material",
+		string(protocol.QueueWaitingForSlot):     "Waiting for a slot",
+		string(protocol.QueueStorageRearranging): "Rearranging storage",
+		string(protocol.QueueWaitingForPartner):  "Waiting for partner robot",
+		string(protocol.QueueFleetUnavailable):   "Robot system not responding",
+	}
 }
 
 func (h *Handlers) handleOrderDetail(w http.ResponseWriter, r *http.Request) {

@@ -3,7 +3,6 @@ package fulfillment
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -94,9 +93,23 @@ func TestScanner_BuriedSource_Congestion_WaitsNotFails(t *testing.T) {
 		if got := f.ordersByID[order.ID]; got.Status != protocol.StatusQueued {
 			t.Errorf("[%s] status = %q, want %q (stay queued, retry next tick)", tc.name, got.Status, protocol.StatusQueued)
 		}
-		if len(f.queueReasons) != 1 || !strings.Contains(f.queueReasons[0].Reason, "buried") {
-			t.Errorf("[%s] queue_reason = %v, want one naming the buried-source wait so it is diagnosable",
-				tc.name, f.queueReasons)
+		// Both congestion causes park the order under storage_rearranging with the
+		// reshuffle-congestion cause (engineer-readable in the DB). The in-memory
+		// order carries the same code, so on the second iteration the unchanged-
+		// reason short-circuit may suppress the write — assert against the order's
+		// persisted code/cause when the write was recorded, and against the in-memory
+		// fields otherwise.
+		var code, cause string
+		if len(f.queueReasons) == 1 {
+			code, cause = f.queueReasons[0].Code, f.queueReasons[0].Cause
+		} else if got := f.ordersByID[order.ID]; got != nil {
+			code, cause = got.QueueCode, got.QueueCause
+		}
+		if code != string(protocol.QueueStorageRearranging) {
+			t.Errorf("[%s] queue_code = %q, want storage_rearranging", tc.name, code)
+		}
+		if cause != "reshuffle-congestion" {
+			t.Errorf("[%s] queue_cause = %q, want reshuffle-congestion", tc.name, cause)
 		}
 	}
 }

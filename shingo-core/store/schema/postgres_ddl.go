@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS orders (
     payload_code    TEXT NOT NULL DEFAULT '',
     wait_index      INTEGER NOT NULL DEFAULT 0,
     queue_reason    TEXT NOT NULL DEFAULT '',
+    queue_code      TEXT,
+    queue_cause     TEXT,
     skip_auto_confirm BOOLEAN NOT NULL DEFAULT false,
     sibling_order_uuid TEXT NOT NULL DEFAULT '',
     source_intent   TEXT NOT NULL DEFAULT '',

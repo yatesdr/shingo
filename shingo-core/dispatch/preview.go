@@ -9,6 +9,8 @@
 
 package dispatch
 
+import "shingo/protocol"
+
 // DropoffCapacityPreview is the read-only result of asking the dispatcher
 // whether a given delivery node would accept a fresh order right now.
 // Fields mirror CheckDropoffCapacity's return tuple in JSON-friendly
@@ -29,7 +31,11 @@ type DropoffCapacityPreview struct {
 // The actual gate at HandleComplexOrderRequest / planRetrieve / etc. is
 // what enforces correctness.
 func (d *Dispatcher) PreviewDropoffCapacity(deliveryNode string) DropoffCapacityPreview {
-	blocked, reason := CheckDropoffCapacity(d.db, deliveryNode, 0)
+	blocked, block := CheckDropoffCapacity(d.db, deliveryNode, 0)
+	reason := ""
+	if blocked {
+		reason = FormatQueueSentence(protocol.QueueWaitingForSlot, block.Params)
+	}
 	return DropoffCapacityPreview{
 		Blocked:      blocked,
 		Reason:       reason,

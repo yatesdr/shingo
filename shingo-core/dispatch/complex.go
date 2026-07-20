@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"shingo/protocol"
 )
 
 // resolvedStep is a step with concrete node names after resolution.
@@ -117,10 +119,36 @@ const (
 	ResolutionFatal
 )
 
+// capacityKind is the typed payload classifyResolutionError returns alongside
+// ResolutionCapacity, naming WHICH of the four capacity shapes matched. The four
+// shapes split into two operator-facing categories:
+//
+//   - CapacitySlot: a saturated dropoff group ("no available slot in node group",
+//     "no bin of requested payload in node group") → the order is waiting on a
+//     SLOT at its destination.
+//   - CapacityBin: a dry empty-fetch pool ("cannot resolve empty in group",
+//     "no empty carrier in group") → the order is waiting on MATERIAL (an empty
+//     carrier to fill).
+//
+// The split is what lets intake/ngrp resolution pick the right queue code
+// (waiting_for_slot vs waiting_for_material) without re-sniffing the same
+// substrings at the call site.
+type capacityKind int
+
+const (
+	// capacityUnknown is the zero value — no capacity shape matched.
+	capacityUnknown capacityKind = iota
+	// capacitySlot: dropoff group is saturated (no free slot / no payload bin).
+	capacitySlot
+	// capacityBin: empty-fetch pool is dry (no empty carrier available).
+	capacityBin
+)
+
 // classifyResolutionError inspects err and returns the typed class
 // plus the typed-payload pointer when the class carries one
 // (*BuriedError for ResolutionBuried, *StructuralError for
-// ResolutionStructural). The payload is nil for the other classes.
+// ResolutionStructural, capacityKind for ResolutionCapacity). The payload is
+// nil for the other classes.
 //
 // Replaces the v6 pair (isCapacityResolutionError + isBuriedResolutionError)
 // with a single decision point so both the complex-intake and the
@@ -129,7 +157,8 @@ const (
 // survives any wrap chain; capacity detection still uses substring
 // match against the resolver's stable error shapes (the resolver
 // returns plain `fmt.Errorf` for those, with no typed sentinel to
-// match — a future cleanup would type those too).
+// match), but now ALSO returns a typed kind so callers pick the right
+// queue code without re-sniffing the same substrings.
 func classifyResolutionError(err error) (ResolutionErrorClass, any) {
 	if err == nil {
 		return ResolutionOK, nil
@@ -166,14 +195,17 @@ func classifyResolutionError(err error) (ResolutionErrorClass, any) {
 	// half-stranded the press until an operator intervened (2026-07-14 sim run).
 	//
 	// Still substring-matched, like the rest of this classifier — the resolver
-	// returns plain fmt.Errorf for all four with no typed sentinel. Typing them is
-	// the deferred cleanup noted above; do it for all four together, not piecemeal.
+	// returns plain fmt.Errorf for all four with no typed sentinel — but the kind
+	// is returned typed so a caller picks its queue code from the kind, not by
+	// re-sniffing the message.
 	msg := err.Error()
 	if strings.Contains(msg, "no available slot in node group") ||
-		strings.Contains(msg, "no bin of requested payload in node group") ||
-		strings.Contains(msg, "cannot resolve empty in group") ||
+		strings.Contains(msg, "no bin of requested payload in node group") {
+		return ResolutionCapacity, capacitySlot
+	}
+	if strings.Contains(msg, "cannot resolve empty in group") ||
 		strings.Contains(msg, "no empty carrier in group") {
-		return ResolutionCapacity, nil
+		return ResolutionCapacity, capacityBin
 	}
 	// DB-layer wraps that aren't structural or capacity.
 	if strings.Contains(msg, "list children of") ||
@@ -182,4 +214,18 @@ func classifyResolutionError(err error) (ResolutionErrorClass, any) {
 		return ResolutionTransient, nil
 	}
 	return ResolutionFatal, nil
+}
+
+// queueCodeForCapacity maps a typed capacity kind to its operator-facing queue
+// code. A slot-shaped capacity error waits on a destination slot; a bin-shaped
+// one waits on material (an empty carrier). capacityUnknown falls back to
+// waiting_for_material (the broader category) so an uncategorized capacity error
+// still parks under a real code rather than rendering empty.
+func queueCodeForCapacity(k capacityKind) protocol.QueueCode {
+	switch k {
+	case capacitySlot:
+		return protocol.QueueWaitingForSlot
+	default:
+		return protocol.QueueWaitingForMaterial
+	}
 }

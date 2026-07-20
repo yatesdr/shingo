@@ -2,7 +2,6 @@ package dispatch
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"shingocore/store/nodes"
@@ -52,11 +51,11 @@ func (f *fakeCapacityDB) ListChildNodes(int64) ([]*nodes.Node, error) {
 func TestCheckDropoffCapacity(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name          string
-		deliveryNode  string
-		db            *fakeCapacityDB
-		wantBlocked   bool
-		wantReasonHas string // substring assertion; "" means no reason expected
+		name         string
+		deliveryNode string
+		db           *fakeCapacityDB
+		wantBlocked  bool
+		wantCause    string // expected structured cause; "" means no cause expected
 	}{
 		{
 			name:         "empty deliveryNode is never blocked",
@@ -71,18 +70,18 @@ func TestCheckDropoffCapacity(t *testing.T) {
 			wantBlocked:  false,
 		},
 		{
-			name:          "R06-1: bin-count read error fails closed (blocked)",
-			deliveryNode:  "CONC-NODE",
-			db:            &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "CONC-NODE"}, binCountErr: errors.New("db blip")},
-			wantBlocked:   true,
-			wantReasonHas: "capacity unknown",
+			name:         "R06-1: bin-count read error fails closed (blocked)",
+			deliveryNode: "CONC-NODE",
+			db:           &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "CONC-NODE"}, binCountErr: errors.New("db blip")},
+			wantBlocked:  true,
+			wantCause:    "capacity-check-failed",
 		},
 		{
-			name:          "R06-1: in-flight read error fails closed (blocked)",
-			deliveryNode:  "CONC-NODE",
-			db:            &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "CONC-NODE"}, inFlightErr: errors.New("db blip")},
-			wantBlocked:   true,
-			wantReasonHas: "capacity unknown",
+			name:         "R06-1: in-flight read error fails closed (blocked)",
+			deliveryNode: "CONC-NODE",
+			db:           &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "CONC-NODE"}, inFlightErr: errors.New("db blip")},
+			wantBlocked:  true,
+			wantCause:    "capacity-check-failed",
 		},
 		{
 			name:         "synthetic LANE defers to lane planner (not gated here)",
@@ -128,8 +127,8 @@ func TestCheckDropoffCapacity(t *testing.T) {
 				},
 				binsByChild: map[int64]int{51: 1, 52: 1},
 			},
-			wantBlocked:   true,
-			wantReasonHas: "all 2 children of SMG_01",
+			wantBlocked: true,
+			wantCause:   "ngrp-full",
 		},
 		{
 			name:         "NGRP fully saturated by in-flight orders inbound: blocked",
@@ -142,8 +141,8 @@ func TestCheckDropoffCapacity(t *testing.T) {
 				},
 				inFlightByName: map[string]int{"SMG_01_S1": 1, "SMG_01_S2": 1},
 			},
-			wantBlocked:   true,
-			wantReasonHas: "occupied or in-flight",
+			wantBlocked: true,
+			wantCause:   "ngrp-full",
 		},
 		{
 			name:         "NGRP mix of physical + in-flight saturating all: blocked",
@@ -157,8 +156,8 @@ func TestCheckDropoffCapacity(t *testing.T) {
 				binsByChild:    map[int64]int{51: 1},
 				inFlightByName: map[string]int{"SMG_01_S2": 1},
 			},
-			wantBlocked:   true,
-			wantReasonHas: "all 2 children",
+			wantBlocked: true,
+			wantCause:   "ngrp-full",
 		},
 		{
 			name:         "NGRP with disabled + synthetic children skipped from count",
@@ -172,8 +171,8 @@ func TestCheckDropoffCapacity(t *testing.T) {
 				},
 				binsByChild: map[int64]int{51: 1},
 			},
-			wantBlocked:   true,
-			wantReasonHas: "all 1 children", // only S1 counted; it's full
+			wantBlocked: true,
+			wantCause:   "ngrp-full", // only S1 counted; it's full
 		},
 		{
 			name:         "NGRP with no usable children passes through (resolver surfaces error)",
@@ -191,46 +190,54 @@ func TestCheckDropoffCapacity(t *testing.T) {
 			wantBlocked:  false,
 		},
 		{
-			name:          "concrete node, occupied by 1 bin: blocked with bin-count reason",
-			deliveryNode:  "LINE_01",
-			db:            &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "LINE_01"}, binCount: 1},
-			wantBlocked:   true,
-			wantReasonHas: "occupied",
+			name:         "concrete node, occupied by 1 bin: blocked with bin-count reason",
+			deliveryNode: "LINE_01",
+			db:           &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "LINE_01"}, binCount: 1},
+			wantBlocked:  true,
+			wantCause:    "dropoff-occupied",
 		},
 		{
-			name:          "concrete node, occupied by multiple bins (mis-tracked state)",
-			deliveryNode:  "LINE_01",
-			db:            &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "LINE_01"}, binCount: 3},
-			wantBlocked:   true,
-			wantReasonHas: "3 bin",
+			name:         "concrete node, occupied by multiple bins (mis-tracked state)",
+			deliveryNode: "LINE_01",
+			db:           &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "LINE_01"}, binCount: 3},
+			wantBlocked:  true,
+			wantCause:    "dropoff-occupied",
 		},
 		{
-			name:          "concrete node empty but in-flight inbound: blocked with in-flight reason",
-			deliveryNode:  "LINE_01",
-			db:            &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "LINE_01"}, inFlight: 1},
-			wantBlocked:   true,
-			wantReasonHas: "in-flight",
+			name:         "concrete node empty but in-flight inbound: blocked with in-flight reason",
+			deliveryNode: "LINE_01",
+			db:           &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "LINE_01"}, inFlight: 1},
+			wantBlocked:  true,
+			wantCause:    "dropoff-inflight",
 		},
 		{
-			name:          "bin AND in-flight both nonzero: bin-count branch wins (deterministic)",
-			deliveryNode:  "LINE_01",
-			db:            &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "LINE_01"}, binCount: 1, inFlight: 1},
-			wantBlocked:   true,
-			wantReasonHas: "occupied",
+			name:         "bin AND in-flight both nonzero: bin-count branch wins (deterministic)",
+			deliveryNode: "LINE_01",
+			db:           &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "LINE_01"}, binCount: 1, inFlight: 1},
+			wantBlocked:  true,
+			wantCause:    "dropoff-occupied",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			blocked, reason := CheckDropoffCapacity(tc.db, tc.deliveryNode, 0)
+			blocked, block := CheckDropoffCapacity(tc.db, tc.deliveryNode, 0)
 			if blocked != tc.wantBlocked {
-				t.Errorf("CheckDropoffCapacity blocked = %v, want %v (reason=%q)", blocked, tc.wantBlocked, reason)
+				t.Errorf("CheckDropoffCapacity blocked = %v, want %v (cause=%q)", blocked, tc.wantBlocked, block.Cause)
 			}
-			if tc.wantReasonHas != "" && !strings.Contains(reason, tc.wantReasonHas) {
-				t.Errorf("reason = %q, want substring %q", reason, tc.wantReasonHas)
+			if tc.wantCause != "" && block.Cause != tc.wantCause {
+				t.Errorf("cause = %q, want %q", block.Cause, tc.wantCause)
 			}
-			if !tc.wantBlocked && reason != "" {
-				t.Errorf("not blocked but got reason %q (should be empty)", reason)
+			// A blocked result always carries a cause and pins the destination; a
+			// not-blocked result carries neither.
+			if blocked && block.Cause == "" {
+				t.Errorf("blocked but cause is empty")
+			}
+			if blocked && block.Params.Destination == "" {
+				t.Errorf("blocked but destination param is empty")
+			}
+			if !blocked && (block.Cause != "" || block.Params.Destination != "") {
+				t.Errorf("not blocked but got cause/destination %+v", block)
 			}
 		})
 	}

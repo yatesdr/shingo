@@ -508,6 +508,14 @@ func (db *DB) migrate() error {
 	// when the HMI renders non-queued statuses.
 	db.Exec("ALTER TABLE orders ADD COLUMN queue_reason TEXT NOT NULL DEFAULT ''")
 
+	// v28: queue_code on orders — mirrors Core's orders.queue_code, the structured
+	// category behind the queue_reason sentence (one of protocol.QueueCode). Core
+	// ships it on the OrderUpdate push and the boot status snapshot so Edge can
+	// branch on it later without a schema change; for now Edge only persists it
+	// (display keeps rendering the sentence). Empty on non-queued orders and on
+	// pre-v28 rows; cause never leaves Core. Idempotent ADD COLUMN.
+	db.Exec("ALTER TABLE orders ADD COLUMN queue_code TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }
 

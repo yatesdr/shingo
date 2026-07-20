@@ -83,6 +83,14 @@ func (db *DB) migrateAddBaselineColumns() error {
 		// Pre-baseline-add unblocks schema.Apply on plant DBs that still
 		// carry the pre-v21 shape (Springfield, May 2026).
 		{"lineside_buckets", "core_node_name", `ALTER TABLE lineside_buckets ADD COLUMN IF NOT EXISTS core_node_name TEXT NOT NULL DEFAULT ''`},
+		// queue_code / queue_cause on orders: nullable companion columns to
+		// queue_reason (the generated sentence). The baseline DDL now declares
+		// them, so a fresh DB gets them from CREATE TABLE; a plant DB predating
+		// them needs the pre-baseline add so the versioned migration's verify +
+		// the order SELECT list (which reads both columns) don't fail ahead of
+		// the migration pipeline.
+		{"orders", "queue_code", `ALTER TABLE orders ADD COLUMN IF NOT EXISTS queue_code TEXT`},
+		{"orders", "queue_cause", `ALTER TABLE orders ADD COLUMN IF NOT EXISTS queue_cause TEXT`},
 	}
 	for _, a := range adds {
 		if !schema.TableExists(db.DB, a.table) {
@@ -514,6 +522,21 @@ func (db *DB) runVersionedMigrations() error {
 		{47, "add orders.remaining_uop (operator release-correction count for the moved claim)",
 			v47OrderRemainingUOP,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "remaining_uop") }},
+
+		// v48 adds the structured companions to orders.queue_reason: queue_code
+		// (the operator-visible category, one of protocol.QueueCode) and
+		// queue_cause (the engineer-only call-site tag). queue_reason keeps
+		// carrying the generated sentence — zero display regression — and the
+		// two new columns let the floor/analytics GROUP BY the code instead of
+		// parsing prose. Both NULLABLE with no default: NULL = a pre-schema row
+		// (no backfill); a cleared reason writes NULL on both. Cause never
+		// leaves Core.
+		{48, "add orders.queue_code + queue_cause (structured queue-reason companions)",
+			v48OrderQueueCodeCause,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "orders", "queue_code") &&
+					schema.ColumnExists(q, "orders", "queue_cause")
+			}},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1680,6 +1703,23 @@ func v14OrderProcessNode(tx *sql.Tx) error {
 func v16OrderQueueReason(tx *sql.Tx) error {
 	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS queue_reason TEXT NOT NULL DEFAULT ''`)
 	return err
+}
+
+// v48OrderQueueCodeCause adds the structured companions to orders.queue_reason.
+// See the migration-list comment for v48. Both columns are nullable (NULL = a
+// pre-schema row, or a cleared reason); no default, no backfill — existing rows
+// keep NULL and read as "uncoded" until the next time the order is parked.
+func v48OrderQueueCodeCause(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS queue_code TEXT`,
+		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS queue_cause TEXT`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v48 orders queue_code/queue_cause: %w", err)
+		}
+	}
+	return nil
 }
 
 // v23PendingRestocks creates the crash-safe restore-listener registry.

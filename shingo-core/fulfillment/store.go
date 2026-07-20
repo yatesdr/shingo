@@ -1,6 +1,7 @@
 package fulfillment
 
 import (
+	"shingo/protocol"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -49,10 +50,11 @@ type Store interface {
 	ReleaseClaimByOrder(orderID int64) error
 	UpdateOrderBinID(orderID, binID int64) error
 	UpdateOrderSourceNode(id int64, sourceNode string) error
-	// SetOrderQueueReason records why an order is sitting queued.
-	// Phase 4 of bin-transit-state — surfaced through the order-status
-	// API so ops can see the blocking node instead of guessing.
-	SetOrderQueueReason(id int64, reason string) error
+	// SetOrderQueueDetail records why an order is sitting queued — the generated
+	// sentence, its structured queue code, and the engineer-only cause — together.
+	// The code is typed so a caller cannot pass free text; the formatter is the
+	// only producer of the sentence. Pass empty values to clear (on dispatch).
+	SetOrderQueueDetail(id int64, reason string, code protocol.QueueCode, cause string) error
 }
 
 // Trimmed to this interface's "no more, no less" contract as the scanner's

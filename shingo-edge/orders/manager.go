@@ -494,10 +494,11 @@ func (m *Manager) TransitionOrder(orderID int64, newStatus protocol.Status, deta
 	return m.lifecycle.Transition(orderID, newStatus, detail)
 }
 
-// SetOrderQueueReason persists Core's blocking reason for a queued order.
-// Called from the edge handler when an OrderUpdate carries a QueueReason field.
-func (m *Manager) SetOrderQueueReason(uuid, reason string) error {
-	return m.db.SetOrderQueueReason(uuid, reason)
+// SetOrderQueueReason persists Core's blocking reason and its structured code
+// for a queued order. Called from the edge handler when an OrderUpdate (or boot
+// snapshot) carries QueueReason + QueueCode fields.
+func (m *Manager) SetOrderQueueReason(uuid, reason, code string) error {
+	return m.db.SetOrderQueueReason(uuid, reason, code)
 }
 
 // SetOrderETA persists Core's ETA stamp for an order. Called from the edge

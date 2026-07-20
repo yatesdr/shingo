@@ -75,7 +75,7 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	}
 
 	if p.QueueReason != "" {
-		if err := h.orderMgr.SetOrderQueueReason(p.OrderUUID, p.QueueReason); err != nil {
+		if err := h.orderMgr.SetOrderQueueReason(p.OrderUUID, p.QueueReason, p.QueueCode); err != nil {
 			log.Printf("edge_handler: set queue_reason for %s: %v", p.OrderUUID, err)
 		}
 	}

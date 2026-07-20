@@ -88,6 +88,18 @@
     {{if .Authenticated}}<button class="btn btn-primary btn-sm ml-auto" data-action="openManualOrderModal">Manual Order</button>{{end}}
   </div>
 
+  {{$labels := .QueueCodeLabels}}
+  {{if .QueueCodeCounts}}
+  <div class="filter-bar" style="flex-wrap:wrap;gap:0.4rem">
+    <span class="text-muted" style="font-size:0.78rem">Why queued:</span>
+    {{range $code, $count := .QueueCodeCounts}}
+      {{if and $code (gt $count 0)}}
+      <span class="badge" style="background:#eef;text-align:left">{{$label := index $labels $code}}{{if $label}}{{$label}}{{else}}{{$code}}{{end}}: {{$count}}</span>
+      {{end}}
+    {{end}}
+  </div>
+  {{end}}
+
   <div class="card" style="padding:0.75rem">
     {{if .Orders}}
     <table class="table-compact" id="orders-table" data-sortable>

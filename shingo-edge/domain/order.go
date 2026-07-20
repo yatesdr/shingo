@@ -49,9 +49,15 @@ type Order struct {
 	// (mirrored from Core's orders.queue_reason via OrderUpdate push).
 	// Non-empty only while status == "queued". HMI renders it as
 	// "IN QUEUE: <reason>" so operators can see WHY a robot isn't coming.
-	QueueReason string    `json:"queue_reason"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	QueueReason string `json:"queue_reason"`
+	// QueueCode is the structured category behind QueueReason (mirrored from
+	// Core's orders.queue_code). One of protocol.QueueCode. Edge persists it for
+	// future branching (e.g. special fleet-unavailable handling) without a schema
+	// change; display keeps rendering the sentence today. Empty on non-queued
+	// orders. Cause never leaves Core.
+	QueueCode string    `json:"queue_code"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 	// Joined fields
 	ProcessName     string `json:"process_name"`
 	ProcessNodeName string `json:"process_node_name"`

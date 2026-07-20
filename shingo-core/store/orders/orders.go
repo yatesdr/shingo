@@ -38,7 +38,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop`
 
 // Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
 // CountActive) return EVERY order type. They used to exclude reshuffle_restore —
@@ -55,12 +55,13 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
 	var parentOrderID, binID sql.NullInt64
 	var remainingUOP sql.NullInt64
+	var queueCode, queueCause sql.NullString
 
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
-		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason,
+		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &o.SourceIntent, &o.Coordinated, &remainingUOP)
 	if err != nil {
 		return nil, err
@@ -74,6 +75,12 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	if remainingUOP.Valid {
 		v := int(remainingUOP.Int64)
 		o.RemainingUOP = &v
+	}
+	if queueCode.Valid {
+		o.QueueCode = queueCode.String
+	}
+	if queueCause.Valid {
+		o.QueueCause = queueCause.String
 	}
 	return &o, nil
 }
@@ -159,14 +166,30 @@ func UpdateWaitIndex(db *sql.DB, id int64, waitIndex int) error {
 	return err
 }
 
-// SetQueueReason stores the blocking reason on a queued order. Pass ""
-// to clear (e.g., when a previously-queued order successfully dispatches).
-// Phase 4 of bin-transit-state — exposed via order-status responses so
-// ops can see *why* an order is queued instead of guessing.
-func SetQueueReason(db *sql.DB, id int64, reason string) error {
-	_, err := db.Exec(`UPDATE orders SET queue_reason=$1, updated_at=$3 WHERE id=$2`,
-		reason, id, clock.Now().UTC())
+// SetQueueDetail stores the blocking reason on a queued order — the generated
+// sentence (queue_reason), its structured category (queue_code), and the
+// engineer-only call-site tag (queue_cause) — together, in one write. Pass all
+// empty to clear (e.g. when a previously-queued order successfully dispatches).
+//
+// This is the ONE writer for all three columns. The dispatch formatter is the
+// only caller that should reach it: it generates the sentence from code+params
+// and hands sentence+code+cause here, so a free-text queue reason can never be
+// written directly. queue_code/queue_cause are nullable; NULL means a
+// pre-schema row (no backfill) or a cleared reason.
+func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
+	_, err := db.Exec(`UPDATE orders SET queue_reason=$1, queue_code=$4, queue_cause=$5, updated_at=$3 WHERE id=$2`,
+		reason, id, clock.Now().UTC(), nullableText(code), nullableText(cause))
 	return err
+}
+
+// nullableText maps a Go empty string to a SQL NULL (the queue_code/queue_cause
+// columns are nullable; "" and NULL are distinguished so a pre-schema row reads
+// back as NULL, not as the empty code). Non-empty strings pass through.
+func nullableText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // LinkSiblingsByEdgeUUID records a two-robot swap pairing (supply ↔ evac)

@@ -70,8 +70,15 @@ type SourceResult struct {
 	Bin  *bins.Bin
 	Node *nodes.Node
 
-	// OutcomeWait: operator-visible reason the order is parked.
-	QueueReason string
+	// OutcomeWait: the structured category the order is parked under + the
+	// params the operator sentence is generated from. Replaces a pre-formatted
+	// reason string so the caller parks through the formatter door (the same
+	// code surfaces from every finder tier). Cause is the engineer-only scope
+	// tag (which tier waited); the sentence is built by the caller from
+	// QueueCode + QueueParams.
+	QueueCode   protocol.QueueCode
+	QueueCause  string
+	QueueParams QueueParams
 
 	// OutcomeReshuffle: the buried bin + its slot/lane for reshuffle planning.
 	Buried *BuriedError
@@ -195,14 +202,24 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 				// Capacity / Transient / Fatal all QUEUE SCOPED — never fall
 				// through to the plant-wide scan. (Intake queues here too.)
 				f.debug("finder: no source in group %s for payload=%s, waiting", order.SourceNode, payloadCode)
-				return SourceResult{Outcome: OutcomeWait, QueueReason: err.Error()}
+				return SourceResult{
+					Outcome:     OutcomeWait,
+					QueueCode:   protocol.QueueWaitingForMaterial,
+					QueueCause:  "finder-group-empty",
+					QueueParams: QueueParams{Payload: payloadCode, Destination: order.SourceNode},
+				}
 			}
 		}
 		if result.Bin == nil {
 			// Resolver returned a node but no concrete bin — queue and retry.
 			// Matches planMove's defensive branch; safe for retrieve, where
 			// ResolveRetrieve always carries a Bin on success.
-			return SourceResult{Outcome: OutcomeWait, QueueReason: fmt.Sprintf("no bin resolved in group %s", order.SourceNode)}
+			return SourceResult{
+				Outcome:     OutcomeWait,
+				QueueCode:   protocol.QueueWaitingForMaterial,
+				QueueCause:  "finder-group-empty",
+				QueueParams: QueueParams{Payload: payloadCode, Destination: order.SourceNode},
+			}
 		}
 		bin = result.Bin
 	}
@@ -229,7 +246,12 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 				// invariant). Scoping oldest-part-first / partial-buffer is the
 				// whole point of the loader pool.
 				f.debug("finder: loader pool for %s has no %q, waiting", order.SourceNode, payloadCode)
-				return SourceResult{Outcome: OutcomeWait, QueueReason: fmt.Sprintf("loader pool for %s has no %q", order.SourceNode, payloadCode)}
+				return SourceResult{
+					Outcome:     OutcomeWait,
+					QueueCode:   protocol.QueueWaitingForMaterial,
+					QueueCause:  "finder-pool-empty",
+					QueueParams: QueueParams{Payload: payloadCode, Destination: order.SourceNode},
+				}
 			}
 			bin, binNode = chosen, node
 		}
@@ -245,7 +267,12 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		groupBin, gerr := f.db.FindEmptyCompatibleBinInGroup(payloadCode, srcNode.ID, excludeID)
 		if gerr != nil || groupBin == nil {
 			f.debug("finder: no empty in group %s for payload=%s, waiting", order.SourceNode, payloadCode)
-			return SourceResult{Outcome: OutcomeWait, QueueReason: fmt.Sprintf("no empty in group %s", order.SourceNode)}
+			return SourceResult{
+				Outcome:     OutcomeWait,
+				QueueCode:   protocol.QueueWaitingForMaterial,
+				QueueCause:  "finder-group-empty",
+				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode, Destination: order.SourceNode},
+			}
 		}
 		bin = groupBin
 	}
@@ -265,7 +292,12 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 			break
 		}
 		if bin == nil {
-			return SourceResult{Outcome: OutcomeWait, QueueReason: fmt.Sprintf("no available bin at %s", order.SourceNode)}
+			return SourceResult{
+				Outcome:     OutcomeWait,
+				QueueCode:   protocol.QueueWaitingForMaterial,
+				QueueCause:  "finder-node-empty",
+				QueueParams: QueueParams{Payload: payloadCode, Destination: order.SourceNode},
+			}
 		}
 	}
 
@@ -275,24 +307,40 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		if intent == IntentFull {
 			b, err := f.db.FindSourceBinFIFO(payloadCode, excludeID)
 			if err != nil || b == nil {
-				return SourceResult{Outcome: OutcomeWait, QueueReason: "no source bin available"}
+				return SourceResult{
+					Outcome:     OutcomeWait,
+					QueueCode:   protocol.QueueWaitingForMaterial,
+					QueueCause:  "finder-plant-empty",
+					QueueParams: QueueParams{Payload: payloadCode},
+				}
 			}
 			bin = b
 		} else {
 			b, err := f.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeID)
 			if err != nil || b == nil {
-				return SourceResult{Outcome: OutcomeWait, QueueReason: "no empty bin available"}
+				return SourceResult{
+					Outcome:     OutcomeWait,
+					QueueCode:   protocol.QueueWaitingForMaterial,
+					QueueCause:  "finder-plant-empty",
+					QueueParams: QueueParams{Kind: "empty", Payload: payloadCode},
+				}
 			}
 			bin = b
 		}
 	}
 
 	if bin == nil {
-		reason := "no source bin available"
+		params := QueueParams{Payload: payloadCode}
+		cause := "finder-plant-empty"
 		if intent == IntentEmpty {
-			reason = "no empty bin available"
+			params = QueueParams{Kind: "empty", Payload: payloadCode}
 		}
-		return SourceResult{Outcome: OutcomeWait, QueueReason: reason}
+		return SourceResult{
+			Outcome:     OutcomeWait,
+			QueueCode:   protocol.QueueWaitingForMaterial,
+			QueueCause:  cause,
+			QueueParams: params,
+		}
 	}
 
 	// Resolve the bin's node if a tier set `bin` without one (tiers 1 and 5).

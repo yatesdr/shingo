@@ -62,7 +62,11 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// scanner tick. Structural / unknown-action / unknown-node errors
 	// still reject synchronously — those aren't fixable by waiting.
 	resolvedSteps, err := d.resolveComplexSteps(p.Steps, payloadCode)
-	var queueReason string
+	var (
+		queueReason string
+		queueCode   protocol.QueueCode
+		queueCause  string
+	)
 	if err != nil {
 		class, payload := classifyResolutionError(err)
 		switch class {
@@ -78,9 +82,14 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		case ResolutionCapacity:
 			// Capacity-shaped — preserve the original step shape (NGRP
 			// names intact) so the replay path has the input it needs
-			// to re-attempt.
+			// to re-attempt. Pick the queue code from the typed kind so a
+			// saturated dropoff (slot) and a dry empty pool (material) park
+			// under the right operator category without re-sniffing the error.
 			resolvedSteps = stepsAsResolved(p.Steps)
-			queueReason = err.Error()
+			queueCause = "intake-resolve"
+			queueCode = queueCodeForCapacity(payload.(capacityKind))
+			_, intakeDelivery := extractEndpoints(resolvedSteps)
+			queueReason = FormatQueueSentence(queueCode, QueueParams{Payload: payloadCode, Destination: intakeDelivery})
 		default:
 			// Structural / transient / fatal — terminal at intake.
 			d.sendError(env, p.OrderUUID, "resolution_failed", err.Error())
@@ -113,6 +122,8 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		// discriminator (IsCoordinated) reads this column, not StepsJSON.
 		Coordinated: true,
 		QueueReason: queueReason,
+		QueueCode:   string(queueCode),
+		QueueCause:  queueCause,
 		// Durable two-robot swap linkage: persist the supply sibling's UUID
 		// in the CreateOrder INSERT itself, so a two-robot evac's pointer to
 		// its supply is written atomically with the order and can never be
@@ -128,10 +139,10 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		return
 	}
 	if queueReason != "" {
-		// CreateOrder may not persist QueueReason depending on the store
-		// helper's INSERT column list — set it explicitly so the field is
-		// visible to the scanner's queue-reason check and to the HMI.
-		if err := d.db.SetOrderQueueReason(order.ID, queueReason); err != nil {
+		// CreateOrder may not persist QueueReason/QueueCode/QueueCause depending
+		// on the store helper's INSERT column list — set them explicitly so the
+		// fields are visible to the scanner's queue-reason check and to the HMI.
+		if err := d.db.SetOrderQueueDetail(order.ID, queueReason, queueCode, queueCause); err != nil {
 			log.Printf("dispatch: set initial queue_reason for complex order %d: %v", order.ID, err)
 		}
 		log.Printf("dispatch: complex order %d queued at intake — %s", order.ID, queueReason)
@@ -359,9 +370,10 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 			d.handleComplexBuriedOnReplay(order, buriedErr)
 			return rerr
 		case ResolutionCapacity:
-			reason := rerr.Error()
-			d.setQueueReason(order, reason, "ngrp-resolve")
-			d.dbg("complex: order %d still capacity-blocked at NGRP resolution: %s", order.ID, reason)
+			code := queueCodeForCapacity(payload.(capacityKind))
+			d.setQueueReason(order, code, "ngrp-resolve",
+				QueueParams{Payload: order.PayloadCode, Destination: order.DeliveryNode})
+			d.dbg("complex: order %d still capacity-blocked at NGRP resolution: %s", order.ID, code)
 			return rerr
 		default:
 			d.failOrderInternal(order, "invalid_steps", rerr.Error())
@@ -421,7 +433,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// to concrete nodes by now, and the line node is concrete either way, so the
 	// pickup/dropoff shape the gate depends on is stable across resolution.
 	if held, reason := d.swapRemovalLegHeld(order, resolvedSteps); held {
-		d.setQueueReason(order, reason, "swap-hold")
+		d.setQueueReason(order, protocol.QueueWaitingForPartner, "swap-hold", QueueParams{Sibling: order.SiblingOrderUUID})
 		d.dbg("complex: order %d held — %s", order.ID, reason)
 		return fmt.Errorf("swap removal hold: %s", reason)
 	}
@@ -439,10 +451,10 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// error — the scanner keeps the order queued and replays it on the next
 	// slot-vacancy tick (same contract as the claim_failed branch below).
 	if isConcreteStorageDropoff(d.db, order.DeliveryNode) {
-		if blocked, reason := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
-			d.setQueueReason(order, reason, "dropoff-capacity")
-			d.dbg("complex: order %d queued — concrete storage dropoff %s blocked: %s", order.ID, order.DeliveryNode, reason)
-			return fmt.Errorf("dropoff capacity: %s", reason)
+		if blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
+			d.setQueueReason(order, protocol.QueueWaitingForSlot, "dropoff-capacity", cap.Params)
+			d.dbg("complex: order %d queued — concrete storage dropoff %s blocked: %s", order.ID, order.DeliveryNode, cap.Cause)
+			return fmt.Errorf("dropoff capacity: %s", cap.Cause)
 		}
 	}
 
@@ -465,8 +477,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		log.Printf("dispatch: complex order %d slot reserve error: %v", order.ID, serr)
 		return serr
 	} else if slotOutcome != reserveComplete {
-		const reason = "awaiting destination slots"
-		d.setQueueReason(order, reason, "slot-reserve")
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, "slot-reserve", QueueParams{Destination: order.DeliveryNode})
 		d.dbg("complex: order %d held — incomplete slot reserve, retrying next tick", order.ID)
 		return fmt.Errorf("complex order %d slot reserve incomplete", order.ID)
 	}
@@ -516,8 +527,8 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		d.skipOrderInternal(order, codeNoSourceBin, fmt.Sprintf("complex order %d: no bin at any source node", order.ID))
 		return fmt.Errorf("complex order %d moot — skipped", order.ID)
 	case reserveHolding:
-		const reason = "awaiting source bins"
-		d.setQueueReason(order, reason, "reserve-holding")
+		d.setQueueReason(order, protocol.QueueWaitingForMaterial, "reserve-holding",
+			QueueParams{Payload: order.PayloadCode, Partial: true})
 		d.dbg("complex: order %d incomplete reserve — holding partials, retrying next tick", order.ID)
 		return fmt.Errorf("complex order %d reserve incomplete", order.ID)
 	}
@@ -529,7 +540,8 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	if cerr := d.allocator.confirmComplexPlan(order, plan, assigned); cerr != nil {
 		var pe *planningError
 		if errors.As(cerr, &pe) && pe.Code == codeClaimFailed {
-			d.setQueueReason(order, codeClaimFailed, "claim-failed")
+			d.setQueueReason(order, protocol.QueueWaitingForMaterial, "claim-failed",
+				QueueParams{Payload: order.PayloadCode})
 			d.dbg("complex: order %d held on claim_failed: %s", order.ID, pe.Detail)
 			return cerr
 		}
@@ -575,29 +587,34 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	}
 	// Successful dispatch — clear any stale queue_reason from a prior
 	// blocked replay attempt.
-	d.setQueueReason(order, "", "clear-on-dispatch")
+	d.setQueueReason(order, "", "", QueueParams{})
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, order.SourceNode, order.DeliveryNode)
 	return nil
 }
 
-// setQueueReason persists order.QueueReason = reason (via SetOrderQueueReason) AND
-// keeps the in-memory Order in sync — but ONLY when the value actually changes.
-// The unchanged short-circuit is load-bearing: rewriting the same reason re-touches
-// the row and can re-trigger the very scanner tick that just parked the order (an
-// event loop). `where` is a short tag identifying the call site in the log line.
-// Best-effort: a failed write is logged and swallowed (queue_reason is advisory
-// HMI/queue metadata, never a correctness gate), leaving the in-memory field
-// matching the persisted value. This replaces ~13 copies of the guard+write+log
-// block, several of which forgot the in-memory sync.
-func (d *Dispatcher) setQueueReason(order *orders.Order, reason, where string) {
-	if order.QueueReason == reason {
+// setQueueReason is the dispatch side's one door onto the queue-reason columns.
+// It generates the operator sentence from code+params (via the shared formatter),
+// then writes sentence+code+cause together — so a wait parked here always records
+// the structured code, never free text. No-ops when the sentence AND code are
+// unchanged: the unchanged short-circuit is load-bearing (rewriting the same
+// reason re-touches the row and can re-trigger the very scanner tick that just
+// parked the order — an event loop). cause is the engineer-only call-site tag
+// (the `where` of older callers); params carries the values the sentence is built
+// from and is discarded after formatting. Best-effort: a failed write is logged
+// and swallowed (queue_reason is advisory HMI/queue metadata, never a correctness
+// gate), leaving the in-memory fields matching the persisted values.
+func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode, cause string, params QueueParams) {
+	reason := FormatQueueSentence(code, params)
+	if order.QueueReason == reason && order.QueueCode == string(code) {
 		return
 	}
-	if err := d.db.SetOrderQueueReason(order.ID, reason); err != nil {
-		log.Printf("dispatch: set queue_reason (%s) for order %d: %v", where, order.ID, err)
+	if err := d.db.SetOrderQueueDetail(order.ID, reason, code, cause); err != nil {
+		log.Printf("dispatch: set queue_reason (%s) for order %d: %v", cause, order.ID, err)
 		return
 	}
 	order.QueueReason = reason
+	order.QueueCode = string(code)
+	order.QueueCause = cause
 }
 
 // failOrderInternal is the scanner-path failure helper. Same as
@@ -698,8 +715,8 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 
 	// Lane-contention: leave the parent Queued for scanner replay.
 	if d.laneLock.IsLocked(buried.LaneID) {
-		reason := fmt.Sprintf("lane %d locked by reshuffle for another order", buried.LaneID)
-		d.setQueueReason(order, reason, "buried-lane-contention")
+		d.setQueueReason(order, protocol.QueueStorageRearranging, "lane-locked",
+			QueueParams{Lane: lane.Name, Payload: payloadCode})
 		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
 		return
 	}
@@ -717,8 +734,8 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 			return
 		}
 		if allOccupied {
-			reason := "all reshuffle targets occupied"
-			d.setQueueReason(order, reason, "buried-targets-occupied")
+			d.setQueueReason(order, protocol.QueueStorageRearranging, "targets-occupied",
+				QueueParams{Lane: lane.Name, Payload: payloadCode})
 			d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
 			return
 		}
@@ -732,8 +749,8 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 
 	// Race-safe lock acquisition.
 	if !d.laneLock.TryLock(buried.LaneID, order.ID) {
-		reason := fmt.Sprintf("lane %d locked by reshuffle for another order", buried.LaneID)
-		d.setQueueReason(order, reason, "buried-trylock-race")
+		d.setQueueReason(order, protocol.QueueStorageRearranging, "lock-race",
+			QueueParams{Lane: lane.Name, Payload: payloadCode})
 		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
 		return
 	}
@@ -802,8 +819,8 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 	groupID := *lane.ParentID
 
 	if d.laneLock.IsLocked(buried.LaneID) {
-		reason := fmt.Sprintf("lane %d locked by reshuffle for another order", buried.LaneID)
-		d.setQueueReason(order, reason, "replay-lane-contention")
+		d.setQueueReason(order, protocol.QueueStorageRearranging, "lane-locked",
+			QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
 		return
 	}
 
@@ -818,8 +835,8 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 			return
 		}
 		if allOccupied {
-			reason := "all reshuffle targets occupied"
-			d.setQueueReason(order, reason, "replay-targets-occupied")
+			d.setQueueReason(order, protocol.QueueStorageRearranging, "targets-occupied",
+				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
 			return
 		}
 		plan, err = PlanReshuffleToTarget(d.db, buried.Bin, buried.Slot, lane, groupID, targetNode)
@@ -831,8 +848,8 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 	}
 
 	if !d.laneLock.TryLock(buried.LaneID, order.ID) {
-		reason := fmt.Sprintf("lane %d locked by reshuffle for another order", buried.LaneID)
-		d.setQueueReason(order, reason, "replay-trylock-race")
+		d.setQueueReason(order, protocol.QueueStorageRearranging, "lock-race",
+			QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
 		return
 	}
 	if err := d.CreateCompoundOrder(order, plan); err != nil {

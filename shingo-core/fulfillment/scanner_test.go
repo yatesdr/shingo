@@ -57,8 +57,16 @@ func (f *fakeFinder) FindSource(order *orders.Order, intent dispatch.Intent) dis
 	return f.result
 }
 
-func waitFinder(reason string) *fakeFinder {
-	return &fakeFinder{result: dispatch.SourceResult{Outcome: dispatch.OutcomeWait, QueueReason: reason}}
+// waitFinder returns a finder whose FindSource reports a wait under the given
+// queue code + params. (Older callers passed a free-text reason; the SourceResult
+// now carries the structured code + params the sentence is generated from.)
+func waitFinder(code protocol.QueueCode, params dispatch.QueueParams) *fakeFinder {
+	return &fakeFinder{result: dispatch.SourceResult{
+		Outcome:     dispatch.OutcomeWait,
+		QueueCode:   code,
+		QueueCause:  "finder-test",
+		QueueParams: params,
+	}}
 }
 
 func foundFinder(binID int64, nodeName string) *fakeFinder {
@@ -73,6 +81,10 @@ func foundFinder(binID int64, nodeName string) *fakeFinder {
 type recordingDispatcher struct {
 	directCalls []directCall
 	directErr   error
+
+	// reserveErr, when set, makes ReserveStorageDropoff fail — drives the slot-
+	// reserve conflict requeue on both the plain and held-bin paths.
+	reserveErr error
 
 	// reshuffleCalls records orders the scanner asked to reshuffle on replay;
 	// reshuffleErr drives the transient-vs-structural disposition.
@@ -98,11 +110,13 @@ func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
 	panic("recordingDispatcher: complex path not expected in this test")
 }
 
-// ReserveStorageDropoff is a no-op success in the recording fake — the node-
-// driven reserve is exercised end-to-end in the dispatch package's docker tests;
-// here we only assert the scanner's dispatch orchestration.
-func (d *recordingDispatcher) ReserveStorageDropoff(*orders.Order) error { return nil }
-func (d *recordingDispatcher) PostFindHook()                             {}
+// ReserveStorageDropoff honors reserveErr so the slot-reserve conflict requeue
+// is exercisable here; the node-driven reserve is also covered end-to-end in the
+// dispatch package's docker tests.
+func (d *recordingDispatcher) ReserveStorageDropoff(*orders.Order) error {
+	return d.reserveErr
+}
+func (d *recordingDispatcher) PostFindHook() {}
 
 func (d *recordingDispatcher) PlanBuriedReshuffle(o *orders.Order, _ *dispatch.BuriedError) error {
 	d.reshuffleCalls = append(d.reshuffleCalls, o.ID)
@@ -115,7 +129,7 @@ func (d *recordingDispatcher) PlanBuriedReshuffle(o *orders.Order, _ *dispatch.B
 // so a guard regression fails the test automatically.
 func newTestScanner(t *testing.T, f *fakeStore) *Scanner {
 	t.Helper()
-	return newScannerWith(t, f, waitFinder("no source"), nil,
+	return newScannerWith(t, f, waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{Payload: "PN-123"}), nil,
 		func(orderID int64, code, detail string) {
 			t.Errorf("unexpected failFn call: order=%d code=%s detail=%s", orderID, code, detail)
 		})
@@ -235,7 +249,7 @@ func TestScannerScanForRetrieve_FailsCleanlyOnEmptyPayload(t *testing.T) {
 		code    string
 		detail  string
 	}
-	s := newScannerWith(t, f, waitFinder("unused"), nil, func(orderID int64, code, detail string) {
+	s := newScannerWith(t, f, waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{Payload: "PN-123"}), nil, func(orderID int64, code, detail string) {
 		failCalls = append(failCalls, struct {
 			orderID int64
 			code    string
@@ -267,7 +281,7 @@ func TestScanner_TryFulfill_RetrieveEmpty_FinderWaits_StaysQueued(t *testing.T) 
 	order := seedQueuedRetrieve(f, 5, "dest-05")
 	order.OrderType = protocol.OrderTypeRetrieveEmpty
 	order.SourceIntent = dispatch.SourceIntentEmpty // Stage 4: intent now data, set at intake
-	finder := waitFinder("no empty bin available")
+	finder := waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{Kind: "empty", Payload: "PN-123"})
 	s := newTestScanner(t, f)
 	s.finder = finder // finder is white-box accessible in-package
 
@@ -291,7 +305,7 @@ func TestScanner_TryFulfill_RetrieveEmpty_BlankPayload_ReachesFinder(t *testing.
 	order.OrderType = protocol.OrderTypeRetrieveEmpty
 	order.SourceIntent = dispatch.SourceIntentEmpty // Stage 4: intent now data, set at intake
 	order.PayloadCode = ""                          // blank is legitimate here
-	finder := waitFinder("no empty bin available")
+	finder := waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{Kind: "empty", Payload: "PN-123"})
 	s := newTestScanner(t, f)
 	s.finder = finder
 
@@ -316,7 +330,7 @@ func TestScanner_TryFulfill_PayloadlessMove_ReachesFinder(t *testing.T) {
 	order.SourceIntent = dispatch.SourceIntentLocal // Stage 4: intent now data, set at intake
 	order.PayloadCode = ""
 	order.SourceNode = "MOVE-SRC"
-	finder := waitFinder("no available bin at MOVE-SRC")
+	finder := waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{Payload: "PN-123", Destination: "MOVE-SRC"})
 	s := newTestScanner(t, f) // its failFn t.Errorf's on any call
 	s.finder = finder
 
@@ -332,7 +346,7 @@ func TestScanner_TryFulfill_Retrieve_FinderWaits_Skipped(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 6, "dest-06")
-	finder := waitFinder("no source bin available")
+	finder := waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{Payload: "PN-123"})
 	s := newTestScanner(t, f)
 	s.finder = finder
 
@@ -342,8 +356,15 @@ func TestScanner_TryFulfill_Retrieve_FinderWaits_Skipped(t *testing.T) {
 	if len(f.claimedBins) != 0 {
 		t.Errorf("no-source should not claim a bin: %v", f.claimedBins)
 	}
-	if len(f.queueReasons) != 1 || f.queueReasons[0].Reason != "no source bin available" {
-		t.Errorf("queue_reason should record the finder's wait reason, got %v", f.queueReasons)
+	if len(f.queueReasons) != 1 {
+		t.Fatalf("queue_reason should record the finder's wait, got %v", f.queueReasons)
+	}
+	qr := f.queueReasons[0]
+	if qr.Code != string(protocol.QueueWaitingForMaterial) {
+		t.Errorf("queue_code = %q, want waiting_for_material", qr.Code)
+	}
+	if qr.Reason != "Waiting for material: PN-123" {
+		t.Errorf("queue_reason sentence = %q, want the generated material sentence", qr.Reason)
 	}
 }
 
@@ -422,7 +443,7 @@ func TestStoreReplayDispatchesOwnClaimedBin(t *testing.T) {
 	f.nodesByDot["STORE-SRC"] = &nodes.Node{ID: 500, Name: "STORE-SRC"}
 	f.nodesByDot["STORE-DEST"] = &nodes.Node{ID: 501, Name: "STORE-DEST"} // empty → gate passes
 
-	finder := waitFinder("should not be called")
+	finder := waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{Payload: "PN-123"})
 	dispatcher := &recordingDispatcher{}
 	s := newScannerWith(t, f, finder, dispatcher, func(int64, string, string) {})
 
@@ -521,7 +542,7 @@ func TestScannerCapacityGatePassesOrderID(t *testing.T) {
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 55, "dest-55") // concrete dest, 0 bins, 0 in-flight
 	s := newTestScanner(t, f)
-	s.finder = waitFinder("no source") // stop after the gate
+	s.finder = waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{Payload: "PN-123"}) // stop after the gate
 
 	if got := s.RunOnce(); got != 0 {
 		t.Fatalf("RunOnce: got %d, want 0", got)

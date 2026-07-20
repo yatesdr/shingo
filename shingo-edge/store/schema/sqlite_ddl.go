@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS orders (
     payload_code    TEXT NOT NULL DEFAULT '',
     sibling_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     queue_reason    TEXT NOT NULL DEFAULT '',
+    queue_code      TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

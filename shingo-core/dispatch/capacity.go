@@ -28,8 +28,6 @@
 package dispatch
 
 import (
-	"fmt"
-
 	"shingo/protocol"
 	"shingocore/store/nodes"
 )
@@ -47,6 +45,16 @@ type CapacityDB interface {
 	// whole is "blocked" and the order should queue rather than fail at
 	// dispatch.
 	ListChildNodes(parentID int64) ([]*nodes.Node, error)
+}
+
+// CapacityBlock is the structured result of a blocked dropoff-capacity check —
+// the queue code (always QueueWaitingForSlot when blocked), the engineer-only
+// cause naming which shape of block it was, and the params the operator sentence
+// is generated from. Replaces the pre-formatted reason string so a caller parks
+// the order through the shared formatter door, never with free text.
+type CapacityBlock struct {
+	Cause  string
+	Params QueueParams
 }
 
 // CheckDropoffCapacity returns (false, "") when the named delivery node
@@ -86,15 +94,16 @@ type CapacityDB interface {
 // blocking on a lookup failure to preserve forward progress: a typoed
 // node name should fail at the actual dispatch with a clearer error,
 // not silently queue forever.
-func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int64) (blocked bool, reason string) {
+func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int64) (blocked bool, block CapacityBlock) {
 	if deliveryNode == "" {
-		return false, ""
+		return false, CapacityBlock{}
 	}
 	node, err := db.GetNodeByDotName(deliveryNode)
 	if err != nil || node == nil {
 		// Treat lookup failure as "not blocked" — see doc above.
-		return false, ""
+		return false, CapacityBlock{}
 	}
+	params := QueueParams{Destination: deliveryNode}
 	if node.IsSynthetic {
 		if node.NodeTypeCode == protocol.NodeClassNGRP {
 			return checkNGRPCapacity(db, node, deliveryNode, excludeOrderID)
@@ -103,26 +112,26 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 		// resolves them at dispatch time. _TRANSIT is never a legit
 		// dropoff; LANE depth/buried handling lives inside the
 		// lane-aware planners.
-		return false, ""
+		return false, CapacityBlock{}
 	}
 	count, err := db.CountBinsByNode(node.ID)
 	if err != nil {
 		// Fail closed: if occupancy can't be read, don't risk dropping onto a
 		// possibly-full node — gate the order so it queues until the check works.
-		return true, fmt.Sprintf("destination %s capacity unknown (bin count failed: %v)", deliveryNode, err)
+		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
 	}
 	if count > 0 {
-		return true, fmt.Sprintf("destination %s occupied (%d bin(s))", deliveryNode, count)
+		return true, CapacityBlock{Cause: "dropoff-occupied", Params: params}
 	}
 	inFlight, err := db.CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode, excludeOrderID)
 	if err != nil {
 		// Fail closed on the in-flight read as well.
-		return true, fmt.Sprintf("destination %s capacity unknown (in-flight count failed: %v)", deliveryNode, err)
+		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
 	}
 	if inFlight > 0 {
-		return true, fmt.Sprintf("destination %s has %d in-flight order(s) inbound", deliveryNode, inFlight)
+		return true, CapacityBlock{Cause: "dropoff-inflight", Params: params}
 	}
-	return false, ""
+	return false, CapacityBlock{}
 }
 
 // checkNGRPCapacity walks the children of an NGRP destination and
@@ -140,13 +149,13 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 //
 // excludeOrderID propagates to the per-child in-flight count so an
 // order checking its own NGRP destination doesn't self-collide.
-func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, excludeOrderID int64) (blocked bool, reason string) {
+func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, excludeOrderID int64) (blocked bool, block CapacityBlock) {
 	children, err := db.ListChildNodes(ngrp.ID)
 	if err != nil || len(children) == 0 {
 		// Empty or unreadable NGRP — treat as not blocked. The
 		// resolver will return a clearer failure if it really has no
 		// candidate.
-		return false, ""
+		return false, CapacityBlock{}
 	}
 	enabledCount := 0
 	freeCount := 0
@@ -167,10 +176,10 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 		// No usable children at all — the resolver will fail; pass
 		// through so the failure surfaces with the resolver's reason
 		// rather than masking it as a queue.
-		return false, ""
+		return false, CapacityBlock{}
 	}
 	if freeCount == 0 {
-		return true, fmt.Sprintf("all %d children of %s occupied or in-flight", enabledCount, ngrpName)
+		return true, CapacityBlock{Cause: "ngrp-full", Params: QueueParams{Destination: ngrpName}}
 	}
-	return false, ""
+	return false, CapacityBlock{}
 }

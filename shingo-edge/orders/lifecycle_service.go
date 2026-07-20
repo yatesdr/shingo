@@ -183,6 +183,17 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 		return nil
 	}
 
+	// Persist the queue_reason + queue_code the snapshot carries so an Edge
+	// resync doesn't lose them — the live-push path writes both, and the boot
+	// reconcile must mirror it (the order's status is about to change, and the
+	// blocking signal Core reports should land with it). Best-effort: a failed
+	// write is logged and swallowed, matching the live-push path's disposition.
+	if snapshot.QueueReason != "" || order.QueueReason != "" {
+		if qerr := s.db.SetOrderQueueReason(order.UUID, snapshot.QueueReason, snapshot.QueueCode); qerr != nil {
+			log.Printf("lifecycle: snapshot set queue_reason for %s: %v", order.UUID, qerr)
+		}
+	}
+
 	detail := "startup reconciliation with core"
 	switch snapStatus {
 	case StatusConfirmed:

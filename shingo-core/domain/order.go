@@ -18,32 +18,44 @@ import (
 // use the order_bins junction (OrderBin) to track multiple claimed
 // bins, one per step.
 type Order struct {
-	ID              int64              `json:"id"`
-	EdgeUUID        string             `json:"edge_uuid"`
-	StationID       string             `json:"station_id"`
-	OrderType       protocol.OrderType `json:"order_type"`
-	Status          protocol.Status    `json:"status"`
-	Quantity        int64              `json:"quantity"`
-	SourceNode      string             `json:"source_node"`
-	DeliveryNode    string             `json:"delivery_node"`
-	ProcessNode     string             `json:"process_node,omitempty"`
-	VendorOrderID   string             `json:"vendor_order_id"`
-	VendorState     string             `json:"vendor_state"`
-	RobotID         string             `json:"robot_id"`
-	Priority        int                `json:"priority"`
-	PayloadDesc     string             `json:"payload_desc"`
-	ErrorDetail     string             `json:"error_detail"`
-	CreatedAt       time.Time          `json:"created_at"`
-	UpdatedAt       time.Time          `json:"updated_at"`
-	CompletedAt     *time.Time         `json:"completed_at,omitempty"`
-	ParentOrderID   *int64             `json:"parent_order_id,omitempty"`
-	Sequence        int                `json:"sequence"`
-	StepsJSON       string             `json:"steps_json,omitempty"`
-	BinID           *int64             `json:"bin_id,omitempty"`
-	PayloadCode     string             `json:"payload_code"`
-	WaitIndex       int                `json:"wait_index"`
-	QueueReason     string             `json:"queue_reason,omitempty"`
-	SkipAutoConfirm bool               `json:"skip_auto_confirm"`
+	ID            int64              `json:"id"`
+	EdgeUUID      string             `json:"edge_uuid"`
+	StationID     string             `json:"station_id"`
+	OrderType     protocol.OrderType `json:"order_type"`
+	Status        protocol.Status    `json:"status"`
+	Quantity      int64              `json:"quantity"`
+	SourceNode    string             `json:"source_node"`
+	DeliveryNode  string             `json:"delivery_node"`
+	ProcessNode   string             `json:"process_node,omitempty"`
+	VendorOrderID string             `json:"vendor_order_id"`
+	VendorState   string             `json:"vendor_state"`
+	RobotID       string             `json:"robot_id"`
+	Priority      int                `json:"priority"`
+	PayloadDesc   string             `json:"payload_desc"`
+	ErrorDetail   string             `json:"error_detail"`
+	CreatedAt     time.Time          `json:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"`
+	CompletedAt   *time.Time         `json:"completed_at,omitempty"`
+	ParentOrderID *int64             `json:"parent_order_id,omitempty"`
+	Sequence      int                `json:"sequence"`
+	StepsJSON     string             `json:"steps_json,omitempty"`
+	BinID         *int64             `json:"bin_id,omitempty"`
+	PayloadCode   string             `json:"payload_code"`
+	WaitIndex     int                `json:"wait_index"`
+	QueueReason   string             `json:"queue_reason,omitempty"`
+	// QueueCode is the structured category behind QueueReason — one of the
+	// protocol.QueueCode values (waiting_for_material, waiting_for_slot, …).
+	// The sentence is generated FROM this code by the dispatch formatter, so the
+	// two never drift; analytics groups by this column, the operator reads the
+	// sentence. Empty on non-queued orders and on pre-schema rows (nullable in
+	// the DB). See protocol.AllQueueCodes.
+	QueueCode string `json:"queue_code,omitempty"`
+	// QueueCause is the engineer-only call-site tag naming WHERE in the dispatch
+	// pipeline the wait arose (intake-resolve, swap-hold, dropoff-occupied, …).
+	// Operators never see it; engineers group by it when a code trends wrong.
+	// Stays Core-side — never crosses the wire to Edge. Empty on non-queued rows.
+	QueueCause      string `json:"queue_cause,omitempty"`
+	SkipAutoConfirm bool   `json:"skip_auto_confirm"`
 	// SiblingOrderUUID is the edge UUID of the paired leg in a two-robot
 	// swap — the supply's UUID recorded on the evac row (and vice-versa).
 	// Written ATOMICALLY in the CreateOrder INSERT so a two-robot evac's

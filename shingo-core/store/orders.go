@@ -79,10 +79,13 @@ func (db *DB) UpdateOrderWaitIndex(id int64, waitIndex int) error {
 	return orders.UpdateWaitIndex(db.DB, id, waitIndex)
 }
 
-// SetOrderQueueReason stores or clears the blocking reason on a queued
-// order. Phase 4 of bin-transit-state.
-func (db *DB) SetOrderQueueReason(id int64, reason string) error {
-	return orders.SetQueueReason(db.DB, id, reason)
+// SetOrderQueueDetail stores the blocking reason on a queued order — the
+// generated sentence, its structured queue code, and the engineer-only cause —
+// in one write. code is typed (protocol.QueueCode) so a caller cannot pass free
+// text: the dispatch formatter generates the sentence and is the sole caller.
+// Pass "" / empty code to clear (on successful dispatch).
+func (db *DB) SetOrderQueueDetail(id int64, reason string, code protocol.QueueCode, cause string) error {
+	return orders.SetQueueDetail(db.DB, id, reason, string(code), cause)
 }
 
 // LinkOrderSiblingsByEdgeUUID records a two-robot swap pairing keyed on

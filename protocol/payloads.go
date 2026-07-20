@@ -138,6 +138,11 @@ type OrderUpdate struct {
 	// an absent field signals "leave unchanged", not "clear". Core emits this from
 	// the EventOrderQueued handler after the fulfillment scanner completes its pass.
 	QueueReason string `json:"queue_reason,omitempty"`
+	// QueueCode is the structured category behind QueueReason (protocol.QueueCode).
+	// Additive: old Edge ignores it; new Edge with old Core sees "" and falls back
+	// to the sentence. Ships alongside QueueReason so Edge can persist the code
+	// for future branching without a schema change.
+	QueueCode string `json:"queue_code,omitempty"`
 }
 
 // OrderDelivered signals fleet delivery complete.
@@ -612,6 +617,10 @@ type OrderStatusSnapshot struct {
 	// group AMR Supermarket". Re-evaluated by the dispatcher/scanner and
 	// cleared on dispatch, so Edge refreshes it on each status resync.
 	QueueReason string `json:"queue_reason,omitempty"`
+	// QueueCode is the structured category behind QueueReason
+	// (protocol.QueueCode). Carried on the snapshot (additive) so an Edge
+	// resync doesn't lose the code; old Edge ignores it.
+	QueueCode string `json:"queue_code,omitempty"`
 }
 
 // OrderStatusResponse carries the authoritative Core-side state for requested orders.

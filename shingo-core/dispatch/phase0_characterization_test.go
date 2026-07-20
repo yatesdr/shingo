@@ -72,12 +72,12 @@ func TestPhase0_DispositionTriad_ClaimFailed(t *testing.T) {
 	}
 	order := testdb.AssertOrderStatus(t, db, "char-claim-failed", StatusQueued)
 
-	// CHANGE-DETECTOR: simple path does NOT set queue_reason on claim_failed.
-	// HandleOrderRequest calls queueOrder() (no queue_reason parameter) when
-	// planErr.Transient() is true; only the complex path explicitly calls
-	// SetOrderQueueReason(order.ID, codeClaimFailed) at complex_dispatch.go.
-	// Phase 1 should align the two paths. If this assertion starts failing it
-	// means queue_reason is now being set — update the comment and the want.
+	// CHANGE-DETECTOR: simple intake does NOT set a queue reason on a transient
+	// claim_failed. HandleOrderRequest calls queueOrder() (no queue-reason
+	// parameter) when planErr.Transient() is true; only the complex path writes
+	// one explicitly (via setQueueReason in complex_dispatch.go). If this
+	// assertion starts failing it means a queue reason is now being set at simple
+	// intake — update the comment and the want.
 	if order.QueueReason != "" {
 		t.Errorf("queue_reason = %q, want %q (simple path leaves queue_reason empty on claim_failed)",
 			order.QueueReason, "")

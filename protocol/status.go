@@ -11,6 +11,40 @@ import (
 // strings and other enum-shaped string types (e.g. bin status, ack outcome).
 type Status string
 
+// QueueCode is the typed, machine-readable category of WHY a queued order is
+// waiting — the structured companion to the free-text queue_reason sentence.
+// Five operator-visible codes; the sentence (held in queue_reason) is generated
+// from the code plus a few parameters by the dispatch formatter, so every site
+// that parks an order records the same code for the same physical cause and the
+// floor/analytics can GROUP BY queue_code instead of parsing prose.
+//
+// Crosses the wire on OrderUpdate and OrderStatusSnapshot (additive; old Edge
+// ignores it, new Edge with old Core sees "" and falls back to the sentence).
+// Cause (the engineer-only call-site tag) stays Core-side and never crosses.
+type QueueCode string
+
+const (
+	// QueueWaitingForMaterial: no source bin available right now — waiting on
+	// inventory (a payload match, an empty carrier, or a partial of a multi-bin
+	// set). Covers finder waits, claim races, dry empty pools, and swap supply
+	// holds alike; full-vs-empty and partial-vs-complete are parameters, not
+	// separate codes.
+	QueueWaitingForMaterial QueueCode = "waiting_for_material"
+	// QueueWaitingForSlot: the destination slot is occupied or in-flight — waiting
+	// on dropoff capacity (a concrete slot, a saturated node group, or a contended
+	// storage reserve).
+	QueueWaitingForSlot QueueCode = "waiting_for_slot"
+	// QueueStorageRearranging: the source bin is buried or its lane is mid-reshuffle
+	// — waiting on storage to be rearranged so the material becomes reachable.
+	QueueStorageRearranging QueueCode = "storage_rearranging"
+	// QueueWaitingForPartner: a two-robot swap removal leg is holding until its
+	// supply sibling secures a replacement bin.
+	QueueWaitingForPartner QueueCode = "waiting_for_partner"
+	// QueueFleetUnavailable: the fleet rejected the dispatch — waiting on the robot
+	// system (transient; the order re-queues and retries).
+	QueueFleetUnavailable QueueCode = "fleet_unavailable"
+)
+
 // Canonical order status constants shared by core and edge.
 const (
 	StatusPending      Status = "pending"
@@ -77,6 +111,36 @@ func AllStatuses() []Status {
 		StatusDelivered, StatusConfirmed, StatusFaulted, StatusFailed, StatusCancelled,
 		StatusReshuffling, StatusSkipped,
 	}
+}
+
+// AllQueueCodes returns every queue code defined in this module. Used by the
+// formatter's exhaustiveness test (walk every code through the formatter so an
+// unhandled code is a test failure, not a silent default) and by readers that
+// enumerate the analytic dimension. The empty string is intentionally NOT a
+// member — it means "no code / pre-schema row", not a real category.
+func AllQueueCodes() []QueueCode {
+	return []QueueCode{
+		QueueWaitingForMaterial,
+		QueueWaitingForSlot,
+		QueueStorageRearranging,
+		QueueWaitingForPartner,
+		QueueFleetUnavailable,
+	}
+}
+
+// ValidQueueCode reports whether c is one of the defined queue codes. The empty
+// string is valid (it means "uncoded" — a pre-schema row or a cleared reason);
+// any other unknown value is not.
+func ValidQueueCode(c QueueCode) bool {
+	if c == "" {
+		return true
+	}
+	for _, v := range AllQueueCodes() {
+		if c == v {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── Status set predicates ────────────────────────────────────────────────

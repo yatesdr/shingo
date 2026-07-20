@@ -215,12 +215,28 @@ func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bi
 		s.dbg("plan: order %d structural — %s: %s", order.ID, res.TermCode, res.Err)
 		return nil, nil, nil, &planningError{Code: res.TermCode, Detail: res.Err.Error(), Err: res.Err}, false
 	default: // OutcomeWait
-		s.dbg("plan: order %d queued — %s", order.ID, res.QueueReason)
-		if err := s.db.SetOrderQueueReason(order.ID, res.QueueReason); err != nil {
-			log.Printf("dispatch: set queue_reason for order %d: %v", order.ID, err)
-		}
+		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
 		return nil, nil, &PlanningResult{Queued: true}, nil, false
 	}
+}
+
+// setQueueReason is the planning side's one door onto the queue-reason columns:
+// it generates the operator sentence from code+params (via the shared formatter)
+// and writes sentence+code+cause together. Mirrors the Dispatcher and Scanner
+// helpers so every intake path parks through the same formatter, never free text.
+// Best-effort: a failed write is logged and swallowed.
+func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.QueueCode, cause string, params QueueParams) {
+	reason := FormatQueueSentence(code, params)
+	if order.QueueReason == reason && order.QueueCode == string(code) {
+		return
+	}
+	if err := s.db.SetOrderQueueDetail(order.ID, reason, code, cause); err != nil {
+		log.Printf("dispatch: set queue_reason (%s) for order %d: %v", cause, order.ID, err)
+		return
+	}
+	order.QueueReason = reason
+	order.QueueCode = string(code)
+	order.QueueCause = cause
 }
 
 // planTransport is the single planner for the three "simple" transport families —
@@ -295,11 +311,9 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 	// first lets a buried retrieve plan a compound that drives a bin into an
 	// occupied line, laundering the deadlock_gate_test invariant through the
 	// compound machinery. Gate first, then resolve.
-	if blocked, reason := CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
-		s.dbg("transport: order %d queued — %s", order.ID, reason)
-		if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
-			log.Printf("dispatch: set queue_reason for order %d: %v", order.ID, err)
-		}
+	if blocked, cap := CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
+		s.dbg("transport: order %d queued — %s", order.ID, cap.Cause)
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 		return &PlanningResult{Queued: true}, nil
 	}
 

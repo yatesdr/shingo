@@ -35,7 +35,7 @@ type (
 const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
-	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.sibling_order_id, o.queue_reason, o.created_at, o.updated_at,
+	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.sibling_order_id, o.queue_reason, o.queue_code, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
 
 const joinClause = `FROM orders o
@@ -108,7 +108,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &createdAt, &updatedAt,
+			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &o.QueueCode, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 			return nil, err
 		}
@@ -138,7 +138,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &createdAt, &updatedAt,
+		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &o.QueueCode, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 		return err
 	}
@@ -270,11 +270,14 @@ func UpdateBinID(db *sql.DB, id int64, binID *int64) error {
 	return err
 }
 
-// SetQueueReason writes (or clears) the blocking reason on a queued order.
-// Called from the edge handler when Core pushes an OrderUpdate with Status=queued
-// and a non-empty QueueReason. Pass "" to clear on terminal/dispatch transitions.
-func SetQueueReason(db *sql.DB, uuid, reason string) error {
-	_, err := db.Exec(`UPDATE orders SET queue_reason=?, updated_at=datetime('now') WHERE uuid=?`, reason, uuid)
+// SetQueueReason writes (or clears) the blocking reason AND its structured code
+// on a queued order. Called from the edge handler when Core pushes an OrderUpdate
+// (or a boot snapshot) carrying QueueReason + QueueCode. Pass "" for both to
+// clear on terminal/dispatch transitions. code is protocol.QueueCode as a raw
+// string (Edge does not branch on it in v1 — it persists it so future behavior
+// is a read, not a schema change).
+func SetQueueReason(db *sql.DB, uuid, reason, code string) error {
+	_, err := db.Exec(`UPDATE orders SET queue_reason=?, queue_code=?, updated_at=datetime('now') WHERE uuid=?`, reason, code, uuid)
 	return err
 }
 
