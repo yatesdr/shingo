@@ -124,7 +124,14 @@ func (p *PlantClaimsPublisher) publishProcess(proc processes.Process) error {
 		if err != nil {
 			return err
 		}
-		wire := protocol.PlantClaimsStyle{StyleID: st.Name}
+		// Mark the running style. proc.ActiveStyleID is the field Edge itself
+		// resolves claims through (findActiveClaim keys on it), so publishing it
+		// tells Core what Edge is already acting on rather than a second,
+		// separately-maintained notion of "running".
+		wire := protocol.PlantClaimsStyle{
+			StyleID: st.Name,
+			Active:  proc.ActiveStyleID != nil && *proc.ActiveStyleID == st.ID,
+		}
 		for _, c := range claims {
 			if c.SwapMode == protocol.SwapModeManualSwap {
 				continue // loaders/unloaders excluded — pool, not claims

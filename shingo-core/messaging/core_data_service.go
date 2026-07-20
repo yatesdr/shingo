@@ -669,6 +669,7 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 			ProcessID: report.ProcessID,
 			StyleID:   st.StyleID,
 			ConfigGen: report.ConfigGen,
+			IsActive:  st.Active,
 		})
 		for i, c := range st.Claims {
 			claims = append(claims, plantclaims.ClaimRow{

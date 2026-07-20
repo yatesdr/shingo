@@ -1017,6 +1017,17 @@ type PlantClaimsStyle struct {
 	// style. Manual_swap (loader/unloader) claims are excluded at the
 	// publisher; only the material-flow claims the netting reads appear.
 	Claims []PlantClaim `json:"claims"`
+	// Active marks the style the process is currently running — Edge's
+	// processes.active_style_id, which is the same field Edge already
+	// resolves node claims through (findActiveClaim keys on it). At most one
+	// style per process carries it.
+	//
+	// Additive: an older Core simply never sets its mirror column, and the
+	// sourcing page keeps saying no style is marked running. Absent on a
+	// report from an older Edge, which is indistinguishable from "this
+	// process has no active style set" — both mean Core must not claim to
+	// know what is running.
+	Active bool `json:"active,omitempty"`
 }
 
 // PlantClaim is one (node, payload) assignment under a style — the

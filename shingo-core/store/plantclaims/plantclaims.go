@@ -23,6 +23,11 @@ type StyleRow struct {
 	ProcessID string
 	StyleID   string
 	ConfigGen int64
+	// IsActive marks the style the process is currently running, mirrored from
+	// Edge's processes.active_style_id. At most one style per process carries
+	// it; false for every style when Edge has no active style set, or when the
+	// report came from an Edge too old to publish the flag.
+	IsActive bool
 }
 
 // ClaimRow is one sourceability-relevant node claim under a (process, style).
@@ -79,8 +84,9 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 
 	for _, s := range styles {
 		if _, err := tx.Exec(
-			`INSERT INTO process_styles (process_id, style_id, config_gen) VALUES ($1, $2, $3)`,
-			s.ProcessID, s.StyleID, s.ConfigGen,
+			`INSERT INTO process_styles (process_id, style_id, config_gen, is_active)
+			 VALUES ($1, $2, $3, $4)`,
+			s.ProcessID, s.StyleID, s.ConfigGen, s.IsActive,
 		); err != nil {
 			return fmt.Errorf("plantclaims replace %s: insert style %s: %w", processID, s.StyleID, err)
 		}

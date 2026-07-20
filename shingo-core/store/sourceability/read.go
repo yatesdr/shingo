@@ -188,3 +188,33 @@ func consumptionRateByPayload(db *sql.DB, window time.Duration) (map[string]floa
 	}
 	return rate, rows.Err()
 }
+
+// ActiveStyles returns the style each process is currently running, keyed by
+// process ID, from the plant-claims mirror. A process with no active style is
+// absent from the map — Core must not guess at one.
+//
+// This is the running-style signal the sourcing page lacked entirely: Edge has
+// always known (processes.active_style_id, the field it resolves node claims
+// through) but it did not cross the wire until the plant.claims feed gained an
+// active flag.
+func ActiveStyles(db *sql.DB) (map[string]string, error) {
+	rows, err := db.Query(
+		`SELECT process_id, style_id FROM process_styles WHERE is_active`)
+	if err != nil {
+		return nil, fmt.Errorf("sourceability: load active styles: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]string)
+	for rows.Next() {
+		var processID, styleID string
+		if err := rows.Scan(&processID, &styleID); err != nil {
+			return nil, fmt.Errorf("sourceability: scan active style: %w", err)
+		}
+		out[processID] = styleID
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sourceability: active styles: %w", err)
+	}
+	return out, nil
+}

@@ -11,6 +11,7 @@ import (
 	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store/plantclaims"
+	"shingocore/store/sourceability"
 )
 
 // TestHandlePlantClaims_MirrorRebuildAfterWipe pins the property that replaces
@@ -240,13 +241,14 @@ type claimSpec struct {
 
 type styleSpec struct {
 	name   string
+	active bool
 	claims []claimSpec
 }
 
 func plantClaimsReport(process string, configGen int64, styles []styleSpec) *protocol.PlantClaimsReport {
 	out := &protocol.PlantClaimsReport{ProcessID: process, ConfigGen: configGen}
 	for _, st := range styles {
-		ws := protocol.PlantClaimsStyle{StyleID: st.name}
+		ws := protocol.PlantClaimsStyle{StyleID: st.name, Active: st.active}
 		for _, c := range st.claims {
 			role, swap := c.role, c.swap
 			if role == "" {
@@ -287,10 +289,15 @@ func payloadTargets(idx map[string][]plantclaims.ProcessKey, payload string) []s
 // restore the tables without a full re-migrate.
 func reseedMirrorTables(db *sql.DB) error {
 	stmts := []string{
+		// Mirrors the migrated shape, v49 + v51. This helper hand-rolls the DDL
+		// to model a "tables dropped, recreated, feed replayed" cycle, so it has
+		// to track every migration that touches these tables — is_active came
+		// with v51 (the running style from the plant-claims feed).
 		`CREATE TABLE IF NOT EXISTS process_styles (
 			process_id   TEXT NOT NULL,
 			style_id     TEXT NOT NULL,
 			config_gen   BIGINT NOT NULL DEFAULT 0,
+			is_active    BOOLEAN NOT NULL DEFAULT FALSE,
 			updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			PRIMARY KEY (process_id, style_id)
 		)`,
@@ -315,4 +322,85 @@ func reseedMirrorTables(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// TestHandlePlantClaims_MirrorsTheRunningStyle pins the running-style signal end
+// to end: Edge marks one style active on the feed, Core persists it, and the
+// sourcing read returns it. Core had no notion of a running style before this —
+// the feed carried a process's styles and claims but no active flag, so the
+// sourcing page could only say what a process COULD change over to.
+func TestHandlePlantClaims_MirrorsTheRunningStyle(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewCoreDataService(db, &captureResponder{})
+
+	svc.HandlePlantClaims(nil, plantClaimsReport("SNF2", 1, []styleSpec{
+		{name: "74595-6SA0A.95", claims: []claimSpec{{node: "STOR-01", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
+		{name: "76680-6TA0A.95", active: true, claims: []claimSpec{{node: "STOR-02", payload: "BIN-B", allowed: []string{"BIN-B"}}}},
+		{name: "Default", claims: []claimSpec{{node: "STOR-03", payload: "BIN-C", allowed: []string{"BIN-C"}}}},
+	}))
+
+	active, err := sourceability.ActiveStyles(db.DB)
+	if err != nil {
+		t.Fatalf("ActiveStyles: %v", err)
+	}
+	if got := active["SNF2"]; got != "76680-6TA0A.95" {
+		t.Fatalf("running style = %q, want 76680-6TA0A.95", got)
+	}
+	if len(active) != 1 {
+		t.Fatalf("active styles = %v, want exactly one process marked", active)
+	}
+}
+
+// TestHandlePlantClaims_NoActiveStyleIsNotGuessed is the honesty half. A report
+// with no style marked active must leave Core with no running style for that
+// process — not the first style, not a default. Core showing a confident wrong
+// style is worse than showing none.
+func TestHandlePlantClaims_NoActiveStyleIsNotGuessed(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewCoreDataService(db, &captureResponder{})
+
+	svc.HandlePlantClaims(nil, plantClaimsReport("P47", 1, []styleSpec{
+		{name: "81220-6SA0A.95", claims: []claimSpec{{node: "STOR-01", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
+		{name: "81220-6SA0B.95", claims: []claimSpec{{node: "STOR-02", payload: "BIN-B", allowed: []string{"BIN-B"}}}},
+	}))
+
+	active, err := sourceability.ActiveStyles(db.DB)
+	if err != nil {
+		t.Fatalf("ActiveStyles: %v", err)
+	}
+	if got, ok := active["P47"]; ok {
+		t.Fatalf("running style = %q, want absent — no style was marked active", got)
+	}
+}
+
+// TestHandlePlantClaims_ActiveStyleFollowsAChangeover pins that the flag TRACKS
+// rather than accumulates: a later snapshot moving the active style must leave
+// exactly one active, not two. The mirror is replaced per process wholesale, so
+// this is really a guard on that replace covering the new column.
+func TestHandlePlantClaims_ActiveStyleFollowsAChangeover(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewCoreDataService(db, &captureResponder{})
+
+	before := []styleSpec{
+		{name: "A", active: true, claims: []claimSpec{{node: "N1", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
+		{name: "B", claims: []claimSpec{{node: "N2", payload: "BIN-B", allowed: []string{"BIN-B"}}}},
+	}
+	after := []styleSpec{
+		{name: "A", claims: []claimSpec{{node: "N1", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
+		{name: "B", active: true, claims: []claimSpec{{node: "N2", payload: "BIN-B", allowed: []string{"BIN-B"}}}},
+	}
+
+	svc.HandlePlantClaims(nil, plantClaimsReport("SNF4", 1, before))
+	svc.HandlePlantClaims(nil, plantClaimsReport("SNF4", 2, after))
+
+	active, err := sourceability.ActiveStyles(db.DB)
+	if err != nil {
+		t.Fatalf("ActiveStyles: %v", err)
+	}
+	if got := active["SNF4"]; got != "B" {
+		t.Fatalf("running style after changeover = %q, want B", got)
+	}
 }

@@ -42,10 +42,13 @@ type SourcingProcessView struct {
 	ProcessID string
 	Styles    []SourcingStyleView
 	// Status is the process-level roll-up shown on the rail: the worst verdict
-	// across its styles. It is a summary of what this process could change over
-	// to — NOT a statement about what it is running now, which Core cannot know
-	// (see SourceabilityPageView.RunningStyleKnown).
+	// across its styles.
 	Status string
+	// RunningStyle is the style this process is currently running, mirrored
+	// from Edge via the plant-claims feed. Empty when Edge has no active style
+	// for the process, or when the mirror predates the active flag — the rail
+	// then shows no style line rather than guessing.
+	RunningStyle string
 	// Ready and Blocked count the styles this process can and cannot change over
 	// to. Unconfigured styles are in neither: they have no verdict.
 	Ready   int
@@ -111,9 +114,14 @@ type SourceabilityPageView struct {
 	// YellowEnabled tells the page whether the at-risk tier is on, so it can
 	// explain an empty queue rather than imply nothing is ever at risk.
 	YellowEnabled bool
-	// RunningStyleKnown is false: Core has no authoritative running-style signal
-	// (the plant.claims feed carries no active flag). The page marks no style
-	// running rather than guess.
+	// RunningStyleKnown reports whether Core has a running-style signal at all:
+	// true once ANY process arrives with an active style on the plant-claims
+	// feed. False means no Edge has published one yet (an Edge older than the
+	// active flag, or a plant with no active style set anywhere), and the page
+	// explains that rather than showing an empty column that reads as a bug.
+	//
+	// Per-process absence is a different thing and is carried by
+	// SourcingProcessView.RunningStyle being empty.
 	RunningStyleKnown bool
 }
 
@@ -121,8 +129,7 @@ type SourceabilityPageView struct {
 // gated snapshot plus claim + pool context. It never recomputes a verdict.
 func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 	view := SourceabilityPageView{
-		YellowEnabled:     e.cfg.Sourceability.EnableAtRisk,
-		RunningStyleKnown: false,
+		YellowEnabled: e.cfg.Sourceability.EnableAtRisk,
 	}
 	if e.sourceabilityMonitor == nil {
 		return view, nil
@@ -134,6 +141,10 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 		return view, err
 	}
 	pool, err := sourceability.PoolBreakdownByPayload(e.db.DB)
+	if err != nil {
+		return view, err
+	}
+	activeStyles, err := sourceability.ActiveStyles(e.db.DB)
 	if err != nil {
 		return view, err
 	}
@@ -187,6 +198,10 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 
 	for _, pv := range byProcess {
 		sort.Slice(pv.Styles, func(i, j int) bool { return pv.Styles[i].StyleID < pv.Styles[j].StyleID })
+		pv.RunningStyle = activeStyles[pv.ProcessID]
+		if pv.RunningStyle != "" {
+			view.RunningStyleKnown = true
+		}
 		pv.Status = rollUpStatus(pv.Styles)
 		for _, s := range pv.Styles {
 			switch s.Status {

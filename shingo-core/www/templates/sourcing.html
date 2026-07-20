@@ -16,7 +16,11 @@
   .src-rrow[aria-selected="true"] { background:var(--elev-raised); box-shadow:inset 2px 0 0 var(--accent); }
   .src-rrow:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
   .src-rname { font-weight:650; font-size:0.87rem; }
-  .src-rmeta { font-size:0.72rem; color:var(--text-muted); margin-top:0.1rem; }
+  .src-rmeta { font-size:0.72rem; color:var(--text-muted); margin-top:0.1rem; display:block; }
+  /* The running style is a value, not a label — brighter than the meta line
+     beneath it, tabular so codes line up down the rail. */
+  .src-running { color:var(--text); font-variant-numeric:tabular-nums; }
+  .src-now { font-size:1.05rem; font-weight:650; margin-top:0.1rem; font-variant-numeric:tabular-nums; }
 
   /* Pane */
   .src-pane { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:0.9rem 1.1rem; }
@@ -77,10 +81,11 @@
 </div>
 
 <p class="text-muted">
-  What every process can change over to right now.
+  What every process is running and can change over to right now.
   {{if not .View.RunningStyleKnown}}
-  Core has no running-style signal, so no style is marked as currently running &mdash;
-  the plant-claims feed carries each process's styles and claims but no active flag.
+  No process has reported a running style yet &mdash; either this Edge predates the
+  active-style flag on the plant-claims feed, or no active style is set. Styles
+  will appear once Edge republishes (on the next spec change, timer, or boot).
   {{end}}
 </p>
 
@@ -95,9 +100,11 @@
             aria-controls="pane-{{$p.ProcessID}}">
       <span>
         <span class="src-rname">{{$p.ProcessID}}</span>
-        {{/* No current-style line: Core cannot know what is running. The rail
-             carries what it can stand behind — how many styles this process
-             could change over to, and how many are blocked. */}}
+        {{/* The running style, mirrored from Edge's active_style_id. Shown only
+             when Edge actually published one for THIS process — an absent flag
+             means Core does not know, and a placeholder dash there would read
+             as a style rather than as an absence. */}}
+        {{if $p.RunningStyle}}<span class="src-rmeta src-running">{{$p.RunningStyle}}</span>{{end}}
         <span class="src-rmeta">
           {{if eq $p.Status "not_configured"}}no claims configured
           {{else}}{{$p.Ready}} ready &middot; {{$p.Blocked}} blocked{{end}}
@@ -112,6 +119,11 @@
   <div class="src-pane" id="pane-{{$p.ProcessID}}" role="tabpanel"
        data-process="{{$p.ProcessID}}"{{if ne $i 0}} hidden{{end}}>
     <h3>{{$p.ProcessID}} {{template "srcchip" $p.Status}}</h3>
+
+    {{if $p.RunningStyle}}
+    <div class="src-k">Running now</div>
+    <div class="src-now">{{$p.RunningStyle}}</div>
+    {{end}}
 
     <div class="src-k">Changeover</div>
     {{if not $p.Styles}}

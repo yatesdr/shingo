@@ -565,6 +565,22 @@ func (db *DB) runVersionedMigrations() error {
 				return schema.ColumnExists(q, "payloads", "advanced_load_sequence") &&
 					schema.TableExists(q, "load_sequences")
 			}},
+		// ⚠ NUMBERING COLLISION AHEAD — READ BEFORE REBASING THE LANE CAMPAIGN.
+		//
+		// v51 is taken HERE, on main. The unpushed lane campaign (refactor-phase1,
+		// held back per the Springfield merge brief §5) also carries a v51 and a
+		// v52 — the durable lane rows and the pending_restocks drop. Those two
+		// MUST be renumbered to v52 and v53 when that branch rebases onto main.
+		// The migration list is keyed by integer, so two v51s do not conflict at
+		// compile time: the second one silently never runs against a database
+		// that already recorded 51, and the schema diverges per-plant depending
+		// on which build reached it first. Renumber at rebase; do not merge the
+		// campaign without checking this line.
+		{51, "add process_styles.is_active (running style from the plant-claims feed)",
+			v51ProcessStyleActive,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "process_styles", "is_active")
+			}},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1834,6 +1850,35 @@ func v50AdvancedLoadSequence(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v50 advanced load sequence: %w", err)
+		}
+	}
+	return nil
+}
+
+// v51ProcessStyleActive marks which mirrored style a process is running.
+//
+// Core had no notion of a running style at all: the plant-claims feed carried a
+// process's styles and their claims but no active flag, so the sourcing page
+// could only say what a process COULD change over to, never what it is on now.
+// Edge has known all along — processes.active_style_id, the same field Edge
+// resolves node claims through — it simply never crossed the wire.
+//
+// Additive and idempotent: NOT NULL DEFAULT FALSE, so every existing row reads
+// "not the active style" until the next plant-claims snapshot lands (Edge
+// republishes on every spec change, on a timer, and at boot, so that is minutes
+// at worst). A partial index rather than a UNIQUE constraint: at most one style
+// per process should be active, but a mid-flight snapshot is replaced
+// wholesale inside one transaction, and a hard constraint would turn a
+// transient double-active during replace into a failed mirror write.
+func v51ProcessStyleActive(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE process_styles ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT FALSE`,
+		`CREATE INDEX IF NOT EXISTS ix_process_styles_active
+			ON process_styles (process_id) WHERE is_active`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v51 process_styles.is_active: %w", err)
 		}
 	}
 	return nil
