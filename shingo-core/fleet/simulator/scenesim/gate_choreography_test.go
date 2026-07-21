@@ -1,6 +1,8 @@
 package scenesim
 
 import (
+	"fmt"
+	"math/rand"
 	"testing"
 
 	"shingocore/fleet"
@@ -143,54 +145,287 @@ func TestGateChoreo_OpenValveIsInvisible(t *testing.T) {
 // behavior as expected, rather than working around it.
 //
 // When the classifier says the lane is contended, the valve creates the unsealed
-// waybill and appends nothing. The robot drives to the wait point and holds —
-// indefinitely, because the release evaluator does not exist until increment 4.
-// This asserts that shape precisely: the robot dwells, it dwells AT THE GATE and
-// not inside the lane, and nothing in the harness mistakes the dwell for a
-// deadlock. When increment 4 lands, this test is what proves the dwell became a
-// release rather than silently having been a release all along.
-func TestGateChoreo_ContendedStagesAndDwells(t *testing.T) {
+// waybill and appends nothing — the robot drives to the wait point and holds. The
+// release evaluator then appends its tail the moment the lane becomes safe, and
+// the store completes wall-free.
+//
+// Increment 3 asserted only the first half (the dwell), because nothing could
+// release it yet. This is the flip: the same dwell now ENDS, and it ends because
+// of the blocker's PLACEMENT rather than its completion — the blocker is still in
+// the lane driving out when the dwelling robot is let in.
+func TestGateChoreo_ContendedStagesThenReleases(t *testing.T) {
 	sim := newGatedSim(t, 4, 0) // 0 → the sim's default hop cost
-	if err := sim.AddRobot("STORE", "AISLE"); err != nil {
-		t.Fatalf("AddRobot: %v", err)
-	}
-	// Created unsealed; the classifier said contended, so NO tail is appended.
-	if err := sim.Submit("STORE", gatedStoreReq("store-1", "LINE", "GATE"), false); err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
+	gc := newGateController(sim, "LANE")
 
-	_, vios, settled := sim.RunUntilIdle(300)
-	if settled {
-		t.Fatal("a contended gated order must NOT complete — nothing has appended its tail")
+	// Deep blocker and a shallower entrant, different origins. The shallow one is
+	// closer, so without the gate it would reach the mouth first and wall the deep
+	// one — the owner scenario.
+	gc.submit(t, "DEEP", "deep-1", "S1", "", 6)
+	gc.submit(t, "SHALLOW", "shallow-1", "S0", "", 1)
+
+	dwelled := false
+	ticks, vios, settled := gc.run(t, 400, func() {
+		if len(sim.WaitingOrders()) > 0 {
+			dwelled = true
+		}
+	})
+	if !settled {
+		t.Fatalf("both stores must settle once the gate releases them (ran %d ticks, waiting=%v)", ticks, sim.WaitingOrders())
+	}
+	if !dwelled {
+		t.Fatal("the shallow store should have dwelled at the gate at least one tick — otherwise this scenario is not testing contention")
 	}
 	for _, v := range vios {
-		t.Errorf("staged dwell fired a checker (a dwell is pending, not broken): %s: %s", v.Checker, v.Detail)
+		t.Errorf("contended release fired a checker: %s: %s", v.Checker, v.Detail)
 	}
-	if w := sim.WaitingOrders(); len(w) != 1 || w[0] != "store-1" {
-		t.Fatalf("waiting orders = %v, want exactly [store-1] dwelling at the gate", w)
+	if n := sim.BusyCount(); n != 0 {
+		t.Errorf("walled stores = %d, want 0", n)
 	}
-	// It must hold OUTSIDE the lane. A robot that dwelled inside would occupy a
-	// lane cell and block the very traffic the gate exists to sequence.
-	if r := sim.robots["STORE"]; r.pos.inLane() {
-		t.Errorf("gated robot dwelled INSIDE the lane at %v — the wait point must be outside the mouth", r.pos)
-	} else if r.pos.Node != "GATE" {
-		t.Errorf("gated robot dwelled at %q, want GATE", r.pos.Node)
+	// Deepest-first: the deep bin must be down before the shallow one, or the
+	// shallow bin would have walled the deep target.
+	if gc.placedAt["deep-1"] >= gc.placedAt["shallow-1"] {
+		t.Errorf("deep placed at tick %d, shallow at %d — deepest-first entry was not preserved",
+			gc.placedAt["deep-1"], gc.placedAt["shallow-1"])
+	}
+	// THE claim of this arm: release is driven by PLACEMENT, not COMPLETION. The
+	// window is [blocker's bin lands, blocker's robot goes idle] — the blocker is
+	// still physically backing out of the lane when the dwelling robot is let in.
+	// A completion-coarse gate could only release at or after doneAt.
+	rel, placed, done := gc.releasedAt["shallow-1"], gc.placedAt["deep-1"], gc.doneAt["deep-1"]
+	if rel < placed {
+		t.Errorf("shallow released at tick %d, before the blocker placed at %d — impossible; the model is wrong", rel, placed)
+	}
+	if done == 0 {
+		t.Fatal("blocker completion was never observed — the scenario cannot distinguish placement from completion")
+	}
+	if rel >= done {
+		t.Errorf("shallow released at tick %d but the blocker only finished at %d — that is completion-release, not placement-release (placed at %d)",
+			rel, done, placed)
+	}
+	t.Logf("contended store dwelled, released at tick %d — after the blocker PLACED (%d), before it COMPLETED (%d); settled at %d",
+		rel, placed, done, ticks)
+}
+
+// TestGateChoreo_ContendedFilterIn: three cross-origin stores converge on one lane
+// with scrambled approach distances, so arrival order at the mouth is the REVERSE
+// of the safe entry order. The gate has to filter them in deepest-first anyway.
+//
+// This is the wall scenario generalized past two robots. The reachability checker
+// is the real assertion — it fires the moment a bin lands shallower than a target
+// something is still bound to — and the placement order pins deepest-first
+// explicitly rather than inferring it from the absence of a violation.
+func TestGateChoreo_ContendedFilterIn(t *testing.T) {
+	sim := newGatedSim(t, 4, 0)
+	gc := newGateController(sim, "LANE")
+
+	// Shallowest robot is nearest the lane; deepest is furthest. Ungated, they
+	// would enter in exactly the wrong order.
+	gc.submit(t, "R-DEEP", "deep", "S2", "", 9)
+	gc.submit(t, "R-MID", "mid", "S1", "", 5)
+	gc.submit(t, "R-SHALLOW", "shallow", "S0", "", 1)
+
+	ticks, vios, settled := gc.run(t, 600, nil)
+	if !settled {
+		t.Fatalf("all three stores must settle (ran %d ticks, waiting=%v, busy=%d)", ticks, sim.WaitingOrders(), sim.BusyCount())
+	}
+	for _, v := range vios {
+		t.Errorf("filter-in fired a checker: %s: %s", v.Checker, v.Detail)
+	}
+	if n := sim.BusyCount(); n != 0 {
+		t.Errorf("walled stores = %d, want 0", n)
+	}
+	// Deepest-first, asserted as a total order over placements.
+	got := gc.placementOrder()
+	want := []string{"deep", "mid", "shallow"}
+	if len(got) != len(want) {
+		t.Fatalf("placement order = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("placement order = %v, want %v (deepest-first entry is the whole point of the gate)", got, want)
+		}
+	}
+	t.Logf("3-store contended filter-in: placements %v in %d ticks, zero walls, zero checker fires", got, ticks)
+}
+
+// TestGateChoreo_Tier1CoRelease: a SAME-ORIGIN pair behind a deeper cross-origin
+// blocker must be released TOGETHER — one decision, two appends, same pass.
+//
+// Tier 1 is the press pair, and splitting it is the one unforgivable regression.
+// Releasing only the deeper partner and making the shallower one wait for it to
+// place would re-serialize exactly the pair the exemption exists to protect. The
+// assertion is therefore on the release TICK being identical, not merely on both
+// eventually going.
+func TestGateChoreo_Tier1CoRelease(t *testing.T) {
+	sim := newGatedSim(t, 4, 0)
+	gc := newGateController(sim, "LANE")
+
+	gc.submit(t, "BLOCKER", "blocker", "S2", "", 6) // deeper, cross-origin
+	gc.submit(t, "PRESS-L", "press-l", "S1", "press", 2)
+	gc.submit(t, "PRESS-R", "press-r", "S0", "press", 2)
+
+	ticks, vios, settled := gc.run(t, 600, nil)
+	if !settled {
+		t.Fatalf("pair + blocker must settle (ran %d ticks, waiting=%v)", ticks, sim.WaitingOrders())
+	}
+	for _, v := range vios {
+		t.Errorf("Tier-1 co-release fired a checker: %s: %s", v.Checker, v.Detail)
+	}
+	l, r := gc.releasedAt["press-l"], gc.releasedAt["press-r"]
+	if l == 0 || r == 0 {
+		t.Fatalf("both partners must have been released by the gate (l=%d r=%d)", l, r)
+	}
+	if l != r {
+		t.Errorf("press partners released at ticks %d and %d — Tier 1 requires ONE decision releasing both, or the pair is re-serialized", l, r)
+	}
+	// And the pair went on the blocker's PLACEMENT, not its completion — so Tier 1
+	// costs the pair nothing beyond the physical wait for the lane to clear.
+	placed, done := gc.placedAt["blocker"], gc.doneAt["blocker"]
+	if l < placed {
+		t.Errorf("pair released at %d, before the blocker placed at %d — impossible", l, placed)
+	}
+	if done != 0 && l >= done {
+		t.Errorf("pair released at %d but the blocker only finished at %d — completion-release, not placement-release", l, done)
 	}
 
-	// Increment 4 preview, asserted now so the harness proves the dwell is a valve
-	// and not a wedge: appending the tail releases it and the store completes.
-	if err := sim.AppendBlocks("store-1", gatedTail("store-1", "S1")); err != nil {
-		t.Fatalf("AppendBlocks: %v", err)
+	// TICK PARITY vs an OPEN valve. Waiting together must not make the partners
+	// wait on EACH OTHER: once released, the pair should interleave exactly as it
+	// does with no blocker present. The measure is the gap between their two
+	// placements — the open-valve gap is what the press costs inherently, and Tier
+	// 1 must reproduce it rather than add a serialization on top.
+	openGap, openTicks := pressPairPlacementGap(t)
+	gatedGap := gc.placedAt["press-r"] - gc.placedAt["press-l"]
+	if gatedGap < 0 {
+		gatedGap = -gatedGap
 	}
-	ticks, moreVios, done := sim.RunUntilIdle(300)
-	if !done {
-		t.Fatal("appending the tail must release the dwelling robot and let it finish")
+	if gatedGap != openGap {
+		t.Errorf("press partners placed %d ticks apart behind a gate vs %d ticks apart through an open valve — Tier 1 added serialization between the pair",
+			gatedGap, openGap)
 	}
-	for _, v := range moreVios {
-		t.Errorf("post-release fired a checker: %s: %s", v.Checker, v.Detail)
+	t.Logf("Tier-1: blocker placed tick %d (done %d), BOTH partners released tick %d, settled %d; pair placement gap %d == open-valve gap %d (open valve settles in %d)",
+		placed, done, l, ticks, gatedGap, openGap, openTicks)
+}
+
+// pressPairPlacementGap runs the same same-origin pair through an OPEN valve (no
+// blocker) and returns how many ticks apart their two bins land, plus the settle
+// tick. This is the pair's inherent cost — what Tier 1 must not exceed.
+func pressPairPlacementGap(t *testing.T) (gap, ticks int) {
+	t.Helper()
+	sim := newGatedSim(t, 4, 0)
+	gc := newGateController(sim, "LANE")
+	gc.submit(t, "PRESS-L", "press-l", "S1", "press", 2)
+	gc.submit(t, "PRESS-R", "press-r", "S0", "press", 2)
+	ticks, vios, settled := gc.run(t, 400, nil)
+	if !settled {
+		t.Fatal("open-valve press pair did not settle")
 	}
-	if len(sim.WaitingOrders()) != 0 {
-		t.Errorf("nothing should still be waiting after the tail landed: %v", sim.WaitingOrders())
+	for _, v := range vios {
+		t.Errorf("open-valve press pair fired a checker: %s: %s", v.Checker, v.Detail)
 	}
-	t.Logf("contended store dwelled at the gate, then completed %d ticks after its tail was appended", ticks)
+	gap = gc.placedAt["press-r"] - gc.placedAt["press-l"]
+	if gap < 0 {
+		gap = -gap
+	}
+	return gap, ticks
+}
+
+// TestGateChoreo_DoubleFireIdempotent: evaluating the same lane many times per
+// tick must not append a tail twice.
+//
+// The authoritative guard lives in production (releaseGatedOrder reloads the
+// order and re-checks IsGateStaged under the per-lane mutex, asserted in the
+// dispatch battery). What this pins is the PHYSICS consequence: a duplicated tail
+// would give a robot two dropoff blocks and it would try to place twice, which
+// the harness would show as extra work and a bin count that does not match. So
+// this runs the evaluator 5× per tick and asserts the outcome is bit-identical to
+// running it once.
+func TestGateChoreo_DoubleFireIdempotent(t *testing.T) {
+	run := func(firesPerTick int) (ticks int, appends map[string]int, bins int) {
+		sim := newGatedSim(t, 4, 0)
+		gc := newGateController(sim, "LANE")
+		gc.firesPerTick = firesPerTick
+		gc.submit(t, "DEEP", "deep-1", "S1", "", 6)
+		gc.submit(t, "SHALLOW", "shallow-1", "S0", "", 1)
+		ticks, vios, settled := gc.run(t, 400, nil)
+		if !settled {
+			t.Fatalf("firesPerTick=%d: did not settle", firesPerTick)
+		}
+		for _, v := range vios {
+			t.Errorf("firesPerTick=%d fired a checker: %s: %s", firesPerTick, v.Checker, v.Detail)
+		}
+		n := 0
+		for _, s := range []string{"S0", "S1", "S2", "S3"} {
+			if sim.HasBin(s) {
+				n++
+			}
+		}
+		return ticks, gc.appends, n
+	}
+
+	onceTicks, onceAppends, onceBins := run(1)
+	manyTicks, manyAppends, manyBins := run(5)
+
+	for id, n := range manyAppends {
+		if n != 1 {
+			t.Errorf("order %s had its tail appended %d times under repeated evaluation, want exactly 1", id, n)
+		}
+	}
+	if len(manyAppends) != len(onceAppends) {
+		t.Errorf("appended orders = %d under 5×/tick vs %d under 1×/tick", len(manyAppends), len(onceAppends))
+	}
+	if manyTicks != onceTicks || manyBins != onceBins {
+		t.Errorf("repeated evaluation changed the outcome: ticks %d→%d, bins %d→%d",
+			onceTicks, manyTicks, onceBins, manyBins)
+	}
+	t.Logf("double-fire: 5 evaluations/tick produced an identical run (%d ticks, %d bins, one append per order)", manyTicks, manyBins)
+}
+
+// TestGateChoreo_SoakZeroWalls is the 200-seed soak with the gate armed: random
+// pre-fill, random approach distances, cross-origin stores filling whatever the
+// lane has left. Every seed must settle wall-free with every checker green.
+//
+// It is the direct counterpart of TestTieredEntry_SoakZeroWalls, which soaks the
+// fallback arm over the same configurations — so the two arms are held to the
+// same bar on the same shapes.
+func TestGateChoreo_SoakZeroWalls(t *testing.T) {
+	const seeds = 200
+	const slots = 4
+	var walled, violated, dwelt int
+
+	for seed := range seeds {
+		rng := rand.New(rand.NewSource(int64(seed)))
+		f := rng.Intn(slots - 1)
+		var preFill []string
+		for i := slots - f; i < slots; i++ {
+			preFill = append(preFill, fmt.Sprintf("S%d", i))
+		}
+		nEmpty := slots - f
+
+		sim := newGatedSim(t, slots, 0)
+		for _, s := range preFill {
+			sim.PlaceBin(s)
+		}
+		gc := newGateController(sim, "LANE")
+		for k := range nEmpty {
+			depthIdx := (nEmpty - 1) - k
+			gc.submit(t, fmt.Sprintf("R%d", depthIdx), fmt.Sprintf("o%d", depthIdx),
+				fmt.Sprintf("S%d", depthIdx), "", 1+rng.Intn(8))
+		}
+
+		_, vios, settled := gc.run(t, 800, nil)
+		if !settled || sim.BusyCount() > 0 {
+			walled++
+		}
+		if len(vios) > 0 {
+			violated++
+		}
+		if len(gc.releasedAt) > 0 {
+			dwelt++
+		}
+	}
+	if walled > 0 || violated > 0 {
+		t.Errorf("gate_choreography soak must be clean: %d/%d seeds walled, %d/%d fired a checker", walled, seeds, violated, seeds)
+	}
+	t.Logf("GATE_CHOREOGRAPHY soak: %d/%d walled, %d/%d fired a checker, %d/%d seeds exercised a real gate release — clean",
+		walled, seeds, violated, seeds, dwelt, seeds)
 }

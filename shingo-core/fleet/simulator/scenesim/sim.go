@@ -205,6 +205,26 @@ func (s *Sim) Flags() Flags { return s.flags }
 // inventory), so reachability/packing start from a real lane state.
 func (s *Sim) PlaceBin(slot string) { s.bins[slot] = true }
 
+// HasBin reports whether a bin currently sits in a slot. A store's bin appears
+// here the tick its dropoff block completes, which makes this the harness's
+// PLACEMENT signal — the physical event Core observes as a dropoff block reaching
+// FINISHED, and therefore the moment a store stops blocking the lane behind it.
+func (s *Sim) HasBin(slot string) bool { return s.bins[slot] }
+
+// OrderActive reports whether an order is still being executed by some robot —
+// the harness's COMPLETION signal, and the counterpart to HasBin. The gap between
+// the two is the whole point of the A′ predicate: a store's bin is down (HasBin)
+// well before its robot has backed out of the lane and gone idle (OrderActive), and
+// releasing on the former rather than the latter is what placement-release means.
+func (s *Sim) OrderActive(orderID string) bool {
+	for _, id := range s.order {
+		if r := s.robots[id]; r.order != nil && r.order.ID == orderID && !r.idle {
+			return true
+		}
+	}
+	return false
+}
+
 // ReleaseWait completes the Wait block a robot is parked on, letting it proceed.
 // Mirrors the lifecycle sim's ReleaseOrder-appends-and-continues machinery.
 func (s *Sim) ReleaseWait(orderID string) bool {

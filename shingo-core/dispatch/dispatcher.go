@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/google/uuid"
 
@@ -34,6 +35,13 @@ type Dispatcher struct {
 	laneHolds *laneHoldRegistry
 	DebugLog  func(string, ...any)
 
+	// laneGates serializes lane-gate release passes per lane; gateAppendFails
+	// debounces the operator-facing queue code for repeated append failures. Both
+	// are in-process and crash-volatile by design — see lane_gate_release.go.
+	laneGates       *laneGateSerializer
+	gateFailMu      sync.Mutex
+	gateAppendFails map[int64]int
+
 	// postFindHook is a test-only seam fired by the fulfillment scanner between
 	// Find and Claim (the single claim point after the claim-move to the scanner).
 	// Nil in production; set via SetPostFindHook for deterministic concurrency tests.
@@ -52,6 +60,9 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 		dispatchTopic: dispatchTopic,
 		binManifest:   binManifest,
 		laneHolds:     newLaneHoldRegistry(),
+
+		laneGates:       newLaneGateSerializer(),
+		gateAppendFails: make(map[int64]int),
 	}
 	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
 	d.replies = newReplySender(db, dispatchTopic, stationID, d.dbg)

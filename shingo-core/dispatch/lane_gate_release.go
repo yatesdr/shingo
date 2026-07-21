@@ -1,0 +1,417 @@
+package dispatch
+
+import (
+	"log"
+	"sort"
+	"sync"
+
+	"shingo/protocol"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+)
+
+// The lane-gate RELEASE EVALUATOR — Core as traffic cop.
+//
+// Increment 3 gave every lane-bound order on a gate_choreography group the
+// uniform unsealed shape, and appended the tail immediately when the classifier
+// already admitted. A CONTENDED order was created unsealed and then dwelled with
+// nothing to release it. This is that release.
+//
+// The shape is deliberately boring, because all three moving parts already exist:
+//
+//   POLICY     laneEntryCause — the landed tiered classifier, verbatim, the same
+//              function the dispatch-time valve calls. Tier-1 same-origin
+//              co-release, Tier-2 cross-origin deepest-first, Tier-3 group wait
+//              are not re-expressed here; they ARE the classifier.
+//   OCCUPANCY  the A′ predicate (stillWorkingLaneMouth): a store blocks until it
+//              PLACES, which is when ReleaseInboundLaneForOrder deletes its
+//              inbound mouth row. Nothing new is read.
+//   APPEND     appendSegmentAndAdvance — the one fleet-append path, shared with
+//              operator release, vehicle pinned.
+//
+// So the evaluator is a loop, an ordering, and two guards.
+//
+// WHY THE `others` SET IS STABLE ACROSS A PASS. A gate-staged candidate holds its
+// inbound mouth row from dispatch (admitLanes runs before the fleet commit) and
+// keeps it until it places — which is long after release. So releasing an order
+// does NOT remove it from the blocker set: a shallower cross-origin candidate
+// still sees it and still parks, exactly as it should. What DOES change mid-pass
+// is a re-bind (§ rebindGatedDropoff), which moves a candidate's depth. That is
+// why each candidate is evaluated against a freshly read view rather than one
+// snapshot taken up front.
+
+// laneGateRetryQueueThreshold is how many consecutive append failures on one
+// order are tolerated before the wait becomes operator-visible. Below it a
+// failure is a transient fleet blip and the next firing retries silently; at it,
+// the order carries a structured queue code so the floor can see a robot is
+// holding at a gate for a fleet reason rather than a traffic one.
+const laneGateRetryQueueThreshold = 3
+
+// laneGateSerializer serializes evaluator passes per lane.
+//
+// The evaluator fires from event subscribers, and the event bus dispatches on the
+// EMITTING goroutine — so two different emitters (the RDS poller and the
+// fulfillment scanner, say) can run a pass for the same lane at the same time.
+// Two concurrent passes over one staged set would each read wait_index 0 and each
+// append the same tail, and a duplicate blockId is the one thing SEER rejects
+// outright.
+//
+// An in-process keyed mutex rather than a Postgres advisory lock, deliberately:
+// Core is a single process, so the only thing a DB lock would add is cross-process
+// exclusion that nothing needs — and it would have to be held across the RDS
+// append, which means a database transaction open across an external HTTP call.
+// That trades a race we can close in-process for connection-pool exposure and a
+// lock that outlives a hung vendor call. The DURABLE half of the guard is the
+// reload-and-recheck inside the critical section (see releaseGatedOrder), which is
+// what actually makes a double-append impossible rather than merely unlikely.
+type laneGateSerializer struct {
+	mu    sync.Mutex
+	locks map[int64]*sync.Mutex
+}
+
+func newLaneGateSerializer() *laneGateSerializer {
+	return &laneGateSerializer{locks: make(map[int64]*sync.Mutex)}
+}
+
+// lock takes the per-lane mutex and returns its release func.
+func (s *laneGateSerializer) lock(laneID int64) func() {
+	s.mu.Lock()
+	m, ok := s.locks[laneID]
+	if !ok {
+		m = &sync.Mutex{}
+		s.locks[laneID] = m
+	}
+	s.mu.Unlock()
+	m.Lock()
+	return m.Unlock
+}
+
+// EvaluateLaneReleases runs one release pass over a lane: every gate-staged order
+// the classifier now admits gets its tail appended and is released into the lane.
+//
+// Idempotent and level-triggered — it derives everything from live state and
+// nothing from the event that woke it. A firing that finds nothing to do is a
+// no-op, a dropped event costs only latency (the next firing recovers), and a
+// duplicate event is harmless. That is what lets the trigger set be generous.
+//
+// A no-op for any lane whose group is not gate_choreography, so an unconfigured
+// plant does one lane lookup and returns.
+func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
+	lane, err := d.db.GetNode(laneID)
+	if err != nil || lane == nil || lane.ParentID == nil {
+		return
+	}
+	if d.laneEnforcementMode(*lane.ParentID) != LaneEnforceGateChoreography {
+		return
+	}
+
+	unlock := d.laneGates.lock(laneID)
+	defer unlock()
+
+	candidates, err := d.gateStagedInLane(lane)
+	if err != nil {
+		log.Printf("lane gate: list staged orders for lane %s: %v", lane.Name, err)
+		return
+	}
+	if len(candidates) == 0 {
+		return
+	}
+
+	// Deepest first — but be clear about what this sort does and does not buy,
+	// because it is easy to mistake it for the safety mechanism.
+	//
+	// It is NOT what keeps a shallower order from walling a deeper one. That is
+	// the classifier's Tier-2 rule: a candidate with a deeper un-placed
+	// cross-origin store in the lane is held no matter when it is evaluated, so
+	// iterating shallow-first produces the same releases in the same pass.
+	// (Verified: reversing this comparison leaves every gate scenario and the
+	// 200-seed soak green, whereas disabling Tier-2 walls 160/200 seeds.)
+	//
+	// What it buys is ordering agreement. The appends leave in the same sequence
+	// as the depth-derived RDS priorities they carry (laneDispatchPriority, larger
+	// = deeper = served first), so Core's append order and the fleet's own
+	// dispatch order do not disagree, and the deepest admissible order goes out on
+	// this pass rather than the next firing.
+	//
+	// Tier 1 rides on the same loop: a SAME-ORIGIN partner is skipped by the
+	// classifier rather than depth-gated, so a press pair is released together in
+	// one pass instead of one partner waiting for the other to place.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].depth != candidates[j].depth {
+			return candidates[i].depth > candidates[j].depth
+		}
+		return candidates[i].order.ID < candidates[j].order.ID // deterministic
+	})
+
+	released := 0
+	for _, c := range candidates {
+		// Re-read per candidate rather than reusing one snapshot: a re-bind by an
+		// earlier candidate in this pass moves its depth and its delivery_node, and
+		// the classifier's view has to see that.
+		park, cause, cErr := d.laneEntryCause(lane, c.order, c.dest)
+		if cErr != nil {
+			log.Printf("lane gate: classifier error for order %d on lane %s: %v", c.order.ID, lane.Name, cErr)
+			continue
+		}
+		if park {
+			d.dbg("lane gate: order %d still held at %s (%s)", c.order.ID, lane.Name, cause)
+			continue
+		}
+		if err := d.releaseGatedOrder(c.order, lane); err != nil {
+			log.Printf("lane gate: release order %d into lane %s: %v", c.order.ID, lane.Name, err)
+			continue
+		}
+		released++
+	}
+	if released > 0 {
+		log.Printf("lane gate: released %d order(s) into lane %s", released, lane.Name)
+	}
+}
+
+// gateCandidate is one gate-staged order with the destination and depth the
+// ordering and the classifier need.
+type gateCandidate struct {
+	order *orders.Order
+	dest  *nodes.Node
+	depth int
+}
+
+// gateStagedInLane returns the orders currently dwelling at this lane's gate.
+//
+// It reuses ActiveLaneStores (the classifier's own active-set query) rather than
+// adding one: the staged set is a SUBSET of the lane's active stores, picked out
+// by IsGateStaged — created unsealed, tail not yet appended, robot committed.
+//
+// Faulted orders are excluded. A faulted leg is mid-recovery, not dead, and
+// appending to it would race the recovery; the operator-release path refuses a
+// faulted order for the same reason (complex_release.go). It re-enters the staged
+// set on its own once it recovers, because nothing about its row changed.
+func (d *Dispatcher) gateStagedInLane(lane *nodes.Node) ([]gateCandidate, error) {
+	slots, err := d.db.ListLaneSlots(lane.ID)
+	if err != nil || len(slots) < 2 {
+		return nil, err // depth-1 (or unreadable) lane — nothing to sequence
+	}
+	lanePrefix := lane.Name + "."
+	slotNames := make([]string, 0, 2*len(slots))
+	nodeByName := make(map[string]*nodes.Node, 2*len(slots))
+	depthByName := make(map[string]int, 2*len(slots))
+	for _, s := range slots {
+		dep, dErr := d.db.GetSlotDepth(s.ID)
+		if dErr != nil {
+			return nil, dErr
+		}
+		// Both spellings, for the same reason admitLaneEntry matches both: a
+		// delivery_node is written BARE or DOT-qualified depending on the path
+		// that wrote it, and a dotted row invisible here would be a staged order
+		// the evaluator never releases.
+		slotNames = append(slotNames, s.Name, lanePrefix+s.Name)
+		nodeByName[s.Name], nodeByName[lanePrefix+s.Name] = s, s
+		depthByName[s.Name], depthByName[lanePrefix+s.Name] = dep, dep
+	}
+
+	active, err := d.db.ActiveLaneStores(slotNames)
+	if err != nil {
+		return nil, err
+	}
+	var out []gateCandidate
+	for _, o := range active {
+		if !IsGateStaged(o) || o.Status == StatusFaulted {
+			continue
+		}
+		dest := nodeByName[o.DeliveryNode]
+		if dest == nil {
+			continue
+		}
+		out = append(out, gateCandidate{order: o, dest: dest, depth: depthByName[o.DeliveryNode]})
+	}
+	return out, nil
+}
+
+// releaseGatedOrder binds the dropoff against the lane as it stands, appends the
+// tail, and seals the order.
+//
+// ── The double-append guard ───────────────────────────────────────────────
+// Called only under the per-lane mutex, and the FIRST thing it does is re-read
+// the order and re-check IsGateStaged. wait_index is the durable witness: the
+// shared append helper advances it to 1 only after ReleaseOrder returns nil, so a
+// second pass that raced this one reloads, sees wait_index 1, and returns without
+// touching the fleet. Reloading is what makes the guard durable rather than a
+// property of one in-memory struct — two passes hold two different *orders.Order
+// values, and the stale one would otherwise pass every check.
+//
+// lifecycle.Release inside the helper is the backstop: it validates
+// staged→in_transit against the live status and refuses an already-released order
+// (lifecycle.go transition → protocol.IsValidTransition).
+func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node) error {
+	fresh, err := d.db.GetOrder(order.ID)
+	if err != nil || fresh == nil {
+		return err
+	}
+	if !IsGateStaged(fresh) {
+		d.dbg("lane gate: order %d no longer gate-staged (wait_index=%d status=%s) — another pass released it",
+			fresh.ID, fresh.WaitIndex, fresh.Status)
+		return nil
+	}
+
+	dest, err := d.rebindGatedDropoff(fresh, lane)
+	if err != nil {
+		// The lane moved against this order and no reachable slot is available.
+		// Refusing is the safe disposition: appending into an occupied or walled
+		// slot is the exact failure the bind-at-release rule exists to prevent.
+		// The order stays staged and the next firing re-tries.
+		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, "gate-rebind-unavailable",
+			QueueParams{Destination: lane.Name})
+		return err
+	}
+
+	if err := d.appendGateTail(fresh, "lane gate release"); err != nil {
+		d.noteGateAppendFailure(fresh, lane)
+		return err
+	}
+	d.clearGateAppendFailures(fresh.ID)
+	d.setQueueReason(fresh, "", "", QueueParams{})
+	d.dbg("lane gate: order %d released into lane %s at %s", fresh.ID, lane.Name, dest.Name)
+	return nil
+}
+
+// rebindGatedDropoff re-resolves the order's dropoff against the lane AS IT
+// STANDS, at the moment of append. Returns the node the tail will target.
+//
+// This is the bind-at-release property, and it is the reason a gated create
+// carries no dropoff block at all: there is no committed binding to go stale, so
+// there is nothing to re-confirm — only something to resolve, once, late.
+//
+// Three outcomes, and the common one writes nothing:
+//
+//   - the order's own slot is still the deepest reachable pick → keep it. The
+//     owner-aware resolver is what makes this the answer instead of a spurious
+//     move to a shallower slot (see nodes.FindStoreSlotInLaneExcluding).
+//   - a different slot wins — its own was walled by a bin that landed shallower
+//     while it dwelled, or a DEEPER slot freed → move to it.
+//   - nothing is available → error; the caller refuses to release.
+//
+// The move takes the new slot BEFORE releasing the old one, so a failure part-way
+// leaves the order holding exactly what it held before. Holding two slot rows for
+// the instant between is legal: the uniqueness index is per NODE, not per order.
+func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node) (*nodes.Node, error) {
+	current, err := d.db.GetNodeByDotName(order.DeliveryNode)
+	if err != nil {
+		return nil, err
+	}
+	best, err := d.db.FindStoreSlotInLaneExcluding(lane.ID, order.ID)
+	if err != nil {
+		return nil, err // no reachable empty slot right now — refuse to release
+	}
+	if current != nil && best.ID == current.ID {
+		return current, nil // still the right slot; no writes at all
+	}
+
+	if err := claimStoreSlot(d.db, order, best); err != nil {
+		return nil, err
+	}
+	if err := d.confirmDropoffSlot(order, best); err != nil {
+		return nil, err
+	}
+	if current != nil {
+		if rErr := d.db.ReleaseSlotClaim(current.ID, order.ID); rErr != nil {
+			// Non-fatal: the new slot is secured and the append is correct. A
+			// lingering old hold is reclaimed by the owner-liveness reaper when the
+			// order goes terminal. Log it — a leaked hold narrows the lane.
+			log.Printf("lane gate: order %d re-bound %s → %s but releasing the old slot failed: %v",
+				order.ID, current.Name, best.Name, rErr)
+		}
+	}
+	// applyDeliveryNode, not a raw delivery_node write: it patches the deferred
+	// tail in steps_json in the same breath, and that tail is exactly what the
+	// append is about to emit. A raw write would append a block for the slot the
+	// order no longer owns.
+	if err := applyDeliveryNode(d.db, order, best.Name); err != nil {
+		return nil, err
+	}
+	log.Printf("lane gate: order %d re-bound at release %s → %s (lane %s)",
+		order.ID, nodeName(current), best.Name, lane.Name)
+	return best, nil
+}
+
+func nodeName(n *nodes.Node) string {
+	if n == nil {
+		return "(unbound)"
+	}
+	return n.Name
+}
+
+// noteGateAppendFailure counts consecutive append failures for an order and makes
+// the wait operator-visible once they stop looking transient. Below the threshold
+// the next firing simply retries: one failed append against a busy fleet is not
+// worth a floor-facing message.
+//
+// The counter is in-process and crash-volatile ON PURPOSE — it is a debounce, not
+// a fact. Losing it on restart re-arms the debounce, which is the safe direction:
+// the order is still staged, still retried, and still visible once the failures
+// repeat. Nothing about recovery depends on it.
+func (d *Dispatcher) noteGateAppendFailure(order *orders.Order, lane *nodes.Node) {
+	d.gateFailMu.Lock()
+	d.gateAppendFails[order.ID]++
+	n := d.gateAppendFails[order.ID]
+	d.gateFailMu.Unlock()
+	if n < laneGateRetryQueueThreshold {
+		return
+	}
+	d.setQueueReason(order, protocol.QueueFleetUnavailable, "gate-append-failed",
+		QueueParams{Destination: lane.Name})
+}
+
+func (d *Dispatcher) clearGateAppendFailures(orderID int64) {
+	d.gateFailMu.Lock()
+	delete(d.gateAppendFails, orderID)
+	d.gateFailMu.Unlock()
+}
+
+// LaneIDsForGateEvent maps a node the caller just saw change to the lane whose
+// gate should be re-evaluated, or 0 when the node is not a lane slot. The engine
+// subscribers use it to turn an occupancy event into a lane without knowing
+// anything about lane geometry.
+func (d *Dispatcher) LaneIDsForGateEvent(nodeID int64) int64 {
+	if nodeID == 0 {
+		return 0
+	}
+	lane, err := d.db.LaneForNode(nodeID)
+	if err != nil || lane == nil {
+		return 0
+	}
+	return lane.ID
+}
+
+// LaneIDForNodeName is LaneIDsForGateEvent for a node addressed by name (block
+// locations arrive as vendor strings, not ids). Returns 0 when it is not a lane
+// slot.
+func (d *Dispatcher) LaneIDForNodeName(name string) int64 {
+	if name == "" {
+		return 0
+	}
+	node, err := d.db.GetNodeByDotName(name)
+	if err != nil || node == nil {
+		return 0
+	}
+	return d.LaneIDsForGateEvent(node.ID)
+}
+
+// LaneIDsForOrder returns the lanes an order touches (its source and its
+// destination), for the terminal-event triggers: an order that dies holding a
+// mouth row frees whichever lane it was working.
+func (d *Dispatcher) LaneIDsForOrder(orderID int64) []int64 {
+	order, err := d.db.GetOrder(orderID)
+	if err != nil || order == nil {
+		return nil
+	}
+	var out []int64
+	for _, name := range []string{order.DeliveryNode, order.SourceNode} {
+		if id := d.LaneIDForNodeName(name); id != 0 {
+			out = append(out, id)
+		}
+	}
+	if len(out) == 2 && out[0] == out[1] {
+		out = out[:1]
+	}
+	return out
+}

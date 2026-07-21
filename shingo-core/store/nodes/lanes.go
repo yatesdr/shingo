@@ -73,21 +73,52 @@ func IsSlotAccessible(db *sql.DB, slotNodeID int64) (bool, error) {
 // complex store picking a slot a simple store is heading to. (Equivalence check
 // result: gap found → proxy kept. Retire it when simple-store reserves its slot.)
 func FindStoreSlotInLane(db *sql.DB, laneID int64) (*Node, error) {
+	return FindStoreSlotInLaneExcluding(db, laneID, 0)
+}
+
+// FindStoreSlotInLaneExcluding is FindStoreSlotInLane made OWNER-AWARE: every
+// "someone else holds this" guard skips holds belonging to excludeOrderID, so an
+// order that ALREADY holds a slot in this lane can re-resolve and see its own
+// slot as available.
+//
+// This exists for re-binding at release time (the lane gate). The plain resolver
+// cannot be reused there, and the reason is a trap worth stating: its guards are
+// owner-BLIND. A gate-staged order holds its slot's claim, its reservation, AND
+// has delivery_node pointing at it — so it matches all three NOT EXISTS clauses
+// against ITSELF and its own slot is invisible. Re-resolving with the blind
+// version therefore never returns the slot the order already holds; it returns
+// the next-best one, which is SHALLOWER. Re-binding to that would silently undo
+// back-to-front packing and break the deepest-first invariant the whole lane seam
+// exists to enforce — while looking like it worked.
+//
+// Owner-aware, the same call is well behaved in all three cases: the order's own
+// slot is still the best pick (the overwhelmingly common one — resolve returns it
+// and the caller writes nothing), a shallower slot filled and walled it (the
+// accessibility guard excludes it, so a reachable one is returned), or a deeper
+// slot freed while it dwelled (the deeper one wins and the caller re-binds).
+//
+// excludeOrderID = 0 disables the exemption and reproduces the blind behavior
+// exactly: order ids are positive, so `o.id <> 0` and `r.order_id <> 0` hold for
+// every row, and `n.claimed_by = 0` never matches (claimed_by is NULL or a real
+// id). That equivalence is what lets FindStoreSlotInLane delegate here unchanged.
+func FindStoreSlotInLaneExcluding(db *sql.DB, laneID, excludeOrderID int64) (*Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s
 		WHERE n.parent_id = $1
 		  AND n.is_synthetic = false
-		  AND n.claimed_by IS NULL
+		  AND (n.claimed_by IS NULL OR n.claimed_by = $2)
 		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)
 		  AND NOT EXISTS (
 			SELECT 1 FROM reservations r
 			WHERE r.node_id = n.id
 			  AND r.resource_kind = 'slot'
 			  AND r.state IN ('pending','confirmed')
+			  AND r.order_id <> $2
 		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM orders o
 			WHERE o.delivery_node = n.name
 			  AND o.status NOT IN (%s)
+			  AND o.id <> $2
 		  )
 		  AND NOT EXISTS (
 			-- Accessibility guard (mirrors IsSlotAccessible): a slot is only a
@@ -103,7 +134,7 @@ func FindStoreSlotInLane(db *sql.DB, laneID int64) (*Node, error) {
 			  AND sib.depth < n.depth
 		  )
 		ORDER BY COALESCE(n.depth, 0) DESC
-		LIMIT 1`, SelectCols, FromClause, protocol.TerminalStatusSQLList()), laneID)
+		LIMIT 1`, SelectCols, FromClause, protocol.TerminalStatusSQLList()), laneID, excludeOrderID)
 	n, err := ScanNode(row)
 	if err != nil {
 		return nil, fmt.Errorf("no empty slot in lane %d", laneID)

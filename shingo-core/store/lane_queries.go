@@ -133,6 +133,14 @@ func (db *DB) FindStoreSlotInLane(laneID int64) (*nodes.Node, error) {
 	return nodes.FindStoreSlotInLane(db.DB, laneID)
 }
 
+// FindStoreSlotInLaneExcluding is FindStoreSlotInLane with excludeOrderID's own
+// holds ignored — the owner-aware form the lane gate re-binds through, so a
+// staged order can re-resolve and still see the slot it already holds. See
+// nodes.FindStoreSlotInLaneExcluding for why the blind form is unusable there.
+func (db *DB) FindStoreSlotInLaneExcluding(laneID, excludeOrderID int64) (*nodes.Node, error) {
+	return nodes.FindStoreSlotInLaneExcluding(db.DB, laneID, excludeOrderID)
+}
+
 // CountBinsInLane counts total bins across all slots in a lane.
 func (db *DB) CountBinsInLane(laneID int64) (int, error) {
 	return nodes.CountBinsInLane(db.DB, laneID)

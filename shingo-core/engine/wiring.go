@@ -489,4 +489,12 @@ func (e *Engine) wireEventHandlers() {
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, GraceExpiredEvent]) {
 		e.handleGraceExpired(evt.Payload)
 	}, EventGraceExpired)
+
+	// ── Lane-gate release evaluator ─────────────────────────────────────
+	// Registered LAST on purpose. The bus dispatches synchronously in
+	// registration order, and the evaluator has to observe the mouth rows that
+	// handlers above it release — handleBlockCompleted on a dropoff, and the
+	// bin-transit handler on a pickup. Registering it last is the cheapest way
+	// to be after all of them; see wiring_lane_gate.go.
+	e.wireLaneGateHandlers()
 }
