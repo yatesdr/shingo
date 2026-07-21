@@ -156,6 +156,36 @@ func (e *Engine) canCompleteChangeover(changeoverID int64) (bool, []domain.Block
 			})
 		}
 	}
+	// Conjunct 2′ — an order gates cutover only when it PLACES A BIN at a
+	// participant node (Amendment 1: the gate is conjuncts 1 + 2′, Edge-local).
+	//
+	// The old conjunct required EVERY linked order terminal, which is what
+	// blocked the HOP cutover on an outbound evac still driving its old bin to
+	// the market — a leg whose completion changes nothing at any node the
+	// changeover touches. The classifier is legPlacesBinAt over the order's own
+	// steps: "does this leg leave a bin at node n", the same question both
+	// sides of the wire ask. Evac legs never gate here; their physical
+	// slot-clear moment already flows into conjunct 1 (evac pickup advances a
+	// drop task to line_cleared, which is terminal for drop).
+	//
+	// THIS SAME EXPRESSION IS THE HARD CONJUNCT. There is no separate hard
+	// code path to drift; Blocker.Hard stays display-only.
+	//
+	// Fail-closed rule: an order whose steps cannot be read — decode failure,
+	// or NO steps at all (simple move orders) — GATES, exactly as every order
+	// did before 2′. The classifier only UN-gates legs it can PROVE place no
+	// bin at a participant. delivery_node is deliberately never consulted: the
+	// Edge leaves it blank by design on evac legs, so a delivery_node
+	// predicate fails open — the wrong direction for dual-dispatch prevention.
+	participants, err := e.db.ListChangeoverParticipants(changeoverID)
+	if err != nil {
+		return false, nil, err
+	}
+	participantNames := make([]string, 0, len(participants))
+	for _, p := range participants {
+		participantNames = append(participantNames, p.CoreNodeName)
+	}
+
 	for _, orderID := range linkedOrderIDs(tasks) {
 		order, err := e.db.GetOrder(orderID)
 		if err != nil {
@@ -167,18 +197,43 @@ func (e *Engine) canCompleteChangeover(changeoverID int64) (bool, []domain.Block
 			}
 			return false, nil, err
 		}
-		if !protocol.IsTerminal(order.Status) {
-			blockers = append(blockers, domain.Blocker{
-				Reason:  fmt.Sprintf("order %d in %s", order.ID, order.Status),
-				OrderID: order.ID,
-				Hard:    true,
-			})
+		if protocol.IsTerminal(order.Status) {
+			continue
 		}
+		if !e.orderGatesCutover(order.ID, participantNames) {
+			continue
+		}
+		blockers = append(blockers, domain.Blocker{
+			Reason:  fmt.Sprintf("order %d in %s", order.ID, order.Status),
+			OrderID: order.ID,
+			Hard:    true,
+		})
 	}
 	if len(blockers) > 0 {
 		return false, blockers, nil
 	}
 	return true, nil, nil
+}
+
+// orderGatesCutover is conjunct 2′'s per-order classifier: does this order
+// place a bin at any changeover participant? Unreadable or absent steps return
+// true — fail closed, preserving the pre-2′ behaviour for exactly the orders
+// the classifier cannot prove anything about.
+func (e *Engine) orderGatesCutover(orderID int64, participantNames []string) bool {
+	stepsJSON, err := e.db.GetOrderStepsJSON(orderID)
+	if err != nil || stepsJSON == "" {
+		return true // cannot read the leg's shape — gate, as before 2′
+	}
+	steps, err := decodeSteps(stepsJSON)
+	if err != nil {
+		return true // undecodable steps fail closed
+	}
+	for _, name := range participantNames {
+		if legPlacesBinAt(steps, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // ChangeoverGateStatus is the read-only projection of the cutover gate for
@@ -347,6 +402,16 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 		return nil
 	}
 	if process.ActiveStyleID == nil || *process.ActiveStyleID != changeover.ToStyleID {
+		return nil
+	}
+	// PARITY with the operator path: auto-confirm any linked order the fleet
+	// already delivered before evaluating the gate. completeCutover has run
+	// this pre-pass since it existed; this path never did, so an auto-cutover
+	// could hang forever on a clerical confirm no operator was looking at —
+	// two definitions of "ready" for the same gate. Errors log and defer to
+	// the next trigger rather than failing the auto path.
+	if err := e.autoConfirmDeliveredLinkedOrders(changeover.ID); err != nil {
+		log.Printf("changeover: auto-path pre-pass for changeover %d: %v", changeover.ID, err)
 		return nil
 	}
 	// Gate before the station-task force-switch. Today's auto-completion

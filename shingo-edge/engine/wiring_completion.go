@@ -198,6 +198,15 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 		return
 	}
 
+	// Success-path straggler check: loadOrderCompletionCtx only attaches a
+	// nodeTask from an ACTIVE changeover, so a confirmed order whose changeover
+	// already finalized arrives here with nodeTask == nil. Clear its runtime
+	// order refs (phantom-[REP] class) before the chain runs; additive — the
+	// chain still does whatever it can for the node.
+	if ctx.nodeTask == nil {
+		e.clearStragglerSuccess(ctx.order.ID)
+	}
+
 	for _, c := range completionChain {
 		if !c.Match(ctx) {
 			continue
@@ -628,10 +637,19 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 	// If this order was part of a changeover, mark node task as failed (requires manual retry)
 	changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID)
 	if err != nil {
+		// No ACTIVE changeover — but the order may belong to a FINALIZED one
+		// (a straggler: the leg died after cutover). Today's broad gate makes
+		// this unreachable; the 2′-scoped gate is what makes it reachable, so
+		// the disposition lands here rather than being discovered as a
+		// stranded task in a post-mortem.
+		e.stampStragglerFailure(failed.OrderID)
 		return
 	}
 	nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, node.ID)
 	if err != nil {
+		// An active changeover exists but not for this node — the order may
+		// still be a PREVIOUS changeover's leg. Same straggler stamping.
+		e.stampStragglerFailure(failed.OrderID)
 		return
 	}
 	if (nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID) ||
@@ -742,4 +760,55 @@ func isCapacityBlocked(reason string) bool {
 	return strings.Contains(reason, "no available slot in node group") ||
 		strings.Contains(reason, "no available bin at ") ||
 		strings.Contains(reason, "no bin of requested payload in node group")
+}
+
+// stampStragglerFailure records the disposition of an order that reached a
+// non-success terminal AFTER its changeover finalized. State-unfiltered lookup
+// by ORDER id (the active-changeover walk above cannot see a completed
+// changeover's task), one loud STRAGGLER log, the task stamped to error with a
+// note — and NEVER a completion re-run: the changeover row is closed and no
+// code path expects it to advance again.
+//
+// The stamp is for the record, not for gating — a finalized changeover's tasks
+// gate nothing. Without it the task sits forever in whatever non-terminal
+// state it died in, with no trace of why, which is exactly the archaeology
+// this exists to prevent.
+func (e *Engine) stampStragglerFailure(orderID int64) {
+	task, coState, err := e.db.FindChangeoverNodeTaskByOrderID(orderID)
+	if err != nil || task == nil {
+		return // genuinely not a changeover order
+	}
+	if !coState.IsTerminal() {
+		return // its changeover is live; the active-path branches own it
+	}
+	if domain.IsNodeTaskStateTerminal(task.State, task.Situation) {
+		return // task already reached a final disposition — nothing to record
+	}
+	log.Printf("STRAGGLER: order %d reached non-success terminal AFTER changeover finalized — stamping task %d (node %s, was %s) to error; completion is NOT re-run",
+		orderID, task.ID, task.NodeName, task.State)
+	if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskError); err != nil {
+		log.Printf("straggler: stamp task %d: %v", task.ID, err)
+	}
+	if err := e.db.SetChangeoverNodeTaskSkipNote(task.ID,
+		"straggler: linked order failed/cancelled after cutover"); err != nil {
+		log.Printf("straggler: note task %d: %v", task.ID, err)
+	}
+}
+
+// clearStragglerSuccess is the success-path twin: an order that CONFIRMS after
+// its changeover finalized. The task needs no stamp (the work physically
+// happened), but the node's runtime order slots still point at the order —
+// and the operator screen renders [REP] off a bare non-nil pointer, so a
+// confirmed straggler leaves a phantom badge until the next Edge restart (the
+// phantom-[REP] class). Clear the refs, say so once.
+func (e *Engine) clearStragglerSuccess(orderID int64) {
+	task, coState, err := e.db.FindChangeoverNodeTaskByOrderID(orderID)
+	if err != nil || task == nil || !coState.IsTerminal() {
+		return
+	}
+	log.Printf("STRAGGLER: order %d confirmed AFTER changeover finalized (task %d, node %s) — clearing runtime order refs",
+		orderID, task.ID, task.NodeName)
+	if err := e.db.ClearProcessNodeRuntimeOrderRefs(orderID); err != nil {
+		log.Printf("straggler: clear runtime refs for order %d: %v", orderID, err)
+	}
 }

@@ -77,6 +77,17 @@ func (e *Engine) synthLoaderClaim(coreNodeName string) *processes.NodeClaim {
 // a target-style is configured (i.e. a changeover is in progress).
 // After cutover, active_style_id == the prior target, and the first
 // branch succeeds — behavior reverts to identical pre-fallback.
+//
+// POST-FINALIZE DEPENDENCY, pinned by test (TestFindActiveClaim_PostCutover):
+// finalizeChangeoverRow nils target_style_id as its first step, which KILLS the
+// fallback branch — deliberately load-bearing, not a gap. Post-finalize
+// resolution is correct-or-unreachable: active_style_id already points at the
+// to-style (the flip precedes finalize), so the first branch answers for every
+// node the new style claims, and a node the new style does NOT claim (a
+// dropped node's straggler) resolves nil — which its callers treat as "no
+// active claim", the honest answer. Review rejected a defensive fallback here
+// as code for an unreachable case; if this ever fires wrong, fix the caller's
+// expectation, do not widen this resolver.
 func findActiveClaim(db *store.DB, node *processes.Node) *processes.NodeClaim {
 	process, err := db.GetProcess(node.ProcessID)
 	if err != nil {
