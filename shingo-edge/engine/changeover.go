@@ -189,6 +189,37 @@ func shouldFanOutPressIndex(d ChangeoverNodeDiff, binTypes map[string]string) bo
 	return binTypesDiffer(d.FromClaim, d.ToClaim, binTypes)
 }
 
+// pressIndexExtensionPositions returns the EXTENSION positions of a
+// press-index claim — the paired seat and, on a 3-position press, the second
+// paired seat — with empties dropped.
+//
+// SCOPE, deliberately narrow. It returns ONLY the extensions:
+//
+//   - It does NOT include CoreNodeName (the front seat). fanOutPositions wants
+//     the front as slot 0; FanOutPressIndexCrossMode must NOT include it,
+//     because the front is already the diff's own node. Folding that difference
+//     in here would silently change one of the two callers.
+//   - It does NOT check SwapMode. fanOutPositions is called with a parent
+//     already established as press-index; the cross-mode walk guards each side
+//     independently. Folding the guard in here would likewise change a caller.
+//
+// So callers keep their own front-node and swap-mode handling and share only
+// the part that was genuinely duplicated: which extension seats exist. That
+// duplication is what let the fan-out and the participant builder disagree
+// about a press's geometry.
+func pressIndexExtensionPositions(claim *processes.NodeClaim) []string {
+	if claim == nil {
+		return nil
+	}
+	out := make([]string, 0, 2)
+	for _, name := range []string{claim.PairedCoreNode, claim.SecondPairedCoreNode} {
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // fanOutPositions expands one press-index diff into up to three
 // per-position diffs (front, paired, second-paired) based on which
 // positions are occupied in from and needed in to.

@@ -349,3 +349,142 @@ func LinkChangeoverNodeOrders(db *sql.DB, id int64, nextOrderID, oldOrderID *int
 		WHERE id=?`, nextOrderID, oldOrderID, clock.Now().UTC().Format(helpers.TimeLayout), id)
 	return err
 }
+
+// ── Changeover participants ─────────────────────────────────────────
+//
+// The set of nodes a changeover physically touches, frozen at plan time.
+// Superset of the task set: every task node is a participant, plus the
+// press-index extension positions that are indexed over but mint no order.
+
+const participantSelectCols = `p.id, p.process_changeover_id, p.core_node_name,
+	p.process_node_id, p.role, p.owning_task_id, p.updated_at`
+
+func scanParticipant(row interface{ Scan(...any) error }) (domain.Participant, error) {
+	var p domain.Participant
+	var updatedAt string
+	err := row.Scan(&p.ID, &p.ProcessChangeoverID, &p.CoreNodeName,
+		&p.ProcessNodeID, &p.Role, &p.OwningTaskID, &updatedAt)
+	if err == nil {
+		p.UpdatedAt = helpers.ScanTime(updatedAt)
+	}
+	return p, err
+}
+
+// ListChangeoverParticipants returns every participant row for a changeover.
+//
+// LEGACY FALLBACK: a changeover that was planned before this table existed has
+// zero participant rows but a non-empty task set. Rather than backfill, derive
+// task-role participants from the tasks on read. Such a changeover gets no
+// indexed_over rows — the geometry was never captured and cannot be recovered
+// without re-running the diff pipeline, which is exactly what freezing the set
+// at plan time exists to avoid. Self-deleting: it stops mattering as in-flight
+// changeovers complete.
+func ListChangeoverParticipants(db *sql.DB, changeoverID int64) ([]domain.Participant, error) {
+	rows, err := db.Query(`SELECT `+participantSelectCols+`
+		FROM changeover_participants p WHERE p.process_changeover_id=?
+		ORDER BY p.role, p.core_node_name`, changeoverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Participant
+	for rows.Next() {
+		p, err := scanParticipant(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) > 0 {
+		return out, nil
+	}
+	return legacyParticipantsFromTasks(db, changeoverID)
+}
+
+// legacyParticipantsFromTasks is the pre-table fallback described on
+// ListChangeoverParticipants. Returns nil when there are no tasks either — an
+// empty changeover legitimately has no participants.
+func legacyParticipantsFromTasks(db *sql.DB, changeoverID int64) ([]domain.Participant, error) {
+	tasks, err := ListChangeoverNodeTasks(db, changeoverID)
+	if err != nil || len(tasks) == 0 {
+		return nil, err
+	}
+	out := make([]domain.Participant, 0, len(tasks))
+	for _, t := range tasks {
+		if t.NodeName == "" {
+			continue
+		}
+		nodeID := t.ProcessNodeID
+		taskID := t.ID
+		out = append(out, domain.Participant{
+			ProcessChangeoverID: changeoverID,
+			CoreNodeName:        t.NodeName,
+			ProcessNodeID:       &nodeID,
+			Role:                domain.ParticipantRoleTask,
+			OwningTaskID:        &taskID,
+		})
+	}
+	return out, nil
+}
+
+// IsChangeoverParticipant answers "is this core node part of the active
+// changeover on this process, and in what role" as ONE indexed point query.
+//
+// HOT PATH — CanAcceptOrders calls this from PLC-tick-driven consume paths, not
+// only from operator actions. It must stay a point query; it must never re-run
+// the diff pipeline. That constraint is the reason participants are persisted
+// rather than derived on read.
+//
+// Returns (false, "", nil) when there is no active changeover or the node is
+// not a participant — both are "not gated", and neither is an error.
+func IsChangeoverParticipant(db *sql.DB, processID int64, coreNodeName string) (bool, string, error) {
+	if coreNodeName == "" {
+		return false, "", nil
+	}
+	var role string
+	err := db.QueryRow(`SELECT p.role
+		FROM changeover_participants p
+		JOIN process_changeovers c ON c.id = p.process_changeover_id
+		WHERE c.process_id = ?
+		  AND c.state NOT IN ('completed','cancelled')
+		  AND p.core_node_name = ?
+		LIMIT 1`, processID, coreNodeName).Scan(&role)
+	if err == sql.ErrNoRows {
+		return legacyIsParticipantFromTasks(db, processID, coreNodeName)
+	}
+	if err != nil {
+		return false, "", err
+	}
+	return true, role, nil
+}
+
+// legacyIsParticipantFromTasks mirrors legacyParticipantsFromTasks for the
+// point query: a pre-table changeover still gates on its task nodes.
+//
+// Note this runs on a participant MISS as well as on a legacy changeover, so it
+// costs one extra indexed lookup for non-participant nodes. That is the correct
+// trade: it keeps a changeover planned by an older binary gating exactly as it
+// did before, rather than silently opening every node the moment the new binary
+// starts.
+func legacyIsParticipantFromTasks(db *sql.DB, processID int64, coreNodeName string) (bool, string, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(1)
+		FROM changeover_node_tasks t
+		JOIN process_changeovers c ON c.id = t.process_changeover_id
+		JOIN process_nodes n ON n.id = t.process_node_id
+		WHERE c.process_id = ?
+		  AND c.state NOT IN ('completed','cancelled')
+		  AND NOT EXISTS (SELECT 1 FROM changeover_participants p
+		                  WHERE p.process_changeover_id = c.id)
+		  AND n.core_node_name = ?`, processID, coreNodeName).Scan(&n)
+	if err != nil {
+		return false, "", err
+	}
+	if n == 0 {
+		return false, "", nil
+	}
+	return true, domain.ParticipantRoleTask, nil
+}

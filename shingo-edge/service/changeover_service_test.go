@@ -61,6 +61,11 @@ func TestChangeover_CreateAtomic(t *testing.T) {
 			{ProcessID: pid, CoreNodeName: "N-EXIST", Situation: "refill", State: "waiting"},
 			{ProcessID: pid, CoreNodeName: "N-NEW", Situation: "introduce", State: "waiting"},
 		},
+		[]domain.ParticipantInput{
+			{CoreNodeName: "N-EXIST", Role: domain.ParticipantRoleTask},
+			{CoreNodeName: "N-NEW", Role: domain.ParticipantRoleTask},
+			{CoreNodeName: "N-INDEXED", Role: domain.ParticipantRoleIndexedOver, OwningTaskCoreNode: "N-EXIST"},
+		},
 		existingNodes,
 	)
 	if err != nil {
@@ -139,13 +144,13 @@ func TestChangeover_ListingExclusionByCompletedState(t *testing.T) {
 	pid, fromStyle := seedProcessStyle(t, db, "P", "F")
 	toStyle, _ := db.CreateStyle("T", "", pid)
 
-	cid, err := svc.Create(pid, &fromStyle, toStyle, "x", "", nil, nil, nil)
+	cid, err := svc.Create(pid, &fromStyle, toStyle, "x", "", nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
 	// Second changeover to test listing and exclusion-by-state.
-	cid2, _ := svc.Create(pid, &fromStyle, toStyle, "y", "", nil, nil, nil)
+	cid2, _ := svc.Create(pid, &fromStyle, toStyle, "y", "", nil, nil, nil, nil)
 	_ = cid2
 
 	list, _ := db.ListProcessChangeovers(pid)
@@ -191,11 +196,11 @@ func TestChangeover_ListingExclusionByCancelledState(t *testing.T) {
 	pid, fromStyle := seedProcessStyle(t, db, "PC", "FC")
 	toStyle, _ := db.CreateStyle("TC", "", pid)
 
-	cid, err := svc.Create(pid, &fromStyle, toStyle, "x", "", nil, nil, nil)
+	cid, err := svc.Create(pid, &fromStyle, toStyle, "x", "", nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	cid2, _ := svc.Create(pid, &fromStyle, toStyle, "y", "", nil, nil, nil)
+	cid2, _ := svc.Create(pid, &fromStyle, toStyle, "y", "", nil, nil, nil, nil)
 	_ = cid2
 
 	// Mark first as cancelled — GetActive returns the remaining one only.
@@ -242,6 +247,7 @@ func TestChangeover_NodeAndStationTaskMutations(t *testing.T) {
 	cid, err := svc.Create(pid, &fromStyle, toStyle, "x", "",
 		[]int64{sid},
 		[]processes.NodeTaskInput{{ProcessID: pid, CoreNodeName: "N", Situation: "refill", State: "waiting"}},
+		nil,
 		existingNodes)
 	if err != nil {
 		t.Fatalf("create: %v", err)

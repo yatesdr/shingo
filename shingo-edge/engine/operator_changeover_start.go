@@ -49,7 +49,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	}
 
 	if _, err := e.changeoverService.Create(processID, plan.process.ActiveStyleID, toStyleID,
-		calledBy, notes, plan.stationIDs, plan.nodeTasks, plan.nodes); err != nil {
+		calledBy, notes, plan.stationIDs, plan.nodeTasks, plan.participants, plan.nodes); err != nil {
 		return nil, err
 	}
 

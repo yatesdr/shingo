@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"shingo/shared/clock"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -40,7 +41,14 @@ func NewChangeoverService(db *store.DB) *ChangeoverService {
 // moved the transaction body in from the (now-deleted) outer
 // store/process_changeovers.go::CreateChangeover.
 func (s *ChangeoverService) Create(processID int64, fromStyleID *int64, toStyleID int64, calledBy, notes string,
-	stationIDs []int64, nodeTasks []processes.NodeTaskInput, existingNodes []processes.Node) (int64, error) {
+	stationIDs []int64, nodeTasks []processes.NodeTaskInput, participants []domain.ParticipantInput,
+	existingNodes []processes.Node) (int64, error) {
+
+	// Task id / process-node id by core node name, populated as the task loop
+	// runs so the participant loop below can resolve owning_task_id and
+	// process_node_id without a second query.
+	taskIDByNode := map[string]int64{}
+	nodeIDByNode := map[string]int64{}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -101,13 +109,58 @@ func (s *ChangeoverService) Create(processID int64, fromStyleID *int64, toStyleI
 			processNodeID = &id
 		}
 
-		if _, err := tx.Exec(`INSERT INTO changeover_node_tasks (
+		res, err := tx.Exec(`INSERT INTO changeover_node_tasks (
 			process_changeover_id, process_node_id, from_claim_id, to_claim_id, situation, state
-		) VALUES (?, ?, ?, ?, ?, ?)`, changeoverID, *processNodeID, nt.FromClaimID, nt.ToClaimID, nt.Situation, nt.State); err != nil {
+		) VALUES (?, ?, ?, ?, ?, ?)`, changeoverID, *processNodeID, nt.FromClaimID, nt.ToClaimID, nt.Situation, nt.State)
+		if err != nil {
 			return 0, err
 		}
+		taskID, _ := res.LastInsertId()
+		taskIDByNode[coreNodeName] = taskID
+		nodeIDByNode[coreNodeName] = *processNodeID
+
 		if _, err := tx.Exec(`INSERT OR IGNORE INTO process_node_runtime_states (process_node_id) VALUES (?)`, *processNodeID); err != nil {
 			return 0, err
+		}
+	}
+
+	// Participants — the nodes this changeover physically touches, frozen at
+	// plan time. Written in THIS transaction, after the tasks, so owning_task_id
+	// can reference real ids and so a changeover can never exist with tasks but
+	// no participants (or the reverse).
+	//
+	// process_node_id is looked up, not required: a press-index extension
+	// position may have no process_nodes row, and it stays representable by name
+	// so the plan-time assertion can report it instead of it vanishing here.
+	for _, pt := range participants {
+		coreNodeName := strings.TrimSpace(pt.CoreNodeName)
+		if coreNodeName == "" {
+			continue
+		}
+		var processNodeID *int64
+		if id, ok := nodeIDByNode[coreNodeName]; ok {
+			processNodeID = &id
+		} else {
+			for i := range existingNodes {
+				if existingNodes[i].CoreNodeName == coreNodeName {
+					id := existingNodes[i].ID
+					processNodeID = &id
+					break
+				}
+			}
+		}
+		var owningTaskID *int64
+		if owner := strings.TrimSpace(pt.OwningTaskCoreNode); owner != "" {
+			if id, ok := taskIDByNode[owner]; ok {
+				owningTaskID = &id
+			}
+		} else if id, ok := taskIDByNode[coreNodeName]; ok {
+			owningTaskID = &id
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO changeover_participants (
+			process_changeover_id, core_node_name, process_node_id, role, owning_task_id
+		) VALUES (?, ?, ?, ?, ?)`, changeoverID, coreNodeName, processNodeID, pt.Role, owningTaskID); err != nil {
+			return 0, fmt.Errorf("write participant %s: %w", coreNodeName, err)
 		}
 	}
 

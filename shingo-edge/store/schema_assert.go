@@ -43,6 +43,7 @@ var requiredTables = []string{
 	"style_node_claims",
 	"process_changeovers",
 	"changeover_node_tasks",
+	"changeover_participants",
 	"process_node_runtime_states",
 	"sourcing_state",
 }

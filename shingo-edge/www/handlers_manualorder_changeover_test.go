@@ -98,6 +98,7 @@ func TestBuildChangeoverViewData_ActiveChangeoverWithPendingNodeTasks(t *testing
 			Situation:    "switch",
 			State:        "pending",
 		}},
+		nil,
 		existing,
 	)
 	if err != nil {
@@ -150,6 +151,7 @@ func TestBuildChangeoverViewData_AllSwitchedTasksMarkComplete(t *testing.T) {
 			Situation:    "switch",
 			State:        "switched", // already considered complete by the helper
 		}},
+		nil,
 		existing,
 	)
 	if err != nil {
@@ -191,6 +193,7 @@ func TestBuildChangeoverViewData_CentralNodeTasksWhenNoStation(t *testing.T) {
 			Situation:    "switch",
 			State:        "pending",
 		}},
+		nil,
 		existing,
 	); err != nil {
 		t.Fatalf("CreateChangeover: %v", err)

@@ -113,3 +113,14 @@ func (db *DB) SetChangeoverNodeTaskSkipNote(id int64, note string) error {
 func (db *DB) LinkChangeoverNodeOrders(id int64, nextOrderID, oldOrderID *int64) error {
 	return processes.LinkChangeoverNodeOrders(db.DB, id, nextOrderID, oldOrderID)
 }
+
+// ListChangeoverParticipants returns the participant set for a changeover
+// (with the legacy derive-from-tasks fallback).
+func (db *DB) ListChangeoverParticipants(changeoverID int64) ([]domain.Participant, error) {
+	return processes.ListChangeoverParticipants(db.DB, changeoverID)
+}
+
+// IsChangeoverParticipant is the hot-path point query behind intake gating.
+func (db *DB) IsChangeoverParticipant(processID int64, coreNodeName string) (bool, string, error) {
+	return processes.IsChangeoverParticipant(db.DB, processID, coreNodeName)
+}

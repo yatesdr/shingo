@@ -395,6 +395,41 @@ CREATE INDEX IF NOT EXISTS idx_changeovers_process_id ON process_changeovers(pro
 CREATE INDEX IF NOT EXISTS idx_cst_changeover_id ON changeover_station_tasks(process_changeover_id);
 CREATE INDEX IF NOT EXISTS idx_cnt_changeover_id ON changeover_node_tasks(process_changeover_id);
 
+-- Changeover participants — the set of nodes a changeover PHYSICALLY TOUCHES,
+-- frozen at plan time. Superset of the task set.
+--
+-- Why it exists: "which nodes is this changeover about" was being re-derived
+-- independently by the release affordance, the cutover gate, and intake
+-- gating, and those derivations disagreed. A press-index extension position is
+-- traversed by the index motion but owns no task and no order, so a
+-- task-keyed answer left it invisible -- and therefore open to unrelated robot
+-- dispatch while a bin was about to be placed on it.
+--
+-- KEYED BY NAME, not process_node_id: an extension position may have no
+-- process_nodes row, and it must stay representable and reportable rather than
+-- dropped at write time -- reporting it is exactly what the plan-time
+-- assertion does. process_node_id is therefore nullable.
+--
+-- NO ORDER COLUMNS. A participant is a membership fact, not work. The
+-- no-phantom-orders rule is expressed as absent columns.
+--
+-- Written in the SAME TRANSACTION as changeover_node_tasks (see
+-- service/changeover_service.go): a changeover with tasks but no participants,
+-- or vice versa, is not a state any reader should have to handle.
+CREATE TABLE IF NOT EXISTS changeover_participants (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_changeover_id INTEGER NOT NULL REFERENCES process_changeovers(id) ON DELETE CASCADE,
+    core_node_name        TEXT    NOT NULL,
+    process_node_id       INTEGER REFERENCES process_nodes(id) ON DELETE SET NULL,
+    role                  TEXT    NOT NULL,
+        -- 'task' | 'indexed_over'
+    owning_task_id        INTEGER REFERENCES changeover_node_tasks(id) ON DELETE SET NULL,
+    updated_at            TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(process_changeover_id, core_node_name)
+);
+CREATE INDEX IF NOT EXISTS idx_cp_changeover_id ON changeover_participants(process_changeover_id);
+CREATE INDEX IF NOT EXISTS idx_cp_node_name ON changeover_participants(core_node_name);
+
 CREATE TABLE IF NOT EXISTS node_lineside_bucket (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     node_id      INTEGER NOT NULL REFERENCES process_nodes(id) ON DELETE CASCADE,

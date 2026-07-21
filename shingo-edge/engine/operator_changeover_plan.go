@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
@@ -26,6 +27,9 @@ type changeoverPlan struct {
 	diffs      []ChangeoverNodeDiff
 	nodes      []processes.Node
 	nodeTasks  []processes.NodeTaskInput
+	// participants is the node set the changeover physically touches —
+	// superset of nodeTasks, frozen here at plan time.
+	participants []domain.ParticipantInput
 }
 
 // planChangeover assembles all data needed for a changeover without writing anything.
@@ -111,6 +115,8 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 		}
 	}
 
+	participants := buildParticipants(diffs)
+
 	return &changeoverPlan{
 		process:    process,
 		style:      style,
@@ -119,6 +125,8 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 		diffs:      diffs,
 		nodes:      nodes,
 		nodeTasks:  nodeTasks,
+
+		participants: participants,
 	}, nil
 }
 
@@ -268,6 +276,65 @@ func (e *Engine) activePullSnapshot(nodes []processes.Node) map[string]bool {
 			continue
 		}
 		out[nodes[i].CoreNodeName] = rt.ActivePull
+	}
+	return out
+}
+
+// buildParticipants derives the changeover's participant set from the
+// POST-FAN-OUT diffs: every diff node as a task-role participant, plus every
+// press-index extension seat that no diff already covers as indexed_over.
+//
+// TASK ROLE IS THE FULL DIFF SLICE, including SituationUnchanged. That is a
+// strict widening and it is deliberate: unchanged diffs mint task rows today,
+// so scoping participants to "changed only" would silently UNGATE a node the
+// current gate blocks. Springfield-safe regardless — a loader that isn't in the
+// changeover produces no diff at all, so it never becomes a participant and
+// never gets gated (that regression is what forced the gate to be scoped in the
+// first place).
+//
+// INDEXED_OVER is the set this table exists for: a press-index extension seat
+// is physically traversed by the index motion but mints no order and owns no
+// task, so a task-keyed view cannot see it. Same-bin-type press-index
+// changeovers never fan out (binTypesDiffer is false), so those seats appear
+// ONLY here — and without them, intake gating leaves a position open to
+// unrelated dispatch while a bin is about to be placed on it.
+//
+// Seats already covered by a diff (the different-bin-type case, where fan-out
+// gave each position its own task) stay task-role; the UNIQUE constraint would
+// reject the duplicate anyway, but skipping it keeps the roles honest rather
+// than order-dependent.
+func buildParticipants(diffs []ChangeoverNodeDiff) []domain.ParticipantInput {
+	taskNodes := make(map[string]bool, len(diffs))
+	out := make([]domain.ParticipantInput, 0, len(diffs))
+	for _, d := range diffs {
+		if d.CoreNodeName == "" || taskNodes[d.CoreNodeName] {
+			continue
+		}
+		taskNodes[d.CoreNodeName] = true
+		out = append(out, domain.ParticipantInput{
+			CoreNodeName: d.CoreNodeName,
+			Role:         domain.ParticipantRoleTask,
+		})
+	}
+
+	seen := make(map[string]bool, len(taskNodes))
+	for _, d := range diffs {
+		for _, claim := range []*processes.NodeClaim{d.FromClaim, d.ToClaim} {
+			if claim == nil || claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+				continue
+			}
+			for _, seat := range pressIndexExtensionPositions(claim) {
+				if taskNodes[seat] || seen[seat] {
+					continue
+				}
+				seen[seat] = true
+				out = append(out, domain.ParticipantInput{
+					CoreNodeName:       seat,
+					Role:               domain.ParticipantRoleIndexedOver,
+					OwningTaskCoreNode: d.CoreNodeName,
+				})
+			}
+		}
 	}
 	return out
 }

@@ -302,3 +302,51 @@ type NodeTaskInput struct {
 	Situation    string
 	State        string
 }
+
+// ParticipantRole distinguishes the two kinds of node a changeover touches.
+//
+// Deliberately TWO values. A richer evac/supply/both vocabulary was rejected in
+// review because it duplicates data the task row already owns; participants
+// answer "is this node part of the changeover", not "what work happens there".
+const (
+	// ParticipantRoleTask — the node owns a changeover_node_task: there is
+	// releasable work here and the operator can act on it.
+	ParticipantRoleTask = "task"
+	// ParticipantRoleIndexedOver — the node is physically traversed by the
+	// changeover (a press-index extension position) but mints NO order and
+	// owns NO task. It exists so intake gating can refuse robot traffic to a
+	// position an index motion is about to place a bin on. Giving these a task
+	// instead would create a phantom with no reachable terminal state.
+	ParticipantRoleIndexedOver = "indexed_over"
+)
+
+// ParticipantInput is the input shape for one changeover participant, written
+// in the same transaction as the node tasks.
+//
+// NO ORDER POINTERS, by construction. A participant is a membership fact, not a
+// unit of work; the no-phantom-orders rule is expressed here as absent columns
+// rather than as a convention someone has to remember.
+type ParticipantInput struct {
+	CoreNodeName string
+	Role         string
+	// OwningTaskCoreNode is the task-role node this participant hangs off —
+	// for an indexed_over position, the press it extends. Empty for task-role
+	// participants (they own themselves). Resolved to owning_task_id at write
+	// time, once the task rows exist and have ids.
+	OwningTaskCoreNode string
+}
+
+// Participant is a persisted changeover participant row.
+type Participant struct {
+	ID                  int64
+	ProcessChangeoverID int64
+	CoreNodeName        string
+	// ProcessNodeID is nullable: a press-index extension position may have no
+	// process_nodes row at all, and the whole point of keying this table by
+	// name is that such a position stays representable and REPORTABLE rather
+	// than being silently dropped at write time.
+	ProcessNodeID *int64
+	Role          string
+	OwningTaskID  *int64
+	UpdatedAt     time.Time
+}

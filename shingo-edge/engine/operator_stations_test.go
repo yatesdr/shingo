@@ -150,7 +150,7 @@ func TestCanAcceptOrders(t *testing.T) {
 			t.Fatalf("list process nodes: %v", err)
 		}
 		tasks := []processes.NodeTaskInput{{ProcessID: processID, CoreNodeName: "TEST-NODE", Situation: "swap", State: "swap_required"}}
-		_, err = service.NewChangeoverService(db).Create(processID, &fromStyleID, toStyleID, "test", "test changeover", nil, tasks, existing)
+		_, err = service.NewChangeoverService(db).Create(processID, &fromStyleID, toStyleID, "test", "test changeover", nil, tasks, nil, existing)
 		if err != nil {
 			t.Fatalf("create changeover: %v", err)
 		}
@@ -182,7 +182,7 @@ func TestCanAcceptOrders(t *testing.T) {
 		// loader that only supplies empties and isn't part of the swap. It must
 		// stay available (regression guard for the "node X unavailable:
 		// changeover in progress" loader bug).
-		_, err = service.NewChangeoverService(db).Create(processID, &fromStyleID, toStyleID, "test", "loader not in changeover", nil, nil, nil)
+		_, err = service.NewChangeoverService(db).Create(processID, &fromStyleID, toStyleID, "test", "loader not in changeover", nil, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("create changeover: %v", err)
 		}
@@ -207,7 +207,7 @@ func TestCanAcceptOrders(t *testing.T) {
 			t.Fatalf("create to style: %v", err)
 		}
 
-		coID, err := service.NewChangeoverService(db).Create(processID, &fromStyleID, toStyleID, "test", "test changeover", nil, nil, nil)
+		coID, err := service.NewChangeoverService(db).Create(processID, &fromStyleID, toStyleID, "test", "test changeover", nil, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("create changeover: %v", err)
 		}
