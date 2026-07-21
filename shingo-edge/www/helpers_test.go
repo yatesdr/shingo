@@ -88,6 +88,10 @@ type stubEngine struct {
 	// pure read, so the stub just replays whatever the test set.
 	lastReleaseNodeID int64
 
+	lastAbandonNodeID     int64
+	lastAbandonAcceptHalf bool
+	abandonErr            error
+
 	gateCanComplete bool
 	gateBlockers    []domain.Blocker
 	gateErr         error
@@ -180,6 +184,11 @@ func (s *stubEngine) ReleaseChangeoverWaitForNode(_, nodeID int64, disp engine.R
 	s.lastReleaseChangeoverWaitDisp = &d
 	s.lastReleaseNodeID = nodeID
 	return engine.ReleaseChangeoverWaitResult{}, nil
+}
+func (s *stubEngine) AbandonChangeoverSupply(_, nodeID int64, acceptHalf bool, _ string) error {
+	s.lastAbandonNodeID = nodeID
+	s.lastAbandonAcceptHalf = acceptHalf
+	return s.abandonErr
 }
 func (s *stubEngine) SequentialChangeoverCutover(int64, int64, string) error { return nil }
 func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*storeorders.Order, error) {

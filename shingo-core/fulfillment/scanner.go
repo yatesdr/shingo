@@ -286,7 +286,9 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		intent = dispatch.IntentEmpty
 	}
 	res := s.finder.FindSource(order, intent)
-	switch res.Outcome {
+	// mapFinderOutcome is the shared admission point: it fails loudly on an
+	// unknown outcome instead of letting a default arm mis-file it.
+	switch dispatch.MapFinderOutcome(res) {
 	case dispatch.OutcomeWait:
 		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
 		return false

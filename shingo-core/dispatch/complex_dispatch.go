@@ -444,6 +444,19 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 			return rerr
 		}
 	}
+
+	// C(ii): supply-pickup widening. Every full-material pickup — never an
+	// evac/removal leg (isRemovalPickup splits those off; they keep today's
+	// reserve/moot path byte-unchanged) — is re-anchored through the
+	// node-local finder each tick: material sitting on a sibling position in
+	// the anchor's pool rewrites the step there; a dry anchor PARKS the order
+	// as waiting_for_material instead of letting it fail terminal downstream.
+	// The park is the disposition change: a dry supply need is escapable
+	// (operator abandon) rather than a cancel→autoreorder loop.
+	widened, wchanged, hold := d.widenSupplyPickups(order, newSteps)
+	newSteps = widened
+	changed = changed || wchanged
+
 	if changed {
 		stepsJSON, mErr := json.Marshal(newSteps)
 		if mErr == nil {
@@ -473,6 +486,40 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		}
 	}
 	resolvedSteps = newSteps
+
+	// A blocked supply need surfaces AFTER the persist block so partial
+	// rewrites (steps widened before the blocked one) are already durable;
+	// the next tick re-derives every anchor from the persisted Group stamp.
+	if hold != nil {
+		switch MapFinderOutcome(*hold) {
+		case OutcomeWait:
+			d.setQueueReason(order, hold.QueueCode, hold.QueueCause, hold.QueueParams)
+			d.dbg("complex: order %d supply pickup waiting for material (%s)", order.ID, hold.QueueCause)
+			return fmt.Errorf("supply pickup waiting for material: %s", hold.QueueCause)
+		case OutcomeReshuffle:
+			d.dbg("complex: order %d supply pickup buried at widen — bin %d in lane %d",
+				order.ID, hold.Buried.Bin.ID, hold.Buried.LaneID)
+			d.handleComplexBuriedOnReplay(order, hold.Buried)
+			return fmt.Errorf("supply pickup buried; reshuffle planned")
+		case OutcomeFound:
+			// Impossible: widenSupplyPickups only holds non-Found results.
+			// Fail structurally rather than silently dispatching a plan whose
+			// widening never finished.
+			fallthrough
+		default: // OutcomeStructural — TermCode/Err may be unset on the
+			// loud-degrade path out of MapFinderOutcome.
+			code := hold.TermCode
+			if code == "" {
+				code = codeNoBin
+			}
+			detail := "supply widening failed structurally"
+			if hold.Err != nil {
+				detail = hold.Err.Error()
+			}
+			d.failOrderInternal(order, code, detail)
+			return fmt.Errorf("supply pickup structural: %s", detail)
+		}
+	}
 
 	// Dedicated home loader PARK: when this is a changeover return from a
 	// dedicated-loader home (order.SourceNode = the evac pickup), Core decides where

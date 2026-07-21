@@ -43,6 +43,24 @@ const (
 	NodeTaskCancelled NodeTaskState = "cancelled"
 	NodeTaskError     NodeTaskState = "error"
 
+	// NodeTaskAwaitingMaterial marks a swap/evacuate task whose SUPPLY order
+	// is parked on Core with queue code waiting_for_material — the material
+	// pool at the order's own node (its anchor) is dry, so Core queued the
+	// order instead of failing it terminal (C(ii) supply widening). Written by
+	// the orders manager when the queue-reason push lands; exits through the
+	// normal staged-delivery writer when material arrives, or through operator
+	// abandon (AbandonChangeoverSupply). NON-terminal with NO carve-out: an
+	// awaiting task blocks changeover completion until one of those happens.
+	NodeTaskAwaitingMaterial NodeTaskState = "awaiting_material"
+
+	// NodeTaskAbandoned marks a task whose supply half the operator gave up
+	// on — plain abandon (both halves cancelled) or accepted half-swap (evac
+	// kept, supply cancelled; Core sees cancel reason accept_half_swap and
+	// leaves the partner alone). TERMINAL: the changeover completes without
+	// this node's new material, same semantic family as a Core-skipped supply
+	// leg advancing to released. skip_note carries the operator-facing story.
+	NodeTaskAbandoned NodeTaskState = "abandoned"
+
 	// NodeTaskCapacityBlocked marks a drop task whose source-side fleet
 	// dispatch failed because the destination (storage) is full —
 	// distinct from NodeTaskLineCleared (no bin to remove, evac done)
@@ -88,7 +106,7 @@ func (s NodeTaskState) Value() (driver.Value, error) {
 // per-station rollup, and the dashboard's "all nodes complete" indicator.
 func (s NodeTaskState) IsTerminal(situation string) bool {
 	switch s {
-	case NodeTaskSwitched, NodeTaskVerified, NodeTaskUnchanged, NodeTaskReleased:
+	case NodeTaskSwitched, NodeTaskVerified, NodeTaskUnchanged, NodeTaskReleased, NodeTaskAbandoned:
 		return true
 	case NodeTaskLineCleared:
 		return situation == "drop"

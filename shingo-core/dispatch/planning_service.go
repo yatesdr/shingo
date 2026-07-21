@@ -205,7 +205,11 @@ func (s *PlanningService) Plan(order *orders.Order, env *protocol.Envelope, payl
 // codeNode strings are the persisted contract intake already used).
 func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bins.Bin, *nodes.Node, *PlanningResult, *planningError, bool) {
 	res := s.finder.FindSource(order, intent)
-	switch res.Outcome {
+	// mapFinderOutcome is the shared admission point (see finder_outcome.go):
+	// unknown outcomes fail loudly there, so every arm here is explicit and
+	// the old behavior-bearing default (anything-unknown parked as Wait,
+	// forever, silently) is gone.
+	switch MapFinderOutcome(res) {
 	case OutcomeFound:
 		return res.Bin, res.Node, nil, nil, true
 	case OutcomeReshuffle:
@@ -214,7 +218,7 @@ func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bi
 	case OutcomeStructural:
 		s.dbg("plan: order %d structural — %s: %s", order.ID, res.TermCode, res.Err)
 		return nil, nil, nil, &planningError{Code: res.TermCode, Detail: res.Err.Error(), Err: res.Err}, false
-	default: // OutcomeWait
+	default: // OutcomeWait — the only remaining member
 		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
 		return nil, nil, &PlanningResult{Queued: true}, nil, false
 	}

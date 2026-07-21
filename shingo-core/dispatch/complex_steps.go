@@ -2,10 +2,12 @@ package dispatch
 
 import (
 	"fmt"
+	"log"
 
 	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
+	"shingocore/store/orders"
 )
 
 // resolveComplexSteps validates and resolves all steps, returning concrete node names.
@@ -408,4 +410,134 @@ func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int, 
 		})
 	}
 	return blocks
+}
+
+// widenSupplyPickups is C(ii)'s behavior change: complex SUPPLY pickups see the
+// loader POOL instead of one hard-coded node.
+//
+// The incident shape (Springfield 74379, orders 2429/2431/2433): a supply
+// pickup at an empty pinned home while the ONLY bin of that payload sat one
+// slot over in the same loader's buffer. The allocator's findAvailableForNeed
+// reads exactly one node, so the order terminal-skipped "no bin at any source
+// node", the swap-peer unwound the partner evac, and — because the skip is
+// terminal — autoreorder saw a clear lane and re-fired the pair every ~50s
+// (282 skips in one day at SPR on 2026-07-21). This function is both halves of
+// the fix: the WIDENING (pool hit → rewrite the step to the bin's real node)
+// and, in its caller, the DISPOSITION change (pool dry → hold with a scoped
+// queue reason instead of a terminal skip).
+//
+// Gate, per locked design: pickup ∧ !Empty ∧ !isRemovalPickup.
+//   - Empty pickups keep their existing resolution paths untouched.
+//   - Removal/evac pickups stay NODE-BOUND and payload-agnostic: an evac must
+//     clear whatever sits at the line, never be re-routed to a pool node —
+//     filtering an evac by anything is what wedged SPR ALN_006 (2026-07).
+//     Orders with a blank ProcessNode degrade isRemovalPickup to
+//     "never removal"; the live population with that shape is supply-shaped
+//     (Springfield census 2026-07-21), and for a line-node pickup the finder's
+//     tier 4 resolves the resident bin AT that node — same name, no rewrite —
+//     so the degradation is inert there too. Pinned by the fixture tests.
+//
+// Anchor = step.Group if set, else step.Node — RE-DERIVED per tick from the
+// persisted anchor, so a widened step stays re-derivable after restarts and
+// the pool choice can move as bins move. Synthetic nodes are skipped (NGRP
+// resolution is reResolveComplexSteps' job, which runs before this).
+//
+// The Group stamp on a rewrite is what keeps the reservation reconcile sane:
+// matchHeldToNeed keys held reservations by the step's CURRENT node, so the
+// rewrite must persist (the caller's changed-steps machinery) or every tick
+// re-derives from the stale node and thrashes the hold.
+//
+// Returns the (possibly rewritten) steps, whether anything changed — set
+// EXPLICITLY on a Group-only stamp, because the caller's persist trigger keys
+// on the changed flag and a name-equality check alone cannot see a Group write
+// — and the first non-Found SourceResult for a widened need (nil when every
+// widened pickup resolved). The caller owns the disposition of that hold.
+func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedStep) ([]resolvedStep, bool, *SourceResult) {
+	if d.finder == nil {
+		return steps, false, nil
+	}
+	// Owner-aware guard: a `sourcing` order HOLDS partial reservations across
+	// scanner retries by design (reserveComplexPlan's landmine doc). The
+	// finder is owner-blind — it would reject the order's own held bin as
+	// unavailable and park the order on the exact resource it already holds,
+	// a self-park it could never exit. So needs covered by an own hold are the
+	// reconcile's property and widening must not touch them. If the holds
+	// can't be read, skip widening entirely this tick (the pre-widening
+	// behavior) rather than proceed blind.
+	rows, rerr := d.db.ListReservationsByOrder(order.ID)
+	if rerr != nil {
+		log.Printf("dispatch: widen order %d: list own reservations: %v (skipping widening this tick)", order.ID, rerr)
+		return steps, false, nil
+	}
+	var held []*heldReservation
+	if len(rows) > 0 {
+		held = d.allocator.resolveHeldReservations(rows)
+	}
+	out := make([]resolvedStep, len(steps))
+	copy(out, steps)
+	changed := false
+	for i := range out {
+		step := out[i]
+		if step.Action == protocol.ActionWait {
+			// Widening stops at the first wait. Post-wait steps execute after
+			// an Edge release, against a FUTURE world state — the classic
+			// single-order swap's post-wait line pickup removes a bin that
+			// arrives only once THIS order's pre-wait blocks deliver it.
+			// Judging those steps against current pools would park orders
+			// whose conditions resolve mid-flight. The release path owns
+			// them, mirroring the block split the fleet dispatch itself
+			// makes at the wait.
+			break
+		}
+		if step.Action != protocol.ActionPickup || step.Empty || isRemovalPickup(step, order.ProcessNode) {
+			continue
+		}
+		if hb := matchHeldToNeed(held, step); hb != nil {
+			// Same (node, empty-status) key the reserve reconcile matches on;
+			// consume the hold so a second identical need can't ride the same
+			// reservation past the finder.
+			hb.used = true
+			continue
+		}
+		anchor := step.Group
+		if anchor == "" {
+			anchor = step.Node
+		}
+		if anchor == "" {
+			continue
+		}
+		if n, err := d.db.GetNodeByDotName(anchor); err != nil || n == nil || n.IsSynthetic {
+			continue // unknown or synthetic anchor — not this seam's job
+		}
+		res := d.finder.FindSourceForNeed(SourceNeed{
+			SourceNode:   anchor,
+			PayloadCode:  order.PayloadCode,
+			DeliveryNode: order.DeliveryNode,
+			Intent:       IntentFull,
+			NodeLocal:    true,
+		})
+		switch MapFinderOutcome(res) {
+		case OutcomeFound:
+			if res.Node.Name != step.Node {
+				d.dbg("widen: order %d supply pickup %s → %s (pool hit, anchor %s)",
+					order.ID, step.Node, res.Node.Name, anchor)
+				out[i].Node = res.Node.Name
+				out[i].Group = anchor
+				changed = true
+			} else if out[i].Group != anchor && step.Group != "" {
+				// Anchor came from a prior rewrite's Group and the pool now
+				// resolves back to a node matching the current name — keep the
+				// stamp coherent, and set changed EXPLICITLY: the persist
+				// trigger cannot see a Group-only write through name equality.
+				out[i].Group = anchor
+				changed = true
+			}
+		default:
+			// Wait / Reshuffle / Structural — the caller disposes. First
+			// blocked need wins; steps rewritten so far still persist.
+			resCopy := res
+			return out, changed, &resCopy
+		}
+	}
+	return out, changed, nil
 }

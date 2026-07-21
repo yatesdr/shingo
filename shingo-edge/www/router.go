@@ -308,6 +308,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/processes/{id}/changeover/deliver-material/{nodeID}", h.apiDeliverNewMaterialForChangeover)
 			r.Post("/processes/{id}/changeover/switch-station/{stationID}", h.apiSwitchOperatorStationToTarget)
 			r.Post("/processes/{id}/changeover/switch-node/{nodeID}", h.apiSwitchNodeToTarget)
+			r.Post("/processes/{id}/changeover/abandon-node/{nodeID}", h.apiAbandonChangeoverNode)
 			r.Post("/processes/{id}/changeover/release-wait", h.apiReleaseChangeoverWait)
 			r.Post("/processes/{id}/changeover/sequential-cutover/{nodeID}", h.apiSequentialChangeoverCutover)
 

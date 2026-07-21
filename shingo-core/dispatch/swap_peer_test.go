@@ -236,3 +236,40 @@ func TestSwapPeerTerminal_PressIndexR2Skipped_CancelsEvac(t *testing.T) {
 			"a skipped supply means no replacement is coming, so the evac must not pull the press's bin", got.Status)
 	}
 }
+
+// TestSwapPeerTerminal_Abandoned_LeavesPartner — C(ii) escape γ (accept the
+// half-swap). The operator abandons a supply Core parked for material; the
+// cancel carries protocol.CancelReasonAcceptHalfSwap, which the engine maps to
+// SwapTerminalAbandoned. Unlike every other terminal kind, the partner evac is
+// LEFT ALONE to finish (the operator chose the cleared-line half), and the
+// half-swap is auditable on the surviving leg.
+func TestSwapPeerTerminal_Abandoned_LeavesPartner(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+	store1 := &nodes.Node{Name: "SWAP-STORE-AB", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	mkSwapLeg(t, db, "supab", "evacab", StatusCancelled, lineNode.Name, lineNode.Name, bp.Code)
+	supply, _ := db.GetOrderByUUID("supab")
+	mkSwapLeg(t, db, "evacab", "supab", protocol.StatusInTransit, lineNode.Name, store1.Name, bp.Code)
+
+	d.HandleSwapPeerTerminal(supply.ID, SwapTerminalAbandoned)
+
+	got, _ := db.GetOrderByUUID("evacab")
+	if got.Status != protocol.StatusInTransit {
+		t.Fatalf("evac status = %q, want in_transit untouched — an accepted half-swap must NOT cascade the cancel", got.Status)
+	}
+	entries, err := db.ListEntityAudit("order", got.ID)
+	testutil.MustNoErr(t, err, "list evac audit")
+	found := false
+	for _, e := range entries {
+		if e.Action == "swap_half_accepted" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no swap_half_accepted audit on the surviving evac — the half-swap must be traceable")
+	}
+}

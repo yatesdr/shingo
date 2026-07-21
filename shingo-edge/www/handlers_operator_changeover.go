@@ -12,6 +12,7 @@ package www
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -397,6 +398,38 @@ func (h *Handlers) apiSwitchNodeToTarget(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "switch-to-target"}})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
+}
+
+// apiAbandonChangeoverNode is the operator exit from awaiting_material — a
+// node task whose supply order Core parked for lack of material. Plain POST
+// abandons both halves (refused 409 while the partner evac is fleet-active);
+// ?accept_half=1 keeps the evac and cancels only the supply. Body-less by
+// design so the template buttons can hx-post it like their siblings.
+func (h *Handlers) apiAbandonChangeoverNode(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	nodeID, err := parseID(r, "nodeID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	acceptHalf := r.URL.Query().Get("accept_half") == "1"
+	if err := h.orchestration.AbandonChangeoverSupply(processID, nodeID, acceptHalf, "operator"); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, engine.ErrPartnerInFlight) {
+			// Conflict, not a bad request: the request was well-formed but the
+			// floor state forbids it right now. The toast tells the operator
+			// their two real options (wait, or accept the half-swap).
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "supply-abandoned"}})
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 

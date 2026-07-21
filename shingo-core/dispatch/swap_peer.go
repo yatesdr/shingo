@@ -14,6 +14,14 @@ const (
 	SwapTerminalFailed    = "failed"
 	SwapTerminalCancelled = "cancelled"
 	SwapTerminalSkipped   = "skipped"
+	// SwapTerminalAbandoned is a supply cancel where the operator explicitly
+	// accepted the half-swap (protocol.CancelReasonAcceptHalfSwap). It is a
+	// DISTINCT kind rather than a flag on Cancelled because the two arms have
+	// opposite post-conditions — Cancelled cancels the partner fail-closed,
+	// Abandoned deliberately leaves it flying — and overloading one constant
+	// with both would force a suppression boolean through this handler, which
+	// is exactly the two-definitions drift the constants exist to prevent.
+	SwapTerminalAbandoned = "abandoned"
 )
 
 // HandleSwapPeerTerminal reacts to a two-robot swap leg reaching a terminal
@@ -73,6 +81,16 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 		log.Printf("dispatch: swap peer-terminal for order %d — cannot read steps; treating as supply (resolve the peer) rather than risk a silent moot-evac no-op", dead.ID)
 	}
 	deadIsEvac := ok && legTakesLineBin(steps, dead.ProcessNode)
+
+	// Accept-half-swap: the operator explicitly chose to let the committed
+	// partner finish. Record it loudly; touch NOTHING. The fail-closed peer
+	// cancel below is the default for every other terminal kind.
+	if terminalKind == SwapTerminalAbandoned {
+		d.db.AppendAudit("order", peer.ID, "swap_half_accepted", "",
+			fmt.Sprintf("supply (order %d) abandoned by operator accepting the half-swap; partner left to complete", dead.ID), "system")
+		log.Printf("dispatch: swap supply %d abandoned (accept-half-swap) — partner %d left to complete", dead.ID, peer.ID)
+		return
+	}
 
 	if deadIsEvac {
 		// A moot (skipped) evac is a clean no-op — the line's resident was

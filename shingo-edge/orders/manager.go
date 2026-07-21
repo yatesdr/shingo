@@ -497,8 +497,55 @@ func (m *Manager) TransitionOrder(orderID int64, newStatus protocol.Status, deta
 // SetOrderQueueReason persists Core's blocking reason and its structured code
 // for a queued order. Called from the edge handler when an OrderUpdate (or boot
 // snapshot) carries QueueReason + QueueCode fields.
+//
+// A waiting_for_material code on a changeover SUPPLY order additionally stamps
+// the owning node task awaiting_material — the C(ii) park made visible. The
+// stamp rides the same push (and the boot snapshot) so a restart re-derives it.
 func (m *Manager) SetOrderQueueReason(uuid, reason, code string) error {
-	return m.db.SetOrderQueueReason(uuid, reason, code)
+	if err := m.db.SetOrderQueueReason(uuid, reason, code); err != nil {
+		return err
+	}
+	if code == string(protocol.QueueWaitingForMaterial) {
+		m.stampAwaitingMaterial(uuid)
+	}
+	return nil
+}
+
+// stampAwaitingMaterial moves a changeover supply leg's node task to
+// awaiting_material when Core parks the supply order for lack of material at
+// its node-local pool. Best-effort: a miss here only costs visibility (the
+// order itself is already parked), so every bail-out is silent or logged, never
+// an error to the push path.
+//
+// Guards: supply leg only (NextMaterialOrderID — an evac never parks for
+// material), changeover still active, task not already terminal for its
+// situation. The task does NOT revert when the order un-parks; it is genuinely
+// "waiting for material to arrive at the line" until the staged-delivery writer
+// advances it, and the abandon path re-checks the order's live status anyway.
+func (m *Manager) stampAwaitingMaterial(uuid string) {
+	order, err := m.db.GetOrderByUUID(uuid)
+	if err != nil || order == nil {
+		return
+	}
+	task, coState, terr := m.db.FindChangeoverNodeTaskByOrderID(order.ID)
+	if terr != nil || task == nil {
+		return
+	}
+	if task.NextMaterialOrderID == nil || *task.NextMaterialOrderID != order.ID {
+		return
+	}
+	if coState.IsTerminal() {
+		return
+	}
+	if task.State == domain.NodeTaskAwaitingMaterial || task.State.IsTerminal(task.Situation) {
+		return
+	}
+	if err := m.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskAwaitingMaterial); err != nil {
+		log.Printf("orders: stamp node task %d awaiting_material: %v", task.ID, err)
+		return
+	}
+	m.DebugLog.Log("changeover: node task %d (%s) -> awaiting_material (supply order %d parked by core)",
+		task.ID, task.NodeName, order.ID)
 }
 
 // SetOrderETA persists Core's ETA stamp for an order. Called from the edge
@@ -518,7 +565,16 @@ func (m *Manager) SetOrderETA(uuid, eta string) error {
 // is guaranteed to receive the cancellation — preventing a robot from
 // continuing to execute a cancelled order on the floor.
 func (m *Manager) AbortOrder(orderID int64) error {
-	m.DebugLog.Log("abort: id=%d", orderID)
+	return m.AbortOrderWithReason(orderID, "aborted by operator")
+}
+
+// AbortOrderWithReason is AbortOrder with a caller-chosen cancel reason. The
+// reason travels in the OrderCancel envelope and Core keys behavior on it —
+// protocol.CancelReasonAcceptHalfSwap tells Core's swap-peer arm to leave the
+// partner leg alone (the accepted half-swap) where any other reason cascades
+// the cancel. It is also the local transition detail, so the HMI shows it.
+func (m *Manager) AbortOrderWithReason(orderID int64, reason string) error {
+	m.DebugLog.Log("abort: id=%d reason=%q", orderID, reason)
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
@@ -531,15 +587,14 @@ func (m *Manager) AbortOrder(orderID int64) error {
 	// If enqueue fails, the order stays in its current state so the
 	// operator can retry rather than having a locally-cancelled order
 	// with a robot still executing on the floor.
-	const abortReason = "aborted by operator"
 	if err := m.sender.Queue(protocol.TypeOrderCancel, &protocol.OrderCancel{
 		OrderUUID: order.UUID,
-		Reason:    abortReason,
+		Reason:    reason,
 	}); err != nil {
 		return fmt.Errorf("enqueue cancel message: %w", err)
 	}
 
-	if err := m.TransitionOrder(orderID, StatusCancelled, abortReason); err != nil {
+	if err := m.TransitionOrder(orderID, StatusCancelled, reason); err != nil {
 		return err
 	}
 	return nil

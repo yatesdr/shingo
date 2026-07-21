@@ -114,6 +114,10 @@ type EngineOrchestration interface {
 	ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
 	// ReleaseChangeoverWaitForNode scopes the same release to one node's task.
 	ReleaseChangeoverWaitForNode(processID, processNodeID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
+	// AbandonChangeoverSupply is the operator exit from awaiting_material:
+	// cancel the parked supply half (both halves unless acceptHalf) and land
+	// the node task abandoned-terminal.
+	AbandonChangeoverSupply(processID, processNodeID int64, acceptHalf bool, calledBy string) error
 	// ChangeoverGateStatus is a pure read of the cutover gate — safe to poll.
 	ChangeoverGateStatus(processID int64) (bool, []domain.Blocker, error)
 	SequentialChangeoverCutover(processID, nodeID int64, calledBy string) error

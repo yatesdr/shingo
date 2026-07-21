@@ -96,6 +96,14 @@ type OrderCancel struct {
 	Reason    string `json:"reason"`
 }
 
+// CancelReasonAcceptHalfSwap marks a supply-leg cancel where the operator
+// explicitly ACCEPTED the half-swap: the fleet-committed partner evac must NOT
+// be cancelled in response (axiom: Core cannot recall a robot mid-drive, so
+// cancelling a committed evac is not an option — accepting the half-swap is).
+// Core's swap-peer unwind switches on this exact reason; every other cancel
+// reason keeps the fail-closed peer-cancel behaviour.
+const CancelReasonAcceptHalfSwap = "accept_half_swap"
+
 // OrderReceipt confirms delivery acceptance.
 type OrderReceipt struct {
 	OrderUUID   string `json:"order_uuid"`

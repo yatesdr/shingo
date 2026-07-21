@@ -203,7 +203,13 @@ func (e *Engine) wireEventHandlers() {
 		// can't strand/collide the line. Self-gates on the durable sibling link;
 		// the peer's own re-entrant call terminates on the IsTerminal guard.
 		if e.dispatcher != nil {
-			e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, dispatch.SwapTerminalCancelled)
+			kind := dispatch.SwapTerminalCancelled
+			// An operator-accepted half-swap must NOT cancel the committed
+			// partner — the marker rides the cancel reason end to end.
+			if ev.Reason == protocol.CancelReasonAcceptHalfSwap {
+				kind = dispatch.SwapTerminalAbandoned
+			}
+			e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, kind)
 		}
 	}, EventOrderCancelled)
 

@@ -51,6 +51,13 @@
     <button class="btn btn-sm" disabled style="opacity:0.5">Waiting for downstream capacity...</button>
     <button class="btn btn-sm" hx-post="/api/processes/{{.ProcessID}}/changeover/evacuate-node/{{.ProcessNodeID}}" hx-swap="none">Retry Evac</button>
     <button class="btn btn-sm" hx-post="/api/processes/{{.ProcessID}}/changeover/switch-node/{{.ProcessNodeID}}" hx-swap="none" style="margin-left:0.5rem">Skip</button>
+{{else if eq .State "awaiting_material"}}
+    {{/* C(ii): Core parked this node's supply order — the material pool at its own node is dry. It un-parks by itself when material shows up (staged delivery advances the task). Abandon cancels BOTH halves (refused with a toast while the evac robot is mid-move); Accept Half-Swap keeps the evacuation and cancels only the supply. */}}
+    <button class="btn btn-sm" disabled style="opacity:0.5">Waiting for material at the line...</button>
+    <button class="btn btn-sm btn-danger" hx-post="/api/processes/{{.ProcessID}}/changeover/abandon-node/{{.ProcessNodeID}}" hx-swap="none">Abandon</button>
+    <button class="btn btn-sm" hx-post="/api/processes/{{.ProcessID}}/changeover/abandon-node/{{.ProcessNodeID}}?accept_half=1" hx-swap="none" style="margin-left:0.5rem">Accept Half-Swap</button>
+{{else if eq .State "abandoned"}}
+    <button class="btn btn-sm" disabled style="opacity:0.5">Supply abandoned</button>
 {{else if eq .State "cancelled"}}
     <button class="btn btn-sm" disabled style="opacity:0.5">Cancelled</button>
 {{end}}
