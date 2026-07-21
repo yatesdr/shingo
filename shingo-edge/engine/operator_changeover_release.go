@@ -113,6 +113,17 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition)
 		return result, err
 	}
 
+	// Entry log. Until now this function produced NO record of having been
+	// called — only per-slot failures logged, so a click that released
+	// nothing (every leg terminal, or every task "unchanged") was
+	// indistinguishable in the logs from a click that never happened. That
+	// ambiguity is what left "did the operator actually press release?"
+	// unanswerable in the Hopkinsville changeover post-mortems. One line per
+	// invocation, before any slot is examined, so the record exists even when
+	// the loop does nothing.
+	e.logFn("release_changeover_wait: process=%d changeover=%d tasks=%d called_by=%q",
+		processID, changeover.ID, len(tasks), disp.CalledBy)
+
 	// Supply leg always rides through with no manifest action regardless of
 	// what the operator chose. Empty Mode → buildProtocolDisposition returns
 	// nil → Core no-op. CalledBy still flows for audit.
