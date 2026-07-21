@@ -531,6 +531,43 @@ func (e *Engine) releaseUnlessTerminal(orderID int64, label string, disp Release
 	return nil
 }
 
+// releaseIfReleasable is releaseUnlessTerminal plus Core's OWN release
+// precondition (orders.ReleasableAtCore). It reports whether the release was
+// actually queued, so a caller can count the skip rather than miscount it as
+// a release.
+//
+// Use this on the DEFERRED release paths — the ones that fire from an event
+// rather than an operator click, where nothing upstream guarantees the target
+// leg has reached staged. releaseUnlessTerminal remains correct for the
+// operator's consolidated two-robot release, which deliberately fans out to
+// both legs regardless of where each is in its choreography.
+//
+// Without this, a supply leg still at queued/sourcing/dispatched/acknowledged
+// gets an OrderRelease envelope Core refuses with "invalid_state", while
+// Manager.ReleaseOrderWithDisposition has already transitioned the Edge row to
+// in_transit — a persistent Edge/Core divergence. Reachable today via
+// press-index self-sufficient shapes; it becomes the NORMAL path once
+// pool-sourced supply legs can sit in a wait state.
+func (e *Engine) releaseIfReleasable(orderID int64, label string, disp ReleaseDisposition) (bool, error) {
+	order, err := e.db.GetOrder(orderID)
+	if err != nil {
+		return false, fmt.Errorf("get order %s (%d): %w", label, orderID, err)
+	}
+	if orders.IsTerminal(order.Status) {
+		e.logFn("deferred release: order %s (%d) status=%q is terminal — skipping", label, orderID, order.Status)
+		return false, nil
+	}
+	if !orders.ReleasableAtCore(order.Status) {
+		e.logFn("deferred release: order %s (%d) status=%q is not releasable at Core (needs staged or in_transit) — skipping, will release when it stages",
+			label, orderID, order.Status)
+		return false, nil
+	}
+	if err := e.ReleaseOrderWithLineside(orderID, disp); err != nil {
+		return false, fmt.Errorf("release order %s (%d): %w", label, orderID, err)
+	}
+	return true, nil
+}
+
 // AbortNodeOrders cancels all non-terminal orders tracked in a node's
 // runtime state and clears the runtime order references.
 func (e *Engine) AbortNodeOrders(nodeID int64) {

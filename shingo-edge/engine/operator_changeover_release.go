@@ -20,11 +20,12 @@ import (
 // ReleaseChangeoverWaitResult reports the outcome of a release-wait click so
 // the frontend can show the operator how much actually happened. Released is
 // the count of legs whose OrderRelease envelopes were queued this call;
-// Pending is the count of legs that exist but weren't in staged status yet
-// (still sourcing / in_transit / etc.) and so were silently skipped — those
-// are the legs the operator may need to come back for on a second click.
-// Already-terminal legs (released earlier, cancelled, failed) are not
-// counted in either field.
+// Pending is the count of legs that exist but could not be released this
+// call — either a supply leg deliberately deferred to evac-pickup confirm, or
+// a leg Core would refuse because it has not reached staged yet (queued /
+// sourcing / dispatched / acknowledged). Both are legs the operator may need
+// to come back for on a second click. Already-terminal legs (released
+// earlier, cancelled, failed) are not counted in either field.
 type ReleaseChangeoverWaitResult struct {
 	Released int `json:"released"`
 	Pending  int `json:"pending"`
@@ -167,6 +168,19 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition)
 			if orders.IsTerminal(order.Status) {
 				// Already released earlier, cancelled, or failed. No
 				// operator action required.
+				continue
+			}
+			if !orders.ReleasableAtCore(order.Status) {
+				// Core refuses a release for anything that isn't staged or
+				// in_transit, and Manager.ReleaseOrderWithDisposition would
+				// force this row to in_transit anyway — leaving Edge and Core
+				// disagreeing, and Released counting a release that never
+				// happened. Count it Pending (the operator clicks again once
+				// it stages) and say so in the log. This is the skip the
+				// Pending docstring above has always promised.
+				log.Printf("release changeover wait node %s (%s): order %d status=%q not releasable at Core — counting pending",
+					task.NodeName, s.kind, order.ID, order.Status)
+				result.Pending++
 				continue
 			}
 			if err := e.ReleaseOrderWithLineside(order.ID, s.disp); err != nil {
