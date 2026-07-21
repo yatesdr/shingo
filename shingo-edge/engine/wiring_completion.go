@@ -177,6 +177,24 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 				e.reconcileActiveBinAfterCancel(*ctx.order.ProcessNodeID, ctx.runtime.ActiveClaimID)
 			}
 		}
+		// Release the node's order slot for ANY non-success terminal status.
+		// Until this ran, only the boot migration (migrations.go v25b) ever
+		// cleared these pointers: a skipped order fell straight through the
+		// branch above with no cleanup at all, and a cancelled one reconciled
+		// the BIN pointer but never the ORDER pointer. Either way the slot
+		// kept a dead order id until the next edge restart, and the operator
+		// screen renders [REP] "Order in progress" off a bare non-nil pointer
+		// without consulting the order's status (isReplenishing in
+		// operator-state.js). SPR ALN_005/ALN_006 2026-07-21: active=skipped,
+		// staged=cancelled, no live order on Core or Edge, badge stuck on.
+		//
+		// Skipped is included here while deliberately staying out of the
+		// task/bin reconcile above — that path answers "where did the
+		// physical bin end up after an abort", which a skip never asks: the
+		// work was determined unnecessary before a bin was ever committed.
+		if err := e.db.ClearProcessNodeRuntimeOrderRefs(ctx.order.ID); err != nil {
+			log.Printf("clear runtime order refs for order %d: %v", ctx.order.ID, err)
+		}
 		return
 	}
 

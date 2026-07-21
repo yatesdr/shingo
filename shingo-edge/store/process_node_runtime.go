@@ -69,6 +69,12 @@ func (db *DB) UpdateProcessNodeRuntimeOrders(processNodeID int64, activeOrderID,
 	return processes.UpdateRuntimeOrders(db.DB, processNodeID, activeOrderID, stagedOrderID)
 }
 
+// ClearProcessNodeRuntimeOrderRefs nulls every runtime order pointer that
+// references orderID, on whichever node rows hold it.
+func (db *DB) ClearProcessNodeRuntimeOrderRefs(orderID int64) error {
+	return processes.ClearRuntimeOrderRefs(db.DB, orderID)
+}
+
 // UpdateProcessNodeUOP writes the remaining UOP on a runtime row.
 func (db *DB) UpdateProcessNodeUOP(processNodeID int64, remainingUOP int) error {
 	return processes.UpdateRuntimeUOP(db.DB, processNodeID, remainingUOP)

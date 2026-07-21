@@ -1248,6 +1248,53 @@ func TestProcessNodeRuntime_EnsureGetSet(t *testing.T) {
 	}
 }
 
+// A dead order must release only its own slot. The two-robot swap case is
+// the one that matters: when the supply leg is skipped and the evac leg is
+// still running, blanket-nulling both pointers would strand the live leg.
+func TestProcessNodeRuntime_ClearOrderRefs(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	mk := func(name string) int64 {
+		id, _ := db.CreateProcessNode(processes.NodeInput{
+			ProcessID: pid, CoreNodeName: name, Code: name, Name: name, Sequence: 1, Enabled: true,
+		})
+		// The order-pointer writes are bare UPDATEs — the runtime row has
+		// to exist first or they silently affect nothing.
+		testutil.MustNoErr(t, func() error { _, err := db.EnsureProcessNodeRuntime(id); return err }(), "ensure runtime")
+		return id
+	}
+	nodeA, nodeB := mk("A"), mk("B")
+
+	active, staged, other := int64(2413), int64(2414), int64(9999)
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeA, &active, &staged), "seed A")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeB, &other, nil), "seed B")
+
+	// Clearing the active leg leaves the staged sibling in place.
+	testutil.MustNoErr(t, db.ClearProcessNodeRuntimeOrderRefs(active), "clear active")
+	rt, _ := db.GetProcessNodeRuntime(nodeA)
+	if rt.ActiveOrderID != nil {
+		t.Errorf("active_order_id = %v, want nil (order %d is dead)", *rt.ActiveOrderID, active)
+	}
+	if rt.StagedOrderID == nil || *rt.StagedOrderID != staged {
+		t.Fatalf("staged_order_id = %v, want %d — the surviving swap leg must not be dropped", rt.StagedOrderID, staged)
+	}
+
+	// An unrelated node keeps its pointer.
+	if rtB, _ := db.GetProcessNodeRuntime(nodeB); rtB.ActiveOrderID == nil || *rtB.ActiveOrderID != other {
+		t.Errorf("node B active_order_id = %v, want %d (untouched)", rtB.ActiveOrderID, other)
+	}
+
+	// Clearing the staged leg empties the slot.
+	testutil.MustNoErr(t, db.ClearProcessNodeRuntimeOrderRefs(staged), "clear staged")
+	if rt, _ = db.GetProcessNodeRuntime(nodeA); rt.StagedOrderID != nil {
+		t.Errorf("staged_order_id = %v, want nil", *rt.StagedOrderID)
+	}
+
+	// Unreferenced id is a no-op, not an error.
+	testutil.MustNoErr(t, db.ClearProcessNodeRuntimeOrderRefs(12345), "clear unreferenced")
+}
+
 // ============================================================================
 // style_node_claims.go
 // ============================================================================

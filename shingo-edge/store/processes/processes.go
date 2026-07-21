@@ -448,6 +448,31 @@ func UpdateRuntimeOrders(db *sql.DB, processNodeID int64, activeOrderID, stagedO
 	return err
 }
 
+// ClearRuntimeOrderRefs nulls every runtime order pointer that references
+// orderID, leaving the sibling slot and every other row untouched. Called
+// when an order reaches a non-success terminal state, so a dead order can
+// never keep a node's slot occupied.
+//
+// The two slots are cleared independently: a two-robot swap whose supply
+// leg is skipped must keep pointing at its surviving evac leg, and vice
+// versa. A blanket (nil, nil) write would drop the live sibling too.
+//
+// Keyed by order id rather than by node because one Core node fans out to
+// several process_nodes rows and an order's own process_node_id may be
+// nil — "wherever this order is referenced" is the only formulation that
+// reliably drops every reference. Mirrors the boot-time cleanup in
+// migrations.go (v25b), which is otherwise the only thing that clears
+// these pointers.
+func ClearRuntimeOrderRefs(db *sql.DB, orderID int64) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		active_order_id = CASE WHEN active_order_id=? THEN NULL ELSE active_order_id END,
+		staged_order_id = CASE WHEN staged_order_id=? THEN NULL ELSE staged_order_id END,
+		updated_at = datetime('now')
+		WHERE active_order_id=? OR staged_order_id=?`,
+		orderID, orderID, orderID, orderID)
+	return err
+}
+
 // UpdateRuntimeUOP writes the cached UOP on a runtime row.
 func UpdateRuntimeUOP(db *sql.DB, processNodeID int64, remainingUOPCached int) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET remaining_uop_cached=?, updated_at=datetime('now') WHERE process_node_id=?`,

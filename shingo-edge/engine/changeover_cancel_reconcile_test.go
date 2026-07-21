@@ -139,6 +139,64 @@ func TestRegression_PlainAbortReconcilesActiveBinFromPhysical(t *testing.T) {
 	}
 }
 
+// TestRegression_TerminalOrderReleasesRuntimeOrderSlot pins the SPR ALN_005 /
+// ALN_006 failure (2026-07-21): a skipped supply leg and a cancelled evac leg
+// both reached terminal, but nothing cleared the node's runtime ORDER
+// pointers. The cancelled branch reconciled the BIN pointer only, and skipped
+// fell through the branch entirely with no cleanup at all — so the slots held
+// two dead order ids until the next edge restart, and the operator screen kept
+// rendering [REP] "Order in progress" against them (isReplenishing trusts a
+// bare non-nil pointer without checking status).
+//
+// Skipped is the sharper of the two cases and is what this pins. The clear
+// must also be per-slot: the surviving sibling of a two-robot swap keeps its
+// pointer when its partner dies.
+func TestRegression_TerminalOrderReleasesRuntimeOrderSlot(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+
+	node, _ := db.GetProcessNode(nodeID)
+	srv := physicalBinCoreServer(node.CoreNodeName, 555, 77, 9)
+	defer srv.Close()
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+	eng.coreClient = NewCoreClient(srv.URL)
+
+	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
+	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+	if task.NextMaterialOrderID == nil {
+		t.Fatal("scenario should have a next-material order")
+	}
+	supplyID := *task.NextMaterialOrderID
+
+	// ALN_005's exact shape: the active slot holds the supply leg, the staged
+	// slot holds its still-live evac sibling.
+	sibling := int64(424242)
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &supplyID, &sibling), "seed runtime slots")
+
+	// Core skips the supply leg — the work turned out never to be needed.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(supplyID, string(orders.StatusSkipped)), "skip supply leg")
+	order, _ := db.GetOrder(supplyID)
+	eng.Events.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{
+		OrderID:       supplyID,
+		OrderUUID:     order.UUID,
+		OrderType:     order.OrderType,
+		ProcessNodeID: &nodeID,
+	}})
+
+	post, _ := db.GetProcessNodeRuntime(nodeID)
+	if post.ActiveOrderID != nil {
+		t.Errorf("active_order_id = %d after the order was skipped, want nil — a dead order must not hold the slot (this is the [REP] phantom)",
+			*post.ActiveOrderID)
+	}
+	if post.StagedOrderID == nil || *post.StagedOrderID != sibling {
+		t.Errorf("staged_order_id = %v, want %d — the live swap sibling must survive its partner's death",
+			post.StagedOrderID, sibling)
+	}
+}
+
 // TestRegression_ConfirmedCompletionDoesNotReconcile is the negative case:
 // a normal CONFIRMED completion must NOT trip the bail-branch reconcile
 // (which would clobber a just-finalized count with Core's lineside snapshot).
