@@ -30,6 +30,9 @@ type changeoverPlan struct {
 	// participants is the node set the changeover physically touches —
 	// superset of nodeTasks, frozen here at plan time.
 	participants []domain.ParticipantInput
+	// unresolvedParticipants names participants with no process_nodes row.
+	// Advisory; see domain.Changeover.UnresolvedParticipants.
+	unresolvedParticipants []string
 }
 
 // planChangeover assembles all data needed for a changeover without writing anything.
@@ -116,6 +119,7 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 	}
 
 	participants := buildParticipants(diffs)
+	unresolved := assertParticipantsResolve(participants, nodes)
 
 	return &changeoverPlan{
 		process:    process,
@@ -127,6 +131,8 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 		nodeTasks:  nodeTasks,
 
 		participants: participants,
+
+		unresolvedParticipants: unresolved,
 	}, nil
 }
 
@@ -337,4 +343,38 @@ func buildParticipants(diffs []ChangeoverNodeDiff) []domain.ParticipantInput {
 		}
 	}
 	return out
+}
+
+// assertParticipantsResolve is the plan-time assertion: every participant's
+// core_node_name must resolve to a process_nodes row. Returns the names that do
+// not, in plan order.
+//
+// PURE DATA, no I/O — it reads the node list planChangeover already loaded, so
+// it costs nothing and cannot fail for its own reasons. Sited in planChangeover
+// after the fan-out post-processors, which means PreviewChangeoverPlan surfaces
+// it PRE-COMMIT for free (Preview and Start share this function), rather than
+// the operator discovering it only after the rows are written.
+//
+// Advisory by construction: it returns a list, it does not refuse. See
+// domain.Changeover.UnresolvedParticipants for why hardening is gated.
+//
+// Scope note: this checks row EXISTENCE only. The companion check — that every
+// task-role participant resolves a release station — needs stationForRelease,
+// which ships with the affordance widening; without the affordance a named
+// station would be advice the operator cannot act on.
+func assertParticipantsResolve(participants []domain.ParticipantInput, nodes []processes.Node) []string {
+	if len(participants) == 0 {
+		return nil
+	}
+	known := make(map[string]bool, len(nodes))
+	for i := range nodes {
+		known[nodes[i].CoreNodeName] = true
+	}
+	var unresolved []string
+	for _, p := range participants {
+		if p.CoreNodeName != "" && !known[p.CoreNodeName] {
+			unresolved = append(unresolved, p.CoreNodeName)
+		}
+	}
+	return unresolved
 }

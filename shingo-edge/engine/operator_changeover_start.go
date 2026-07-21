@@ -83,6 +83,14 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// which bins to load; the live per-order "Awaiting Stock" status is the
 	// durable signal once orders exist.
 	final.AwaitingStock = awaitingStock
+	// Advisory, never blocking: participants with no process_nodes row. Logged
+	// as well as returned so it lands in the record even when the caller is a
+	// script that discards the response body.
+	final.UnresolvedParticipants = plan.unresolvedParticipants
+	if len(plan.unresolvedParticipants) > 0 {
+		e.logFn("changeover: process %d → style %d started with %d participant node(s) that have no process_nodes row: %v — these cannot be gated, rendered or released until added on the process-nodes page",
+			processID, toStyleID, len(plan.unresolvedParticipants), plan.unresolvedParticipants)
+	}
 	return final, nil
 }
 

@@ -38,6 +38,24 @@ type Changeover struct {
 	// Not stored and not re-emitted on refresh; the live per-order "Awaiting
 	// Stock" status is the durable signal. Empty/omitted when fully stocked.
 	AwaitingStock []string `json:"awaiting_stock,omitempty"`
+
+	// UnresolvedParticipants is a transient, non-persisted advisory set only
+	// on the StartProcessChangeover response: participant nodes whose
+	// core_node_name resolves to NO process_nodes row.
+	//
+	// These are almost always press-index extension seats — physically
+	// traversed by the index motion, owning no task and no order, and (before
+	// participants existed) invisible to every consumer. A node with no row
+	// cannot be gated, rendered, or released, so naming it here is the point:
+	// it is a config gap the engineer fixes on the process-nodes page.
+	//
+	// ADVISORY ONLY. The changeover still starts. A hard refusal on day one
+	// could block every same-bin-type press-index changeover at a plant that
+	// has never had rows for those seats -- and the 2026-06-03 Springfield
+	// softening is the standing evidence that a guard the floor cannot work
+	// around gets disabled rather than fixed. Hardening waits on the V.4 audit
+	// returning clean at both plants AND the affordance widening shipping.
+	UnresolvedParticipants []string `json:"unresolved_participants,omitempty"`
 }
 
 // StationTask is the per-operator-station leg of a Changeover. The

@@ -335,20 +335,49 @@ func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingU
 func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	// Check changeover first — applies regardless of runtime state.
 	//
-	// Scope the gate to nodes actually PARTICIPATING in the changeover. A
-	// changeover only creates a changeover_node_task for nodes whose style
-	// claim changes between the old and new style (see planChangeover in
-	// operator_changeover_plan.go). A node with no task — e.g. a bin loader
-	// that only supplies empties to the line — is not being swapped and must
-	// stay available. Gating on the whole process instead wrongly blocked
-	// the loader from calling an empty bin during a changeover on a press
-	// that shares its process (the "node X unavailable: changeover in
-	// progress" field report at Springfield). Fail-open on lookup errors,
-	// matching the prior behavior of this guard.
+	// Scope the gate to nodes actually PARTICIPATING in the changeover. A node
+	// that is not part of it — e.g. a bin loader that only supplies empties to
+	// the line — must stay available; gating on the whole process wrongly
+	// blocked the loader from calling an empty bin during a changeover on a
+	// press sharing its process (the Springfield field report).
+	//
+	// PARTICIPANTS, not tasks. The task set is too narrow: a same-bin-type
+	// press-index changeover never fans out, so its indexed-over seats own no
+	// task at all and were left OPEN to unrelated dispatch while the index
+	// motion was about to place a bin on them. Two bins on one node — the
+	// catastrophic family. Participants are the superset that includes them.
+	//
+	// FAIL POSTURE IS DELIBERATELY HYBRID, and the split is where the cost
+	// asymmetry inverts:
+	//
+	//   - Outer lookups (GetProcessNode, GetActiveProcessChangeover) stay
+	//     byte-identical FAIL-OPEN. An error there is indistinguishable from
+	//     "no changeover running", which is the overwhelmingly common case and
+	//     the PLC-tick path; closing it would idle the plant on a transient
+	//     read blip. This is also the Springfield-regression surface, untouched.
+	//   - Once an active changeover IS resolved, the participant lookup fails
+	//     CLOSED. A false "unavailable" there costs a blocked action during a
+	//     changeover window — transient, visible, now panel-named. A false
+	//     "available" is the two-bins case. The lookup is a single indexed
+	//     point query against a table written at plan time, so an error means
+	//     the Edge DB is failing — not a state in which to admit robot traffic
+	//     to a node that may be about to receive a bin.
 	node, err := e.db.GetProcessNode(nodeID)
 	if err == nil {
-		if co, err := e.db.GetActiveProcessChangeover(node.ProcessID); err == nil {
-			if _, err := e.db.GetChangeoverNodeTaskByNode(co.ID, nodeID); err == nil {
+		if co, coErr := e.db.GetActiveProcessChangeover(node.ProcessID); coErr == nil && co != nil {
+			isParticipant, role, pErr := e.db.IsChangeoverParticipant(node.ProcessID, node.CoreNodeName)
+			if pErr != nil {
+				log.Printf("WARN CanAcceptOrders: participant lookup failed for node %s during active changeover %d: %v — failing CLOSED",
+					node.CoreNodeName, co.ID, pErr)
+				return false, "changeover in progress (participant lookup failed)"
+			}
+			if isParticipant {
+				if role == domain.ParticipantRoleIndexedOver {
+					// Distinct reason: this node owns no task, so an operator
+					// looking at it has nothing to work and would otherwise have
+					// no idea why it is refusing.
+					return false, "changeover in progress (indexed-over position)"
+				}
 				return false, "changeover in progress"
 			}
 		}
