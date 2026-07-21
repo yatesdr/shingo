@@ -6,9 +6,10 @@
 // (active-style-only vs all-styles, by role, by swap mode, by core node,
 // by payload). Before this helper each call site hand-rolled the walk with
 // its own copy of the N+1-avoiding node fetch and its own filter chain
-// (SendClaimSync, findManualSwapNodes, FindLoaderForPayload,
-// FindUnloaderForPayload, FindAnyLoaderClaimForPayload, listAllLoader
-// bindings). WalkClaims is the single read path they share.
+// (findManualSwapNodes, FindLoaderForPayload, FindUnloaderForPayload,
+// FindAnyLoaderClaimForPayload, and the since-deleted SendClaimSync and
+// loader-threshold binding list). WalkClaims is the single read path they
+// share.
 //
 // It lives in store/processes (a free function over *sql.DB) rather than on
 // *engine.Engine deliberately: engine imports service, so a method on the
@@ -141,11 +142,11 @@ func WalkClaims(db *sql.DB, opts WalkOpts, visit func(WalkCtx) (stop bool)) erro
 
 // PayloadsForLoader returns the active-style and all-style payload unions for
 // the manual_swap claim(s) at coreNodeName with the given role, plus the
-// active-style OutboundDestination (active-wins, mirroring SendClaimSync's
-// tie-break). It is the per-loader read shared by SendClaimSync (engine) and
-// BuildView (service) — both build on WalkClaims, which is why this lives in
-// store/processes rather than on *engine.Engine (engine imports service, so a
-// method there would be unreachable from BuildView).
+// active-style OutboundDestination (active-wins). Its remaining consumer is
+// BuildView (service); it also served SendClaimSync until that was deleted
+// 2026-07-21. It lives in store/processes rather than on *engine.Engine
+// because engine imports service, so a method there would be unreachable from
+// BuildView.
 //
 //   - active: payloads from claims on a process's ACTIVE style only.
 //   - all:    payloads from claims on any style (active or not).

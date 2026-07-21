@@ -121,7 +121,7 @@ func (h *Handlers) apiCloneStyle(w http.ResponseWriter, r *http.Request) {
 	}
 	h.requestBackup("style-cloned")
 	// Cloned claims must reach Core's demand_registry just like edits do.
-	h.requestClaimSync()
+	h.requestSpecChangePublish()
 	writeJSON(w, map[string]int64{"id": newID})
 }
 
@@ -153,10 +153,10 @@ func (h *Handlers) apiGenerateStyles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("styles-generated")
-	// One sync for the whole batch — requestClaimSync coalesces, and
+	// One sync for the whole batch — requestSpecChangePublish coalesces, and
 	// SendClaimSync emits a full snapshot, so a single request covers every
 	// new style's claims.
-	h.requestClaimSync()
+	h.requestSpecChangePublish()
 	writeJSON(w, map[string][]int64{"ids": ids})
 }
 
@@ -290,7 +290,7 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// Push the refreshed claim set to Core so demand_registry stays in sync
 	// with what the operator just edited. Fire-and-forget — SendClaimSync
 	// logs its own failures and the outbox will retry transient send errors.
-	h.requestClaimSync()
+	h.requestSpecChangePublish()
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -358,6 +358,6 @@ func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// demand_registry drops the corresponding row. Without this push the
 	// registry drifts and Core keeps sending demand signals to a node
 	// whose claim is gone.
-	h.requestClaimSync()
+	h.requestSpecChangePublish()
 	writeJSON(w, map[string]string{"status": "ok"})
 }

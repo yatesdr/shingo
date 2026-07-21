@@ -48,21 +48,22 @@ type Handlers struct {
 	eventHub      *EventHub
 	debugLog      *debuglog.Logger
 
-	// claimSyncCh is a single-slot channel that coalesces concurrent
-	// admin claim mutations into one SendClaimSync invocation. Two
-	// raw `go h.orchestration.SendClaimSync()` spawns raced each
-	// other on the DB. SendClaimSync emits a full snapshot of all
-	// manual_swap claims, so coalescing N rapid edits into one send
-	// loses no information (last writer wins on the snapshot view).
-	claimSyncCh   chan struct{}
-	claimSyncStop chan struct{}
+	// specChangeCh is a single-slot channel that coalesces concurrent
+	// admin style/claim mutations into ONE plant-claims re-publish. The
+	// publisher emits a full snapshot, so collapsing N rapid edits into one
+	// publish loses no information (last writer wins on the snapshot view).
+	//
+	// Named claimSync* until 2026-07-21, when the retired SendClaimSync()
+	// no-op it also drove was deleted. Publishing the plant-claims snapshot
+	// is now the only work on this signal.
+	specChangeCh   chan struct{}
+	specChangeStop chan struct{}
 
 	// onPlantSpecChange is the plant-claims publisher's spec-change hook.
-	// Set by main after constructing the publisher; called from
-	// requestClaimSync so the plant-claims snapshot rides the same coalesced
-	// signal as the manual_swap claim sync (one publish per batch of edits,
-	// not one per edit). Optional; nil when the publisher is not wired
-	// (e.g. tests), in which case requestClaimSync skips it.
+	// Set by main after constructing the publisher; fired from
+	// specChangeLoop so the snapshot re-publishes once per BATCH of edits
+	// rather than once per edit. Optional; nil when the publisher is not
+	// wired (e.g. tests), in which case the loop simply does nothing.
 	onPlantSpecChange func()
 }
 
@@ -83,16 +84,16 @@ type Handlers struct {
 // Handlers live in handlers_*.go files grouped by domain.
 func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Service) (*Handlers, http.Handler, func()) {
 	h := &Handlers{
-		engine:        eng, // ServiceAccess — narrow surface for CRUD handlers
-		orchestration: eng, // EngineOrchestration — wide surface for flow handlers
-		backup:        backupSvc,
-		sessions:      newSessionStore(eng.AppConfig().Web.SessionSecret),
-		eventHub:      NewEventHub(),
-		debugLog:      dbg,
-		claimSyncCh:   make(chan struct{}, 1),
-		claimSyncStop: make(chan struct{}),
+		engine:         eng, // ServiceAccess — narrow surface for CRUD handlers
+		orchestration:  eng, // EngineOrchestration — wide surface for flow handlers
+		backup:         backupSvc,
+		sessions:       newSessionStore(eng.AppConfig().Web.SessionSecret),
+		eventHub:       NewEventHub(),
+		debugLog:       dbg,
+		specChangeCh:   make(chan struct{}, 1),
+		specChangeStop: make(chan struct{}),
 	}
-	go h.claimSyncLoop()
+	go h.specChangeLoop()
 
 	funcMap := template.FuncMap{
 		"join": strings.Join,
@@ -436,40 +437,39 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 	return h, r, func() {
 		h.eventHub.Stop()
-		close(h.claimSyncStop)
+		close(h.specChangeStop)
 	}
 }
 
 // SetPlantSpecChangeHook wires the plant-claims publisher's publish callback
-// so the coalesced spec-change signal (claimSyncLoop) re-publishes the
+// so the coalesced spec-change signal (specChangeLoop) re-publishes the
 // plant-claims snapshot on every style/claim edit. Optional; main calls it
-// after constructing the publisher. The hook fires inside claimSyncLoop's
-// recover wrapper, so a panic in the publisher cannot orphan the sync loop.
+// after constructing the publisher. The hook fires inside specChangeLoop's
+// recover wrapper, so a panic in the publisher cannot orphan the loop.
 func (h *Handlers) SetPlantSpecChangeHook(fn func()) {
 	h.onPlantSpecChange = fn
 }
 
-// claimSyncLoop owns SendClaimSync invocations. Multiple concurrent
-// admin claim edits collapse into one channel send (capacity 1 with
-// non-blocking sender), and this loop drains the channel and calls
-// SendClaimSync sequentially. Same effective behavior as raw
-// `go SendClaimSync()` but without the concurrent DB-write race.
+// specChangeLoop owns plant-claims re-publishing. Multiple concurrent admin
+// style/claim edits collapse into one channel send (capacity 1 with a
+// non-blocking sender); this loop drains the channel and publishes
+// sequentially, which is the same effective behaviour as spawning a goroutine
+// per edit but without the concurrent DB-write race.
 //
-// The recover wrapper is the same shape as goSafe in main.go but
-// inline here because we want the loop to self-heal — a panic in
-// orchestration.SendClaimSync should not leave the channel
-// orphaned.
-func (h *Handlers) claimSyncLoop() {
+// The recover wrapper is the same shape as goSafe in main.go but inline here
+// because the loop must self-heal — a panic in the publisher should not leave
+// the channel orphaned.
+func (h *Handlers) specChangeLoop() {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("PANIC www-claimSyncLoop: %v (claim sync coalescer exiting)", r)
+			log.Printf("PANIC www-specChangeLoop: %v (claim sync coalescer exiting)", r)
 		}
 	}()
 	for {
 		select {
-		case <-h.claimSyncStop:
+		case <-h.specChangeStop:
 			return
-		case <-h.claimSyncCh:
+		case <-h.specChangeCh:
 			// Re-publish the plant-claims snapshot on the coalesced signal —
 			// spec edits changed what every process can source. This used to
 			// also call orchestration.SendClaimSync(); that was a retired
@@ -489,13 +489,13 @@ func (h *Handlers) claimSyncLoop() {
 	}
 }
 
-// requestClaimSync queues a non-blocking sync request. If a request
-// is already pending, this is a no-op — the pending request will
-// see the updated state when it runs (SendClaimSync emits a full
-// snapshot, so coalescing is information-preserving).
-func (h *Handlers) requestClaimSync() {
+// requestSpecChangePublish queues a non-blocking publish request. If one is
+// already pending this is a no-op — the pending request will see the updated
+// state when it runs, and the publisher emits a full snapshot, so coalescing
+// is information-preserving.
+func (h *Handlers) requestSpecChangePublish() {
 	select {
-	case h.claimSyncCh <- struct{}{}:
+	case h.specChangeCh <- struct{}{}:
 	default:
 		// Already pending; coalesce.
 	}

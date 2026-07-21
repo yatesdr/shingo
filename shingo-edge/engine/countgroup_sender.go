@@ -1,6 +1,6 @@
 // countgroup_sender.go — outbound data message to core for count-group
-// request/ack telemetry. Follows the established SendClaimSync /
-// RequestOrderStatusSync pattern: build a NewDataEnvelope, call sendFn.
+// request/ack telemetry. Follows the established RequestOrderStatusSync
+// pattern: build a NewDataEnvelope, call sendFn.
 
 package engine
 
