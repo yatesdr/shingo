@@ -31,6 +31,17 @@ type StationNodeView struct {
 	// points and a single coordinated release can move both forward.
 	// Non-two-robot nodes always report false.
 	SwapReady bool `json:"swap_ready"`
+	// ChildOfNode is set when this tile is rendered on a station only because
+	// the node it EXTENDS lives here — a press-index seat with no
+	// operator_station_id of its own, shown under its press. Carries the
+	// owning node's display name.
+	//
+	// Load-bearing for the UI, not decoration: a child tile must NOT offer a
+	// release button. The seat owns no task and no order, so there is nothing
+	// to release; a button there would either no-op or, worse, release the
+	// parent's work from a tile that does not represent it. Empty on ordinary
+	// tiles.
+	ChildOfNode string `json:"child_of_node,omitempty"`
 	// LinesideActive is the set of buckets currently counting toward
 	// remaining UOP on this node (one row per part for the active style).
 	// Rendered as the "active lineside bar" beneath the node fill-bar.

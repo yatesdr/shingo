@@ -124,3 +124,8 @@ func (db *DB) ListChangeoverParticipants(changeoverID int64) ([]domain.Participa
 func (db *DB) IsChangeoverParticipant(processID int64, coreNodeName string) (bool, string, error) {
 	return processes.IsChangeoverParticipant(db.DB, processID, coreNodeName)
 }
+
+// ListParticipantsWithStation resolves each participant's release station.
+func (db *DB) ListParticipantsWithStation(changeoverID int64) ([]processes.ParticipantWithStation, error) {
+	return processes.ListParticipantsWithStation(db.DB, changeoverID)
+}

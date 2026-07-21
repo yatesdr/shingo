@@ -112,6 +112,8 @@ type EngineOrchestration interface {
 	CancelProcessChangeover(processID int64) error
 	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error
 	ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
+	// ReleaseChangeoverWaitForNode scopes the same release to one node's task.
+	ReleaseChangeoverWaitForNode(processID, processNodeID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
 	// ChangeoverGateStatus is a pure read of the cutover gate — safe to poll.
 	ChangeoverGateStatus(processID int64) (bool, []domain.Blocker, error)
 	SequentialChangeoverCutover(processID, nodeID int64, calledBy string) error

@@ -139,7 +139,20 @@ export function renderModal(entry) {
     // Produce:  same but FINALIZE instead of REQUEST when node has parts.
     html += '<div class="modal-actions">';
 
-    if (claim) {
+    // CHILD TILE — this node is shown here only because the node it extends
+    // lives on this station (a press-index seat with no station of its own).
+    // It owns no changeover task and no orders, so there is NOTHING to release
+    // from here. Offering a release button would either no-op or, worse, act on
+    // the parent's work from a tile that does not represent it. Render the
+    // relationship and stop; the seat is visible (which is the point — it used
+    // to be invisible and got fork-trucked) but not actionable.
+    if (entry.child_of_node) {
+        html += '<div style="padding:12px 16px;border-radius:8px;background:#1a1a1a;border:1px solid #444;color:#aab;font-size:14px;line-height:1.5">' +
+            'Indexed-over position of <strong>' + esc(entry.child_of_node) + '</strong>.' +
+            '<div style="color:#888;font-size:12px;margin-top:4px">' +
+            'The changeover moves a bin through this seat. There is nothing to release here — ' +
+            'work it from ' + esc(entry.child_of_node) + '.</div></div>';
+    } else if (claim) {
         if (claim.swap_mode === 'manual_swap') {
             const binState = entry.bin_state;
             const hasBin = binState && binState.occupied;

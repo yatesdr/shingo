@@ -102,6 +102,23 @@ type ReleaseChangeoverWaitResult struct {
 // will fire on evac pickup) and any standalone-leg orders we skipped
 // because they weren't in a releasable state at click time.
 func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {
+	return e.releaseChangeoverWaitScoped(processID, 0, disp)
+}
+
+// ReleaseChangeoverWaitForNode releases only the task at one process node.
+//
+// Same function, same evac-first sequencing, same per-slot disposition rules —
+// only the task set is narrower. Per-node release is the operator's ACTUAL
+// workflow (the changeover-wide header button was removed in 2026-05-10 HMI
+// Tier 2), so it routes through this one path rather than a second engine
+// method that would drift from it.
+func (e *Engine) ReleaseChangeoverWaitForNode(processID, processNodeID int64, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {
+	return e.releaseChangeoverWaitScoped(processID, processNodeID, disp)
+}
+
+// releaseChangeoverWaitScoped is the shared body. onlyNodeID == 0 means every
+// task (the changeover-wide release); non-zero narrows to that node.
+func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {
 	var result ReleaseChangeoverWaitResult
 
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
@@ -121,8 +138,12 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition)
 	// unanswerable in the Hopkinsville changeover post-mortems. One line per
 	// invocation, before any slot is examined, so the record exists even when
 	// the loop does nothing.
-	e.logFn("release_changeover_wait: process=%d changeover=%d tasks=%d called_by=%q",
-		processID, changeover.ID, len(tasks), disp.CalledBy)
+	scope := "all-nodes"
+	if onlyNodeID != 0 {
+		scope = fmt.Sprintf("node=%d", onlyNodeID)
+	}
+	e.logFn("release_changeover_wait: process=%d changeover=%d tasks=%d scope=%s called_by=%q",
+		processID, changeover.ID, len(tasks), scope, disp.CalledBy)
 
 	// Supply leg always rides through with no manifest action regardless of
 	// what the operator chose. Empty Mode → buildProtocolDisposition returns
@@ -138,6 +159,9 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition)
 	var failures []error
 	for _, task := range tasks {
 		if task.Situation == "unchanged" {
+			continue
+		}
+		if onlyNodeID != 0 && task.ProcessNodeID != onlyNodeID {
 			continue
 		}
 		// Auto-detect evac disposition from the line's runtime cache for

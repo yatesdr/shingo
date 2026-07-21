@@ -488,3 +488,75 @@ func legacyIsParticipantFromTasks(db *sql.DB, processID int64, coreNodeName stri
 	}
 	return true, domain.ParticipantRoleTask, nil
 }
+
+// ParticipantWithStation is a participant plus the operator station responsible
+// for rendering its tile and accepting its release.
+type ParticipantWithStation struct {
+	domain.Participant
+	// StationID is the resolved station, or nil when none could be resolved.
+	// Nil on a task-role participant is a config gap worth reporting; nil on an
+	// indexed_over participant just means it renders nowhere, which is benign
+	// (it owns no work — it exists to be gated, not worked).
+	StationID *int64
+	// StationSource records WHICH rule resolved it, for logs and the advisory.
+	// "own" | "owner" | "" (unresolved).
+	StationSource string
+}
+
+// ListParticipantsWithStation resolves the release station for every
+// participant in a changeover.
+//
+// This is `stationForRelease`, expressed as one query rather than a per-node
+// walk, and it is the single definition the affordance and the plan-time
+// assertion both consume — the whole point of the participant work is that
+// "which station owns this node" stops having two answers.
+//
+// Resolution order:
+//
+//  1. OWN — the participant's own process_nodes.operator_station_id.
+//  2. OWNER — its owning task's node's station. This is the case that matters:
+//     a press-index extension seat auto-created with no station (see
+//     changeover_service.go's INSERT, which sets only process_id/name/code)
+//     renders as a CHILD of the press it extends, instead of being invisible.
+//
+// Two further fallbacks named in the design — the plan's single station, and
+// called_by — are deliberately NOT applied here. Both are guesses rather than
+// facts about where a node lives, and a guessed tile is worse than an absent
+// one: the operator taps release on a station that does not own the node. They
+// remain useful only as advisory text, which is where they are used.
+func ListParticipantsWithStation(db *sql.DB, changeoverID int64) ([]ParticipantWithStation, error) {
+	rows, err := db.Query(`
+		SELECT p.id, p.process_changeover_id, p.core_node_name, p.process_node_id,
+		       p.role, p.owning_task_id, p.updated_at,
+		       own.operator_station_id, ownerNode.operator_station_id
+		FROM changeover_participants p
+		LEFT JOIN process_nodes own            ON own.id = p.process_node_id
+		LEFT JOIN changeover_node_tasks t      ON t.id = p.owning_task_id
+		LEFT JOIN process_nodes ownerNode      ON ownerNode.id = t.process_node_id
+		WHERE p.process_changeover_id = ?
+		ORDER BY p.role, p.core_node_name`, changeoverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ParticipantWithStation
+	for rows.Next() {
+		var pw ParticipantWithStation
+		var updatedAt string
+		var ownStation, ownerStation *int64
+		if err := rows.Scan(&pw.ID, &pw.ProcessChangeoverID, &pw.CoreNodeName,
+			&pw.ProcessNodeID, &pw.Role, &pw.OwningTaskID, &updatedAt,
+			&ownStation, &ownerStation); err != nil {
+			return nil, err
+		}
+		pw.UpdatedAt = helpers.ScanTime(updatedAt)
+		switch {
+		case ownStation != nil:
+			pw.StationID, pw.StationSource = ownStation, "own"
+		case ownerStation != nil:
+			pw.StationID, pw.StationSource = ownerStation, "owner"
+		}
+		out = append(out, pw)
+	}
+	return out, rows.Err()
+}

@@ -36,6 +36,12 @@ type releaseRequest struct {
 	PartialCount          *int           `json:"partial_count"`
 	PartialCountSuggested *int           `json:"partial_count_suggested"`
 	CalledBy              string         `json:"called_by"`
+	// NodeID optionally scopes a changeover-wide release to ONE node's task.
+	// Zero/absent = every task, the historical behaviour. This is what gives
+	// the per-node release affordance a server path without a second engine
+	// method: same code, same evac-first sequencing, same disposition rules,
+	// just a filter.
+	NodeID int64 `json:"node_id,omitempty"`
 }
 
 // parseReleaseRequest reads and validates the JSON body for any release

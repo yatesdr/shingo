@@ -86,6 +86,8 @@ type stubEngine struct {
 
 	// ChangeoverGateStatus canned response — the gate-status endpoint is a
 	// pure read, so the stub just replays whatever the test set.
+	lastReleaseNodeID int64
+
 	gateCanComplete bool
 	gateBlockers    []domain.Blocker
 	gateErr         error
@@ -172,6 +174,12 @@ func (s *stubEngine) ReleaseChangeoverWait(_ int64, disp engine.ReleaseDispositi
 }
 func (s *stubEngine) ChangeoverGateStatus(int64) (bool, []domain.Blocker, error) {
 	return s.gateCanComplete, s.gateBlockers, s.gateErr
+}
+func (s *stubEngine) ReleaseChangeoverWaitForNode(_, nodeID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
+	d := disp
+	s.lastReleaseChangeoverWaitDisp = &d
+	s.lastReleaseNodeID = nodeID
+	return engine.ReleaseChangeoverWaitResult{}, nil
 }
 func (s *stubEngine) SequentialChangeoverCutover(int64, int64, string) error { return nil }
 func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*storeorders.Order, error) {

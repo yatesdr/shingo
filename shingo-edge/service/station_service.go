@@ -217,10 +217,62 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 		return nil, err
 	}
 	nodeTaskMap := map[int64]processes.NodeTask{}
-	if view.StationTask != nil {
-		nodeTasks, _ := s.db.ListChangeoverNodeTasksByStation(view.ActiveChangeover.ID, stationID)
-		for _, nodeTask := range nodeTasks {
+	childOf := map[int64]string{}
+
+	// THREE narrowings used to hide a changeover node from its own station, and
+	// all three are relaxed here. A press-index extension seat is auto-created
+	// with no operator_station_id (changeover_service.go inserts only
+	// process_id/core_node_name/code/name), so it fell through every one:
+	//
+	//  1. `if view.StationTask != nil` — a station with no
+	//     changeover_station_tasks row got an EMPTY task map, so none of its
+	//     nodes showed a task even when tasks existed. The real precondition is
+	//     the CHANGEOVER existing, not this station having a row; gate on that.
+	//  2. ListChangeoverNodeTasksByStation filters `n.operator_station_id=?`,
+	//     which drops every task whose node has no station. Read the tasks
+	//     unfiltered and key them by process_node_id — safe, because the map is
+	//     only ever consulted for nodes in THIS station's list, so another
+	//     station's task can never match.
+	//  3. ListProcessNodesByStation likewise never returns a stationless node.
+	//     Resolve each participant's station (own → owning task's node) and
+	//     append the ones that belong here as CHILD tiles of the node they
+	//     extend.
+	if view.ActiveChangeover != nil {
+		allTasks, _ := s.db.ListChangeoverNodeTasks(view.ActiveChangeover.ID)
+		taskByID := make(map[int64]processes.NodeTask, len(allTasks))
+		for _, nodeTask := range allTasks {
 			nodeTaskMap[nodeTask.ProcessNodeID] = nodeTask
+			taskByID[nodeTask.ID] = nodeTask
+		}
+
+		known := make(map[int64]bool, len(nodes))
+		for i := range nodes {
+			known[nodes[i].ID] = true
+		}
+		parts, perr := s.db.ListParticipantsWithStation(view.ActiveChangeover.ID)
+		if perr != nil {
+			log.Printf("station view: resolve participant stations for changeover %d: %v", view.ActiveChangeover.ID, perr)
+		}
+		for _, p := range parts {
+			// Only adopt participants that (a) have a node row at all, (b)
+			// resolve to THIS station, (c) resolve via their OWNER rather than
+			// their own station — a node with its own station is already in the
+			// list — and (d) aren't already present.
+			if p.ProcessNodeID == nil || p.StationID == nil ||
+				*p.StationID != stationID || p.StationSource != "owner" || known[*p.ProcessNodeID] {
+				continue
+			}
+			child, gerr := s.db.GetProcessNode(*p.ProcessNodeID)
+			if gerr != nil || child == nil {
+				continue
+			}
+			if p.OwningTaskID != nil {
+				if owner, ok := taskByID[*p.OwningTaskID]; ok {
+					childOf[child.ID] = owner.NodeName
+				}
+			}
+			nodes = append(nodes, *child)
+			known[child.ID] = true
 		}
 	}
 	for _, node := range nodes {
@@ -248,6 +300,10 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 			taskCopy := nodeTask
 			nodeView.ChangeoverTask = &taskCopy
 		}
+		// Child tile: rendered here only because the node it extends lives on
+		// this station. Marked so the board can suppress the release button —
+		// it owns no task and no order, so there is nothing to release.
+		nodeView.ChildOfNode = childOf[node.ID]
 		// Include orders sourcing FROM this node's CoreNode in addition to
 		// orders tracked at this process_node. A manual_swap supermarket
 		// loader (SMN_001 etc.) doesn't directly own orders — the line

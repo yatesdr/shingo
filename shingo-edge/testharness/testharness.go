@@ -77,11 +77,25 @@ type Edge struct {
 // list — a benign goroutine until eng.Stop closes its stop channel.
 func NewEdge(t *testing.T, stationID string) *Edge {
 	t.Helper()
+	return NewEdgeWithCoreAPI(t, stationID, "")
+}
+
+// NewEdgeWithCoreAPI is NewEdge with the Core HTTP API configured. Needed by
+// scenarios that exercise paths gated on Core availability — a press-index
+// changeover START refuses outright when Core is unreachable
+// (refusePressIndexWhenCoreUnavailable), so the V2 sim gate cannot run against
+// the default harness. Point coreAPI at an httptest.Server serving the
+// telemetry endpoints the scenario touches (for press-index planning that is
+// GET /api/telemetry/payload/{code}/manifest; claimOccupancy additionally hits
+// /api/telemetry/node-bins). Empty string = disabled, identical to NewEdge.
+func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
+	t.Helper()
 	db := OpenDB(t)
 
 	cfg := &config.Config{
 		Namespace: "test",
 		LineID:    "edge-test",
+		CoreAPI:   coreAPI,
 		Messaging: config.MessagingConfig{
 			StationID: stationID,
 		},

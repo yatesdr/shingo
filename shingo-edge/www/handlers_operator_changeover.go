@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"shingoedge/domain"
+	"shingoedge/engine"
 	"shingoedge/engine/changeover"
 )
 
@@ -215,7 +216,15 @@ func (h *Handlers) apiReleaseChangeoverWait(w http.ResponseWriter, r *http.Reque
 		req.CalledBy = "operator_station"
 	}
 	disp := buildReleaseDisposition(req)
-	result, err := h.orchestration.ReleaseChangeoverWait(processID, disp)
+	// Optional per-node scope. Absent = every task (the changeover-wide
+	// release this endpoint has always done); present = just that node's task,
+	// which is the affordance the operator board actually uses.
+	var result engine.ReleaseChangeoverWaitResult
+	if req.NodeID != 0 {
+		result, err = h.orchestration.ReleaseChangeoverWaitForNode(processID, req.NodeID, disp)
+	} else {
+		result, err = h.orchestration.ReleaseChangeoverWait(processID, disp)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

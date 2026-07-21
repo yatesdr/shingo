@@ -188,3 +188,57 @@ func TestReleaseIfReleasable_SkipsHeldOrder(t *testing.T) {
 		t.Error("releaseIfReleasable(staged) = false, want true")
 	}
 }
+
+// TestReleaseChangeoverWaitForNode_ScopesToThatTask pins the per-node release:
+// the same path, same sequencing, same dispositions — narrowed to one node's
+// task. A wrong node id releases nothing (and queues nothing); the right one
+// releases exactly the staged leg.
+func TestReleaseChangeoverWaitForNode_ScopesToThatTask(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "per-node release")
+	if err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+	task, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+	if err != nil {
+		t.Fatalf("get node task: %v", err)
+	}
+	if task.OldMaterialReleaseOrderID == nil {
+		t.Fatal("expected an evac order on the task")
+	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(*task.OldMaterialReleaseOrderID, string(orders.StatusStaged)), "stage evac")
+
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	// Wrong node: nothing releases, nothing is queued.
+	result, err := eng.ReleaseChangeoverWaitForNode(processID, nodeID+9999, ReleaseDisposition{CalledBy: "test"})
+	if err != nil {
+		t.Fatalf("scoped release (wrong node): %v", err)
+	}
+	if result.Released != 0 || result.Pending != 0 {
+		t.Errorf("wrong-node release = %+v, want zero activity", result)
+	}
+	if msgs := findOutboxByType(t, db, protocol.TypeOrderRelease); len(msgs) != 0 {
+		t.Errorf("wrong-node release queued %d envelope(s), want 0", len(msgs))
+	}
+
+	// Right node: exactly the staged evac releases.
+	result, err = eng.ReleaseChangeoverWaitForNode(processID, nodeID, ReleaseDisposition{CalledBy: "test"})
+	if err != nil {
+		t.Fatalf("scoped release: %v", err)
+	}
+	if result.Released != 1 {
+		t.Errorf("Released = %d, want 1", result.Released)
+	}
+	if msgs := findOutboxByType(t, db, protocol.TypeOrderRelease); len(msgs) != 1 {
+		t.Errorf("release envelopes = %d, want 1", len(msgs))
+	}
+}
