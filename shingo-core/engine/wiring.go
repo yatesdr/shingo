@@ -269,6 +269,9 @@ func (e *Engine) wireEventHandlers() {
 	// that needed to drop something there. Subscribing here makes the
 	// scanner re-evaluate without waiting for the order to fully complete.
 	e.Events.SubscribeTypes(triggerFulfillment, EventBinEnteredTransit)
+	// NOTE: a sixth trigger — EventBlockCompleted — is deliberately registered
+	// further down, immediately after the handleBlockCompleted subscription,
+	// because it must observe the mouth row that handler releases. See there.
 
 	// Sync trigger for fresh-intake (Phase 4b): EventOrderQueued.
 	// HandleComplexOrderRequest creates new complex orders as queued and
@@ -295,6 +298,25 @@ func (e *Engine) wireEventHandlers() {
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BlockCompletedEvent]) {
 		e.handleBlockCompleted(evt.Payload)
 	}, EventBlockCompleted)
+
+	// Fulfillment trigger on per-block completion (A′ — placement release).
+	// A store parked by the tiered-entry gate is waiting on a DEEPER store to
+	// get its bin into the lane; that moment is the deeper store's dropoff
+	// block reaching FINISHED, where handleStoreBlockCompleted deletes its
+	// inbound mouth row (wiring_block_completed.go → ReleaseInboundLaneForOrder)
+	// and the gate's active set stops counting it (dispatch/lane_entry.go
+	// stillWorkingLaneMouth). Nothing re-scanned on that signal before, so a
+	// parked order sat until the blocker's whole ORDER completed — the gate was
+	// completion-coarse purely for want of this subscription.
+	//
+	// REGISTRATION ORDER IS LOAD-BEARING. The bus dispatches synchronously in
+	// registration order (protocol/eventbus: "Subscribers are called in
+	// registration order on the emitting goroutine"), so this MUST stay AFTER
+	// the handleBlockCompleted subscription above — that handler is what drops
+	// the mouth row. Registered before it, the scan would read the pre-release
+	// state, still see the placer as a blocker, and the admit would slip to the
+	// next trigger or the periodic sweep. Do not reorder these two.
+	e.Events.SubscribeTypes(triggerFulfillment, EventBlockCompleted)
 
 	// ── Restore-blockers + lane-lock-extension listeners ──────────────
 	// Both listeners trigger on the same bin-transit and parent-

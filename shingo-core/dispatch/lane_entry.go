@@ -7,6 +7,7 @@ import (
 
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // Tiered depth-ordered lane entry (the tiered-entry arm). A store about to be
@@ -164,7 +165,7 @@ func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (
 		return false, "", err
 	}
 
-	self, others, err := d.buildLaneEntryView(order, destNode, active, depthByName)
+	self, others, err := d.buildLaneEntryView(order, destNode, lane.ID, active, depthByName)
 	if err != nil {
 		return false, "", err
 	}
@@ -174,15 +175,79 @@ func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (
 	return false, "", nil
 }
 
+// stillWorkingLaneMouth filters the active-store set down to the orders that can
+// still BLOCK an entrant — the placement-aware release signal (A′).
+//
+// The active-set query returns every non-terminal order whose delivery_node is a
+// slot in this lane (ActiveByDeliveryNodes), which is COMPLETION-coarse: a store
+// that has already dropped its bin keeps blocking until its whole order goes
+// terminal, though physically the lane is clear behind it. The finer truth is
+// already on disk: a store holds an inbound MOUTH ROW from the fleet commit
+// (AcquireLanesForOrder, scanner.go) until its dropoff block reports FINISHED,
+// where ReleaseInboundLaneForOrder deletes the row BEFORE the delivery-node
+// early-return (lane_gate.go / wiring_block_completed.go). So for a DISPATCHED
+// order:
+//
+//	holds an inbound mouth row on lane L  ⟺  has not yet placed its bin in L
+//
+// Hence the rule, in two halves:
+//
+//   - NOT yet dispatched (vendor_order_id == "") → KEEP as a blocker. It has not
+//     reached the fleet, so it cannot have a mouth row yet, and dropping it would
+//     silently stop a queued/sourcing deeper store from holding its place — a
+//     behavior change well outside placement-release, and one that would widen the
+//     one-sided deeper-later residual (F2).
+//   - dispatched AND holding no inbound row → DROP. It has placed (or otherwise
+//     finished with this mouth), so it blocks nobody.
+//
+// Modes other than inbound are not blockers for a store's depth ordering: an
+// outbound holder removes a bin rather than adding one, and a dig excludes every
+// other holder at the mouth gate itself (reservations/mouth.go admitMouth), which
+// parks the entrant at admitLanes with the more accurate lane-held-dig cause.
+//
+// Transient note: an order dispatched BEFORE the group was switched to mouth
+// enforcement carries a vendor id and never took a mouth row, so it stops being a
+// blocker as soon as the config flips. That window closes when it completes, and
+// it is the same class of transient a mid-flight config change already implies.
+func (d *Dispatcher) stillWorkingLaneMouth(laneID int64, active []*orders.Order) ([]*orders.Order, error) {
+	holds, err := reservations.ActiveMouthRows(d.db.DB, laneID)
+	if err != nil {
+		return nil, err
+	}
+	inbound := make(map[int64]bool, len(holds))
+	for _, h := range holds {
+		if h.Mode == reservations.ModeInbound {
+			inbound[h.OrderID] = true
+		}
+	}
+	kept := make([]*orders.Order, 0, len(active))
+	for _, o := range active {
+		if o.VendorOrderID != "" && !inbound[o.ID] {
+			continue // dispatched and no longer holding the mouth → it has placed
+		}
+		kept = append(kept, o)
+	}
+	return kept, nil
+}
+
 // buildLaneEntryView resolves the classifier inputs: the self order and every other
 // active store in the lane, each with its slot depth, origin key, and whether it is
 // a member of an active same-origin group (≥2 same-origin stores in the lane).
-func (d *Dispatcher) buildLaneEntryView(order *orders.Order, destNode *nodes.Node, active []*orders.Order, depthByName map[string]int) (self laneEntryOrder, others []laneEntryOrder, err error) {
+//
+// The active set is first narrowed by stillWorkingLaneMouth, so an order that has
+// already PLACED its bin is neither a blocker nor a group member — the release
+// signal is placement, not completion.
+func (d *Dispatcher) buildLaneEntryView(order *orders.Order, destNode *nodes.Node, laneID int64, active []*orders.Order, depthByName map[string]int) (self laneEntryOrder, others []laneEntryOrder, err error) {
 	selfOrigin, err := d.laneEntryOriginFor(order)
 	if err != nil {
 		return self, nil, err
 	}
 	self = laneEntryOrder{id: order.ID, depth: depthByName[destNode.Name], origin: selfOrigin}
+
+	active, err = d.stillWorkingLaneMouth(laneID, active)
+	if err != nil {
+		return self, nil, err
+	}
 
 	// First pass: resolve origin for each active store and tally origins, so we can
 	// mark grouped members (a non-empty origin held by ≥2 active stores in the lane).
