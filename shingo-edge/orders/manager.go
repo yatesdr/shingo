@@ -354,9 +354,12 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 // but ships it through the fire-and-forget Queue path (like ConfirmDelivery's
 // receipt): no order row, no transition, no EmitOrderCreated. The stamp is
 // still delivered (durable outbox, idempotent SetForProduction at Core).
-func (m *Manager) QueueIngestManifest(payloadCode, binLabel, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, producedAt string) error {
+// binID (0 = absent) pins the exact Core bin for the release-time produce
+// manifest — see protocol.OrderIngestRequest.BinID.
+func (m *Manager) QueueIngestManifest(payloadCode, binLabel string, binID int64, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, producedAt string) error {
 	return m.sender.Queue(protocol.TypeOrderIngest, &protocol.OrderIngestRequest{
 		OrderUUID:   uuid.New().String(),
+		BinID:       binID,
 		PayloadCode: payloadCode,
 		BinLabel:    binLabel,
 		SourceNode:  sourceNode,

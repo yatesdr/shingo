@@ -298,7 +298,7 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 			e.logFn("autoreorder eval (produce): claim=%d node=%s remaining=%d capacity=%d canAccept=%v reason=%s gate=produce_tick",
 				claim.ID, node.Name, newRemaining, claim.UOPCapacity, canAccept, reason)
 			if canAccept {
-				if _, err := e.FinalizeProduceNode(node.ID); err != nil {
+				if _, err := e.RequestProduceSwap(node.ID); err != nil {
 					log.Printf("auto-relief for produce node %s: %v", node.Name, err)
 				}
 			}

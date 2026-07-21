@@ -200,7 +200,7 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 
 	producedAt := time.Now().UTC().Format(time.RFC3339)
 	if err := h.engine.OrderManager().QueueIngestManifest(
-		req.PayloadCode, req.BinLabel, req.SourceNode,
+		req.PayloadCode, req.BinLabel, 0, req.SourceNode,
 		req.Quantity, req.Manifest, producedAt,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

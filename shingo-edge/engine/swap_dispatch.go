@@ -54,7 +54,7 @@ type SwapDispatch struct {
 // calls.
 //
 // Per-mode field validation matches the inline switches in
-// FinalizeProduceNode and requestNodeFromClaim verbatim, so error
+// RequestProduceSwap and requestNodeFromClaim verbatim, so error
 // messages stay diff-stable across the refactor.
 //
 // After building the per-mode steps, a produce claim's inbound-source pickup

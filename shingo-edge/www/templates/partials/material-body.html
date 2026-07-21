@@ -82,7 +82,7 @@
                             {{if eq .ActiveClaim.SwapMode "manual_swap"}}
                             <button class="btn btn-sm" data-action="openRequestEmptyModal" data-node-id="{{.Node.ID}}" data-allowed-payloads="{{json .ActiveClaim.AllowedPayloads}}" title="Request empty bin">Request Empty</button>
                             {{end}}
-                            <button class="btn btn-sm btn-primary" hx-post="/api/process-nodes/{{.Node.ID}}/finalize" hx-swap="none" title="Finalize manifest count and release full bin to storage">Finalize &amp; Release</button>
+                            <button class="btn btn-sm btn-primary" hx-post="/api/process-nodes/{{.Node.ID}}/finalize" hx-swap="none" title="Call robots for the full-bin swap — the manifest count locks at release">Request Swap</button>
                             {{else if eq .ActiveClaim.SwapMode "manual_swap"}}
                             {{if not .BinState}}
                             <button class="btn btn-sm" data-action="openRequestEmptyModal" data-node-id="{{.Node.ID}}" data-allowed-payloads="{{json .ActiveClaim.AllowedPayloads}}" title="Request an empty bin">Request Empty</button>

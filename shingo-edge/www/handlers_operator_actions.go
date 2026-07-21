@@ -123,13 +123,13 @@ func (h *Handlers) apiReleaseNodeStagedOrders(w http.ResponseWriter, r *http.Req
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
 }
 
-func (h *Handlers) apiFinalizeProduceNode(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiRequestProduceSwap(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	result, err := h.orchestration.FinalizeProduceNode(id)
+	result, err := h.orchestration.RequestProduceSwap(id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

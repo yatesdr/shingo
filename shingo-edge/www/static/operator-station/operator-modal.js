@@ -136,7 +136,8 @@ export function renderModal(entry) {
 
     // Actions — state machine: only show the next step in the cycle.
     // Consume:  IDLE → REQUEST MATERIAL → (stage) → RELEASE → (drop) → CONFIRM
-    // Produce:  same but FINALIZE instead of REQUEST when node has parts.
+    // Produce:  same but REQUEST SWAP (the /finalize route) when node has parts;
+    //           the manifest count locks at RELEASE, not here (Fix D).
     html += '<div class="modal-actions">';
 
     // CHILD TILE — this node is shown here only because the node it extends
@@ -372,7 +373,7 @@ export function renderModal(entry) {
                 // swap_ready is false — Robot B hasn't reached its wait point.
                 // Show explicit waiting state instead of the per-order RELEASE
                 // branch (would release one leg, bypass disposition prompt) or
-                // idle FINALIZE/REQUEST (don't apply mid-swap).
+                // idle REQUEST SWAP/REQUEST (don't apply mid-swap).
                 //
                 // The active.length>=2 guard is the recovery surface: if one
                 // leg is cancelled/failed (active drops to <=1 because the
@@ -445,7 +446,7 @@ export function renderModal(entry) {
                 }
             } else {
                 if (claim.role === 'produce' && remaining > 0) {
-                    html += actionBtn('FINALIZE', 'finalize', true,
+                    html += actionBtn('REQUEST SWAP', 'finalize', true,
                         '/api/process-nodes/' + entry.node.id + '/finalize');
                 } else if (claim.role === 'produce') {
                     // remaining=0: operator brings an empty bin to the press.

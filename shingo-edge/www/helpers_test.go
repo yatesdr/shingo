@@ -152,7 +152,7 @@ func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition
 	s.lastReleaseStagedOrdersDisposition = &d
 	return nil
 }
-func (s *stubEngine) FinalizeProduceNode(int64) (*engine.NodeOrderResult, error)        { return nil, nil }
+func (s *stubEngine) RequestProduceSwap(int64) (*engine.NodeOrderResult, error)         { return nil, nil }
 func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem) error { return nil }
 func (s *stubEngine) ClearBin(int64, string) error                                      { return nil }
 func (s *stubEngine) ClearLoaderHome(int64) error                                       { return nil }

@@ -8,7 +8,7 @@ import (
 	"shingoedge/store/processes"
 )
 
-// ProducePlan describes everything FinalizeProduceNode will do for a given
+// ProducePlan describes everything RequestProduceSwap will do for a given
 // (node, runtime, claim) triple. Pure — no DB, fleet, or order-manager
 // calls. Captures the produce-specific concerns (manifest the filled bin,
 // reset the runtime UOP) on top of the shared swap dispatch.

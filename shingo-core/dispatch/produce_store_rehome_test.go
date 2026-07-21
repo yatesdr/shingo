@@ -51,3 +51,52 @@ func TestHandleOrderIngest_RecordsManifestNoOrder(t *testing.T) {
 		t.Errorf("bin UOP = %d, want %d (manifest recorded even without an order)", gotBin.UOPRemaining, measured)
 	}
 }
+
+// TestHandleOrderIngest_BinIDPinsExactBin — Fix D: the release-time produce
+// manifest pins the departing bin by id. By the time Core processes a deferred
+// ingest, a press-index R2 may have indexed the fresh tote onto the manifest
+// tote's position, and node-based resolution (which prefers a payload match)
+// would credit the wrong bin. An explicit BinID must win over every node-based
+// choice.
+func TestHandleOrderIngest_BinIDPinsExactBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, bp := setupTestData(t, db)
+
+	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(bp.ID, []int64{bt.ID}), "set payload bin types")
+
+	press := &nodes.Node{Name: "PRESS-BINID", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(press), "create press node")
+	// The node-resolution favorite: co-located and payload-matching.
+	decoy := &bins.Bin{BinTypeID: bt.ID, Label: "FRESH-TOTE", NodeID: &press.ID, Status: "available", PayloadCode: bp.Code}
+	testutil.MustNoErr(t, db.CreateBin(decoy), "create decoy bin")
+	// The departing tote the manifest is actually for.
+	departing := &bins.Bin{BinTypeID: bt.ID, Label: "DEPARTING-TOTE", NodeID: &press.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(departing), "create departing bin")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	const measured = 61
+	d.HandleOrderIngest(testEnvelope(), &protocol.OrderIngestRequest{
+		OrderUUID:   "ingest-binid-1",
+		PayloadCode: bp.Code,
+		BinID:       departing.ID,
+		SourceNode:  press.Name,
+		Quantity:    measured,
+		Manifest: []protocol.IngestManifestItem{
+			{PartNumber: bp.Code, Quantity: measured, Description: bp.Code},
+		},
+	})
+
+	gotDeparting, err := db.GetBin(departing.ID)
+	testutil.MustNoErr(t, err, "get departing")
+	if gotDeparting.UOPRemaining != measured {
+		t.Errorf("departing bin UOP = %d, want %d — BinID must pin the manifest target", gotDeparting.UOPRemaining, measured)
+	}
+	gotDecoy, err := db.GetBin(decoy.ID)
+	testutil.MustNoErr(t, err, "get decoy")
+	if gotDecoy.UOPRemaining == measured {
+		t.Error("payload-matching co-located bin got the manifest — node resolution overrode the explicit BinID")
+	}
+}

@@ -76,7 +76,7 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (pr
 }
 
 // testEngine creates a minimal Engine with a real order manager backed by the
-// given SQLite DB. The engine is suitable for testing FinalizeProduceNode and
+// given SQLite DB. The engine is suitable for testing RequestProduceSwap and
 // wiring handlers. No PLC manager or network services are created.
 func testEngine(t *testing.T, db *store.DB) *Engine {
 	t.Helper()
@@ -186,8 +186,8 @@ func TestProduceSwap_FinalizeSendsIngestNoLocalOrder(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "sequential")
 	eng := testEngine(t, db)
 
-	if _, err := eng.FinalizeProduceNode(nodeID); err != nil {
-		t.Fatalf("FinalizeProduceNode: %v", err)
+	if _, err := eng.RequestProduceSwap(nodeID); err != nil {
+		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 
 	// No local ingest order should exist — the swap's complex order carries
@@ -232,9 +232,9 @@ func TestProduceSequential_RemovalThenBackfill(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "sequential")
 	eng := testEngine(t, db)
 
-	result, err := eng.FinalizeProduceNode(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID)
 	if err != nil {
-		t.Fatalf("FinalizeProduceNode: %v", err)
+		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 	if result.CycleMode != "sequential" {
 		t.Errorf("CycleMode = %q, want %q", result.CycleMode, "sequential")
@@ -277,9 +277,9 @@ func TestProduceSingleRobot_TenStepSwap(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "single_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.FinalizeProduceNode(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID)
 	if err != nil {
-		t.Fatalf("FinalizeProduceNode: %v", err)
+		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 	if result.CycleMode != "single_robot" {
 		t.Errorf("CycleMode = %q, want %q", result.CycleMode, "single_robot")
@@ -304,9 +304,9 @@ func TestProduceTwoRobot_BothOrdersCreated(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.FinalizeProduceNode(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID)
 	if err != nil {
-		t.Fatalf("FinalizeProduceNode: %v", err)
+		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 	if result.CycleMode != "two_robot" {
 		t.Errorf("CycleMode = %q, want %q", result.CycleMode, "two_robot")
@@ -335,8 +335,11 @@ func TestProduceTwoRobot_BothOrdersCreated(t *testing.T) {
 	if runtime.StagedOrderID == nil || *runtime.StagedOrderID != result.OrderB.ID {
 		t.Error("StagedOrderID should be OrderB")
 	}
-	if runtime.RemainingUOPCached != 0 {
-		t.Errorf("RemainingUOP = %d, want 0", runtime.RemainingUOPCached)
+	// Fix D: the REQUEST tap must NOT reset the count on two-robot modes —
+	// the bin keeps filling until the RELEASE tap, and the release-time
+	// manifest is built from this live count.
+	if runtime.RemainingUOPCached != 50 {
+		t.Errorf("RemainingUOP = %d, want 50 preserved at request (release owns the reset)", runtime.RemainingUOPCached)
 	}
 }
 
@@ -349,7 +352,7 @@ func TestProduceFinalize_RejectsZeroUOP(t *testing.T) {
 	// Set UOP to 0 — nothing to finalize
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 0), "set runtime")
 
-	_, err := eng.FinalizeProduceNode(nodeID)
+	_, err := eng.RequestProduceSwap(nodeID)
 	if err == nil {
 		t.Fatal("expected error when RemainingUOP is 0")
 	}
@@ -375,7 +378,7 @@ func TestProduceFinalize_RejectsConsumeNode(t *testing.T) {
 	}
 	_ = processID
 
-	_, err = eng.FinalizeProduceNode(nodeID)
+	_, err = eng.RequestProduceSwap(nodeID)
 	if err == nil {
 		t.Fatal("expected error for consume node")
 	}
@@ -397,9 +400,9 @@ func TestReleaseStagedOrders_BothStaged(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.FinalizeProduceNode(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID)
 	if err != nil {
-		t.Fatalf("FinalizeProduceNode: %v", err)
+		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 	markStaged(t, db, result.OrderA.ID)
 	markStaged(t, db, result.OrderB.ID)
@@ -449,9 +452,9 @@ func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.FinalizeProduceNode(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID)
 	if err != nil {
-		t.Fatalf("FinalizeProduceNode: %v", err)
+		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 	// B at staged (lineside robot parked at the wait point). A at
 	// acknowledged — post-dispatch but pre-staged. In production this is
@@ -493,9 +496,9 @@ func TestReleaseStagedOrders_RejectsNonTwoRobot(t *testing.T) {
 	_, nodeID, styleID, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.FinalizeProduceNode(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID)
 	if err != nil {
-		t.Fatalf("FinalizeProduceNode: %v", err)
+		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 	markStaged(t, db, result.OrderA.ID)
 	markStaged(t, db, result.OrderB.ID)
@@ -541,9 +544,9 @@ func TestReleaseStagedOrders_Idempotent(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.FinalizeProduceNode(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID)
 	if err != nil {
-		t.Fatalf("FinalizeProduceNode: %v", err)
+		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 	markStaged(t, db, result.OrderA.ID)
 	// B already advanced past staged.

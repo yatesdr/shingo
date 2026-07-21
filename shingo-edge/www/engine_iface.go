@@ -94,7 +94,7 @@ type EngineOrchestration interface {
 	ReleaseNodeWithRemainingUOP(nodeID int64, qty int64, remainingUOP int) (*domain.Order, error)
 	ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
-	FinalizeProduceNode(nodeID int64) (*engine.NodeOrderResult, error)
+	RequestProduceSwap(nodeID int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
 	ClearBin(nodeID int64, binTypeCode string) error
 	ClearLoaderHome(nodeID int64) error

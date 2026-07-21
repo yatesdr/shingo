@@ -402,13 +402,20 @@ type OrderStaged struct {
 // falls back to SourceNode, and Core resolves the bin from what is parked at
 // that node (headless produce-finalize, which tracks the bin by id, not label).
 type OrderIngestRequest struct {
-	OrderUUID   string               `json:"order_uuid"`
-	PayloadCode string               `json:"payload_code"`
-	BinLabel    string               `json:"bin_label"` // optional: blank => resolve the bin by SourceNode
-	SourceNode  string               `json:"source_node"`
-	Quantity    int64                `json:"quantity"` // operator-measured produced count (UOP); 0 => payload capacity
-	Manifest    []IngestManifestItem `json:"manifest,omitempty"`
-	ProducedAt  string               `json:"produced_at,omitempty"` // RFC3339 timestamp from Edge at cell completion
+	OrderUUID   string `json:"order_uuid"`
+	PayloadCode string `json:"payload_code"`
+	BinLabel    string `json:"bin_label"` // optional: blank => resolve the bin by SourceNode
+	// BinID pins the exact Core bin (0 = absent → BinLabel/SourceNode
+	// resolution). Exists for the release-time produce manifest: by the time
+	// Core processes a deferred ingest, a press-index R2 may already have
+	// indexed the fresh tote onto the position the manifest's tote occupied,
+	// so resolve-by-node would credit the wrong bin. Edge passes the runtime's
+	// active bin id, which Core itself seeded at delivery.
+	BinID      int64                `json:"bin_id,omitempty"`
+	SourceNode string               `json:"source_node"`
+	Quantity   int64                `json:"quantity"` // operator-measured produced count (UOP); 0 => payload capacity
+	Manifest   []IngestManifestItem `json:"manifest,omitempty"`
+	ProducedAt string               `json:"produced_at,omitempty"` // RFC3339 timestamp from Edge at cell completion
 }
 
 // IngestManifestItem describes a single item in an ingest manifest.

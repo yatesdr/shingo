@@ -502,6 +502,17 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		return fmt.Errorf("node %s: %w", node.Name, err)
 	}
 
+	// Fix D: the deferred produce paperwork fires HERE, before either release
+	// envelope, so Core applies the manifest first (outbox drains by id).
+	// Changeover-owned pairs are excluded — their manifests belong to the
+	// changeover release dispositions, and this pair resolution can be
+	// serving a changeover task's legs (the task fallback above).
+	if task == nil {
+		if err := e.produceIngestAtRelease(node, runtime, claim); err != nil {
+			return err
+		}
+	}
+
 	// Order B (evacuation) — full disposition.
 	if evacOrderID != nil {
 		if err := e.releaseUnlessTerminal(*evacOrderID, "B", disp); err != nil {

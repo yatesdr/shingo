@@ -136,6 +136,16 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 //     path still demanding a label. This completes the "bin label resolved by
 //     core from node contents" contract Edge has documented since 2026-04-30.
 func (s *LifecycleService) resolveIngestBin(p *protocol.OrderIngestRequest) (*bins.Bin, *lifecycleError) {
+	// Explicit bin id wins: the release-time produce manifest (Fix D) pins
+	// the departing bin by the id Core seeded at delivery, because node-based
+	// resolution can land on the freshly-indexed tote by processing time.
+	if p.BinID != 0 {
+		bin, err := s.db.GetBin(p.BinID)
+		if err != nil || bin == nil {
+			return nil, lifecycleErr("bin_error", fmt.Sprintf("ingest bin id %d not found", p.BinID), err)
+		}
+		return bin, nil
+	}
 	if p.BinLabel != "" {
 		bin, err := s.db.GetBinByLabel(p.BinLabel)
 		if err != nil {
