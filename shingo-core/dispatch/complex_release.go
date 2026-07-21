@@ -165,19 +165,47 @@ func (d *Dispatcher) patchRedirectSegments(segment []resolvedStep, order *orders
 // dispatchFleetRelease converts the segment to fleet blocks, submits them to
 // the fleet backend, advances the wait index, and transitions the order
 // lifecycle. Called after manifest sync and segment extraction have succeeded.
+//
+// The fleet half is appendSegmentAndAdvance (shared with the lane-gate path);
+// this wrapper only adds the operator-facing error reply, which is the one thing
+// the two callers genuinely differ on.
 func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.Order, segment []resolvedStep, moreWaits bool, blockOffset int) {
-	// Complex release segments are not load-sequence expanded (nil) — see
-	// dispatchComplex; F4c is scoped to the simple transport path.
+	if err := d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "complex release"); err != nil {
+		d.sendError(env, order.EdgeUUID, "fleet_failed", err.Error())
+	}
+}
+
+// appendSegmentAndAdvance is the ONE fleet-append path: convert a segment to
+// blocks, append them to the order's live (unsealed) waybill, and — only on
+// success — advance wait_index and take the staged→in_transit transition.
+//
+// Both releasers go through here: the OPERATOR release (dispatchFleetRelease,
+// driven by protocol.OrderRelease from Edge) and the LANE GATE release (Core
+// deciding a lane is safe to enter). They differ only in who pushes the button
+// and how a failure is reported, so the append itself must not be written twice:
+// the vehicle pin (seerrds Adapter.ReleaseOrder reads the assigned vehicle and
+// pins it so RDS does not re-dispatch to a different robot), the
+// success-before-advance ordering, and the IsIllegalTransition tolerance are
+// three independently-learned behaviors, and a parallel implementation would
+// lose one of them quietly.
+//
+// ORDERING IS LOAD-BEARING. wait_index and the lifecycle transition move ONLY
+// after ReleaseOrder returns nil. On failure the order keeps wait_index and its
+// staged status, so the caller can retry the same segment — the retry is what
+// makes a transient fleet error survivable rather than a stranded robot.
+//
+// Segments are not load-sequence expanded (nil): F4c is scoped to the simple
+// transport path's initial pickup, and an appended segment never carries one.
+func (d *Dispatcher) appendSegmentAndAdvance(order *orders.Order, segment []resolvedStep, moreWaits bool, blockOffset int, what string) error {
 	blocks := stepsToBlocks(order.VendorOrderID, segment, blockOffset, nil)
 	complete := !moreWaits
 
-	d.dbg("complex release: order=%d vendor=%s wait_index=%d adding %d blocks complete=%v",
-		order.ID, order.VendorOrderID, order.WaitIndex, len(blocks), complete)
+	d.dbg("%s: order=%d vendor=%s wait_index=%d adding %d blocks complete=%v",
+		what, order.ID, order.VendorOrderID, order.WaitIndex, len(blocks), complete)
 
 	if err := d.backend.ReleaseOrder(order.VendorOrderID, blocks, complete); err != nil {
-		log.Printf("dispatch: fleet release order failed: %v", err)
-		d.sendError(env, order.EdgeUUID, "fleet_failed", err.Error())
-		return
+		log.Printf("dispatch: %s: fleet append for order %d failed: %v", what, order.ID, err)
+		return err
 	}
 
 	newWaitIndex := order.WaitIndex + 1
@@ -185,6 +213,9 @@ func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.
 		log.Printf("dispatch: update order %d wait_index to %d: %v", order.ID, newWaitIndex, err)
 	}
 
+	// Release BEFORE the in-memory wait_index bump: its audit reason renders
+	// ord.WaitIndex as "released from staging (wait N)", where N names the wait
+	// being LEFT. Bumping first would silently re-number every such audit line.
 	if err := d.lifecycle.Release(order, "dispatcher"); err != nil {
 		if IsIllegalTransition(err) {
 			log.Printf("dispatch: order %d became un-releasable mid-flight (status=%s): %v", order.ID, order.Status, err)
@@ -192,8 +223,12 @@ func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.
 			log.Printf("dispatch: release order %d from staging: %v", order.ID, err)
 		}
 	}
-	log.Printf("dispatch: complex order %d released with %d additional blocks (wait %d, complete=%v)",
-		order.ID, len(blocks), order.WaitIndex, complete)
+	log.Printf("dispatch: %s: order %d appended %d blocks (wait %d, complete=%v)",
+		what, order.ID, len(blocks), order.WaitIndex, complete)
+	// Keep the caller's struct consistent with the row it just wrote — the gate
+	// path re-reads it to decide whether an order is still awaiting its tail.
+	order.WaitIndex = newWaitIndex
+	return nil
 }
 
 // findFallbackBinAtSource locates a bin to manifest-sync when the

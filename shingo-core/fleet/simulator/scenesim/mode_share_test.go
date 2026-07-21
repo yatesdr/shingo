@@ -29,7 +29,7 @@ func TestModeShare_PressPairCoOccupy(t *testing.T) {
 	_ = sim.AddRobot("LEFT", "AISLE")
 	_ = sim.AddRobot("RIGHT", "AISLE")
 
-	_ = sim.Submit("LEFT", storeReq("left-1", "LINE-IN", "A1-S2"), false)  // deep leader
+	_ = sim.Submit("LEFT", storeReq("left-1", "LINE-IN", "A1-S2"), false)   // deep leader
 	_ = sim.Submit("RIGHT", storeReq("right-1", "LINE-IN", "A1-S1"), false) // shallow follower
 
 	maxInLane := 0

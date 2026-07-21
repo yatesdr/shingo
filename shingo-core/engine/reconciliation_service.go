@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared/clock"
+	"shingocore/dispatch"
 	"shingocore/store/messaging"
 	"shingocore/store/orders"
 	"shingocore/store/reconciliation"
@@ -318,6 +319,25 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout time.Duration) (int, 
 		// re-queue back to a pre-dispatch waiting state) — skip if it is no
 		// longer a runtime-stuck candidate.
 		if !protocol.IsStuckSweepCandidate(order.Status) {
+			continue
+		}
+		// A gate-staged order is a robot physically parked at a lane wait point,
+		// holding a bin and an unsealed waybill, waiting for Core to append its
+		// tail. Its updated_at never moves while it dwells, so the cutoff fires
+		// reliably — and abandoning it cancels a committed robot mid-order and
+		// strands the bin it is carrying. That is not "stuck"; it is Core owing it
+		// a decision.
+		//
+		// Skipping here rather than in the SQL keeps the exemption next to the
+		// re-check above, where a reader looking at what the sweep cancels will
+		// see it. It is the sweep's own stated principle (give-up is an operator
+		// decision, demand never evaporates) applied to a case it predates.
+		//
+		// TODO(increment 7): a dwelling order must not be merely exempt — it needs
+		// its own watchdog: a staged-too-long queue code and an operator surface,
+		// so the wait is visible and owned rather than silent. Exemption alone
+		// trades a destructive failure for an invisible one.
+		if dispatch.IsGateStaged(order) {
 			continue
 		}
 		reason := fmt.Sprintf("abandoned: stuck in %s past %s", order.Status, timeout)

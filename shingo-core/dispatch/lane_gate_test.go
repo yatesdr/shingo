@@ -331,9 +331,18 @@ func TestLaneGate_ChoreographyKeepsCoreMachineryOn(t *testing.T) {
 		t.Errorf("delegated mouth rows = %d, want 0 — RDS owns that mouth", n)
 	}
 
-	// (3) The depth classifier — the admitLaneEntry site. Same fixture shape as
-	// TestAdmitLaneEntry_ParksDeeperPending, run against both active arms.
-	parksBehindDeeper := func(prefix, enforcement string) (bool, string) {
+	// (3) The depth classifier. POLICY is shared by both active arms; DISPOSITION
+	// is not, and that distinction is the design rather than a gap:
+	//
+	//   mouth              — a park cause parks the order before it is dispatched.
+	//   gate_choreography  — the same cause means "dwell at the wait point", so
+	//                        AdmitLaneEntry returns park=false and the valve in
+	//                        dispatchToFleetCore stages the robot instead.
+	//
+	// So this asserts the shared policy function (laneEntryCause) gives BOTH arms
+	// the identical verdict — that is the thing the hazard would silently kill —
+	// and separately that each arm's disposition is the intended one.
+	buildContended := func(prefix, enforcement string) (*nodes.Node, *nodes.Node, *orders.Order) {
 		t.Helper()
 		_, laneID, s0 := gatedLane(t, db, prefix, enforcement)
 		s1 := deepestOf(laneID)
@@ -345,23 +354,44 @@ func TestLaneGate_ChoreographyKeepsCoreMachineryOn(t *testing.T) {
 			o.DeliveryNode = s1.Name
 			o.Status = "in_transit"
 		})
-		park, cause, err := d.AdmitLaneEntry(shallow, s0)
+		laneNode, err := db.GetNode(laneID)
 		if err != nil {
-			t.Fatalf("[%s] AdmitLaneEntry: %v", prefix, err)
+			t.Fatalf("[%s] get lane: %v", prefix, err)
 		}
-		return park, cause
+		return laneNode, s0, shallow
 	}
-	wantPark, wantCause := parksBehindDeeper("HAZ-CLS-MOUTH", "mouth")
-	if !wantPark {
-		t.Fatal("mouth arm must park behind a deeper store (fixture broken)")
+	policyCause := func(prefix, enforcement string) (bool, string, *nodes.Node, *orders.Order) {
+		t.Helper()
+		laneNode, s0, shallow := buildContended(prefix, enforcement)
+		park, cause, err := d.laneEntryCause(laneNode, shallow, s0)
+		if err != nil {
+			t.Fatalf("[%s] laneEntryCause: %v", prefix, err)
+		}
+		return park, cause, s0, shallow
 	}
-	gotPark, gotCause := parksBehindDeeper("HAZ-CLS-CHOREO", "gate_choreography")
+
+	wantPark, wantCause, mouthS0, mouthOrder := policyCause("HAZ-CLS-MOUTH", "mouth")
+	if !wantPark || wantCause == "" {
+		t.Fatal("mouth arm's policy must park behind a deeper store (fixture broken)")
+	}
+	gotPark, gotCause, choreoS0, choreoOrder := policyCause("HAZ-CLS-CHOREO", "gate_choreography")
 	if gotPark != wantPark || gotCause != wantCause {
-		t.Errorf("choreography classifier = (park=%v, %q), want (park=%v, %q) — the arm lost depth ordering",
+		t.Errorf("choreography POLICY = (park=%v, %q), want (park=%v, %q) — the arm lost depth ordering",
 			gotPark, gotCause, wantPark, wantCause)
 	}
-	if park, _ := parksBehindDeeper("HAZ-CLS-DELEG", "delegated"); park {
-		t.Error("delegated must not run the Core depth classifier")
+
+	// Dispositions, each asserted for what it is.
+	if park, _, err := d.AdmitLaneEntry(mouthOrder, mouthS0); err != nil || !park {
+		t.Errorf("mouth disposition: park=%v err=%v, want a pre-dispatch park", park, err)
+	}
+	if park, _, err := d.AdmitLaneEntry(choreoOrder, choreoS0); err != nil || park {
+		t.Errorf("choreography disposition: park=%v err=%v, want NO park — the valve stages the robot instead", park, err)
+	}
+
+	// delegated runs no Core classifier at all.
+	_, delS0, delOrder := buildContended("HAZ-CLS-DELEG", "delegated")
+	if park, _, err := d.AdmitLaneEntry(delOrder, delS0); err != nil || park {
+		t.Errorf("delegated must not run the Core depth classifier: park=%v err=%v", park, err)
 	}
 }
 

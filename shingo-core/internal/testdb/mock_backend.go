@@ -10,11 +10,21 @@ import (
 // Use NewFailingBackend() for tests that expect fleet errors, or
 // NewSuccessBackend() for tests that need successful fleet operations.
 type MockBackend struct {
-	fail       bool
-	orders     map[string]fleet.TransportOrderResult
-	createReqs []fleet.CreateOrderRequest
-	cancelled  []string
-	onCreate   func()
+	fail        bool
+	orders      map[string]fleet.TransportOrderResult
+	createReqs  []fleet.CreateOrderRequest
+	cancelled   []string
+	onCreate    func()
+	releaseReqs []ReleaseCall
+}
+
+// ReleaseCall is one captured append against a live (unsealed) order — the
+// /addBlocks half of the staged lifecycle. Complete records whether the append
+// SEALED the order.
+type ReleaseCall struct {
+	VendorOrderID string
+	Blocks        []fleet.OrderBlock
+	Complete      bool
 }
 
 // CancelRequests returns the vendor order ids passed to CancelOrder, in call
@@ -36,6 +46,12 @@ func (m *MockBackend) SetOnCreate(fn func()) { m.onCreate = fn }
 // differential tests should assert on — it preserves the Complete value that
 // distinguishes the no-wait (Complete=true) and staged (Complete=false) lifecycles.
 func (m *MockBackend) CreateRequests() []fleet.CreateOrderRequest { return m.createReqs }
+
+// ReleaseCalls returns the appends seen by ReleaseOrder, in call order. The
+// create/append PAIR is what a staged lifecycle has to be asserted on: a lane-gate
+// order that created unsealed but never appended is a robot dwelling forever, and
+// only this capture can tell that apart from one whose tail went out.
+func (m *MockBackend) ReleaseCalls() []ReleaseCall { return m.releaseReqs }
 
 // NewFailingBackend returns a MockBackend where all operations return errors.
 func NewFailingBackend() *MockBackend {
@@ -102,6 +118,11 @@ func (m *MockBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlo
 	if m.fail {
 		return fmt.Errorf("mock: not connected")
 	}
+	m.releaseReqs = append(m.releaseReqs, ReleaseCall{
+		VendorOrderID: vendorOrderID,
+		Blocks:        append([]fleet.OrderBlock(nil), blocks...),
+		Complete:      complete,
+	})
 	return nil
 }
 

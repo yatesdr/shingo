@@ -126,6 +126,12 @@ func (d *Dispatcher) AdmitLaneEntry(order *orders.Order, destNode *nodes.Node) (
 // cause) when the order must wait, and park=false otherwise — including for every
 // non-lane / non-mouth-enforced destination, so the gate is byte-identical when no
 // group enforces the mouth. Depth-1 lanes are exempt (single slot, no ordering).
+//
+// It is the DISPOSITION half of the tiered arm — "park the order before it is
+// dispatched". The gate_choreography arm answers the same classifier question with
+// a different disposition (ship the robot to the lane's wait point and append its
+// tail when the lane is safe), so this returns park=false for that mode and the
+// valve in dispatchToFleetCore takes over. Same policy, different instrument.
 func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (park bool, cause string, err error) {
 	if destNode == nil {
 		return false, "", nil
@@ -134,10 +140,26 @@ func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (
 	if err != nil || lane == nil || lane.ParentID == nil {
 		return false, "", err // not a lane slot, or a lane with no group
 	}
-	if !laneGateActive(d.laneEnforcementMode(*lane.ParentID)) {
+	mode := d.laneEnforcementMode(*lane.ParentID)
+	if !laneGateActive(mode) {
 		return false, "", nil // Core does not own this group's mouth → byte-identical
 	}
+	if mode == LaneEnforceGateChoreography {
+		// The valve never parks: the order dispatches now as an unsealed waybill
+		// ending at the lane's wait point, and the classifier decides at APPEND
+		// time whether the tail goes out immediately or the robot dwells.
+		return false, "", nil
+	}
+	return d.laneEntryCause(lane, order, destNode)
+}
 
+// laneEntryCause runs the tiered classifier for `order` entering `lane` at
+// destNode and returns its park cause ("" = admit). It is the POLICY half,
+// shared verbatim by both arms: the tiered arm turns a cause into a pre-dispatch
+// park, the gate arm turns the same cause into "dwell at the wait point".
+//
+// Callers must have already established that Core owns this lane's mouth.
+func (d *Dispatcher) laneEntryCause(lane *nodes.Node, order *orders.Order, destNode *nodes.Node) (park bool, cause string, err error) {
 	slots, err := d.db.ListLaneSlots(lane.ID)
 	if err != nil || len(slots) < 2 {
 		return false, "", err // depth-1 (or unreadable) lane — nothing to order

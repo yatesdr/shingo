@@ -375,4 +375,3 @@ func TestSubmitSpotRetrieveSpecific_BinAlreadyClaimed(t *testing.T) {
 		t.Errorf("expected no new order on 409, got order_id=%d", resp.OrderID)
 	}
 }
-

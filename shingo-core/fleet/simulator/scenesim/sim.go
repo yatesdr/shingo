@@ -133,10 +133,10 @@ type Sim struct {
 	mouthGate    bool // when true, lane entry is gated by mode + deepest-first discipline (§2)
 	capacity1    bool // with mouthGate: one robot per lane (the baseline the soak compares against)
 	priorityOnly bool // with mouthGate: model production-as-landed — mode gate only, NO deepest-first hold
-	robots    map[string]*Robot
-	order     []string          // robot ids, stable order for deterministic ticking
-	occ       map[string]string // cell key → robot id (lane cells only)
-	bins      map[string]bool   // slot name → a dropped bin sits there (persists; walls deeper slots)
+	robots       map[string]*Robot
+	order        []string          // robot ids, stable order for deterministic ticking
+	occ          map[string]string // cell key → robot id (lane cells only)
+	bins         map[string]bool   // slot name → a dropped bin sits there (persists; walls deeper slots)
 
 	tick         int
 	lastProgress int // tick of the last observed state change (deadlock watchdog)
@@ -220,6 +220,57 @@ func (s *Sim) ReleaseWait(orderID string) bool {
 	return false
 }
 
+// AppendBlocks adds blocks to a robot's in-flight order — the harness's /addBlocks,
+// and the half of the lane-gate valve that Submit alone could not express.
+//
+// Submit takes the whole block list up front, so before this a DEFERRED TAIL was
+// unmodellable and a gated order could only be faked as a pre-known plan behind a
+// flag. That tests a mock of the design rather than the design: the real waybill
+// genuinely does not contain its dropoff block until Core appends one.
+//
+// If the robot is already parked on the wait, appending satisfies it and the robot
+// resumes — the same effect ReleaseWait has, because in production they are the
+// same event (the append IS the release). If the robot has not reached the wait
+// yet, the tail is simply there when it arrives and it never dwells at all: that
+// is the open valve, and it is why an early append makes the gate invisible.
+func (s *Sim) AppendBlocks(orderID string, blocks []fleet.OrderBlock) error {
+	for _, id := range s.order {
+		r := s.robots[id]
+		if r.order == nil || r.order.ID != orderID {
+			continue
+		}
+		for _, b := range blocks {
+			if s.scene.Node(b.Location) == nil {
+				return fmt.Errorf("scenesim: appended block location %q not in scene", b.Location)
+			}
+			r.order.Blocks = append(r.order.Blocks, Block{Location: b.Location, Action: actionFor(b.BinTask)})
+		}
+		if r.waiting && r.block+1 < len(r.order.Blocks) {
+			r.waiting = false
+			r.block++ // the wait is satisfied by the work that just arrived
+		}
+		r.idle = false
+		s.lastProgress = s.tick
+		return nil
+	}
+	return fmt.Errorf("scenesim: no robot is running order %q", orderID)
+}
+
+// WaitingOrders returns the ids of orders whose robot is currently parked on a
+// Wait block, sorted. The observable the lane-gate scenarios assert on: an OPEN
+// valve must never produce one (the robot rolls through), a CONTENDED valve must
+// produce exactly the dwelling order.
+func (s *Sim) WaitingOrders() []string {
+	var out []string
+	for _, id := range s.order {
+		if r := s.robots[id]; r.waiting && r.order != nil {
+			out = append(out, r.order.ID)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // AddRobot places a robot at a plain start node.
 func (s *Sim) AddRobot(id, startNode string) error {
 	if _, dup := s.robots[id]; dup {
@@ -297,8 +348,20 @@ func (s *Sim) Tick() []Violation {
 			// Arrived at the current block's location.
 			if r.block < len(r.order.Blocks) {
 				b := &r.order.Blocks[r.block]
-				if b.Action == ActionWait {
-					r.waiting = true // hold here until ReleaseWait; do NOT advance
+				if b.Action == ActionWait && r.block+1 >= len(r.order.Blocks) {
+					// Nothing follows the wait, so the order is still UNSEALED and
+					// there is no work to go to: hold here until the tail arrives
+					// (AppendBlocks) or ReleaseWait fires.
+					//
+					// The test is structural — "is there a block after this one" —
+					// not a flag. A wait with work already behind it is satisfied on
+					// arrival and the robot rolls straight through, which is exactly
+					// the open lane gate: Core appended the tail before the robot got
+					// here, so the wait costs nothing. A wait that is last is the
+					// contended gate, or the operator-release dwell the swap fixtures
+					// model (their Wait is always the final block, so they park
+					// exactly as before).
+					r.waiting = true
 					continue
 				}
 				if b.Action == ActionDropoff {

@@ -258,7 +258,23 @@ func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
 // the only difference is the Complete flag. blockId/goodsId differ from the old
 // dedicated transport primitive, but SEER acts only on location + binTask
 // (blockId/goodsId are cosmetic) — both preserved here.
+//
+// It is also the single fleet-create seam for every plain order, which is why the
+// gate_choreography valve branches HERE rather than in the scanner: routing on the
+// destination at the one create site is what makes "every lane-bound order ships
+// unsealed" structurally true, instead of true-for-the-callers-we-remembered. Both
+// callers (Kafka/envelope and UI/scanner) inherit it.
 func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
+	// gate_choreography: a lane-bound store ships unsealed to the lane's wait
+	// point and has its dropoff tail appended when the lane is safe — immediately
+	// when it already is. No-op (and no extra query beyond the lane lookup) for
+	// every other destination, so an unconfigured plant never leaves this line.
+	if target, gated, err := d.resolveLaneGateTarget(destNode); err != nil {
+		return "", err
+	} else if gated {
+		return d.dispatchGated(order, target, sourceNode, destNode)
+	}
+
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 
 	plan := buildTransportPlan(sourceNode.Name, destNode.Name, order.SourceIntent == SourceIntentEmpty)
