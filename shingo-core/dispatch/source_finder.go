@@ -34,9 +34,13 @@ import (
 )
 
 // Intent distinguishes what kind of bin the caller needs. It is keyed on the
-// order's data, never on OrderType==Complex or StepsJSON — a simple order is the
-// one-need case; the Allocator loops the same finder over a complex order's
-// distinct source needs.
+// order's data, never on OrderType==Complex or StepsJSON.
+//
+// FindSource has exactly two callers — PlanningService (simple retrieve /
+// retrieve_empty / move intake) and the fulfillment scanner's replay. The
+// Allocator is NOT one of them: it sources complex orders through its own
+// findAvailableForNeed, which reads a single node. Do not assume complex
+// pickups are covered by anything in this file.
 type Intent int
 
 const (
