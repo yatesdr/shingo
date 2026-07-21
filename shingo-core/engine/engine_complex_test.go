@@ -334,29 +334,25 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 	}
 }
 
-// --- Test: Ghost robot — ApplyComplexPlan finds no bin (TC-49) ---
+// --- Test: Ghost robot — supply pickup finds no bin (TC-49) ---
 //
 // Scenario: A complex order specifies a pickup at a node, but the node
 // has no bins at all — the source was emptied externally before this
 // dispatch tick (plant case: operator pulled the bin to quality hold
 // after the order was queued but before the scanner picked it up).
 //
-// Expected (post no_source_bin refactor): ApplyComplexPlan returns a
-// planningError with code "no_source_bin", and DispatchPreparedComplex
-// routes it to lifecycle.Skip → StatusSkipped (terminal, distinct from
-// Failed). No robot is dispatched. The semantic distinction matters
-// operationally — Skipped feeds Edge's auto-advance path on the linked
-// changeover node task instead of surfacing a sticky red error toast.
+// Expected (C(ii) supply widening): the pre-wait supply pickup PARKS the
+// order queued/waiting_for_material — material may yet arrive, and the
+// scanner re-runs the widening every tick until it does (or the operator
+// abandons). This replaced the terminal-skip disposition (which itself
+// replaced Failed): the skip fed the swap-peer cancel cascade and the
+// autoreorder re-fire loop (Springfield 2026-07-21).
 //
-// The "bin existed but unclaimable" case (already claimed, payload
-// mismatch, status) still routes to Failed — see
-// TestDispatchPreparedComplex_BinClaimedElsewhereFails in
-// dispatch/bin_lifecycle_test.go.
-//
-// Expected:
-// 1. Order status = skipped (was failed pre-refactor)
+// The ghost-robot guards are the part that must never regress, and they
+// hold under the park exactly as they did under the skip:
+// 1. Order stays queued with code waiting_for_material (no terminal lie)
 // 2. BinID = nil
-// 3. No vendor order created (no fleet interaction)
+// 3. No vendor order created (no fleet interaction while parked)
 // 4. No auto-return order created
 func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 	t.Parallel()
@@ -385,11 +381,14 @@ func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 
 	order := testdb.RequireOrder(t, db, "cx-ghost-1")
 
-	// Source genuinely empty → Skip terminal (not Fail). Pins the new
-	// no_source_bin path: bins absent at every pickup node means the
-	// work was never needed, not that the system errored.
-	if order.Status != dispatch.StatusSkipped {
-		t.Fatalf("status = %q, want skipped (empty source must route to Skip via no_source_bin)", order.Status)
+	// Source genuinely empty → PARK, not a terminal. The order waits for
+	// material with the scoped queue code; the scanner retries it every
+	// tick and the operator can abandon a changeover-linked one.
+	if order.Status != dispatch.StatusQueued {
+		t.Fatalf("status = %q, want queued (dry supply source must park as waiting_for_material, never terminal)", order.Status)
+	}
+	if order.QueueCode != string(protocol.QueueWaitingForMaterial) {
+		t.Errorf("QueueCode = %q, want %q", order.QueueCode, protocol.QueueWaitingForMaterial)
 	}
 	if order.BinID != nil {
 		t.Errorf("expected BinID=nil (no bin at pickup), got %d", *order.BinID)
