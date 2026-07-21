@@ -348,3 +348,73 @@ func TestPlaceForDedicatedLoader_Race_RestockInFlight_AllYieldBuffer(t *testing.
 		}
 	}
 }
+
+// FALLTHROUGH: Pattern A declining must not end placement.
+//
+// Regression for the defect where Pattern A's lookup failures each returned
+// from placeForDedicatedLoader outright, so Pattern B was unreachable for any
+// order whose SOURCE is not a dedicated-loader home — even when its DELIVERY
+// node was one.
+//
+// Shape: a return leg that lifts a bin from a LINE node and delivers it to the
+// loader home, with a restock already in flight to that home. Pattern A is
+// entered (SourceNode set, no wait step) and declines (the line is not a home).
+// Pattern B must then run and route the bin to the BUFFER, because the home is
+// spoken for.
+//
+// Before the fix this asserted-on value stayed at the home — i.e. the order was
+// left committed to a node another bin was already inbound to, which is the
+// two-bins-on-one-node family. Pattern A never even looked at it.
+func TestPlaceForDedicatedLoader_NonHomeSource_FallsThroughToPatternB(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, _, _ := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	line := &nodes.Node{Name: "LX-LINE-FT", Enabled: true}
+	if err := db.CreateNode(line); err != nil {
+		t.Fatalf("create line node: %v", err)
+	}
+
+	// The home is already spoken for by an inbound restock.
+	makeInFlightTo(t, db, "restock-ft-1", home.Name)
+
+	o := &orders.Order{
+		EdgeUUID: "park-fallthrough-1", StationID: "test", OrderType: protocol.OrderTypeMove,
+		Status: "staged", Quantity: 1,
+		SourceNode: line.Name, DeliveryNode: home.Name, PayloadCode: "PART-X",
+	}
+	if err := db.CreateOrder(o); err != nil {
+		t.Fatalf("create return order: %v", err)
+	}
+
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: line.Name},
+		{Action: protocol.ActionDropoff, Node: home.Name},
+	}
+	d.placeForDedicatedLoader(o, steps)
+
+	if o.DeliveryNode != buffer.Name {
+		t.Fatalf("DeliveryNode = %q, want BUFFER %q — Pattern A declined (source is not a home) "+
+			"so Pattern B must place this; leaving it at the home commits two bins to one node",
+			o.DeliveryNode, buffer.Name)
+	}
+}
+
+// Pattern A OWNING the placement must still short-circuit: when the source IS a
+// home, Pattern B must not also run and re-decide. Guards the other direction of
+// the handled-helper contract.
+func TestPlaceForDedicatedLoader_HomeSource_PatternAStillShortCircuits(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, _, outbound, _ := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	evac := makeEvacOrder(t, db, "park-shortcircuit-1", home.Name, outbound.Name)
+	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name))
+
+	if evac.DeliveryNode != home.Name {
+		t.Fatalf("DeliveryNode = %q, want HOME %q — Pattern A owned this and the home is free",
+			evac.DeliveryNode, home.Name)
+	}
+}

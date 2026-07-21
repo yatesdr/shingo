@@ -54,35 +54,17 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 	// the intent for the removal leg, and the single-robot-swap shape can't
 	// produce a same-order conflict here.
 
+	// Pattern A DECLINING must fall through to Pattern B, not end placement.
+	// Before this was extracted, Pattern A's three lookup failures each
+	// `return`ed out of placeForDedicatedLoader entirely, so a leg whose SOURCE
+	// is not a dedicated-loader home never reached the delivery-side branch
+	// below — Pattern B was unreachable for every such order even when its
+	// DeliveryNode WAS a home. tryPlaceFromHomeSource reports whether it took
+	// ownership; "false" means "not mine", never "done".
 	if order.SourceNode != "" && !hasWaitStep(steps) {
-		// Pattern A: partial bin at a home position → route the return.
-		// Guard on !hasWaitStep: supply legs that pick FROM a home carry a wait step
-		// (staging gate in the two-robot swap); evac/return legs are simple
-		// pickup→dropoff with no wait. Without the guard Pattern A fires on
-		// supply-from-home legs and overwrites their delivery with the home, making
-		// the order circular (pickup=SMN_014, deliver=SMN_014) → Core skips it.
-		srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
-		if err != nil || srcNode == nil {
+		if d.tryPlaceFromHomeSource(order, steps) {
 			return
 		}
-		home, err := d.db.GetLoaderHomeByPositionNode(srcNode.ID)
-		if err != nil || home == nil {
-			return
-		}
-		loader, err := d.db.GetLoader(home.LoaderID)
-		if err != nil || loader == nil || loader.Layout != loaders.LayoutDedicatedPositions {
-			return
-		}
-		homeName := srcNode.Name
-		if !orderDeliversTo(steps, homeName) {
-			inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
-			if ierr == nil && inFlight == 0 {
-				d.setParkDestination(order, homeName, "home")
-				return
-			}
-		}
-		d.placeForLoader(order, home.LoaderID, homeName)
-		return
 	}
 
 	if order.DeliveryNode != "" {
@@ -122,6 +104,44 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		}
 		d.placeForLoader(order, home.LoaderID, homeName)
 	}
+}
+
+// tryPlaceFromHomeSource is Pattern A: the order lifts its bin AT a
+// dedicated-loader home, so that home is the first candidate for the return —
+// home if provably free, else a buffer slot, else drain.
+//
+// Reports whether it took OWNERSHIP of the placement. Every `false` means
+// "this order is not a dedicated-loader home return" and the caller must go on
+// to try Pattern B; it never means "placement is finished". That distinction is
+// the whole reason this is a separate function: as inline code the three
+// lookup failures below returned from placeForDedicatedLoader and silently
+// skipped the delivery-side branch.
+//
+// `true` covers the drain outcome too — if placeForLoader finds no free buffer
+// and drains, Pattern A still owned and answered the question.
+func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolvedStep) bool {
+	srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
+	if err != nil || srcNode == nil {
+		return false
+	}
+	home, err := d.db.GetLoaderHomeByPositionNode(srcNode.ID)
+	if err != nil || home == nil {
+		return false // source is not a loader home — Pattern B may still apply
+	}
+	loader, err := d.db.GetLoader(home.LoaderID)
+	if err != nil || loader == nil || loader.Layout != loaders.LayoutDedicatedPositions {
+		return false
+	}
+	homeName := srcNode.Name
+	if !orderDeliversTo(steps, homeName) {
+		inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
+		if ierr == nil && inFlight == 0 {
+			d.setParkDestination(order, homeName, "home")
+			return true
+		}
+	}
+	d.placeForLoader(order, home.LoaderID, homeName)
+	return true
 }
 
 // placeForLoader routes to a free buffer slot for the given loader, or drains.
@@ -164,6 +184,24 @@ func orderDeliversTo(steps []resolvedStep, node string) bool {
 // hasWaitStep reports whether any step in a resolved step list is a wait action.
 // Used to distinguish evac/return legs (simple pickup→dropoff, no wait) from
 // supply-from-home legs (staging wait embedded in the two-robot swap chain).
+//
+// KNOWN FALSE PROXY — deliberately still here. A wait step is a proxy for leg
+// role, not the role itself, and it misclassifies a press-index R1 evac (which
+// carries a wait) as a supply leg. Replacing it with the role predicates in
+// swap_leg_role.go was planned and then FALSIFIED as specified: legTakesLineBin
+// returns false — not "unknown" — when order.ProcessNode is empty, and ~12% of
+// the complex orders that reach this file carry no ProcessNode (measured at
+// Springfield: 193 of 1518, including 56 home-source and 47 home-delivery
+// legs). A bare swap would stop Pattern A firing for those and would drop
+// Pattern B's supply legs onto the in-flight-only branch, losing the physical
+// capacity check that exists to prevent a robot fault on arrival.
+//
+// The two call sites also ask OPPOSITE questions, so one predicate cannot serve
+// both by negation. Correct per-site predicates are deferred to a written
+// proposal (Amendment 1 §A1.5); until then this stays, because round 1
+// established its misroute is conservative — it biases to buffer, which is
+// fail-safe — and a wrong replacement is strictly worse than the status quo.
+// See EXEC-LOG-cobalt-kestrel-2284.md, "Queue item 4 — B-park".
 func hasWaitStep(steps []resolvedStep) bool {
 	for _, s := range steps {
 		if s.Action == protocol.ActionWait {
