@@ -4,14 +4,6 @@ import (
 	"shingoedge/store/orders"
 )
 
-// SendClaimSync is retired under the Core-owned loader aggregate. Core derives
-// demand_registry from its bin_loaders aggregate (seeddev / migrateloaders), so
-// the Edge's style_node_claims are no longer authoritative and pushing them up
-// would clobber the Core-derived registry. Kept as a no-op so the call sites
-// (startup-ack, the admin claim-edit path, the replenishment page) don't each
-// need to change.
-func (e *Engine) SendClaimSync() {}
-
 // (systemBinCountForPayload was retired with the bin-count floor: the produce
 // supply paths are now UOP-threshold / operator-push, neither of which needs a
 // system-wide physical bin count. Core's /api/inventory/system-count endpoint and

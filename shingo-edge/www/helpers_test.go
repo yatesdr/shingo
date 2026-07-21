@@ -116,7 +116,6 @@ func (s *stubEngine) RequestNodeSync()                                          
 func (s *stubEngine) RequestCatalogSync()                                                 {}
 func (s *stubEngine) RequestOrderStatusSync() error                                       { return nil }
 func (s *stubEngine) StartupReconcile() error                                             { return nil }
-func (s *stubEngine) SendClaimSync()                                                      {}
 func (s *stubEngine) SyncProcessCounter(int64) error                                      { return nil }
 func (s *stubEngine) EnsureTagPublished(int64, string, string)                            {}
 func (s *stubEngine) ManageReportingPointTag(int64, string, string, bool, string, string) {}
@@ -198,25 +197,9 @@ func (s *stubEngine) BucketBackfillNeeded() (bool, error) {
 
 func (s *stubEngine) AdminAdjustLinesideBucket(int64, int, bool) error { return nil }
 
-// UOP-threshold replenishment admin (Phase 1+2) — stubs only; the
-// real path is exercised through engine tests, not www handler tests.
-func (s *stubEngine) ListLoaderThresholds() ([]engine.LoaderThresholdRow, error) { return nil, nil }
-func (s *stubEngine) UpsertLoaderThreshold(engine.LoaderThresholdInput) error    { return nil }
-func (s *stubEngine) DeleteLoaderThreshold(string, string) error                 { return nil }
-func (s *stubEngine) UpdateCellReorder(engine.CellReorderInput) error            { return nil }
-func (s *stubEngine) CalculateThresholdForLoader(engine.CalculateInput) (service.CalculateResult, error) {
-	return service.CalculateResult{}, nil
-}
-func (s *stubEngine) ApplyCalculatedThreshold(engine.LoaderThresholdInput) error { return nil }
-func (s *stubEngine) OverrideCalculatedThreshold(int, engine.LoaderThresholdInput) error {
-	return nil
-}
-func (s *stubEngine) ListLoaderClaimsForRecalculate() ([]engine.LoaderClaimPair, error) {
-	return nil, nil
-}
-func (s *stubEngine) SetPayloadCatalogCycleSeconds(payloadCode string, seconds float64) error {
-	return nil
-}
+// Cell-side replenishment admin (the loader half was deleted with the
+// dead Edge threshold surface).
+func (s *stubEngine) UpdateCellReorder(engine.CellReorderInput) error { return nil }
 
 // ── Service accessors (Phase 6.2′) ─────────────────────────────────
 // Each accessor returns a real *service.X backed by the test DB so

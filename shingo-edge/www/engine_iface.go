@@ -86,7 +86,6 @@ type EngineOrchestration interface {
 	RequestCatalogSync()
 	RequestOrderStatusSync() error
 	StartupReconcile() error
-	SendClaimSync()
 
 	// ── Material orchestration ─────────────────────────────────────
 	RequestNodeMaterial(nodeID int64, quantity int64) (*engine.NodeOrderResult, error)
@@ -138,23 +137,10 @@ type EngineOrchestration interface {
 	AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearBucket bool) error
 
 	// ── UOP-threshold replenishment admin ──────────────────────────
-	// Backs the /replenishment admin page (handlers_admin_replenishment +
-	// handlers_api_replenishment). Writes trigger ClaimSync so Core's
-	// threshold monitor picks up the new values immediately rather than
-	// waiting for the next heartbeat-driven sync.
-	ListLoaderThresholds() ([]engine.LoaderThresholdRow, error)
-	UpsertLoaderThreshold(engine.LoaderThresholdInput) error
-	DeleteLoaderThreshold(coreNodeName, payloadCode string) error
+	// Backs the CELL half of the /replenishment admin page. The loader
+	// half was deleted: Core owns the loader UOP threshold and the Edge
+	// write path ended in a no-op stub. See engine/replenishment_admin.go.
 	UpdateCellReorder(engine.CellReorderInput) error
-	// v6 Phase 2 pull-forward — engineer-triggered calculation.
-	CalculateThresholdForLoader(engine.CalculateInput) (service.CalculateResult, error)
-	ApplyCalculatedThreshold(in engine.LoaderThresholdInput) error
-	OverrideCalculatedThreshold(overrideValue int, in engine.LoaderThresholdInput) error
-	ListLoaderClaimsForRecalculate() ([]engine.LoaderClaimPair, error)
-	// Edge-local per-part cycle time. Engineer-edited via the
-	// replenishment page, used by the threshold calculator as a fallback
-	// when no cycle is supplied per-request. See store/catalog/catalog.go.
-	SetPayloadCatalogCycleSeconds(payloadCode string, seconds float64) error
 
 	// ── WarLink tag management ─────────────────────────────────────
 	EnsureTagPublished(rpID int64, plcName, tagName string)

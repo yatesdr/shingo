@@ -259,37 +259,32 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     UNIQUE(style_id, core_node_name)
 );
 
--- UOP-threshold replenishment (v6 C-push, opt-in):
---   Per-(loader, payload) trigger value Core's threshold monitor
---   compares against combined in-loop UOP (bins + buckets).
---   PK is (core_node_name, payload_code) — the canonical cross-system
---   identifier already used by style_node_claims, process_nodes, the
---   protocol, and Core's demand_registry. Multi-cell plants sharing a
---   loader end up with one row per binding, not per-Edge variants.
---   A row with replenish_uop_threshold = 0 is treated identically to
---   no row at all — Edge falls back to legacy bin-count, Core never
---   monitors.
-CREATE TABLE IF NOT EXISTS loader_payload_thresholds (
-    core_node_name          TEXT    NOT NULL,
-    payload_code            TEXT    NOT NULL,
-    replenish_uop_threshold INTEGER NOT NULL DEFAULT 0,
-    source                  TEXT    NOT NULL DEFAULT 'legacy',
-        -- 'legacy' | 'manual' | 'calculated'
-    safety_factor           REAL    NOT NULL DEFAULT 1.5,
-    lookback_days           INTEGER NOT NULL DEFAULT 14,
-    threshold_calculated    INTEGER NOT NULL DEFAULT 0,
-    threshold_calculated_at TEXT,
-    threshold_confidence    TEXT    NOT NULL DEFAULT '',
-        -- 'HIGH' | 'MEDIUM' | 'LOW' | ''
-    overridden_inputs       TEXT    NOT NULL DEFAULT '',
-        -- Comma-separated list of calculator-input field names the
-        -- engineer overrode during the last Calculate that produced
-        -- the current threshold. Empty when no overrides OR when
-        -- source != 'calculated'. Example: 'l2_load_seconds,safety_factor'
-    updated_at              TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_by              TEXT    NOT NULL DEFAULT '',
-    PRIMARY KEY (core_node_name, payload_code)
-);
+-- REMOVED 2026-07-21 — loader_payload_thresholds.
+--
+-- The Edge-owned per-(loader, payload) UOP threshold table. Core owns that
+-- value now (bin_loader_homes.uop_threshold -> BuildDemandRegistryFromAggregate
+-- -> demand_registry -> the threshold monitor); the Edge write path terminated
+-- in SendClaimSync(), a no-op stub retired when Core took ownership of the
+-- loader aggregate. A threshold typed on the Edge page saved cleanly,
+-- displayed, and reached nothing.
+--
+-- THE DDL IS DELETED; THE PHYSICAL TABLE IS DELIBERATELY LEFT ON DISK.
+-- It is a POTENTIAL DROP TARGET, not yet dropped, pending sign-off.
+--
+-- Why it is not dropped yet:
+--   1. ROLLBACK, not disk. A pre-sweep binary still lists this table in
+--      schema_assert.go's required set, so verifySchema would refuse to boot
+--      if the table were gone -- at a plant, with the line down. Leaving the
+--      orphan table keeps binary rollback survivable. Code reverts cleanly; a
+--      dropped table does not come back.
+--   2. The rows are the only record of what engineers actually typed, and are
+--      the input to the remediation at any plant whose Core-side thresholds
+--      turn out empty. Springfield's are correctly on Core (verified
+--      2026-07-21); other plants are unverified.
+--
+-- Drop it with a normal migration once both plants have run a clean week on a
+-- post-sweep binary. See EXEC-LOG-cobalt-kestrel-2284.md (queue item 5) and
+-- FOLLOWUPS.md.
 
 -- Core-owned loader config cache. Edge's persistent, last-known-good replica of
 -- Core's bin_loaders aggregate, written full-state on each node-list sync from

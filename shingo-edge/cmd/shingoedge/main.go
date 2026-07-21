@@ -204,7 +204,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		// this also called StartupSweepManualSwap to seed empty-in orders
 		// at every loader — unnecessary now that empty-ins are driven by
 		// line REQUESTs through MaybeCreateLoaderEmptyIn.
-		goSafe("engine-SendClaimSync", func() { eng.SendClaimSync() })
 		// Auto-push unloaders: catch any window that became free (or
 		// supply that arrived) while Edge was offline. No-op for kanban-
 		// driven consume manual_swap claims (AutoPush=false). Mirrors

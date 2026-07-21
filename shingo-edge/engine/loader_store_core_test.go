@@ -165,19 +165,3 @@ func TestLoaderIdentityCutover_ResolveByKey(t *testing.T) {
 		t.Errorf("LoaderAt(CUT-W1) = %v, %v; want the loader by its window", at, err)
 	}
 }
-
-// TestSendClaimSync_Retired pins that SendClaimSync is a no-op: under the
-// Core-owned aggregate, Core derives the demand registry from bin_loaders, so the
-// Edge must not push style_node_claims up and clobber it.
-func TestSendClaimSync_Retired(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-	sent := 0
-	eng.SetSendFunc(func(*protocol.Envelope) error { sent++; return nil })
-
-	eng.SendClaimSync()
-	if sent != 0 {
-		t.Errorf("SendClaimSync sent %d envelope(s); want 0 (retired)", sent)
-	}
-}

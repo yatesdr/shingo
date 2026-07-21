@@ -42,7 +42,6 @@ var requiredTables = []string{
 	"styles",
 	"style_node_claims",
 	"process_changeovers",
-	"loader_payload_thresholds",
 	"changeover_node_tasks",
 	"process_node_runtime_states",
 	"sourcing_state",
@@ -65,7 +64,6 @@ var requiredColumns = []requiredColumn{
 	{"style_node_claims", "reorder_point_source"},
 	{"processes", "auto_cutover_enabled"},
 	{"process_changeovers", "triggered_by"},
-	{"loader_payload_thresholds", "overridden_inputs"},
 	{"changeover_node_tasks", "skip_note"},
 	{"process_node_runtime_states", "remaining_uop_cached"},
 }

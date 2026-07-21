@@ -2,13 +2,9 @@ package engine
 
 import (
 	"testing"
-	"time"
 
 	"shingo/protocol"
-	"shingo/protocol/testutil"
 	"shingoedge/domain"
-	"shingoedge/service"
-	"shingoedge/store/catalog"
 )
 
 // Tier 1 gates — "one read-model" (collapse the dual loader-resolution layer).
@@ -136,35 +132,5 @@ func TestTier1_DedicatedLoaderKeepsLayoutViaAggregate(t *testing.T) {
 	nodes, budget := l.ReservationTarget("D2", "STUD", eng.multiWindowEnabled())
 	if len(nodes) != 1 || nodes[0] != "D2" || budget != 1 {
 		t.Errorf("ReservationTarget(member=D2) = %v/%d, want [D2]/1", nodes, budget)
-	}
-}
-
-// Gate 6 (calculator capacity from catalog): after the shim deletion, the threshold
-// calculator must source per-bin capacity from the payload catalog (not the deleted
-// manual_swap shim claim, where it was synthesized as 0). Assert the result echoes the
-// catalog's non-zero UOPCapacity. Pre-fix this annotation was silently 0.
-func TestTier1_CalculatorCapacityFromCatalog(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-	eng.catalogService = service.NewCatalogService(db) // testEngine leaves it nil; production sets it in engine.New
-
-	testutil.MustNoErr(t, db.UpsertPayloadCatalog(&catalog.CatalogEntry{
-		ID: 1, Name: "Calc Part", Code: "CALC-PART", UOPCapacity: 345,
-	}), "upsert catalog")
-
-	res, err := eng.CalculateThresholdForLoader(CalculateInput{
-		CoreNodeName:   "ANY",
-		PayloadCode:    "CALC-PART",
-		DateRangeStart: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
-		DateRangeEnd:   time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC),
-		SafetyFactor:   1.0,
-		CycleSeconds:   10,
-	})
-	if err != nil {
-		t.Fatalf("CalculateThresholdForLoader: %v", err)
-	}
-	if res.Inputs.BinCapacityUOP != 345 {
-		t.Errorf("BinCapacityUOP = %d, want 345 (sourced from the payload catalog)", res.Inputs.BinCapacityUOP)
 	}
 }

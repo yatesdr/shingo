@@ -345,14 +345,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				// UOP backfill (Item 3)
 				r.Post("/admin/uop/backfill", h.apiBackfillBuckets)
 
-				// UOP-threshold replenishment admin (Phase 1+2)
-				r.Put("/replenishment/loader-threshold", h.apiUpsertLoaderThreshold)
-				r.Delete("/replenishment/loader-threshold", h.apiDeleteLoaderThreshold)
+				// Cell-side autoreorder. The loader-threshold routes that sat
+				// here were deleted with the dead Edge threshold surface —
+				// Core owns that value (engine/replenishment_admin.go).
 				r.Put("/replenishment/cell-reorder", h.apiUpdateCellReorder)
-				r.Post("/replenishment/calculate", h.apiCalculateThresholds)
-				r.Post("/replenishment/calculate-and-apply", h.apiCalculateAndApply)
-				r.Post("/replenishment/override", h.apiOverrideThreshold)
-				r.Post("/replenishment/recalculate-all", h.apiRecalculateAll)
 
 				// Reporting points
 				r.Get("/reporting-points", h.apiListReportingPoints)
@@ -474,16 +470,11 @@ func (h *Handlers) claimSyncLoop() {
 		case <-h.claimSyncStop:
 			return
 		case <-h.claimSyncCh:
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Printf("PANIC orchestration.SendClaimSync: %v", r)
-					}
-				}()
-				h.orchestration.SendClaimSync()
-			}()
-			// Re-publish the plant-claims snapshot on the same coalesced
-			// signal — spec edits changed what every process can source.
+			// Re-publish the plant-claims snapshot on the coalesced signal —
+			// spec edits changed what every process can source. This used to
+			// also call orchestration.SendClaimSync(); that was a retired
+			// no-op and is gone. The coalescing and the publish are the
+			// live work.
 			if h.onPlantSpecChange != nil {
 				func() {
 					defer func() {
