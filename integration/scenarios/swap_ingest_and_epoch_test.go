@@ -132,9 +132,11 @@ func TestScenario_SwapFinalizeStampsCoreBinWithoutOrderRow(t *testing.T) {
 	// Drain any startup envelopes so we pump only what finalize emits.
 	drainOutbox(t, edge)
 
-	// ── Drive the swap-mode produce finalize ──
-	if _, err := edge.Engine.FinalizeProduceNode(nodeID); err != nil {
-		t.Fatalf("FinalizeProduceNode: %v", err)
+	// ── Drive the swap-mode produce request (sequential: request time IS
+	// release time, so the manifest-only ingest still fires here — Fix D
+	// defers it only on two-robot modes) ──
+	if _, err := edge.Engine.RequestProduceSwap(nodeID); err != nil {
+		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 
 	// Edge minted no local ingest order (the phantom is gone).
