@@ -127,37 +127,76 @@ func (e *Engine) SequentialChangeoverCutover(processID, nodeID int64, calledBy s
 //     protocol.IsTerminal).
 //
 // Pinning both checks keeps the gate honest if either state machine
-// drifts independently of the other. Returns (false, reasons, nil) when
-// blocked, with one human-readable line per blocker — the HMI handler
+// drifts independently of the other. Returns (false, blockers, nil) when
+// blocked, with one structured blocker per reason — the HMI handler
 // surfaces these so operators see "task at node ALN_002 in
 // staging_requested; order 703 in in_transit" rather than a generic 500.
-func (e *Engine) canCompleteChangeover(changeoverID int64) (bool, []string, error) {
+//
+// Blockers are structured (rather than the flat []string this used to
+// return) so the same computation feeds BOTH the click-time toast and the
+// live "waiting on:" panel. The gate already knew every fact the operator
+// needs; it was formatting them into a string and throwing the structure
+// away. domain.BlockersToReasons projects back to the old flat list, which
+// is what keeps the 400 toast byte-identical.
+//
+// Every blocker is Hard today: both conjuncts are hard, and there is no
+// override. See domain.Blocker for why the flag exists anyway.
+func (e *Engine) canCompleteChangeover(changeoverID int64) (bool, []domain.Blocker, error) {
 	tasks, err := e.db.ListChangeoverNodeTasks(changeoverID)
 	if err != nil {
 		return false, nil, err
 	}
-	var reasons []string
+	var blockers []domain.Blocker
 	for _, task := range tasks {
 		if !domain.IsNodeTaskStateTerminal(task.State, task.Situation) {
-			reasons = append(reasons, fmt.Sprintf("task at node %s in %s", task.NodeName, task.State))
+			blockers = append(blockers, domain.Blocker{
+				Reason:   fmt.Sprintf("task at node %s in %s", task.NodeName, task.State),
+				NodeName: task.NodeName,
+				Hard:     true,
+			})
 		}
 	}
 	for _, orderID := range linkedOrderIDs(tasks) {
 		order, err := e.db.GetOrder(orderID)
 		if err != nil {
+			// A missing order row is deliberately NOT a blocker: the order was
+			// GC'd or never persisted, and refusing cutover over a row nobody
+			// can act on would wedge the changeover permanently.
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
 			return false, nil, err
 		}
 		if !protocol.IsTerminal(order.Status) {
-			reasons = append(reasons, fmt.Sprintf("order %d in %s", order.ID, order.Status))
+			blockers = append(blockers, domain.Blocker{
+				Reason:  fmt.Sprintf("order %d in %s", order.ID, order.Status),
+				OrderID: order.ID,
+				Hard:    true,
+			})
 		}
 	}
-	if len(reasons) > 0 {
-		return false, reasons, nil
+	if len(blockers) > 0 {
+		return false, blockers, nil
 	}
 	return true, nil, nil
+}
+
+// ChangeoverGateStatus is the read-only projection of the cutover gate for
+// the active changeover on a process: can it complete, and if not, what is it
+// waiting on. Pure read — it resolves the changeover, evaluates the same gate
+// completeCutover runs, and mutates nothing, so the HMI can poll it.
+//
+// Returns (true, nil, nil) when no changeover is active: there is nothing to
+// gate, which the panel renders as "no changeover" rather than as an error.
+func (e *Engine) ChangeoverGateStatus(processID int64) (bool, []domain.Blocker, error) {
+	changeover, err := e.db.GetActiveProcessChangeover(processID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return true, nil, nil
+		}
+		return false, nil, err
+	}
+	return e.canCompleteChangeover(changeover.ID)
 }
 
 // linkedOrderIDs returns the deduped order IDs referenced by a changeover's
@@ -247,11 +286,14 @@ func (e *Engine) completeCutover(processID int64, triggeredBy string) error {
 	// to-style with an still-in-progress changeover row if the gate
 	// blocked. findActiveClaim resolves from process.ActiveStyleID, so
 	// that order is unrecoverable without operator intervention.
-	if ok, reasons, err := e.canCompleteChangeover(changeover.ID); err != nil || !ok {
+	// BlockersToReasons keeps this message byte-identical to what it produced
+	// before blockers became structured — the 400 toast is a contract the
+	// floor reads, and the panel is additive to it, not a replacement.
+	if ok, blockers, err := e.canCompleteChangeover(changeover.ID); err != nil || !ok {
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("cannot cutover: %s", strings.Join(reasons, "; "))
+		return fmt.Errorf("cannot cutover: %s", strings.Join(domain.BlockersToReasons(blockers), "; "))
 	}
 	toStyleID := changeover.ToStyleID
 	if err := e.db.SetActiveStyle(processID, &toStyleID); err != nil {

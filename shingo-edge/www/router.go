@@ -293,6 +293,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
 
 			// Changeover lifecycle
+			// Read-only gate status behind the live "waiting on:" panel.
+			// GET + no mutation, so the HMI can poll it; sits with the other
+			// shop-floor changeover routes rather than behind admin auth
+			// because the operator station is the consumer.
+			r.Get("/processes/{id}/changeover/gate-status", h.apiChangeoverGateStatus)
 			r.Post("/processes/{id}/changeover/preview", h.apiPreviewProcessChangeover)
 			r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
 			r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)

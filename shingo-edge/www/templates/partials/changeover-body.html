@@ -52,6 +52,36 @@
         {{end}}
     </div>
 
+    {{/*
+        Live "waiting on:" panel. Before this existed the gate's answer was
+        only observable by CLICKING Complete Cutover and reading the 400
+        toast — so the one button you must not press speculatively was the
+        only way to find out why it was disabled. Same blockers, same
+        sentences, rendered continuously. Refreshes with the rest of this
+        partial off the existing SSE triggers on #changeover-content.
+
+        There is no override control here and there must never be one: an
+        out-of-order style flip is unrecoverable. This panel's job is
+        visibility, not permission.
+    */}}
+    {{if .GateBlockers}}
+    <div class="card-body" id="changeover-gate-panel"
+         style="margin-bottom:1rem;padding:0.75rem 1rem;border-left:3px solid var(--warning,#c90);background:rgba(200,150,0,0.08);border-radius:4px">
+        <div style="font-weight:600;margin-bottom:0.35rem">
+            Cutover is waiting on {{len .GateBlockers}} item{{if ne (len .GateBlockers) 1}}s{{end}}
+        </div>
+        <ul style="margin:0;padding-left:1.1rem;font-size:0.9rem;line-height:1.5">
+            {{range .GateBlockers}}
+            <li>
+                {{.Reason}}
+                {{if .NodeName}}<span class="mono" style="color:var(--text-muted);font-size:0.8rem"> · {{.NodeName}}</span>{{end}}
+                {{if .OrderID}}<span class="mono" style="color:var(--text-muted);font-size:0.8rem"> · order {{.OrderID}}</span>{{end}}
+            </li>
+            {{end}}
+        </ul>
+    </div>
+    {{end}}
+
     {{if .CentralNodeTasks}}
     <table class="table" style="margin-bottom:1rem">
         <thead>

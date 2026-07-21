@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 
+	"shingoedge/domain"
 	"shingoedge/engine/changeover"
 )
 
@@ -225,6 +226,37 @@ func (h *Handlers) apiReleaseChangeoverWait(w http.ResponseWriter, r *http.Reque
 		"released": result.Released,
 		"pending":  result.Pending,
 	}, "refreshChangeover")
+}
+
+// apiChangeoverGateStatus is the read-only "what is the changeover waiting
+// on" endpoint behind the live panel. GET, no mutation, safe to poll.
+//
+// It exists because the gate's answer was previously only observable by
+// ATTEMPTING a cutover and reading the 400 toast — so an operator watching a
+// changeover that would not complete had no way to see why without clicking
+// the one button that must not be clicked speculatively. Same computation,
+// same blockers, no side effects.
+//
+// No active changeover is not an error: can_complete=true with an empty list,
+// which the panel renders as "nothing pending".
+func (h *Handlers) apiChangeoverGateStatus(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	canComplete, blockers, err := h.orchestration.ChangeoverGateStatus(processID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if blockers == nil {
+		blockers = []domain.Blocker{} // render as [] not null
+	}
+	writeJSON(w, map[string]any{
+		"can_complete": canComplete,
+		"blockers":     blockers,
+	})
 }
 
 func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r *http.Request) {

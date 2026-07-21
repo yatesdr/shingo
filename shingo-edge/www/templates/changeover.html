@@ -15,7 +15,7 @@
      hx-ext="sse"
      sse-connect="/events"
      hx-get="/changeover/partial?process={{.ActiveProcessID}}"
-     hx-trigger="refreshChangeover from:body, sse:order-update throttle:2s, sse:order-failed"
+     hx-trigger="refreshChangeover from:body, sse:order-update throttle:2s, sse:order-failed, sse:changeover-update"
      hx-swap="innerHTML">
     {{template "changeover-body" .}}
 </div>

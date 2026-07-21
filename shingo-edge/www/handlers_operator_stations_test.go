@@ -45,6 +45,7 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
 		r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
 
+		r.Get("/processes/{id}/changeover/gate-status", h.apiChangeoverGateStatus)
 		r.Post("/processes/{id}/changeover/preview", h.apiPreviewProcessChangeover)
 		r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
 		r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)

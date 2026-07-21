@@ -80,6 +80,15 @@ type changeoverViewData struct {
 	// verdict (keyed by style name). Read from Edge's local cache — no Core
 	// round-trip. Empty when the feed has no verdict for a style (no annotation).
 	SourcingByStyle map[string]styleSourcingView
+	// GateBlockers is what the cutover gate is currently waiting on — the
+	// live "waiting on:" panel. Empty means the gate would pass right now.
+	//
+	// Server-rendered into this partial rather than polled from
+	// /changeover/gate-status, because #changeover-content already re-fetches
+	// the whole partial on the SSE triggers; a second client-side poll would
+	// be a second source of truth for the same computation. The endpoint
+	// exists for non-HMI consumers and stays a pure read.
+	GateBlockers []domain.Blocker
 }
 
 func (h *Handlers) buildChangeoverViewData(activeProcess *domain.Process) changeoverViewData {
@@ -105,6 +114,10 @@ func (h *Handlers) buildChangeoverViewData(activeProcess *domain.Process) change
 	}
 	d.ActiveChangeover, _ = h.engine.ChangeoverService().GetActive(activeProcess.ID)
 	if d.ActiveChangeover != nil {
+		// What the cutover gate is waiting on, computed by the same code the
+		// cutover click runs. Errors are swallowed to nil: a failed read means
+		// the panel shows nothing, never that the page breaks.
+		_, d.GateBlockers, _ = h.orchestration.ChangeoverGateStatus(activeProcess.ID)
 		d.StationTasks, _ = h.engine.ChangeoverService().ListStationTasks(d.ActiveChangeover.ID)
 		allNodeTasks, _ := h.engine.ChangeoverService().ListNodeTasks(d.ActiveChangeover.ID)
 

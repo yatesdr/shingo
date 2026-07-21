@@ -84,3 +84,44 @@ type NodeTask struct {
 func IsNodeTaskStateTerminal(state NodeTaskState, situation string) bool {
 	return state.IsTerminal(situation)
 }
+
+// Blocker is one reason a changeover cannot cut over yet, in a shape the HMI
+// can render as a live panel instead of a one-shot toast string.
+//
+// Reason is the FULL human sentence and is the only field the operator reads;
+// NodeName and OrderID are the same fact in structured form so the panel can
+// link a blocker to the tile or order it names. Exactly one of them is set,
+// matching which conjunct produced the blocker.
+//
+// Hard is DISPLAY-ONLY. There is no override — the cutover gate has no
+// operator bypass and none is planned, because an out-of-order style flip is
+// unrecoverable (see completeCutover's irreversibility comment). The flag
+// exists so the panel can distinguish "this will clear itself" from "this
+// needs you" once the gate grows a soft conjunct; today every blocker is hard.
+// Do not grow a second code path off it.
+type Blocker struct {
+	Reason   string `json:"reason"`
+	NodeName string `json:"node_name,omitempty"`
+	OrderID  int64  `json:"order_id,omitempty"`
+	Hard     bool   `json:"hard"`
+}
+
+// BlockersToReasons projects blockers back to the flat sentence list the
+// click-time error path has always produced.
+//
+// This exists to keep the 400 toast BYTE-IDENTICAL across the structured-
+// blocker change: Blocker.Reason holds the same string the old []string
+// carried, so joining these reproduces the previous message exactly. The
+// structured fields are additive metadata for the panel, never a re-render of
+// the sentence — if a caller ever needs different wording it composes its own
+// rather than editing Reason, or the toast and the panel drift.
+func BlockersToReasons(blockers []Blocker) []string {
+	if len(blockers) == 0 {
+		return nil
+	}
+	reasons := make([]string, 0, len(blockers))
+	for _, b := range blockers {
+		reasons = append(reasons, b.Reason)
+	}
+	return reasons
+}

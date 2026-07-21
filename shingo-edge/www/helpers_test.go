@@ -84,6 +84,12 @@ type stubEngine struct {
 	lastReleaseChangeoverWaitDisp *engine.ReleaseDisposition
 	lastReleaseOrderDisposition   *engine.ReleaseDisposition
 
+	// ChangeoverGateStatus canned response — the gate-status endpoint is a
+	// pure read, so the stub just replays whatever the test set.
+	gateCanComplete bool
+	gateBlockers    []domain.Blocker
+	gateErr         error
+
 	// Item 3: BucketBackfillNeeded / BackfillBucketsForStation spies.
 	backfillNeeded      bool
 	backfillNeededCalls int
@@ -164,6 +170,9 @@ func (s *stubEngine) ReleaseChangeoverWait(_ int64, disp engine.ReleaseDispositi
 	d := disp
 	s.lastReleaseChangeoverWaitDisp = &d
 	return engine.ReleaseChangeoverWaitResult{}, nil
+}
+func (s *stubEngine) ChangeoverGateStatus(int64) (bool, []domain.Blocker, error) {
+	return s.gateCanComplete, s.gateBlockers, s.gateErr
 }
 func (s *stubEngine) SequentialChangeoverCutover(int64, int64, string) error { return nil }
 func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*storeorders.Order, error) {
