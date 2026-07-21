@@ -124,12 +124,12 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 // node is concrete, it is returned directly. If no node is provided, the
 // global fallback resolves via payload code.
 //
-// TODO: route this through dispatch.SourceFinder. This is the last
-// inline copy of the plant-wide bin finders (FindEmptyCompatibleBinInGroup /
-// FindEmptyCompatibleBin / FindSourceBinFIFO below) — the simple planners and the
-// scanner already collapsed onto SourceFinder. It is a visible,
-// forbidigo-carved-out exception (exclusions.rules #7) until the complex-path
-// unification folds complexPickups through the finder.
+// Every source-finding path in this function now routes through the shared
+// dispatch.SourceFinder (C(i)): the last inline copies of the plant-wide bin
+// finders are gone, and the forbidigo carve-out that marked them
+// (exclusions rule #7, complex_steps.go arm) is deleted with them. The
+// Reshuffle→blind-dispatch mappings below preserve pre-fold behaviour
+// byte-for-byte; surfacing the burial is a C(ii) decision.
 func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode string) (string, string, error) {
 	if step.Node != "" {
 		node, err := d.db.GetNodeByDotName(step.Node)
@@ -147,18 +147,33 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			// nodes; step.Empty now carries the distinction the old comment
 			// here said it would need.)
 			if step.Action == protocol.ActionPickup && step.Empty {
-				bin, err := d.db.FindEmptyCompatibleBinInGroup(payloadCode, node.ID, 0)
-				if err != nil {
-					return "", "", fmt.Errorf("cannot resolve empty in group %s: %w", step.Node, err)
-				}
-				if bin == nil || bin.NodeID == nil {
+				// Through the shared finder (tier 3 runs the same
+				// FindEmptyCompatibleBinInGroup this used to call inline, with
+				// excludeID=0 because the need carries no DeliveryNode).
+				res := d.finder.FindSourceForNeed(SourceNeed{
+					SourceNode:  step.Node,
+					PayloadCode: payloadCode,
+					Intent:      IntentEmpty,
+				})
+				switch res.Outcome {
+				case OutcomeFound:
+					return res.Node.Name, step.Node, nil
+				case OutcomeReshuffle:
+					// Pre-fold behaviour, preserved BYTE-FOR-BYTE for C(i): the
+					// inline call never checked slot accessibility, so a buried
+					// empty was dispatched at blind. The finder's tier-6 check
+					// now SEES the burial; acting on it (reshuffle instead of a
+					// robot fault at an unreachable slot) is a C(ii) decision,
+					// not a ratchet side effect.
+					return res.Buried.Slot.Name, step.Node, nil
+				default:
+					// Wait and Structural both collapse to the resolution error
+					// this caller has always returned. Known string delta, DB-
+					// error path only: the inline code distinguished a db error
+					// ("cannot resolve empty in group") from no-bin; the finder
+					// folds both into Wait.
 					return "", "", fmt.Errorf("no empty carrier in group %s", step.Node)
 				}
-				slot, err := d.db.GetNode(*bin.NodeID)
-				if err != nil || slot == nil {
-					return "", "", fmt.Errorf("resolve node for empty bin %d in group %s: %w", bin.ID, step.Node, err)
-				}
-				return slot.Name, step.Node, nil
 			}
 			orderType := OrderTypeRetrieve
 			if step.Action == protocol.ActionDropoff {
@@ -183,31 +198,31 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			// (we are picking the source), so no node to exclude. Pass 0.
 			// Empty leg sources an empty carrier (FindEmptyCompatibleBin),
 			// matching the NGRP empty branch above; otherwise a full (FIFO).
+			// Through the shared finder: a need with NO source node and
+			// NodeLocal=false skips tiers 1-4 and lands exactly on the tier-5
+			// plant-wide calls this used to make inline (preferZone "" and
+			// excludeID 0 because the need carries no DeliveryNode).
+			intent := IntentFull
 			if step.Empty {
-				bin, err := d.db.FindEmptyCompatibleBin(payloadCode, "", 0)
-				if err != nil {
-					return "", "", fmt.Errorf("no empty carrier for payload %q: %w", payloadCode, err)
-				}
-				if bin == nil || bin.NodeID == nil {
+				intent = IntentEmpty
+			}
+			res := d.finder.FindSourceForNeed(SourceNeed{
+				PayloadCode: payloadCode,
+				Intent:      intent,
+			})
+			switch res.Outcome {
+			case OutcomeFound:
+				d.dbg("resolveStepNode: global fallback pickup → %s (bin %d)", res.Node.Name, res.Bin.ID)
+				return res.Node.Name, "", nil
+			case OutcomeReshuffle:
+				// Pre-fold blind dispatch preserved — see the NGRP branch above.
+				return res.Buried.Slot.Name, "", nil
+			default:
+				if step.Empty {
 					return "", "", fmt.Errorf("no empty carrier for payload %q", payloadCode)
 				}
-				node, err := d.db.GetNode(*bin.NodeID)
-				if err != nil || node == nil {
-					return "", "", fmt.Errorf("resolve node for empty bin %d: %w", bin.ID, err)
-				}
-				d.dbg("resolveStepNode: global fallback empty pickup → %s (bin %d)", node.Name, bin.ID)
-				return node.Name, "", nil
+				return "", "", fmt.Errorf("no source bin for payload %q", payloadCode)
 			}
-			bin, err := d.db.FindSourceBinFIFO(payloadCode, 0)
-			if err != nil {
-				return "", "", fmt.Errorf("no source bin for payload %q: %w", payloadCode, err)
-			}
-			node, err := d.db.GetNode(*bin.NodeID)
-			if err != nil {
-				return "", "", fmt.Errorf("resolve node for source bin %d: %w", bin.ID, err)
-			}
-			d.dbg("resolveStepNode: global fallback pickup → %s (bin %d)", node.Name, bin.ID)
-			return node.Name, "", nil
 		}
 	}
 	return "", "", fmt.Errorf("step requires either node or payload_code for resolution")

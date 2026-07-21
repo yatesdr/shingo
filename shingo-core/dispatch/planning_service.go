@@ -129,11 +129,11 @@ type PlanningService struct {
 	handlers map[protocol.OrderType]PlanningHandler
 }
 
-func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan) error) *PlanningService {
+func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinder, laneLock *LaneLock, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan) error) *PlanningService {
 	s := &PlanningService{
 		db:             db,
 		resolver:       resolver,
-		finder:         NewSourceFinder(db, resolver, debug),
+		finder:         finder,
 		laneLock:       laneLock,
 		debug:          debug,
 		createCompound: createCompound,

@@ -37,11 +37,18 @@ import (
 type Allocator struct {
 	db          *store.DB
 	binManifest *service.BinManifestService
-	dbg         func(string, ...any)
+	// finder is the shared source seam, injected so complex sourcing resolves
+	// through the SAME instance simple sourcing uses. C(i) injects it; C(ii)'s
+	// widening class is its first allocator-side consumer. Compile-time
+	// narrowing of the db dependency to a finder-shaped interface is the
+	// deferred follow-up (27 call sites) — injection alone already pins the
+	// instance identity.
+	finder *SourceFinder
+	dbg    func(string, ...any)
 }
 
-func newAllocator(db *store.DB, binManifest *service.BinManifestService, dbg func(string, ...any)) *Allocator {
-	return &Allocator{db: db, binManifest: binManifest, dbg: dbg}
+func newAllocator(db *store.DB, binManifest *service.BinManifestService, finder *SourceFinder, dbg func(string, ...any)) *Allocator {
+	return &Allocator{db: db, binManifest: binManifest, finder: finder, dbg: dbg}
 }
 
 // reservedPickup is one TRUE-source pickup step matched to a reserved bin by the

@@ -50,6 +50,24 @@ const (
 	IntentEmpty
 )
 
+// SourceNeed is the need-shaped input to the finder: WHAT is required and
+// WHERE it may come from, with no *orders.Order attached. It exists because
+// the finder used to derive its scoping from order fields, and a complex
+// order's fields describe the ORDER, not the individual source need -- a
+// complex pickup fed through the order-shaped entry point read as
+// SourceIntentFull and fell through to the tier-5 plant-wide scan while
+// steps_json still drove the robot to the step node.
+//
+// NodeLocal makes tier 5 UNREACHABLE BY TYPE: a node-local need queues at its
+// node instead of widening plant-wide. That is a parameter now, not a comment.
+type SourceNeed struct {
+	SourceNode   string
+	PayloadCode  string
+	DeliveryNode string
+	Intent       Intent
+	NodeLocal    bool
+}
+
 // Outcome is the closed disposition set FindSource returns.
 type Outcome int
 
@@ -153,11 +171,30 @@ func (f *SourceFinder) debug(format string, args ...any) {
 // none of these fall through to tier 5. Those "no fall-through" edges are the
 // bugs the collapse fixes; keep them exact.
 func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResult {
-	payloadCode := order.PayloadCode
-	// Move-shaped: a node-local source relocates the bin AT a concrete source
-	// node (tier 4) and never scans plant-wide. Stage 4 keys this on the sourcing
-	// intent data (SourceIntentLocal), stamped at intake, not on OrderType.
-	moveShaped := order.SourceIntent == SourceIntentLocal
+	return f.FindSourceForNeed(SourceNeed{
+		SourceNode:   order.SourceNode,
+		PayloadCode:  order.PayloadCode,
+		DeliveryNode: order.DeliveryNode,
+		Intent:       intent,
+		// Move-shaped: a node-local source relocates the bin AT a concrete
+		// source node and never scans plant-wide. Keyed on the sourcing intent
+		// data (SourceIntentLocal), stamped at intake, never on OrderType.
+		NodeLocal: order.SourceIntent == SourceIntentLocal,
+	})
+}
+
+// FindSourceForNeed runs the tier cascade for one NEED. Same cascade, same
+// no-fall-through edges as FindSource -- which is now a two-line adapter over
+// this -- but callable per-need, which is what lets a complex order's distinct
+// source needs each get correctly-scoped resolution instead of inheriting the
+// order's shape.
+func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
+	payloadCode := need.PayloadCode
+	intent := need.Intent
+	// moveShaped keeps its historical name inside the cascade; it now means
+	// exactly need.NodeLocal, and the tier-5 gate on !moveShaped is what makes
+	// plant-wide widening unreachable by type for node-local needs.
+	moveShaped := need.NodeLocal
 
 	// Destination resolved once — excludeNodeID (prevent same-node retrieve) and
 	// preferZone (zone-preferring empty fallback). Kills the four open-coded
@@ -166,8 +203,8 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		excludeID  int64
 		preferZone string
 	)
-	if order.DeliveryNode != "" {
-		if dest, err := f.db.GetNodeByDotName(order.DeliveryNode); err == nil && dest != nil {
+	if need.DeliveryNode != "" {
+		if dest, err := f.db.GetNodeByDotName(need.DeliveryNode); err == nil && dest != nil {
 			excludeID = dest.ID
 			preferZone = dest.Zone
 		}
@@ -177,8 +214,8 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 	// gate on nil and fall through to the plant-wide scan (retrieve) or queue
 	// (move — no plant-wide fallback).
 	var srcNode *nodes.Node
-	if order.SourceNode != "" {
-		srcNode, _ = f.db.GetNodeByDotName(order.SourceNode)
+	if need.SourceNode != "" {
+		srcNode, _ = f.db.GetNodeByDotName(need.SourceNode)
 	}
 
 	var (
@@ -205,12 +242,12 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 			default:
 				// Capacity / Transient / Fatal all QUEUE SCOPED — never fall
 				// through to the plant-wide scan. (Intake queues here too.)
-				f.debug("finder: no source in group %s for payload=%s, waiting", order.SourceNode, payloadCode)
+				f.debug("finder: no source in group %s for payload=%s, waiting", need.SourceNode, payloadCode)
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
 					QueueCause:  "finder-group-empty",
-					QueueParams: QueueParams{Payload: payloadCode, Destination: order.SourceNode},
+					QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
 				}
 			}
 		}
@@ -222,7 +259,7 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
 				QueueCause:  "finder-group-empty",
-				QueueParams: QueueParams{Payload: payloadCode, Destination: order.SourceNode},
+				QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
 			}
 		}
 		bin = result.Bin
@@ -234,12 +271,12 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 	// bin at the position, handled by the concrete-node tier below. This mirrors
 	// planMove:580 (`isLoaderPos && payloadCode != ""`); planRetrieve and
 	// planRetrieveEmpty always carry a payload/intent that reaches here.
-	if bin == nil && order.SourceNode != "" && (intent == IntentEmpty || payloadCode != "") {
+	if bin == nil && need.SourceNode != "" && (intent == IntentEmpty || payloadCode != "") {
 		loaderIntent := binsource.Drain
 		if intent == IntentEmpty {
 			loaderIntent = binsource.Fill
 		}
-		chosen, node, isLoaderPos, lerr := f.sourceFromDedicatedLoader(order.SourceNode, payloadCode, loaderIntent)
+		chosen, node, isLoaderPos, lerr := f.sourceFromDedicatedLoader(need.SourceNode, payloadCode, loaderIntent)
 		if lerr != nil {
 			return SourceResult{Outcome: OutcomeStructural, TermCode: codeLoaderSource, Err: lerr}
 		}
@@ -249,12 +286,12 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 				// NOT fall through to the plant-wide scan (the no-fall-through
 				// invariant). Scoping oldest-part-first / partial-buffer is the
 				// whole point of the loader pool.
-				f.debug("finder: loader pool for %s has no %q, waiting", order.SourceNode, payloadCode)
+				f.debug("finder: loader pool for %s has no %q, waiting", need.SourceNode, payloadCode)
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
 					QueueCause:  "finder-pool-empty",
-					QueueParams: QueueParams{Payload: payloadCode, Destination: order.SourceNode},
+					QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
 				}
 			}
 			bin, binNode = chosen, node
@@ -270,37 +307,55 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		(srcNode.NodeTypeCode == protocol.NodeClassNGRP || srcNode.NodeTypeCode == protocol.NodeClassLANE) {
 		groupBin, gerr := f.db.FindEmptyCompatibleBinInGroup(payloadCode, srcNode.ID, excludeID)
 		if gerr != nil || groupBin == nil {
-			f.debug("finder: no empty in group %s for payload=%s, waiting", order.SourceNode, payloadCode)
+			f.debug("finder: no empty in group %s for payload=%s, waiting", need.SourceNode, payloadCode)
 			return SourceResult{
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
 				QueueCause:  "finder-group-empty",
-				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode, Destination: order.SourceNode},
+				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode, Destination: need.SourceNode},
 			}
 		}
 		bin = groupBin
 	}
 
-	// ── Tier 4: concrete-node candidates (move-shaped, full intent) ───────
-	// A move sources the bin parked AT its concrete source node — the first
-	// available candidate (BinUnavailableReason=="", which skips the payload
-	// check for a payload-less move, exactly as claimFirstAvailable does at
-	// intake). No plant-wide fallback: not-found queues, it never widens.
-	if bin == nil && moveShaped && intent == IntentFull && srcNode != nil {
+	// ── Tier 4: concrete-node candidates (node-local needs) ───────────────
+	// A node-local need sources the bin parked AT its concrete source node —
+	// the first available candidate (BinUnavailableReason=="", which skips the
+	// payload check for a payload-less move, exactly as claimFirstAvailable
+	// does at intake). No plant-wide fallback: not-found queues, never widens.
+	//
+	// IntentEmpty extension (C(i), DORMANT until C(ii)): tier 4 also serves
+	// node-local EMPTY needs, filtered to empty carriers exactly as the
+	// allocator's step.Empty branch filters. No caller produces
+	// NodeLocal+IntentEmpty today (SourceIntentForType pairs Move→Local with
+	// full intent, and retrieve_empty is never Local — pinned by test), so
+	// this changes nothing now; without it, C(ii)'s node-local empty needs
+	// would fall past every tier into a permanent Wait and strand every
+	// produce-side press-index empty refill.
+	if bin == nil && moveShaped && srcNode != nil && (intent == IntentFull || intent == IntentEmpty) {
 		candidates, _ := f.db.ListBinsByNode(srcNode.ID)
+		claimPayload := payloadCode
+		if intent == IntentEmpty {
+			candidates = emptyBinsOnly(candidates)
+			claimPayload = ""
+		}
 		for _, b := range candidates {
-			if BinUnavailableReason(b, payloadCode) != "" {
+			if BinUnavailableReason(b, claimPayload) != "" {
 				continue
 			}
 			bin, binNode = b, srcNode
 			break
 		}
 		if bin == nil {
+			params := QueueParams{Payload: payloadCode, Destination: need.SourceNode}
+			if intent == IntentEmpty {
+				params.Kind = "empty"
+			}
 			return SourceResult{
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
 				QueueCause:  "finder-node-empty",
-				QueueParams: QueueParams{Payload: payloadCode, Destination: order.SourceNode},
+				QueueParams: params,
 			}
 		}
 	}

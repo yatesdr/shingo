@@ -95,7 +95,7 @@ linters:
         # group-scoped-empty scoping → wrong-source-on-replay). Route source finding
         # through dispatch.SourceFinder.FindSource. The FindEmptyCompatibleBin pattern
         # also prefix-matches FindEmptyCompatibleBinInGroup. Sanctioned callers
-        # (source_finder.go itself + the still-inline complex_steps.go copy) are carved
+        # (source_finder.go itself; complex_steps.go folded through the finder in C(i)) are carved
         # out in exclusions.rules #7 below.
         - pattern: 'db\.FindSourceBinFIFO'
           msg: "Direct FindSourceBinFIFO calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
@@ -347,17 +347,12 @@ linters:
       #    Stage-5 OrderType guard. It trips forbidigo only via its 3 plant-wide
       #    fallback calls, so excusing just that message keeps the OrderType/claim/
       #    slot guards live on the rest of the file.
-      #    complex_steps.go holds the last inline copy (resolveStepNode); it is a
-      #    visible, TODO-marked exception until the dispatch-path unification
-      #    folds it into the finder. It stays whole-file exempt: it has no
-      #    order.OrderType field reads (its type logic is a local orderType var
-      #    holding a constant, which the '\.OrderType\b' pattern cannot match), so
-      #    scoping it would add no OrderType coverage.
+      #    complex_steps.go formerly held the last inline copy (resolveStepNode);
+      #    C(i) folded it through the finder and DELETED its whole-file arm --
+      #    verified by dry run: zero forbidigo findings on the file with the arm
+      #    removed. Only the message-scoped source_finder.go arm remains.
       - path: "shingo-core/dispatch/source_finder\\.go"
         text: "bypass the shared source seam"
-        linters:
-          - forbidigo
-      - path: "shingo-core/dispatch/complex_steps\\.go"
         linters:
           - forbidigo
       # 8. Edge lifecycle driver — equivalent to #1 for the edge module.
