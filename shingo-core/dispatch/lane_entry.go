@@ -134,8 +134,8 @@ func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (
 	if err != nil || lane == nil || lane.ParentID == nil {
 		return false, "", err // not a lane slot, or a lane with no group
 	}
-	if d.laneEnforcementMode(*lane.ParentID) != LaneEnforceMouth {
-		return false, "", nil // group not mouth-enforced → byte-identical
+	if !laneGateActive(d.laneEnforcementMode(*lane.ParentID)) {
+		return false, "", nil // Core does not own this group's mouth → byte-identical
 	}
 
 	slots, err := d.db.ListLaneSlots(lane.ID)

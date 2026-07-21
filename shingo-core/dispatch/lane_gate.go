@@ -24,6 +24,14 @@ const (
 	// LaneEnforceDelegated — an RDS mutex zone owns the physical mouth (B4); Core
 	// takes no mouth hold for this group.
 	LaneEnforceDelegated LaneEnforcementMode = "delegated"
+	// LaneEnforceGateChoreography — Core is the traffic cop: a lane-bound order
+	// ships UNSEALED ending at the lane's wait point, and Core appends its tail
+	// when the lane is safe. Same substrate as mouth (mouth rows, §4 release,
+	// depth priority) and the SAME classifier; only the disposition of a park
+	// verdict differs — mouth parks the order pre-dispatch, choreography stages
+	// the robot at the gate. Introduced inert: until the staging path lands, a
+	// group set to this value behaves exactly like `mouth`.
+	LaneEnforceGateChoreography LaneEnforcementMode = "gate_choreography"
 )
 
 // PropLaneEnforcement is the node-property key (read on the lane's group) that
@@ -55,11 +63,35 @@ func (d *Dispatcher) laneEnforcementMode(groupID int64) LaneEnforcementMode {
 	switch LaneEnforcementMode(d.db.GetNodeProperty(groupID, PropLaneEnforcement)) {
 	case LaneEnforceMouth:
 		return LaneEnforceMouth
+	case LaneEnforceGateChoreography:
+		return LaneEnforceGateChoreography
 	case LaneEnforceDelegated:
 		return LaneEnforceDelegated
 	default:
 		return LaneEnforceNone
 	}
+}
+
+// laneGateActive reports whether CORE owns this group's lane mouth — i.e.
+// whether the Core-side lane machinery (mouth holds, the depth-sequenced RDS
+// priority, the tiered-entry classifier) applies at all.
+//
+// It exists to make adding an arm safe. Every one of those three call sites used
+// to spell the test `!= LaneEnforceMouth`, which silently means "any mode that is
+// not literally mouth gets NO gate" — so a new arm would fall through to the
+// `none` behavior and quietly ship with no mouth holds, no depth priority, and no
+// classifier, on a plant that had explicitly configured a gate. That failure is
+// invisible: nothing errors, orders just stop being sequenced. Routing the tests
+// through one predicate is what keeps the next arm from inheriting that.
+//
+// `delegated` is deliberately NOT active: an RDS mutex zone owns that mouth, so
+// Core takes no hold — that is the whole meaning of the value. `none` is off.
+//
+// What an ACTIVE mode still chooses for itself is the DISPOSITION of a classifier
+// park verdict (mouth: park pre-dispatch; gate_choreography: stage at the wait
+// point). That branch belongs in admitLaneEntry, never here.
+func laneGateActive(m LaneEnforcementMode) bool {
+	return m == LaneEnforceMouth || m == LaneEnforceGateChoreography
 }
 
 // laneDispatchPriority returns the depth-sequenced RDS priority for a robot
@@ -83,8 +115,8 @@ func (d *Dispatcher) laneDispatchPriority(destNode *nodes.Node) (int, bool) {
 	if err != nil || lane == nil || lane.ParentID == nil {
 		return 0, false // not a lane slot, or a lane with no group
 	}
-	if d.laneEnforcementMode(*lane.ParentID) != LaneEnforceMouth {
-		return 0, false // group not mouth-enforced → byte-identical
+	if !laneGateActive(d.laneEnforcementMode(*lane.ParentID)) {
+		return 0, false // Core does not own this group's mouth → byte-identical
 	}
 	targetDepth, err := d.db.GetSlotDepth(destNode.ID)
 	if err != nil {
@@ -120,8 +152,8 @@ func (d *Dispatcher) resolveOrderLaneHolds(sourceNode, destNode *nodes.Node) ([]
 		if lane == nil || lane.ParentID == nil {
 			return nil // not a lane slot, or a lane with no group — no hold
 		}
-		if d.laneEnforcementMode(*lane.ParentID) != LaneEnforceMouth {
-			return nil // group not mouth-enforced
+		if !laneGateActive(d.laneEnforcementMode(*lane.ParentID)) {
+			return nil // Core does not own this group's mouth
 		}
 		holds = append(holds, laneHold{laneID: lane.ID, mode: mode})
 		return nil

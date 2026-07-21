@@ -251,6 +251,118 @@ func TestLaneGate_EnforcementMode(t *testing.T) {
 	if got := d.laneEnforcementMode(gJunk); got != LaneEnforceNone {
 		t.Errorf("unrecognized = %q, want none", got)
 	}
+
+	gChoreo, _, _ := gatedLane(t, db, "MODE-CHOREO", "gate_choreography")
+	if got := d.laneEnforcementMode(gChoreo); got != LaneEnforceGateChoreography {
+		t.Errorf("gate_choreography = %q, want gate_choreography", got)
+	}
+}
+
+// TestLaneGate_ChoreographyKeepsCoreMachineryOn is the hazard test for the arm
+// enum. Three predicates used to read `!= LaneEnforceMouth`, which means "anything
+// that is not literally mouth gets NO Core gate" — so adding an arm would silently
+// ship a configured plant with no mouth holds, no depth priority and no depth
+// classifier, with nothing logged and nothing failing. laneGateActive() is what
+// closes that, and this pins all three from the outside: a gate_choreography group
+// must behave exactly like a mouth group, while delegated and none stay OFF.
+//
+// It asserts equivalence against a live `mouth` fixture rather than hard-coded
+// expectations, so the two arms cannot drift apart silently either.
+func TestLaneGate_ChoreographyKeepsCoreMachineryOn(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	deepestOf := func(laneID int64) *nodes.Node {
+		t.Helper()
+		slots, err := db.ListLaneSlots(laneID)
+		if err != nil {
+			t.Fatalf("list slots: %v", err)
+		}
+		for _, s := range slots {
+			if dpt, _ := db.GetSlotDepth(s.ID); dpt == 1 {
+				return s
+			}
+		}
+		t.Fatal("fixture should have a depth-1 slot")
+		return nil
+	}
+
+	_, mouthLane, _ := gatedLane(t, db, "HAZ-MOUTH", "mouth")
+	_, choreoLane, choreoS0 := gatedLane(t, db, "HAZ-CHOREO", "gate_choreography")
+	_, delegLane, delegS0 := gatedLane(t, db, "HAZ-DELEG", "delegated")
+	mouthS1, choreoS1, delegS1 := deepestOf(mouthLane), deepestOf(choreoLane), deepestOf(delegLane)
+
+	// (1) Depth priority — the laneDispatchPriority site.
+	wantDeep, ok := d.laneDispatchPriority(mouthS1)
+	if !ok {
+		t.Fatal("mouth arm must produce a depth priority (fixture broken)")
+	}
+	gotDeep, ok := d.laneDispatchPriority(choreoS1)
+	if !ok || gotDeep != wantDeep {
+		t.Errorf("choreography depth priority = %d ok=%v, want %d — the arm lost depth sequencing", gotDeep, ok, wantDeep)
+	}
+	if _, ok := d.laneDispatchPriority(delegS1); ok {
+		t.Error("delegated must NOT take a Core depth priority — RDS owns that mouth")
+	}
+
+	// (2) Mouth holds — the resolveOrderLaneHolds site, via the exported wrapper.
+	line := lineNode(t, db, "HAZ-LINE")
+	a := testdb.CreateOrder(t, db)
+	if adm, _, _, err := d.AcquireLanesForOrder(a.ID, line, choreoS0); err != nil || !adm {
+		t.Fatalf("choreography store must be admitted on a free lane: adm=%v err=%v", adm, err)
+	}
+	// Errorf, not Fatalf: the three axes fail independently under the hazard, and
+	// reporting all of them at once is what makes the diagnosis obvious.
+	if n := gateMouthRows(t, db, choreoLane); n != 1 {
+		t.Errorf("choreography inbound mouth row = %d, want 1 — the arm lost its mouth hold", n)
+	}
+	// The hold is real, not decorative: a different-mode order must now conflict.
+	b := testdb.CreateOrder(t, db)
+	if adm, _, _, err := d.AcquireLanesForOrder(b.ID, choreoS0, line); err != nil || adm {
+		t.Errorf("outbound into an inbound-held choreography lane: adm=%v err=%v, want conflict", adm, err)
+	}
+	// Delegated takes no hold at all.
+	c := testdb.CreateOrder(t, db)
+	if adm, _, _, err := d.AcquireLanesForOrder(c.ID, line, delegS0); err != nil || !adm {
+		t.Fatalf("delegated must admit as a no-op: adm=%v err=%v", adm, err)
+	}
+	if n := gateMouthRows(t, db, delegLane); n != 0 {
+		t.Errorf("delegated mouth rows = %d, want 0 — RDS owns that mouth", n)
+	}
+
+	// (3) The depth classifier — the admitLaneEntry site. Same fixture shape as
+	// TestAdmitLaneEntry_ParksDeeperPending, run against both active arms.
+	parksBehindDeeper := func(prefix, enforcement string) (bool, string) {
+		t.Helper()
+		_, laneID, s0 := gatedLane(t, db, prefix, enforcement)
+		s1 := deepestOf(laneID)
+		shallow := testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.DeliveryNode = s0.Name
+			o.Status = "queued"
+		})
+		_ = testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.DeliveryNode = s1.Name
+			o.Status = "in_transit"
+		})
+		park, cause, err := d.AdmitLaneEntry(shallow, s0)
+		if err != nil {
+			t.Fatalf("[%s] AdmitLaneEntry: %v", prefix, err)
+		}
+		return park, cause
+	}
+	wantPark, wantCause := parksBehindDeeper("HAZ-CLS-MOUTH", "mouth")
+	if !wantPark {
+		t.Fatal("mouth arm must park behind a deeper store (fixture broken)")
+	}
+	gotPark, gotCause := parksBehindDeeper("HAZ-CLS-CHOREO", "gate_choreography")
+	if gotPark != wantPark || gotCause != wantCause {
+		t.Errorf("choreography classifier = (park=%v, %q), want (park=%v, %q) — the arm lost depth ordering",
+			gotPark, gotCause, wantPark, wantCause)
+	}
+	if park, _ := parksBehindDeeper("HAZ-CLS-DELEG", "delegated"); park {
+		t.Error("delegated must not run the Core depth classifier")
+	}
 }
 
 func TestLaneGate_ResolveHolds(t *testing.T) {
