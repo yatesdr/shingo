@@ -937,7 +937,8 @@ func TestDispatchToFleet_ConcurrentTerminal_CancelsVendorOrder(t *testing.T) {
 	// Injected inside CreateOrder so the ordering is exact: re-read sees a live
 	// order, the robot gets committed, then the order goes terminal.
 	backend.SetOnCreate(func() {
-		testutil.MustNoErr(t, db.TerminalizeOrder(order.ID, StatusCancelled, "operator cancel"), "concurrent cancel")
+		_, terr := db.TerminalizeOrder(order.ID, StatusCancelled, "operator cancel")
+		testutil.MustNoErr(t, terr, "concurrent cancel")
 	})
 
 	_, err := d.dispatchToFleetCore(order, storageNode, lineNode)
@@ -997,7 +998,8 @@ func TestDispatchToFleet_AlreadyTerminal_NeverCreatesFleetOrder(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	order.Status = StatusQueued // stale snapshot the caller still holds
-	testutil.MustNoErr(t, db.TerminalizeOrder(order.ID, StatusCancelled, "operator cancel"), "cancel before dispatch")
+	_, terr := db.TerminalizeOrder(order.ID, StatusCancelled, "operator cancel")
+	testutil.MustNoErr(t, terr, "cancel before dispatch")
 
 	_, err := d.dispatchToFleetCore(order, storageNode, lineNode)
 	if err == nil {

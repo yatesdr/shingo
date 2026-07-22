@@ -219,7 +219,15 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		if detail == "" {
 			detail = ev.Reason
 		}
-		err = s.db.TerminalizeOrder(ord.ID, to, detail)
+		// Terminal writes CAS on "still live" (see store.TerminalizeOrder). A
+		// loser still releases this order's claims + reservations — only the
+		// status write and the history row belong to the winner — so a refusal
+		// here never strands a hold.
+		var won bool
+		won, err = s.db.TerminalizeOrder(ord.ID, to, detail)
+		if err == nil && !won {
+			return ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
+		}
 	} else {
 		detail := ev.Reason
 		if detail == "" {

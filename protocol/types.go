@@ -394,6 +394,32 @@ func IsTerminal(status Status) bool {
 	return !hasOutgoing
 }
 
+// TerminalStatuses returns every terminal status — those that appear as a
+// transition TARGET but have no outgoing edges of their own. Derived from
+// validTransitions for the same reason IsTerminal is: a hand-maintained list
+// silently rots the moment a terminal status is added.
+//
+// Exists so persistence can express "only if this row is still live" as a SQL
+// predicate (store.TerminalizeOrder) without hard-coding the set in a query,
+// which is exactly the drift IsTerminal was written to prevent. Sorted, so the
+// output is stable for tests and query plans.
+func TerminalStatuses() []Status {
+	seen := map[Status]bool{}
+	for _, allowed := range validTransitions {
+		for _, to := range allowed {
+			if IsTerminal(to) {
+				seen[to] = true
+			}
+		}
+	}
+	out := make([]Status, 0, len(seen))
+	for s := range seen {
+		out = append(out, s)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // IsValidTransition returns true if transitioning from -> to is a valid state change.
 // A terminal `from` (no key in validTransitions) returns false via the lookup miss.
 func IsValidTransition(from, to Status) bool {

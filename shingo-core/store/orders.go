@@ -238,10 +238,10 @@ func (db *DB) ListOrdersByBin(binID int64, limit int) ([]*orders.Order, error) {
 // persisted for every terminal except the clean success 'confirmed' (which would
 // otherwise surface receipt text as an "error"); order_history keeps the full
 // detail regardless. Cross-aggregate.
-func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail string) error {
+func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail string) (bool, error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback()
 
@@ -251,12 +251,52 @@ func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail str
 	if status == protocol.StatusConfirmed {
 		errDetail = ""
 	}
-	if _, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=NOW() WHERE id=$3`, string(status), errDetail, orderID); err != nil {
-		return err
+	// COMPARE-AND-SWAP on "still live". Two callers can each hold a snapshot
+	// showing a non-terminal order and both pass lifecycle's guard — an operator
+	// cancel racing a scanner fail is the everyday pair. Unguarded, the second
+	// write flipped an already-terminal order to a different terminal and fired a
+	// second actionMap entry (fireCancelled AND fireFailed for one order).
+	//
+	// The predicate is "current status is not terminal" rather than
+	// "current status = the caller's from". A cancel is operator intent that must
+	// land from ANY live state, and an order legitimately moves non-terminally
+	// (queued→sourcing) between snapshot and cancel; keying on `from` would
+	// silently refuse that cancel, and CancelOrder returns no error to notice it
+	// with. Terminal-absorbs-terminal is the property we actually want.
+	//
+	// The set is derived from the transition table (protocol.TerminalStatuses),
+	// not hard-coded here, so adding a terminal status can't quietly bypass this.
+	terminals := protocol.TerminalStatuses()
+	terminalNames := make([]string, len(terminals))
+	for i, t := range terminals {
+		terminalNames[i] = string(t)
 	}
-	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, $2, $3)`, orderID, string(status), detail); err != nil {
-		return err
+	res, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=NOW()
+		WHERE id=$3 AND status <> ALL($4)`, string(status), errDetail, orderID, terminalNames)
+	if err != nil {
+		return false, err
 	}
+	moved, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	won := moved > 0
+	// History only for the winner — a losing terminalize must not add a second
+	// terminal row to the order's audit trail.
+	if won {
+		if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, $2, $3)`, orderID, string(status), detail); err != nil {
+			return false, err
+		}
+	}
+	// EVERYTHING BELOW RUNS FOR THE LOSER TOO, and commits.
+	//
+	// The loser must not assume the winner released this order's holds. Every
+	// release here is keyed on the ORDER id and is idempotent by construction
+	// (WHERE claimed_by=$1 matches zero rows the second time; the DELETE and the
+	// reservation release are set-based), so running them twice is a no-op — but
+	// running them ZERO times because we returned early would strand a claim on a
+	// bin forever, which is the exact leak this chokepoint exists to prevent.
+	// Idempotent release is an invariant of this function, not an accident.
 	// Anomaly mark MUST run before claim release: the WHERE filters on
 	// claimed_by=$orderID, which the next statement clears. COALESCE preserves an
 	// earlier stamp. Unconditional across terminals — a bin still claimed by this
@@ -267,34 +307,38 @@ func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail str
 		UPDATE bins SET anomaly_at=COALESCE(anomaly_at, NOW()), updated_at=NOW()
 		WHERE claimed_by=$1
 		  AND node_id IN (SELECT id FROM nodes WHERE name='_TRANSIT')`, orderID); err != nil {
-		return err
+		return false, err
 	}
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
-		return err
+		return false, err
 	}
 	// Release this order's destination-slot claims too (store dual of the bin
 	// release above); ReleaseOrphanedClaims is the defense-in-depth backstop.
 	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
-		return err
+		return false, err
 	}
 	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
-		return err
+		return false, err
 	}
 	// Release any reservations this order holds (pending or confirmed). Must run
 	// in the same tx so no window exists where the order is terminal but its
 	// reservation still blocks the bin. The owner-liveness reaper is the
 	// defense-in-depth backstop for any row that leaks past this path.
 	if err := reservations.ReleaseByOrder(tx, orderID); err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return won, nil
 }
 
 // FailOrderAtomic transitions an order to "failed" and releases all its holds.
 // A failure marks _TRANSIT bins anomalous (a claim released mid-flight is a leak
 // to investigate). Thin wrapper over TerminalizeOrder.
 func (db *DB) FailOrderAtomic(orderID int64, detail string) error {
-	return db.TerminalizeOrder(orderID, protocol.StatusFailed, detail)
+	_, err := db.TerminalizeOrder(orderID, protocol.StatusFailed, detail)
+	return err
 }
 
 // ReleaseClaimForBin is the inverse of a single ClaimForDispatch: it clears the

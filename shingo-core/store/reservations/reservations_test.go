@@ -315,10 +315,10 @@ func TestReservations_SwapSiblingCancel(t *testing.T) {
 	// Simulate abandonOrder: terminate each leg through the chokepoint that
 	// LifecycleService.CancelOrder routes to (transition → TerminalizeOrder for
 	// StatusCancelled), which releases every reservation the order holds.
-	if err := db.TerminalizeOrder(supply.ID, protocol.StatusCancelled, "test abandon"); err != nil {
+	if _, err := db.TerminalizeOrder(supply.ID, protocol.StatusCancelled, "test abandon"); err != nil {
 		t.Fatalf("terminalize supply: %v", err)
 	}
-	if err := db.TerminalizeOrder(evac.ID, protocol.StatusCancelled, "test abandon"); err != nil {
+	if _, err := db.TerminalizeOrder(evac.ID, protocol.StatusCancelled, "test abandon"); err != nil {
 		t.Fatalf("terminalize evac: %v", err)
 	}
 
