@@ -41,13 +41,35 @@ function setVal(id, v) { const e = document.getElementById(id); if (e) e.value =
 function setText(id, t) { const e = document.getElementById(id); if (e) e.textContent = t; }
 function setDisabled(id, d) { const e = document.getElementById(id); if (e) e.disabled = d; }
 
-// The inbound/outbound/buffer "Material flow" fields are meaningful only for
-// shared_window — a dedicated_positions loader's spots are their own in/out, so
-// hide that whole section for dedicated (echoes the box header).
+// Material-flow field gating, per layout.
+//
+// The whole section used to be display:none for dedicated_positions, on the
+// reasoning that a dedicated loader's spots are their own in/out. Only the
+// OUTBOUND half of that was ever true. Inbound is what the Edge retrieves
+// empties FROM (loaderEmptySource → tryCreateL1); with it blank the whole
+// threshold→empty-to-home chain silently no-ops at debug level, which is
+// exactly the Springfield failure. Hiding a load-bearing field left the raw
+// API as the only way to set it.
+//
+// So: per-field, not per-section. Inbound editable for both layouts; Outbound
+// and Buffer disabled for dedicated with the reason on screen. Disabled inputs
+// still RENDER their current value (editLoader always fills them and
+// submitLoader always sends them), so a dedicated loader that carries a legacy
+// outbound/buffer keeps it — this gate never blanks anything.
 function setLayoutFlowVisibility() {
   const sel = document.getElementById('loader-layout');
   const sec = document.getElementById('loader-flow-section');
-  if (sec) sec.style.display = (sel && sel.value === 'dedicated_positions') ? 'none' : '';
+  const dedicated = !!(sel && sel.value === 'dedicated_positions');
+  if (sec) sec.style.display = '';
+  setDisabled('loader-outbound', dedicated);
+  setDisabled('loader-buffer', dedicated);
+  setDisabled('loader-inbound', false);
+  const scope = document.getElementById('loader-flow-scope');
+  if (scope) scope.textContent = dedicated ? '(inbound only — spots are their own outbound)' : '(shared_window)';
+  const outNote = document.getElementById('loader-outbound-note');
+  if (outNote) outNote.style.display = dedicated ? '' : 'none';
+  const bufNote = document.getElementById('loader-buffer-note-dedicated');
+  if (bufNote) bufNote.style.display = dedicated ? '' : 'none';
 }
 
 // setReplenishmentOptions populates the replenishment <select> with role-aware
@@ -322,14 +344,23 @@ function loaderGroupsHtml(l) {
 function boxHtml(item) {
   const l = item.loader;
   const dedicated = l.layout === 'dedicated_positions';
-  // Dedicated positions are their own inbound+outbound, so the inbound→outbound
-  // flow is meaningless (false info) for them — only shared_window shows it.
+  // Flow line. A dedicated loader's OUTBOUND is meaningless (its spots are its
+  // own outbound) but its INBOUND is load-bearing: it is where empties are
+  // retrieved from, and blank means the replenishment chain silently does
+  // nothing. Suppressing the whole line for dedicated hid exactly the value an
+  // engineer needs to see at a glance, so dedicated now renders
+  // `inbound → (spots)`. "(spots)" rather than a dash on the right, so the
+  // destination doesn't read as unset config; a dash on the LEFT is real and
+  // is meant to look wrong.
   let meta = escapeHtml(l.role) + ' · ' + escapeHtml(l.layout) + ' · ' + escapeHtml(replenishLabel(l));
-  if (!dedicated) {
-    let flow = (l.inbound_source || '—') + ' → ' + (l.outbound_dest || '—');
-    if (l.buffer_dest) flow += ' · buf ' + l.buffer_dest;
-    meta += ' · ' + escapeHtml(flow);
+  let flow;
+  if (dedicated) {
+    flow = (l.inbound_source || '—') + ' → (spots)';
+  } else {
+    flow = (l.inbound_source || '—') + ' → ' + (l.outbound_dest || '—');
   }
+  if (l.buffer_dest) flow += ' · buf ' + l.buffer_dest;
+  meta += ' · ' + escapeHtml(flow);
   // Member nodes are shown ONLY for dedicated-home loaders (each position is a
   // meaningful payload-pinned slot). Shared-window loaders + unloaders are defined
   // by the node GROUPS they pull from / feed — showing their individual windows is
