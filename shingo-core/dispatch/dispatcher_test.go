@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -895,6 +896,76 @@ func TestRegression_HandleOrderReceipt_ReturnsOnError(t *testing.T) {
 	// Verify: no completion event emitted
 	if len(emitter.completed) > 0 {
 		t.Errorf("completed events = %d, want 0 (receipt failed, should not complete)", len(emitter.completed))
+	}
+}
+
+// TestDispatchToFleet_ConcurrentTerminal_CancelsVendorOrder pins the
+// orphan-mission guard.
+//
+// The fleet order is created BEFORE the status write (dispatchToFleetCore:
+// backend.CreateOrder → UpdateOrderVendor → lifecycle.Dispatch). If another
+// actor terminalizes the order in that window — an operator cancel racing a
+// fulfillment tick — the status CAS refuses, and before this guard the code
+// logged at debug level, emitted OrderDispatched anyway and returned success.
+// Net effect: a robot physically moving for an order the database calls
+// cancelled, with nothing to reconcile it. CancelOrder's own vendor leg cannot
+// clean it up, because it ran before this vendor order existed.
+//
+// The guard must cancel the fleet order, stay silent on the dispatched event,
+// and return an error naming the vendor id.
+func TestDispatchToFleet_ConcurrentTerminal_CancelsVendorOrder(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, _ := setupTestData(t, db)
+
+	backend := testdb.NewTrackingBackend()
+	d, emitter := newTestDispatcher(t, db, backend)
+
+	order := &orders.Order{
+		EdgeUUID:     "orphan-guard-1",
+		StationID:    "edge.line1",
+		OrderType:    OrderTypeRetrieve,
+		Status:       StatusQueued,
+		Quantity:     1,
+		DeliveryNode: lineNode.Name,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	order.Status = StatusQueued // the caller's snapshot
+
+	// Another actor terminalizes it while this dispatch is in flight. The
+	// caller's `order` still says queued — that is the whole point.
+	testutil.MustNoErr(t, db.TerminalizeOrder(order.ID, StatusCancelled, "operator cancel"), "concurrent cancel")
+
+	_, err := d.dispatchToFleetCore(order, storageNode, lineNode)
+	if err == nil {
+		t.Fatal("expected an error: the status write was refused after a robot was committed")
+	}
+
+	// The fleet order was created (that is the premise) ...
+	created := backend.CreateRequests()
+	if len(created) != 1 {
+		t.Fatalf("CreateOrder calls = %d, want 1", len(created))
+	}
+	// ... and must have been cancelled again by the guard.
+	cancelled := backend.CancelRequests()
+	if len(cancelled) != 1 {
+		t.Fatalf("CancelOrder calls = %d, want 1 — the committed robot was left flying", len(cancelled))
+	}
+	if cancelled[0] != created[0].OrderID {
+		t.Errorf("cancelled %q, want the vendor order just created (%q)", cancelled[0], created[0].OrderID)
+	}
+	// The error must name the vendor id so an operator can find it.
+	if !strings.Contains(err.Error(), created[0].OrderID) {
+		t.Errorf("error %q does not name vendor order %q", err.Error(), created[0].OrderID)
+	}
+	// No dispatch announcement for a mission that is being torn down.
+	if len(emitter.dispatched) != 0 {
+		t.Errorf("dispatched events = %d, want 0 (order is terminal)", len(emitter.dispatched))
+	}
+	// And the cancel stands.
+	persisted, _ := db.GetOrder(order.ID)
+	if persisted.Status != StatusCancelled {
+		t.Errorf("status = %q, want %q — the refused write must not have landed", persisted.Status, StatusCancelled)
 	}
 }
 

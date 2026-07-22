@@ -13,7 +13,13 @@ type MockBackend struct {
 	fail       bool
 	orders     map[string]fleet.TransportOrderResult
 	createReqs []fleet.CreateOrderRequest
+	cancelled  []string
 }
+
+// CancelRequests returns the vendor order ids passed to CancelOrder, in call
+// order. Needed to assert the orphan-mission guard actually cancels the fleet
+// order it just created when the status write is refused (dispatcher.go).
+func (m *MockBackend) CancelRequests() []string { return m.cancelled }
 
 // CreateRequests returns the CreateOrderRequests seen by CreateOrder, in call
 // order. This is the unified capture (the single create primitive) and the one
@@ -52,6 +58,7 @@ func (m *MockBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.Transport
 }
 
 func (m *MockBackend) CancelOrder(vendorOrderID string) error {
+	m.cancelled = append(m.cancelled, vendorOrderID)
 	if m.fail {
 		return fmt.Errorf("mock: not connected")
 	}

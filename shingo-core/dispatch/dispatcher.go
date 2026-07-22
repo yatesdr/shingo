@@ -290,7 +290,34 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		d.dbg("update order %d vendor: %v", order.ID, err)
 	}
 	if err := d.lifecycle.Dispatch(order, vendorOrderID, "dispatcher"); err != nil {
-		d.dbg("order %d → dispatched: %v", order.ID, err)
+		// ORPHAN-MISSION GUARD. The robot is already committed — CreateOrder
+		// succeeded above — so a failed status write here leaves a mission
+		// flying for an order the database says is something else.
+		//
+		// The specific case that made this real: the status CAS refuses
+		// because another actor terminalized the order while this dispatch
+		// was in flight (operator cancel racing a fulfillment tick). Cancel
+		// the vendor order we just created, do NOT announce a dispatch that
+		// isn't going to be tracked, and fail the caller. CancelOrder's own
+		// vendor leg cannot clean this up: it ran before this vendor order
+		// existed.
+		if IsConcurrentTransition(err) {
+			log.Printf("dispatch: order %d moved under us after the fleet order was created — cancelling vendor order %s: %v",
+				order.ID, vendorOrderID, err)
+			if cerr := d.backend.CancelOrder(vendorOrderID); cerr != nil {
+				// Both ids on one line: this is the operator's breadcrumb for
+				// a robot that is moving with no order to account for it.
+				log.Printf("ERROR dispatch: ORPHAN MISSION — order %d is terminal but vendor order %s could not be cancelled: %v (robot may still be moving; cancel it in the fleet manager)",
+					order.ID, vendorOrderID, cerr)
+			}
+			return "", fmt.Errorf("order %d moved concurrently after fleet create; vendor order %s cancelled: %w",
+				order.ID, vendorOrderID, err)
+		}
+		// Any other failed status write after a committed robot is also
+		// operationally significant — it was previously debug-only, which
+		// meant it could pass silently in a production build.
+		log.Printf("dispatch: order %d → dispatched FAILED after vendor order %s was created: %v (order status and fleet state may now disagree)",
+			order.ID, vendorOrderID, err)
 	}
 
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
