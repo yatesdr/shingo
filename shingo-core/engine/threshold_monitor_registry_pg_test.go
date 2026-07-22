@@ -185,6 +185,66 @@ func TestThresholdMonitor_OnThresholdChanges_ReBaselinesFromDB(t *testing.T) {
 	}
 }
 
+// TestThresholdMonitor_NegativeTotal_EmitsNoSignal is the end-to-end half of
+// the validity floor: with a negative in-loop total, NOTHING reaches the
+// outbox. The unit-level counterpart
+// (TestThresholdMonitor_CheckBindings_NegativeTotal_NoFire) proves the branch;
+// this proves the observable contract against a real engine, and exercises the
+// real logFn path that the nil-eng harness cannot.
+//
+// The refusal log line itself is not asserted: Engine's logFn is wired at
+// construction (LogFunc: t.Logf here) with no capture hook, and adding one to
+// production Engine purely for this assertion would be a worse trade than
+// asserting the outcome that actually matters — no robot traffic off a broken
+// ledger.
+func TestThresholdMonitor_NegativeTotal_EmitsNoSignal(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+
+	const (
+		stationID = "station-negative"
+		loader    = "MS-LOADER-NEG"
+		payload   = "P-NEGATIVE"
+	)
+
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleConsume,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 50,
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	m := eng.thresholdMonitor
+	m.mu.Lock()
+	m.thresholdsByPayload[payload] = []thresholdEntry{{
+		stationID:    stationID,
+		coreNodeName: loader,
+		payloadCode:  payload,
+		threshold:    50,
+	}}
+	m.uopCache[payload] = -443 // the Springfield 74577-6SA0A.06 total
+	m.mu.Unlock()
+
+	preMsgs, _ := db.ListPendingOutbox(50)
+	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+
+	// Drive the hot path the way a real delta would: still deeply negative
+	// after applying, and trivially "below threshold".
+	m.OnBinUOPDelta(payload, -1)
+
+	time.Sleep(300 * time.Millisecond)
+
+	msgs, _ := db.ListPendingOutbox(50)
+	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+		t.Errorf("negative in-loop total produced %d new LoopBelowThresholdSignal(s); want 0 — a broken ledger must not arm replenishment (outbox=%v)",
+			got-preCount, outboxSummary(msgs))
+	}
+}
+
 // TestThresholdMonitor_Resync_EngagesAndFiresSeededBinding pins the seed-ordering
 // fix. A demand_registry binding written OUT-OF-BAND (seeddev / migrateloaders
 // write it directly; ClaimSync is retired so the Edge pushes no claims) is

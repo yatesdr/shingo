@@ -309,6 +309,32 @@ func (m *ThresholdMonitor) handleBinUpdated(ev BinUpdatedEvent) {
 // checkBindings evaluates all threshold bindings for a given total and
 // fires signals for any that are below threshold and past debounce.
 func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int) {
+	// Validity floor. A negative plant-wide in-loop total is never a real
+	// demand signal — it is always a broken ledger. bins.uop_remaining is
+	// allowed to go negative by SME lock (overpack/underpack), buckets are
+	// CHECK (qty >= 0), so a negative SUM means the bin side is wrong, not
+	// that the plant owes itself parts. Springfield 2026-07-21 signalled
+	// 74577-6SA0A.06 at an in-loop total of −443.
+	//
+	// Firing on that produces legitimate-LOOKING L1s off garbage input, and
+	// the fleet has no way to tell you the number was wrong. Refuse to signal
+	// and say so loudly instead — a monitored payload going quiet with a log
+	// line beats robot traffic nobody can trace. This is input validation,
+	// not a toggle: there is nothing to turn on or off.
+	//
+	// Zero is NOT rejected: a genuinely out-of-stock payload is real demand.
+	if total < 0 {
+		if m.eng != nil { // nil in the pure unit harness (newTestMonitor)
+			for _, b := range bindings {
+				if b.threshold <= 0 {
+					continue
+				}
+				m.eng.logFn("threshold_monitor: REFUSING to signal station=%s loader=%s payload=%s — in-loop total is negative (total=%d threshold=%d); the bins ledger for this payload is broken, reconcile it before trusting replenishment",
+					b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold)
+			}
+		}
+		return
+	}
 	for _, b := range bindings {
 		if b.threshold <= 0 {
 			continue
