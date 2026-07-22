@@ -492,9 +492,16 @@ function buildLoaderCard(entry, code, counters, opts) {
     }
 
     // Normal (non-transitional) loader hides idle produce cards so the operator
-    // sees only what's called for. Transitional keeps every card; a home-location
-    // board passes keepIdle so every physical home stays on screen.
+    // sees only what's called for. Transitional keeps every card (its idle cards
+    // were just relabelled ACTIVE/PRELOAD above, which IS actionable information);
+    // keepIdle forces every card to stay on screen.
     if (!entry.operator_driven && claim.role === 'produce' && cs.cls === 'os-board-nodemand' && !(opts && opts.keepIdle)) return null;
+
+    // hideIdle extends that to BOTH roles, for the home-location board: a wall of
+    // grey "NO DEMAND" homes buries the handful the operator can actually act on.
+    // Gated on !operator_driven for the same reason as above — a transitional
+    // board's "idle" cards carry coverage meaning and must survive.
+    if (opts && opts.hideIdle && !entry.operator_driven && cs.cls === 'os-board-nodemand') return null;
 
     card.classList.add(cs.cls);
     if (cs.loadNow) card.classList.add('os-board-load-now');
@@ -522,10 +529,21 @@ function buildLoaderCard(entry, code, counters, opts) {
         if (starved) card.classList.add('os-board-card--starved');
     }
 
-    // Queue-position badge only for REAL per-payload orders (the agnostic
-    // blank-payload empty must not stamp every card with a meaningless number).
+    // Corner badge, only for REAL per-payload orders (the agnostic blank-payload
+    // empty must not stamp every card with a meaningless marker).
+    //
+    // Its TEXT depends on the board. A window board shares one budget across its
+    // payloads, so the queue ordinal answers "where am I in line". A home board
+    // does not: every home is an independent one-bin slot, so the ordinal is noise
+    // — sourceBadge swaps it for the supermarket/buffer node the carrier is being
+    // pulled from, which is what the operator actually wants to know. Falls back to
+    // the ordinal when the order carries no source (pre-plan, unresolved group).
     if (cs.queueCount > 0) {
-        var badge = el('span', { className: 'os-board-pos', textContent: String(counters.queuePos) });
+        var useSource = opts && opts.sourceBadge && cs.sourceNode;
+        var badge = el('span', {
+            className: 'os-board-pos' + (useSource ? ' os-board-pos--node' : ''),
+            textContent: useSource ? cs.sourceNode : String(counters.queuePos),
+        });
         if (cs.delivered) badge.classList.add('os-board-pos-delivered');
         else if (cs.inTransit) badge.classList.add('os-board-pos-transit');
         else badge.classList.add('os-board-pos-queued');
@@ -736,20 +754,20 @@ function renderHomeLocationBoard(nodes) {
     nodes.forEach(function(n) { if (n.active_claim) roles[n.active_claim.role] = true; });
     var title = (roles.produce && roles.consume) ? 'Stations'
         : roles.consume ? 'Unloader' : 'Bin Loader';
-    var header = el('div', { className: 'os-board-header' });
-    header.innerHTML =
-        '<div><div style="font-size:42px;font-weight:700;color:#fff">' + title + ' — Home Locations</div>' +
-        '<div style="font-size:20px;color:#aab;margin-top:6px">' + nodes.length + ' dedicated position' + (nodes.length === 1 ? '' : 's') + '</div></div>';
-    grid.appendChild(header);
 
+    // Cards are built BEFORE the header so the subtitle can report how many homes
+    // were filtered out. Hidden cards must stay counted and visible as a number:
+    // a board that silently drops two thirds of its tiles reads as "this is
+    // everything" when it is not.
     var cardGrid = el('div', { className: 'os-board-cards' });
     var counters = { queuePos: 1 };
     var rendered = 0;
+    var idle = 0;
     nodes.forEach(function(node) {
         if (!node.active_claim) return;
         allowedPayloadsFor(node).forEach(function(code) {
-            var card = buildLoaderCard(node, code, counters, { keepIdle: true });
-            if (!card) return;
+            var card = buildLoaderCard(node, code, counters, { hideIdle: true, sourceBadge: true });
+            if (!card) { idle++; return; }
             // Home label (physical position) + its own bin state, prepended so a
             // wall of cards stays scannable by home.
             var bs = node.bin_state || {};
@@ -782,9 +800,21 @@ function renderHomeLocationBoard(nodes) {
     if (rendered === 0) {
         cardGrid.appendChild(el('div', {
             style: 'color:#666;font-style:italic;padding:24px;text-align:center;grid-column:1/-1',
-            textContent: 'No homes configured',
+            // Distinguish "nothing set up" from "set up, nothing to do right now" —
+            // on a home board the second is the normal resting state and must not
+            // look like a broken configuration.
+            textContent: idle > 0 ? 'All homes stocked — nothing to load' : 'No homes configured',
         }));
     }
+
+    var header = el('div', { className: 'os-board-header' });
+    header.innerHTML =
+        '<div><div style="font-size:42px;font-weight:700;color:#fff">' + title + ' — Home Locations</div>' +
+        '<div style="font-size:20px;color:#aab;margin-top:6px">' +
+        nodes.length + ' dedicated position' + (nodes.length === 1 ? '' : 's') +
+        (idle > 0 ? ' · ' + idle + ' idle hidden' : '') +
+        '</div></div>';
+    grid.appendChild(header);
     grid.appendChild(cardGrid);
 }
 

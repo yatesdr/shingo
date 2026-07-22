@@ -171,6 +171,37 @@ eq(headerModel(entry('consume', null, [])).text, 'AWAITING FULL', 'consume idle:
     eq(f.activeOrders.length, 1, 'sourcing counts as an active order');
 })();
 
+// 18. sourceNode carries the supermarket/buffer slot the carrier is coming FROM.
+//     The home-location board renders it in place of the queue ordinal, which on a
+//     board of independent one-bin homes says nothing an operator can act on.
+(function () {
+    const c = card(entry('produce', null, [
+        { status: 'in_transit', payload_code: 'BRKT', source_node: 'SMN_005' },
+    ]), 'BRKT');
+    eq(c.sourceNode, 'SMN_005', 'sourceNode comes from the per-payload order');
+})();
+
+// 19. sourceNode is EMPTY when no real per-payload order backs the card — the
+//     agnostic blank-payload empty lights every allowed payload (case 3), and must
+//     not stamp a source pill on all of them any more than it stamps a number.
+(function () {
+    const c = card(entry('produce', 'empty', [{ status: 'queued', payload_code: '' }]), 'BRKT');
+    eq(c.queueCount, 0, 'agnostic demand contributes no per-payload order');
+    eq(c.sourceNode, '', 'agnostic demand stamps no source pill');
+})();
+
+// 20. With several orders in flight for one payload, sourceNode must describe the
+//     SAME order the badge colour does (delivered → in transit → first queued),
+//     or the pill and the colour tell the operator about different robots.
+(function () {
+    const c = card(entry('produce', null, [
+        { status: 'queued', payload_code: 'BRKT', source_node: 'SMN_009' },
+        { status: 'delivered', payload_code: 'BRKT', source_node: 'SMN_006' },
+    ]), 'BRKT');
+    eq(c.delivered, true, 'delivered wins the badge colour');
+    eq(c.sourceNode, 'SMN_006', 'sourceNode follows the delivered order, not the first');
+})();
+
 // ── result ──
 if (failed > 0) { console.error('\n' + failed + ' failure(s), ' + passed + ' passed'); process.exit(1); }
 console.log('operator-window-state: ' + passed + ' assertions passed');

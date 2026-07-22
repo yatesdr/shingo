@@ -1128,6 +1128,20 @@ body {
     font-size: 22px;
     color: #fff;
 }
+/* Home-location board: the badge carries the SOURCE node the carrier is being
+   pulled from (e.g. SMN_005) instead of a queue ordinal, so it widens from a
+   circle to a pill. min-width matches the circle so a short node name still
+   reads as the same element, and the corner pinning above is inherited. */
+.os-board-pos--node {
+    width: auto;
+    min-width: 50px;
+    padding: 0 14px;
+    border-radius: 25px;
+    font-size: 18px;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
 .os-board-pos-delivered { background: #2a5a2a; }
 .os-board-pos-transit { background: #5a5a2a; }
 .os-board-pos-queued { background: #3a5a8a; }

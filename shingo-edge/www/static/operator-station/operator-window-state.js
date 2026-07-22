@@ -140,11 +140,25 @@ export function cardModel(entry, code) {
     const canUnload = canClearThisPayload || f.canSwapEmpty || (payloadDelivered && role === 'consume');
     const action = canLoad ? 'load' : (canUnload ? 'unload' : '');
 
+    // badgeOrder is the single order the corner badge describes. Picked with the
+    // SAME precedence the badge's colour uses (delivered → in transit → first
+    // queued) so the badge's colour and its text can never describe different
+    // orders when a payload has more than one in flight.
+    const badgeOrder = payloadOrders.find(function (o) { return o.status === 'delivered'; }) ||
+        payloadOrders.find(function (o) { return o.status === 'in_transit'; }) ||
+        payloadOrders[0];
+
     return {
         cls: cls, statusText: statusText, statusClass: statusClass, detail: detail, action: action, loadNow: loadNow,
         // Queue-position badge facts (rendered by operator-render): only REAL per-payload
         // orders count — the agnostic blank-payload empty must not stamp a number on every card.
         queueCount: payloadOrders.length, delivered: payloadDelivered, inTransit: payloadInTransit,
+        // sourceNode is where badgeOrder is pulling FROM — the supermarket or buffer
+        // slot the carrier is coming out of. On a home-location board this replaces the
+        // queue ordinal: each home is its own one-bin slot, so "3rd in the queue" says
+        // nothing an operator can act on, while "which supermarket slot is feeding me"
+        // does. Empty when no real per-payload order backs the card.
+        sourceNode: (badgeOrder && badgeOrder.source_node) || '',
     };
 }
 
