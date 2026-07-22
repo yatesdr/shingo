@@ -62,13 +62,6 @@ func (c *CoreClient) SetBaseURL(url string) {
 // Available returns true if a Core API URL is configured. Nil-safe so test
 // engines that don't wire a CoreClient still report unavailable rather than
 // panicking through callers that probe Core telemetry.
-//
-// Note what this does NOT tell you: it answers "can I ask Core?", never "did
-// Core answer?". A caller using Core telemetry as a SUPPRESSION guard has to
-// separate the two — unavailable means the guard was never running and prior
-// behaviour stands, while asked-and-no-answer must fail CLOSED, since a guard
-// that passes on an unknown answer suppresses nothing exactly when it matters.
-// BinAtLineside collapses both into an error, so probe this first.
 func (c *CoreClient) Available() bool {
 	return c != nil && c.baseURL != ""
 }
