@@ -242,7 +242,11 @@ func (e *Engine) loaderResvLock(loaderID string) *sync.Mutex {
 //
 // want is the desired TOTAL in-flight for this payload; toFire = want minus what
 // is already in flight for the payload, capped to the loader's free capacity
-// (budget = one bin per delivery node, minus all in-flight empties across the set).
+// (budget = one bin per delivery node, minus all in-flight empties across the set,
+// minus the nodes physically holding a bin already — see occupiedDeliveryNodes).
+// Both halves matter: a slot's capacity is spent by an order inbound to it OR by a
+// bin standing on it, and counting only the former is what let a home with an
+// unloaded carrier keep drawing empties it had nowhere to put.
 //
 // NO transaction, by design. The only operation that RAISES a loader's empty
 // count is the create inside `fire`; every other mutation (completion,
@@ -286,6 +290,24 @@ func (e *Engine) reserveLoaderBins(loader *domain.Loader, payload domain.Payload
 	loaderID := string(loader.ID())
 	pay := string(payload)
 
+	// Physical occupancy is resolved BEFORE the lock: it costs a Core round-trip
+	// per node, and the per-loader mutex is a hot serialisation point whose
+	// contract (see the re-entrancy rule above) assumes no network inside it.
+	//
+	// This read is therefore NOT covered by the mutex's monotonicity argument, and
+	// the window is real in both directions: a slot that frees in between makes us
+	// under-fire (harmless — the next signal retries), and a slot that fills in
+	// between makes us over-fire by one. The latter needs an order to have
+	// delivered inside a single Core round-trip, having been counted as in-flight
+	// when we read; the result is one order parked at Core's dropoff-capacity check
+	// — i.e. it degrades to the pre-guard behaviour, never to two bins driven at one
+	// slot. Closing it would mean holding the network call under the lock, which
+	// costs more than the race does.
+	occupied, oerr := e.occupiedDeliveryNodes(deliveryNodes)
+	if oerr != nil {
+		return 0, fmt.Errorf("reserve loader=%s: %w", loaderID, oerr)
+	}
+
 	mu := e.loaderResvLock(loaderID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -307,32 +329,35 @@ func (e *Engine) reserveLoaderBins(loader *domain.Loader, payload domain.Payload
 			inFlightPayload++
 		}
 	}
+	// Budget spends on BOTH halves of a slot's capacity: an order already inbound
+	// to it, and a bin already standing on it. Counting only the former is what let
+	// a home with an unloaded carrier keep drawing empties it had no room for.
 	toFire := want - inFlightPayload
-	if headroom := budget - inFlightTotal; toFire > headroom {
+	if headroom := budget - inFlightTotal - len(occupied); toFire > headroom {
 		toFire = headroom
 	}
 	if toFire <= 0 {
-		e.logFn("loader_reserve loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d budget=%d to_fire=0 created=0",
-			loaderID, pay, want, inFlightPayload, inFlightTotal, budget)
+		e.logFn("loader_reserve loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d occupied=%d budget=%d to_fire=0 created=0",
+			loaderID, pay, want, inFlightPayload, inFlightTotal, len(occupied), budget)
 		return 0, nil
 	}
-	// Assign each new empty to a FREE window (none in flight) — one physical bin
-	// per window. budget = window count and toFire ≤ headroom = the free-window
-	// count, so there are always enough; a single-node set degrades to [that node].
+	// Assign each new empty to a FREE window — nothing in flight AND no bin standing
+	// on it. budget = window count and toFire ≤ headroom = the free-window count, so
+	// there are always enough; a single-node set degrades to [that node] or to none.
 	targets := make([]string, 0, toFire)
 	for _, node := range deliveryNodes {
 		if len(targets) >= toFire {
 			break
 		}
-		if perNode[node] == 0 {
+		if perNode[node] == 0 && !occupied[node] {
 			targets = append(targets, node)
 		}
 	}
 	created, ferr := fire(targets)
 	// Structured decision record — one machine-parseable line per reservation so an
 	// over-ordering incident is reconstructable from logs alone (the SLN_002 bar).
-	e.logFn("loader_reserve loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d budget=%d to_fire=%d targets=%v created=%d err=%v",
-		loaderID, pay, want, inFlightPayload, inFlightTotal, budget, toFire, targets, created, ferr)
+	e.logFn("loader_reserve loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d occupied=%d budget=%d to_fire=%d targets=%v created=%d err=%v",
+		loaderID, pay, want, inFlightPayload, inFlightTotal, len(occupied), budget, toFire, targets, created, ferr)
 	return created, ferr
 }
 
@@ -342,6 +367,54 @@ func (e *Engine) reserveLoaderBins(loader *domain.Loader, payload domain.Payload
 // to funnel to the anchor with budget 1 instead.
 func (e *Engine) multiWindowEnabled() bool {
 	return e.cfg == nil || e.cfg.LoadersMultiWindow == nil || *e.cfg.LoadersMultiWindow
+}
+
+// occupiedDeliveryNodes reports which of nodes physically hold a bin right now,
+// as Core sees it. This is the PHYSICAL half of the reservation budget: a slot
+// holds one bin, so a slot that already has one has no room for another
+// regardless of how many orders are in flight.
+//
+// Why it exists: the loader's demand is "there is an empty carrier at this home
+// for the operator to fill", NOT "the loop is short on UOP". Once the carrier is
+// standing there the demand is MET — an unloaded carrier contributes 0 UOP, so
+// the threshold monitor keeps reading the loop as empty and keeps asking, but
+// what the plant needs is the operator to catch up, not more transport. Firing
+// anyway parks an order at waiting_for_slot (Core's dropoff-capacity check
+// refuses to drive into an occupied node) and re-fires on every subsequent
+// delta, so the fleet accumulates a queue the plant cannot consume.
+// Springfield SMN_014, 2026-07-22: CARRIER-0001 sat unloaded on the home while
+// the monitor ordered a second empty for the same slot.
+//
+// Fails CLOSED, matching reserveLoaderBins' in-flight count: if Core is
+// reachable but will not confirm a node's state we return an error and the
+// caller fires nothing, because "unknown" must not read as "empty" for a guard
+// whose whole job is to suppress. An Edge with no Core API configured never had
+// this guard, so it degrades to (nil, nil) and prior behaviour rather than
+// wedging replenishment plant-wide.
+//
+// BinAtLineside is the tri-state lookup deliberately used here instead of
+// FetchNodeBins, which collapses "Core unreachable" into "no bins" — exactly the
+// failure direction this guard cannot tolerate. One call per node; a dedicated
+// loader resolves to a single position and a shared loader to its window count,
+// so the fan-out is bounded by the loader's physical size.
+func (e *Engine) occupiedDeliveryNodes(nodes []string) (map[string]bool, error) {
+	if !e.coreClient.Configured() {
+		return nil, nil
+	}
+	occupied := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		bin, confirmed, err := e.coreClient.BinAtLineside(n)
+		if err != nil {
+			return nil, fmt.Errorf("occupancy for node %s: %w", n, err)
+		}
+		if !confirmed {
+			return nil, fmt.Errorf("occupancy for node %s: core did not confirm", n)
+		}
+		if bin != nil {
+			occupied[n] = true
+		}
+	}
+	return occupied, nil
 }
 
 // nodeIDStrings projects typed NodeIDs to the plain strings the order-query layer
