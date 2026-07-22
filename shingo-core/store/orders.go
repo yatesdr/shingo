@@ -73,6 +73,12 @@ func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
 	return orders.UpdateStatus(db.DB, id, status, detail)
 }
 
+// UpdateOrderStatusFrom is the compare-and-swap status write — see
+// orders.UpdateStatusFrom. Returns false when the order already moved on.
+func (db *DB) UpdateOrderStatusFrom(id int64, from, to, detail string) (bool, error) {
+	return orders.UpdateStatusFrom(db.DB, id, from, to, detail)
+}
+
 // UpdateOrderWaitIndex increments the wait_index for a complex order after
 // releasing one wait segment.
 func (db *DB) UpdateOrderWaitIndex(id int64, waitIndex int) error {

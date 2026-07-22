@@ -46,6 +46,33 @@ func IsIllegalTransition(err error) bool {
 	return errors.As(err, &it)
 }
 
+// ConcurrentTransition is returned when the order's status changed in the DB
+// between the caller loading it and this transition persisting. The write is
+// refused rather than applied on top of whatever landed first.
+//
+// The transition guard below validates against the caller's own snapshot
+// (ord.Status), so it cannot see a status written by another goroutine since
+// the load. The compare-and-swap in the store is what catches that, and this
+// is how it surfaces. Callers that hold an order across a blocking step (the
+// fulfillment scanner, notably) should treat it as "someone else owns this
+// order now" and stop, not retry.
+type ConcurrentTransition struct {
+	OrderID  int64
+	Expected protocol.Status
+	To       protocol.Status
+}
+
+func (e ConcurrentTransition) Error() string {
+	return fmt.Sprintf("order %d moved concurrently: expected %s, refusing write to %s",
+		e.OrderID, e.Expected, e.To)
+}
+
+// IsConcurrentTransition reports whether err is a refused concurrent write.
+func IsConcurrentTransition(err error) bool {
+	var ct ConcurrentTransition
+	return errors.As(err, &ct)
+}
+
 // Event is the audit/context payload for a transition. Not a routing
 // key — the (from, to) pair routes; this carries data actions and audit
 // need. PreviousStatus is set by transition() before firing actions.
@@ -198,7 +225,17 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		if detail == "" {
 			detail = fmt.Sprintf("%s → %s by %s", from, to, ev.Actor)
 		}
-		err = s.db.UpdateOrderStatus(ord.ID, string(to), detail)
+		// Compare-and-swap on `from`: the guard above only proves the
+		// transition is legal from the status this caller LOADED. Another
+		// goroutine may have moved (or terminalized) the order since, and an
+		// unconditional write by id would clobber it — CI #497, where a
+		// fulfillment tick's queued→sourcing resurrected an order the
+		// recovery op had just cancelled.
+		var moved bool
+		moved, err = s.db.UpdateOrderStatusFrom(ord.ID, string(from), string(to), detail)
+		if err == nil && !moved {
+			return ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("persist %s→%s: %w", from, to, err)

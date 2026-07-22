@@ -173,6 +173,59 @@ func TestLifecycle_CancelOrder_IdempotentOnTerminal(t *testing.T) {
 	}
 }
 
+// TestLifecycle_StaleCallerCannotResurrectTerminal pins the CI #497 fix.
+//
+// The transition guard validates (from, to) against the status on the caller's
+// OWN *orders.Order — it cannot see a status written by another goroutine since
+// that struct was loaded. Before the compare-and-swap in UpdateStatusFrom, the
+// persist was an unconditional `UPDATE orders SET status=? WHERE id=?`, so a
+// caller holding a pre-cancel snapshot wrote straight over the cancel:
+//
+//	scanner loads order (queued) → recovery op cancels it → scanner's
+//	queued→sourcing write lands → order is "sourcing" again, un-cancelled.
+//
+// That is what failed TestCancelStuckOrder_Success under -race (the detector's
+// slowdown widened the window). Terminal statuses have no outgoing edges, so
+// they must be absorbing against CONCURRENT writers, not just sequential ones.
+//
+// Deterministic here: the stale snapshot is constructed explicitly rather than
+// raced for, so the invariant is pinned without depending on scheduling.
+func TestLifecycle_StaleCallerCannotResurrectTerminal(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	lc, _ := newLifecycleForTest(t, db)
+	ord := makeOrderAt(t, db, "stale-resurrect-1", StatusQueued)
+
+	// The in-flight caller's reference, captured BEFORE the cancel.
+	stale := *ord
+
+	// Another actor terminalizes the order (recovery op / operator cancel).
+	fresh, err := db.GetOrder(ord.ID)
+	testutil.MustNoErr(t, err, "reload for cancel")
+	lc.CancelOrder(fresh, "edge.test", "cancelled by recovery-op")
+
+	persisted, err := db.GetOrder(ord.ID)
+	testutil.MustNoErr(t, err, "reload after cancel")
+	if persisted.Status != StatusCancelled {
+		t.Fatalf("precondition: status = %q, want %q", persisted.Status, StatusCancelled)
+	}
+
+	// The stale caller now tries the transition that was legal when it loaded.
+	err = lc.MoveToSourcing(&stale, "fulfillment", "dispatching held bin")
+	if err == nil {
+		t.Fatal("stale queued→sourcing was accepted; a cancelled order must not be resurrectable")
+	}
+	if !IsConcurrentTransition(err) {
+		t.Errorf("err = %v, want ConcurrentTransition", err)
+	}
+
+	after, err := db.GetOrder(ord.ID)
+	testutil.MustNoErr(t, err, "reload after stale transition")
+	if after.Status != StatusCancelled {
+		t.Errorf("status = %q, want %q — the cancel was overwritten", after.Status, StatusCancelled)
+	}
+}
+
 func TestLifecycle_ConfirmReceipt_AlreadyCompleted(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

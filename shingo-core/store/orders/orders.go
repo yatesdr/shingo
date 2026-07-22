@@ -158,6 +158,49 @@ func UpdateStatus(db *sql.DB, id int64, status, detail string) error {
 	return tx.Commit()
 }
 
+// UpdateStatusFrom is the compare-and-swap form of UpdateStatus: the row moves
+// only if its status in the DB is STILL `from`. Returns false (and no error)
+// when the order has already moved on — a concurrent writer got there first and
+// this write is refused rather than applied on top.
+//
+// Why the CAS exists. UpdateStatus writes by id alone, so a caller holding a
+// stale *orders.Order overwrites whatever landed since it loaded. Terminal
+// statuses have no outgoing edges in protocol.validTransitions, which makes
+// them absorbing against SEQUENTIAL writers only — the guard in
+// lifecycle.transition validates against the caller's own snapshot. CI #497:
+// an in-flight fulfillment tick loaded order 1 as `queued`, the recovery op
+// cancelled it, and the tick's queued→sourcing write (legal against its stale
+// snapshot) resurrected the cancelled order. The CAS makes terminal states
+// absorbing against concurrent writers too.
+//
+// Same terminal-write refusal as UpdateStatus — terminal transitions go
+// through TerminalizeOrder, which also releases claims + reservations.
+func UpdateStatusFrom(db *sql.DB, id int64, from, to, detail string) (bool, error) {
+	if protocol.IsTerminal(protocol.Status(to)) {
+		return false, fmt.Errorf("UpdateStatusFrom: refusing raw terminal write to %q (id=%d) — route terminal transitions through TerminalizeOrder", to, id)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	// error_detail is cleared exactly as UpdateStatus does on this path: its
+	// failed/cancelled branch is unreachable here because both are terminal
+	// and refused above.
+	res, err := tx.Exec(`UPDATE orders SET status=$1, error_detail='', updated_at=$3 WHERE id=$2 AND status=$4`,
+		to, id, clock.Now().UTC(), from)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, nil
+	}
+	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, $2, $3)`, id, to, detail); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
 // UpdateWaitIndex increments the wait_index for a complex order after
 // releasing one wait segment.
 func UpdateWaitIndex(db *sql.DB, id int64, waitIndex int) error {
