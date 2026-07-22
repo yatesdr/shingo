@@ -340,6 +340,26 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 			// a self-sufficient evac.
 			return false, ""
 		}
+		// A clearer that DIED never cleared the line, so its resident bin is still
+		// sitting there and this filler must not drive onto it. Checked before the
+		// self-sufficient-evac narrowing below, because that narrowing exists only to
+		// avoid mutual-holding two LIVE legs — a dead peer cannot be waiting on us,
+		// so there is no deadlock to avoid and every filler shape needs this.
+		//
+		// This became reachable when the peer-terminal cascade stopped cancelling a
+		// supply parked on a dry source (swap_peer.go, "spare a swap supply parked on
+		// a dry source"): that cancel was what previously kept a filler from
+		// outliving its clearer. Sparing the wait is right — it stops the re-arm
+		// churn — but the filler must then be held rather than left free to dispatch
+		// once the operator stocks the payload. Core cannot recall a driving robot
+		// (one-way RDS handoff), so dispatch-time admission is the only lever.
+		//
+		// Terminal-SUCCESS is not this case: a confirmed evac did clear the line and
+		// is released by swapClearerCommitted below. swapTerminalKind is non-empty
+		// only for skipped/failed/cancelled.
+		if swapTerminalKind(sib.Status) != "" {
+			return true, "swap: holding filler — clearer sibling died without clearing the line"
+		}
 		sibSteps, ok := decodeSteps(sib.StepsJSON)
 		if !ok || !legSecuresOwnReplacement(sibSteps) {
 			// Sibling is not a self-sufficient evac (the two_robot supply case, or

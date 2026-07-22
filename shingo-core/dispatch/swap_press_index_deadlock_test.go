@@ -276,3 +276,117 @@ func TestSwapHold_TwoRobotSupply_NotHeld(t *testing.T) {
 			"holding both is the mutual-wait deadlock the index arm must avoid", reason)
 	}
 }
+
+// TestSwapHold_Filler_HeldWhenClearerDied pins the admission half of the
+// spare-a-parked-supply change.
+//
+// The peer-terminal cascade used to cancel a supply whose evac died, and that
+// cancel was — incidentally — what kept a filler from outliving its clearer. Once
+// a supply parked on a dry source is SPARED instead (to stop the re-arm churn),
+// nothing stopped it from dispatching later, after the operator stocked the
+// payload, onto a line position its dead evac never cleared. Two bins, one
+// position, and Core cannot recall a driving robot.
+//
+// A two_robot supply is the shape that exposes it: its sibling is a plain evac,
+// so legSecuresOwnReplacement is false and the index arm used to return
+// not-held for it unconditionally. The dead-clearer check has to sit ahead of
+// that narrowing — the narrowing exists to avoid mutual-holding two LIVE legs,
+// and a dead peer cannot be waiting on anyone.
+func TestSwapHold_Filler_HeldWhenClearerDied(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, line, bp := setupTestData(t, db)
+
+	market := &nodes.Node{Name: "DEAD-CLEARER-MARKET", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "create market")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// Supply (filler): pickup(market) -> dropoff(line).
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "dc-supply", PayloadCode: bp.Code, Quantity: 1, ProcessNode: line.Name,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionPickup, Node: market.Name},
+			{Action: protocol.ActionDropoff, Node: line.Name},
+		},
+	})
+	// Evac (clearer): lifts the line bin. Carries the sibling pointer.
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "dc-evac", PayloadCode: bp.Code, Quantity: 1, ProcessNode: line.Name,
+		SiblingOrderUUID: "dc-supply",
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionWait, Node: line.Name},
+			{Action: protocol.ActionPickup, Node: line.Name},
+			{Action: protocol.ActionDropoff, Node: market.Name},
+		},
+	})
+
+	evac, err := db.GetOrderByUUID("dc-evac")
+	testutil.MustNoErr(t, err, "get evac")
+	// The clearer dies WITHOUT clearing the line — the resident bin is still there.
+	if _, terr := db.TerminalizeOrder(evac.ID, StatusCancelled, "test: clearer died without clearing the line"); terr != nil {
+		t.Fatalf("kill evac: %v", terr)
+	}
+
+	supply, err := db.GetOrderByUUID("dc-supply")
+	testutil.MustNoErr(t, err, "get supply")
+	supplySteps, ok := decodeSteps(supply.StepsJSON)
+	if !ok {
+		t.Fatal("supply has no readable steps")
+	}
+	held, reason := d.swapLegHeld(supply, supplySteps)
+	if !held {
+		t.Fatal("filler NOT held while its clearer sibling is cancelled — it would drive a bin " +
+			"onto a line position that still holds the resident bin (two bins, one position)")
+	}
+	t.Logf("held as expected: %s", reason)
+}
+
+// TestSwapHold_Filler_ReleasedWhenClearerConfirmed is the other side of that
+// guard: a clearer that COMPLETED did clear the line, so the filler must be
+// released. Terminal alone must not mean held, or every successful swap wedges on
+// its second leg.
+func TestSwapHold_Filler_ReleasedWhenClearerConfirmed(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, line, bp := setupTestData(t, db)
+
+	market := &nodes.Node{Name: "DONE-CLEARER-MARKET", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "create market")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "ok-supply", PayloadCode: bp.Code, Quantity: 1, ProcessNode: line.Name,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionPickup, Node: market.Name},
+			{Action: protocol.ActionDropoff, Node: line.Name},
+		},
+	})
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "ok-evac", PayloadCode: bp.Code, Quantity: 1, ProcessNode: line.Name,
+		SiblingOrderUUID: "ok-supply",
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionWait, Node: line.Name},
+			{Action: protocol.ActionPickup, Node: line.Name},
+			{Action: protocol.ActionDropoff, Node: market.Name},
+		},
+	})
+
+	evac, err := db.GetOrderByUUID("ok-evac")
+	testutil.MustNoErr(t, err, "get evac")
+	if _, terr := db.TerminalizeOrder(evac.ID, StatusConfirmed, "test: clearer completed and cleared the line"); terr != nil {
+		t.Fatalf("complete evac: %v", terr)
+	}
+
+	supply, err := db.GetOrderByUUID("ok-supply")
+	testutil.MustNoErr(t, err, "get supply")
+	supplySteps, ok := decodeSteps(supply.StepsJSON)
+	if !ok {
+		t.Fatal("supply has no readable steps")
+	}
+	if held, reason := d.swapLegHeld(supply, supplySteps); held {
+		t.Fatalf("filler held (%s) after its clearer CONFIRMED — the line was cleared, "+
+			"holding here wedges the second half of every successful swap", reason)
+	}
+}
