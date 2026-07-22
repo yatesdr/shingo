@@ -398,7 +398,7 @@ func (e *Engine) multiWindowEnabled() bool {
 // loader resolves to a single position and a shared loader to its window count,
 // so the fan-out is bounded by the loader's physical size.
 func (e *Engine) occupiedDeliveryNodes(nodes []string) (map[string]bool, error) {
-	if !e.coreClient.Configured() {
+	if !e.coreClient.Available() {
 		return nil, nil
 	}
 	occupied := make(map[string]bool, len(nodes))

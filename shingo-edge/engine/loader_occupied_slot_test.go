@@ -189,7 +189,7 @@ func TestReserveLoaderBins_NoCoreAPIKeepsPriorBehaviour(t *testing.T) {
 	eng := testEngine(t, db)
 	seedCapManualSwap(t, db, "PROC-NOAPI", "HOME-NOAPI", protocol.ClaimRoleProduce, []string{"P1"}, 0, false)
 	seedCoreLoader(t, eng, dedicatedHomeLoaderInfo("HOME-NOAPI", "P1", 100))
-	if eng.coreClient.Configured() {
+	if eng.coreClient.Available() {
 		t.Fatal("fixture invariant: testEngine must build no Core client")
 	}
 

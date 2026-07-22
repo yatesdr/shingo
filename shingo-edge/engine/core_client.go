@@ -44,18 +44,6 @@ type CoreClient struct {
 	http    *http.Client
 }
 
-// Configured reports whether the Core HTTP API is wired up for this client.
-// Nil-safe: a nil client (unit-test fixtures build the Engine literal without
-// one) and an unset base URL both read as unconfigured.
-//
-// The distinction that matters is "Core is not available to ask" vs "Core was
-// asked and did not answer". Callers using Core telemetry as a SUPPRESSION
-// guard must fail CLOSED on the latter — a guard that silently passes when the
-// answer is unknown is worse than no guard — but an Edge with no Core API at
-// all was never running the guard, so it keeps its prior behaviour instead of
-// wedging. BinAtLineside collapses both into an error, so ask this first.
-func (c *CoreClient) Configured() bool { return c != nil && c.baseURL != "" }
-
 // NewCoreClient creates a CoreClient. baseURL may be empty (disabled).
 func NewCoreClient(baseURL string) *CoreClient {
 	return &CoreClient{
@@ -74,6 +62,13 @@ func (c *CoreClient) SetBaseURL(url string) {
 // Available returns true if a Core API URL is configured. Nil-safe so test
 // engines that don't wire a CoreClient still report unavailable rather than
 // panicking through callers that probe Core telemetry.
+//
+// Note what this does NOT tell you: it answers "can I ask Core?", never "did
+// Core answer?". A caller using Core telemetry as a SUPPRESSION guard has to
+// separate the two — unavailable means the guard was never running and prior
+// behaviour stands, while asked-and-no-answer must fail CLOSED, since a guard
+// that passes on an unknown answer suppresses nothing exactly when it matters.
+// BinAtLineside collapses both into an error, so probe this first.
 func (c *CoreClient) Available() bool {
 	return c != nil && c.baseURL != ""
 }
