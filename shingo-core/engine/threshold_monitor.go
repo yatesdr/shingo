@@ -67,6 +67,13 @@ const thresholdDebounceWindow = 15 * time.Second
 // claim config and apply the ceiling.
 const warmUpFloor = 2
 
+// negativeLogWindow throttles the broken-ledger refusal line. The floor is
+// evaluated on every incoming delta — i.e. every consume tick — so an
+// unthrottled log would emit per binding per tick and bury the plant log in
+// the one situation where an operator most needs to read it. Once a minute per
+// binding is enough to keep the condition visible without becoming the noise.
+const negativeLogWindow = 60 * time.Second
+
 // thresholdEntry is one (station, loader, payload) binding with its
 // configured threshold, cached in memory so the monitor never queries
 // demand_registry on the hot path.
@@ -105,6 +112,12 @@ type ThresholdMonitor struct {
 	// then updated by OnBinUOPDelta and OnBucketApplied on each Kafka
 	// delta. No DB queries after startup.
 	uopCache map[string]int
+	// negativeLogged is the last time the broken-ledger refusal was logged
+	// per binding. Deliberately SEPARATE from debounce: debounce is
+	// signal-eligibility budget, this is log volume. Sharing one stamp would
+	// mean a negative total consumed the binding's right to fire the moment
+	// the ledger was corrected.
+	negativeLogged map[string]time.Time
 }
 
 // NewThresholdMonitor constructs the monitor. Call Run() to perform
@@ -116,6 +129,7 @@ func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
 		warmUp:              make(map[string]int),
 		thresholdsByPayload: make(map[string][]thresholdEntry),
 		uopCache:            make(map[string]int),
+		negativeLogged:      make(map[string]time.Time),
 	}
 }
 
@@ -347,9 +361,17 @@ func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, r
 			if b.threshold <= 0 {
 				continue
 			}
+			// Throttled per binding: this runs on every incoming delta, so an
+			// unthrottled line would bury the plant log exactly when it needs
+			// reading. shouldLogNegative touches ONLY negativeLogged — the
+			// binding's debounce budget is untouched, so it stays immediately
+			// eligible for the moment the ledger is corrected.
+			if !m.shouldLogNegative(bindingKey(b.stationID, b.coreNodeName, b.payloadCode)) {
+				continue
+			}
 			if m.eng != nil { // nil in the pure unit harness (newTestMonitor)
-				m.eng.logFn("threshold_monitor: REFUSING to signal station=%s loader=%s payload=%s — in-loop total is negative (total=%d threshold=%d); the bins ledger for this payload is broken, reconcile it before trusting replenishment",
-					b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold)
+				m.eng.logFn("threshold_monitor: REFUSING to signal station=%s loader=%s payload=%s — in-loop total is negative (total=%d threshold=%d); the bins ledger for this payload is broken, reconcile it before trusting replenishment (further occurrences suppressed for %s)",
+					b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold, negativeLogWindow)
 			}
 		}
 		return
@@ -369,6 +391,21 @@ func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, r
 		}
 		m.fireSignalCached(b, total, reason)
 	}
+}
+
+// shouldLogNegative reports whether the broken-ledger refusal should be logged
+// for this binding now, stamping it when it should. Pure log-volume control —
+// it never touches debounce or warm-up, so refusing to signal on a garbage
+// total costs the binding nothing once the total is real again.
+func (m *ThresholdMonitor) shouldLogNegative(key string) bool {
+	now := time.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if last, seen := m.negativeLogged[key]; seen && now.Sub(last) < negativeLogWindow {
+		return false
+	}
+	m.negativeLogged[key] = now
+	return true
 }
 
 // allow returns true if the binding may fire now under the debounce

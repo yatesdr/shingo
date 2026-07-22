@@ -15,6 +15,7 @@ func newTestMonitor() *ThresholdMonitor {
 		sweepDone:           true,
 		thresholdsByPayload: make(map[string][]thresholdEntry),
 		uopCache:            make(map[string]int),
+		negativeLogged:      make(map[string]time.Time),
 	}
 }
 
@@ -192,3 +193,72 @@ func TestThresholdMonitor_CheckBindings_NegativeTotal_NoFire(t *testing.T) {
 // CurrentUOP == 0 against a real engine. Re-asserting it here against the
 // nil-eng harness cannot be done without either catching a deliberate panic or
 // writing a tautology, so it is deliberately left to that test.
+
+// TestThresholdMonitor_NegativeLogThrottle pins the log-volume control on the
+// broken-ledger refusal.
+//
+// The floor is evaluated on every incoming delta — every consume tick — so an
+// unthrottled refusal line buries the plant log in exactly the situation an
+// operator needs to read it. The throttle must NOT be implemented by borrowing
+// the debounce stamp: debounce is signal-eligibility budget, and spending it on
+// a garbage total would delay the first real signal once the ledger is fixed.
+func TestThresholdMonitor_NegativeLogThrottle(t *testing.T) {
+	t.Parallel()
+	tm := newTestMonitor()
+	key := bindingKey("s1", "LOADER", "WIDGET-A")
+
+	if !tm.shouldLogNegative(key) {
+		t.Fatal("first refusal must log")
+	}
+	if tm.shouldLogNegative(key) {
+		t.Error("second refusal within the window must be suppressed")
+	}
+
+	// Age the stamp past the window — the condition is still true, so it must
+	// be reported again rather than staying silent forever.
+	tm.mu.Lock()
+	tm.negativeLogged[key] = time.Now().Add(-negativeLogWindow - time.Second)
+	tm.mu.Unlock()
+	if !tm.shouldLogNegative(key) {
+		t.Error("refusal must log again once the window expires")
+	}
+
+	// A different binding has its own budget.
+	if !tm.shouldLogNegative(bindingKey("s1", "LOADER", "WIDGET-B")) {
+		t.Error("throttle must be per binding, not global")
+	}
+}
+
+// TestThresholdMonitor_NegativeRefusal_PreservesEligibility is the property that
+// makes the throttle safe: however many negative evaluations go by, the binding
+// must still be immediately eligible to signal the moment the total is real
+// again. Refusing to act on garbage must cost the binding nothing.
+func TestThresholdMonitor_NegativeRefusal_PreservesEligibility(t *testing.T) {
+	t.Parallel()
+	tm := newTestMonitor()
+	entry := thresholdEntry{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50}
+	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{entry}
+	key := bindingKey("s1", "LOADER", "WIDGET-A")
+
+	// Many ticks against a broken ledger. nil eng: any fire attempt panics.
+	for i := 0; i < 25; i++ {
+		tm.checkBindings([]thresholdEntry{entry}, -443, "below_threshold")
+	}
+
+	// Exactly one log stamp was taken (the rest throttled) ...
+	tm.mu.Lock()
+	stamps := len(tm.negativeLogged)
+	_, debounced := tm.debounce[key]
+	tm.mu.Unlock()
+	if stamps != 1 {
+		t.Errorf("negativeLogged entries = %d, want 1", stamps)
+	}
+	// ... and NO debounce budget was consumed.
+	if debounced {
+		t.Error("a refused evaluation consumed debounce budget; the binding is now delayed for a fault that wasn't its own")
+	}
+	// So the binding is still immediately eligible the moment the ledger is fixed.
+	if !tm.allow(key) {
+		t.Error("binding is not immediately eligible after the ledger is corrected")
+	}
+}
