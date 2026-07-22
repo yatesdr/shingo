@@ -242,9 +242,32 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 	switch {
 	case missing == 0:
 		return assigned, reserveComplete, nil
-	case len(assigned) == 0 && !anyMissWithBins:
+	case len(assigned) == 0 && !anyMissWithBins && !legPlacesLineBin(plan.ResolvedSteps, order.ProcessNode):
 		// Reserved nothing and every missing need's node is genuinely empty — the
 		// order's work is moot (source removed), not merely momentarily unsourceable.
+		//
+		// EXCEPT for a leg that PLACES a bin on the line. Moot is written for the
+		// evac case — "the bin I came to remove is gone, so there is nothing to do"
+		// — and for that it is right, and load-bearing: the skip is what advances a
+		// linked changeover task (Edge's HandleOrderSkipped). But a supply/index leg
+		// reads identically here (reserved nothing, source node empty) while meaning
+		// the opposite: the replacement has not been STAGED yet. That is demand, and
+		// demand is operator-driven and never evaporates — it belongs in
+		// waiting_for_material until someone stocks the source, not deleted.
+		//
+		// Without this the same physical situation got two dispositions depending on
+		// the SHAPE of the source: a group source fell to SourceFinder and queued
+		// (waiting_for_material/finder-pool-empty), while a concrete node source fell
+		// here and was skipped. A press-index or paired-position swap always sources
+		// from a concrete node, so it could never wait for material no matter how
+		// much demand stood behind it — Hopkinsville 2026-07-22, where every index
+		// leg died ~5ms after creation with "no bin at any source node" and took its
+		// evac sibling down with it, leaving nothing on the board to explain why.
+		//
+		// legPlacesLineBin is the same predicate the swap admission gate uses to tell
+		// a filler from a clearer, so the two cannot drift apart. A leg with no
+		// ProcessNode (a plain non-swap complex order) reads false and keeps the old
+		// skip — this narrows moot, it does not re-home unrelated traffic.
 		return assigned, reserveMoot, nil
 	default:
 		return assigned, reserveHolding, nil

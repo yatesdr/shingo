@@ -429,6 +429,49 @@ func TestReserveMootWhenAllSourcesEmpty(t *testing.T) {
 	}
 }
 
+// TestReserveFillerLegWithEmptySourceHoldsNotMoot is the other side of the moot
+// boundary, and the one Hopkinsville fell through on 2026-07-22.
+//
+// A leg that PLACES a bin on the line (a press-index R2, a two_robot supply) reads
+// IDENTICALLY to a moot evac at the reserve — nothing reserved, source node
+// genuinely empty — but it means the opposite. The evac's source is empty because
+// the bin it came to remove is gone, so the work is void. The filler's source is
+// empty because the replacement has not been STAGED there yet, which is demand,
+// and demand is operator-driven and never evaporates.
+//
+// Skipping it deleted the order ~5ms after creation and took its evac sibling down
+// with it via the swap cascade, leaving nothing on the board to explain why. Worse,
+// it was shape-dependent: a GROUP source falls to SourceFinder and queues
+// (waiting_for_material), so only a CONCRETE source — which is exactly what every
+// press-index and paired-position swap uses — could never wait for material.
+func TestReserveFillerLegWithEmptySourceHoldsNotMoot(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// The index/staging position the filler collects from — created empty, i.e.
+	// nothing has stocked it yet.
+	index := &nodes.Node{Name: "INDEX-POS", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(index), "index node")
+	steps := []resolvedStep{
+		{Action: protocol.ActionWait, Node: index.Name},
+		{Action: protocol.ActionPickup, Node: index.Name},
+		{Action: protocol.ActionDropoff, Node: lineNode.Name},
+	}
+	// ProcessNode is the LINE — this leg fills the shared line position from the
+	// index position. That is what makes it a filler rather than an evac, and it is
+	// read from the steps (legPlacesLineBin), not from the node names.
+	order := mkComplexOrder(t, db, "filler-1", index.Name, lineNode.Name, lineNode.Name, bp.Code, steps)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, lineNode.Name)
+
+	_, outcome, err := d.allocator.reserveComplexPlan(order, plan)
+	testutil.MustNoErr(t, err, "reserve")
+	if outcome != reserveHolding {
+		t.Fatalf("outcome = %v, want reserveHolding — an unstaged filler source is demand waiting for material, not void work", outcome)
+	}
+}
+
 // TestReservePresentButTakenHoldsNotMoot pins the moot/hold boundary: the
 // moot-skip route fires ONLY when every unmet need is a concrete node verified
 // genuinely EMPTY. A node that HOLDS a bin claimed by ANOTHER order is present-but-
