@@ -99,6 +99,27 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 		if terminalKind == SwapTerminalSkipped {
 			return
 		}
+		// Spare a supply that is PARKED waiting for material. The D-ii supply
+		// widening (complex_dispatch.go widenSupplyPickups) parks a dry supply
+		// need as sourcing/waiting_for_material — an operator-resolvable wait
+		// for stock, NOT a dead leg. Cancelling it here used to drive a re-arm
+		// churn: the monitor saw the cancel move the in-loop UOP, re-armed the
+		// changeover, the planner recreated the swap pair, the supply parked
+		// again, the evac died again, and this handler cancelled the supply
+		// again — hundreds of doomed swaps per changeover (Springfield
+		// 2026-07-21, 74577-6SA0A.06, zero system stock). Leaving the parked
+		// supply alone breaks the loop: the wait survives the evac's death, the
+		// operator can stock the payload and the supply resumes, and a swap
+		// that can never source stops re-arming every tick. Surface it so the
+		// half-state is visible instead of silently held.
+		if peerIsParkedWaitingForMaterial(peer) {
+			log.Printf("dispatch: two-robot swap evac (order %d) %s — leaving parked supply %d waiting for material (%s); not cancelling a live wait",
+				dead.ID, terminalKind, peer.ID, peer.QueueCause)
+			d.db.AppendAudit("order", peer.ID, "swap_supply_parked_peer_died", "",
+				fmt.Sprintf("evac sibling %d terminal (%s) while this supply is parked waiting for material (%s) — left alive for operator stock/resume",
+					dead.ID, terminalKind, peer.QueueCause), "system")
+			return
+		}
 		d.resolveSwapPeer(peer, dead,
 			fmt.Sprintf("two-robot swap evac (order %d) %s; cancelling supply so it cannot drop onto an un-cleared line", dead.ID, terminalKind))
 		return
@@ -110,6 +131,17 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 	// keeps its bin; surface if the evac already delivered.
 	d.resolveSwapPeer(peer, dead,
 		fmt.Sprintf("two-robot swap supply (order %d) %s; cancelling evac so it cannot strand the line", dead.ID, terminalKind))
+}
+
+// peerIsParkedWaitingForMaterial reports whether a swap peer is a supply leg
+// parked on a dry source — sourcing or queued with a waiting_for_material queue
+// code (the D-ii widen park). Such a peer is an operator-resolvable wait, not a
+// dead leg, so the swap-peer cascade must not cancel it when its evac sibling
+// dies. IsAcquiring alone is too broad: an acquiring peer mid-reserve (no queue
+// code yet) is genuinely live and the fail-closed cancel still applies. The
+// queue code is what distinguishes "parked on a dry need" from "mid-acquire".
+func peerIsParkedWaitingForMaterial(peer *orders.Order) bool {
+	return protocol.IsAcquiring(peer.Status) && peer.QueueCode == string(protocol.QueueWaitingForMaterial)
 }
 
 // resolveSwapPeer cancels the peer if it is still live, or surfaces the

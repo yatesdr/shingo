@@ -113,6 +113,68 @@ func TestSwapPeerTerminal_EvacFails_CancelsLiveSupply(t *testing.T) {
 	}
 }
 
+// TestSwapPeerTerminal_EvacFails_LeavesParkedSupply: the regression guard for the
+// re-arm churn. When the evac dies but the supply is PARKED waiting for material
+// (the D-ii widen park for a dry source — sourcing/waiting_for_material), the
+// cascade must NOT cancel it. That wait is operator-resolvable (stock the
+// payload and the supply resumes); cancelling it drove a recreate loop where the
+// monitor re-armed the changeover every tick because a zero-stock swap could
+// never source (Springfield 2026-07-21, 74577-6SA0A.06, ~484 doomed swaps).
+// The supply stays acquiring; the half-state surfaces as an audit instead.
+func TestSwapPeerTerminal_EvacFails_LeavesParkedSupply(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+	store1 := &nodes.Node{Name: "SWAP-STORE-PARK", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// Supply parked on a dry source: sourcing + waiting_for_material, the exact
+	// state widenSupplyPickups leaves it in when the payload has no bins.
+	mkSwapLeg(t, db, "supPark", "evacPark", protocol.StatusSourcing, lineNode.Name, lineNode.Name, bp.Code)
+	testutil.MustNoErr(t, orders.SetQueueDetail(db.DB, mustOrderID(t, db, "supPark"),
+		"Waiting for material: "+bp.Code, string(protocol.QueueWaitingForMaterial), "finder-node-empty"),
+		"park supply waiting_for_material")
+
+	// Evac dies (genuine failure, not a moot skip).
+	mkSwapLeg(t, db, "evacPark", "supPark", StatusFailed, lineNode.Name, store1.Name, bp.Code)
+	evac, _ := db.GetOrderByUUID("evacPark")
+
+	d.HandleSwapPeerTerminal(evac.ID, SwapTerminalFailed)
+
+	got, _ := db.GetOrderByUUID("supPark")
+	if !protocol.IsAcquiring(got.Status) {
+		t.Fatalf("parked supply status = %q, want to remain acquiring (sourcing/queued) — a dry-source wait must survive its evac sibling dying, not be cancelled into the re-arm churn", got.Status)
+	}
+	if got.QueueCode != string(protocol.QueueWaitingForMaterial) {
+		t.Errorf("parked supply queue_code = %q, want waiting_for_material (unchanged)", got.QueueCode)
+	}
+	if !hasAuditAction(t, db, mustOrderID(t, db, "supPark"), "swap_supply_parked_peer_died") {
+		t.Fatal("expected a swap_supply_parked_peer_died audit surface (half-state must be visible, not silently held)")
+	}
+}
+
+// mustOrderID resolves an order id by edge uuid for the test fixtures above.
+func mustOrderID(t *testing.T, db *store.DB, uuid string) int64 {
+	t.Helper()
+	o, err := db.GetOrderByUUID(uuid)
+	testutil.MustNoErr(t, err, "get order "+uuid)
+	return o.ID
+}
+
+// hasAuditAction reports whether an order has an audit row with the given action.
+func hasAuditAction(t *testing.T, db *store.DB, orderID int64, action string) bool {
+	t.Helper()
+	entries, err := db.ListEntityAudit("order", orderID)
+	testutil.MustNoErr(t, err, "list audit")
+	for _, e := range entries {
+		if e.Action == action {
+			return true
+		}
+	}
+	return false
+}
+
 // TestSwapPeerTerminal_SupplyFails_EvacDelivered_Surfaces: the worst case — the
 // evac already DELIVERED (line's resident removed) and the supply then dies. The
 // evac is terminal-success so it can't be cancelled; the handler surfaces the
