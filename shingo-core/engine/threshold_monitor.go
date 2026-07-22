@@ -490,21 +490,28 @@ func (m *ThresholdMonitor) engagePayloads(affectedPayloads map[string]bool) {
 			continue
 		}
 		m.thresholdsByPayload[payload] = tes
-		cachedTotal, haveCached := m.uopCache[payload]
 		m.mu.Unlock()
 
-		// Seed the cache from the DB if this payload wasn't being
-		// monitored before — without this, a newly-added threshold for
-		// a zero-stock payload (no prior incremental delta) has no
-		// baseline to compare against and the immediate-fire below
-		// would compare against 0 by default, which is correct-by-accident
-		// for the zero-stock case but wrong if the bin/bucket totals are
-		// non-zero. Explicit lookup is unambiguous.
-		total := cachedTotal
-		if !haveCached && m.eng.inventoryService != nil {
+		// RE-BASELINE FROM THE DB, UNCONDITIONALLY.
+		//
+		// This used to reuse the cached total whenever one existed and only
+		// query for a payload that wasn't already monitored. That made a
+		// threshold EDIT re-evaluate against whatever the incremental cache
+		// had drifted to, which is the one moment an engineer is actively
+		// trying to correct the system's belief. On 2026-07-21 that cost a
+		// diagnostic loop at Springfield: nudging a threshold 120→121→120
+		// fired nothing because the cache sat at ~139 while the DB truth was
+		// 31. Resync ((re)connect) shared the same stale path.
+		//
+		// This does NOT violate the file-header "no DB queries on the hot
+		// path" invariant: engagePayloads runs only on a config edit
+		// (OnThresholdChanges) or an Edge (re)connect (Resync). The hot path
+		// is OnBinUOPDelta / OnBucketApplied, which stay purely incremental.
+		total := 0
+		if m.eng.inventoryService != nil {
 			uop, err := m.eng.inventoryService.SystemUOPForPayload(context.Background(), []string{payload})
 			if err != nil {
-				m.eng.logFn("threshold_monitor: engagePayloads seed cache for %s: %v", payload, err)
+				m.eng.logFn("threshold_monitor: engagePayloads re-baseline for %s: %v", payload, err)
 				// Best-effort: fall through with total=0 so a zero-stock
 				// payload still fires. The DB error is logged loudly so
 				// the operator can see it.

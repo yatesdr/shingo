@@ -100,6 +100,91 @@ func TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold(
 	}
 }
 
+// TestThresholdMonitor_OnThresholdChanges_ReBaselinesFromDB pins the
+// re-baseline fix: a threshold edit must be evaluated against DB TRUTH, not
+// against whatever the incremental in-memory cache has drifted to.
+//
+// engagePayloads used to query SystemUOPForPayload only when the payload
+// wasn't already in uopCache, so an edit to an ALREADY-MONITORED payload
+// re-evaluated against the stale cached total. Springfield 2026-07-21: nudging
+// a threshold 120→121→120 fired nothing because the cache sat at ~139 while
+// the DB truth was 31 — a diagnostic loop spent chasing a monitor that was
+// answering from memory. Resync ((re)connect) shared the same path.
+//
+// Setup poisons the cache ABOVE the threshold while the DB says 0. Pre-fix the
+// monitor compares 999 >= 50 and stays silent; post-fix it re-reads 0 and
+// fires.
+func TestThresholdMonitor_OnThresholdChanges_ReBaselinesFromDB(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+
+	const (
+		stationID = "station-rebaseline"
+		loader    = "MS-LOADER-REBASE"
+		payload   = "P-REBASE"
+	)
+
+	// No bins of this payload exist — DB truth for system UOP is 0.
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleConsume,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 50,
+	}}); err != nil {
+		t.Fatalf("seed initial registry: %v", err)
+	}
+
+	// Poison the cache: already monitored, and far ABOVE the threshold. This is
+	// the drifted-ledger state the fix exists for.
+	m := eng.thresholdMonitor
+	m.mu.Lock()
+	m.uopCache[payload] = 999
+	m.mu.Unlock()
+
+	preMsgs, _ := db.ListPendingOutbox(50)
+	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+
+	m.OnThresholdChanges([]demands.RegistryChange{{
+		StationID:    stationID,
+		CoreNodeName: loader,
+		PayloadCode:  payload,
+		OldThreshold: 40,
+		NewThreshold: 50,
+	}})
+
+	deadline := time.Now().Add(2 * time.Second)
+	var hit *protocol.LoopBelowThresholdSignal
+	for time.Now().Before(deadline) {
+		msgs, _ := db.ListPendingOutbox(50)
+		if countLoopBelowThresholdSignals(msgs, stationID) > preCount {
+			hit = findLoopBelowThresholdSignal(t, msgs, stationID)
+			if hit != nil {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if hit == nil {
+		msgs, _ := db.ListPendingOutbox(50)
+		t.Fatalf("expected a signal after the threshold edit — the monitor evaluated the stale cached total (999) instead of DB truth (0); outbox=%v",
+			outboxSummary(msgs))
+	}
+	if hit.CurrentUOP != 0 {
+		t.Errorf("signal CurrentUOP = %d, want 0 (DB truth, not the poisoned cache)", hit.CurrentUOP)
+	}
+
+	// The cache itself must be corrected, not just the one evaluation —
+	// otherwise the next incremental delta resumes from the stale number.
+	m.mu.Lock()
+	cached := m.uopCache[payload]
+	m.mu.Unlock()
+	if cached != 0 {
+		t.Errorf("uopCache[%s] = %d after re-baseline, want 0", payload, cached)
+	}
+}
+
 // TestThresholdMonitor_Resync_EngagesAndFiresSeededBinding pins the seed-ordering
 // fix. A demand_registry binding written OUT-OF-BAND (seeddev / migrateloaders
 // write it directly; ClaimSync is retired so the Edge pushes no claims) is
