@@ -202,20 +202,39 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 		m.mu.Lock()
 		m.uopCache[payload] = total
 		m.mu.Unlock()
+		// Seed the cold-start warm-up allowance, then let checkBindings make the
+		// FIRE decision — it is the only place that decision is made.
+		//
+		// This block used to compare total < threshold and call fireSignalCached
+		// itself, which meant the startup path silently bypassed every guard
+		// checkBindings applies — including the negative-total floor. Restart is
+		// exactly when that matters: restarting Core is the remedy an operator
+		// reaches for BECAUSE the ledger looks wrong, and the sweep would then
+		// fire on the garbage total, twice per binding (warm-up bypasses
+		// debounce). One fire decision, one set of guards.
+		//
+		// Warm-up is still seeded here, and still only for bindings that are
+		// currently below threshold — that is the sweep's own cold-start concern
+		// (Springfield's fresh start wants one bin in the supermarket and one in
+		// flight), not a fire decision. It must be seeded BEFORE checkBindings
+		// because allow() is what consumes it. If the floor suppresses the fire,
+		// the allowance simply survives until the ledger is corrected.
+		tes := make([]thresholdEntry, 0, len(bindings))
+		m.mu.Lock()
 		for _, b := range bindings {
 			if total < b.ReplenishUOPThreshold {
-				m.mu.Lock()
 				m.warmUp[bindingKey(b.StationID, b.CoreNodeName, b.PayloadCode)] = warmUpFloor
-				m.mu.Unlock()
-				m.fireSignalCached(thresholdEntry{
-					stationID:    b.StationID,
-					coreNodeName: b.CoreNodeName,
-					payloadCode:  b.PayloadCode,
-					threshold:    b.ReplenishUOPThreshold,
-					loaderID:     b.LoaderID,
-				}, total, "warm_up_startup_sweep")
 			}
+			tes = append(tes, thresholdEntry{
+				stationID:    b.StationID,
+				coreNodeName: b.CoreNodeName,
+				payloadCode:  b.PayloadCode,
+				threshold:    b.ReplenishUOPThreshold,
+				loaderID:     b.LoaderID,
+			})
 		}
+		m.mu.Unlock()
+		m.checkBindings(tes, total, "warm_up_startup_sweep")
 	}
 
 	m.mu.Lock()
@@ -244,7 +263,7 @@ func (m *ThresholdMonitor) OnBinUOPDelta(payloadCode string, delta int) {
 	total := m.uopCache[payloadCode]
 	m.mu.Unlock()
 
-	m.checkBindings(bindings, total)
+	m.checkBindings(bindings, total, "below_threshold")
 }
 
 // OnBucketApplied is invoked by the messaging layer after a successful
@@ -273,7 +292,7 @@ func (m *ThresholdMonitor) OnBucketApplied(station, coreNodeName, payloadCode st
 	total := m.uopCache[payloadCode]
 	m.mu.Unlock()
 
-	m.checkBindings(bindings, total)
+	m.checkBindings(bindings, total, "below_threshold")
 }
 
 // handleBinUpdated is the EventBinUpdated subscriber for rare non-delta
@@ -303,12 +322,12 @@ func (m *ThresholdMonitor) handleBinUpdated(ev BinUpdatedEvent) {
 	bindings := m.thresholdsByPayload[ev.PayloadCode]
 	m.mu.Unlock()
 
-	m.checkBindings(bindings, total)
+	m.checkBindings(bindings, total, "below_threshold")
 }
 
 // checkBindings evaluates all threshold bindings for a given total and
 // fires signals for any that are below threshold and past debounce.
-func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int) {
+func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, reason string) {
 	// Validity floor. A negative plant-wide in-loop total is never a real
 	// demand signal — it is always a broken ledger. bins.uop_remaining is
 	// allowed to go negative by SME lock (overpack/underpack), buckets are
@@ -324,11 +343,11 @@ func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int) {
 	//
 	// Zero is NOT rejected: a genuinely out-of-stock payload is real demand.
 	if total < 0 {
-		if m.eng != nil { // nil in the pure unit harness (newTestMonitor)
-			for _, b := range bindings {
-				if b.threshold <= 0 {
-					continue
-				}
+		for _, b := range bindings {
+			if b.threshold <= 0 {
+				continue
+			}
+			if m.eng != nil { // nil in the pure unit harness (newTestMonitor)
 				m.eng.logFn("threshold_monitor: REFUSING to signal station=%s loader=%s payload=%s — in-loop total is negative (total=%d threshold=%d); the bins ledger for this payload is broken, reconcile it before trusting replenishment",
 					b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold)
 			}
@@ -348,7 +367,7 @@ func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int) {
 				b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold)
 			continue
 		}
-		m.fireSignalCached(b, total, "below_threshold")
+		m.fireSignalCached(b, total, reason)
 	}
 }
 
@@ -549,6 +568,6 @@ func (m *ThresholdMonitor) engagePayloads(affectedPayloads map[string]bool) {
 			m.mu.Unlock()
 		}
 
-		m.checkBindings(tes, total)
+		m.checkBindings(tes, total, "below_threshold")
 	}
 }

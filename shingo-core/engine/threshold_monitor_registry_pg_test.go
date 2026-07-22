@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/demands"
 	"shingocore/store/messaging"
@@ -354,4 +356,70 @@ func countLoopBelowThresholdSignals(msgs []*messaging.OutboxMessage, stationID s
 		}
 	}
 	return n
+}
+
+// TestThresholdMonitor_StartupSweep_NegativeTotal_EmitsNoSignal pins the floor
+// on the RESTART path.
+//
+// startupSweep used to make its own fire decision — its own total < threshold
+// compare plus a direct fireSignalCached — which meant it bypassed every guard
+// checkBindings applies, the negative-total floor included. That is the worst
+// possible path to miss: restarting Core is the remedy an operator reaches for
+// BECAUSE the ledger looks wrong, and the sweep would then fire on the garbage
+// total, twice per binding (it seeds warm-up first, and warm-up bypasses
+// debounce).
+//
+// The sweep now routes through checkBindings, so there is one fire decision
+// with one set of guards.
+func TestThresholdMonitor_StartupSweep_NegativeTotal_EmitsNoSignal(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+
+	const (
+		stationID = "station-sweep-negative"
+		loader    = "MS-LOADER-SWEEP"
+		payload   = "P-SWEEP-NEG"
+	)
+
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleConsume,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 50,
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	// A bin carrying a deeply negative count is what makes the payload's
+	// in-loop total negative — the Springfield 74577-6SA0A.06 shape.
+	seedNegativeBin(t, db, payload, -443)
+
+	preMsgs, _ := db.ListPendingOutbox(50)
+	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+
+	// Drive the sweep directly rather than waiting out Run()'s 3s grace.
+	eng.thresholdMonitor.startupSweep(context.Background())
+
+	msgs, _ := db.ListPendingOutbox(50)
+	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+		t.Errorf("startup sweep emitted %d signal(s) on a negative in-loop total; want 0 — a restart must not arm replenishment off a broken ledger (outbox=%v)",
+			got-preCount, outboxSummary(msgs))
+	}
+}
+
+// seedNegativeBin creates a bin carrying the given (negative) uop_remaining for
+// a payload, which is what makes that payload's in-loop total negative. Bins
+// may legitimately go negative under the SME overpack/underpack lock; buckets
+// cannot (CHECK qty >= 0), which is why a negative TOTAL always means the bin
+// side is wrong.
+func seedNegativeBin(t *testing.T, db *store.DB, payloadCode string, uop int) {
+	t.Helper()
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, payloadCode, sd.StorageNode.ID, "BIN-NEG-"+payloadCode)
+	testutil.MustNoErr(t, func() error {
+		_, err := db.DB.Exec(`UPDATE bins SET payload_code=$1, uop_remaining=$2 WHERE id=$3`, payloadCode, uop, bin.ID)
+		return err
+	}(), "seed negative bin")
 }

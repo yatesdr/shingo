@@ -152,7 +152,7 @@ func TestThresholdMonitor_CheckBindings_AboveThreshold_NoFire(t *testing.T) {
 	// the threshold check short-circuits correctly.
 	tm.checkBindings([]thresholdEntry{
 		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
-	}, 100)
+	}, 100, "below_threshold")
 }
 
 // TestThresholdMonitor_CheckBindings_NegativeTotal_NoFire pins the validity
@@ -175,7 +175,7 @@ func TestThresholdMonitor_CheckBindings_NegativeTotal_NoFire(t *testing.T) {
 
 	tm.checkBindings([]thresholdEntry{
 		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
-	}, -443)
+	}, -443, "below_threshold")
 
 	// The floor must not consume debounce budget either: a refused evaluation
 	// is not a fire, so the binding stays eligible for the moment the ledger
