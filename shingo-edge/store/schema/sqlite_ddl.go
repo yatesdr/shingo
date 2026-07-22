@@ -235,7 +235,17 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     payload_code            TEXT NOT NULL DEFAULT '',
     uop_capacity            INTEGER NOT NULL DEFAULT 0,
     reorder_point           INTEGER NOT NULL DEFAULT 0,
-    auto_reorder            INTEGER NOT NULL DEFAULT 1,
+    -- Cell auto-reorder is opt-IN: a claim must not arm itself. Was DEFAULT 1,
+    -- which made "new claim" mean "count-driven order creation is live" before
+    -- anyone chose it. Every INSERT in the codebase names this column
+    -- explicitly (processes/claims.go UpsertClaim, processes/styles.go
+    -- cloneClaimColumns, seeddev/seed_edge.go), so the default is reachable
+    -- only by a future hand-written INSERT that omits it — which is exactly
+    -- the case that should land off. Fresh databases only: this is
+    -- CREATE TABLE IF NOT EXISTS and there is no ALTER for this column, so an
+    -- existing plant DB keeps its current table definition and its current
+    -- per-claim values either way.
+    auto_reorder            INTEGER NOT NULL DEFAULT 0,
     inbound_staging         TEXT NOT NULL DEFAULT '',
     outbound_staging        TEXT NOT NULL DEFAULT '',
     inbound_source          TEXT NOT NULL DEFAULT '',

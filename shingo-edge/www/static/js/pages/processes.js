@@ -520,7 +520,16 @@ function claimToBody(c) {
         uop_capacity: c.uop_capacity || 0,
         reorder_point: c.reorder_point || 0,
         lineside_soft_threshold: c.lineside_soft_threshold || 0,
-        auto_reorder: true,
+        // Preserve, never assert. This editor has no auto_reorder control, and
+        // UpsertStyleNodeClaim writes the WHOLE row — so a hard-coded value
+        // here silently rewrites plant config on every unrelated field edit.
+        // It was `true`, which re-armed cell auto-reorder on any claim an
+        // engineer touched, undoing a plant-wide disable one claim at a time.
+        // Note the field is a plain bool on the wire (domain.NodeClaimInput),
+        // NOT a *bool — omitting it decodes to false and would bulk-DISARM
+        // just as silently. Echoing the fetched value is the only neutral
+        // option, same as auto_push / auto_confirm below.
+        auto_reorder: !!c.auto_reorder,
         inbound_staging: c.inbound_staging || '',
         outbound_staging: c.outbound_staging || '',
         inbound_source: c.inbound_source || '',
@@ -1130,6 +1139,16 @@ async function saveClaim() {
     // switches among the aggregate's payloads at load time.
     var primaryPayload = state.swapMode === 'manual_swap' ? '' : state.payloadCode;
 
+    // Preserve the claim's existing auto_reorder — see claimToBody. The modal
+    // has no control for it, so an edit must carry whatever the claim already
+    // had; a NEW claim (no id) starts off rather than arming itself. Read from
+    // the loaded claim rather than form state because the flag has no DOM
+    // field to round-trip through.
+    var existingClaim = (_currentClaims || []).find(function(c) {
+        return String(c.id) === String(state.id);
+    });
+    var autoReorder = !!(existingClaim && existingClaim.auto_reorder);
+
     var claimBody = {
         style_id: state.styleId,
         core_node_name: state.coreNodeName,
@@ -1140,7 +1159,7 @@ async function saveClaim() {
         uop_capacity: state.uopCapacity,
         reorder_point: state.reorderPoint,
         lineside_soft_threshold: state.linesideSoftThreshold,
-        auto_reorder: true,
+        auto_reorder: autoReorder,
         inbound_staging: state.inboundStaging,
         outbound_staging: state.outboundStaging,
         inbound_source: state.inboundSource,

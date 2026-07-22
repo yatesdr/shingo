@@ -469,7 +469,13 @@ async function runSaveClaimSchemaCase() {
         uop_capacity: 30,
         reorder_point: 5,
         lineside_soft_threshold: 2,
-        auto_reorder: true,
+        // Was pinned `true` — a hard-coded literal in saveClaim, not an
+        // operator choice: the editor exposes no auto_reorder control, and
+        // UpsertStyleNodeClaim writes the whole row, so every unrelated claim
+        // edit re-armed cell auto-reorder. This fixture saves a NEW claim
+        // (no matching id in _currentClaims), and a new claim must not arm
+        // itself. An EDIT carries the claim's existing value through instead.
+        auto_reorder: false,
         inbound_staging: 'STAGE_IN_1',
         outbound_staging: 'STAGE_OUT_1',
         inbound_source: 'SRC_A',
