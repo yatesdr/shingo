@@ -637,3 +637,23 @@ func ListByBinID(db *sql.DB, binID int64, limit int) ([]*Order, error) {
 	defer rows.Close()
 	return ScanOrders(rows)
 }
+
+// ActiveByBinID returns non-terminal orders currently referencing a bin via
+// bin_id. BinService consults it to refuse a manual retire/move that would
+// orphan a live order — the SMN_029 zombie (2026-07-22): a delivered
+// retrieve_empty still pointing at a carrier an operator retired + moved kept
+// its delivery card on the HMI and its loader slot budget spent while the
+// carrier was recycled into another part elsewhere. Core CLEARS bins.claimed_by
+// on arrival (ApplyArrival), so orders.bin_id is the only durable bin↔order tie
+// a post-delivery guard can key on. No LIMIT: correctness can't ride on a bin's
+// active order being among its N most recent rows.
+func ActiveByBinID(db *sql.DB, binID int64) ([]*Order, error) {
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT %s FROM orders WHERE bin_id=$1 AND status NOT IN (%s) ORDER BY id DESC`,
+		SelectCols, protocol.TerminalStatusSQLList()), binID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanOrders(rows)
+}

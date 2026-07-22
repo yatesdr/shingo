@@ -303,6 +303,9 @@ func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 	if b.NodeID != nil && *b.NodeID == toNodeID {
 		return nil, fmt.Errorf("bin is already at this location")
 	}
+	if err := s.guardNoOrphanedOrder(b.ID, "move"); err != nil {
+		return nil, err
+	}
 	destNode, err := s.db.GetNode(toNodeID)
 	if err != nil {
 		return nil, fmt.Errorf("node not found")
@@ -489,7 +492,39 @@ func (s *BinService) Delete(id int64) error {
 // status != 'retired', so the node_id=NULL state cannot trigger a
 // panic.
 func (s *BinService) Retire(id int64) error {
+	if err := s.guardNoOrphanedOrder(id, "retire"); err != nil {
+		return err
+	}
 	return s.db.RetireBin(id)
+}
+
+// guardNoOrphanedOrder refuses a manual bin action that would strand a live
+// order still pointing at this bin. A retire (status→retired, node→NULL) or a
+// manual Move relocates/withdraws the carrier out from under any non-terminal
+// order that reserved it, leaving the order referencing a bin that is gone or
+// elsewhere — the SMN_029 zombie (2026-07-22): a delivered retrieve_empty kept
+// its HMI delivery card AND its loader in-flight budget spent for 15+ hours
+// after an operator retired + moved its carrier, blocking the replacement empty
+// that would have cleared it.
+//
+// It refuses rather than auto-cancels: cancelling here would free the slot
+// budget and let the next signal dispatch a fresh empty while stale bins rows
+// still read the slot occupied — trading a stall for a collision. The operator
+// cancels the named order first (or the UI offers to, as a follow-up), then
+// retires/moves. Keys on orders.bin_id, not bins.claimed_by: ApplyArrival
+// clears the claim on landing, which is exactly why the manual retire slipped
+// through.
+func (s *BinService) guardNoOrphanedOrder(binID int64, action string) error {
+	active, err := s.db.ActiveOrdersByBin(binID)
+	if err != nil {
+		return fmt.Errorf("check bin %d for active orders: %w", binID, err)
+	}
+	if len(active) == 0 {
+		return nil
+	}
+	o := active[0]
+	return fmt.Errorf("cannot %s: bin is committed to order %d (%s → %s); cancel that order first or it will be orphaned",
+		action, o.ID, o.Status, o.DeliveryNode)
 }
 
 // HasNotes returns a map indicating which of the supplied bin IDs have

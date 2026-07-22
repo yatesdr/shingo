@@ -217,6 +217,12 @@ func (db *DB) ListOrdersByBin(binID int64, limit int) ([]*orders.Order, error) {
 	return orders.ListByBinID(db.DB, binID, limit)
 }
 
+// ActiveOrdersByBin returns non-terminal orders referencing a bin via bin_id.
+// Cross-aggregate delegate for BinService's orphan-order guard on retire/move.
+func (db *DB) ActiveOrdersByBin(binID int64) ([]*orders.Order, error) {
+	return orders.ActiveByBinID(db.DB, binID)
+}
+
 // TerminalizeOrder transitions an order to a terminal status and releases ALL of
 // its holds — bin claims, destination-slot claims, order_bins junction rows, and
 // reservations (pending and confirmed) — in a single transaction. It is the one

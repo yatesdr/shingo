@@ -3,6 +3,7 @@
 package service
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1060,6 +1061,104 @@ func TestBinService_Retire_LockedBin(t *testing.T) {
 	got, err := db.GetBin(bin.ID)
 	if err != nil {
 		t.Fatalf("GetBin after Retire: %v", err)
+	}
+	if got.Status != domain.BinStatusRetired {
+		t.Errorf("status = %q, want %q", got.Status, domain.BinStatusRetired)
+	}
+}
+
+// TestBinService_Retire_RefusesWhenBinBoundToLiveOrder pins the orphan-order
+// guard: a bin still referenced by a non-terminal order (via orders.bin_id)
+// cannot be retired out from under it. This is the SMN_029 zombie — a delivered
+// retrieve_empty whose carrier was retired kept its HMI card and slot budget.
+// The guard keys on bin_id, NOT claimed_by (which ApplyArrival clears on
+// landing), so it catches exactly the post-delivery case the claim column can't
+// — contrast TestBinService_Retire_ClaimedBin, where claimed_by is set but
+// bin_id is not, and retire still proceeds.
+func TestBinService_Retire_RefusesWhenBinBoundToLiveOrder(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := newBinSvc(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-RET-BOUND", "", 0)
+	binID := bin.ID
+	order := testdb.CreateOrder(t, db, func(o *domain.Order) {
+		o.Status = "delivered"
+		o.DeliveryNode = "SMN_029"
+		o.BinID = &binID
+	})
+
+	err := svc.Retire(bin.ID)
+	if err == nil {
+		t.Fatal("Retire must refuse a bin bound to a live order")
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("order %d", order.ID)) {
+		t.Errorf("error should name the blocking order %d; got %q", order.ID, err)
+	}
+
+	got, gerr := db.GetBin(bin.ID)
+	if gerr != nil {
+		t.Fatalf("GetBin: %v", gerr)
+	}
+	if got.Status == domain.BinStatusRetired {
+		t.Error("bin was retired despite the guard — the mutation must not have run")
+	}
+}
+
+// TestBinService_Move_RefusesWhenBinBoundToLiveOrder is the Move twin of the
+// retire guard above: a manual relocation of a bin a live order points at is
+// refused before it can strand the order.
+func TestBinService_Move_RefusesWhenBinBoundToLiveOrder(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	bt := ensureDefaultBinType(t, db)
+
+	from := &nodes.Node{Name: "MV-BOUND-FROM", Enabled: true}
+	to := &nodes.Node{Name: "MV-BOUND-TO", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(from), "create from")
+	testutil.MustNoErr(t, db.CreateNode(to), "create to")
+
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-BOUND", NodeID: &from.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
+	binID := bin.ID
+	testdb.CreateOrder(t, db, func(o *domain.Order) {
+		o.Status = "in_transit"
+		o.BinID = &binID
+	})
+
+	svc := newBinSvc(db)
+	if _, err := svc.Move(bin, to.ID); err == nil {
+		t.Fatal("Move must refuse a bin bound to a live order")
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.NodeID == nil || *got.NodeID != from.ID {
+		t.Errorf("bin moved despite the guard; NodeID = %v, want %d (unchanged)", got.NodeID, from.ID)
+	}
+}
+
+// TestBinService_Retire_AllowedWhenOnlyTerminalOrders confirms the guard is
+// scoped to LIVE orders: a bin whose only referencing order has gone terminal
+// (the normal post-confirm state) retires freely.
+func TestBinService_Retire_AllowedWhenOnlyTerminalOrders(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := newBinSvc(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-RET-TERM", "", 0)
+	binID := bin.ID
+	testdb.CreateOrder(t, db, func(o *domain.Order) {
+		o.Status = "confirmed"
+		o.BinID = &binID
+	})
+
+	testutil.MustNoErr(t, svc.Retire(bin.ID), "Retire with only terminal referencing orders")
+
+	got, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("GetBin: %v", err)
 	}
 	if got.Status != domain.BinStatusRetired {
 		t.Errorf("status = %q, want %q", got.Status, domain.BinStatusRetired)
