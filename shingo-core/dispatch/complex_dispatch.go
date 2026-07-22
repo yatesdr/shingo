@@ -631,6 +631,14 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// its entry status (queued first pass, sourcing on retry); both are retried by
 	// the complex-scoped scanner, and each wrote queue_reason for the Edge push.
 	if err := d.lifecycle.MoveToSourcing(order, "scanner", "reserving source bins"); err != nil {
+		// Refused CAS = another actor terminalized or moved this order while we
+		// held a stale snapshot. Everything below reserves bins and ends in a
+		// fleet dispatch, so yield rather than commit robots for an order that
+		// is no longer ours.
+		if IsConcurrentTransition(err) {
+			log.Printf("dispatch: complex order %d moved under us — another actor owns it now: %v", order.ID, err)
+			return fmt.Errorf("complex order %d moved concurrently: %w", order.ID, err)
+		}
 		log.Printf("dispatch: complex order %d → sourcing: %v", order.ID, err)
 	}
 

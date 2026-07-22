@@ -14,12 +14,22 @@ type MockBackend struct {
 	orders     map[string]fleet.TransportOrderResult
 	createReqs []fleet.CreateOrderRequest
 	cancelled  []string
+	onCreate   func()
 }
 
 // CancelRequests returns the vendor order ids passed to CancelOrder, in call
 // order. Needed to assert the orphan-mission guard actually cancels the fleet
 // order it just created when the status write is refused (dispatcher.go).
 func (m *MockBackend) CancelRequests() []string { return m.cancelled }
+
+// SetOnCreate installs a hook that runs INSIDE CreateOrder, after the request
+// is recorded and before it returns. The fleet call is where real time passes
+// in a dispatch, so it is the only faithful place to inject a concurrent
+// mutation — e.g. an operator cancel landing while the robot is being
+// committed. Tests for the post-create orphan guard need exactly that window:
+// the pre-dispatch status re-read must still see a live order, and the status
+// write afterwards must not.
+func (m *MockBackend) SetOnCreate(fn func()) { m.onCreate = fn }
 
 // CreateRequests returns the CreateOrderRequests seen by CreateOrder, in call
 // order. This is the unified capture (the single create primitive) and the one
@@ -54,6 +64,9 @@ func (m *MockBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.Transport
 	result := fleet.TransportOrderResult{VendorOrderID: req.OrderID}
 	m.orders[req.OrderID] = result
 	m.createReqs = append(m.createReqs, req)
+	if m.onCreate != nil {
+		m.onCreate()
+	}
 	return result, nil
 }
 

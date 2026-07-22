@@ -363,7 +363,14 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// `sourcing` (NEVER `queued`) so the order stays in the acquiring set and the
 	// scanner retries it, holding its soft reservations across ticks.
 	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin found, soft-holding"); err != nil {
-		s.logFn("fulfillment: order %d → sourcing: %v", order.ID, err)
+		// Refused CAS = the order moved under us. Everything below this point
+		// acquires and then DISPATCHES; continuing would commit a robot for an
+		// order we no longer own (and may be terminal). Yield the tick.
+		if dispatch.IsConcurrentTransition(err) {
+			s.logTransition(order.ID, "acquiring", err)
+			return false
+		}
+		s.logTransition(order.ID, "→ sourcing", err)
 	}
 
 	// Test seam: the deterministic claim-race hook fires at acquire time (order now
@@ -402,7 +409,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.setQueueReason(order, protocol.QueueWaitingForSlot, "dest-node-unresolved",
 			dispatch.QueueParams{Destination: order.DeliveryNode, DestUnresolved: true})
 		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dest unresolved, retrying"); err != nil {
-			s.logFn("fulfillment: order %d → sourcing after dest resolve fail: %v", order.ID, err)
+			s.logTransition(order.ID, "→ sourcing after dest resolve fail", err)
 		}
 		return false
 	}
@@ -410,7 +417,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.setQueueReason(order, protocol.QueueWaitingForSlot, "slot-reserved",
 			dispatch.QueueParams{Destination: order.DeliveryNode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "destination slot contended"); qerr != nil {
-			s.logFn("fulfillment: order %d → sourcing after reserve conflict: %v", order.ID, qerr)
+			s.logTransition(order.ID, "→ sourcing after reserve conflict", qerr)
 		}
 		return false
 	}
@@ -434,7 +441,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "lock-race",
 			dispatch.QueueParams{Payload: order.PayloadCode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin race, retrying"); qerr != nil {
-			s.logFn("fulfillment: order %d → sourcing after reserve fail: %v", order.ID, qerr)
+			s.logTransition(order.ID, "→ sourcing after reserve fail", qerr)
 		}
 		return false
 	}
@@ -457,7 +464,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "claim-failed",
 			dispatch.QueueParams{Payload: order.PayloadCode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "confirm failed, retrying"); qerr != nil {
-			s.logFn("fulfillment: order %d → sourcing after confirm fail: %v", order.ID, qerr)
+			s.logTransition(order.ID, "→ sourcing after confirm fail", qerr)
 		}
 		return false
 	}
@@ -476,7 +483,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		// fleet_unavailable so the row carries that code.
 		s.setQueueReason(order, protocol.QueueFleetUnavailable, "fleet-error", dispatch.QueueParams{})
 		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
-			s.logFn("fulfillment: order %d → sourcing after fleet fail: %v", order.ID, err)
+			s.logTransition(order.ID, "→ sourcing after fleet fail", err)
 		}
 		return false
 	}
@@ -525,7 +532,13 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		return false
 	}
 	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dispatching held bin"); err != nil {
-		s.logFn("fulfillment: held-bin order %d → sourcing: %v", order.ID, err)
+		// Same yield as the fresh-bin path: ConfirmForDispatch and
+		// DispatchDirect follow, and DispatchDirect commits a robot.
+		if dispatch.IsConcurrentTransition(err) {
+			s.logTransition(order.ID, "dispatching held bin", err)
+			return false
+		}
+		s.logTransition(order.ID, "held-bin → sourcing", err)
 	}
 	// Confirm-at-dispatch: the held bin is still SOFT (pending reservation from the
 	// prior tick). Hard-claim the slot (if a storage dropoff) AND the bin here, one
@@ -536,7 +549,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "claim-failed",
 			dispatch.QueueParams{Payload: order.PayloadCode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "confirm failed, retrying"); qerr != nil {
-			s.logFn("fulfillment: held-bin order %d → sourcing after confirm fail: %v", order.ID, qerr)
+			s.logTransition(order.ID, "held-bin → sourcing after confirm fail", qerr)
 		}
 		return false
 	}
@@ -551,7 +564,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		// re-soft-acquires next tick.
 		s.setQueueReason(order, protocol.QueueFleetUnavailable, "fleet-error", dispatch.QueueParams{})
 		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
-			s.logFn("fulfillment: held-bin order %d → sourcing after fleet fail: %v", order.ID, err)
+			s.logTransition(order.ID, "held-bin → sourcing after fleet fail", err)
 		}
 		return false
 	}
@@ -568,6 +581,26 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 // unchanged (avoids a re-touch every tick a wait persists, which can re-trigger
 // the scanner). cause is the engineer-only call-site tag; params carries the
 // values the sentence is built from and is discarded after formatting.
+// logTransition reports a failed lifecycle transition from the scanner.
+//
+// A refused compare-and-swap (ConcurrentTransition) is not a failure — it is
+// the CAS doing its job: another actor (operator cancel, a fail, a peer tick)
+// terminalized or moved the order while this tick held a stale snapshot. It
+// reads as information so a working guard doesn't look like breakage in the
+// plant log. Everything else keeps its original wording.
+//
+// It does NOT decide control flow: call sites that must abandon the tick check
+// dispatch.IsConcurrentTransition themselves and return. See fulfillOrder /
+// fulfillOrderWithHeldBin, where continuing would dispatch a robot for an
+// order that is no longer ours.
+func (s *Scanner) logTransition(orderID int64, what string, err error) {
+	if dispatch.IsConcurrentTransition(err) {
+		s.logFn("fulfillment: order %d moved under us (%s) — another actor owns it now: %v", orderID, what, err)
+		return
+	}
+	s.logFn("fulfillment: order %d %s: %v", orderID, what, err)
+}
+
 func (s *Scanner) setQueueReason(order *orders.Order, code protocol.QueueCode, cause string, params dispatch.QueueParams) {
 	reason := dispatch.FormatQueueSentence(code, params)
 	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == cause {

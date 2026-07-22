@@ -279,6 +279,19 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s to=%s priority=%d",
 		order.ID, vendorOrderID, sourceNode.Name, destNode.Name, order.Priority)
 
+	// Last look before the irreversible step. `order` is a snapshot that may be
+	// many DB calls old by now, and CreateOrder physically commits a robot — one
+	// extra read is nothing against a mission that has to be chased down. The
+	// post-create guard below still exists for the window this cannot close;
+	// this just makes that window as small as a single statement.
+	if fresh, ferr := d.db.GetOrder(order.ID); ferr != nil {
+		d.dbg("pre-dispatch status re-read for order %d failed: %v (proceeding on snapshot)", order.ID, ferr)
+	} else if protocol.IsTerminal(fresh.Status) {
+		log.Printf("dispatch: order %d reached %s before the fleet order was created — not dispatching",
+			order.ID, fresh.Status)
+		return "", fmt.Errorf("order %d is terminal (%s); refusing to dispatch", order.ID, fresh.Status)
+	}
+
 	if _, err := d.backend.CreateOrder(req); err != nil {
 		d.dbg("fleet create order failed: %v", err)
 		return "", err

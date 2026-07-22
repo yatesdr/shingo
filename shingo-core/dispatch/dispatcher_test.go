@@ -932,9 +932,13 @@ func TestDispatchToFleet_ConcurrentTerminal_CancelsVendorOrder(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	order.Status = StatusQueued // the caller's snapshot
 
-	// Another actor terminalizes it while this dispatch is in flight. The
-	// caller's `order` still says queued — that is the whole point.
-	testutil.MustNoErr(t, db.TerminalizeOrder(order.ID, StatusCancelled, "operator cancel"), "concurrent cancel")
+	// The cancel lands DURING the fleet call — the one window the pre-dispatch
+	// re-read cannot close, and the reason the post-create guard has to exist.
+	// Injected inside CreateOrder so the ordering is exact: re-read sees a live
+	// order, the robot gets committed, then the order goes terminal.
+	backend.SetOnCreate(func() {
+		testutil.MustNoErr(t, db.TerminalizeOrder(order.ID, StatusCancelled, "operator cancel"), "concurrent cancel")
+	})
 
 	_, err := d.dispatchToFleetCore(order, storageNode, lineNode)
 	if err == nil {
@@ -966,6 +970,47 @@ func TestDispatchToFleet_ConcurrentTerminal_CancelsVendorOrder(t *testing.T) {
 	persisted, _ := db.GetOrder(order.ID)
 	if persisted.Status != StatusCancelled {
 		t.Errorf("status = %q, want %q — the refused write must not have landed", persisted.Status, StatusCancelled)
+	}
+}
+
+// TestDispatchToFleet_AlreadyTerminal_NeverCreatesFleetOrder pins the
+// belt-and-braces half: an order that went terminal before the fleet call must
+// not commit a robot at all. The post-create guard can only tear a mission
+// down after the fact; this stops it being created. One GetOrder against a
+// robot that has to be chased down in the fleet manager is a trade worth
+// making on every dispatch.
+func TestDispatchToFleet_AlreadyTerminal_NeverCreatesFleetOrder(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, _ := setupTestData(t, db)
+
+	backend := testdb.NewTrackingBackend()
+	d, emitter := newTestDispatcher(t, db, backend)
+
+	order := &orders.Order{
+		EdgeUUID:     "terminal-predispatch-1",
+		StationID:    "edge.line1",
+		OrderType:    OrderTypeRetrieve,
+		Status:       StatusQueued,
+		Quantity:     1,
+		DeliveryNode: lineNode.Name,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	order.Status = StatusQueued // stale snapshot the caller still holds
+	testutil.MustNoErr(t, db.TerminalizeOrder(order.ID, StatusCancelled, "operator cancel"), "cancel before dispatch")
+
+	_, err := d.dispatchToFleetCore(order, storageNode, lineNode)
+	if err == nil {
+		t.Fatal("expected refusal: the order was terminal before the fleet call")
+	}
+	if n := len(backend.CreateRequests()); n != 0 {
+		t.Errorf("CreateOrder calls = %d, want 0 — a robot was committed for a cancelled order", n)
+	}
+	if n := len(backend.CancelRequests()); n != 0 {
+		t.Errorf("CancelOrder calls = %d, want 0 — nothing should need tearing down", n)
+	}
+	if len(emitter.dispatched) != 0 {
+		t.Errorf("dispatched events = %d, want 0", len(emitter.dispatched))
 	}
 }
 
