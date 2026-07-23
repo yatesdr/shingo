@@ -409,22 +409,36 @@ surface):
 | Token | Dark | Role |
 |---|---|---|
 | `--viz-indigo` | `#7C7CF0` | series-1 (= the UI accent) |
-| `--viz-violet` | `#B07CF5` | series-2 |
-| `--viz-sky` | `#38BDF8` | series-3 |
-| `--viz-teal` | `#2DD4BF` | series-4 |
-| `--viz-amber` | `#FACC5B` | series-5 · **warning / ceiling / target** |
+| `--viz-teal` | `#2DD4BF` | series-2 |
+| `--viz-violet` | `#B07CF5` | series-3 |
+| `--viz-amber` | `#FACC5B` | series-4 · **warning / ceiling / target** |
+| `--viz-sky` | `#38BDF8` | series-5 |
 | `--viz-coral` | `#FB7185` | series-6 · **failure / bad** |
 | `--viz-green` | `#34D399` | **success / good / live** |
+
+The rows are listed in **categorical scale order** (series-1 → series-6). Note
+the token *values* are unchanged from earlier revisions — only the assignment
+order moved (see P19 CVD fix under law 2).
 
 **The law:**
 
 1. **One palette, used generously.** Charts draw from the `--viz-*` set above —
    never raw semantic tokens grabbed ad hoc, and never monochrome.
 2. **Two roles.** *Categorical* (tell series apart) — assign in scale order:
-   indigo → violet → sky → teal → amber → coral. *Semantic* (the color means
-   something) — success/good = green, failure/bad = coral, warning / ceiling /
-   target = amber. When a series is inherently semantic, use the semantic hue
-   over its categorical slot.
+   **indigo → teal → violet → amber → sky → coral** (P19 CVD fix, see below).
+   *Semantic* (the color means something) — success/good = green, failure/bad =
+   coral, warning / ceiling / target = amber. When a series is inherently
+   semantic, use the semantic hue over its categorical slot.
+
+   **P19 categorical-order fix (CVD).** The original scale put indigo next to
+   violet — a pair that collapses under protanopia (worst-pair ΔE only 2.4
+   protan / 8.0 normal): two "different" series read as one to a red-weak
+   viewer, and nearly one to everyone. Teal now separates them, so the *worst*
+   adjacent pair in the whole ramp clears ΔE 17.0 under CVD simulation / 27.1
+   normal. **Same seven hues, assignment order only** — no token value changed,
+   so nothing that already references `--viz-teal`/`--viz-violet` by name moves.
+   Only code that assigns *by series index* (series-2 was violet, is now teal)
+   is affected; migrate those opportunistically.
 3. **Soft area fills.** Primary line series get a translucent fill at **~13%** of
    the line color (`color-mix(in srgb, <viz-token> 13%, transparent)`). This soft
    wash carries much of the "premium" feel — use it on the lead series.
@@ -448,6 +462,61 @@ sky / P95 violet; cancellation amber, failure coral; fleet-load avg teal fill,
 peak indigo line, ceiling amber-dashed; footprint two palette hues (teal +
 indigo) with soft fills. KPI heroes white (delta arrows green up / coral down);
 section titles get an indigo tick; the live pill is green.
+
+## Visual principles
+
+Three named principles generalize the look people like on the map — the
+best-looking surface in the system — to every other surface. They sit above the
+component sections and inform tokens, tables, tiles, meters, and animation
+everywhere. Where a component rule and a principle disagree, the principle is
+the intent; fix the component rule.
+
+### Structure recedes, state glows
+
+Static structure carries no saturated color. The floor plan, table chrome, node
+geometry, card borders, grid lines — all neutral steel and muted tones.
+Saturated color is **reserved for live state**: robots, order status, health,
+the number that just changed. This is the generalization of the map's look — a
+calm grey scaffold with a few vivid, meaningful marks on top.
+
+Concretely:
+- **Tables** — muted header/border chrome; color lives only in the status chips
+  and health dots, never in the row fill (except a soft state tint like the
+  >30 d staleness wash).
+- **Tiles / node cells** — neutral base; the state color (has-payload, staged,
+  maintenance) is the one saturated thing on the tile.
+- **Meters** — the track is `--bg-dark`; only the fill and the threshold tick
+  carry hue.
+
+If a surface feels loud, the fix is almost always *desaturate the structure*,
+not *tone down the state* — the state is the point.
+
+### Motion means motion
+
+Animation is reserved for **real physical movement or live data flow**. It is
+never decoration and never plays on a stationary thing.
+
+- A robot moving on the map → its comet flows. Stopped mid-route → the comet
+  freezes to a faint static lane. Blocked/faulted → static red lane, no flow.
+- A value updating live → a brief flash on the changed cell. A value sitting
+  still → nothing.
+- The one restrained accent *glow* allowed on genuinely live/active elements
+  (route comet, live pill) folds under this rule — it is motion standing in for
+  "this is alive right now." The older "one restrained accent glow" line in the
+  Indigo-accent section is a special case of this principle, not a separate one.
+
+Corollary: decorative hover-wobble, idle-pulsing buttons, spinners still
+spinning after the data arrived — all forbidden. Every animation honors
+`prefers-reduced-motion` (see Motion tokens under Design tokens).
+
+### Focus dims siblings
+
+The standard focus pattern across surfaces: **one element lit, its siblings
+dimmed, the background unchanged.** Clicking a robot on the map focuses it and
+fades the rest of the fleet; highlighting a payload on Inventory lights its
+holding bins and dims the others; the material layer's `?highlight=` deep-link
+reuses the same machinery. Dim the peers (lower opacity / desaturate) — do not
+grey out the whole canvas. The context stays readable; the focus just wins.
 
 ## Modals
 
@@ -1060,6 +1129,12 @@ name and migrate. Listed in rough order of impact × ease.
 | **What Core calls "edge-station" in NodeType** | `EDGE` NodeType code described as "edge station" | Keep the code as `EDGE` (short codes are intentional). Rename the human description to "edge cell" | One docstring change on `shingo-core/domain/node_type.go:6` |
 
 Reconciliation is opportunistic adjacency — bundle these into the consistency refactor PRs as files get touched. They're not blockers; they're cleanup.
+
+### Units and casing
+
+| Term | Definition | Casing rule |
+|---|---|---|
+| **UoP** | Units of Production — the count of finished parts a bin/payload carries, or that a cell has consumed. The atomic quantity the threshold monitor sums and reorder thresholds fire on. | Always **"UoP"** in UI text — labels, headers, table columns, prose, toasts, tooltips. Never "UOP" or "uop". The all-caps form had drifted across pages (34× "UOP" vs 7× "UoP"); standardized 2026-07. **Display text only:** code identifiers, JSON keys, struct fields, and `data-*` attributes keep their existing casing (`UOPRemaining`, `uop_remaining`, `data-uop`) — renaming a serialized field is out of scope and would break the protocol. |
 
 ### Working principle
 

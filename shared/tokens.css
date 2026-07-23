@@ -65,8 +65,9 @@
   --info: #0dcaf0;
 
   /* Curated data-viz palette (P19 — supersedes P18 mono). ONE vibrant set for all
-   * charts: categorical order indigo → violet → sky → teal → amber → coral, plus
-   * green=good / coral=bad / amber=warn-ceiling-target semantics. Light variants
+   * charts: categorical order indigo → teal → violet → amber → sky → coral (D5 CVD
+   * fix — teal separates the indigo/violet pair that collapsed under protanopia),
+   * plus green=good / coral=bad / amber=warn-ceiling-target semantics. Light variants
    * are deepened to ~600-level so they stay legible on a light surface; the bright
    * board hues live in the dark block. --viz-primary (white / near-black,
    * theme-aware) backs hero numbers + chart text. */
