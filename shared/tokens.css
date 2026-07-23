@@ -120,6 +120,29 @@
   --status-blocked-dot:     #f85149;   /* red = alarm */
   --status-delivered-dot:   #3fb950;   /* green */
 
+  /* Map floor-plan palette — promoted here from dashboard.css / dashboard-map.js
+   * so the map's colours come from tokens rather than inline hex, and so the
+   * material layer is a second consumer of the same set. The map renders
+   * dark-only (the kiosk pins data-theme=dark), so these are single-value dark
+   * tokens with no light override. */
+  --map-floor:       #131a24;   /* floor plate, lifted off near-black */
+  --map-aisle:       #45566e;   /* travel network, receded steel */
+  --map-node:        #66768f;   /* waypoint dots */
+  --map-node-action: #7a8ba6;   /* action point, one step brighter than --map-node */
+  --map-bay-ring:    #3c4a5e;   /* empty charge/park outline */
+  --map-bay-glyph:   #6b7a90;   /* faint charge bolt on an empty bay */
+  --map-robot-idle:  #8b949e;   /* idle-moving robot, neutral grey */
+  --map-dock-charge: #e3b341;   /* occupied charge point, amber */
+  --map-dock-park:   #d98c4a;   /* occupied park point, clay */
+  /* Node-class categorical colours (were CLASS_PALETTE in dashboard-map.js). */
+  --map-class-1: #6cb0ff;
+  --map-class-2: #56d364;
+  --map-class-3: #e3b341;
+  --map-class-4: #d2a8ff;
+  --map-class-5: #ff9b72;
+  --map-class-6: #79c0ff;
+  --map-class-7: #f0883e;
+
   /* Dashboard / charts (mission-telemetry plan §4). These reference the
    * semantic tokens above, so they resolve per-theme without a dark-mode
    * override. --kpi-up / --kpi-down are aliases for delta arrows so they

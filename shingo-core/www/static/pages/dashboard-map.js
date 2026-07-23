@@ -74,7 +74,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // hue, so an occupied ring reads as a filled socket and an empty ring as an
   // available bay. Amber belongs to charging (a robot state, unchanged by the
   // P13 palette work — staged is now teal in the unified status scheme).
-  var DOCK_COLOR = { charge: '#e3b341', park: '#d98c4a' };
+  var DOCK_COLOR = { charge: cssVar('--map-dock-charge', '#e3b341'), park: cssVar('--map-dock-park', '#d98c4a') };
   var CHARGE_RING = cssVar('--map-bay-ring', '#3c4a5e');
   var PARK_RING = cssVar('--map-bay-ring', '#3c4a5e');
   // Active-node accent (P21): an order source/destination ("hot") node is marked
@@ -817,7 +817,10 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   }
 
   // ── node classes (e.g. advanced/action points vs bin locations) ────
-  var CLASS_PALETTE = ['#6cb0ff', '#56d364', '#e3b341', '#d2a8ff', '#ff9b72', '#79c0ff', '#f0883e'];
+  // Node-class colours read from the shared --map-class-* tokens (the hex is a
+  // defensive fallback, matching the other cssVar() reads in this file).
+  var CLASS_PALETTE = ['#6cb0ff', '#56d364', '#e3b341', '#d2a8ff', '#ff9b72', '#79c0ff', '#f0883e']
+    .map(function (h, i) { return cssVar('--map-class-' + (i + 1), h); });
   var classColors = {};
   function classOf(p) { return String(p.class_name || 'node'); }
   function buildClassColors() {
