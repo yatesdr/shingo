@@ -208,11 +208,42 @@ func (s *InventoryService) SystemUOPForPayload(ctx context.Context, payloads []s
 		return result, fmt.Errorf("system-uop: bins rows: %w", err)
 	}
 
-	// Bucket sum. Excludes empty payload_code (orphans / pre-upgrade).
-	bucketQuery := `SELECT payload_code, COALESCE(SUM(qty), 0) AS total
-		FROM lineside_buckets
-		WHERE payload_code IN (` + in + `)
-		GROUP BY payload_code`
+	// Bucket sum. Excludes empty payload_code (orphans / pre-upgrade) AND stranded
+	// buckets — parts captured under a PRIOR style that the node's current style no
+	// longer consumes. A stranded bucket is real inventory but it isn't available to
+	// the running style (it gets pulled, not consumed), so counting it toward on-hand
+	// inflates the payload's total and suppresses that payload's replenishment (the
+	// Springfield 74576 case: a 250-qty stranded bucket kept the total ≥ threshold so no
+	// empty was ever sent). Decision (2026-07-23): stranded buckets don't count; active
+	// lineside still does.
+	//
+	// "Stranded" is computed at query time from the plant-claims mirror
+	// (process_styles.is_active + style_claims), joined on core_node_name + payload_code
+	// — NOT on style_id, because the bucket carries the numeric edge style id while the
+	// mirror carries the style NAME (different namespaces, unjoinable). A bucket is
+	// stranded iff its node has an active style AND none of that node's active style
+	// claims cover the bucket's payload. If the node isn't in the mirror (no active
+	// style known — e.g. a not-yet-published or loader node), the bucket is left
+	// counted: exclude only what we can POSITIVELY prove stranded, never under-count on
+	// a missing mirror.
+	bucketQuery := `SELECT lb.payload_code, COALESCE(SUM(lb.qty), 0) AS total
+		FROM lineside_buckets lb
+		WHERE lb.payload_code IN (` + in + `)
+		  AND NOT (
+		    EXISTS (
+		      SELECT 1 FROM style_claims sc
+		      JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
+		      WHERE sc.core_node_name = lb.core_node_name AND ps.is_active
+		    )
+		    AND NOT EXISTS (
+		      SELECT 1 FROM style_claims sc
+		      JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
+		      WHERE sc.core_node_name = lb.core_node_name AND ps.is_active
+		        AND (sc.payload_code = lb.payload_code
+		             OR jsonb_exists(sc.allowed_payload_codes::jsonb, lb.payload_code))
+		    )
+		  )
+		GROUP BY lb.payload_code`
 	bucketRows, err := s.db.QueryContext(ctx, bucketQuery, args...)
 	if err != nil {
 		return result, fmt.Errorf("system-uop: buckets query: %w", err)
