@@ -522,6 +522,7 @@ function refreshBinRow(id) {
       if (b.locked) flags += '<span title="Locked by ' + escapeHtml(b.locked_by || '') + '">&#128274;</span>';
       if (b.claimed_by) flags += '<span title="Claimed by order #' + b.claimed_by + '">&#128230;</span>';
       if (!b.manifest_confirmed && b.payload_code) flags += '<span title="Manifest unconfirmed">&#9888;</span>';
+      if (b.anomaly_at) flags += '<span title="Counts refused — payload mismatch (anomaly); reconcile this bin" style="color:var(--danger)">&#9940;</span>';
       tds[off + 6].innerHTML = flags;
     })
     .catch(function(err) { console.error('refreshBinRow', id, err); });

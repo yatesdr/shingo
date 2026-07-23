@@ -145,6 +145,7 @@
           {{if .Locked}}<span title="Locked by {{.LockedBy}}">&#128274;</span>{{end}}
           {{if .ClaimedBy}}<span title="Claimed by order #{{deref .ClaimedBy}}">&#128230;</span>{{end}}
           {{if not .ManifestConfirmed}}{{if .PayloadCode}}<span title="Manifest unconfirmed">&#9888;</span>{{end}}{{end}}
+          {{if .AnomalyAt}}<span title="Counts refused — payload mismatch (anomaly); reconcile this bin" style="color:var(--danger)">&#9940;</span>{{end}}
           {{if index $.BinHasNotes .ID}}<span title="Has notes">&#128221;</span>{{end}}
         </td>
       </tr>
