@@ -199,7 +199,6 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   stroke: var(--map-aisle, #45566e);
 }
 .map-route-frozen { stroke-linecap: round; stroke-linejoin: round; }
-.map-route-blocked { stroke-linecap: round; stroke-linejoin: round; }
 
 /* Robots: moving = chevron with heading + pulsing halo; parked = compact
  * disc, no halo (heading is noise when docked, and haloless discs keep

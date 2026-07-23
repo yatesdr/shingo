@@ -765,6 +765,13 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // the comet always ran robot→delivery, i.e. opposite the AMR's motion on the
   // pickup leg.
   function orderLeg(o, r, src) {
+    // Authoritative physical signal first: the board carries `carrying` from the
+    // robot's lift/jack state (BoardOrder.Carrying ← LiftHeight). A loaded robot is on
+    // its carry leg wherever it is — this fixes the stale "arrow back to the supermarket"
+    // on multi-leg/complex orders, where the single source_node + geometry never latched.
+    // carrying false/absent falls through to the geometric inference below (covers
+    // non-lift robots and older Core that doesn't send the field).
+    if (o.carrying === true) return 'carry';
     if (!src) return 'carry';                        // no source known → carrying
     if (pickedUpByOrder[o.order_id]) return 'carry'; // latched at source earlier
     var pr = (graphScale > 0 ? graphScale : 1) * PICKUP_RADIUS;
@@ -805,14 +812,16 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     }));
   }
 
-  // Static lane (no flow): a stopped-mid-route robot freezes to a faint line;
-  // blocked/faulted shows a red line. Motion is reserved for actual movement.
+  // Static lane (no flow): a stopped-mid-route robot freezes to a faint line. A
+  // blocked/faulted robot is signalled on the ROBOT glyph itself (robotColor → red
+  // error state), so its lane draws the SAME neutral frozen treatment — the old loud
+  // red route line doubled the signal and was removed (2026-07).
   function drawStaticLane(svg, pts, color, robotR, opts) {
     svg.appendChild(svgEl('polyline', {
       points: pts.map(function (p) { return p[0] + ',' + p[1]; }).join(' '),
-      class: opts.blocked ? 'map-route-blocked' : 'map-route-frozen', fill: 'none',
+      class: 'map-route-frozen', fill: 'none',
       stroke: color, 'stroke-width': robotR * 0.22,
-      'stroke-opacity': opts.dimmed ? 0.22 : (opts.blocked ? 0.72 : 0.4)
+      'stroke-opacity': opts.dimmed ? 0.22 : 0.4
     }));
   }
 
@@ -1326,7 +1335,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       var leg = orderLeg(o, r, src);
       var legNode = (leg === 'fetch' && src) ? src : (dst || src);
       if (!legNode) return;
-      var color = blocked ? (STATUS_COLOR.blocked || '#f85149') : (STATUS_COLOR[o.status] || '#888');
+      var color = STATUS_COLOR[o.status] || '#888';
       var pts = legPts(r, legNode);
 
       var wantComet = !reduceMotion && !blocked && isMoving(r) && calmOK;
@@ -1338,12 +1347,12 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
           sig: o.order_id + '>' + leg + '>' + o.status
         });
       } else {
-        // A static lane only where it carries signal: a blocked/faulted alert
-        // (always), the reduced-motion motion-free fallback, or a robot frozen
-        // mid-route on a calm floor. A moving robot whose comet is suppressed by
-        // the busy-floor cap draws nothing — the floor stays "just robots".
+        // A static lane only where it carries signal: the reduced-motion fallback, a
+        // robot frozen mid-route on a calm floor, or a blocked/faulted robot. The block
+        // itself is shown by the RED ROBOT glyph, so a blocked robot's lane draws NEUTRAL
+        // grey (IDLE_MOVE_COLOR), not a loud red alert line.
         var showLane = blocked || reduceMotion || (!isMoving(r) && calmOK);
-        if (showLane) drawStaticLane(svg, pts, color, robotR, { blocked: blocked, dimmed: dimmed });
+        if (showLane) drawStaticLane(svg, pts, blocked ? IDLE_MOVE_COLOR : color, robotR, { dimmed: dimmed });
       }
       // Destination is marked by the node glyph's indigo accent (drawNode/hotNodes).
     });
