@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-07-22 — Inventory page rebuilt (v2), exception-first
+
+A rebuild of the inventory page around what needs attention, plus the backend
+to power it. The old bins table moved to /bins; consumption, produced, and
+cycle-time moved to the per-payload drill and to Missions.
+
+### Added / Changed
+
+- **New endpoint `GET /api/inventory/monitor-totals`** returns one row per
+  payload that is monitored or stocked: DB on-hand (bins + lineside split), the
+  threshold monitor's cached total (so the page can flag cache-vs-DB drift), the
+  configured threshold(s), and the catalog description. Backed by a new
+  `ThresholdMonitor.Snapshot()` (reads the monitor's in-memory totals and
+  bindings under its lock) and a `ReplenishmentHealth` rollup that joins the
+  monitor snapshot, the stocked-payload list, per-payload UoP, and descriptions.
+- **Lineside buckets now carry `updated_at`**, so the page can colour stale rows
+  (amber over 7 days, coral over 30) — a bucket untouched for a month is a ghost
+  that inflates the in-loop total and never fires a threshold.
+- **The inventory page** now leads with a Replenishment Health table (one row
+  per payload, worst first), a five-tile KPI strip, and a conditional alerts
+  banner; each health row expands to an explicit-save threshold editor (with a
+  suggest-then-apply calculator) and the payload's holding bins. Search filters
+  every section. The native pop-up dialogs, silently-dropped saves, and
+  fixed-colspan empty rows are gone.
+
+### Notes / follow-ups
+
+- The consumption drill shows window totals and days-of-cover rather than a
+  daily trend chart: consumption is recorded per part number, which does not map
+  one-to-one to a payload code, and there is no per-payload daily series
+  endpoint yet. The "show on map" button is a stub until the map's material
+  layer lands.
+- The Postgres-backed and race test suites were not run locally (they need WSL
+  or Docker); the build, vet, linter, and the monitor-snapshot unit test pass.
+
 ## 2026-07-22 — Map: zoom/pan and truthful route rendering
 
 Interactive framing and honest route animation on the dashboard map
