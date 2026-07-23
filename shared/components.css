@@ -116,6 +116,9 @@
   font-size: 0.8rem;
 }
 .full-width { width: 100%; }
+/* D12: numbers always get tabular-nums. Apply to any cell/figure showing a
+ * count, quantity, duration, or metric so digits align column-to-column. */
+.tnum { font-variant-numeric: tabular-nums; }
 
 .flex-end {
   display: flex;

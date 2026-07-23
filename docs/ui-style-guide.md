@@ -187,6 +187,48 @@ The original operator tokens used visual names. Rename to semantic:
    one hard line: indigo is **never a status hue** — status lives in the
    `--status-*-dot` tokens and the `.badge-*` classes; don't cross the streams.
 
+### Type scale (D12)
+
+Five named steps, defined in `tokens.css`, replace the ~12 ad-hoc `rem` sizes
+that had accreted across pages:
+
+| Token | Size | Use |
+|---|---|---|
+| `--font-xs` | 0.75rem (12px) | labels, captions, table chrome |
+| `--font-sm` | 0.875rem (14px) | secondary text, dense table cells |
+| `--font-base` | 1rem (16px) | body default |
+| `--font-lg` | 1.25rem (20px) | section titles / `h2` |
+| `--font-xl` | 1.5rem (24px) | page titles / `.ops-title` |
+
+Two weights only: `--fw-normal` (400) for labels and body, `--fw-bold` (600)
+for emphasis, headings, and numbers. Display heroes (KPI numbers at 2rem+) are
+**not** on this scale — they own their size via `.kpi-value` / `.ov-hero`.
+
+**Numbers always get `tabular-nums`.** Any count, quantity, duration, or metric
+uses `font-variant-numeric: tabular-nums` (the `.tnum` utility) so digits align
+column-to-column and don't jitter as live values tick.
+
+### Spacing scale (D13)
+
+A 4px-base scale (`--sp-1` … `--sp-6` = 4/8/12/16/24/32px) for gap, margin, and
+padding. Use these instead of the 0.3 / 0.35 / 0.45 / 0.55rem soup. The existing
+`.gap-*` / `.mt-*` / `.mb-*` utilities keep their values; new spacing references
+the tokens.
+
+### Motion (D18)
+
+Two durations and one easing, in `tokens.css`: `--dur-fast` (~120ms, hovers and
+small state flips), `--dur-base` (~250ms, transitions where something moves),
+and `--ease` (`cubic-bezier(0.4, 0, 0.2, 1)`).
+
+**Reduced-motion is law.** A `@media (prefers-reduced-motion: reduce)` block in
+`tokens.css` zeroes `--dur-fast` / `--dur-base`, so any animation that drives
+its timing from the tokens is disabled automatically for users who ask for it —
+no per-component opt-in. New animation MUST reference `var(--dur-*)` rather than
+a hardcoded `0.25s` to inherit this; existing hardcoded transitions migrate
+opportunistically. This is the mechanism behind "motion means motion" (see
+Visual principles).
+
 ## Status indicators
 
 ### Signal theme
@@ -455,6 +497,24 @@ order moved (see P19 CVD fix under law 2).
 **Tokens.** The `--viz-*` palette above plus `--viz-primary` (white / near-black,
 theme-aware — hero numbers + chart text). Series colors reference these, never
 inline hex; area fills use `color-mix(in srgb, <viz-token> 13%, transparent)`.
+
+### Sequential + diverging ramps (D14)
+
+The categorical palette tells *series* apart; two more ramps encode *magnitude*.
+Together they complete P19: **categorical + semantic + sequential + diverging.**
+
+- **Sequential** — `--viz-seq-1` … `--viz-seq-5`, a single-hue teal ramp for
+  magnitude/density surfaces (heatmaps, the congestion layer). `seq-1` is the
+  lowest value, `seq-5` the highest. Steps are ordered by luminance so the ramp
+  still reads in greyscale; on dark surfaces the direction inverts (higher =
+  brighter) via the dark-theme override.
+- **Diverging** — `--viz-div-neg-2 / -1`, `--viz-div-mid`, `--viz-div-pos-1 / -2`,
+  a teal ↔ coral ramp around a neutral gray for *signed* data (e.g. bin-sum
+  drift): teal = positive/above, coral = negative/below, mid = zero.
+
+Both ramps are chosen for monotonic luminance; validate any new step the same
+way the categorical set was (perceptual spacing, CVD check). Reference tokens by
+name — never inline the hex.
 
 **Reference implementation: `/overview`.** Throughput bars = indigo; success-rate
 line green + soft green fill (dashed bridge over thin buckets kept); duration P50
