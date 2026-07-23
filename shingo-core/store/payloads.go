@@ -18,6 +18,12 @@ func (db *DB) GetPayloadByCode(code string) (*payloads.Payload, error) {
 }
 func (db *DB) ListPayloads() ([]*payloads.Payload, error) { return payloads.List(db.DB) }
 
+// PayloadDescriptions returns a payload_code → description map for the catalog,
+// used by the inventory Replenishment Health rollup.
+func (db *DB) PayloadDescriptions() (map[string]string, error) {
+	return payloads.DescriptionsByCode(db.DB)
+}
+
 // GetLoadSequence returns the load_sequences registry entry for name (the
 // ordered binTask-name list a payload's advanced_load_sequence selects), or
 // (nil, nil) when no such sequence is registered.

@@ -29,6 +29,13 @@ func (db *DB) DeleteLinesideBucket(id int64) (int, error) {
 	return inventory.DeleteLinesideBucket(db.DB, id)
 }
 
+// DistinctStockedPayloads returns every payload_code with current stock on a
+// bin or lineside bucket. Feeds the Replenishment Health rollup so stocked but
+// unmonitored payloads still appear.
+func (db *DB) DistinctStockedPayloads() ([]string, error) {
+	return inventory.DistinctStockedPayloads(db.DB)
+}
+
 // SumBinUOP returns the signed total of bins.uop_remaining across all
 // bin rows. Item 13 invariant probe; signed because the SME lock
 // allows bins to go negative (overpack). Empty table returns 0.

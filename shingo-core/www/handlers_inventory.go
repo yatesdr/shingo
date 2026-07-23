@@ -58,6 +58,19 @@ func (h *Handlers) apiInventory(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, rows)
 }
 
+// apiInventoryMonitorTotals returns the per-payload Replenishment Health rollup:
+// DB on-hand (bins + lineside split), the threshold monitor's cached total (for
+// drift detection), and configured thresholds. Powers the inventory page's
+// Replenishment Health meters and drift chips (monitor cache ≠ DB truth).
+func (h *Handlers) apiInventoryMonitorTotals(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.engine.ReplenishmentHealth(r.Context())
+	if err != nil {
+		h.jsonError(w, "replenishment health: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, rows)
+}
+
 // apiBuckets returns every authoritative lineside_buckets row as JSON.
 // Powers the "Lineside Buckets" section on the operator-facing
 // inventory page. Round-3 Obs 10 added the Delete column on top of

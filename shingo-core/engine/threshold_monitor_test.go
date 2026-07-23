@@ -19,6 +19,53 @@ func newTestMonitor() *ThresholdMonitor {
 	}
 }
 
+func TestThresholdMonitor_Snapshot(t *testing.T) {
+	t.Parallel()
+	tm := newTestMonitor()
+	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{
+		{stationID: "st-1", coreNodeName: "MS-A", payloadCode: "WIDGET-A", threshold: 120, loaderID: 7},
+		{stationID: "st-1", coreNodeName: "SMN_015", payloadCode: "WIDGET-A", threshold: 96, loaderID: 7},
+	}
+	tm.uopCache["WIDGET-A"] = 139
+	// Monitored payload with no cached delta yet reports 0, not absent.
+	tm.thresholdsByPayload["WIDGET-B"] = []thresholdEntry{
+		{stationID: "st-2", coreNodeName: "MS-B", payloadCode: "WIDGET-B", threshold: 40, loaderID: 3},
+	}
+
+	byCode := map[string]MonitorSnapshotEntry{}
+	for _, s := range tm.Snapshot() {
+		byCode[s.PayloadCode] = s
+	}
+	if len(byCode) != 2 {
+		t.Fatalf("Snapshot returned %d payloads, want 2", len(byCode))
+	}
+	a, ok := byCode["WIDGET-A"]
+	if !ok {
+		t.Fatal("WIDGET-A missing from snapshot")
+	}
+	if a.CachedTotal != 139 {
+		t.Errorf("WIDGET-A cached = %d, want 139", a.CachedTotal)
+	}
+	if len(a.Bindings) != 2 {
+		t.Fatalf("WIDGET-A bindings = %d, want 2", len(a.Bindings))
+	}
+	maxThresh := 0
+	for _, b := range a.Bindings {
+		if b.Threshold > maxThresh {
+			maxThresh = b.Threshold
+		}
+		if b.LoaderID != 7 {
+			t.Errorf("WIDGET-A binding loader id = %d, want 7", b.LoaderID)
+		}
+	}
+	if maxThresh != 120 {
+		t.Errorf("WIDGET-A max binding threshold = %d, want 120", maxThresh)
+	}
+	if b := byCode["WIDGET-B"]; b.CachedTotal != 0 {
+		t.Errorf("WIDGET-B cached = %d, want 0 (no delta seeded yet)", b.CachedTotal)
+	}
+}
+
 func TestThresholdMonitor_DebounceWindow(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()

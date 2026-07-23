@@ -1,6 +1,8 @@
 package www
 
 import (
+	"context"
+
 	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/dispatch/eta"
@@ -81,6 +83,11 @@ type ServiceAccess interface {
 	// gated per-(process, style) verdicts plus claim/pool drill-in context and
 	// the replenishment queue. A pure read of the monitor snapshot.
 	SourceabilityPage() (engine.SourceabilityPageView, error)
+	// ReplenishmentHealth is the per-payload inventory rollup behind the
+	// inventory page: DB on-hand (bins + lineside split), the threshold monitor's
+	// cached total (for drift detection), and configured thresholds. A pure read
+	// of the monitor snapshot + inventory.
+	ReplenishmentHealth(ctx context.Context) ([]engine.PayloadHealth, error)
 	// ValidateAdvancedLoadSequence checks a payload's configured load-sequence
 	// task names against the RDS binTask keys of its assigned node locations. A
 	// pure read (no side effects): a missing key at a real location returns an

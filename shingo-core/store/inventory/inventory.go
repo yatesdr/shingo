@@ -175,6 +175,10 @@ type BucketRow struct {
 	PayloadCode string `json:"payload_code"`
 	Qty         int    `json:"qty"`
 	State       string `json:"state"`
+	// UpdatedAt is the last time this bucket row's qty changed. Surfaced so the
+	// inventory page can colour stale rows (amber >7d, coral >30d) — a bucket
+	// untouched for a month is a ghost candidate that inflates the in-loop total.
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // linesideBucketsSQL mirrors the bin-side inventory join (cell → lane →
@@ -197,7 +201,7 @@ SELECT
     COALESCE(n.zone, '') AS zone,
     b.station, b.style_id, b.part_number,
     COALESCE(b.payload_code, '') AS payload_code,
-    b.qty
+    b.qty, b.updated_at
 FROM lineside_buckets b
 LEFT JOIN nodes n ON n.name = b.core_node_name
 LEFT JOIN nodes lane ON lane.id = n.parent_id
@@ -227,7 +231,7 @@ func ListLinesideBuckets(db *sql.DB) ([]BucketRow, error) {
 		if err := rows.Scan(
 			&r.ID,
 			&r.GroupName, &r.LaneName, &r.NodeName, &r.Zone,
-			&r.Station, &r.StyleID, &r.PartNumber, &r.PayloadCode, &r.Qty,
+			&r.Station, &r.StyleID, &r.PartNumber, &r.PayloadCode, &r.Qty, &r.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan lineside_buckets row: %w", err)
 		}
@@ -235,6 +239,35 @@ func ListLinesideBuckets(db *sql.DB) ([]BucketRow, error) {
 		// returned here is active by definition.
 		r.State = "active"
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DistinctStockedPayloads returns every payload_code with current stock — a
+// non-empty payload on at least one bin (any lifecycle) or one lineside bucket.
+// Used to build the Replenishment Health rollup so payloads that are stocked but
+// have no threshold configured still appear (as "no threshold set") next to the
+// monitored ones.
+func DistinctStockedPayloads(db *sql.DB) ([]string, error) {
+	const q = `
+SELECT payload_code FROM (
+    SELECT DISTINCT payload_code FROM bins WHERE COALESCE(payload_code, '') <> ''
+    UNION
+    SELECT DISTINCT payload_code FROM lineside_buckets WHERE COALESCE(payload_code, '') <> ''
+) s
+ORDER BY payload_code`
+	rows, err := db.Query(q)
+	if err != nil {
+		return nil, fmt.Errorf("distinct stocked payloads: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("scan stocked payload: %w", err)
+		}
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }

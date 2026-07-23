@@ -133,6 +133,52 @@ func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
 	}
 }
 
+// MonitorBinding is one monitored (station, node, payload) threshold binding,
+// exported for the Snapshot read model behind the inventory Replenishment
+// Health page.
+type MonitorBinding struct {
+	StationID    string `json:"station_id"`
+	CoreNodeName string `json:"core_node_name"`
+	Threshold    int    `json:"threshold"`
+	LoaderID     int64  `json:"loader_id,omitempty"`
+}
+
+// MonitorSnapshotEntry is the monitor's live belief for one payload: its cached
+// in-loop UOP total and every threshold binding watching it.
+type MonitorSnapshotEntry struct {
+	PayloadCode string           `json:"payload_code"`
+	CachedTotal int              `json:"cached_total"`
+	Bindings    []MonitorBinding `json:"bindings"`
+}
+
+// Snapshot returns the monitor's current per-payload cached totals and binding
+// sets — a point-in-time read for the inventory Replenishment Health page. Taken
+// under the monitor lock; safe to call from an HTTP handler. It reports only the
+// monitor's in-memory belief (cached total); the caller compares it against DB
+// truth to surface drift.
+func (m *ThresholdMonitor) Snapshot() []MonitorSnapshotEntry {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]MonitorSnapshotEntry, 0, len(m.thresholdsByPayload))
+	for payload, bindings := range m.thresholdsByPayload {
+		bs := make([]MonitorBinding, 0, len(bindings))
+		for _, b := range bindings {
+			bs = append(bs, MonitorBinding{
+				StationID:    b.stationID,
+				CoreNodeName: b.coreNodeName,
+				Threshold:    b.threshold,
+				LoaderID:     b.loaderID,
+			})
+		}
+		out = append(out, MonitorSnapshotEntry{
+			PayloadCode: payload,
+			CachedTotal: m.uopCache[payload],
+			Bindings:    bs,
+		})
+	}
+	return out
+}
+
 // bindingKey composes the (station, core_node_name, payload) tuple
 // used to key per-binding state in the threshold monitor's debounce
 // and warm-up maps.
