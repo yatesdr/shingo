@@ -58,6 +58,16 @@ import (
 // absorb bursts from rapid bin-move / bucket-delta sequences.
 const thresholdDebounceWindow = 15 * time.Second
 
+// reconcileInterval is how often the monitor re-baselines every monitored payload's
+// cached total from authoritative DB on-hand (SystemUOPForPayload) and re-checks its
+// bindings. It bounds uopCache drift to one interval REGARDLESS of cause — a direct-DB
+// reseed/changeover, a bin reassign that emitted no consume-delta, a dropped event —
+// the class of bug the incremental delta path structurally cannot see (Springfield
+// 2026-07-23: bins reassigned in the DB froze the cache at 263/404 while DB truth went
+// to 0 and the binding never re-fired). Off the hot path; re-signals are bounded by the
+// debounce + the Edge never-2N seam + the resident-empty gate.
+const reconcileInterval = 60 * time.Second
+
 // warmUpFloor is the floor in the per-binding warm-up cap formula
 // max(2, ceil(threshold / C)). The capacity C is per-claim and isn't
 // trivially queryable from Core, so for Phase 1 we apply only the
@@ -202,7 +212,74 @@ func (m *ThresholdMonitor) Run(ctx context.Context) {
 		case <-time.After(3 * time.Second):
 		}
 		m.startupSweep(ctx)
+		m.runPeriodicReconcile(ctx)
 	}()
+}
+
+// runPeriodicReconcile re-baselines every monitored payload from authoritative DB
+// on-hand on a fixed interval and re-evaluates its bindings, until ctx is cancelled.
+// This is the drift backstop: the incremental delta path (OnBinUOPDelta /
+// OnBucketApplied) only sees inventory that leaves a payload via a consume-delta, so a
+// direct-DB write, a reassign that emitted no delta, or a dropped event leaves the
+// cached total stuck — and a stuck-high total suppresses ordering silently. Walking
+// SystemUOPForPayload on a timer corrects the cache within one interval no matter how
+// it drifted. Re-signals for a persistently-below binding are absorbed by the 15s
+// debounce, the Edge never-2N reservation seam, and the resident-empty gate, so this
+// cannot spam orders.
+func (m *ThresholdMonitor) runPeriodicReconcile(ctx context.Context) {
+	t := time.NewTicker(reconcileInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			m.reconcileAll(ctx)
+		}
+	}
+}
+
+// reconcileAll re-reads authoritative on-hand (SystemUOPForPayload) for every monitored
+// payload, overwrites the cached total, and re-checks its bindings — the
+// startupSweep/engagePayloads re-baseline body, on a timer, over the single source of
+// truth. The monitored set + bindings are snapshotted under the lock; the DB reads (a
+// grouped SUM per payload) run off the lock to keep it uncontended.
+func (m *ThresholdMonitor) reconcileAll(ctx context.Context) {
+	if m.eng == nil || m.eng.inventoryService == nil {
+		return
+	}
+	m.mu.Lock()
+	payloads := make([]string, 0, len(m.thresholdsByPayload))
+	for p := range m.thresholdsByPayload {
+		payloads = append(payloads, p)
+	}
+	m.mu.Unlock()
+	if len(payloads) == 0 {
+		return
+	}
+	for _, payload := range payloads {
+		if ctx.Err() != nil {
+			return
+		}
+		uop, err := m.eng.inventoryService.SystemUOPForPayload(ctx, []string{payload})
+		if err != nil {
+			m.eng.logFn("threshold_monitor: periodic reconcile SystemUOPForPayload(%s): %v", payload, err)
+			continue
+		}
+		var total int
+		if len(uop.Counts) > 0 {
+			total = uop.Counts[0].TotalUOP
+		}
+		m.mu.Lock()
+		prev, had := m.uopCache[payload]
+		m.uopCache[payload] = total
+		bindings := m.thresholdsByPayload[payload]
+		m.mu.Unlock()
+		if had && prev != total {
+			m.eng.logFn("threshold_monitor: periodic reconcile corrected drift payload=%s cache=%d -> db=%d", payload, prev, total)
+		}
+		m.checkBindings(bindings, total, "periodic_reconcile")
+	}
 }
 
 // startupSweep iterates every (loader, payload) with threshold > 0,

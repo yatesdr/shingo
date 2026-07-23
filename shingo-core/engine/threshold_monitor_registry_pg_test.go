@@ -187,6 +187,69 @@ func TestThresholdMonitor_OnThresholdChanges_ReBaselinesFromDB(t *testing.T) {
 	}
 }
 
+// TestThresholdMonitor_PeriodicReconcile_CorrectsDriftAndFires is the drift backstop:
+// the incremental delta path can't see inventory that leaves a payload without a
+// consume-delta (direct-DB reassign/reseed, dropped event), so the cached total sticks
+// high and silently suppresses ordering. The periodic reconcile must re-read DB truth,
+// correct the cache, and fire the signal that was being withheld. This is the
+// Springfield 2026-07-23 shape (cache stuck at 263/404 while DB truth went to 0).
+func TestThresholdMonitor_PeriodicReconcile_CorrectsDriftAndFires(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+
+	const (
+		stationID = "station-reconcile"
+		loader    = "MS-LOADER-RECON"
+		payload   = "P-RECON"
+	)
+
+	// Binding at threshold 50; no bins of this payload exist → DB truth = 0.
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleConsume,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 50,
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	// Inject the drifted state directly: the payload is monitored and its cached total
+	// is stuck ABOVE threshold (999) — a reassign removed the stock with no consume-
+	// delta, so the binding never fires even though DB truth is 0. No prior fire here,
+	// so there is no debounce to fight.
+	m := eng.thresholdMonitor
+	m.mu.Lock()
+	m.thresholdsByPayload[payload] = []thresholdEntry{{
+		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 50,
+	}}
+	m.uopCache[payload] = 999
+	m.mu.Unlock()
+
+	preMsgs, _ := db.ListPendingOutbox(50)
+	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+
+	m.reconcileAll(context.Background())
+
+	// Cache re-baselined to DB truth (0), not left at the drifted 999.
+	m.mu.Lock()
+	cached := m.uopCache[payload]
+	m.mu.Unlock()
+	if cached != 0 {
+		t.Errorf("uopCache[%s] = %d after reconcile, want 0 (DB truth)", payload, cached)
+	}
+
+	// And the withheld signal fires now that the cache reflects reality.
+	msgs, _ := db.ListPendingOutbox(50)
+	if countLoopBelowThresholdSignals(msgs, stationID) <= preCount {
+		t.Fatalf("expected a LoopBelowThreshold signal after reconcile corrected the drifted cache (999 -> 0); outbox=%v", outboxSummary(msgs))
+	}
+	if hit := findLoopBelowThresholdSignal(t, msgs, stationID); hit != nil && hit.CurrentUOP != 0 {
+		t.Errorf("signal CurrentUOP = %d, want 0 (DB truth, not the drifted 999)", hit.CurrentUOP)
+	}
+}
+
 // TestThresholdMonitor_NegativeTotal_EmitsNoSignal is the end-to-end half of
 // the validity floor: with a negative in-loop total, NOTHING reaches the
 // outbox. The unit-level counterpart
