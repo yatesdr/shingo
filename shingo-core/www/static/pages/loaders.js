@@ -1,4 +1,4 @@
-import { apiGet, apiPost, delegateActions, escapeHtml, toast } from '/static/app.js';
+import { apiGet, apiPost, delegateActions, escapeHtml, toast, uiConfirm } from '/static/app.js';
 
 // Core-owned bin loaders, rendered as drag-and-drop containers on the Nodes grid
 // — the same mental model as node groups/lanes (nodes-supermarket.js). The modal
@@ -89,8 +89,8 @@ function setReplenishmentOptions(preferred) {
     hint = 'Unloaders drain today; a consume threshold mode is wired but dormant.';
   } else {
     opts = [['operator', 'Operator-driven — operator stages from the board (no auto-fire)', false],
-            ['threshold', 'Auto — UOP threshold (Core auto-fires an empty when UOP drops)', false]];
-    hint = 'Auto fires when lineside UOP drops below the per-payload threshold (set on the Inventory page); operator-driven never auto-fires.';
+            ['threshold', 'Auto — UoP threshold (Core auto-fires an empty when UoP drops)', false]];
+    hint = 'Auto fires when lineside UoP drops below the per-payload threshold (set on the Inventory page); operator-driven never auto-fires.';
   }
   sel.innerHTML = opts.map(function (o) {
     const dis = o[2] ? ' disabled' : '';
@@ -168,7 +168,7 @@ function clearLoaderInbound() {
 }
 
 // submitLoader handles both create and edit (driven by the hidden loader-edit-id).
-function submitLoader() {
+async function submitLoader() {
   const editId = val('loader-edit-id');
   const name = val('loader-name');
   if (!name) { result('Name is required', true); return; }
@@ -192,7 +192,7 @@ function submitLoader() {
     // Changing layout on a loader that already has members would orphan them, so confirm
     // and drop them first (the operator opted in).
     if (eitem && newLayout !== eitem.loader.layout && (homes.length + pls.length) > 0) {
-      if (!window.confirm('Changing layout to "' + newLayout + '" will drop this loader’s ' + homes.length + ' node(s) and ' + pls.length + ' payload(s). Continue?')) {
+      if (!await uiConfirm('Changing layout to "' + newLayout + '" will drop this loader’s ' + homes.length + ' node(s) and ' + pls.length + ' payload(s). Continue?')) {
         setVal('loader-layout', eitem.loader.layout);
         result('Cancelled — layout unchanged', false);
         return;
@@ -370,7 +370,7 @@ function boxHtml(item) {
   const groupsHtml = loaderGroupsHtml(l);
   const hint = isAuth
     ? (dedicated
-      ? '<div class="loader-hint">Drag node tiles here · ⠿ reorder · × remove · pick a payload per spot (shows as a badge). UOP threshold lives on the Inventory page.</div>'
+      ? '<div class="loader-hint">Drag node tiles here · ⠿ reorder · × remove · pick a payload per spot (shows as a badge). UoP threshold lives on the Inventory page.</div>'
       : '<div class="loader-hint">Shared-window loader — drag node tiles in above as its <strong>windows</strong> (where the operator loads); set its shared payloads below. The group zones are the source it pulls from and the supermarket it feeds.</div>')
     : '';
   return '<div class="loader-box" data-loader-id="' + l.id + '" data-layout="' + escapeHtml(l.layout) + '">'
@@ -463,7 +463,7 @@ function payloadChipsHtml(item) {
   // panel stays OPEN and nothing round-trips until "Save payloads" commits the diff in
   // one batch (set-payload for adds, remove-payload for removes, one refresh after).
   html += '<details class="loader-pc-checklist" style="margin-top:4px">'
-    + '<summary style="cursor:pointer;color:#0a8f6a">Select payloads ▾</summary>'
+    + '<summary style="cursor:pointer;color:var(--primary)">Select payloads ▾</summary>'
     + '<div class="loader-pc-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;margin-top:4px;display:flex;flex-direction:column;gap:2px">';
   html += payloadCodes.map(function (c) {
     return '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem">'

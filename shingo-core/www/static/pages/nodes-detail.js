@@ -408,7 +408,7 @@ function loadInventory(nodeID) {
         return;
       }
       countEl.textContent = items.length;
-      var html = '<table style="font-size:0.8rem"><thead><tr><th>Bin</th><th>Type</th><th>Status</th><th>Contents</th><th>UOP</th></tr></thead><tbody>';
+      var html = '<table style="font-size:0.8rem"><thead><tr><th>Bin</th><th>Type</th><th>Status</th><th>Contents</th><th>UoP</th></tr></thead><tbody>';
       items.forEach(function(b) {
         var binBadges = '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>';
         if (b.claimed_by) binBadges += ' <span class="badge badge-claimed">claimed</span>';
@@ -601,8 +601,8 @@ function checkOccupancy() {
       items.forEach(function(item) {
         var cls = '';
         var status = 'OK';
-        if (item.discrepancy === 'fleet_only') { cls = ' style="background:#fff3cd"'; status = 'Fleet Only'; }
-        else if (item.discrepancy === 'shingo_only') { cls = ' style="background:#f8d7da"'; status = 'Shingo Only'; }
+        if (item.discrepancy === 'fleet_only') { cls = ' class="discrepancy-fleet-only"'; status = 'Fleet Only'; }
+        else if (item.discrepancy === 'shingo_only') { cls = ' class="discrepancy-shingo-only"'; status = 'Shingo Only'; }
         var occupied = item.fleet_occupied === null ? '-' : (item.fleet_occupied ? 'Yes' : 'No');
         html += '<tr' + cls + '><td>' + escapeHtml(item.location_id) + '</td><td>' + escapeHtml(item.node_name || '-') + '</td><td>' + occupied + '</td><td>' + (item.in_shingo ? 'Yes' : 'No') + '</td><td>' + status + '</td></tr>';
       });

@@ -324,12 +324,12 @@ import { onSSE } from '/static/shared/utils.js';
 
     if (isFire) {
       statusEl.textContent = 'ACTIVE';
-      statusEl.style.color = '#dc2626';
+      statusEl.style.color = 'var(--danger)';
       if (btnActivate) btnActivate.style.display = 'none';
       if (btnClear) btnClear.style.display = 'inline-block';
     } else {
       statusEl.textContent = 'Clear';
-      statusEl.style.color = '#16a34a';
+      statusEl.style.color = 'var(--success)';
       if (btnActivate) btnActivate.style.display = 'inline-block';
       if (btnClear) btnClear.style.display = 'none';
     }
@@ -416,14 +416,14 @@ import { onSSE } from '/static/shared/utils.js';
           var ctrlTemp = r.controller && r.controller.temp_c ? r.controller.temp_c.toFixed(1) : '-';
           var station = r.position ? r.position.current_station || '-' : '-';
           var status = r.task ? r.task.status : '-';
-          var statusColor = '';
-          if (status === 'ready') statusColor = 'color:#16a34a;';
-          else if (status === 'busy') statusColor = 'color:#2563eb;';
-          else if (status === 'offline') statusColor = 'color:#9ca3af;';
-          else if (status === 'error') statusColor = 'color:#dc2626;';
+          // Track E: robot task state → shared .badge-robot-* class (no inline hexes).
+          var robotStateClasses = { ready: 'badge-robot-ready', busy: 'badge-robot-busy', offline: 'badge-robot-offline', error: 'badge-robot-error' };
+          var statusCell = status === '-'
+            ? '-'
+            : '<span class="badge ' + (robotStateClasses[status] || '') + '">' + escapeHtml(status) + '</span>';
           tr.innerHTML =
             '<td><strong>' + escapeHtml(r.vehicle_id || '') + '</strong></td>' +
-            '<td style="' + statusColor + '">' + escapeHtml(status) + '</td>' +
+            '<td>' + statusCell + '</td>' +
             '<td>' + batteryPct + '</td>' +
             '<td>' + voltage + '</td>' +
             '<td>' + odoTotal + '</td>' +
