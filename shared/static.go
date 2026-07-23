@@ -25,7 +25,7 @@ import (
 	"io/fs"
 )
 
-//go:embed *.css *.js
+//go:embed *.css *.js *.svg
 var assets embed.FS
 
 // Files is the read-only filesystem of shared UI assets, suitable for

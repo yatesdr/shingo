@@ -120,6 +120,31 @@
  * count, quantity, duration, or metric so digits align column-to-column. */
 .tnum { font-variant-numeric: tabular-nums; }
 
+/* ─── Icons (D17) ────────────────────────────────────────────────────────
+ * Vendored Lucide sprite (shared/icons.svg), inlined once per page. Icons are
+ * MONOCHROME currentColor only: the sprite symbols carry no stroke/fill, so
+ * .icon supplies them here — change the text color and the icon follows. Use:
+ *   <svg class="icon" aria-hidden="true"><use href="#icon-search"></use></svg>
+ * Icon-only controls MUST carry an aria-label; icons accompany a text label,
+ * they never replace status text. */
+.svg-sprite { display: none; }
+.icon {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  vertical-align: -0.125em;   /* optical baseline alignment with adjacent text */
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;                 /* never shrink inside a flex button/cell */
+}
+/* Fixed sizes for buttons + table cells (1em default is for inline-with-text). */
+.icon-16 { width: 16px; height: 16px; }
+.icon-18 { width: 18px; height: 18px; }
+.icon-20 { width: 20px; height: 20px; }
+
 .flex-end {
   display: flex;
   justify-content: flex-end;

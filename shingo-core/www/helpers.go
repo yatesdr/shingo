@@ -4,14 +4,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"shingo/protocol"
+	"shingo/shared"
 	"shingocore/fleet"
 )
+
+// iconSpriteHTML is the vendored Lucide sprite (shared/icons.svg), read once at
+// init and injected into layout.html via {{iconSprite}} so page markup can
+// reference symbols with <use href="#icon-…">. It's a trusted first-party asset,
+// so template.HTML (not user data) is safe here.
+var iconSpriteHTML = func() template.HTML {
+	b, err := fs.ReadFile(shared.Files, "icons.svg")
+	if err != nil {
+		return ""
+	}
+	return template.HTML(b)
+}()
 
 func (h *Handlers) jsonOK(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -55,8 +69,9 @@ func (h *Handlers) parseJSON(w http.ResponseWriter, r *http.Request, dst any) bo
 
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
-		"simMode":   simModeEnabled, // dev speed top-strip gate; false in prod builds
-		"cacheBust": func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
+		"simMode":    simModeEnabled, // dev speed top-strip gate; false in prod builds
+		"cacheBust":  func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
+		"iconSprite": func() template.HTML { return iconSpriteHTML },
 		"timeAgo": func(t time.Time) string {
 			if t.IsZero() {
 				return ""

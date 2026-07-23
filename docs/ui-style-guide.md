@@ -578,6 +578,50 @@ holding bins and dims the others; the material layer's `?highlight=` deep-link
 reuses the same machinery. Dim the peers (lower opacity / desaturate) — do not
 grey out the whole canvas. The context stays readable; the focus just wins.
 
+## Icons (D17)
+
+**No emoji, ever.** Emoji render inconsistently across platforms, can't take
+`currentColor`, and drift from the monochrome look. Use a vendored icon or plain
+text — never a pictographic unicode character.
+
+### The sprite
+
+A ~20-icon subset of **Lucide** (ISC license) is vendored as a single SVG symbol
+sprite at `shared/icons.svg` (`go:embed`), inlined **once per page** — Core
+injects it into `layout.html` via the `{{iconSprite}}` template func so
+`<use href="#icon-…">` resolves same-document. Reference an icon:
+
+```html
+<svg class="icon" aria-hidden="true"><use href="#icon-search"></use></svg>
+```
+
+Rules:
+
+- **Monochrome, `currentColor` only.** The sprite symbols carry no stroke/fill;
+  the `.icon` class (components.css) supplies `stroke: currentColor` — set the
+  text color and the icon follows. Never hardcode an icon color.
+- **Sizing:** `1em` when inline with text (the `.icon` default), fixed
+  **16–20px** in buttons and table cells (`.icon-16` / `.icon-18` / `.icon-20`).
+- **Icon-only controls carry an `aria-label`.** A bare icon button is invisible
+  to a screen reader without one.
+- **Icons accompany labels; they never replace status text.** An icon reinforces
+  a word, it isn't the sole carrier of meaning — the label / status text stays.
+
+Starter set: search, refresh, close, chevron-right/down, arrow-up-right,
+sort-asc/desc, lock, box, map-pin, layers, zoom-in/out, crosshair,
+alert-triangle, info, check, trash, pencil, download, battery. Add one by copying
+the Lucide 24×24 geometry into a new `<symbol id="icon-…">` (geometry only — no
+per-shape stroke/fill, so it inherits `.icon`).
+
+### Drift test
+
+`TestNoEmojiInTemplatesAndPageJS` (in both `shingo-core/www` and
+`shingo-edge/www`) fails CI on any emoji in a template or page-JS file. The
+shared detector `shared.IsEmoji` draws the line: the supplementary emoji planes
+and any VS16-qualified symbol are rejected; the monochrome geometric glyphs the
+surfaces use as affordances (arrows, chevrons, bullets, `✓`/`✗`, the bare `⚠`)
+are allowed. First catch: a lock emoji in `bins.js`.
+
 ## Modals
 
 ### One mechanism
@@ -1221,6 +1265,9 @@ Extend this pattern to:
 3. **Claim role enum** — same.
 4. **Token name presence** — if a CSS file references `var(--foo)`, `--foo`
    exists in `tokens.css`.
+5. **No emoji** (D17, shipped) — `TestNoEmojiInTemplatesAndPageJS` in both
+   `www` packages fails on any emoji in a template or page-JS file, via
+   `shared.IsEmoji`. See the Icons section.
 
 Each test is ~30-50 LOC of Go reading source files literally with a regex.
 Don't introduce a code generator; the test pattern is sufficient for the
