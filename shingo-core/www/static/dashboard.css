@@ -190,6 +190,21 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 .map-comet-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .map-route-base { stroke-linecap: round; stroke-linejoin: round; }
 .map-comet-head { stroke: none; }
+/* Fetch (empty-run) comet head: hollow outline. Stroke color is set inline
+ * (per-status), so this class must NOT force a stroke — it only ensures the
+ * `.map-comet-head { stroke: none }` rule above doesn't apply. */
+.map-comet-head-hollow { fill: none; }
+
+/* B2 route states — all STATIC (no flow); only a moving robot animates (D7).
+ * Intent lines recede to neutral aisle steel (structure recedes); frozen and
+ * blocked lanes carry their status hue inline at low opacity. */
+.map-route-intent {
+  stroke-linecap: round;
+  stroke-dasharray: 2 6;
+  stroke: var(--map-aisle, #45566e);
+}
+.map-route-frozen { stroke-linecap: round; stroke-linejoin: round; }
+.map-route-blocked { stroke-linecap: round; stroke-linejoin: round; }
 
 /* Robots: moving = chevron with heading + pulsing halo; parked = compact
  * disc, no halo (heading is noise when docked, and haloless discs keep
@@ -380,4 +395,31 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   border-radius: 6px;
   opacity: 0.85;
   overflow: hidden;
+  /* B1: click-to-jump. `all` makes the whole box clickable (not just painted
+   * marks); the click handler maps the point to world coords via the CTM. */
+  cursor: pointer;
+  pointer-events: all;
 }
+
+/* B1: recenter control — restores auto-follow. Hidden until the user takes
+ * manual control (wheel-zoom / drag-pan add .is-active). */
+.map-recenter {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 5;
+  display: none;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  color: var(--text-strong, #e6edf3);
+  background: color-mix(in srgb, var(--elev-raised, #1f2733) 90%, transparent);
+  border: 1px solid var(--border, #30363d);
+  border-radius: var(--radius, 6px);
+  cursor: pointer;
+}
+.map-recenter.is-active { display: inline-flex; }
+.map-recenter:hover { background: var(--elev-raised, #1f2733); }
+/* Grab cursor while drag-panning. */
+.map-svg-wrap.map-dragging { cursor: grabbing; }

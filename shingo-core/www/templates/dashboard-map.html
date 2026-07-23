@@ -6,11 +6,14 @@
   <title>{{.Dashboard.Name}} — Shingo Map</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/shared/tokens.css?v={{cacheBust}}">
+  <link rel="stylesheet" href="/static/shared/components.css?v={{cacheBust}}">
   <link rel="stylesheet" href="/static/dashboard.css?v={{cacheBust}}">
 </head>
 <body class="dash-kiosk"
       data-dashboard-id="{{.Dashboard.ID}}"
       data-dashboard-kind="{{.Dashboard.Kind}}">
+  {{/* D17: icon sprite, inlined once so <use href="#icon-…"> resolves. */}}
+  {{iconSprite}}
 
   <header class="dash-header">
     <h1 class="dash-title">{{.Dashboard.Name}}</h1>
@@ -28,6 +31,9 @@
       <div class="board-empty" id="map-empty" style="display:none">
         No scene data — sync nodes &amp; scene from the fleet, then reload.
       </div>
+      <button type="button" class="map-recenter" id="map-recenter" title="Recenter and resume auto-follow">
+        <svg class="icon icon-16" aria-hidden="true"><use href="#icon-crosshair"></use></svg>Recenter
+      </button>
     </div>
     <aside class="map-rail">
       <section class="rail-motion">

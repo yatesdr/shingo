@@ -53,6 +53,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   var STATUS_COLOR = {
     in_transit: cssVar('--status-in-transit-dot', '#34c3e0'),
     staged: cssVar('--status-staged-dot', '#15b8a0'),
+    reshuffling: cssVar('--status-reshuffling-dot', '#df6fb4'),
     dispatched: cssVar('--status-dispatched-dot', '#4f9bff'),
     blocked: cssVar('--status-blocked-dot', '#f85149'),
     acknowledged: cssVar('--status-pending-dot', '#8b95a5'),
@@ -118,6 +119,30 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // comets) so a busy floor doesn't become 20 arrows fighting for attention;
   // clicking a robot still lights its comet. Tune to taste.
   var COMET_LIMIT = 12;
+
+  // ── manual view (B1: wheel-zoom + drag-pan break auto-follow) ───────
+  // Once the user zooms or pans, `userView` latches true and computeView()
+  // stops re-framing to the active-order ROI — the operator keeps the view they
+  // set. The recenter control (and re-enabling follow) clears it. Zoom/pan write
+  // `view` directly and refresh the live viewBox + minimap without the ease
+  // loop, so there is no fight between the user's gesture and auto-framing.
+  var userView = false;
+  var forceReframe = false;  // recenter sets this so adoptViewTarget eases past hysteresis
+  var dragging = false;      // left-button drag-pan in progress
+  var dragLastX = 0, dragLastY = 0;
+  var dragMoved = false;     // exceeded the click/drag threshold → suppress the focus click
+  var suppressClick = false; // set on drag end so the trailing click doesn't focus a robot
+
+  // ── pickup-latch for leg-aware comets (B2) ─────────────────────────
+  // The board payload exposes NO explicit picked-up/leg field (see BoardOrder in
+  // engine_board.go — only status/source/delivery/current_station), and no
+  // protocol status distinguishes the fetch leg from the carry leg (in_transit
+  // spans both). So the current leg is INFERRED from robot↔source proximity and
+  // LATCHED: once the robot reaches its source (bin pickup) during an order it is
+  // "carrying" for the rest of that order; before that it is "fetching". Latch
+  // per order_id, pruned when the order leaves the active set.
+  var pickedUpByOrder = {};   // order_id → true once the robot has reached source
+  var PICKUP_RADIUS = 0.9;    // × graphScale (world units) — "at the source node"
 
   // ── activity feed + status rail ────────────────────────────────────
   var activityFeed = [];   // [{text, level, ts}] — newest first
@@ -331,9 +356,149 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     viewEaseRAF = requestAnimationFrame(tickEase);
   }
 
+  // ── manual view controls (B1) ──────────────────────────────────────
+  // Map a client pixel to view (screen/proj) space. Uses the scene SVG's
+  // screen CTM for an exact inverse regardless of preserveAspectRatio; falls
+  // back to a linear container-rect map (view is aspect-corrected, so exact).
+  function clientToWorld(cx, cy) {
+    var s = document.querySelector('#map-svg-wrap .map-svg');
+    if (s && s.getScreenCTM) {
+      var m = s.getScreenCTM();
+      if (m) {
+        var inv = m.inverse();
+        return { x: cx * inv.a + cy * inv.c + inv.e, y: cx * inv.b + cy * inv.d + inv.f };
+      }
+    }
+    var host = document.getElementById('map-svg-wrap');
+    if (!host || !view) return null;
+    var rect = host.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    return {
+      x: view.minX + ((cx - rect.left) / rect.width) * view.w,
+      y: view.minY + ((cy - rect.top) / rect.height) * view.h
+    };
+  }
+
+  // Clamp the manual zoom to a sane band around the full-plant extent so the
+  // user can't zoom into the void or way past the whole plant.
+  function clampManualView() {
+    if (!view || !fullPlantView) return;
+    var fpExt = Math.max(fullPlantView.w, fullPlantView.h);
+    var curExt = Math.max(view.w, view.h);
+    var clamped = Math.max(fpExt * 0.08, Math.min(fpExt * 1.25, curExt));
+    if (clamped !== curExt) {
+      var sc = clamped / curExt;
+      var cx = view.minX + view.w / 2, cy = view.minY + view.h / 2;
+      view.w *= sc; view.h *= sc;
+      view.minX = cx - view.w / 2; view.minY = cy - view.h / 2;
+    }
+  }
+
+  function applyManualView() {
+    if (viewEaseRAF) { cancelAnimationFrame(viewEaseRAF); viewEaseRAF = 0; }
+    clampManualView();
+    updateLiveViewBox();
+    updateMinimapDynamic();
+    var btn = document.getElementById('map-recenter');
+    if (btn) btn.classList.add('is-active');
+  }
+
+  // Zoom toward a client point, keeping the world point under the cursor fixed.
+  function zoomAt(cx, cy, factor) {
+    if (!view) return;
+    var w = clientToWorld(cx, cy);
+    if (!w) return;
+    userView = true;
+    view = {
+      minX: w.x - (w.x - view.minX) * factor,
+      minY: w.y - (w.y - view.minY) * factor,
+      w: view.w * factor,
+      h: view.h * factor
+    };
+    applyManualView();
+  }
+
+  // Recenter: drop manual mode and ease from the current view back to the ROI.
+  function recenterView() {
+    if (!userView) return;
+    userView = false;
+    forceReframe = true;
+    computeView(); // recomputes ROI + adoptViewTarget (forceReframe eases to it)
+  }
+
+  // Minimap click-to-jump: center the current view on the clicked world point
+  // (stays in manual mode — it's navigation, not a follow-restore; recenter is
+  // the follow-restore).
+  function jumpToWorld(cx, cy) {
+    if (!view || !minimapEl || !minimapEl.getScreenCTM) return;
+    var m = minimapEl.getScreenCTM();
+    if (!m) return;
+    var inv = m.inverse();
+    var wx = cx * inv.a + cy * inv.c + inv.e;
+    var wy = cx * inv.b + cy * inv.d + inv.f;
+    userView = true;
+    view.minX = wx - view.w / 2;
+    view.minY = wy - view.h / 2;
+    applyManualView();
+  }
+
+  var viewControlsWired = false;
+  function wireViewControls() {
+    if (viewControlsWired) return;
+    var host = document.getElementById('map-svg-wrap');
+    if (!host) return;
+    viewControlsWired = true;
+
+    host.addEventListener('wheel', function (e) {
+      if (!view) return;
+      e.preventDefault();
+      // Scroll up → zoom in (extent shrinks); down → zoom out. Gentle per-notch.
+      var factor = e.deltaY > 0 ? 1.12 : 1 / 1.12;
+      zoomAt(e.clientX, e.clientY, factor);
+    }, { passive: false });
+
+    host.addEventListener('mousedown', function (e) {
+      if (e.button !== 0 || !view) return;
+      dragging = true; dragMoved = false;
+      dragLastX = e.clientX; dragLastY = e.clientY;
+      host.classList.add('map-dragging');
+    });
+    window.addEventListener('mousemove', function (e) {
+      if (!dragging || !view) return;
+      var host2 = document.getElementById('map-svg-wrap');
+      if (!host2) return;
+      var rect = host2.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return;
+      var dxp = e.clientX - dragLastX, dyp = e.clientY - dragLastY;
+      dragLastX = e.clientX; dragLastY = e.clientY;
+      if (Math.abs(dxp) + Math.abs(dyp) > 2) dragMoved = true;
+      userView = true;
+      view.minX -= dxp * (view.w / rect.width);
+      view.minY -= dyp * (view.h / rect.height);
+      applyManualView();
+    });
+    window.addEventListener('mouseup', function () {
+      if (!dragging) return;
+      dragging = false;
+      host.classList.remove('map-dragging');
+      if (dragMoved) suppressClick = true; // swallow the trailing focus click
+    });
+
+    var recenter = document.getElementById('map-recenter');
+    if (recenter) recenter.addEventListener('click', function () { recenterView(); });
+  }
+
   // Hysteresis: only adopt a new target if the shift is meaningful.
   // Prevents per-SSE-tick robot micro-jitter from nudging the frame constantly.
   function adoptViewTarget(candidate) {
+    // Recenter (B1): ease from the current manual view back to the ROI,
+    // ignoring the jitter hysteresis so a deliberate recenter always animates.
+    if (forceReframe) {
+      forceReframe = false;
+      viewTarget = candidate;
+      startEase();
+      return;
+    }
     if (!viewTarget) {
       viewTarget = candidate;
       view = candidate; // snap on first paint — no animation for the initial frame
@@ -461,6 +626,10 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       }
     }
 
+    // B1: while the user drives the view, keep the full-plant reference (minimap +
+    // orientation, computed above) fresh but DON'T re-frame — leave `view` where
+    // the operator put it. Recenter clears userView and calls computeView again.
+    if (userView) return;
     adoptViewTarget({ minX: roiMinX, minY: roiMinY, w: roiW, h: roiH });
   }
 
@@ -587,6 +756,66 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     return pts;
   }
 
+  // ── leg-aware routing helpers (B2) ─────────────────────────────────
+  // orderLeg infers whether the robot is FETCHING (heading to source, empty) or
+  // CARRYING (heading to delivery, loaded). Per the pickup-latch note at the top
+  // of the module: no payload field or protocol status distinguishes the legs,
+  // so we latch on robot↔source proximity — once the robot reaches source it is
+  // carrying for the rest of the order. This fixes the reversed-arrow bug where
+  // the comet always ran robot→delivery, i.e. opposite the AMR's motion on the
+  // pickup leg.
+  function orderLeg(o, r, src) {
+    if (!src) return 'carry';                        // no source known → carrying
+    if (pickedUpByOrder[o.order_id]) return 'carry'; // latched at source earlier
+    var pr = (graphScale > 0 ? graphScale : 1) * PICKUP_RADIUS;
+    var dxs = r.x - src.x, dys = r.y - src.y;
+    if (dxs * dxs + dys * dys <= pr * pr) {           // reached source → latch carry
+      pickedUpByOrder[o.order_id] = true;
+      return 'carry';
+    }
+    // Not latched, not at source: if the robot is already closer to delivery than
+    // to source it has likely picked up (map opened mid-carry) — treat as carry
+    // WITHOUT latching, so if it's actually still approaching source the next
+    // ticks self-correct back to fetch as the source distance shrinks.
+    var dst = findNode(o.delivery_node);
+    if (dst) {
+      var dxd = r.x - dst.x, dyd = r.y - dst.y;
+      if (dxd * dxd + dyd * dyd < dxs * dxs + dys * dys) return 'carry';
+    }
+    return 'fetch';
+  }
+
+  // World→screen polyline from the robot to a target node, routed on the network.
+  function legPts(r, node) {
+    var w = routeWorld(r.x, r.y, node);
+    return w ? w.map(function (p) { return proj(p[0], p[1]); })
+      : [proj(r.x, r.y), proj(node.x, node.y)];
+  }
+
+  // Dashed "intent" line source→delivery for pre-dispatch / staged orders — no
+  // robot is actively driving this leg, so it gets structure, not motion.
+  function drawIntentLine(svg, src, dst, robotR, dimmed) {
+    var w = routeWorld(src.x, src.y, dst);
+    var pts = w ? w.map(function (p) { return proj(p[0], p[1]); })
+      : [proj(src.x, src.y), proj(dst.x, dst.y)];
+    svg.appendChild(svgEl('polyline', {
+      points: pts.map(function (p) { return p[0] + ',' + p[1]; }).join(' '),
+      class: 'map-route-intent', fill: 'none',
+      'stroke-width': robotR * 0.16, 'stroke-opacity': dimmed ? 0.18 : 0.34
+    }));
+  }
+
+  // Static lane (no flow): a stopped-mid-route robot freezes to a faint line;
+  // blocked/faulted shows a red line. Motion is reserved for actual movement.
+  function drawStaticLane(svg, pts, color, robotR, opts) {
+    svg.appendChild(svgEl('polyline', {
+      points: pts.map(function (p) { return p[0] + ',' + p[1]; }).join(' '),
+      class: opts.blocked ? 'map-route-blocked' : 'map-route-frozen', fill: 'none',
+      stroke: color, 'stroke-width': robotR * 0.22,
+      'stroke-opacity': opts.dimmed ? 0.22 : (opts.blocked ? 0.72 : 0.4)
+    }));
+  }
+
   // ── node classes (e.g. advanced/action points vs bin locations) ────
   var CLASS_PALETTE = ['#6cb0ff', '#56d364', '#e3b341', '#d2a8ff', '#ff9b72', '#79c0ff', '#f0883e'];
   var classColors = {};
@@ -651,20 +880,33 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // drives, and never restarts/teleports when the path is retargeted. (P17 —
   // replaces the animateMotion/mpath approach, which Chrome would not re-sample
   // when the referenced path's geometry changed mid-animation.)
-  function buildCometDots(layer, color, robotR) {
+  // leg: 'fetch' → hollow (outlined) dots = empty run to source; 'carry' → solid
+  // (filled) dots = loaded run to delivery. So the map reads loaded vs empty at a
+  // glance (B2).
+  function buildCometDots(layer, color, robotR, leg) {
+    var fetch = leg === 'fetch';
     var headK = robotR * 0.5;
     var headColor = hexLighten(color, 0.45);
+    var sw = (robotR * 0.14).toFixed(3); // outline weight for the hollow fetch dots
     var dots = [];
     for (var i = 0; i < COMET_COUNT; i++) {
       var el;
       if (i === 0) {
-        el = svgEl('polygon', {
+        var head = {
           points: (headK * 1.7) + ',0 ' + (-headK) + ',' + headK + ' ' +
             (-headK * 0.35) + ',0 ' + (-headK) + ',' + (-headK),
-          fill: headColor, class: 'map-comet-head'
-        });
+          // Fetch uses a distinct class so the `.map-comet-head { stroke: none }`
+          // rule doesn't kill the hollow outline (CSS beats a presentation attr).
+          class: fetch ? 'map-comet-head-hollow' : 'map-comet-head'
+        };
+        if (fetch) { head.fill = 'none'; head.stroke = headColor; head['stroke-width'] = sw; }
+        else { head.fill = headColor; }
+        el = svgEl('polygon', head);
       } else {
-        el = svgEl('circle', { r: (robotR * 0.4 * (1 - 0.7 * i / COMET_COUNT)).toFixed(3), fill: color });
+        var dot = { r: (robotR * 0.4 * (1 - 0.7 * i / COMET_COUNT)).toFixed(3) };
+        if (fetch) { dot.fill = 'none'; dot.stroke = color; dot['stroke-width'] = sw; }
+        else { dot.fill = color; }
+        el = svgEl('circle', dot);
       }
       el.setAttribute('opacity', '0');
       layer.appendChild(el);
@@ -778,7 +1020,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       lastCometSig = sig;
       while (layer.firstChild) layer.removeChild(layer.firstChild);
       cometState = cometRoutes.map(function (c) {
-        return { pts: c.pts, meas: measurePolyline(c.pts), dots: buildCometDots(layer, c.color, robotR) };
+        return { pts: c.pts, meas: measurePolyline(c.pts), dots: buildCometDots(layer, c.color, robotR, c.leg) };
       });
     } else {
       // Same SET — just refresh each comet's live geometry (robot moved). The rAF
@@ -803,7 +1045,11 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     var region = document.querySelector('.map-region');
     if (!region) return;
     if (!minimapEl) {
-      minimapEl = svgEl('svg', { class: 'map-minimap', 'pointer-events': 'none' });
+      // Clickable (B1): click-to-jump centers the main view on the clicked spot.
+      // Robot dots + viewport rect inside stay pointer-events:none (CSS) so the
+      // click always resolves against the minimap surface.
+      minimapEl = svgEl('svg', { class: 'map-minimap' });
+      minimapEl.addEventListener('click', function (e) { jumpToWorld(e.clientX, e.clientY); });
       region.appendChild(minimapEl);
     }
     var fp = fullPlantView;
@@ -967,6 +1213,8 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     if (!clickBound) {
       clickBound = true;
       host.addEventListener('click', function (ev) {
+        // A click that ends a drag-pan must not also focus a robot (B1).
+        if (suppressClick) { suppressClick = false; return; }
         var t = ev.target;
         while (t && t !== host && !(t.getAttribute && t.getAttribute('data-robot'))) t = t.parentNode;
         var id = (t && t.getAttribute) ? t.getAttribute('data-robot') : null;
@@ -1020,63 +1268,81 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     }
 
     // ── routes ────────────────────────────────────────────────────────
-    // Comet-only: the standing route line is gone. The comet alone carries the
-    // route, and it lives on a PERSISTENT overlay (syncCometLayer below) that the
-    // per-tick scene rebuild does not touch — so it animates continuously instead
-    // of restarting every SSE tick (which made it teleport, and the constant SMIL
-    // churn pinned the renderer). Here we only draw the destination ring, collect
-    // each comet's stable path, and — for reduced-motion users — a faint static
-    // lane line as the accessible, motion-free fallback.
+    // Three honest visual states (B2), so the map shows what's REALLY happening:
+    //  • Moving, working order → an animated comet along the robot's CURRENT LEG
+    //    (source until pickup, then delivery — see orderLeg). Fetch legs draw
+    //    hollow/empty dots, carry legs solid/loaded, so loaded-vs-empty reads at
+    //    a glance. The comet lives on a PERSISTENT overlay (syncCometLayer below)
+    //    so it glides continuously instead of restarting each SSE tick.
+    //  • Stopped mid-route (or reduced-motion) → a faint STATIC lane, no flow.
+    //    Blocked/faulted → a red static lane. "Motion means motion" (D7): a
+    //    stationary robot never animates.
+    //  • Pre-dispatch / staged → a dashed INTENT line source→delivery at most;
+    //    nothing is driving that leg yet.
     var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-    var activeRoutes = orders.filter(function (o) {
-      if (o.status === 'delivered' || o.status === 'confirmed' || o.status === 'cancelled') return false;
-      var r = robots[o.robot_id];
-      return r && isFinite(r.x) && isFinite(r.y) && findNode(o.delivery_node);
+    var MOVING_PHASE = { dispatched: 1, in_transit: 1, reshuffling: 1 };
+    var INTENT_PHASE = { pending: 1, sourcing: 1, queued: 1, acknowledged: 1, submitted: 1, staged: 1 };
+
+    // Prune pickup latches for orders that have left the active set.
+    var liveOrderIds = {};
+    orders.forEach(function (o) { liveOrderIds[o.order_id] = 1; });
+    Object.keys(pickedUpByOrder).forEach(function (id) { if (!liveOrderIds[id]) delete pickedUpByOrder[id]; });
+
+    // Count the comets that would actually animate first, so the busy-floor calm
+    // (≤ COMET_LIMIT → no route lines, just robots) keys off real motion.
+    var movingComets = 0;
+    orders.forEach(function (o) {
+      if (!MOVING_PHASE[o.status]) return;
+      var rr = robots[o.robot_id];
+      if (rr && isFinite(rr.x) && isFinite(rr.y) && isMoving(rr)) movingComets++;
     });
-    // Which routes get a comet: with a focus set, only the focused robot's;
-    // otherwise all of them while the floor is quiet (≤ COMET_LIMIT). A busy
-    // unfocused floor shows none (just robots + destination rings) so it doesn't
-    // become a swarm of arrows — click a robot to light its lane.
+    var quiet = movingComets <= COMET_LIMIT;
+
     var cometRoutes = [];
-    activeRoutes.forEach(function (o, idx) {
-      var r = robots[o.robot_id];
-      var dest = findNode(o.delivery_node);
-      var color = STATUS_COLOR[o.status] || '#888';
+    orders.forEach(function (o) {
+      if (o.status === 'delivered' || o.status === 'confirmed' || o.status === 'cancelled') return;
       var focused = !!focusRobot && o.robot_id === focusRobot;
       var dimmed = !!focusRobot && !focused;
-      var wantComet = !reduceMotion && (focusRobot ? focused : activeRoutes.length <= COMET_LIMIT);
+      var calmOK = focusRobot ? focused : quiet;
+      var src = findNode(o.source_node);
+      var dst = findNode(o.delivery_node);
+
+      // Pre-dispatch / staged: a dashed intent line at most (no comet, no robot
+      // needed). Calmed like the comets — only when quiet or focused.
+      if (INTENT_PHASE[o.status]) {
+        if (src && dst && calmOK) drawIntentLine(svg, src, dst, robotR, dimmed);
+        return;
+      }
+
+      // Actively worked (dispatched/in_transit/reshuffling) or blocked/faulted —
+      // needs a robot with a known position.
+      var r = robots[o.robot_id];
+      if (!r || !isFinite(r.x) || !isFinite(r.y)) return;
+
+      var blocked = (o.status === 'blocked' || o.status === 'faulted');
+      var leg = orderLeg(o, r, src);
+      var legNode = (leg === 'fetch' && src) ? src : (dst || src);
+      if (!legNode) return;
+      var color = blocked ? (STATUS_COLOR.blocked || '#f85149') : (STATUS_COLOR[o.status] || '#888');
+      var pts = legPts(r, legNode);
+
+      var wantComet = !reduceMotion && !blocked && isMoving(r) && calmOK;
       if (wantComet) {
-        // Comet runs from the ROBOT'S CURRENT position to its destination, along
-        // the network — routeWorld() starts the path at (r.x, r.y), so the streak
-        // leaves the robot, not a fixed node. The polyline is recomputed every
-        // tick and handed to syncCometLayer; the rAF positioner reads it live, so
-        // the comet tracks the robot while gliding. syncCometLayer rebuilds the
-        // dot elements only when the comet SET changes (route added/removed/
-        // focus/status).
-        var cworld = routeWorld(r.x, r.y, dest);
-        var cpts = cworld
-          ? cworld.map(function (w) { return proj(w[0], w[1]); })
-          : [proj(r.x, r.y), proj(dest.x, dest.y)];
         cometRoutes.push({
-          pts: cpts,
-          color: color,
-          // membership/rebuild key (NOT geometry) — geometry tracks the robot
-          // live via the rAF positioner, never forcing a rebuild on movement.
-          sig: o.robot_id + '>' + o.delivery_node + '>' + o.status
+          pts: pts, color: color, leg: leg,
+          // membership/rebuild key (NOT geometry) — includes the leg so a
+          // fetch→carry flip rebuilds the dots (hollow→solid).
+          sig: o.order_id + '>' + leg + '>' + o.status
         });
+      } else {
+        // A static lane only where it carries signal: a blocked/faulted alert
+        // (always), the reduced-motion motion-free fallback, or a robot frozen
+        // mid-route on a calm floor. A moving robot whose comet is suppressed by
+        // the busy-floor cap draws nothing — the floor stays "just robots".
+        var showLane = blocked || reduceMotion || (!isMoving(r) && calmOK);
+        if (showLane) drawStaticLane(svg, pts, color, robotR, { blocked: blocked, dimmed: dimmed });
       }
-      // Reduced-motion fallback: a faint static lane line (no animation).
-      if (reduceMotion) {
-        var rworld = routeWorld(r.x, r.y, dest);
-        var rscreen = rworld ? rworld.map(function (w) { return proj(w[0], w[1]); }) : [proj(r.x, r.y), proj(dest.x, dest.y)];
-        svg.appendChild(svgEl('polyline', {
-          points: rscreen.map(function (p) { return p[0] + ',' + p[1]; }).join(' '),
-          class: 'map-route-base', fill: 'none', stroke: color,
-          'stroke-width': robotR * 0.22, 'stroke-opacity': dimmed ? 0.25 : 0.5
-        }));
-      }
-      // Destination is marked by the node glyph's indigo accent (drawNode/hotNodes),
-      // not a separate ring — no duplicate marker drawn here.
+      // Destination is marked by the node glyph's indigo accent (drawNode/hotNodes).
     });
     // Deterministic order so the comet SET signature is order-independent — a
     // server reshuffle of `orders` doesn't force a needless rebuild, and index →
@@ -1128,7 +1394,11 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       }
       if (moving) {
         // In motion the chevron shows heading. Fleet Angle is radians
-        // (confirmed live); SVG rotate wants degrees.
+        // (confirmed live); SVG rotate wants degrees. (B2 open question: the
+        // reversed-arrow report was the comet LEG direction — comet always ran
+        // robot→delivery, i.e. backwards on the pickup leg — now fixed via
+        // orderLeg. This chevron convention is the second candidate only if
+        // reversed CHEVRONS, not streaks, are ever seen again.)
         var rot = -(r.angle * 180 / Math.PI) + (rotate90 ? 90 : 0);
         var g = svgEl('g', { transform: 'translate(' + s[0] + ',' + s[1] + ') rotate(' + rot + ')' });
         g.appendChild(svgEl('polygon', { points: chevronPoints(robotR), class: 'map-robot', fill: color, 'stroke-width': robotR * 0.16 }));
@@ -1457,6 +1727,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
   function init() {
     renderLegend();
+    wireViewControls(); // B1: wheel-zoom + drag-pan + recenter on the map host
     startFeedTimer(); // starts the 10s interval that ages/expires feed events
     // Initial paint from REST so the board isn't blank before the first SSE tick.
     refreshAll();
