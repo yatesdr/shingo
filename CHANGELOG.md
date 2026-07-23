@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-07-22 — UI refresh, Package 1: map zoom/pan + comet honesty (Track B1+B2)
+
+Interactive framing and truthful route rendering on the dashboard map
+(`dashboard-map.js`). No schema/API change. Map behavior needs live
+verification on a running scene (no JS harness for the map).
+
+### Added / Changed
+
+- **B1 — manual view.** Wheel-zoom at the cursor and left-drag-pan; either
+  breaks auto-follow (`userView`), so the frame stops chasing active orders
+  until Recenter. Zoom keeps the world point under the cursor fixed via the
+  scene CTM inverse. A new Recenter control (Lucide crosshair) eases from the
+  manual view back to the ROI and resumes follow; the minimap is now
+  click-to-jump. A drag that moved is swallowed so it doesn't focus a robot.
+  The kiosk template gains `components.css` + `{{iconSprite}}`.
+- **B2 — comet honesty.** The board payload exposes no picked-up/leg field and
+  no status distinguishes the two legs (documented in-code), so `orderLeg()`
+  infers fetch vs carry by latching on robot↔source proximity. The comet now
+  targets the robot's *current* leg (source until pickup, then delivery) —
+  fixing the reversed-arrow that always ran robot→delivery. Fetch legs draw
+  hollow/empty dots, carry legs solid/loaded. Comets animate only while the
+  robot is actually moving; stopped mid-route freezes to a faint static lane,
+  blocked/faulted to a red static lane; pre-dispatch/staged orders get a dashed
+  intent line at most. `prefers-reduced-motion` honored throughout.
+
+### Tests
+
+- Template parse, emoji + inline-handler drift, and core JS-wrapper tests green.
+  The map has no vm harness (unchanged from before); leg inference and the three
+  route states were reviewed by hand and need a live scene to confirm visually.
+
 ## 2026-07-22 — UI refresh, Package 0: little-wins sweep + style-guide foundations
 
 Foundations for the inventory / map / nodes refresh (see
