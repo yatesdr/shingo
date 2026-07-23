@@ -163,30 +163,6 @@ func TestList_And_ListByNode_And_Counts(t *testing.T) {
 	})
 }
 
-func TestMove(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	std := testdb.SetupStandardData(t, db)
-
-	bin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-MOVE-1", NodeID: &std.StorageNode.ID, Status: "available"}
-	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
-
-	t.Run("move_to_different_node", func(t *testing.T) {
-		testutil.MustNoErr(t, bins.Move(db.DB, bin.ID, std.LineNode.ID), "bins.Move")
-		got, _ := bins.Get(db.DB, bin.ID)
-		if got.NodeID == nil || *got.NodeID != std.LineNode.ID {
-			t.Errorf("after bins.Move, NodeID = %v, want %d", got.NodeID, std.LineNode.ID)
-		}
-	})
-
-	t.Run("move_to_same_node_errors", func(t *testing.T) {
-		// Already at LineNode after previous sub-test.
-		if err := bins.Move(db.DB, bin.ID, std.LineNode.ID); err == nil {
-			t.Error("bins.Move to same node: expected error, got nil")
-		}
-	})
-}
-
 func TestClaim_And_Unclaim(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -211,32 +187,6 @@ func TestClaim_And_Unclaim(t *testing.T) {
 		o := testdb.CreateOrder(t, db)
 		if err := bins.Claim(db.DB, bin.ID, o.ID); err == nil {
 			t.Error("second bins.Claim: expected error, got nil")
-		}
-	})
-
-	t.Run("Unclaim_clears_claim", func(t *testing.T) {
-		testutil.MustNoErr(t, bins.Unclaim(db.DB, bin.ID), "bins.Unclaim")
-		got, _ := bins.Get(db.DB, bin.ID)
-		if got.ClaimedBy != nil {
-			t.Errorf("ClaimedBy after bins.Unclaim = %v, want nil", got.ClaimedBy)
-		}
-	})
-
-	t.Run("UnclaimByOrder_clears_all_for_order", func(t *testing.T) {
-		bin2 := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-CLM-2", NodeID: &std.StorageNode.ID, Status: "available"}
-		bin3 := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-CLM-3", NodeID: &std.StorageNode.ID, Status: "available"}
-		testutil.MustNoErr(t, bins.Create(db.DB, bin2), "bins.Create bin2")
-		testutil.MustNoErr(t, bins.Create(db.DB, bin3), "bins.Create bin3")
-		o := testdb.CreateOrder(t, db)
-		testdb.ReserveBin(t, db, o.ID, bin2.ID)
-		testdb.ReserveBin(t, db, o.ID, bin3.ID)
-		testutil.MustNoErr(t, bins.Claim(db.DB, bin2.ID, o.ID), "bins.Claim bin2")
-		testutil.MustNoErr(t, bins.Claim(db.DB, bin3.ID, o.ID), "bins.Claim bin3")
-		bins.UnclaimByOrder(db.DB, o.ID)
-		g2, _ := bins.Get(db.DB, bin2.ID)
-		g3, _ := bins.Get(db.DB, bin3.ID)
-		if g2.ClaimedBy != nil || g3.ClaimedBy != nil {
-			t.Errorf("after bins.UnclaimByOrder, ClaimedBy bin2=%v bin3=%v, want both nil", g2.ClaimedBy, g3.ClaimedBy)
 		}
 	})
 

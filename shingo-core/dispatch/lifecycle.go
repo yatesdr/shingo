@@ -599,17 +599,6 @@ func (s *LifecycleService) MarkFaultedRecovered(ord *orders.Order, robotID strin
 
 // ── Derived status sets (Phase 6) ───────────────────────────────────────
 
-// IsInFlight returns true for statuses where a robot is committed but
-// the order has not reached its destination. Replaces the inline switch
-// in engine/wiring_auto_return.go:54.
-func IsInFlight(status protocol.Status) bool {
-	switch status {
-	case StatusDispatched, StatusAcknowledged, StatusInTransit, StatusStaged, StatusFaulted:
-		return true
-	}
-	return false
-}
-
 // IsPostDelivery returns true if the bin is at (or past) the destination
 // node. Replaces engine/wiring.go:153 and engine/orders.go:85.
 //

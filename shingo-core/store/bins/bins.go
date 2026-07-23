@@ -359,20 +359,6 @@ func NodeTileStates(db *sql.DB) (map[int64]NodeTileState, error) {
 	return states, rows.Err()
 }
 
-// Move moves a bin to a new node. Returns an error if the bin is already
-// at the destination (same-node move is physically impossible).
-func Move(db *sql.DB, binID, toNodeID int64) error {
-	res, err := db.Exec(`UPDATE bins SET node_id=$1, updated_at=$3 WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`, toNodeID, binID, clock.Now().UTC())
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("bin %d is already at node %d", binID, toNodeID)
-	}
-	return nil
-}
-
 // MoveAndClearStaging relocates a bin and, when clearStaging is set, drops a
 // stale staged status — both in one transaction. The staging clear is
 // guarded (WHERE status='staged'), so it is a no-op on a non-staged bin and
@@ -485,17 +471,6 @@ func claimBin(db binExecer, binID, orderID int64) error {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
 	}
 	return nil
-}
-
-// Unclaim releases a bin from an order claim.
-func Unclaim(db *sql.DB, binID int64) error {
-	_, err := db.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=$2 WHERE id=$1`, binID, clock.Now().UTC())
-	return err
-}
-
-// UnclaimByOrder releases all bins claimed by a specific order.
-func UnclaimByOrder(db *sql.DB, orderID int64) {
-	db.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=$2 WHERE claimed_by=$1`, orderID, clock.Now().UTC())
 }
 
 // FindEmptyCompatible finds an unclaimed, available bin with no manifest that is

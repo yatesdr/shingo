@@ -154,27 +154,6 @@ func TestEvent_FieldsAreOptional(t *testing.T) {
 	}
 }
 
-func TestIsInFlight(t *testing.T) {
-	t.Parallel()
-	inFlight := []protocol.Status{
-		StatusDispatched, StatusAcknowledged, StatusInTransit, StatusStaged, StatusFaulted,
-	}
-	for _, s := range inFlight {
-		if !IsInFlight(s) {
-			t.Errorf("IsInFlight(%q) = false, want true", s)
-		}
-	}
-	notInFlight := []protocol.Status{
-		StatusPending, StatusSourcing, StatusQueued, StatusSubmitted,
-		StatusDelivered, StatusConfirmed, StatusFailed, StatusCancelled, StatusReshuffling,
-	}
-	for _, s := range notInFlight {
-		if IsInFlight(s) {
-			t.Errorf("IsInFlight(%q) = true, want false", s)
-		}
-	}
-}
-
 func TestIsPostDelivery(t *testing.T) {
 	t.Parallel()
 	if !IsPostDelivery(StatusDelivered) {
