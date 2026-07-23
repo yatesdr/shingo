@@ -307,13 +307,43 @@ func (e *Engine) reserveLoaderBins(loader *domain.Loader, payload domain.Payload
 			inFlightPayload++
 		}
 	}
+	// A bin already RESIDENT on a window occupies it just as an inbound order does.
+	// The order count above sees inbound retrieve/full ORDERS only; a carrier
+	// physically standing on a window — an empty awaiting the operator's load, or a
+	// full not yet pulled — is invisible to it. Without this the seam re-fires an
+	// empty onto an occupied window every time the previous order terminalises: the
+	// SLN_002 resident-bin blindness (live at Springfield 2026-07-23 — SMN_014 held a
+	// 0-UOP empty, system UOP read 0 < threshold, and the monitor re-issued a
+	// retrieve_empty each cycle; the empty is already there for the loader operator to
+	// LOAD, another carrier does nothing). Count a resident bin toward window
+	// occupancy only where no inbound order already accounts for that window, so an
+	// order that just delivered its bin isn't double-counted.
+	//
+	// Occupancy is Core-authoritative (FetchNodeBins), which marks a window Occupied
+	// for ANY resident bin, including a 0-UOP empty. On Core-unreachable it returns nil
+	// and we fall back to the order-only count — no worse than before, and Core's
+	// dropoff guard still parks a redundant empty. Kept inside the loader mutex so the
+	// occupancy read is part of the same atomic count→fire snapshot as the orders.
+	resident := 0
+	if e.coreClient.Available() {
+		if residentBins, _ := e.coreClient.FetchNodeBins(deliveryNodes); residentBins != nil {
+			for i := range residentBins {
+				nb := residentBins[i]
+				if nb.Occupied && perNode[nb.NodeName] == 0 {
+					inFlightTotal++
+					perNode[nb.NodeName] = 1
+					resident++
+				}
+			}
+		}
+	}
 	toFire := want - inFlightPayload
 	if headroom := budget - inFlightTotal; toFire > headroom {
 		toFire = headroom
 	}
 	if toFire <= 0 {
-		e.logFn("loader_reserve loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d budget=%d to_fire=0 created=0",
-			loaderID, pay, want, inFlightPayload, inFlightTotal, budget)
+		e.logFn("loader_reserve loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d budget=%d to_fire=0 created=0",
+			loaderID, pay, want, inFlightPayload, inFlightTotal, resident, budget)
 		return 0, nil
 	}
 	// Assign each new empty to a FREE window (none in flight) — one physical bin
@@ -331,8 +361,8 @@ func (e *Engine) reserveLoaderBins(loader *domain.Loader, payload domain.Payload
 	created, ferr := fire(targets)
 	// Structured decision record — one machine-parseable line per reservation so an
 	// over-ordering incident is reconstructable from logs alone (the SLN_002 bar).
-	e.logFn("loader_reserve loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d budget=%d to_fire=%d targets=%v created=%d err=%v",
-		loaderID, pay, want, inFlightPayload, inFlightTotal, budget, toFire, targets, created, ferr)
+	e.logFn("loader_reserve loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d budget=%d to_fire=%d targets=%v created=%d err=%v",
+		loaderID, pay, want, inFlightPayload, inFlightTotal, resident, budget, toFire, targets, created, ferr)
 	return created, ferr
 }
 
