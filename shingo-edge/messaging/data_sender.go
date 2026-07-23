@@ -1,7 +1,6 @@
 package messaging
 
 import (
-	"fmt"
 	"log"
 	"time"
 
@@ -36,16 +35,4 @@ func (s *DataSender) PublishEnvelope(env *protocol.Envelope, label string) error
 		backoff *= 2
 	}
 	return err
-}
-
-func (s *DataSender) Send(subject string, src, dst protocol.Address, payload any, label string) error {
-	env, err := protocol.NewDataEnvelope(subject, src, dst, payload)
-	if err != nil {
-		return fmt.Errorf("build %s: %w", label, err)
-	}
-	if err := s.PublishEnvelope(env, label); err != nil {
-		return fmt.Errorf("publish %s: %w", label, err)
-	}
-	s.DebugLog.Log("%s sent", label)
-	return nil
 }
