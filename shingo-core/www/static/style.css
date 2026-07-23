@@ -83,10 +83,6 @@ nav .nav-sep { width: 1px; height: 1.2rem; background: var(--border); flex-shrin
 .health-ok { background: var(--success); }
 .health-fail { background: var(--danger); }
 
-/* Occupancy discrepancy row tints. Token-derived color-mix so they stay legible
- * in dark mode (the old inline #fff3cd / #f8d7da were light-only). */
-.discrepancy-fleet-only { background: color-mix(in srgb, var(--warning) 15%, transparent); }
-.discrepancy-shingo-only { background: color-mix(in srgb, var(--danger) 15%, transparent); }
 
 /* Tables */
 table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
@@ -135,32 +131,58 @@ textarea { resize: vertical; min-height: 60px; }
   padding: 0.25rem 0.4rem;
   text-align: center;
   cursor: pointer;
-  border: 1px solid rgba(0,0,0,0.08);
+  border: 1px solid var(--border);
   transition: transform 0.1s, box-shadow 0.1s;
   min-height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #e9ecef;
-  color: #495057;
+  background: var(--bg-dark);
+  color: var(--text-muted);
 }
-/* Node tile content states */
-.tile-has-payload { background: #22c55e; color: #fff; }
+/* Node tile content states — re-derived from the shared palette so they read the
+ * same as the badges/map (has-payload = success green, staged = staged teal —
+ * NOT the old cyan that collided with in-transit, maintenance = warning amber,
+ * disabled = danger, claimed = warning border). The hatch stripes stay as a
+ * texture channel. Tokens are theme-aware, so no dark-mode overrides are needed. */
+.tile-has-payload { background: var(--success); color: #fff; }
 .tile-empty-bin {
-  background: repeating-linear-gradient(45deg, #22c55e, #22c55e 4px, #bbf7d0 4px, #bbf7d0 8px);
-  color: #166534;
+  background: repeating-linear-gradient(45deg, var(--success) 0 4px, color-mix(in srgb, var(--success) 30%, var(--surface)) 4px 8px);
+  color: #fff;
 }
-.tile-staged { background: #67e8f9; color: #155e75; }
+.tile-staged { background: var(--status-staged-dot); color: #fff; }
 
 /* Node tile maintenance state */
 .tile-maintenance {
-  background: repeating-linear-gradient(45deg, #f97316, #f97316 4px, #fed7aa 4px, #fed7aa 8px);
-  color: #7c2d12;
+  background: repeating-linear-gradient(45deg, var(--warning) 0 4px, color-mix(in srgb, var(--warning) 35%, var(--surface)) 4px 8px);
+  color: var(--text-strong);
 }
 
 /* Node tile claim/lock borders */
-.tile-claimed { border: 2px solid #f97316; }
-.tile-disabled { border-color: #ef4444; }
+.tile-claimed { border: 2px solid var(--warning); }
+.tile-disabled { border-color: var(--danger); }
+
+/* Nodes toolbar "Dev tools" disclosure — holds the test-node generate/delete
+ * actions that used to be hidden behind Ctrl/Shift-click on Sync from Fleet. */
+.dev-menu { position: relative; display: inline-block; }
+.dev-menu > summary { list-style: none; display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
+.dev-menu > summary::-webkit-details-marker { display: none; }
+.dev-menu-items {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 0.25rem;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 180px;
+  padding: 0.5rem;
+  background: var(--elev-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
 .node-tile:hover {
   transform: scale(1.08);
   box-shadow: 0 3px 12px rgba(0,0,0,0.18);
@@ -521,19 +543,9 @@ textarea { resize: vertical; min-height: 60px; }
 
 [data-theme="dark"] .modal { box-shadow: 0 8px 30px rgba(0,0,0,0.6); }
 [data-theme="dark"] .robot-battery { background: rgba(255,255,255,0.12); }
-[data-theme="dark"] .node-tile { border-color: rgba(255,255,255,0.08); background: #2d333b; color: #adbac7; }
-[data-theme="dark"] .tile-has-payload { background: #16a34a; color: #fff; }
-[data-theme="dark"] .tile-empty-bin {
-  background: repeating-linear-gradient(45deg, #16a34a, #16a34a 4px, #052e16 4px, #052e16 8px);
-  color: #86efac;
-}
-[data-theme="dark"] .tile-staged { background: #0e7490; color: #cffafe; }
-[data-theme="dark"] .tile-maintenance {
-  background: repeating-linear-gradient(45deg, #c2410c, #c2410c 4px, #431407 4px, #431407 8px);
-  color: #fdba74;
-}
-[data-theme="dark"] .tile-claimed { border-color: #f97316; }
-[data-theme="dark"] .tile-disabled { border-color: #f85149; }
+/* Node tile dark overrides removed: the tile states now use theme-aware tokens
+ * (var(--success)/(--status-staged-dot)/(--warning)/(--danger)/(--bg-dark)),
+ * which already carry their dark values. */
 
 /* Tooltip trigger */
 .tooltip-trigger {
@@ -1060,7 +1072,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   padding: 0.15rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--card-bg);
+  background: var(--surface);
   cursor: pointer;
   color: var(--text-muted);
 }
@@ -1151,7 +1163,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   max-width: 82px;
   border-radius: 10px;
   border: 1px dashed var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   color: var(--text-muted);
   cursor: pointer;
 }
@@ -1189,7 +1201,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   border-radius: 12px;
   padding: 0.1rem 0.5rem;
   font-size: 0.72rem;
-  background: var(--card-bg);
+  background: var(--surface);
 }
 .loader-chip-x { cursor: pointer; color: var(--text-muted); font-weight: 700; }
 .loader-chip-x:hover { color: var(--danger); }

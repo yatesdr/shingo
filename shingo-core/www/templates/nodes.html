@@ -5,14 +5,15 @@
     {{if .Authenticated}}
     <div class="flex gap-1">
       <button class="btn btn-primary" data-action="openNgrpModal">Add Node Group</button>
-      <button class="btn" style="background:#0a8f6a;border-color:#0a8f6a;color:#fff" data-action="openLoaderModal">Create Loader</button>
-      <button type="button" class="btn" data-action="syncOrGenerate" title="Ctrl-click: generate test nodes | Shift-click: delete test nodes">Sync from Fleet</button>
-      <!-- DEAD CODE (hidden 2026-06-12): "Check Occupancy" depends on RDS/SEER
-           bin tracking (GET /binDetails) that was never set up in production, so
-           it errors on live plants (the UI swallowed the real error). Hidden
-           rather than deleted; re-enable if RDS bin tracking ever ships.
-      <button class="btn" data-action="checkOccupancy">Check Occupancy</button>
-      -->
+      <button class="btn btn-primary" data-action="openLoaderModal">Create Loader</button>
+      <button type="button" class="btn" data-action="syncFromFleet">Sync from Fleet</button>
+      <details class="dev-menu">
+        <summary class="btn" title="Developer / test-data tools">Dev tools <svg class="icon icon-16" aria-hidden="true"><use href="#icon-chevron-down"></use></svg></summary>
+        <div class="dev-menu-items">
+          <button type="button" class="btn btn-sm" data-action="generateTestNodes">Generate test nodes</button>
+          <button type="button" class="btn btn-sm btn-danger" data-action="deleteTestNodes">Delete test nodes</button>
+        </div>
+      </details>
     </div>
     {{end}}
   </div>
@@ -27,13 +28,13 @@
   </div>
 
   <div class="node-legend" style="display:flex;gap:1rem;align-items:center;font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem;flex-wrap:wrap;">
-    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch" style="width:12px;height:12px;border-radius:2px;background:var(--card-bg);border:1px solid var(--border);display:inline-block;"></span> Empty</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch" style="width:12px;height:12px;border-radius:2px;background:var(--bg-dark);border:1px solid var(--border);display:inline-block;"></span> Empty</span>
     <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-has-payload" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Has Payload</span>
     <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-empty-bin" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Empty Bin</span>
     <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-staged" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Staged</span>
     <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-maintenance" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Maintenance</span>
-    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:2px;border:2px solid #f97316;display:inline-block;"></span> Claimed</span>
-    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:2px;border:2px solid #ef4444;display:inline-block;"></span> Disabled</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:2px;border:2px solid var(--warning);display:inline-block;"></span> Claimed</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:2px;border:2px solid var(--danger);display:inline-block;"></span> Disabled</span>
   </div>
 
   {{if .Nodes}}
@@ -290,18 +291,6 @@
 <script type="module" src="/static/pages/nodes-supermarket.js?v={{cacheBust}}"></script>
 <script type="module" src="/static/pages/loaders.js?v={{cacheBust}}"></script>
 
-<!-- Node Occupancy Modal -->
-<div id="occupancy-modal" class="modal-overlay" data-backdrop-close>
-  <div class="modal" style="max-width:700px">
-    <div class="modal-header flex flex-between">
-      <h2>Node Occupancy</h2>
-      <button class="modal-close" data-action="closeOccupancyModal">&times;</button>
-    </div>
-    <div id="occupancy-modal-content">
-      <span class="text-muted">Loading...</span>
-    </div>
-  </div>
-</div>
 
 
 <!-- Add Node Modal -->
@@ -348,7 +337,7 @@
       <h2 id="loader-modal-title">Create Loader</h2>
       <button class="modal-close" data-action="closeLoaderModal">&times;</button>
     </div>
-    <div class="form-group" style="border-left:3px solid #0a8f6a;padding-left:10px">
+    <div class="form-group" style="border-left:3px solid var(--accent);padding-left:10px">
       <input type="hidden" id="loader-edit-id">
       <label class="text-sm" style="font-weight:600;display:block">Name</label>
       <div class="flex gap-1" style="flex-wrap:wrap">
@@ -382,7 +371,7 @@
       <datalist id="loader-nodes-dl"></datalist>
       <datalist id="loader-payloads-dl"></datalist>
       <div class="flex-end gap-1 mt-1">
-        <button id="loader-submit-btn" class="btn" style="background:#0a8f6a;border-color:#0a8f6a;color:#fff" data-action="submitLoader">Create Loader</button>
+        <button id="loader-submit-btn" class="btn btn-primary" data-action="submitLoader">Create Loader</button>
       </div>
       <span id="loader-result" class="text-sm"></span>
     </div>

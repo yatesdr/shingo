@@ -587,37 +587,11 @@ function closeManifestExpand() {
   expandedPayloadID = 0;
 }
 
-/* --- Occupancy check --- */
-function checkOccupancy() {
-  document.getElementById('occupancy-modal').classList.add('active');
-  document.getElementById('occupancy-modal-content').innerHTML = '<span class="text-muted">Loading...</span>';
-  apiGet('/api/nodes/occupancy')
-    .then(function(items) {
-      if (!items || items.length === 0) {
-        document.getElementById('occupancy-modal-content').innerHTML = '<span class="text-muted">No locations found</span>';
-        return;
-      }
-      var html = '<table style="font-size:0.8rem"><thead><tr><th>Location</th><th>Node</th><th>Fleet Occupied</th><th>In Shingo</th><th>Status</th></tr></thead><tbody>';
-      items.forEach(function(item) {
-        var cls = '';
-        var status = 'OK';
-        if (item.discrepancy === 'fleet_only') { cls = ' class="discrepancy-fleet-only"'; status = 'Fleet Only'; }
-        else if (item.discrepancy === 'shingo_only') { cls = ' class="discrepancy-shingo-only"'; status = 'Shingo Only'; }
-        var occupied = item.fleet_occupied === null ? '-' : (item.fleet_occupied ? 'Yes' : 'No');
-        html += '<tr' + cls + '><td>' + escapeHtml(item.location_id) + '</td><td>' + escapeHtml(item.node_name || '-') + '</td><td>' + occupied + '</td><td>' + (item.in_shingo ? 'Yes' : 'No') + '</td><td>' + status + '</td></tr>';
-      });
-      html += '</tbody></table>';
-      document.getElementById('occupancy-modal-content').innerHTML = html;
-    })
-    .catch(function(err) {
-      console.error('checkOccupancy', err);
-      document.getElementById('occupancy-modal-content').innerHTML = '<span class="text-muted">Error loading occupancy</span>';
-    });
-}
-
-function closeOccupancyModal() {
-  document.getElementById('occupancy-modal').classList.remove('active');
-}
+// The "Check Occupancy" block was removed here: it depended on RDS/SEER bin
+// tracking (GET /binDetails) that was never provisioned in production, so it
+// errored on live plants (and the UI swallowed the real error). Its toolbar
+// button had already been hidden. If RDS bin tracking ever ships, restore it
+// from git history.
 
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions
@@ -630,11 +604,9 @@ delegateActions(document.body, {
     addChip,
     addNodeManifestRow,
     addReshuffleTarget,
-    checkOccupancy,
     clearChipPicker,
     closeManifestExpand,
     closeNodeModal,
-    closeOccupancyModal,
     collectManifestItems,
     deleteNode,
     expandPayloadManifest,
@@ -662,5 +634,5 @@ delegateActions(document.body, {
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
 
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closeNodeModal(); closeOccupancyModal(); }
+  if (e.key === 'Escape') { closeNodeModal(); }
 });

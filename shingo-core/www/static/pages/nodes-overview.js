@@ -5,31 +5,35 @@ import { api, apiPost, delegateActions, toast, uiConfirm } from '/static/app.js'
 // nodes-supermarket.js) read isAuth from #page-data independently
 // under ES module scoping.
 
-async function syncOrGenerate(e) {
-  if (e.shiftKey) {
-    if (!await uiConfirm('Delete all TEST- nodes?')) return;
-    apiPost('/api/nodes/delete-test')
-      .then(function(data) {
-        if (data.error) toast(data.error, 'error');
-        else location.reload();
-      })
-      .catch(function(err) { toast('Error: ' + err, 'error'); });
-  } else if (e.ctrlKey || e.metaKey) {
-    if (!await uiConfirm('Generate test nodes for debugging?\n\nThis creates ~25 TEST- prefixed nodes.')) return;
-    apiPost('/api/nodes/generate-test')
-      .then(function(data) {
-        if (data.error) toast(data.error, 'error');
-        else location.reload();
-      })
-      .catch(function(err) { toast('Error: ' + err, 'error'); });
-  } else {
-    if (!await uiConfirm('Sync all nodes and scene data from fleet?')) return;
-    var form = document.createElement('form');
-    form.method = 'POST';
-    form.action = '/nodes/sync-fleet';
-    document.body.appendChild(form);
-    form.submit();
-  }
+// Sync + the test-data tools used to hide behind Ctrl/Shift-click on one button
+// (undiscoverable, and hazardous right next to a production action). They are now
+// three explicit actions: Sync from Fleet, and the two test-node tools tucked
+// inside the "Dev tools" disclosure in the toolbar.
+async function syncFromFleet() {
+  if (!await uiConfirm('Sync all nodes and scene data from fleet?')) return;
+  var form = document.createElement('form');
+  form.method = 'POST';
+  form.action = '/nodes/sync-fleet';
+  document.body.appendChild(form);
+  form.submit();
+}
+async function generateTestNodes() {
+  if (!await uiConfirm('Generate test nodes for debugging?\n\nThis creates ~25 TEST- prefixed nodes.')) return;
+  apiPost('/api/nodes/generate-test')
+    .then(function(data) {
+      if (data.error) toast(data.error, 'error');
+      else location.reload();
+    })
+    .catch(function(err) { toast('Error: ' + err, 'error'); });
+}
+async function deleteTestNodes() {
+  if (!await uiConfirm('Delete all TEST- nodes?')) return;
+  apiPost('/api/nodes/delete-test')
+    .then(function(data) {
+      if (data.error) toast(data.error, 'error');
+      else location.reload();
+    })
+    .catch(function(err) { toast('Error: ' + err, 'error'); });
 }
 
 function toggleAccordion(id) {
@@ -81,6 +85,8 @@ function filterNodes() {
 // single-source.
 delegateActions(document.body, {
     filterNodes,
-    syncOrGenerate,
+    syncFromFleet,
+    generateTestNodes,
+    deleteTestNodes,
     toggleAccordion
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
