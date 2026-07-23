@@ -416,7 +416,7 @@ import { onSSE } from '/static/shared/utils.js';
           var ctrlTemp = r.controller && r.controller.temp_c ? r.controller.temp_c.toFixed(1) : '-';
           var station = r.position ? r.position.current_station || '-' : '-';
           var status = r.task ? r.task.status : '-';
-          // Track E: robot task state → shared .badge-robot-* class (no inline hexes).
+          // Robot task state → shared .badge-robot-* class (no inline hexes).
           var robotStateClasses = { ready: 'badge-robot-ready', busy: 'badge-robot-busy', offline: 'badge-robot-offline', error: 'badge-robot-error' };
           var statusCell = status === '-'
             ? '-'

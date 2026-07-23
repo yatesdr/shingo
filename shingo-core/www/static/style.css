@@ -71,8 +71,8 @@ nav .nav-sep { width: 1px; height: 1.2rem; background: var(--border); flex-shrin
 .badge-available { background: #e2e3e5; color: #41464b; }
 .badge-empty { background: #e5e7eb; color: #6b7280; }
 .badge-claimed { background: #fde68a; color: #92400e; }
-/* Track E: bins.locked pill (nodes-detail.js). Amber family, aliased onto
- * .badge-claimed so it needs no new hex and can't drift from the claimed hue. */
+/* bins.locked pill (nodes-detail.js). Amber family, aliased onto .badge-claimed
+ * so it needs no new hex and can't drift from the claimed hue. */
 .badge-locked { background: #fde68a; color: #92400e; }
 .badge-flagged { background: #fde68a; color: #92400e; }
 .badge-maintenance { background: #fde68a; color: #92400e; }
@@ -83,8 +83,8 @@ nav .nav-sep { width: 1px; height: 1.2rem; background: var(--border); flex-shrin
 .health-ok { background: var(--success); }
 .health-fail { background: var(--danger); }
 
-/* Track E: occupancy discrepancy row tints. Token-derived color-mix so they
- * stay legible in dark mode (the old inline #fff3cd / #f8d7da were light-only). */
+/* Occupancy discrepancy row tints. Token-derived color-mix so they stay legible
+ * in dark mode (the old inline #fff3cd / #f8d7da were light-only). */
 .discrepancy-fleet-only { background: color-mix(in srgb, var(--warning) 15%, transparent); }
 .discrepancy-shingo-only { background: color-mix(in srgb, var(--danger) 15%, transparent); }
 

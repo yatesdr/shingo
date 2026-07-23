@@ -195,7 +195,7 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
  * `.map-comet-head { stroke: none }` rule above doesn't apply. */
 .map-comet-head-hollow { fill: none; }
 
-/* B2 route states — all STATIC (no flow); only a moving robot animates (D7).
+/* Route states — all STATIC (no flow); only a moving robot animates.
  * Intent lines recede to neutral aisle steel (structure recedes); frozen and
  * blocked lanes carry their status hue inline at low opacity. */
 .map-route-intent {
@@ -395,13 +395,13 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   border-radius: 6px;
   opacity: 0.85;
   overflow: hidden;
-  /* B1: click-to-jump. `all` makes the whole box clickable (not just painted
+  /* Click-to-jump. `all` makes the whole box clickable (not just painted
    * marks); the click handler maps the point to world coords via the CTM. */
   cursor: pointer;
   pointer-events: all;
 }
 
-/* B1: recenter control — restores auto-follow. Hidden until the user takes
+/* Recenter control — restores auto-follow. Hidden until the user takes
  * manual control (wheel-zoom / drag-pan add .is-active). */
 .map-recenter {
   position: absolute;

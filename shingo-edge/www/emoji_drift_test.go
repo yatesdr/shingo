@@ -10,7 +10,7 @@ import (
 )
 
 // TestNoEmojiInTemplatesAndPageJS enforces the "no emoji, ever" icon policy
-// (D17, docs/ui-style-guide.md § Icon policy) on the Edge admin surface. Mirror
+// (see docs/ui-style-guide.md § Icons) on the Edge admin surface. Mirror
 // of the Core test; the detection lives in shared.IsEmoji so both surfaces stay
 // in lockstep. Emoji render inconsistently, can't take currentColor, and drift
 // from the vendored Lucide sprite — use an icon or plain text. Monochrome
@@ -43,7 +43,7 @@ func scanForEmoji(t *testing.T, fsys fs.FS, root string) {
 		}
 		for i, line := range strings.Split(string(body), "\n") {
 			if r, ok := shared.FirstEmoji(line); ok {
-				t.Errorf("%s:%d emoji U+%04X forbidden by the no-emoji icon policy (D17) — use <svg class=\"icon\"><use href=\"#icon-name\"> or plain text\n  %s",
+				t.Errorf("%s:%d emoji U+%04X forbidden by the no-emoji icon policy — use <svg class=\"icon\"><use href=\"#icon-name\"> or plain text\n  %s",
 					p, i+1, r, strings.TrimSpace(line))
 			}
 		}

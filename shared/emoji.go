@@ -1,7 +1,7 @@
 package shared
 
-// Emoji policy support for the "no emoji, ever" UI rule (D17,
-// docs/ui-style-guide.md § Icon policy). Icons are vendored Lucide glyphs from
+// Emoji policy support for the "no emoji, ever" UI rule (see
+// docs/ui-style-guide.md § Icons). Icons are vendored Lucide glyphs from
 // icons.svg; emoji are forbidden in templates and page JS because they render
 // inconsistently across platforms, can't take currentColor, and drift from the
 // monochrome icon system. The per-surface drift tests

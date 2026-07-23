@@ -120,7 +120,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // clicking a robot still lights its comet. Tune to taste.
   var COMET_LIMIT = 12;
 
-  // ── manual view (B1: wheel-zoom + drag-pan break auto-follow) ───────
+  // ── manual view: wheel-zoom + drag-pan break auto-follow ────────────
   // Once the user zooms or pans, `userView` latches true and computeView()
   // stops re-framing to the active-order ROI — the operator keeps the view they
   // set. The recenter control (and re-enabling follow) clears it. Zoom/pan write
@@ -133,7 +133,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   var dragMoved = false;     // exceeded the click/drag threshold → suppress the focus click
   var suppressClick = false; // set on drag end so the trailing click doesn't focus a robot
 
-  // ── pickup-latch for leg-aware comets (B2) ─────────────────────────
+  // ── pickup-latch for leg-aware comets ──────────────────────────────
   // The board payload exposes NO explicit picked-up/leg field (see BoardOrder in
   // engine_board.go — only status/source/delivery/current_station), and no
   // protocol status distinguishes the fetch leg from the carry leg (in_transit
@@ -356,7 +356,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     viewEaseRAF = requestAnimationFrame(tickEase);
   }
 
-  // ── manual view controls (B1) ──────────────────────────────────────
+  // ── manual view controls ───────────────────────────────────────────
   // Map a client pixel to view (screen/proj) space. Uses the scene SVG's
   // screen CTM for an exact inverse regardless of preserveAspectRatio; falls
   // back to a linear container-rect map (view is aspect-corrected, so exact).
@@ -491,7 +491,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // Hysteresis: only adopt a new target if the shift is meaningful.
   // Prevents per-SSE-tick robot micro-jitter from nudging the frame constantly.
   function adoptViewTarget(candidate) {
-    // Recenter (B1): ease from the current manual view back to the ROI,
+    // Recenter: ease from the current manual view back to the ROI,
     // ignoring the jitter hysteresis so a deliberate recenter always animates.
     if (forceReframe) {
       forceReframe = false;
@@ -626,7 +626,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       }
     }
 
-    // B1: while the user drives the view, keep the full-plant reference (minimap +
+    // While the user drives the view, keep the full-plant reference (minimap +
     // orientation, computed above) fresh but DON'T re-frame — leave `view` where
     // the operator put it. Recenter clears userView and calls computeView again.
     if (userView) return;
@@ -756,7 +756,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     return pts;
   }
 
-  // ── leg-aware routing helpers (B2) ─────────────────────────────────
+  // ── leg-aware routing helpers ──────────────────────────────────────
   // orderLeg infers whether the robot is FETCHING (heading to source, empty) or
   // CARRYING (heading to delivery, loaded). Per the pickup-latch note at the top
   // of the module: no payload field or protocol status distinguishes the legs,
@@ -882,7 +882,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // when the referenced path's geometry changed mid-animation.)
   // leg: 'fetch' → hollow (outlined) dots = empty run to source; 'carry' → solid
   // (filled) dots = loaded run to delivery. So the map reads loaded vs empty at a
-  // glance (B2).
+  // glance.
   function buildCometDots(layer, color, robotR, leg) {
     var fetch = leg === 'fetch';
     var headK = robotR * 0.5;
@@ -1045,7 +1045,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     var region = document.querySelector('.map-region');
     if (!region) return;
     if (!minimapEl) {
-      // Clickable (B1): click-to-jump centers the main view on the clicked spot.
+      // Clickable: click-to-jump centers the main view on the clicked spot.
       // Robot dots + viewport rect inside stay pointer-events:none (CSS) so the
       // click always resolves against the minimap surface.
       minimapEl = svgEl('svg', { class: 'map-minimap' });
@@ -1213,7 +1213,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     if (!clickBound) {
       clickBound = true;
       host.addEventListener('click', function (ev) {
-        // A click that ends a drag-pan must not also focus a robot (B1).
+        // A click that ends a drag-pan must not also focus a robot.
         if (suppressClick) { suppressClick = false; return; }
         var t = ev.target;
         while (t && t !== host && !(t.getAttribute && t.getAttribute('data-robot'))) t = t.parentNode;
@@ -1268,15 +1268,15 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     }
 
     // ── routes ────────────────────────────────────────────────────────
-    // Three honest visual states (B2), so the map shows what's REALLY happening:
+    // Three honest visual states, so the map shows what's REALLY happening:
     //  • Moving, working order → an animated comet along the robot's CURRENT LEG
     //    (source until pickup, then delivery — see orderLeg). Fetch legs draw
     //    hollow/empty dots, carry legs solid/loaded, so loaded-vs-empty reads at
     //    a glance. The comet lives on a PERSISTENT overlay (syncCometLayer below)
     //    so it glides continuously instead of restarting each SSE tick.
     //  • Stopped mid-route (or reduced-motion) → a faint STATIC lane, no flow.
-    //    Blocked/faulted → a red static lane. "Motion means motion" (D7): a
-    //    stationary robot never animates.
+    //    Blocked/faulted → a red static lane. Motion means motion: a stationary
+    //    robot never animates.
     //  • Pre-dispatch / staged → a dashed INTENT line source→delivery at most;
     //    nothing is driving that leg yet.
     var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -1394,8 +1394,9 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       }
       if (moving) {
         // In motion the chevron shows heading. Fleet Angle is radians
-        // (confirmed live); SVG rotate wants degrees. (B2 open question: the
-        // reversed-arrow report was the comet LEG direction — comet always ran
+        // (confirmed live); SVG rotate wants degrees. (Open question worth
+        // re-checking: the reversed-arrow report was the comet LEG direction —
+        // the comet always ran
         // robot→delivery, i.e. backwards on the pickup leg — now fixed via
         // orderLeg. This chevron convention is the second candidate only if
         // reversed CHEVRONS, not streaks, are ever seen again.)
@@ -1727,7 +1728,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
   function init() {
     renderLegend();
-    wireViewControls(); // B1: wheel-zoom + drag-pan + recenter on the map host
+    wireViewControls(); // wheel-zoom + drag-pan + recenter on the map host
     startFeedTimer(); // starts the 10s interval that ages/expires feed events
     // Initial paint from REST so the board isn't blank before the first SSE tick.
     refreshAll();

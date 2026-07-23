@@ -65,8 +65,9 @@
   --info: #0dcaf0;
 
   /* Curated data-viz palette (P19 — supersedes P18 mono). ONE vibrant set for all
-   * charts: categorical order indigo → teal → violet → amber → sky → coral (D5 CVD
-   * fix — teal separates the indigo/violet pair that collapsed under protanopia),
+   * charts: categorical order indigo → teal → violet → amber → sky → coral (teal
+   * separates the indigo/violet pair that collapsed under protanopia for red-weak
+   * viewers),
    * plus green=good / coral=bad / amber=warn-ceiling-target semantics. Light variants
    * are deepened to ~600-level so they stay legible on a light surface; the bright
    * board hues live in the dark block. --viz-primary (white / near-black,
@@ -82,7 +83,7 @@
   --viz-coral: #e11d48;
   --viz-green: #059669;
 
-  /* Sequential + diverging viz ramps (D14). Completes P19: categorical (above)
+  /* Sequential + diverging viz ramps. Complete the palette: categorical (above)
    * + semantic (green/coral/amber) + sequential + diverging. Steps are ordered
    * by luminance (monotonic light->dark) so a heatmap reads correctly in
    * greyscale; validate new steps the same way the categorical set was.
@@ -127,7 +128,7 @@
   --kpi-up: var(--viz-green);   /* P19: delta arrows — green up/good */
   --kpi-down: var(--viz-coral); /* coral down/bad */
 
-  /* Type scale (D12) — five named steps replace the ~12 ad-hoc rem sizes that
+  /* Type scale — five named steps replace the ~12 ad-hoc rem sizes that
    * had accreted across pages. Chrome/labels live at xs–sm, body at base,
    * section/page titles at lg–xl. Display heroes (KPI numbers, 2rem+) are NOT
    * on this scale — they own their size via the .kpi-value / .ov-hero classes.
@@ -141,7 +142,7 @@
   --fw-normal: 400;      /* labels, body */
   --fw-bold: 600;        /* emphasis, headings, numbers */
 
-  /* Spacing scale (D13) — 4px base. Use for gap / margin / padding instead of
+  /* Spacing scale — 4px base. Use for gap / margin / padding instead of
    * the 0.3 / 0.35 / 0.45 / 0.55rem soup. */
   --sp-1: 0.25rem;   /* 4px  */
   --sp-2: 0.5rem;    /* 8px  */
@@ -150,7 +151,7 @@
   --sp-5: 1.5rem;    /* 24px */
   --sp-6: 2rem;      /* 32px */
 
-  /* Motion (D18) — two durations + one easing. Every animation references these
+  /* Motion — two durations + one easing. Every animation references these
    * so the reduced-motion override below can zero them in one place ("motion
    * means motion", and it honors the OS preference by law). */
   --dur-fast: 120ms;   /* hovers, small state flips */
@@ -202,7 +203,7 @@
   --viz-coral: #fb7185;
   --viz-green: #34d399;
 
-  /* Sequential + diverging ramps (D14) — dark inverts the sequential direction
+  /* Sequential + diverging ramps — dark inverts the sequential direction
    * so higher magnitude reads brighter on the dark canvas; diverging keeps
    * teal=positive / coral=negative with a dimmer neutral mid. */
   --viz-seq-1: #0c322e;
@@ -222,7 +223,7 @@
   --shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.4);
 }
 
-/* Reduced-motion, by law (D18 / "motion means motion"). Zeroing the motion
+/* Reduced-motion, by law ("motion means motion"). Zeroing the motion
  * durations here means any transition/animation that references --dur-* is
  * disabled for users who ask for it — no per-component opt-in. New animation
  * MUST drive its timing from these tokens (not a hardcoded 0.25s) to inherit

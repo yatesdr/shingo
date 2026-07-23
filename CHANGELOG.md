@@ -1,79 +1,81 @@
 # Changelog
 
-## 2026-07-22 — UI refresh, Package 1: map zoom/pan + comet honesty (Track B1+B2)
+## 2026-07-22 — Map: zoom/pan and truthful route rendering
 
-Interactive framing and truthful route rendering on the dashboard map
-(`dashboard-map.js`). No schema/API change. Map behavior needs live
-verification on a running scene (no JS harness for the map).
-
-### Added / Changed
-
-- **B1 — manual view.** Wheel-zoom at the cursor and left-drag-pan; either
-  breaks auto-follow (`userView`), so the frame stops chasing active orders
-  until Recenter. Zoom keeps the world point under the cursor fixed via the
-  scene CTM inverse. A new Recenter control (Lucide crosshair) eases from the
-  manual view back to the ROI and resumes follow; the minimap is now
-  click-to-jump. A drag that moved is swallowed so it doesn't focus a robot.
-  The kiosk template gains `components.css` + `{{iconSprite}}`.
-- **B2 — comet honesty.** The board payload exposes no picked-up/leg field and
-  no status distinguishes the two legs (documented in-code), so `orderLeg()`
-  infers fetch vs carry by latching on robot↔source proximity. The comet now
-  targets the robot's *current* leg (source until pickup, then delivery) —
-  fixing the reversed-arrow that always ran robot→delivery. Fetch legs draw
-  hollow/empty dots, carry legs solid/loaded. Comets animate only while the
-  robot is actually moving; stopped mid-route freezes to a faint static lane,
-  blocked/faulted to a red static lane; pre-dispatch/staged orders get a dashed
-  intent line at most. `prefers-reduced-motion` honored throughout.
-
-### Tests
-
-- Template parse, emoji + inline-handler drift, and core JS-wrapper tests green.
-  The map has no vm harness (unchanged from before); leg inference and the three
-  route states were reviewed by hand and need a live scene to confirm visually.
-
-## 2026-07-22 — UI refresh, Package 0: little-wins sweep + style-guide foundations
-
-Foundations for the inventory / map / nodes refresh (see
-`shingo-ui-refresh-plan-2026-07-23.md`). No behavior change; tokens, docs, one
-new asset, and mechanical guide-compliance fixes. All existing gates green.
+Interactive framing and honest route animation on the dashboard map
+(`dashboard-map.js`). No schema or API change. The map's on-screen behavior
+needs a live scene to confirm — there is no automated JavaScript test for it.
 
 ### Added / Changed
 
-- **Track E little-wins (Core admin):** `loaders.js` `window.confirm()` →
-  `await uiConfirm()` and its rogue `#0a8f6a` summary color → `var(--primary)`;
-  `diagnostics.js` fire-alarm + robot-status inline hexes → `--success`/`--danger`
-  and the shared `.badge-robot-*` classes; `nodes-detail.js` occupancy
-  discrepancy rows swap light-only inline `#fff3cd`/`#f8d7da` for dark-safe
-  token-derived `.discrepancy-*` classes; new `.badge-locked` (aliased onto
-  `.badge-claimed`, no new hex).
-- **D10 UoP casing:** display text "UOP" → "UoP" across bins/payloads/nodes/
-  material-body/processes/replenishment templates and bins/dashboard-node-report/
-  orders page JS. Code identifiers, JSON keys, `data-*` attrs untouched.
-  `inventory.html` + `inventory-loaders.js` skipped (rewritten in Package 2).
-- **Foundation tokens (`shared/tokens.css`):** D12 type scale
-  (`--font-xs..--font-xl`, `--fw-normal`/`--fw-bold`, `.tnum`), D13 spacing
-  scale (`--sp-1..--sp-6`), D14 sequential (`--viz-seq-*`) + diverging
-  (`--viz-div-*`) viz ramps (both themes), D18 motion (`--dur-fast`,
-  `--dur-base`, `--ease`) with a `prefers-reduced-motion` block that zeroes the
-  durations by law.
-- **D17 icon system:** vendored 22-icon Lucide (ISC) SVG symbol sprite at
-  `shared/icons.svg`, embedded and inlined once into Core's `layout.html` via
-  the `{{iconSprite}}` func; `.icon` / `.icon-16/18/20` classes (monochrome
-  `currentColor`).
-- **Style guide:** D5 (P19 categorical reorder indigo→teal→violet→amber→sky→
-  coral for CVD), D6/D7/D8 new "Visual principles" (structure recedes / motion
-  means motion / focus dims siblings), D10 UoP glossary entry, D12/D13/D14/D18
-  token docs, D17 Icons section.
+- **Manual view.** Wheel-zoom at the cursor and left-drag to pan. Either one
+  takes over the view, so the frame stops auto-chasing active orders until you
+  press Recenter. Zoom keeps the point under the cursor fixed. A new Recenter
+  button (crosshair icon) eases the view back to the active area and resumes
+  auto-follow; the small overview map is now click-to-jump. A drag that actually
+  moved is not treated as a click, so panning never accidentally selects a robot.
+  The map page now loads the shared component styles and the icon sprite.
+- **Honest route comets.** The map data carries no "picked up yet" flag, and no
+  order status separates the trip to the pickup from the trip to the drop-off
+  (both are "in transit"), so the code infers the current leg from how close the
+  robot is to its source and locks it in once the robot reaches the source. The
+  comet now points along the leg the robot is actually driving — toward the
+  source until pickup, then toward the delivery — instead of always pointing at
+  the delivery. Empty runs draw hollow dots, loaded runs draw solid dots. Comets
+  only animate while the robot is moving; a robot stopped mid-route shows a faint
+  static line, a blocked or faulted one a red static line, and orders not yet
+  dispatched (or already staged) show at most a dashed intent line. The reduced-
+  motion setting is honored throughout.
 
 ### Tests
 
-- **New:** `shared.IsEmoji`/`FirstEmoji` detector + unit test;
-  `TestNoEmojiInTemplatesAndPageJS` drift test in both `www` packages (no emoji
-  in templates or page JS — tree currently clean). Build/vet/test/golangci-lint
-  (0 issues) green across all four modules; existing drift tests and all node
-  vm-harness JS tests pass.
+- Template parsing, the emoji and inline-handler checks, and the JavaScript unit
+  tests all pass. The map has no automated UI test; the leg inference and the
+  three route states were reviewed by reading the code and need a running scene
+  to confirm visually.
 
+## 2026-07-22 — UI refresh groundwork: cleanups, design tokens, and the icon set
 
+Groundwork for the inventory, map, and nodes refresh. No behavior change — new
+design tokens, documentation, one new asset, and a set of mechanical
+style-consistency fixes. All existing checks pass.
+
+### Added / Changed
+
+- **Admin-page cleanups (Core).** `loaders.js` now uses the styled confirmation
+  dialog instead of the browser's native `confirm()`, and its one stray green
+  color is replaced with the theme's accent. `diagnostics.js` fire-alarm and
+  robot-status colors move from hard-coded hex values to theme colors and the
+  shared robot-status badge classes. The node "check occupancy" discrepancy rows
+  drop their light-only inline backgrounds for theme colors that stay legible in
+  dark mode. A new "locked" badge reuses the existing amber "claimed" styling, so
+  no new color is introduced.
+- **"UoP" casing.** Visible text reading "UOP" is now "UoP" across the bins,
+  payloads, nodes, material, processes, and replenishment pages. Code names,
+  data attributes, and JSON keys are left alone.
+- **Design tokens (`shared/tokens.css`).** A five-step type scale and two font
+  weights; a 4px-based spacing scale; a single-hue teal ramp and a
+  teal-to-coral diverging ramp for heat maps and signed charts (both light and
+  dark); and motion tokens (two durations, one easing) with a reduced-motion rule
+  that zeroes the durations so animation is disabled for users who ask for it.
+- **Icons.** A ~22-icon subset of the Lucide icon set (ISC license) is vendored
+  as one SVG sprite (`shared/icons.svg`), embedded and inlined once into the Core
+  layout. Icons are single-color and take the surrounding text color.
+- **Style guide.** Reordered the chart palette so two adjacent series no longer
+  collapse for red-weak viewers (same colors, new order); added a "visual
+  principles" section (keep structure quiet and let live state carry the color;
+  animate only real movement; focus one thing and dim its neighbors); documented
+  the new tokens and the icon and no-emoji rules; added a "UoP" glossary entry.
+
+### Tests
+
+- New `shared.IsEmoji`/`FirstEmoji` helper with a unit test, and a
+  `TestNoEmojiInTemplatesAndPageJS` check in both `www` packages that fails on
+  any emoji in a template or page script (the tree is currently clean). Build,
+  vet, unit tests, and the linter (0 issues) pass across all four modules, along
+  with the existing consistency checks and the JavaScript unit tests.
+
+## 2026-06-12 — Bin-loader multi-window refactor, checkpoint C4a: multi-window delivery (flag-gated)
 
 Activates the multi-window runtime — the payoff of the refactor — behind a config
 flag, default OFF. A shared loader configured with N windows now shares one budget

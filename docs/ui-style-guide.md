@@ -187,7 +187,7 @@ The original operator tokens used visual names. Rename to semantic:
    one hard line: indigo is **never a status hue** — status lives in the
    `--status-*-dot` tokens and the `.badge-*` classes; don't cross the streams.
 
-### Type scale (D12)
+### Type scale
 
 Five named steps, defined in `tokens.css`, replace the ~12 ad-hoc `rem` sizes
 that had accreted across pages:
@@ -208,14 +208,14 @@ for emphasis, headings, and numbers. Display heroes (KPI numbers at 2rem+) are
 uses `font-variant-numeric: tabular-nums` (the `.tnum` utility) so digits align
 column-to-column and don't jitter as live values tick.
 
-### Spacing scale (D13)
+### Spacing scale
 
 A 4px-base scale (`--sp-1` … `--sp-6` = 4/8/12/16/24/32px) for gap, margin, and
 padding. Use these instead of the 0.3 / 0.35 / 0.45 / 0.55rem soup. The existing
 `.gap-*` / `.mt-*` / `.mb-*` utilities keep their values; new spacing references
 the tokens.
 
-### Motion (D18)
+### Motion
 
 Two durations and one easing, in `tokens.css`: `--dur-fast` (~120ms, hovers and
 small state flips), `--dur-base` (~250ms, transitions where something moves),
@@ -498,10 +498,11 @@ order moved (see P19 CVD fix under law 2).
 theme-aware — hero numbers + chart text). Series colors reference these, never
 inline hex; area fills use `color-mix(in srgb, <viz-token> 13%, transparent)`.
 
-### Sequential + diverging ramps (D14)
+### Sequential and diverging ramps
 
 The categorical palette tells *series* apart; two more ramps encode *magnitude*.
-Together they complete P19: **categorical + semantic + sequential + diverging.**
+Together they complete the palette: **categorical + semantic + sequential +
+diverging.**
 
 - **Sequential** — `--viz-seq-1` … `--viz-seq-5`, a single-hue teal ramp for
   magnitude/density surfaces (heatmaps, the congestion layer). `seq-1` is the
@@ -578,7 +579,7 @@ holding bins and dims the others; the material layer's `?highlight=` deep-link
 reuses the same machinery. Dim the peers (lower opacity / desaturate) — do not
 grey out the whole canvas. The context stays readable; the focus just wins.
 
-## Icons (D17)
+## Icons
 
 **No emoji, ever.** Emoji render inconsistently across platforms, can't take
 `currentColor`, and drift from the monochrome look. Use a vendored icon or plain
@@ -1265,7 +1266,7 @@ Extend this pattern to:
 3. **Claim role enum** — same.
 4. **Token name presence** — if a CSS file references `var(--foo)`, `--foo`
    exists in `tokens.css`.
-5. **No emoji** (D17, shipped) — `TestNoEmojiInTemplatesAndPageJS` in both
+5. **No emoji** (shipped) — `TestNoEmojiInTemplatesAndPageJS` in both
    `www` packages fails on any emoji in a template or page-JS file, via
    `shared.IsEmoji`. See the Icons section.
 

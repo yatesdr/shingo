@@ -10,7 +10,7 @@ import (
 )
 
 // TestNoEmojiInTemplatesAndPageJS enforces the "no emoji, ever" icon policy
-// (D17, docs/ui-style-guide.md § Icon policy). Emoji render inconsistently
+// (see docs/ui-style-guide.md § Icons). Emoji render inconsistently
 // across platforms, can't take currentColor, and drift from the vendored Lucide
 // sprite (shared/icons.svg). Use an icon —
 // `<svg class="icon"><use href="#icon-name"></use></svg>` — or plain text
@@ -48,7 +48,7 @@ func scanForEmoji(t *testing.T, fsys fs.FS, root string) {
 		}
 		for i, line := range strings.Split(string(body), "\n") {
 			if r, ok := shared.FirstEmoji(line); ok {
-				t.Errorf("%s:%d emoji U+%04X forbidden by the no-emoji icon policy (D17) — use <svg class=\"icon\"><use href=\"#icon-name\"> or plain text\n  %s",
+				t.Errorf("%s:%d emoji U+%04X forbidden by the no-emoji icon policy — use <svg class=\"icon\"><use href=\"#icon-name\"> or plain text\n  %s",
 					p, i+1, r, strings.TrimSpace(line))
 			}
 		}

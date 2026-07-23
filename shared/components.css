@@ -116,11 +116,11 @@
   font-size: 0.8rem;
 }
 .full-width { width: 100%; }
-/* D12: numbers always get tabular-nums. Apply to any cell/figure showing a
- * count, quantity, duration, or metric so digits align column-to-column. */
+/* Numbers always get tabular-nums. Apply to any cell/figure showing a count,
+ * quantity, duration, or metric so digits align column-to-column. */
 .tnum { font-variant-numeric: tabular-nums; }
 
-/* ─── Icons (D17) ────────────────────────────────────────────────────────
+/* ─── Icons ──────────────────────────────────────────────────────────────
  * Vendored Lucide sprite (shared/icons.svg), inlined once per page. Icons are
  * MONOCHROME currentColor only: the sprite symbols carry no stroke/fill, so
  * .icon supplies them here — change the text color and the icon follows. Use:
