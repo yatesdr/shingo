@@ -1,6 +1,48 @@
 # Changelog
 
-## 2026-06-12 — Bin-loader multi-window refactor, checkpoint C4a: multi-window delivery (flag-gated)
+## 2026-07-22 — UI refresh, Package 0: little-wins sweep + style-guide foundations
+
+Foundations for the inventory / map / nodes refresh (see
+`shingo-ui-refresh-plan-2026-07-23.md`). No behavior change; tokens, docs, one
+new asset, and mechanical guide-compliance fixes. All existing gates green.
+
+### Added / Changed
+
+- **Track E little-wins (Core admin):** `loaders.js` `window.confirm()` →
+  `await uiConfirm()` and its rogue `#0a8f6a` summary color → `var(--primary)`;
+  `diagnostics.js` fire-alarm + robot-status inline hexes → `--success`/`--danger`
+  and the shared `.badge-robot-*` classes; `nodes-detail.js` occupancy
+  discrepancy rows swap light-only inline `#fff3cd`/`#f8d7da` for dark-safe
+  token-derived `.discrepancy-*` classes; new `.badge-locked` (aliased onto
+  `.badge-claimed`, no new hex).
+- **D10 UoP casing:** display text "UOP" → "UoP" across bins/payloads/nodes/
+  material-body/processes/replenishment templates and bins/dashboard-node-report/
+  orders page JS. Code identifiers, JSON keys, `data-*` attrs untouched.
+  `inventory.html` + `inventory-loaders.js` skipped (rewritten in Package 2).
+- **Foundation tokens (`shared/tokens.css`):** D12 type scale
+  (`--font-xs..--font-xl`, `--fw-normal`/`--fw-bold`, `.tnum`), D13 spacing
+  scale (`--sp-1..--sp-6`), D14 sequential (`--viz-seq-*`) + diverging
+  (`--viz-div-*`) viz ramps (both themes), D18 motion (`--dur-fast`,
+  `--dur-base`, `--ease`) with a `prefers-reduced-motion` block that zeroes the
+  durations by law.
+- **D17 icon system:** vendored 22-icon Lucide (ISC) SVG symbol sprite at
+  `shared/icons.svg`, embedded and inlined once into Core's `layout.html` via
+  the `{{iconSprite}}` func; `.icon` / `.icon-16/18/20` classes (monochrome
+  `currentColor`).
+- **Style guide:** D5 (P19 categorical reorder indigo→teal→violet→amber→sky→
+  coral for CVD), D6/D7/D8 new "Visual principles" (structure recedes / motion
+  means motion / focus dims siblings), D10 UoP glossary entry, D12/D13/D14/D18
+  token docs, D17 Icons section.
+
+### Tests
+
+- **New:** `shared.IsEmoji`/`FirstEmoji` detector + unit test;
+  `TestNoEmojiInTemplatesAndPageJS` drift test in both `www` packages (no emoji
+  in templates or page JS — tree currently clean). Build/vet/test/golangci-lint
+  (0 issues) green across all four modules; existing drift tests and all node
+  vm-harness JS tests pass.
+
+
 
 Activates the multi-window runtime — the payoff of the refactor — behind a config
 flag, default OFF. A shared loader configured with N windows now shares one budget
