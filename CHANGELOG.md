@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-07-22 — Nodes page cleanup, map token promotion, template-var check
+
+### Added / Changed
+
+- **Nodes page** style-guide compliance: the node-tile colours move onto the
+  shared palette (has-payload green, staged teal instead of a cyan that collided
+  with in-transit, maintenance amber, disabled danger, claimed warning border),
+  which lets the dark-mode tile overrides drop; the undefined `var(--card-bg)` is
+  renamed to real tokens; the two Create Loader buttons become primary buttons;
+  the Ctrl/Shift-click test-node actions become an explicit "Dev tools"
+  disclosure; and the dead "Check Occupancy" block (which errored on live plants)
+  is removed.
+- **Map palette** moved into shared tokens: the `--map-*` floor-plan colours and
+  the map JS's two local hex palettes (dock colours, node-class colours) now come
+  from `shared/tokens.css`. No visual change.
+
+### Tests
+
+- New `TestNoUndefinedCSSVarsInTemplates` fails CI when a template references a
+  `var(--foo)` that no stylesheet defines — the gap that let `var(--card-bg)`
+  render as unset. Everything builds, vets, lints clean, and the full drift +
+  JavaScript test set passes.
+
 ## 2026-07-22 — Inventory page rebuilt (v2), exception-first
 
 A rebuild of the inventory page around what needs attention, plus the backend
