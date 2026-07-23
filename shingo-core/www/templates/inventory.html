@@ -1,136 +1,99 @@
 {{define "content"}}
-<div>
-  <div class="flex flex-between mb-2">
-    <h1>Inventory</h1>
-    <div class="flex-center gap-1">
-      <span id="row-count" class="text-muted text-sm"></span>
-      {{if .Authenticated}}
-      <button class="btn btn-primary btn-sm" data-action="exportInventory" id="export-btn" disabled>Export Excel</button>
-      {{end}}
-    </div>
+<div class="inv-page" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}">
+
+  <!-- Sticky search + controls bar. Search filters every section below. -->
+  <div class="inv-bar ops-filter-bar">
+    <h1 class="inv-title">Inventory</h1>
+    <input type="text" id="inv-search" class="form-input inv-search"
+           placeholder="Search part, bin, node…  ( / to focus )"
+           data-action-input="onSearch" data-action-keydown="onSearchKey">
+    <select id="inv-zone" class="form-input" data-action-change="onFilter"><option value="">All zones</option></select>
+    <select id="inv-group" class="form-input" data-action-change="onFilter"><option value="">All groups</option></select>
+    <button type="button" class="btn btn-sm" data-action="refresh" title="Refresh now">
+      <svg class="icon icon-16" aria-hidden="true"><use href="#icon-refresh"></use></svg>
+    </button>
+    <span class="live-pill" id="inv-live" title="Live updates">idle</span>
+    <span class="inv-live-stamp" id="inv-asof"></span>
+    {{if .Authenticated}}
+    <button type="button" class="btn btn-primary btn-sm" data-action="exportInventory" id="inv-export">
+      <svg class="icon icon-16" aria-hidden="true"><use href="#icon-download"></use></svg> Export
+    </button>
+    {{end}}
   </div>
 
-  <!-- P3.2/P3.3 (Q-035 + Q-032 tail): part-number is the headline inventory
-       grain. On-hand UoP + bins-holding per payload, a three-way bin lifecycle
-       split (stocked / in-production-empty / idle), and the Production cluster
-       (produced / cycle / consumption) folded from the old Missions Parts
-       section. Bin-level detail stays beneath. Rollup + lifecycle are
-       plant-wide — independent of the detail-table filters below. -->
-  <section class="card mb-2" id="inv-parts">
+  <!-- Conditional alerts banner — only rendered when something needs eyes. -->
+  <div id="inv-alerts"></div>
+
+  <!-- KPI strip (5 tiles) — filled by JS. -->
+  <div class="grid-kpi" id="inv-kpi"></div>
+
+  <!-- Replenishment Health — one row per payload, worst first. -->
+  <section class="card mb-2" id="rh">
     <div class="section-head">
-      <h2>Inventory by Part</h2>
-      <span class="text-muted-sm" id="inv-lifecycle" title="Bin lifecycle across the plant"></span>
+      <h2>Replenishment Health</h2>
+      <span class="text-muted-sm">On-hand = bins + lineside (what the threshold monitor sums) · click a row to tune thresholds</span>
     </div>
-    <table class="table-compact w-full" id="inv-rollup-table">
-      <thead>
-        <tr>
-          <th>Part (payload)</th>
-          <th>Cat-ID</th>
-          <th style="text-align:right">On-hand UoP</th>
-          <th style="text-align:right">Bins holding</th>
-        </tr>
-      </thead>
-      <tbody id="inv-rollup-body"><tr><td colspan="4" class="dash-empty">Loading&hellip;</td></tr></tbody>
-    </table>
-  </section>
-
-  <section class="card mb-2" id="inv-loaders">
-    <div class="section-head">
-      <h2>Loader Replenishment Thresholds</h2>
-      <span class="text-muted-sm">Per-payload UOP threshold for Core-owned loaders. Edits re-derive demand + push to Edge.</span>
-    </div>
-    <table class="table-compact w-full">
-      <thead><tr><th>Loader</th><th>Node</th><th>Role</th><th>Payload</th><th>Calc (cycle s)</th><th>UOP threshold</th></tr></thead>
-      <tbody id="inv-loaders-body"><tr><td colspan="6" class="dash-empty">Loading&hellip;</td></tr></tbody>
-    </table>
-  </section>
-
-  <section class="card mb-2" id="inv-production">
-    <div class="section-head">
-      <h2>Production</h2>
-      <span class="text-muted-sm">Plant-wide &middot; recent window</span>
-    </div>
-    <div class="grid grid-3">
-      <div><div class="chart-caption">Produced (qty &middot; missions)</div><div class="bar-list" id="inv-parts-produced"></div></div>
-      <div><div class="chart-caption" title="Payload-level cycle time attributed to each part">Cycle time (avg)</div><div class="bar-list" id="inv-parts-cycle"></div></div>
-      <div><div class="chart-caption">Consumption (UoP)</div><div class="bar-list" id="inv-parts-consume"></div></div>
-    </div>
-  </section>
-
-  <h2 class="mb-1">Bins</h2>
-  <div class="filter-bar mb-1">
-    <input type="text" id="inv-search" placeholder="Search..." data-action-input="applyFilters">
-    <select id="inv-zone" data-action-change="applyFilters"><option value="">All Zones</option></select>
-    <select id="inv-group" data-action-change="applyFilters"><option value="">All Groups</option></select>
-    <select id="inv-status" data-action-change="applyFilters">
-      <option value="">All Statuses</option>
-      <option value="available">Available</option>
-      <option value="staged">Staged</option>
-      <option value="flagged">Flagged</option>
-      <option value="maintenance">Maintenance</option>
-      <option value="retired">Retired</option>
-    </select>
-    <label class="text-sm flex-center" style="gap:0.3rem;">
-      <input type="checkbox" id="inv-transit" data-action-change="applyFilters"> In Transit
-    </label>
-  </div>
-
-  <div id="inv-loading" class="loading-overlay">
-    <div class="spinner"></div>
-    <span>Loading inventory...</span>
-  </div>
-
-  <div id="inv-error" class="alert hide"></div>
-
-  <div id="inv-table-wrap" class="hide">
-    <div style="overflow-x:auto;">
-      <table id="inv-table">
+    <div class="table-scroll-y">
+      <table class="rh-table">
         <thead>
           <tr>
-            <th class="sortable" data-col="group_name" data-action="sortBy:group_name">Group</th>
-            <th class="sortable" data-col="lane_name" data-action="sortBy:lane_name">Lane</th>
-            <th class="sortable" data-col="node_name" data-action="sortBy:node_name">Node</th>
-            <th class="sortable" data-col="zone" data-action="sortBy:zone">Zone</th>
-            <th class="sortable" data-col="bin_label" data-action="sortBy:bin_label">Bin</th>
-            <th class="sortable" data-col="bin_type" data-action="sortBy:bin_type">Type</th>
-            <th class="sortable" data-col="status" data-action="sortBy:status">Status</th>
-            <th>Transit</th>
-            <th class="sortable" data-col="payload_code" data-action="sortBy:payload_code">Payload</th>
-            <th class="sortable" data-col="cat_id" data-action="sortBy:cat_id">Cat-ID</th>
-            <th class="sortable" data-col="qty" data-action="sortBy:qty">Qty</th>
-            <th>UOP Rem.</th>
-            <th>Confirmed</th>
+            <th style="width:1rem"></th>
+            <th>Part (payload)</th>
+            <th>Cat-ID</th>
+            <th style="min-width:200px">On-hand vs threshold</th>
+            <th class="rh-num">On-hand</th>
+            <th class="rh-num">Threshold</th>
+            <th class="rh-num">Headroom</th>
+            <th>Status</th>
+            <th></th>
           </tr>
         </thead>
-        <tbody id="inv-body"></tbody>
+        <tbody id="rh-body"><tr><td colspan="9" class="dash-empty">Loading…</td></tr></tbody>
       </table>
     </div>
-  </div>
+  </section>
 
-  <div class="flex flex-between mb-1 mt-2">
-    <h2>Lineside Buckets</h2>
-    <span id="buckets-count" class="text-muted text-sm"></span>
-  </div>
-  <div id="buckets-table-wrap" style="overflow-x:auto;">
-    <table id="buckets-table">
-      <thead>
-        <tr>
-          <th>Cell</th>
-          <th>Process</th>
-          <th>Station</th>
-          <th>Node</th>
-          <th>Style</th>
-          <th>Part</th>
-          <th>State</th>
-          <th style="text-align:right">Qty</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody id="buckets-body"></tbody>
-    </table>
+  <!-- Lineside Buckets — Core-authoritative rows the monitor sums; stale = ghost risk. -->
+  <section class="card mb-2" id="buckets">
+    <div class="section-head">
+      <h2>Lineside Buckets</h2>
+      <span class="text-muted-sm">Stale rows (untouched &gt; 30 d) inflate the in-loop total and never fire a threshold</span>
+    </div>
+    <div class="table-scroll-y">
+      <table class="rh-table">
+        <thead>
+          <tr>
+            <th>Cell</th><th>Station</th><th>Node</th><th>Part</th><th>State</th>
+            <th class="rh-num">Qty</th><th>Updated</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="buckets-body"><tr><td colspan="8" class="dash-empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <p class="text-muted-sm">
+    Bin-level detail lives on the <a href="/bins">Bins page</a>.
+    Consumption, produced, and cycle-time now live in the per-payload trend drill and on Missions.
+  </p>
+</div>
+
+<!-- Consumption / cover drill modal. -->
+<div class="modal-overlay drill-modal" id="inv-drill" data-backdrop-close>
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="drill-title">Consumption &amp; cover</h2>
+      <button class="modal-close" data-action="close-modal" aria-label="Close"><svg class="icon icon-20" aria-hidden="true"><use href="#icon-close"></use></svg></button>
+    </div>
+    <div class="range-toggle" id="drill-range">
+      <button type="button" data-action="drillRange:7">7d</button>
+      <button type="button" class="is-active" data-action="drillRange:14">14d</button>
+      <button type="button" data-action="drillRange:30">30d</button>
+    </div>
+    <div id="drill-detail"></div>
+    <div class="drill-narrative" id="drill-narrative"></div>
   </div>
 </div>
 
 <script type="module" src="/static/pages/inventory.js?v={{cacheBust}}"></script>
-<script type="module" src="/static/pages/inventory-loaders.js?v={{cacheBust}}"></script>
 {{end}}

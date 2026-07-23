@@ -1648,3 +1648,72 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .nr-empty-payload {
   color: var(--text-muted);
 }
+
+/* ═══ Inventory page (v2) ══════════════════════════════════════════════════
+ * Exception-first inventory: sticky search bar, alerts banner, KPI strip, a
+ * Replenishment Health table (on-hand vs threshold per payload, worst first),
+ * and lineside buckets with staleness colouring. The bins table moved to /bins.
+ * Shared pieces (.thr-meter, .chip-*, .kpi-*, .alerts-banner, .ops-filter-bar)
+ * live in components.css; page-specific layout lives here. */
+
+/* Sticky search + controls bar. */
+.inv-bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.7rem 0; border-bottom: 1px solid var(--border); }
+.inv-bar .inv-title { font-size: var(--font-xl); margin: 0 auto 0 0; font-weight: var(--fw-bold); }
+.inv-search { min-width: 240px; }
+.inv-live-stamp { font-size: var(--font-xs); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+/* KPI bin-lifecycle stacked bar. */
+.lifebar { display: flex; height: 0.9rem; border-radius: 3px; overflow: hidden; margin-top: 0.55rem; gap: 2px; }
+.lifebar span { height: 100%; }
+.lifebar .seg-stocked { background: var(--viz-green); }
+.lifebar .seg-prodempty { background: var(--viz-amber); }
+.lifebar .seg-idle { background: color-mix(in srgb, var(--text-muted) 45%, transparent); }
+.lifekey { display: flex; gap: 0.9rem; font-size: var(--font-xs); color: var(--text-muted); margin-top: 0.3rem; flex-wrap: wrap; }
+.lifekey i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.3rem; }
+.lifekey .k-stocked { background: var(--viz-green); }
+.lifekey .k-prodempty { background: var(--viz-amber); }
+.lifekey .k-idle { background: color-mix(in srgb, var(--text-muted) 45%, transparent); }
+
+/* Replenishment Health table. */
+.rh-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
+.rh-table th { font-weight: 600; color: var(--text-muted); font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.05em; text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); }
+.rh-table td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.rh-row { cursor: pointer; }
+.rh-row:hover { background: var(--elev-raised); }
+.rh-num { text-align: right; font-variant-numeric: tabular-nums; }
+.rh-neg { color: var(--viz-coral); }
+.rh-split { font-size: var(--font-xs); color: var(--text-tertiary); }
+.chev { display: inline-block; transition: transform var(--dur-fast, 0.15s) var(--ease, ease); color: var(--text-tertiary); }
+.rh-row.open .chev { transform: rotate(90deg); }
+
+/* Expanded editor row. */
+.rh-editor > td { background: var(--elev-raised); padding: 0.9rem 1rem; }
+.thr-edit-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
+.thr-edit-table th { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
+.thr-edit-table td { padding: 0.4rem 0.5rem; vertical-align: middle; }
+.thr-edit-table input[type="number"] { width: 90px; text-align: right; }
+.row-dirty { outline: 1px solid var(--viz-amber); outline-offset: -1px; border-radius: 4px; }
+.dirty-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--viz-amber); margin-right: 0.35rem; vertical-align: middle; }
+.kind-pill { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); border: 1px solid var(--border); border-radius: 999px; padding: 0.05rem 0.45rem; }
+.calc-pop { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 0.8rem 1rem; margin-top: 0.6rem; max-width: 520px; }
+.calc-pop b { font-variant-numeric: tabular-nums; }
+.conf-high { color: var(--viz-green); }
+.conf-low { color: var(--viz-amber); }
+
+/* Holding-bins mini list inside the expanded row. */
+.holding-title { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); margin: 0.8rem 0 0.3rem; }
+.holding-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
+.holding-table th { font-size: var(--font-xs); color: var(--text-tertiary); text-transform: uppercase; text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border); }
+.holding-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
+
+/* Lineside bucket staleness. */
+.stale-7 { color: var(--viz-amber); }
+.stale-30 { color: var(--viz-coral); font-weight: 600; }
+tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transparent); }
+
+/* Global-search match highlight. */
+.inv-hit { background: color-mix(in srgb, var(--viz-amber) 35%, transparent); border-radius: 2px; }
+
+/* Consumption drill chart. */
+.drill-chart { height: 320px; }
+.drill-narrative { margin-top: 0.75rem; color: var(--text-muted); font-size: var(--font-sm); }

@@ -321,6 +321,66 @@
 .bar-row__fill { background: var(--primary); height: 100%; border-radius: 3px; transition: width 0.25s ease; }
 .bar-row__value { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+/* ─── Threshold meter — on-hand vs replenishment threshold ────────────────
+ * A bullet bar: a filled bar (on-hand) over a muted track, with an amber tick
+ * at the threshold. Colour by headroom — green OK, amber near, coral below.
+ * The hatched variant flags a broken ledger (negative in-loop total) where the
+ * meter can't be trusted at all. Shared because the inventory page and the map's
+ * material layer both draw it. */
+.thr-meter {
+  position: relative;
+  height: 0.8rem;
+  min-width: 160px;
+  background: var(--bg-dark);
+  border-radius: 3px;
+  overflow: visible;
+}
+.thr-meter__fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: var(--viz-green);
+  transition: width var(--dur-base, 0.25s) var(--ease, ease);
+}
+.thr-meter--near .thr-meter__fill { background: var(--viz-amber); }
+.thr-meter--below .thr-meter__fill { background: var(--viz-coral); }
+.thr-meter--unset .thr-meter__fill { background: color-mix(in srgb, var(--text-muted) 45%, transparent); }
+.thr-meter__tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--viz-amber);
+  border-radius: 1px;
+}
+.thr-meter--err {
+  background: repeating-linear-gradient(45deg,
+    color-mix(in srgb, var(--viz-coral) 30%, transparent),
+    color-mix(in srgb, var(--viz-coral) 30%, transparent) 4px,
+    transparent 4px, transparent 8px);
+}
+
+/* ─── Health chips — derived-health states, calm weight ───────────────────
+ * A quieter, separate vocabulary from the Signal status badges: these mark a
+ * derived health verdict (OK / near / below / unset / ledger error / drift),
+ * not an order's lifecycle. Pill shape, low-saturation fills. */
+.chip {
+  display: inline-block;
+  padding: 0.14em 0.55em;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.chip-ok    { background: color-mix(in srgb, var(--viz-green) 16%, transparent); color: var(--viz-green); }
+.chip-near  { background: color-mix(in srgb, var(--viz-amber) 18%, transparent); color: var(--viz-amber); }
+.chip-below { background: color-mix(in srgb, var(--viz-coral) 18%, transparent); color: var(--viz-coral); }
+.chip-muted { background: color-mix(in srgb, var(--text-muted) 15%, transparent); color: var(--text-muted); }
+.chip-err   { background: var(--viz-coral); color: #1b0508; }
+.chip-drift { background: color-mix(in srgb, var(--viz-violet) 20%, transparent); color: var(--viz-violet); cursor: help; }
+
 /* Chart box wrapper for Chart.js canvases. */
 .chart-box { position: relative; }
 .chart-box canvas { max-width: 100%; }
