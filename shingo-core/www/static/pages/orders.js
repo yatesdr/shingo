@@ -143,7 +143,7 @@ function renderOrderModal(data) {
     if (data.payload) {
       out += '<div>';
       out += field('Payload', '#' + data.payload.id + ' <span style="color:var(--text-muted)">' + escapeHtml(data.payload.payload_code) + '</span>');
-      out += field('UOP Remaining', data.payload.uop_remaining + '');
+      out += field('UoP Remaining', data.payload.uop_remaining + '');
       out += field('Manifest', data.payload.manifest_confirmed ? '<span class="badge badge-available">confirmed</span>' : '<span class="badge badge-empty">unconfirmed</span>');
       out += '</div>';
     }

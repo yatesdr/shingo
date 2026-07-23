@@ -120,7 +120,7 @@ function renderOverview(data) {
         ? '<code>' + esc(ord.payload_code) + '</code> <span class="text-muted" style="font-size:0.85em">(in transit)</span>'
         : '<span class="text-muted">empty</span>');
   html += bdField('Payload', payloadDisplay);
-  html += bdField('UOP Remaining', b.payload_code ? b.uop_remaining + uopBar(b.uop_remaining, data.template) : '<span class="text-muted">-</span>');
+  html += bdField('UoP Remaining', b.payload_code ? b.uop_remaining + uopBar(b.uop_remaining, data.template) : '<span class="text-muted">-</span>');
   html += bdField('Manifest', b.manifest_confirmed ? '<span style="color:var(--success)">Confirmed</span>' :
     (b.payload_code ? '<span style="color:var(--warning)">Unconfirmed</span>' : '<span class="text-muted">-</span>'));
   html += bdField('Locked', b.locked ? '<span style="color:var(--danger)">' + esc(b.locked_by) + '</span>' : 'No');
@@ -263,7 +263,7 @@ async function renderActions(data) {
   // Record Count
   html += '<div class="action-group"><h4>Record Count</h4>';
   html += '<div class="inline-form">';
-  html += '<div class="form-group"><label>Actual UOP</label><input type="number" id="bd-count-uop" min="0" style="width:80px" value="' + b.uop_remaining + '"></div>';
+  html += '<div class="form-group"><label>Actual UoP</label><input type="number" id="bd-count-uop" min="0" style="width:80px" value="' + b.uop_remaining + '"></div>';
   html += '<div class="form-group"><label>Counter</label><input type="text" id="bd-count-actor" placeholder="Name" style="width:150px"></div>';
   html += '<button class="btn btn-sm" data-action="recordCount">Record</button>';
   html += '</div></div>';
@@ -586,7 +586,7 @@ function ccShowBin() {
   document.getElementById('cc-bin-card').innerHTML =
     '<div class="cc-label">' + esc(bin.label) + '</div>' +
     '<div class="text-muted">' + esc(bin.node || 'unassigned') + ' &middot; ' + esc(bin.payload) + '</div>' +
-    '<div style="margin-top:0.5rem">Expected UOP: <strong>' + bin.uop + '</strong></div>';
+    '<div style="margin-top:0.5rem">Expected UoP: <strong>' + bin.uop + '</strong></div>';
   document.getElementById('cc-actual').value = bin.uop;
   document.getElementById('cc-actual').max = bin.uopCapacity || '';
   var hint = document.getElementById('cc-capacity-hint');

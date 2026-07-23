@@ -25,9 +25,9 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
   function headerHTML(layout) {
     if (layout === 'shared_window') {
-      return '<th>Payload</th><th>Status</th><th>Node</th><th>UOP</th>';
+      return '<th>Payload</th><th>Status</th><th>Node</th><th>UoP</th>';
     }
-    return '<th>Node</th><th>Node Group</th><th>Status</th><th>Payload</th><th>UOP</th>';
+    return '<th>Node</th><th>Node Group</th><th>Status</th><th>Payload</th><th>UoP</th>';
   }
 
   function rowHTML(r, layout) {
@@ -35,7 +35,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     var statusHTML = r.occupied
       ? '<span class="nr-dot nr-dot-filled"></span> FILLED'
       : '<span class="nr-dot nr-dot-empty nr-dot-pulse"></span> EMPTY';
-    var uopText = r.uop_remaining ? r.uop_remaining + ' UOP' : '\u2014';
+    var uopText = r.uop_remaining ? r.uop_remaining + ' UoP' : '\u2014';
 
     if (isShared) {
       var payloadHTML = esc(r.payload_code);
