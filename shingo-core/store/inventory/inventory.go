@@ -154,11 +154,12 @@ func List(db *sql.DB) ([]Row, error) {
 // the bucket-specific fields (Station, StyleID, PartNumber, Qty,
 // State).
 //
-// State is derived rather than stored: rows in lineside_buckets are
-// garbage-collected at qty=0, so any row that surfaces here is by
-// definition "active". The field is exposed for parity with Edge's
-// admin Lineside Buckets table and so a future "inactive" bucket
-// shape (if it ever lands on Core) has a place to plug in.
+// State ("active" | "stranded") is derived at query time from the
+// plant-claims active-style mirror (process_styles.is_active +
+// style_claims), NOT stored: a bucket is "stranded" when its node runs
+// an active style whose payload set no longer covers the bucket's
+// payload — real inventory the running style won't consume, surfaced so
+// the operator can recall it. Mirrors Edge's admin Lineside Buckets table.
 type BucketRow struct {
 	// ID is the lineside_buckets.id primary key. Surfaced on the wire
 	// so the Core admin "Lineside Buckets" page can drive the Round-3
@@ -201,7 +202,21 @@ SELECT
     COALESCE(n.zone, '') AS zone,
     b.station, b.style_id, b.part_number,
     COALESCE(b.payload_code, '') AS payload_code,
-    b.qty, b.updated_at
+    b.qty, b.updated_at,
+    (
+      EXISTS (
+        SELECT 1 FROM style_claims sc
+        JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
+        WHERE sc.core_node_name = b.core_node_name AND ps.is_active
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM style_claims sc
+        JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
+        WHERE sc.core_node_name = b.core_node_name AND ps.is_active
+          AND (sc.payload_code = b.payload_code
+               OR jsonb_exists(sc.allowed_payload_codes::jsonb, b.payload_code))
+      )
+    ) AS stranded
 FROM lineside_buckets b
 LEFT JOIN nodes n ON n.name = b.core_node_name
 LEFT JOIN nodes lane ON lane.id = n.parent_id
@@ -228,16 +243,23 @@ func ListLinesideBuckets(db *sql.DB) ([]BucketRow, error) {
 	var out []BucketRow
 	for rows.Next() {
 		var r BucketRow
+		var stranded bool
 		if err := rows.Scan(
 			&r.ID,
 			&r.GroupName, &r.LaneName, &r.NodeName, &r.Zone,
 			&r.Station, &r.StyleID, &r.PartNumber, &r.PayloadCode, &r.Qty, &r.UpdatedAt,
+			&stranded,
 		); err != nil {
 			return nil, fmt.Errorf("scan lineside_buckets row: %w", err)
 		}
-		// GC contract on lineside_buckets removes qty=0 rows; anything
-		// returned here is active by definition.
+		// State is derived from the plant-claims active-style mirror (same rule as
+		// SystemUOPForPayload's stranded exclusion): "stranded" when the bucket's node
+		// runs an active style that no longer covers the bucket's payload — real
+		// inventory the running style won't consume, which the operator should recall.
 		r.State = "active"
+		if stranded {
+			r.State = "stranded"
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()

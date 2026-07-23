@@ -5,9 +5,11 @@ package inventory_test
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store/inventory"
 	"shingocore/store/nodes"
+	"shingocore/store/plantclaims"
 )
 
 // TestListLinesideBuckets_ReturnsAllRowsOrdered pins the Issue 2
@@ -75,6 +77,58 @@ func TestListLinesideBuckets_ReturnsAllRowsOrdered(t *testing.T) {
 	}
 	if rows[2].Station != "STATION-B" {
 		t.Errorf("rows[2].Station = %q, want STATION-B (cell→station→node sort)", rows[2].Station)
+	}
+}
+
+// TestListLinesideBuckets_MarksStranded pins the derived State: a bucket whose node
+// runs an active style that no longer covers the bucket's payload is "stranded" (the
+// "Core showed active on a stranded one" bug — State used to be hardcoded "active");
+// a bucket the active style does consume stays "active".
+func TestListLinesideBuckets_MarksStranded(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	node := &nodes.Node{Name: "BKT-STRAND-NODE", Zone: "Z1", Enabled: true}
+	if err := nodes.Create(db.DB, node); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	// Mirror: the node runs an active style consuming PAY-ACTIVE, not PAY-OLD.
+	if err := plantclaims.ReplaceProcess(db.DB, "PROC-B",
+		[]plantclaims.StyleRow{{ProcessID: "PROC-B", StyleID: "STYLE-ACTIVE", ConfigGen: 1, IsActive: true}},
+		[]plantclaims.ClaimRow{{
+			ProcessID:           "PROC-B",
+			StyleID:             "STYLE-ACTIVE",
+			CoreNodeName:        node.Name,
+			Role:                protocol.ClaimRoleConsume,
+			PayloadCode:         "PAY-ACTIVE",
+			AllowedPayloadCodes: []string{"PAY-ACTIVE"},
+		}}, 0,
+	); err != nil {
+		t.Fatalf("seed plant claims: %v", err)
+	}
+
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty, payload_code)
+		VALUES
+		  ('ST', $1, '', 1, 'PART-A', 100, 'PAY-ACTIVE'),
+		  ('ST', $1, '', 2, 'PART-O', 250, 'PAY-OLD')`,
+		node.Name); err != nil {
+		t.Fatalf("seed buckets: %v", err)
+	}
+
+	rows, err := inventory.ListLinesideBuckets(db.DB)
+	if err != nil {
+		t.Fatalf("ListLinesideBuckets: %v", err)
+	}
+	state := map[string]string{}
+	for _, r := range rows {
+		state[r.PayloadCode] = r.State
+	}
+	if state["PAY-ACTIVE"] != "active" {
+		t.Errorf("PAY-ACTIVE state = %q, want active (node's active style consumes it)", state["PAY-ACTIVE"])
+	}
+	if state["PAY-OLD"] != "stranded" {
+		t.Errorf("PAY-OLD state = %q, want stranded (prior style, active style no longer covers it)", state["PAY-OLD"])
 	}
 }
 

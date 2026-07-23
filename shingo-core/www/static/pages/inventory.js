@@ -427,7 +427,7 @@ function renderBuckets() {
       + '<td>' + hl(b.station || '') + '</td>'
       + '<td><code>' + hl(b.node_name || '') + '</code></td>'
       + '<td><code>' + hl(b.part_number || b.payload_code || '') + '</code></td>'
-      + '<td><span class="badge badge-available">' + escapeHtml(b.state || 'active') + '</span></td>'
+      + '<td><span class="badge ' + (b.state === 'stranded' ? 'badge-flagged' : 'badge-available') + '">' + escapeHtml(b.state || 'active') + '</span></td>'
       + '<td class="rh-num">' + num(b.qty) + '</td>'
       + '<td class="' + ageCls + '"' + (b.updated_at ? ' title="' + escapeHtml(new Date(b.updated_at).toLocaleString()) + '"' : '')
       + '>' + escapeHtml(ageText) + (stale ? ' · <b>stale</b>' : '') + '</td>'
