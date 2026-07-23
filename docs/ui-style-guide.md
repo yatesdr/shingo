@@ -1265,7 +1265,11 @@ Extend this pattern to:
 2. **Swap mode enum** — JS dropdown options match `protocol.SwapMode` values.
 3. **Claim role enum** — same.
 4. **Token name presence** — if a CSS file references `var(--foo)`, `--foo`
-   exists in `tokens.css`.
+   exists in `tokens.css`. Extended to **templates** (shipped):
+   `TestNoUndefinedCSSVarsInTemplates` in `shingo-core/www` fails when a
+   template's `var(--foo)` resolves to no `--foo` in the shared/page CSS (the
+   `--card-bg`-referenced-but-undefined class of bug), allowing inline
+   template-local custom properties.
 5. **No emoji** (shipped) — `TestNoEmojiInTemplatesAndPageJS` in both
    `www` packages fails on any emoji in a template or page-JS file, via
    `shared.IsEmoji`. See the Icons section.
