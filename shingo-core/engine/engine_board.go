@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch/eta"
+	"shingocore/fleet"
 )
 
 type BoardOrder struct {
@@ -19,7 +20,17 @@ type BoardOrder struct {
 	StationID      string `json:"station_id"`
 	CreatedAt      string `json:"created_at"`
 	CurrentStation string `json:"current_station"`
+	// Carrying is true when the assigned robot is physically loaded (lift/jack up).
+	// The map uses it as the authoritative fetch-vs-carry signal instead of inferring
+	// the leg from robot↔source geometry — which broke on multi-leg / complex orders.
+	Carrying bool `json:"carrying"`
 }
+
+// liftLoadedThreshold is the lift/jack height (metres) above which a robot counts as
+// physically loaded (carrying). A jacked-up AMR reports ~0.15 m; the small floor keeps
+// sensor noise from reading as "loaded". A robot with no lift reports 0 → carrying=false,
+// and the map falls back to its geometric leg inference for those.
+const liftLoadedThreshold = 0.02
 
 func (e *Engine) GetActiveOrdersWithRobotLocation() ([]BoardOrder, error) {
 	return e.GetActiveOrdersWithRobotLocationFiltered(nil)
@@ -36,13 +47,14 @@ func (e *Engine) GetActiveOrdersWithRobotLocationFiltered(stations []string) ([]
 	}
 
 	robots := e.GetAllCachedRobots()
-	robotMap := make(map[string]string, len(robots))
+	robotMap := make(map[string]fleet.RobotStatus, len(robots))
 	for _, r := range robots {
-		robotMap[r.VehicleID] = r.CurrentStation
+		robotMap[r.VehicleID] = r
 	}
 
 	result := make([]BoardOrder, 0, len(dbOrders))
 	for _, o := range dbOrders {
+		rob := robotMap[o.RobotID]
 		bo := BoardOrder{
 			OrderID:        o.ID,
 			RobotID:        o.RobotID,
@@ -52,7 +64,8 @@ func (e *Engine) GetActiveOrdersWithRobotLocationFiltered(stations []string) ([]
 			Status:         string(o.Status),
 			StationID:      o.StationID,
 			CreatedAt:      o.CreatedAt.Format(time.RFC3339),
-			CurrentStation: robotMap[o.RobotID],
+			CurrentStation: rob.CurrentStation,
+			Carrying:       rob.LiftHeight > liftLoadedThreshold,
 		}
 		if string(o.Status) == "in_transit" {
 			bo.ETA = eta.Stamp(e.etaCache, o.SourceNode, o.DeliveryNode)
@@ -83,6 +96,7 @@ func (e *Engine) GetActiveOrderWithRobotLocation(orderID int64) (*BoardOrder, er
 	}
 	if rs, ok := e.GetCachedRobotStatus(o.RobotID); ok {
 		bo.CurrentStation = rs.CurrentStation
+		bo.Carrying = rs.LiftHeight > liftLoadedThreshold
 	}
 	if string(o.Status) == "in_transit" {
 		bo.ETA = eta.Stamp(e.etaCache, o.SourceNode, o.DeliveryNode)
