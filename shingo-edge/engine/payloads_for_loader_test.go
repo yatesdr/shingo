@@ -65,6 +65,44 @@ func TestPayloadsForLoader_UnionsAcrossProcessesActiveVsAll(t *testing.T) {
 	}
 }
 
+// TestPayloadsForManualSwapNodes_MatchesPerNode pins the batched form BuildView
+// uses: one walk that buckets by (core node, role) must return, for every
+// manual_swap node, exactly what PayloadsForLoader returns for that node alone.
+// BuildView calls this ONCE instead of PayloadsForLoader per tile — the per-tile
+// version made an N-home board do N full walks (the 44s Springfield bin-loader
+// regression).
+func TestPayloadsForManualSwapNodes_MatchesPerNode(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	seedActiveManualSwapLoader(t, db, "P1", "HOME-1", "PART-A")
+	seedActiveManualSwapLoader(t, db, "P2", "HOME-2", "PART-B")
+	// SHARED is claimed by two processes → the batched map must union them exactly
+	// like the per-node call does.
+	seedActiveManualSwapLoader(t, db, "P3", "SHARED", "PART-C")
+	seedActiveManualSwapLoader(t, db, "P4", "SHARED", "PART-D")
+
+	m, err := processes.PayloadsForManualSwapNodes(db.DB)
+	if err != nil {
+		t.Fatalf("PayloadsForManualSwapNodes: %v", err)
+	}
+	for _, node := range []string{"HOME-1", "HOME-2", "SHARED"} {
+		wantActive, wantAll, _, err := processes.PayloadsForLoader(db.DB, node, protocol.ClaimRoleProduce)
+		if err != nil {
+			t.Fatalf("PayloadsForLoader(%s): %v", node, err)
+		}
+		got := m[node][protocol.ClaimRoleProduce]
+		if !slices.Equal(got.Active, wantActive) {
+			t.Errorf("%s active = %v, want %v (batched must match per-node)", node, got.Active, wantActive)
+		}
+		if !slices.Equal(got.All, wantAll) {
+			t.Errorf("%s all = %v, want %v", node, got.All, wantAll)
+		}
+	}
+	if _, ok := m["NOPE"]; ok {
+		t.Error("a node with no manual_swap claim must be absent from the map")
+	}
+}
+
 // TestFindLoaderForDemand_RoutesToSignaledCoreNode pins the legacy-path twin
 // of the threshold routing fix: a DemandSignal naming a specific loader
 // resolves to that loader (not the alphabetically-first one) when the same

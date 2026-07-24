@@ -24,8 +24,10 @@ async function loadView() {
         // Bounded (fetchWithTimeout): scheduleRefresh awaits this before arming the
         // next poll, so a hung view fetch — a severed connection — would freeze every
         // board update until a hard refresh. On timeout it throws → caught below →
-        // the poll loop keeps ticking. 10s is generous for a local edge query.
-        const res = await fetchWithTimeout('/api/operator-stations/' + stationID + '/view', undefined, 10000);
+        // the poll loop keeps ticking. The timeout only guards a true hang: it is set
+        // well above the slowest legitimate view so it never aborts a slow-but-working
+        // one (a 10s cap once stranded a heavy bin-loader view mid-load).
+        const res = await fetchWithTimeout('/api/operator-stations/' + stationID + '/view', undefined, 30000);
         if (!res.ok) { showToast('Connection error: ' + res.status, 'error'); return; }
         const text = await res.text();
         if (text === getLastViewJSON()) return;

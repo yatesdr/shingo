@@ -284,6 +284,14 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 			known[child.ID] = true
 		}
 	}
+	// Loader payload sets, computed ONCE for the whole board. PayloadsForLoader
+	// walks every process/style/claim, so calling it per manual_swap tile made an
+	// N-home board do N walks (14 homes → ~44s on the Springfield bin loader). One
+	// walk, keyed by (core node, role); each tile just looks itself up below.
+	loaderPayloads, err := processes.PayloadsForManualSwapNodes(s.db.DB)
+	if err != nil {
+		loaderPayloads = nil // fail-open: tiles fall back to the claim-derived set
+	}
 	for _, node := range nodes {
 		nodeView := store.StationNodeView{Node: node}
 		runtime, _ := s.db.EnsureProcessNodeRuntime(node.ID)
@@ -343,9 +351,9 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 		// payloads, not just this station's. Plus the transitional flag the
 		// board reads to default into preload mode.
 		if nodeView.ActiveClaim != nil && nodeView.ActiveClaim.SwapMode == protocol.SwapModeManualSwap {
-			if act, all, _, err := processes.PayloadsForLoader(s.db.DB, node.CoreNodeName, nodeView.ActiveClaim.Role); err == nil {
-				nodeView.ActiveStylePayloads = act
-				nodeView.AllStylePayloads = all
+			if rp, ok := loaderPayloads[node.CoreNodeName][nodeView.ActiveClaim.Role]; ok {
+				nodeView.ActiveStylePayloads = rp.Active
+				nodeView.AllStylePayloads = rp.All
 			}
 			// Operator-driven (board defaults to preload) + dedicated-position layout +
 			// window-group membership all come from the Core aggregate — the SAME resolver

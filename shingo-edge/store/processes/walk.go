@@ -181,6 +181,56 @@ func PayloadsForLoader(db *sql.DB, coreNodeName string, role protocol.ClaimRole)
 	return sortedKeys(activeSet), sortedKeys(allSet), outboundDest, nil
 }
 
+// PayloadSet is the active-style and all-style payload union for one loader
+// position, both sorted (deterministic HMI shape).
+type PayloadSet struct {
+	Active []string
+	All    []string
+}
+
+// PayloadsForManualSwapNodes walks the process/style/claim tree ONCE and returns
+// the active/all payload unions for EVERY manual_swap claim, keyed by core node
+// name then role. It is the batched form of PayloadsForLoader: BuildView needs
+// these sets for each loader tile, and calling PayloadsForLoader per tile made an
+// N-home board do N full walks — each walk runs a ListClaims query per style, so
+// a station with many homes and many styles cost O(N × styles) queries (44s on the
+// Springfield bin loader with 14 homes). This does one walk — O(styles) — and the
+// caller looks each node up in the map.
+func PayloadsForManualSwapNodes(db *sql.DB) (map[string]map[protocol.ClaimRole]PayloadSet, error) {
+	type acc struct{ active, all map[string]bool }
+	buckets := map[string]map[protocol.ClaimRole]*acc{}
+	err := WalkClaims(db, WalkOpts{SwapMode: protocol.SwapModeManualSwap}, func(ctx WalkCtx) bool {
+		name := ctx.Claim.CoreNodeName
+		role := ctx.Claim.Role
+		if buckets[name] == nil {
+			buckets[name] = map[protocol.ClaimRole]*acc{}
+		}
+		a := buckets[name][role]
+		if a == nil {
+			a = &acc{active: map[string]bool{}, all: map[string]bool{}}
+			buckets[name][role] = a
+		}
+		for _, p := range ctx.Claim.AllowedPayloads() {
+			a.all[p] = true
+			if ctx.Active {
+				a.active[p] = true
+			}
+		}
+		return false
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]map[protocol.ClaimRole]PayloadSet, len(buckets))
+	for name, roles := range buckets {
+		out[name] = make(map[protocol.ClaimRole]PayloadSet, len(roles))
+		for role, a := range roles {
+			out[name][role] = PayloadSet{Active: sortedKeys(a.active), All: sortedKeys(a.all)}
+		}
+	}
+	return out, nil
+}
+
 func sortedKeys(set map[string]bool) []string {
 	out := make([]string, 0, len(set))
 	for k := range set {
