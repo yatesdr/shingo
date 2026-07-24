@@ -121,6 +121,33 @@ func GetClaimByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim,
 	return &c, nil
 }
 
+// IsPairedOnDeckNode reports whether coreNodeName is used as a paired /
+// on-deck (back) position by any claim of a style in the given process — i.e.
+// a two_robot_press_index PairedCoreNode or SecondPairedCoreNode. Such
+// positions hold ONLY an empty carrier waiting to be indexed onto the core
+// (front) position, so a part-number stamp on one violates the invariant that
+// hung the Hopkinsville press-index swap (2026-07-23). A blank coreNodeName
+// never matches (blank paired fields on non-press-index claims must not
+// false-positive).
+func IsPairedOnDeckNode(db *sql.DB, processID int64, coreNodeName string) (bool, error) {
+	name := strings.TrimSpace(coreNodeName)
+	if name == "" {
+		return false, nil
+	}
+	var exists int
+	err := db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM style_node_claims c
+			JOIN styles s ON c.style_id = s.id
+			WHERE s.process_id = ?
+			  AND (c.paired_core_node = ? OR c.second_paired_core_node = ?)
+		)`, processID, name, name).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists == 1, nil
+}
+
 // UpsertClaim inserts or updates a claim and returns the row id. Validates
 // role/swap_mode invariants (manual_swap claims must auto-confirm and
 // must declare an outbound destination).

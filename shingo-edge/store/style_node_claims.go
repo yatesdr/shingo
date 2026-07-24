@@ -24,6 +24,13 @@ func (db *DB) GetStyleNodeClaimByNode(styleID int64, coreNodeName string) (*proc
 	return processes.GetClaimByNode(db.DB, styleID, coreNodeName)
 }
 
+// IsPairedOnDeckNode reports whether coreNodeName is a press-index paired /
+// on-deck position for any style in the process — a position that may hold
+// only an empty carrier (A1 stamp guard, hop 2026-07-23).
+func (db *DB) IsPairedOnDeckNode(processID int64, coreNodeName string) (bool, error) {
+	return processes.IsPairedOnDeckNode(db.DB, processID, coreNodeName)
+}
+
 // UpsertStyleNodeClaim inserts or updates a claim and returns the row id.
 func (db *DB) UpsertStyleNodeClaim(in processes.NodeClaimInput) (int64, error) {
 	return processes.UpsertClaim(db.DB, in)

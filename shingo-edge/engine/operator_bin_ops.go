@@ -55,6 +55,25 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	if err != nil {
 		return err
 	}
+
+	// A1 (hop 2026-07-23): a paired / on-deck press-index position holds ONLY an
+	// empty carrier — it is the slot a fresh empty waits on to be indexed onto
+	// the core (front) position. LOAD always stamps a part number, and a stamped
+	// part on a paired node is exactly what hung the Hopkinsville press-index
+	// swap (KK21 stamped on PLN_02/05): the evac legs cleared the presses but the
+	// index legs then saw the wrong-part on-deck bins as unavailable and hung.
+	// Refuse the stamp on any node another claim names as a paired/on-deck
+	// position, with a clear operator-facing message (surfaced as a toast). Runs
+	// before the manual_swap/claim gates so a paired node gets THIS message, not
+	// the generic "not a manual_swap node". Fail-open on a read error — a local
+	// SQLite blip must not block a legitimate loader load; the guard is defense
+	// in depth, not the only backstop.
+	if onDeck, derr := e.db.IsPairedOnDeckNode(node.ProcessID, node.CoreNodeName); derr != nil {
+		e.logFn("LoadBin: on-deck check for node %s failed: %v — allowing (fail-open on read error)", node.Name, derr)
+	} else if onDeck {
+		return fmt.Errorf("%s is an on-deck / paired position — it may hold only an empty carrier, never a stamped part. Load the part at the press's core (front) position instead", node.Name)
+	}
+
 	if claim == nil {
 		return fmt.Errorf("node %s has no active claim", node.Name)
 	}
