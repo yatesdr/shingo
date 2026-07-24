@@ -67,6 +67,7 @@ var requiredColumns = []requiredColumn{
 	{"processes", "auto_cutover_enabled"},
 	{"processes", "changeover_auto_arm"},
 	{"process_changeovers", "triggered_by"},
+	{"process_changeovers", "verify_live_catid"},
 	{"changeover_node_tasks", "skip_note"},
 	{"process_node_runtime_states", "remaining_uop_cached"},
 }

@@ -548,6 +548,14 @@ func (db *DB) migrate() error {
 	// this collides.
 	db.Exec("ALTER TABLE processes ADD COLUMN changeover_auto_arm TEXT NOT NULL DEFAULT 'auto'")
 
+	// v31 (2026-07-24, post-cutover CATID verification): the live PLC part id
+	// observed disagreeing with the new active style shortly after a cutover
+	// completed. Non-empty flags that changeover for operator confirmation on the
+	// station; empty (the default) means verified-or-not-yet-checked, so this is
+	// safe on every existing row. Idempotent ADD COLUMN. NOTE: migration version
+	// numbers are per-branch — renumber on merge if this collides.
+	db.Exec("ALTER TABLE process_changeovers ADD COLUMN verify_live_catid TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }
 

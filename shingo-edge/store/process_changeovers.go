@@ -40,6 +40,18 @@ func (db *DB) UpdateProcessChangeoverState(id int64, state domain.ChangeoverStat
 	return processes.UpdateChangeoverState(db.DB, id, state)
 }
 
+// SetChangeoverVerifyMismatch records (or clears, when liveCATID is empty) the
+// post-cutover CATID verification flag on a changeover.
+func (db *DB) SetChangeoverVerifyMismatch(changeoverID int64, liveCATID string) error {
+	return processes.SetChangeoverVerifyMismatch(db.DB, changeoverID, liveCATID)
+}
+
+// LatestFlaggedChangeover returns the most recent post-cutover-flagged
+// changeover for a process, or (nil, nil) when none is flagged.
+func (db *DB) LatestFlaggedChangeover(processID int64) (*processes.Changeover, error) {
+	return processes.LatestFlaggedChangeover(db.DB, processID)
+}
+
 // UpdateProcessChangeoverStateWithTrigger changes the state and records
 // the trigger source ("operator-hmi" | "plc-auto" | "auto-task-terminal")
 // on a process_changeover. Empty triggeredBy preserves the existing

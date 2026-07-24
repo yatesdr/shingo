@@ -23,8 +23,14 @@ type Changeover struct {
 	// cutover from PLC-driven cutover from the B.3 auto-completion
 	// path that fires when terminal task transitions land while the
 	// gate was open.
-	TriggeredBy string    `json:"triggered_by,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	TriggeredBy string `json:"triggered_by,omitempty"`
+	// VerifyLiveCATID is the live PLC part id observed disagreeing with this
+	// changeover's new active style within the short window after it completed
+	// (post-cutover verification). Non-empty flags the changeover for operator
+	// confirmation on the station; empty means verified, not yet checked, or the
+	// new style has no expected_catid (silent).
+	VerifyLiveCATID string    `json:"verify_live_catid,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at"`
 	// Joined fields
 	ProcessName   string `json:"process_name"`
 	FromStyleName string `json:"from_style_name"`

@@ -21,6 +21,7 @@ package processes
 
 import (
 	"database/sql"
+	"errors"
 
 	"shingo/shared/clock"
 	"shingoedge/domain"
@@ -44,14 +45,14 @@ type (
 // --- changeover header ---
 
 const changeoverSelect = `c.id, c.process_id, c.from_style_id, c.to_style_id, c.state, c.called_by, c.notes,
-		c.started_at, COALESCE(c.completed_at, ''), COALESCE(c.triggered_by, ''), c.updated_at,
+		c.started_at, COALESCE(c.completed_at, ''), COALESCE(c.triggered_by, ''), COALESCE(c.verify_live_catid, ''), c.updated_at,
 		COALESCE(p.name, ''), COALESCE(fs.name, ''), COALESCE(ts.name, '')`
 
 func scanChangeover(scanner interface{ Scan(...any) error }) (Changeover, error) {
 	var c Changeover
 	var startedAt, completedAt, updatedAt string
 	err := scanner.Scan(&c.ID, &c.ProcessID, &c.FromStyleID, &c.ToStyleID, &c.State, &c.CalledBy, &c.Notes,
-		&startedAt, &completedAt, &c.TriggeredBy, &updatedAt, &c.ProcessName, &c.FromStyleName, &c.ToStyleName)
+		&startedAt, &completedAt, &c.TriggeredBy, &c.VerifyLiveCATID, &updatedAt, &c.ProcessName, &c.FromStyleName, &c.ToStyleName)
 	if err != nil {
 		return c, err
 	}
@@ -130,6 +131,35 @@ func UpdateChangeoverStateWithTrigger(db *sql.DB, id int64, state domain.Changeo
 		state, completedAt.String, completedAt.String,
 		triggeredBy, triggeredBy, now, id)
 	return err
+}
+
+// SetChangeoverVerifyMismatch records (or clears, when liveCATID is empty) the
+// live PLC part id that disagreed with the changeover's new active style during
+// post-cutover verification. Empty clears the flag (verified or dismissed).
+func SetChangeoverVerifyMismatch(db *sql.DB, changeoverID int64, liveCATID string) error {
+	_, err := db.Exec(`UPDATE process_changeovers SET verify_live_catid=?, updated_at=? WHERE id=?`,
+		liveCATID, clock.Now().UTC().Format(helpers.TimeLayout), changeoverID)
+	return err
+}
+
+// LatestFlaggedChangeover returns the most recent changeover for a process that
+// carries a post-cutover verification flag (verify_live_catid set), or
+// (nil, nil) when none is flagged.
+func LatestFlaggedChangeover(db *sql.DB, processID int64) (*Changeover, error) {
+	c, err := scanChangeover(db.QueryRow(`SELECT `+changeoverSelect+`
+		FROM process_changeovers c
+		LEFT JOIN processes p ON p.id = c.process_id
+		LEFT JOIN styles fs ON fs.id = c.from_style_id
+		LEFT JOIN styles ts ON ts.id = c.to_style_id
+		WHERE c.process_id = ? AND c.verify_live_catid != ''
+		ORDER BY c.id DESC LIMIT 1`, processID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
 }
 
 // --- station tasks ---

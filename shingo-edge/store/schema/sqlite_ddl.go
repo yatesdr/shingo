@@ -377,6 +377,7 @@ CREATE TABLE IF NOT EXISTS process_changeovers (
     started_at      TEXT NOT NULL DEFAULT (datetime('now')),
     completed_at    TEXT,
     triggered_by    TEXT NOT NULL DEFAULT '',
+    verify_live_catid TEXT NOT NULL DEFAULT '',
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
