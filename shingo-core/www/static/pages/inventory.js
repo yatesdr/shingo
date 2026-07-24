@@ -3,7 +3,7 @@
 // a KPI strip, a conditional alerts banner, and lineside buckets with staleness
 // colouring. Bin-level detail lives on /bins now. Data sources:
 //   /api/inventory/monitor-totals — per-payload on-hand (bins+lineside split),
-//     the threshold monitor's cached total (drift), and thresholds.
+//     which payloads are monitored, and their thresholds.
 //   /api/loader/list — editable per-loader threshold config (Save + Calc).
 //   /api/inventory — bin rows, for the payload's holding bins + bin lifecycle.
 //   /api/buckets — lineside buckets, now carrying updated_at for staleness.
@@ -102,10 +102,6 @@ function healthState(r) {
 }
 const STATE_RANK = { err: 0, below: 1, near: 2, ok: 3, unset: 4 };
 
-function hasDrift(r) {
-  return r.monitored && r.monitor_cached_total !== r.on_hand;
-}
-
 // ── search + filter helpers ───────────────────────────────────────────────
 function zonesForPayload(pc) {
   const set = {};
@@ -183,12 +179,11 @@ function sparklineSvg(series) {
 function renderKpis() {
   const el = document.getElementById('inv-kpi');
   if (!el) return;
-  let binU = 0, lineU = 0, monitored = 0, belowN = 0, driftN = 0;
+  let binU = 0, lineU = 0, monitored = 0, belowN = 0;
   health.forEach((r) => {
     if (r.monitored) { binU += r.bin_uop; lineU += r.bucket_uop; monitored++; }
     const st = healthState(r);
     if (st === 'below' || st === 'err') belowN++;
-    if (hasDrift(r)) driftN++;
   });
   const onHand = binU + lineU;
   // Bin lifecycle: stocked (loaded), in-production-empty (claimed but drained), idle.
@@ -210,8 +205,6 @@ function renderKpis() {
     lifecycleTile(stocked, prodEmpty, idle, binTot),
     tile('Stale buckets', String(staleBk), 'untouched &gt; 30 d — ghost risk',
       (staleBk ? 'kpi-tile--warn ' : '') + 'kpi-tile--clickable', '', 'scrollTo:buckets'),
-    tile('Monitor drift', String(driftN), driftN ? 'cache ≠ DB — needs re-baseline' : 'cache matches DB',
-      driftN ? 'kpi-tile--warn' : ''),
   ].join('');
 }
 function tile(label, value, sub, cls, spark, action) {
@@ -241,12 +234,11 @@ function lifecycleTile(stocked, prodEmpty, idle, tot) {
 function renderAlerts() {
   const el = document.getElementById('inv-alerts');
   if (!el) return;
-  let below = 0, err = 0, drift = 0, stale = 0;
+  let below = 0, err = 0, stale = 0;
   health.forEach((r) => {
     const st = healthState(r);
     if (st === 'below') below++;
     if (st === 'err') err++;
-    if (hasDrift(r)) drift++;
   });
   buckets.forEach((b) => { if (bucketAgeMs(b) > STALE_BAD_MS) stale++; });
   // Rejected-delta bins (deltas being refused: payload mismatch or stale epoch)
@@ -256,12 +248,11 @@ function renderAlerts() {
   const parts = [];
   if (below) parts.push('<b>' + below + '</b> payload' + (below > 1 ? 's' : '') + ' below threshold');
   if (err) parts.push('<b>' + err + '</b> ledger error' + (err > 1 ? 's' : ''));
-  if (drift) parts.push('<b>' + drift + '</b> monitor drift');
   if (rejected) parts.push('<b>' + rejected + '</b> rejected delta' + (rejected > 1 ? 's' : ''));
   if (staleStaged) parts.push('<b>' + staleStaged + '</b> stale staged bin' + (staleStaged > 1 ? 's' : ''));
   if (stale) parts.push('<b>' + stale + '</b> stale bucket' + (stale > 1 ? 's' : ''));
   if (!parts.length) { el.innerHTML = ''; return; }
-  el.innerHTML = '<div class="alerts-banner" data-action="scrollTo:' + (err || below || drift ? 'rh' : 'buckets') + '">'
+  el.innerHTML = '<div class="alerts-banner" data-action="scrollTo:' + (err || below ? 'rh' : 'buckets') + '">'
     + '<svg class="icon icon-16" aria-hidden="true"><use href="#icon-alert-triangle"></use></svg>'
     + '<span>' + parts.join(' · ') + ' — click to review</span></div>';
 }
@@ -314,11 +305,6 @@ function chipsHtml(r) {
   else if (st === 'near') chips += '<span class="chip chip-near">Near threshold</span>';
   else if (st === 'ok') chips += '<span class="chip chip-ok">OK</span>';
   else chips += '<span class="chip chip-muted">No threshold set</span>';
-  if (hasDrift(r)) {
-    const tip = 'Threshold monitor cache holds ' + r.monitor_cached_total + '; DB truth is ' + r.on_hand
-      + '. The monitor needs a re-baseline (re-register the edge, or reconcile bins).';
-    chips += ' <span class="chip chip-drift" title="' + escapeHtml(tip) + '">cache ' + r.monitor_cached_total + ' ≠ ' + r.on_hand + '</span>';
-  }
   return chips;
 }
 function rhRowHtml(r) {

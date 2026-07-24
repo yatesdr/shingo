@@ -5,20 +5,25 @@
 // The C-push architecture in one paragraph:
 //
 //   Edge owns claim config and ships per-(loader, payload) thresholds
-//   to Core via ClaimSync. Core tracks combined in-loop UOP (bins +
-//   buckets) per payload incrementally — the delta handlers apply each
-//   BinUOPDelta and LinesideBucketDelta directly to an in-memory total.
-//   When the total drops below the configured threshold for a (loader,
-//   payload) pair, Core emits a LoopBelowThresholdSignal on subject
-//   demand.loop_below_threshold. Edge responds by firing L1 retrieve_empty
-//   after its in-flight guard.
+//   to Core via ClaimSync. On any activity for a monitored payload —
+//   a BinUOPDelta, a LinesideBucketDelta, or a non-delta bin mutation —
+//   Core re-reads the AUTHORITATIVE combined in-loop UOP for that payload
+//   (SystemUOPForPayload = SUM(bins.uop_remaining) + active lineside
+//   buckets) and evaluates it against the configured threshold. When the
+//   total is below the threshold for a (loader, payload) pair, Core emits
+//   a LoopBelowThresholdSignal on subject demand.loop_below_threshold.
+//   Edge responds by firing L1 retrieve_empty after its in-flight guard.
 //
-// No DB queries on the hot path. The monitor is notified directly by
-// the Kafka delta handlers (HandleBinUOPDelta, HandleLinesideBucketDelta)
-// which already have the payload code and delta. The EventBinUpdated bus
-// is only used for rare non-delta mutations (status changes, manual bin
-// moves) which reconcile from the DB since the event doesn't carry a
-// UOP delta.
+// Reads the source of truth, holds no private tally. The monitor used to
+// keep its own incremental in-memory UOP total (uopCache), moved by each
+// delta and re-baselined by a 60s reconcile sweep. That tally was a
+// second copy of the same number that could — and did — silently drift
+// from DB truth (Springfield 2026-07-21: cache stuck ~139 while DB was
+// 31, so a threshold nudge fired nothing; 2026-07-23: cache stuck high
+// after a direct-DB reassign suppressed ordering). F-1 benchmarked the
+// authoritative read at ~0.43 ms/payload at plant scale, so the monitor
+// now just READS it on every evaluation. That deletes the drift failure
+// category outright: there is no cached belief left to diverge.
 //
 // Debounce policy: 15-second window per (loader_node, payload).
 // In-memory state (lost on Core restart — that's intentional; the
@@ -27,8 +32,11 @@
 // so a newly-applied threshold engages immediately.
 //
 // Startup sweep: on Run() the monitor walks every binding with
-// threshold > 0 once, seeding the UOP cache from the DB. After the
-// sweep, all further UOP updates are incremental — no more DB reads.
+// threshold > 0 once, builds its per-payload binding cache
+// (thresholdsByPayload — CONFIG, not a UOP tally), seeds the cold-start
+// warm-up allowance, and evaluates each binding against the authoritative
+// DB read. There is no ongoing reconcile sweep — every evaluation already
+// reads the truth.
 //
 // Dedup with the legacy DemandSignal path:
 //   - Core never sends LoopBelowThresholdSignal for (loader, payload)
@@ -57,16 +65,6 @@ import (
 // than v4's 30s for legitimate-crossing response, still long enough to
 // absorb bursts from rapid bin-move / bucket-delta sequences.
 const thresholdDebounceWindow = 15 * time.Second
-
-// reconcileInterval is how often the monitor re-baselines every monitored payload's
-// cached total from authoritative DB on-hand (SystemUOPForPayload) and re-checks its
-// bindings. It bounds uopCache drift to one interval REGARDLESS of cause — a direct-DB
-// reseed/changeover, a bin reassign that emitted no consume-delta, a dropped event —
-// the class of bug the incremental delta path structurally cannot see (Springfield
-// 2026-07-23: bins reassigned in the DB froze the cache at 263/404 while DB truth went
-// to 0 and the binding never re-fired). Off the hot path; re-signals are bounded by the
-// debounce + the Edge never-2N seam + the resident-empty gate.
-const reconcileInterval = 60 * time.Second
 
 // warmUpFloor is the floor in the per-binding warm-up cap formula
 // max(2, ceil(threshold / C)). The capacity C is per-claim and isn't
@@ -115,13 +113,10 @@ type ThresholdMonitor struct {
 	sweepDone bool
 	// thresholdsByPayload caches per-payload threshold bindings. Keyed
 	// by payload_code. Built from the startup sweep and kept fresh via
-	// OnThresholdChanges. Never queried from the DB on the hot path.
+	// OnThresholdChanges. This is CONFIG (which loaders watch which
+	// payload at what threshold), NOT a UOP tally — the UOP total is read
+	// fresh from the DB on every evaluation.
 	thresholdsByPayload map[string][]thresholdEntry
-	// uopCache is the combined (bin + bucket) UOP total per payload,
-	// maintained incrementally. Seeded by the startup sweep from the DB,
-	// then updated by OnBinUOPDelta and OnBucketApplied on each Kafka
-	// delta. No DB queries after startup.
-	uopCache map[string]int
 	// negativeLogged is the last time the broken-ledger refusal was logged
 	// per binding. Deliberately SEPARATE from debounce: debounce is
 	// signal-eligibility budget, this is log volume. Sharing one stamp would
@@ -138,7 +133,6 @@ func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
 		debounce:            make(map[string]time.Time),
 		warmUp:              make(map[string]int),
 		thresholdsByPayload: make(map[string][]thresholdEntry),
-		uopCache:            make(map[string]int),
 		negativeLogged:      make(map[string]time.Time),
 	}
 }
@@ -153,19 +147,19 @@ type MonitorBinding struct {
 	LoaderID     int64  `json:"loader_id,omitempty"`
 }
 
-// MonitorSnapshotEntry is the monitor's live belief for one payload: its cached
-// in-loop UOP total and every threshold binding watching it.
+// MonitorSnapshotEntry is the set of threshold bindings watching one payload —
+// which loaders monitor it, at what threshold. It carries no UOP total: the
+// monitor holds no cached belief, so the caller reads DB truth
+// (SystemUOPForPayload) directly for the on-hand number.
 type MonitorSnapshotEntry struct {
 	PayloadCode string           `json:"payload_code"`
-	CachedTotal int              `json:"cached_total"`
 	Bindings    []MonitorBinding `json:"bindings"`
 }
 
-// Snapshot returns the monitor's current per-payload cached totals and binding
-// sets — a point-in-time read for the inventory Replenishment Health page. Taken
-// under the monitor lock; safe to call from an HTTP handler. It reports only the
-// monitor's in-memory belief (cached total); the caller compares it against DB
-// truth to surface drift.
+// Snapshot returns which payloads are monitored and the binding set watching
+// each — a point-in-time read for the inventory Replenishment Health page.
+// Taken under the monitor lock; safe to call from an HTTP handler. It reports
+// only the monitored-set + thresholds; the caller reads DB on-hand itself.
 func (m *ThresholdMonitor) Snapshot() []MonitorSnapshotEntry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -182,7 +176,6 @@ func (m *ThresholdMonitor) Snapshot() []MonitorSnapshotEntry {
 		}
 		out = append(out, MonitorSnapshotEntry{
 			PayloadCode: payload,
-			CachedTotal: m.uopCache[payload],
 			Bindings:    bs,
 		})
 	}
@@ -212,80 +205,63 @@ func (m *ThresholdMonitor) Run(ctx context.Context) {
 		case <-time.After(3 * time.Second):
 		}
 		m.startupSweep(ctx)
-		m.runPeriodicReconcile(ctx)
 	}()
 }
 
-// runPeriodicReconcile re-baselines every monitored payload from authoritative DB
-// on-hand on a fixed interval and re-evaluates its bindings, until ctx is cancelled.
-// This is the drift backstop: the incremental delta path (OnBinUOPDelta /
-// OnBucketApplied) only sees inventory that leaves a payload via a consume-delta, so a
-// direct-DB write, a reassign that emitted no delta, or a dropped event leaves the
-// cached total stuck — and a stuck-high total suppresses ordering silently. Walking
-// SystemUOPForPayload on a timer corrects the cache within one interval no matter how
-// it drifted. Re-signals for a persistently-below binding are absorbed by the 15s
-// debounce, the Edge never-2N reservation seam, and the resident-empty gate, so this
-// cannot spam orders.
-func (m *ThresholdMonitor) runPeriodicReconcile(ctx context.Context) {
-	t := time.NewTicker(reconcileInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			m.reconcileAll(ctx)
-		}
+// readTotal reads the authoritative in-loop UOP total for one payload straight
+// from the DB (SystemUOPForPayload = SUM(bins.uop_remaining) over the lifecycle
+// filter + active lineside buckets). This is the single source of truth the
+// monitor evaluates on EVERY firing decision; there is no cached belief that
+// can drift from it. F-1 benchmarked it at ~0.43 ms/payload at plant scale.
+// Returns (0, nil) when there is no engine/inventory service (pure unit
+// harness) so callers behave as "zero on-hand" rather than panicking.
+func (m *ThresholdMonitor) readTotal(ctx context.Context, payloadCode string) (int, error) {
+	if m.eng == nil || m.eng.inventoryService == nil {
+		return 0, nil
 	}
+	uop, err := m.eng.inventoryService.SystemUOPForPayload(ctx, []string{payloadCode})
+	if err != nil {
+		return 0, err
+	}
+	if len(uop.Counts) > 0 {
+		return uop.Counts[0].TotalUOP, nil
+	}
+	return 0, nil
 }
 
-// reconcileAll re-reads authoritative on-hand (SystemUOPForPayload) for every monitored
-// payload, overwrites the cached total, and re-checks its bindings — the
-// startupSweep/engagePayloads re-baseline body, on a timer, over the single source of
-// truth. The monitored set + bindings are snapshotted under the lock; the DB reads (a
-// grouped SUM per payload) run off the lock to keep it uncontended.
-func (m *ThresholdMonitor) reconcileAll(ctx context.Context) {
-	if m.eng == nil || m.eng.inventoryService == nil {
+// evaluatePayload re-reads the authoritative sum for a monitored payload and
+// checks its bindings — the single entry point the delta hot path and the
+// non-delta bin-update path both funnel through. Empty/unmonitored payloads
+// short-circuit BEFORE the DB read, so the hot path only pays for payloads a
+// binding actually watches. On a transient DB-read error it logs and SKIPS the
+// check (the next delta re-evaluates) rather than manufacturing a fire off a
+// zero — the config-edit path (engagePayloads) is the only one that
+// deliberately fires on a read failure.
+func (m *ThresholdMonitor) evaluatePayload(payloadCode, reason string) {
+	if payloadCode == "" {
 		return
 	}
 	m.mu.Lock()
-	payloads := make([]string, 0, len(m.thresholdsByPayload))
-	for p := range m.thresholdsByPayload {
-		payloads = append(payloads, p)
-	}
+	bindings, monitored := m.thresholdsByPayload[payloadCode]
 	m.mu.Unlock()
-	if len(payloads) == 0 {
+	if !monitored {
 		return
 	}
-	for _, payload := range payloads {
-		if ctx.Err() != nil {
-			return
+	total, err := m.readTotal(context.Background(), payloadCode)
+	if err != nil {
+		if m.eng != nil {
+			m.eng.logFn("threshold_monitor: SystemUOPForPayload(%s): %v", payloadCode, err)
 		}
-		uop, err := m.eng.inventoryService.SystemUOPForPayload(ctx, []string{payload})
-		if err != nil {
-			m.eng.logFn("threshold_monitor: periodic reconcile SystemUOPForPayload(%s): %v", payload, err)
-			continue
-		}
-		var total int
-		if len(uop.Counts) > 0 {
-			total = uop.Counts[0].TotalUOP
-		}
-		m.mu.Lock()
-		prev, had := m.uopCache[payload]
-		m.uopCache[payload] = total
-		bindings := m.thresholdsByPayload[payload]
-		m.mu.Unlock()
-		if had && prev != total {
-			m.eng.logFn("threshold_monitor: periodic reconcile corrected drift payload=%s cache=%d -> db=%d", payload, prev, total)
-		}
-		m.checkBindings(bindings, total, "periodic_reconcile")
+		return
 	}
+	m.checkBindings(bindings, total, reason)
 }
 
 // startupSweep iterates every (loader, payload) with threshold > 0,
-// seeds the UOP cache from the DB, and fires signals for any binding
-// already below threshold. After the sweep, all UOP updates are
-// incremental — no more DB reads.
+// builds the per-payload binding cache, seeds the cold-start warm-up
+// allowance, and evaluates each binding against an authoritative DB read —
+// firing signals for any already below threshold. It holds no UOP tally
+// afterwards; every later evaluation reads the DB again.
 func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 	entries, err := m.eng.db.ListDemandThresholds()
 	if err != nil {
@@ -322,23 +298,16 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 	}
 	m.mu.Unlock()
 
-	// Seed UOP cache from DB (only time we query UOP after startup).
+	// Evaluate each binding against the authoritative DB read once at boot.
 	for payload, bindings := range byPayload {
 		if ctx.Err() != nil {
 			return
 		}
-		uop, err := m.eng.inventoryService.SystemUOPForPayload(ctx, []string{payload})
+		total, err := m.readTotal(ctx, payload)
 		if err != nil {
 			m.eng.logFn("threshold_monitor: startup sweep SystemUOPForPayload(%s): %v", payload, err)
 			continue
 		}
-		var total int
-		if len(uop.Counts) > 0 {
-			total = uop.Counts[0].TotalUOP
-		}
-		m.mu.Lock()
-		m.uopCache[payload] = total
-		m.mu.Unlock()
 		// Seed the cold-start warm-up allowance, then let checkBindings make the
 		// FIRE decision — it is the only place that decision is made.
 		//
@@ -377,37 +346,25 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 	m.mu.Lock()
 	m.sweepDone = true
 	m.mu.Unlock()
-	m.eng.logFn("threshold_monitor: startup sweep complete — switching to incremental mode")
+	m.eng.logFn("threshold_monitor: startup sweep complete — evaluating from authoritative DB reads")
 }
 
 // OnBinUOPDelta applies a bin UOP delta to the cached total and checks
-// thresholds. Called by HandleBinUOPDelta after the delta is applied to
-// the DB. The delta is known (from the Kafka message) so we apply it
-// directly — no DB query needed. Short-circuits for unmonitored
-// payloads so the cache doesn't grow entries for payloads no binding
-// is watching.
+// thresholds. Called by HandleBinUOPDelta after the delta has been applied to
+// bins.uop_remaining. The delta value is retained for interface compatibility
+// with the messaging layer but no longer drives the math: the monitor re-reads
+// the authoritative sum (which already reflects the just-applied write) instead
+// of moving a private tally. Unmonitored/empty payloads short-circuit before
+// the read.
 func (m *ThresholdMonitor) OnBinUOPDelta(payloadCode string, delta int) {
-	if payloadCode == "" {
-		return
-	}
-	m.mu.Lock()
-	bindings, monitored := m.thresholdsByPayload[payloadCode]
-	if !monitored {
-		m.mu.Unlock()
-		return
-	}
-	m.uopCache[payloadCode] += delta
-	total := m.uopCache[payloadCode]
-	m.mu.Unlock()
-
-	m.checkBindings(bindings, total, "below_threshold")
+	m.evaluatePayload(payloadCode, "below_threshold")
 }
 
 // OnBucketApplied is invoked by the messaging layer after a successful
-// LinesideBucketDelta apply. Applies the delta to the cached total,
-// emits an engine event for other subscribers, and checks thresholds.
-// Short-circuits for unmonitored payloads (after the event emit) so
-// the cache doesn't grow for payloads no binding is watching.
+// LinesideBucketDelta apply. Emits the engine event for other subscribers, then
+// re-reads the authoritative sum and checks thresholds. The event emit is
+// unconditional (other subscribers rely on it); the threshold re-evaluation
+// short-circuits for unmonitored/empty payloads.
 func (m *ThresholdMonitor) OnBucketApplied(station, coreNodeName, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
 	m.eng.Events.Emit(Event{Type: EventLinesideBucketApplied, Payload: LinesideBucketAppliedEvent{
 		Station:      station,
@@ -416,50 +373,15 @@ func (m *ThresholdMonitor) OnBucketApplied(station, coreNodeName, payloadCode st
 		Delta:        delta,
 		Reason:       reason,
 	}})
-	if payloadCode == "" {
-		return
-	}
-	m.mu.Lock()
-	bindings, monitored := m.thresholdsByPayload[payloadCode]
-	if !monitored {
-		m.mu.Unlock()
-		return
-	}
-	m.uopCache[payloadCode] += delta
-	total := m.uopCache[payloadCode]
-	m.mu.Unlock()
-
-	m.checkBindings(bindings, total, "below_threshold")
+	m.evaluatePayload(payloadCode, "below_threshold")
 }
 
-// handleBinUpdated is the EventBinUpdated subscriber for rare non-delta
-// bin mutations (status changes, manual moves, corrections). These
-// events don't carry a UOP delta, so we reconcile from the DB. This
-// path fires infrequently — the primary consumption path goes through
-// OnBinUOPDelta instead.
+// handleBinUpdated is the EventBinUpdated subscriber for non-delta bin
+// mutations (status changes, manual moves, corrections). These events don't
+// carry a UOP delta, so — like every other evaluation now — it re-reads the
+// authoritative sum for the payload and checks thresholds.
 func (m *ThresholdMonitor) handleBinUpdated(ev BinUpdatedEvent) {
-	if ev.PayloadCode == "" {
-		return
-	}
-	// Reconcile UOP from DB for this payload.
-	if m.eng == nil || m.eng.inventoryService == nil {
-		return
-	}
-	uop, err := m.eng.inventoryService.SystemUOPForPayload(context.Background(), []string{ev.PayloadCode})
-	if err != nil {
-		m.eng.logFn("threshold_monitor: reconcile SystemUOPForPayload(%s): %v", ev.PayloadCode, err)
-		return
-	}
-	var total int
-	if len(uop.Counts) > 0 {
-		total = uop.Counts[0].TotalUOP
-	}
-	m.mu.Lock()
-	m.uopCache[ev.PayloadCode] = total
-	bindings := m.thresholdsByPayload[ev.PayloadCode]
-	m.mu.Unlock()
-
-	m.checkBindings(bindings, total, "below_threshold")
+	m.evaluatePayload(ev.PayloadCode, "below_threshold")
 }
 
 // checkBindings evaluates all threshold bindings for a given total and
@@ -697,35 +619,22 @@ func (m *ThresholdMonitor) engagePayloads(affectedPayloads map[string]bool) {
 		m.thresholdsByPayload[payload] = tes
 		m.mu.Unlock()
 
-		// RE-BASELINE FROM THE DB, UNCONDITIONALLY.
+		// Read the authoritative in-loop sum and evaluate. This is the same
+		// single-source-of-truth read the hot path uses, just issued eagerly on
+		// a config edit (OnThresholdChanges) or an Edge (re)connect (Resync) —
+		// the moment an engineer is actively correcting the system's belief.
+		// There is no cached tally to "re-baseline" against anymore; the private
+		// copy that once sat at ~139 while DB truth was 31 (Springfield
+		// 2026-07-21, threshold nudged 120→121→120, fired nothing) is gone, so
+		// "re-baseline" collapsed to "read".
 		//
-		// This used to reuse the cached total whenever one existed and only
-		// query for a payload that wasn't already monitored. That made a
-		// threshold EDIT re-evaluate against whatever the incremental cache
-		// had drifted to, which is the one moment an engineer is actively
-		// trying to correct the system's belief. On 2026-07-21 that cost a
-		// diagnostic loop at Springfield: nudging a threshold 120→121→120
-		// fired nothing because the cache sat at ~139 while the DB truth was
-		// 31. Resync ((re)connect) shared the same stale path.
-		//
-		// This does NOT violate the file-header "no DB queries on the hot
-		// path" invariant: engagePayloads runs only on a config edit
-		// (OnThresholdChanges) or an Edge (re)connect (Resync). The hot path
-		// is OnBinUOPDelta / OnBucketApplied, which stay purely incremental.
-		total := 0
-		if m.eng.inventoryService != nil {
-			uop, err := m.eng.inventoryService.SystemUOPForPayload(context.Background(), []string{payload})
-			if err != nil {
-				m.eng.logFn("threshold_monitor: engagePayloads re-baseline for %s: %v", payload, err)
-				// Best-effort: fall through with total=0 so a zero-stock
-				// payload still fires. The DB error is logged loudly so
-				// the operator can see it.
-			} else if len(uop.Counts) > 0 {
-				total = uop.Counts[0].TotalUOP
-			}
-			m.mu.Lock()
-			m.uopCache[payload] = total
-			m.mu.Unlock()
+		// UNLIKE the hot path, this path deliberately fires on a read error
+		// (total falls through to 0): a config edit that hits a transient DB
+		// error should still arm a zero-stock payload rather than stay silent.
+		total, err := m.readTotal(context.Background(), payload)
+		if err != nil {
+			m.eng.logFn("threshold_monitor: engagePayloads read for %s: %v", payload, err)
+			total = 0
 		}
 
 		m.checkBindings(tes, total, "below_threshold")

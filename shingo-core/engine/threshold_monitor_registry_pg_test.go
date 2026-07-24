@@ -102,32 +102,28 @@ func TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold(
 	}
 }
 
-// TestThresholdMonitor_OnThresholdChanges_ReBaselinesFromDB pins the
-// re-baseline fix: a threshold edit must be evaluated against DB TRUTH, not
-// against whatever the incremental in-memory cache has drifted to.
+// TestThresholdMonitor_ReadsAuthoritativeSum_NotAStaleCache replaces the old
+// cache-re-baseline and periodic-reconcile tests. Both existed to prove the
+// monitor could recover from a private tally that had drifted from DB truth.
+// That tally is deleted — the monitor now reads SystemUOPForPayload on every
+// evaluation — so the property to pin is simpler and stronger: an evaluation
+// always reflects DB truth, and there is no stale below-threshold belief that
+// could fire against a payload that is actually stocked.
 //
-// engagePayloads used to query SystemUOPForPayload only when the payload
-// wasn't already in uopCache, so an edit to an ALREADY-MONITORED payload
-// re-evaluated against the stale cached total. Springfield 2026-07-21: nudging
-// a threshold 120→121→120 fired nothing because the cache sat at ~139 while
-// the DB truth was 31 — a diagnostic loop spent chasing a monitor that was
-// answering from memory. Resync ((re)connect) shared the same path.
-//
-// Setup poisons the cache ABOVE the threshold while the DB says 0. Pre-fix the
-// monitor compares 999 >= 50 and stays silent; post-fix it re-reads 0 and
-// fires.
-func TestThresholdMonitor_OnThresholdChanges_ReBaselinesFromDB(t *testing.T) {
+// Setup: threshold 50, and a bin holding 200 UOP of the payload — the DB says
+// STOCKED. A delta arrives. Because the monitor reads the DB (200 >= 50) rather
+// than any cached number, it must NOT fire.
+func TestThresholdMonitor_ReadsAuthoritativeSum_NotAStaleCache(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
 	const (
-		stationID = "station-rebaseline"
-		loader    = "MS-LOADER-REBASE"
-		payload   = "P-REBASE"
+		stationID = "station-authoritative"
+		loader    = "MS-LOADER-AUTH"
+		payload   = "P-AUTH"
 	)
 
-	// No bins of this payload exist — DB truth for system UOP is 0.
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
 		StationID:             stationID,
 		CoreNodeName:          loader,
@@ -135,26 +131,73 @@ func TestThresholdMonitor_OnThresholdChanges_ReBaselinesFromDB(t *testing.T) {
 		PayloadCode:           payload,
 		ReplenishUOPThreshold: 50,
 	}}); err != nil {
-		t.Fatalf("seed initial registry: %v", err)
+		t.Fatalf("seed registry: %v", err)
 	}
 
-	// Poison the cache: already monitored, and far ABOVE the threshold. This is
-	// the drifted-ledger state the fix exists for.
+	// DB truth: stocked well above threshold.
+	seedBinWithUOP(t, db, payload, 200)
+
+	// Engage the binding (as a real Resync/startup would) so the payload is
+	// monitored, then drive a delta.
 	m := eng.thresholdMonitor
 	m.mu.Lock()
-	m.uopCache[payload] = 999
+	m.thresholdsByPayload[payload] = []thresholdEntry{{
+		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 50,
+	}}
 	m.mu.Unlock()
 
 	preMsgs, _ := db.ListPendingOutbox(50)
 	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
 
-	m.OnThresholdChanges([]demands.RegistryChange{{
-		StationID:    stationID,
-		CoreNodeName: loader,
-		PayloadCode:  payload,
-		OldThreshold: 40,
-		NewThreshold: 50,
-	}})
+	m.OnBinUOPDelta(payload, -1)
+	time.Sleep(300 * time.Millisecond)
+
+	msgs, _ := db.ListPendingOutbox(50)
+	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+		t.Errorf("stocked payload (DB total 200 >= threshold 50) produced %d new signal(s); want 0 — the monitor must read DB truth, not a stale below-threshold cache (outbox=%v)",
+			got-preCount, outboxSummary(msgs))
+	}
+}
+
+// TestThresholdMonitor_ReadsAuthoritativeSum_FiresWhenDBBelow is the positive
+// twin: with DB truth genuinely below threshold, the same delta-driven path
+// fires. Together with the test above this pins "the fire decision follows the
+// authoritative read, in both directions."
+func TestThresholdMonitor_ReadsAuthoritativeSum_FiresWhenDBBelow(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+
+	const (
+		stationID = "station-auth-below"
+		loader    = "MS-LOADER-AUTH-BELOW"
+		payload   = "P-AUTH-BELOW"
+	)
+
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleConsume,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 50,
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	// DB truth: 10 UOP, below the threshold of 50.
+	seedBinWithUOP(t, db, payload, 10)
+
+	m := eng.thresholdMonitor
+	m.mu.Lock()
+	m.thresholdsByPayload[payload] = []thresholdEntry{{
+		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 50,
+	}}
+	m.mu.Unlock()
+
+	preMsgs, _ := db.ListPendingOutbox(50)
+	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+
+	m.OnBinUOPDelta(payload, -1)
 
 	deadline := time.Now().Add(2 * time.Second)
 	var hit *protocol.LoopBelowThresholdSignal
@@ -170,83 +213,10 @@ func TestThresholdMonitor_OnThresholdChanges_ReBaselinesFromDB(t *testing.T) {
 	}
 	if hit == nil {
 		msgs, _ := db.ListPendingOutbox(50)
-		t.Fatalf("expected a signal after the threshold edit — the monitor evaluated the stale cached total (999) instead of DB truth (0); outbox=%v",
-			outboxSummary(msgs))
+		t.Fatalf("expected a signal — DB truth (10) is below threshold (50); outbox=%v", outboxSummary(msgs))
 	}
-	if hit.CurrentUOP != 0 {
-		t.Errorf("signal CurrentUOP = %d, want 0 (DB truth, not the poisoned cache)", hit.CurrentUOP)
-	}
-
-	// The cache itself must be corrected, not just the one evaluation —
-	// otherwise the next incremental delta resumes from the stale number.
-	m.mu.Lock()
-	cached := m.uopCache[payload]
-	m.mu.Unlock()
-	if cached != 0 {
-		t.Errorf("uopCache[%s] = %d after re-baseline, want 0", payload, cached)
-	}
-}
-
-// TestThresholdMonitor_PeriodicReconcile_CorrectsDriftAndFires is the drift backstop:
-// the incremental delta path can't see inventory that leaves a payload without a
-// consume-delta (direct-DB reassign/reseed, dropped event), so the cached total sticks
-// high and silently suppresses ordering. The periodic reconcile must re-read DB truth,
-// correct the cache, and fire the signal that was being withheld. This is the
-// Springfield 2026-07-23 shape (cache stuck at 263/404 while DB truth went to 0).
-func TestThresholdMonitor_PeriodicReconcile_CorrectsDriftAndFires(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	eng := newTestEngine(t, db, simulator.New())
-
-	const (
-		stationID = "station-reconcile"
-		loader    = "MS-LOADER-RECON"
-		payload   = "P-RECON"
-	)
-
-	// Binding at threshold 50; no bins of this payload exist → DB truth = 0.
-	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
-		StationID:             stationID,
-		CoreNodeName:          loader,
-		Role:                  protocol.ClaimRoleConsume,
-		PayloadCode:           payload,
-		ReplenishUOPThreshold: 50,
-	}}); err != nil {
-		t.Fatalf("seed registry: %v", err)
-	}
-
-	// Inject the drifted state directly: the payload is monitored and its cached total
-	// is stuck ABOVE threshold (999) — a reassign removed the stock with no consume-
-	// delta, so the binding never fires even though DB truth is 0. No prior fire here,
-	// so there is no debounce to fight.
-	m := eng.thresholdMonitor
-	m.mu.Lock()
-	m.thresholdsByPayload[payload] = []thresholdEntry{{
-		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 50,
-	}}
-	m.uopCache[payload] = 999
-	m.mu.Unlock()
-
-	preMsgs, _ := db.ListPendingOutbox(50)
-	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
-
-	m.reconcileAll(context.Background())
-
-	// Cache re-baselined to DB truth (0), not left at the drifted 999.
-	m.mu.Lock()
-	cached := m.uopCache[payload]
-	m.mu.Unlock()
-	if cached != 0 {
-		t.Errorf("uopCache[%s] = %d after reconcile, want 0 (DB truth)", payload, cached)
-	}
-
-	// And the withheld signal fires now that the cache reflects reality.
-	msgs, _ := db.ListPendingOutbox(50)
-	if countLoopBelowThresholdSignals(msgs, stationID) <= preCount {
-		t.Fatalf("expected a LoopBelowThreshold signal after reconcile corrected the drifted cache (999 -> 0); outbox=%v", outboxSummary(msgs))
-	}
-	if hit := findLoopBelowThresholdSignal(t, msgs, stationID); hit != nil && hit.CurrentUOP != 0 {
-		t.Errorf("signal CurrentUOP = %d, want 0 (DB truth, not the drifted 999)", hit.CurrentUOP)
+	if hit.CurrentUOP != 10 {
+		t.Errorf("signal CurrentUOP = %d, want 10 (the authoritative DB read)", hit.CurrentUOP)
 	}
 }
 
@@ -283,6 +253,10 @@ func TestThresholdMonitor_NegativeTotal_EmitsNoSignal(t *testing.T) {
 		t.Fatalf("seed registry: %v", err)
 	}
 
+	// DB truth is deeply negative (the Springfield 74577-6SA0A.06 total): a bin
+	// carrying -443 makes SystemUOPForPayload return -443.
+	seedBinWithUOP(t, db, payload, -443)
+
 	m := eng.thresholdMonitor
 	m.mu.Lock()
 	m.thresholdsByPayload[payload] = []thresholdEntry{{
@@ -291,14 +265,14 @@ func TestThresholdMonitor_NegativeTotal_EmitsNoSignal(t *testing.T) {
 		payloadCode:  payload,
 		threshold:    50,
 	}}
-	m.uopCache[payload] = -443 // the Springfield 74577-6SA0A.06 total
 	m.mu.Unlock()
 
 	preMsgs, _ := db.ListPendingOutbox(50)
 	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
 
-	// Drive the hot path the way a real delta would: still deeply negative
-	// after applying, and trivially "below threshold".
+	// Drive the hot path the way a real delta would: the monitor re-reads the
+	// authoritative sum (-443), which is trivially "below threshold" but caught
+	// by the negative-total floor.
 	m.OnBinUOPDelta(payload, -1)
 
 	time.Sleep(300 * time.Millisecond)
@@ -457,7 +431,7 @@ func TestThresholdMonitor_StartupSweep_NegativeTotal_EmitsNoSignal(t *testing.T)
 
 	// A bin carrying a deeply negative count is what makes the payload's
 	// in-loop total negative — the Springfield 74577-6SA0A.06 shape.
-	seedNegativeBin(t, db, payload, -443)
+	seedBinWithUOP(t, db, payload, -443)
 
 	preMsgs, _ := db.ListPendingOutbox(50)
 	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
@@ -472,17 +446,18 @@ func TestThresholdMonitor_StartupSweep_NegativeTotal_EmitsNoSignal(t *testing.T)
 	}
 }
 
-// seedNegativeBin creates a bin carrying the given (negative) uop_remaining for
-// a payload, which is what makes that payload's in-loop total negative. Bins
-// may legitimately go negative under the SME overpack/underpack lock; buckets
-// cannot (CHECK qty >= 0), which is why a negative TOTAL always means the bin
-// side is wrong.
-func seedNegativeBin(t *testing.T, db *store.DB, payloadCode string, uop int) {
+// seedBinWithUOP creates one available bin carrying the given uop_remaining for
+// a payload, so that payload's authoritative in-loop total (SystemUOPForPayload)
+// reflects it. Used both to seed a negative total (bins may legitimately go
+// negative under the SME overpack/underpack lock; buckets cannot — CHECK
+// qty >= 0 — which is why a negative TOTAL always means the bin side is wrong)
+// and to seed a stocked total that must NOT fire.
+func seedBinWithUOP(t *testing.T, db *store.DB, payloadCode string, uop int) {
 	t.Helper()
 	sd := testdb.SetupStandardData(t, db)
-	bin := testdb.CreateBinAtNode(t, db, payloadCode, sd.StorageNode.ID, "BIN-NEG-"+payloadCode)
+	bin := testdb.CreateBinAtNode(t, db, payloadCode, sd.StorageNode.ID, "BIN-"+payloadCode)
 	testutil.MustNoErr(t, func() error {
 		_, err := db.DB.Exec(`UPDATE bins SET payload_code=$1, uop_remaining=$2 WHERE id=$3`, payloadCode, uop, bin.ID)
 		return err
-	}(), "seed negative bin")
+	}(), "seed bin with uop")
 }

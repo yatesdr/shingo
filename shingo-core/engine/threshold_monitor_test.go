@@ -14,11 +14,14 @@ func newTestMonitor() *ThresholdMonitor {
 		warmUp:              make(map[string]int),
 		sweepDone:           true,
 		thresholdsByPayload: make(map[string][]thresholdEntry),
-		uopCache:            make(map[string]int),
 		negativeLogged:      make(map[string]time.Time),
 	}
 }
 
+// TestThresholdMonitor_Snapshot pins the monitored-set + binding view the
+// Replenishment Health page reads. The snapshot no longer carries a cached UOP
+// total (the private tally is gone); it reports only which payloads are
+// monitored and the bindings watching each.
 func TestThresholdMonitor_Snapshot(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()
@@ -26,8 +29,6 @@ func TestThresholdMonitor_Snapshot(t *testing.T) {
 		{stationID: "st-1", coreNodeName: "MS-A", payloadCode: "WIDGET-A", threshold: 120, loaderID: 7},
 		{stationID: "st-1", coreNodeName: "SMN_015", payloadCode: "WIDGET-A", threshold: 96, loaderID: 7},
 	}
-	tm.uopCache["WIDGET-A"] = 139
-	// Monitored payload with no cached delta yet reports 0, not absent.
 	tm.thresholdsByPayload["WIDGET-B"] = []thresholdEntry{
 		{stationID: "st-2", coreNodeName: "MS-B", payloadCode: "WIDGET-B", threshold: 40, loaderID: 3},
 	}
@@ -42,9 +43,6 @@ func TestThresholdMonitor_Snapshot(t *testing.T) {
 	a, ok := byCode["WIDGET-A"]
 	if !ok {
 		t.Fatal("WIDGET-A missing from snapshot")
-	}
-	if a.CachedTotal != 139 {
-		t.Errorf("WIDGET-A cached = %d, want 139", a.CachedTotal)
 	}
 	if len(a.Bindings) != 2 {
 		t.Fatalf("WIDGET-A bindings = %d, want 2", len(a.Bindings))
@@ -61,8 +59,8 @@ func TestThresholdMonitor_Snapshot(t *testing.T) {
 	if maxThresh != 120 {
 		t.Errorf("WIDGET-A max binding threshold = %d, want 120", maxThresh)
 	}
-	if b := byCode["WIDGET-B"]; b.CachedTotal != 0 {
-		t.Errorf("WIDGET-B cached = %d, want 0 (no delta seeded yet)", b.CachedTotal)
+	if b, ok := byCode["WIDGET-B"]; !ok || len(b.Bindings) != 1 {
+		t.Errorf("WIDGET-B should be present with 1 binding, got present=%v bindings=%d", ok, len(b.Bindings))
 	}
 }
 
@@ -128,28 +126,12 @@ func TestThresholdMonitor_WarmUpOverridesDebounce(t *testing.T) {
 	}
 }
 
-func TestThresholdMonitor_OnBinUOPDelta_AppliesIncrementally(t *testing.T) {
-	t.Parallel()
-	tm := newTestMonitor()
-	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{
-		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
-	}
-	tm.uopCache["WIDGET-A"] = 100
-
-	tm.OnBinUOPDelta("WIDGET-A", -5)
-	tm.mu.Lock()
-	if tm.uopCache["WIDGET-A"] != 95 {
-		t.Errorf("uopCache = %d, want 95", tm.uopCache["WIDGET-A"])
-	}
-	tm.mu.Unlock()
-
-	tm.OnBinUOPDelta("WIDGET-A", -10)
-	tm.mu.Lock()
-	if tm.uopCache["WIDGET-A"] != 85 {
-		t.Errorf("uopCache = %d, want 85", tm.uopCache["WIDGET-A"])
-	}
-	tm.mu.Unlock()
-}
+// The incremental-cache application test was deleted with the private tally:
+// OnBinUOPDelta no longer moves an in-memory total, it re-reads the
+// authoritative DB sum. The read-authoritative behavior is pinned end-to-end
+// against a real engine in threshold_monitor_registry_pg_test.go
+// (TestThresholdMonitor_ReadsAuthoritativeSum_NotAStaleCache and the negative-
+// total tests), which cannot be expressed against the nil-eng unit harness.
 
 func TestThresholdMonitor_OnBinUOPDelta_SkipsEmptyPayload(t *testing.T) {
 	t.Parallel()
@@ -163,21 +145,31 @@ func TestThresholdMonitor_OnBinUOPDelta_NoBindings(t *testing.T) {
 	tm.OnBinUOPDelta("UNMONITORED", -10) // no bindings, should not panic
 }
 
-func TestThresholdMonitor_OnBucketApplied_AppliesDelta(t *testing.T) {
+// TestThresholdMonitor_OnBucketApplied_EmitsEvent pins the one side effect
+// OnBucketApplied still owns unconditionally: emitting EventLinesideBucketApplied
+// for other subscribers. (The threshold re-evaluation now reads the DB, which
+// the nil-inventory unit engine returns 0 for; an UNMONITORED payload is used
+// so no fire path is exercised.) The old assertion on an incremental uopCache
+// value is gone with the tally.
+func TestThresholdMonitor_OnBucketApplied_EmitsEvent(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()
 	tm.eng = &Engine{Events: NewEventBus()}
-	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{
-		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
-	}
-	tm.uopCache["WIDGET-A"] = 100
 
-	tm.OnBucketApplied("s1", "LOADER", "WIDGET-A", -10, "capture")
-	tm.mu.Lock()
-	if tm.uopCache["WIDGET-A"] != 90 {
-		t.Errorf("uopCache = %d, want 90", tm.uopCache["WIDGET-A"])
+	var got *LinesideBucketAppliedEvent
+	tm.eng.Events.SubscribeTypes(func(ev Event) {
+		e := ev.Payload.(LinesideBucketAppliedEvent)
+		got = &e
+	}, EventLinesideBucketApplied)
+
+	tm.OnBucketApplied("s1", "LOADER", "UNMONITORED-WIDGET", -10, "capture")
+
+	if got == nil {
+		t.Fatal("OnBucketApplied did not emit EventLinesideBucketApplied")
 	}
-	tm.mu.Unlock()
+	if got.PayloadCode != "UNMONITORED-WIDGET" || got.Delta != -10 || got.CoreNodeName != "LOADER" {
+		t.Errorf("emitted event = %+v, want payload=UNMONITORED-WIDGET delta=-10 node=LOADER", *got)
+	}
 }
 
 func TestThresholdMonitor_OnBucketApplied_SkipsEmptyPayload(t *testing.T) {
@@ -193,7 +185,6 @@ func TestThresholdMonitor_CheckBindings_AboveThreshold_NoFire(t *testing.T) {
 	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{
 		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
 	}
-	tm.uopCache["WIDGET-A"] = 100
 
 	// Above threshold — checkBindings should not attempt to fire.
 	// With nil eng, a fire attempt would panic, so this passing proves
@@ -218,8 +209,8 @@ func TestThresholdMonitor_CheckBindings_NegativeTotal_NoFire(t *testing.T) {
 	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{
 		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
 	}
-	// Deeply below threshold — without the floor this fires immediately.
-	tm.uopCache["WIDGET-A"] = -443
+	// Deeply below threshold — without the floor this fires immediately. The
+	// total is passed straight to checkBindings (-443 below).
 
 	tm.checkBindings([]thresholdEntry{
 		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},

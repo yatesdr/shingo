@@ -59,9 +59,10 @@ func (h *Handlers) apiInventory(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiInventoryMonitorTotals returns the per-payload Replenishment Health rollup:
-// DB on-hand (bins + lineside split), the threshold monitor's cached total (for
-// drift detection), and configured thresholds. Powers the inventory page's
-// Replenishment Health meters and drift chips (monitor cache ≠ DB truth).
+// DB on-hand (bins + lineside split), which payloads are monitored, and their
+// configured thresholds. Powers the inventory page's Replenishment Health
+// meters. (The monitor holds no private tally anymore, so there is no
+// cache-vs-DB drift to surface — that chip was deleted with the tally.)
 func (h *Handlers) apiInventoryMonitorTotals(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.engine.ReplenishmentHealth(r.Context())
 	if err != nil {
