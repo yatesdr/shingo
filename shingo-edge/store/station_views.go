@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -100,11 +101,25 @@ func LookupLastReleaseError(db *DB, runtime *processes.RuntimeState) string {
 //     per-order release semantics (different disposition routing).
 //   - Excludes manual_swap, which doesn't create pairs at all.
 //
-// Pre-staged-status semantic preserved: Order A's status is irrelevant.
-// ReleaseStagedOrders fans out to both legs unconditionally regardless
-// of where each leg is in its choreography. See the 2026-04-27
-// retrospective for why the symmetric "both at staged" check was
-// replaced with this single-check shape.
+// Per-mode staged gate (hop A4-iv, 2026-07-23):
+//
+//   - two_robot: the positionally-resolved evac (StagedOrderID slot) is the
+//     gating leg and must be at staged. ReleaseStagedOrders fans this pair out
+//     evac-first (Edge-ordered on a shared line node), so the button must not
+//     appear while only the supply is parked — releasing the supply ahead of an
+//     un-staged evac would race a fresh bin onto the line before the old one is
+//     lifted. Order A's status stays irrelevant; the StagedOrderID leg is the
+//     single gate.
+//   - two_robot_press_index: the evac/supply labels above are POSITIONAL and
+//     INVERTED (R1 is the evac, R2 the supply/index — see ResolveSwapPair's
+//     "KNOWN WRONG" note), and the two legs are FLEET-sequenced on their shared
+//     nodes rather than Edge-ordered. So the RELEASE affordance must track
+//     "either leg of the pair is parked at staged", not the positional evac
+//     alone: otherwise a legitimately-staged INDEX leg — the one that sourced
+//     ~19 min late in the Hopkinsville hang — reads swap_ready=false and loses
+//     its button. Showing the button on either-staged is safe because
+//     ReleaseStagedOrders now gates each leg on ReleasableAtCore and defers the
+//     rest (hop A4-i/-ii), so a leg Core would refuse is never released.
 //
 // Non-two-robot claims always return false — their single staged order
 // is released via the per-order /api/orders/{id}/release endpoint.
@@ -128,8 +143,18 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 	if evac.SiblingOrderID == nil {
 		return false
 	}
-	// Lineside leg parked at staged → release-ready.
-	return evac.Status == "staged"
+	// two_robot gate: the positionally-resolved evac must be parked.
+	if evac.Status == "staged" {
+		return true
+	}
+	// press-index: role labels are inverted and the legs are fleet-sequenced,
+	// so accept the pair as release-ready when the SIBLING leg is parked too.
+	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
+		if sib, serr := db.GetOrder(*evac.SiblingOrderID); serr == nil && sib != nil && sib.Status == "staged" {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveEvacOrderID locates the evac (lineside) order's ID via three
@@ -204,6 +229,16 @@ func resolveEvacOrderID(db *DB, runtime *processes.RuntimeState, task *processes
 // re-derivation of the same fact; it is the case that earns the `leg_role` field
 // on the order, which is the next phase. Until then it is wrong, contained, and
 // written down.
+//
+// hop A4-iv (2026-07-23) did NOT un-invert this mapping — that still waits on
+// leg_role. It only fixed the downstream symptom that bit an operator: the
+// RELEASE button vanishing on a legitimately-staged index leg. ComputeSwapReady
+// works around the inversion by accepting EITHER staged leg for press-index
+// (see there), so the button survives even though this resolver still labels the
+// legs positionally. The disposition/ordering the positional labels drive in
+// ReleaseStagedOrders stays masked (live press-index claims are produce-role,
+// whose release returns before the evac/supply split) and harmless (press-index
+// is fleet-sequenced, so leg order at release doesn't gate physical safety).
 func ResolveSwapPair(db *DB, runtime *processes.RuntimeState, task *processes.NodeTask) (evacID, supplyID *int64, err error) {
 	if runtime != nil {
 		if runtime.StagedOrderID != nil {

@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/store/processes"
 )
@@ -127,6 +128,44 @@ func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "in_transit"), "mark B in_transit")
 	if ComputeSwapReady(db, claim, runtime, nil) {
 		t.Error("expected SwapReady=false when only ActiveOrderID (A) is staged and B has not yet arrived — B is the gate, not A")
+	}
+}
+
+// TestComputeSwapReady_PressIndex_EitherLegStaged is the hop A4-iv regression:
+// for two_robot_press_index the evac/supply role labels are resolved
+// POSITIONALLY and are inverted (R1 is the evac, R2 the supply/index), and the
+// legs are fleet-sequenced. So the RELEASE button must appear whenever EITHER
+// leg of the pair is parked at staged — not only the positionally-resolved evac
+// (StagedOrderID). A legitimately-staged index leg sitting in the ActiveOrderID
+// slot must keep its button; under two_robot the same shape reads false.
+func TestComputeSwapReady_PressIndex_EitherLegStaged(t *testing.T) {
+	t.Parallel()
+	db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
+	// Promote the pair to press-index. ComputeSwapReady only reads claim.SwapMode
+	// (the other press-index fields gate dispatch, not the swap-ready predicate).
+	claim.SwapMode = protocol.SwapModeTwoRobotPressIndex
+
+	// ActiveOrderID (A) at staged, StagedOrderID (B) still in_transit. Under
+	// two_robot this reads false (B is the sole gate); under press-index the
+	// button must appear because a leg of the pair is parked.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "staged"), "mark A staged")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "in_transit"), "mark B in_transit")
+	if !ComputeSwapReady(db, claim, runtime, nil) {
+		t.Error("press-index: expected SwapReady=true when the ActiveOrderID leg is staged — the inverted-role index leg must keep its RELEASE button")
+	}
+
+	// Control: with the SAME slot states but two_robot mode, the button stays
+	// off (A staged / B in_transit is the un-gated inverse for two_robot).
+	claim.SwapMode = protocol.SwapModeTwoRobot
+	if ComputeSwapReady(db, claim, runtime, nil) {
+		t.Error("two_robot: expected SwapReady=false when only the ActiveOrderID leg is staged — the either-leg relaxation is press-index-only")
+	}
+
+	// And press-index still returns false when NEITHER leg is staged.
+	claim.SwapMode = protocol.SwapModeTwoRobotPressIndex
+	testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "in_transit"), "mark A in_transit")
+	if ComputeSwapReady(db, claim, runtime, nil) {
+		t.Error("press-index: expected SwapReady=false when neither leg is staged")
 	}
 }
 
