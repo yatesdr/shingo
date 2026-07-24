@@ -196,6 +196,39 @@ func TestChar_FailOrderInternal_TransitionErrorFallback(t *testing.T) {
 	}
 }
 
+// TestChar_SkipOrderInternal_TransitionErrorFallback pins the ERROR-path half of
+// the EmitOrderSkipped dedup (mirror of the failOrderInternal case above): when
+// lifecycle.Skip returns an error, its fireSkipped actionMap hook never ran, so
+// skipOrderInternal's fallback emit must fire EXACTLY ONCE — the skip still has to
+// reach the edge. Here the order is already terminal, so Skip short-circuits to
+// IllegalTransition (no state write, no fireSkipped) and drives the fallback branch
+// directly. Together with TestPhase0_DispositionTriad_NoSourceBin_Complex (the
+// success-path case, want 1) this pins the invariant: exactly one EmitOrderSkipped
+// on BOTH paths.
+func TestChar_SkipOrderInternal_TransitionErrorFallback(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// In-memory order only: Skip's IsTerminal guard returns before touching the DB.
+	order := &orders.Order{
+		EdgeUUID:  "char-skip-fallback",
+		StationID: "line-1",
+		OrderType: OrderTypeComplex,
+		Status:    StatusSkipped, // terminal → Skip returns IllegalTransition, fireSkipped does not run
+	}
+
+	d.skipOrderInternal(order, "no_source_bin", "transition-error fallback")
+
+	if len(emitter.skipped) != 1 {
+		t.Fatalf("skipped events = %d, want 1 (transition-error fallback emit)", len(emitter.skipped))
+	}
+	if emitter.skipped[0].errorCode != "no_source_bin" {
+		t.Errorf("skipped[0] code = %q, want %q", emitter.skipped[0].errorCode, "no_source_bin")
+	}
+}
+
 // TestChar_DispatchPreparedComplex_FleetCreateFailure_Fails pins the fleet-create
 // failure branch (complex_dispatch.go:747) — the guardless happy-path tail's one
 // failure exit — routing through failOrderInternal with fleet_failed. A fully

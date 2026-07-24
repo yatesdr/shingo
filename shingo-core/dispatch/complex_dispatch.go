@@ -553,6 +553,11 @@ func (d *Dispatcher) failOrderInternal(order *orders.Order, code, detail string)
 func (d *Dispatcher) skipOrderInternal(order *orders.Order, code, detail string) {
 	if err := d.lifecycle.Skip(order, order.StationID, code, detail); err != nil {
 		log.Printf("dispatch: skip order %d: %v", order.ID, err)
+		// The transition failed, so its fireSkipped actionMap hook did NOT emit
+		// EmitOrderSkipped. Fall back to an explicit emit so the skip still
+		// reaches the edge. On the success path fireSkipped is the single
+		// authoritative emit — emitting again here would double it (the defect
+		// this dedup removed, mirroring the failOrderInternal fix above).
+		d.emitter.EmitOrderSkipped(order.ID, order.EdgeUUID, order.StationID, code, detail)
 	}
-	d.emitter.EmitOrderSkipped(order.ID, order.EdgeUUID, order.StationID, code, detail)
 }

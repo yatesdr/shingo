@@ -131,8 +131,14 @@ func TestPhase0_DispositionTriad_NoSourceBin_Complex(t *testing.T) {
 		t.Fatalf("no_source_bin must SKIP (not fail): got failure errorCode=%q",
 			emitter.failed[0].errorCode)
 	}
-	if len(emitter.skipped) == 0 {
-		t.Fatal("expected order to be skipped with no_source_bin; no skip event emitted")
+	// CHANGE-DETECTOR: a terminal skip emits EmitOrderSkipped exactly ONCE. On the
+	// success path (this test — a legal queued→skipped transition) the lifecycle
+	// transition's fireSkipped hook (lifecycle.go) is the single authoritative
+	// emit; skipOrderInternal's explicit emit is now a fallback that fires only
+	// when the transition itself errored. The prior double-emit was deduped
+	// deliberately, mirroring the failOrderInternal fix — flipping this from >=1 to ==1.
+	if len(emitter.skipped) != 1 {
+		t.Fatalf("skipped events = %d, want 1 (single authoritative fireSkipped emit)", len(emitter.skipped))
 	}
 	if emitter.skipped[0].errorCode != codeNoSourceBin {
 		t.Errorf("skip error code = %q, want %q", emitter.skipped[0].errorCode, codeNoSourceBin)
