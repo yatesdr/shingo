@@ -311,6 +311,11 @@ func (h *Handlers) binRecordCount(b *domain.Bin, params json.RawMessage) error {
 			fmt.Sprintf("Cycle count discrepancy: expected %d, actual %d (%+d)", res.Expected, res.Actual, res.Actual-res.Expected),
 			actor)
 	}
+	// Over-capacity counts are accepted but flagged: the note surfaces on the bin
+	// tab and the service already wrote a distinct over-capacity audit row.
+	if res.Warning != "" {
+		svc.AddNote(b.ID, "count", res.Warning, actor)
+	}
 	h.emitBinUpdate(b, "counted", "")
 
 	// Broadcast the corrected UOP to every Edge station. The station that

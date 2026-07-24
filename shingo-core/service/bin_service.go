@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -356,6 +357,10 @@ type CountResult struct {
 	Expected    int
 	Actual      int
 	Discrepancy bool
+	// Warning is set (and surfaced to the operator on the bin tab) when the
+	// recorded count exceeded the payload's UOP capacity. The count is still
+	// accepted; the warning flags a possible mis-set capacity config.
+	Warning string
 }
 
 // RecordCount writes a cycle count for the bin and returns the expected vs.
@@ -379,9 +384,16 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 	if pl.UOPCapacity <= 0 {
 		return nil, fmt.Errorf("cannot validate UOP capacity — payload %q has no UOP capacity set", b.PayloadCode)
 	}
-	if actualUOP < 0 || actualUOP > pl.UOPCapacity {
-		return nil, fmt.Errorf("actual UOP must be between 0 and %d", pl.UOPCapacity)
+	// Warn-and-accept over capacity: only a negative count is rejected. A count
+	// above the payload's UOP capacity still records (a bin can be physically
+	// overpacked, and a hard block just stops the operator from telling the truth
+	// about what's in the bin) — but it is flagged in the response, on the bin
+	// tab, and in the audit trail so a persistently-over count surfaces a mis-set
+	// capacity config.
+	if actualUOP < 0 {
+		return nil, fmt.Errorf("actual UOP must be 0 or more")
 	}
+	overCapacity := actualUOP > pl.UOPCapacity
 
 	expected := b.UOPRemaining
 
@@ -404,14 +416,28 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 		nil, b.PayloadCode, actor, uopCtx); err != nil {
 		return nil, fmt.Errorf("audit cycle count bin %d: %w", b.ID, err)
 	}
+	if overCapacity {
+		meta, _ := json.Marshal(map[string]int{"count": actualUOP, "capacity": pl.UOPCapacity})
+		if err := audit.AppendBinUOPOverride(tx, b.ID, pl.UOPCapacity, actualUOP,
+			audit.OpCycleCountOverCapacity, "service/bin_service.go:RecordCount",
+			nil, b.PayloadCode, actor, meta); err != nil {
+			return nil, fmt.Errorf("audit over-capacity count bin %d: %w", b.ID, err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit cycle count bin %d: %w", b.ID, err)
 	}
-	return &CountResult{
+	result := &CountResult{
 		Expected:    expected,
 		Actual:      actualUOP,
 		Discrepancy: expected != actualUOP,
-	}, nil
+	}
+	if overCapacity {
+		result.Warning = fmt.Sprintf(
+			"recorded count %d is above the payload's UOP capacity of %d — the count was accepted; check the payload's capacity setting",
+			actualUOP, pl.UOPCapacity)
+	}
+	return result, nil
 }
 
 // --- Notes ----------------------------------------------------------------

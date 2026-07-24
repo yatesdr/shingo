@@ -47,6 +47,14 @@ const (
 	// agreement = system was right and the count just confirms it.
 	OpCycleCount = "cycle_count"
 
+	// OpCycleCountOverCapacity tags a cycle count whose value exceeded the
+	// payload's UOP capacity. The count is still accepted (a bin can be
+	// physically overpacked, or the capacity template is mis-set), but this
+	// distinct row flags it: suggested_uop carries the payload's capacity,
+	// after_uop the operator's count, and metadata {count, capacity} makes a
+	// persistent over-capacity pattern — the mis-set-config signal — trendable.
+	OpCycleCountOverCapacity = "cycle_count_over_capacity"
+
 	// OpReleasedUnderpack tags a release where the operator declared
 	// the bin physically empty before the tracked count reached zero
 	// (bin labeled 1200 actually held 1190; cell starves at runtime=10).
