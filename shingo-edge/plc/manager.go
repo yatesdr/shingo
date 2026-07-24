@@ -55,6 +55,28 @@ type ManagedPLC struct {
 	mu          sync.RWMutex
 }
 
+// newManagedPLC builds a PLC entry with a SAFE DEFAULT STATUS.
+//
+// Status must never be the empty string. Every reader treats "Connected" as the
+// only live value, but an empty Status renders as a blank cell in PLCStatuses()
+// (GET /api/plcs) and the Processes-page dropdown — neither connected nor
+// disconnected. It also defeats the connection-transition checks, which compare
+// against "Connected" to decide whether to emit connect/disconnect events.
+//
+// This exists because three of the four construction sites are lazy inserts in
+// the SSE handlers, and two of them (tag-change, health) never assign Status at
+// all. Once warlinkPollTick started EVICTING removed PLCs, a late SSE event for
+// an evicted PLC would resurrect it with a blank status — recreating, in a new
+// form, the very ghost the eviction removed. A constructor makes the default
+// impossible to forget at a future fifth site.
+func newManagedPLC(name string) *ManagedPLC {
+	return &ManagedPLC{
+		Name:   name,
+		Status: "Disconnected",
+		Values: make(map[string]TagValue),
+	}
+}
+
 // DebugLogFunc is a nil-safe debug logging function.
 type DebugLogFunc = types.DebugLogFunc
 
@@ -247,10 +269,7 @@ func (m *Manager) warlinkPollTick() {
 		m.mu.Lock()
 		existing, exists := m.plcs[p.Name]
 		if !exists {
-			existing = &ManagedPLC{
-				Name:   p.Name,
-				Values: make(map[string]TagValue),
-			}
+			existing = newManagedPLC(p.Name)
 			m.plcs[p.Name] = existing
 		}
 		m.mu.Unlock()

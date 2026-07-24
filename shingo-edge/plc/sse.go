@@ -201,10 +201,7 @@ func (m *Manager) handleSSEValueChange(data string) {
 	mp, ok := m.plcs[change.PLC]
 	if !ok {
 		// SSE may report PLCs discovered after bootstrap
-		mp = &ManagedPLC{
-			Name:   change.PLC,
-			Values: make(map[string]TagValue),
-		}
+		mp = newManagedPLC(change.PLC)
 		m.plcs[change.PLC] = mp
 	}
 	m.mu.Unlock()
@@ -244,10 +241,7 @@ func (m *Manager) handleSSEStatusChange(data string) {
 	m.mu.Lock()
 	mp, ok := m.plcs[status.PLC]
 	if !ok {
-		mp = &ManagedPLC{
-			Name:   status.PLC,
-			Values: make(map[string]TagValue),
-		}
+		mp = newManagedPLC(status.PLC)
 		m.plcs[status.PLC] = mp
 	}
 	m.mu.Unlock()
@@ -289,10 +283,7 @@ func (m *Manager) handleSSEHealth(data string) {
 	m.mu.Lock()
 	mp, ok := m.plcs[health.PLC]
 	if !ok {
-		mp = &ManagedPLC{
-			Name:   health.PLC,
-			Values: make(map[string]TagValue),
-		}
+		mp = newManagedPLC(health.PLC)
 		m.plcs[health.PLC] = mp
 	}
 	m.mu.Unlock()

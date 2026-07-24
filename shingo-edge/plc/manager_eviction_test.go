@@ -110,6 +110,42 @@ func TestWarlinkPollEvictionEmitsDisconnectOnce(t *testing.T) {
 	}
 }
 
+// An SSE event arriving for an already-evicted PLC lazily re-inserts it. That
+// entry must not carry an empty Status: it would render as a blank cell in
+// PLCStatuses() / GET /api/plcs — neither connected nor disconnected — which is
+// the eviction ghost returning in a new form. The tag-change and health handlers
+// never assign Status at all, so the constructor default is the only thing
+// standing between an evicted PLC and a blank-status resurrection.
+func TestSSEResurrectedPLCNeverHasEmptyStatus(t *testing.T) {
+	t.Parallel()
+	cfg := config.Defaults()
+	mgr := NewManager(nil, cfg, &mockEmitter{}, nil)
+	client := &mockWarlinkClient{plcs: []WarlinkPLC{{Name: "gone_PLC", Status: "Connected"}}}
+	mgr.wl = client
+
+	mgr.warlinkPollTick()
+	client.plcs = nil
+	mgr.warlinkPollTick()
+	if mgr.GetPLC("gone_PLC") != nil {
+		t.Fatal("precondition: PLC should have been evicted")
+	}
+
+	// A value-change event for the evicted PLC re-inserts it. This handler never
+	// assigns Status.
+	mgr.handleSSEValueChange(`{"plc":"gone_PLC","tag":"gone_PLC.SomeTag","type":"DINT","value":1}`)
+
+	mp := mgr.GetPLC("gone_PLC")
+	if mp == nil {
+		t.Fatal("tag-change did not re-insert the PLC; adjust the test, not the guard")
+	}
+	if got := mgr.PLCStatuses()["gone_PLC"]; got == "" {
+		t.Error("resurrected PLC has an EMPTY status — renders as a blank cell in /api/plcs")
+	}
+	if mgr.IsConnected("gone_PLC") {
+		t.Error("a resurrected PLC must not read as connected until a status event says so")
+	}
+}
+
 // countEvents counts exact matches in mockEmitter's recorded event log.
 func countEvents(e *mockEmitter, want string) int {
 	e.mu.Lock()
