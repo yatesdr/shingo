@@ -215,7 +215,41 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 			ExpectedCATID: expected,
 		}})
 	}
-	_ = isChange // Commit 3 uses this for the B1 prompt-arm.
+	// B1 prompt-arm half: on an actual CHANGE of the physical part, prompt the
+	// operator to start a changeover. Not on the first-read baseline (isChange
+	// is false there) — only when the part genuinely changed under the press.
+	if isChange {
+		cm.raiseCATIDChangePrompt(processID, st)
+	}
+}
+
+// raiseCATIDChangePrompt emits EventCATIDChangePrompt after the press's part
+// changed, pre-filling the target style when the new CATID maps to a known
+// style's expected_catid. B1 PROMPT half only: it never starts the changeover —
+// the operator confirms through the existing Start Changeover flow. Called with
+// cm.mu held.
+//
+// Suppressed when the new part matches the already-active style's expected_catid
+// (the line is now correct for the running style — a completed cutover, not a
+// pending one), so a change that RESOLVES a mismatch does not nag the operator
+// to change to the style they are already running.
+func (cm *catidMonitor) raiseCATIDChangePrompt(processID int64, st *catidState) {
+	newCATID := st.lastConfirmed
+	if _, _, activeExpected, ok := cm.eng.activeStyleCATID(processID); ok && activeExpected != "" && newCATID == activeExpected {
+		return
+	}
+	targetID, targetName, hasTarget := cm.eng.styleForCATID(processID, newCATID)
+	log.Printf("CATID change: press %s (process %d) part is now CATID %q — prompt operator to start changeover (pre-fill target: %v %q)",
+		st.processName, processID, newCATID, hasTarget, targetName)
+	cm.eng.Events.Emit(Event{Type: EventCATIDChangePrompt, Payload: CATIDChangePromptEvent{
+		ProcessID:       processID,
+		ProcessName:     st.processName,
+		PLCName:         st.plcName,
+		NewCATID:        newCATID,
+		HasTarget:       hasTarget,
+		TargetStyleID:   targetID,
+		TargetStyleName: targetName,
+	}})
 }
 
 // liveCATID returns the debounced part-identity value for a process, or
@@ -244,6 +278,26 @@ func (e *Engine) activeStyleCATID(processID int64) (styleID int64, styleName, ex
 		return 0, "", "", false
 	}
 	return style.ID, style.Name, style.ExpectedCATID, true
+}
+
+// styleForCATID finds the style in a process whose expected_catid equals the
+// given (non-empty) CATID — the B1 pre-fill lookup. ok=false when the CATID is
+// empty, no style maps to it, or the lookup fails. If more than one style shares
+// the value (unusual), the first by name wins; the operator confirms regardless.
+func (e *Engine) styleForCATID(processID int64, catid string) (styleID int64, styleName string, ok bool) {
+	if catid == "" {
+		return 0, "", false
+	}
+	styles, err := e.db.ListStylesByProcess(processID)
+	if err != nil {
+		return 0, "", false
+	}
+	for _, s := range styles {
+		if s.ExpectedCATID == catid {
+			return s.ID, s.Name, true
+		}
+	}
+	return 0, "", false
 }
 
 // catidToString normalizes a WarLink CATID tag value to a comparison string.

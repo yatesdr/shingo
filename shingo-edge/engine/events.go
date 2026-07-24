@@ -87,6 +87,16 @@ const (
 	// surfaces the divergence, naming the press + both CATID values. Edge-
 	// triggered on a debounced value change — no fixed threshold, no timer.
 	EventCATIDMismatch
+
+	// EventCATIDChangePrompt fires when a press's debounced CATID_01 CHANGES to
+	// a value that no longer matches the active style (B1 prompt-arm half, hop
+	// 2026-07-23). It PROMPTS the operator to start a changeover — pre-filling
+	// the target style when the new part's CATID maps to a known style's
+	// expected_catid — but never starts one: the operator still confirms
+	// through the existing Start Changeover flow. Full auto-arm (starting the
+	// changeover without the prompt) stays OUT until a live cutover confirms the
+	// tag flips cleanly, so nothing here calls StartProcessChangeover.
+	EventCATIDChangePrompt
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -304,6 +314,22 @@ type CATIDMismatchEvent struct {
 	StyleName     string `json:"style_name"`
 	LiveCATID     string `json:"live_catid"`
 	ExpectedCATID string `json:"expected_catid"`
+}
+
+// CATIDChangePromptEvent asks the operator to start a changeover after the
+// press's part physically changed. TargetStyleID/Name are pre-filled when the
+// new CATID maps to exactly one known style's expected_catid (HasTarget=true);
+// otherwise the operator picks the target manually. This is a prompt, not an
+// arm — nothing acts on it until the operator confirms Start Changeover.
+type CATIDChangePromptEvent struct {
+	eventbus.PayloadBase
+	ProcessID       int64  `json:"process_id"`
+	ProcessName     string `json:"process_name"`
+	PLCName         string `json:"plc_name"`
+	NewCATID        string `json:"new_catid"`
+	HasTarget       bool   `json:"has_target"`
+	TargetStyleID   int64  `json:"target_style_id"`
+	TargetStyleName string `json:"target_style_name"`
 }
 
 // DeliveredNotBoundEvent carries the detail for a delivery that arrived at one

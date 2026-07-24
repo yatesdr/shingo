@@ -133,3 +133,70 @@ func TestOnConfirmedCATID_RaisesMismatchAlert(t *testing.T) {
 		t.Fatalf("matching CATID must not add an alert, got %d", len(alarms))
 	}
 }
+
+// TestCATIDChangePrompt_PromptsOnChange pins the B1 prompt-arm half: a confirmed
+// CATID CHANGE prompts the operator to start a changeover, pre-filling the target
+// when the new part maps to a known style — but never on the baseline read, never
+// when the new part already matches the active style, and NEVER auto-starting a
+// changeover.
+func TestCATIDChangePrompt_PromptsOnChange(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, _, styleID, _ := seedProduceNode(t, db, "two_robot")
+	eng := testEngine(t, db)
+
+	// Active style runs part 40016911; a second style maps to 50029999.
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "40016911"), "active expected")
+	nextStyleID, err := db.CreateStyle("NEXT-STYLE", "next part", processID)
+	testutil.MustNoErr(t, err, "create next style")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(nextStyleID, "50029999"), "next expected")
+
+	var prompts []CATIDChangePromptEvent
+	eng.Events.SubscribeTypes(func(evt Event) {
+		if p, ok := evt.Payload.(CATIDChangePromptEvent); ok {
+			prompts = append(prompts, p)
+		}
+	}, EventCATIDChangePrompt)
+
+	mon := &catidMonitor{eng: eng, states: map[int64]*catidState{
+		processID: {processName: "PRODUCE-PROC", plcName: "test-plc", seenValue: true},
+	}}
+	eng.catidMon = mon
+	st := mon.states[processID]
+
+	// Baseline confirmation (isChange=false) → NO prompt.
+	st.lastConfirmed = "40016911"
+	mon.onConfirmedCATID(processID, st, false)
+	if len(prompts) != 0 {
+		t.Fatalf("baseline read must not prompt, got %d", len(prompts))
+	}
+
+	// Change to a part that maps to a known, non-active style → prompt with a
+	// pre-filled target.
+	st.lastConfirmed = "50029999"
+	mon.onConfirmedCATID(processID, st, true)
+	if len(prompts) != 1 {
+		t.Fatalf("a change must prompt exactly once, got %d", len(prompts))
+	}
+	if p := prompts[0]; !p.HasTarget || p.TargetStyleID != nextStyleID || p.TargetStyleName != "NEXT-STYLE" || p.NewCATID != "50029999" {
+		t.Errorf("prompt = %+v, want pre-filled NEXT-STYLE target for 50029999", p)
+	}
+
+	// Change to a part with no known style → still prompts, but no pre-fill.
+	st.lastConfirmed = "99999999"
+	mon.onConfirmedCATID(processID, st, true)
+	if len(prompts) != 2 {
+		t.Fatalf("an unmapped change must still prompt, got %d", len(prompts))
+	}
+	if p := prompts[1]; p.HasTarget || p.TargetStyleID != 0 {
+		t.Errorf("unmapped prompt = %+v, want HasTarget=false", p)
+	}
+
+	// Change back to the ACTIVE style's part → suppressed (line is now correct
+	// for the running style; nothing to change to).
+	st.lastConfirmed = "40016911"
+	mon.onConfirmedCATID(processID, st, true)
+	if len(prompts) != 2 {
+		t.Fatalf("a change matching the active style must not prompt, got %d", len(prompts))
+	}
+}

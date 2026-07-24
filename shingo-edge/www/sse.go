@@ -301,6 +301,13 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.CATIDMismatchEvent); ok {
 				sseEvt = SSEEvent{Type: "catid-mismatch", Data: p}
 			}
+		case engine.EventCATIDChangePrompt:
+			// B1 prompt half: the press's part changed. Prompt the operator to
+			// start a changeover (target pre-filled when the new CATID maps to a
+			// known style). Prompt only — the operator still confirms.
+			if p, ok := evt.Payload.(engine.CATIDChangePromptEvent); ok {
+				sseEvt = SSEEvent{Type: "catid-change-prompt", Data: p}
+			}
 		default:
 			return
 		}
