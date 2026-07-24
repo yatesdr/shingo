@@ -373,6 +373,18 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return cerr
 	}
 
+	return d.dispatchComplexToFleet(order, resolvedSteps)
+}
+
+// dispatchComplexToFleet performs the guardless happy-path tail of complex
+// dispatch (Phase E): split the resolved steps at the wait boundary, create the
+// staged fleet order, transition the order → dispatched, clear any stale
+// queue_reason, and emit the dispatched event. All source claims and the
+// destination slot reserve are already secured by the earlier phases; this stage
+// only turns them into a fleet order. Returns a non-nil error on its two failure
+// exits (no actionable blocks before the wait, or the fleet backend rejecting the
+// create), each of which terminal-fails the order via failOrderInternal.
+func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps []resolvedStep) error {
 	preWait, hasWait := splitAtWait(resolvedSteps)
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 	// Complex orders are not load-sequence expanded (nil): the F4c advanced load
