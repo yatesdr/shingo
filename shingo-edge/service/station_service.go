@@ -2,15 +2,33 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"strings"
 
 	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store"
+	"shingoedge/store/lineside"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
 )
+
+// claimsByCoreNode indexes a style's node claims by core node name — the
+// batched form of GetStyleNodeClaimByNode for a whole board. Exact rather than
+// approximate: style_node_claims declares UNIQUE(style_id, core_node_name), so
+// there is at most one claim per (style, node) and the map cannot lose one.
+func claimsByCoreNode(db *sql.DB, styleID int64) (map[string]processes.NodeClaim, error) {
+	claims, err := processes.ListClaims(db, styleID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]processes.NodeClaim, len(claims))
+	for _, c := range claims {
+		out[c.CoreNodeName] = c
+	}
+	return out, nil
+}
 
 // LoaderResolver resolves the Core-owned loader aggregate a node belongs to, for
 // the operator view. It is consumer-defined HERE (service sits below engine, so it
@@ -311,6 +329,36 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	if err != nil {
 		loaderPayloads = nil // fail-open: tiles fall back to the claim-derived set
 	}
+	// Per-tile lookups hoisted to one query each for the whole board. Same
+	// motivation as loaderPayloads above: every read serialises on one
+	// connection, so a query inside the tile loop is a query multiplied by the
+	// tile count (22 on the Springfield bin loader).
+	//
+	// Claims are safe to index by core node name because style_node_claims
+	// declares UNIQUE(style_id, core_node_name) — at most one claim per
+	// (style, node), so a map lookup is exactly what GetStyleNodeClaimByNode
+	// returns. Both maps fail open to nil: a nil map lookup yields the zero
+	// value, and the tile then reads as "no claim", which is the same thing
+	// GetStyleNodeClaimByNode's sql.ErrNoRows produced.
+	var activeClaims, targetClaims map[string]processes.NodeClaim
+	if process.ActiveStyleID != nil {
+		activeClaims, _ = claimsByCoreNode(s.db.DB, *process.ActiveStyleID)
+	}
+	if process.TargetStyleID != nil {
+		targetClaims, _ = claimsByCoreNode(s.db.DB, *process.TargetStyleID)
+	}
+	nodeIDs := make([]int64, 0, len(nodes))
+	for _, node := range nodes {
+		nodeIDs = append(nodeIDs, node.ID)
+	}
+	activeBuckets, err := lineside.ListActiveForNodes(s.db.DB, nodeIDs)
+	if err != nil {
+		activeBuckets = nil // best-effort, as the per-node call was
+	}
+	inactiveBuckets, err := lineside.ListInactiveForNodes(s.db.DB, nodeIDs)
+	if err != nil {
+		inactiveBuckets = nil
+	}
 	for _, node := range nodes {
 		// See the BuildView doc comment: one abandoned tile-loop iteration is the
 		// granularity at which we give the single DB connection back.
@@ -321,10 +369,16 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		runtime, _ := s.db.EnsureProcessNodeRuntime(node.ID)
 		nodeView.Runtime = runtime
 		if process.ActiveStyleID != nil && node.CoreNodeName != "" {
-			nodeView.ActiveClaim, _ = s.db.GetStyleNodeClaimByNode(*process.ActiveStyleID, node.CoreNodeName)
+			if c, ok := activeClaims[node.CoreNodeName]; ok {
+				claim := c
+				nodeView.ActiveClaim = &claim
+			}
 		}
 		if process.TargetStyleID != nil && node.CoreNodeName != "" {
-			nodeView.TargetClaim, _ = s.db.GetStyleNodeClaimByNode(*process.TargetStyleID, node.CoreNodeName)
+			if c, ok := targetClaims[node.CoreNodeName]; ok {
+				claim := c
+				nodeView.TargetClaim = &claim
+			}
 		}
 		// Core-owned-loader fallback: a window/position of a Core loader with no
 		// per-style edge claim still reads as a manual_swap loader node, so the
@@ -358,8 +412,8 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		// Lineside buckets power the active-bar and stranded-chip UI on
 		// the operator station modal. Best-effort — absence of buckets
 		// just means the node has nothing pulled to lineside yet.
-		nodeView.LinesideActive, _ = s.db.ListActiveLinesideBuckets(node.ID)
-		nodeView.LinesideInactive, _ = s.db.ListInactiveLinesideBuckets(node.ID)
+		nodeView.LinesideActive = activeBuckets[node.ID]
+		nodeView.LinesideInactive = inactiveBuckets[node.ID]
 		// Surface any pending release-time error that's been rolled back to
 		// Staged for the operator to retry.
 		nodeView.LastReleaseError = store.LookupLastReleaseError(s.db, runtime)

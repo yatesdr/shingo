@@ -131,6 +131,65 @@ func ListActiveForNode(db *sql.DB, nodeID int64) ([]Bucket, error) {
 	return scanBuckets(rows)
 }
 
+// ListActiveForNodes is the batched form of ListActiveForNode: one query for
+// a whole set of nodes, keyed by node id. An operator-station view needs these
+// for every tile, and calling the per-node form in the tile loop cost one query
+// per tile on a connection that serialises every read (store.Open sets
+// SetMaxOpenConns(1)). Nodes with no buckets are simply absent from the map,
+// which reads the same as the per-node form's empty slice.
+//
+// Ordering within each node matches ListActiveForNode (updated_at DESC), so the
+// HMI sees the same bucket order either way.
+func ListActiveForNodes(db *sql.DB, nodeIDs []int64) (map[int64][]Bucket, error) {
+	return listForNodes(db, nodeIDs, StateActive)
+}
+
+// ListInactiveForNodes is the batched form of ListInactiveForNode.
+func ListInactiveForNodes(db *sql.DB, nodeIDs []int64) (map[int64][]Bucket, error) {
+	return listForNodes(db, nodeIDs, StateInactive)
+}
+
+func listForNodes(db *sql.DB, nodeIDs []int64, state string) (map[int64][]Bucket, error) {
+	out := map[int64][]Bucket{}
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	// Deduplicate: a station can list the same node twice (a changeover
+	// participant adopted as a child tile), and a duplicated id would otherwise
+	// duplicate that node's buckets in the result.
+	seen := make(map[int64]bool, len(nodeIDs))
+	args := make([]any, 0, len(nodeIDs)+1)
+	placeholders := make([]byte, 0, len(nodeIDs)*2)
+	for _, id := range nodeIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if len(placeholders) > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args = append(args, id)
+	}
+	args = append(args, state)
+	rows, err := db.Query(`SELECT `+bucketCols+`
+		FROM node_lineside_bucket
+		WHERE node_id IN (`+string(placeholders)+`) AND state=?
+		ORDER BY updated_at DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	buckets, err := scanBuckets(rows)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range buckets {
+		out[b.NodeID] = append(out[b.NodeID], b)
+	}
+	return out, nil
+}
+
 // ListInactiveForNode returns only the stranded (inactive) buckets on
 // a node — the ones that render as stacked chips.
 func ListInactiveForNode(db *sql.DB, nodeID int64) ([]Bucket, error) {
