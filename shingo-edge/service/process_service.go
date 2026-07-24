@@ -54,6 +54,12 @@ func (s *ProcessService) SetActiveStyle(processID int64, styleID *int64) error {
 	return s.db.SetActiveStyle(processID, styleID)
 }
 
+// SetChangeoverAutoArm writes the per-process CATID auto-arm mode
+// (auto|prompt|off); unknown/empty ⇒ auto.
+func (s *ProcessService) SetChangeoverAutoArm(processID int64, mode string) error {
+	return s.db.SetChangeoverAutoArm(processID, mode)
+}
+
 // ── Process nodes ──────────────────────────────────────────────────
 
 // ListNodes returns every process_nodes row.

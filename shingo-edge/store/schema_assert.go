@@ -65,6 +65,7 @@ var requiredColumns = []requiredColumn{
 	{"style_node_claims", "reorder_point_source"},
 	{"styles", "expected_catid"},
 	{"processes", "auto_cutover_enabled"},
+	{"processes", "changeover_auto_arm"},
 	{"process_changeovers", "triggered_by"},
 	{"changeover_node_tasks", "skip_note"},
 	{"process_node_runtime_states", "remaining_uop_cached"},

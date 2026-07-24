@@ -37,14 +37,14 @@ type (
 func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 	var p Process
 	var createdAt string
-	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.AutoCutoverEnabled, &createdAt); err != nil {
+	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.AutoCutoverEnabled, &p.ChangeoverAutoArm, &createdAt); err != nil {
 		return p, err
 	}
 	p.CreatedAt = helpers.ScanTime(createdAt)
 	return p, nil
 }
 
-const processSelect = `id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, auto_cutover_enabled, created_at`
+const processSelect = `id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, auto_cutover_enabled, changeover_auto_arm, created_at`
 
 // List returns every process row sorted by name.
 func List(db *sql.DB) ([]Process, error) {
@@ -129,6 +129,15 @@ func GetActiveStyleID(db *sql.DB, processID int64) (*int64, error) {
 // SetProductionState writes the production_state on a process.
 func SetProductionState(db *sql.DB, processID int64, state string) error {
 	_, err := db.Exec(`UPDATE processes SET production_state=? WHERE id=?`, state, processID)
+	return err
+}
+
+// SetChangeoverAutoArm writes the changeover_auto_arm mode on a process,
+// normalized to one of auto|prompt|off (empty/unknown ⇒ auto). Kept as a focused
+// setter rather than another positional arg on Create/Update so the CATID auto-arm
+// mode threads through without churning every process-CRUD call site.
+func SetChangeoverAutoArm(db *sql.DB, processID int64, mode string) error {
+	_, err := db.Exec(`UPDATE processes SET changeover_auto_arm=? WHERE id=?`, domain.NormalizeChangeoverAutoArm(mode), processID)
 	return err
 }
 

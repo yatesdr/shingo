@@ -51,3 +51,9 @@ func (db *DB) GetActiveStyleID(processID int64) (*int64, error) {
 func (db *DB) SetProcessProductionState(processID int64, state string) error {
 	return processes.SetProductionState(db.DB, processID, state)
 }
+
+// SetChangeoverAutoArm writes the changeover_auto_arm mode (auto|prompt|off) on a
+// process; unknown/empty ⇒ auto.
+func (db *DB) SetChangeoverAutoArm(processID int64, mode string) error {
+	return processes.SetChangeoverAutoArm(db.DB, processID, mode)
+}

@@ -538,6 +538,16 @@ func (db *DB) migrate() error {
 	// may also add migrations; renumber on merge if this collides.
 	db.Exec("ALTER TABLE styles ADD COLUMN expected_catid TEXT NOT NULL DEFAULT ''")
 
+	// v30 (2026-07-24, B1 CATID auto-arm): per-process 3-value mode controlling
+	// whether a confirmed, stable CATID change auto-STARTS the changeover to the
+	// mapped style ("auto", the global default), only PROMPTS the operator
+	// ("prompt", the round-2 behavior), or does nothing ("off"). Default 'auto' is
+	// safe on every existing process: the auto path is inert wherever no style has
+	// an expected_catid (no CATID match ⇒ no target ⇒ no arm). Idempotent ADD
+	// COLUMN. NOTE: migration version numbers are per-branch — renumber on merge if
+	// this collides.
+	db.Exec("ALTER TABLE processes ADD COLUMN changeover_auto_arm TEXT NOT NULL DEFAULT 'auto'")
+
 	return nil
 }
 

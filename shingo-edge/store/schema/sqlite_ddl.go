@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS processes (
     counter_tag_name    TEXT NOT NULL DEFAULT '',
     counter_enabled     INTEGER NOT NULL DEFAULT 0,
     auto_cutover_enabled INTEGER NOT NULL DEFAULT 0,
+    changeover_auto_arm TEXT NOT NULL DEFAULT 'auto',
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

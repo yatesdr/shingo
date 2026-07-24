@@ -31,8 +31,46 @@ type Process struct {
 	// the safety net for spurious PLC triggers (PLC restart, fault
 	// recovery): a falling edge with non-terminal tasks is a no-op,
 	// logged.
-	AutoCutoverEnabled bool      `json:"auto_cutover_enabled"`
-	CreatedAt          time.Time `json:"created_at"`
+	AutoCutoverEnabled bool `json:"auto_cutover_enabled"`
+	// ChangeoverAutoArm controls the PLC CATID auto-arm behavior for this
+	// process, a 3-value mode (auto | prompt | off):
+	//   "auto"   — on a STABLE, confirmed CATID change that maps to a configured
+	//              style's expected_catid (differs from the active style, with no
+	//              changeover already in progress), automatically START the
+	//              changeover to that style. The default everywhere; naturally
+	//              inert where no style has an expected_catid (nothing to match ⇒
+	//              nothing to arm), so default-auto is safe on unconfigured plants.
+	//   "prompt" — only PROMPT the operator to start the changeover (the round-2
+	//              behavior, raiseCATIDChangePrompt); never auto-start.
+	//   "off"    — neither auto-arm nor prompt; silent.
+	// Empty/unknown persisted values read as "auto" via NormalizeChangeoverAutoArm.
+	ChangeoverAutoArm string    `json:"changeover_auto_arm"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+// Changeover auto-arm modes for Process.ChangeoverAutoArm.
+const (
+	// ChangeoverAutoArmAuto auto-starts a changeover on a stable, mapped CATID
+	// change. The global default.
+	ChangeoverAutoArmAuto = "auto"
+	// ChangeoverAutoArmPrompt only prompts the operator (round-2 behavior).
+	ChangeoverAutoArmPrompt = "prompt"
+	// ChangeoverAutoArmOff is silent — neither arm nor prompt.
+	ChangeoverAutoArmOff = "off"
+)
+
+// NormalizeChangeoverAutoArm coerces a persisted/submitted auto-arm value to one
+// of the three valid modes. Empty or unknown ⇒ auto (the safe default that is
+// inert without an expected_catid match).
+func NormalizeChangeoverAutoArm(mode string) string {
+	switch mode {
+	case ChangeoverAutoArmPrompt:
+		return ChangeoverAutoArmPrompt
+	case ChangeoverAutoArmOff:
+		return ChangeoverAutoArmOff
+	default:
+		return ChangeoverAutoArmAuto
+	}
 }
 
 // Style is a build configuration that a Process can run — typically a
