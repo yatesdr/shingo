@@ -86,6 +86,12 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
 // downgrades any non-simple swap mode to a simple move — there is nothing
 // to swap out.
 func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, quantity int64) (*NodeOrderResult, error) {
+	// A2 (hop 2026-07-23): refuse outgoing-style relief while a changeover is
+	// armed on this process — don't let a produce/consume swap race the cutover.
+	if err := e.guardStyleTransition(node, claim); err != nil {
+		return nil, err
+	}
+
 	autoConfirm := false
 	if claim != nil {
 		autoConfirm = claim.AutoConfirm || e.cfg.Web.AutoConfirm

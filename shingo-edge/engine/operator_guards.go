@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -36,6 +37,44 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 	}
 	if hasActiveSwap(e, runtime) {
 		return fmt.Errorf("node %s: two-robot swap already in progress — wait for the current cycle to complete or abort it before requesting more material", node.Name)
+	}
+	return nil
+}
+
+// guardStyleTransition refuses a material request for the OUTGOING style while a
+// changeover is armed on the node's process (A2, hop 2026-07-23). Once a target
+// style is set, the active-style claim this request resolved is the style the
+// cutover is replacing; firing outgoing-style produce/consume relief into a
+// half-cutover line is what stranded the Hopkinsville presses (LK41 relief raced
+// the KK21 cutover). The changeover's OWN evac/supply orders are created by
+// StartProcessChangeover, not through the RequestNodeMaterial / RequestProduceSwap
+// paths this guards, so they are unaffected.
+//
+// Loaders (manual_swap) are exempt: they supply empties ACROSS a changeover and
+// must stay available — gating them on the process changeover is exactly the
+// Springfield regression (see CanAcceptOrders). Only line produce/consume relief
+// is transition-sensitive.
+//
+// Edge-DB only, like guardNoActiveSwap — no Core round-trip. A read error is
+// treated as "no changeover" (fail-open): a transient read blip must not shut
+// down the line, and the changeover machinery has its own preflight/cutover gates.
+func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.NodeClaim) error {
+	if node == nil || claim == nil {
+		return nil
+	}
+	if claim.SwapMode == protocol.SwapModeManualSwap {
+		return nil
+	}
+	co, err := e.db.GetActiveProcessChangeover(node.ProcessID)
+	if err != nil || co == nil {
+		return nil
+	}
+	// Block when the request's claim is the changeover's FROM (outgoing) style.
+	// When from-style is unrecorded, still block: pre-cutover the active style IS
+	// the outgoing one, so any line relief here is outgoing by construction (once
+	// the cutover completes the changeover is no longer active and this passes).
+	if co.FromStyleID == nil || claim.StyleID == *co.FromStyleID {
+		return fmt.Errorf("node %s: a changeover is armed on this process (switching styles) — material requests for the outgoing style are blocked until cutover completes", node.Name)
 	}
 	return nil
 }

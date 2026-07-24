@@ -31,6 +31,12 @@ func (e *Engine) RequestProduceSwap(nodeID int64) (*NodeOrderResult, error) {
 		return nil, err
 	}
 
+	// A2 (hop 2026-07-23): refuse outgoing-style relief while a changeover is
+	// armed on this process — don't let a produce swap race the cutover.
+	if err := e.guardStyleTransition(node, claim); err != nil {
+		return nil, err
+	}
+
 	plan, err := BuildProducePlan(node, runtime, claim, time.Now())
 	if err != nil {
 		return nil, err
