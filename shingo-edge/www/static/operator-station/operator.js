@@ -18,8 +18,47 @@ import { openLoadBin, setLoadView } from './operator-load-bin.js';
 import { setReleaseRefs, isReleasePromptOpen } from './operator-release.js';
 
 let refreshTimer = null;
+// In-flight view build, or null. Every refresh path funnels through
+// loadView, so holding the guard HERE (rather than in scheduleRefresh)
+// covers the SSE poll, postAction's post-action refresh, and the modal
+// callbacks alike.
+let inFlightLoad = null;
+// A refresh was asked for while a build was already running. Set by the
+// joining caller, consumed by scheduleRefresh to run one prompt follow-up.
+let refreshPending = false;
 
+// loadView is single-flight: concurrent callers join the running build
+// instead of starting another one.
+//
+// The old shape cleared refreshTimer *before* awaiting the build, so the
+// re-entrancy guard was released for the whole duration of the fetch. Every
+// SSE event landing during a build (onOrderUpdate / onCounterUpdate /
+// onMaterialRefresh fire once or twice a second on a live plant) therefore
+// armed another concurrent build. Edge serialises all DB work on a single
+// connection (store.Open sets SetMaxOpenConns(1)), so those builds queue
+// behind each other and behind the write stream, and every one of them gets
+// slower — a ratchet that only a process restart cleared. Springfield's
+// 22-home bin-loader board measured 3.1s on a freshly restarted edge and
+// 25-116s after a day of uptime, purely from this pile-up.
+//
+// Joining rather than dropping matters: postAction awaits loadView to show
+// the result of what the operator just did, and a dropped refresh would
+// leave the board stale. A joined caller may get a snapshot that predates
+// its own action, so it sets refreshPending to earn one prompt follow-up.
 async function loadView() {
+    if (inFlightLoad) {
+        refreshPending = true;
+        return inFlightLoad;
+    }
+    inFlightLoad = doLoadView();
+    try {
+        return await inFlightLoad;
+    } finally {
+        inFlightLoad = null;
+    }
+}
+
+async function doLoadView() {
     try {
         // Bounded (fetchWithTimeout): scheduleRefresh awaits this before arming the
         // next poll, so a hung view fetch — a severed connection — would freeze every
@@ -27,6 +66,11 @@ async function loadView() {
         // the poll loop keeps ticking. The timeout only guards a true hang: it is set
         // well above the slowest legitimate view so it never aborts a slow-but-working
         // one (a 10s cap once stranded a heavy bin-loader view mid-load).
+        //
+        // NOTE: an abort here frees only the browser. The Go handler takes no
+        // context, so the server keeps building and keeps holding the single DB
+        // connection — which is why an under-set timeout used to make the pile-up
+        // strictly worse (every retry added a build, none removed one).
         const res = await fetchWithTimeout('/api/operator-stations/' + stationID + '/view', undefined, 30000);
         if (!res.ok) { showToast('Connection error: ' + res.status, 'error'); return; }
         const text = await res.text();
@@ -64,6 +108,13 @@ function renderAll() {
 }
 
 function scheduleRefresh() {
+    // A build already running is not a reason to arm a second timer — loadView
+    // would only join it. Record the interest and let the running build's
+    // follow-up pick it up, so the poll loop stays exactly one deep.
+    if (inFlightLoad) {
+        refreshPending = true;
+        return;
+    }
     if (refreshTimer) return;
     refreshTimer = setTimeout(async () => {
         refreshTimer = null;
@@ -71,7 +122,13 @@ function scheduleRefresh() {
         // Follow-up gives Core time to process receipt + ApplyBinArrival
         // after auto-confirm. With the retrieve_empty staging exemption in
         // Core, bins are available immediately; this covers residual latency.
-        setTimeout(() => scheduleRefresh(), 3000);
+        //
+        // Anything that asked for a refresh mid-build (an SSE event, or a
+        // postAction that joined) is served by a prompt follow-up instead of a
+        // concurrent build: one build at a time, no dropped events.
+        const settled = refreshPending;
+        refreshPending = false;
+        setTimeout(() => scheduleRefresh(), settled ? 0 : 3000);
     }, 500);
 }
 
