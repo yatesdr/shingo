@@ -432,6 +432,102 @@ func ListActiveByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {
 // sourceNodeName matches against orders.source_node (the dot-name
 // string Edge stores, not the integer node ID). Pass empty string to
 // skip the source match (degenerates to ListActiveByProcessNode).
+// NodeKey identifies one operator-board tile for the batched active-order
+// lookup: its process_node row and the Core node name it maps to (which may be
+// empty).
+type NodeKey struct {
+	ProcessNodeID int64
+	CoreNodeName  string
+}
+
+// ListActiveByNodeKeys is the batched form of ListActiveByProcessNodeOrSource:
+// one query for a whole board, returning each tile's orders keyed by
+// process_node_id. Motivation is query count — every read serialises on one
+// connection (store.Open sets SetMaxOpenConns(1)), so a query per tile is a
+// query multiplied by the tile count.
+//
+// Two things make this more than a mechanical IN-list rewrite:
+//
+//   - An order is matched by process_node_id OR source_node, so ONE order can
+//     legitimately belong to SEVERAL tiles (a loader's order is tracked at the
+//     line node but sources from the loader node). It is therefore fanned out to
+//     every key it matches, never assigned to just one — that is what the
+//     per-node calls did.
+//   - A tile with an EMPTY CoreNodeName must match on process_node_id only.
+//     ListActiveByProcessNodeOrSource routes those to ListActiveByProcessNode,
+//     which has no source_node term; folding "" into the source_node set would
+//     wrongly hand such a tile every order with an empty source_node.
+//
+// Ordering within each tile is o.created_at, matching both per-node forms.
+func ListActiveByNodeKeys(db *sql.DB, keys []NodeKey) (map[int64][]Order, error) {
+	out := map[int64][]Order{}
+	if len(keys) == 0 {
+		return out, nil
+	}
+	var idPlaceholders, namePlaceholders strings.Builder
+	idArgs := make([]any, 0, len(keys))
+	nameArgs := make([]any, 0, len(keys))
+	seenID := make(map[int64]bool, len(keys))
+	seenName := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		if !seenID[k.ProcessNodeID] {
+			seenID[k.ProcessNodeID] = true
+			if idPlaceholders.Len() > 0 {
+				idPlaceholders.WriteByte(',')
+			}
+			idPlaceholders.WriteByte('?')
+			idArgs = append(idArgs, k.ProcessNodeID)
+		}
+		if k.CoreNodeName != "" && !seenName[k.CoreNodeName] {
+			seenName[k.CoreNodeName] = true
+			if namePlaceholders.Len() > 0 {
+				namePlaceholders.WriteByte(',')
+			}
+			namePlaceholders.WriteByte('?')
+			nameArgs = append(nameArgs, k.CoreNodeName)
+		}
+	}
+
+	match := `o.process_node_id IN (` + idPlaceholders.String() + `)`
+	args := idArgs
+	if len(nameArgs) > 0 {
+		match += ` OR o.source_node IN (` + namePlaceholders.String() + `)`
+		args = append(args, nameArgs...)
+	}
+	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
+		WHERE (`+match+`)
+		  AND o.status NOT IN (%s)
+		ORDER BY o.created_at`, protocol.TerminalStatusSQLList()), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	found, err := scanOrders(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, k := range keys {
+		if _, done := out[k.ProcessNodeID]; done {
+			continue // duplicate key (a node listed twice on one board)
+		}
+		var mine []Order
+		for _, o := range found {
+			if o.ProcessNodeID != nil && *o.ProcessNodeID == k.ProcessNodeID {
+				mine = append(mine, o)
+				continue
+			}
+			if k.CoreNodeName != "" && o.SourceNode == k.CoreNodeName {
+				mine = append(mine, o)
+			}
+		}
+		if mine != nil {
+			out[k.ProcessNodeID] = mine
+		}
+	}
+	return out, nil
+}
+
 func ListActiveByProcessNodeOrSource(db *sql.DB, processNodeID int64, sourceNodeName string) ([]Order, error) {
 	if sourceNodeName == "" {
 		return ListActiveByProcessNode(db, processNodeID)

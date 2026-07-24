@@ -338,6 +338,53 @@ func scanRuntime(scanner interface{ Scan(...any) error }) (RuntimeState, error) 
 	return r, nil
 }
 
+// RuntimesForNodes returns the existing runtime rows for a set of process_nodes
+// in ONE query, keyed by process_node_id. Nodes with no row yet are simply
+// absent from the map.
+//
+// This is the read half of EnsureRuntime, split out so a caller building a whole
+// board can do one SELECT instead of one per tile — every read serialises on a
+// single connection (store.Open sets SetMaxOpenConns(1)). It deliberately does
+// NOT insert: the caller falls back to EnsureRuntime for exactly the ids that
+// come back missing, so the write happens for the same set of nodes as before
+// and the "ensure" semantics are preserved rather than reinterpreted.
+func RuntimesForNodes(db *sql.DB, processNodeIDs []int64) (map[int64]*RuntimeState, error) {
+	out := map[int64]*RuntimeState{}
+	if len(processNodeIDs) == 0 {
+		return out, nil
+	}
+	seen := make(map[int64]bool, len(processNodeIDs))
+	args := make([]any, 0, len(processNodeIDs))
+	var placeholders strings.Builder
+	for _, id := range processNodeIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if placeholders.Len() > 0 {
+			placeholders.WriteByte(',')
+		}
+		placeholders.WriteByte('?')
+		args = append(args, id)
+	}
+	rows, err := db.Query(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, remaining_uop_cached,
+		pending_uop_delta, active_order_id, staged_order_id, active_pull, updated_at
+		FROM process_node_runtime_states WHERE process_node_id IN (`+placeholders.String()+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		r, err := scanRuntime(rows)
+		if err != nil {
+			return nil, err
+		}
+		state := r
+		out[r.ProcessNodeID] = &state
+	}
+	return out, rows.Err()
+}
+
 // EnsureRuntime returns the runtime row for a process_node, inserting
 // a fresh row when none exists yet. INSERT OR IGNORE makes the
 // check-then-insert race-safe when concurrent callers (engine tick,

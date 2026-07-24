@@ -10,6 +10,7 @@ import (
 	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/lineside"
+	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
 )
@@ -348,8 +349,23 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		targetClaims, _ = claimsByCoreNode(s.db.DB, *process.TargetStyleID)
 	}
 	nodeIDs := make([]int64, 0, len(nodes))
+	nodeKeys := make([]orders.NodeKey, 0, len(nodes))
 	for _, node := range nodes {
 		nodeIDs = append(nodeIDs, node.ID)
+		nodeKeys = append(nodeKeys, orders.NodeKey{ProcessNodeID: node.ID, CoreNodeName: node.CoreNodeName})
+	}
+	// Runtime rows: one SELECT for the board. This is the READ half of
+	// EnsureProcessNodeRuntime — the tile loop still calls Ensure for any node
+	// missing from this map, so the INSERT happens for exactly the same set of
+	// nodes as before. On a live plant every node already has its row, so the
+	// per-tile query disappears and the write path is untouched.
+	runtimes, err := processes.RuntimesForNodes(s.db.DB, nodeIDs)
+	if err != nil {
+		runtimes = nil // fall back to per-node Ensure below
+	}
+	boardOrders, err := orders.ListActiveByNodeKeys(s.db.DB, nodeKeys)
+	if err != nil {
+		boardOrders = nil
 	}
 	activeBuckets, err := lineside.ListActiveForNodes(s.db.DB, nodeIDs)
 	if err != nil {
@@ -366,7 +382,12 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 			return nil, err
 		}
 		nodeView := store.StationNodeView{Node: node}
-		runtime, _ := s.db.EnsureProcessNodeRuntime(node.ID)
+		runtime := runtimes[node.ID]
+		if runtime == nil {
+			// No row yet (a freshly created node), or the batch read failed.
+			// Ensure materialises it, exactly as the per-tile call always did.
+			runtime, _ = s.db.EnsureProcessNodeRuntime(node.ID)
+		}
 		nodeView.Runtime = runtime
 		if process.ActiveStyleID != nil && node.CoreNodeName != "" {
 			if c, ok := activeClaims[node.CoreNodeName]; ok {
@@ -407,7 +428,7 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		// they keep it loaded. Plant test 2026-04-27: line-initiated swap
 		// orders went silent on the loader UI after the kanban-spam guard
 		// stopped firing process-node-tracked orders here.
-		nodeView.Orders, _ = s.db.ListActiveOrdersByProcessNodeOrSource(node.ID, node.CoreNodeName)
+		nodeView.Orders = boardOrders[node.ID]
 		nodeView.SwapReady = store.ComputeSwapReady(s.db, nodeView.ActiveClaim, runtime, nodeView.ChangeoverTask)
 		// Lineside buckets power the active-bar and stranded-chip UI on
 		// the operator station modal. Best-effort — absence of buckets
