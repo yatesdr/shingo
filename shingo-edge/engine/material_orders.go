@@ -186,22 +186,54 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 			{Action: "pickup", Node: claim.SecondPairedCoreNode},
 			{Action: "dropoff", Node: claim.PairedCoreNode},
 		}
-		return orderR1, orderR2
+	} else {
+		// 2-position: B → A index, R1's final dropoff feeds B.
+		orderR1 = []protocol.ComplexOrderStep{
+			{Action: "wait", Node: claim.CoreNodeName},
+			{Action: "pickup", Node: claim.CoreNodeName},
+			buildStep("dropoff", claim.OutboundDestination),
+			buildStep("pickup", claim.InboundSource),
+			{Action: "dropoff", Node: claim.PairedCoreNode},
+		}
+		orderR2 = []protocol.ComplexOrderStep{
+			{Action: "wait", Node: claim.PairedCoreNode},
+			{Action: "pickup", Node: claim.PairedCoreNode},
+			{Action: "dropoff", Node: claim.CoreNodeName},
+		}
 	}
-	// 2-position: B → A index, R1's final dropoff feeds B.
-	orderR1 = []protocol.ComplexOrderStep{
-		{Action: "wait", Node: claim.CoreNodeName},
-		{Action: "pickup", Node: claim.CoreNodeName},
-		buildStep("dropoff", claim.OutboundDestination),
-		buildStep("pickup", claim.InboundSource),
-		{Action: "dropoff", Node: claim.PairedCoreNode},
-	}
-	orderR2 = []protocol.ComplexOrderStep{
-		{Action: "wait", Node: claim.PairedCoreNode},
-		{Action: "pickup", Node: claim.PairedCoreNode},
-		{Action: "dropoff", Node: claim.CoreNodeName},
+	// hop A3 (2026-07-23): a PRODUCE press-index indexes ON-DECK EMPTIES forward
+	// onto the press to be filled, so flag the index leg's (R2) paired-node
+	// pickups Empty. That drops Core's payload filter (findAvailableForNeed →
+	// emptyBinsOnly, claimPayload="") so the index fetches the on-deck carrier
+	// regardless of any part number stamped on it — a wrong-part stamp on an
+	// on-deck empty is exactly what hung the Hopkinsville swap (the index pickup
+	// matched nothing → waiting_for_material). A CONSUME press-index would index
+	// FULL bins forward, so it must NOT be flagged (and doesn't occur in
+	// practice); scoping to produce also keeps the consume "full retrieve"
+	// invariant. The changeover R2 solves the same asymmetry via carriesFromPayload
+	// (§ buildPressIndexChangeoverSwap); steady-state has no from-style, so Empty
+	// is the mirror. Produce-scoped INSIDE the builder, mirroring BuildSingleSwapSteps
+	// / BuildSequentialBackfillSteps' own markInboundEmpty gate.
+	if claim.Role == protocol.ClaimRoleProduce {
+		markPressIndexOnDeckEmpty(orderR2, claim)
 	}
 	return orderR1, orderR2
+}
+
+// markPressIndexOnDeckEmpty flags the index leg's pickups at the on-deck
+// (paired / second-paired) positions as Empty, so Core sources the on-deck
+// carrier regardless of its stamped payload. See BuildTwoRobotPressIndexSwapSteps
+// (hop A3) for why this is produce-only.
+func markPressIndexOnDeckEmpty(steps []protocol.ComplexOrderStep, claim *processes.NodeClaim) {
+	for i := range steps {
+		if steps[i].Action != protocol.ActionPickup {
+			continue
+		}
+		if steps[i].Node == claim.PairedCoreNode ||
+			(claim.SecondPairedCoreNode != "" && steps[i].Node == claim.SecondPairedCoreNode) {
+			steps[i].Empty = true
+		}
+	}
 }
 
 // BuildSequentialRemovalSteps builds Order A for sequential mode (removal robot).

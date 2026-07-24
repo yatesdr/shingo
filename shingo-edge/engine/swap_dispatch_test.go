@@ -46,32 +46,37 @@ func TestBuildSwapDispatch_Simple(t *testing.T) {
 	}
 }
 
-// TestBuildSwapDispatch_ProduceMarksInboundEmpty pins the produce-node fix:
-// the inbound-source pickup (fetch a fresh carrier from the supermarket) must
-// be flagged Empty so Core sources an empty to fill — and ONLY that leg. The
-// CoreNode pickup that removes the produced full must stay full. Covers the
-// multi-step modes that emit complex orders (press-index here).
+// TestBuildSwapDispatch_ProduceMarksInboundEmpty pins the produce-node empty
+// flagging on the press-index dispatch. TWO kinds of pickup are empty: the
+// InboundSource pickup (fetch a fresh carrier from the supermarket) and the
+// index leg's on-deck pickups (hop A3: fetch the on-deck empty regardless of any
+// stamped part). The CoreNode pickup that removes the produced FULL off the
+// press must stay full — that is the invariant this test has always protected.
 func TestBuildSwapDispatch_ProduceMarksInboundEmpty(t *testing.T) {
 	t.Parallel()
 	d, err := BuildSwapDispatch(dispatchNode(), dispatchClaim("two_robot_press_index"))
 	if err != nil {
 		t.Fatalf("BuildSwapDispatch: %v", err)
 	}
-	inboundEmpty := 0
+	emptyNodes := map[string]bool{}
 	for _, steps := range [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB} {
 		for _, s := range steps {
-			if !s.Empty {
+			if s.Action != "pickup" {
 				continue
 			}
-			if s.Action == "pickup" && s.Node == "INBOUND-SRC" {
-				inboundEmpty++
-			} else {
-				t.Errorf("non-inbound step flagged empty: %+v (only the InboundSource pickup should be empty)", s)
+			if s.Node == "CORE-NODE" && s.Empty {
+				t.Errorf("the CoreNode removal pickup must stay full (it lifts the produced full off the press): %+v", s)
+			}
+			if s.Empty {
+				emptyNodes[s.Node] = true
 			}
 		}
 	}
-	if inboundEmpty != 1 {
-		t.Errorf("InboundSource pickup empty-flag count = %d, want exactly 1", inboundEmpty)
+	if !emptyNodes["INBOUND-SRC"] {
+		t.Error("InboundSource pickup must be flagged Empty (fetch a fresh carrier to fill)")
+	}
+	if !emptyNodes["CORE-NODE-BACK"] {
+		t.Error("index-leg on-deck pickup (CORE-NODE-BACK) must be flagged Empty (hop A3 — fetch the on-deck empty regardless of stamp)")
 	}
 }
 

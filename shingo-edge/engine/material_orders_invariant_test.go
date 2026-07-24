@@ -75,3 +75,68 @@ func TestSwapBuilders_EveryLegEndsOnADropoff(t *testing.T) {
 		})
 	}
 }
+
+// TestPressIndexSteadyState_IndexLegPicksUpEmpty is the hop A3 regression
+// (2026-07-23): the steady-state press-index index leg (R2) fetches the on-deck
+// carrier as an EMPTY, so a wrong-part stamp on that empty — the half-cutover
+// state that hung Hopkinsville — doesn't block the pickup. Every R2 pickup at a
+// paired / on-deck node must carry Empty=true (Core then drops the payload
+// filter and takes the empty regardless of its stamp).
+func TestPressIndexSteadyState_IndexLegPicksUpEmpty(t *testing.T) {
+	t.Parallel()
+
+	claim := func(secondPaired string) *processes.NodeClaim {
+		return &processes.NodeClaim{
+			CoreNodeName:         "PRESS",
+			Role:                 protocol.ClaimRoleProduce,
+			InboundSource:        "MARKET-EMPTIES",
+			OutboundDestination:  "MARKET",
+			PairedCoreNode:       "INDEX-B",
+			SecondPairedCoreNode: secondPaired,
+		}
+	}
+
+	// 2-position: R2 = wait(B) → pickup(B, empty) → dropoff(PRESS).
+	_, r2 := BuildTwoRobotPressIndexSwapSteps(claim(""))
+	assertIndexPickupsEmpty(t, "2-pos", r2, map[string]bool{"INDEX-B": true})
+
+	// 3-position: R2 picks up at B AND C, both empties moving forward.
+	_, r3 := BuildTwoRobotPressIndexSwapSteps(claim("INDEX-C"))
+	assertIndexPickupsEmpty(t, "3-pos", r3, map[string]bool{"INDEX-B": true, "INDEX-C": true})
+
+	// A CONSUME press-index would index FULL bins, not empties — its index
+	// pickups must stay full (produce-scoped flagging).
+	consume := &processes.NodeClaim{
+		CoreNodeName:        "PRESS",
+		Role:                protocol.ClaimRoleConsume,
+		InboundSource:       "MARKET-EMPTIES",
+		OutboundDestination: "MARKET",
+		PairedCoreNode:      "INDEX-B",
+	}
+	_, cr2 := BuildTwoRobotPressIndexSwapSteps(consume)
+	for _, s := range cr2 {
+		if s.Action == protocol.ActionPickup && s.Empty {
+			t.Errorf("consume press-index index pickup must NOT be Empty (it indexes a full bin): %+v", s)
+		}
+	}
+}
+
+// assertIndexPickupsEmpty checks every pickup at an on-deck node carries Empty.
+func assertIndexPickupsEmpty(t *testing.T, label string, steps []protocol.ComplexOrderStep, onDeck map[string]bool) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, s := range steps {
+		if s.Action != protocol.ActionPickup || !onDeck[s.Node] {
+			continue
+		}
+		seen[s.Node] = true
+		if !s.Empty {
+			t.Errorf("%s: index-leg pickup at on-deck node %q must be Empty (it fetches an empty carrier; a wrong-part stamp must not block it)", label, s.Node)
+		}
+	}
+	for node := range onDeck {
+		if !seen[node] {
+			t.Errorf("%s: expected an index-leg pickup at on-deck node %q", label, node)
+		}
+	}
+}
