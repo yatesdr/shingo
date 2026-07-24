@@ -63,6 +63,7 @@ var requiredColumns = []requiredColumn{
 	{"style_node_claims", "reuse_compatible_bins"},
 	{"style_node_claims", "auto_push"},
 	{"style_node_claims", "reorder_point_source"},
+	{"styles", "expected_catid"},
 	{"processes", "auto_cutover_enabled"},
 	{"process_changeovers", "triggered_by"},
 	{"changeover_node_tasks", "skip_note"},

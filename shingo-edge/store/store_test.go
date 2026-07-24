@@ -269,6 +269,56 @@ func TestStyles_CRUDAndListing(t *testing.T) {
 	}
 }
 
+// TestStyles_ExpectedCATIDRoundTrip pins the A5 schema plumbing: a style's
+// expected_catid defaults to ” (inert guard), survives a Set, is readable back
+// through every style read path, and can be cleared. Guards the scan column
+// order in styleSelectColumns against silent drift.
+func TestStyles_ExpectedCATIDRoundTrip(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	pid, err := db.CreateProcess("P-CATID", "", "", "", "", false, false)
+	testutil.MustNoErr(t, err, "create process")
+
+	sid, err := db.CreateStyle("CATID-STYLE", "", pid)
+	testutil.MustNoErr(t, err, "create style")
+
+	// Default is empty (unconfigured → inert guard).
+	got, err := db.GetStyle(sid)
+	testutil.MustNoErr(t, err, "get fresh")
+	if got.ExpectedCATID != "" {
+		t.Fatalf("fresh expected_catid = %q, want empty", got.ExpectedCATID)
+	}
+
+	// Set it, then confirm it reads back through every path.
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(sid, "40016911"), "set catid")
+	got, _ = db.GetStyle(sid)
+	if got.ExpectedCATID != "40016911" {
+		t.Errorf("GetStyle expected_catid = %q, want 40016911", got.ExpectedCATID)
+	}
+	byName, _ := db.GetStyleByName("CATID-STYLE")
+	if byName.ExpectedCATID != "40016911" {
+		t.Errorf("GetStyleByName expected_catid = %q, want 40016911", byName.ExpectedCATID)
+	}
+	list, _ := db.ListStylesByProcess(pid)
+	if len(list) != 1 || list[0].ExpectedCATID != "40016911" {
+		t.Errorf("ListStylesByProcess expected_catid = %+v, want [40016911]", list)
+	}
+
+	// A plain name/description Update must NOT disturb expected_catid.
+	testutil.MustNoErr(t, db.UpdateStyle(sid, "CATID-STYLE-v2", "renamed", pid), "update")
+	got, _ = db.GetStyle(sid)
+	if got.ExpectedCATID != "40016911" {
+		t.Errorf("expected_catid after name update = %q, want preserved 40016911", got.ExpectedCATID)
+	}
+
+	// Clearing it returns the guard to inert.
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(sid, ""), "clear catid")
+	got, _ = db.GetStyle(sid)
+	if got.ExpectedCATID != "" {
+		t.Errorf("expected_catid after clear = %q, want empty", got.ExpectedCATID)
+	}
+}
+
 func TestStyles_GetMissingReturnsError(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)

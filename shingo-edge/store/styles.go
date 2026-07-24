@@ -40,6 +40,12 @@ func (db *DB) UpdateStyle(id int64, name, description string, processID int64) e
 	return processes.UpdateStyle(db.DB, id, name, description, processID)
 }
 
+// SetStyleExpectedCATID sets (or clears, when empty) the style's expected PLC
+// part-identity value (WarLink CATID_01) used by the A5 CATID guard.
+func (db *DB) SetStyleExpectedCATID(id int64, expectedCATID string) error {
+	return processes.SetStyleExpectedCATID(db.DB, id, expectedCATID)
+}
+
 // DeleteStyle removes a style row by id.
 func (db *DB) DeleteStyle(id int64) error {
 	return processes.DeleteStyle(db.DB, id)

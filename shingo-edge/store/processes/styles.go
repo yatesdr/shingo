@@ -24,10 +24,15 @@ import (
 // call site, and the outer store/ re-export.
 type Style = domain.Style
 
+// styleSelectColumns is the shared column list for every style SELECT so the
+// scan order in scanStyle stays in lockstep. expected_catid is COALESCEd
+// because it is added by an idempotent ALTER (older rows land at ”).
+const styleSelectColumns = `id, name, description, COALESCE(process_id, 0) as process_id, created_at, COALESCE(expected_catid, '') as expected_catid`
+
 func scanStyle(scanner interface{ Scan(...any) error }) (Style, error) {
 	var s Style
 	var createdAt string
-	if err := scanner.Scan(&s.ID, &s.Name, &s.Description, &s.ProcessID, &createdAt); err != nil {
+	if err := scanner.Scan(&s.ID, &s.Name, &s.Description, &s.ProcessID, &createdAt, &s.ExpectedCATID); err != nil {
 		return s, err
 	}
 	s.CreatedAt = helpers.ScanTime(createdAt)
@@ -48,7 +53,7 @@ func scanStyles(rows *sql.Rows) ([]Style, error) {
 
 // ListStyles returns all styles ordered by name.
 func ListStyles(db *sql.DB) ([]Style, error) {
-	rows, err := db.Query(`SELECT id, name, description, COALESCE(process_id, 0) as process_id, created_at FROM styles ORDER BY name`)
+	rows, err := db.Query(`SELECT ` + styleSelectColumns + ` FROM styles ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +63,7 @@ func ListStyles(db *sql.DB) ([]Style, error) {
 
 // ListStylesByProcess returns styles for a single process_id.
 func ListStylesByProcess(db *sql.DB, processID int64) ([]Style, error) {
-	rows, err := db.Query(`SELECT id, name, description, COALESCE(process_id, 0) as process_id, created_at FROM styles WHERE process_id = ? ORDER BY name`, processID)
+	rows, err := db.Query(`SELECT `+styleSelectColumns+` FROM styles WHERE process_id = ? ORDER BY name`, processID)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +73,7 @@ func ListStylesByProcess(db *sql.DB, processID int64) ([]Style, error) {
 
 // GetStyleByName looks up a single style by name.
 func GetStyleByName(db *sql.DB, name string) (*Style, error) {
-	s, err := scanStyle(db.QueryRow(`SELECT id, name, description, COALESCE(process_id, 0) as process_id, created_at FROM styles WHERE name = ?`, name))
+	s, err := scanStyle(db.QueryRow(`SELECT `+styleSelectColumns+` FROM styles WHERE name = ?`, name))
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +82,7 @@ func GetStyleByName(db *sql.DB, name string) (*Style, error) {
 
 // GetStyle looks up a single style by id.
 func GetStyle(db *sql.DB, id int64) (*Style, error) {
-	s, err := scanStyle(db.QueryRow(`SELECT id, name, description, COALESCE(process_id, 0) as process_id, created_at FROM styles WHERE id = ?`, id))
+	s, err := scanStyle(db.QueryRow(`SELECT `+styleSelectColumns+` FROM styles WHERE id = ?`, id))
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +101,16 @@ func CreateStyle(db *sql.DB, name, description string, processID int64) (int64, 
 // UpdateStyle modifies an existing style.
 func UpdateStyle(db *sql.DB, id int64, name, description string, processID int64) error {
 	_, err := db.Exec(`UPDATE styles SET name=?, description=?, process_id=? WHERE id=?`, name, description, processID, id)
+	return err
+}
+
+// SetStyleExpectedCATID sets (or clears, when empty) the style's expected PLC
+// part-identity value. Kept as its own setter rather than a parameter on
+// Create/UpdateStyle so the dozens of existing Create/Update call sites stay
+// untouched — expected_catid is an independent, optional field the style
+// editor writes alongside a save. The value is trimmed by the caller.
+func SetStyleExpectedCATID(db *sql.DB, id int64, expectedCATID string) error {
+	_, err := db.Exec(`UPDATE styles SET expected_catid=? WHERE id=?`, expectedCATID, id)
 	return err
 }
 

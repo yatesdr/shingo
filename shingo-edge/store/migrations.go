@@ -528,6 +528,16 @@ func (db *DB) migrate() error {
 	// pre-v28 rows; cause never leaves Core. Idempotent ADD COLUMN.
 	db.Exec("ALTER TABLE orders ADD COLUMN queue_code TEXT NOT NULL DEFAULT ''")
 
+	// v29 (Hopkinsville 2026-07-24, A5 CATID guard): the expected PLC
+	// part-identity value (WarLink CATID_01) per style. The engine reads the
+	// press's live CATID_01 and blocks outgoing-style relief when it diverges
+	// from the active style's expected_catid (the ground-truth "right part on
+	// the press" check the 07-23 index-hang lacked). Empty = unconfigured =
+	// inert guard, so this default is safe on every existing style. Idempotent
+	// ADD COLUMN. NOTE: migration version numbers are per-branch — Lanes E/F
+	// may also add migrations; renumber on merge if this collides.
+	db.Exec("ALTER TABLE styles ADD COLUMN expected_catid TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }
 

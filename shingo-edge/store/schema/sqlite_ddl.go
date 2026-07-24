@@ -34,11 +34,12 @@ CREATE TABLE IF NOT EXISTS processes (
 );
 
 CREATE TABLE IF NOT EXISTS styles (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id  INTEGER REFERENCES processes(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id     INTEGER REFERENCES processes(id) ON DELETE CASCADE,
+    name           TEXT NOT NULL,
+    description    TEXT NOT NULL DEFAULT '',
+    expected_catid TEXT NOT NULL DEFAULT '',
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(process_id, name)
 );
 

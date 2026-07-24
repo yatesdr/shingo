@@ -129,6 +129,7 @@ function resetStyleForm() {
     document.getElementById('style-id').value = '';
     document.getElementById('style-name').value = '';
     document.getElementById('style-description').value = '';
+    document.getElementById('style-expected-catid').value = '';
 }
 
 function openCreateStyleModal() {
@@ -152,6 +153,7 @@ function editStyle() {
     document.getElementById('style-id').value = style.id;
     document.getElementById('style-name').value = style.name || '';
     document.getElementById('style-description').value = style.description || '';
+    document.getElementById('style-expected-catid').value = style.expected_catid || '';
     document.getElementById('style-modal-title').textContent = 'Edit Style';
     showModal('style-modal');
 }
@@ -161,6 +163,7 @@ async function saveStyle() {
     const payload = {
         name: document.getElementById('style-name').value.trim(),
         description: document.getElementById('style-description').value.trim(),
+        expected_catid: document.getElementById('style-expected-catid').value.trim(),
         process_id: activeProcessID
     };
     if (!payload.name) {

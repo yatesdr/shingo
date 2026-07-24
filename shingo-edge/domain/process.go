@@ -44,6 +44,14 @@ type Style struct {
 	Description string    `json:"description"`
 	ProcessID   int64     `json:"process_id"`
 	CreatedAt   time.Time `json:"created_at"`
+	// ExpectedCATID is the PLC part-identity value (WarLink CATID_01) that
+	// this style's physical part stamps on the press. Empty = unconfigured,
+	// which leaves the A5 CATID guard INERT for this style (never blocks on an
+	// empty expected value). When set, the guard blocks outgoing-style relief
+	// whenever the press's live CATID_01 diverges from this value — the
+	// ground-truth "is the right part physically on the press" check
+	// (Hopkinsville 2026-07-23).
+	ExpectedCATID string `json:"expected_catid"`
 }
 
 // StyleVariant describes one style to scaffold by cloning a base style

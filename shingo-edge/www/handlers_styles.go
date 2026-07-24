@@ -30,9 +30,10 @@ func (h *Handlers) apiListStyles(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateStyle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		ProcessID   int64  `json:"process_id"`
+		Name          string `json:"name"`
+		Description   string `json:"description"`
+		ProcessID     int64  `json:"process_id"`
+		ExpectedCATID string `json:"expected_catid"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -47,6 +48,12 @@ func (h *Handlers) apiCreateStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// expected_catid is a separate, optional field (own setter) so the many
+	// Create call sites stay untouched. Trim + persist alongside the create.
+	if err := h.engine.StyleService().SetExpectedCATID(id, strings.TrimSpace(req.ExpectedCATID)); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	h.requestBackup("style-created")
 	writeJSON(w, map[string]int64{"id": id})
 }
@@ -58,9 +65,10 @@ func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		ProcessID   int64  `json:"process_id"`
+		Name          string `json:"name"`
+		Description   string `json:"description"`
+		ProcessID     int64  `json:"process_id"`
+		ExpectedCATID string `json:"expected_catid"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -71,6 +79,12 @@ func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.engine.StyleService().Update(id, req.Name, req.Description, req.ProcessID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// expected_catid is written by its own setter (see apiCreateStyle) so the
+	// Update signature and its call sites stay unchanged. Trim + persist.
+	if err := h.engine.StyleService().SetExpectedCATID(id, strings.TrimSpace(req.ExpectedCATID)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

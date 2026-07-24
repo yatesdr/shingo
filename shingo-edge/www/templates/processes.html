@@ -295,6 +295,11 @@ window.claimedByStation = {{json .ClaimedByStation}};
                 <label>Description</label>
                 <input type="text" id="style-description" class="form-input">
             </div>
+            <div class="form-group">
+                <label>Expected CATID <span class="text-muted">(optional — PLC part identity)</span></label>
+                <input type="text" id="style-expected-catid" class="form-input" placeholder="e.g. 40016911">
+                <div class="form-hint text-muted">Live CATID_01 from the press is matched against this. Leave blank to disable the part-identity guard for this style.</div>
+            </div>
         </div>
         <div class="modal-footer">
             <button class="btn" data-action="closeStyleModal">Cancel</button>
