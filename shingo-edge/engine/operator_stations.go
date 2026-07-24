@@ -442,24 +442,25 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 // action) so we don't re-run capture and don't accidentally clear Order A's
 // freshly-loaded supply bin manifest.
 //
-// Status tolerance: both releases fire unconditionally as long as the order
-// is non-terminal. Order B is at "staged" (the UI gate computeSwapReady
-// guarantees it). Order A may be anywhere in its choreography — staged,
-// in_transit, even acknowledged — we don't care. Manager.ReleaseOrder
-// sends the OrderRelease envelope to Core; Core's HandleOrderRelease
-// dispatches the post-wait blocks to the fleet, which appends them. If the
-// robot hasn't reached the (bare) wait yet, the blocks queue and the robot
-// continues straight through. If it's already there, blocks dispatch
-// immediately. Either way the operator's intent ("go") propagates to both
-// legs without needing the auto-release-on-staged coordination dance.
+// Per-leg ReleasableAtCore gating (hop A4-i, 2026-07-23). Each leg fires
+// ONLY when Core would accept the release — i.e. the leg is staged or
+// in_transit (orders.ReleasableAtCore). Order B (evac) is at "staged" (the
+// UI gate ComputeSwapReady guarantees it) and releases. Order A (supply)
+// may be anywhere in its choreography; if it has NOT yet reached staged
+// (still queued/sourcing/dispatched/acknowledged) it is SKIPPED rather than
+// force-flipped to in_transit. The pre-hop shape fanned out unconditionally
+// on IsTerminal alone (releaseUnlessTerminal), which optimistically moved a
+// not-yet-releasable Edge row to in_transit and then rolled it back when
+// Core answered "invalid_state" — the persistent Edge/Core divergence that
+// hid the RELEASE button on the Hopkinsville press-index hang (PLN_01/04,
+// 2026-07-23). A leg skipped here is re-fired when it later reaches staged
+// (hop A4-ii, handleSiblingReleaseRefire) because its sibling already went.
 //
-// This shape replaces the pre-2026-04-27 design where each release required
-// the order to be at "staged" and a separate handleAutoReleaseOnStaged hook
-// had to fire when the late sibling arrived. That coordination layer was
-// fragile (depended on Order A's bare wait reliably reaching staged via
-// the seerrds adapter, which it does not always do) and accumulated a
-// cluster of patches and predicates. See shingo_todo.md and the 2026-04-27
-// retrospective for context.
+// This is the targeted revival of the pre-2026-04-27 auto-release-on-staged
+// coordination: the operator's single click still expresses "go" for the
+// whole pair, but a leg Core cannot yet accept is deferred, not desynced.
+// See shingo_todo.md and the 2026-04-27 retrospective for the interim
+// fan-out-regardless design this supersedes.
 func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
@@ -513,15 +514,17 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		}
 	}
 
-	// Order B (evacuation) — full disposition.
+	// Order B (evacuation) — full disposition. Gated per-leg on
+	// ReleasableAtCore (hop A4-i): a leg still queued/sourcing/dispatched/
+	// acknowledged is skipped, not force-flipped to in_transit.
 	if evacOrderID != nil {
-		if err := e.releaseUnlessTerminal(*evacOrderID, "B", disp); err != nil {
+		if _, err := e.releaseIfReleasable(*evacOrderID, "B", disp); err != nil {
 			return err
 		}
 	}
 	// Order A (supply) — zero disposition (preserve supply bin manifest).
 	if supplyOrderID != nil {
-		if err := e.releaseUnlessTerminal(*supplyOrderID, "A", ReleaseDisposition{CalledBy: disp.CalledBy}); err != nil {
+		if _, err := e.releaseIfReleasable(*supplyOrderID, "A", ReleaseDisposition{CalledBy: disp.CalledBy}); err != nil {
 			return err
 		}
 	}
@@ -545,49 +548,27 @@ func loadReleaseSwapNodeTask(db *store.DB, node *processes.Node) *processes.Node
 	return task
 }
 
-// releaseUnlessTerminal calls ReleaseOrderWithLineside on any non-terminal
-// order. Replaces the pre-2026-04-27 releaseIfStaged which only fired on
-// orders currently at "staged" status. The new contract: as long as the
-// order isn't already finished (confirmed / failed / cancelled), fan out
-// the release. Manager.ReleaseOrder + Core's HandleOrderRelease handle the
-// envelope mechanics regardless of where the order is in its lifecycle.
-//
-// See shingo_todo.md for the pre-dispatch edge case (order has no
-// VendorOrderID yet — in practice doesn't happen because Robot B reaching
-// staged means both orders have been dispatched, but worth a guard
-// eventually).
-func (e *Engine) releaseUnlessTerminal(orderID int64, label string, disp ReleaseDisposition) error {
-	order, err := e.db.GetOrder(orderID)
-	if err != nil {
-		return fmt.Errorf("get order %s (%d): %w", label, orderID, err)
-	}
-	if orders.IsTerminal(order.Status) {
-		e.logFn("two-robot release: order %s (%d) status=%q is terminal — skipping", label, orderID, order.Status)
-		return nil
-	}
-	if err := e.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		return fmt.Errorf("release order %s (%d): %w", label, orderID, err)
-	}
-	return nil
-}
-
-// releaseIfReleasable is releaseUnlessTerminal plus Core's OWN release
-// precondition (orders.ReleasableAtCore). It reports whether the release was
+// releaseIfReleasable calls ReleaseOrderWithLineside on a non-terminal order
+// ONLY when Core's own release precondition (orders.ReleasableAtCore) holds —
+// i.e. the leg is staged or in_transit. It reports whether the release was
 // actually queued, so a caller can count the skip rather than miscount it as
 // a release.
 //
-// Use this on the DEFERRED release paths — the ones that fire from an event
-// rather than an operator click, where nothing upstream guarantees the target
-// leg has reached staged. releaseUnlessTerminal remains correct for the
-// operator's consolidated two-robot release, which deliberately fans out to
-// both legs regardless of where each is in its choreography.
+// This is the single gate for BOTH release surfaces:
+//   - the DEFERRED paths that fire from an event rather than an operator click
+//     (HandleBinPickedUp's changeover supply auto-release), where nothing
+//     upstream guarantees the target leg has reached staged; and
+//   - the operator's consolidated two-robot release (ReleaseStagedOrders),
+//     which since hop A4-i (2026-07-23) also gates per-leg here instead of
+//     fanning out unconditionally on IsTerminal alone.
 //
-// Without this, a supply leg still at queued/sourcing/dispatched/acknowledged
-// gets an OrderRelease envelope Core refuses with "invalid_state", while
+// Without this, a leg still at queued/sourcing/dispatched/acknowledged gets an
+// OrderRelease envelope Core refuses with "invalid_state", while
 // Manager.ReleaseOrderWithDisposition has already transitioned the Edge row to
-// in_transit — a persistent Edge/Core divergence. Reachable today via
-// press-index self-sufficient shapes; it becomes the NORMAL path once
-// pool-sourced supply legs can sit in a wait state.
+// in_transit — a persistent Edge/Core divergence, the one that hid the RELEASE
+// button on the Hopkinsville press-index hang. A leg skipped here re-fires when
+// it later reaches staged (handleSiblingReleaseRefire), scoped to a pair whose
+// sibling already released.
 func (e *Engine) releaseIfReleasable(orderID int64, label string, disp ReleaseDisposition) (bool, error) {
 	order, err := e.db.GetOrder(orderID)
 	if err != nil {

@@ -93,7 +93,7 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 		stopChan: make(chan struct{}),
 		// logFn is initialized to a no-op for tests that exercise diagnostic
 		// logging paths (e.g. ReleaseOrderWithLineside's toClaim==nil case,
-		// releaseUnlessTerminal's terminal-skip branch). Production sets
+		// releaseIfReleasable's terminal-skip branch). Production sets
 		// this in engine.New; this fixture mirrors that contract so tests
 		// don't nil-pointer panic on log calls.
 		logFn:   func(string, ...any) {},
@@ -425,27 +425,24 @@ func TestReleaseStagedOrders_BothStaged(t *testing.T) {
 	}
 }
 
-// TestReleaseStagedOrders_OnlyOneStaged covers the post-2026-04-27 contract:
-// when Robot B (the lineside robot, StagedOrderID slot) is at staged and
-// Robot A is still in some pre-staged status, a single click releases BOTH
-// orders. Order A's release fires unconditionally on a non-terminal status
-// because Manager.ReleaseOrder no longer requires staged — it just sends
-// the OrderRelease envelope and transitions to in_transit. Core's
-// HandleOrderRelease handles the rest (queues post-wait blocks for the
-// fleet to pick up at whatever point the robot is at).
+// TestReleaseStagedOrders_OnlyOneStaged covers the hop A4-i contract
+// (2026-07-23): when Robot B (the lineside robot, StagedOrderID slot) is at
+// staged and Robot A is still in a pre-staged status Core would refuse
+// (acknowledged), a single click releases ONLY the staged leg. Order A is
+// SKIPPED — not force-flipped to in_transit — because orders.ReleasableAtCore
+// is false for acknowledged.
 //
-// Pre-2026-04-27 the contract was different: A was skipped, and a separate
-// handleAutoReleaseOnStaged hook fired when A later transitioned to staged.
-// That coordination layer was deleted; this test now asserts the simpler
-// shape.
+// The pre-hop contract (2026-04-27 → 2026-07-23) fanned out unconditionally on
+// IsTerminal alone: Order A's release envelope was queued regardless and the
+// Edge row moved to in_transit. But Core refuses a release for anything that is
+// not staged or in_transit ("invalid_state"), so that optimistic flip left Edge
+// and Core diverged with no heal path — the divergence that hid the RELEASE
+// button on the Hopkinsville press-index hang. hop A4-i reverses it: a leg Core
+// would refuse is deferred, not desynced.
 //
-// B-before-A ordering still matters for disposition: B gets the operator's
-// full disposition first, A gets the zero-value disposition second. We
-// verify both end at in_transit.
-//
-// Scenario: B (removal robot) is staged, A (delivery robot) is still in its
-// initial post-finalize (pre-staged) status. ReleaseStagedOrders releases
-// both.
+// The deferred Order A re-fires when it later reaches staged, its sibling having
+// already released (handleSiblingReleaseRefire, hop A4-ii — a targeted revival
+// of the removed auto-release-on-staged hook).
 func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -457,13 +454,8 @@ func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 	// B at staged (lineside robot parked at the wait point). A at
-	// acknowledged — post-dispatch but pre-staged. In production this is
-	// the typical state when Robot A is en route to the supermarket while
-	// Robot B is already at the line. We seed acknowledged rather than
-	// leaving A at the default submitted because Manager.ReleaseOrder has a
-	// pre-dispatch guard (pending/submitted = silent no-op) and the
-	// lifecycle validator rejects submitted->in_transit. Production traffic
-	// reaches at-least acknowledged before B can stage at the line.
+	// acknowledged — post-dispatch but pre-staged, the state Core refuses with
+	// invalid_state and the pre-hop path force-flipped to in_transit.
 	markStaged(t, db, result.OrderB.ID)
 	testutil.MustNoErr(t, db.UpdateOrderStatus(result.OrderA.ID, string(orders.StatusAcknowledged)), "seed A acknowledged")
 
@@ -474,14 +466,12 @@ func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 	if b.Status != orders.StatusInTransit {
 		t.Errorf("OrderB status = %q, want in_transit (staged leg releases immediately)", b.Status)
 	}
-	// New contract: A is also released even though it wasn't at staged. The
-	// release envelope was queued, and Manager.ReleaseOrder transitioned A
-	// to in_transit. If this assertion fails because A's status didn't
-	// change, ReleaseStagedOrders has regressed to its pre-2026-04-27
-	// "skip if not staged" semantic and the auto-release hook would need to
-	// be reintroduced.
-	if a.Status != orders.StatusInTransit {
-		t.Errorf("OrderA status = %q, want in_transit (pre-staged leg should release unconditionally under the new contract)", a.Status)
+	// hop A4-i: A is NOT releasable at Core (acknowledged), so it is skipped and
+	// left exactly where it was — never optimistically moved to in_transit. If
+	// this fails with a.Status == in_transit, the pre-hop optimistic-flip
+	// divergence has returned.
+	if a.Status != orders.StatusAcknowledged {
+		t.Errorf("OrderA status = %q, want acknowledged unchanged (a leg Core would refuse must be skipped, not force-flipped to in_transit)", a.Status)
 	}
 }
 

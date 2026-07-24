@@ -142,8 +142,9 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 	//
 	// Runs before the inventoryDelta-nil early-return so the chain
 	// works whether or not the delta reporter is wired (the chain is
-	// orthogonal to delta flushing). releaseUnlessTerminal is
-	// idempotent against terminal supply orders.
+	// orthogonal to delta flushing). releaseIfReleasable is
+	// idempotent against terminal supply orders and skips a leg Core
+	// would refuse.
 	if task, terr := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); terr == nil && task != nil {
 		if task.NextMaterialOrderID != nil {
 			supplyDisp := ReleaseDisposition{CalledBy: "auto-evac-pickup"}

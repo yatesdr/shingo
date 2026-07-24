@@ -589,7 +589,7 @@ func TestHandleBinPickedUp_NoOpForNonChangeoverOrder(t *testing.T) {
 // TestHandleBinPickedUp_DoesNotReleaseTerminalSupply guards idempotency:
 // if the supply order is already terminal (released earlier, cancelled,
 // failed, or delivered), the BinPickedUp auto-release path must not
-// re-fire it. releaseUnlessTerminal handles the terminal-skip branch;
+// re-fire it. releaseIfReleasable handles the terminal-skip branch;
 // this test pins that the wiring respects it.
 func TestHandleBinPickedUp_DoesNotReleaseTerminalSupply(t *testing.T) {
 	t.Parallel()
