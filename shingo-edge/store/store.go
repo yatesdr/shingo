@@ -61,8 +61,39 @@ func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
 }
 
 // Open opens (or creates) a SQLite database and runs migrations.
+//
+// DSN parameter syntax is driver-specific and the two common SQLite drivers do
+// NOT share it. This is modernc.org/sqlite (registered as "sqlite"); the
+// mattn/go-sqlite3 spelling `_journal_mode=WAL&_busy_timeout=5000&
+// _foreign_keys=on` was used here from the start and is silently ignored —
+// modernc's applyQueryParams reads only `_pragma`, `_time_format` and
+// `_txlock`, and both SQLite and the driver drop unrecognised URI parameters
+// without complaint. Confirmed on the Springfield edge 2026-07-24: `PRAGMA
+// journal_mode` returned `delete`, and no -wal/-shm files existed beside the
+// 31 MB database. So WAL and the busy timeout have never actually been on.
+//
+// journal_mode(WAL) suits this workload — many small writes (outbox drain,
+// inventory deltas, PLC counters) on SD-card storage, where a rollback
+// journal's create/write/fsync/delete per commit is the expensive path. The
+// hourly wal_checkpoint(TRUNCATE) in cmd/shingoedge/main.go was written for
+// this and has been a no-op until now; deploy/db-migration.sh likewise already
+// expects WAL and a regenerable -shm.
+//
+// busy_timeout(5000) makes a lock conflict wait rather than fail instantly.
+// Inside this process there is only one connection (below), but every OTHER
+// reader — backups, db-migration.sh, an operator running sqlite3 — was getting
+// an immediate "database is locked".
+//
+// foreign_keys is deliberately NOT set here. SQLite defaults it off, so the
+// schema's 17 ON DELETE CASCADE and 15 ON DELETE SET NULL clauses have never
+// been enforced on any edge. Turning them all on at once against a live plant
+// database would activate dormant cascades — a delete that removed one row
+// would start removing children — and would likely surface pre-existing
+// violations as new runtime errors. That needs a PRAGMA foreign_key_check
+// audit against a copy of a real plant DB and its own change; it is not a
+// safe rider on a performance fix.
 func Open(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on", path)
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path)
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
