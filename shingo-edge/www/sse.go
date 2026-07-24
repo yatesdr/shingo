@@ -294,6 +294,13 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.UOPStrandedEvent); ok {
 				sseEvt = SSEEvent{Type: "uop-stranded-alarm", Data: p}
 			}
+		case engine.EventCATIDMismatch:
+			// A5: wrong physical part on a press vs the active style. Distinct
+			// event so the HMI can raise a sticky station alert naming the
+			// press + both CATID values (outgoing relief is already blocked).
+			if p, ok := evt.Payload.(engine.CATIDMismatchEvent); ok {
+				sseEvt = SSEEvent{Type: "catid-mismatch", Data: p}
+			}
 		default:
 			return
 		}

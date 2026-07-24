@@ -36,6 +36,12 @@ func (e *Engine) RequestProduceSwap(nodeID int64) (*NodeOrderResult, error) {
 	if err := e.guardStyleTransition(node, claim); err != nil {
 		return nil, err
 	}
+	// A5 (hop 2026-07-23): refuse outgoing-style relief when the press's live
+	// CATID says the wrong part is physically on it — the ground-truth sibling
+	// of the changeover guard above.
+	if err := e.guardCatidMismatch(node, claim); err != nil {
+		return nil, err
+	}
 
 	plan, err := BuildProducePlan(node, runtime, claim, time.Now())
 	if err != nil {

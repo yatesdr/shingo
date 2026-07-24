@@ -70,6 +70,12 @@ type Engine struct {
 
 	plcMgr   *plc.Manager
 	orderMgr *orders.Manager
+	// catidMon tracks each press's live WarLink CATID_01 (part identity),
+	// debounced. guardCatidMismatch reads it to block outgoing-style relief
+	// when the live part diverges from the active style's expected_catid (A5,
+	// Hopkinsville 2026-07-23). Nil until Start() (and in test fixtures that
+	// build Engine directly) — the guard nil-checks and stays inert.
+	catidMon *catidMonitor
 	// warlinkClient is the injected WarLink client (sim fake) carried from
 	// Config.Warlink to the NewManager call in Start(). Nil → real HTTP client.
 	warlinkClient plc.WarlinkClient
@@ -311,6 +317,12 @@ func (e *Engine) Start() {
 	// every 60s so Core can shadow its replenishment ledger against Edge's
 	// authoritative counts. Reporting only; Core decides off the ledger.
 	e.startLinesideReporter()
+
+	// PLC part-identity (CATID) monitor: tracks each counter-bound process's
+	// live CATID_01 and feeds the A5 guard (guardCatidMismatch) + raises the
+	// wrong-part alert. Independent of auto-cutover — runs for every process
+	// with a counter binding. No-op when the plant publishes no CATID tag.
+	e.startCatidMonitor()
 
 	e.startedAt = time.Now()
 	e.logFn("Engine started: namespace=%s line_id=%s", e.cfg.Namespace, e.cfg.LineID)

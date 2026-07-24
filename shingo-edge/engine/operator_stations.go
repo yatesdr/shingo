@@ -91,6 +91,12 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	if err := e.guardStyleTransition(node, claim); err != nil {
 		return nil, err
 	}
+	// A5 (hop 2026-07-23): refuse outgoing-style relief when the press's live
+	// CATID says the wrong part is physically on it — the ground-truth sibling
+	// of the changeover guard above.
+	if err := e.guardCatidMismatch(node, claim); err != nil {
+		return nil, err
+	}
 
 	autoConfirm := false
 	if claim != nil {

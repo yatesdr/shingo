@@ -76,6 +76,17 @@ const (
 	// carrier + node and carries the operator's front-door fix. Rendered on the
 	// operator-station tile (P2-C8) and greppable via its "parked ticks:" log line.
 	EventUOPStranded
+
+	// EventCATIDMismatch fires when a press's live WarLink CATID_01 (its
+	// physical part identity) diverges from the active style's expected_catid
+	// (A5, Hopkinsville 2026-07-23). It is the ground-truth "wrong part on the
+	// press for the running style" alert — the exact condition that let LK41
+	// relief fire into a physically-KK21 line. Alarm only: it never cancels or
+	// re-plans anything. The blocking of outgoing-style relief is done
+	// separately by guardCatidMismatch on the request path; this event just
+	// surfaces the divergence, naming the press + both CATID values. Edge-
+	// triggered on a debounced value change — no fixed threshold, no timer.
+	EventCATIDMismatch
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -277,6 +288,22 @@ type UOPAdjustedEvent struct {
 	BinID         int64  `json:"bin_id"`
 	NewRemaining  int    `json:"new_remaining"`
 	Actor         string `json:"actor"`
+}
+
+// CATIDMismatchEvent names the press and both part-identity values when the
+// live CATID_01 diverges from the active style's expected_catid. Rendered on
+// the operator station and greppable in the journal via its "CATID mismatch:"
+// log line. Purely informational — the relief block is enforced on the request
+// path by guardCatidMismatch.
+type CATIDMismatchEvent struct {
+	eventbus.PayloadBase
+	ProcessID     int64  `json:"process_id"`
+	ProcessName   string `json:"process_name"`
+	PLCName       string `json:"plc_name"`
+	StyleID       int64  `json:"style_id"`
+	StyleName     string `json:"style_name"`
+	LiveCATID     string `json:"live_catid"`
+	ExpectedCATID string `json:"expected_catid"`
 }
 
 // DeliveredNotBoundEvent carries the detail for a delivery that arrived at one

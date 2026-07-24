@@ -53,3 +53,21 @@ func deriveCutoverTag(counterTagName string) string {
 	}
 	return prefix + ".Changeover_Active"
 }
+
+// deriveIdentityTag returns the CATID_01 part-identity tag path under the same
+// parent struct as the supplied counter tag. Returns empty when the input has
+// no parent struct. Sibling of deriveCutoverTag: the AMR trial confirmed
+// CATID_01 lives in the same MES struct as Prod_Counter_01 / Changeover_Active,
+// and the Hopkinsville live read showed it populated (CATID_01 = 40016911).
+// This is the ground-truth part signal the A5 guard reads.
+//
+// Example: "MES_P42_Spot_Nut_Farm_2.Prod_Counter_01" →
+//
+//	"MES_P42_Spot_Nut_Farm_2.CATID_01"
+func deriveIdentityTag(counterTagName string) string {
+	prefix := deriveProcessTagPrefix(counterTagName)
+	if prefix == "" {
+		return ""
+	}
+	return prefix + ".CATID_01"
+}

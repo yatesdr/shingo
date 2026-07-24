@@ -79,6 +79,54 @@ func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.Nod
 	return nil
 }
 
+// guardCatidMismatch refuses a material request for a line claim when the
+// press's live PLC part identity (WarLink CATID_01) diverges from the active
+// style's expected_catid (A5, hop 2026-07-23). It is a SIBLING trigger to
+// guardStyleTransition for the same outcome — block outgoing-style relief — but
+// keyed on ground truth (the physical part on the press) rather than an armed
+// changeover. In the 07-23 incident the press was physically KK21 while shingo
+// fired LK41 relief; this check catches exactly that divergence at the source
+// and refuses the relief before it can strand the line.
+//
+// Inert by construction unless BOTH sides are known:
+//   - The active style must have expected_catid configured. Empty = never
+//     block (unconfigured guard). This is the documented "inert on empty" rule.
+//   - A live CATID must have been observed and debounced. No monitor, no
+//     observation yet, or an unreadable tag ⇒ fail-open (no block), matching
+//     guardStyleTransition's read-blip policy: a transient PLC read must not
+//     shut the line down.
+//
+// Loaders (manual_swap) are exempt — they supply empties ACROSS a changeover
+// and must stay available (the Springfield regression), same as
+// guardStyleTransition. Only line produce/consume relief is part-sensitive.
+//
+// Edge-DB + in-memory monitor only; no Core round-trip. Never cancels an
+// existing order — it only refuses to START new outgoing-style relief.
+func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeClaim) error {
+	if node == nil || claim == nil {
+		return nil
+	}
+	if claim.SwapMode == protocol.SwapModeManualSwap {
+		return nil
+	}
+	if e.catidMon == nil {
+		return nil // monitor not started (test fixtures / no PLC) — inert.
+	}
+	style, err := e.db.GetStyle(claim.StyleID)
+	if err != nil || style == nil || style.ExpectedCATID == "" {
+		return nil // unconfigured expected_catid ⇒ inert, never block on empty.
+	}
+	live, ok := e.catidMon.liveCATID(node.ProcessID)
+	if !ok {
+		return nil // no debounced observation yet ⇒ fail-open.
+	}
+	if live != style.ExpectedCATID {
+		return fmt.Errorf("node %s: press part identity CATID %s does not match active style %q (expects CATID %s) — the wrong part is physically on the press; outgoing-style relief is blocked until it matches or you start a changeover",
+			node.Name, live, style.Name, style.ExpectedCATID)
+	}
+	return nil
+}
+
 // hasActiveSwap reports whether the runtime slots reference any non-terminal
 // order. Pure Edge-DB check — no Core round-trip.
 func hasActiveSwap(e *Engine, runtime *processes.RuntimeState) bool {
