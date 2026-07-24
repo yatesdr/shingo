@@ -215,48 +215,8 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return st.err
 	}
 
-	// #1 (regression 2b05dce): restore the dropoff-capacity gate for complex
-	// orders, but ONLY for concrete STORAGE/STAGING dropoffs. The scanner
-	// dropped the gate for every complex order to unstick two-robot SUPPLY
-	// legs — which deliver to a LINE node a sibling EVAC clears, and Core has
-	// no SiblingOrderID to model that — but that also let a changeover
-	// drop/evac to a FULL concrete storage slot dispatch into the occupied
-	// slot. Gate by node role (storage slot = child of LANE/NGRP), NOT by
-	// same-order pickup: gating the line case would re-create the deadlock
-	// 2b05dce fixed. NGRP dropoffs are already covered above by
-	// reResolveComplexSteps / ResolutionCapacity. Stay queued by returning an
-	// error — the scanner keeps the order queued and replays it on the next
-	// slot-vacancy tick (same contract as the claim_failed branch below).
-	if isConcreteStorageDropoff(d.db, order.DeliveryNode) {
-		if blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
-			d.setQueueReason(order, protocol.QueueWaitingForSlot, "dropoff-capacity", cap.Params)
-			d.dbg("complex: order %d queued — concrete storage dropoff %s blocked: %s", order.ID, order.DeliveryNode, cap.Cause)
-			return fmt.Errorf("dropoff capacity: %s", cap.Cause)
-		}
-	}
-
-	// Reserve each concrete storage drop-off SLOT (the destination dual of the bin
-	// reserve) — the reservation-native replacement for the retired hard-claim slot
-	// loop (the split-brain fix). An incomplete order now holds its slots as
-	// revocable RESERVATIONS across ticks, NOT hard nodes.claimed_by. Runs BEFORE the
-	// bin reserve (slots-before-bins + the relay rule: a slot must be held before
-	// the bin leg reads its emptiness). A fungible NGRP slot conflict
-	// reverts-and-re-resolves (the escape valve, preserved); a fixed-concrete
-	// conflict holds (Wait) — both requeue in the order's entry status (queued
-	// first pass, sourcing on retry).
-	//
-	// The canonical node-ID sort is gone WITH the loop: the ABBA class dissolves at
-	// the soft-acquire layer, where a loser backs off holding only revocable slot
-	// reservations, not a hard claim. Removing the loop and its insurance together
-	// honors the rule that the slot-ordering must not be reverted without restoring
-	// a sweep for slot-wedged orders.
-	if slotOutcome, serr := d.allocator.reserveComplexSlots(order, resolvedSteps); serr != nil {
-		log.Printf("dispatch: complex order %d slot reserve error: %v", order.ID, serr)
-		return serr
-	} else if slotOutcome != reserveComplete {
-		d.setQueueReason(order, protocol.QueueWaitingForSlot, "slot-reserve", QueueParams{Destination: order.DeliveryNode})
-		d.dbg("complex: order %d held — incomplete slot reserve, retrying next tick", order.ID)
-		return fmt.Errorf("complex order %d slot reserve incomplete", order.ID)
+	if st := d.reserveComplexDestination(order, resolvedSteps); st.done {
+		return st.err
 	}
 
 	// Reserve/confirm. MoveToSourcing at the START of the reserve attempt: the
@@ -451,6 +411,60 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 		d.setQueueReason(order, protocol.QueueWaitingForPartner, "swap-hold", QueueParams{Sibling: order.SiblingOrderUUID})
 		d.dbg("complex: order %d held — %s", order.ID, reason)
 		return dispatchStep{done: true, err: fmt.Errorf("swap hold: %s", reason)}
+	}
+
+	return dispatchStep{}
+}
+
+// reserveComplexDestination runs the destination-side gates (Phase C): the
+// dropoff-capacity gate for concrete STORAGE/STAGING slots (regression 2b05dce)
+// followed by the reservation-native slot reserve (the split-brain fix). done=true
+// means the order parked waiting_for_slot (capacity-blocked or incomplete reserve)
+// or hit a reserve error; the orchestrator returns st.err verbatim. Runs before the
+// bin reserve (slots-before-bins). Reads the resolved steps read-only.
+func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
+	// #1 (regression 2b05dce): restore the dropoff-capacity gate for complex
+	// orders, but ONLY for concrete STORAGE/STAGING dropoffs. The scanner
+	// dropped the gate for every complex order to unstick two-robot SUPPLY
+	// legs — which deliver to a LINE node a sibling EVAC clears, and Core has
+	// no SiblingOrderID to model that — but that also let a changeover
+	// drop/evac to a FULL concrete storage slot dispatch into the occupied
+	// slot. Gate by node role (storage slot = child of LANE/NGRP), NOT by
+	// same-order pickup: gating the line case would re-create the deadlock
+	// 2b05dce fixed. NGRP dropoffs are already covered above by
+	// reResolveComplexSteps / ResolutionCapacity. Stay queued by returning an
+	// error — the scanner keeps the order queued and replays it on the next
+	// slot-vacancy tick (same contract as the claim_failed branch below).
+	if isConcreteStorageDropoff(d.db, order.DeliveryNode) {
+		if blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
+			d.setQueueReason(order, protocol.QueueWaitingForSlot, "dropoff-capacity", cap.Params)
+			d.dbg("complex: order %d queued — concrete storage dropoff %s blocked: %s", order.ID, order.DeliveryNode, cap.Cause)
+			return dispatchStep{done: true, err: fmt.Errorf("dropoff capacity: %s", cap.Cause)}
+		}
+	}
+
+	// Reserve each concrete storage drop-off SLOT (the destination dual of the bin
+	// reserve) — the reservation-native replacement for the retired hard-claim slot
+	// loop (the split-brain fix). An incomplete order now holds its slots as
+	// revocable RESERVATIONS across ticks, NOT hard nodes.claimed_by. Runs BEFORE the
+	// bin reserve (slots-before-bins + the relay rule: a slot must be held before
+	// the bin leg reads its emptiness). A fungible NGRP slot conflict
+	// reverts-and-re-resolves (the escape valve, preserved); a fixed-concrete
+	// conflict holds (Wait) — both requeue in the order's entry status (queued
+	// first pass, sourcing on retry).
+	//
+	// The canonical node-ID sort is gone WITH the loop: the ABBA class dissolves at
+	// the soft-acquire layer, where a loser backs off holding only revocable slot
+	// reservations, not a hard claim. Removing the loop and its insurance together
+	// honors the rule that the slot-ordering must not be reverted without restoring
+	// a sweep for slot-wedged orders.
+	if slotOutcome, serr := d.allocator.reserveComplexSlots(order, resolvedSteps); serr != nil {
+		log.Printf("dispatch: complex order %d slot reserve error: %v", order.ID, serr)
+		return dispatchStep{done: true, err: serr}
+	} else if slotOutcome != reserveComplete {
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, "slot-reserve", QueueParams{Destination: order.DeliveryNode})
+		d.dbg("complex: order %d held — incomplete slot reserve, retrying next tick", order.ID)
+		return dispatchStep{done: true, err: fmt.Errorf("complex order %d slot reserve incomplete", order.ID)}
 	}
 
 	return dispatchStep{}
