@@ -24,6 +24,10 @@ type PayloadHealth struct {
 	Monitored   bool             `json:"monitored"`
 	Threshold   int              `json:"threshold"` // representative (max binding); 0 = unset
 	Bindings    []MonitorBinding `json:"bindings"`
+	// SwapContradiction is true when a manual swap was requested for this
+	// payload while the ledger read it as fully stocked (P2-C9) — surfaced as a
+	// right-hand chip on the Replenishment Health row.
+	SwapContradiction bool `json:"swap_contradiction"`
 }
 
 // ReplenishmentHealth builds the per-payload rollup behind the inventory
@@ -90,6 +94,7 @@ func (e *Engine) ReplenishmentHealth(ctx context.Context) ([]PayloadHealth, erro
 		if s, ok := byPayload[p]; ok {
 			row.Monitored = true
 			row.Bindings = s.Bindings
+			row.SwapContradiction = s.SwapContradiction
 			for _, b := range s.Bindings {
 				if b.Threshold > row.Threshold {
 					row.Threshold = b.Threshold

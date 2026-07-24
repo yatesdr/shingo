@@ -423,6 +423,17 @@ func (e *Engine) wireEventHandlers() {
 		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
 			e.thresholdMonitor.handleBinUpdated(evt.Payload)
 		}, EventBinUpdated)
+
+		// P2-C9 contradiction check: a manual swap request (a complex order —
+		// the shape the SNF3 operator swap took) for a payload the ledger reads
+		// as fully stocked is a contradiction. Log it, chip it, and re-read.
+		// Filtered to complex orders (the swap/manual-request family); the
+		// stocked-ledger gate + per-payload throttle keep it quiet in normal ops.
+		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderReceivedEvent]) {
+			if evt.Payload.OrderType == protocol.OrderTypeComplex {
+				e.thresholdMonitor.NoteSwapRequestContradiction(evt.Payload.PayloadCode)
+			}
+		}, EventOrderReceived)
 	}
 
 	// ── Sourceability monitor ───────────────────────────────────────────

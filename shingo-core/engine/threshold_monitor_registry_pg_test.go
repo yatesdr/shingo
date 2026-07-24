@@ -220,6 +220,111 @@ func TestThresholdMonitor_ReadsAuthoritativeSum_FiresWhenDBBelow(t *testing.T) {
 	}
 }
 
+// TestThresholdMonitor_SwapContradiction_ChipsWhenStocked pins P2-C9: a manual
+// swap request for a payload whose ledger reads fully stocked (>= its max
+// binding threshold) raises the Replenishment Health contradiction chip and
+// creates NO signal — the SNF3 phantom-on-hand shape where the operator swaps
+// while Core believes stocked.
+func TestThresholdMonitor_SwapContradiction_ChipsWhenStocked(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+
+	const (
+		stationID = "station-c9-stocked"
+		loader    = "MS-LOADER-C9"
+		payload   = "P-C9-STOCKED"
+	)
+
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleConsume,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 50,
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	// DB truth: stocked at/above the threshold — nothing should fire.
+	seedBinWithUOP(t, db, payload, 200)
+
+	m := eng.thresholdMonitor
+	m.mu.Lock()
+	m.thresholdsByPayload[payload] = []thresholdEntry{{
+		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 50,
+	}}
+	m.mu.Unlock()
+
+	preMsgs, _ := db.ListPendingOutbox(50)
+	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+
+	m.NoteSwapRequestContradiction(payload)
+	time.Sleep(200 * time.Millisecond)
+
+	// Chip raised for this payload.
+	chip := false
+	for _, s := range m.Snapshot() {
+		if s.PayloadCode == payload && s.SwapContradiction {
+			chip = true
+		}
+	}
+	if !chip {
+		t.Error("expected P2-C9 SwapContradiction chip for a swap requested against a stocked ledger")
+	}
+
+	// And NO order was created — the re-read reads stocked.
+	msgs, _ := db.ListPendingOutbox(50)
+	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+		t.Errorf("contradiction re-evaluation created %d signal(s); want 0 (C9 must never create an order)", got-preCount)
+	}
+}
+
+// TestThresholdMonitor_SwapContradiction_NoChipWhenBelow pins the other half:
+// a swap request for a genuinely below-threshold payload is the operator being
+// right, not a contradiction — no chip is raised. (A normal below-threshold
+// signal may fire; that is the expected path and is covered elsewhere.)
+func TestThresholdMonitor_SwapContradiction_NoChipWhenBelow(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+
+	const (
+		stationID = "station-c9-below"
+		loader    = "MS-LOADER-C9-BELOW"
+		payload   = "P-C9-BELOW"
+	)
+
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleConsume,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 50,
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	// DB truth: below threshold — the operator is right, no contradiction.
+	seedBinWithUOP(t, db, payload, 10)
+
+	m := eng.thresholdMonitor
+	m.mu.Lock()
+	m.thresholdsByPayload[payload] = []thresholdEntry{{
+		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 50,
+	}}
+	m.mu.Unlock()
+
+	m.NoteSwapRequestContradiction(payload)
+	time.Sleep(200 * time.Millisecond)
+
+	for _, s := range m.Snapshot() {
+		if s.PayloadCode == payload && s.SwapContradiction {
+			t.Error("raised a contradiction chip for a genuinely below-threshold payload; the operator is right, not contradicted")
+		}
+	}
+}
+
 // TestThresholdMonitor_NegativeTotal_EmitsNoSignal is the end-to-end half of
 // the validity floor: with a negative in-loop total, NOTHING reaches the
 // outbox. The unit-level counterpart

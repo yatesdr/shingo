@@ -305,6 +305,15 @@ function chipsHtml(r) {
   else if (st === 'near') chips += '<span class="chip chip-near">Near threshold</span>';
   else if (st === 'ok') chips += '<span class="chip chip-ok">OK</span>';
   else chips += '<span class="chip chip-muted">No threshold set</span>';
+  if (r.swap_contradiction) {
+    // P2-C9: an operator requested a manual swap for this payload while the
+    // ledger reads it as fully stocked — the SNF3 phantom-on-hand shape. The
+    // line may be starving behind a stale staged bin; check this payload's bins.
+    const tip = 'A manual swap was requested for this payload while on-hand ('
+      + r.on_hand + ') reads at or above threshold. The line may be starving '
+      + 'behind a phantom on-hand — check this payload\'s bins for a stale staged bin.';
+    chips += ' <span class="chip chip-warn" title="' + escapeHtml(tip) + '">Swap requested vs stocked ledger</span>';
+  }
   return chips;
 }
 function rhRowHtml(r) {

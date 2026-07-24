@@ -15,6 +15,7 @@ func newTestMonitor() *ThresholdMonitor {
 		sweepDone:           true,
 		thresholdsByPayload: make(map[string][]thresholdEntry),
 		negativeLogged:      make(map[string]time.Time),
+		swapContradiction:   make(map[string]time.Time),
 	}
 }
 

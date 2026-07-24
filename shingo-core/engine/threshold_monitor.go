@@ -82,6 +82,13 @@ const warmUpFloor = 2
 // binding is enough to keep the condition visible without becoming the noise.
 const negativeLogWindow = 60 * time.Second
 
+// swapContradictionWindow is how long a manual-swap-vs-ledger contradiction
+// (P2-C9) stays surfaced as a Replenishment Health chip, and the throttle
+// window for its log line. A human requesting a swap for a payload the ledger
+// reads as fully stocked is a standing condition worth showing for a while, not
+// a per-request event.
+const swapContradictionWindow = 15 * time.Minute
+
 // thresholdEntry is one (station, loader, payload) binding with its
 // configured threshold, cached in memory so the monitor never queries
 // demand_registry on the hot path.
@@ -123,6 +130,10 @@ type ThresholdMonitor struct {
 	// mean a negative total consumed the binding's right to fire the moment
 	// the ledger was corrected.
 	negativeLogged map[string]time.Time
+	// swapContradiction is the last time a manual-swap request arrived for a
+	// payload the ledger read as fully stocked (P2-C9). Keyed by payload_code;
+	// drives the Replenishment Health contradiction chip and throttles the log.
+	swapContradiction map[string]time.Time
 }
 
 // NewThresholdMonitor constructs the monitor. Call Run() to perform
@@ -134,6 +145,7 @@ func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
 		warmUp:              make(map[string]int),
 		thresholdsByPayload: make(map[string][]thresholdEntry),
 		negativeLogged:      make(map[string]time.Time),
+		swapContradiction:   make(map[string]time.Time),
 	}
 }
 
@@ -154,6 +166,10 @@ type MonitorBinding struct {
 type MonitorSnapshotEntry struct {
 	PayloadCode string           `json:"payload_code"`
 	Bindings    []MonitorBinding `json:"bindings"`
+	// SwapContradiction is true when a manual-swap request arrived for this
+	// payload within swapContradictionWindow while the ledger read it as fully
+	// stocked (P2-C9). Surfaced as a Replenishment Health chip.
+	SwapContradiction bool `json:"swap_contradiction"`
 }
 
 // Snapshot returns which payloads are monitored and the binding set watching
@@ -161,6 +177,7 @@ type MonitorSnapshotEntry struct {
 // Taken under the monitor lock; safe to call from an HTTP handler. It reports
 // only the monitored-set + thresholds; the caller reads DB on-hand itself.
 func (m *ThresholdMonitor) Snapshot() []MonitorSnapshotEntry {
+	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]MonitorSnapshotEntry, 0, len(m.thresholdsByPayload))
@@ -174,9 +191,14 @@ func (m *ThresholdMonitor) Snapshot() []MonitorSnapshotEntry {
 				LoaderID:     b.loaderID,
 			})
 		}
+		contradiction := false
+		if last, ok := m.swapContradiction[payload]; ok && now.Sub(last) < swapContradictionWindow {
+			contradiction = true
+		}
 		out = append(out, MonitorSnapshotEntry{
-			PayloadCode: payload,
-			Bindings:    bs,
+			PayloadCode:       payload,
+			Bindings:          bs,
+			SwapContradiction: contradiction,
 		})
 	}
 	return out
@@ -382,6 +404,70 @@ func (m *ThresholdMonitor) OnBucketApplied(station, coreNodeName, payloadCode st
 // authoritative sum for the payload and checks thresholds.
 func (m *ThresholdMonitor) handleBinUpdated(ev BinUpdatedEvent) {
 	m.evaluatePayload(ev.PayloadCode, "below_threshold")
+}
+
+// NoteSwapRequestContradiction is the P2-C9 contradiction check. Called when a
+// manual swap request (a complex order — the shape the incident's operator
+// swap took) arrives for a payload. If the monitor's ledger reads that payload
+// as fully stocked (in-loop total at or above its highest binding threshold)
+// yet a human at the line is requesting a swap, that is a contradiction — the
+// SNF3 CARRIER-0024 shape, where Core held a 150-UOP phantom on-hand while the
+// operator's tile read 46 and the line starved. It logs a
+// manual_request_vs_ledger warning, raises a Replenishment Health chip, and
+// immediately re-evaluates the payload.
+//
+// With the private tally gone, "re-evaluate" is simply "re-read" — the only
+// mode there is now. It creates NO orders: the re-read fires the normal
+// (debounced) signal only if the ledger is genuinely below threshold, which is
+// the non-contradiction case; when it reads stocked, nothing fires. The
+// contradiction log/chip is throttled to once per swapContradictionWindow per
+// payload, so a burst of complex orders can't spam it.
+func (m *ThresholdMonitor) NoteSwapRequestContradiction(payloadCode string) {
+	if payloadCode == "" {
+		return
+	}
+	m.mu.Lock()
+	bindings, monitored := m.thresholdsByPayload[payloadCode]
+	m.mu.Unlock()
+	if !monitored {
+		return
+	}
+	total, err := m.readTotal(context.Background(), payloadCode)
+	if err != nil {
+		if m.eng != nil {
+			m.eng.logFn("threshold_monitor: NoteSwapRequestContradiction SystemUOPForPayload(%s): %v", payloadCode, err)
+		}
+		return
+	}
+	maxThreshold := 0
+	for _, b := range bindings {
+		if b.threshold > maxThreshold {
+			maxThreshold = b.threshold
+		}
+	}
+	if maxThreshold > 0 && total >= maxThreshold {
+		if m.recordSwapContradiction(payloadCode) && m.eng != nil {
+			m.eng.logFn("threshold_monitor: manual_request_vs_ledger — swap requested for payload=%s while the ledger reads STOCKED (in-loop total=%d >= max binding threshold=%d); the line may be starving behind a phantom on-hand — check this payload's bins for a stale staged bin (further occurrences suppressed for %s)",
+				payloadCode, total, maxThreshold, swapContradictionWindow)
+		}
+	}
+	// Immediately re-evaluate — a re-read now. Creates no orders when stocked.
+	m.checkBindings(bindings, total, "manual_swap_recheck")
+}
+
+// recordSwapContradiction stamps a swap-vs-ledger contradiction for the payload
+// if the last one is outside the window, returning whether it was newly
+// recorded (i.e. should be logged now). Fixed-window throttle: the log fires
+// once per window and the chip reads the stamp for the rest of it.
+func (m *ThresholdMonitor) recordSwapContradiction(payloadCode string) bool {
+	now := time.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if last, ok := m.swapContradiction[payloadCode]; ok && now.Sub(last) < swapContradictionWindow {
+		return false
+	}
+	m.swapContradiction[payloadCode] = now
+	return true
 }
 
 // checkBindings evaluates all threshold bindings for a given total and
