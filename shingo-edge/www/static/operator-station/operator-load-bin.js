@@ -1,4 +1,4 @@
-import { esc, postAction, showToast } from './operator-util.js';
+import { esc, postAction, showToast, fetchWithTimeout } from './operator-util.js';
 import { openKeypad } from './operator-keypad.js';
 
 let loadBinState = null;
@@ -43,17 +43,15 @@ async function selectLoadPayload(code) {
     });
     const rows = document.getElementById('load-bin-rows');
     rows.innerHTML = '<div style="color:#999;text-align:center;padding:12px">Loading manifest...</div>';
-    // Bound the fetch: a browser fetch has no default timeout, so a silently
-    // severed connection (edge restart mid-request, Wi-Fi blip, half-open TCP —
-    // e.g. Core unreachable during a reboot) leaves the promise pending forever
-    // and the modal stuck on "Loading manifest…" until a hard refresh. The
-    // AbortController turns that into a retryable message: tapping the payload
-    // fires selectLoadPayload again. 8s is well past the server's own 3s Core
-    // timeout, so a healthy load is never cut short.
-    const ctrl = new AbortController();
-    const timer = setTimeout(function() { ctrl.abort(); }, 8000);
+    // Bound the fetch (fetchWithTimeout): a browser fetch has no default timeout,
+    // so a silently severed connection (edge restart mid-request, Wi-Fi blip,
+    // half-open TCP, Core unreachable during a reboot) would leave the modal stuck
+    // on "Loading manifest…" until a hard refresh. On timeout it fails to a
+    // retryable message — tapping the payload re-fires selectLoadPayload. The
+    // helper's 8s default is well past the server's own 3s Core timeout, so a
+    // healthy load is never cut short.
     try {
-        const res = await fetch('/api/payload/' + encodeURIComponent(code) + '/manifest', { signal: ctrl.signal });
+        const res = await fetchWithTimeout('/api/payload/' + encodeURIComponent(code) + '/manifest');
         const data = res.ok ? await res.json() : { uop_capacity: 0, items: [] };
         // The operator may have closed the modal or picked a different payload
         // while this was in flight — don't clobber the current view with a stale
@@ -84,8 +82,6 @@ async function selectLoadPayload(code) {
             ? 'Manifest timed out — tap the payload again to retry'
             : 'Failed to load manifest — tap the payload again to retry';
         rows.innerHTML = '<div style="color:#f66;padding:8px">' + msg + '</div>';
-    } finally {
-        clearTimeout(timer);
     }
 }
 

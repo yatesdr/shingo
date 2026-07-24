@@ -111,6 +111,21 @@ body {
 .os-header-btn.cutover { background: var(--os-green-bright); color: #000; }
 .os-header-btn.release { background: var(--os-amber); color: #000; }
 .os-header-btn.cancel-changeover { background: #6b1f1f; color: #fff; }
+/* PULL FULL FROM HOME — the loader's buffer-chain header action. Teal so it reads
+   as a loader/logistics action, distinct from CHANGEOVER (orange) / CUTOVER (green). */
+.os-header-btn.pull-full-home { background: #1f6b5a; color: #fff; }
+
+/* A loaded home whose loader buffer holds a matching partial is ready to
+   consolidate. Pulse a green ring (not opacity — keep the tile legible) so the
+   operator can spot which homes the "PULL FULL FROM HOME" picker will offer. */
+.os-board-cards .os-board-card--ready {
+    animation: os-ready-glow 1.6s ease-in-out infinite;
+    border-radius: 10px;
+}
+@keyframes os-ready-glow {
+    0%, 100% { box-shadow: 0 0 0 2px var(--os-green-bright), 0 0 6px 1px rgba(64, 220, 120, 0.35); }
+    50%      { box-shadow: 0 0 0 3px var(--os-green-bright), 0 0 16px 4px rgba(64, 220, 120, 0.70); }
+}
 
 /* Active-style chip — display-only, sits in the action bar next to the
    changeover button so the operator can see what's running at a glance. */

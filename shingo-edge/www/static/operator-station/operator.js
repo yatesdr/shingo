@@ -2,7 +2,7 @@
 // Entry module wires SSE → loadView, refreshes the view, and bootstraps
 // the render / modal / load-bin / release / keypad sub-modules.
 
-import { stationID, showToast, friendlyOrderError, postAction, el } from './operator-util.js';
+import { stationID, showToast, friendlyOrderError, postAction, el, fetchWithTimeout } from './operator-util.js';
 import {
     getView, setView, getSelectedNodeID,
     getLastViewJSON, setLastViewJSON,
@@ -21,7 +21,11 @@ let refreshTimer = null;
 
 async function loadView() {
     try {
-        const res = await fetch('/api/operator-stations/' + stationID + '/view');
+        // Bounded (fetchWithTimeout): scheduleRefresh awaits this before arming the
+        // next poll, so a hung view fetch — a severed connection — would freeze every
+        // board update until a hard refresh. On timeout it throws → caught below →
+        // the poll loop keeps ticking. 10s is generous for a local edge query.
+        const res = await fetchWithTimeout('/api/operator-stations/' + stationID + '/view', undefined, 10000);
         if (!res.ok) { showToast('Connection error: ' + res.status, 'error'); return; }
         const text = await res.text();
         if (text === getLastViewJSON()) return;

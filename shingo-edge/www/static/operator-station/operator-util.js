@@ -149,6 +149,23 @@ export function showExitToast(msg, actionLabel, onAction) {
     return toast;
 }
 
+// fetchWithTimeout wraps fetch with an AbortController deadline so a silently
+// severed connection (edge restart mid-request, a Wi-Fi blip, a half-open TCP,
+// Core unreachable during a reboot) can't leave the promise pending forever.
+// That is the class of bug behind the loader "Loading manifest…" / "Loading…"
+// hangs AND the stalled live-refresh loop (scheduleRefresh awaits loadView, so a
+// hung view fetch freezes every board update until a hard refresh). On timeout it
+// rejects with an AbortError; callers handle it like any fetch failure. Default 8s.
+export async function fetchWithTimeout(url, opts, ms) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(function() { ctrl.abort(); }, ms || 8000);
+    try {
+        return await fetch(url, Object.assign({}, opts, { signal: ctrl.signal }));
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 // postAction is the single POST→refresh path. Returns true on 2xx.
 // Caller passes its own loadView callback so this module stays free of
 // state/view dependencies.

@@ -1,4 +1,4 @@
-import { el, esc, fillColor, postAction, showToast } from './operator-util.js';
+import { el, esc, fillColor, postAction, showToast, fetchWithTimeout } from './operator-util.js';
 import { getView, claimedNodes, isReplenishing } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { cardModel, headerModel, nodeFacts, ROLE_WORDS } from './operator-window-state.js';
@@ -64,7 +64,13 @@ export function renderHeader() {
     // cutover, and a stuck PLC bit is something to investigate, not to
     // mask with a manual override. Theme B's gate is the safety net for
     // both paths.
-    if (!isBoardMode()) {
+    if (isHomeLocationLoader()) {
+        // Dedicated home loader (forklift-operated): the operator's header action
+        // is consolidating homes, not a changeover. Surface the buffer chain here
+        // in place of CHANGEOVER so it's discoverable instead of hidden behind a
+        // per-card condition.
+        headerActions.appendChild(headerBtn('PULL FULL FROM HOME', 'pull-full-home', openPullFullFromHomePicker));
+    } else if (!isBoardMode()) {
         if (view.active_changeover) {
             if (!view.process.auto_cutover_enabled) {
                 headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
@@ -401,6 +407,63 @@ function confirmClearLoaderHome(nodeID) {
     document.body.appendChild(overlay);
 }
 
+// isHomeLocationLoader reports whether this station is a dedicated home-location
+// loader (manual_swap positions each pinned to a payload). Gates the header
+// "PULL FULL FROM HOME" action so it only appears where the buffer chain applies.
+function isHomeLocationLoader() {
+    return claimedNodes().some(function(n) {
+        return n.active_claim && n.active_claim.swap_mode === 'manual_swap' && n.home_location_loader;
+    });
+}
+
+// openPullFullFromHomePicker is the header entry point to the buffer chain. It
+// lists ONLY the homes that can actually run it — a loaded home ("full") whose
+// loader buffer holds a matching partial to backfill (the same gate as the
+// per-card CLEAR BIN). Showing only eligible homes means every option is
+// actionable; tapping one runs the clear-loader-home consolidation. The board
+// itself pulses these same homes (os-board-card--ready) so the operator can also
+// see at a glance which ones are ready.
+function openPullFullFromHomePicker() {
+    var eligible = claimedNodes().filter(function(n) {
+        var bs = (n && n.bin_state) || {};
+        return n.active_claim && n.home_location_loader
+            && bs.occupied && bs.payload_code && n.has_buffer_partial;
+    });
+
+    var overlay = el('div', { className: 'os-co-picker-overlay' });
+    var panel = el('div', { className: 'os-co-picker' });
+    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Pull full from home' }));
+    panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+        textContent: 'Pick a full home. Shingo sends its empty carrier to the buffer, then pulls the matching buffer partial into the home.' }));
+
+    if (eligible.length === 0) {
+        panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+            textContent: 'No home has a matching buffer partial ready right now.' }));
+    }
+    eligible.forEach(function(n) {
+        var bs = n.bin_state || {};
+        var btn = el('button', { className: 'os-co-picker-btn' });
+        btn.style.cssText = 'text-align:left;padding:14px 18px;display:block;width:100%;';
+        btn.appendChild(el('div', { textContent: esc(n.node.name),
+            style: 'font-size:22px;font-weight:700;letter-spacing:0.03em;' }));
+        btn.appendChild(el('div', { textContent: esc(bs.payload_code),
+            style: 'font-size:17px;font-weight:600;margin-top:5px;' }));
+        btn.addEventListener('click', function() {
+            overlay.remove();
+            confirmClearLoaderHome(n.node.id);
+        });
+        panel.appendChild(btn);
+    });
+
+    var cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
+    cancel.addEventListener('click', function() { overlay.remove(); });
+    panel.appendChild(cancel);
+
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', function(evt) { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
 // showPullFromMarketPicker fetches bins currently sitting in the loader's
 // outbound supermarket and presents a picker so the operator can pull one back
 // to the loader window. Used during cell launches to recover bins from the
@@ -424,7 +487,9 @@ function showPullFromMarketPicker(nodeID) {
     overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
     document.body.appendChild(overlay);
 
-    fetch('/api/process-nodes/' + nodeID + '/market-bins', { credentials: 'same-origin' })
+    // Bounded so a severed connection trips the .catch below ("Could not load
+    // market bins.") instead of leaving the picker stuck on "Loading…" forever.
+    fetchWithTimeout('/api/process-nodes/' + nodeID + '/market-bins', { credentials: 'same-origin' })
         .then(function(r) { return r.json(); })
         .then(function(bins) {
             listDiv.textContent = '';
@@ -777,8 +842,12 @@ function renderHomeLocationBoard(nodes) {
                 textContent: esc(node.node.name) + ' · ' + binTxt,
             }), card.firstChild);
             // "Clear Bin" — only for home tiles with a buffer partial of the same
-            // payload. Shows the consolidation confirmation overlay on tap.
+            // payload. Shows the consolidation confirmation overlay on tap. The card
+            // also pulses (os-board-card--ready) so the operator can spot at a glance
+            // which loaded homes are ready to consolidate — the same set the header
+            // "PULL FULL FROM HOME" picker offers.
             if (node.has_buffer_partial && bs.occupied && bs.payload_code && code === bs.payload_code) {
+                card.classList.add('os-board-card--ready');
                 var clearBtn = el('button', {
                     className: 'os-co-picker-btn',
                     textContent: 'CLEAR BIN',
