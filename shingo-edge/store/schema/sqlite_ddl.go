@@ -170,6 +170,7 @@ CREATE TABLE IF NOT EXISTS payload_catalog (
     -- preserved across catalog syncs (UpsertCatalog excludes this column
     -- from its ON CONFLICT update list).
     cycle_seconds REAL NOT NULL DEFAULT 0,
+    catid         TEXT NOT NULL DEFAULT '',
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

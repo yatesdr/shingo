@@ -556,6 +556,14 @@ func (db *DB) migrate() error {
 	// numbers are per-branch — renumber on merge if this collides.
 	db.Exec("ALTER TABLE process_changeovers ADD COLUMN verify_live_catid TEXT NOT NULL DEFAULT ''")
 
+	// v32 (2026-07-24, CATID on the payload catalog): the payload's part identity,
+	// synced from Core (its single distinct manifest part number, else empty). The
+	// claim editor auto-fills a style's expected_catid from this, so the PLC
+	// part-identity guard configures itself when a payload is chosen. Idempotent
+	// ADD COLUMN. NOTE: migration version numbers are per-branch — renumber on
+	// merge if this collides.
+	db.Exec("ALTER TABLE payload_catalog ADD COLUMN catid TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }
 

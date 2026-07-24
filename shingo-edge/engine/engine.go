@@ -554,6 +554,7 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
 			ID: b.ID, Name: b.Name, Code: b.Code,
 			Description: b.Description,
 			UOPCapacity: b.UOPCapacity,
+			CATID:       b.CATID,
 		}
 		if err := e.db.UpsertPayloadCatalog(entry); err != nil {
 			log.Printf("engine: upsert payload catalog entry %s: %v", b.Name, err)
@@ -563,6 +564,9 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
 	if err := e.db.DeleteStalePayloadCatalogEntries(ids); err != nil {
 		log.Printf("engine: prune stale payload catalog: %v", err)
 	}
+	// Now that the catalog (and its CATIDs) is current, fill any style whose
+	// expected_catid is still blank from its produce payload's CATID.
+	e.AutoFillExpectedCATIDs()
 	e.logFn("engine: updated payload catalog (%d entries)", len(entries))
 }
 

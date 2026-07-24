@@ -51,6 +51,34 @@ func ScanPayloads(rows *sql.Rows) ([]*Payload, error) {
 	return payloads, rows.Err()
 }
 
+// PayloadCATIDs returns each payload's part identity (its single distinct
+// payload_manifest part number) keyed by payload id — but ONLY for payloads
+// whose manifest carries exactly one distinct part number. Payloads with zero
+// or several distinct part numbers are omitted, so the edge auto-fill never
+// guesses which part id a multi-part payload "is".
+func PayloadCATIDs(db *sql.DB) (map[int64]string, error) {
+	rows, err := db.Query(`SELECT payload_id, MIN(part_number), COUNT(DISTINCT part_number)
+		FROM payload_manifest WHERE part_number != ''
+		GROUP BY payload_id`)
+	if err != nil {
+		return nil, fmt.Errorf("payload catids: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64]string)
+	for rows.Next() {
+		var payloadID int64
+		var partNumber string
+		var distinct int
+		if err := rows.Scan(&payloadID, &partNumber, &distinct); err != nil {
+			return nil, fmt.Errorf("scan payload catid: %w", err)
+		}
+		if distinct == 1 {
+			out[payloadID] = partNumber
+		}
+	}
+	return out, rows.Err()
+}
+
 // DescriptionsByCode returns a payload_code → description map for every payload
 // template. Used by the inventory Replenishment Health rollup to show a catalog
 // description beside each payload code.

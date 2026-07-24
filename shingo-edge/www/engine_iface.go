@@ -126,6 +126,10 @@ type EngineOrchestration interface {
 	PostCutoverFlag(processID int64) (*engine.PostCutoverFlag, bool)
 	// ClearPostCutoverFlag clears that flag — the operator confirmed or resolved it.
 	ClearPostCutoverFlag(processID int64) error
+	// AutoFillExpectedCATIDForStyle fills a style's expected_catid (blank-only)
+	// from its produce payload's synced CATID — called after a claim is saved so
+	// choosing a payload configures the part-identity guard.
+	AutoFillExpectedCATIDForStyle(styleID int64)
 	SequentialChangeoverCutover(processID, nodeID int64, calledBy string) error
 	StageNodeChangeoverMaterial(processID, nodeID int64) (*domain.Order, error)
 	EvacuateNode(processID, nodeID int64, partialQty int64) (*domain.Order, error)

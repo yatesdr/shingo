@@ -179,6 +179,7 @@ func (s *stubEngine) CancelProcessChangeover(int64) error                   { re
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error   { return nil }
 func (s *stubEngine) PostCutoverFlag(int64) (*engine.PostCutoverFlag, bool) { return nil, false }
 func (s *stubEngine) ClearPostCutoverFlag(int64) error                      { return nil }
+func (s *stubEngine) AutoFillExpectedCATIDForStyle(int64)                   {}
 func (s *stubEngine) ReleaseChangeoverWait(_ int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
 	d := disp
 	s.lastReleaseChangeoverWaitDisp = &d

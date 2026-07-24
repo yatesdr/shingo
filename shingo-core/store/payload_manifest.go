@@ -23,3 +23,9 @@ func (db *DB) ListPayloadManifest(payloadID int64) ([]*payloads.ManifestItem, er
 func (db *DB) ReplacePayloadManifest(payloadID int64, items []*payloads.ManifestItem) error {
 	return payloads.ReplaceManifest(db.DB, payloadID, items)
 }
+
+// PayloadCATIDs returns payload id → its single distinct manifest part number
+// (the payload's part identity), for the unambiguous payloads only.
+func (db *DB) PayloadCATIDs() (map[int64]string, error) {
+	return payloads.PayloadCATIDs(db.DB)
+}

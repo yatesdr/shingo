@@ -28,21 +28,25 @@ import (
 // the replenishment page, preserved across UpsertCatalog calls so the
 // catalog sync (which only refreshes the synced columns) doesn't wipe it.
 type CatalogEntry struct {
-	ID           int64     `json:"id"`
-	Name         string    `json:"name"`
-	Code         string    `json:"code"`
-	Description  string    `json:"description"`
-	UOPCapacity  int       `json:"uop_capacity"`
-	CycleSeconds float64   `json:"cycle_seconds"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           int64   `json:"id"`
+	Name         string  `json:"name"`
+	Code         string  `json:"code"`
+	Description  string  `json:"description"`
+	UOPCapacity  int     `json:"uop_capacity"`
+	CycleSeconds float64 `json:"cycle_seconds"`
+	// CATID is the payload's part identity, synced from Core (its single distinct
+	// manifest part number, or empty when the payload maps to zero or several).
+	// The claim editor auto-fills a style's expected_catid from this.
+	CATID     string    `json:"catid"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
-const catalogSelectCols = `id, name, code, description, uop_capacity, cycle_seconds, updated_at`
+const catalogSelectCols = `id, name, code, description, uop_capacity, cycle_seconds, COALESCE(catid, '') as catid, updated_at`
 
 func scanCatalogEntry(scanner interface{ Scan(...any) error }) (*CatalogEntry, error) {
 	e := &CatalogEntry{}
 	var updatedAt string
-	if err := scanner.Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &e.CycleSeconds, &updatedAt); err != nil {
+	if err := scanner.Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &e.CycleSeconds, &e.CATID, &updatedAt); err != nil {
 		return nil, err
 	}
 	e.UpdatedAt = helpers.ScanTime(updatedAt)
@@ -55,11 +59,12 @@ func scanCatalogEntry(scanner interface{ Scan(...any) error }) (*CatalogEntry, e
 // preserved across syncs. On INSERT the column takes its DEFAULT 0;
 // SetCycleSeconds is the engineer-edit path.
 func UpsertCatalog(db *sql.DB, entry *CatalogEntry) error {
-	_, err := db.Exec(`INSERT INTO payload_catalog (id, name, code, description, uop_capacity, updated_at)
-		VALUES (?, ?, ?, ?, ?, datetime('now'))
+	_, err := db.Exec(`INSERT INTO payload_catalog (id, name, code, description, uop_capacity, catid, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, code=excluded.code,
-		description=excluded.description, uop_capacity=excluded.uop_capacity, updated_at=datetime('now')`,
-		entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity)
+		description=excluded.description, uop_capacity=excluded.uop_capacity,
+		catid=excluded.catid, updated_at=datetime('now')`,
+		entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity, entry.CATID)
 	return err
 }
 

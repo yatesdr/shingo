@@ -532,12 +532,20 @@ func (s *CoreDataService) HandleCatalogPayloadsRequest(env *protocol.Envelope) {
 		log.Printf("core_handler: list payloads for catalog: %v", err)
 		return
 	}
+	catids, err := s.db.PayloadCATIDs()
+	if err != nil {
+		// Degrade to no CATIDs rather than failing the whole catalog sync — the
+		// edge just won't auto-fill expected_catid this round.
+		log.Printf("core_handler: payload catids for catalog: %v", err)
+		catids = map[int64]string{}
+	}
 	infos := make([]protocol.CatalogPayloadInfo, len(payloads))
 	for i, p := range payloads {
 		infos[i] = protocol.CatalogPayloadInfo{
 			ID: p.ID, Name: p.Code, Code: p.Code,
 			Description: p.Description,
 			UOPCapacity: p.UOPCapacity,
+			CATID:       catids[p.ID],
 		}
 	}
 	s.resp.replyData(env, protocol.SubjectCatalogPayloadsResponse, &protocol.CatalogPayloadsResponse{Payloads: infos})
