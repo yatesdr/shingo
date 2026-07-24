@@ -43,9 +43,22 @@ async function selectLoadPayload(code) {
     });
     const rows = document.getElementById('load-bin-rows');
     rows.innerHTML = '<div style="color:#999;text-align:center;padding:12px">Loading manifest...</div>';
+    // Bound the fetch: a browser fetch has no default timeout, so a silently
+    // severed connection (edge restart mid-request, Wi-Fi blip, half-open TCP —
+    // e.g. Core unreachable during a reboot) leaves the promise pending forever
+    // and the modal stuck on "Loading manifest…" until a hard refresh. The
+    // AbortController turns that into a retryable message: tapping the payload
+    // fires selectLoadPayload again. 8s is well past the server's own 3s Core
+    // timeout, so a healthy load is never cut short.
+    const ctrl = new AbortController();
+    const timer = setTimeout(function() { ctrl.abort(); }, 8000);
     try {
-        const res = await fetch('/api/payload/' + encodeURIComponent(code) + '/manifest');
+        const res = await fetch('/api/payload/' + encodeURIComponent(code) + '/manifest', { signal: ctrl.signal });
         const data = res.ok ? await res.json() : { uop_capacity: 0, items: [] };
+        // The operator may have closed the modal or picked a different payload
+        // while this was in flight — don't clobber the current view with a stale
+        // response (a newer selectLoadPayload owns the modal now).
+        if (!loadBinState || loadBinState.payloadCode !== code) return;
         const items = data.items || [];
         loadBinState.uopCount = data.uop_capacity || 0;
         // Capture the canonical manifest from the payload template — operators
@@ -66,7 +79,13 @@ async function selectLoadPayload(code) {
         renderRows();
     } catch (err) {
         console.error('selectLoadPayload manifest fetch', err);
-        rows.innerHTML = '<div style="color:#f66;padding:8px">Failed to load manifest</div>';
+        if (!loadBinState || loadBinState.payloadCode !== code) return;
+        const msg = err && err.name === 'AbortError'
+            ? 'Manifest timed out — tap the payload again to retry'
+            : 'Failed to load manifest — tap the payload again to retry';
+        rows.innerHTML = '<div style="color:#f66;padding:8px">' + msg + '</div>';
+    } finally {
+        clearTimeout(timer);
     }
 }
 
