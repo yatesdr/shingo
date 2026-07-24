@@ -514,21 +514,67 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		}
 	}
 
+	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
+
 	// Order B (evacuation) — full disposition. Gated per-leg on
 	// ReleasableAtCore (hop A4-i): a leg still queued/sourcing/dispatched/
 	// acknowledged is skipped, not force-flipped to in_transit.
+	evacReleased := false
 	if evacOrderID != nil {
-		if _, err := e.releaseIfReleasable(*evacOrderID, "B", disp); err != nil {
+		released, err := e.releaseIfReleasable(*evacOrderID, "B", disp)
+		if err != nil {
 			return err
 		}
+		evacReleased = released
 	}
 	// Order A (supply) — zero disposition (preserve supply bin manifest).
+	supplyReleased := false
 	if supplyOrderID != nil {
-		if _, err := e.releaseIfReleasable(*supplyOrderID, "A", ReleaseDisposition{CalledBy: disp.CalledBy}); err != nil {
+		released, err := e.releaseIfReleasable(*supplyOrderID, "A", supplyDisp)
+		if err != nil {
 			return err
 		}
+		supplyReleased = released
+	}
+
+	// hop A4-ii: if exactly one leg released and its sibling was deferred
+	// (Core would refuse it right now), remember the deferred leg so it fires
+	// when it later reaches staged — its sibling having already gone. The
+	// operator's single click expressed "go" for the whole pair; deferring is
+	// not dropping. Nothing is recorded when BOTH released (nothing to re-fire)
+	// or NEITHER released (no sibling went — re-firing would auto-release with
+	// no operator intent behind it).
+	if evacReleased && !supplyReleased && supplyOrderID != nil {
+		e.rememberDeferredSiblingRelease(*supplyOrderID, supplyDisp)
+	}
+	if supplyReleased && !evacReleased && evacOrderID != nil {
+		e.rememberDeferredSiblingRelease(*evacOrderID, disp)
 	}
 	return nil
+}
+
+// rememberDeferredSiblingRelease records a two-robot leg whose consolidated
+// RELEASE was skipped because Core would refuse it right now, so
+// handleSiblingReleaseRefire can fire it once it reaches staged. Only records a
+// GENUINELY deferred leg — non-terminal AND not-yet-releasable. A terminal leg
+// has nothing to re-fire (and would leak the map entry, since it never reaches
+// staged); an already-releasable leg was released on this same click.
+func (e *Engine) rememberDeferredSiblingRelease(orderID int64, disp ReleaseDisposition) {
+	order, err := e.db.GetOrder(orderID)
+	if err != nil {
+		return
+	}
+	if orders.IsTerminal(order.Status) || orders.ReleasableAtCore(order.Status) {
+		return
+	}
+	e.pendingSiblingReleaseMu.Lock()
+	if e.pendingSiblingRelease == nil {
+		e.pendingSiblingRelease = make(map[int64]ReleaseDisposition)
+	}
+	e.pendingSiblingRelease[orderID] = disp
+	e.pendingSiblingReleaseMu.Unlock()
+	e.logFn("two-robot release: leg %d (%s) deferred — sibling already released; will re-fire when it reaches staged",
+		orderID, order.Status)
 }
 
 // loadReleaseSwapNodeTask fetches the active changeover node task for

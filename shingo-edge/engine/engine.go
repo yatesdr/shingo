@@ -162,6 +162,21 @@ type Engine struct {
 	// Key = order UUID, value = Edge process node ID of the loader window.
 	marketPullbacks   map[string]int64
 	marketPullbacksMu sync.Mutex
+
+	// pendingSiblingRelease records a two-robot swap leg whose consolidated
+	// RELEASE was deferred by ReleaseStagedOrders because Core would have
+	// refused it (still queued/sourcing/dispatched/acknowledged) WHILE its
+	// sibling was released on the same operator click. When the deferred leg
+	// later reaches staged, handleSiblingReleaseRefire fires the release the
+	// operator already intended — the targeted revival of the auto-release-on-
+	// staged coordination removed 2026-04-27 (hop A4-ii, 2026-07-23). Key =
+	// deferred order id, value = the disposition to re-fire with. In-memory
+	// only: on Edge restart the entry is lost and the operator re-taps RELEASE
+	// (ComputeSwapReady keeps the button, P3-C3) — no timer, no reaper, and
+	// nothing here ever cancels or re-plans an order. Lazy-initialised under
+	// pendingSiblingReleaseMu so test fixtures that build Engine directly work.
+	pendingSiblingRelease   map[int64]ReleaseDisposition
+	pendingSiblingReleaseMu sync.Mutex
 }
 
 // Config holds the parameters needed to create an Engine.

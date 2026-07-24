@@ -67,3 +67,94 @@ func TestReleaseStagedOrders_HeldSupplyLegNotReleasedNorDesynced(t *testing.T) {
 		t.Errorf("evac status = %q, want past staged — the staged evac must still release", evac.Status)
 	}
 }
+
+// TestReleaseStagedOrders_RefiresDeferredSiblingOnStaged is the hop A4-ii
+// regression: a leg deferred by the consolidated RELEASE (Core would have
+// refused it) fires the release the operator already intended the moment it
+// later reaches staged — its sibling having already gone.
+func TestReleaseStagedOrders_RefiresDeferredSiblingOnStaged(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "HOP-A4II", PayloadCode: "PART-A4II", UOPCapacity: 1200, InitialUOP: 800,
+	})
+	supplyID, _ := seedTwoRobotPair(t, db, nodeID, "uuid-a4ii", "two_robot")
+
+	// Supply held pre-staged; evac at staged. The consolidated release fans out:
+	// the evac releases, the supply is deferred (Core would refuse it now).
+	testutil.MustNoErr(t, db.UpdateOrderStatus(supplyID, string(protocol.StatusSourcing)), "hold supply at sourcing")
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	testutil.MustNoErr(t, eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: "test-op"}), "ReleaseStagedOrders")
+
+	// Precondition: the supply really was deferred, not released.
+	supply, _ := db.GetOrder(supplyID)
+	if supply.Status != protocol.StatusSourcing {
+		t.Fatalf("precondition: supply status = %q, want sourcing (must have been deferred)", supply.Status)
+	}
+
+	// Drain the evac's release envelope so the re-fire's is the only one we count.
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	// Supply now reaches staged. In production Core's order.staged push drives
+	// this transition and the engine bridges it onto the event bus; here we set
+	// the row and fire the same EventOrderStatusChanged the lifecycle emits.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(supplyID, string(protocol.StatusStaged)), "supply reaches staged")
+	eng.Events.Emit(Event{Type: EventOrderStatusChanged, Payload: OrderStatusChangedEvent{
+		OrderID: supplyID, NewStatus: string(protocol.StatusStaged),
+	}})
+
+	// The deferred release fired: supply advanced past staged, one OrderRelease
+	// envelope queued.
+	supply, _ = db.GetOrder(supplyID)
+	if supply.Status == protocol.StatusStaged {
+		t.Errorf("supply status = %q, want past staged — the deferred release must re-fire when the leg reaches staged", supply.Status)
+	}
+	if releases := findOutboxByType(t, db, protocol.TypeOrderRelease); len(releases) != 1 {
+		t.Errorf("OrderRelease envelopes after re-fire = %d, want 1 (the deferred supply)", len(releases))
+	}
+}
+
+// TestSiblingReleaseRefire_NoRefireWithoutPriorRelease is the safety property:
+// a leg reaching staged must NOT auto-release unless its sibling already
+// released on an operator click. Without a recorded deferral there is no
+// operator intent, so the handler must do nothing — never auto-release, never
+// cancel, never re-plan.
+func TestSiblingReleaseRefire_NoRefireWithoutPriorRelease(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "HOP-A4II-NEG", PayloadCode: "PART-A4IIN", UOPCapacity: 1200, InitialUOP: 800,
+	})
+	supplyID, _ := seedTwoRobotPair(t, db, nodeID, "uuid-a4ii-neg", "two_robot")
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// No consolidated RELEASE was ever clicked, so nothing is recorded as a
+	// deferred sibling. Drain setup envelopes.
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	// The supply leg reaches staged on its own.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(supplyID, string(protocol.StatusStaged)), "supply reaches staged")
+	eng.Events.Emit(Event{Type: EventOrderStatusChanged, Payload: OrderStatusChangedEvent{
+		OrderID: supplyID, NewStatus: string(protocol.StatusStaged),
+	}})
+
+	// Nothing must have been released — the operator never clicked.
+	if releases := findOutboxByType(t, db, protocol.TypeOrderRelease); len(releases) != 0 {
+		t.Errorf("OrderRelease envelopes = %d, want 0 — a leg with no recorded operator release must not auto-fire", len(releases))
+	}
+	supply, _ := db.GetOrder(supplyID)
+	if supply.Status != protocol.StatusStaged {
+		t.Errorf("supply status = %q, want staged unchanged (no auto-release)", supply.Status)
+	}
+}
