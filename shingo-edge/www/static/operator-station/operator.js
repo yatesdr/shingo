@@ -18,14 +18,54 @@ import { openLoadBin, setLoadView } from './operator-load-bin.js';
 import { setReleaseRefs, isReleasePromptOpen } from './operator-release.js';
 
 let refreshTimer = null;
+// Wall-clock deadline of the pending refreshTimer, so armRefresh can tell
+// whether an incoming request wants the board sooner than what is queued.
+let refreshDueAt = 0;
 // In-flight view build, or null. Every refresh path funnels through
 // loadView, so holding the guard HERE (rather than in scheduleRefresh)
 // covers the SSE poll, postAction's post-action refresh, and the modal
 // callbacks alike.
 let inFlightLoad = null;
 // A refresh was asked for while a build was already running. Set by the
-// joining caller, consumed by scheduleRefresh to run one prompt follow-up.
+// joining caller, consumed by loadView to run one prompt follow-up.
 let refreshPending = false;
+
+// Quiet-board cadence, and the debounce applied to event-driven refreshes.
+const pollIdleMs = 3000;
+const pollBurstMs = 500;
+
+// THE INVARIANT: once the board has started polling, exactly one of "a timer is
+// pending" or "a build is in flight" is true at all times. loadView re-arms in a
+// finally, so the chain continues even if a build throws.
+//
+// This matters because it is easy to get wrong in the other direction. An
+// earlier version of this file kept the chain's only continuation INSIDE the
+// poll timer's callback, and had scheduleRefresh return early while a build was
+// in flight. A build started off-chain — postAction and the modal callbacks call
+// loadView directly — would then swallow the continuation: the timer fired,
+// scheduleRefresh took the early return, armed nothing, and the poll chain was
+// gone for good. The board only came back if an SSE event happened to arrive
+// while idle, so a quiet board could sit stale indefinitely. That is a worse
+// failure than the pile-up this file was changed to fix, and it would have been
+// made more likely by anything that reduces SSE traffic. Keep the re-arm in
+// loadView, not in the timer.
+//
+// armRefresh keeps whichever deadline is SOONER, so an event landing during the
+// idle gap is still served promptly instead of waiting out the full gap.
+function armRefresh(delayMs) {
+    const dueAt = Date.now() + delayMs;
+    if (refreshTimer !== null) {
+        if (refreshDueAt <= dueAt) return;
+        clearTimeout(refreshTimer);
+    }
+    refreshDueAt = dueAt;
+    refreshTimer = setTimeout(function() {
+        refreshTimer = null;
+        // No await between clearing the timer and loadView taking the in-flight
+        // guard, so the invariant above never has a gap.
+        loadView();
+    }, delayMs);
+}
 
 // loadView is single-flight: concurrent callers join the running build
 // instead of starting another one.
@@ -55,6 +95,13 @@ async function loadView() {
         return await inFlightLoad;
     } finally {
         inFlightLoad = null;
+        // Continue the poll chain. This is the ONE continuation point, and it
+        // runs for every build regardless of which path started it — see the
+        // invariant above. A refresh requested mid-build is served promptly
+        // rather than waiting out the full idle gap.
+        const soon = refreshPending;
+        refreshPending = false;
+        armRefresh(soon ? 0 : pollIdleMs);
     }
 }
 
@@ -67,10 +114,11 @@ async function doLoadView() {
         // well above the slowest legitimate view so it never aborts a slow-but-working
         // one (a 10s cap once stranded a heavy bin-loader view mid-load).
         //
-        // NOTE: an abort here frees only the browser. The Go handler takes no
-        // context, so the server keeps building and keeps holding the single DB
-        // connection — which is why an under-set timeout used to make the pile-up
-        // strictly worse (every retry added a build, none removed one).
+        // An abort here now propagates: the handler honours r.Context() and the
+        // shared build is cancelled once its last waiter leaves, so the server
+        // stops holding the single DB connection. Before that, an under-set
+        // timeout made the pile-up strictly worse — every retry added an orphan
+        // build and removed none.
         const res = await fetchWithTimeout('/api/operator-stations/' + stationID + '/view', undefined, 30000);
         if (!res.ok) { showToast('Connection error: ' + res.status, 'error'); return; }
         const text = await res.text();
@@ -107,29 +155,22 @@ function renderAll() {
     }
 }
 
+// scheduleRefresh asks for the board to be refreshed soon. Safe to call from
+// anywhere, any number of times: it never starts a second concurrent build and
+// never drops the poll chain.
+//
+// The prompt follow-up (rather than an immediate second build) also gives Core
+// time to process receipt + ApplyBinArrival after auto-confirm. With the
+// retrieve_empty staging exemption in Core, bins are available immediately; this
+// covers residual latency.
 function scheduleRefresh() {
-    // A build already running is not a reason to arm a second timer — loadView
-    // would only join it. Record the interest and let the running build's
-    // follow-up pick it up, so the poll loop stays exactly one deep.
     if (inFlightLoad) {
+        // A build is already running and will re-arm when it settles. Record the
+        // interest so that re-arm is prompt instead of a full idle gap.
         refreshPending = true;
         return;
     }
-    if (refreshTimer) return;
-    refreshTimer = setTimeout(async () => {
-        refreshTimer = null;
-        await loadView();
-        // Follow-up gives Core time to process receipt + ApplyBinArrival
-        // after auto-confirm. With the retrieve_empty staging exemption in
-        // Core, bins are available immediately; this covers residual latency.
-        //
-        // Anything that asked for a refresh mid-build (an SSE event, or a
-        // postAction that joined) is served by a prompt follow-up instead of a
-        // concurrent build: one build at a time, no dropped events.
-        const settled = refreshPending;
-        refreshPending = false;
-        setTimeout(() => scheduleRefresh(), settled ? 0 : 3000);
-    }, 500);
+    armRefresh(pollBurstMs);
 }
 
 function handleOrderFailed(data) {
