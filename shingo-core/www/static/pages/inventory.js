@@ -17,6 +17,7 @@ import { onSSE } from '/static/shared/utils.js';
 
 // ── state ──────────────────────────────────────────────────────────────
 let health = [];        // /api/inventory/monitor-totals rows
+let anomalySummary = {}; // /api/inventory/anomaly-summary (rejected/stale counts)
 let loaders = [];       // /api/loader/list loaders (editable config)
 let bins = [];          // /api/inventory rows
 let buckets = [];       // /api/buckets rows (with updated_at)
@@ -40,14 +41,16 @@ const STALE_BAD_MS = 30 * 24 * 3600 * 1000;
 // ── data loading ─────────────────────────────────────────────────────────
 async function loadAll(quiet) {
   try {
-    const [h, ld, inv, bk, nd] = await Promise.all([
+    const [h, ld, inv, bk, nd, an] = await Promise.all([
       apiGet('/api/inventory/monitor-totals').catch(() => []),
       apiGet('/api/loader/list').catch(() => ({ loaders: [] })),
       apiGet('/api/inventory').catch(() => []),
       apiGet('/api/buckets').catch(() => []),
       apiGet('/api/nodes').catch(() => ({})),
+      apiGet('/api/inventory/anomaly-summary').catch(() => ({})),
     ]);
     health = Array.isArray(h) ? h : [];
+    anomalySummary = an && typeof an === 'object' ? an : {};
     loaders = (ld && ld.loaders) || [];
     bins = Array.isArray(inv) ? inv : (inv && inv.rows) || [];
     buckets = Array.isArray(bk) ? bk : (bk && bk.rows) || [];
@@ -246,10 +249,16 @@ function renderAlerts() {
     if (hasDrift(r)) drift++;
   });
   buckets.forEach((b) => { if (bucketAgeMs(b) > STALE_BAD_MS) stale++; });
+  // Rejected-delta bins (deltas being refused: payload mismatch or stale epoch)
+  // and bins parked staged past their own TTL — the SNF3 stranding signals.
+  const rejected = anomalySummary.rejected_delta_bins || 0;
+  const staleStaged = anomalySummary.stale_staged_bins || 0;
   const parts = [];
   if (below) parts.push('<b>' + below + '</b> payload' + (below > 1 ? 's' : '') + ' below threshold');
   if (err) parts.push('<b>' + err + '</b> ledger error' + (err > 1 ? 's' : ''));
   if (drift) parts.push('<b>' + drift + '</b> monitor drift');
+  if (rejected) parts.push('<b>' + rejected + '</b> rejected delta' + (rejected > 1 ? 's' : ''));
+  if (staleStaged) parts.push('<b>' + staleStaged + '</b> stale staged bin' + (staleStaged > 1 ? 's' : ''));
   if (stale) parts.push('<b>' + stale + '</b> stale bucket' + (stale > 1 ? 's' : ''));
   if (!parts.length) { el.innerHTML = ''; return; }
   el.innerHTML = '<div class="alerts-banner" data-action="scrollTo:' + (err || below || drift ? 'rh' : 'buckets') + '">'
@@ -293,7 +302,14 @@ function meterHtml(r) {
 function chipsHtml(r) {
   const st = healthState(r);
   let chips = '';
-  if (st === 'err') chips += '<span class="chip chip-err">Ledger error — reconcile</span>';
+  if (st === 'err') {
+    // on_hand < 0: the threshold monitor is REFUSING to signal replenishment
+    // for this payload (a negative in-loop total means the bins ledger is
+    // broken). Surface the refusal, not just "error".
+    const tip = 'In-loop total is negative (' + r.on_hand + '); the monitor refuses to '
+      + 'signal replenishment for this payload until the bins ledger is reconciled.';
+    chips += '<span class="chip chip-err" title="' + escapeHtml(tip) + '">Ledger error — monitor refusing to signal</span>';
+  }
   else if (st === 'below') chips += '<span class="chip chip-below">Below — order due</span>';
   else if (st === 'near') chips += '<span class="chip chip-near">Near threshold</span>';
   else if (st === 'ok') chips += '<span class="chip chip-ok">OK</span>';

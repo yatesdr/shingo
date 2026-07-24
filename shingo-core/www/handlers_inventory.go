@@ -71,6 +71,20 @@ func (h *Handlers) apiInventoryMonitorTotals(w http.ResponseWriter, r *http.Requ
 	h.jsonOK(w, rows)
 }
 
+// apiInventoryAnomalySummary returns the read-only rejected-delta + stale-staged
+// rollup behind the inventory page's alerts banner (P2-C6): reason-split drop
+// counters, the count of anomaly-flagged bins whose deltas are being refused, and
+// the count of bins parked staged past their own TTL. Pure observability — no
+// behavior change, safe to poll.
+func (h *Handlers) apiInventoryAnomalySummary(w http.ResponseWriter, r *http.Request) {
+	sum, err := h.engine.InventoryDeltaService().AnomalySummary()
+	if err != nil {
+		h.jsonError(w, "anomaly summary: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, sum)
+}
+
 // apiBuckets returns every authoritative lineside_buckets row as JSON.
 // Powers the "Lineside Buckets" section on the operator-facing
 // inventory page. Round-3 Obs 10 added the Delete column on top of

@@ -8,6 +8,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"shingo/protocol"
 
@@ -79,6 +80,14 @@ type ManifestClearer interface {
 // effect). All production composition roots wire it; only legacy
 // tests pass nil.
 type InventoryDeltaService struct {
+	// Reason-split dropped-delta counters (P2-C6). Process-lifetime, atomic;
+	// int64 first so they stay 64-bit aligned for atomic ops on 32-bit builds.
+	// Read via DroppedDeltaCounts / AnomalySummary. Counters only — they change
+	// no apply behavior; they make the two silent drop paths measurable so the
+	// inventory page can show a rejected-delta rate instead of a bare log line.
+	droppedStaleEpoch      int64
+	droppedPayloadMismatch int64
+
 	db          *store.DB
 	binManifest ManifestClearer
 }
@@ -168,9 +177,18 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 				nil, d.PayloadCode, d.Station, metadata); err != nil {
 				return err
 			}
+			// Flag the bin so the bins page surfaces a carrier whose deltas are
+			// being refused (P2-C6). Payload-mismatch drops already do this; a
+			// stale-epoch drop is just as much a "counts aren't landing" signal.
+			// Visibility only — anomaly_at gates no claim or dispatch predicate.
+			// COALESCE keeps the first-seen timestamp on repeated drops.
+			if _, err := tx.Exec(`UPDATE bins SET anomaly_at=COALESCE(anomaly_at, NOW()) WHERE id=$1`, d.BinID); err != nil {
+				return fmt.Errorf("flag anomaly on stale-epoch drop bin=%d: %w", d.BinID, err)
+			}
 			if err := tx.Commit(); err != nil {
 				return fmt.Errorf("commit stale-epoch drop bin=%d: %w", d.BinID, err)
 			}
+			atomic.AddInt64(&s.droppedStaleEpoch, 1)
 			log.Printf("BinUOPDelta stale epoch DROPPED bin=%d wire_epoch=%d bin_epoch=%d seq=%d delta=%d — routed to discrepancy audit (Edge cache behind Core; next bin-state refresh repairs)",
 				d.BinID, d.Epoch, currentEpoch, d.SequenceID, d.Delta)
 			return ErrInventoryDeltaSkipped
@@ -393,6 +411,47 @@ func (s *InventoryDeltaService) recordRejectedDelta(d *protocol.BinUOPDelta, hav
 			log.Printf("mark anomaly for rejected delta bin=%d: %v", d.BinID, err)
 		}
 	}
+	atomic.AddInt64(&s.droppedPayloadMismatch, 1)
+}
+
+// DroppedDeltaCounts returns the process-lifetime dropped-delta tallies split by
+// reason (P2-C6). Counters only — reading them changes nothing. Payload-mismatch
+// is the rate worth alarming on (a bin whose label was reassigned underneath an
+// in-flight delta); stale-epoch churn is expected noise after a Core-side reset.
+func (s *InventoryDeltaService) DroppedDeltaCounts() (staleEpoch, payloadMismatch int64) {
+	return atomic.LoadInt64(&s.droppedStaleEpoch), atomic.LoadInt64(&s.droppedPayloadMismatch)
+}
+
+// AnomalyDeltaSummary is the read-only rollup behind the inventory page's
+// "N rejected deltas · N stale staged bins" banner line (P2-C6). All four
+// fields are pure observability: the drop counters are process-lifetime tallies,
+// the two bin counts are live queries.
+type AnomalyDeltaSummary struct {
+	DroppedStaleEpoch      int64 `json:"dropped_stale_epoch"`
+	DroppedPayloadMismatch int64 `json:"dropped_payload_mismatch"`
+	// RejectedDeltaBins is the count of non-retired bins flagged anomaly_at —
+	// carriers whose deltas are being refused (payload mismatch or stale epoch).
+	RejectedDeltaBins int `json:"rejected_delta_bins"`
+	// StaleStagedBins is the count of bins parked `staged` past their OWN
+	// staging TTL (staged_expires_at < NOW). Uses the bin's configured expiry,
+	// not a fixed age threshold; nil-TTL (permanent) staged bins are excluded.
+	StaleStagedBins int `json:"stale_staged_bins"`
+}
+
+// AnomalySummary computes the read-only anomaly rollup for the inventory page.
+// Never mutates; safe to call on every poll.
+func (s *InventoryDeltaService) AnomalySummary() (AnomalyDeltaSummary, error) {
+	out := AnomalyDeltaSummary{
+		DroppedStaleEpoch:      atomic.LoadInt64(&s.droppedStaleEpoch),
+		DroppedPayloadMismatch: atomic.LoadInt64(&s.droppedPayloadMismatch),
+	}
+	if err := s.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM bins WHERE anomaly_at IS NOT NULL AND status != 'retired'),
+		(SELECT COUNT(*) FROM bins WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < NOW())
+	`).Scan(&out.RejectedDeltaBins, &out.StaleStagedBins); err != nil {
+		return out, fmt.Errorf("anomaly summary counts: %w", err)
+	}
+	return out, nil
 }
 
 // ApplyLinesideBucketDelta applies a LinesideBucketDelta against the

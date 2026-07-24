@@ -954,3 +954,69 @@ func TestApplyBinUOPDelta_ConsumeTickNeverBindsBlankBin(t *testing.T) {
 		t.Errorf("UOPRemaining = %d, want -1 (blank passes the guard, delta applies)", got.UOPRemaining)
 	}
 }
+
+// TestInventoryDelta_C6_AnomalyObservability pins the P2-C6 observability
+// surfaces: a stale-epoch drop now flags the bin's anomaly_at (today only the
+// payload-mismatch drop did) and bumps a reason-split counter; a payload-mismatch
+// drop bumps its own counter; and AnomalySummary rolls up the counters plus the
+// live counts of anomaly-flagged bins and bins staged past their own TTL. All
+// display/counters — no apply behavior changes.
+func TestInventoryDelta_C6_AnomalyObservability(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+
+	// (1) Stale-epoch drop: bin at epoch 2, a delta carrying retired epoch 1.
+	staleBin := createTestBin(t, db, sd.StorageNode.ID, "BIN-C6-STALE", "PART-A", 100)
+	_, err := db.Exec(`UPDATE bins SET delta_epoch=2 WHERE id=$1`, staleBin.ID)
+	testutil.MustNoErr(t, err, "advance epoch")
+	sd1 := makeBinDelta(staleBin.ID, "PART-A", -7, 1, protocol.ReasonConsumeTick)
+	sd1.Epoch = 1
+	if err := svc.ApplyBinUOPDelta(sd1); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+		t.Fatalf("stale-epoch apply = %v, want ErrInventoryDeltaSkipped", err)
+	}
+	staleGot, _ := db.GetBin(staleBin.ID)
+	if staleGot.AnomalyAt == nil {
+		t.Error("stale-epoch drop must now flag anomaly_at (P2-C6)")
+	}
+
+	// (2) Payload-mismatch drop: consume delta whose payload differs from the bin.
+	mismatchBin := createTestBin(t, db, sd.StorageNode.ID, "BIN-C6-MISMATCH", "PART-A", 50)
+	if err := svc.ApplyBinUOPDelta(
+		makeBinDelta(mismatchBin.ID, "PART-WRONG", -3, 1, protocol.ReasonConsumeTick)); err == nil {
+		t.Fatal("payload-mismatch delta should have been rejected")
+	}
+	mismatchGot, _ := db.GetBin(mismatchBin.ID)
+	if mismatchGot.AnomalyAt == nil {
+		t.Error("payload-mismatch drop must flag anomaly_at")
+	}
+
+	// (3) A bin parked staged past its own TTL.
+	staleStaged := createTestBin(t, db, sd.StorageNode.ID, "BIN-C6-STAGED", "PART-A", 20)
+	_, err = db.Exec(`UPDATE bins SET status='staged', staged_at=NOW() - interval '3 hours',
+		staged_expires_at=NOW() - interval '1 hour' WHERE id=$1`, staleStaged.ID)
+	testutil.MustNoErr(t, err, "stage past ttl")
+
+	// Reason-split counters (per-service, deterministic).
+	stale, mismatch := svc.DroppedDeltaCounts()
+	if stale != 1 {
+		t.Errorf("droppedStaleEpoch = %d, want 1", stale)
+	}
+	if mismatch != 1 {
+		t.Errorf("droppedPayloadMismatch = %d, want 1", mismatch)
+	}
+
+	// AnomalySummary rolls it all up.
+	sum, err := svc.AnomalySummary()
+	testutil.MustNoErr(t, err, "anomaly summary")
+	if sum.DroppedStaleEpoch != 1 || sum.DroppedPayloadMismatch != 1 {
+		t.Errorf("summary drop counters = %d/%d, want 1/1", sum.DroppedStaleEpoch, sum.DroppedPayloadMismatch)
+	}
+	if sum.RejectedDeltaBins < 2 {
+		t.Errorf("RejectedDeltaBins = %d, want >= 2 (stale-epoch + payload-mismatch bins)", sum.RejectedDeltaBins)
+	}
+	if sum.StaleStagedBins < 1 {
+		t.Errorf("StaleStagedBins = %d, want >= 1 (the bin staged past its TTL)", sum.StaleStagedBins)
+	}
+}
