@@ -58,6 +58,16 @@ const (
 	// NOT subscribed in wiring.go — avoids triggering PLC
 	// counter processing that EventCounterDelta would cause.
 	EventUOPAdjusted
+
+	// EventDeliveredNotBound fires when a bin arrives at one of our nodes but
+	// the delivered handler could NOT bind it to the runtime — the silent
+	// detachment behind the SNF3 CARRIER-0024 stranding (2026-07-24). Today
+	// each such skip was a no-op; now it names the exact bin/order + node +
+	// reason + the operator's front-door fix. Alarm only — it never changes
+	// binding behavior (multi-bin binding, F1b, is still open). Rendered on the
+	// operator-station tile (C8) and greppable in the journal via its
+	// "delivered but NOT bound:" log line.
+	EventDeliveredNotBound
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -251,4 +261,19 @@ type UOPAdjustedEvent struct {
 	BinID         int64  `json:"bin_id"`
 	NewRemaining  int    `json:"new_remaining"`
 	Actor         string `json:"actor"`
+}
+
+// DeliveredNotBoundEvent carries the detail for a delivery that arrived at one
+// of our nodes but did not bind the runtime. BinID is nil for a multi-bin
+// delivery (the envelope carried no per-bin id, F1b); otherwise it names the
+// exact carrier. Instruction is the operator's front-door correction, worded
+// so the tile (C8) can render it verbatim.
+type DeliveredNotBoundEvent struct {
+	eventbus.PayloadBase
+	OrderID      int64  `json:"order_id"`
+	OrderUUID    string `json:"order_uuid"`
+	CoreNodeName string `json:"core_node_name"`
+	BinID        *int64 `json:"bin_id,omitempty"`
+	Reason       string `json:"reason"`
+	Instruction  string `json:"instruction"`
 }

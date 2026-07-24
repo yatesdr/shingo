@@ -20,6 +20,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"shingo/protocol"
@@ -48,10 +49,20 @@ import (
 // plan / architecture doc).
 func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if delivered.ProcessNodeID == nil || delivered.BinID == nil {
-		// Fallback for Core-admin orders (no Edge order row): ProcessNodeID is nil.
-		// Resolve the process node from DeliveryNode if present.
-		if delivered.BinID != nil && delivered.DeliveryNode != "" {
+		switch {
+		case delivered.ProcessNodeID == nil && delivered.BinID != nil && delivered.DeliveryNode != "":
+			// Core-admin order (no Edge order row): ProcessNodeID is nil but a bin
+			// and destination are present. Resolve the node from DeliveryNode and
+			// bind — the legitimate fallback path, not a silent skip.
 			e.handleFallbackDelivered(delivered)
+		case delivered.ProcessNodeID != nil && delivered.BinID == nil:
+			// Multi-bin delivery to a node we own: the envelope carries no per-bin
+			// id (F1b, still open), so nothing binds here. Single-bin orders always
+			// carry a bin id by delivery, so this is unambiguously the multi-bin
+			// no-op the SNF3 write-up named as a steady-state stranding source. Make
+			// it loud instead of silent — but still bind nothing (F1b is out of
+			// scope; multi-bin stays alarm-only).
+			e.raiseDeliveredNotBound(delivered, "", "multi-bin delivery carried no bin id (F1b open)")
 		}
 		return
 	}
@@ -110,6 +121,11 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	}
 	claim := findActiveClaim(e.db, node)
 	if claim == nil {
+		// The bin landed at a node we own but there is no active claim to bind it
+		// to (unpublished/mid-changeover style, orphaned node). Pre-fix this was a
+		// silent no-op and the bin's ticks stranded; now it names the bin + node so
+		// the operator can correct it through the front door.
+		e.raiseDeliveredNotBound(delivered, node.CoreNodeName, "no active claim at node")
 		return
 	}
 	// Seed the runtime cache + epoch from the snapshot Core stamped on the
@@ -189,6 +205,55 @@ func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 			log.Printf("delivered fallback: node %s bin %d: %v", delivered.DeliveryNode, *delivered.BinID, err)
 		}
 	}
+}
+
+// raiseDeliveredNotBound surfaces a delivery that arrived at one of our nodes
+// but did NOT bind the runtime — the silent detachment behind the SNF3
+// stranding. It never changes binding behavior; it makes the skip loud. It
+// writes one greppable audit line naming the exact bin/order + node + reason +
+// the operator's front-door fix, and emits a structured EventDeliveredNotBound
+// for the operator tile (C8) / SSE.
+//
+// coreNodeName may be "" (the multi-bin early return has no resolved node); in
+// that case it is resolved from the envelope's ProcessNodeID, then DeliveryNode.
+// The front-door instruction is uniform — "Record Count on the bin tab" — which
+// P2-C5 makes actually bind a staged, unbound bin.
+func (e *Engine) raiseDeliveredNotBound(delivered OrderDeliveredEvent, coreNodeName, reason string) {
+	node := coreNodeName
+	if node == "" && delivered.ProcessNodeID != nil {
+		if n, err := e.db.GetProcessNode(*delivered.ProcessNodeID); err == nil && n != nil {
+			node = n.CoreNodeName
+		}
+	}
+	if node == "" {
+		node = delivered.DeliveryNode
+	}
+	if node == "" {
+		node = "unknown node"
+	}
+
+	// Name the subject: the carrier when we have a bin id, else the order.
+	var subject string
+	switch {
+	case delivered.BinID != nil:
+		subject = fmt.Sprintf("bin %d", *delivered.BinID)
+	case delivered.OrderUUID != "":
+		subject = fmt.Sprintf("order %s", delivered.OrderUUID)
+	default:
+		subject = fmt.Sprintf("order %d", delivered.OrderID)
+	}
+
+	const instruction = "Record Count on the bin tab to bind it"
+	log.Printf("delivered but NOT bound: %s at %s — %s. %s", subject, node, reason, instruction)
+
+	e.Events.Emit(Event{Type: EventDeliveredNotBound, Payload: DeliveredNotBoundEvent{
+		OrderID:      delivered.OrderID,
+		OrderUUID:    delivered.OrderUUID,
+		CoreNodeName: node,
+		BinID:        delivered.BinID,
+		Reason:       reason,
+		Instruction:  instruction,
+	}})
 }
 
 // finalDropoffNode returns the node of the last "dropoff" step in a complex
