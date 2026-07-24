@@ -493,7 +493,22 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	// the transitional board can show real numbers on ACTIVE cards instead of a
 	// meaningless "no demand" (the loader is operator-driven). Computed once for
 	// the process's active style; all local Edge data.
-	if lineside := s.activePayloadLineside(); len(lineside) > 0 {
+	// Gate on the board actually having a tile that consumes the result.
+	// activePayloadLineside is a PLANT-WIDE scan — every active consume claim on
+	// the edge, not just this station's — so a board with no manual_swap produce
+	// tile was paying the full cost and then discarding every value. The
+	// predicate is exactly the one the loop below filters on.
+	wantsLineside := false
+	for i := range view.Nodes {
+		nv := &view.Nodes[i]
+		if nv.ActiveClaim != nil &&
+			nv.ActiveClaim.SwapMode == protocol.SwapModeManualSwap &&
+			nv.ActiveClaim.Role == protocol.ClaimRoleProduce {
+			wantsLineside = true
+			break
+		}
+	}
+	if lineside := s.activePayloadLineside(wantsLineside); len(lineside) > 0 {
 		for i := range view.Nodes {
 			nv := &view.Nodes[i]
 			if nv.ActiveClaim == nil ||
@@ -547,8 +562,28 @@ func linesideStarved(capacityUOP, linesideUOP int) bool {
 // combined lineside. A consume claim with several allowed payloads attributes
 // its node's total to each (rare; the common case is one payload per node). All
 // reads are local Edge state — no Core round-trip.
-func (s *StationService) activePayloadLineside() map[string]int {
+// wanted=false short-circuits: the caller has no tile that would read the result,
+// and this is a plant-wide scan.
+func (s *StationService) activePayloadLineside(wanted bool) map[string]int {
 	out := map[string]int{}
+	if !wanted {
+		return out
+	}
+	// Walk first, WITHOUT touching the DB per visit, then satisfy every visit
+	// from two batched reads. The per-visit GetProcessNodeRuntime +
+	// ListActiveLinesideBuckets were 2 queries per active consume claim
+	// plant-wide, on the one connection store.Open allows.
+	//
+	// Visits are collected with their MULTIPLICITY preserved, not deduplicated by
+	// node: the original recomputed the node total on every visit and added it to
+	// each of that claim's payloads, so a node reached by two claims contributed
+	// twice. Deduplicating here would silently change the sums.
+	type visit struct {
+		nodeID   int64
+		payloads []string
+	}
+	var visits []visit
+	nodeIDs := make([]int64, 0, 8)
 	_ = processes.WalkClaims(s.db.DB, processes.WalkOpts{
 		ActiveOnly:  true,
 		Role:        protocol.ClaimRoleConsume,
@@ -557,20 +592,49 @@ func (s *StationService) activePayloadLineside() map[string]int {
 		if ctx.Node.ID == 0 {
 			return false
 		}
-		total := 0
-		if rt, err := s.db.GetProcessNodeRuntime(ctx.Node.ID); err == nil && rt != nil {
-			total += rt.RemainingUOPCached
+		payloads := ctx.Claim.AllowedPayloads()
+		if len(payloads) == 0 {
+			return false
 		}
-		if buckets, err := s.db.ListActiveLinesideBuckets(ctx.Node.ID); err == nil {
-			for _, b := range buckets {
-				total += b.Qty
-			}
-		}
-		for _, p := range ctx.Claim.AllowedPayloads() {
-			out[p] += total
-		}
+		visits = append(visits, visit{nodeID: ctx.Node.ID, payloads: payloads})
+		nodeIDs = append(nodeIDs, ctx.Node.ID)
 		return false // collect all
 	})
+	if len(visits) == 0 {
+		return out
+	}
+
+	// Best-effort, matching the per-node calls this replaces: a read error there
+	// contributed 0 for that node. A failed batch contributes 0 for every node,
+	// which is a wider blast radius, so it is logged rather than silent.
+	runtimes, err := processes.RuntimesForNodes(s.db.DB, nodeIDs)
+	if err != nil {
+		log.Printf("station view: lineside runtime batch failed, lineside totals will read low: %v", err)
+	}
+	buckets, err := lineside.ListActiveForNodes(s.db.DB, nodeIDs)
+	if err != nil {
+		log.Printf("station view: lineside bucket batch failed, lineside totals will read low: %v", err)
+	}
+
+	totals := make(map[int64]int, len(nodeIDs))
+	for _, id := range nodeIDs {
+		if _, done := totals[id]; done {
+			continue
+		}
+		total := 0
+		if rt := runtimes[id]; rt != nil {
+			total += rt.RemainingUOPCached
+		}
+		for _, b := range buckets[id] {
+			total += b.Qty
+		}
+		totals[id] = total
+	}
+	for _, v := range visits {
+		for _, p := range v.payloads {
+			out[p] += totals[v.nodeID]
+		}
+	}
 	return out
 }
 
