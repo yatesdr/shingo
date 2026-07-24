@@ -86,10 +86,39 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return nil
 	}
 
+	resolvedSteps, st := d.prepareComplexSteps(order)
+	if st.done {
+		return st.err
+	}
+
+	if st := d.applySwapGates(order, resolvedSteps); st.done {
+		return st.err
+	}
+
+	if st := d.reserveComplexDestination(order, resolvedSteps); st.done {
+		return st.err
+	}
+
+	if st := d.acquireComplexSources(order, resolvedSteps); st.done {
+		return st.err
+	}
+
+	return d.dispatchComplexToFleet(order, resolvedSteps)
+}
+
+// prepareComplexSteps re-resolves and widens the order's stored steps (Phase A),
+// persisting any changes, and returns the resolved slice for the later phases to
+// read. It owns the re-resolution state machine: NGRP re-resolve (buried→replay /
+// capacity→queue / other→fail), supply-pickup widening (found / wait / reshuffle /
+// structural-fail), the persist-changed-steps + endpoint re-extract block, and the
+// dedicated-loader placement. done=true means the order was parked or terminalized
+// here and the orchestrator returns st.err verbatim; on done=false the returned
+// slice is the single source of truth the read-only phases B–E consume.
+func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, dispatchStep) {
 	var resolvedSteps []resolvedStep
 	if err := json.Unmarshal([]byte(order.StepsJSON), &resolvedSteps); err != nil {
 		d.failOrderInternal(order, "invalid_steps", fmt.Sprintf("parse stored steps: %v", err))
-		return err
+		return nil, dispatchStep{done: true, err: err}
 	}
 
 	// Round-3 follow-up: re-resolve any step that still references an
@@ -111,17 +140,17 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 			buriedErr := payload.(*BuriedError)
 			d.dbg("complex: order %d buried at replay — bin %d in lane %d", order.ID, buriedErr.Bin.ID, buriedErr.LaneID)
 			d.handleComplexBuriedOnReplay(order, buriedErr)
-			return rerr
+			return nil, dispatchStep{done: true, err: rerr}
 		case ResolutionCapacity:
 			capDetail := capacityDetailFrom(payload)
 			code := queueCodeForCapacity(capDetail.kindOf())
 			d.setQueueReason(order, code, "ngrp-resolve",
 				queueParamsForCapacity(capDetail, order.PayloadCode, order.DeliveryNode))
 			d.dbg("complex: order %d still capacity-blocked at NGRP resolution: %s", order.ID, code)
-			return rerr
+			return nil, dispatchStep{done: true, err: rerr}
 		default:
 			d.failOrderInternal(order, "invalid_steps", rerr.Error())
-			return rerr
+			return nil, dispatchStep{done: true, err: rerr}
 		}
 	}
 
@@ -175,12 +204,12 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		case OutcomeWait:
 			d.setQueueReason(order, hold.QueueCode, hold.QueueCause, hold.QueueParams)
 			d.dbg("complex: order %d supply pickup waiting for material (%s)", order.ID, hold.QueueCause)
-			return fmt.Errorf("supply pickup waiting for material: %s", hold.QueueCause)
+			return nil, dispatchStep{done: true, err: fmt.Errorf("supply pickup waiting for material: %s", hold.QueueCause)}
 		case OutcomeReshuffle:
 			d.dbg("complex: order %d supply pickup buried at widen — bin %d in lane %d",
 				order.ID, hold.Buried.Bin.ID, hold.Buried.LaneID)
 			d.handleComplexBuriedOnReplay(order, hold.Buried)
-			return fmt.Errorf("supply pickup buried; reshuffle planned")
+			return nil, dispatchStep{done: true, err: fmt.Errorf("supply pickup buried; reshuffle planned")}
 		case OutcomeFound:
 			// Impossible: widenSupplyPickups only holds non-Found results.
 			// Fail structurally rather than silently dispatching a plan whose
@@ -197,7 +226,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 				detail = hold.Err.Error()
 			}
 			d.failOrderInternal(order, code, detail)
-			return fmt.Errorf("supply pickup structural: %s", detail)
+			return nil, dispatchStep{done: true, err: fmt.Errorf("supply pickup structural: %s", detail)}
 		}
 	}
 
@@ -211,19 +240,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// widening) — a resolution-time read, so the swap supply leg is never gated.
 	d.placeForDedicatedLoader(order, resolvedSteps)
 
-	if st := d.applySwapGates(order, resolvedSteps); st.done {
-		return st.err
-	}
-
-	if st := d.reserveComplexDestination(order, resolvedSteps); st.done {
-		return st.err
-	}
-
-	if st := d.acquireComplexSources(order, resolvedSteps); st.done {
-		return st.err
-	}
-
-	return d.dispatchComplexToFleet(order, resolvedSteps)
+	return resolvedSteps, dispatchStep{}
 }
 
 // acquireComplexSources secures the source bins (Phase D): transition the order
