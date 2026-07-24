@@ -94,6 +94,19 @@
                 </fieldset>
 
                 <fieldset class="fieldset-card">
+                    <legend class="fieldset-legend">CATID Auto-Arm</legend>
+                    <div class="form-group">
+                        <label>On a confirmed part (CATID) change</label>
+                        <select id="changeover-auto-arm" class="form-input">
+                            <option value="auto" {{if eq .ActiveProcess.ChangeoverAutoArm "auto"}}selected{{end}}>Auto-start the changeover to the matched style</option>
+                            <option value="prompt" {{if eq .ActiveProcess.ChangeoverAutoArm "prompt"}}selected{{end}}>Prompt the operator only (no auto-start)</option>
+                            <option value="off" {{if eq .ActiveProcess.ChangeoverAutoArm "off"}}selected{{end}}>Off (do nothing)</option>
+                        </select>
+                        <span class="form-hint">Auto (the default) starts the changeover automatically once the press's live CATID has held a new value that maps to a configured style's expected CATID for at least 60s. It is inert where no style has an expected CATID (nothing to match). Prompt keeps the operator in the loop; Off silences both.</span>
+                    </div>
+                </fieldset>
+
+                <fieldset class="fieldset-card">
                     <legend class="fieldset-legend">Styles</legend>
                     {{if and .ProcessStyles (not .ActiveProcess.ActiveStyleID)}}
                     <div class="alert alert-warn" style="margin:0 0 0.75rem 0; padding:0.5rem 0.75rem; background:var(--warn-bg, #fff3cd); border:1px solid var(--warn-border, #ffe69c); border-radius:4px; font-size:0.9rem;">

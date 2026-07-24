@@ -308,6 +308,13 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.CATIDChangePromptEvent); ok {
 				sseEvt = SSEEvent{Type: "catid-change-prompt", Data: p}
 			}
+		case engine.EventCATIDAutoArmed:
+			// B1 auto-arm: the monitor already STARTED a changeover to the mapped
+			// style on a stable part change. Notify the station so the operator
+			// knows it happened (the changeover is already under way).
+			if p, ok := evt.Payload.(engine.CATIDAutoArmedEvent); ok {
+				sseEvt = SSEEvent{Type: "catid-auto-armed", Data: p}
+			}
 		default:
 			return
 		}

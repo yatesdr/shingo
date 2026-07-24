@@ -93,10 +93,18 @@ const (
 	// 2026-07-23). It PROMPTS the operator to start a changeover — pre-filling
 	// the target style when the new part's CATID maps to a known style's
 	// expected_catid — but never starts one: the operator still confirms
-	// through the existing Start Changeover flow. Full auto-arm (starting the
-	// changeover without the prompt) stays OUT until a live cutover confirms the
-	// tag flips cleanly, so nothing here calls StartProcessChangeover.
+	// through the existing Start Changeover flow. Raised only for processes whose
+	// changeover_auto_arm mode is `prompt`; `auto` processes auto-start instead
+	// (EventCATIDAutoArmed) and `off` processes do neither.
 	EventCATIDChangePrompt
+
+	// EventCATIDAutoArmed fires when the CATID monitor AUTO-STARTS a changeover on
+	// a stable, confirmed part change (B1 auto-arm, changeover_auto_arm=auto).
+	// Sibling of EventCATIDChangePrompt: where the prompt asks the operator to act,
+	// this announces the system already started the changeover to the mapped style,
+	// so the HMI can raise a station notification. It never cancels or re-plans —
+	// it is the notification for an authorized auto-START.
+	EventCATIDAutoArmed
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -330,6 +338,19 @@ type CATIDChangePromptEvent struct {
 	HasTarget       bool   `json:"has_target"`
 	TargetStyleID   int64  `json:"target_style_id"`
 	TargetStyleName string `json:"target_style_name"`
+}
+
+// CATIDAutoArmedEvent announces an auto-started changeover: the press's part
+// changed to NewCATID, which maps to TargetStyle, and the monitor started the
+// changeover automatically (changeover_auto_arm=auto). Purely a notification for
+// the operator station — the changeover itself is already under way.
+type CATIDAutoArmedEvent struct {
+	eventbus.PayloadBase
+	ProcessID       int64  `json:"process_id"`
+	ProcessName     string `json:"process_name"`
+	TargetStyleID   int64  `json:"target_style_id"`
+	TargetStyleName string `json:"target_style_name"`
+	NewCATID        string `json:"new_catid"`
 }
 
 // DeliveredNotBoundEvent carries the detail for a delivery that arrived at one
