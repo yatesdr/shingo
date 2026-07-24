@@ -21,11 +21,13 @@ func captureDeliveredNotBound(eng *Engine) *[]DeliveredNotBoundEvent {
 	return &alarms
 }
 
-// TestDeliveredNotBound_MultiBinRaisesAlarm pins P2-C3: a multi-bin delivery to
-// a node we own (ProcessNodeID set, envelope BinID nil — the F1b gap) no longer
-// no-ops silently. It raises a named EventDeliveredNotBound and stays alarm-only:
-// nothing binds (F1b is out of scope). The alarm names the node and carries the
-// operator's front-door instruction.
+// TestDeliveredNotBound_MultiBinRaisesAlarm pins P2-C3 as the F1b BACKSTOP:
+// a multi-bin delivery to a node we own with envelope BinID nil means Core
+// resolved no order_bin to this process node (F1b's no-match path). It is not a
+// routine multi-tote delivery — those now carry a BinID + BinDestNode and bind
+// (see TestF1b_MultiToteDelivered_Binds). This case must still raise a named
+// EventDeliveredNotBound and bind nothing: the alarm names the node and carries
+// the operator's front-door instruction.
 func TestDeliveredNotBound_MultiBinRaisesAlarm(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -70,6 +72,63 @@ func TestDeliveredNotBound_MultiBinRaisesAlarm(t *testing.T) {
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.ActiveBinID != nil {
 		t.Errorf("ActiveBinID = %v, want nil (multi-bin stays alarm-only, F1b open)", rt.ActiveBinID)
+	}
+}
+
+// TestF1b_MultiToteDelivered_Binds proves F1b end to end on Edge: a multi-tote
+// delivery carries the consuming node's bin id + Core's per-bin BinDestNode, and
+// the runtime binds THAT bin at the count snapshot — even though the envelope's
+// DeliveryNode names a different node (the swap's last dropoff, the supermarket).
+// This is the flip of the P2-C3 backstop: with a resolved bin, no alarm fires and
+// ticks land on the delivered carrier instead of piling in pending_uop_delta.
+func TestF1b_MultiToteDelivered_Binds(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "MB-BIND", PayloadCode: "PART-MBB", UOPCapacity: 300, InitialUOP: 0,
+	})
+	// Start unbound — the SNF3 staged-but-unbound window.
+	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(nodeID, nil), "clear active bin")
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "get node")
+
+	const uuid = "uuid-f1b-multitote"
+	const supplyBinID int64 = 733
+	// Complex order — a multi-tote swap. Its final dropoff is the supermarket
+	// (the evac leg), NOT this node, so the pre-F1b steps gate would no-op the
+	// supply bin. The DeliveryNode below is that lossy last-dropoff; BinDestNode
+	// overrides it with Core's per-bin resolution.
+	orderID, err := db.CreateOrder(uuid, orders.TypeComplex, &nodeID, false, 1,
+		"SUPERMARKET-OUT", "", "", "", false, "PART-MBB")
+	testutil.MustNoErr(t, err, "create order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "set in_transit")
+
+	eng := testEngineWithOrderBridge(t, db)
+	alarms := captureDeliveredNotBound(eng)
+
+	const snapshotUOP = 220
+	bid := supplyBinID
+	uop := snapshotUOP
+	// deliveryNode = lossy last-dropoff (supermarket); binDestNode = the consuming
+	// node Core resolved for this bin. The bind must follow binDestNode.
+	testutil.MustNoErr(t,
+		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "multi-tote delivery", nil, &bid, &uop, 9, "SUPERMARKET-OUT", node.CoreNodeName),
+		"handle multi-tote delivered")
+
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "get runtime")
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != supplyBinID {
+		t.Errorf("ActiveBinID = %v, want %d (multi-tote supply bin bound via BinDestNode)", rt.ActiveBinID, supplyBinID)
+	}
+	if rt.RemainingUOPCached != snapshotUOP {
+		t.Errorf("RemainingUOPCached = %d, want %d (bound at the delivered snapshot)", rt.RemainingUOPCached, snapshotUOP)
+	}
+	if rt.ActiveBinEpoch != 9 {
+		t.Errorf("ActiveBinEpoch = %d, want 9 (epoch from the delivered envelope)", rt.ActiveBinEpoch)
+	}
+	// Resolved bin → no backstop alarm.
+	if len(*alarms) != 0 {
+		t.Errorf("alarms = %d, want 0 (a bound multi-tote delivery is not a not-bound alarm): %+v", len(*alarms), *alarms)
 	}
 }
 
@@ -158,7 +217,7 @@ func TestDeliveredNotBound_ChangeoverAutoConfirmBindsNotSilent(t *testing.T) {
 	bid := binID
 	uop := snapshotUOP
 	testutil.MustNoErr(t,
-		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "changeover auto-confirm delivery", nil, &bid, &uop, 4, node.CoreNodeName),
+		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "changeover auto-confirm delivery", nil, &bid, &uop, 4, node.CoreNodeName, ""),
 		"handle delivered")
 
 	// Bound (not silent) — active bin + snapshot count.

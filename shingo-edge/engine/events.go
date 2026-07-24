@@ -249,6 +249,14 @@ type OrderDeliveredEvent struct {
 	// the Edge has no order row. handleNodeOrderDelivered uses it as a fallback
 	// to resolve the process node when ProcessNodeID is absent.
 	DeliveryNode string `json:"delivery_node,omitempty"`
+	// BinDestNode is the Core dot-name of the node the carried bin came to rest
+	// at — set ONLY for multi-tote deliveries (F1b), where Core already selected
+	// the one bin destined for the consuming process node. When present,
+	// handleNodeOrderDelivered binds iff BinDestNode == the node's CoreNodeName,
+	// trusting Core's per-bin resolution instead of the steps finalDropoff (which
+	// for a swap names the last leg, not where this bin landed). Empty for
+	// single-bin orders — their existing delivery gate is unchanged.
+	BinDestNode string `json:"bin_dest_node,omitempty"`
 }
 
 // UOPAdjustedEvent is emitted when Core sends an admin-originated UOP

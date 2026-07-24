@@ -73,7 +73,7 @@ func runFailedReleaseRetry(t *testing.T, rollback func(m *orders.Manager, uuid, 
 	bid := newBinID
 	uop := snapshotUOP
 	testutil.MustNoErr(t,
-		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "delivered on retry", nil, &bid, &uop, 7, node.CoreNodeName),
+		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "delivered on retry", nil, &bid, &uop, 7, node.CoreNodeName, ""),
 		"handle delivered on retry")
 
 	// The delivered event fired and bound the runtime to the new bin at the

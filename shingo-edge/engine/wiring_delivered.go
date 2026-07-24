@@ -8,8 +8,10 @@
 // matches a process_node we own, the runtime cache (active_bin_id,
 // active_bin_epoch, remaining_uop_cached) flips to the delivered bin's
 // authoritative UOP carried on the OrderDelivered envelope. Removal-shaped
-// orders (DeliveryNode is the supermarket) and multi-bin orders (BinID
-// nil at the envelope) no-op out — DeliveryNode == CoreNodeName is the gate.
+// orders (DeliveryNode is the supermarket) no-op out. Single-bin orders gate
+// on DeliveryNode / steps finalDropoff == CoreNodeName; multi-tote deliveries
+// (F1b) carry Core's per-bin BinDestNode and gate on that. A multi-bin
+// delivery with no per-bin id resolved (BinID nil) hits the backstop alarm.
 //
 // This is the "physics → cache" half of the runtime UOP binding split.
 // Operator-semantic events (StatusConfirmed) no longer touch the cache;
@@ -31,8 +33,12 @@ import (
 // bin's authoritative uop_remaining. Gates on:
 //
 //   - ProcessNodeID present and resolvable.
-//   - BinID present (multi-bin orders defer to the bucket-delta path).
-//   - Order's DeliveryNode equals the process node's CoreNodeName
+//   - BinID present. For single-bin orders Core always carries it by delivery;
+//     for multi-tote orders (F1b) Core selects the bin destined for the
+//     consuming node and carries it plus BinDestNode. BinID nil on a multi-bin
+//     delivery means Core resolved no bin to this node — the backstop alarm.
+//   - The carried bin landed at this node: BinDestNode == CoreNodeName for
+//     multi-tote; steps finalDropoff / DeliveryNode == CoreNodeName otherwise
 //     (removal-shaped orders flow through this event too — Order B in
 //     two-robot consume delivers to the supermarket — but their slot
 //     accounting is owned by the supply leg's delivery, not theirs).
@@ -56,13 +62,13 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 			// bind — the legitimate fallback path, not a silent skip.
 			e.handleFallbackDelivered(delivered)
 		case delivered.ProcessNodeID != nil && delivered.BinID == nil:
-			// Multi-bin delivery to a node we own: the envelope carries no per-bin
-			// id (F1b, still open), so nothing binds here. Single-bin orders always
-			// carry a bin id by delivery, so this is unambiguously the multi-bin
-			// no-op the SNF3 write-up named as a steady-state stranding source. Make
-			// it loud instead of silent — but still bind nothing (F1b is out of
-			// scope; multi-bin stays alarm-only).
-			e.raiseDeliveredNotBound(delivered, "", "multi-bin delivery carried no bin id (F1b open)")
+			// Multi-bin delivery whose envelope carries no per-bin id. Post-F1b
+			// this is the BACKSTOP, not the primary path: Core now selects the bin
+			// destined for the consuming node and ships its id + BinDestNode (bound
+			// below). BinID is nil here only when Core resolved NO order_bin to this
+			// process node — a genuine gap worth naming, not a routine multi-tote
+			// delivery. Alarm, bind nothing.
+			e.raiseDeliveredNotBound(delivered, "", "multi-bin delivery carried no bin id — no bin resolved to this node (F1b backstop)")
 		}
 		return
 	}
@@ -94,7 +100,16 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	// The removal-shaped filter is preserved: a leg ending at a supermarket has a
 	// final dropoff != this node, so it still no-ops.
 	var deliveredHere bool
-	if order.OrderType == protocol.OrderTypeComplex {
+	switch {
+	case delivered.BinDestNode != "":
+		// F1b multi-tote: Core already selected the one bin destined for the
+		// consuming node and shipped its landing node here. Trust that per-bin
+		// resolution — for a multi-dropoff swap the steps finalDropoff names the
+		// LAST leg (the supermarket for the evac tote), not where THIS bin came to
+		// rest, so consulting it would wrongly no-op the supply bin (the SNF3
+		// stranding). Bind iff the carried bin landed at the node we own.
+		deliveredHere = delivered.BinDestNode == node.CoreNodeName
+	case order.OrderType == protocol.OrderTypeComplex:
 		stepsJSON, sErr := e.db.GetOrderStepsJSON(order.ID)
 		if sErr != nil {
 			log.Printf("delivered: order %d — cannot load steps to resolve complex destination: %v", order.ID, sErr)
@@ -110,7 +125,7 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 			return
 		}
 		deliveredHere = dest == node.CoreNodeName
-	} else {
+	default:
 		deliveredHere = order.DeliveryNode == node.CoreNodeName
 	}
 	if !deliveredHere {

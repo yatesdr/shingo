@@ -30,9 +30,13 @@ type LifecycleService struct {
 
 // deliveredSeed is the bin snapshot Core stamps on the OrderDelivered
 // envelope; nil uop means "not provided" (older Core) → role default.
+// binDestNode is set only for multi-tote deliveries (F1b): the Core dot-name of
+// the node the carried bin landed at, so the delivered emit can carry it to the
+// runtime-binding handler.
 type deliveredSeed struct {
-	uop   *int
-	epoch int64
+	uop         *int
+	epoch       int64
+	binDestNode string
 }
 
 func newLifecycleService(db *store.DB, emitter EventEmitter, debug DebugLogFunc) *LifecycleService {
@@ -153,11 +157,12 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 		// absent for force/recovery deliveries → Edge role-default seed.
 		var binUOP *int
 		var binEpoch int64
+		var binDestNode string
 		if v, ok := s.deliveredSeeds.LoadAndDelete(order.ID); ok {
 			seed := v.(deliveredSeed)
-			binUOP, binEpoch = seed.uop, seed.epoch
+			binUOP, binEpoch, binDestNode = seed.uop, seed.epoch, seed.binDestNode
 		}
-		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, binUOP, binEpoch)
+		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, binUOP, binEpoch, binDestNode)
 	}
 	if IsTerminal(newStatus) {
 		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)
@@ -168,7 +173,7 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 	return nil
 }
 
-func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64) error {
+func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64, binDestNode string) error {
 	if stagedExpireAt != nil {
 		if err := s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt); err != nil {
 			log.Printf("lifecycle: update staged_expire_at for order=%d: %v", order.ID, err)
@@ -185,7 +190,7 @@ func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail str
 			log.Printf("update order bin_id: %v", err)
 		}
 	}
-	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, epoch: epoch})
+	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, epoch: epoch, binDestNode: binDestNode})
 	defer s.deliveredSeeds.Delete(order.ID)
 	return s.Transition(order.ID, StatusDelivered, statusDetail)
 }

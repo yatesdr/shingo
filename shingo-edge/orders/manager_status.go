@@ -24,7 +24,7 @@ import (
 // OrderDelivered protocol message. When the order isn't found by UUID (Core-
 // admin manual orders have no Edge row), a fallback bind event is emitted using
 // deliveryNode so the runtime cache can still be updated.
-func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64, deliveryNode string) error {
+func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64, deliveryNode, binDestNode string) error {
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {
 		// Core-admin order — no Edge row. Emit a bind-only fallback event so the
@@ -34,11 +34,11 @@ func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stag
 		}
 		return fmt.Errorf("order %s not found: %w", orderUUID, err)
 	}
-	return m.handleDelivered(order, statusDetail, stagedExpireAt, binID, uop, epoch)
+	return m.handleDelivered(order, statusDetail, stagedExpireAt, binID, uop, epoch, binDestNode)
 }
 
-func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64) error {
-	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, uop, epoch); err != nil {
+func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64, binDestNode string) error {
+	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, uop, epoch, binDestNode); err != nil {
 		return err
 	}
 	if order.AutoConfirm {
@@ -77,8 +77,8 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		return nil
 	case ReplyDelivered:
 		// Dispatch-reply delivery carries no bin snapshot (that rides the
-		// OrderDelivered envelope); pass nil/0 so Edge uses the role default.
-		return m.handleDelivered(order, statusDetail, nil, nil, nil, 0)
+		// OrderDelivered envelope); pass nil/0/"" so Edge uses the role default.
+		return m.handleDelivered(order, statusDetail, nil, nil, nil, 0, "")
 	case ReplyError:
 		return m.TransitionOrder(order.ID, StatusFailed, statusDetail)
 	case ReplySkipped:

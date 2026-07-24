@@ -65,7 +65,7 @@ func (e *capturingEmitter) EmitOrderCompleted(orderID int64, orderUUID string, o
 	e.completed = append(e.completed, string(orderType)+":"+orderUUID)
 }
 
-func (e *capturingEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binEpoch int64) {
+func (e *capturingEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binEpoch int64, binDestNode string) {
 }
 
 func (e *capturingEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binEpoch int64, deliveryNode string) {
@@ -1361,7 +1361,7 @@ func TestHandleDeliveredWithExpiry_StoresStagedExpireAt(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 
 	future := time.Now().UTC().Add(1 * time.Hour)
-	testutil.MustNoErr(t, mgr.HandleDeliveredWithExpiry("uuid-he", "dwell", &future, nil, nil, 0, ""), "HandleDeliveredWithExpiry")
+	testutil.MustNoErr(t, mgr.HandleDeliveredWithExpiry("uuid-he", "dwell", &future, nil, nil, 0, "", ""), "HandleDeliveredWithExpiry")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusDelivered {
 		t.Errorf("Status: got %q, want delivered", o.Status)
@@ -1376,7 +1376,7 @@ func TestHandleDeliveredWithExpiry_MissingOrder(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	err := mgr.HandleDeliveredWithExpiry("missing-uuid", "", nil, nil, nil, 0, "")
+	err := mgr.HandleDeliveredWithExpiry("missing-uuid", "", nil, nil, nil, 0, "", "")
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}
