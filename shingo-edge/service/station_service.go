@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"log"
 	"strings"
+	"sync"
+	"time"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -66,7 +68,22 @@ type StationService struct {
 	// core node name. Optional: nil leaves StrandedAlarm empty. The engine injects
 	// the live resolver (its strandedAlarms map) via SetStrandedResolver.
 	stranded func(coreNodeName string) string
+
+	// touched throttles the liveness write — see Touch.
+	touchMu sync.Mutex
+	touched map[int64]touchState
 }
+
+type touchState struct {
+	status string
+	at     time.Time
+}
+
+// touchThrottle is how stale last_seen_at is allowed to get while a board keeps
+// polling. Well under any human's sense of "is that screen alive", and the
+// column has no behavioural consumer — nothing reaps or alarms on it, it is
+// surfaced for display only.
+const touchThrottle = 15 * time.Second
 
 // NewStationService constructs a StationService wrapping the shared
 // *store.DB. The loader resolver is wired separately via SetLoaderResolver so
@@ -672,7 +689,30 @@ func (s *StationService) Delete(id int64) error {
 }
 
 // Touch updates last_seen_at and health_status.
+//
+// Throttled, because it is called on EVERY operator-station view request —
+// including every request that merely joined an already-running build — and it is
+// a WRITE on the single connection store.Open allows, so it queues ahead of the
+// reads the boards are waiting on. Five boards polling produced a write per poll
+// for a column nothing behaves on.
+//
+// A status CHANGE always writes through immediately; only the repeated
+// same-status refresh is collapsed. Worst case last_seen_at trails reality by
+// touchThrottle while a board is polling steadily.
 func (s *StationService) Touch(id int64, healthStatus string) error {
+	s.touchMu.Lock()
+	if s.touched == nil {
+		s.touched = make(map[int64]touchState)
+	}
+	prev, seen := s.touched[id]
+	if seen && prev.status == healthStatus && time.Since(prev.at) < touchThrottle {
+		s.touchMu.Unlock()
+		return nil
+	}
+	// Record before the write so a slow or failing write cannot turn into a
+	// tight retry loop on the hot path.
+	s.touched[id] = touchState{status: healthStatus, at: time.Now()}
+	s.touchMu.Unlock()
 	return s.db.TouchOperatorStation(id, healthStatus)
 }
 

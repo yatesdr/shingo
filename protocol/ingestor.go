@@ -43,7 +43,13 @@ func (ing *Ingestor) dbg(format string, args ...any) {
 
 // HandleRaw is the entry point for raw message bytes from the messaging layer.
 func (ing *Ingestor) HandleRaw(data []byte) {
-	ing.dbg("raw: size=%d data=%s", len(data), truncateBytes(data, 1024))
+	// rawPreviewBytes, not 1 KB. This fires for EVERY inbound message, and on the
+	// edge that log lands on the Pi's SD card. Node-list and plant-claims payloads
+	// run to several KB each, so a handful of them dominated the edge debug log
+	// (measured ~22.7 MB/day at Springfield). A short prefix is enough to identify
+	// a message and correlate it — size= already gives the true length, and the
+	// decoded envelope is logged by the handlers below when it matters.
+	ing.dbg("raw: size=%d data=%s", len(data), truncateBytes(data, rawPreviewBytes))
 
 	// Verify signature if signing is enabled
 	inner, err := VerifyAndUnwrap(data, ing.SigningKey)
@@ -91,6 +97,10 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 		ing.Dispatch(&env)
 	}
 }
+
+// rawPreviewBytes is how much of an inbound message body HandleRaw previews.
+// Deliberately small — see the note at the call site.
+const rawPreviewBytes = 160
 
 func truncateBytes(data []byte, maxLen int) string {
 	if len(data) == 0 {
