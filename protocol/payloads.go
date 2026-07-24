@@ -978,10 +978,13 @@ type UOPAdjustment struct {
 	// destination held no other bin, so Edge binds ahead of its active-bin guard
 	// and overwrites any stale pointer. Older Edges ignore the field.
 	Bound bool `json:"bound,omitempty"`
-	// Epoch carries the moved bin's delta_epoch for the Bound path so the
-	// destination seeds active_bin_epoch correctly and subsequent BinUOPDeltas
-	// carry the right generation for Core's epoch-aware dedup. Meaningful only
-	// when Bound; zero on the Released / legacy-adjustment paths.
+	// Epoch carries the bin's delta_epoch so a bind seeds active_bin_epoch
+	// correctly and subsequent BinUOPDeltas carry the right generation for
+	// Core's epoch-aware dedup. Set on the Bound path (admin Move onto a node)
+	// and on a plain count correction (record_count): when the correction lands
+	// on a staged-but-unbound bin, Edge binds it with this epoch (P2-C5), so the
+	// resumed delta stream is accepted instead of dropped as epoch-0. Zero on
+	// the Released path and from older Cores.
 	Epoch int64 `json:"epoch,omitempty"`
 }
 

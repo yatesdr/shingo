@@ -313,18 +313,24 @@ func (h *Handlers) binRecordCount(b *domain.Bin, params json.RawMessage) error {
 	}
 	h.emitBinUpdate(b, "counted", "")
 
-	// Broadcast the corrected UOP to every Edge station. Only the station
-	// whose operator screen currently has this bin active applies it — Edge
-	// guards on active_bin_id and no-ops everywhere else. This mirrors the
+	// Broadcast the corrected UOP to every Edge station. The station that
+	// models this Core node applies it: if the bin is already bound there it
+	// updates the count; if the bin is staged-but-unbound (the SNF3 detachment,
+	// where a delivered bin never bound so its ticks stranded), the correction
+	// now BINDS it with the corrected value (P2-C5). Epoch carries the bin's
+	// delta_epoch so that bind seeds active_bin_epoch correctly and the resumed
+	// BinUOPDeltas carry the right generation for Core's epoch-aware dedup —
+	// without it a freshly bound bin would emit epoch-0 deltas that Core drops,
+	// re-detaching the very stream this correction is meant to reconnect. Every
+	// other station no-ops (it doesn't model this Core node). This mirrors the
 	// broadcast pattern already used for SubjectNodeStructureChanged: a
 	// node-scoped change Core shouldn't try to pre-resolve to one station.
-	// (The first cut used GetEffectiveStations, which returns nil for
-	// "all"-mode nodes and so silently propagated to nobody.)
 	if b.NodeID != nil {
 		if err := h.orchestration.SendDataToEdge(protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
 			BinID:        b.ID,
 			CoreNodeName: b.NodeName,
 			NewRemaining: res.Actual,
+			Epoch:        b.DeltaEpoch,
 			Actor:        actor,
 			AdjustedAt:   time.Now().UTC(),
 		}); err != nil {
