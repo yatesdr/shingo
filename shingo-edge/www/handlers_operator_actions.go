@@ -9,10 +9,31 @@ package www
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"shingoedge/domain"
+	"shingoedge/engine"
 )
+
+// writeMaterialRequestError turns a material-request refusal into a response the
+// operator station can act on. An armed-changeover block (ChangeoverArmedError)
+// ships an inline "abandon changeover" exit carrying the process's cancel URL,
+// so the operator can clear it and retry without a refresh; every other refusal
+// is a plain error (2026-07-24).
+func writeMaterialRequestError(w http.ResponseWriter, err error) {
+	var armed *engine.ChangeoverArmedError
+	if errors.As(err, &armed) {
+		writeErrorWithExit(w, http.StatusBadRequest, armed.Error(), actionExit{
+			Kind:  "abandon_changeover",
+			URL:   fmt.Sprintf("/api/processes/%d/changeover/cancel", armed.ProcessID),
+			Label: "Abandon changeover to " + armed.ToStyleName,
+		})
+		return
+	}
+	writeError(w, http.StatusBadRequest, err.Error())
+}
 
 func (h *Handlers) apiRequestNodeMaterial(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
@@ -22,7 +43,7 @@ func (h *Handlers) apiRequestNodeMaterial(w http.ResponseWriter, r *http.Request
 	}
 	result, err := h.orchestration.RequestNodeMaterial(id, 1)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeMaterialRequestError(w, err)
 		return
 	}
 	writeJSONWithTrigger(w, r, result, "refreshMaterial")
@@ -131,7 +152,7 @@ func (h *Handlers) apiRequestProduceSwap(w http.ResponseWriter, r *http.Request)
 	}
 	result, err := h.orchestration.RequestProduceSwap(id)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeMaterialRequestError(w, err)
 		return
 	}
 	writeJSONWithTrigger(w, r, result, "refreshMaterial")

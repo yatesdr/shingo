@@ -28,6 +28,25 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+// actionExit is an inline recovery action attached to a refusal so the client
+// can offer it — and then retry the original request — instead of dead-ending.
+// Kind identifies the action for the client; URL is POSTed with an empty body
+// to take it; Label is the button text.
+type actionExit struct {
+	Kind  string `json:"kind"`
+	URL   string `json:"url"`
+	Label string `json:"label"`
+}
+
+// writeErrorWithExit writes an error body that also carries an inline exit
+// action, so a refusal the operator can recover from renders a button rather
+// than a plain toast.
+func writeErrorWithExit(w http.ResponseWriter, status int, msg string, exit actionExit) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]any{"error": msg, "exit": exit})
+}
+
 func parseID(r *http.Request, param string) (int64, error) {
 	s := chi.URLParam(r, param)
 	return strconv.ParseInt(s, 10, 64)

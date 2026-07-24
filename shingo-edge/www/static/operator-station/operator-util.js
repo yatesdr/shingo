@@ -113,6 +113,42 @@ export function showToast(msg, type, opts) {
     return toast;
 }
 
+// showExitToast renders a sticky refusal with an inline recovery button. The
+// button runs onAction — which typically takes the exit (e.g. abandon the
+// changeover) and retries the original request — then dismisses the toast. The
+// × lets the operator ignore the exit and leave the refusal on screen.
+export function showExitToast(msg, actionLabel, onAction) {
+    const toast = el('div', { className: 'os-toast-msg error sticky' });
+    while (toastContainer.children.length >= 3) {
+        toastContainer.firstChild.remove();
+    }
+    const text = el('span', { textContent: msg });
+    const action = el('button', {
+        className: 'os-toast-action',
+        textContent: actionLabel,
+        type: 'button',
+    });
+    action.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        action.disabled = true;
+        try { await onAction(); } finally { toast.remove(); }
+    });
+    const close = el('button', {
+        className: 'os-toast-close',
+        textContent: '×',
+        type: 'button',
+    });
+    close.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toast.remove();
+    });
+    toast.appendChild(text);
+    toast.appendChild(action);
+    toast.appendChild(close);
+    toastContainer.appendChild(toast);
+    return toast;
+}
+
 // postAction is the single POST→refresh path. Returns true on 2xx.
 // Caller passes its own loadView callback so this module stays free of
 // state/view dependencies.
@@ -125,14 +161,27 @@ export async function postAction(url, body, loadView) {
         });
         if (!res.ok) {
             const text = await res.text();
-            let msg;
-            try { msg = JSON.parse(text).error || text; } catch { msg = text; }
+            let parsed = null;
+            try { parsed = JSON.parse(text); } catch { parsed = null; }
+            let msg = (parsed && parsed.error) || text;
             // chi's default unmatched-route response is a bare "404 page
             // not found". That happens when the URL was built with a
             // missing/zero param (e.g. confirm-delivery/0 from a half-built
             // complex order). Map it to an actionable message instead.
             if (res.status === 404) {
                 msg = 'Order not found — refresh and try again';
+            }
+            // A refusal may carry an inline exit (e.g. an armed changeover
+            // blocking a material request). Offer it as a button: taking it
+            // runs the exit action and then re-issues THIS same request, so the
+            // operator recovers without a page refresh or restart.
+            const exit = parsed && parsed.exit;
+            if (exit && exit.url && exit.label) {
+                showExitToast(msg, exit.label, async () => {
+                    const took = await postAction(exit.url, {}, null);
+                    if (took) await postAction(url, body, loadView);
+                });
+                return false;
             }
             showToast(msg, 'error');
             return false;

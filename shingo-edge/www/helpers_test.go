@@ -92,6 +92,10 @@ type stubEngine struct {
 	lastAbandonAcceptHalf bool
 	abandonErr            error
 
+	// requestProduceSwapErr, when set, is returned by RequestProduceSwap so a
+	// handler test can drive the armed-changeover exit path.
+	requestProduceSwapErr error
+
 	gateCanComplete bool
 	gateBlockers    []domain.Blocker
 	gateErr         error
@@ -152,7 +156,9 @@ func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition
 	s.lastReleaseStagedOrdersDisposition = &d
 	return nil
 }
-func (s *stubEngine) RequestProduceSwap(int64) (*engine.NodeOrderResult, error)         { return nil, nil }
+func (s *stubEngine) RequestProduceSwap(int64) (*engine.NodeOrderResult, error) {
+	return nil, s.requestProduceSwapErr
+}
 func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem) error { return nil }
 func (s *stubEngine) ClearBin(int64, string) error                                      { return nil }
 func (s *stubEngine) ClearLoaderHome(int64) error                                       { return nil }

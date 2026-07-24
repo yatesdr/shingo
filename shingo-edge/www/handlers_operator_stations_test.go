@@ -1,12 +1,15 @@
 package www
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 
 	"shingo/protocol/testutil"
+	"shingoedge/engine"
 	"shingoedge/store"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -662,6 +665,45 @@ func TestOperatorStations_RequestNodeMaterial_InvalidID(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/process-nodes/bad/request", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "invalid node id")
+}
+
+// TestOperatorStations_RequestProduceSwap_ArmedChangeoverOffersExit proves the
+// handler turns an armed-changeover refusal into an actionable response: the
+// body carries the operator sentence plus an inline "abandon changeover" exit
+// with the process's cancel URL and a labelled button, so the station can offer
+// recovery instead of a dead-end toast (2026-07-24).
+func TestOperatorStations_RequestProduceSwap_ArmedChangeoverOffersExit(t *testing.T) {
+	h, router := newOperatorStationsRouter(t)
+	h.orchestration.(*stubEngine).requestProduceSwapErr = &engine.ChangeoverArmedError{
+		ProcessID: 7, ToStyleName: "KK21", OutgoingStyle: "LK41",
+	}
+
+	resp := doRequest(t, router, "POST", "/api/process-nodes/1/finalize", nil, nil)
+	assertStatus(t, resp, http.StatusBadRequest)
+
+	defer resp.Body.Close()
+	var body struct {
+		Error string `json:"error"`
+		Exit  struct {
+			Kind  string `json:"kind"`
+			URL   string `json:"url"`
+			Label string `json:"label"`
+		} `json:"exit"`
+	}
+	testutil.MustNoErr(t, json.NewDecoder(resp.Body).Decode(&body), "decode exit response")
+
+	if !strings.Contains(body.Error, "abandon") || !strings.Contains(body.Error, "KK21") {
+		t.Errorf("error = %q, want the armed-changeover message naming the target", body.Error)
+	}
+	if body.Exit.Kind != "abandon_changeover" {
+		t.Errorf("exit.kind = %q, want abandon_changeover", body.Exit.Kind)
+	}
+	if body.Exit.URL != "/api/processes/7/changeover/cancel" {
+		t.Errorf("exit.url = %q, want the process cancel URL", body.Exit.URL)
+	}
+	if !strings.Contains(body.Exit.Label, "KK21") {
+		t.Errorf("exit.label = %q, want it to name the target style", body.Exit.Label)
+	}
 }
 
 func TestOperatorStations_ReleaseNodeEmpty_Success(t *testing.T) {
