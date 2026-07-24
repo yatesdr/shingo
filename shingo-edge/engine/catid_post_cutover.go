@@ -11,6 +11,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -31,10 +32,13 @@ func (e *Engine) openPostCutoverVerify(processID, changeoverID int64) {
 		return
 	}
 	style, err := e.db.GetStyle(*proc.ActiveStyleID)
-	if err != nil || style == nil || style.ExpectedCATID == "" {
+	if err != nil || style == nil {
 		return
 	}
-	e.catidMon.openPostCutoverVerify(processID, changeoverID, style.ID, style.ExpectedCATID,
+	if len(e.styleCATIDSet(style)) == 0 {
+		return // no configured/derivable parts ⇒ nothing to verify against
+	}
+	e.catidMon.openPostCutoverVerify(processID, changeoverID, style.ID,
 		time.Now().Add(postCutoverVerifyWindow))
 }
 
@@ -46,42 +50,56 @@ type PostCutoverFlag struct {
 	ExpectedStyleID   int64  `json:"expected_style_id"`
 	ExpectedStyleName string `json:"expected_style_name"`
 	LiveCATID         string `json:"live_catid"`
-	MappedStyleID     int64  `json:"mapped_style_id,omitempty"`
-	MappedStyleName   string `json:"mapped_style_name,omitempty"`
-	HasMapped         bool   `json:"has_mapped"`
-	Message           string `json:"message"`
+	// MappedStyle is set only when the live part maps to EXACTLY ONE style, so the
+	// station can offer a one-tap corrective changeover. When the part maps to more
+	// than one, Candidates names them and HasMapped is false.
+	MappedStyleID   int64            `json:"mapped_style_id,omitempty"`
+	MappedStyleName string           `json:"mapped_style_name,omitempty"`
+	HasMapped       bool             `json:"has_mapped"`
+	Candidates      []CATIDCandidate `json:"candidates,omitempty"`
+	Message         string           `json:"message"`
 }
 
 // PostCutoverFlag returns the process's active post-cutover verification flag, or
 // (nil, false) when none. ExpectedStyle is the style the changeover was set to;
-// MappedStyle is the style the live part id actually matches when it maps to one
-// (enabling a one-tap corrective changeover). Message is the operator prompt.
+// the live part is resolved against every style's CATID set — exactly one match
+// gives a one-tap corrective changeover, more than one names the candidates, none
+// points the operator at the part-id config. Message is the operator prompt.
 func (e *Engine) PostCutoverFlag(processID int64) (*PostCutoverFlag, bool) {
 	co, err := e.db.LatestFlaggedChangeover(processID)
 	if err != nil || co == nil {
 		return nil, false
 	}
 	expectedName := e.styleName(co.ToStyleID)
-	mappedID, mappedName, hasMapped := e.styleForCATID(processID, co.VerifyLiveCATID)
+	matches := e.stylesForCATID(processID, co.VerifyLiveCATID)
 
-	msg := fmt.Sprintf("This changeover was set to %s, but the press is reporting %s",
-		expectedName, co.VerifyLiveCATID)
-	if hasMapped {
-		msg += fmt.Sprintf(" (%s)", mappedName)
-	}
-	msg += " — please confirm."
-
-	return &PostCutoverFlag{
+	flag := &PostCutoverFlag{
 		ChangeoverID:      co.ID,
 		ProcessID:         processID,
 		ExpectedStyleID:   co.ToStyleID,
 		ExpectedStyleName: expectedName,
 		LiveCATID:         co.VerifyLiveCATID,
-		MappedStyleID:     mappedID,
-		MappedStyleName:   mappedName,
-		HasMapped:         hasMapped,
-		Message:           msg,
-	}, true
+	}
+	msg := fmt.Sprintf("This changeover was set to %s, but the press is reporting %s",
+		expectedName, co.VerifyLiveCATID)
+	switch len(matches) {
+	case 1:
+		flag.HasMapped = true
+		flag.MappedStyleID = matches[0].ID
+		flag.MappedStyleName = matches[0].Name
+		msg += fmt.Sprintf(" (%s)", matches[0].Name)
+	case 0:
+		// maps to no configured style — the operator reviews the part-id config
+	default:
+		flag.Candidates = make([]CATIDCandidate, len(matches))
+		for i, m := range matches {
+			flag.Candidates[i] = CATIDCandidate{StyleID: m.ID, StyleName: m.Name}
+		}
+		msg += fmt.Sprintf(" (matches %s)", strings.Join(matchNames(matches), " or "))
+	}
+	msg += " — please confirm."
+	flag.Message = msg
+	return flag, true
 }
 
 // ClearPostCutoverFlag clears the process's post-cutover verification flag — the

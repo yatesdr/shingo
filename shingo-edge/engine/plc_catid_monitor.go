@@ -94,12 +94,12 @@ func (st *catidState) resetArm() {
 
 // postCutoverVerify is an open post-cutover verification watch for one process:
 // within [now, deadline] after a cutover completed, the monitor checks whether
-// the press's live part id matches the new active style's expected_catid, and
-// flags changeoverID when it does not.
+// the press's live part id is one of the new active style's parts, and flags
+// changeoverID when it is not. The style's part-identity set is recomputed at
+// check time (derived-set model), so styleID is stored rather than a snapshot.
 type postCutoverVerify struct {
 	changeoverID int64
-	styleID      int64  // the new active style (the changeover's to-style)
-	expected     string // that style's expected_catid at completion time (non-empty)
+	styleID      int64 // the new active style (the changeover's to-style)
 	deadline     time.Time
 }
 
@@ -223,7 +223,7 @@ func (cm *catidMonitor) evaluateProcess(processID int64, st *catidState, now tim
 // within [now, deadline], the monitor checks whether the press's live part id
 // matches the new active style's expected_catid and flags changeoverID if it
 // does not. Called from the completion path (outside the tick); locks mu.
-func (cm *catidMonitor) openPostCutoverVerify(processID, changeoverID, styleID int64, expected string, deadline time.Time) {
+func (cm *catidMonitor) openPostCutoverVerify(processID, changeoverID, styleID int64, deadline time.Time) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	if cm.verify == nil {
@@ -232,7 +232,6 @@ func (cm *catidMonitor) openPostCutoverVerify(processID, changeoverID, styleID i
 	cm.verify[processID] = &postCutoverVerify{
 		changeoverID: changeoverID,
 		styleID:      styleID,
-		expected:     expected,
 		deadline:     deadline,
 	}
 }
@@ -247,9 +246,15 @@ func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, 
 	if !ok {
 		return
 	}
-	// Success short-circuit: the moment the live part matches the new style, the
-	// cutover is verified — clear any flag and close the watch.
-	if st.seenValue && st.lastConfirmed == pv.expected {
+	// The new style's part-identity set, recomputed live (a side of a two-part
+	// style is a valid post-cutover reading).
+	var set map[string]struct{}
+	if style, err := cm.eng.db.GetStyle(pv.styleID); err == nil && style != nil {
+		set = cm.eng.styleCATIDSet(style)
+	}
+	// Success short-circuit: the moment the live part is one of the new style's
+	// parts, the cutover is verified — clear any flag and close the watch.
+	if st.seenValue && catidSetHas(set, st.lastConfirmed) {
 		if err := cm.eng.db.SetChangeoverVerifyMismatch(pv.changeoverID, ""); err != nil {
 			log.Printf("plc-catid: clear post-cutover flag on changeover %d: %v", pv.changeoverID, err)
 		}
@@ -259,20 +264,20 @@ func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, 
 	if now.Before(pv.deadline) {
 		return // still inside the window — give the press time to settle
 	}
-	// Window elapsed. If we ever saw a live value and it still disagrees, flag the
-	// changeover; otherwise close silently.
-	if st.seenValue && st.lastConfirmed != pv.expected {
+	// Window elapsed. If we saw a live value, the style has parts to check against,
+	// and the value is none of them, flag the changeover; otherwise close silently.
+	if st.seenValue && len(set) > 0 && !catidSetHas(set, st.lastConfirmed) {
 		if err := cm.eng.db.SetChangeoverVerifyMismatch(pv.changeoverID, st.lastConfirmed); err != nil {
 			log.Printf("plc-catid: flag post-cutover mismatch on changeover %d: %v", pv.changeoverID, err)
 		} else {
-			log.Printf("CATID post-cutover mismatch: press %s (process %d) reports %q after cutover to style %d (expected %q) — flagged for operator confirmation",
-				st.processName, processID, st.lastConfirmed, pv.styleID, pv.expected)
+			log.Printf("CATID post-cutover mismatch: press %s (process %d) reports %q after cutover to style %d (parts {%s}) — flagged for operator confirmation",
+				st.processName, processID, st.lastConfirmed, pv.styleID, formatCATIDSet(set))
 			cm.eng.Events.Emit(Event{Type: EventChangeoverVerifyMismatch, Payload: CATIDVerifyMismatchEvent{
 				ProcessID:     processID,
 				ProcessName:   st.processName,
 				ChangeoverID:  pv.changeoverID,
 				StyleID:       pv.styleID,
-				ExpectedCATID: pv.expected,
+				ExpectedCATID: formatCATIDSet(set),
 				LiveCATID:     st.lastConfirmed,
 			}})
 		}
@@ -342,12 +347,13 @@ func applyCatidEdge(st *catidState, cur string, ok bool, now time.Time) (confirm
 // which arms after the settle window — no prompt; `off` is silent. Called with
 // cm.mu held; keep DB/event work light.
 func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChange bool) {
-	styleID, styleName, expected, ok := cm.eng.activeStyleCATID(processID)
-	// A5: alert only when the active style HAS an expected value (configured)
-	// and the live part diverges from it. Empty expected = inert (never alert).
-	if ok && expected != "" && st.lastConfirmed != expected {
-		log.Printf("CATID mismatch: press %s (process %d) live CATID %q != active style %q expected %q — outgoing-style relief is blocked",
-			st.processName, processID, st.lastConfirmed, styleName, expected)
+	styleID, styleName, set, ok := cm.eng.activeStyleCATIDSet(processID)
+	// A5: alert when the active style has configured/derivable CATIDs and the live
+	// part is NONE of them (not just != a single value — a two-position style runs
+	// two parts, and either side is fine). Empty set = inert (never alert).
+	if ok && len(set) > 0 && !catidSetHas(set, st.lastConfirmed) {
+		log.Printf("CATID mismatch: press %s (process %d) live CATID %q not among active style %q parts {%s} — outgoing-style relief is blocked",
+			st.processName, processID, st.lastConfirmed, styleName, formatCATIDSet(set))
 		cm.eng.Events.Emit(Event{Type: EventCATIDMismatch, Payload: CATIDMismatchEvent{
 			ProcessID:     processID,
 			ProcessName:   st.processName,
@@ -355,7 +361,7 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 			StyleID:       styleID,
 			StyleName:     styleName,
 			LiveCATID:     st.lastConfirmed,
-			ExpectedCATID: expected,
+			ExpectedCATID: formatCATIDSet(set),
 		}})
 	}
 	// B1: on an actual CHANGE of the physical part (not the first-read baseline),
@@ -378,12 +384,32 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 // to change to the style they are already running.
 func (cm *catidMonitor) raiseCATIDChangePrompt(processID int64, st *catidState) {
 	newCATID := st.lastConfirmed
-	if _, _, activeExpected, ok := cm.eng.activeStyleCATID(processID); ok && activeExpected != "" && newCATID == activeExpected {
+	// Suppress when the new part already belongs to the active style's set (a
+	// completed cutover, not a pending one — the line is already correct).
+	if _, _, activeSet, ok := cm.eng.activeStyleCATIDSet(processID); ok && catidSetHas(activeSet, newCATID) {
 		return
 	}
-	targetID, targetName, hasTarget := cm.eng.styleForCATID(processID, newCATID)
-	log.Printf("CATID change: press %s (process %d) part is now CATID %q — prompt operator to start changeover (pre-fill target: %v %q)",
-		st.processName, processID, newCATID, hasTarget, targetName)
+	cm.emitCATIDPrompt(processID, st, newCATID, cm.eng.stylesForCATID(processID, newCATID))
+}
+
+// emitCATIDPrompt raises EventCATIDChangePrompt for a part change, carrying every
+// candidate style the new part maps to: exactly one pre-fills the target; more
+// than one leaves the operator to pick (naming them); none prompts without a
+// target. Shared by the prompt-mode confirm edge and the auto-arm ambiguity
+// fallback. Called with cm.mu held.
+func (cm *catidMonitor) emitCATIDPrompt(processID int64, st *catidState, newCATID string, matches []styleCATIDMatch) {
+	cands := make([]CATIDCandidate, len(matches))
+	for i, m := range matches {
+		cands[i] = CATIDCandidate{StyleID: m.ID, StyleName: m.Name}
+	}
+	hasTarget := len(matches) == 1
+	var targetID int64
+	var targetName string
+	if hasTarget {
+		targetID, targetName = matches[0].ID, matches[0].Name
+	}
+	log.Printf("CATID change: press %s (process %d) part is now CATID %q — %d candidate style(s): %s",
+		st.processName, processID, newCATID, len(matches), strings.Join(matchNames(matches), ", "))
 	cm.eng.Events.Emit(Event{Type: EventCATIDChangePrompt, Payload: CATIDChangePromptEvent{
 		ProcessID:       processID,
 		ProcessName:     st.processName,
@@ -392,6 +418,7 @@ func (cm *catidMonitor) raiseCATIDChangePrompt(processID int64, st *catidState) 
 		HasTarget:       hasTarget,
 		TargetStyleID:   targetID,
 		TargetStyleName: targetName,
+		Candidates:      cands,
 	}})
 }
 
@@ -444,29 +471,39 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string)
 	if cm.eng.processChangeoverAutoArm(processID) != domain.ChangeoverAutoArmAuto {
 		return nil
 	}
-	// The value must map to a configured style's expected_catid.
-	targetID, targetName, hasTarget := cm.eng.styleForCATID(processID, v)
-	if !hasTarget {
+	// If the live part is already one of the active style's parts (a side of it),
+	// the line already runs it — nothing to arm, nothing to prompt.
+	if _, _, activeSet, okActive := cm.eng.activeStyleCATIDSet(processID); okActive && catidSetHas(activeSet, v) {
+		return nil
+	}
+	// Which style(s) does this part belong to? Uniqueness is CHECKED, not assumed.
+	matches := cm.eng.stylesForCATID(processID, v)
+	if len(matches) == 0 {
 		log.Printf("plc-catid: press %s (process %d) CATID %q held stable but matches no configured style — auto-arm skipped",
 			st.processName, processID, v)
 		return nil
 	}
-	// The target must differ from the active style (else the line already runs it).
-	if activeID, _, _, okActive := cm.eng.activeStyleCATID(processID); okActive && targetID == activeID {
+	if len(matches) > 1 {
+		// Ambiguous: the part belongs to more than one style's set. NEVER auto-arm a
+		// guess — fall back to the operator prompt naming the candidate styles.
+		log.Printf("plc-catid: press %s (process %d) CATID %q maps to %d styles (%s) — ambiguous; auto-arm falls back to the operator prompt",
+			st.processName, processID, v, len(matches), strings.Join(matchNames(matches), ", "))
+		cm.emitCATIDPrompt(processID, st, v, matches)
 		return nil
 	}
+	target := matches[0]
 	// No changeover may already be armed / in progress for this process — stay
 	// silent rather than attempt-and-fail.
 	if cm.eng.changeoverInProgress(processID) {
 		log.Printf("plc-catid: press %s (process %d) CATID %q maps to style %q but a changeover is already in progress — auto-arm skipped",
-			st.processName, processID, v, targetName)
+			st.processName, processID, v, target.Name)
 		return nil
 	}
 	return &autoArmIntent{
 		processID:   processID,
 		processName: st.processName,
-		targetID:    targetID,
-		targetName:  targetName,
+		targetID:    target.ID,
+		targetName:  target.Name,
 		catid:       v,
 	}
 }
@@ -531,41 +568,6 @@ func (cm *catidMonitor) liveCATID(processID int64) (string, bool) {
 		return "", false
 	}
 	return st.lastConfirmed, true
-}
-
-// activeStyleCATID resolves a process's active style id, name, and
-// expected_catid. ok=false when the process has no active style set or the
-// lookups fail (treated as "nothing to compare against" by callers).
-func (e *Engine) activeStyleCATID(processID int64) (styleID int64, styleName, expectedCATID string, ok bool) {
-	proc, err := e.db.GetProcess(processID)
-	if err != nil || proc == nil || proc.ActiveStyleID == nil {
-		return 0, "", "", false
-	}
-	style, err := e.db.GetStyle(*proc.ActiveStyleID)
-	if err != nil || style == nil {
-		return 0, "", "", false
-	}
-	return style.ID, style.Name, style.ExpectedCATID, true
-}
-
-// styleForCATID finds the style in a process whose expected_catid equals the
-// given (non-empty) CATID — the B1 pre-fill lookup. ok=false when the CATID is
-// empty, no style maps to it, or the lookup fails. If more than one style shares
-// the value (unusual), the first by name wins; the operator confirms regardless.
-func (e *Engine) styleForCATID(processID int64, catid string) (styleID int64, styleName string, ok bool) {
-	if catid == "" {
-		return 0, "", false
-	}
-	styles, err := e.db.ListStylesByProcess(processID)
-	if err != nil {
-		return 0, "", false
-	}
-	for _, s := range styles {
-		if s.ExpectedCATID == catid {
-			return s.ID, s.Name, true
-		}
-	}
-	return 0, "", false
 }
 
 // catidToString normalizes a WarLink CATID tag value to a comparison string.

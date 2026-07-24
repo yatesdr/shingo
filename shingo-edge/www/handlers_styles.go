@@ -273,10 +273,6 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		writeError(w, status, err.Error())
 		return
 	}
-	// Choosing a payload for a produce claim configures the style's part-identity
-	// guard: fill the style's expected_catid from that payload's synced CATID when
-	// it is still blank (never overwrites, never guesses).
-	h.orchestration.AutoFillExpectedCATIDForStyle(in.StyleID)
 	// Operator-driven flag is loader-wide (keyed by core_node_name) and
 	// Edge-only — not a claim column — so it's applied here against the
 	// operator_driven_loaders set rather than persisted by UpsertClaim. Only a

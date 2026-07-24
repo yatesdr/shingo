@@ -564,9 +564,10 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
 	if err := e.db.DeleteStalePayloadCatalogEntries(ids); err != nil {
 		log.Printf("engine: prune stale payload catalog: %v", err)
 	}
-	// Now that the catalog (and its CATIDs) is current, fill any style whose
-	// expected_catid is still blank from its produce payload's CATID.
-	e.AutoFillExpectedCATIDs()
+	// Now that the catalog (and its CATIDs) is current, retire any expected_catid
+	// stamp that merely duplicates the style's derived single CATID (the guard now
+	// derives the set live from the claims' payloads).
+	e.ClearRedundantExpectedCATIDs()
 	e.logFn("engine: updated payload catalog (%d entries)", len(entries))
 }
 

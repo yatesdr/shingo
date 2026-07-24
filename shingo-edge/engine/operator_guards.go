@@ -148,16 +148,24 @@ func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeC
 		return nil // monitor not started (test fixtures / no PLC) — inert.
 	}
 	style, err := e.db.GetStyle(claim.StyleID)
-	if err != nil || style == nil || style.ExpectedCATID == "" {
-		return nil // unconfigured expected_catid ⇒ inert, never block on empty.
+	if err != nil || style == nil {
+		return nil
+	}
+	// The style's valid part identities: its produce claims' CATIDs (left/right on
+	// a two-position press), or a manual pin. Empty ⇒ inert, never block.
+	set := e.styleCATIDSet(style)
+	if len(set) == 0 {
+		return nil
 	}
 	live, ok := e.catidMon.liveCATID(node.ProcessID)
 	if !ok {
 		return nil // no debounced observation yet ⇒ fail-open.
 	}
-	if live != style.ExpectedCATID {
-		return fmt.Errorf("Press reports CATID %s; active style is %s (expects CATID %s) — the wrong part is on the press. %s",
-			live, style.Name, style.ExpectedCATID, e.catidResolutionHint(node.ProcessID))
+	// The live part must be ONE OF the style's parts — whichever side the press is
+	// reporting. It only blocks when the live part belongs to none of them.
+	if !catidSetHas(set, live) {
+		return fmt.Errorf("Press reports CATID %s; active style is %s (runs CATID %s) — the wrong part is on the press. %s",
+			live, style.Name, formatCATIDSet(set), e.catidResolutionHint(node.ProcessID))
 	}
 	return nil
 }

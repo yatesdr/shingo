@@ -1,66 +1,63 @@
-// catid_autofill_test.go — auto-fill of style.expected_catid from the catalog CATID.
+// catid_autofill_test.go — retiring redundant expected_catid stamps once the
+// guard derives the part-identity set live from the claims' payloads.
 package engine
 
 import (
 	"testing"
 
 	"shingo/protocol/testutil"
-	"shingoedge/store"
-	"shingoedge/store/catalog"
 )
 
-func styleExpected(t *testing.T, db *store.DB, id int64) string {
-	t.Helper()
-	s, err := db.GetStyle(id)
-	testutil.MustNoErr(t, err, "get style")
-	return s.ExpectedCATID
-}
-
-// TestAutoFillExpectedCATID fills a blank style from its produce payload's synced
-// CATID, never overwrites an engineer's value, and never guesses when the catalog
-// has no CATID for the payload.
-func TestAutoFillExpectedCATID(t *testing.T) {
+// TestClearRedundantExpectedCATIDs: a pin equal to the derived single value is
+// cleared (it was a backfill stamp); a differing pin, a multi-value pin, and a
+// pin whose payload has no derivable CATID are all left untouched.
+func TestClearRedundantExpectedCATIDs(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	// seedProduceNode gives a produce-role claim whose payload code is WIDGET-A.
-	_, _, styleA, _ := seedProduceNode(t, db, "two_robot")
+	processID, _, styleA, _ := seedProduceNode(t, db, "two_robot") // produce claim WIDGET-A
 	eng := testEngine(t, db)
 
-	// Catalog (synced from Core) says WIDGET-A is part 40016911.
-	testutil.MustNoErr(t, db.UpsertPayloadCatalog(&catalog.CatalogEntry{
-		ID: 1, Name: "WIDGET-A", Code: "WIDGET-A", CATID: "40016911",
-	}), "upsert catalog")
+	putCatalog(t, db, 1, "WIDGET-A", "40016911")
+	putCatalog(t, db, 2, "PIA15", "40017111")
+	putCatalog(t, db, 3, "PIA16", "40017112")
 
-	// Blank style auto-fills from its produce payload's CATID.
-	eng.AutoFillExpectedCATIDForStyle(styleA)
-	if got := styleExpected(t, db, styleA); got != "40016911" {
-		t.Errorf("expected_catid = %q, want 40016911 auto-filled from the catalog", got)
-	}
+	// (a) Redundant: pin == derived single value → cleared.
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "40016911"), "pin redundant")
 
-	// Never overwrites an engineer-set value.
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "99999999"), "manual set")
-	eng.AutoFillExpectedCATIDForStyle(styleA)
-	if got := styleExpected(t, db, styleA); got != "99999999" {
-		t.Errorf("auto-fill must not overwrite an engineer value; got %q", got)
-	}
-}
+	// (b) Differing pin (human intent) → left.
+	styleDiff, err := db.CreateStyle("DIFF", "", processID)
+	testutil.MustNoErr(t, err, "create diff")
+	seedProduceClaim(t, db, styleDiff, "N-DIFF", "WIDGET-A") // derives 40016911
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleDiff, "99999999"), "pin differing")
 
-// TestAutoFillExpectedCATID_NoCatalogCATID_NoFill: when the catalog has no CATID
-// for the produce payload (Core reported it ambiguous / none), the style stays
-// blank — never guess.
-func TestAutoFillExpectedCATID_NoCatalogCATID_NoFill(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	_, _, styleA, _ := seedProduceNode(t, db, "two_robot")
-	eng := testEngine(t, db)
+	// (c) Multi-value pin (a two-part style a human pinned) → left, never
+	//     collapsed against a single derived value.
+	styleMulti, err := db.CreateStyle("MULTI", "", processID)
+	testutil.MustNoErr(t, err, "create multi")
+	seedProduceClaim(t, db, styleMulti, "N-ML", "PIA15")
+	seedProduceClaim(t, db, styleMulti, "N-MR", "PIA16")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleMulti, "40017111,40017112"), "pin multi")
 
-	testutil.MustNoErr(t, db.UpsertPayloadCatalog(&catalog.CatalogEntry{
-		ID: 1, Name: "WIDGET-A", Code: "WIDGET-A", CATID: "",
-	}), "upsert catalog")
+	// (d) Pin whose payload has no derivable CATID (payload absent from catalog)
+	//     → derived empty, nothing to compare → left.
+	styleNoCat, err := db.CreateStyle("NOCAT", "", processID)
+	testutil.MustNoErr(t, err, "create nocat")
+	seedProduceClaim(t, db, styleNoCat, "N-NC", "MISSING-PAYLOAD")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleNoCat, "40016911"), "pin nocat")
 
-	eng.AutoFillExpectedCATIDForStyle(styleA)
+	eng.ClearRedundantExpectedCATIDs()
+
 	if got := styleExpected(t, db, styleA); got != "" {
-		t.Errorf("no catalog CATID must leave the style blank; got %q", got)
+		t.Errorf("redundant single-value pin should be cleared, got %q", got)
+	}
+	if got := styleExpected(t, db, styleDiff); got != "99999999" {
+		t.Errorf("differing pin must be left (human intent), got %q", got)
+	}
+	if got := styleExpected(t, db, styleMulti); got != "40017111,40017112" {
+		t.Errorf("multi-value pin must be left, got %q", got)
+	}
+	if got := styleExpected(t, db, styleNoCat); got != "40016911" {
+		t.Errorf("pin with no derivable CATID must be left, got %q", got)
 	}
 }
 
@@ -69,9 +66,7 @@ func TestAutoFillExpectedCATID_NoCatalogCATID_NoFill(t *testing.T) {
 func TestHandlePayloadCatalog_StoresCATID(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	testutil.MustNoErr(t, db.UpsertPayloadCatalog(&catalog.CatalogEntry{
-		ID: 7, Name: "PL-7", Code: "PL-7", CATID: "40012345",
-	}), "upsert catalog")
+	putCatalog(t, db, 7, "PL-7", "40012345")
 
 	ce, err := db.GetPayloadCatalogByCode("PL-7")
 	testutil.MustNoErr(t, err, "get catalog by code")

@@ -402,6 +402,55 @@ func TestAutoArm_DoubleFlipWithinWindow_NeverArms(t *testing.T) {
 	}
 }
 
+// TestAutoArm_AmbiguousMapping_PromptsNoArm pins addition 1: when a stable new
+// part maps to MORE than one style (uniqueness is checked, not assumed) the
+// monitor NEVER auto-arms a guess — it falls back to the operator prompt naming
+// every candidate style, with no pre-filled target.
+func TestAutoArm_AmbiguousMapping_PromptsNoArm(t *testing.T) {
+	t.Parallel()
+	mon, st, processID, targetStyleID, calls := setupAutoArm(t, "auto", "40016911", "50029999")
+
+	// A SECOND style also runs part 50029999 → the part is now ambiguous.
+	otherID, err := mon.eng.db.CreateStyle("TARGET-STYLE-2", "target2", processID)
+	testutil.MustNoErr(t, err, "create second target style")
+	testutil.MustNoErr(t, mon.eng.db.SetStyleExpectedCATID(otherID, "50029999"), "second target expected")
+
+	var prompts []CATIDChangePromptEvent
+	mon.eng.Events.SubscribeTypes(func(evt Event) {
+		if p, ok := evt.Payload.(CATIDChangePromptEvent); ok {
+			prompts = append(prompts, p)
+		}
+	}, EventCATIDChangePrompt)
+
+	t0 := time.Unix(0, 0)
+	tickAutoArm(mon, processID, st, "50029999", true, t0)
+	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(30*time.Second))
+	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(60*time.Second)) // stable → decision
+
+	if len(*calls) != 0 {
+		t.Fatalf("an ambiguous part must never auto-arm, got %d arm(s)", len(*calls))
+	}
+	if len(prompts) != 1 {
+		t.Fatalf("ambiguity must emit exactly one operator prompt, got %d", len(prompts))
+	}
+	p := prompts[0]
+	if p.HasTarget {
+		t.Errorf("ambiguous prompt must not pre-fill a target, got %+v", p)
+	}
+	if len(p.Candidates) != 2 {
+		t.Fatalf("ambiguous prompt must name both candidate styles, got %d", len(p.Candidates))
+	}
+	gotIDs := map[int64]bool{p.Candidates[0].StyleID: true, p.Candidates[1].StyleID: true}
+	if !gotIDs[targetStyleID] || !gotIDs[otherID] {
+		t.Errorf("candidates = %+v, want both %d and %d", p.Candidates, targetStyleID, otherID)
+	}
+	// Staying stable must not re-decide (armHandled) — still exactly one prompt.
+	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(90*time.Second))
+	if len(prompts) != 1 || len(*calls) != 0 {
+		t.Fatalf("a settled ambiguous value must not re-prompt/arm: prompts=%d arms=%d", len(prompts), len(*calls))
+	}
+}
+
 // TestAutoArm_PromptMode_NeverAutoArms: in 'prompt' mode a stable mapped value
 // never auto-starts (the operator is prompted instead — covered by
 // TestCATIDChangePrompt_PromptsOnChange).

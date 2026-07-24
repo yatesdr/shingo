@@ -339,13 +339,23 @@ type CATIDMismatchEvent struct {
 // arm — nothing acts on it until the operator confirms Start Changeover.
 type CATIDChangePromptEvent struct {
 	eventbus.PayloadBase
-	ProcessID       int64  `json:"process_id"`
-	ProcessName     string `json:"process_name"`
-	PLCName         string `json:"plc_name"`
-	NewCATID        string `json:"new_catid"`
-	HasTarget       bool   `json:"has_target"`
-	TargetStyleID   int64  `json:"target_style_id"`
-	TargetStyleName string `json:"target_style_name"`
+	ProcessID   int64  `json:"process_id"`
+	ProcessName string `json:"process_name"`
+	PLCName     string `json:"plc_name"`
+	NewCATID    string `json:"new_catid"`
+	// HasTarget is true only when the new part maps to EXACTLY ONE style, so the
+	// prompt can pre-fill it. When the part is ambiguous (in more than one style's
+	// set) HasTarget is false and Candidates names them for the operator to pick.
+	HasTarget       bool             `json:"has_target"`
+	TargetStyleID   int64            `json:"target_style_id"`
+	TargetStyleName string           `json:"target_style_name"`
+	Candidates      []CATIDCandidate `json:"candidates,omitempty"`
+}
+
+// CATIDCandidate is one style a live CATID maps to (via its part-identity set).
+type CATIDCandidate struct {
+	StyleID   int64  `json:"style_id"`
+	StyleName string `json:"style_name"`
 }
 
 // CATIDAutoArmedEvent announces an auto-started changeover: the press's part

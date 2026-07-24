@@ -34,7 +34,7 @@ func TestPostCutoverVerify_MatchNoFlag(t *testing.T) {
 	seedCatidMonitor(eng, processID, "PROC", "40016911") // live matches the new style
 	cm := eng.catidMon
 	now := time.Now()
-	cm.openPostCutoverVerify(processID, coID, styleA, "40016911", now.Add(time.Minute))
+	cm.openPostCutoverVerify(processID, coID, styleA, now.Add(time.Minute))
 	cm.checkPostCutoverVerify(processID, cm.states[processID], now)
 
 	co, err := db.LatestFlaggedChangeover(processID)
@@ -64,7 +64,7 @@ func TestPostCutoverVerify_MismatchMapped(t *testing.T) {
 	seedCatidMonitor(eng, processID, "PROC", "50029999") // wrong part — maps to style B
 	cm := eng.catidMon
 	now := time.Now()
-	cm.openPostCutoverVerify(processID, coID, styleA, "40016911", now) // deadline = now ⇒ window elapsed
+	cm.openPostCutoverVerify(processID, coID, styleA, now) // deadline = now ⇒ window elapsed
 	cm.checkPostCutoverVerify(processID, cm.states[processID], now)
 
 	co, err := db.LatestFlaggedChangeover(processID)
@@ -109,7 +109,7 @@ func TestPostCutoverVerify_MismatchUnmapped(t *testing.T) {
 	seedCatidMonitor(eng, processID, "PROC", "99999999") // wrong part, maps to nothing
 	cm := eng.catidMon
 	now := time.Now()
-	cm.openPostCutoverVerify(processID, coID, styleA, "40016911", now)
+	cm.openPostCutoverVerify(processID, coID, styleA, now)
 	cm.checkPostCutoverVerify(processID, cm.states[processID], now)
 
 	flag, ok := eng.PostCutoverFlag(processID)
@@ -121,5 +121,36 @@ func TestPostCutoverVerify_MismatchUnmapped(t *testing.T) {
 	}
 	if !strings.Contains(flag.Message, "99999999") || !strings.Contains(flag.Message, "PROD-STYLE") {
 		t.Errorf("message %q must name the live part and the set style", flag.Message)
+	}
+}
+
+// TestPostCutoverVerify_TwoPartMemberNoFlag: the new style is two-position and the
+// live part is EITHER side of its derived set ⇒ verified, no flag. Mirrors the
+// guard's membership rule at the verify step — a two-part cutover must not raise a
+// false post-cutover flag just because the press settled on the "other" side.
+func TestPostCutoverVerify_TwoPartMemberNoFlag(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, _, styleA, _ := seedProduceNode(t, db, "two_robot")
+	// Two-position new style: left WIDGET-A / right PIA16, both with catalog CATIDs.
+	putCatalog(t, db, 1, "WIDGET-A", "40017111")
+	putCatalog(t, db, 2, "PIA16", "40017112")
+	seedProduceClaim(t, db, styleA, "N-RIGHT", "PIA16")
+	eng := testEngine(t, db)
+	coID := seedChangeoverTo(t, eng, db, processID, styleA)
+
+	seedCatidMonitor(eng, processID, "PROC", "40017112") // press settled on the RIGHT side
+	cm := eng.catidMon
+	now := time.Now()
+	cm.openPostCutoverVerify(processID, coID, styleA, now.Add(time.Minute))
+	cm.checkPostCutoverVerify(processID, cm.states[processID], now)
+
+	if co, err := db.LatestFlaggedChangeover(processID); err != nil {
+		t.Fatalf("latest flagged: %v", err)
+	} else if co != nil {
+		t.Errorf("a member of the two-part set must not flag the changeover, got %+v", co)
+	}
+	if _, ok := eng.PostCutoverFlag(processID); ok {
+		t.Error("PostCutoverFlag must report no flag when the live part is in the new style's set")
 	}
 }
