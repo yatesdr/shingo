@@ -21,6 +21,7 @@
 package scenarios
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -184,7 +185,7 @@ func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
 	}
 
 	// (4) the seat renders as a CHILD tile on the press's station.
-	view, err := service.NewStationService(edge.DB).BuildView(opStationID)
+	view, err := service.NewStationService(edge.DB).BuildView(context.Background(), opStationID)
 	if err != nil {
 		t.Fatalf("BuildView: %v", err)
 	}
