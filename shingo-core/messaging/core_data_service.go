@@ -38,10 +38,11 @@ type ThresholdMonitor interface {
 	// Resync re-engages a station's demand_registry bindings on (re)connect, so a
 	// threshold seeded after the startup sweep fires without a Core restart.
 	Resync(stationID string)
-	// ShadowCompareLineside runs the R1 shadow (ledger vs Edge lineside reports)
-	// for the payloads in a just-arrived report, logging firing-decision
-	// disagreements. Shadow only — decides nothing.
-	ShadowCompareLineside(payloadCodes []string)
+	// OnLinesideReports is the R1 report-arrival trigger for the payloads in a
+	// just-arrived Edge report. R1 is LIVE: in edge_reports mode a fresh report is
+	// a fire trigger (decide off the edge-adjusted total); in ledger mode it stays
+	// audit-only. Either way it logs the ledger-vs-edge disagreement audit line.
+	OnLinesideReports(payloadCodes []string)
 }
 
 type CoreDataService struct {

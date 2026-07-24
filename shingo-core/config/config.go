@@ -20,6 +20,25 @@ type Config struct {
 	FireAlarm     FireAlarmConfig     `yaml:"fire_alarm"`
 	Sim           SimConfig           `yaml:"sim"`
 	Sourceability SourceabilityConfig `yaml:"sourceability"`
+	Replenishment ReplenishmentConfig `yaml:"replenishment"`
+}
+
+// ReplenishmentConfig tunes the UOP-threshold replenishment monitor (R1).
+type ReplenishmentConfig struct {
+	// LinesideDecisionMode selects which in-loop total the threshold monitor
+	// decides replenishment firing off:
+	//   "edge_reports" (default) — trust the Edge's per-consuming-node lineside
+	//     reports: ledger total plus, for each FRESH reported node, (edge view −
+	//     ledger view). A node whose report is missing OR stale (older than the
+	//     monitor's staleness window) contributes no adjustment — its ledger term
+	//     stands — and is flagged. This is R1 LIVE: it closes the SNF3 phantom-on-
+	//     hand gap where a bin stranded `staged` keeps the ledger stocked while the
+	//     line starves.
+	//   "ledger" — decide off Core's ledger alone (the pre-R1 behavior). The revert
+	//     knob: a plant reverts to pure-ledger by setting this, no code change.
+	// Unknown values fall back to "edge_reports" with a warning. Either way the
+	// ledger-vs-edge disagreement audit line is logged permanently.
+	LinesideDecisionMode string `yaml:"lineside_decision_mode"`
 }
 
 // CountGroupsConfig configures the advanced-zone polling feature.
@@ -188,6 +207,11 @@ func Defaults() *Config {
 			EnableAtRisk: false, // green/red only until the owner validates the rate window on plant data
 			RateWindow:   30 * time.Minute,
 			Horizon:      30 * time.Minute,
+		},
+		Replenishment: ReplenishmentConfig{
+			// R1 LIVE by default: decide off the Edge lineside reports (ledger +
+			// fresh-node adjustments). Set "ledger" to revert to pure-ledger.
+			LinesideDecisionMode: "edge_reports",
 		},
 		Messaging: MessagingConfig{
 			Kafka: KafkaConfig{

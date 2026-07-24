@@ -325,22 +325,33 @@ func TestThresholdMonitor_SwapContradiction_NoChipWhenBelow(t *testing.T) {
 	}
 }
 
-// TestThresholdMonitor_R1Shadow_DisagreesButDecidesNothing exercises the R1
-// shadow end-to-end: the ledger reads STOCKED (a lineside bin at 150, threshold
-// 100) while a fresh Edge report says that node's bin drained to 10 — the SNF3
-// divergence. The shadow computes the lineside term both ways and would log a
-// firing-decision disagreement, but it is SHADOW: it must NOT fire a signal.
-// This also exercises the v52 migration, the edge_lineside_reports store
-// round-trip, and LinesideLedgerByNode against a real DB.
-func TestThresholdMonitor_R1Shadow_DisagreesButDecidesNothing(t *testing.T) {
+// TestThresholdMonitor_R1Live_FiresOffEdgeAdjustedTotal is the R1-LIVE flip of the
+// old shadow test. The ledger reads STOCKED (a lineside bin at 150, threshold 100)
+// while a FRESH Edge report says that node's bin drained to 10 — the SNF3
+// divergence. Under the new default (lineside_decision_mode=edge_reports) the fire
+// gate decides off the edge-adjusted total (150 + (10−150) = 10 < 100) and MUST
+// FIRE, even though the ledger alone (150 >= 100) would hold. The fired signal
+// carries the edge-adjusted total, not the ledger. This also exercises the v52
+// migration, the edge_lineside_reports store round-trip, and LinesideLedgerByNode
+// against a real DB.
+//
+// CHANGE-DETECTOR: this replaces TestThresholdMonitor_R1Shadow_DisagreesButDecidesNothing,
+// which asserted the shadow fired NOTHING. R1 going live inverts that: the whole
+// point of R1 is that this exact SNF3 shape now orders replenishment.
+func TestThresholdMonitor_R1Live_FiresOffEdgeAdjustedTotal(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
+	// Default mode is edge_reports (config.Defaults) — assert it, so a future
+	// default flip trips here rather than silently changing the fire decision.
+	if got := eng.thresholdMonitor.decisionMode(); got != linesideModeEdgeReports {
+		t.Fatalf("default decision mode = %q, want %q", got, linesideModeEdgeReports)
+	}
 
 	const (
-		stationID = "station-r1-shadow"
+		stationID = "station-r1-live"
 		loader    = "MS-LOADER-R1"
-		payload   = "P-R1-SHADOW"
+		payload   = "P-R1-LIVE"
 	)
 
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
@@ -382,25 +393,196 @@ func TestThresholdMonitor_R1Shadow_DisagreesButDecidesNothing(t *testing.T) {
 	preMsgs, _ := db.ListPendingOutbox(50)
 	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
 
-	// The report arrival trigger. It computes both ways (ledger 150 hold vs
-	// edge-adjusted 10 fire) and logs the disagreement — but decides off the
-	// ledger, so NOTHING fires.
-	m.ShadowCompareLineside([]string{payload})
-	time.Sleep(200 * time.Millisecond)
+	// The report-arrival trigger. Edge-adjusted total is 10 (< 100), so it fires.
+	m.OnLinesideReports([]string{payload})
 
-	msgs, _ := db.ListPendingOutbox(50)
-	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
-		t.Errorf("R1 shadow fired %d signal(s); want 0 — the shadow must decide off the ledger and change nothing (outbox=%v)",
-			got-preCount, outboxSummary(msgs))
+	deadline := time.Now().Add(2 * time.Second)
+	var hit *protocol.LoopBelowThresholdSignal
+	for time.Now().Before(deadline) {
+		msgs, _ := db.ListPendingOutbox(50)
+		if countLoopBelowThresholdSignals(msgs, stationID) > preCount {
+			hit = findLoopBelowThresholdSignal(t, msgs, stationID)
+			if hit != nil {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if hit == nil {
+		msgs, _ := db.ListPendingOutbox(50)
+		t.Fatalf("expected R1-live fire — edge-adjusted total (10) is below threshold (100) though the ledger (150) would hold; outbox=%v", outboxSummary(msgs))
+	}
+	if hit.CurrentUOP != 10 {
+		t.Errorf("signal CurrentUOP = %d, want 10 (the edge-adjusted total, not the ledger's 150)", hit.CurrentUOP)
+	}
+	if hit.Threshold != 100 {
+		t.Errorf("signal Threshold = %d, want 100", hit.Threshold)
 	}
 
-	// The store round-trip the shadow relies on.
+	// The store round-trip the read-model relies on.
 	reports, err := db.ListLinesideReportsForPayload(payload)
 	if err != nil {
 		t.Fatalf("list lineside reports: %v", err)
 	}
 	if len(reports) != 1 || reports[0].BinUOP != 10 {
 		t.Errorf("stored reports = %+v, want 1 row with BinUOP=10", reports)
+	}
+}
+
+// TestThresholdMonitor_R1Live_StaleReportFallsBackToLedger pins the per-node
+// fallback: a STALE Edge report (older than linesideReportStaleness) contributes
+// NO adjustment — that node's ledger term stands. With the ledger STOCKED (150 >=
+// 100) and the only report stale, the edge-adjusted total collapses back to the
+// ledger, so nothing fires — the stale drained report must not be trusted.
+func TestThresholdMonitor_R1Live_StaleReportFallsBackToLedger(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+
+	const (
+		stationID = "station-r1-stale"
+		loader    = "MS-LOADER-R1-STALE"
+		payload   = "P-R1-STALE"
+	)
+
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleConsume,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 100,
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, payload, sd.LineNode.ID, "BIN-R1-STALE")
+	testutil.MustNoErr(t, func() error {
+		_, err := db.DB.Exec(`UPDATE bins SET uop_remaining=150 WHERE id=$1`, bin.ID)
+		return err
+	}(), "set bin uop")
+
+	// Report says drained to 10, but it is STALE (reported well past the window),
+	// so it must be ignored and the ledger term (150) stands.
+	testutil.MustNoErr(t, db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
+		Station:      stationID,
+		CoreNodeName: sd.LineNode.Name,
+		PayloadCode:  payload,
+		BinCount:     1,
+		BinUOP:       10,
+		BucketQty:    0,
+		ReportedAt:   time.Now().UTC().Add(-linesideReportStaleness - time.Minute),
+	}), "upsert stale edge report")
+
+	m := eng.thresholdMonitor
+	m.mu.Lock()
+	m.thresholdsByPayload[payload] = []thresholdEntry{{
+		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 100,
+	}}
+	m.mu.Unlock()
+
+	// Prove the helper falls back: no fresh node, edge-adjusted == ledger, usedEdge false.
+	edgeTotal, ledgerTotal, usedEdge, err := m.linesideDecisionTotal(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("linesideDecisionTotal: %v", err)
+	}
+	if usedEdge {
+		t.Error("stale-only report must yield usedEdge=false (fell back to the ledger)")
+	}
+	if ledgerTotal != 150 || edgeTotal != 150 {
+		t.Errorf("totals = edge %d / ledger %d, want both 150 (stale report ignored)", edgeTotal, ledgerTotal)
+	}
+
+	preMsgs, _ := db.ListPendingOutbox(50)
+	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+
+	m.OnLinesideReports([]string{payload})
+	time.Sleep(200 * time.Millisecond)
+
+	msgs, _ := db.ListPendingOutbox(50)
+	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+		t.Errorf("stale report fired %d signal(s); want 0 — a stale report must fall back to the ledger (150 >= 100 holds) (outbox=%v)",
+			got-preCount, outboxSummary(msgs))
+	}
+}
+
+// TestThresholdMonitor_LedgerMode_RevertsToPreR1 pins the revert knob:
+// lineside_decision_mode=ledger reproduces the pre-R1 decision. Same SNF3 setup as
+// the live test (ledger 150 STOCKED, fresh Edge report at 10), but in ledger mode
+// the report arrival is audit-only and decides off the ledger, so NOTHING fires —
+// exactly the round-2 shadow behavior.
+func TestThresholdMonitor_LedgerMode_RevertsToPreR1(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+	// Flip this monitor to the revert mode (what config lineside_decision_mode=ledger
+	// resolves to). Package-internal field, set directly in-test.
+	eng.thresholdMonitor.linesideMode = linesideModeLedger
+	if got := eng.thresholdMonitor.decisionMode(); got != linesideModeLedger {
+		t.Fatalf("decision mode = %q, want %q", got, linesideModeLedger)
+	}
+
+	const (
+		stationID = "station-r1-ledger"
+		loader    = "MS-LOADER-R1-LEDGER"
+		payload   = "P-R1-LEDGER"
+	)
+
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleConsume,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 100,
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, payload, sd.LineNode.ID, "BIN-R1-LEDGER")
+	testutil.MustNoErr(t, func() error {
+		_, err := db.DB.Exec(`UPDATE bins SET uop_remaining=150 WHERE id=$1`, bin.ID)
+		return err
+	}(), "set bin uop")
+
+	testutil.MustNoErr(t, db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
+		Station:      stationID,
+		CoreNodeName: sd.LineNode.Name,
+		PayloadCode:  payload,
+		BinCount:     1,
+		BinUOP:       10,
+		BucketQty:    0,
+		ReportedAt:   time.Now().UTC(),
+	}), "upsert edge report")
+
+	m := eng.thresholdMonitor
+	m.mu.Lock()
+	m.thresholdsByPayload[payload] = []thresholdEntry{{
+		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 100,
+	}}
+	m.mu.Unlock()
+
+	preMsgs, _ := db.ListPendingOutbox(50)
+	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+
+	// Report arrival in ledger mode: audit-only, decides off the ledger (150 >= 100).
+	m.OnLinesideReports([]string{payload})
+	time.Sleep(200 * time.Millisecond)
+
+	msgs, _ := db.ListPendingOutbox(50)
+	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+		t.Errorf("ledger mode fired %d signal(s); want 0 — the revert knob must decide off the ledger and change nothing (outbox=%v)",
+			got-preCount, outboxSummary(msgs))
+	}
+
+	// And the hot path also decides off the ledger in this mode: a delta re-reads
+	// the ledger (150 >= 100), so still nothing fires despite the drained report.
+	m.OnBinUOPDelta(payload, -1)
+	time.Sleep(200 * time.Millisecond)
+	msgs, _ = db.ListPendingOutbox(50)
+	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+		t.Errorf("ledger-mode hot path fired %d signal(s); want 0 (delta decides off the ledger, 150 >= 100) (outbox=%v)",
+			got-preCount, outboxSummary(msgs))
 	}
 }
 

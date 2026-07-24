@@ -82,6 +82,34 @@ const warmUpFloor = 2
 // binding is enough to keep the condition visible without becoming the noise.
 const negativeLogWindow = 60 * time.Second
 
+// Lineside decision modes (R1). Select which in-loop total the fire gate decides
+// off — see config.ReplenishmentConfig.LinesideDecisionMode.
+const (
+	// linesideModeEdgeReports decides off the Edge-report-adjusted total (R1 LIVE,
+	// the default). linesideModeLedger decides off Core's ledger alone (the revert
+	// knob — pre-R1 behavior).
+	linesideModeEdgeReports = "edge_reports"
+	linesideModeLedger      = "ledger"
+)
+
+// resolveLinesideMode validates a configured lineside_decision_mode value. An
+// empty or "edge_reports" value resolves to edge_reports (the default); "ledger"
+// resolves to ledger; any other value falls back to edge_reports and warns via
+// warnf (called at most once, at construction). Pure so it is unit-testable.
+func resolveLinesideMode(raw string, warnf func(string, ...any)) string {
+	switch raw {
+	case "", linesideModeEdgeReports:
+		return linesideModeEdgeReports
+	case linesideModeLedger:
+		return linesideModeLedger
+	default:
+		if warnf != nil {
+			warnf("threshold_monitor: unknown lineside_decision_mode %q; falling back to %q", raw, linesideModeEdgeReports)
+		}
+		return linesideModeEdgeReports
+	}
+}
+
 // swapContradictionWindow is how long a manual-swap-vs-ledger contradiction
 // (P2-C9) stays surfaced as a Replenishment Health chip, and the throttle
 // window for its log line. A human requesting a swap for a payload the ledger
@@ -134,11 +162,27 @@ type ThresholdMonitor struct {
 	// payload the ledger read as fully stocked (P2-C9). Keyed by payload_code;
 	// drives the Replenishment Health contradiction chip and throttles the log.
 	swapContradiction map[string]time.Time
+	// linesideMode is the resolved R1 decision mode (edge_reports | ledger),
+	// validated once at construction from config. Read on every evaluation to
+	// pick which in-loop total the fire gate decides off. Empty is treated as the
+	// edge_reports default (the nil-eng unit harness leaves it unset).
+	linesideMode string
 }
 
 // NewThresholdMonitor constructs the monitor. Call Run() to perform
 // the startup sweep.
 func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
+	// Resolve the R1 decision mode once, at construction — deployment config, not a
+	// hot-reload knob. Validating here means unknown values warn exactly once
+	// instead of on every evaluation.
+	rawMode := ""
+	var warnf func(string, ...any)
+	if e != nil {
+		warnf = e.logFn
+		if e.cfg != nil {
+			rawMode = e.cfg.Replenishment.LinesideDecisionMode
+		}
+	}
 	return &ThresholdMonitor{
 		eng:                 e,
 		debounce:            make(map[string]time.Time),
@@ -146,7 +190,19 @@ func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
 		thresholdsByPayload: make(map[string][]thresholdEntry),
 		negativeLogged:      make(map[string]time.Time),
 		swapContradiction:   make(map[string]time.Time),
+		linesideMode:        resolveLinesideMode(rawMode, warnf),
 	}
+}
+
+// decisionMode reports the resolved R1 lineside decision mode. Any value other
+// than the explicit ledger mode (including the unset unit-harness default) reads
+// as edge_reports — the value is validated at construction, so this is a plain
+// read with a safe default.
+func (m *ThresholdMonitor) decisionMode() string {
+	if m.linesideMode == linesideModeLedger {
+		return linesideModeLedger
+	}
+	return linesideModeEdgeReports
 }
 
 // MonitorBinding is one monitored (station, node, payload) threshold binding,
@@ -269,14 +325,23 @@ func (m *ThresholdMonitor) evaluatePayload(payloadCode, reason string) {
 	if !monitored {
 		return
 	}
-	total, err := m.readTotal(context.Background(), payloadCode)
+	// R1: compute BOTH the pure ledger total and the Edge-report-adjusted total.
+	// The decision mode picks which one the fire gate decides off; the audit log
+	// records any binding whose firing decision the two totals disagree on, on
+	// every eval, whichever mode is active.
+	edgeTotal, ledgerTotal, usedEdge, err := m.linesideDecisionTotal(context.Background(), payloadCode)
 	if err != nil {
 		if m.eng != nil {
 			m.eng.logFn("threshold_monitor: SystemUOPForPayload(%s): %v", payloadCode, err)
 		}
 		return
 	}
-	m.checkBindings(bindings, total, reason)
+	decisionTotal := ledgerTotal
+	if m.decisionMode() == linesideModeEdgeReports {
+		decisionTotal = edgeTotal
+	}
+	m.auditLinesideDecision(payloadCode, bindings, ledgerTotal, edgeTotal, usedEdge)
+	m.checkBindings(bindings, decisionTotal, reason)
 }
 
 // startupSweep iterates every (loader, payload) with threshold > 0,

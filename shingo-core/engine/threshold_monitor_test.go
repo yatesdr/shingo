@@ -65,6 +65,49 @@ func TestThresholdMonitor_Snapshot(t *testing.T) {
 	}
 }
 
+// TestResolveLinesideMode pins the R1 config validation: empty and "edge_reports"
+// resolve to the edge_reports default, "ledger" is the revert knob, and any
+// unknown value falls back to edge_reports WITH a warning (never silently).
+func TestResolveLinesideMode(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		raw      string
+		want     string
+		wantWarn bool
+	}{
+		{"", linesideModeEdgeReports, false},
+		{"edge_reports", linesideModeEdgeReports, false},
+		{"ledger", linesideModeLedger, false},
+		{"EDGE_REPORTS", linesideModeEdgeReports, true}, // case-sensitive → unknown → warn+default
+		{"garbage", linesideModeEdgeReports, true},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.raw, func(t *testing.T) {
+			t.Parallel()
+			warned := false
+			got := resolveLinesideMode(tc.raw, func(string, ...any) { warned = true })
+			if got != tc.want {
+				t.Errorf("resolveLinesideMode(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+			if warned != tc.wantWarn {
+				t.Errorf("resolveLinesideMode(%q) warned=%v, want %v", tc.raw, warned, tc.wantWarn)
+			}
+		})
+	}
+}
+
+// TestNewThresholdMonitor_DefaultsToEdgeReports pins that a monitor built with no
+// engine (nil cfg) resolves to the edge_reports default rather than an empty/unset
+// mode — the R1-live default holds even in the degenerate construction path.
+func TestNewThresholdMonitor_DefaultsToEdgeReports(t *testing.T) {
+	t.Parallel()
+	m := NewThresholdMonitor(nil)
+	if m.decisionMode() != linesideModeEdgeReports {
+		t.Errorf("nil-engine monitor decision mode = %q, want %q", m.decisionMode(), linesideModeEdgeReports)
+	}
+}
+
 func TestThresholdMonitor_DebounceWindow(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()

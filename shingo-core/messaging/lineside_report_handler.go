@@ -8,15 +8,15 @@ import (
 )
 
 // HandleLinesideLevelReport persists Edge's periodic per-consuming-node lineside
-// levels (the R1 shadow read-model) and triggers the shadow comparison. Edge →
-// Core, SubjectLinesideLevelReport.
+// levels (the R1 read-model) and triggers the monitor's report-arrival path.
+// Edge → Core, SubjectLinesideLevelReport.
 //
 // It upserts one edge_lineside_reports row per entry keyed by
-// (station, node, payload), then asks the threshold monitor to compute its
-// lineside term BOTH ways for the reported payloads (ledger vs these reports)
-// and log any disagreement that would change a firing decision. SHADOW: nothing
-// here changes a replenishment decision, and nothing writes bins.uop_remaining
-// (its own table, edge_lineside_reports).
+// (station, node, payload), then asks the threshold monitor to evaluate the
+// reported payloads. R1 is LIVE: in edge_reports mode the fresh report can fire
+// replenishment off the edge-adjusted total; in ledger mode it stays audit-only.
+// Either way it logs the ledger-vs-edge disagreement audit line, and nothing here
+// writes bins.uop_remaining (its own table, edge_lineside_reports).
 func (s *CoreDataService) HandleLinesideLevelReport(env *protocol.Envelope, r *protocol.LinesideLevelReport) {
 	station := r.Station
 	if station == "" {
@@ -53,6 +53,6 @@ func (s *CoreDataService) HandleLinesideLevelReport(env *protocol.Envelope, r *p
 
 	s.resp.dbg("lineside_level_report station=%s entries=%d payloads=%d", station, len(r.Entries), len(payloads))
 	if s.thresholdMonitor != nil && len(payloads) > 0 {
-		s.thresholdMonitor.ShadowCompareLineside(payloads)
+		s.thresholdMonitor.OnLinesideReports(payloads)
 	}
 }
