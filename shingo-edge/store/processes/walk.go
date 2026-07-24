@@ -197,11 +197,68 @@ type PayloadSet struct {
 // Springfield bin loader with 14 homes). This does one walk — O(styles) — and the
 // caller looks each node up in the map.
 func PayloadsForManualSwapNodes(db *sql.DB) (map[string]map[protocol.ClaimRole]PayloadSet, error) {
+	// TWO queries, not a walk. WalkClaims issues one ListStylesByProcess per
+	// process and one ListClaims per style — ~53 queries on a 12-process /
+	// ~40-style plant — and BuildView calls this once per board build. With five
+	// boards polling that was several thousand queries a minute against the one
+	// connection store.Open allows, which made this the largest single query
+	// consumer in the build once the per-tile work was batched.
+	//
+	// Filtering and grouping happen in Go rather than in SQL on purpose: it
+	// reuses claimSelect and scanNodeClaim verbatim, so there is no risk of a
+	// hand-written column list drifting from the scan order, and no question
+	// about how a swap_mode constant compares in the DB. Claims are per
+	// (style, node), so the row count is small enough that reading them all is
+	// cheaper than the queries it replaces.
+	//
+	// activeByStyle is the only thing the walk provided that a flat claim read
+	// does not. The INNER join reproduces the walk's reachable set exactly: a
+	// style whose process_id does not resolve was never visited, because the walk
+	// started from List(processes).
+	activeByStyle := map[int64]bool{}
+	styleRows, err := db.Query(`SELECT s.id,
+		CASE WHEN p.active_style_id IS NOT NULL AND p.active_style_id = s.id THEN 1 ELSE 0 END
+		FROM styles s JOIN processes p ON p.id = s.process_id`)
+	if err != nil {
+		return nil, fmt.Errorf("manual-swap payloads: active styles: %w", err)
+	}
+	defer styleRows.Close()
+	for styleRows.Next() {
+		var id int64
+		var isActive int
+		if err := styleRows.Scan(&id, &isActive); err != nil {
+			return nil, fmt.Errorf("manual-swap payloads: scan style: %w", err)
+		}
+		activeByStyle[id] = isActive != 0
+	}
+	if err := styleRows.Err(); err != nil {
+		return nil, fmt.Errorf("manual-swap payloads: active styles: %w", err)
+	}
+
+	claimRows, err := db.Query(`SELECT ` + claimSelect + ` FROM style_node_claims`)
+	if err != nil {
+		return nil, fmt.Errorf("manual-swap payloads: claims: %w", err)
+	}
+	defer claimRows.Close()
+
 	type acc struct{ active, all map[string]bool }
 	buckets := map[string]map[protocol.ClaimRole]*acc{}
-	err := WalkClaims(db, WalkOpts{SwapMode: protocol.SwapModeManualSwap}, func(ctx WalkCtx) bool {
-		name := ctx.Claim.CoreNodeName
-		role := ctx.Claim.Role
+	for claimRows.Next() {
+		claim, err := scanNodeClaim(claimRows)
+		if err != nil {
+			return nil, fmt.Errorf("manual-swap payloads: scan claim: %w", err)
+		}
+		if claim.SwapMode != protocol.SwapModeManualSwap {
+			continue
+		}
+		// A claim on a style with no resolvable process was unreachable from the
+		// walk; skip it rather than silently treating it as inactive.
+		isActive, reachable := activeByStyle[claim.StyleID]
+		if !reachable {
+			continue
+		}
+		name := claim.CoreNodeName
+		role := claim.Role
 		if buckets[name] == nil {
 			buckets[name] = map[protocol.ClaimRole]*acc{}
 		}
@@ -210,16 +267,15 @@ func PayloadsForManualSwapNodes(db *sql.DB) (map[string]map[protocol.ClaimRole]P
 			a = &acc{active: map[string]bool{}, all: map[string]bool{}}
 			buckets[name][role] = a
 		}
-		for _, p := range ctx.Claim.AllowedPayloads() {
+		for _, p := range claim.AllowedPayloads() {
 			a.all[p] = true
-			if ctx.Active {
+			if isActive {
 				a.active[p] = true
 			}
 		}
-		return false
-	})
-	if err != nil {
-		return nil, err
+	}
+	if err := claimRows.Err(); err != nil {
+		return nil, fmt.Errorf("manual-swap payloads: claims: %w", err)
 	}
 	out := make(map[string]map[protocol.ClaimRole]PayloadSet, len(buckets))
 	for name, roles := range buckets {
