@@ -57,6 +57,12 @@ type StationNodeView struct {
 	// their release didn't take and can click release again to retry.
 	// Empty when no recent release error is pending.
 	LastReleaseError string `json:"last_release_error,omitempty"`
+	// StrandedAlarm is the parked-ticks alarm sentence (P2-C7/C8) for this node:
+	// consume ticks piling up in pending_uop_delta while no bin is bound. The
+	// operator UI renders it as an amber chip on the node card, verbatim —
+	// "CARRIER-XXXX staged Nh at <node>, not bound — Record Count on the bin tab."
+	// Empty when the node has no active stranding alarm.
+	StrandedAlarm string `json:"stranded_alarm,omitempty"`
 	// ActiveStylePayloads / AllStylePayloads are the manual_swap loader-board
 	// unions across EVERY active process sharing this node's CoreNodeName (not
 	// just this station's process): active = payloads the running styles need,

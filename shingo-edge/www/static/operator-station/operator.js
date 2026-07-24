@@ -81,6 +81,16 @@ function handleOrderFailed(data) {
     showToast(msg, 'error', { sticky: true });
 }
 
+function handleUopStranded(data) {
+    scheduleRefresh();
+    // One sticky toast per alarm window (Core emits once per window). The detail
+    // is the full front-door instruction, rendered verbatim.
+    const msg = data && (data.detail || data.Detail);
+    if (msg) {
+        showToast(msg, 'error', { sticky: true });
+    }
+}
+
 // ─── Wire sub-module callbacks (one-way, breaks the import cycle) ───
 
 setRenderRefs({ openModal, openLoadBin, loadView });
@@ -109,6 +119,10 @@ if (!SSE) {
         // failures (fleet failure, admin terminate, structural resolver
         // error) are only visible on the next view refresh.
         onOrderFailed: handleOrderFailed,
+        // uop-stranded-alarm (P2-C7/C8): parked ticks piling up on an unbound
+        // node. Refresh so the tile chip + attention badge appear immediately,
+        // and fire one sticky toast per alarm window with the exact instruction.
+        onUopStrandedAlarm: handleUopStranded,
     });
 }
 

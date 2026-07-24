@@ -286,6 +286,14 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.CounterReadErrorEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-read-error", Data: p}
 			}
+		case engine.EventUOPStranded:
+			// Parked-ticks alarm (P2-C8): push a refresh so the operator tile
+			// picks up the StrandedAlarm chip the moment the stranding is
+			// detected, not on the next poll. The sentence itself rides the
+			// station view, so the payload only needs to name the node.
+			if p, ok := evt.Payload.(engine.UOPStrandedEvent); ok {
+				sseEvt = SSEEvent{Type: "uop-stranded-alarm", Data: p}
+			}
 		default:
 			return
 		}

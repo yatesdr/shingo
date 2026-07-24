@@ -42,6 +42,10 @@ type StationService struct {
 	// so the lighter test constructors that don't wire it compile and pass
 	// unchanged. The engine injects the live resolver via SetLoaderResolver.
 	loaders LoaderResolver
+	// stranded resolves a node's active parked-ticks alarm sentence (P2-C8) by
+	// core node name. Optional: nil leaves StrandedAlarm empty. The engine injects
+	// the live resolver (its strandedAlarms map) via SetStrandedResolver.
+	stranded func(coreNodeName string) string
 }
 
 // NewStationService constructs a StationService wrapping the shared
@@ -56,6 +60,11 @@ func NewStationService(db *store.DB) *StationService {
 // multi-window view fields (WindowGroupAnchor / WindowNodes). The engine calls
 // this once at startup with its flag-selected LoaderStore.
 func (s *StationService) SetLoaderResolver(r LoaderResolver) { s.loaders = r }
+
+// SetStrandedResolver injects the parked-ticks alarm resolver (P2-C8) — the
+// engine's StrandedAlarmDetail — so BuildView can render the tile chip. Optional;
+// unset leaves StrandedAlarm empty for the lighter test constructors.
+func (s *StationService) SetStrandedResolver(r func(coreNodeName string) string) { s.stranded = r }
 
 // ── Cross-aggregate orchestrations ──────────────────────────────────
 
@@ -322,6 +331,11 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 		// Surface any pending release-time error that's been rolled back to
 		// Staged for the operator to retry.
 		nodeView.LastReleaseError = store.LookupLastReleaseError(s.db, runtime)
+		// Surface any active parked-ticks alarm (P2-C7/C8): consume ticks piling
+		// up on this node while no bin is bound. Rendered as an amber chip.
+		if s.stranded != nil {
+			nodeView.StrandedAlarm = s.stranded(node.CoreNodeName)
+		}
 		// Multi-process loader-board unions: for a manual_swap node, resolve
 		// the active-style and all-style payload sets across EVERY active
 		// process sharing this CoreNodeName (PayloadsForLoader walks all

@@ -892,6 +892,17 @@ function createNodeButton(entry) {
 
     btn.appendChild(el('span', { className: 'os-node-name', textContent: entry.node.name }));
 
+    // Parked-ticks attention badge (P2-C8): draws the operator to tap the tile,
+    // where the modal chip shows the full "... Record Count on the bin tab."
+    // instruction. Amber, corner-anchored, cleared automatically once a bin binds.
+    if (entry.stranded_alarm) {
+        const alarm = el('span', { className: 'os-node-alarm', textContent: '⚠ NOT BOUND' });
+        alarm.style.cssText = 'position:absolute;bottom:4px;left:4px;font-size:11px;' +
+            'font-weight:700;color:#1a1204;background:#ffd98a;padding:2px 6px;border-radius:4px';
+        alarm.title = entry.stranded_alarm;
+        btn.appendChild(alarm);
+    }
+
     // Banner label for the priority states. The full-tile background
     // already signals "something is up"; the label says what.
     if (releaseReady && !drain) {

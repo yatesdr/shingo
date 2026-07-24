@@ -115,6 +115,20 @@ export function renderModal(entry) {
             '</div>';
     }
 
+    // Parked-ticks chip (P2-C8): consume ticks are piling up on this node while
+    // no bin is bound — the SNF3 stranding. The sentence carries the operator's
+    // front-door fix verbatim ("... Record Count on the bin tab."). Amber, not
+    // red — it's an unbound-carrier warning, not a hard failure. Clears
+    // automatically once a bin binds (Record Count / the next delivery).
+    if (entry.stranded_alarm) {
+        html += '<div class="os-stranded-chip" style="' +
+            'margin:8px 0;padding:10px 14px;border-radius:6px;' +
+            'background:#3a2f14;color:#ffd98a;border:1px solid #6a5322;' +
+            'font-size:13px;line-height:1.4">' +
+            '<strong>Parked ticks:</strong> ' + esc(entry.stranded_alarm) +
+            '</div>';
+    }
+
     // Skip-note chip: surfaces when a linked changeover complex order
     // reached terminal "skipped" — Core's no_source_bin path (the source
     // node was emptied externally, e.g. operator pulled the bin to quality

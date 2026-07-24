@@ -233,6 +233,9 @@ func New(c Config) *Engine {
 	// never disagree (multi-window C4b). Lazy via loaders() so the flag dual is
 	// honoured; the not-found sentinel is mapped to a clean miss for the view.
 	e.stationService.SetLoaderResolver(stationLoaderResolver{e})
+	// Wire the parked-ticks alarm (P2-C7) onto the operator tile: BuildView reads
+	// the live alarm map so the chip renders on load and on every refresh.
+	e.stationService.SetStrandedResolver(e.StrandedAlarmDetail)
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)
