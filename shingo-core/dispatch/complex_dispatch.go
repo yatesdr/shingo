@@ -219,6 +219,22 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return st.err
 	}
 
+	if st := d.acquireComplexSources(order, resolvedSteps); st.done {
+		return st.err
+	}
+
+	return d.dispatchComplexToFleet(order, resolvedSteps)
+}
+
+// acquireComplexSources secures the source bins (Phase D): transition the order
+// queued → sourcing, build the plan, reserve the distinct source needs, then
+// confirm the complete reserved set to hard claims. done=true means the order was
+// moved-concurrently, skipped moot, parked holding partials, held on claim_failed,
+// or failed on a malformed order; the orchestrator returns st.err verbatim. The
+// MoveToSourcing status side effect is intentional and stays first, inside this
+// phase. plan and assigned are locals — nothing downstream needs them. Reads the
+// resolved steps read-only.
+func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
 	// Reserve/confirm. MoveToSourcing at the START of the reserve attempt: the
 	// order stays `sourcing` while it holds partials and the scanner retries it
 	// (the acquiring-set widening, complex scope). Idempotent — a retried order
@@ -233,7 +249,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		// is no longer ours.
 		if IsConcurrentTransition(err) {
 			log.Printf("dispatch: complex order %d moved under us — another actor owns it now: %v", order.ID, err)
-			return fmt.Errorf("complex order %d moved concurrently: %w", order.ID, err)
+			return dispatchStep{done: true, err: fmt.Errorf("complex order %d moved concurrently: %w", order.ID, err)}
 		}
 		log.Printf("dispatch: complex order %d → sourcing: %v", order.ID, err)
 	}
@@ -260,7 +276,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
 	if rerr != nil {
 		log.Printf("dispatch: complex order %d reserve error: %v", order.ID, rerr)
-		return rerr
+		return dispatchStep{done: true, err: rerr}
 	}
 	switch outcome {
 	case reserveMoot:
@@ -270,7 +286,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		// than hold forever: a moot evac is not demand (operator-driven hold-and-retry
 		// does not apply).
 		d.skipOrderInternal(order, codeNoSourceBin, fmt.Sprintf("complex order %d: no bin at any source node", order.ID))
-		return fmt.Errorf("complex order %d moot — skipped", order.ID)
+		return dispatchStep{done: true, err: fmt.Errorf("complex order %d moot — skipped", order.ID)}
 	case reserveHolding:
 		// Only claim "partial set already held" when the order actually holds part
 		// of its set. Holding NOTHING (zero reserved, blocked on every need) is a
@@ -281,7 +297,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		d.setQueueReason(order, protocol.QueueWaitingForMaterial, "reserve-holding",
 			QueueParams{Payload: order.PayloadCode, Partial: holdingPartials})
 		d.dbg("complex: order %d incomplete reserve — holding %d partial(s), retrying next tick", order.ID, len(assigned))
-		return fmt.Errorf("complex order %d reserve incomplete", order.ID)
+		return dispatchStep{done: true, err: fmt.Errorf("complex order %d reserve incomplete", order.ID)}
 	}
 
 	// Confirm = commit the complete reserved set to hard claims (apply-as-confirm, no
@@ -294,13 +310,13 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 			d.setQueueReason(order, protocol.QueueWaitingForMaterial, "claim-failed",
 				QueueParams{Payload: order.PayloadCode})
 			d.dbg("complex: order %d held on claim_failed: %s", order.ID, pe.Detail)
-			return cerr
+			return dispatchStep{done: true, err: cerr}
 		}
 		d.failOrderInternal(order, codeNoBin, cerr.Error())
-		return cerr
+		return dispatchStep{done: true, err: cerr}
 	}
 
-	return d.dispatchComplexToFleet(order, resolvedSteps)
+	return dispatchStep{}
 }
 
 // dispatchComplexToFleet performs the guardless happy-path tail of complex
