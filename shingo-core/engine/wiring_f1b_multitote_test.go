@@ -131,24 +131,35 @@ func dispatchMultiToteSwap(t *testing.T, db *store.DB, eng *Engine, sim *simulat
 	return supplyBin.ID, evacBin.ID, lineNode.Name
 }
 
-// TestF1b_MultiToteDelivered_StrandsConsumingBin pins the pre-F1b behavior:
-// a multi-tote delivery ships BinID=nil, so the supply bin standing at the
-// consuming node is never carried to Edge and can never bind. Commit 2 flips
-// these assertions (Core selects and ships the supply bin + its dest node).
-func TestF1b_MultiToteDelivered_StrandsConsumingBin(t *testing.T) {
+// TestF1b_MultiToteDelivered_ShipsConsumingBin proves F1b-2 (Core side): a
+// multi-tote delivery selects the order_bin destined for the consuming process
+// node and ships THAT bin's id + its dest node on the existing delivered
+// envelope — not order.BinID (the evac bin), not nil. Edge binds it in F1b-3.
+func TestF1b_MultiToteDelivered_ShipsConsumingBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
 
-	_, _, _ = dispatchMultiToteSwap(t, db, eng, sim)
+	supplyBinID, evacBinID, lineNodeName := dispatchMultiToteSwap(t, db, eng, sim)
 
 	delivered := findDeliveredEnvelope(t, db)
 
-	// BROKEN (pre-F1b): the multi-bin path leaves BinID nil, so the consuming
-	// node's supply bin is stranded — Edge only raises the P2-C3 backstop alarm
-	// and binds nothing. Commit 2 makes this ship the supply bin id.
-	if delivered.BinID != nil {
-		t.Fatalf("pre-F1b expects delivered.BinID == nil (multi-tote strands the consuming bin); got %d", *delivered.BinID)
+	if delivered.BinID == nil {
+		t.Fatalf("F1b expects the consuming bin shipped, got BinID nil (multi-tote stranding not fixed)")
+	}
+	if *delivered.BinID != supplyBinID {
+		t.Errorf("delivered.BinID = %d, want supply bin %d (the bin destined for the process node)", *delivered.BinID, supplyBinID)
+	}
+	if *delivered.BinID == evacBinID {
+		t.Errorf("delivered.BinID = %d is the evac bin — must be the supply bin destined for the process node", evacBinID)
+	}
+	if delivered.BinDestNode != lineNodeName {
+		t.Errorf("delivered.BinDestNode = %q, want the consuming node %q", delivered.BinDestNode, lineNodeName)
+	}
+	// The count snapshot must be for the SELECTED (supply) bin, present so Edge
+	// seeds the runtime cache from it rather than a role default.
+	if delivered.UOPRemaining == nil {
+		t.Errorf("delivered.UOPRemaining = nil, want the supply bin's count snapshot")
 	}
 }

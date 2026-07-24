@@ -42,12 +42,14 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	e.applyBinArrivalForOrder(order)
 
 	// Ship the bin ID so Edge can attribute PLC tick deltas to the
-	// right bin. Single-bin orders carry BinID; multi-bin orders leave
-	// it nil and rely on bucket deltas instead. Edge's bin-ownership
-	// flip means active_bin_id at the runtime row is now sourced from
-	// this envelope — without it, Edge can't track tick attribution
-	// for the duration the bin sits at the slot.
+	// right bin. Single-bin orders carry BinID; multi-tote (multi-bin)
+	// orders select the ONE bin destined for the consuming process node
+	// (F1b) — see selectConsumingBinForNode. Edge's bin-ownership flip
+	// means active_bin_id at the runtime row is now sourced from this
+	// envelope — without it, Edge can't track tick attribution for the
+	// duration the bin sits at the slot.
 	var binID *int64
+	var binDestNode string
 	multiBin := false
 	if order.BinID != nil {
 		orderBins, _ := e.db.ListOrderBins(order.ID)
@@ -55,7 +57,22 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 			v := *order.BinID
 			binID = &v
 		} else {
+			// F1b — multi-tote adoption. order.BinID names the bin claimed AT
+			// the process node (for a swap, the evac bin picked up there), not
+			// the supply bin that stays and is consumed. Select the order_bin
+			// whose dest_node is the consuming node (order.ProcessNode) and ship
+			// THAT bin so Edge binds the right carrier. If none lands at the
+			// process node, leave binID nil so the Edge multi-bin backstop alarm
+			// (P2-C3) fires — never guess.
 			multiBin = true
+			if sel := selectConsumingBinForNode(orderBins, order.ProcessNode); sel != nil {
+				v := sel.BinID
+				binID = &v
+				binDestNode = sel.DestNode
+			} else {
+				e.logFn("engine: order=%d multi-bin delivered: no order_bin destined for process node %q — Edge multi-bin backstop alarm will fire (F1b no-match)",
+					order.ID, order.ProcessNode)
+			}
 		}
 	}
 
@@ -73,7 +90,9 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	// epoch onto the envelope so Edge seeds its runtime cache and stamps
 	// outgoing BinUOPDeltas from these — no separate HTTP pull. Read AFTER
 	// applyBinArrivalForOrder above so the bin row reflects the arrival.
-	// Single-bin only; multi-bin (binID nil) uses bucket deltas.
+	// Reads whichever bin was selected above: order.BinID for single-bin, or
+	// the consuming-node bin for multi-tote (F1b). binID nil (unmatched
+	// multi-bin) leaves the snapshot empty and Edge falls back to its default.
 	var uopRemaining *int
 	var deltaEpoch int64
 	if binID != nil {
@@ -101,9 +120,33 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 		UOPRemaining:   uopRemaining,
 		DeltaEpoch:     deltaEpoch,
 		DeliveryNode:   order.DeliveryNode,
+		BinDestNode:    binDestNode,
 	}); err != nil {
 		e.logFn("engine: delivered notification: %v", err)
 	}
+}
+
+// selectConsumingBinForNode returns the order_bin destined for the consuming
+// (process) node — the bin that stays at the line and receives consume ticks.
+// For a two-robot swap this is the SUPPLY bin dropped at the line, NOT
+// order.BinID, which names the evac bin picked up AT the line. dest_node is the
+// per-bin landing node persisted by the allocator (resolvePerBinDestinations),
+// so a plain dot-name compare against order.ProcessNode is unambiguous — the
+// same string-compare the Edge delivery gate uses (dest == CoreNodeName).
+//
+// Returns nil when processNode is empty or no bin lands there, so the caller
+// leaves BinID nil and the Edge multi-bin backstop alarm (P2-C3) fires rather
+// than binding a guess.
+func selectConsumingBinForNode(orderBins []*orders.OrderBin, processNode string) *orders.OrderBin {
+	if processNode == "" {
+		return nil
+	}
+	for _, ob := range orderBins {
+		if ob.DestNode == processNode {
+			return ob
+		}
+	}
+	return nil
 }
 
 // applyBinArrivalForOrder moves the order's bin(s) to the delivery node.

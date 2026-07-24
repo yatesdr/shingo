@@ -195,6 +195,16 @@ type OrderDelivered struct {
 	// the order has no station (stationID==""); omitempty so older Edge builds
 	// ignore the field silently.
 	DeliveryNode string `json:"delivery_node,omitempty"`
+
+	// BinDestNode is the Core dot-name of the node the carried bin came to rest
+	// at — set ONLY for multi-tote deliveries (F1b), where BinID names the one
+	// order_bin destined for the consuming process node. It is the per-bin
+	// landing node, which for a swap is authoritative and unambiguous, unlike
+	// DeliveryNode (the last dropoff — the supermarket for the evac leg) or a
+	// steps-derived finalDropoff. Edge binds when BinDestNode == its process
+	// node's CoreNodeName. Empty for single-bin orders, whose existing
+	// delivery-gate (steps finalDropoff / DeliveryNode) is unchanged.
+	BinDestNode string `json:"bin_dest_node,omitempty"`
 }
 
 // BinPickedUp notifies Edge that a robot has physically picked up a
