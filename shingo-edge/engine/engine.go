@@ -126,6 +126,12 @@ type Engine struct {
 	// short window. Zero value is usable.
 	l1Burst loaderBurstTracker
 
+	// strandedAlarms holds the current parked-ticks alarm detail per core node
+	// name (map[string]string), maintained by strandedMonitor. The operator-
+	// station view reads it via StrandedAlarmDetail so the tile renders the chip
+	// on load AND on the SSE-driven refresh. Empty/absent = no active alarm.
+	strandedAlarms sync.Map
+
 	// loaderResv serializes the count→fire reservation per loader so concurrent
 	// writers (a Kafka demand signal vs an HTTP RequestEmptyBin, or the push
 	// sweep) can't both read the same in-flight count and both fire empties —
@@ -291,6 +297,12 @@ func (e *Engine) Start() {
 	// CompleteProcessProductionCutover on debounced falling edges. No-op
 	// when no processes have the flag set.
 	e.startCutoverMonitor()
+
+	// Parked-ticks monitor (P2-C7): watches every consume node for
+	// pending_uop_delta growing across consecutive flush intervals while
+	// unbound, and raises a named stranding alarm. Detection only — never
+	// binds or moves anything.
+	e.startStrandedMonitor()
 
 	e.startedAt = time.Now()
 	e.logFn("Engine started: namespace=%s line_id=%s", e.cfg.Namespace, e.cfg.LineID)

@@ -64,10 +64,18 @@ const (
 	// detachment behind the SNF3 CARRIER-0024 stranding (2026-07-24). Today
 	// each such skip was a no-op; now it names the exact bin/order + node +
 	// reason + the operator's front-door fix. Alarm only — it never changes
-	// binding behavior (multi-bin binding, F1b, is still open). Rendered on the
-	// operator-station tile (C8) and greppable in the journal via its
-	// "delivered but NOT bound:" log line.
+	// binding behavior. Rendered on the operator-station tile (C8) and greppable
+	// in the journal via its "delivered but NOT bound:" log line.
 	EventDeliveredNotBound
+
+	// EventUOPStranded fires when a node's pending_uop_delta has grown across
+	// several consecutive flush intervals while no bin is bound — consume ticks
+	// piling up unattributed because the physical carrier at the line was never
+	// bound (the SNF3 parked-ticks class). It is a GROWTH condition, not a fixed
+	// threshold: an idle line (pending flat) never fires. The alarm names the
+	// carrier + node and carries the operator's front-door fix. Rendered on the
+	// operator-station tile (P2-C8) and greppable via its "parked ticks:" log line.
+	EventUOPStranded
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -284,4 +292,19 @@ type DeliveredNotBoundEvent struct {
 	BinID        *int64 `json:"bin_id,omitempty"`
 	Reason       string `json:"reason"`
 	Instruction  string `json:"instruction"`
+}
+
+// UOPStrandedEvent carries the parked-ticks alarm (P2-C7): a node whose
+// pending_uop_delta kept growing across consecutive flush intervals while
+// unbound. CoreNodeName names the node; Carrier is the physical bin's label
+// (best-effort from Core, "" when unknown); StagedHours is how long the node has
+// been stranded; PendingDelta is the held count that never landed on a bin.
+// Detail is the fully-formatted operator sentence the tile renders verbatim.
+type UOPStrandedEvent struct {
+	eventbus.PayloadBase
+	CoreNodeName string `json:"core_node_name"`
+	Carrier      string `json:"carrier,omitempty"`
+	StagedHours  int    `json:"staged_hours"`
+	PendingDelta int    `json:"pending_delta"`
+	Detail       string `json:"detail"`
 }
