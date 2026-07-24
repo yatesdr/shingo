@@ -451,8 +451,13 @@ func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode
 func (d *Dispatcher) failOrderInternal(order *orders.Order, code, detail string) {
 	if err := d.lifecycle.Fail(order, order.StationID, code, detail); err != nil {
 		log.Printf("dispatch: fail order %d: %v", order.ID, err)
+		// The transition failed, so its fireFailed actionMap hook did NOT emit
+		// EmitOrderFailed. Fall back to an explicit emit so the failure still
+		// reaches the edge. On the success path fireFailed is the single
+		// authoritative emit — emitting again here would double it (the defect
+		// this dedup removed).
+		d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, order.StationID, code, detail)
 	}
-	d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, order.StationID, code, detail)
 }
 
 // skipOrderInternal is the scanner-path "the work was never needed" helper.

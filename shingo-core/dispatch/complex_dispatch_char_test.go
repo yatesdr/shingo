@@ -143,13 +143,14 @@ func TestChar_DispatchPreparedComplex_InvalidStoredSteps_Fails(t *testing.T) {
 	if err == nil {
 		t.Fatal("invalid stored steps must return a non-nil error")
 	}
-	// CHANGE-DETECTOR: a terminal fail emits EmitOrderFailed TWICE today — once
-	// from the lifecycle transition's fireFailed hook (lifecycle.go), once from
-	// failOrderInternal's own explicit emit. Both carry the same code. This
-	// double-emit is pinned as current behavior, not endorsed; a dedup would be a
-	// deliberate change that flips this assertion.
-	if len(emitter.failed) != 2 {
-		t.Fatalf("failed events = %d, want 2 (fireFailed + failOrderInternal double-emit)", len(emitter.failed))
+	// CHANGE-DETECTOR: a terminal fail emits EmitOrderFailed exactly ONCE. On the
+	// success path (this test — a legal queued→failed transition) the lifecycle
+	// transition's fireFailed hook (lifecycle.go) is the single authoritative
+	// emit; failOrderInternal's explicit emit is now a fallback that fires only
+	// when the transition itself errored. The prior double-emit was deduped
+	// deliberately, flipping this assertion from 2 to 1.
+	if len(emitter.failed) != 1 {
+		t.Fatalf("failed events = %d, want 1 (single authoritative fireFailed emit)", len(emitter.failed))
 	}
 	for i, f := range emitter.failed {
 		if f.errorCode != "invalid_steps" {
@@ -160,6 +161,38 @@ func TestChar_DispatchPreparedComplex_InvalidStoredSteps_Fails(t *testing.T) {
 	testutil.MustNoErr(t, gerr, "re-read order")
 	if got.Status != StatusFailed {
 		t.Errorf("order status = %q, want %q", got.Status, StatusFailed)
+	}
+}
+
+// TestChar_FailOrderInternal_TransitionErrorFallback pins the ERROR-path half of
+// the EmitOrderFailed dedup: when lifecycle.Fail returns an error, its fireFailed
+// actionMap hook never ran, so failOrderInternal's fallback emit must fire EXACTLY
+// ONCE — the failure still has to reach the edge. Here the order is already
+// terminal, so Fail short-circuits to IllegalTransition (no state write, no
+// fireFailed) and drives the fallback branch directly. Together with the two
+// success-path cases (want 1) this pins the invariant: exactly one EmitOrderFailed
+// on BOTH paths.
+func TestChar_FailOrderInternal_TransitionErrorFallback(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// In-memory order only: Fail's IsTerminal guard returns before touching the DB.
+	order := &orders.Order{
+		EdgeUUID:  "char-fail-fallback",
+		StationID: "line-1",
+		OrderType: OrderTypeComplex,
+		Status:    StatusFailed, // terminal → Fail returns IllegalTransition, fireFailed does not run
+	}
+
+	d.failOrderInternal(order, "invalid_steps", "transition-error fallback")
+
+	if len(emitter.failed) != 1 {
+		t.Fatalf("failed events = %d, want 1 (transition-error fallback emit)", len(emitter.failed))
+	}
+	if emitter.failed[0].errorCode != "invalid_steps" {
+		t.Errorf("failed[0] code = %q, want %q", emitter.failed[0].errorCode, "invalid_steps")
 	}
 }
 
@@ -197,11 +230,11 @@ func TestChar_DispatchPreparedComplex_FleetCreateFailure_Fails(t *testing.T) {
 	if err == nil {
 		t.Fatal("fleet CreateOrder failure must return a non-nil error")
 	}
-	// CHANGE-DETECTOR: same double-emit as the invalid-steps case — fireFailed via
-	// the lifecycle transition plus failOrderInternal's explicit emit. Pinned, not
-	// endorsed.
-	if len(emitter.failed) != 2 {
-		t.Fatalf("failed events = %d, want 2 (fireFailed + failOrderInternal double-emit)", len(emitter.failed))
+	// CHANGE-DETECTOR: same single-emit as the invalid-steps case — the lifecycle
+	// transition's fireFailed is the one authoritative emit; failOrderInternal's
+	// explicit emit is now a transition-error-only fallback. Deduped deliberately.
+	if len(emitter.failed) != 1 {
+		t.Fatalf("failed events = %d, want 1 (single authoritative fireFailed emit)", len(emitter.failed))
 	}
 	for i, f := range emitter.failed {
 		if f.errorCode != "fleet_failed" {
