@@ -92,9 +92,23 @@ func (st *catidState) resetArm() {
 	st.armHandled = false
 }
 
+// postCutoverVerify is an open post-cutover verification watch for one process:
+// within [now, deadline] after a cutover completed, the monitor checks whether
+// the press's live part id matches the new active style's expected_catid, and
+// flags changeoverID when it does not.
+type postCutoverVerify struct {
+	changeoverID int64
+	styleID      int64  // the new active style (the changeover's to-style)
+	expected     string // that style's expected_catid at completion time (non-empty)
+	deadline     time.Time
+}
+
 type catidMonitor struct {
 	eng    *Engine
 	states map[int64]*catidState // processID → state
+	// verify holds the open post-cutover verification watch per process (nil until
+	// the first cutover opens one). Guarded by mu, like states.
+	verify map[int64]*postCutoverVerify
 	mu     sync.Mutex
 	// startChangeover is the seam for the auto-arm fire, defaulting to
 	// eng.StartProcessChangeover (wired in startCatidMonitor); tests inject a spy.
@@ -201,7 +215,69 @@ func (cm *catidMonitor) evaluateProcess(processID int64, st *catidState, now tim
 	if confirmed {
 		cm.onConfirmedCATID(processID, st, isChange)
 	}
+	cm.checkPostCutoverVerify(processID, st, now)
 	return cm.evaluateAutoArm(processID, st, ok, now)
+}
+
+// openPostCutoverVerify starts a post-cutover verification watch for a process:
+// within [now, deadline], the monitor checks whether the press's live part id
+// matches the new active style's expected_catid and flags changeoverID if it
+// does not. Called from the completion path (outside the tick); locks mu.
+func (cm *catidMonitor) openPostCutoverVerify(processID, changeoverID, styleID int64, expected string, deadline time.Time) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if cm.verify == nil {
+		cm.verify = map[int64]*postCutoverVerify{}
+	}
+	cm.verify[processID] = &postCutoverVerify{
+		changeoverID: changeoverID,
+		styleID:      styleID,
+		expected:     expected,
+		deadline:     deadline,
+	}
+}
+
+// checkPostCutoverVerify runs the open verification watch each tick. As soon as
+// the live part id matches the new style it clears the watch (verified). Once the
+// window elapses with a live value that still disagrees, it flags the changeover
+// for operator confirmation and emits EventChangeoverVerifyMismatch. Called with
+// cm.mu held; one decision per cutover, then the watch closes.
+func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, now time.Time) {
+	pv, ok := cm.verify[processID]
+	if !ok {
+		return
+	}
+	// Success short-circuit: the moment the live part matches the new style, the
+	// cutover is verified — clear any flag and close the watch.
+	if st.seenValue && st.lastConfirmed == pv.expected {
+		if err := cm.eng.db.SetChangeoverVerifyMismatch(pv.changeoverID, ""); err != nil {
+			log.Printf("plc-catid: clear post-cutover flag on changeover %d: %v", pv.changeoverID, err)
+		}
+		delete(cm.verify, processID)
+		return
+	}
+	if now.Before(pv.deadline) {
+		return // still inside the window — give the press time to settle
+	}
+	// Window elapsed. If we ever saw a live value and it still disagrees, flag the
+	// changeover; otherwise close silently.
+	if st.seenValue && st.lastConfirmed != pv.expected {
+		if err := cm.eng.db.SetChangeoverVerifyMismatch(pv.changeoverID, st.lastConfirmed); err != nil {
+			log.Printf("plc-catid: flag post-cutover mismatch on changeover %d: %v", pv.changeoverID, err)
+		} else {
+			log.Printf("CATID post-cutover mismatch: press %s (process %d) reports %q after cutover to style %d (expected %q) — flagged for operator confirmation",
+				st.processName, processID, st.lastConfirmed, pv.styleID, pv.expected)
+			cm.eng.Events.Emit(Event{Type: EventChangeoverVerifyMismatch, Payload: CATIDVerifyMismatchEvent{
+				ProcessID:     processID,
+				ProcessName:   st.processName,
+				ChangeoverID:  pv.changeoverID,
+				StyleID:       pv.styleID,
+				ExpectedCATID: pv.expected,
+				LiveCATID:     st.lastConfirmed,
+			}})
+		}
+	}
+	delete(cm.verify, processID)
 }
 
 // applyCatidEdge runs the value-change debounce state machine. Returns

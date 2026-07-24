@@ -382,7 +382,14 @@ func (e *Engine) finalizeChangeoverRow(processID, changeoverID int64, triggeredB
 	if err := e.SyncProcessCounter(processID); err != nil {
 		return err
 	}
-	return e.db.UpdateProcessChangeoverStateWithTrigger(changeoverID, domain.ChangeoverCompleted, triggeredBy)
+	if err := e.db.UpdateProcessChangeoverStateWithTrigger(changeoverID, domain.ChangeoverCompleted, triggeredBy); err != nil {
+		return err
+	}
+	// Open the post-cutover part-id verification watch: within a short window, if
+	// the press's live CATID still disagrees with the new active style, this
+	// changeover is flagged for operator confirmation on the station.
+	e.openPostCutoverVerify(processID, changeoverID)
+	return nil
 }
 
 func (e *Engine) tryCompleteProcessChangeover(processID int64) error {

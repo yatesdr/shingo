@@ -174,9 +174,11 @@ func (s *stubEngine) PreviewChangeoverPlan(int64, int64) (changeover.Plan, error
 func (s *stubEngine) StartProcessChangeover(int64, int64, string, string) (*processes.Changeover, error) {
 	return nil, nil
 }
-func (s *stubEngine) CompleteProcessProductionCutover(int64) error        { return nil }
-func (s *stubEngine) CancelProcessChangeover(int64) error                 { return nil }
-func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error { return nil }
+func (s *stubEngine) CompleteProcessProductionCutover(int64) error          { return nil }
+func (s *stubEngine) CancelProcessChangeover(int64) error                   { return nil }
+func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error   { return nil }
+func (s *stubEngine) PostCutoverFlag(int64) (*engine.PostCutoverFlag, bool) { return nil, false }
+func (s *stubEngine) ClearPostCutoverFlag(int64) error                      { return nil }
 func (s *stubEngine) ReleaseChangeoverWait(_ int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
 	d := disp
 	s.lastReleaseChangeoverWaitDisp = &d

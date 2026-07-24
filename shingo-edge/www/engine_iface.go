@@ -120,6 +120,12 @@ type EngineOrchestration interface {
 	AbandonChangeoverSupply(processID, processNodeID int64, acceptHalf bool, calledBy string) error
 	// ChangeoverGateStatus is a pure read of the cutover gate — safe to poll.
 	ChangeoverGateStatus(processID int64) (bool, []domain.Blocker, error)
+	// PostCutoverFlag returns the process's active post-cutover verification flag
+	// (the press's live part disagrees with the style the cutover was set to), or
+	// (nil, false) when none.
+	PostCutoverFlag(processID int64) (*engine.PostCutoverFlag, bool)
+	// ClearPostCutoverFlag clears that flag — the operator confirmed or resolved it.
+	ClearPostCutoverFlag(processID int64) error
 	SequentialChangeoverCutover(processID, nodeID int64, calledBy string) error
 	StageNodeChangeoverMaterial(processID, nodeID int64) (*domain.Order, error)
 	EvacuateNode(processID, nodeID int64, partialQty int64) (*domain.Order, error)

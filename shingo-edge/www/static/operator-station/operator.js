@@ -2,7 +2,7 @@
 // Entry module wires SSE → loadView, refreshes the view, and bootstraps
 // the render / modal / load-bin / release / keypad sub-modules.
 
-import { stationID, showToast, friendlyOrderError } from './operator-util.js';
+import { stationID, showToast, friendlyOrderError, postAction, el } from './operator-util.js';
 import {
     getView, setView, getSelectedNodeID,
     getLastViewJSON, setLastViewJSON,
@@ -39,6 +39,7 @@ function renderAll() {
     renderHeader();
     renderGrid();
     renderFooter();
+    checkPostCutoverFlag();
     const sid = getSelectedNodeID();
     if (sid !== null) {
         const entry = findNodeByID(sid);
@@ -91,6 +92,81 @@ function handleUopStranded(data) {
     }
 }
 
+// ─── Post-cutover part-id verification flag ───
+//
+// After a cutover, if the press's live part id still disagrees with the style it
+// was set to, Core flags the changeover. We fetch that flag on every view render
+// (so a flag raised while no one was looking still surfaces) and offer the two
+// resolutions in place: a one-tap corrective changeover to the mapped style, and
+// a link to review the style's expected part-id config. "Confirm" clears it.
+
+function removePostCutoverBanner() {
+    const b = document.getElementById('os-postcutover-flag');
+    if (b) b.remove();
+}
+
+async function checkPostCutoverFlag() {
+    const view = getView();
+    if (!view || !view.process) { removePostCutoverBanner(); return; }
+    const pid = view.process.id;
+    try {
+        const res = await fetch('/api/processes/' + pid + '/post-cutover-flag');
+        if (!res.ok) return;
+        const body = await res.json();
+        if (!body || !body.flagged || !body.flag) { removePostCutoverBanner(); return; }
+        renderPostCutoverFlag(pid, body.flag);
+    } catch (err) {
+        console.error('checkPostCutoverFlag', err);
+    }
+}
+
+function renderPostCutoverFlag(pid, flag) {
+    removePostCutoverBanner(); // id-stable re-render — an SSE refresh can't stack banners
+    const bannerStyle = {
+        position: 'fixed', top: '0', left: '0', right: '0', zIndex: '9000',
+        background: '#7a1f1f', color: '#fff', padding: '0.9rem 1.1rem',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.4)', display: 'flex',
+        flexDirection: 'column', gap: '0.6rem',
+    };
+    const btnStyle = {
+        padding: '0.6rem 0.9rem', fontSize: '1rem', borderRadius: '6px',
+        border: '1px solid rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.12)',
+        color: '#fff', cursor: 'pointer', textDecoration: 'none', display: 'inline-block',
+    };
+    const banner = el('div', { id: 'os-postcutover-flag', style: bannerStyle });
+    banner.appendChild(el('div', { textContent: flag.message, style: { fontWeight: '600', fontSize: '1.05rem' } }));
+
+    const actions = el('div', { style: { display: 'flex', gap: '0.6rem', flexWrap: 'wrap' } });
+    // Resolution 1 — one-tap corrective changeover to the mapped style.
+    if (flag.has_mapped) {
+        const fixStyle = Object.assign({}, btnStyle, { background: '#2f7a2f', borderColor: '#2f7a2f' });
+        const fix = el('button', { type: 'button', style: fixStyle, textContent: 'Change over to ' + flag.mapped_style_name });
+        fix.addEventListener('click', async () => {
+            fix.disabled = true;
+            const ok = await postAction('/api/processes/' + pid + '/changeover/start', {
+                to_style_id: flag.mapped_style_id,
+                called_by: 'post-cutover-correction',
+                notes: 'corrective changeover from post-cutover part-id mismatch',
+            }, loadView);
+            if (ok) { showToast('Corrective changeover to ' + flag.mapped_style_name + ' started', 'success'); removePostCutoverBanner(); }
+        });
+        actions.appendChild(fix);
+    }
+    // Resolution 2 — review the style's expected part-id config.
+    actions.appendChild(el('a', { href: '/processes', target: '_blank', style: btnStyle, textContent: 'Review part-id config' }));
+    // Confirm the press is correct → clear the flag.
+    const confirmBtn = el('button', { type: 'button', style: btnStyle, textContent: 'Confirm — press is correct' });
+    confirmBtn.addEventListener('click', async () => {
+        confirmBtn.disabled = true;
+        const ok = await postAction('/api/processes/' + pid + '/post-cutover-flag/confirm', {}, loadView);
+        if (ok) removePostCutoverBanner();
+    });
+    actions.appendChild(confirmBtn);
+
+    banner.appendChild(actions);
+    document.body.appendChild(banner);
+}
+
 // ─── Wire sub-module callbacks (one-way, breaks the import cycle) ───
 
 setRenderRefs({ openModal, openLoadBin, loadView });
@@ -123,6 +199,9 @@ if (!SSE) {
         // node. Refresh so the tile chip + attention badge appear immediately,
         // and fire one sticky toast per alarm window with the exact instruction.
         onUopStrandedAlarm: handleUopStranded,
+        // changeover-verify-mismatch: a post-cutover part-id disagreement was
+        // flagged. Refresh so checkPostCutoverFlag fetches + shows the prompt.
+        onChangeoverVerifyMismatch: () => scheduleRefresh(),
     });
 }
 

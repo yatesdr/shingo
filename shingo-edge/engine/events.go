@@ -105,6 +105,14 @@ const (
 	// so the HMI can raise a station notification. It never cancels or re-plans —
 	// it is the notification for an authorized auto-START.
 	EventCATIDAutoArmed
+
+	// EventChangeoverVerifyMismatch fires when, within the short window after a
+	// cutover completed, the press's live part id still disagrees with the new
+	// active style's expected_catid. It flags that changeover for operator
+	// confirmation on the station (the changeover was set to style A, but the
+	// press reports a part matching style B or nothing). It never blocks beyond
+	// the existing request-path mismatch guard — it is a confirmation prompt.
+	EventChangeoverVerifyMismatch
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -351,6 +359,20 @@ type CATIDAutoArmedEvent struct {
 	TargetStyleID   int64  `json:"target_style_id"`
 	TargetStyleName string `json:"target_style_name"`
 	NewCATID        string `json:"new_catid"`
+}
+
+// CATIDVerifyMismatchEvent carries a post-cutover verification flag: after the
+// changeover to StyleID completed, the press's live part id (LiveCATID) still
+// did not match its ExpectedCATID within the watch window. The station renders
+// it as a "please confirm" prompt on ChangeoverID.
+type CATIDVerifyMismatchEvent struct {
+	eventbus.PayloadBase
+	ProcessID     int64  `json:"process_id"`
+	ProcessName   string `json:"process_name"`
+	ChangeoverID  int64  `json:"changeover_id"`
+	StyleID       int64  `json:"style_id"`
+	ExpectedCATID string `json:"expected_catid"`
+	LiveCATID     string `json:"live_catid"`
 }
 
 // DeliveredNotBoundEvent carries the detail for a delivery that arrived at one

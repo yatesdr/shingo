@@ -163,6 +163,40 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
+// apiGetPostCutoverFlag returns the process's post-cutover part-id verification
+// flag, or {flagged:false} when none. Polled on station load so a flag raised
+// while no one was looking still surfaces.
+func (h *Handlers) apiGetPostCutoverFlag(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	flag, ok := h.orchestration.PostCutoverFlag(processID)
+	if !ok {
+		writeJSON(w, map[string]any{"flagged": false})
+		return
+	}
+	writeJSON(w, map[string]any{"flagged": true, "flag": flag})
+}
+
+// apiConfirmPostCutoverFlag clears the flag — the operator confirmed the press
+// is correct (or handled it another way). The corrective-changeover exit clears
+// it on its own via StartProcessChangeover.
+func (h *Handlers) apiConfirmPostCutoverFlag(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	if err := h.orchestration.ClearPostCutoverFlag(processID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-verify-cleared", Data: map[string]int64{"process_id": processID}})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
+}
+
 // apiReleaseChangeoverWait gates the changeover wait-points (ready / tooling done).
 //
 // HMI ORPHAN as of 2026-05-10 (HMI Tier 2). The operator-station

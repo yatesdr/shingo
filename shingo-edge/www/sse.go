@@ -315,6 +315,13 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.CATIDAutoArmedEvent); ok {
 				sseEvt = SSEEvent{Type: "catid-auto-armed", Data: p}
 			}
+		case engine.EventChangeoverVerifyMismatch:
+			// Post-cutover verification: the press's part still disagrees with the
+			// style the cutover was set to. Push a refresh so the station fetches
+			// and shows the "please confirm" flag with its resolutions.
+			if p, ok := evt.Payload.(engine.CATIDVerifyMismatchEvent); ok {
+				sseEvt = SSEEvent{Type: "changeover-verify-mismatch", Data: p}
+			}
 		default:
 			return
 		}

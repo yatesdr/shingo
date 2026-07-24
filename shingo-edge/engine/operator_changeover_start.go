@@ -10,12 +10,20 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"shingoedge/store/processes"
 )
 
 // Error handling policy: log and continue. Do not add early returns without understanding the caller contract. See 2567plandiscussion.md.
 func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*processes.Changeover, error) {
+	// A new changeover resolves any pending post-cutover verification flag on the
+	// process — the operator is acting on the mismatch (e.g. the one-tap corrective
+	// changeover offered on the flag). Best-effort; a stale flag is cosmetic.
+	if err := e.ClearPostCutoverFlag(processID); err != nil {
+		log.Printf("changeover: clear post-cutover flag for process %d: %v", processID, err)
+	}
+
 	// Pre-flight inventory gate: refuse to start if Core reports any
 	// required payload has zero available bins in the supermarket — the
 	// changeover would deadlock at the first retrieve. Run BEFORE
