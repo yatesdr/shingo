@@ -299,26 +299,50 @@ func (m *Manager) warlinkPollTick() {
 		}
 	}
 
-	// Detect PLCs that disappeared from WarLink
-	m.mu.RLock()
-	var removed []string
+	// PLCs that disappeared from WarLink. Two things happen and both matter:
+	//
+	//  1. Status → Disconnected. GetPLC hands out the raw *ManagedPLC, so a
+	//     caller still holding one from before the eviction must not go on
+	//     reading "Connected".
+	//  2. The entry is DELETED from m.plcs. Marking it disconnected but keeping
+	//     it — the behaviour until now — left a removed PLC visible for the life
+	//     of the process in PLCNames() and PLCStatuses(), so it kept appearing
+	//     in the Processes-page PLC dropdown and in GET /api/plcs. That is why
+	//     removing a PLC upstream looked like it needed an edge restart to take
+	//     effect: the status was right, the list was not.
+	//
+	// Only a PLC that WAS connected gets a disconnect event — one already marked
+	// disconnected has no transition to report. It is still evicted, though,
+	// otherwise a PLC that drops and is only then removed upstream lingers for
+	// good, which is exactly the ghost this fixes.
+	//
+	// A single absence is treated as authoritative, consistent with the
+	// disconnect event this has always emitted on the same signal. A failed
+	// fetchPLCs returns early above, so `seen` is only ever compared against a
+	// list WarLink actually served.
+	m.mu.Lock()
+	var evicted, disconnected []string
 	for name, mp := range m.plcs {
-		mp.mu.RLock()
-		isConnected := mp.Status == "Connected"
-		mp.mu.RUnlock()
-		if !seen[name] && isConnected {
-			removed = append(removed, name)
+		if seen[name] {
+			continue
 		}
-	}
-	m.mu.RUnlock()
-
-	for _, name := range removed {
-		m.mu.RLock()
-		mp := m.plcs[name]
-		m.mu.RUnlock()
+		delete(m.plcs, name)
 		mp.mu.Lock()
+		wasConnected := mp.Status == "Connected"
 		mp.Status = "Disconnected"
 		mp.mu.Unlock()
+		evicted = append(evicted, name)
+		if wasConnected {
+			disconnected = append(disconnected, name)
+		}
+	}
+	m.mu.Unlock()
+
+	// Emissions and logging outside the lock — the emitter can re-enter.
+	for _, name := range evicted {
+		m.DebugLog.Log("plc evicted: %s no longer listed by warlink", name)
+	}
+	for _, name := range disconnected {
 		m.emitter.EmitPLCDisconnected(name, fmt.Errorf("removed from WarLink"))
 	}
 
