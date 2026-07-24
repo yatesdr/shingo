@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -58,6 +59,34 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 // Edge-DB only, like guardNoActiveSwap — no Core round-trip. A read error is
 // treated as "no changeover" (fail-open): a transient read blip must not shut
 // down the line, and the changeover machinery has its own preflight/cutover gates.
+// ChangeoverArmedError is returned by guardStyleTransition when a material
+// request is refused because a changeover is armed on the node's process. It
+// carries the process id and both style names so the HTTP handler can offer the
+// operator an inline exit — abandon the changeover, and the same request then
+// proceeds — instead of a dead-end refusal (2026-07-24). Error() builds the
+// operator-facing sentence from those fields, so the value is fully
+// constructible (handlers/tests) without a hidden message.
+type ChangeoverArmedError struct {
+	ProcessID     int64
+	ToStyleName   string
+	OutgoingStyle string
+}
+
+func (e *ChangeoverArmedError) Error() string {
+	return fmt.Sprintf("A changeover to %s is armed on this press — abandon it to request %s material.",
+		e.ToStyleName, e.OutgoingStyle)
+}
+
+// styleName resolves a style id to its display name for operator-facing
+// messages, falling back to a stable "style <id>" label when the lookup fails
+// or the row has no name — a refusal message must never blank out mid-sentence.
+func (e *Engine) styleName(id int64) string {
+	if s, err := e.db.GetStyle(id); err == nil && s != nil && s.Name != "" {
+		return s.Name
+	}
+	return fmt.Sprintf("style %d", id)
+}
+
 func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.NodeClaim) error {
 	if node == nil || claim == nil {
 		return nil
@@ -74,7 +103,13 @@ func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.Nod
 	// the outgoing one, so any line relief here is outgoing by construction (once
 	// the cutover completes the changeover is no longer active and this passes).
 	if co.FromStyleID == nil || claim.StyleID == *co.FromStyleID {
-		return fmt.Errorf("node %s: a changeover is armed on this process (switching styles) — material requests for the outgoing style are blocked until cutover completes", node.Name)
+		toName := e.styleName(co.ToStyleID)
+		outName := e.styleName(claim.StyleID)
+		return &ChangeoverArmedError{
+			ProcessID:     node.ProcessID,
+			ToStyleName:   toName,
+			OutgoingStyle: outName,
+		}
 	}
 	return nil
 }
@@ -121,10 +156,31 @@ func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeC
 		return nil // no debounced observation yet ⇒ fail-open.
 	}
 	if live != style.ExpectedCATID {
-		return fmt.Errorf("node %s: press part identity CATID %s does not match active style %q (expects CATID %s) — the wrong part is physically on the press; outgoing-style relief is blocked until it matches or you start a changeover",
-			node.Name, live, style.Name, style.ExpectedCATID)
+		return fmt.Errorf("Press reports CATID %s; active style is %s (expects CATID %s) — the wrong part is on the press. %s",
+			live, style.Name, style.ExpectedCATID, e.catidResolutionHint(node.ProcessID))
 	}
 	return nil
+}
+
+// catidResolutionHint tells the operator where the fix for a CATID mismatch is
+// coming from, keyed to the process's auto-arm mode: on `auto` the monitor arms
+// a changeover itself once the new part settles and maps to a style; on
+// `prompt` the operator gets a changeover prompt on the station; otherwise
+// (`off`) they start one. Read-only and fail-soft — an unknown/blank mode reads
+// as the default (auto), so the refusal always points somewhere.
+func (e *Engine) catidResolutionHint(processID int64) string {
+	mode := domain.ChangeoverAutoArmAuto
+	if proc, err := e.db.GetProcess(processID); err == nil && proc != nil {
+		mode = domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm)
+	}
+	switch mode {
+	case domain.ChangeoverAutoArmPrompt:
+		return "use the changeover prompt on this station, or start a changeover to the matching style"
+	case domain.ChangeoverAutoArmOff:
+		return "start a changeover to the matching style"
+	default:
+		return "the automatic changeover arm will start it once the part settles, or start a changeover to the matching style"
+	}
 }
 
 // hasActiveSwap reports whether the runtime slots reference any non-terminal

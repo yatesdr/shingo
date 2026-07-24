@@ -71,14 +71,16 @@ func TestGuardCatidMismatch_InertAndBlocking(t *testing.T) {
 		t.Errorf("matching CATID must not block, got: %v", err)
 	}
 
-	// 5. Live diverges from expected → BLOCKS, naming node + both values.
+	// 5. Live diverges from expected → BLOCKS, stating BOTH sides (live part +
+	//    active style's expected) and pointing at the pending resolution.
 	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "40016911")
 	eng.catidMon.states[processID].lastConfirmed = "50029999"
 	err = eng.guardCatidMismatch(node, lineClaim)
 	if err == nil {
 		t.Fatal("divergent CATID must block outgoing-style relief")
 	}
-	for _, want := range []string{node.Name, "50029999", "40016911"} {
+	// "Press reports CATID 50029999; active style is PROD-STYLE (expects CATID 40016911) — ..."
+	for _, want := range []string{"Press reports", "50029999", "40016911", "PROD-STYLE", "changeover"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("block message %q missing %q", err.Error(), want)
 		}
@@ -107,5 +109,30 @@ func TestRequestProduceSwap_BlockedOnCatidMismatch(t *testing.T) {
 		t.Fatal("expected RequestProduceSwap to be refused when live CATID mismatches the active style")
 	} else if !strings.Contains(err.Error(), "CATID") {
 		t.Errorf("error = %q, want the CATID mismatch message", err.Error())
+	}
+}
+
+// TestGuardCatidMismatch_NeverFiresWhenExpectedCATIDBlank pins the inert-on-blank
+// rule directly: a style with no expected_catid never blocks, even when a live
+// value is observed and diverges from anything — an unconfigured guard is a
+// no-op, so default-safe on plants that have not filled the field in.
+func TestGuardCatidMismatch_NeverFiresWhenExpectedCATIDBlank(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, styleID, _ := seedProduceNode(t, db, "two_robot")
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "get node")
+	eng := testEngine(t, db)
+
+	// expected_catid is left unset on the seeded style. A live value is present
+	// and would diverge from any configured value — but blank ⇒ never fires.
+	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "50029999")
+	lineClaim := &processes.NodeClaim{SwapMode: protocol.SwapModeTwoRobot, StyleID: styleID}
+	if err := eng.guardCatidMismatch(node, lineClaim); err != nil {
+		t.Errorf("blank expected_catid must never block, got: %v", err)
+	}
+	// And through the real relief path, the request is not refused for CATID.
+	if _, err := eng.RequestProduceSwap(nodeID); err != nil && strings.Contains(err.Error(), "CATID") {
+		t.Errorf("blank expected_catid must not refuse the request for a CATID mismatch, got: %v", err)
 	}
 }
