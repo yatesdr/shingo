@@ -307,6 +307,11 @@ func (e *Engine) Start() {
 	// binds or moves anything.
 	e.startStrandedMonitor()
 
+	// R1 shadow read-model: push per-consuming-node lineside on-hand to Core
+	// every 60s so Core can shadow its replenishment ledger against Edge's
+	// authoritative counts. Reporting only; Core decides off the ledger.
+	e.startLinesideReporter()
+
 	e.startedAt = time.Now()
 	e.logFn("Engine started: namespace=%s line_id=%s", e.cfg.Namespace, e.cfg.LineID)
 }

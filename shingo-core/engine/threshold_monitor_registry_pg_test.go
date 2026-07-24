@@ -325,6 +325,85 @@ func TestThresholdMonitor_SwapContradiction_NoChipWhenBelow(t *testing.T) {
 	}
 }
 
+// TestThresholdMonitor_R1Shadow_DisagreesButDecidesNothing exercises the R1
+// shadow end-to-end: the ledger reads STOCKED (a lineside bin at 150, threshold
+// 100) while a fresh Edge report says that node's bin drained to 10 — the SNF3
+// divergence. The shadow computes the lineside term both ways and would log a
+// firing-decision disagreement, but it is SHADOW: it must NOT fire a signal.
+// This also exercises the v52 migration, the edge_lineside_reports store
+// round-trip, and LinesideLedgerByNode against a real DB.
+func TestThresholdMonitor_R1Shadow_DisagreesButDecidesNothing(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+
+	const (
+		stationID = "station-r1-shadow"
+		loader    = "MS-LOADER-R1"
+		payload   = "P-R1-SHADOW"
+	)
+
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleConsume,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 100,
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	// Ledger truth: a lineside bin holding 150 at a named node — STOCKED (>= 100).
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, payload, sd.LineNode.ID, "BIN-R1")
+	testutil.MustNoErr(t, func() error {
+		_, err := db.DB.Exec(`UPDATE bins SET uop_remaining=150 WHERE id=$1`, bin.ID)
+		return err
+	}(), "set bin uop")
+
+	// Edge reports that node's bin drained to 10 — a fresh, sharp divergence.
+	testutil.MustNoErr(t, db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
+		Station:      stationID,
+		CoreNodeName: sd.LineNode.Name,
+		PayloadCode:  payload,
+		BinCount:     1,
+		BinUOP:       10,
+		BucketQty:    0,
+		ReportedAt:   time.Now().UTC(),
+	}), "upsert edge report")
+
+	m := eng.thresholdMonitor
+	m.mu.Lock()
+	m.thresholdsByPayload[payload] = []thresholdEntry{{
+		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 100,
+	}}
+	m.mu.Unlock()
+
+	preMsgs, _ := db.ListPendingOutbox(50)
+	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+
+	// The report arrival trigger. It computes both ways (ledger 150 hold vs
+	// edge-adjusted 10 fire) and logs the disagreement — but decides off the
+	// ledger, so NOTHING fires.
+	m.ShadowCompareLineside([]string{payload})
+	time.Sleep(200 * time.Millisecond)
+
+	msgs, _ := db.ListPendingOutbox(50)
+	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+		t.Errorf("R1 shadow fired %d signal(s); want 0 — the shadow must decide off the ledger and change nothing (outbox=%v)",
+			got-preCount, outboxSummary(msgs))
+	}
+
+	// The store round-trip the shadow relies on.
+	reports, err := db.ListLinesideReportsForPayload(payload)
+	if err != nil {
+		t.Fatalf("list lineside reports: %v", err)
+	}
+	if len(reports) != 1 || reports[0].BinUOP != 10 {
+		t.Errorf("stored reports = %+v, want 1 row with BinUOP=10", reports)
+	}
+}
+
 // TestThresholdMonitor_NegativeTotal_EmitsNoSignal is the end-to-end half of
 // the validity floor: with a negative in-loop total, NOTHING reaches the
 // outbox. The unit-level counterpart

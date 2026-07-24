@@ -581,6 +581,20 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "process_styles", "is_active")
 			}},
+		// v52: R1 shadow read-model. Edge's periodic per-consuming-node lineside
+		// on-hand, its OWN table (NOT bins), so Core can compute the monitor's
+		// lineside term both ways (ledger vs Edge reports) and log
+		// firing-decision disagreements — SHADOW, deciding off the ledger.
+		//
+		// ⚠ NUMBERING: v52 is taken HERE on branch monitor-collapse-r1. Sibling
+		// lanes E and G (this round) may also add migrations, and the unpushed
+		// lane campaign already carries a v51/v52 to renumber (see the v51
+		// collision note above). This migration is a pure additive CREATE TABLE
+		// with no dependency on any constraint, so it renumbers trivially on
+		// merge — order it after any dedup/data migration if one is added.
+		{52, "add edge_lineside_reports (R1 shadow read-model for the lineside term)",
+			v52EdgeLinesideReports,
+			func(q schema.Querier) bool { return schema.TableExists(q, "edge_lineside_reports") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1880,6 +1894,30 @@ func v51ProcessStyleActive(tx *sql.Tx) error {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v51 process_styles.is_active: %w", err)
 		}
+	}
+	return nil
+}
+
+// v52EdgeLinesideReports creates the R1 shadow read-model table: Edge's
+// periodic per-consuming-node lineside on-hand. One row per
+// (station, core_node_name, payload_code), upserted on each 60s report. Core
+// reads the fresh (< 3 min) rows to shadow the monitor's lineside term against
+// the ledger and log firing-decision disagreements. Its OWN table — NOT bins —
+// and nothing here writes bins.uop_remaining; the delta path stays that
+// column's only writer.
+func v52EdgeLinesideReports(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS edge_lineside_reports (
+		station         TEXT NOT NULL,
+		core_node_name  TEXT NOT NULL,
+		payload_code    TEXT NOT NULL,
+		bin_count       INTEGER NOT NULL DEFAULT 0,
+		bin_uop         INTEGER NOT NULL DEFAULT 0,
+		bucket_qty      INTEGER NOT NULL DEFAULT 0,
+		reported_at     TIMESTAMPTZ NOT NULL,
+		updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		PRIMARY KEY (station, core_node_name, payload_code)
+	)`); err != nil {
+		return fmt.Errorf("v52 edge_lineside_reports: %w", err)
 	}
 	return nil
 }

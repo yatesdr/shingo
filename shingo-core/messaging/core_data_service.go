@@ -38,6 +38,10 @@ type ThresholdMonitor interface {
 	// Resync re-engages a station's demand_registry bindings on (re)connect, so a
 	// threshold seeded after the startup sweep fires without a Core restart.
 	Resync(stationID string)
+	// ShadowCompareLineside runs the R1 shadow (ledger vs Edge lineside reports)
+	// for the payloads in a just-arrived report, logging firing-decision
+	// disagreements. Shadow only — decides nothing.
+	ShadowCompareLineside(payloadCodes []string)
 }
 
 type CoreDataService struct {
