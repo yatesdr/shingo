@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -78,7 +79,7 @@ func TestBuildView_SharedWindow_TagsWindowGroup(t *testing.T) {
 		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
 	}})
 
-	view, err := eng.stationService.BuildView(sid)
+	view, err := eng.stationService.BuildView(context.Background(), sid)
 	if err != nil {
 		t.Fatalf("BuildView: %v", err)
 	}
@@ -114,7 +115,7 @@ func TestBuildView_SingleWindowLoader_NoWindowGroup(t *testing.T) {
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
 	}})
 
-	view, err := eng.stationService.BuildView(sid)
+	view, err := eng.stationService.BuildView(context.Background(), sid)
 	if err != nil {
 		t.Fatalf("BuildView: %v", err)
 	}

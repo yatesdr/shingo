@@ -287,6 +287,9 @@ func newTestHandlers(t *testing.T) (*Handlers, *chi.Mux) {
 		orchestration: eng, // EngineOrchestration
 		sessions:      newSessionStore(""),
 		eventHub:      NewEventHub(),
+		// Mirror NewRouter: the station-view handler coalesces through this, so
+		// a Handlers built without it panics on the first view request.
+		stationViews: newStationViewGroup(),
 	}
 
 	r := chi.NewRouter()

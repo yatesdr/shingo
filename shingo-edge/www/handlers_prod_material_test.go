@@ -1,6 +1,7 @@
 package www
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -145,7 +146,7 @@ func TestApiGetHourlyCounts_WithProcessIDReturnsMap(t *testing.T) {
 
 func TestBuildStationViews_NilProcessReturnsNil(t *testing.T) {
 	h, _ := newTestHandlers(t)
-	views := buildStationViews(h.engine, nil)
+	views := buildStationViews(context.Background(), h.engine, nil)
 	if views != nil {
 		t.Errorf("expected nil views for nil process, got %d", len(views))
 	}
@@ -156,7 +157,7 @@ func TestBuildStationViews_ProcessWithoutStations(t *testing.T) {
 	pid := seedProcess(t, "MaterialNoStations")
 	process := &processes.Process{ID: pid}
 
-	views := buildStationViews(h.engine, process)
+	views := buildStationViews(context.Background(), h.engine, process)
 	if len(views) != 0 {
 		t.Errorf("expected zero views for process with no stations, got %d", len(views))
 	}
@@ -168,7 +169,7 @@ func TestBuildStationViews_ProcessWithStation(t *testing.T) {
 	_ = seedOperatorStation(t, pid, "MAT-CODE-1", "MaterialStation1")
 	process := &processes.Process{ID: pid}
 
-	views := buildStationViews(h.engine, process)
+	views := buildStationViews(context.Background(), h.engine, process)
 	if len(views) != 1 {
 		t.Fatalf("expected 1 view, got %d", len(views))
 	}

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"shingoedge/domain"
@@ -129,7 +130,7 @@ func TestBuildView_StationlessSeatRendersAsChildTile(t *testing.T) {
 	db, stationID, _, seatNodeID, _ := seatScenario(t)
 	svc := NewStationService(db)
 
-	view, err := svc.BuildView(stationID)
+	view, err := svc.BuildView(context.Background(), stationID)
 	if err != nil {
 		t.Fatalf("BuildView: %v", err)
 	}
@@ -165,7 +166,7 @@ func TestBuildView_TaskAttachesWithoutAStationTaskRow(t *testing.T) {
 	db, stationID, pressNodeID, _, _ := seatScenario(t)
 	svc := NewStationService(db)
 
-	view, err := svc.BuildView(stationID)
+	view, err := svc.BuildView(context.Background(), stationID)
 	if err != nil {
 		t.Fatalf("BuildView: %v", err)
 	}

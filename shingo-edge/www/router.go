@@ -48,6 +48,12 @@ type Handlers struct {
 	eventHub      *EventHub
 	debugLog      *debuglog.Logger
 
+	// stationViews coalesces concurrent builds of the same operator-station
+	// view. See stationViewGroup — the short version is that a station view is
+	// expensive, every DB read serialises on one connection, and without this
+	// N clients asking for the same board each start their own build.
+	stationViews *stationViewGroup
+
 	// specChangeCh is a single-slot channel that coalesces concurrent
 	// admin style/claim mutations into ONE plant-claims re-publish. The
 	// publisher emits a full snapshot, so collapsing N rapid edits into one
@@ -90,6 +96,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		sessions:       newSessionStore(eng.AppConfig().Web.SessionSecret),
 		eventHub:       NewEventHub(),
 		debugLog:       dbg,
+		stationViews:   newStationViewGroup(),
 		specChangeCh:   make(chan struct{}, 1),
 		specChangeStop: make(chan struct{}),
 	}

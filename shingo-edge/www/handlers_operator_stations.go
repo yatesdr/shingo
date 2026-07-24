@@ -5,7 +5,9 @@
 package www
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"shingo/protocol"
@@ -37,15 +39,31 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	view, err := h.engine.StationService().BuildView(id)
+	// Coalesced per station: concurrent requests for the same board share one
+	// build instead of each starting their own on the single DB connection. The
+	// Core enrichment runs inside the shared build too, so joiners get a
+	// complete view rather than a half-populated one.
+	view, err := h.stationViews.do(r.Context(), id, func(ctx context.Context) (*domain.OperatorStationView, error) {
+		v, err := h.engine.StationService().BuildView(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		views := []domain.OperatorStationView{*v}
+		enrichViewBinState(h.engine.CoreAPI(), views)
+		h.orchestration.EnrichHomeBufferPartials(views[0].Nodes)
+		v.Nodes = views[0].Nodes
+		return v, nil
+	})
 	if err != nil {
+		// The requester gave up (browser abort, or its own timeout). There is
+		// nobody to answer and it is not a 404 — writing one would only mislabel
+		// a healthy station as missing in the logs.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
 		writeError(w, http.StatusNotFound, "station not found")
 		return
 	}
-	views := []domain.OperatorStationView{*view}
-	enrichViewBinState(h.engine.CoreAPI(), views)
-	h.orchestration.EnrichHomeBufferPartials(views[0].Nodes)
-	view.Nodes = views[0].Nodes
 	_ = h.engine.StationService().Touch(id, "online")
 	writeJSON(w, struct {
 		*domain.OperatorStationView

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"shingoedge/domain"
@@ -23,7 +24,7 @@ func TestBuildView_StrandedResolverPopulatesChip(t *testing.T) {
 		return ""
 	})
 
-	view, err := svc.BuildView(stationID)
+	view, err := svc.BuildView(context.Background(), stationID)
 	if err != nil {
 		t.Fatalf("BuildView: %v", err)
 	}

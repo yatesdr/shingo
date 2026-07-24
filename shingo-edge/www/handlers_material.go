@@ -1,6 +1,7 @@
 package www
 
 import (
+	"context"
 	"net/http"
 
 	"shingoedge/domain"
@@ -49,14 +50,20 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStati
 	}
 }
 
-func buildStationViews(eng ServiceAccess, activeProcess *domain.Process) []domain.OperatorStationView {
+func buildStationViews(ctx context.Context, eng ServiceAccess, activeProcess *domain.Process) []domain.OperatorStationView {
 	if activeProcess == nil {
 		return nil
 	}
 	stations, _ := eng.StationService().ListByProcess(activeProcess.ID)
 	var views []domain.OperatorStationView
 	for _, station := range stations {
-		if view, err := eng.StationService().BuildView(station.ID); err == nil {
+		// A build per station, each serialised on the one DB connection — so an
+		// abandoned material page should stop after the current station, not grind
+		// through the rest. BuildView returns ctx.Err() and we drop out.
+		if ctx.Err() != nil {
+			break
+		}
+		if view, err := eng.StationService().BuildView(ctx, station.ID); err == nil {
 			views = append(views, *view)
 		}
 	}
@@ -70,7 +77,7 @@ func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
 	var activeProcessID int64
 	var currentStyleName, targetStyleName string
 
-	stationViews := buildStationViews(h.engine, activeProcess)
+	stationViews := buildStationViews(r.Context(), h.engine, activeProcess)
 	enrichViewBinState(h.engine.CoreAPI(), stationViews)
 
 	if activeProcess != nil {
@@ -105,7 +112,7 @@ func (h *Handlers) handleMaterialPartial(w http.ResponseWriter, r *http.Request)
 	processes, _ := h.engine.ProcessService().List()
 	activeProcess := resolveProcessFromQuery(r, processes)
 
-	stationViews := buildStationViews(h.engine, activeProcess)
+	stationViews := buildStationViews(r.Context(), h.engine, activeProcess)
 	enrichViewBinState(h.engine.CoreAPI(), stationViews)
 
 	data := map[string]any{

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"log"
 	"strings"
 
@@ -189,7 +190,25 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 // (ComputeSwapReady, LookupLastReleaseError) stay in store/ so the
 // existing test file station_views_test.go can continue exercising
 // them directly without import-cycle gymnastics.
-func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView, error) {
+// BuildView assembles the operator-station view.
+//
+// ctx is honoured at the tile-loop boundary so a build whose requester has gone
+// away stops instead of running to completion. That matters more here than the
+// usual "be a good citizen": Edge serialises every DB operation on one
+// connection (store.Open sets SetMaxOpenConns(1)), and a tile costs ~8 queries,
+// so an abandoned 22-tile build holds the connection against work someone is
+// still waiting on. Before this, a browser abort freed only the browser — the
+// handler took no context, so each timed-out poll ADDED an orphan build and
+// removed none, which is how Springfield's bin-loader board wound from 3.1s to
+// 116s over a day of uptime.
+//
+// Cancellation is checked per TILE, not per query: it needs no ctx plumbing
+// through the 300+ non-context store calls and still bounds the wasted work to
+// a single tile.
+func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store.OperatorStationView, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	station, err := s.db.GetOperatorStation(stationID)
 	if err != nil {
 		return nil, err
@@ -293,6 +312,11 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 		loaderPayloads = nil // fail-open: tiles fall back to the claim-derived set
 	}
 	for _, node := range nodes {
+		// See the BuildView doc comment: one abandoned tile-loop iteration is the
+		// granularity at which we give the single DB connection back.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		nodeView := store.StationNodeView{Node: node}
 		runtime, _ := s.db.EnsureProcessNodeRuntime(node.ID)
 		nodeView.Runtime = runtime
