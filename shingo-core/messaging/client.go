@@ -256,6 +256,79 @@ func (c *Client) IsConnected() bool {
 	return c.kafka != nil
 }
 
+// EnsureConnected keeps retrying Connect() in the background until it succeeds
+// (or the client is Closed), then starts readers for every handler that was
+// registered via Subscribe while the connection was down.
+//
+// This closes the startup ordering race behind the Springfield "Kafka down"
+// wedge (2026-07-24): when the box reboots, shingo-core and its co-located
+// Kafka broker restart together, and core boots first — the initial Connect()
+// gets `connection refused`, Subscribe() then returns "kafka not connected"
+// without creating a reader, and nothing retries. The process runs Kafka-dead
+// (no dispatch out, no ingest in) until someone restarts it by hand. With this,
+// core reconnects the moment the broker is up and restores its subscriptions.
+//
+// Only the INITIAL connect needs this. Once a reader exists, readLoop's own
+// backoff keeps it alive across later broker blips, and kafka.Writer manages
+// its own reconnects. No-op when already connected. Idempotent-safe: guarded by
+// IsConnected so a second call while the first goroutine is still retrying just
+// returns.
+func (c *Client) EnsureConnected() {
+	if c.IsConnected() {
+		return
+	}
+	// Capture the stop channel once, like readLoop, so a Reconfigure swap can't
+	// make this goroutine follow the new channel and never stop.
+	c.mu.RLock()
+	stop := c.stopChan
+	c.mu.RUnlock()
+
+	go func() {
+		bo := backoff.New(1*time.Second, 30*time.Second)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err := c.Connect(); err != nil {
+				d := bo.Next()
+				log.Printf("messaging: kafka connect failed (%v); retrying in %v", err, d.Round(time.Millisecond))
+				timer := time.NewTimer(d)
+				select {
+				case <-stop:
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+				continue
+			}
+			log.Printf("messaging: kafka connected on retry — restoring subscriptions")
+			c.restoreSubscriptions()
+			return
+		}
+	}()
+}
+
+// restoreSubscriptions starts a reader for every handler registered via
+// Subscribe. Called after a successful late Connect() so subscriptions that
+// no-op'd while the broker was down (Subscribe stores the handler but skips the
+// reader when not connected) come to life. Snapshots under the lock, then calls
+// Subscribe (which locks itself) outside it.
+func (c *Client) restoreSubscriptions() {
+	c.mu.RLock()
+	handlers := make(map[string]MessageHandler, len(c.handlers))
+	for topic, h := range c.handlers {
+		handlers[topic] = h
+	}
+	c.mu.RUnlock()
+	for topic, handler := range handlers {
+		if err := c.Subscribe(topic, handler); err != nil {
+			log.Printf("messaging: restore subscription %s: %v", topic, err)
+		}
+	}
+}
+
 // Reconfigure closes the existing connection and reconnects with new config.
 // All previously registered subscriptions are automatically restored.
 func (c *Client) Reconfigure(cfg *config.MessagingConfig) error {

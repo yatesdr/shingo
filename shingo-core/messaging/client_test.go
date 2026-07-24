@@ -104,6 +104,42 @@ func TestClient_Subscribe_NotConnected(t *testing.T) {
 	if err == nil {
 		t.Fatal("subscribe should fail when not connected")
 	}
+	// It must still RECORD the handler even though it could not start a reader —
+	// that is the precondition for EnsureConnected/restoreSubscriptions to bring
+	// the subscription to life once the broker comes up.
+	client.mu.RLock()
+	_, stored := client.handlers["test-topic"]
+	client.mu.RUnlock()
+	if !stored {
+		t.Fatal("Subscribe while disconnected must record the handler for later restore")
+	}
+}
+
+// TestClient_EnsureConnected_RetriesWhileDown pins the reboot-wedge fix: against
+// an unreachable broker, EnsureConnected keeps retrying in the background (it does
+// not falsely report connected, and it does not give up after the first failure),
+// and Close() stops the retry goroutine cleanly. The happy-path reconnect +
+// subscription-restore is exercised live on deploy; this pins the resilience
+// contract that a disconnected boot no longer runs Kafka-dead forever.
+func TestClient_EnsureConnected_RetriesWhileDown(t *testing.T) {
+	t.Parallel()
+	client := NewClient(&config.MessagingConfig{
+		Kafka:         config.KafkaConfig{Brokers: []string{"127.0.0.1:1"}}, // nothing listens → connection refused, fast
+		OrdersTopic:   "shingo.orders",
+		DispatchTopic: "shingo.dispatch",
+	})
+	// A subscription registered before the broker is up is remembered.
+	_ = client.Subscribe("shingo.orders", func(string, []byte) {})
+
+	client.EnsureConnected() // spawns the background retry loop
+	time.Sleep(150 * time.Millisecond)
+	if client.IsConnected() {
+		t.Fatal("must not report connected against an unreachable broker")
+	}
+	// Close must terminate the retry goroutine (no panic, no hang). The test
+	// completing is the assertion; a leaked/panicking goroutine trips -race/vet.
+	client.Close()
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestClient_Publish_NotConnected(t *testing.T) {

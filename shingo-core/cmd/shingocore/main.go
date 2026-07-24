@@ -257,7 +257,12 @@ func main() {
 		msgClient.SigningKey = []byte(cfg.Messaging.SigningKey)
 	}
 	if err := msgClient.Connect(); err != nil {
-		log.Printf("shingocore: messaging connect failed (%v)", err)
+		// Not fatal, and not the end of it: EnsureConnected (wired after the
+		// ingestor subscribe below) keeps retrying in the background so a boot
+		// where Kafka is not yet ready — a box reboot where the co-located broker
+		// is slower to come up than core — recovers on its own instead of running
+		// Kafka-dead until a manual restart.
+		log.Printf("shingocore: messaging connect failed (%v); will retry in the background", err)
 	} else {
 		log.Printf("shingocore: messaging connected (kafka)")
 	}
@@ -418,6 +423,12 @@ func main() {
 	} else {
 		log.Printf("shingocore: protocol ingestor listening on %s", cfg.Messaging.OrdersTopic)
 	}
+	// If the broker was not reachable at boot, the Connect above failed and this
+	// Subscribe only recorded the handler without starting a reader. EnsureConnected
+	// keeps retrying and, once the broker is up, starts the reader (and the writer)
+	// and restores this subscription — so core never sits Kafka-dead after a reboot.
+	// No-op when already connected.
+	msgClient.EnsureConnected()
 
 	// ── Outbox drainer (outbound to ShinGo Edge) ───────────────────────
 	drainer := messaging.NewOutboxDrainer(db, msgClient, cfg.Messaging.OutboxDrainInterval)
