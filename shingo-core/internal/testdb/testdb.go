@@ -241,7 +241,11 @@ func dropTemplate() error {
 // via t.Cleanup.
 //
 // If Docker is not running, the test is skipped (not failed).
-func Open(t *testing.T) *store.DB {
+// Open accepts testing.TB (not *testing.T) so benchmarks can clone the
+// template database the same way tests do — every method it uses (Helper,
+// Skipf, Fatalf, Name, Cleanup) is on the TB interface, and a *testing.T
+// still satisfies it, so existing callers are unaffected.
+func Open(t testing.TB) *store.DB {
 	t.Helper()
 
 	// Guard against Docker panics from testcontainers
