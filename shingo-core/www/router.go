@@ -258,6 +258,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/inventory", h.apiInventory)
 			r.Get("/inventory/monitor-totals", h.apiInventoryMonitorTotals)
 			r.Get("/inventory/anomaly-summary", h.apiInventoryAnomalySummary)
+			r.Get("/inventory/rejected-deltas", h.apiInventoryRejectedDeltas)
 			r.Get("/inventory/invariant", h.apiInventoryInvariant)
 			r.Post("/inventory/preflight", h.apiInventoryPreflight)
 			r.Post("/inventory/system-count", h.apiInventorySystemCount)

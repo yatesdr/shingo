@@ -248,7 +248,9 @@ function renderAlerts() {
   const parts = [];
   if (below) parts.push('<b>' + below + '</b> payload' + (below > 1 ? 's' : '') + ' below threshold');
   if (err) parts.push('<b>' + err + '</b> ledger error' + (err > 1 ? 's' : ''));
-  if (rejected) parts.push('<b>' + rejected + '</b> rejected delta' + (rejected > 1 ? 's' : ''));
+  // The rejected-delta count is its own click target — it opens the drill listing
+  // WHICH carriers are flagged (part, node, reason), not just a scroll.
+  if (rejected) parts.push('<span data-action="showRejectedDeltas" style="text-decoration:underline;cursor:pointer"><b>' + rejected + '</b> rejected delta' + (rejected > 1 ? 's' : '') + '</span>');
   if (staleStaged) parts.push('<b>' + staleStaged + '</b> stale staged bin' + (staleStaged > 1 ? 's' : ''));
   if (stale) parts.push('<b>' + stale + '</b> stale bucket' + (stale > 1 ? 's' : ''));
   if (!parts.length) { el.innerHTML = ''; return; }
@@ -562,6 +564,10 @@ async function deleteBucket(id) {
 function openDrill(pc) {
   drillPayload = pc;
   drillDays = 14;
+  // The rejected-delta view hides the range toggle; restore it for the
+  // consumption drill (the two views share the #inv-drill modal).
+  const range = document.getElementById('drill-range');
+  if (range) range.style.display = '';
   document.querySelectorAll('#drill-range button').forEach((b) => b.classList.toggle('is-active', b.dataset.action === 'drillRange:14'));
   const title = document.getElementById('drill-title');
   if (title) title.textContent = pc + ' — consumption & cover';
@@ -634,11 +640,59 @@ function showOnMap() {
 }
 function closeDrill() { document.getElementById('inv-drill').classList.remove('active'); }
 
+// ── rejected-delta drill ───────────────────────────────────────────────────
+// The "N rejected deltas" banner count was a dead scroll — it never told the
+// operator WHICH carrier was flagged. This lists them: carrier, part, node, why
+// (stale epoch / payload mismatch), how many drops, and when — so they know
+// exactly what to cycle-count. Reuses the #inv-drill modal shell.
+function reasonLabel(op) {
+  if (op === 'stale_epoch_dropped') return 'Stale epoch — bin was rebound; deltas from the old count are dropped';
+  if (op === 'payload_mismatch_dropped') return 'Payload mismatch — the delta’s part differs from the bin’s';
+  return 'Flagged (no recent drop logged)';
+}
+async function showRejectedDeltas() {
+  const modal = document.getElementById('inv-drill');
+  const detail = document.getElementById('drill-detail');
+  const title = document.getElementById('drill-title');
+  const range = document.getElementById('drill-range');
+  const narr = document.getElementById('drill-narrative');
+  if (!modal || !detail) return;
+  if (title) title.textContent = 'Rejected deltas — carriers whose counts are being refused';
+  if (range) range.style.display = 'none';
+  if (narr) narr.innerHTML = 'These carriers have live counter deltas the system is dropping, so their on-hand '
+    + 'can drift from what is physically in the bin. Cycle-count the carrier at its node to clear the flag and realign the count.';
+  detail.innerHTML = '<div class="dash-empty">Loading…</div>';
+  modal.classList.add('active');
+  let rows;
+  try {
+    rows = await apiGet('/api/inventory/rejected-deltas');
+  } catch (e) {
+    detail.innerHTML = '<div class="dash-empty">Failed to load: ' + escapeHtml(e.message || String(e)) + '</div>';
+    return;
+  }
+  if (!rows || !rows.length) {
+    detail.innerHTML = '<div class="dash-empty">No carriers are currently flagged.</div>';
+    return;
+  }
+  detail.innerHTML = '<div class="table-scroll-y"><table class="rh-table"><thead><tr>'
+    + '<th>Carrier</th><th>Part</th><th>Node</th><th>Reason</th><th>Drops</th><th>Flagged</th><th>Last reject</th>'
+    + '</tr></thead><tbody>'
+    + rows.map((b) =>
+      '<tr><td>' + escapeHtml(b.bin_label || ('#' + b.bin_id)) + '</td>'
+      + '<td>' + escapeHtml(b.payload_code || '—') + '</td>'
+      + '<td>' + escapeHtml(b.node_name || '—') + '</td>'
+      + '<td>' + escapeHtml(reasonLabel(b.reason)) + '</td>'
+      + '<td>' + (b.drop_count || 0) + '</td>'
+      + '<td class="nowrap">' + timeAgo(b.anomaly_at) + '</td>'
+      + '<td class="nowrap">' + (b.last_reject_at ? timeAgo(b.last_reject_at) : '—') + '</td></tr>').join('')
+    + '</tbody></table></div>';
+}
+
 // ── init + live updates ────────────────────────────────────────────────────
 delegateActions(document.body, {
   onSearch, onSearchKey, onFilter, refresh, exportInventory, scrollTo,
   toggleRow, onThrInput, saveThr, discardThr, calcThr, applyCalc, dismissCalc,
-  deleteBucket, openDrill, drillRange, showOnMap,
+  deleteBucket, openDrill, drillRange, showOnMap, showRejectedDeltas,
   'close-modal': closeDrill,
 }, { events: ['click', 'change', 'input', 'keydown'] });
 

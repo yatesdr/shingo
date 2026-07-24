@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"shingo/protocol"
 
@@ -452,6 +453,63 @@ func (s *InventoryDeltaService) AnomalySummary() (AnomalyDeltaSummary, error) {
 		return out, fmt.Errorf("anomaly summary counts: %w", err)
 	}
 	return out, nil
+}
+
+// RejectedDeltaBin names ONE carrier whose deltas are being refused, for the
+// inventory page's drill-down behind the "N rejected deltas" banner. It answers
+// the operator's "which part / which carrier / why" — the summary only gives a
+// count.
+type RejectedDeltaBin struct {
+	BinID       int64      `json:"bin_id"`
+	BinLabel    string     `json:"bin_label"`
+	NodeName    string     `json:"node_name"`
+	PayloadCode string     `json:"payload_code"`
+	AnomalyAt   time.Time  `json:"anomaly_at"`
+	Reason      string     `json:"reason"`         // stale_epoch_dropped | payload_mismatch_dropped | "" if no audit row
+	LastReject  *time.Time `json:"last_reject_at"` // most recent drop of either reason
+	DropCount   int        `json:"drop_count"`     // total drops recorded for this bin
+}
+
+// RejectedDeltaDetail lists every non-retired bin flagged anomaly_at — the
+// carriers whose BinUOPDeltas the applier is dropping (stale epoch or payload
+// mismatch) — with the node, payload/part, when it was flagged, the latest drop
+// reason + time, and how many drops it has logged. Pure read; ordered newest
+// flag first. This is the click target behind the summary count so the operator
+// can see WHICH carrier to cycle-count instead of just a number.
+func (s *InventoryDeltaService) RejectedDeltaDetail() ([]RejectedDeltaBin, error) {
+	rows, err := s.db.Query(`SELECT b.id, COALESCE(b.label,''), COALESCE(n.name,''),
+		COALESCE(b.payload_code,''), b.anomaly_at,
+		(SELECT a.op FROM bin_uop_audit a
+		   WHERE a.bin_id=b.id AND a.op IN ('stale_epoch_dropped','payload_mismatch_dropped')
+		   ORDER BY a.applied_at DESC LIMIT 1),
+		(SELECT MAX(a.applied_at) FROM bin_uop_audit a
+		   WHERE a.bin_id=b.id AND a.op IN ('stale_epoch_dropped','payload_mismatch_dropped')),
+		(SELECT COUNT(*) FROM bin_uop_audit a
+		   WHERE a.bin_id=b.id AND a.op IN ('stale_epoch_dropped','payload_mismatch_dropped'))
+		FROM bins b
+		LEFT JOIN nodes n ON n.id=b.node_id
+		WHERE b.anomaly_at IS NOT NULL AND b.status != 'retired'
+		ORDER BY b.anomaly_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("rejected-delta detail: %w", err)
+	}
+	defer rows.Close()
+	var out []RejectedDeltaBin
+	for rows.Next() {
+		var b RejectedDeltaBin
+		var reason sql.NullString
+		var last sql.NullTime
+		if err := rows.Scan(&b.BinID, &b.BinLabel, &b.NodeName, &b.PayloadCode,
+			&b.AnomalyAt, &reason, &last, &b.DropCount); err != nil {
+			return nil, fmt.Errorf("scan rejected-delta row: %w", err)
+		}
+		b.Reason = reason.String
+		if last.Valid {
+			b.LastReject = &last.Time
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 // ApplyLinesideBucketDelta applies a LinesideBucketDelta against the

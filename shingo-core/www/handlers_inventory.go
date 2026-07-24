@@ -86,6 +86,20 @@ func (h *Handlers) apiInventoryAnomalySummary(w http.ResponseWriter, r *http.Req
 	h.jsonOK(w, sum)
 }
 
+// apiInventoryRejectedDeltas is the drill-down behind the inventory page's
+// "N rejected deltas" banner: the list of carriers whose deltas are being
+// refused, each with its node, payload/part, when it was flagged, the latest
+// drop reason + time, and the drop count — so the operator can see WHICH carrier
+// to cycle-count instead of just a number. Pure read; safe to poll.
+func (h *Handlers) apiInventoryRejectedDeltas(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.engine.InventoryDeltaService().RejectedDeltaDetail()
+	if err != nil {
+		h.jsonError(w, "rejected-delta detail: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, rows)
+}
+
 // apiBuckets returns every authoritative lineside_buckets row as JSON.
 // Powers the "Lineside Buckets" section on the operator-facing
 // inventory page. Round-3 Obs 10 added the Delete column on top of

@@ -1019,4 +1019,40 @@ func TestInventoryDelta_C6_AnomalyObservability(t *testing.T) {
 	if sum.StaleStagedBins < 1 {
 		t.Errorf("StaleStagedBins = %d, want >= 1 (the bin staged past its TTL)", sum.StaleStagedBins)
 	}
+
+	// RejectedDeltaDetail is the drill-down behind the count: WHICH carrier, part,
+	// node, and why — so the operator knows what to cycle-count. Both dropped bins
+	// appear with their reason; the stale-staged bin (not anomaly-flagged) does not.
+	detail, err := svc.RejectedDeltaDetail()
+	testutil.MustNoErr(t, err, "rejected-delta detail")
+	byLabel := map[string]uop.RejectedDeltaBin{}
+	for _, b := range detail {
+		byLabel[b.BinLabel] = b
+	}
+	staleRow, ok := byLabel["BIN-C6-STALE"]
+	if !ok {
+		t.Fatal("stale-epoch bin missing from rejected-delta detail")
+	}
+	if staleRow.Reason != "stale_epoch_dropped" {
+		t.Errorf("stale bin reason = %q, want stale_epoch_dropped", staleRow.Reason)
+	}
+	if staleRow.DropCount < 1 {
+		t.Errorf("stale bin drop_count = %d, want >= 1", staleRow.DropCount)
+	}
+	if staleRow.PayloadCode != "PART-A" || staleRow.NodeName == "" {
+		t.Errorf("stale bin detail = %+v, want part PART-A and a resolved node name", staleRow)
+	}
+	if staleRow.LastReject == nil {
+		t.Error("stale bin last_reject_at should be set (a drop was audited)")
+	}
+	mmRow, ok := byLabel["BIN-C6-MISMATCH"]
+	if !ok {
+		t.Fatal("payload-mismatch bin missing from rejected-delta detail")
+	}
+	if mmRow.Reason != "payload_mismatch_dropped" {
+		t.Errorf("mismatch bin reason = %q, want payload_mismatch_dropped", mmRow.Reason)
+	}
+	if _, present := byLabel["BIN-C6-STAGED"]; present {
+		t.Error("stale-staged bin must NOT appear in rejected-delta detail (it is not anomaly-flagged)")
+	}
 }
