@@ -39,6 +39,17 @@ func isConcreteStorageDropoff(db *store.DB, deliveryNode string) bool {
 	return parent.NodeTypeCode == protocol.NodeClassLANE || parent.NodeTypeCode == protocol.NodeClassNGRP
 }
 
+// dispatchStep carries a phase helper's decision back to the DispatchPreparedComplex
+// orchestrator. done=true means the phase parked, failed, or skipped the order and
+// the orchestrator must return err verbatim; done=false (the zero value) means the
+// phase completed and control proceeds to the next phase. It lives only at the
+// orchestrator boundary — phases that consume the package's native reserveOutcome
+// enum collapse it to a dispatchStep at their return rather than surfacing it up.
+type dispatchStep struct {
+	done bool
+	err  error
+}
+
 // DispatchPreparedComplex performs the side-effecting tail of complex-
 // order dispatch: claim bins per pickup step, transition the order
 // queued → sourcing, send blocks to the fleet, transition → dispatched.
@@ -200,52 +211,8 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// widening) — a resolution-time read, so the swap supply leg is never gated.
 	d.placeForDedicatedLoader(order, resolvedSteps)
 
-	// Close the swap peer-terminal RACE (SPR 2424/2425, 2026-07). HandleSwapPeerTerminal
-	// unwinds a swap when one leg reaches a terminal state, but it fires from the
-	// DEAD leg's side — so if this leg did not exist yet when its sibling died (a
-	// supply created + skipped moot in the same tick, before its evac was created),
-	// that unwind found no peer and no-op'd, leaving this leg to hold forever on a
-	// dead sibling (swapLegHeld waits on a claim that will never come). Re-run the
-	// unwind now, from the surviving side, so a leg linked to an already-terminal
-	// sibling is resolved instead of wedged. Reuses the same handler and its
-	// per-role resolution: a moot-evac sibling that legitimately lets this supply
-	// proceed is a no-op there, so this leg falls through and dispatches.
-	if sibUUID, serr := d.db.OrderSiblingUUID(order.ID); serr == nil && sibUUID != "" {
-		if sib, gerr := d.db.GetOrderByUUID(sibUUID); gerr == nil && sib != nil && protocol.IsTerminal(sib.Status) {
-			if kind := swapTerminalKind(sib.Status); kind != "" {
-				// Heal the dead leg's back-link first (idempotent). The unwind
-				// resolves the peer FROM the dead leg's side, and the race is
-				// precisely that this link may not have existed when the dead leg
-				// first went terminal — so ensure it does now.
-				if sib.SiblingOrderUUID != order.EdgeUUID {
-					if _, rerr := d.db.LinkOrderSiblingsByEdgeUUID(order.EdgeUUID, sibUUID); rerr != nil {
-						log.Printf("dispatch: swap race back-link repair order %d sib %s: %v", order.ID, sibUUID, rerr)
-					}
-				}
-				d.HandleSwapPeerTerminal(sib.ID, kind)
-				if self, rerr := d.db.GetOrder(order.ID); rerr == nil && self != nil && protocol.IsTerminal(self.Status) {
-					return fmt.Errorf("complex order %d resolved by swap peer-terminal unwind: sibling %d already %s", order.ID, sib.ID, sib.Status)
-				}
-			}
-		}
-	}
-
-	// Two-robot swap removal-leg hold: don't let a removal (evac) leg that
-	// cannot fetch its own replacement claim/pull the line bin until its supply
-	// sibling has secured one. Stops a swap from stranding the line when the
-	// supermarket is empty (ALN_003 swap-starvation, 2026-06-03). Stay
-	// queued — the scanner replays on EventBinUpdated when the supply leg
-	// claims, clearing the gate. The sibling pointer is set at intake (the
-	// second leg carries it on its ComplexOrderRequest), so it is present
-	// here even on the synchronous intake-dispatch path.
-	//
-	// Reads the RESOLVED steps, not the raw ones: NGRP names have been resolved
-	// to concrete nodes by now, and the line node is concrete either way, so the
-	// pickup/dropoff shape the gate depends on is stable across resolution.
-	if held, reason := d.swapLegHeld(order, resolvedSteps); held {
-		d.setQueueReason(order, protocol.QueueWaitingForPartner, "swap-hold", QueueParams{Sibling: order.SiblingOrderUUID})
-		d.dbg("complex: order %d held — %s", order.ID, reason)
-		return fmt.Errorf("swap hold: %s", reason)
+	if st := d.applySwapGates(order, resolvedSteps); st.done {
+		return st.err
 	}
 
 	// #1 (regression 2b05dce): restore the dropoff-capacity gate for complex
@@ -429,6 +396,64 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	d.setQueueReason(order, "", "", QueueParams{})
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, order.SourceNode, order.DeliveryNode)
 	return nil
+}
+
+// applySwapGates runs the two-robot swap guards (Phase B): the swap peer-terminal
+// race unwind (SPR 2424/2425) that resolves a leg whose sibling already went
+// terminal, then the swapLegHeld removal-leg hold (ALN_003) that parks an evac leg
+// until its supply sibling has secured a claim. done=true means the order was
+// resolved by the unwind or parked waiting_for_partner; the orchestrator returns
+// st.err verbatim. Reads the resolved steps read-only.
+func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
+	// Close the swap peer-terminal RACE (SPR 2424/2425, 2026-07). HandleSwapPeerTerminal
+	// unwinds a swap when one leg reaches a terminal state, but it fires from the
+	// DEAD leg's side — so if this leg did not exist yet when its sibling died (a
+	// supply created + skipped moot in the same tick, before its evac was created),
+	// that unwind found no peer and no-op'd, leaving this leg to hold forever on a
+	// dead sibling (swapLegHeld waits on a claim that will never come). Re-run the
+	// unwind now, from the surviving side, so a leg linked to an already-terminal
+	// sibling is resolved instead of wedged. Reuses the same handler and its
+	// per-role resolution: a moot-evac sibling that legitimately lets this supply
+	// proceed is a no-op there, so this leg falls through and dispatches.
+	if sibUUID, serr := d.db.OrderSiblingUUID(order.ID); serr == nil && sibUUID != "" {
+		if sib, gerr := d.db.GetOrderByUUID(sibUUID); gerr == nil && sib != nil && protocol.IsTerminal(sib.Status) {
+			if kind := swapTerminalKind(sib.Status); kind != "" {
+				// Heal the dead leg's back-link first (idempotent). The unwind
+				// resolves the peer FROM the dead leg's side, and the race is
+				// precisely that this link may not have existed when the dead leg
+				// first went terminal — so ensure it does now.
+				if sib.SiblingOrderUUID != order.EdgeUUID {
+					if _, rerr := d.db.LinkOrderSiblingsByEdgeUUID(order.EdgeUUID, sibUUID); rerr != nil {
+						log.Printf("dispatch: swap race back-link repair order %d sib %s: %v", order.ID, sibUUID, rerr)
+					}
+				}
+				d.HandleSwapPeerTerminal(sib.ID, kind)
+				if self, rerr := d.db.GetOrder(order.ID); rerr == nil && self != nil && protocol.IsTerminal(self.Status) {
+					return dispatchStep{done: true, err: fmt.Errorf("complex order %d resolved by swap peer-terminal unwind: sibling %d already %s", order.ID, sib.ID, sib.Status)}
+				}
+			}
+		}
+	}
+
+	// Two-robot swap removal-leg hold: don't let a removal (evac) leg that
+	// cannot fetch its own replacement claim/pull the line bin until its supply
+	// sibling has secured one. Stops a swap from stranding the line when the
+	// supermarket is empty (ALN_003 swap-starvation, 2026-06-03). Stay
+	// queued — the scanner replays on EventBinUpdated when the supply leg
+	// claims, clearing the gate. The sibling pointer is set at intake (the
+	// second leg carries it on its ComplexOrderRequest), so it is present
+	// here even on the synchronous intake-dispatch path.
+	//
+	// Reads the RESOLVED steps, not the raw ones: NGRP names have been resolved
+	// to concrete nodes by now, and the line node is concrete either way, so the
+	// pickup/dropoff shape the gate depends on is stable across resolution.
+	if held, reason := d.swapLegHeld(order, resolvedSteps); held {
+		d.setQueueReason(order, protocol.QueueWaitingForPartner, "swap-hold", QueueParams{Sibling: order.SiblingOrderUUID})
+		d.dbg("complex: order %d held — %s", order.ID, reason)
+		return dispatchStep{done: true, err: fmt.Errorf("swap hold: %s", reason)}
+	}
+
+	return dispatchStep{}
 }
 
 // setQueueReason is the dispatch side's one door onto the queue-reason columns.
