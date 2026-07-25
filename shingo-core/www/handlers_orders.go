@@ -170,9 +170,15 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		Parent       *domain.Order            `json:"parent,omitempty"`
 		VendorDetail *fleet.VendorOrderDetail `json:"vendor_detail,omitempty"`
 		Robot        *fleet.RobotStatus       `json:"robot,omitempty"`
+		// CanCancel drives the manifest's Terminate button. Computed here
+		// rather than re-derived in JS so the client-rendered controls use
+		// the same gate as the server-rendered list rows — a status list
+		// duplicated into JS is exactly how the old template denylists
+		// drifted from the engine.
+		CanCancel bool `json:"can_cancel"`
 	}
 
-	result := enrichedOrder{Order: order}
+	result := enrichedOrder{Order: order, CanCancel: canCancelStatus(order.Status)}
 
 	result.History, _ = svc.ListOrderHistory(id)
 

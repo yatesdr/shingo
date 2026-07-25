@@ -844,8 +844,9 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .mo-status-line { min-height:1.4em; }
 .order-modal-error { color:var(--danger); }
 
-/* Order detail page (non-modal) */
-.order-detail-controls { min-height:1.2em; }
+/* Manifest controls (modal + detail page share this block). */
+.manifest-controls { padding-top:0.35rem; }
+.manifest-controls .ctl-msg { min-height:1.2em; }
 .order-priority-label { display:inline; margin-left:1rem; font-size:var(--font-xs); }
 .order-priority-input { width:5rem; }
 .order-mission-link { font-size:.85em; margin-left:.5rem; }

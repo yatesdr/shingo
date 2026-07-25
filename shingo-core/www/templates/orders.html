@@ -1,5 +1,9 @@
 {{define "content"}}
-<div data-sse="orders">
+{{/* data-authenticated is read by orders.js, which renders the manifest's
+     Controls section client-side — the manifest is drawn in the modal and
+     on the detail page, neither of which is a Go template. Same
+     JSON-in-attribute handoff the inventory page uses. */}}
+<div data-sse="orders" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}">
   {{if .Order}}
   {{/* Order detail view. The body is the same .manifest that the row-click
       modal draws, from the same /api/orders/enriched payload and the same
@@ -22,28 +26,6 @@
     <div id="order-detail-error" class="hide p-2 order-modal-error"></div>
     <div id="order-detail-content" class="hide"></div>
   </div>
-
-  {{if .Authenticated}}
-  <div class="card mb-2">
-    <h3>Controls</h3>
-    <div id="order-status-msg" class="text-muted text-sm mb-1 order-detail-controls"></div>
-    <div class="flex gap-1 items-center flex-wrap">
-      {{/* Same canCancel gate as the list rows. The old hand-listed check
-          here was looser still — it left Terminate on screen for
-          delivered, confirmed and skipped orders, all of which
-          engine.TerminateOrder refuses. */}}
-      {{if canCancel .Order.Status}}
-      <button class="btn btn-danger btn-sm" data-action="terminateOrder:{{.Order.ID}}">Terminate Order</button>
-      {{end}}
-      {{if eq .Order.Status "delivered"}}
-      <button class="btn btn-warning btn-sm" data-action="forceConfirmDelivered:{{.Order.ID}}">Force Confirm</button>
-      {{end}}
-      <label class="order-priority-label">Priority:</label>
-      <input type="number" id="order-priority" class="form-input order-priority-input" value="{{.Order.Priority}}">
-      <button class="btn btn-sm" data-action="setOrderPriority:{{.Order.ID}}">Set Priority</button>
-    </div>
-  </div>
-  {{end}}
 
   {{else}}
   {{/* Order list view */}}

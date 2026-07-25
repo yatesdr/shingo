@@ -1,13 +1,34 @@
 import { api, apiGet, apiPost, debounce, delegateActions, escapeHtml, formatTime, h, hideModal, showModal, toggleVisibility, uiConfirm } from '/static/app.js';
 import { onSSE } from '/static/shared/utils.js';
 
-function orderControlPost(url, body) {
-  var msg = document.getElementById('order-status-msg');
+// Controls live inside the manifest, which can be on screen twice at once
+// (detail page with a child-step modal open over it), so the status line is
+// found relative to the button that was pressed rather than by a page-wide
+// id. `el` is the clicked element — delegateActions appends it after the
+// colon args.
+// Auth comes from the wrapper's data-authenticated, set by the Go template.
+// The manifest is drawn by JS on two surfaces, neither of which is a
+// template, so {{if .Authenticated}} can't gate the controls.
+function isAuthenticated() {
+  var root = document.querySelector('[data-sse="orders"]');
+  return !!root && root.dataset.authenticated === 'true';
+}
+
+function controlMsg(el) {
+  var scope = el && el.closest ? el.closest('.manifest') : null;
+  return scope ? scope.querySelector('.ctl-msg') : null;
+}
+
+function orderControlPost(url, body, el) {
+  var msg = controlMsg(el);
   if (msg) msg.textContent = 'Sending...';
   apiPost(url, body)
     .then(function() {
-      if (msg) msg.textContent = 'OK - reloading...';
-      setTimeout(function() { location.reload(); }, 800);
+      if (msg) msg.textContent = 'OK';
+      // Re-render in place instead of location.reload(): a reload from
+      // inside the modal would close it, and on the detail page it would
+      // throw away scroll for no gain.
+      refreshVisibleManifest();
     })
     .catch(function(e) {
       console.error('orderControl', url, e);
@@ -15,13 +36,19 @@ function orderControlPost(url, body) {
     });
 }
 
-async function terminateOrder(id) {
+// Re-draw whichever manifest surfaces are currently showing.
+function refreshVisibleManifest() {
+  if (_orderModalID != null) openOrderModal(_orderModalID);
+  if (_detailOrderID != null) loadOrderDetail();
+}
+
+async function terminateOrder(id, el) {
   // id arrives as a string from data-action="terminateOrder:<id>" colon-arg
   // dispatch; the Go handler decodes order_id as int64 and rejects string
   // JSON values with "invalid request".
   var oid = parseInt(id, 10);
   if (!await uiConfirm('Terminate order #' + oid + '? This cannot be undone.')) return;
-  orderControlPost('/api/orders/terminate', {order_id: oid});
+  orderControlPost('/api/orders/terminate', {order_id: oid}, el);
 }
 
 // cancelOrderFromRow is the operator-facing cancel action surfaced on
@@ -30,27 +57,33 @@ async function terminateOrder(id) {
 // vocabulary, not a separate code path. The row's click handler
 // (openOrderModal) is suppressed implicitly because delegateActions
 // dispatches to the nearest [data-action] ancestor and stops there.
-async function cancelOrderFromRow(id) {
+async function cancelOrderFromRow(id, el) {
   var oid = parseInt(id, 10);
   if (!await uiConfirm('Cancel order #' + oid + '? This will abort any in-flight robot work and release claimed bins.')) return;
-  orderControlPost('/api/orders/terminate', {order_id: oid});
+  // From a list row there is no manifest to re-render, so fall back to the
+  // reload the list has always done.
+  apiPost('/api/orders/terminate', {order_id: oid})
+    .then(function() { location.reload(); })
+    .catch(function(e) { console.error('cancelOrderFromRow', oid, e); });
 }
 
 // Force-confirm a delivered order whose bin can't be recovered (moved by
 // something else, or arrival side effects never propagated). Same effect
 // as waiting 5 min for the auto-confirm loop. Goes through the recovery
 // repair endpoint, which routes to ForceConfirmDelivered server-side.
-async function forceConfirmDelivered(id) {
+async function forceConfirmDelivered(id, el) {
   var oid = parseInt(id, 10);
   if (!await uiConfirm('Force-confirm order #' + oid + ' (skip operator confirm)? Use when the bin has been moved elsewhere and the order is stuck in delivered.')) return;
-  orderControlPost('/api/recovery/repair', {action: 'force_confirm_delivered', order_id: oid, bin_id: 0});
+  orderControlPost('/api/recovery/repair', {action: 'force_confirm_delivered', order_id: oid, bin_id: 0}, el);
 }
 
-function setOrderPriority(id) {
+function setOrderPriority(id, el) {
   var oid = parseInt(id, 10);
-  var p = parseInt(document.getElementById('order-priority').value, 10);
+  var scope = el && el.closest ? el.closest('.manifest') : document;
+  var input = scope.querySelector('.ctl-priority');
+  var p = input ? parseInt(input.value, 10) : NaN;
   if (isNaN(p)) return;
-  orderControlPost('/api/orders/priority', {order_id: oid, priority: p});
+  orderControlPost('/api/orders/priority', {order_id: oid, priority: p}, el);
 }
 
 // --- Order detail modal ---
@@ -256,6 +289,30 @@ function buildManifest(data, opts) {
         </li>`;
       })
     }</ul>`;
+  }
+
+  // ── CONTROLS ──
+  // Rendered here rather than only on the detail page, so the modal and the
+  // permalink are identical in what they can DO, not just what they show.
+  // Before this, "peek at the order" and "act on the order" were split
+  // across two surfaces and the modal was read-only.
+  if (isAuthenticated()) {
+    out += '<div class="manifest-section">Controls</div>';
+    out += '<div class="manifest-controls">';
+    out += '<div class="ctl-msg text-muted text-sm"></div>';
+    out += '<div class="flex gap-1 items-center flex-wrap">';
+    // can_cancel comes from the server (www.canCancelStatus), the same gate
+    // engine.TerminateOrder applies — never re-derived from a status list here.
+    if (data.can_cancel) {
+      out += '<button class="btn btn-danger btn-sm" data-action="terminateOrder:' + o.id + '">Terminate Order</button>';
+    }
+    if (o.status === 'delivered') {
+      out += '<button class="btn btn-warning btn-sm" data-action="forceConfirmDelivered:' + o.id + '">Force Confirm</button>';
+    }
+    out += '<label class="order-priority-label">Priority:</label>';
+    out += '<input type="number" class="form-input order-priority-input ctl-priority" value="' + (o.priority || 0) + '">';
+    out += '<button class="btn btn-sm" data-action="setOrderPriority:' + o.id + '">Set Priority</button>';
+    out += '</div></div>';
   }
 
   // Footer
