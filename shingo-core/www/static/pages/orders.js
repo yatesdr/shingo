@@ -149,12 +149,21 @@ function buildManifest(data, opts) {
   // Status line: badge + error together
   out += '<div style="margin-bottom:0.25rem">';
   out += '<span class="badge badge-' + o.status + '">' + escapeHtml(o.status) + '</span>';
-  if (o.error_detail) out += ' <span style="color:var(--danger);font-size:0.82rem">' + escapeHtml(o.error_detail) + '</span>';
+  if (o.error_detail) out += ' <span class="manifest-error">' + escapeHtml(o.error_detail) + '</span>';
+  // queue_reason is the whole story on a queued order — why it is stuck. The
+  // list rows have always shown it; the manifest did not, so routing the
+  // detail page through the manifest would have hidden it on exactly the
+  // orders someone opens the detail page to understand.
+  if (o.queue_reason) out += ' <span class="manifest-reason">' + escapeHtml(o.queue_reason) + '</span>';
   out += '</div>';
   // UUID + type
   out += '<div class="manifest-uuid"><strong>UUID:</strong> ' + escapeHtml(o.edge_uuid) + ' (' + escapeHtml(o.order_type) + ')</div>';
   // Station + priority
-  out += '<div class="manifest-meta"><span><strong>Originating Station:</strong> ' + escapeHtml(o.station_id) + ' (Priority: ' + o.priority + ')</span></div>';
+  // Quantity used to sit in the Transport section, which only renders once
+  // an order has a vendor order or a robot — so it was invisible on exactly
+  // the orders that haven't dispatched yet. It belongs with the identity.
+  out += '<div class="manifest-meta"><span><strong>Originating Station:</strong> ' + escapeHtml(o.station_id) +
+    ' (Priority: ' + o.priority + ')</span><span><strong>Quantity:</strong> ' + o.quantity + '</span></div>';
   if (o.payload_desc) {
     out += '<div class="manifest-meta"><span><strong>Description:</strong> ' + escapeHtml(o.payload_desc) + '</span></div>';
   }
@@ -213,7 +222,6 @@ function buildManifest(data, opts) {
     out += '<div class="manifest-row cols-3">';
     if (o.vendor_order_id) out += '<div>' + field('Vendor Order', '<span style="font-family:monospace;font-size:0.75rem">' + escapeHtml(o.vendor_order_id) + '</span>') + fieldH('Vendor State', o.vendor_state) + '</div>';
     if (o.robot_id) out += '<div>' + fieldH('Robot ID', o.robot_id) + '</div>';
-    out += '<div>' + field('Quantity', o.quantity + '') + '</div>';
     out += '</div>';
   }
 

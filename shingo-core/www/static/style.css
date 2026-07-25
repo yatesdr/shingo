@@ -845,6 +845,8 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .order-modal-error { color:var(--danger); }
 
 /* Manifest controls (modal + detail page share this block). */
+.manifest-error { color:var(--danger); font-size:0.82rem; }
+.manifest-reason { color:var(--text-muted); font-size:0.82rem; }
 .manifest-controls { padding-top:0.35rem; }
 .manifest-controls .ctl-msg { min-height:1.2em; }
 .order-priority-label { display:inline; margin-left:1rem; font-size:var(--font-xs); }
