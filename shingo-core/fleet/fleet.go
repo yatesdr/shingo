@@ -51,6 +51,9 @@ type Backend interface {
 type ReconfigureParams struct {
 	BaseURL string
 	Timeout time.Duration
+	// FaultGrace is the faulted-order grace period. Zero means "leave it
+	// alone" — backends that don't track faults ignore it entirely.
+	FaultGrace time.Duration
 }
 
 // CreateOrderRequest contains the vendor-neutral parameters for creating a

@@ -54,7 +54,10 @@ type Poller struct {
 }
 
 func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, interval time.Duration, graceDuration ...time.Duration) *Poller {
-	gd := 10 * time.Minute
+	// Fallback only — production passes cfg.RDS.FaultGrace. Kept in step
+	// with the config default so a caller that omits it can't silently
+	// drop back to a much shorter window.
+	gd := 45 * time.Minute
 	if len(graceDuration) > 0 && graceDuration[0] > 0 {
 		gd = graceDuration[0]
 	}

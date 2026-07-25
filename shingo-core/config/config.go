@@ -147,6 +147,12 @@ type RDSConfig struct {
 	BaseURL      string        `yaml:"base_url"`
 	PollInterval time.Duration `yaml:"poll_interval"`
 	Timeout      time.Duration `yaml:"timeout"`
+	// FaultGrace is how long an order sits in `faulted` after RDS reports
+	// FAILED before Core gives up and fails it. A robot that recovers
+	// inside the window (FAILED->RUNNING) clears the deadline and the
+	// order carries on, so this is really "how long we let the floor sort
+	// a stuck AMR out before the order is written off".
+	FaultGrace time.Duration `yaml:"fault_grace"`
 }
 
 type WebConfig struct {
@@ -191,6 +197,7 @@ func Defaults() *Config {
 			BaseURL:      "http://192.168.1.100:8088",
 			PollInterval: 5 * time.Second,
 			Timeout:      10 * time.Second,
+			FaultGrace:   45 * time.Minute,
 		},
 		Web: WebConfig{
 			Host:          "0.0.0.0",

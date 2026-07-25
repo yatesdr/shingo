@@ -58,6 +58,12 @@ func (h *Handlers) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 			if d, err := time.ParseDuration(r.FormValue("fleet_timeout")); err == nil {
 				cfg.RDS.Timeout = d
 			}
+			// Guard the zero: an empty or unparseable field must not silently
+			// drop the grace period to 0, which would fail every faulted
+			// order on the next poll instead of giving the floor time.
+			if d, err := time.ParseDuration(r.FormValue("fleet_fault_grace")); err == nil && d > 0 {
+				cfg.RDS.FaultGrace = d
+			}
 		}
 	case "services", "messaging":
 		var brokers []string

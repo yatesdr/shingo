@@ -241,6 +241,7 @@ func main() {
 			BaseURL:      cfg.RDS.BaseURL,
 			Timeout:      cfg.RDS.Timeout,
 			PollInterval: cfg.RDS.PollInterval,
+			FaultGrace:   cfg.RDS.FaultGrace,
 			DebugLog:     dbg.Func("rds"),
 		})
 	}

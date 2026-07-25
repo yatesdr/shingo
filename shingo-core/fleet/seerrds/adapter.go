@@ -17,6 +17,7 @@ type Config struct {
 	BaseURL      string
 	Timeout      time.Duration
 	PollInterval time.Duration
+	FaultGrace   time.Duration
 	DebugLog     func(string, ...any)
 }
 
@@ -25,6 +26,7 @@ type Config struct {
 type Adapter struct {
 	client       *rds.Client
 	pollInterval time.Duration
+	faultGrace   time.Duration
 	poller       *rds.Poller
 	debugLog     func(string, ...any)
 }
@@ -36,6 +38,7 @@ func New(cfg Config) *Adapter {
 	return &Adapter{
 		client:       client,
 		pollInterval: cfg.PollInterval,
+		faultGrace:   cfg.FaultGrace,
 		debugLog:     cfg.DebugLog,
 	}
 }
@@ -130,6 +133,16 @@ func (a *Adapter) Reconfigure(cfg fleet.ReconfigureParams) {
 		timeout = 10 * time.Second
 	}
 	a.client.Reconfigure(cfg.BaseURL, timeout)
+	// Grace applies to FAILED entries recorded from here on, so pushing it
+	// into a live poller is safe and lets the config page take effect
+	// without a core restart. Orders already counting down keep the
+	// deadline they were stamped with.
+	if cfg.FaultGrace > 0 {
+		a.faultGrace = cfg.FaultGrace
+		if a.poller != nil {
+			a.poller.SetGraceDuration(cfg.FaultGrace)
+		}
+	}
 }
 
 // --- fleet.TrackingBackend ---
@@ -137,7 +150,7 @@ func (a *Adapter) Reconfigure(cfg fleet.ReconfigureParams) {
 func (a *Adapter) InitTracker(emitter fleet.TrackerEmitter, resolver fleet.OrderIDResolver) {
 	bridge := &emitterBridge{emitter: emitter}
 	resolverBridge := &resolverBridge{resolver: resolver}
-	a.poller = rds.NewPoller(a.client, bridge, resolverBridge, a.pollInterval)
+	a.poller = rds.NewPoller(a.client, bridge, resolverBridge, a.pollInterval, a.faultGrace)
 	a.poller.DebugLog = a.debugLog
 }
 

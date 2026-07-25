@@ -84,6 +84,11 @@
           <label>Timeout</label>
           <input type="text" name="fleet_timeout" value="{{.Config.RDS.Timeout}}" placeholder="10s">
         </div>
+        <div class="form-group">
+          <label>Faulted Grace Period</label>
+          <input type="text" name="fleet_fault_grace" value="{{.Config.RDS.FaultGrace}}" placeholder="45m">
+          <div class="field-help">How long an order waits in <code>faulted</code> after the fleet reports FAILED before Core fails it. A robot that recovers inside the window keeps its order. Applies to faults recorded after saving; orders already counting down keep their original deadline.</div>
+        </div>
       </div>
       <button type="submit" class="btn btn-primary btn-sm">Save</button>
     </form>

@@ -22,8 +22,9 @@ func (e *Engine) ReconfigureDatabase() {
 // ReconfigureFleet applies fleet config changes live.
 func (e *Engine) ReconfigureFleet() {
 	e.fleet.Reconfigure(fleet.ReconfigureParams{
-		BaseURL: e.cfg.RDS.BaseURL,
-		Timeout: e.cfg.RDS.Timeout,
+		BaseURL:    e.cfg.RDS.BaseURL,
+		Timeout:    e.cfg.RDS.Timeout,
+		FaultGrace: e.cfg.RDS.FaultGrace,
 	})
 	e.logFn("engine: fleet reconfigured (%s)", e.fleet.Name())
 	e.checkConnectionStatus()
