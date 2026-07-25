@@ -116,9 +116,15 @@
 .badge-skipped      { background: #e0e7f0; color: #51607a; border-color: #c3cede; }
 
 /* ── Terminal — needs attention ───────────────────────────────────────
- * Warm amber — the order completed abnormally and a human needs to act.
- * Visually distinct from the cool active tones so it draws the eye. */
-.badge-faulted      { background: #fde68a; color: #92400e; border-color: #fcd34d; }
+ * Deep orange — the order completed abnormally and a human needs to act.
+ * Was amber (#fde68a/#92400e), which shared a hue with sourcing's sand:
+ * the only thing separating "quietly looking for material" from "a robot
+ * is stuck" was pill weight, and in dark mode both rendered brown-bg /
+ * gold-text. Orange puts faulted on the failure side of the warm ramp it
+ * belongs to — sand (benign) → orange (attention) → red (failed) — which
+ * also matches the lifecycle: faulted either recovers or becomes failed.
+ * 5.40:1 on the pill (AA). */
+.badge-faulted      { background: #fed7aa; color: #9a3412; border-color: #fdba74; }
 
 /* ── Terminal — failure ───────────────────────────────────────────────
  * Strong red — something broke. Impossible to miss. */
@@ -160,8 +166,10 @@
 /* Cancelled — dark: the one allowed grey, contrast-corrected */
 [data-theme="dark"] .badge-cancelled    { background: #1c1f26; color: #9ca3af; border-color: #2d313c; }
 
-/* Needs attention — dark */
-[data-theme="dark"] .badge-faulted      { background: #3d2e00; color: #fbbf24; border-color: #5c4400; }
+/* Needs attention — dark. Background is lifted off failed's near-black
+ * (#450a0a) so the two loud pills don't collapse into one dark smudge on
+ * a shop-floor LCD; the text does most of the separating. 7.92:1 (AAA). */
+[data-theme="dark"] .badge-faulted      { background: #4a2606; color: #fdba74; border-color: #6b2c06; }
 
 /* Failure — dark */
 [data-theme="dark"] .badge-failed       { background: #450a0a; color: #f87171; border-color: #5c1515; }

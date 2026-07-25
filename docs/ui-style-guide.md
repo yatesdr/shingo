@@ -235,7 +235,7 @@ Visual principles).
 
 Badge colors follow a scheme called **Signal**. **Hue** encodes *where* an order
 is in its lifecycle; **weight** is held flat. Every non-alert badge sits at one
-calm, low-saturation weight, so the two alert states — `faulted` (amber) and
+calm, low-saturation weight, so the two alert states — `faulted` (orange) and
 `failed` (red) — are the only loud pills and clearly out-weigh everything else on
 a crowded table. Grey is reserved for `cancelled` alone.
 
@@ -251,6 +251,15 @@ EARLY (3 graduated calm tints:           →  SUBMITTED (steel blue)
 **Weight rule** (for anyone adding a status): non-alert light backgrounds stay
 light (L≥86) and dark text stays bright (L≥68); only `faulted` and `failed` may
 go below that. All text-on-pill pairs clear WCAG AA (≥4.5:1) in both themes.
+
+**Hue rule — warm is for alerts.** `faulted` moved off amber to orange because
+amber put it in the same hue family as `sourcing`'s sand: pill *weight* was the
+only thing distinguishing "quietly looking for material" from "a robot is
+stuck", and in dark mode both rendered as brown-bg / gold-text. The warm ramp
+now reads as three separable steps — sand (benign, early) → orange (attention)
+→ red (failed) — which also tracks the lifecycle, since `faulted` either
+recovers or becomes `failed`. When adding a status, do not put a benign state
+on a warm hue.
 
 **Per-phase hues in the active band:**
 
@@ -277,7 +286,7 @@ Each active phase has its own color so it's distinguishable at a glance:
 | Active: reshuffling (pink) | reshuffling | `#f8dcec` | `#8f2f64` |
 | Success | delivered, confirmed | `#c6f6d5` | `#166534` |
 | No-op | skipped | `#e0e7f0` | `#51607a` |
-| Attention (loud) | faulted | `#fde68a` | `#92400e` |
+| Attention (loud) | faulted | `#fed7aa` | `#9a3412` |
 | Failure (loud) | failed | `#fecaca` | `#991b1b` |
 | Cancelled (the one grey) | cancelled | `#e5e7eb` | `#52525b` |
 
