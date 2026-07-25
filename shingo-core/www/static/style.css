@@ -227,8 +227,6 @@ textarea { resize: vertical; min-height: 60px; }
 .modal-overlay.active {
   display: flex;
 }
-.modal-wide { max-width: 900px; padding: 1.25rem 1.5rem; }
-.modal-wide .modal-header { margin-bottom: 0.375rem; }
 
 /* Manifest document styles */
 .manifest { font-size: 0.82rem; line-height: 1.5; }
@@ -293,6 +291,12 @@ textarea { resize: vertical; min-height: 60px; }
   overflow-y: auto;
   box-shadow: 0 8px 30px rgba(0,0,0,0.25);
 }
+/* Must follow .modal — same specificity, so source order decides. This sat
+ * ABOVE .modal for its whole life, which meant .modal's 520px won and
+ * .modal-wide did nothing: the order manifest was rendering into a narrow
+ * column and wrapping its field strip for no reason. */
+.modal-wide { max-width: 900px; padding: 1.25rem 1.5rem; }
+.modal-wide .modal-header { margin-bottom: 0.375rem; }
 .modal-header {
   margin-bottom: 1rem;
 }
