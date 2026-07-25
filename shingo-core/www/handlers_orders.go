@@ -85,21 +85,14 @@ func (h *Handlers) handleOrderDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc := h.engine.OrderService()
-	order, err := svc.GetOrder(id)
-	if err != nil {
-		http.Error(w, "order not found", http.StatusNotFound)
-		return
-	}
-
-	// No history fetch here: the page body is rendered client-side from
-	// /api/orders/enriched, which already carries it. The server render is
-	// just the header, the auth-gated controls, and the 404 above.
-	data := map[string]any{
-		"Page":  "orders",
-		"Order": order,
-	}
-	h.render(w, r, "orders.html", data)
+	// There is no separate order detail page any more. It rendered the same
+	// manifest as the row-click modal, so maintaining a second surface —
+	// with its own layout, its own controls and its own way of going stale
+	// — bought nothing. /orders?open=N opens that order's modal on load, so
+	// an order is still linkable and bookmarkable; this redirect keeps old
+	// links, bookmarks and the "View Order" links on the mission pages
+	// landing on the order rather than 404ing.
+	http.Redirect(w, r, "/orders?open="+strconv.FormatInt(id, 10), http.StatusMovedPermanently)
 }
 
 func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {

@@ -4,30 +4,6 @@
      on the detail page, neither of which is a Go template. Same
      JSON-in-attribute handoff the inventory page uses. */}}
 <div data-sse="orders" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}">
-  {{if .Order}}
-  {{/* Order detail view. The body is the same .manifest that the row-click
-      modal draws, from the same /api/orders/enriched payload and the same
-      renderer (orders.js buildManifest) — so a permalink and a row click
-      show an identical view. This page used to hand-roll a key-value
-      table plus a Timeline card, which was a sparser second view of the
-      same object: no routing, cargo, robot status, RDS live detail or
-      child steps, and a forced grid-2 that left a half-page hole
-      whenever an order had no history. */}}
-  <div class="orders-head">
-    <h1 class="orders-title">Order #{{.Order.ID}}</h1>
-    <div class="flex gap-1 items-center">
-      {{if .Order.ParentOrderID}}<a href="/orders/detail?id={{deref .Order.ParentOrderID}}" class="btn btn-sm">Parent #{{deref .Order.ParentOrderID}} (step {{.Order.Sequence}})</a>{{end}}
-      <a href="/orders" class="btn btn-sm">Back to list</a>
-    </div>
-  </div>
-
-  <div class="card" id="order-detail-card" data-order-id="{{.Order.ID}}">
-    <div id="order-detail-loading" class="dash-empty">Loading...</div>
-    <div id="order-detail-error" class="hide p-2 order-modal-error"></div>
-    <div id="order-detail-content" class="hide"></div>
-  </div>
-
-  {{else}}
   {{/* Order list view */}}
   <div class="orders-head">
     <h1 class="orders-title">Orders</h1>
@@ -86,13 +62,11 @@
       <tbody>
         {{range .Orders}}
         <tr data-action="openOrderModal:{{.ID}}">
-          {{/* The whole row does ONE thing: open the order. The ID used to
-              navigate to the detail page while the rest of the row opened
-              the modal — two destinations from one row, for two views that
-              are now identical anyway. It stays an <a> so the permalink is
-              still copyable and ctrl/middle-click still opens the page in a
-              new tab; a plain click is intercepted (see openOrderModal). */}}
-          <td class="tnum" data-sort-value="{{.ID}}"><a href="/orders/detail?id={{.ID}}" data-action="openOrderModal:{{.ID}}">{{.ID}}</a></td>
+          {{/* The whole row does ONE thing: open the order. It stays an
+              <a> so the link is copyable and ctrl/middle-click opens it in
+              a new tab, where ?open= reopens the same modal; a plain click
+              is intercepted (see openOrderModal). */}}
+          <td class="tnum" data-sort-value="{{.ID}}"><a href="/orders?open={{.ID}}" data-action="openOrderModal:{{.ID}}">{{.ID}}</a></td>
           <td class="orders-uuid" title="{{.EdgeUUID}}">{{.EdgeUUID}}</td>
           <td>{{.StationID}}</td>
           <td>{{.OrderType}}</td>
@@ -129,7 +103,6 @@
     <p class="dash-empty">No orders found.</p>
     {{end}}
   </div>
-  {{end}}
 </div>
 
 {{/* No data-backdrop-close: this is a data-input modal, and the style

@@ -82,7 +82,7 @@
       <tbody>
         {{range .ActiveOrders}}
         <tr>
-          <td><a href="/orders/detail?id={{.ID}}">{{.ID}}</a></td>
+          <td><a href="/orders?open={{.ID}}">{{.ID}}</a></td>
           <td>{{.StationID}}</td>
           <td>{{.OrderType}}</td>
           <td>

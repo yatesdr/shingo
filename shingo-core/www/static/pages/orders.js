@@ -36,10 +36,9 @@ function orderControlPost(url, body, el) {
     });
 }
 
-// Re-draw whichever manifest surfaces are currently showing.
+// Re-draw the open order after a control action.
 function refreshVisibleManifest() {
   if (_orderModalID != null) openOrderModal(_orderModalID);
-  if (_detailOrderID != null) loadOrderDetail();
 }
 
 async function terminateOrder(id, el) {
@@ -103,28 +102,44 @@ function openOrderModal(id, el, evt) {
   var content = document.getElementById('order-modal-content');
   var errEl = document.getElementById('order-modal-error');
   title.textContent = 'Order #' + id;
-  loading.style.display = '';
-  content.style.display = 'none';
-  errEl.style.display = 'none';
+  // classList, not style.display. The markup marks these hidden with
+  // class="hide" (.hide { display:none }), and clearing an inline display
+  // cannot beat a class — so the old style.display='' left the body
+  // invisible and the modal opened as an empty box. Third instance of this
+  // exact bug in this file; see manualOrderTransportTypeChanged.
+  loading.classList.remove('hide');
+  content.classList.add('hide');
+  errEl.classList.add('hide');
   showModal('order-modal-overlay');
+  // Reflect the open order in the URL so it is linkable and survives a
+  // refresh; /orders/detail?id=N redirects here.
+  try { history.replaceState(null, '', '/orders?open=' + id); } catch (e) { /* non-fatal */ }
 
   apiGet('/api/orders/enriched?id=' + id)
     .then(function(data) {
-      loading.style.display = 'none';
-      content.style.display = '';
       renderOrderModal(data);
+      loading.classList.add('hide');
+      errEl.classList.add('hide');
+      content.classList.remove('hide');
     })
     .catch(function(e) {
       console.error('openOrderModal', id, e);
-      loading.style.display = 'none';
-      errEl.style.display = '';
+      loading.classList.add('hide');
       errEl.textContent = (typeof e === 'string' && e) ? e : 'Failed to load order';
+      errEl.classList.remove('hide');
     });
 }
 
 function closeOrderModal() {
   _orderModalID = null;
   hideModal('order-modal-overlay');
+  // Drop ?open= so a refresh doesn't reopen what you just closed, keeping
+  // whatever status filter you were browsing.
+  try {
+    var u = new URL(location.href);
+    u.searchParams.delete('open');
+    history.replaceState(null, '', u.pathname + (u.search || ''));
+  } catch (e) { /* non-fatal */ }
 }
 
 document.addEventListener('keydown', function(e) {
@@ -155,15 +170,10 @@ function elapsedLabel(o) {
   return o.completed_at ? 'took ' + txt : txt + ' elapsed';
 }
 
-// buildManifest renders the order manifest and returns the HTML. It backs
-// BOTH the row-click modal and the /orders/detail permalink page, which is
-// the point: the detail page used to hand-roll a sparser key-value table
-// and had drifted into a second, worse view of the same object — no
-// routing, cargo, robot status, RDS live detail or child steps. One
-// renderer means they cannot diverge again.
-//
-// opts.detailLink adds the "Open full detail page" footer link. The detail
-// page passes false, since there it would point at itself.
+// buildManifest renders the order manifest and returns the HTML. It is the
+// ONE order view: the separate /orders/detail page was retired once it and
+// this modal rendered the same thing, so there is no second surface to
+// drift. /orders?open=N deep-links straight to it.
 function buildManifest(data, opts) {
   opts = opts || {};
   var o = data.order;
@@ -357,9 +367,6 @@ function buildManifest(data, opts) {
   if (o.vendor_order_id) {
     links.push('<a href="/missions/' + o.id + '" title="View mission telemetry, timeline, and robot tracking for this order">Mission Telemetry</a>');
   }
-  if (opts.detailLink) {
-    links.push('<a href="/orders/detail?id=' + o.id + '">Open full detail page &rarr;</a>');
-  }
   if (links.length) out += '<div class="manifest-footer">' + links.join(' &middot; ') + '</div>';
 
   out += '</div>'; // end manifest
@@ -367,51 +374,23 @@ function buildManifest(data, opts) {
 }
 
 function renderOrderModal(data) {
-  document.getElementById('order-modal-content').innerHTML = buildManifest(data, {detailLink: true});
+  document.getElementById('order-modal-content').innerHTML = buildManifest(data);
 }
 
-// --- Order detail page ---
-// The permalink page is a shell around the same manifest the modal draws.
-// _detailOrderID is set only on that page; null everywhere else.
-var _detailOrderID = null;
-
-function loadOrderDetail() {
-  var card = document.getElementById('order-detail-card');
-  if (!card) return;
-  _detailOrderID = card.dataset.orderId;
-  var loading = document.getElementById('order-detail-loading');
-  var content = document.getElementById('order-detail-content');
-  var errEl = document.getElementById('order-detail-error');
-
-  apiGet('/api/orders/enriched?id=' + _detailOrderID)
-    .then(function(data) {
-      content.innerHTML = buildManifest(data, {detailLink: false});
-      loading.classList.add('hide');
-      errEl.classList.add('hide');
-      content.classList.remove('hide');
-    })
-    .catch(function(e) {
-      console.error('loadOrderDetail', _detailOrderID, e);
-      loading.classList.add('hide');
-      errEl.textContent = (typeof e === 'string' && e) ? e : 'Failed to load order';
-      errEl.classList.remove('hide');
-    });
-}
-loadOrderDetail();
+// Deep link: /orders?open=N opens that order's modal on load. There is no
+// separate detail page any more — one order view, reachable by link.
+// /orders/detail?id=N redirects here so old links and bookmarks still land
+// on the order.
+(function openFromQuery() {
+  var id = new URLSearchParams(location.search).get('open');
+  if (id) openOrderModal(id);
+})();
 
 // SSE auto-refresh for open modal — subscribed on the shared onSSE bus.
 // The handler receives the already-parsed payload (the bus does JSON.parse,
 // reconnect, and build-id detection); replaces the retired app.js IIFE's
 // window.onOrderUpdate dispatch (Q-002).
 onSSE('order-update', debounce(function(data) {
-  if (_detailOrderID != null) {
-    // Detail page: re-render this order's manifest in place when the event
-    // is for it, and ignore every other order. Reloading the page on any
-    // order's update — as the list below does — would throw away scroll
-    // position on a page that has nothing to gain from it.
-    if (data && Number(data.order_id) === Number(_detailOrderID)) loadOrderDetail();
-    return;
-  }
   if (_orderModalID != null) {
     // A modal is open. Refresh it when this event is for that order.
     // order_id arrives as a number in the SSE JSON, but _orderModalID comes

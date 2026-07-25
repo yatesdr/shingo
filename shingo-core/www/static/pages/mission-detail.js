@@ -107,7 +107,7 @@ import { onSSE } from '/static/shared/utils.js';
     var el = document.getElementById('mission-summary');
 
     var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem">';
-    html += '<div title="Shingo order ID"><strong>Order ID</strong><br><a href="/orders/detail?id=' + o.id + '">' + o.id + '</a></div>';
+    html += '<div title="Shingo order ID"><strong>Order ID</strong><br><a href="/orders?open=' + o.id + '">' + o.id + '</a></div>';
     html += '<div title="Transport order type (retrieve, store, move, etc.)"><strong>Type</strong><br>' + (o.order_type || '-') + '</div>';
     html += '<div title="Edge station that requested this order"><strong>Station</strong><br>' + (o.station_id || '-') + '</div>';
     html += '<div title="Robot vehicle ID assigned by the fleet"><strong>Robot</strong><br>' + (t.robot_id || o.robot_id || '-') + '</div>';
