@@ -12,6 +12,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared"
+	"shingocore/dispatch"
 	"shingocore/fleet"
 )
 
@@ -72,6 +73,18 @@ func templateFuncs() template.FuncMap {
 		"simMode":    simModeEnabled, // dev speed top-strip gate; false in prod builds
 		"cacheBust":  func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
 		"iconSprite": func() template.HTML { return iconSpriteHTML },
+		// canCancel reports whether a cancel/terminate control should render
+		// for an order in this status. It is engine.TerminateOrder's own
+		// rejection gate, so the button can only appear where the handler
+		// would actually accept it. Templates previously hand-listed the
+		// excluded statuses and drifted from the engine: the list view
+		// missed "skipped" (terminal, so Cancel was a dead button on every
+		// skipped row) and the detail view also left Terminate up for
+		// delivered and confirmed. Deriving it here means adding a status
+		// to protocol/status.go can't reopen that gap.
+		"canCancel": func(s protocol.Status) bool {
+			return !dispatch.IsPostDelivery(s) && !protocol.IsTerminal(s)
+		},
 		"timeAgo": func(t time.Time) string {
 			if t.IsZero() {
 				return ""

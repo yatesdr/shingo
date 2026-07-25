@@ -299,7 +299,7 @@ function closeManualOrderModal() {
 
 function switchManualOrderTab(name, btn) {
   _moActiveTab = name;
-  document.querySelectorAll('.manual-order-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('#manual-order-modal .tab-btn').forEach(function(t) { t.classList.remove('active'); });
   document.querySelectorAll('.manual-order-tab-content').forEach(function(c) { c.classList.remove('active'); });
   document.getElementById('manual-order-tab-' + name).classList.add('active');
   btn.classList.add('active');
@@ -429,39 +429,36 @@ function loadManualOrderBinDropdown() {
     .catch(function(e) { console.error('loadManualOrderBinDropdown', e); });
 }
 
+// Field visibility for the Transport tab, derived from the order type.
+//
+// Two bugs lived here. The element was looked up as 'mo-pickup-group' —
+// that is the Edge template's id; Core's is 'mo-source-group', so every
+// call threw on the null deref and none of the later toggles ran. And the
+// toggles wrote element.style.display while the template marks the
+// initially-hidden groups with class="hide" (.hide { display:none });
+// clearing an inline display can't beat a class, so the Bin and Quantity
+// groups could never appear. Toggling the class fixes both, and matches
+// the style guide's "visibility is derived from state" rule.
 function manualOrderTransportTypeChanged() {
   var t = document.getElementById('mo-transport-type').value;
-  var pickup = document.getElementById('mo-pickup-group');
-  var delivery = document.getElementById('mo-delivery-group');
-  var payload = document.getElementById('mo-payload-group');
-  var binGroup = document.getElementById('mo-bin-group');
-  var qtyGroup = document.getElementById('mo-quantity-group');
-
-  if (t === 'retrieve_specific') {
-    // Retrieve specific: bin selector + delivery only
-    pickup.style.display = 'none';
-    delivery.style.display = '';
-    payload.style.display = 'none';
-    binGroup.style.display = '';
-  } else {
-    binGroup.style.display = 'none';
-    // Move: pickup + delivery
-    // Retrieve: delivery + payload
-    // Retrieve Empty: delivery + payload
-    pickup.style.display = (t === 'retrieve' || t === 'retrieve_empty') ? 'none' : '';
-    delivery.style.display = '';
-    payload.style.display = (t === 'move') ? 'none' : '';
-  }
-
-  // Quantity only for retrieve and retrieve_empty
-  qtyGroup.style.display = (t === 'retrieve' || t === 'retrieve_empty') ? '' : 'none';
+  var batch = (t === 'retrieve' || t === 'retrieve_empty');
+  var specific = (t === 'retrieve_specific');
+  var vis = {
+    'mo-source-group': !specific && !batch,  // Move only
+    'mo-delivery-group': true,
+    'mo-payload-group': !specific && t !== 'move',
+    'mo-bin-group': specific,
+    'mo-quantity-group': batch,
+  };
+  Object.keys(vis).forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.classList.toggle('hide', !vis[id]);
+  });
 }
 
 function updateManualOrderQuantityVisibility() {
-  var tab = _moActiveTab;
-  var qtyGroup = document.getElementById('mo-quantity-group');
-  if (tab !== 'transport') {
-    qtyGroup.style.display = 'none';
+  if (_moActiveTab !== 'transport') {
+    document.getElementById('mo-quantity-group').classList.add('hide');
     return;
   }
   manualOrderTransportTypeChanged();

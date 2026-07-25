@@ -764,16 +764,87 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .cms-qty-neg { color:#dc2626; font-weight:600; }
 
 /* --- Orders page --- */
-.manual-order-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:1rem; }
-.manual-order-tab {
-  background:none; border:none; padding:.5rem 1rem; cursor:pointer;
-  font-size:.9rem; color:var(--text-muted); border-bottom:2px solid transparent;
-  margin-bottom:-2px; font-weight:500;
-}
-.manual-order-tab:hover { color:var(--text); }
-.manual-order-tab.active { color:#7c3aed; border-bottom-color:#7c3aed; }
+/* The manual-order modal's tabs used to be a parallel .manual-order-tab
+ * taxonomy hardcoding #7c3aed. They now reuse the .tab-bar / .tab-btn
+ * pattern (which tracks --primary), per the style guide's one-tabs rule;
+ * only the panel show/hide rule stays page-local. */
 .manual-order-tab-content { display:none; }
 .manual-order-tab-content.active { display:block; }
+
+/* Page head: title + status filter row on one line, wrapping on narrow. */
+.orders-head {
+  display:flex; align-items:center; justify-content:space-between;
+  flex-wrap:wrap; gap:var(--sp-2); margin-bottom:var(--sp-3);
+}
+.orders-title { font-size:var(--font-lg); margin:0; }
+
+/* Status filters. Navigation, not CTAs — so they read as quiet pills, and
+ * only the selected one takes the accent fill (style guide: "tabs are not
+ * CTAs" + "structure recedes, state glows"). The dot carries the same
+ * --status-*-dot hue as the badge in the table, so the chip and the rows it
+ * filters to are visibly the same colour. */
+.order-filters { display:flex; align-items:center; flex-wrap:wrap; gap:0.25rem; }
+.ofilter {
+  display:inline-flex; align-items:center; gap:0.4rem;
+  padding:0.25rem 0.65rem; border-radius:999px;
+  font-size:var(--font-xs); font-weight:var(--fw-bold);
+  color:var(--text-muted); white-space:nowrap;
+  transition:background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.ofilter:hover { background:var(--elev-raised); color:var(--text); text-decoration:none; }
+.ofilter.is-active { background:var(--accent-solid); color:#fff; }
+.ofilter.is-active:hover { background:var(--accent-solid-hover); color:#fff; }
+.ofilter-sep { width:1px; height:1.1rem; background:var(--border); margin:0 0.3rem; flex-shrink:0; }
+.ofilter-dot { width:7px; height:7px; border-radius:50%; background:var(--text-muted); flex-shrink:0; }
+.ofilter.is-active .ofilter-dot { background:#fff; }
+.ofilter-dot[data-status="pending"]     { background:var(--status-pending-dot); }
+.ofilter-dot[data-status="dispatched"]  { background:var(--status-dispatched-dot); }
+.ofilter-dot[data-status="in_transit"]  { background:var(--status-in-transit-dot); }
+.ofilter-dot[data-status="delivered"]   { background:var(--status-delivered-dot); }
+.ofilter-dot[data-status="confirmed"]   { background:var(--status-delivered-dot); }
+.ofilter-dot[data-status="failed"]      { background:var(--danger); }
+.ofilter-dot[data-status="reshuffling"] { background:var(--status-reshuffling-dot); }
+
+.orders-search { min-width:220px; max-width:260px; }
+.queue-why { display:flex; align-items:center; flex-wrap:wrap; gap:0.4rem; margin-bottom:var(--sp-3); }
+
+.orders-card { padding:0.75rem; }
+/* Rows open the detail modal. */
+.orders-table tbody tr { cursor:pointer; }
+/* The UUID is the widest column and the least-scanned field: clamp it with an
+ * ellipsis rather than truncating the string, so the full value stays in the
+ * DOM for the client-side text filter (and in the title on hover). */
+.orders-uuid {
+  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size:var(--font-xs); color:var(--text-muted);
+  max-width:13rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+/* Part codes, robot ids and timestamps are single tokens — letting them wrap
+ * broke them mid-string and doubled every row's height. */
+.orders-time { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.orders-table code, .orders-robot { white-space:nowrap; }
+/* Header stays put while a 100-row page scrolls. */
+.orders-table thead th {
+  position:sticky; top:0; z-index:1;
+  background:var(--surface); box-shadow:inset 0 -1px 0 var(--border);
+}
+.orders-subtext { font-size:var(--font-xs); color:var(--text-muted); }
+.orders-reason { max-width:22rem; white-space:normal; }
+.orders-actions { white-space:nowrap; }
+/* Destructive control on every row is loud structure; keep it quiet until
+ * the row is under the cursor. */
+.orders-table tbody .btn-danger { opacity:0.55; transition:opacity var(--dur-fast) var(--ease); }
+.orders-table tbody tr:hover .btn-danger,
+.orders-table tbody .btn-danger:focus-visible { opacity:1; }
+
+.mo-status-line { min-height:1.4em; }
+.order-modal-error { color:var(--danger); }
+
+/* Order detail page (non-modal) */
+.order-detail-controls { min-height:1.2em; }
+.order-priority-label { display:inline; margin-left:1rem; font-size:var(--font-xs); }
+.order-priority-input { width:5rem; }
+.order-mission-link { font-size:.85em; margin-left:.5rem; }
 
 /* --- Test Orders page --- */
 .to-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:1.5rem; }

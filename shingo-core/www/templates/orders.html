@@ -19,7 +19,7 @@
         <tr><td><strong>Quantity</strong></td><td>{{.Order.Quantity}}</td></tr>
         <tr><td><strong>Status</strong></td><td><span class="badge badge-{{.Order.Status}}">{{.Order.Status}}</span></td></tr>
         {{if .Order.QueueReason}}<tr><td><strong>Queue Reason</strong></td><td><span class="text-muted">{{.Order.QueueReason}}</span></td></tr>{{end}}
-        <tr><td><strong>Vendor Order</strong></td><td>{{.Order.VendorOrderID}}{{if .Order.VendorOrderID}} <a href="/missions/{{.Order.ID}}" title="View mission telemetry, timeline, and robot tracking" style="font-size:.85em;margin-left:.5rem">View Mission</a>{{end}}</td></tr>
+        <tr><td><strong>Vendor Order</strong></td><td>{{.Order.VendorOrderID}}{{if .Order.VendorOrderID}} <a href="/missions/{{.Order.ID}}" title="View mission telemetry, timeline, and robot tracking" class="order-mission-link">View Mission</a>{{end}}</td></tr>
         <tr><td><strong>Robot</strong></td><td>{{.Order.RobotID}}</td></tr>
         <tr><td><strong>Priority</strong></td><td>{{.Order.Priority}}</td></tr>
         {{if .Order.ParentOrderID}}<tr><td><strong>Parent Order</strong></td><td><a href="/orders/detail?id={{deref .Order.ParentOrderID}}">#{{deref .Order.ParentOrderID}}</a> (step {{.Order.Sequence}})</td></tr>{{end}}
@@ -50,16 +50,20 @@
   {{if .Authenticated}}
   <div class="card mb-2">
     <h3>Controls</h3>
-    <div id="order-status-msg" class="text-muted text-sm mb-1" style="min-height:1.2em"></div>
+    <div id="order-status-msg" class="text-muted text-sm mb-1 order-detail-controls"></div>
     <div class="flex gap-1 items-center flex-wrap">
-      {{if and (ne .Order.Status "completed") (ne .Order.Status "cancelled") (ne .Order.Status "failed")}}
+      {{/* Same canCancel gate as the list rows. The old hand-listed check
+          here was looser still — it left Terminate on screen for
+          delivered, confirmed and skipped orders, all of which
+          engine.TerminateOrder refuses. */}}
+      {{if canCancel .Order.Status}}
       <button class="btn btn-danger btn-sm" data-action="terminateOrder:{{.Order.ID}}">Terminate Order</button>
       {{end}}
       {{if eq .Order.Status "delivered"}}
       <button class="btn btn-warning btn-sm" data-action="forceConfirmDelivered:{{.Order.ID}}">Force Confirm</button>
       {{end}}
-      <label style="font-size:0.85rem;margin-left:1rem">Priority:</label>
-      <input type="number" id="order-priority" value="{{.Order.Priority}}" style="width:5rem">
+      <label class="order-priority-label">Priority:</label>
+      <input type="number" id="order-priority" class="form-input order-priority-input" value="{{.Order.Priority}}">
       <button class="btn btn-sm" data-action="setOrderPriority:{{.Order.ID}}">Set Priority</button>
     </div>
   </div>
@@ -67,42 +71,47 @@
 
   {{else}}
   {{/* Order list view */}}
-  <div class="flex flex-between mb-1">
-    <h1 style="font-size:1.3rem">Orders</h1>
-    <div class="flex gap-1">
-      <a href="/orders?status=all" class="btn btn-sm {{if eq .FilterStatus "all"}}btn-primary{{end}}">All</a>
-      <a href="/orders" class="btn btn-sm {{if not .FilterStatus}}btn-primary{{end}}">Active</a>
-      <a href="/orders?status=pending" class="btn btn-sm {{if eq .FilterStatus "pending"}}btn-primary{{end}}">Pending</a>
-      <a href="/orders?status=dispatched" class="btn btn-sm {{if eq .FilterStatus "dispatched"}}btn-primary{{end}}">Dispatched</a>
-      <a href="/orders?status=in_transit" class="btn btn-sm {{if eq .FilterStatus "in_transit"}}btn-primary{{end}}">In Transit</a>
-      <a href="/orders?status=delivered" class="btn btn-sm {{if eq .FilterStatus "delivered"}}btn-primary{{end}}">Delivered</a>
-      <a href="/orders?status=confirmed" class="btn btn-sm {{if eq .FilterStatus "confirmed"}}btn-primary{{end}}">Confirmed</a>
-      <a href="/orders?status=failed" class="btn btn-sm {{if eq .FilterStatus "failed"}}btn-primary{{end}}">Failed</a>
-      <a href="/orders?status=reshuffling" class="btn btn-sm {{if eq .FilterStatus "reshuffling"}}btn-primary{{end}}">Reshuffling</a>
+  <div class="orders-head">
+    <h1 class="orders-title">Orders</h1>
+    {{/* Status filters are navigation, not CTAs — quiet pills, with only the
+         selected one filled. Each dot reuses the status hue the badge in the
+         table already carries. "All" and "Active" are the two aggregate views
+         and carry no dot; the separator marks that split. */}}
+    <div class="order-filters" role="group" aria-label="Filter orders by status">
+      <a href="/orders?status=all" class="ofilter{{if eq .FilterStatus "all"}} is-active{{end}}">All</a>
+      <a href="/orders" class="ofilter{{if not .FilterStatus}} is-active{{end}}">Active</a>
+      <span class="ofilter-sep" aria-hidden="true"></span>
+      <a href="/orders?status=pending" class="ofilter{{if eq .FilterStatus "pending"}} is-active{{end}}"><span class="ofilter-dot" data-status="pending"></span>Pending</a>
+      <a href="/orders?status=dispatched" class="ofilter{{if eq .FilterStatus "dispatched"}} is-active{{end}}"><span class="ofilter-dot" data-status="dispatched"></span>Dispatched</a>
+      <a href="/orders?status=in_transit" class="ofilter{{if eq .FilterStatus "in_transit"}} is-active{{end}}"><span class="ofilter-dot" data-status="in_transit"></span>In Transit</a>
+      <a href="/orders?status=delivered" class="ofilter{{if eq .FilterStatus "delivered"}} is-active{{end}}"><span class="ofilter-dot" data-status="delivered"></span>Delivered</a>
+      <a href="/orders?status=confirmed" class="ofilter{{if eq .FilterStatus "confirmed"}} is-active{{end}}"><span class="ofilter-dot" data-status="confirmed"></span>Confirmed</a>
+      <a href="/orders?status=failed" class="ofilter{{if eq .FilterStatus "failed"}} is-active{{end}}"><span class="ofilter-dot" data-status="failed"></span>Failed</a>
+      <a href="/orders?status=reshuffling" class="ofilter{{if eq .FilterStatus "reshuffling"}} is-active{{end}}"><span class="ofilter-dot" data-status="reshuffling"></span>Reshuffling</a>
     </div>
   </div>
 
   <div class="filter-bar">
-    <input type="text" id="filter-search" placeholder="Filter by station, type, robot..." style="min-width:220px">
-    <span id="filter-count" class="text-muted" style="font-size:0.78rem"></span>
+    <input type="text" id="filter-search" class="form-input orders-search" placeholder="Filter by station, type, robot...">
+    <span id="filter-count" class="text-muted-xs tnum"></span>
     {{if .Authenticated}}<button class="btn btn-primary btn-sm ml-auto" data-action="openManualOrderModal">Manual Order</button>{{end}}
   </div>
 
   {{$labels := .QueueCodeLabels}}
   {{if .QueueCodeCounts}}
-  <div class="filter-bar" style="flex-wrap:wrap;gap:0.4rem">
-    <span class="text-muted" style="font-size:0.78rem">Why queued:</span>
+  <div class="queue-why">
+    <span class="text-muted-xs">Why queued:</span>
     {{range $code, $count := .QueueCodeCounts}}
       {{if and $code (gt $count 0)}}
-      <span class="badge" style="background:#eef;text-align:left">{{$label := index $labels $code}}{{if $label}}{{$label}}{{else}}{{$code}}{{end}}: {{$count}}</span>
+      <span class="chip chip-muted">{{$label := index $labels $code}}{{if $label}}{{$label}}{{else}}{{$code}}{{end}}: <span class="tnum">{{$count}}</span></span>
       {{end}}
     {{end}}
   </div>
   {{end}}
 
-  <div class="card" style="padding:0.75rem">
+  <div class="card orders-card">
     {{if .Orders}}
-    <table class="table-compact" id="orders-table" data-sortable>
+    <table class="table-compact orders-table" id="orders-table" data-sortable>
       <thead>
         <tr>
           <th data-sort>ID</th>
@@ -118,29 +127,32 @@
       </thead>
       <tbody>
         {{range .Orders}}
-        <tr style="cursor:pointer" data-action="openOrderModal:{{.ID}}">
-          <td data-sort-value="{{.ID}}"><a href="/orders/detail?id={{.ID}}" data-action="stopPropagation">{{.ID}}</a></td>
-          <td style="font-family:monospace;font-size:0.75rem">{{.EdgeUUID}}</td>
+        <tr data-action="openOrderModal:{{.ID}}">
+          <td class="tnum" data-sort-value="{{.ID}}"><a href="/orders/detail?id={{.ID}}" data-action="stopPropagation">{{.ID}}</a></td>
+          <td class="orders-uuid" title="{{.EdgeUUID}}">{{.EdgeUUID}}</td>
           <td>{{.StationID}}</td>
           <td>{{.OrderType}}</td>
           <td data-sort-value="{{.PayloadCode}}">
             {{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{end}}
-            {{if .PayloadDesc}}<div class="text-muted" style="font-size:0.8rem">{{.PayloadDesc}}</div>{{end}}
+            {{if .PayloadDesc}}<div class="orders-subtext">{{.PayloadDesc}}</div>{{end}}
             {{if and (not .PayloadCode) (not .PayloadDesc)}}<span class="text-muted">-</span>{{end}}
           </td>
           <td data-sort-value="{{.Status}}">
             <span class="badge badge-{{.Status}}">{{.Status}}</span>
-            {{if .QueueReason}}<div class="text-muted" style="font-size:0.78rem;max-width:22rem;white-space:normal">{{.QueueReason}}</div>{{end}}
+            {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}</div>{{end}}
           </td>
-          <td>{{.RobotID}}</td>
-          <td data-sort-value="{{.CreatedAt}}">{{formatTime .CreatedAt}}</td>
+          <td class="orders-robot">{{.RobotID}}</td>
+          <td class="orders-time" data-sort-value="{{.CreatedAt}}">{{formatTime .CreatedAt}}</td>
           {{if $.Authenticated}}
-          <td>
-            {{/* Cancel is only valid for non-terminal, non-post-delivery
-                statuses — mirror engine.TerminateOrder's IsPostDelivery
-                || IsTerminal gate so the button is hidden where the
-                handler would refuse it. */}}
-            {{if and (ne .Status "completed") (ne .Status "cancelled") (ne .Status "failed") (ne .Status "delivered") (ne .Status "confirmed")}}
+          <td class="orders-actions">
+            {{/* canCancel is engine.TerminateOrder's own gate
+                (dispatch.IsPostDelivery || protocol.IsTerminal), so the
+                button can only render where the handler would accept it.
+                This replaced a hand-listed status denylist that had
+                drifted: it missed "skipped" (terminal — the button was
+                dead) and guarded "completed", which is not a protocol
+                status at all. */}}
+            {{if canCancel .Status}}
             <button class="btn btn-danger btn-sm" data-action="cancelOrderFromRow:{{.ID}}">Cancel</button>
             {{end}}
           </td>
@@ -150,109 +162,112 @@
       </tbody>
     </table>
     {{else}}
-    <p class="text-muted">No orders found.</p>
+    <p class="dash-empty">No orders found.</p>
     {{end}}
   </div>
   {{end}}
 </div>
 
-<div class="modal-overlay" id="manual-order-modal" data-backdrop-close>
-  <div class="modal" style="max-width:520px">
+{{/* No data-backdrop-close: this is a data-input modal, and the style
+     guide's default is button-only dismissal so a stray backdrop click
+     can't discard a half-filled order. */}}
+<div class="modal-overlay" id="manual-order-modal">
+  <div class="modal">
     <div class="modal-header flex flex-between">
       <h2>Manual Order</h2>
-      <button class="modal-close" data-action="closeManualOrderModal">&times;</button>
+      <button class="modal-close" data-action="closeManualOrderModal" aria-label="Close"><svg class="icon icon-20" aria-hidden="true"><use href="#icon-close"></use></svg></button>
     </div>
     <div class="p-2">
-      <div class="manual-order-tabs">
-        <button class="manual-order-tab active" data-action="switchManualOrderTab:transport">Transport</button>
-        <button class="manual-order-tab" data-action="switchManualOrderTab:staged">Staged</button>
-        <button class="manual-order-tab" data-action="switchManualOrderTab:swap">Swap</button>
-        <button class="manual-order-tab" data-action="switchManualOrderTab:send_to">Send to Location</button>
+      <div class="tab-bar">
+        <button class="tab-btn active" data-action="switchManualOrderTab:transport">Transport</button>
+        <button class="tab-btn" data-action="switchManualOrderTab:staged">Staged</button>
+        <button class="tab-btn" data-action="switchManualOrderTab:swap">Swap</button>
+        <button class="tab-btn" data-action="switchManualOrderTab:send_to">Send to Location</button>
       </div>
 
       <!-- Tab 1: Transport -->
       <div id="manual-order-tab-transport" class="manual-order-tab-content active">
-        <div class="form-group" style="margin-bottom:0.75rem">
+        <div class="form-group">
           <label><strong>Order Type</strong></label>
-          <select id="mo-transport-type" data-action-change="manualOrderTransportTypeChanged">
+          <select class="form-input" id="mo-transport-type" data-action-change="manualOrderTransportTypeChanged">
             <option value="move">Move</option>
             <option value="retrieve">Retrieve</option>
             <option value="retrieve_empty">Retrieve Empty</option>
             <option value="retrieve_specific">Retrieve Specific Bin</option>
           </select>
         </div>
-        <div class="form-group" style="margin-bottom:0.75rem" id="mo-source-group">
+        <div class="form-group" id="mo-source-group">
           <label><strong>Source Node</strong></label>
-          <select id="mo-source"><option value="">Loading...</option></select>
+          <select class="form-input" id="mo-source"><option value="">Loading...</option></select>
         </div>
-        <div class="form-group" style="margin-bottom:0.75rem" id="mo-delivery-group">
+        <div class="form-group" id="mo-delivery-group">
           <label><strong>Delivery Node</strong></label>
-          <select id="mo-delivery"><option value="">Loading...</option></select>
+          <select class="form-input" id="mo-delivery"><option value="">Loading...</option></select>
         </div>
-        <div class="form-group" style="margin-bottom:0.75rem" id="mo-payload-group">
+        <div class="form-group" id="mo-payload-group">
           <label><strong>Payload</strong> <span class="text-muted">(optional)</span></label>
-          <select id="mo-payload"><option value="">— none —</option></select>
+          <select class="form-input" id="mo-payload"><option value="">— none —</option></select>
         </div>
-        <div class="form-group hide" style="margin-bottom:0.75rem" id="mo-bin-group">
+        <div class="form-group hide" id="mo-bin-group">
           <label><strong>Bin</strong></label>
-          <select id="mo-bin"><option value="">Loading...</option></select>
+          <select class="form-input" id="mo-bin"><option value="">Loading...</option></select>
         </div>
       </div>
 
       <!-- Tab 2: Staged -->
       <div id="manual-order-tab-staged" class="manual-order-tab-content">
-        <div class="form-group" style="margin-bottom:0.75rem">
+        <div class="form-group">
           <label><strong>Source Node</strong></label>
-          <select id="mo-staged-source"><option value="">Loading...</option></select>
+          <select class="form-input" id="mo-staged-source"><option value="">Loading...</option></select>
         </div>
-        <div class="form-group" style="margin-bottom:0.75rem">
+        <div class="form-group">
           <label><strong>Staging Node</strong></label>
-          <select id="mo-staged-staging"><option value="">Loading...</option></select>
+          <select class="form-input" id="mo-staged-staging"><option value="">Loading...</option></select>
         </div>
-        <div class="form-group" style="margin-bottom:0.75rem">
+        <div class="form-group">
           <label><strong>Delivery Node</strong></label>
-          <select id="mo-staged-delivery"><option value="">Loading...</option></select>
+          <select class="form-input" id="mo-staged-delivery"><option value="">Loading...</option></select>
         </div>
-        <div class="form-group" style="margin-bottom:0.75rem">
+        <div class="form-group">
           <label><strong>Payload</strong> <span class="text-muted">(optional)</span></label>
-          <select id="mo-staged-payload"><option value="">— none —</option></select>
+          <select class="form-input" id="mo-staged-payload"><option value="">— none —</option></select>
         </div>
       </div>
 
       <!-- Tab 3: Swap -->
       <div id="manual-order-tab-swap" class="manual-order-tab-content">
-        <div class="form-group" style="margin-bottom:0.75rem">
+        <div class="form-group">
           <label><strong>Target Node</strong></label>
-          <select id="mo-swap-node"><option value="">Loading...</option></select>
+          <select class="form-input" id="mo-swap-node"><option value="">Loading...</option></select>
         </div>
-        <div class="form-group" style="margin-bottom:0.75rem">
+        <div class="form-group">
           <label><strong>New Payload</strong></label>
-          <select id="mo-swap-payload"><option value="">Loading...</option></select>
+          <select class="form-input" id="mo-swap-payload"><option value="">Loading...</option></select>
         </div>
       </div>
 
       <!-- Tab 4: Send to Location -->
       <div id="manual-order-tab-send_to" class="manual-order-tab-content">
-        <div class="form-group" style="margin-bottom:0.75rem">
+        <div class="form-group">
           <label><strong>Destination Node</strong></label>
-          <select id="mo-sendto-dest"><option value="">Loading...</option></select>
+          <select class="form-input" id="mo-sendto-dest"><option value="">Loading...</option></select>
         </div>
       </div>
 
       <!-- Shared fields -->
-      <div class="form-group hide" style="margin-bottom:0.75rem" id="mo-quantity-group">
+      <div class="form-group hide" id="mo-quantity-group">
         <label><strong>Quantity</strong></label>
-        <input type="number" id="mo-quantity" value="1" min="1" max="20" style="width:5rem">
+        <input type="number" class="form-input order-priority-input" id="mo-quantity" value="1" min="1" max="20">
       </div>
-      <div class="form-group" style="margin-bottom:0.75rem">
+      <div class="form-group">
         <label><strong>Priority</strong></label>
-        <input type="number" id="mo-priority" value="0" style="width:5rem">
+        <input type="number" class="form-input order-priority-input" id="mo-priority" value="0">
       </div>
-      <div class="form-group" style="margin-bottom:0.75rem">
+      <div class="form-group">
         <label><strong>Description</strong> <span class="text-muted">(optional)</span></label>
-        <input type="text" id="mo-description" placeholder="e.g. urgent replenishment">
+        <input type="text" class="form-input" id="mo-description" placeholder="e.g. urgent replenishment">
       </div>
-      <div id="mo-status" class="text-sm mb-1" style="min-height:1.4em"></div>
+      <div id="mo-status" class="text-sm mb-1 mo-status-line"></div>
       <div class="flex gap-1">
         <button class="btn btn-primary" id="manual-order-submit-btn" data-action="submitManualOrder">Submit</button>
         <button class="btn" data-action="closeManualOrderModal">Cancel</button>
@@ -264,10 +279,10 @@
   <div class="modal modal-wide">
     <div class="modal-header flex flex-between">
       <h2 id="order-modal-title">Order Detail</h2>
-      <button class="modal-close" data-action="closeOrderModal">&times;</button>
+      <button class="modal-close" data-action="closeOrderModal" aria-label="Close"><svg class="icon icon-20" aria-hidden="true"><use href="#icon-close"></use></svg></button>
     </div>
-    <div id="order-modal-loading" class="text-muted text-center" style="padding:2rem">Loading...</div>
-    <div id="order-modal-error" class="hide p-2" style="color:var(--danger)"></div>
+    <div id="order-modal-loading" class="dash-empty">Loading...</div>
+    <div id="order-modal-error" class="hide p-2 order-modal-error"></div>
     <div id="order-modal-content" class="hide"></div>
   </div>
 </div>
