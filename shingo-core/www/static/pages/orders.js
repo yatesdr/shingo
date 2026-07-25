@@ -96,7 +96,17 @@ function field(label, val, cls) {
 }
 function fieldH(label, val, cls) { return field(label, escapeHtml(val || '-'), cls); }
 
-function renderOrderModal(data) {
+// buildManifest renders the order manifest and returns the HTML. It backs
+// BOTH the row-click modal and the /orders/detail permalink page, which is
+// the point: the detail page used to hand-roll a sparser key-value table
+// and had drifted into a second, worse view of the same object — no
+// routing, cargo, robot status, RDS live detail or child steps. One
+// renderer means they cannot diverge again.
+//
+// opts.detailLink adds the "Open full detail page" footer link. The detail
+// page passes false, since there it would point at itself.
+function buildManifest(data, opts) {
+  opts = opts || {};
   var o = data.order;
   var out = '<div class="manifest">';
 
@@ -249,19 +259,65 @@ function renderOrderModal(data) {
   }
 
   // Footer
-  out += '<div style="text-align:right;font-size:0.75rem;margin-top:0.625rem;padding-top:0.375rem;border-top:1px solid var(--border)">';
-  if (o.vendor_order_id) out += '<a href="/missions/' + o.id + '" title="View mission telemetry, timeline, and robot tracking for this order">Mission Telemetry</a> &middot; ';
-  out += '<a href="/orders/detail?id=' + o.id + '">Open full detail page &rarr;</a></div>';
+  var links = [];
+  if (o.vendor_order_id) {
+    links.push('<a href="/missions/' + o.id + '" title="View mission telemetry, timeline, and robot tracking for this order">Mission Telemetry</a>');
+  }
+  if (opts.detailLink) {
+    links.push('<a href="/orders/detail?id=' + o.id + '">Open full detail page &rarr;</a>');
+  }
+  if (links.length) out += '<div class="manifest-footer">' + links.join(' &middot; ') + '</div>';
 
   out += '</div>'; // end manifest
-  document.getElementById('order-modal-content').innerHTML = out;
+  return out;
 }
+
+function renderOrderModal(data) {
+  document.getElementById('order-modal-content').innerHTML = buildManifest(data, {detailLink: true});
+}
+
+// --- Order detail page ---
+// The permalink page is a shell around the same manifest the modal draws.
+// _detailOrderID is set only on that page; null everywhere else.
+var _detailOrderID = null;
+
+function loadOrderDetail() {
+  var card = document.getElementById('order-detail-card');
+  if (!card) return;
+  _detailOrderID = card.dataset.orderId;
+  var loading = document.getElementById('order-detail-loading');
+  var content = document.getElementById('order-detail-content');
+  var errEl = document.getElementById('order-detail-error');
+
+  apiGet('/api/orders/enriched?id=' + _detailOrderID)
+    .then(function(data) {
+      content.innerHTML = buildManifest(data, {detailLink: false});
+      loading.classList.add('hide');
+      errEl.classList.add('hide');
+      content.classList.remove('hide');
+    })
+    .catch(function(e) {
+      console.error('loadOrderDetail', _detailOrderID, e);
+      loading.classList.add('hide');
+      errEl.textContent = (typeof e === 'string' && e) ? e : 'Failed to load order';
+      errEl.classList.remove('hide');
+    });
+}
+loadOrderDetail();
 
 // SSE auto-refresh for open modal — subscribed on the shared onSSE bus.
 // The handler receives the already-parsed payload (the bus does JSON.parse,
 // reconnect, and build-id detection); replaces the retired app.js IIFE's
 // window.onOrderUpdate dispatch (Q-002).
 onSSE('order-update', debounce(function(data) {
+  if (_detailOrderID != null) {
+    // Detail page: re-render this order's manifest in place when the event
+    // is for it, and ignore every other order. Reloading the page on any
+    // order's update — as the list below does — would throw away scroll
+    // position on a page that has nothing to gain from it.
+    if (data && Number(data.order_id) === Number(_detailOrderID)) loadOrderDetail();
+    return;
+  }
   if (_orderModalID != null) {
     // A modal is open. Refresh it when this event is for that order.
     // order_id arrives as a number in the SSE JSON, but _orderModalID comes

@@ -837,6 +837,10 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .orders-table tbody tr:hover .btn-danger,
 .orders-table tbody .btn-danger:focus-visible { opacity:1; }
 
+.manifest-footer {
+  text-align:right; font-size:var(--font-xs);
+  margin-top:0.625rem; padding-top:0.375rem; border-top:1px solid var(--border);
+}
 .mo-status-line { min-height:1.4em; }
 .order-modal-error { color:var(--danger); }
 

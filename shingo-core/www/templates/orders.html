@@ -1,50 +1,26 @@
 {{define "content"}}
 <div data-sse="orders">
   {{if .Order}}
-  {{/* Order detail view */}}
-  <div class="flex flex-between mb-2">
-    <h1>Order #{{.Order.ID}}</h1>
-    <a href="/orders">Back to list</a>
+  {{/* Order detail view. The body is the same .manifest that the row-click
+      modal draws, from the same /api/orders/enriched payload and the same
+      renderer (orders.js buildManifest) — so a permalink and a row click
+      show an identical view. This page used to hand-roll a key-value
+      table plus a Timeline card, which was a sparser second view of the
+      same object: no routing, cargo, robot status, RDS live detail or
+      child steps, and a forced grid-2 that left a half-page hole
+      whenever an order had no history. */}}
+  <div class="orders-head">
+    <h1 class="orders-title">Order #{{.Order.ID}}</h1>
+    <div class="flex gap-1 items-center">
+      {{if .Order.ParentOrderID}}<a href="/orders/detail?id={{deref .Order.ParentOrderID}}" class="btn btn-sm">Parent #{{deref .Order.ParentOrderID}} (step {{.Order.Sequence}})</a>{{end}}
+      <a href="/orders" class="btn btn-sm">Back to list</a>
+    </div>
   </div>
 
-  <div class="grid grid-2 mb-2">
-    <div class="card">
-      <h3>Details</h3>
-      <table>
-        <tr><td><strong>UUID</strong></td><td>{{.Order.EdgeUUID}}</td></tr>
-        <tr><td><strong>Station</strong></td><td>{{.Order.StationID}}</td></tr>
-        <tr><td><strong>Type</strong></td><td>{{.Order.OrderType}}</td></tr>
-        <tr><td><strong>Payload</strong></td><td>{{if .Order.PayloadCode}}<code>{{.Order.PayloadCode}}</code>{{else}}<span class="text-muted">-</span>{{end}}</td></tr>
-        <tr><td><strong>Description</strong></td><td>{{if .Order.PayloadDesc}}{{.Order.PayloadDesc}}{{else}}<span class="text-muted">-</span>{{end}}</td></tr>
-        <tr><td><strong>Quantity</strong></td><td>{{.Order.Quantity}}</td></tr>
-        <tr><td><strong>Status</strong></td><td><span class="badge badge-{{.Order.Status}}">{{.Order.Status}}</span></td></tr>
-        {{if .Order.QueueReason}}<tr><td><strong>Queue Reason</strong></td><td><span class="text-muted">{{.Order.QueueReason}}</span></td></tr>{{end}}
-        <tr><td><strong>Vendor Order</strong></td><td>{{.Order.VendorOrderID}}{{if .Order.VendorOrderID}} <a href="/missions/{{.Order.ID}}" title="View mission telemetry, timeline, and robot tracking" class="order-mission-link">View Mission</a>{{end}}</td></tr>
-        <tr><td><strong>Robot</strong></td><td>{{.Order.RobotID}}</td></tr>
-        <tr><td><strong>Priority</strong></td><td>{{.Order.Priority}}</td></tr>
-        {{if .Order.ParentOrderID}}<tr><td><strong>Parent Order</strong></td><td><a href="/orders/detail?id={{deref .Order.ParentOrderID}}">#{{deref .Order.ParentOrderID}}</a> (step {{.Order.Sequence}})</td></tr>{{end}}
-        <tr><td><strong>Created</strong></td><td>{{formatTime .Order.CreatedAt}}</td></tr>
-        <tr><td><strong>Updated</strong></td><td>{{formatTime .Order.UpdatedAt}}</td></tr>
-        <tr><td><strong>Completed</strong></td><td>{{formatTimePtr .Order.CompletedAt}}</td></tr>
-      </table>
-    </div>
-
-    <div class="card">
-      <h3>Timeline</h3>
-      {{if .History}}
-      <div class="timeline">
-        {{range .History}}
-        <div class="timeline-item">
-          <div><span class="badge badge-{{.Status}}">{{.Status}}</span></div>
-          <div>{{.Detail}}</div>
-          <div class="time">{{formatTime .CreatedAt}}</div>
-        </div>
-        {{end}}
-      </div>
-      {{else}}
-      <p class="text-muted">No history</p>
-      {{end}}
-    </div>
+  <div class="card" id="order-detail-card" data-order-id="{{.Order.ID}}">
+    <div id="order-detail-loading" class="dash-empty">Loading...</div>
+    <div id="order-detail-error" class="hide p-2 order-modal-error"></div>
+    <div id="order-detail-content" class="hide"></div>
   </div>
 
   {{if .Authenticated}}

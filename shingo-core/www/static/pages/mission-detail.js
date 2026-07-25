@@ -45,12 +45,22 @@ import { onSSE } from '/static/shared/utils.js';
     return '<span class="badge ' + cls + '">' + label + '</span>';
   }
 
+  // Duration segments and timeline dots take the hue of the status they are
+  // LABELLED with (see stateLabel), not a hue of their own. This table used
+  // to be independent and disagreed with the badges rendered beside it:
+  // RUNNING is labelled "in_transit" but was painted with the dispatched
+  // blue, TOBEDISPATCHED is labelled "dispatched" but was painted --info
+  // cyan — the two hues were swapped relative to their own badges — and
+  // WAITING ("staged", a benign dwell) was painted --warning amber. Same
+  // "one palette, three renderers" defect P13 fixed for the map's
+  // STATUS_COLOR; keyed off the shared --status-*-dot tokens now, so the
+  // segment, the dot and the badge can't drift apart again.
   var stateColors = {
-    'CREATED': 'var(--text-muted)',
-    'TOBEDISPATCHED': 'var(--info)',
-    'RUNNING': 'var(--status-dispatched-dot)',
-    'WAITING': 'var(--warning)',
-    'FINISHED': 'var(--success)',
+    'CREATED': 'var(--status-pending-dot)',
+    'TOBEDISPATCHED': 'var(--status-dispatched-dot)',
+    'RUNNING': 'var(--status-in-transit-dot)',
+    'WAITING': 'var(--status-staged-dot)',
+    'FINISHED': 'var(--status-delivered-dot)',
     'FAILED': 'var(--danger)',
     'STOPPED': 'var(--text-muted)'
   };

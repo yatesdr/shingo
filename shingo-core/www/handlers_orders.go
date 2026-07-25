@@ -92,15 +92,12 @@ func (h *Handlers) handleOrderDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	history, err := svc.ListOrderHistory(id)
-	if err != nil {
-		log.Printf("order detail: list history for order %d: %v", id, err)
-	}
-
+	// No history fetch here: the page body is rendered client-side from
+	// /api/orders/enriched, which already carries it. The server render is
+	// just the header, the auth-gated controls, and the 404 above.
 	data := map[string]any{
-		"Page":    "orders",
-		"Order":   order,
-		"History": history,
+		"Page":  "orders",
+		"Order": order,
 	}
 	h.render(w, r, "orders.html", data)
 }
