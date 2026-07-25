@@ -72,11 +72,26 @@ func (e *Engine) finalizeMissionTelemetry(ev OrderStatusChangedEvent) {
 		return
 	}
 
+	// The robot comes from the ORDER, not the event — every other field here
+	// already does. Terminal transitions routinely carry no robot on the
+	// event: the simulator's completion path passes "" outright
+	// (fleet/simulator/transitions.go:45) and the RDS poller can only pass
+	// detail.Vehicle if the vendor happened to include it on the terminal
+	// poll. The result was a blank robot_id on every summary row, which
+	// silently disabled three things — the per-robot breakdown returned zero
+	// rows, the robot filter had nothing to filter, and the robot-alarm
+	// snapshot below is gated on this same id, so the failure Pareto never
+	// had an alarm to classify a hardware fault from.
+	robotID := order.RobotID
+	if robotID == "" {
+		robotID = ev.RobotID
+	}
+
 	now := clock.Now().UTC()
 	mt := &telemetry.Mission{
 		OrderID:         ev.OrderID,
 		VendorOrderID:   ev.VendorOrderID,
-		RobotID:         ev.RobotID,
+		RobotID:         robotID,
 		StationID:       order.StationID,
 		OrderType:       order.OrderType,
 		SourceNode:      order.SourceNode,
@@ -96,8 +111,8 @@ func (e *Engine) finalizeMissionTelemetry(ev OrderStatusChangedEvent) {
 	// mission the causal fault (blocked / battery / hardware) is still active on
 	// the robot, so this is the signal the failure Pareto classifies first. The
 	// cache is ≤2s stale (the robot poll cadence), current enough at failure.
-	if ev.RobotID != "" {
-		if rs, ok := e.GetCachedRobotStatus(ev.RobotID); ok && len(rs.Alarms) > 0 {
+	if robotID != "" {
+		if rs, ok := e.GetCachedRobotStatus(robotID); ok && len(rs.Alarms) > 0 {
 			if data, err := json.Marshal(rs.Alarms); err == nil {
 				mt.RobotAlarmsJSON = string(data)
 			}

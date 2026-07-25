@@ -32,7 +32,15 @@ func GetBreakdown(db *sql.DB, f Filter, by string) ([]BreakdownRow, error) {
 			where += " AND robot_id <> ''"
 		}
 	}
-	q := fmt.Sprintf(`SELECT %s AS label, COUNT(*), COALESCE(AVG(duration_ms), 0)::BIGINT
+	// FILTER (WHERE duration_ms > 0) matches every other duration query in
+	// this package (see GetStats / GetStatsV2). Without it this was the one
+	// consumer averaging non-positive durations straight into the bar list:
+	// a clock skew that writes a negative duration_ms — which the sim does
+	// on nearly every row — dragged the average to nonsense like -3.6e9 ms
+	// while the same data read 46 s through the guarded queries. Count stays
+	// unfiltered so the bar still reflects real volume.
+	q := fmt.Sprintf(`SELECT %s AS label, COUNT(*),
+		COALESCE(AVG(duration_ms) FILTER (WHERE duration_ms > 0), 0)::BIGINT
 		FROM mission_telemetry%s
 		GROUP BY label ORDER BY COUNT(*) DESC LIMIT 10`, groupExpr, where)
 	rows, err := db.Query(q, args...)

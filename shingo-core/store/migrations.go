@@ -595,6 +595,8 @@ func (db *DB) runVersionedMigrations() error {
 		{52, "add edge_lineside_reports (R1 shadow read-model for the lineside term)",
 			v52EdgeLinesideReports,
 			func(q schema.Querier) bool { return schema.TableExists(q, "edge_lineside_reports") }},
+		{53, "backfill mission_telemetry.robot_id from orders (was written blank)",
+			v53BackfillTelemetryRobotID, nil},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2122,5 +2124,29 @@ func fixPayloadFK(tx *sql.Tx, table, constraintName string) error {
 	}
 	_, err := tx.Exec(`ALTER TABLE ` + table + ` ADD CONSTRAINT ` + constraintName +
 		` FOREIGN KEY (payload_id) REFERENCES payloads(id) ON DELETE CASCADE`)
+	return err
+}
+
+// v53BackfillTelemetryRobotID repairs summary rows written with a blank
+// robot_id.
+//
+// finalizeMissionTelemetry took the robot from the status-change event
+// rather than from the order it had already loaded, and terminal
+// transitions frequently carry no robot on the event. Every affected row
+// is invisible to the per-robot breakdown and to the robot filter, so the
+// history stays broken even after the writer is fixed unless it is
+// backfilled. orders.robot_id is the authoritative value the writer should
+// have used, so copy it across.
+//
+// Deliberately not verify-gated: the post-condition ("no blank robot_id")
+// is legitimately unreachable for orders that genuinely never had a robot
+// assigned, so a verify would re-run this forever.
+func v53BackfillTelemetryRobotID(tx *sql.Tx) error {
+	_, err := tx.Exec(`UPDATE mission_telemetry mt
+		SET robot_id = o.robot_id
+		FROM orders o
+		WHERE mt.order_id = o.id
+		  AND mt.robot_id = ''
+		  AND o.robot_id <> ''`)
 	return err
 }
