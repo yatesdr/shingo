@@ -89,7 +89,14 @@ function setOrderPriority(id, el) {
 // --- Order detail modal ---
 var _orderModalID = null;
 
-function openOrderModal(id) {
+function openOrderModal(id, el, evt) {
+  // The ID cell is a real <a href> to the detail page so the permalink can
+  // be copied and ctrl/cmd/middle-clicked into a new tab. A plain click
+  // opens the modal instead, so every click on a row lands in the same
+  // place. Modified clicks fall through to the browser.
+  if (evt && evt.type === 'click' && !evt.metaKey && !evt.ctrlKey && !evt.shiftKey && !evt.altKey && evt.button === 0) {
+    evt.preventDefault();
+  }
   _orderModalID = id;
   var title = document.getElementById('order-modal-title');
   var loading = document.getElementById('order-modal-loading');
@@ -124,10 +131,29 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape' && _orderModalID) closeOrderModal();
 });
 
+// The label is NOT bold. It used to be, which inverted the hierarchy on
+// every field in the manifest: the caption "VENDOR ORDER" carried more
+// weight than the value beside it, so the eye had nothing to land on and
+// the page read as a wall of shouting captions. Labels are small, muted
+// and light; the value is the emphasis. (.manifest-field in style.css.)
 function field(label, val, cls) {
-  return '<div class="manifest-field' + (cls ? ' ' + cls : '') + '"><label><strong>' + label + '</strong></label><span>' + val + '</span></div>';
+  return '<div class="manifest-field' + (cls ? ' ' + cls : '') + '"><label>' + label + '</label><span>' + val + '</span></div>';
 }
 function fieldH(label, val, cls) { return field(label, escapeHtml(val || '-'), cls); }
+
+// elapsedLabel answers "how long did this take / has this been going" —
+// the question the timestamps made you compute by hand.
+function elapsedLabel(o) {
+  if (!o.created_at) return '';
+  var start = new Date(o.created_at).getTime();
+  var end = o.completed_at ? new Date(o.completed_at).getTime() : Date.now();
+  var secs = Math.round((end - start) / 1000);
+  if (!isFinite(secs) || secs < 0) return '';
+  var txt = secs < 60 ? secs + 's'
+    : secs < 3600 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's'
+    : Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
+  return o.completed_at ? 'took ' + txt : txt + ' elapsed';
+}
 
 // buildManifest renders the order manifest and returns the HTML. It backs
 // BOTH the row-click modal and the /orders/detail permalink page, which is
@@ -143,71 +169,82 @@ function buildManifest(data, opts) {
   var o = data.order;
   var out = '<div class="manifest">';
 
-  // ── HEADER ──
-  // Title is set on the modal <h2> already; build the status line + identity here
+  // ── HERO ──
+  // The route is what an order IS, so it leads — one readable
+  // "SMN_004 → SMN_001" line rather than two labelled cells in a grid, with
+  // the status and the elapsed time beside it. Everything else is a
+  // footnote to that. This replaced a header of bold-label / plain-value
+  // pairs, which inverted the emphasis: the eye landed on the word
+  // "Originating Station" instead of on the station.
   out += '<div class="manifest-head">';
-  // Status line: badge + error together
-  out += '<div style="margin-bottom:0.25rem">';
+  out += '<div class="manifest-hero">';
+  out += '<span class="manifest-route">' + escapeHtml(o.source_node || '—') +
+    ' <span class="manifest-arrow">&rarr;</span> ' + escapeHtml(o.delivery_node || '—') + '</span>';
   out += '<span class="badge badge-' + o.status + '">' + escapeHtml(o.status) + '</span>';
-  if (o.error_detail) out += ' <span class="manifest-error">' + escapeHtml(o.error_detail) + '</span>';
-  // queue_reason is the whole story on a queued order — why it is stuck. The
-  // list rows have always shown it; the manifest did not, so routing the
-  // detail page through the manifest would have hidden it on exactly the
-  // orders someone opens the detail page to understand.
-  if (o.queue_reason) out += ' <span class="manifest-reason">' + escapeHtml(o.queue_reason) + '</span>';
+  var elapsed = elapsedLabel(o);
+  if (elapsed) out += '<span class="manifest-elapsed tnum">' + elapsed + '</span>';
   out += '</div>';
-  // UUID + type
-  out += '<div class="manifest-uuid"><strong>UUID:</strong> ' + escapeHtml(o.edge_uuid) + ' (' + escapeHtml(o.order_type) + ')</div>';
-  // Station + priority
-  // Quantity used to sit in the Transport section, which only renders once
-  // an order has a vendor order or a robot — so it was invisible on exactly
-  // the orders that haven't dispatched yet. It belongs with the identity.
-  out += '<div class="manifest-meta"><span><strong>Originating Station:</strong> ' + escapeHtml(o.station_id) +
-    ' (Priority: ' + o.priority + ')</span><span><strong>Quantity:</strong> ' + o.quantity + '</span></div>';
-  if (o.payload_desc) {
-    out += '<div class="manifest-meta"><span><strong>Description:</strong> ' + escapeHtml(o.payload_desc) + '</span></div>';
+
+  // Anything wrong or blocking goes directly under the hero, full width —
+  // queue_reason is the whole story on a queued order (why it is stuck) and
+  // the manifest never showed it, so the detail page would have hidden it
+  // on exactly the orders someone opens that page to understand.
+  if (o.error_detail) out += '<div class="manifest-error">' + escapeHtml(o.error_detail) + '</div>';
+  if (o.queue_reason) out += '<div class="manifest-reason">' + escapeHtml(o.queue_reason) + '</div>';
+
+  // Identity strip: small, muted, one wrapping line. Zones ride along with
+  // the nodes they belong to instead of taking their own cells.
+  var ident = [];
+  ident.push(escapeHtml(o.order_type));
+  if (o.payload_desc) ident.push(escapeHtml(o.payload_desc));
+  if (data.source_node && data.source_node.zone) ident.push('from ' + escapeHtml(data.source_node.zone));
+  if (data.delivery_node && data.delivery_node.zone) ident.push('to ' + escapeHtml(data.delivery_node.zone));
+  ident.push(escapeHtml(o.station_id));
+  ident.push('qty ' + o.quantity);
+  ident.push('priority ' + o.priority);
+  if (o.parent_order_id) {
+    ident.push('step ' + o.sequence + ' of <a href="#" data-action="openOrderModal:' + o.parent_order_id +
+      '" data-prevent-default="1">#' + o.parent_order_id + '</a>');
   }
-  // Timestamps
-  out += '<div class="manifest-meta">';
-  out += '<span><strong>Created:</strong> ' + formatTime(o.created_at) + '</span>';
-  out += '<span><strong>Modified:</strong> ' + formatTime(o.updated_at) + '</span>';
-  if (o.completed_at) out += '<span><strong>Completed:</strong> ' + formatTime(o.completed_at) + '</span>';
-  if (o.parent_order_id) out += '<span><strong>Parent:</strong> <a href="#" data-action="openOrderModal:' + o.parent_order_id + '" data-prevent-default="1" >#' + o.parent_order_id + '</a> (step ' + o.sequence + ')</span>';
-  out += '</div></div>';
+  out += '<div class="manifest-ident">' + ident.join('<span class="manifest-dot">&middot;</span>') + '</div>';
+  out += '<div class="manifest-uuid">' + escapeHtml(o.edge_uuid) + '</div>';
+  out += '</div>';
 
-  // ── ROUTING ──
-  out += '<div class="manifest-row">';
-  out += '<div>';
-  out += field('Source', escapeHtml(o.source_node || '-') + (data.source_node && data.source_node.zone ? ' <span style="color:var(--text-muted)">(' + escapeHtml(data.source_node.zone) + ')</span>' : ''));
-  out += '</div><div>';
-  out += field('Delivery', escapeHtml(o.delivery_node || '-') + (data.delivery_node && data.delivery_node.zone ? ' <span style="color:var(--text-muted)">(' + escapeHtml(data.delivery_node.zone) + ')</span>' : ''));
-  out += '</div></div>';
+  // ── CARGO + TRANSPORT ──
+  // One flowing field strip rather than fixed 2- and 3-column grid rows.
+  // The grid reserved a cell per column whether or not it had content, so a
+  // section with one field left half the width empty — most of the dead
+  // space on this page came from there. Fields now wrap naturally and only
+  // occupy what they need.
+  var facts = [];
+  if (data.bin) {
+    facts.push(field('Bin', escapeHtml(data.bin.label) + ' <span class="manifest-sub">(' + escapeHtml(data.bin.bin_type_code) + ')</span>'));
+    facts.push(field('Bin Status', '<span class="badge">' + escapeHtml(data.bin.status) + '</span>'));
+  }
+  if (data.payload) {
+    facts.push(field('Payload', '#' + data.payload.id + ' <span class="manifest-sub">' + escapeHtml(data.payload.payload_code) + '</span>'));
+    facts.push(field('UoP Remaining', data.payload.uop_remaining + ''));
+    facts.push(field('Manifest', data.payload.manifest_confirmed ? '<span class="badge badge-available">confirmed</span>' : '<span class="badge badge-empty">unconfirmed</span>'));
+  }
+  if (o.vendor_order_id) {
+    facts.push(field('Vendor Order', '<span class="manifest-mono">' + escapeHtml(o.vendor_order_id) + '</span>'));
+    facts.push(fieldH('Vendor State', o.vendor_state));
+  }
+  if (o.robot_id) facts.push(fieldH('Robot', o.robot_id));
+  if (facts.length) out += '<div class="manifest-facts">' + facts.join('') + '</div>';
 
-  // ── CARGO: bin + payload ──
   if (data.bin || data.payload) {
-    out += '<div class="manifest-row">';
-    if (data.bin) {
-      out += '<div>';
-      out += field('Bin', escapeHtml(data.bin.label) + ' <span style="color:var(--text-muted)">(' + escapeHtml(data.bin.bin_type_code) + ')</span>');
-      out += field('Bin Status', '<span class="badge">' + escapeHtml(data.bin.status) + '</span>');
-      out += '</div>';
-    }
-    if (data.payload) {
-      out += '<div>';
-      out += field('Payload', '#' + data.payload.id + ' <span style="color:var(--text-muted)">' + escapeHtml(data.payload.payload_code) + '</span>');
-      out += field('UoP Remaining', data.payload.uop_remaining + '');
-      out += field('Manifest', data.payload.manifest_confirmed ? '<span class="badge badge-available">confirmed</span>' : '<span class="badge badge-empty">unconfirmed</span>');
-      out += '</div>';
-    }
-    out += '</div>';
 
     // Manifest items (click to expand)
     if (data.manifest_items && data.manifest_items.length > 0) {
       var mid = 'om-manifest-' + o.id;
-      out += '<div style="border-bottom:1px solid var(--border);padding:0.375rem 0">';
-      out += '<a href="#" style="font-size:0.8rem" data-action="toggleVisibility:' + mid + '" data-prevent-default="1" >';
+      out += '<div class="manifest-expand">';
+      out += '<a href="#" data-action="toggleVisibility:' + mid + '" data-prevent-default="1" >';
       out += 'Manifest (' + data.manifest_items.length + ' item' + (data.manifest_items.length > 1 ? 's' : '') + ')</a>';
-      out += h`<table class="table-compact" id="${mid}" style="display:none;font-size:0.78rem;margin-top:0.25rem">
+      // display:none, not .hide — the shared toggleVisibility helper flips
+      // style.display, and a class it cannot beat is exactly the bug that
+      // kept the manual-order Bin/Quantity groups permanently hidden.
+      out += h`<table class="table-compact manifest-items" id="${mid}" style="display:none">
         <thead><tr><th>Part Number</th><th>Qty</th><th>Lot</th><th>Notes</th></tr></thead><tbody>${
           data.manifest_items.map(function(item) {
             return h`<tr><td>${item.part_number}</td><td>${item.quantity}</td><td>${item.lot_code || ''}</td><td>${item.notes || ''}</td></tr>`;
@@ -216,21 +253,13 @@ function buildManifest(data, opts) {
     }
   }
 
-  // ── TRANSPORT: vendor + robot ──
-  if (o.vendor_order_id || o.robot_id) {
-    out += '<div class="manifest-section">Transport</div>';
-    out += '<div class="manifest-row cols-3">';
-    if (o.vendor_order_id) out += '<div>' + field('Vendor Order', '<span style="font-family:monospace;font-size:0.75rem">' + escapeHtml(o.vendor_order_id) + '</span>') + fieldH('Vendor State', o.vendor_state) + '</div>';
-    if (o.robot_id) out += '<div>' + fieldH('Robot ID', o.robot_id) + '</div>';
-    out += '</div>';
-  }
 
   // ── ROBOT STATUS ──
   if (data.robot) {
     var rb = data.robot;
     var st = rb.Connected ? (rb.Emergency || rb.Blocked ? 'error' : (rb.Busy ? 'busy' : (rb.Available ? 'ready' : 'paused'))) : 'offline';
     out += '<div class="manifest-section">Robot Status</div>';
-    out += '<div class="manifest-row cols-3">';
+    out += '<div class="manifest-facts">';
     out += '<div>' + field('Vehicle', escapeHtml(rb.VehicleID) + ' <span class="badge badge-' + st + '">' + st + '</span>') + '</div>';
     out += '<div>' + field('Battery', Math.round(rb.BatteryLevel) + '%' + (rb.Charging ? ' (charging)' : '')) + '</div>';
     out += '<div>' + field('Station', escapeHtml(rb.CurrentStation || rb.LastStation || '-')) + '</div>';
@@ -243,7 +272,7 @@ function buildManifest(data, opts) {
   if (data.vendor_detail && data.vendor_detail.Raw) {
     var vd = data.vendor_detail.Raw;
     out += '<div class="manifest-section">Fleet Detail (RDS Live)</div>';
-    out += '<div class="manifest-row cols-3">';
+    out += '<div class="manifest-facts">';
     out += '<div>' + field('State', '<span class="badge badge-' + escapeHtml(data.vendor_detail.State) + '">' + escapeHtml(data.vendor_detail.State) + '</span>' + (data.vendor_detail.IsTerminal ? ' (terminal)' : '')) + '</div>';
     if (vd.fromLoc) out += '<div>' + fieldH('From Location', vd.fromLoc) + '</div>';
     if (vd.toLoc) out += '<div>' + fieldH('To Location', vd.toLoc) + '</div>';
@@ -251,7 +280,7 @@ function buildManifest(data, opts) {
 
     var hasSubOrders = vd.containerName || vd.goodsId || vd.loadOrderId || vd.unloadOrderId;
     if (hasSubOrders) {
-      out += '<div class="manifest-row cols-3">';
+      out += '<div class="manifest-facts">';
       if (vd.containerName) out += '<div>' + fieldH('Container', vd.containerName) + '</div>';
       if (vd.goodsId) out += '<div>' + fieldH('Goods', vd.goodsId) + '</div>';
       if (vd.loadOrderId) out += '<div>' + field('Load Sub-Order', escapeHtml(vd.loadOrderId) + ' <span class="badge">' + escapeHtml(vd.loadState || '') + '</span>') + '</div>';
@@ -276,7 +305,7 @@ function buildManifest(data, opts) {
     out += '<div class="manifest-section">Order Steps</div>';
     out += h`<table class="table-compact"><thead><tr><th>#</th><th>ID</th><th>Type</th><th>Status</th><th>Source</th><th>Delivery</th><th>Robot</th></tr></thead><tbody>${
       data.children.map(function(c) {
-        return h`<tr style="cursor:pointer" data-action="openOrderModal:${c.id}">
+        return h`<tr class="row-click" data-action="openOrderModal:${c.id}">
           <td>${c.sequence}</td><td>${c.id}</td><td>${c.order_type}</td>
           <td><span class="badge badge-${c.status}">${c.status}</span></td>
           <td>${c.source_node}</td><td>${c.delivery_node}</td><td>${c.robot_id}</td>
@@ -292,7 +321,7 @@ function buildManifest(data, opts) {
       data.history.map(function(ev) {
         return h`<li>
           <span class="tl-time">${{__html:true, value: formatTime(ev.created_at)}}</span>
-          <span class="badge badge-${ev.status}" style="font-size:0.7rem">${ev.status}</span>
+          <span class="badge badge-xs badge-${ev.status}">${ev.status}</span>
           ${ev.detail ? {__html:true, value: h`<span class="tl-detail">${ev.detail}</span>`} : ''}
         </li>`;
       })

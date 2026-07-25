@@ -86,7 +86,13 @@
       <tbody>
         {{range .Orders}}
         <tr data-action="openOrderModal:{{.ID}}">
-          <td class="tnum" data-sort-value="{{.ID}}"><a href="/orders/detail?id={{.ID}}" data-action="stopPropagation">{{.ID}}</a></td>
+          {{/* The whole row does ONE thing: open the order. The ID used to
+              navigate to the detail page while the rest of the row opened
+              the modal — two destinations from one row, for two views that
+              are now identical anyway. It stays an <a> so the permalink is
+              still copyable and ctrl/middle-click still opens the page in a
+              new tab; a plain click is intercepted (see openOrderModal). */}}
+          <td class="tnum" data-sort-value="{{.ID}}"><a href="/orders/detail?id={{.ID}}" data-action="openOrderModal:{{.ID}}">{{.ID}}</a></td>
           <td class="orders-uuid" title="{{.EdgeUUID}}">{{.EdgeUUID}}</td>
           <td>{{.StationID}}</td>
           <td>{{.OrderType}}</td>
