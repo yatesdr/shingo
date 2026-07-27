@@ -301,12 +301,6 @@ func (e *Engine) Start() {
 	}
 	e.plcMgr.StartPolling()
 
-	// PLC-driven changeover-completion monitor: subscribes to each
-	// auto-cutover-enabled process's Changeover_Active tag and fires
-	// CompleteProcessProductionCutover on debounced falling edges. No-op
-	// when no processes have the flag set.
-	e.startCutoverMonitor()
-
 	// Parked-ticks monitor (P2-C7): watches every consume node for
 	// pending_uop_delta growing across consecutive flush intervals while
 	// unbound, and raises a named stranding alarm. Detection only — never

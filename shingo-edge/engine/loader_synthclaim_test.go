@@ -19,7 +19,7 @@ func TestCoreLoaderNode_NoEdgeClaim_ResolvesAsManualSwap(t *testing.T) {
 	eng := testEngine(t, db)
 
 	// A process node for the unloader window — deliberately with NO style_node_claim.
-	procID, err := db.CreateProcess("UNLOADER-PROC", "", "active_production", "", "", false, false)
+	procID, err := db.CreateProcess("UNLOADER-PROC", "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

@@ -18,7 +18,7 @@ import (
 func TestLoadBin_RejectsStampOnPairedNode(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, err := db.CreateProcess("A1-PROC", "a1", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("A1-PROC", "a1", "active_production", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	styleID, err := db.CreateStyle("A1-STYLE", "a1", processID)
 	testutil.MustNoErr(t, err, "create style")

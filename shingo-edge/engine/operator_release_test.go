@@ -317,7 +317,7 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 // LINE's release should fan out to.
 func seedManualSwapClaim(t *testing.T, db *store.DB, prefix string, role protocol.ClaimRole, payloadCode, outbound string) (nodeID, claimID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" mswap", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" mswap", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create mswap process: %v", err)
 	}
@@ -599,7 +599,7 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 			db := testEngineDB(t)
 
 			// Process + style + node, mode-specific claim.
-			processID, err := db.CreateProcess("REL-MODE-"+tc.name, "", "active_production", "", "", false, false)
+			processID, err := db.CreateProcess("REL-MODE-"+tc.name, "", "active_production", "", "", false)
 			if err != nil {
 				t.Fatalf("create process: %v", err)
 			}

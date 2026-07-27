@@ -26,7 +26,7 @@ func testEngineDB(t *testing.T) *store.DB {
 // Returns the process ID and node ID.
 func seedProcessNode(t *testing.T, db *store.DB) (processID, nodeID int64) {
 	t.Helper()
-	pid, err := db.CreateProcess("TEST-PROC", "test process", "active_production", "", "", false, false)
+	pid, err := db.CreateProcess("TEST-PROC", "test process", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

@@ -148,7 +148,7 @@ func TestHandleNodeOrderFailed_DropOtherFailureStillErrors(t *testing.T) {
 // task must be non-terminal at the moment the order fails.
 func seedDropScenarioEvacuate(t *testing.T, db *store.DB) (processID, nodeID, fromStyleID, toStyleID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess("DROPE-PROC", "drop evac test", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("DROPE-PROC", "drop evac test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

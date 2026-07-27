@@ -15,7 +15,7 @@ import (
 // these to exercise the cross-process sum.
 func linesideProcess(t *testing.T, db *store.DB, procName, coreNode, code string, payloads []string) (styleID, nodeID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess(procName, "lineside", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess(procName, "lineside", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process %s: %v", procName, err)
 	}

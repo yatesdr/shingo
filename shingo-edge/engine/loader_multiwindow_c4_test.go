@@ -13,7 +13,7 @@ import (
 // GetProcessNodeByCoreNodeName resolves each one. The seam keys on the names.
 func seedWindowNodes(t *testing.T, db *store.DB, proc string, windows []string) {
 	t.Helper()
-	procID, err := db.CreateProcess(proc, "", "active_production", "", "", false, false)
+	procID, err := db.CreateProcess(proc, "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process %s: %v", proc, err)
 	}

@@ -56,14 +56,16 @@ export function renderHeader() {
     // pre-fill), submits. Phase 2's deferred-supply chain auto-releases
     // the supply leg when the evac robot picks up.
     //
-    // CUTOVER button: shown only when the process does NOT have PLC-
-    // driven cutover enabled (Theme C's auto_cutover_enabled flag). On
-    // auto-cutover processes, the PLC's falling edge on Changeover_Active
-    // fires CompleteProcessProductionCutoverFromPLC automatically — a
-    // manual button creates ambiguity about who's "really" in charge of
-    // cutover, and a stuck PLC bit is something to investigate, not to
-    // mask with a manual override. Theme B's gate is the safety net for
-    // both paths.
+    // CUTOVER button: ALWAYS shown during an active changeover.
+    //
+    // It used to be hidden when the process had PLC-driven cutover enabled,
+    // on the reasoning that a manual button would create ambiguity about who
+    // owns cutover. That reasoning assumed the PLC path worked. It never did
+    // — no plant wired Changeover_Active — so enabling the flag removed the
+    // operator's only way to finish a changeover and put nothing in its
+    // place, stranding it with neither an automatic nor a manual completion.
+    // PLC-driven cutover is now removed entirely; CATID auto-arm handles the
+    // START side and the operator always owns the FINISH.
     if (isHomeLocationLoader()) {
         // Dedicated home loader (forklift-operated): the operator's header action
         // is consolidating homes, not a changeover. Surface the buffer chain here
@@ -72,9 +74,7 @@ export function renderHeader() {
         headerActions.appendChild(headerBtn('PULL FULL FROM HOME', 'pull-full-home', openPullFullFromHomePicker));
     } else if (!isBoardMode()) {
         if (view.active_changeover) {
-            if (!view.process.auto_cutover_enabled) {
-                headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
-            }
+            headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
             // CANCEL during active changeover: aborts every in-flight evac+
             // supply order on the process's node tasks, marks the changeover
             // row cancelled, and resets the process back to active_production

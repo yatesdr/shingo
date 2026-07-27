@@ -53,11 +53,11 @@ func TestApplyCatidEdge_Debounce(t *testing.T) {
 		t.Fatal("changed value must not confirm before the debounce elapses")
 	}
 	// Still within the window → still not confirmed.
-	if confirmed, _ := applyCatidEdge(st, "50029999", true, tChange.Add(cutoverDebounce/2)); confirmed {
+	if confirmed, _ := applyCatidEdge(st, "50029999", true, tChange.Add(plcEdgeDebounce/2)); confirmed {
 		t.Fatal("value must not confirm mid-debounce")
 	}
 	// Debounce elapsed → confirm as a CHANGE.
-	if confirmed, isChange := applyCatidEdge(st, "50029999", true, tChange.Add(cutoverDebounce)); !confirmed || !isChange {
+	if confirmed, isChange := applyCatidEdge(st, "50029999", true, tChange.Add(plcEdgeDebounce)); !confirmed || !isChange {
 		t.Fatalf("post-debounce: got (confirmed=%v,isChange=%v), want (true,true)", confirmed, isChange)
 	}
 	if st.lastConfirmed != "50029999" {
@@ -68,7 +68,7 @@ func TestApplyCatidEdge_Debounce(t *testing.T) {
 	// settling → must never confirm the flicker.
 	tFlick := tChange.Add(1 * time.Minute)
 	applyCatidEdge(st, "77777777", true, tFlick) // start candidate
-	if confirmed, _ := applyCatidEdge(st, "50029999", true, tFlick.Add(cutoverDebounce)); confirmed {
+	if confirmed, _ := applyCatidEdge(st, "50029999", true, tFlick.Add(plcEdgeDebounce)); confirmed {
 		t.Fatal("rebounded flicker must not confirm")
 	}
 	if st.pending != nil {

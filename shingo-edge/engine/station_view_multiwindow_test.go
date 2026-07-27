@@ -18,7 +18,7 @@ import (
 // multi-window, single-window, or no loader.
 func buildMultiWindowStation(t *testing.T, db *store.DB, procName, windowNode string) int64 {
 	t.Helper()
-	procID, err := db.CreateProcess(procName, "", "active_production", "", "", false, false)
+	procID, err := db.CreateProcess(procName, "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

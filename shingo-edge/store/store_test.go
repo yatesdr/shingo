@@ -34,7 +34,7 @@ func coverageDB(t *testing.T) *DB {
 // Used throughout this file where a minimal parent hierarchy is needed.
 func seedProcessStyle(t *testing.T, db *DB, procName, styleName string) (int64, int64) {
 	t.Helper()
-	pid, err := db.CreateProcess(procName, "desc", "active_production", "", "", false, false)
+	pid, err := db.CreateProcess(procName, "desc", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestProcesses_CreateListGetUpdateDelete(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 
-	id, err := db.CreateProcess("LINE-A", "main line", "active_production", "PLC1", "TAG1", true, false)
+	id, err := db.CreateProcess("LINE-A", "main line", "active_production", "PLC1", "TAG1", true)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestProcesses_CreateListGetUpdateDelete(t *testing.T) {
 		t.Errorf("counter fields wrong: %+v", got)
 	}
 
-	testutil.MustNoErr(t, db.UpdateProcess(id, "LINE-A-v2", "updated", "", "PLC2", "TAG2", false, false), "update")
+	testutil.MustNoErr(t, db.UpdateProcess(id, "LINE-A-v2", "updated", "", "PLC2", "TAG2", false), "update")
 	got2, _ := db.GetProcess(id)
 	if got2.Name != "LINE-A-v2" {
 		t.Errorf("name after update = %q", got2.Name)
@@ -155,7 +155,7 @@ func TestProcesses_CreateListGetUpdateDelete(t *testing.T) {
 func TestProcesses_CreateDefaultsProductionState(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	id, err := db.CreateProcess("DEF", "", "", "", "", false, false)
+	id, err := db.CreateProcess("DEF", "", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestProcesses_ActiveAndTargetStyle(t *testing.T) {
 func TestProcesses_SetProductionState(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	id, err := db.CreateProcess("P", "", "", "", "", false, false)
+	id, err := db.CreateProcess("P", "", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestProcesses_SetProductionState(t *testing.T) {
 func TestStyles_CRUDAndListing(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	pid, err := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, err := db.CreateProcess("P", "", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestStyles_CRUDAndListing(t *testing.T) {
 func TestStyles_ExpectedCATIDRoundTrip(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	pid, err := db.CreateProcess("P-CATID", "", "", "", "", false, false)
+	pid, err := db.CreateProcess("P-CATID", "", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 
 	sid, err := db.CreateStyle("CATID-STYLE", "", pid)
@@ -867,7 +867,7 @@ func TestOrders_ActiveListFilters(t *testing.T) {
 func TestOrders_ByProcessAndNodeFilters(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	pid, _ := db.CreateProcess("P1", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P1", "", "", "", "", false)
 	nid, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "N1", Code: "N1", Name: "N1", Sequence: 1, Enabled: true,
 	})
@@ -910,7 +910,7 @@ func TestOrders_UpdateMutations(t *testing.T) {
 	id, _ := db.CreateOrder("u", "retrieve", nil, false, 1, "", "", "", "", false, "")
 
 	// ProcessNode assignment
-	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 	nid, _ := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "N", Code: "N", Name: "N", Sequence: 1, Enabled: true,
 	})
@@ -1016,7 +1016,7 @@ func TestOrders_GetMissingReturnsError(t *testing.T) {
 func TestOperatorStations_CRUD(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 
 	// Empty Code + Sequence trigger auto-generation paths.
 	id, err := db.CreateOperatorStation(stations.Input{
@@ -1088,7 +1088,7 @@ func TestOperatorStations_CRUD(t *testing.T) {
 func TestOperatorStations_TouchUpdatesHealthAndLastSeen(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 	id, _ := db.CreateOperatorStation(stations.Input{
 		ProcessID: pid, Name: "S", Enabled: true,
 	})
@@ -1106,7 +1106,7 @@ func TestOperatorStations_TouchUpdatesHealthAndLastSeen(t *testing.T) {
 func TestOperatorStations_MoveUpDown(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 	a, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "A"})
 	b, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "B"})
 	c, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "C"})
@@ -1149,7 +1149,7 @@ func TestOperatorStations_MoveUpDown(t *testing.T) {
 func TestProcessNodes_CRUDAndListing(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 
 	// Auto-code, auto-sequence, auto-name-from-core.
@@ -1217,7 +1217,7 @@ func TestProcessNodes_CRUDAndListing(t *testing.T) {
 func TestProcessNodes_InvalidStationIDCoercedToNil(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 
 	// Pass OperatorStationID pointer to 0 — create should coerce to nil.
 	zero := int64(0)
@@ -1243,7 +1243,7 @@ func TestProcessNodes_InvalidStationIDCoercedToNil(t *testing.T) {
 func TestProcessNodeRuntime_EnsureGetSet(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 	nid, _ := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "N", Code: "N", Name: "N", Sequence: 1, Enabled: true,
 	})
@@ -1304,7 +1304,7 @@ func TestProcessNodeRuntime_EnsureGetSet(t *testing.T) {
 func TestProcessNodeRuntime_ClearOrderRefs(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 	mk := func(name string) int64 {
 		id, _ := db.CreateProcessNode(processes.NodeInput{
 			ProcessID: pid, CoreNodeName: name, Code: name, Name: name, Sequence: 1, Enabled: true,
@@ -1706,7 +1706,7 @@ func TestGenerateStyles_DuplicateNameRollsBackBatch(t *testing.T) {
 func TestGetProcessNodeByCoreNodeName(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 
 	id, err := db.CreateProcessNode(processes.NodeInput{
