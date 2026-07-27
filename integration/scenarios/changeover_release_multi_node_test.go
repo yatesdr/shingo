@@ -42,7 +42,7 @@ func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing
 	edge := edgeharness.NewEdge(t, stationID)
 
 	// ── Seed: process + two nodes, full Phase-3 staging on each ──
-	processID, err := edge.DB.CreateProcess("MULTI-PROC", "multi-node phase3", "active_production", "", "", false, false)
+	processID, err := edge.DB.CreateProcess("MULTI-PROC", "multi-node phase3", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
