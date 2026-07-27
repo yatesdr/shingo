@@ -304,35 +304,8 @@ echo ""
 
 confirm "Proceed?" || { echo "Aborted."; exit 0; }
 
-# ----------------------------------------------------------------------
-# Backup
-# ----------------------------------------------------------------------
-BACKUP_TS=$(date +%Y%m%d-%H%M%S)
-BACKUP_PATH="/tmp/shingo-pre-install-${BACKUP_TS}.tar.gz"
-echo "==> Creating backup at ${BACKUP_PATH}"
-
-# Prune older backups before creating the new one — keep the most
-# recent 3. systemd-tmpfiles also cleans /tmp at the OS level on a
-# 10-day window, but on Pi SD cards the SQLite DB makes each tarball
-# meaningful (tens to hundreds of MB) so we don't want to wait. ls -t
-# orders by mtime newest-first; tail -n +4 skips the first 3 and
-# emits everything older. xargs -r is a no-op when input is empty
-# (fresh install, no prior backups).
-ls -1t /tmp/shingo-pre-install-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f || true
-
-BACKUP_FILES=()
-for f in "$LEGACY_DB" "${LEGACY_DB}-wal" "${LEGACY_DB}-shm" "$LEGACY_CONFIG" \
-         /var/lib/shingo-edge/shingoedge.db /var/lib/shingo-edge/shingoedge.db-wal \
-         /var/lib/shingo-edge/shingoedge.db-shm /etc/shingo/shingoedge.yaml; do
-    [ -n "$f" ] && [ -f "$f" ] && BACKUP_FILES+=("$f")
-done
-
-if [ ${#BACKUP_FILES[@]} -gt 0 ]; then
-    tar czf "$BACKUP_PATH" "${BACKUP_FILES[@]}" 2>/dev/null || true
-    echo "    backup contains: ${BACKUP_FILES[*]}"
-else
-    echo "    nothing to back up (fresh install)"
-fi
+# NOTE: the backup is taken further down, AFTER the service is stopped.
+# See the "Backup" section below the stop block for why.
 
 # ----------------------------------------------------------------------
 # Build
@@ -445,6 +418,71 @@ if [ -n "$EDGE_PID" ]; then
         echo "Aborted; edge still running."
         exit 0
     fi
+fi
+
+# ----------------------------------------------------------------------
+# Backup
+# ----------------------------------------------------------------------
+# This runs AFTER the stop, not before it, and the ordering is the whole
+# point of the section.
+#
+# Taken while edge is running, `tar czf` reads shingoedge.db, then -wal,
+# then -shm as three separate files with writes landing between them. That
+# is not a backup of any state the database was ever in:
+#
+#   * WAL mode (Springfield, and any edge on f34d5cad or later): the -wal
+#     is a moving target. tar can capture a .db page-set from time T and a
+#     -wal from time T+n, and recovery replays frames that assume pages the
+#     .db copy does not have.
+#   * Rollback-journal mode (Hopkinsville, and any edge predating f34d5cad
+#     where the mattn-style DSN meant WAL never actually engaged): worse.
+#     There the main .db is modified IN PLACE during a transaction and the
+#     original pages live in shingoedge.db-journal — which this list never
+#     collected. A hot copy mid-transaction is a half-applied database with
+#     nothing to roll it back.
+#
+# After `systemctl stop` there is no writer, so the copy is consistent by
+# construction. A clean SQLite close also checkpoints and removes -wal/-shm,
+# so on a graceful stop the tarball is usually just the .db; the sidecars are
+# still listed because a stop that escalated to SIGKILL leaves them behind.
+# -journal is listed for the same reason.
+#
+# This is the artifact you fall back to when a repair or migration goes
+# wrong, so it has to be restorable, not merely present.
+BACKUP_TS=$(date +%Y%m%d-%H%M%S)
+BACKUP_PATH="/tmp/shingo-pre-install-${BACKUP_TS}.tar.gz"
+echo "==> Creating backup at ${BACKUP_PATH}"
+
+# Prune older backups before creating the new one — keep the most
+# recent 3. systemd-tmpfiles also cleans /tmp at the OS level on a
+# 10-day window, but on Pi SD cards the SQLite DB makes each tarball
+# meaningful (tens to hundreds of MB) so we don't want to wait. ls -t
+# orders by mtime newest-first; tail -n +4 skips the first 3 and
+# emits everything older. xargs -r is a no-op when input is empty
+# (fresh install, no prior backups).
+ls -1t /tmp/shingo-pre-install-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f || true
+
+BACKUP_FILES=()
+for f in "$LEGACY_DB" "${LEGACY_DB}-wal" "${LEGACY_DB}-shm" "${LEGACY_DB}-journal" \
+         "$LEGACY_CONFIG" \
+         /var/lib/shingo-edge/shingoedge.db /var/lib/shingo-edge/shingoedge.db-wal \
+         /var/lib/shingo-edge/shingoedge.db-shm /var/lib/shingo-edge/shingoedge.db-journal \
+         /etc/shingo/shingoedge.yaml; do
+    [ -n "$f" ] && [ -f "$f" ] && BACKUP_FILES+=("$f")
+done
+
+if [ ${#BACKUP_FILES[@]} -gt 0 ]; then
+    # No `|| true`. A backup that failed silently is indistinguishable from
+    # one that succeeded right up until you need it, and everything below
+    # this line mutates the DB or the binary.
+    if ! tar czf "$BACKUP_PATH" "${BACKUP_FILES[@]}"; then
+        echo "ERROR: backup failed; aborting before touching the DB or binary."
+        echo "       files: ${BACKUP_FILES[*]}"
+        exit 1
+    fi
+    echo "    backup contains: ${BACKUP_FILES[*]}"
+else
+    echo "    nothing to back up (fresh install)"
 fi
 
 # ----------------------------------------------------------------------
