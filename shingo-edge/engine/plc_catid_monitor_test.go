@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
-	"shingoedge/store/processes"
 )
 
 func TestDeriveIdentityTag(t *testing.T) {
@@ -207,20 +206,26 @@ func TestCATIDChangePrompt_PromptsOnChange(t *testing.T) {
 	}
 }
 
-// ── B1 auto-arm (changeover_auto_arm='auto') ──────────────────────────────────
+// ── B1 auto-CUTOVER (changeover_auto_arm='auto') ─────────────────────────────
+//
+// The monitor used to auto-START changeovers here. It now auto-COMPLETES one
+// already in progress, and never starts anything. See decideAutoArm for why the
+// condition inverted; the short version is that the problem this feature exists
+// for is the operator who runs a changeover and then forgets to press CUTOVER,
+// leaving shingo attributing new parts to the old style. Starting changeovers
+// put four robots on the Hopkinsville floor chasing a style with zero stock
+// (2026-07-28).
 
-type autoArmSpyCall struct {
-	processID int64
-	styleID   int64
-	calledBy  string
-	notes     string
+type autoCutoverSpyCall struct {
+	processID   int64
+	triggeredBy string
 }
 
-// setupAutoArm wires a process with an active style (expected_catid=activeCATID)
-// and a TARGET-STYLE (expected_catid=targetCATID), plus a monitor whose
-// StartProcessChangeover is a recording spy. mode is written to the process; ""
-// leaves the DDL default ('auto'), which is what the default-on cases exercise.
-func setupAutoArm(t *testing.T, mode, activeCATID, targetCATID string) (mon *catidMonitor, st *catidState, processID, targetStyleID int64, calls *[]autoArmSpyCall) {
+// setupAutoCutover wires a process with an active style (expected_catid =
+// activeCATID) plus a second style, and a monitor whose completeCutover is a
+// recording spy. mode is written to the process; "" leaves the DDL default.
+// withChangeover seeds the in-progress changeover row the cutover path requires.
+func setupAutoCutover(t *testing.T, mode, activeCATID, targetCATID string, withChangeover bool) (mon *catidMonitor, st *catidState, processID, targetStyleID int64, calls *[]autoCutoverSpyCall) {
 	t.Helper()
 	db := testEngineDB(t)
 	processID, _, activeStyleID, _ := seedProduceNode(t, db, "two_robot")
@@ -233,250 +238,215 @@ func setupAutoArm(t *testing.T, mode, activeCATID, targetCATID string) (mon *cat
 	if mode != "" {
 		testutil.MustNoErr(t, db.SetChangeoverAutoArm(processID, mode), "set auto-arm mode")
 	}
-	recorded := []autoArmSpyCall{}
+	if withChangeover {
+		_, err := db.DB.Exec(`INSERT INTO process_changeovers (process_id, to_style_id, state) VALUES (?, ?, 'in_progress')`, processID, targetStyleID)
+		testutil.MustNoErr(t, err, "seed in-progress changeover")
+	}
+	recorded := []autoCutoverSpyCall{}
 	mon = &catidMonitor{
 		eng: eng,
 		states: map[int64]*catidState{
 			processID: {processName: "PRESS-1", plcName: "plc", seenValue: true},
 		},
-		startChangeover: func(pid, sid int64, cb, notes string) (*processes.Changeover, error) {
-			recorded = append(recorded, autoArmSpyCall{pid, sid, cb, notes})
-			return &processes.Changeover{ID: 1}, nil
+		completeCutover: func(pid int64, triggeredBy string) error {
+			recorded = append(recorded, autoCutoverSpyCall{pid, triggeredBy})
+			return nil
 		},
 	}
 	eng.catidMon = mon
 	return mon, mon.states[processID], processID, targetStyleID, &recorded
 }
 
-// tickAutoArm simulates one monitor tick for the auto-arm tracker: it sets the
-// debounced value (when the read is ok) and runs evaluateAutoArm, firing any
-// resulting intent exactly as the real tick does after unlocking cm.mu.
-func tickAutoArm(mon *catidMonitor, processID int64, st *catidState, value string, ok bool, now time.Time) {
+// tickAutoCutover simulates one monitor tick: set the debounced value (when the
+// read is ok) and run evaluateAutoArm, firing any resulting intent exactly as the
+// real tick does after unlocking cm.mu.
+func tickAutoCutover(mon *catidMonitor, processID int64, st *catidState, value string, ok bool, now time.Time) {
 	if ok {
 		st.lastConfirmed = value
 		st.seenValue = true
 	}
 	if intent := mon.evaluateAutoArm(processID, st, ok, now); intent != nil {
-		mon.fireAutoArm(*intent)
+		mon.fireAutoCutover(*intent)
 	}
 }
 
-// TestAutoArm_CleanFlip_ArmsOnceWithTarget pins the happy path AND default-on: a
-// process with NO explicit mode (DDL default 'auto') whose live CATID holds a new,
-// mapped value across >=3 reads spanning >=60s auto-starts the changeover to that
-// target — exactly once — and raises the station notification.
-func TestAutoArm_CleanFlip_ArmsOnceWithTarget(t *testing.T) {
+// TestAutoCutover_CleanFlip_CutsOverOnce is the happy path AND default-on: with a
+// changeover in progress, a live CATID that leaves the active style and holds
+// across >=3 reads spanning >=60s presses CUTOVER exactly once.
+func TestAutoCutover_CleanFlip_CutsOverOnce(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, targetStyleID, calls := setupAutoArm(t, "", "40016911", "50029999")
+	mon, st, processID, _, calls := setupAutoCutover(t, "", "40016911", "50029999", true)
 
-	// Default-on: an unconfigured process reads as 'auto'.
 	if got := mon.eng.processChangeoverAutoArm(processID); got != "auto" {
 		t.Fatalf("default changeover_auto_arm = %q, want auto (default-on everywhere)", got)
 	}
 
-	var notes []CATIDAutoArmedEvent
+	var notes []CATIDAutoCutoverEvent
 	mon.eng.Events.SubscribeTypes(func(evt Event) {
-		if n, ok := evt.Payload.(CATIDAutoArmedEvent); ok {
+		if n, ok := evt.Payload.(CATIDAutoCutoverEvent); ok {
 			notes = append(notes, n)
 		}
-	}, EventCATIDAutoArmed)
+	}, EventCATIDAutoCutover)
 
 	t0 := time.Unix(0, 0)
-	tickAutoArm(mon, processID, st, "50029999", true, t0) // read 1
+	tickAutoCutover(mon, processID, st, "50029999", true, t0)
 	if len(*calls) != 0 {
-		t.Fatalf("armed after 1 read, want 0")
+		t.Fatalf("cut over after 1 read, want 0")
 	}
-	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(30*time.Second)) // read 2, 30s
+	tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(30*time.Second))
 	if len(*calls) != 0 {
-		t.Fatalf("armed after 2 reads/30s (< window), want 0")
+		t.Fatalf("cut over after 2 reads/30s (< window), want 0")
 	}
-	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(60*time.Second)) // read 3, 60s → arm
+	tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(60*time.Second))
 	if len(*calls) != 1 {
-		t.Fatalf("want exactly 1 arm at 3 reads/60s, got %d", len(*calls))
+		t.Fatalf("want exactly 1 cutover at 3 reads/60s, got %d", len(*calls))
 	}
-	c := (*calls)[0]
-	if c.processID != processID || c.styleID != targetStyleID || c.calledBy != "auto-arm" {
-		t.Errorf("arm = %+v, want process %d style %d calledBy=auto-arm", c, processID, targetStyleID)
+	if c := (*calls)[0]; c.processID != processID || c.triggeredBy != "auto-catid" {
+		t.Errorf("cutover = %+v, want process %d triggeredBy=auto-catid", c, processID)
 	}
-	if len(notes) != 1 || notes[0].TargetStyleID != targetStyleID || notes[0].NewCATID != "50029999" {
-		t.Errorf("station notification = %+v, want one for target %d / CATID 50029999", notes, targetStyleID)
+	if len(notes) != 1 || notes[0].NewCATID != "50029999" {
+		t.Errorf("station notification = %+v, want one for CATID 50029999", notes)
 	}
 
-	// Continued stability must NOT re-arm.
-	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(90*time.Second))
-	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(120*time.Second))
+	tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(90*time.Second))
+	tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(120*time.Second))
 	if len(*calls) != 1 {
-		t.Fatalf("re-armed a still-stable value: got %d, want 1", len(*calls))
+		t.Fatalf("re-fired on a still-stable value: got %d, want 1", len(*calls))
 	}
 }
 
-// TestAutoArm_BouncingTag_NeverArms: a value that changes on every read never
-// accumulates the required stability, even over minutes.
-func TestAutoArm_BouncingTag_NeverArms(t *testing.T) {
+// TestAutoCutover_NoChangeoverInProgress_NeverFires is the regression pin for
+// Hopkinsville 2026-07-28. The monitor must do NOTHING when no changeover is
+// running — it previously STARTED one here, which dispatched four robots toward
+// a style with zero available stock.
+func TestAutoCutover_NoChangeoverInProgress_NeverFires(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoArm(t, "auto", "40016911", "50029999")
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", false)
+	t0 := time.Unix(0, 0)
+	for i := 0; i < 6; i++ {
+		tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(time.Duration(i)*30*time.Second))
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("fired with no changeover in progress: got %d, want 0 (never start one)", len(*calls))
+	}
+}
+
+// TestAutoCutover_StillOnActiveStylePart_NeverFires: while the press still reports
+// a part belonging to the ACTIVE style it has not cut over, so neither do we.
+func TestAutoCutover_StillOnActiveStylePart_NeverFires(t *testing.T) {
+	t.Parallel()
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", true)
+	t0 := time.Unix(0, 0)
+	for i := 0; i < 6; i++ {
+		tickAutoCutover(mon, processID, st, "40016911", true, t0.Add(time.Duration(i)*30*time.Second))
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("cut over while the press was still on the active style's part: got %d, want 0", len(*calls))
+	}
+}
+
+// TestAutoCutover_UnmappedValue_StillCutsOver pins a DELIBERATE behaviour change.
+// The old auto-start path refused a part that mapped to no configured style,
+// because it had to pick a target. Cutover has no target to pick: the changeover
+// already knows where it is going, and the press has demonstrably left the old
+// part. Completing is correct even for an unrecognised part — the post-cutover
+// verification watch compares the live part against the new active style and
+// raises the operator flag when they disagree.
+func TestAutoCutover_UnmappedValue_StillCutsOver(t *testing.T) {
+	t.Parallel()
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", true)
+	t0 := time.Unix(0, 0)
+	for i := 0; i < 3; i++ {
+		tickAutoCutover(mon, processID, st, "12345678", true, t0.Add(time.Duration(i)*30*time.Second))
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("an unmapped part that left the active style must still cut over: got %d, want 1", len(*calls))
+	}
+}
+
+// TestAutoCutover_BouncingTag_NeverFires: a value that changes on every read never
+// accumulates the required stability, even over minutes.
+func TestAutoCutover_BouncingTag_NeverFires(t *testing.T) {
+	t.Parallel()
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", true)
 	t0 := time.Unix(0, 0)
 	values := []string{"50029999", "77777777", "50029999", "88888888", "50029999", "99999999"}
 	for i, v := range values {
-		tickAutoArm(mon, processID, st, v, true, t0.Add(time.Duration(i)*30*time.Second))
+		tickAutoCutover(mon, processID, st, v, true, t0.Add(time.Duration(i)*30*time.Second))
 	}
 	if len(*calls) != 0 {
-		t.Fatalf("a bouncing tag armed %d time(s), want 0", len(*calls))
+		t.Fatalf("a bouncing tag fired %d time(s), want 0", len(*calls))
 	}
 }
 
-// TestAutoArm_ZeroAndUnreadable_NeverArm: a stable zero value never arms, and
+// TestAutoCutover_ZeroAndUnreadable_NeverFire: a stable zero never fires, and
 // unreadable reads reset the tracker (the last-good value survives for the guard,
-// but the auto-arm window restarts).
-func TestAutoArm_ZeroAndUnreadable_NeverArm(t *testing.T) {
+// but the window restarts).
+func TestAutoCutover_ZeroAndUnreadable_NeverFire(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoArm(t, "auto", "40016911", "50029999")
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", true)
 	t0 := time.Unix(0, 0)
-	for i := 0; i < 5; i++ { // stable "0" well past the window
-		tickAutoArm(mon, processID, st, "0", true, t0.Add(time.Duration(i)*30*time.Second))
+	for i := 0; i < 5; i++ {
+		tickAutoCutover(mon, processID, st, "0", true, t0.Add(time.Duration(i)*30*time.Second))
 	}
 	if len(*calls) != 0 {
-		t.Fatalf("a zero value armed %d time(s), want 0", len(*calls))
+		t.Fatalf("a zero value fired %d time(s), want 0", len(*calls))
 	}
-	st.lastConfirmed = "50029999" // last good value survives an unreadable read
+	st.lastConfirmed = "50029999"
 	for i := 5; i < 10; i++ {
-		tickAutoArm(mon, processID, st, "", false, t0.Add(time.Duration(i)*30*time.Second))
+		tickAutoCutover(mon, processID, st, "", false, t0.Add(time.Duration(i)*30*time.Second))
 	}
 	if len(*calls) != 0 {
-		t.Fatalf("unreadable reads armed %d time(s), want 0", len(*calls))
+		t.Fatalf("unreadable reads fired %d time(s), want 0", len(*calls))
 	}
 }
 
-// TestAutoArm_UnmappedValue_NeverArms: a stable value that maps to no configured
-// style never arms (matches nothing → silent, no auto-start).
-func TestAutoArm_UnmappedValue_NeverArms(t *testing.T) {
+// TestAutoCutover_DoubleFlipWithinWindow_NeverFires: A→B→A→B within the settle
+// window never fires; each flip restarts the window. It fires only once B truly
+// holds for the full window after the LAST flip.
+func TestAutoCutover_DoubleFlipWithinWindow_NeverFires(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoArm(t, "auto", "40016911", "50029999")
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", true)
 	t0 := time.Unix(0, 0)
-	for i := 0; i < 4; i++ {
-		tickAutoArm(mon, processID, st, "12345678", true, t0.Add(time.Duration(i)*30*time.Second))
-	}
+	tickAutoCutover(mon, processID, st, "50029999", true, t0)
+	tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(20*time.Second))
+	tickAutoCutover(mon, processID, st, "40016911", true, t0.Add(30*time.Second))
+	tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(45*time.Second))
+	tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(75*time.Second))
 	if len(*calls) != 0 {
-		t.Fatalf("an unmapped value armed %d time(s), want 0", len(*calls))
+		t.Fatalf("a double-flip fired within the window: got %d, want 0", len(*calls))
 	}
-}
-
-// TestAutoArm_ChangeoverInProgress_NeverArms: a stable mapped value never arms
-// while a non-terminal changeover already exists for the process.
-func TestAutoArm_ChangeoverInProgress_NeverArms(t *testing.T) {
-	t.Parallel()
-	mon, st, processID, targetStyleID, calls := setupAutoArm(t, "auto", "40016911", "50029999")
-	_, err := mon.eng.db.DB.Exec(`INSERT INTO process_changeovers (process_id, to_style_id, state) VALUES (?, ?, 'in_progress')`, processID, targetStyleID)
-	testutil.MustNoErr(t, err, "seed in-progress changeover")
-	if !mon.eng.changeoverInProgress(processID) {
-		t.Fatal("test setup: expected changeoverInProgress=true")
-	}
-	t0 := time.Unix(0, 0)
-	for i := 0; i < 4; i++ {
-		tickAutoArm(mon, processID, st, "50029999", true, t0.Add(time.Duration(i)*30*time.Second))
-	}
-	if len(*calls) != 0 {
-		t.Fatalf("armed while a changeover was in progress: got %d, want 0", len(*calls))
-	}
-}
-
-// TestAutoArm_DoubleFlipWithinWindow_NeverArms: A→B→A→B within the settle window
-// never arms; each flip restarts the window. It only arms once B truly holds for
-// the full window after the LAST flip.
-func TestAutoArm_DoubleFlipWithinWindow_NeverArms(t *testing.T) {
-	t.Parallel()
-	mon, st, processID, _, calls := setupAutoArm(t, "auto", "40016911", "50029999")
-	t0 := time.Unix(0, 0)
-	tickAutoArm(mon, processID, st, "50029999", true, t0)                     // B, count 1
-	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(20*time.Second)) // B, count 2 (20s)
-	tickAutoArm(mon, processID, st, "40016911", true, t0.Add(30*time.Second)) // flip to active A → reset
-	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(45*time.Second)) // flip back to B → reset (firstSeen=45s)
-	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(75*time.Second)) // B, count 2 (30s since last flip)
-	if len(*calls) != 0 {
-		t.Fatalf("a double-flip armed within the window: got %d, want 0", len(*calls))
-	}
-	// B has now held a full 60s since the last flip (t=45s) → arms once.
-	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(105*time.Second))
+	tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(105*time.Second))
 	if len(*calls) != 1 {
-		t.Fatalf("B stable 60s after the last flip must arm once, got %d", len(*calls))
+		t.Fatalf("B stable 60s after the last flip must fire once, got %d", len(*calls))
 	}
 }
 
-// TestAutoArm_AmbiguousMapping_PromptsNoArm pins addition 1: when a stable new
-// part maps to MORE than one style (uniqueness is checked, not assumed) the
-// monitor NEVER auto-arms a guess — it falls back to the operator prompt naming
-// every candidate style, with no pre-filled target.
-func TestAutoArm_AmbiguousMapping_PromptsNoArm(t *testing.T) {
+// TestAutoCutover_PromptMode_NeverFires: in 'prompt' mode the monitor never acts
+// on its own — the operator is prompted instead.
+func TestAutoCutover_PromptMode_NeverFires(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, targetStyleID, calls := setupAutoArm(t, "auto", "40016911", "50029999")
-
-	// A SECOND style also runs part 50029999 → the part is now ambiguous.
-	otherID, err := mon.eng.db.CreateStyle("TARGET-STYLE-2", "target2", processID)
-	testutil.MustNoErr(t, err, "create second target style")
-	testutil.MustNoErr(t, mon.eng.db.SetStyleExpectedCATID(otherID, "50029999"), "second target expected")
-
-	var prompts []CATIDChangePromptEvent
-	mon.eng.Events.SubscribeTypes(func(evt Event) {
-		if p, ok := evt.Payload.(CATIDChangePromptEvent); ok {
-			prompts = append(prompts, p)
-		}
-	}, EventCATIDChangePrompt)
-
-	t0 := time.Unix(0, 0)
-	tickAutoArm(mon, processID, st, "50029999", true, t0)
-	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(30*time.Second))
-	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(60*time.Second)) // stable → decision
-
-	if len(*calls) != 0 {
-		t.Fatalf("an ambiguous part must never auto-arm, got %d arm(s)", len(*calls))
-	}
-	if len(prompts) != 1 {
-		t.Fatalf("ambiguity must emit exactly one operator prompt, got %d", len(prompts))
-	}
-	p := prompts[0]
-	if p.HasTarget {
-		t.Errorf("ambiguous prompt must not pre-fill a target, got %+v", p)
-	}
-	if len(p.Candidates) != 2 {
-		t.Fatalf("ambiguous prompt must name both candidate styles, got %d", len(p.Candidates))
-	}
-	gotIDs := map[int64]bool{p.Candidates[0].StyleID: true, p.Candidates[1].StyleID: true}
-	if !gotIDs[targetStyleID] || !gotIDs[otherID] {
-		t.Errorf("candidates = %+v, want both %d and %d", p.Candidates, targetStyleID, otherID)
-	}
-	// Staying stable must not re-decide (armHandled) — still exactly one prompt.
-	tickAutoArm(mon, processID, st, "50029999", true, t0.Add(90*time.Second))
-	if len(prompts) != 1 || len(*calls) != 0 {
-		t.Fatalf("a settled ambiguous value must not re-prompt/arm: prompts=%d arms=%d", len(prompts), len(*calls))
-	}
-}
-
-// TestAutoArm_PromptMode_NeverAutoArms: in 'prompt' mode a stable mapped value
-// never auto-starts (the operator is prompted instead — covered by
-// TestCATIDChangePrompt_PromptsOnChange).
-func TestAutoArm_PromptMode_NeverAutoArms(t *testing.T) {
-	t.Parallel()
-	mon, st, processID, _, calls := setupAutoArm(t, "prompt", "40016911", "50029999")
+	mon, st, processID, _, calls := setupAutoCutover(t, "prompt", "40016911", "50029999", true)
 	t0 := time.Unix(0, 0)
 	for i := 0; i < 4; i++ {
-		tickAutoArm(mon, processID, st, "50029999", true, t0.Add(time.Duration(i)*30*time.Second))
+		tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(time.Duration(i)*30*time.Second))
 	}
 	if len(*calls) != 0 {
-		t.Fatalf("prompt mode auto-armed %d time(s), want 0", len(*calls))
+		t.Fatalf("prompt mode cut over %d time(s), want 0", len(*calls))
 	}
 }
 
-// TestAutoArm_OffMode_Silent: in 'off' mode a stable mapped value neither arms nor
-// prompts.
-func TestAutoArm_OffMode_Silent(t *testing.T) {
+// TestAutoCutover_OffMode_Silent: in 'off' mode a stable new part neither cuts
+// over nor prompts.
+func TestAutoCutover_OffMode_Silent(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoArm(t, "off", "40016911", "50029999")
+	mon, st, processID, _, calls := setupAutoCutover(t, "off", "40016911", "50029999", true)
 	t0 := time.Unix(0, 0)
 	for i := 0; i < 4; i++ {
-		tickAutoArm(mon, processID, st, "50029999", true, t0.Add(time.Duration(i)*30*time.Second))
+		tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(time.Duration(i)*30*time.Second))
 	}
 	if len(*calls) != 0 {
-		t.Fatalf("off mode armed %d time(s), want 0", len(*calls))
+		t.Fatalf("off mode cut over %d time(s), want 0", len(*calls))
 	}
 	var prompts int
 	mon.eng.Events.SubscribeTypes(func(evt Event) {

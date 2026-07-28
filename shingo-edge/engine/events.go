@@ -94,17 +94,27 @@ const (
 	// the target style when the new part's CATID maps to a known style's
 	// expected_catid — but never starts one: the operator still confirms
 	// through the existing Start Changeover flow. Raised only for processes whose
-	// changeover_auto_arm mode is `prompt`; `auto` processes auto-start instead
-	// (EventCATIDAutoArmed) and `off` processes do neither.
+	// changeover_auto_arm mode is `prompt`; `auto` processes auto-cut-over an
+	// in-progress changeover instead (EventCATIDAutoCutover) and `off` processes
+	// do neither.
 	EventCATIDChangePrompt
 
-	// EventCATIDAutoArmed fires when the CATID monitor AUTO-STARTS a changeover on
-	// a stable, confirmed part change (B1 auto-arm, changeover_auto_arm=auto).
-	// Sibling of EventCATIDChangePrompt: where the prompt asks the operator to act,
-	// this announces the system already started the changeover to the mapped style,
-	// so the HMI can raise a station notification. It never cancels or re-plans —
-	// it is the notification for an authorized auto-START.
+	// EventCATIDAutoArmed is RETIRED. The monitor no longer starts changeovers —
+	// see EventCATIDAutoCutover. Kept only so existing subscribers and stored
+	// events still resolve; nothing emits it.
 	EventCATIDAutoArmed
+
+	// EventCATIDAutoCutover fires when the CATID monitor presses CUTOVER on an
+	// ALREADY-IN-PROGRESS changeover, because the press's live part id stably left
+	// the outgoing style — evidence the press itself already cut over.
+	//
+	// This is the inverse of what EventCATIDAutoArmed used to do, and the
+	// inversion is the point. Operators start a changeover, the material moves,
+	// and then they forget to press CUTOVER; shingo keeps attributing the new
+	// parts to the old style until someone notices hours later. The monitor now
+	// presses the button they forget, and never starts anything — starting
+	// dispatches robots, and nothing here knows whether the material exists.
+	EventCATIDAutoCutover
 
 	// EventChangeoverVerifyMismatch fires when, within the short window after a
 	// cutover completed, the press's live part id still disagrees with the new
@@ -369,6 +379,20 @@ type CATIDAutoArmedEvent struct {
 	TargetStyleID   int64  `json:"target_style_id"`
 	TargetStyleName string `json:"target_style_name"`
 	NewCATID        string `json:"new_catid"`
+}
+
+// CATIDAutoCutoverEvent reports that the monitor pressed CUTOVER on an
+// in-progress changeover because the press's live part id had stably left the
+// outgoing style — i.e. the press had already cut over and the operator had not
+// told shingo yet. Carries no style: whether the new active style actually
+// matches the press is decided afterwards by the post-cutover verification
+// watch, which raises its own flag when it does not.
+type CATIDAutoCutoverEvent struct {
+	eventbus.PayloadBase
+	ProcessID    int64  `json:"process_id"`
+	ProcessName  string `json:"process_name"`
+	ChangeoverID int64  `json:"changeover_id"`
+	NewCATID     string `json:"new_catid"`
 }
 
 // CATIDVerifyMismatchEvent carries a post-cutover verification flag: after the
