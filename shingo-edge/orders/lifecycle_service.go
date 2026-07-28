@@ -162,7 +162,7 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 			seed := v.(deliveredSeed)
 			binUOP, binEpoch, binDestNode = seed.uop, seed.epoch, seed.binDestNode
 		}
-		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, binUOP, binEpoch, binDestNode)
+		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, binUOP, binEpoch, binDestNode, order.DeliveryNode)
 	}
 	if IsTerminal(newStatus) {
 		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)

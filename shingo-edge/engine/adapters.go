@@ -88,9 +88,9 @@ func (e *orderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, order
 	}})
 }
 
-func (e *orderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binEpoch int64, binDestNode string) {
+func (e *orderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binEpoch int64, binDestNode, deliveryNode string) {
 	e.bus.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
-		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, ProcessNodeID: processNodeID, BinID: binID, BinUOP: binUOP, BinEpoch: binEpoch, BinDestNode: binDestNode,
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, ProcessNodeID: processNodeID, BinID: binID, BinUOP: binUOP, BinEpoch: binEpoch, BinDestNode: binDestNode, DeliveryNode: deliveryNode,
 	}})
 }
 
