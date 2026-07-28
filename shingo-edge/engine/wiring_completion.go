@@ -22,6 +22,7 @@
 package engine
 
 import (
+	"fmt"
 	"log"
 	"strings"
 
@@ -594,13 +595,43 @@ func (e *Engine) handleOrphanedTaskOrderCompleted(order *storeorders.Order) {
 		log.Printf("orphan: skip task %d stamp — changeover %d already %s", task.ID, task.ProcessChangeoverID, changeoverState)
 		return
 	}
-	newState := domain.NodeTaskCancelled
+	// An operator-cancelled order lands the task ABANDONED, not CANCELLED.
+	//
+	// NodeTaskCancelled is documented (changeover_node_state.go) as
+	// "only set by cancelProcessChangeoverInternal, which moves the changeover
+	// row to cancelled rather than completed, so the completion gate never
+	// reaches a row with cancelled tasks" — and that is exactly why cancelled is
+	// excluded from IsTerminal. This handler broke that invariant: it stamps a
+	// task from the operator's PER-ORDER cancel button while the changeover
+	// stays ACTIVE, so the gate does reach it, sees a non-terminal state, and
+	// blocks cutover permanently with no operator route out. Hopkinsville
+	// 2026-07-28: two evac orders cancelled at 19:39:15 to free robots that had
+	// been parked an hour, and the changeover became impossible to finish.
+	//
+	// Abandoned is the state that already means this: "the changeover completes
+	// without this node's work, skip_note carries the operator-facing story" —
+	// the same landing AbandonChangeoverSupply uses for the operator's other
+	// give-up route. Fixing it here rather than by making cancelled terminal
+	// keeps that shared predicate (five consumers, single source of truth) and
+	// its documented reasoning intact.
+	//
+	// A FAILED order still lands NodeTaskError, which stays non-terminal on
+	// purpose — "operator retry is expected" — a different situation from a
+	// deliberate cancel.
+	newState := domain.NodeTaskAbandoned
+	note := fmt.Sprintf("order %d cancelled by operator — changeover continues without this node", order.ID)
 	if order.Status == orders.StatusFailed {
 		newState = domain.NodeTaskError
+		note = ""
 	}
 	if err := e.db.UpdateChangeoverNodeTaskState(task.ID, newState); err != nil {
 		log.Printf("orphan: update task %d to %s: %v", task.ID, newState, err)
 		return
+	}
+	if note != "" {
+		if err := e.db.SetChangeoverNodeTaskSkipNote(task.ID, note); err != nil {
+			log.Printf("orphan: set skip note on task %d: %v", task.ID, err)
+		}
 	}
 	log.Printf("orphan: task %d stamped %s for order %d (%s)", task.ID, newState, order.ID, order.Status)
 	node, err := e.db.GetProcessNode(task.ProcessNodeID)
