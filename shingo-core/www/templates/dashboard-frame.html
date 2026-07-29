@@ -1,7 +1,16 @@
 {{define "content"}}
+{{/* NO <h1> HERE. This page is chrome around someone else's page, and every
+     one of the four kiosk templates it can load renders the dashboard name
+     itself — dashboard-display.html, dashboard-map.html, heartbeat.html,
+     dashboard-node-report.html (handlers_dashboards.go:19-24). A title here
+     produced "ROBOT FLIGHT MAP ROBOT FLIGHT MAP" on all four.
+
+     The frame drops its title rather than the kiosk pages dropping theirs:
+     the kiosk page must work standalone on a wall monitor, where its own
+     title is the only one there is. The iframe keeps the name as its
+     accessible title. */}}
 <div class="flex flex-between mb-1">
-  <h1>{{if .Dashboard}}{{.Dashboard.Name}}{{end}}</h1>
-  <div class="flex-center gap-1">
+  <div class="flex-center gap-1 ml-auto">
     <a class="btn btn-sm" href="/" title="Back to the dashboard hub">&larr; Dashboards</a>
     {{if .Dashboard}}<a class="btn btn-sm btn-primary" href="/dashboard/{{.Dashboard.ID}}?kiosk=1" target="_blank" rel="noopener" title="Open chromeless for a wall monitor">&#x26F6; Fullscreen</a>{{end}}
   </div>

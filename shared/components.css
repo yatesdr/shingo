@@ -389,6 +389,15 @@
 .chip-muted { background: color-mix(in srgb, var(--text-muted) 15%, transparent); color: var(--text-muted); }
 .chip-err   { background: var(--viz-coral); color: #1b0508; }
 .chip-drift { background: color-mix(in srgb, var(--viz-violet) 20%, transparent); color: var(--viz-violet); cursor: help; }
+/* .chip-warn: a caution that is not yet an error — "this needs a look", where
+ * .chip-err is "this is wrong". Amber like .chip-near, but at .chip-drift's
+ * weight because it marks a finding rather than a band on a meter.
+ *
+ * It was referenced by inventory.js for two whole releases with NO rule
+ * anywhere, so it rendered as bare .chip: shaped like a chip, coloured like
+ * the page behind it. Second invisible chip after .chip-err's 1.2:1 contrast;
+ * chip_drift_test.go closes the class. */
+.chip-warn  { background: color-mix(in srgb, var(--viz-amber) 20%, transparent); color: var(--viz-amber); }
 
 /* Chart box wrapper for Chart.js canvases. */
 .chart-box { position: relative; }
