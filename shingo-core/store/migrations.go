@@ -605,6 +605,8 @@ func (db *DB) runVersionedMigrations() error {
 		{56, "sourceability_events — persist the verdict changes the monitor already computes",
 			v56SourceabilityEvents,
 			func(q schema.Querier) bool { return schema.TableExists(q, "sourceability_events") }},
+		{57, "rename legacy downtime_events partitions to the aligned form",
+			v57RenameDowntimePartitions, nil},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2176,6 +2178,58 @@ func v53BackfillTelemetryRobotID(tx *sql.Tx) error {
 // Not verify-gated, same reasoning as 53: "no blank robot_id" is legitimately
 // unreachable for orders that never had a robot, so a verify would re-run
 // this forever.
+// v57RenameDowntimePartitions renames downtime_events_y2026m07 to
+// downtime_events_2026_07, aligning with store/heartbeat's cell_part_events
+// form.
+//
+// This is not cosmetic. createMonthPartition now emits the aligned name, and
+// CREATE TABLE IF NOT EXISTS guards the NAME, not the RANGE — so on any
+// database carrying legacy-named partitions the new one fails with
+//
+//	partition "downtime_events_2026_07" would overlap partition
+//	"downtime_events_y2026m07" (SQLSTATE 42P17)
+//
+// and the month has no usable partition. Caught on the houseserver sim,
+// 2026-07-25, which is the only place downtime_events has ever had rows.
+//
+// A rename is metadata-only: no data moves, no locks beyond the catalog
+// update, and the partition keeps its bounds and its attachment.
+func v57RenameDowntimePartitions(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT c.relname
+		FROM pg_inherits i
+		JOIN pg_class c ON c.oid = i.inhrelid
+		JOIN pg_class p ON p.oid = i.inhparent
+		WHERE p.relname = 'downtime_events'
+		  AND c.relname ~ '^downtime_events_y[0-9]{4}m[0-9]{2}$'`)
+	if err != nil {
+		return fmt.Errorf("v57 list legacy partitions: %w", err)
+	}
+	var legacy []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			rows.Close()
+			return fmt.Errorf("v57 scan partition name: %w", err)
+		}
+		legacy = append(legacy, n)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("v57 iterate partitions: %w", err)
+	}
+
+	for _, old := range legacy {
+		// downtime_events_yYYYYmMM -> downtime_events_YYYY_MM
+		year := old[len("downtime_events_y") : len("downtime_events_y")+4]
+		month := old[len(old)-2:]
+		renamed := fmt.Sprintf("downtime_events_%s_%s", year, month)
+		if _, err := tx.Exec(fmt.Sprintf(`ALTER TABLE %s RENAME TO %s`, old, renamed)); err != nil {
+			return fmt.Errorf("v57 rename %s -> %s: %w", old, renamed, err)
+		}
+	}
+	return nil
+}
+
 // v56SourceabilityEvents persists the verdict changes SourceabilityMonitor
 // already computes and throws away every two minutes.
 //

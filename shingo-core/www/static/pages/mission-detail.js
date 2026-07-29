@@ -92,7 +92,7 @@ import { onSSE } from '/static/shared/utils.js';
       document.getElementById('mission-loading').style.display = 'none';
       document.getElementById('mission-content').style.display = '';
       renderSummary(data);
-      renderDurationBar(data.events || []);
+      renderDurationBar(data.events || [], data.telemetry);
       renderTimeline(data.events || []);
       renderMessages(data.telemetry);
       renderEventLog(data.events || []);
@@ -127,11 +127,173 @@ import { onSSE } from '/static/shared/utils.js';
     el.innerHTML = html;
   }
 
-  function renderDurationBar(events) {
+  // ── Leg decomposition ─────────────────────────────────────────────────
+  //
+  // The bar used to be one giant in_transit block, because a whole retrieve is
+  // a single VENDOR state — which answered "it took 9 minutes" and nothing
+  // about where the 9 minutes went. That was the question that started this
+  // whole exercise.
+  //
+  // The fleet reports per-block startTime/terminateTime (epoch SECONDS) and
+  // Core now stores them on BLOCK_FINISHED rows in mission_events. A block is
+  // the robot DOING something at a location; the gap between two blocks is it
+  // travelling between them. That gives travel-to-source, load, travel-to-dest,
+  // unload without inventing anything.
+  //
+  // Two rules that matter more than the drawing:
+  //   - A leg with no vendor time is UNKNOWN, never zero-length. Absent is not
+  //     instant, and a zero-width segment would read as "took no time".
+  //   - Legs sum to the mission duration or the difference is shown as
+  //     unaccounted. Rescaling to fit would be a lie that looks tidy.
+  var BLOCK_LEG_STATE = 'BLOCK_FINISHED';
+
+  function isBlockLegEvent(ev) {
+    return ev && ev.new_state === BLOCK_LEG_STATE;
+  }
+
+  // parseBlockLegs pulls the stored block records out of the BLOCK_FINISHED
+  // events, oldest first. Returns [] when the fleet never reported any (older
+  // missions, or a backend that does not send blocks) — the caller falls back
+  // to the state-diff bar.
+  function parseBlockLegs(events) {
+    var out = [];
+    for (var i = 0; i < events.length; i++) {
+      if (!isBlockLegEvent(events[i])) continue;
+      try {
+        var blocks = JSON.parse(events[i].blocks_json || '[]');
+        for (var b = 0; b < blocks.length; b++) {
+          out.push(blocks[b]);
+        }
+      } catch (e) { console.error('parseBlockLegs', e); }
+    }
+    return out;
+  }
+
+  // hasVendorTimes reports whether BOTH endpoints were reported. Checking the
+  // timestamps rather than durationSeconds is deliberate: Core writes 0 for
+  // "not reported" AND for "inverted", so a duration of 0 cannot tell an
+  // unknown leg from a genuinely instant one.
+  function hasVendorTimes(blk) {
+    return blk && blk.startTime > 0 && blk.terminateTime >= blk.startTime;
+  }
+
+  // formatDuration renders 0 as "-", which is right for a summary field that
+  // may be absent and wrong for a leg: a block whose start and terminate are
+  // the same second genuinely took under a second, and "-" reads as "not
+  // reported". Absent is `unknown` (handled separately); zero is `0s`.
+  function formatLegDuration(ms) {
+    if (ms <= 0) return '0s';
+    return formatDuration(ms);
+  }
+
+  function legLabel(blk) {
+    var task = (blk.binTask || '').toLowerCase();
+    var verb = 'handle';
+    if (task.indexOf('wait') >= 0) verb = 'wait';
+    else if (task.indexOf('unload') >= 0 || task.indexOf('drop') >= 0 || task.indexOf('release') >= 0) verb = 'unload';
+    else if (task.indexOf('load') >= 0 || task.indexOf('pick') >= 0) verb = 'load';
+    return verb + (blk.location ? ' @ ' + blk.location : '');
+  }
+
+  // buildLegs turns the block records into the segment list the bar draws.
+  // Hues come from the existing per-phase status set — travel is the robot
+  // moving (in_transit), a block is the robot stopped at a node doing work
+  // (staged). Absence gets no hue at all, because "we do not know" is not a
+  // phase.
+  function buildLegs(blocks, totalMs) {
+    var legs = [];
+    var knownMs = 0;
+
+    for (var i = 0; i < blocks.length; i++) {
+      var blk = blocks[i];
+
+      // Travel INTO this block: the gap since the previous block ended. Both
+      // endpoints are vendor times, so this arithmetic never crosses clocks.
+      if (i > 0 && hasVendorTimes(blocks[i - 1]) && hasVendorTimes(blk)) {
+        var gapMs = (blk.startTime - blocks[i - 1].terminateTime) * 1000;
+        if (gapMs > 0) {
+          legs.push({ label: 'travel → ' + (blk.location || '?'), ms: gapMs, color: 'var(--status-in-transit-dot)' });
+          knownMs += gapMs;
+        }
+      }
+
+      if (hasVendorTimes(blk)) {
+        var ms = (blk.terminateTime - blk.startTime) * 1000;
+        legs.push({ label: legLabel(blk), ms: ms, color: 'var(--status-staged-dot)' });
+        knownMs += ms;
+      } else {
+        legs.push({ label: legLabel(blk), ms: null, color: 'var(--text-muted)' });
+      }
+    }
+
+    // Whatever the blocks do not account for. This is real time the mission
+    // spent somewhere the fleet did not report a block for — queued before
+    // dispatch, travelling to the first pickup, delivery bookkeeping after the
+    // last drop. Naming it is more honest than stretching the legs to fill.
+    if (totalMs > 0) {
+      var remainder = totalMs - knownMs;
+      if (remainder > 0) {
+        legs.push({ label: 'unaccounted', ms: remainder, color: 'var(--text-muted)', faint: true });
+      }
+    }
+    return legs;
+  }
+
+  function renderLegBar(bar, legend, legs, totalMs) {
+    var html = '';
+    var legendHtml = '';
+    var sumMs = 0;
+
+    for (var i = 0; i < legs.length; i++) {
+      var leg = legs[i];
+      var swatch, seg;
+
+      if (leg.ms === null) {
+        // Fixed width, hatched: it occupies space so it is visible and
+        // countable, but claims no share of the timeline it cannot measure.
+        seg = '<div class="duration-segment leg-unknown" style="flex:0 0 52px"'
+            + ' title="' + leg.label + ': duration not reported by the fleet"></div>';
+        swatch = '<span class="leg-swatch leg-unknown"></span>';
+        legendHtml += '<span>' + swatch + leg.label + ': <span class="leg-unknown-text">unknown</span></span>';
+      } else {
+        sumMs += leg.ms;
+        var pct = totalMs > 0 ? Math.max((leg.ms / totalMs) * 100, 1) : 1;
+        seg = '<div class="duration-segment" style="flex:' + pct + ';background:' + leg.color
+            + (leg.faint ? ';opacity:.35' : '') + '"'
+            + ' title="' + leg.label + ': ' + formatLegDuration(leg.ms) + '"></div>';
+        swatch = '<span class="leg-swatch" style="background:' + leg.color + (leg.faint ? ';opacity:.35' : '') + '"></span>';
+        legendHtml += '<span>' + swatch + leg.label + ': ' + formatLegDuration(leg.ms) + '</span>';
+      }
+      html += seg;
+    }
+
+    bar.innerHTML = html;
+    // State the arithmetic so the bar can be checked rather than trusted.
+    var unknownCount = legs.filter(function(l) { return l.ms === null; }).length;
+    var footer = '<span class="leg-total">legs ' + formatDuration(sumMs)
+      + ' of ' + formatDuration(totalMs) + ' total';
+    if (unknownCount > 0) footer += ' · ' + unknownCount + ' leg(s) unknown';
+    footer += '</span>';
+    legend.innerHTML = legendHtml + footer;
+  }
+
+  function renderDurationBar(events, telemetry) {
     var bar = document.getElementById('duration-bar');
     var legend = document.getElementById('duration-legend');
+
+    // Prefer the real legs when the fleet reported any.
+    var blocks = parseBlockLegs(events);
+    if (blocks.length > 0) {
+      var totalMs = (telemetry && telemetry.duration_ms) || 0;
+      renderLegBar(bar, legend, buildLegs(blocks, totalMs), totalMs);
+      return;
+    }
+
+    // Fallback: the old state-diff bar, for missions predating block capture.
+    events = events.filter(function(ev) { return !isBlockLegEvent(ev); });
     if (events.length < 2) {
       bar.innerHTML = '<span style="color:var(--text-muted)">Not enough data for duration breakdown</span>';
+      legend.innerHTML = '';
       return;
     }
 
@@ -202,7 +364,22 @@ import { onSSE } from '/static/shared/utils.js';
       html += '<span class="timeline-time">' + formatTime(ev.created_at) + '</span> ';
       html += timeSincePrev;
       html += '</div>';
-      html += '<div>' + stateBadge(ev.old_state) + ' &rarr; ' + stateBadge(ev.new_state) + '</div>';
+      // A block completion is a LEG, not a status transition. Rendering it
+      // through stateBadge would print "→ BLOCK_FINISHED" against an unstyled
+      // pill, which is both ugly and wrong — old_state is empty on these rows
+      // because nothing transitioned.
+      if (isBlockLegEvent(ev)) {
+        var legBlocks = [];
+        try { legBlocks = JSON.parse(ev.blocks_json || '[]'); } catch (e) { console.error('timeline leg parse', e); }
+        var b0 = legBlocks[0] || {};
+        html += '<div><span class="badge badge-staged">leg</span> ' + legLabel(b0) + ' &mdash; '
+          + (hasVendorTimes(b0)
+              ? formatDuration((b0.terminateTime - b0.startTime) * 1000)
+              : '<span class="leg-unknown-text">duration unknown</span>')
+          + '</div>';
+      } else {
+        html += '<div>' + stateBadge(ev.old_state) + ' &rarr; ' + stateBadge(ev.new_state) + '</div>';
+      }
       if (ev.robot_id) {
         html += '<div class="timeline-meta">';
         html += '<span>Robot: ' + ev.robot_id + '</span>';
@@ -274,9 +451,17 @@ import { onSSE } from '/static/shared/utils.js';
       if (ev.robot_x != null && ev.robot_y != null) {
         pos = ev.robot_x.toFixed(1) + ', ' + ev.robot_y.toFixed(1);
       }
+      var what;
+      if (isBlockLegEvent(ev)) {
+        var lb = [];
+        try { lb = JSON.parse(ev.blocks_json || '[]'); } catch (e) { console.error('event log leg parse', e); }
+        what = '<span class="badge badge-staged">leg</span> ' + legLabel(lb[0] || {});
+      } else {
+        what = stateBadge(ev.old_state) + ' &rarr; ' + stateBadge(ev.new_state);
+      }
       html += '<tr>';
       html += '<td style="white-space:nowrap">' + formatTime(ev.created_at) + '</td>';
-      html += '<td>' + stateBadge(ev.old_state) + ' &rarr; ' + stateBadge(ev.new_state) + '</td>';
+      html += '<td>' + what + '</td>';
       html += '<td>' + (ev.robot_id || '-') + '</td>';
       html += '<td>' + (ev.robot_station || '-') + '</td>';
       html += '<td>' + (pos || '-') + '</td>';

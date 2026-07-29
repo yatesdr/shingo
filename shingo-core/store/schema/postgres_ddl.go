@@ -150,10 +150,13 @@ CREATE TABLE IF NOT EXISTS order_history (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_order_history_order ON order_history(order_id);
-CREATE INDEX IF NOT EXISTS idx_order_history_code
-    ON order_history(code, created_at) WHERE code IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_order_history_ref_payload
-    ON order_history((ref->>'payload')) WHERE ref IS NOT NULL;
+-- The code / ref indexes live in migration 55, NOT here. This baseline is
+-- applied on EVERY boot, before migrations run, and CREATE TABLE IF NOT EXISTS
+-- is a no-op on an existing database — so an index over a column migration 55
+-- has not added yet fails the whole schema apply and Core will not start.
+-- Caught on the houseserver sim, 2026-07-25. Fresh installs get the indexes
+-- from migration 55 too: schema_migrations gates on version, so 55 runs on a
+-- new database even though the columns above already satisfy its verify.
 
 CREATE TABLE IF NOT EXISTS outbox (
     id          BIGSERIAL PRIMARY KEY,

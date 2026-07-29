@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"shingocore/store"
 )
 
@@ -23,4 +24,21 @@ func NewHealthService(db *store.DB) *HealthService {
 // PingDB returns nil when the database is reachable.
 func (s *HealthService) PingDB() error {
 	return s.db.Ping()
+}
+
+// PoolStats returns the database connection-pool counters behind the Core
+// Health strip's pool meter.
+//
+// Nothing in shingo-core read sql.DBStats before this: Core recorded every
+// EDGE's health and could not state its own. WaitCount is the one that
+// matters — a non-zero wait means a request queued for a connection, which is
+// the pool being the bottleneck rather than the database.
+//
+// ok is false when the DB handle is absent (test fixtures), so the strip can
+// render "unavailable" instead of an all-zero pool that looks idle.
+func (s *HealthService) PoolStats() (sql.DBStats, bool) {
+	if s.db == nil || s.db.DB == nil {
+		return sql.DBStats{}, false
+	}
+	return s.db.DB.Stats(), true
 }

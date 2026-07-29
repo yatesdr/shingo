@@ -73,10 +73,81 @@ function setState(s) {
     filters.set({ state: s });
 }
 
+// ─── Dwell (per-state, p50/p95) ─────────────────────────────────────────────
+//
+// GET /api/missions/dwell answers the question every mission stat dodged:
+// where did the time GO. One created→terminal number cannot tell a mission
+// that spent eight of its nine minutes queued behind material from one that
+// spent them driving.
+//
+// Reads order_history, not mission_telemetry — 76.6% of terminal orders have
+// no mission_telemetry row at all, so dwell computed from missions would
+// silently describe a quarter of the work.
+//
+// The count is shown beside every percentile because at this volume it has to
+// be: a p95 over four samples is noise wearing a statistic's clothes, and a
+// reader needs to see that without going and checking.
+const DWELL_LABELS = {
+    time_to_dispatch: 'To dispatch',
+    transit: 'Transit',
+    staged_release: 'Staged → resume',
+    staged_delivery: 'Staged → delivered',
+    operator_fill: 'Operator fill',
+};
+
+// A percentile computed from very few samples is reported, but marked, rather
+// than hidden — hiding it would leave a gap a reader fills with a guess.
+const DWELL_THIN_SAMPLE = 5;
+
+function fmtSeconds(s) {
+    if (s === null || s === undefined) return '-';
+    if (s <= 0) return '0s';
+    if (s < 60) return (s < 10 ? s.toFixed(1) : Math.round(s)) + 's';
+    const m = Math.floor(s / 60);
+    const rem = Math.round(s % 60);
+    if (m < 60) return m + 'm ' + rem + 's';
+    return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+}
+
+function refreshDwell(state) {
+    const host = document.getElementById('m-dwell-row');
+    if (!host) return;
+    apiGet('/api/missions/dwell?' + filterQS(state, {})).then((data) => {
+        const rows = (data && data.rows) || [];
+        if (!rows.length) {
+            host.innerHTML = '<span class="text-muted-sm">No transitions in this window</span>';
+            return;
+        }
+        host.innerHTML = rows.map((r) => {
+            const label = DWELL_LABELS[r.key] || r.key;
+            // No samples is not zero seconds. Say so rather than printing 0s,
+            // which reads as "instant".
+            if (!r.count) {
+                return '<div class="dwell-cell dwell-empty" title="' + r.from + ' → ' + r.to + '">'
+                    + '<span class="dwell-label">' + label + '</span>'
+                    + '<span class="dwell-val">no data</span>'
+                    + '<span class="dwell-count">0 samples</span>'
+                    + '</div>';
+            }
+            const thin = r.count < DWELL_THIN_SAMPLE ? ' dwell-thin' : '';
+            return '<div class="dwell-cell' + thin + '" title="' + r.from + ' → ' + r.to
+                + (thin ? ' — only ' + r.count + ' samples, read with care' : '') + '">'
+                + '<span class="dwell-label">' + label + '</span>'
+                + '<span class="dwell-val">' + fmtSeconds(r.p50_seconds)
+                + ' <span class="dwell-sep">/</span> ' + fmtSeconds(r.p95_seconds) + '</span>'
+                + '<span class="dwell-count">' + r.count + ' sample' + (r.count === 1 ? '' : 's') + '</span>'
+                + '</div>';
+        }).join('');
+    }).catch(() => {
+        host.innerHTML = '<span class="text-muted-sm">Dwell unavailable</span>';
+    });
+}
+
 let paretoChart = null;
 
 function refresh(state) {
     offset = 0;
+    refreshDwell(state);
     refreshBreakdowns(state);
     refreshFailures(state);
     refreshList(state);

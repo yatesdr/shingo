@@ -270,3 +270,146 @@ const newBtn = document.getElementById('dash-new');
 if (newBtn) newBtn.addEventListener('click', () => openModal(null));
 
 load();
+
+// ── Core Health strip ───────────────────────────────────────────────────────
+//
+// The template renders the strip server-side so it is correct on first paint.
+// This keeps it live and draws the two things HTML cannot: meter fill width
+// and the goroutine sparkline.
+//
+// Colour rule, and it is deliberate: a meter at 12% is NORMAL, not GOOD.
+// Normal fill is --accent (UI chrome), amber only when it approaches its
+// limit, red at or over. Green is spent only on the dependency dots and the
+// verdict dot — if everything is green always, green stops meaning anything.
+
+const CS_WARN_AT = 0.70; // approaching the limit
+const CS_BAD_AT = 0.90;  // at it
+
+// An empty bar is chrome pretending to be information: DB POOL 0/25 with a
+// blank track says nothing the "0/25" beside it did not already say, and it
+// costs a row's width to say it. Below this the numbers stand alone.
+const CS_SHOW_BAR_AT = 0.10;
+
+// setMeter paints one ratio-against-a-limit bar, and hides the track entirely
+// when there is nothing worth drawing.
+// available=false means we could not READ the value — different from zero, and
+// it must not look the same, so the track stays hidden rather than empty.
+function setMeter(fillEl, ratio, available = true) {
+    if (!fillEl) return;
+    const track = fillEl.parentElement;
+    const r = available ? Math.max(0, Math.min(1, ratio || 0)) : 0;
+    const worthDrawing = available && r >= CS_SHOW_BAR_AT;
+    if (track) track.classList.toggle('is-hidden', !worthDrawing);
+    if (!worthDrawing) {
+        fillEl.style.width = '0%';
+        return;
+    }
+    fillEl.style.width = `${(r * 100).toFixed(1)}%`;
+    fillEl.classList.toggle('is-warn', r >= CS_WARN_AT && r < CS_BAD_AT);
+    fillEl.classList.toggle('is-bad', r >= CS_BAD_AT);
+}
+
+// drawSparkline plots the goroutine window. The value is meaningless; the
+// SLOPE is the leak signal, so the path recedes and only the current point
+// takes the accent.
+function drawSparkline(svg, points) {
+    if (!svg) return;
+    svg.textContent = '';
+    if (!points || points.length < 2) return;
+
+    const min = Math.min(...points);
+    const max = Math.max(...points);
+    // A flat line sits mid-height rather than pinned to an edge — a flat
+    // series is the healthy case and should read as calm, not as zero.
+    const span = max - min || 1;
+    const x = (i) => (i / (points.length - 1)) * 100;
+    const y = (v) => 18 - ((v - min) / span) * 16;
+
+    const d = points.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(2)},${y(v).toFixed(2)}`).join('');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    svg.appendChild(path);
+
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('cx', x(points.length - 1).toFixed(2));
+    dot.setAttribute('cy', y(points[points.length - 1]).toFixed(2));
+    dot.setAttribute('r', '1.6');
+    svg.appendChild(dot);
+}
+
+function renderCoreHealth(h) {
+    if (!h) return;
+    const strip = document.getElementById('core-strip');
+    if (strip) strip.dataset.health = h.verdict;
+
+    const verdict = document.getElementById('cs-verdict-text');
+    if (verdict) {
+        verdict.textContent = h.verdict === 'ok' ? 'Core OK' : 'Core degraded';
+        const dot = verdict.previousElementSibling;
+        if (dot) {
+            dot.classList.toggle('health-ok', h.verdict === 'ok');
+            dot.classList.toggle('health-fail', h.verdict !== 'ok');
+        }
+    }
+
+    // Only the dependencies that are DOWN, and only when some are. All four up
+    // is what "Core OK" already means; repeating it as four dots was saying the
+    // same thing twice at the cost of a zone.
+    const deps = document.getElementById('cs-deps-down');
+    if (deps) {
+        deps.innerHTML = (h.deps_down || [])
+            .map((d) => '<span class="cs-dep-down"><span class="health health-fail"></span>' + d + '</span>')
+            .join('');
+    }
+
+    // DB pool: in-use against the configured max.
+    const poolVal = document.getElementById('cs-pool-val');
+    if (poolVal) {
+        poolVal.textContent = `${h.db_in_use}/${h.db_max_open}`;
+        // Waits are the real signal — a queued request means the POOL is the
+        // bottleneck, not the database.
+        poolVal.classList.toggle('is-bad', h.db_wait_count > 0);
+    }
+    setMeter(document.getElementById('cs-pool-fill'),
+        h.db_max_open > 0 ? h.db_in_use / h.db_max_open : 0,
+        h.db_max_open > 0);
+
+    // Load against core count. load1 is 0 where /proc is absent (dev boxes).
+    const loadAvailable = h.cores > 0 && h.load1 > 0;
+    const loadVal = document.getElementById('cs-load-val');
+    if (loadVal) {
+        loadVal.textContent = loadAvailable ? `${h.load1.toFixed(2)}/${h.cores}` : `—/${h.cores}`;
+        loadVal.classList.toggle('is-bad', loadAvailable && h.load1 > h.cores);
+    }
+    setMeter(document.getElementById('cs-load-fill'),
+        loadAvailable ? h.load1 / h.cores : 0, loadAvailable);
+
+    const build = document.querySelector('.cs-build');
+    if (build && h.version) {
+        build.textContent = h.version + ' · up ' + h.uptime;
+        build.title = h.commit || '';
+    }
+
+    const goroVal = document.getElementById('cs-goro-val');
+    if (goroVal) goroVal.textContent = h.goroutines;
+    drawSparkline(document.getElementById('cs-spark'), h.goroutine_history);
+
+    // One sentence, the first reason. A red dot with no explanation is a
+    // puzzle; the rest are in the payload for whoever wants them.
+    const note = document.getElementById('cs-note');
+    if (note) note.textContent = (h.reasons && h.reasons.length) ? h.reasons[0] : '';
+}
+
+async function refreshCoreHealth() {
+    try {
+        renderCoreHealth(await apiGet('/api/core/health'));
+    } catch {
+        // A failed poll leaves the last good render in place. Blanking the
+        // strip because one fetch failed would be its own false signal.
+    }
+}
+
+if (document.getElementById('core-strip')) {
+    refreshCoreHealth();
+    setInterval(refreshCoreHealth, 15000);
+}

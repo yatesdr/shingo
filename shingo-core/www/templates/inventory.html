@@ -33,6 +33,11 @@
       <h2>Replenishment Health</h2>
       <span class="text-muted-sm">On-hand = bins + lineside (what the threshold monitor sums) · click a row to tune thresholds</span>
     </div>
+    <!-- Ledger exceptions. BLANK ON A GOOD DAY — that is the design: a list
+         that is empty until something is wrong is the right instrument, and a
+         panel of charts computed from a handful of points is worse than
+         nothing. Fed by /api/inventory/ledger-exceptions. -->
+    <div id="rh-ledger-exceptions"></div>
     <div class="table-scroll-y">
       <table class="rh-table">
         <thead>

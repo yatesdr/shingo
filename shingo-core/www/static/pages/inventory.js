@@ -17,6 +17,7 @@ import { onSSE } from '/static/shared/utils.js';
 
 // ── state ──────────────────────────────────────────────────────────────
 let health = [];        // /api/inventory/monitor-totals rows
+let ledgerExceptions = {}; // /api/inventory/ledger-exceptions
 let anomalySummary = {}; // /api/inventory/anomaly-summary (rejected/stale counts)
 let loaders = [];       // /api/loader/list loaders (editable config)
 let bins = [];          // /api/inventory rows
@@ -41,14 +42,16 @@ const STALE_BAD_MS = 30 * 24 * 3600 * 1000;
 // ── data loading ─────────────────────────────────────────────────────────
 async function loadAll(quiet) {
   try {
-    const [h, ld, inv, bk, nd, an] = await Promise.all([
+    const [h, ld, inv, bk, nd, an, lx] = await Promise.all([
       apiGet('/api/inventory/monitor-totals').catch(() => []),
       apiGet('/api/loader/list').catch(() => ({ loaders: [] })),
       apiGet('/api/inventory').catch(() => []),
       apiGet('/api/buckets').catch(() => []),
       apiGet('/api/nodes').catch(() => ({})),
       apiGet('/api/inventory/anomaly-summary').catch(() => ({})),
+      apiGet('/api/inventory/ledger-exceptions').catch(() => ({})),
     ]);
+    ledgerExceptions = lx && typeof lx === 'object' ? lx : {};
     health = Array.isArray(h) ? h : [];
     anomalySummary = an && typeof an === 'object' ? an : {};
     loaders = (ld && ld.loaders) || [];
@@ -142,6 +145,7 @@ function renderAll() {
   populateFilters();
   renderKpis();
   renderAlerts();
+  renderLedgerExceptions();
   renderHealth();
   renderBuckets();
   const asof = document.getElementById('inv-asof');
@@ -292,6 +296,47 @@ function meterHtml(r) {
   }
   return html + '</div>';
 }
+// ── ledger exceptions ─────────────────────────────────────────────────────
+//
+// Bins whose UOP ledger is negative RIGHT NOW. Blank on a good day, and that
+// is the whole design — a list that stays empty until something is wrong is a
+// better instrument than a panel that always shows something.
+//
+// This is upstream of the failure class the rest of the branch chases: a
+// negative ledger makes the threshold monitor refuse to signal replenishment
+// (correctly — a negative in-loop total is a broken ledger, never real
+// demand), the payload then genuinely runs dry, and a changeover arms on a dry
+// source. Springfield logged that refusal 1,119 times a day and it appeared on
+// no surface, so nobody could act on it.
+//
+// Deliberately NOT clamped anywhere: negative is loudly wrong, and a clamp
+// would make it silently wrong.
+function renderLedgerExceptions() {
+  const host = document.getElementById('rh-ledger-exceptions');
+  if (!host) return;
+  const openBins = (ledgerExceptions && ledgerExceptions.open_bins) || [];
+  if (!openBins.length) { host.innerHTML = ''; return; }
+
+  const rows = openBins.map((b) => {
+    const since = b.negative_since
+      ? ' since ' + new Date(b.negative_since).toLocaleString()
+      // The crossing predates the audit retention. Say so rather than
+      // implying it just happened.
+      : ' (crossing older than the audit trail)';
+    const where = b.node_name ? ' at ' + escapeHtml(b.node_name) : '';
+    return '<li><code>' + escapeHtml(b.label || ('bin ' + b.bin_id)) + '</code>'
+      + (b.payload_code ? ' <span class="text-muted-xs">' + escapeHtml(b.payload_code) + '</span>' : '')
+      + where + ' reads <b>' + b.uop_remaining + '</b>' + escapeHtml(since) + '</li>';
+  }).join('');
+
+  host.innerHTML = '<div class="ledger-exceptions">'
+    + '<div class="ledger-exceptions__head">'
+    + '<span class="chip chip-err">Ledger negative</span> '
+    + openBins.length + ' bin' + (openBins.length === 1 ? '' : 's')
+    + ' below zero — replenishment is suppressed for the payloads they carry'
+    + '</div><ul class="ledger-exceptions__list">' + rows + '</ul></div>';
+}
+
 function chipsHtml(r) {
   const st = healthState(r);
   let chips = '';
@@ -307,6 +352,15 @@ function chipsHtml(r) {
   else if (st === 'near') chips += '<span class="chip chip-near">Near threshold</span>';
   else if (st === 'ok') chips += '<span class="chip chip-ok">OK</span>';
   else chips += '<span class="chip chip-muted">No threshold set</span>';
+  if (r.ledger_negative && st !== 'err') {
+    // on_hand (bins + lineside) can read healthy while the BINS side alone is
+    // negative — bucket stock masking a broken bin ledger. The existing
+    // on_hand < 0 test cannot see that, so it gets its own chip.
+    const tip = 'Bins for this payload sum to ' + r.ledger_total + ', but lineside stock is '
+      + 'masking it in the on-hand total. The bin ledger is still wrong — check this '
+      + 'payload in the ledger exceptions above.';
+    chips += ' <span class="chip chip-warn" title="' + escapeHtml(tip) + '">Bin ledger negative</span>';
+  }
   if (r.swap_contradiction) {
     // P2-C9: an operator requested a manual swap for this payload while the
     // ledger reads it as fully stocked — the SNF3 phantom-on-hand shape. The

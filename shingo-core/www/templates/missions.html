@@ -19,6 +19,21 @@
        snapshot; Missions is the analytical drill page (table + breakdowns +
        Pareto + cells + parts). Sys-health pills relocated to the filter bar. -->
 
+  <!-- Dwell: where an order's time actually goes between being asked for and
+       being confirmed. Five state pairs, p50/p95, with the sample count beside
+       each — at this volume a p95 over four samples is noise, so the count is
+       not optional decoration. Respects the filter bar above.
+
+       No chart. Five pairs of numbers is a row of figures; a chart here would
+       be decoration standing in for information. -->
+  <section class="card" id="m-dwell">
+    <div class="section-head">
+      <h2>Dwell</h2>
+      <span class="text-muted-sm">time per state, p50 / p95</span>
+    </div>
+    <div class="dwell-row" id="m-dwell-row"><span class="text-muted-sm">Loading dwell&hellip;</span></div>
+  </section>
+
   <!-- D: Cells (§3.D, Phase E). Per-cell production rhythm — a pulsing primary
        Process dot plus satellite sub-Process dots, live on cell-heartbeat.
        Empty until cells are configured at /admin/cells. -->

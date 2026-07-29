@@ -618,7 +618,19 @@ textarea { resize: vertical; min-height: 60px; }
   border: 1px solid var(--border); border-radius: 0.35rem;
   background: var(--surface);
 }
-.chip {
+/* SCOPED to .chip-container on purpose. This is the chip-PICKER's removable
+   tag pill, a different thing from the status chips in shared/components.css
+   (.chip-ok / .chip-near / .chip-below / .chip-err). Both were called .chip,
+   both are (0,1,0), and style.css loads after components.css — so this
+   background silently won on every status chip in the app.
+   .chip-ok/near/below survived by luck: they set a bright text colour that
+   happens to read on this navy. .chip-err did not — it sets near-black text
+   (#1b0508) because it expects its own coral FILL, and on the navy that is
+   about 1.2:1 contrast. The loudest state on the Replenishment Health page
+   was the one you could not read.
+   Every picker chip is appended into a .chip-container (nodes-detail.js), so
+   scoping costs the widget nothing. */
+.chip-container .chip {
   display: inline-flex; align-items: center; gap: 0.25rem;
   padding: 0.15rem 0.4rem; font-size: 0.8rem;
   background: color-mix(in srgb, var(--primary) 12%, var(--surface));
@@ -722,6 +734,34 @@ textarea { resize: vertical; min-height: 60px; }
 .duration-bar { display:flex; height:24px; border-radius:4px; overflow:hidden; gap:1px; }
 .duration-segment { min-width:2px; cursor:default; transition:opacity .15s; }
 .duration-segment:hover { opacity:.8; }
+
+/* Leg decomposition (mission detail).
+   A leg the fleet did not time is HATCHED, not blank and not zero-width:
+   absent is not instant, and a zero-width segment reads as "took no time".
+   It gets a fixed width in JS so it is visible and countable while claiming
+   no share of a timeline it cannot measure. No hue — "we do not know" is not
+   a lifecycle phase, so it takes none of the status palette. */
+.duration-segment.leg-unknown,
+.leg-swatch.leg-unknown {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--border) 0 4px,
+    transparent 4px 8px
+  );
+  border: 1px dashed var(--text-muted);
+  box-sizing: border-box;
+}
+.leg-swatch {
+  display: inline-block; width: 12px; height: 12px; border-radius: 2px;
+  vertical-align: middle; margin-right: 4px;
+}
+.leg-unknown-text { color: var(--text-muted); font-style: italic; }
+/* The arithmetic, stated. The bar should be checkable, not trusted. */
+.leg-total {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
 
 .stat-value { font-size:1.8rem; font-weight:700; line-height:1.2; }
 .stat-label { font-size:.85em; color:var(--text-muted); }
@@ -1848,3 +1888,198 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 /* Consumption drill chart. */
 .drill-chart { height: 320px; }
 .drill-narrative { margin-top: 0.75rem; color: var(--text-muted); font-size: var(--font-sm); }
+
+/* ── Core Health strip (dashboard) ─────────────────────────────────────────
+   One horizontal band replacing the two grid-6 stat rows. The constraint the
+   whole layout serves: the Active Orders table below it must stay above the
+   fold, because that table is what people interact with.
+
+   Colour discipline, and it is deliberate:
+     --accent   normal meter fill, and the current sparkline point. A meter at
+                12% is NORMAL, not GOOD — normal is not a status claim.
+     --warning  meter approaching its limit (70-90%)
+     --danger   meter at/over limit, and evidence that explains a bad verdict
+     --success  ONLY the dependency dots and the verdict dot when healthy
+   No --info, and none of the Signal lifecycle hues (in_transit cyan, staged
+   teal) — those belong to order status and must not read as health state.
+
+   Net effect on a healthy day: mostly muted grey, two indigo bars, a few small
+   green dots. When something breaks, the broken thing is the only saturated
+   element on screen. "Structure recedes, state glows."
+
+   No idle animation — motion means motion. The only transition is fill width. */
+.core-strip {
+  display: flex;
+  align-items: stretch;
+  gap: 1.25rem;
+  padding: 0.75rem 1rem;
+  flex-wrap: wrap;
+}
+.core-strip .cs-zone { display: flex; }
+.core-strip .cs-zone + .cs-zone {
+  border-left: 1px solid var(--border);
+  padding-left: 1.25rem;
+}
+
+/* Counts: six inline figures, no card each. */
+.cs-counts {
+  flex: 1 1 auto;
+  align-items: center;
+  /* space-between, because removing the dependency zone widened this zone and
+     left-packed figures left a void on its right — the "dead gap" the strip
+     was meant to lose, moved rather than removed. */
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  flex-wrap: wrap;
+}
+.cs-fig { display: flex; flex-direction: column; gap: 0.1rem; }
+.cs-num { font-size: 1.35rem; font-weight: 600; line-height: 1.1; }
+.cs-num.is-bad { color: var(--danger); }
+/* Five of seven counts are usually 0 and carried the same visual weight as
+   the two that mean something. Zero is a fact, not news. */
+.cs-num.is-zero { color: var(--text-muted); font-weight: 500; }
+.cs-lbl {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+/* Dependencies appear ONLY when one is down, inline beside the verdict.
+   All four up means the verdict already said it — printing the dots as well
+   was the conclusion and its evidence side by side, and the zone they lived in
+   left a dead gap across the middle of the strip. Every dot still ships with
+   its label; colour is never the whole message. */
+.cs-deps-down { display: contents; }
+.cs-dep-down {
+  display: inline-flex; align-items: center;
+  font-size: 0.78rem; color: var(--danger); white-space: nowrap;
+}
+
+/* Core health: verdict on top, evidence below. */
+.cs-health { flex: 0 0 auto; min-width: 300px; flex-direction: column; gap: 0.25rem; }
+.cs-verdict {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 0.4rem;
+  font-size: 0.9rem;
+}
+.cs-verdict strong { white-space: nowrap; }
+/* Build + uptime take the rest of the line. The uptime string is short now
+   ("6m", not "0d 00h 06m") so it fits beside the verdict instead of needing a
+   row of its own. */
+.cs-build {
+  margin-left: auto;
+  font-size: 0.72rem; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Rows align as a column, so tabular-nums. (The proportional-figures rule is
+   for large standalone stat values — the KPI tiles elsewhere, not these.) */
+.cs-meter-row {
+  display: grid;
+  grid-template-columns: 5.2rem 1fr 3.4rem;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.cs-val { text-align: right; color: var(--text-muted); }
+
+/* Pool and load share a row. An empty meter earns nothing — a blank 0/25 bar
+   is chrome pretending to be information — so the track is hidden until the
+   fill is non-trivial and the numbers stand alone until then.
+   FLEX, not grid: display:none removes a grid ITEM but not its COLUMN, so
+   hiding one meter shifted every following cell one column left and the two
+   pairs stopped lining up. In flex the row simply closes up. */
+.cs-ratios {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+/* Fixed width so showing and hiding a bar does not reflow the numbers beside
+   it — the row must not jump every time load crosses the threshold. */
+.cs-ratios .cs-meter { flex: 0 0 64px; }
+.cs-ratios .cs-val { text-align: left; }
+.cs-meter.is-hidden { display: none; }
+.cs-val.is-bad { color: var(--danger); }
+
+/* Meter: a ratio against a limit. Track is the fill hue at low alpha so state
+   reads across the whole bar, not just the filled part. */
+.cs-meter {
+  position: relative; height: 6px; border-radius: 3px; overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.cs-meter-fill {
+  position: absolute; inset: 0 auto 0 0; width: 0;
+  background: var(--accent);
+  transition: width 220ms ease;
+}
+.cs-meter-fill.is-warn { background: var(--warning); }
+.cs-meter-fill.is-bad  { background: var(--danger); }
+.cs-meter.is-unavailable { background: var(--border); }
+
+/* Sparkline: goroutines only. The VALUE is meaningless; the DIRECTION is the
+   leak signal. Path recedes; only the current point takes the accent. */
+.cs-spark { width: 100%; height: 16px; overflow: visible; }
+.cs-spark path { fill: none; stroke: var(--text-muted); stroke-width: 1.25; opacity: 0.55; vector-effect: non-scaling-stroke; }
+.cs-spark circle { fill: var(--accent); }
+
+/* The note is the sentence behind a bad verdict. Empty and invisible when the
+   verdict is fine — a red dot with no explanation is a puzzle, not a signal. */
+/* display:none, not visibility:hidden — an invisible row still costs its
+   height, and on a healthy Core this is empty every time. */
+.cs-note { font-size: 0.72rem; color: var(--danger); }
+.cs-note:empty { display: none; }
+
+@media (max-width: 900px) {
+  .core-strip { gap: 0.75rem; }
+  .core-strip .cs-zone + .cs-zone { border-left: 0; padding-left: 0; }
+  .cs-health { width: 100%; }
+}
+
+/* ── Dwell row (missions) ──────────────────────────────────────────────────
+   Five state pairs as figures, not a chart: five numbers is a row, and a
+   chart here would be decoration standing in for information.
+   tabular-nums so the values line up as a column to scan down. */
+.dwell-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.75rem;
+  align-items: flex-start;
+}
+.dwell-cell { display: flex; flex-direction: column; gap: 0.15rem; }
+.dwell-label {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.dwell-val { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.dwell-sep { color: var(--text-muted); }
+.dwell-count { font-size: 0.7rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* No samples reads as "no data", never as 0s — instant and unmeasured are
+   different facts. */
+.dwell-empty .dwell-val { color: var(--text-muted); font-size: 0.9rem; font-style: italic; }
+/* Too few samples to trust: reported but visibly weakened, rather than hidden.
+   A gap is worse — a reader fills it with a guess. */
+.dwell-thin .dwell-val { opacity: 0.65; }
+.dwell-thin .dwell-count { color: var(--warning); }
+
+/* ── Ledger exceptions (inventory) ─────────────────────────────────────────
+   Rendered only when the list is non-empty — the JS emits nothing otherwise.
+   An exception list that always shows something is not an exception list. */
+.ledger-exceptions {
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.75rem;
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+}
+.ledger-exceptions__head { font-size: 0.85rem; margin-bottom: 0.35rem; }
+.ledger-exceptions__list {
+  margin: 0; padding-left: 1.1rem;
+  font-size: 0.8rem; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ledger-exceptions__list b { color: var(--danger); }

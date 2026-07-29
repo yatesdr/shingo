@@ -252,6 +252,10 @@ func main() {
 	// never reaches ready, and those are exactly the boots worth attributing
 	// to a commit (five restarts in fifteen minutes, 2026-07-24).
 	log.Printf("shingocore: starting version=%s commit=%s config=%s", Version, Commit, flags.configPath)
+	// Hand the stamp to the web layer so the Core Health strip can show it
+	// beside uptime — "0d 00h 14m" next to a red verdict reads as "it broke
+	// right after a restart" with no correlation work.
+	www.SetBuildInfo(Version, Commit, time.Now())
 
 	dbg := mustInitDebugLog(flags.fileFilter)
 	defer dbg.Close()

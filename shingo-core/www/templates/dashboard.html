@@ -15,54 +15,59 @@
     <div class="dash-card-grid" id="dash-cards"><div class="dash-empty">Loading dashboards&hellip;</div></div>
   </section>
 
-  <div class="grid grid-6 mb-1">
-    <div class="card stat" data-tip="Orders currently being processed — includes pending, dispatched, in-transit, and awaiting confirmation.">
-      <div class="value">{{.TotalOrders}}</div>
-      <div class="label">Active Orders</div>
+  <!-- Core Health strip.
+       One horizontal band. The constraint the whole layout serves: the Active
+       Orders table below must stay above the fold, because that table is what
+       people interact with.
+
+       The dependency zone is GONE when everything is up. "Core OK" is derived
+       from fleet/database/messaging/edges, so printing four green dots beside
+       it was the conclusion and its evidence saying the same thing twice — and
+       costing a zone's width plus a dead gap to do it. When something IS down,
+       the strip names that one thing next to the verdict. -->
+  <section class="card core-strip mb-2" id="core-strip" data-health='{{.Health.Verdict}}'>
+    <div class="cs-zone cs-counts">
+      <div class="cs-fig"><span class="cs-num{{if eq .TotalOrders 0}} is-zero{{end}}">{{.TotalOrders}}</span><span class="cs-lbl">Active orders</span></div>
+      <div class="cs-fig"><span class="cs-num{{if eq .TotalNodes 0}} is-zero{{end}}">{{.TotalNodes}}</span><span class="cs-lbl">Nodes</span></div>
+      <div class="cs-fig"><span class="cs-num{{if eq .PollerActive 0}} is-zero{{end}}">{{.PollerActive}}</span><span class="cs-lbl">Polling</span></div>
+      {{if .Recon}}
+      <div class="cs-fig"><span class="cs-num{{if gt .Recon.CompletionAnomalies 0}} is-bad{{else}} is-zero{{end}}">{{.Recon.CompletionAnomalies}}</span><span class="cs-lbl">Anomalies</span></div>
+      <div class="cs-fig"><span class="cs-num{{if eq .Recon.OutboxPending 0}} is-zero{{end}}">{{.Recon.OutboxPending}}</span><span class="cs-lbl">Outbox</span></div>
+      {{end}}
+      <div class="cs-fig"><span class="cs-num{{if eq .SSEClients 0}} is-zero{{end}}">{{.SSEClients}}</span><span class="cs-lbl">SSE clients</span></div>
     </div>
-    <div class="card stat" data-tip="Registered storage locations, stations, and waypoints in the node graph.">
-      <div class="value">{{.TotalNodes}}</div>
-      <div class="label">Total Nodes</div>
-    </div>
-    <div class="card stat" data-tip="Connection to the robot fleet controller. Required for dispatching and tracking robot missions.">
-      <div class="value">
-        <span id="fleet-status" class="health {{if .FleetOK}}health-ok{{else}}health-fail{{end}}"></span>
-        {{if .FleetOK}}OK{{else}}Down{{end}}
+
+    <div class="cs-zone cs-health">
+      <div class="cs-verdict">
+        <span class="health {{if eq .Health.Verdict "ok"}}health-ok{{else}}health-fail{{end}}"></span>
+        <strong id="cs-verdict-text">{{if eq .Health.Verdict "ok"}}Core OK{{else}}Core degraded{{end}}</strong>
+        <!-- Only what is DOWN, and only when something is. -->
+        <span class="cs-deps-down" id="cs-deps-down">{{range .Health.DepsDown}}<span class="cs-dep-down"><span class="health health-fail"></span>{{.}}</span>{{end}}</span>
+        <span class="cs-build" title="{{.Health.Commit}}">{{.Health.Version}} &middot; up {{.Health.Uptime}}</span>
       </div>
-      <div class="label">Fleet Manager ({{.FleetName}})</div>
-    </div>
-    <div class="card stat" data-tip="Connection to the message broker linking Core and Edge stations. Handles order acknowledgments and status sync.">
-      <div class="value">
-        <span id="msg-status" class="health {{if .MessagingOK}}health-ok{{else}}health-fail{{end}}"></span>
-        {{if .MessagingOK}}OK{{else}}Down{{end}}
+
+      <!-- Pool and load share one line. An empty meter earns nothing: the bar
+           only appears once the fill is worth looking at, so a quiet Core shows
+           two small numbers instead of two blank tracks. -->
+      <div class="cs-ratios">
+        <span class="cs-lbl">Pool</span>
+        <span class="cs-meter is-hidden" id="cs-pool-meter"><span class="cs-meter-fill" id="cs-pool-fill"></span></span>
+        <span class="cs-val" id="cs-pool-val">{{.Health.DBInUse}}/{{.Health.DBMaxOpen}}</span>
+        <span class="cs-lbl">Load</span>
+        <span class="cs-meter is-hidden" id="cs-load-meter"><span class="cs-meter-fill" id="cs-load-fill"></span></span>
+        <span class="cs-val" id="cs-load-val">{{printf "%.2f" .Health.Load1}}/{{.Health.Cores}}</span>
       </div>
-      <div class="label">Messaging</div>
-    </div>
-    <div class="card stat" data-tip="PostgreSQL connection status.">
-      <div class="value">
-        <span id="db-status" class="health {{if .DatabaseOK}}health-ok{{else}}health-fail{{end}}"></span>
-        {{if .DatabaseOK}}OK{{else}}Down{{end}}
+
+      <div class="cs-meter-row">
+        <span class="cs-lbl">Goroutines</span>
+        <svg class="cs-spark" id="cs-spark" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <span class="cs-val" id="cs-goro-val">{{.Health.Goroutines}}</span>
       </div>
-      <div class="label">Database</div>
+
+      <div class="cs-note" id="cs-note">{{if .Health.Reasons}}{{index .Health.Reasons 0}}{{end}}</div>
     </div>
-    <div class="card stat" data-tip="Orders actively being polled against the fleet manager for real-time status updates.">
-      <div class="value">{{.PollerActive}}</div>
-      <div class="label">Polling Orders</div>
-    </div>
-  </div>
-  {{if .Recon}}
-  <div class="grid grid-6 mb-1">
-    <div class="card stat" data-tip="State mismatches — e.g. terminal orders still holding bin locks, or confirmed orders missing completion timestamps. Investigate if non-zero.">
-      <div class="value">{{.Recon.CompletionAnomalies}}</div>
-      <div class="label">Completion Anomalies</div>
-    </div>
-    <div class="card stat" data-tip="Queued messages awaiting delivery to Edge stations. Clears automatically. Stale entries may indicate a messaging issue.">
-      <div class="value">{{.Recon.OutboxPending}}</div>
-      <div class="label">Pending Outbox</div>
-    </div>
-  </div>
-  {{end}}
-  <div class="text-muted mb-3 text-right" style="font-size:0.8rem;">SSE clients: {{.SSEClients}}</div>
+  </section>
+
 
   {{if .ActiveOrders}}
   <div class="card">

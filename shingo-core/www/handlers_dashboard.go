@@ -38,8 +38,13 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		trackerCount = t.ActiveCount()
 	}
 
+	depsOK, depReasons := h.dependencyState()
+
 	data := map[string]any{
-		"Page":         "dashboard",
+		"Page": "dashboard",
+		// Server-rendered so the strip is correct on first paint rather than
+		// flashing empty until the first poll lands.
+		"Health":       h.coreHealth(depsOK, depReasons),
 		"ActiveOrders": activeOrders,
 		"StatusCounts": statusCounts,
 		"TotalOrders":  len(activeOrders),
