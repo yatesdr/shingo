@@ -538,3 +538,24 @@ func generateSecret() string {
 	}
 	return hex.EncodeToString(b)
 }
+
+// NewStationUID mints this edge's own identity when nobody has given it one.
+//
+// SAME SHAPE AS CORE'S MINTER, deliberately: 'stn-' + 16 hex. An operator
+// reading a log line, a Kafka consumer group or a yaml file cannot tell whether
+// Core minted the value or the edge did, and should not need to — the two are
+// the same kind of thing. What differs is only whether a human has said what
+// the station IS, and that lives on Core as claimed_at, not in the string.
+//
+// 64 bits is not birthday-collision-resistant and does not need to be. The
+// property that matters is that two unconfigured edges cannot draw the SAME
+// value, which is exactly what the old derived id did — 'plant-a.line-1' on
+// every one of them, composed from two struct defaults. Randomness is what
+// makes self-introduction safe; Core's unique index is what makes it certain.
+func NewStationUID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return "stn-" + hex.EncodeToString(b)
+}

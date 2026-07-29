@@ -344,6 +344,21 @@ CREATE TABLE IF NOT EXISTS edge_registry (
     bound_instance    TEXT NOT NULL DEFAULT '',
     prev_instance     TEXT NOT NULL DEFAULT '',
     bound_at          TIMESTAMPTZ,
+    -- claimed_at is NULL until a human has said what this station IS.
+    --
+    -- IT IS NOT status, AND THAT IS THE POINT. Register writes status='active'
+    -- on every single register, so anything recorded there is erased by the
+    -- next heartbeat-tick's worth of traffic. The question "has anybody
+    -- acknowledged this box?" has to survive registration, so it gets its own
+    -- column and only ever moves one way.
+    --
+    -- NULL means an edge introduced itself and nobody has confirmed what it is.
+    -- That is a real and expected state now: an unconfigured Pi mints its own
+    -- uid and comes up working, which is what makes an edge deployable without
+    -- anyone understanding identity. What it CANNOT do is claim to be an
+    -- existing station — a minted uid is random, so it always makes its own row
+    -- and can never take over another one.
+    claimed_at        TIMESTAMPTZ,
     conflict_hostname TEXT NOT NULL DEFAULT '',
     conflict_count    BIGINT NOT NULL DEFAULT 0,
     conflict_at       TIMESTAMPTZ

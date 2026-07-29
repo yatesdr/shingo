@@ -405,6 +405,17 @@ func (s *NodeService) RenameEdge(uid, displayName string) (bool, error) {
 	return ok, err
 }
 
+// ClaimEdge records a human's answer to "what is this station?" — the act an
+// edge cannot perform for itself. Naming is optional everywhere else; here it
+// doubles as the acknowledgement, because the two happen at the same moment.
+func (s *NodeService) ClaimEdge(uid, displayName string) (bool, error) {
+	ok, err := s.db.ClaimEdge(uid, displayName)
+	if err == nil {
+		s.invalidateStationNames()
+	}
+	return ok, err
+}
+
 // RebindEdge moves a station's binding to a new machine and clears its
 // conflict record. The sanctioned "yes, this station lives here now".
 func (s *NodeService) RebindEdge(uid, hostname string) (bool, error) {

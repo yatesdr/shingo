@@ -57,3 +57,14 @@ func (db *DB) GetEdgeByUID(uid string) (*registry.Edge, error) {
 func (db *DB) MarkStaleEdges(threshold time.Duration) ([]string, error) {
 	return registry.MarkStale(db.DB, threshold)
 }
+
+// IntroduceEdge records an edge that arrived with a uid Core has never seen.
+// The row is created UNCLAIMED — see registry.Introduce.
+func (db *DB) IntroduceEdge(uid, hostname, version string) (*registry.Edge, error) {
+	return registry.Introduce(db.DB, uid, hostname, version)
+}
+
+// ClaimEdge records a human's answer to "what is this station?".
+func (db *DB) ClaimEdge(uid, displayName string) (bool, error) {
+	return registry.Claim(db.DB, uid, displayName)
+}

@@ -830,6 +830,11 @@ func (db *DB) runVersionedMigrations() error {
 					schema.ColumnExists(q, "edge_registry", "bound_at") &&
 					!schema.ColumnExists(q, "edge_registry", "line_ids")
 			}},
+		{67, "edge_registry.claimed_at — an edge may introduce itself; a human says what it is",
+			v67EdgeClaim,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "edge_registry", "claimed_at")
+			}},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3033,6 +3038,55 @@ func v66EdgeIdentity(tx *sql.Tx) error {
 	}
 	if _, err := tx.Exec(`ALTER TABLE edge_registry DROP COLUMN IF EXISTS line_ids`); err != nil {
 		return fmt.Errorf("v66 drop retired line_ids: %w", err)
+	}
+	return nil
+}
+
+// v67EdgeClaim adds the acknowledgement mark, and it is the schema half of
+// letting an edge introduce itself.
+//
+// # WHY THIS EXISTS, AND WHY IT IS NOT A REVERSION
+//
+// v66 made Core the only minter of station identity, and the enrollment deploy
+// deleted the branch that let an unknown edge register. Both were right about
+// the defect they were closing: a station id DERIVED FROM TWO CONFIG DEFAULTS
+// was the same string on every unconfigured Pi in the fleet, so a second box
+// did not collide with the first — it took turns owning the first one's row,
+// and the clause that let it do so erased the evidence there had been two.
+//
+// But closing that shut something else that was never the problem: an edge
+// being able to come up AT ALL without a human first fetching a value from
+// another system. That property is what made an edge deployable by whoever was
+// holding the SD card, and losing it moves a distributed-identity concept onto
+// the shop floor, where it does not belong.
+//
+// THE DISTINCTION THE ORIGINAL FIX MISSED IS BETWEEN COLLISION AND CREATION.
+// The danger was never that a machine could create a row. It was that it could
+// create THE SAME row as another machine, because the string was derived rather
+// than drawn. An edge that mints 64 bits of randomness cannot take over another
+// station's row no matter how many are deployed — it can only ever make its
+// own. So the machine may introduce itself; what it may not do is assert WHICH
+// station it is. That remains a human act, and this column is where the human's
+// answer is recorded.
+//
+// NULL = introduced, running, unacknowledged. A timestamp = somebody looked at
+// it and said what it is.
+//
+// THE BACKFILL SETS EVERY EXISTING ROW CLAIMED, and that is not a convenience.
+// Every row that exists when this runs got there one of two ways: an operator
+// called Enroll, or v66 backfilled it from the station id a plant has been
+// running on for months. Both are acknowledged by definition. Leaving them NULL
+// would open the deploy by announcing that both live plants are unidentified,
+// which is false and is exactly the kind of alarm that teaches people to ignore
+// the column.
+func v67EdgeClaim(tx *sql.Tx) error {
+	if _, err := tx.Exec(
+		`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ`); err != nil {
+		return fmt.Errorf("v67 add claimed_at: %w", err)
+	}
+	if _, err := tx.Exec(
+		`UPDATE edge_registry SET claimed_at = registered_at WHERE claimed_at IS NULL`); err != nil {
+		return fmt.Errorf("v67 backfill claimed_at from registered_at: %w", err)
 	}
 	return nil
 }

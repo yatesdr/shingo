@@ -136,6 +136,46 @@ func (h *Handlers) apiEdgeRename(w http.ResponseWriter, r *http.Request) {
 	h.jsonSuccess(w)
 }
 
+// apiEdgeClaim answers "what is this station?" for an edge that introduced
+// itself.
+//
+// POST /api/edges/claim?uid=stn-…  {"display_name": "…"}
+//
+// THE ONE THING AN EDGE CANNOT DO FOR ITSELF. A box can say "I exist" — it
+// mints a uid and registers, which is what makes it deployable by whoever is
+// holding the SD card. It cannot say WHICH station it is, because that is a
+// fact about the plant and not about the hardware. This endpoint is a human
+// supplying that fact.
+//
+// It does NOT cover the replacement case, and must not be reached for it.
+// Claiming an unclaimed row as a replacement would leave the dead station's
+// history under the OLD uid and everything since the swap under the new one —
+// the split the whole identity model exists to prevent. Replacement hardware
+// takes the existing uid onto the box; the provisional row is then deleted, not
+// claimed.
+func (h *Handlers) apiEdgeClaim(w http.ResponseWriter, r *http.Request) {
+	uid := strings.TrimSpace(r.URL.Query().Get("uid"))
+	if uid == "" {
+		h.jsonError(w, "uid required", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		DisplayName string `json:"display_name"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	ok, err := h.engine.NodeService().ClaimEdge(uid, strings.TrimSpace(req.DisplayName))
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		h.jsonError(w, "no station with uid "+uid, http.StatusNotFound)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
 // apiEdgeRebind moves a station's binding to a new machine and clears its
 // conflict record.
 //

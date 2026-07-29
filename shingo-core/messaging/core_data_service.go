@@ -349,15 +349,36 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 
 	conflict, err := s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version)
 	if errors.Is(err, registry.ErrUnknownStation) {
-		// GUARD 2, IN ITS FINAL FORM. The migration window's auto-enroll
-		// recovery branch lived here and is deleted; a station Core has never
-		// enrolled cannot come into existence by an Edge asserting a name at
-		// it. Nothing was written — see registry.Register.
-		log.Printf("core_handler: REFUSED register from unenrolled station %s (hostname=%s). "+
-			"Enroll it on Core and put the returned station_uid in that Pi's shingoedge.yaml; "+
-			"if this is replacement hardware for an existing station, use that station's "+
-			"EXISTING uid instead of enrolling a new one.", uid, p.Hostname)
-		return
+		// AN EDGE MAY INTRODUCE ITSELF. IT MAY NOT SAY WHICH STATION IT IS.
+		//
+		// This is the branch the enrollment deploy deleted, rebuilt on the
+		// distinction the first version missed: the defect was COLLISION, not
+		// CREATION. The old station id was composed from two struct defaults,
+		// so every unconfigured Pi in the fleet asserted the SAME string —
+		// they did not collide, they took turns owning one row. An edge that
+		// mints 64 random bits cannot reach another station's row at all. It
+		// can only make its own.
+		//
+		// So refusing creation bought nothing that randomness does not buy
+		// structurally, and it cost the thing that made an edge deployable:
+		// coming up at all without a human first fetching a value from another
+		// system. That put a distributed-identity concept on the shop floor.
+		//
+		// What is NOT restored is the deleted branch's actual sin. That one
+		// called Enroll and produced a row indistinguishable from a station
+		// somebody had deliberately created. This one leaves claimed_at NULL
+		// and display_name empty, so the station is visibly unacknowledged
+		// everywhere it is listed until a human says what it is. It runs
+		// meanwhile — its work is attributed to its own uid and to nothing
+		// else, which is the property that makes running-while-unclaimed safe.
+		if _, ierr := s.db.IntroduceEdge(uid, p.Hostname, p.Version); ierr != nil &&
+			!errors.Is(ierr, registry.ErrAlreadyEnrolled) {
+			log.Printf("core_handler: introduce unknown station %s: %v", uid, ierr)
+			return
+		}
+		// Re-register so the binding lease, instance and conflict detection all
+		// run against the row exactly as they would for any other station.
+		conflict, err = s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version)
 	}
 	if err != nil {
 		log.Printf("core_handler: register edge %s: %v", uid, err)

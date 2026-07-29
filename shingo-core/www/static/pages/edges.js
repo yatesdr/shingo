@@ -55,9 +55,44 @@ async function renameEdge(btn) {
   }
 }
 
+// claimEdge answers "what is this station?" for an edge that introduced itself.
+//
+// Deliberately a DIFFERENT call from rename, even though both end up writing
+// display_name. Rename relabels a station somebody already accounted for; claim
+// is the first time anybody has. Collapsing them would lose the only record of
+// whether a human ever looked at this box — see edge_registry.claimed_at.
+async function claimEdge(btn) {
+  const row = rowFor(btn);
+  if (!row || !row.uid) return;
+
+  const name = await uiPrompt(
+    'This edge introduced itself as ' + row.uid + '.\n\n' +
+    'If it is a NEW station, name it.\n' +
+    'If it REPLACES an existing station, cancel — put that station\'s uid on the box instead.',
+    { value: '' });
+  if (name === null) return;
+
+  const trimmed = name.trim();
+  if (!trimmed) {
+    toast('Give it a name, or cancel if this replaces an existing station', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    await apiPost('/api/edges/claim?uid=' + encodeURIComponent(row.uid),
+      { display_name: trimmed });
+    toast('Claimed as ' + trimmed, 'success');
+    window.location.reload();
+  } catch (e) {
+    toast('Claim failed: ' + e, 'error');
+    btn.disabled = false;
+  }
+}
+
 document.addEventListener('click', (ev) => {
-  const btn = ev.target.closest('[data-action="renameEdge"]');
-  if (!btn) return;
-  ev.preventDefault();
-  renameEdge(btn);
+  const rename = ev.target.closest('[data-action="renameEdge"]');
+  if (rename) { ev.preventDefault(); renameEdge(rename); return; }
+  const claim = ev.target.closest('[data-action="claimEdge"]');
+  if (claim) { ev.preventDefault(); claimEdge(claim); }
 });

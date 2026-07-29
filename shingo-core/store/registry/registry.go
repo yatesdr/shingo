@@ -149,6 +149,11 @@ func NewStationUID() (string, error) {
 // identity — and they are separate columns because every station-keyed row in
 // this database already carries the string, so the day they diverge is a
 // migration rather than a rename.
+// ENROLLING IS ITSELF THE ACKNOWLEDGEMENT, so claimed_at is set here. An
+// operator calling this has already answered "what is this station?" — that is
+// what the display name they passed IS. Leaving it NULL would list every
+// deliberately-created station as unclaimed, which would make the unclaimed
+// state mean nothing within a day of anyone using it.
 func Enroll(db *sql.DB, uid, displayName, stationID string) (*Edge, error) {
 	if uid == "" {
 		return nil, errors.New("registry: enroll requires a station uid")
@@ -161,8 +166,8 @@ func Enroll(db *sql.DB, uid, displayName, stationID string) (*Edge, error) {
 	}
 	var e Edge
 	err := db.QueryRow(`
-		INSERT INTO edge_registry (station_uid, display_name, station_id, registered_at, status)
-		VALUES ($1, $2, $3, NOW(), 'enrolled')
+		INSERT INTO edge_registry (station_uid, display_name, station_id, registered_at, status, claimed_at)
+		VALUES ($1, $2, $3, NOW(), 'enrolled', NOW())
 		ON CONFLICT DO NOTHING
 		RETURNING id, station_uid, display_name, station_id, registered_at, status
 	`, uid, displayName, stationID).Scan(
@@ -176,6 +181,83 @@ func Enroll(db *sql.DB, uid, displayName, stationID string) (*Edge, error) {
 	log.Printf("registry: ENROLLED station uid=%s display=%q — put `station_uid: %s` in that Pi's "+
 		"/etc/shingo/shingoedge.yaml and restart shingoedge", e.StationUID, e.DisplayName, e.StationUID)
 	return &e, nil
+}
+
+// Introduce records an edge that arrived carrying a uid Core has never seen.
+//
+// THIS IS THE BRANCH THE ENROLLMENT DEPLOY DELETED, REBUILT SO IT IS SAFE.
+// The deleted one called Enroll and produced a row indistinguishable from a
+// station an operator had deliberately created — "an unregistered machine
+// silently became this station", which is precisely what guard 2 exists to
+// prevent. This one cannot do that, for two reasons that are worth separating:
+//
+//  1. THE ROW IS MARKED. claimed_at stays NULL, so the station is visibly
+//     unacknowledged on every surface that lists it until a human says what it
+//     is. Nothing is silent.
+//  2. THE UID IS MINTED, NOT DERIVED. The old defect needed a string that was
+//     THE SAME on every unconfigured edge — 'plant-a.line-1', composed from two
+//     struct defaults. Two such Pis shared one row and took turns owning it.
+//     An edge that draws 64 random bits collides with nothing; it can only ever
+//     create its own row. So "a machine can create a station" was never the
+//     hazard. "A machine can create THE SAME station as another machine" was,
+//     and randomness closes it in a way no guard has to be remembered for.
+//
+// What an edge still cannot do is claim to BE an existing station. That needs
+// the operator to put the existing uid on the box (or restore its backup), and
+// no amount of self-introduction reaches it — which is the whole reason the uid
+// is Core-issued and re-issuable in the first place.
+//
+// display_name is left empty deliberately. Enroll defaults it to the uid so an
+// operator-created station always reads as something; here, empty is the signal
+// that nobody has named this yet, and the Stations page says so.
+func Introduce(db *sql.DB, uid, hostname, version string) (*Edge, error) {
+	if uid == "" {
+		return nil, errors.New("registry: introduce requires a station uid")
+	}
+	var e Edge
+	err := db.QueryRow(`
+		INSERT INTO edge_registry (station_uid, display_name, station_id, hostname, version,
+		                           registered_at, status, bound_hostname, claimed_at)
+		VALUES ($1, '', $1, $2, $3, NOW(), 'active', $2, NULL)
+		ON CONFLICT DO NOTHING
+		RETURNING id, station_uid, display_name, station_id, registered_at, status
+	`, uid, hostname, version).Scan(
+		&e.ID, &e.StationUID, &e.DisplayName, &e.StationID, &e.RegisteredAt, &e.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Raced with another register for the same uid. Not an error: the row
+		// exists, which is all the caller needed.
+		return nil, ErrAlreadyEnrolled
+	}
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("registry: UNCLAIMED STATION %s introduced itself from host %q. It is running and "+
+		"its work is attributed to this uid. Say what it is on Core's Stations page — name it, or "+
+		"if it REPLACES an existing station, put that station's uid on the box instead.",
+		e.StationUID, hostname)
+	return &e, nil
+}
+
+// Claim records a human's answer to "what is this station?".
+//
+// One column, one direction. It never un-claims: a station that has been
+// acknowledged stays acknowledged, because the question it answers is about
+// whether anybody ever looked, not about the station's current state.
+func Claim(db *sql.DB, uid, displayName string) (bool, error) {
+	res, err := db.Exec(`
+		UPDATE edge_registry
+		SET claimed_at = COALESCE(claimed_at, NOW()),
+		    display_name = CASE WHEN $2 <> '' THEN $2 ELSE display_name END
+		WHERE station_uid = $1
+	`, uid, displayName)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if n > 0 {
+		log.Printf("registry: station %s claimed as %q", uid, displayName)
+	}
+	return n > 0, err
 }
 
 // Register records that an already-enrolled station is up, and reports a
@@ -386,14 +468,14 @@ func UpdateHeartbeat(db *sql.DB, uid string) (found bool, err error) {
 
 const edgeColumns = `id, station_uid, display_name, station_id, hostname, version,
 	       registered_at, last_heartbeat, status,
-	       bound_hostname, bound_instance, prev_instance, bound_at,
+	       bound_hostname, bound_instance, prev_instance, bound_at, claimed_at,
 	       conflict_hostname, conflict_count, conflict_at`
 
 func scanEdge(sc interface{ Scan(...any) error }) (Edge, error) {
 	var e Edge
 	err := sc.Scan(&e.ID, &e.StationUID, &e.DisplayName, &e.StationID, &e.Hostname, &e.Version,
 		&e.RegisteredAt, &e.LastHeartbeat, &e.Status,
-		&e.BoundHostname, &e.BoundInstance, &e.PrevInstance, &e.BoundAt,
+		&e.BoundHostname, &e.BoundInstance, &e.PrevInstance, &e.BoundAt, &e.ClaimedAt,
 		&e.ConflictHostname, &e.ConflictCount, &e.ConflictAt)
 	return e, err
 }

@@ -44,6 +44,10 @@ type RegistryEdge struct {
 	BoundInstance string     `json:"bound_instance"`
 	PrevInstance  string     `json:"prev_instance"`
 	BoundAt       *time.Time `json:"bound_at"`
+	// ClaimedAt is NULL until a human has said what this station is. An edge
+	// may introduce itself and run; only a person can say WHICH station it is.
+	// Never cleared — it records whether anybody ever looked, not current state.
+	ClaimedAt *time.Time `json:"claimed_at"`
 	// ConflictHostname / ConflictCount / ConflictAt record the most recent
 	// register that conflicted with the binding. Count 0 means it has never
 	// happened. A count that keeps climbing means two machines are alive and

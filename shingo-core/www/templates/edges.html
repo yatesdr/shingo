@@ -11,6 +11,19 @@
   enrollment and is not editable here or anywhere else.
 </p>
 
+<p class="muted mb-2">
+  An edge that has never been configured mints its own uid and comes up
+  <strong>working</strong> — it appears here as <strong>Unclaimed</strong>. That
+  is a question, not a fault: the box has said it exists, and nobody has said
+  what it is. Name it and it becomes an ordinary station.
+  <br>
+  <strong>If it is REPLACING a station that already exists, do not name it.</strong>
+  Put the existing station's uid on that box instead — from the list below, or
+  by restoring its backup — so its history stays attached, then delete the
+  unclaimed row. Naming it would leave the old station's history under one uid
+  and everything after the swap under another.
+</p>
+
 {{if .RegistryError}}
 <div class="alert alert-error mb-2">Could not read the station registry: {{.RegistryError}}</div>
 {{end}}
@@ -29,15 +42,33 @@
   </thead>
   <tbody>
     {{range .Edges}}
-    <tr data-uid="{{.StationUID}}">
-      <td><span class="edge-name">{{.DisplayName}}</span></td>
+    <tr data-uid="{{.StationUID}}"{{if not .ClaimedAt}} class="edge-unclaimed"{{end}}>
+      <td>
+        {{if .ClaimedAt}}
+          <span class="edge-name">{{.DisplayName}}</span>
+        {{else}}
+          {{/* An edge that introduced itself. It is RUNNING and its work is
+               attributed to its own uid — the row is not a problem, it is a
+               question nobody has answered yet. */}}
+          <span class="badge badge-warn">Unclaimed</span>
+          <div class="text-muted" style="font-size:0.8rem">
+            introduced itself{{if .Hostname}} from {{.Hostname}}{{end}}
+          </div>
+        {{end}}
+      </td>
       <td><code>{{.StationUID}}</code></td>
       <td>{{if .Hostname}}{{.Hostname}}{{else}}-{{end}}</td>
       <td>{{.Status}}</td>
       <td class="col-num tnum">
         {{if gt .ConflictCount 0}}<span class="badge badge-warn">{{.ConflictCount}}</span>{{else}}0{{end}}
       </td>
-      <td><button class="btn btn-sm" data-action="renameEdge">Rename</button></td>
+      <td>
+        {{if .ClaimedAt}}
+          <button class="btn btn-sm" data-action="renameEdge">Rename</button>
+        {{else}}
+          <button class="btn btn-sm btn-primary" data-action="claimEdge">Name it</button>
+        {{end}}
+      </td>
     </tr>
     {{end}}
   </tbody>

@@ -132,52 +132,78 @@ func mustLoadConfig(path string, portOverride int) *config.Config {
 	return cfg
 }
 
-// mustHaveIdentity is GUARD 1: an edge with no Core-issued identity must not
-// come up pretending to be one.
+// ensureIdentity gives this edge an identity if nobody has given it one.
 //
-// THE PRECEDENT IS IN THIS REPO AND IT IS THE RIGHT ONE.
-// store.assertNoStrandedRebuild refuses to start rather than come up silently
-// wrong, on the same reasoning: a process that boots into a state nobody
-// intended is harder to diagnose than a process that will not boot and says
-// why. An unenrolled edge is exactly that state — it registers, it heartbeats,
-// it publishes, and every row it writes is attributed to a station identity it
-// invented from two config defaults.
+// THIS REPLACES A REFUSAL, AND THE REFUSAL WAS RIGHT ABOUT THE WRONG THING.
 //
-// WHAT IT REFUSES IS THE DEFAULT, NOT A MISCONFIGURATION. `plant-a.line-1` was
-// never typed by anyone: it is Namespace + "." + LineID composed from struct
-// defaults, and install-edge.sh writes a placeholder config containing only
-// database_path — so a fresh install COULD NOT come up as anything else. The
-// failure this whole change exists to end was not somebody making a mistake.
-// It was the system having a default answer to a question that has no default.
+// What it refused was `plant-a.line-1` — Namespace + "." + LineID, composed
+// from two struct defaults. Nobody ever typed it, every unconfigured edge in
+// the fleet produced the identical string, and two of them did not collide:
+// they took turns owning one registry row while the clause that let them do it
+// erased the evidence there had been two. Downstream, one of the pair received
+// no dispatch traffic at all — a single-partition consumer group keyed on that
+// same string — while heartbeating and registering normally.
 //
-// THE REFUSAL SHIPPED IN ITS OWN DEPLOY, AND THAT SEPARATION IS THE POINT.
-// It cannot ride the same deploy as the schema: between the Core migration and
-// the enrollment step there IS no enrolled edge, so a refusal there takes both
-// plants down. One deploy tolerates and warns; this one refuses. Which
-// behaviour a plant has is answered by what is deployed, not by a flag — a
-// toggle would have made "is this plant refusing yet" a question about state.
+// Refusing to boot closed that. It also closed something that was never the
+// defect: an edge being able to come up AT ALL without a human first fetching a
+// value out of Core. That property is what let whoever was holding the SD card
+// deploy an edge, and taking it away moved a distributed-identity concept onto
+// the shop floor, where the job is to make the line run.
 //
-// Messaging.StationID still satisfies it, because somebody had to type that
-// into the file. What is refused is the value nobody typed.
-func mustHaveIdentity(cfg *config.Config, stationID string) {
-	if stationID != "" {
+// THE DISTINCTION IS COLLISION versus CREATION. The hazard was never that a box
+// could bring a station into existence; it was that it could bring the SAME one
+// into existence as another box, because the value was DERIVED rather than
+// DRAWN. Sixty-four random bits cannot reach another station's row. So an edge
+// may introduce itself — and Core marks the row unclaimed until a human says
+// what it is (registry.Introduce, edge_registry.claimed_at).
+//
+// WHAT THIS STILL CANNOT DO, and must not: claim to be an EXISTING station.
+// Replacement hardware takes the dead box's uid — read off Core, or restored
+// from its backup — and that is a human act by construction, because a minted
+// value is new by definition. That case is the entire reason the uid is
+// re-issuable, and self-introduction does not touch it.
+//
+// THE MINT IS PERSISTED IMMEDIATELY, which is the part that is easy to get
+// wrong. An edge that minted on every boot would introduce a new station on
+// every restart and fill Core with abandoned rows, each holding a shift of
+// work. Save() writes the whole struct in place over the existing file — the
+// same call the config pages make — so it works despite /etc/shingo being
+// root-owned, because the file itself is shingo-owned. If that write fails the
+// edge still runs, and says loudly that its identity will not survive a
+// restart; refusing there would re-create the outage this function removes.
+func ensureIdentity(cfg *config.Config, configPath string) {
+	if cfg.StationID() != "" {
 		return
 	}
-	log.Fatal("shingoedge: REFUSING TO START — this edge has no identity.\n" +
-		"  There is no station_uid in the config and no explicit messaging.station_id, and " +
-		"there is no longer a default to fall back on: the previous default composed " +
-		"plant-a.line-1 out of two struct fields, which is the identity every unenrolled " +
-		"edge in the fleet shared and the cause of the duplicate-edge failure this refusal " +
-		"exists to end.\n" +
-		"  ENROLL IT on Core (auth-gated API; there is no UI for it yet):\n" +
-		"    POST /api/edges/enroll  {\"display_name\":\"PLANT / EDGE-1\"}\n" +
-		"  Core mints a station_uid and returns it.\n" +
-		"  IF THIS IS REPLACEMENT HARDWARE for a station that already exists, do NOT enroll — " +
-		"that would mint a second identity for one station and split its history. Read the " +
-		"EXISTING uid off Core (GET /api/edges), use that one, and POST " +
-		"/api/edges/rebind?uid=<uid> once this box has registered.\n" +
-		"  THEN: put `station_uid: <uid>` at the top of /etc/shingo/shingoedge.yaml, delete any " +
-		"`group_id:` line under messaging.kafka, and restart.")
+
+	uid := config.NewStationUID()
+	if uid == "" {
+		log.Fatal("shingoedge: REFUSING TO START — this edge has no identity and could not " +
+			"mint one (crypto/rand failed). There is no safe fallback: the previous default " +
+			"composed plant-a.line-1 from two struct fields, which every unconfigured edge in " +
+			"the fleet produced identically and which is the duplicate-station defect this " +
+			"exists to end.")
+	}
+
+	cfg.Lock()
+	cfg.StationUID = uid
+	cfg.Unlock()
+
+	if err := cfg.Save(configPath); err != nil {
+		log.Printf("shingoedge: WARNING — minted station uid %s but could NOT write it to %s: %v\n"+
+			"  This edge is running and Core will show it as an unclaimed station.\n"+
+			"  IT WILL MINT A DIFFERENT UID ON THE NEXT RESTART and appear as a second station.\n"+
+			"  Fix the config file's permissions, or set station_uid by hand, before restarting.",
+			uid, configPath, err)
+		return
+	}
+
+	log.Printf("shingoedge: no station_uid configured — MINTED %s and wrote it to %s.\n"+
+		"  This edge is running now. Core lists it as UNCLAIMED until somebody says what it is:\n"+
+		"    NEW station          → name it on Core's Stations page.\n"+
+		"    REPLACING a station  → put THAT station's uid on this box instead, so its history\n"+
+		"                           stays attached, then delete this unclaimed row.",
+		uid, configPath)
 }
 
 func mustOpenDatabase(path string) *store.DB {
@@ -590,9 +616,9 @@ func main() {
 	// instanceID identifies this RUN. Drawn once, here, because
 	// setupKafkaSubscribers runs a second time on the Kafka-retry path below
 	// and a fresh value there would read to Core as a lease move.
-	stationID := cfg.StationID()
 	instanceID := config.NewInstanceID()
-	mustHaveIdentity(cfg, stationID)
+	ensureIdentity(cfg, flags.configPath)
+	stationID := cfg.StationID()
 
 	// ── Database ────────────────────────────────────────────────────────
 	db := mustOpenDatabase(cfg.DatabasePath)

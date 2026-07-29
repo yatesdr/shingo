@@ -376,6 +376,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				// list, and Core still holding it is the entire design.
 				r.Get("/edges", h.apiEdges)
 				r.Post("/edges/enroll", h.apiEdgeEnroll)
+				r.Post("/edges/claim", h.apiEdgeClaim)
 				r.Post("/edges/rename", h.apiEdgeRename)
 				r.Post("/edges/rebind", h.apiEdgeRebind)
 
