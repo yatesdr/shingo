@@ -1,12 +1,38 @@
 // futility.go — rate-per-tuple futility detector.
 //
-// The failure class this watches for: the planner converts a bounded physical
-// condition into unbounded orchestration work. Springfield, 2026-07-21 — zero
-// system stock on 74577-6SA0A.06, a changeover armed, the supply parked on a
-// dry source, the evac died, the monitor re-armed, and the planner rebuilt the
-// pair. 484 doomed swaps in under two hours, not one of which reached a robot.
-// Every surface stayed green because every surface measures state, and the
-// state at any instant was "a couple of orders in flight".
+// The failure class this watches for: a LEVEL trigger converts a bounded
+// physical condition into unbounded orchestration work. Springfield,
+// 2026-07-21 — zero system stock on 74577-6SA0A.06, the supply leg parked on a
+// dry source, the evac cancelled by the peer handler, and then the level fired
+// again on the next PLC tick. 484 doomed swaps in under two hours, not one of
+// which reached a robot. Every surface stayed green because every surface
+// measures state, and the state at any instant was "a couple of orders in
+// flight".
+//
+// WHAT ACTUALLY RE-ARMED IT — an earlier version of this comment said "the
+// monitor re-armed, and the planner rebuilt the pair", which reads as Core's
+// ThresholdMonitor and the changeover planner. Neither was involved, and that
+// sentence sent three of five reviewers to the wrong subsystem before anyone
+// checked. For the record:
+//
+//   - The trigger was CELL AUTOREORDER, on the Edge — style_node_claims.
+//     auto_reorder + reorder_point, evaluated on EVERY PLC consume tick at
+//     wiring_counter_delta.go:211-240. Claim 31 (SNF3 / ALN_003 /
+//     74577-6SA0A.06) had reorder_point = 50, so every tick below 50 re-fired.
+//   - The planner was BuildConsumePlan / applyConsumePlan, which expands one
+//     RequestNodeMaterial call into a supply + evac pair — the shape that
+//     produced "242 skipped + 242 cancelled".
+//   - The changeover is the incident's PREHISTORY, not a participant: it is
+//     why a bin with a fictional count came to sit on ALN_003.
+//     applyChangeoverPlan has one caller (operator_changeover_start.go:84)
+//     and does not loop.
+//   - CanAcceptOrders is the only guard between the level and unbounded
+//     creation, and it only blocks while tracked orders are non-terminal. Both
+//     legs terminalised in seconds, so the guard cleared faster than the tick.
+//
+// Toggling auto_reorder off on claim 31 stopped the loop — one boolean. See
+// changeover-sourcing-review-2026-07-21/
+// INCIDENT-springfield-negative-uop-runaway-2026-07-21.md.
 //
 // Five commits in three weeks fixed five instances of this class. It recurs.
 //

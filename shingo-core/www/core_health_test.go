@@ -84,7 +84,7 @@ func TestCoreHealthVerdict_ReasonsAreSentences(t *testing.T) {
 		want  string
 	}
 	for _, tc := range []cond{
-		{"pool waits", func(c *CoreHealth) { c.DBWaitCount = 3 }, "DB pool waits"},
+		{"pool waits", func(c *CoreHealth) { c.DBWaitsRecent = 3 }, "DB pool waits"},
 		{"overloaded", func(c *CoreHealth) { c.Load1, c.Cores = 9.5, 4 }, "over 4 cores"},
 		{"dead letters", func(c *CoreHealth) { c.DeadLetters = 2 }, "dead letter"},
 		{"anomalies", func(c *CoreHealth) { c.CompletionAnomalies = 7 }, "completion anomal"},
@@ -108,6 +108,61 @@ func TestCoreHealthVerdict_ReasonsAreSentences(t *testing.T) {
 	if got := deriveReasons(healthy, nil); len(got) != 0 {
 		t.Fatalf("a healthy Core has nothing to say, got %v", got)
 	}
+}
+
+// sql.DBStats.WaitCount is CUMULATIVE for the life of the process, so the
+// original `WaitCount > 0` test meant one pool wait — ever — pinned the strip
+// amber until Core restarted. The verdict has to be able to recover, which is
+// what separates a verdict from a scar.
+func TestDBWaitGauge_DoesNotLatch(t *testing.T) {
+	resetDBWaitGauge()
+	base := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
+
+	// First observation of a long-running Core: the lifetime total is history,
+	// not a symptom.
+	if got := waitsSinceBaseline(1_000_000, base); got != 0 {
+		t.Fatalf("first sample must not report the lifetime total, got %d", got)
+	}
+	// A window in which waits actually happened reports them.
+	if got := waitsSinceBaseline(1_000_004, base.Add(dbWaitWindow)); got != 4 {
+		t.Fatalf("closed window with 4 waits should report 4, got %d", got)
+	}
+	// Every client polling inside that window sees the same number rather than
+	// racing each other for the increments.
+	if got := waitsSinceBaseline(1_000_004, base.Add(dbWaitWindow+time.Second)); got != 4 {
+		t.Fatalf("mid-window polls must agree, got %d", got)
+	}
+	// THE BUG: the counter has not moved, so the next window is quiet and the
+	// verdict must go back to green.
+	if got := waitsSinceBaseline(1_000_004, base.Add(2*dbWaitWindow)); got != 0 {
+		t.Fatalf("a quiet window must report 0 — the verdict latched, got %d", got)
+	}
+	if got := deriveReasons(CoreHealth{Cores: 8, DBWaitsRecent: 0}, nil); len(got) != 0 {
+		t.Fatalf("a quiet window is not degraded, got %v", got)
+	}
+}
+
+// A pool replaced underneath us resets its counter. Reporting a negative
+// delta, or a huge one on the way back up, would be a fault report invented by
+// the arithmetic.
+func TestDBWaitGauge_CounterGoingBackwardsRebaselines(t *testing.T) {
+	resetDBWaitGauge()
+	base := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
+
+	waitsSinceBaseline(500, base)
+	if got := waitsSinceBaseline(3, base.Add(dbWaitWindow)); got != 0 {
+		t.Fatalf("a reset counter must re-baseline, got %d", got)
+	}
+	if got := waitsSinceBaseline(5, base.Add(2*dbWaitWindow)); got != 2 {
+		t.Fatalf("counting resumes from the new baseline, got %d", got)
+	}
+}
+
+func resetDBWaitGauge() {
+	dbWaitGauge.mu.Lock()
+	defer dbWaitGauge.mu.Unlock()
+	dbWaitGauge.started, dbWaitGauge.baseline, dbWaitGauge.reported = false, 0, 0
+	dbWaitGauge.baselineAt = time.Time{}
 }
 
 // Load is only a fault when it EXCEEDS the core count. A box at exactly its

@@ -123,10 +123,33 @@ func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal
 	}
 	capacity := entry.UOPCapacity
 
+	// A NEGATIVE CurrentUOP is a broken ledger, not demand for the whole
+	// threshold. Springfield's -443 made this gap 455 and desiredBins 26 —
+	// every number downstream computed from a reading already known to be
+	// garbage. Size the gap from 0 instead.
+	//
+	// ORDERING STILL CONTINUES. The suppression reversal stands: a negative
+	// total means material moved off the books, which is exactly when the loop
+	// needs replenishing. A broken count does not get to SIZE the order; it
+	// does not get to cancel it either.
+	//
+	// The bound on what actually gets created is reserveLoaderBins' window
+	// budget (one bin per delivery node, minus in-flight), which caps toFire
+	// regardless of what desiredBins says. That clamp was load-bearing here by
+	// accident; this makes the sizing defensible on its own and
+	// TestHandleLoopBelowThreshold_NegativeCurrentUOP names the budget as the
+	// backstop so a change to either one does not silently remove both.
+	current := sig.CurrentUOP
+	if current < 0 {
+		e.logFn("loop_threshold: loader=%s payload=%s currentUOP=%d is negative — sizing the gap from 0 (ledger is off the books; ordering continues)",
+			loader.ID(), sig.PayloadCode, current)
+		current = 0
+	}
+
 	// Desired total in-flight bins to reach threshold from the CURRENT loop
 	// UOP. tryCreateL1 subtracts what is already in flight and fires the
 	// remainder — the in-flight dedup contract lives there now, not here.
-	gap := sig.Threshold - sig.CurrentUOP
+	gap := sig.Threshold - current
 	if gap <= 0 {
 		e.debugFn("loop_threshold: loader=%s payload=%s currentUOP=%d >= threshold=%d — skipping",
 			loader.ID(), sig.PayloadCode, sig.CurrentUOP, sig.Threshold)

@@ -77,8 +77,9 @@ func (h *Handlers) apiInventoryMonitorTotals(w http.ResponseWriter, r *http.Requ
 
 // apiInventoryLedgerExceptions returns the ledger-integrity exception list:
 // bins whose UOP is negative right now, and the payloads whose plant-wide
-// total is negative — the ones the threshold monitor is refusing to signal
-// replenishment for.
+// total is negative — the ones the threshold monitor is signalling
+// replenishment for from a count it cannot trust. (It still signals; the
+// refusal was removed.)
 //
 // BLANK ON A GOOD DAY. That is the design: a page of charts computed from a
 // handful of points is worse than nothing, and a list that is empty until

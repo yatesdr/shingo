@@ -548,6 +548,142 @@ func TestHandleLoopBelowThreshold_ParksAndReplaysBeforeCacheSync(t *testing.T) {
 // sprintf is a thin alias so the log-capture closures read cleanly.
 func sprintf(format string, args ...any) string { return fmt.Sprintf(format, args...) }
 
+// TestHandleLoopBelowThreshold_NegativeCurrentUOP pins the gap clamp and, just
+// as importantly, names the thing that actually bounds the order count.
+//
+// Springfield's 74577-6SA0A.06 read -443 in-loop. With threshold 12 and an
+// 18-UOP bin that made the gap 455 and desiredBins 26 — twenty-six bins sized
+// entirely from a number the system already knew was garbage. Removing
+// replenishment suppression was right (a negative means material moved off the
+// books, which is exactly when the loop needs restocking) but it removed the
+// only bound on the arithmetic and put nothing in its place.
+//
+// Two facts, and both matter:
+//
+//	A. A negative reading is sized from 0. Ordering STILL happens — the
+//	   decision to order stands, only the quantity is refused.
+//	B. reserveLoaderBins' window budget — one bin per delivery node, minus
+//	   what is in flight — is what bounds the fire no matter what desiredBins
+//	   says. That clamp was load-bearing for the -443 case entirely by
+//	   accident, with no test tying it to this. Part B is that test.
+func TestHandleLoopBelowThreshold_NegativeCurrentUOP(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+
+	var (
+		mu   sync.Mutex
+		logs []string
+	)
+	capture := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		logs = append(logs, sprintf(format, args...))
+	}
+	eng := testEngine(t, db)
+	eng.logFn, eng.debugFn = capture, capture
+	eng.catalogService = service.NewCatalogService(db)
+
+	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "NEG-PROC", "NEG-LOADER", "74577-6SA0A.06")
+	testutil.MustNoErr(t, db.UpsertPayloadCatalog(&catalog.CatalogEntry{
+		ID: 1, Name: "Springfield part", Code: "74577-6SA0A.06", UOPCapacity: 18,
+	}), "seed catalog")
+	seedCoreLoader(t, eng, sharedLoaderInfo("NEG-LOADER", "produce", "threshold", "74577-6SA0A.06", 0, 12))
+
+	countL1 := func() int {
+		ords, err := db.ListActiveOrdersByProcessNode(nodeID)
+		if err != nil {
+			t.Fatalf("list orders: %v", err)
+		}
+		n := 0
+		for _, o := range ords {
+			if o.RetrieveEmpty && o.PayloadCode == "74577-6SA0A.06" {
+				n++
+			}
+		}
+		return n
+	}
+	snapshotLogs := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), logs...)
+	}
+	contains := func(lines []string, want string) bool {
+		for _, l := range lines {
+			if strings.Contains(l, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// A. The plant's own numbers: -443 against threshold 12, 18 UOP per bin.
+	eng.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
+		PayloadCode:  "74577-6SA0A.06",
+		CurrentUOP:   -443,
+		Threshold:    12,
+		CoreNodeName: "NEG-LOADER",
+		Reason:       "below_threshold",
+	})
+
+	got := snapshotLogs()
+	if contains(got, "desired_bins=26") {
+		t.Errorf("sized 26 bins from a -443 reading — the clamp is not in force; logs: %v", got)
+	}
+	if !contains(got, "desired_bins=1") {
+		t.Errorf("expected the gap sized from 0 (ceil(12/18)=1); logs: %v", got)
+	}
+	if !contains(got, "is negative — sizing the gap from 0") {
+		t.Errorf("the clamp must say so in the log — a silently corrected number is its own trap; logs: %v", got)
+	}
+	// The suppression reversal stands: a broken count does not stop the order.
+	if n := countL1(); n != 1 {
+		t.Fatalf("ordering must continue on a negative reading, got %d L1", n)
+	}
+
+	// B. The backstop. Nothing about part A's clamp bounds a LEGITIMATE
+	// oversized request — reserveLoaderBins does, and it is the only thing
+	// that does. Threshold 900 against an 18-UOP bin asks for 50; the loader
+	// has one window, so one is what gets created.
+	eng2 := testEngine(t, db)
+	eng2.logFn, eng2.debugFn = capture, capture
+	eng2.catalogService = service.NewCatalogService(db)
+	_, node2, _ := seedActiveManualSwapLoader(t, db, "BUDGET-PROC", "BUDGET-LOADER", "BULK-PART")
+	testutil.MustNoErr(t, db.UpsertPayloadCatalog(&catalog.CatalogEntry{
+		ID: 2, Name: "Bulk", Code: "BULK-PART", UOPCapacity: 18,
+	}), "seed catalog")
+	seedCoreLoader(t, eng2, sharedLoaderInfo("BUDGET-LOADER", "produce", "threshold", "BULK-PART", 0, 900))
+
+	before := len(snapshotLogs())
+	eng2.HandleLoopBelowThreshold(&protocol.LoopBelowThresholdSignal{
+		PayloadCode:  "BULK-PART",
+		CurrentUOP:   0,
+		Threshold:    900,
+		CoreNodeName: "BUDGET-LOADER",
+		Reason:       "below_threshold",
+	})
+	got = snapshotLogs()[before:]
+
+	if !contains(got, "desired_bins=50") {
+		t.Errorf("expected the math to ask for 50 bins (ceil(900/18)); logs: %v", got)
+	}
+	if !contains(got, "budget=1") {
+		t.Errorf("the reservation record must name the window budget that bounds it; logs: %v", got)
+	}
+	ords, err := db.ListActiveOrdersByProcessNode(node2)
+	if err != nil {
+		t.Fatalf("list orders: %v", err)
+	}
+	n := 0
+	for _, o := range ords {
+		if o.RetrieveEmpty && o.PayloadCode == "BULK-PART" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("reserveLoaderBins' budget must bound the fire to the window count, got %d orders for a want of 50", n)
+	}
+}
+
 // TestHandleLoopBelowThreshold_RoutesToSignaledCoreNode pins the routing fix:
 // when the SAME payload is loaded at two loaders, the L1 must land at the
 // loader the signal names (sig.CoreNodeName), not the alphabetically-first

@@ -92,8 +92,9 @@ func (e *Engine) ReplenishmentHealth(ctx context.Context) ([]PayloadHealth, erro
 		uopByCode[c.PayloadCode] = c
 	}
 
-	// Payloads whose bin total is negative — the ones replenishment is
-	// suppressed for. One grouped read, not one per row.
+	// Payloads whose bin total is negative — the ones whose replenishment is
+	// being decided from an untrustworthy count (it is not suppressed; that
+	// behaviour was removed). One grouped read, not one per row.
 	negative, err := e.db.NegativeLedgerPayloads()
 	if err != nil {
 		// Degrade to no chip rather than failing the page: the rest of the
@@ -153,7 +154,9 @@ func (e *Engine) OpenNegativeBins() ([]domain.OpenNegativeBin, error) {
 }
 
 // NegativeLedgerPayloads maps payload code to its negative plant-wide bin
-// total: the payloads replenishment is currently suppressed for.
+// total: the payloads whose replenishment is currently being decided from a
+// count known to be wrong. Ordering continues for them — see
+// store/bins/ledger_integrity.go.
 func (e *Engine) NegativeLedgerPayloads() (map[string]int, error) {
 	return e.db.NegativeLedgerPayloads()
 }

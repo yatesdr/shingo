@@ -302,12 +302,18 @@ function meterHtml(r) {
 // is the whole design — a list that stays empty until something is wrong is a
 // better instrument than a panel that always shows something.
 //
-// This is upstream of the failure class the rest of the branch chases: a
-// negative ledger makes the threshold monitor refuse to signal replenishment
-// (correctly — a negative in-loop total is a broken ledger, never real
-// demand), the payload then genuinely runs dry, and a changeover arms on a dry
-// source. Springfield logged that refusal 1,119 times a day and it appeared on
-// no surface, so nobody could act on it.
+// This is upstream of the failure class the rest of the branch chases. A
+// negative in-loop total means material moved off the books, so every number
+// derived from it is computed from a reading nobody can trust: the total the
+// threshold monitor decides on, and the gap the Edge sizes an order from.
+//
+// It does NOT stop replenishment. That behaviour existed and was removed —
+// material having gone missing is exactly when the loop still needs
+// restocking, and refusing to order let the payload genuinely run dry and a
+// changeover arm on a dry source. What a broken count loses is the right to
+// SIZE the order: the Edge clamps the gap at 0 rather than reading -443 as
+// demand for 26 bins. Springfield's negative appeared on no surface at all,
+// which is why nobody could act on it.
 //
 // Deliberately NOT clamped anywhere: negative is loudly wrong, and a clamp
 // would make it silently wrong.

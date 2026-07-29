@@ -57,6 +57,53 @@ var goroutineRing = struct {
 
 const goroutineRingSize = 12
 
+// dbWaitGauge turns sql.DBStats.WaitCount into a gauge.
+//
+// WaitCount is a CUMULATIVE LIFETIME counter — the one counter among four
+// otherwise-true gauges (dead letters, completion anomalies, load, dependency
+// pings). Comparing it to zero meant the FIRST pool wait ever recorded pinned
+// the strip amber until Core restarted, and a verdict that latches is not a
+// verdict. Hold the previous sample; report the waits since it.
+//
+// The baseline advances at most once per window rather than on every call
+// because the strip is polled per client: advancing on every read would split
+// one wait across however many dashboards happen to be open, so two operators
+// watching the same Core would see different verdicts.
+var dbWaitGauge = struct {
+	mu         sync.Mutex
+	started    bool
+	baseline   int64
+	baselineAt time.Time
+	reported   int64
+}{}
+
+// dbWaitWindow matches the strip's poll interval (dashboard-landing.js).
+const dbWaitWindow = 15 * time.Second
+
+// waitsSinceBaseline reports the waits recorded in the last completed window.
+//
+// The value is the CLOSED window's delta, not the open one's, so every client
+// polling inside a window sees the same number instead of racing each other
+// for the increments. The first observation returns 0: at the first poll of a
+// Core that has been up for a week the lifetime total is history, not a
+// symptom, and reporting it would reproduce the latch for one window. A total
+// that goes backwards — a pool replaced underneath us — re-baselines rather
+// than reporting a negative.
+func waitsSinceBaseline(total int64, now time.Time) int64 {
+	dbWaitGauge.mu.Lock()
+	defer dbWaitGauge.mu.Unlock()
+	if !dbWaitGauge.started || total < dbWaitGauge.baseline {
+		dbWaitGauge.started = true
+		dbWaitGauge.baseline, dbWaitGauge.baselineAt, dbWaitGauge.reported = total, now, 0
+		return 0
+	}
+	if now.Sub(dbWaitGauge.baselineAt) >= dbWaitWindow {
+		dbWaitGauge.reported = total - dbWaitGauge.baseline
+		dbWaitGauge.baseline, dbWaitGauge.baselineAt = total, now
+	}
+	return dbWaitGauge.reported
+}
+
 // sampleGoroutines appends the current count and returns the window,
 // oldest first.
 func sampleGoroutines() []int {
@@ -95,10 +142,12 @@ type CoreHealth struct {
 	Uptime string `json:"uptime"`
 
 	// DB pool. A ratio against a limit — a meter, not a number.
-	DBInUse     int   `json:"db_in_use"`
-	DBIdle      int   `json:"db_idle"`
-	DBMaxOpen   int   `json:"db_max_open"`
-	DBWaitCount int64 `json:"db_wait_count"`
+	DBInUse   int `json:"db_in_use"`
+	DBIdle    int `json:"db_idle"`
+	DBMaxOpen int `json:"db_max_open"`
+	// DBWaitsRecent is waits in the last completed window, NOT the lifetime
+	// total sql.DBStats reports. See dbWaitGauge.
+	DBWaitsRecent int64 `json:"db_waits_recent"`
 
 	// Load average against core count. Also a ratio against a limit.
 	Load1 float64 `json:"load1"`
@@ -153,7 +202,11 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 
 	if st, ok := h.engine.HealthService().PoolStats(); ok {
 		c.DBInUse, c.DBIdle = st.InUse, st.Idle
-		c.DBMaxOpen, c.DBWaitCount = st.MaxOpenConnections, st.WaitCount
+		c.DBMaxOpen = st.MaxOpenConnections
+		// WALL clock again, for the same reason as uptime above: the window
+		// this gauge measures is a real-time one and must not be fast-forwarded
+		// by the sim.
+		c.DBWaitsRecent = waitsSinceBaseline(st.WaitCount, time.Now())
 	}
 	c.Load1 = loadAverage1()
 
@@ -186,9 +239,11 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 	reasons = append(reasons, depsDown...)
 
 	// A wait means a request QUEUED for a connection: the pool is the
-	// bottleneck, not the database.
-	if c.DBWaitCount > 0 {
-		reasons = append(reasons, fmt.Sprintf("DB pool waits: %d", c.DBWaitCount))
+	// bottleneck, not the database. RECENT waits — the lifetime total this is
+	// derived from never goes down, so testing that against zero latched the
+	// verdict degraded for the life of the process.
+	if c.DBWaitsRecent > 0 {
+		reasons = append(reasons, fmt.Sprintf("DB pool waits: %d in %s", c.DBWaitsRecent, dbWaitWindow))
 	}
 	// Strictly greater: a box at exactly its core count is fully used, not
 	// overloaded, and flagging that would cry wolf on every busy plant.

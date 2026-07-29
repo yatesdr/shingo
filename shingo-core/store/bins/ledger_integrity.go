@@ -191,12 +191,15 @@ ORDER BY b.uop_remaining ASC`
 }
 
 // NegativePayloads returns the payload codes whose plant-wide in-loop bin
-// total is currently negative — i.e. the payloads for which the threshold
-// monitor is REFUSING to signal replenishment.
+// total is currently negative — the payloads the threshold monitor is
+// deciding on from a reading it cannot trust.
 //
-// "We didn't order material for this payload because we don't know what's in
-// it" is the sentence this makes available. It is the same condition
-// checkBindings logs 1,119 times a day, expressed once, as state.
+// It is NOT a list of suppressed replenishment. Suppression was removed: a
+// negative total means material moved off the books, which is when the loop
+// most needs restocking. What the monitor loses is a usable denominator, not
+// the decision — "we ordered for this payload against a count we know is
+// wrong" is the sentence this makes available. Same condition checkBindings
+// logs 1,119 times a day, expressed once, as state.
 func NegativePayloads(db *sql.DB) (map[string]int, error) {
 	rows, err := db.Query(`
 		SELECT payload_code, SUM(uop_remaining)::INTEGER

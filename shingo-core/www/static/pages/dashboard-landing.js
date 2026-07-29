@@ -367,8 +367,10 @@ function renderCoreHealth(h) {
     if (poolVal) {
         poolVal.textContent = `${h.db_in_use}/${h.db_max_open}`;
         // Waits are the real signal — a queued request means the POOL is the
-        // bottleneck, not the database.
-        poolVal.classList.toggle('is-bad', h.db_wait_count > 0);
+        // bottleneck, not the database. RECENT waits: the raw sql.DBStats
+        // figure is cumulative for the life of the process, so it never falls
+        // back to zero once anything has ever queued.
+        poolVal.classList.toggle('is-bad', h.db_waits_recent > 0);
     }
     setMeter(document.getElementById('cs-pool-fill'),
         h.db_max_open > 0 ? h.db_in_use / h.db_max_open : 0,
