@@ -14,7 +14,7 @@ COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 # Build flags
 LDFLAGS=-ldflags "-s -w -X main.Version=$(VERSION) -X main.Commit=$(COMMIT)"
 
-.PHONY: all clean linux windows macos build run test test-explain
+.PHONY: all clean linux windows macos build run test test-explain schema-snapshot
 
 # Default target
 all: clean linux windows macos
@@ -49,6 +49,20 @@ clean-testcontainers:
 # Always reaps its testcontainers afterward, then preserves the test exit code.
 test-all:
 	go test -v -tags=docker ./... ; rc=$$? ; $(MAKE) -s clean-testcontainers ; test $$rc -eq 0
+
+# Regenerate the committed schema snapshot: boot an empty Postgres, run the
+# FULL migrate path, pg_dump --schema-only, write store/schema/schema.snapshot.sql.
+#
+# The snapshot exists because no other file in this repo IS the schema — the
+# real shape is the baseline DDL plus migrateRenames plus
+# migrateAddBaselineColumns plus every versioned migration plus how old the
+# database is. With the snapshot committed, a shape change is a readable diff.
+#
+# Requires Docker. pg_dump runs inside the container, so no Postgres client
+# tools are needed on the host. TestSchemaSnapshotIsCurrent fails with this
+# command's name when the file goes stale.
+schema-snapshot:
+	go run ./cmd/schemasnapshot ; rc=$$? ; $(MAKE) -s clean-testcontainers ; test $$rc -eq 0
 
 # Run the bins-store EXPLAIN-plan regression harness. Tagged
 # //go:build explain so it stays out of the default and docker test

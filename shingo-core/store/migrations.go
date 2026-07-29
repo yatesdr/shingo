@@ -607,6 +607,26 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool { return schema.TableExists(q, "sourceability_events") }},
 		{57, "rename legacy downtime_events partitions to the aligned form",
 			v57RenameDowntimePartitions, nil},
+		// FOUND BY TestSchemaConvergesAcrossVintages, and the first thing it
+		// found. A database installed before 2026-05-21 carries
+		// DEFAULT '' on lineside_buckets.core_node_name; one installed after
+		// does not, because the baseline CREATE TABLE declares the column
+		// without one.
+		//
+		// The default was never intent — v21's own comment says it exists "so
+		// existing orphaned rows don't break the column add", which is a
+		// mechanical requirement of ADD COLUMN NOT NULL on a populated table.
+		// It then stayed forever.
+		//
+		// It matters because '' is the UNKNOWN value for this column and the
+		// table has UNIQUE (station, core_node_name, pair_key, style_id,
+		// part_number). At a plant, an insert that omitted the node would
+		// silently write '' and collide unrelated nodes' buckets; on a fresh
+		// install the same insert errors. Every insert site supplies the
+		// column, so dropping the default takes nothing away.
+		{58, "drop lineside_buckets.core_node_name's DEFAULT (converge aged DBs with fresh)",
+			v58DropLinesideCoreNodeNameDefault,
+			func(q schema.Querier) bool { return !columnHasDefault(q, "lineside_buckets", "core_node_name") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2329,4 +2349,37 @@ func v54BackfillMissionEventRobotID(tx *sql.Tx) error {
 		  AND me.robot_id = ''
 		  AND o.robot_id <> ''`)
 	return err
+}
+
+// v58DropLinesideCoreNodeNameDefault removes the DEFAULT ” that v21 had to
+// put on lineside_buckets.core_node_name to add the column to a populated
+// table, and that a fresh install has never had.
+//
+// Dropping a default does not touch existing rows — it only stops future
+// inserts from silently filling in the UNKNOWN value for a column that is part
+// of the table's uniqueness. Every insert site names the column explicitly, so
+// nothing loses a value it was relying on.
+func v58DropLinesideCoreNodeNameDefault(tx *sql.Tx) error {
+	if !schema.ColumnExists(tx, "lineside_buckets", "core_node_name") {
+		return nil
+	}
+	if _, err := tx.Exec(`ALTER TABLE lineside_buckets ALTER COLUMN core_node_name DROP DEFAULT`); err != nil {
+		return fmt.Errorf("drop lineside_buckets.core_node_name default: %w", err)
+	}
+	return nil
+}
+
+// columnHasDefault reports whether a column carries a column default.
+//
+// Used as a migration post-condition. Returns false when the table or column
+// is absent, which reads correctly for the verify: "there is no default here".
+func columnHasDefault(q schema.Querier, table, column string) bool {
+	var has bool
+	q.QueryRow(
+		`SELECT COALESCE(column_default IS NOT NULL, false)
+		   FROM information_schema.columns
+		  WHERE table_name = $1 AND column_name = $2`,
+		table, column,
+	).Scan(&has)
+	return has
 }
