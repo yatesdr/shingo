@@ -87,7 +87,7 @@
     <tbody>
       {{range .Rows}}
       <tr class="ct-row{{if .FlushBound}} ct-flushbound{{end}}{{if .Underpowered}} ct-underpowered{{end}}">
-        <td>{{.Station}}</td>
+        <td>{{stationName .Station}}</td>
         <td>
           <div>{{.Payload}}</div>
           {{if .SpanText}}<div class="ct-sub">over {{.SpanText}}</div>{{end}}

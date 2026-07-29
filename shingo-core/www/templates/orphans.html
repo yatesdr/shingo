@@ -65,7 +65,7 @@
       <tbody>
         {{range .Sites}}
         <tr class="or-row{{if gt .Live 0}} or-live{{end}}">
-          <td>{{.StationID}}</td>
+          <td>{{stationName .StationID}}</td>
           <td class="col-num tnum de-orders">{{.LiveText}}</td>
           <td class="col-num tnum">{{.AgedText}}</td>
           <td class="col-num tnum">{{.Total}}</td>

@@ -68,7 +68,7 @@
               is intercepted (see openOrderModal). */}}
           <td class="tnum" data-sort-value="{{.ID}}"><a href="/orders?open={{.ID}}" data-action="openOrderModal:{{.ID}}">{{.ID}}</a></td>
           <td class="orders-uuid" title="{{.EdgeUUID}}">{{.EdgeUUID}}</td>
-          <td>{{.StationID}}</td>
+          <td>{{stationName .StationID}}</td>
           <td>{{.OrderType}}</td>
           <td data-sort-value="{{.PayloadCode}}">
             {{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{end}}

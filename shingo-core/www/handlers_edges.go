@@ -25,6 +25,33 @@ import (
 // All four are auth-gated: enrolling a station and rebinding one are fleet
 // operations, and renaming one shows up on every board in the plant.
 
+// handleEdgesAdmin renders the /edges Stations page — the operator's way to
+// rename a station without curl.
+//
+// THE UI IS ON CORE BECAUSE THE DATA IS. display_name lives in exactly one
+// place, edge_registry, which Core owns; the rename API already exists here and
+// is already auth-gated; and Core runs at the plant. Putting the field on the
+// Edge instead would mean the Edge reading its own name back from Core to
+// prefill and writing through to Core to save — a new cross-service read path,
+// a new failure mode when Core is unreachable, and a screen that cannot show
+// the name at all during a partition. None of that buys anything, because the
+// one thing an Edge-side field would be good for — storing the name locally —
+// is precisely what must not happen.
+//
+// A REGISTRY READ FAILURE IS SHOWN, NOT SWALLOWED. An empty station list is a
+// legitimate state (nothing enrolled yet) and it is indistinguishable from a
+// failed read unless the failure says so.
+func (h *Handlers) handleEdgesAdmin(w http.ResponseWriter, r *http.Request) {
+	data := map[string]any{"Page": "edges"}
+	edges, err := h.engine.NodeService().ListEdges()
+	if err != nil {
+		data["RegistryError"] = err.Error()
+	} else {
+		data["Edges"] = edges
+	}
+	h.render(w, r, "edges.html", data)
+}
+
 // apiEdges lists enrolled stations, including the binding and conflict state.
 //
 // This is the read the replacement-hardware procedure runs.

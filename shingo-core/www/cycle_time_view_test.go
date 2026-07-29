@@ -377,7 +377,7 @@ func TestCycleRowIsDrivenByConfig(t *testing.T) {
 // cells.html and demand-cell.html, and the merge kept one — see that file's
 // header for which arm of which copy survived and why.
 func TestCycleTimeTemplateKeepsTheThreeStatesDistinct(t *testing.T) {
-	base := template.Must(template.New("").Funcs(templateFuncs()).
+	base := template.Must(template.New("").Funcs(templateFuncs(nil)).
 		ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 	page := template.Must(template.Must(base.Clone()).ParseFS(templateFS, "templates/cycle-time.html"))
 

@@ -21,6 +21,19 @@ const filters = createStore({ since: '', until: '', station: '', robot: '', stat
 let offset = 0;
 const LIMIT = 50;
 let lastMissions = []; // for CSV export
+
+// Station uid → operator label, refreshed with each list response.
+//
+// The rows keep the opaque station_id — it is what the filter sends, what the
+// CSV export writes and what the drill-down queries by. Only the rendered text
+// becomes the label, so a rename shows up here on the next refresh without
+// anything stored having changed. A station with no registry row (core-spot,
+// core-direct, core-test, '*') is absent from the map and renders as itself.
+let stationNames = {};
+function stationLabel(id) {
+    if (!id) return '-';
+    return stationNames[id] || id;
+}
 // ─── list ───────────────────────────────────────────────────────────────
 function refreshList(state) {
     const qs = filterQS(state, { limit: LIMIT, offset });
@@ -28,13 +41,14 @@ function refreshList(state) {
         const tbody = document.getElementById('mission-list');
         if (!tbody) return;
         lastMissions = (data && data.missions) || [];
+        stationNames = (data && data.station_names) || {};
         tbody.innerHTML = '';
         for (const m of lastMissions) {
             const tr = el('tr', { className: 'mission-row', dataset: { orderId: m.order_id }, title: 'Click to view mission details for order ' + m.order_id });
             tr.innerHTML =
                 '<td>' + m.order_id + '</td>' +
                 '<td>' + (m.robot_id || '-') + '</td>' +
-                '<td>' + (m.station_id || '-') + '</td>' +
+                '<td>' + stationLabel(m.station_id) + '</td>' +
                 '<td>' + (m.source_node || '?') + ' &rarr; ' + (m.delivery_node || '?') + '</td>' +
                 '<td><span class="badge ' + stateBadgeClass(m.terminal_state) + '">' + stateLabel(m.terminal_state) + '</span></td>' +
                 '<td title="' + (m.duration_ms ? m.duration_ms + 'ms' : '') + '">' + formatDuration(m.duration_ms) + '</td>' +

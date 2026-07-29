@@ -20,7 +20,7 @@ import (
 // through the shared "layout"). This catches a bad field reference or template
 // function the parse step alone would not.
 func TestTemplatesParse(t *testing.T) {
-	base := template.Must(template.New("").Funcs(templateFuncs()).
+	base := template.Must(template.New("").Funcs(templateFuncs(nil)).
 		ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 
 	pages, err := fs.Glob(templateFS, "templates/*.html")

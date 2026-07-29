@@ -128,7 +128,7 @@
         <td>{{.KindLabel}}{{if .Direction}} <span class="text-muted">· {{.Direction}}</span>{{end}}</td>
         <td>
           <div>{{if .Payload}}{{.Payload}}{{else}}<span class="text-muted">—</span>{{end}}</div>
-          <div class="de-sub">{{.Station}}{{if .CoreNode}} · {{.CoreNode}}{{end}}</div>
+          <div class="de-sub">{{stationName .Station}}{{if .CoreNode}} · {{.CoreNode}}{{end}}</div>
         </td>
         {{/*
           The teal ramp carries magnitude only up to the worry line and

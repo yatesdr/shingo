@@ -48,12 +48,21 @@ func (h *Handlers) apiListMissions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// station_names is the uid→label dictionary, shipped once per response
+	// rather than decorated onto every mission row. The rows keep the key —
+	// station_id is what the filter, the CSV export and the drill-down all send
+	// back — and the page renders the label beside it. Denormalising the name
+	// onto each row would put a copy of a mutable value in a payload that gets
+	// cached, exported and compared, which is the failure this split exists to
+	// end. A station with no enrolled row is simply absent from the map and the
+	// page falls back to the raw id.
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"missions": missions,
-		"total":    total,
-		"limit":    f.Limit,
-		"offset":   f.Offset,
+		"missions":      missions,
+		"total":         total,
+		"limit":         f.Limit,
+		"offset":        f.Offset,
+		"station_names": h.engine.NodeService().StationNames(),
 	})
 }
 

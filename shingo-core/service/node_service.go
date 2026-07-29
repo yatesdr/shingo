@@ -23,6 +23,10 @@ import (
 // verbatim between the create and update paths.
 type NodeService struct {
 	db *store.DB
+
+	// names caches uid→display_name for station label rendering. One row per
+	// plant, dropped whole on rename/enroll. See station_names.go.
+	names stationNameCache
 }
 
 func NewNodeService(db *store.DB) *NodeService {
@@ -377,7 +381,12 @@ func (s *NodeService) EnrollEdge(displayName string) (*registry.Edge, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.db.EnrollEdge(uid, displayName, uid)
+	e, err := s.db.EnrollEdge(uid, displayName, uid)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidateStationNames()
+	return e, nil
 }
 
 // GetEdge returns one enrolled station by uid.
@@ -386,7 +395,14 @@ func (s *NodeService) GetEdge(uid string) (*registry.Edge, error) { return s.db.
 // RenameEdge sets the operator-facing display name. Free of consequence by
 // construction — see registry.SetDisplayName.
 func (s *NodeService) RenameEdge(uid, displayName string) (bool, error) {
-	return s.db.RenameEdge(uid, displayName)
+	ok, err := s.db.RenameEdge(uid, displayName)
+	// Invalidate whenever the write reached the database, matched or not: a
+	// no-match wrote nothing, but the cheapest correct rule is "the write path
+	// ran, drop the cache" and a spurious reload of a one-row map costs nothing.
+	if err == nil {
+		s.invalidateStationNames()
+	}
+	return ok, err
 }
 
 // RebindEdge moves a station's binding to a new machine and clears its

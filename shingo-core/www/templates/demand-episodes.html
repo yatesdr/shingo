@@ -143,7 +143,7 @@
         <td>{{.KindLabel}}{{if .Direction}} <span class="text-muted">· {{.Direction}}</span>{{end}}</td>
         <td>
           <div>{{if .Payload}}{{.Payload}}{{else}}<span class="text-muted">—</span>{{end}}</div>
-          <div class="de-sub">{{.Station}}{{if .CoreNode}} · {{.CoreNode}}{{end}}</div>
+          <div class="de-sub">{{stationName .Station}}{{if .CoreNode}} · {{.CoreNode}}{{end}}</div>
         </td>
         {{/*
           5.14 — the ramp carries magnitude ONLY up to the worry line, and the

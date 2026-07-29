@@ -125,7 +125,7 @@
               <td>{{.Severity}}</td>
               <td>{{if .OrderID}}{{.OrderID}}{{else}}-{{end}}</td>
               <td>{{if .BinID}}{{.BinID}}{{else}}-{{end}}</td>
-              <td>{{if .StationID}}{{.StationID}}{{else}}-{{end}}</td>
+              <td>{{if .StationID}}{{stationName .StationID}}{{else}}-{{end}}</td>
               <td>{{.OrderStatus}}</td>
               <td>{{if .BinStatus}}{{.BinStatus}}{{else}}-{{end}}</td>
               <td>{{.Issue}}</td>

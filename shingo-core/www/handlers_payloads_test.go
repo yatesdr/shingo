@@ -135,7 +135,7 @@ func testHandlersForPages(t *testing.T) (*Handlers, *store.DB) {
 // the handler under test renders HTML.
 func loadTestTemplates(t *testing.T, h *Handlers) {
 	t.Helper()
-	base := template.New("").Funcs(templateFuncs())
+	base := template.New("").Funcs(templateFuncs(nil))
 	base = template.Must(base.ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 	pages, err := fs.Glob(templateFS, "templates/*.html")
 	if err != nil {

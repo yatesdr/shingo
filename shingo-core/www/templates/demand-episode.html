@@ -33,7 +33,7 @@
     <h1>{{.KindLabel}} demand{{if .Payload}} · {{.Payload}}{{end}}</h1>
   </div>
   <p class="text-muted mb-2">
-    {{.Station}}{{if .CoreNode}} · {{.CoreNode}}{{end}} —
+    {{stationName .Station}}{{if .CoreNode}} · {{.CoreNode}}{{end}} —
     {{if .Open}}open now{{else}}closed{{end}}.
     Every order stamped with this demand's origin id, oldest first.
   </p>

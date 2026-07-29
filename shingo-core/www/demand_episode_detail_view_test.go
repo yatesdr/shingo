@@ -426,7 +426,7 @@ func TestTruncationIsCarriedNotSwallowed(t *testing.T) {
 
 func renderEpisodeDetail(t *testing.T, d EpisodeDetail) string {
 	t.Helper()
-	base := template.Must(template.New("").Funcs(templateFuncs()).
+	base := template.Must(template.New("").Funcs(templateFuncs(nil)).
 		ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 	page := template.Must(template.Must(base.Clone()).
 		ParseFS(templateFS, "templates/demand-episode.html"))
@@ -499,7 +499,7 @@ func TestTemplateRendersAMeasuredZeroAsAMeasurement(t *testing.T) {
 // two of the three states end up collapsed on one surface and not the other.
 // This asserts the one shared copy still renders three distinguishable things.
 func TestSharedCellPartialKeepsTheThreeStatesApartInMarkup(t *testing.T) {
-	base := template.Must(template.New("").Funcs(templateFuncs()).
+	base := template.Must(template.New("").Funcs(templateFuncs(nil)).
 		ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 
 	render := func(name string, c Cell) string {

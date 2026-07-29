@@ -1,0 +1,56 @@
+{{define "content"}}
+<div class="flex flex-between mb-2">
+  <h1>Stations</h1>
+</div>
+
+<p class="muted mb-2">
+  One row per enrolled edge station. The <strong>name</strong> is yours to change —
+  it is read by nothing but a person, it never travels on the wire, and renaming
+  updates every screen including past orders, because no stored row holds it. The
+  <strong>uid</strong> is the identity everything is keyed on; it is fixed at
+  enrollment and is not editable here or anywhere else.
+</p>
+
+{{if .RegistryError}}
+<div class="alert alert-error mb-2">Could not read the station registry: {{.RegistryError}}</div>
+{{end}}
+
+{{if .Edges}}
+<table class="table" id="edges-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Station uid</th>
+      <th>Host</th>
+      <th>Status</th>
+      <th title="Registers that arrived from a machine other than the one this station is bound to. A climbing count means two machines are alive on one identity.">Conflicts</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Edges}}
+    <tr data-uid="{{.StationUID}}">
+      <td><span class="edge-name">{{.DisplayName}}</span></td>
+      <td><code>{{.StationUID}}</code></td>
+      <td>{{if .Hostname}}{{.Hostname}}{{else}}-{{end}}</td>
+      <td>{{.Status}}</td>
+      <td class="col-num tnum">
+        {{if gt .ConflictCount 0}}<span class="badge badge-warn">{{.ConflictCount}}</span>{{else}}0{{end}}
+      </td>
+      <td><button class="btn btn-sm" data-action="renameEdge">Rename</button></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+{{if not .RegistryError}}
+<p class="muted">
+  No stations are enrolled yet. An edge appears here once it has been enrolled on
+  Core and its <code>station_uid</code> put in that Pi's
+  <code>/etc/shingo/shingoedge.yaml</code>.
+</p>
+{{end}}
+{{end}}
+
+<script type="module" src="/static/pages/edges.js?v={{cacheBust}}"></script>
+{{end}}

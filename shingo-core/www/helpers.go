@@ -84,12 +84,41 @@ func canCancelStatus(s protocol.Status) bool {
 	return !dispatch.IsPostDelivery(s) && !protocol.IsTerminal(s)
 }
 
-func templateFuncs() template.FuncMap {
+// stationNamer resolves an opaque station identity to the operator's label.
+// Satisfied by *service.NodeService; an interface here so the template layer
+// does not reach into the service package for one method, and so tests can
+// render pages without a database.
+type stationNamer interface {
+	StationName(station string) string
+}
+
+// templateFuncs builds the shared FuncMap.
+//
+// namer may be nil — that is the no-database case (tests, template parse
+// checks) and it renders raw station ids, which is exactly what the fallback
+// does when a station has no registry row. There is deliberately no separate
+// "no namer" rendering path to keep in sync with the real one.
+func templateFuncs(namer stationNamer) template.FuncMap {
 	return template.FuncMap{
 		"simMode":    simModeEnabled, // dev speed top-strip gate; false in prod builds
 		"cacheBust":  func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
 		"iconSprite": func() template.HTML { return iconSpriteHTML },
 		"canCancel":  canCancelStatus,
+
+		// stationName renders the operator's label for a station identity.
+		//
+		// USE THIS FOR AN EDGE STATION AND NOTHING ELSE. A SEER fleet station
+		// (mission_events.robot_station, mission-detail.html's "Station"
+		// column) is a different namespace that must never be looked up here.
+		// Core's own order sources — core-spot, core-direct, core-test — and
+		// the '*' broadcast address have no registry row and fall through to
+		// themselves, which is correct and is why there is no error case.
+		"stationName": func(station string) string {
+			if namer == nil {
+				return station
+			}
+			return namer.StationName(station)
+		},
 		"timeAgo": func(t time.Time) string {
 			if t.IsZero() {
 				return ""

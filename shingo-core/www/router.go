@@ -70,7 +70,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 	// Parse layout + partials as a base template set. Each page is cloned separately
 	// to avoid the "last define wins" problem with {{define "content"}}.
-	base := template.New("").Funcs(templateFuncs())
+	base := template.New("").Funcs(templateFuncs(eng.NodeService()))
 	base = template.Must(base.ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 
 	// Discover page templates via fs.Glob — new templates are picked up
@@ -508,6 +508,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Post("/config/save", h.handleConfigSave)
 			r.Get("/fleet-explorer", h.handleFleetExplorer)
 			r.Get("/admin/cells", h.handleCellsAdmin)
+			// Stations — enrolled edges and the display-name rename. Auth-gated
+			// to match POST /api/edges/rename, which the page calls.
+			r.Get("/edges", h.handleEdgesAdmin)
 
 			// Traffic (count group CRUD)
 			r.Post("/traffic/save", h.handleTrafficSave)

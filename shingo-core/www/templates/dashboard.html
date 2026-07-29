@@ -88,7 +88,7 @@
         {{range .ActiveOrders}}
         <tr>
           <td><a href="/orders?open={{.ID}}">{{.ID}}</a></td>
-          <td>{{.StationID}}</td>
+          <td>{{stationName .StationID}}</td>
           <td>{{.OrderType}}</td>
           <td>
             {{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{end}}

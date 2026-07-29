@@ -53,7 +53,7 @@ func renderPage(t *testing.T, page string, data map[string]any) string {
 		t.Fatalf("%s is not discovered by router.go's glob, so it is not routable", page)
 	}
 
-	base := template.New("").Funcs(templateFuncs())
+	base := template.New("").Funcs(templateFuncs(nil))
 	base = template.Must(base.ParseFS(templateFS,
 		"templates/layout.html", "templates/partials/*.html"))
 	clone := template.Must(base.Clone())
