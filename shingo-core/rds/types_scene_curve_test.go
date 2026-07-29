@@ -1,8 +1,11 @@
 package rds
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +102,68 @@ func TestAdvancedCurve_ControlPointsUsability(t *testing.T) {
 			t.Errorf("%s (%s): ControlPoints ok = %v, want %v",
 				tc.name, c.InstanceName, ok, tc.want)
 		}
+	}
+}
+
+// TestAdvancedCurve_MixedHandlesAnnounceThemselves covers the one pair
+// Springfield's scene does not contain: one all-zero sentinel, one real
+// handle. The behaviour is unchanged — the segment is drawn straight — and
+// that is exactly why it needs a test. A branch that is safe, untaken and
+// silent is indistinguishable from a branch that is wrong, and "no plant
+// scene has ever produced this" is a statement about two scenes on one day.
+//
+// The second half is the half that keeps the log worth reading: the six
+// shapes the scene DOES produce must pass through without a word, or 377
+// curves a sync would bury the one line that matters.
+func TestAdvancedCurve_MixedHandlesAnnounceThemselves(t *testing.T) {
+	// Deliberately NOT parallel: it swaps the process-wide log writer.
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	// Restore the REAL writer. log.SetOutput(nil) turns the next write in the
+	// process into a nil dereference — that is the plant.claims docker
+	// SIGSEGV of 2026-07-20, and it was a deferred restore that caused it.
+	defer func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) }()
+
+	for _, tc := range []struct {
+		name  string
+		zero1 bool
+	}{
+		{"sentinel first, real handle second", true},
+		{"real handle first, sentinel second", false},
+	} {
+		buf.Reset()
+		c := decodeCurve(t, sprBezierPath)
+		if tc.zero1 {
+			c.ControlPos1 = &Pos3D{}
+		} else {
+			c.ControlPos2 = &Pos3D{}
+		}
+
+		c1, c2, ok := c.ControlPoints()
+		if ok {
+			t.Errorf("%s: mixed pair read as usable geometry (%+v, %+v) — the "+
+				"asymmetric sentinel test is what stops a lane being drawn "+
+				"through the origin", tc.name, c1, c2)
+		}
+		if got := buf.String(); !strings.Contains(got, "MIXED control handles") ||
+			!strings.Contains(got, c.InstanceName) {
+			t.Errorf("%s: mixed pair absorbed silently. log output was %q, want a "+
+				"loud line naming %s", tc.name, got, c.InstanceName)
+		}
+	}
+
+	buf.Reset()
+	for _, raw := range []string{
+		sprBezierPath, sprDegenerateCurved, sprDegenerateStraight,
+		sprStraightZeroed, sprStraightAbsent, sprStraightZeroedTwin,
+	} {
+		decodeCurve(t, raw).ControlPoints()
+	}
+	if buf.Len() != 0 {
+		t.Errorf("a shape the live scene actually contains logged a warning: %q — "+
+			"a line that prints on normal traffic is a line nobody reads", buf.String())
 	}
 }
 

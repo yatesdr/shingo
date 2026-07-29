@@ -1,5 +1,7 @@
 package rds
 
+import "log"
+
 // --- Scene types (full-fidelity, matches real /scene API) ---
 
 type SceneResponse struct {
@@ -92,11 +94,31 @@ type AdvancedCurve struct {
 // size: mistaking a real handle for a sentinel costs sub-metre accuracy on a
 // single segment, while mistaking a sentinel for a real handle is the 52 m bug
 // this function exists to prevent.
+//
+// SO THE ASYMMETRY STAYS, AND IT ANNOUNCES ITSELF. "Has never appeared in a
+// plant scene" is a claim about two scenes on one date, and the only two
+// futures for it are that it stays true silently or stops being true silently.
+// The mixed pair is therefore logged loudly and still drawn straight — the
+// accept-and-log posture HandleDemandOrigin takes on an unparseable episode
+// key, for the same reason: the safe behaviour is not the interesting part,
+// the arrival is, and a rule nobody can observe holding is a rule nobody will
+// notice breaking. If this line ever prints, the assumption is wrong and the
+// log says so at the segment that broke it, with both handles, rather than
+// surfacing weeks later as a lane drawn through the origin.
 func (c AdvancedCurve) ControlPoints() (Pos3D, Pos3D, bool) {
 	if c.ControlPos1 == nil || c.ControlPos2 == nil {
 		return Pos3D{}, Pos3D{}, false
 	}
-	if *c.ControlPos1 == (Pos3D{}) || *c.ControlPos2 == (Pos3D{}) {
+	zero1, zero2 := *c.ControlPos1 == (Pos3D{}), *c.ControlPos2 == (Pos3D{})
+	if zero1 != zero2 {
+		log.Printf("WARNING rds scene: MIXED control handles on %s %q — one handle is the "+
+			"all-zero sentinel and the other is real (controlPos1=%+v controlPos2=%+v); "+
+			"drawn STRAIGHT. No plant scene has produced this pair before, so either SEER "+
+			"changed how it spells no-handles or this segment carries one real handle "+
+			"shingo is discarding — read the scene before trusting this lane's length",
+			c.ClassName, c.InstanceName, *c.ControlPos1, *c.ControlPos2)
+	}
+	if zero1 || zero2 {
 		return Pos3D{}, Pos3D{}, false
 	}
 	return *c.ControlPos1, *c.ControlPos2, true

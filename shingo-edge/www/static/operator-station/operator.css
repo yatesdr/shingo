@@ -808,11 +808,28 @@ body {
 #os-toast {
     position: fixed;
     bottom: 56px;
-    left: 50%;
-    transform: translateX(-50%);
     /* Was 200 — under the keypad's 1000, so a toast fired while the keypad
      * was open rendered behind it. Every other surface in the app already
-     * puts its toast at the top of the stack; this makes the station agree. */
+     * puts its toast at the top of the stack; this makes the station agree.
+     *
+     * DOCKED RIGHT, NOT CENTRED, and that half came from rendering the two
+     * together rather than reasoning about them. Raising the toast above the
+     * keypad settled which element paints on top and never asked ON TOP OF
+     * WHAT: centred at bottom:56px the stack lands on the keypad's
+     * Cancel/Clear/OK row as soon as a second toast is up — measured on the
+     * station's own 1280x800, the row spans y=602..657 and the stack top
+     * climbs to 632 at two toasts and 576 at three, so 81px of the row is
+     * buried. .os-toast-msg is pointer-events:auto, so it was not only
+     * covering the buttons but eating the taps: document.elementFromPoint
+     * over the OK button's centre returned the toast, not the button.
+     * Before D19 the toast painted behind the keypad and could not do that.
+     *
+     * Centring was never load-bearing. The touch modal is ~490px wide on a
+     * 1280px screen, so the right gutter clears it with room to spare and the
+     * toast stays fully visible above the modal — which is the thing D19 was
+     * for. max-width keeps a long message from growing back under the keypad. */
+    right: 16px;
+    max-width: 360px;
     z-index: var(--z-toast);
     pointer-events: none;
 }
@@ -827,7 +844,15 @@ body {
     color: #fff;
     margin-top: 8px;
     animation: os-toast-in 0.2s ease-out, os-toast-out 0.3s ease-in 2.7s forwards;
-    pointer-events: auto;
+    /* TRANSPARENT TO TAPS, and this is the half of the fix that does not
+     * depend on a layout. Docking the stack right moves it off the keypad on
+     * the panel that was measured; it cannot speak for a panel with different
+     * dimensions, a future modal that is wider, or a surface nobody has
+     * rendered yet. This rule holds on all of them: a toast body has nothing
+     * clickable in it, so a tap that lands on one should reach whatever is
+     * underneath rather than being swallowed by a message that had no use for
+     * it. The two exceptions take it back below. */
+    pointer-events: none;
 }
 .os-toast-msg.error { border-color: var(--os-red); color: #ff8a8a; }
 .os-toast-msg.success { border-color: var(--os-green-bright); color: #8aff8a; }
@@ -840,8 +865,22 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
-    cursor: pointer;
 }
+
+/* The only two interactive things a toast can contain, and therefore the only
+ * two that take taps back. Both are real <button>s with their own listeners
+ * (operator-util.js showToast / showExitToast); the toast BODY has no handler
+ * on it at all, on sticky toasts either — the listeners are on the buttons and
+ * they stopPropagation to a parent that was never listening. So the body is
+ * inert by design and the rule above simply stops it pretending otherwise.
+ * `cursor: pointer` came off .os-toast-msg.sticky with this: it advertised a
+ * clickable body that has never existed, and pointer-events:none makes the
+ * declaration dead as well as wrong. */
+.os-toast-msg .os-toast-close,
+.os-toast-msg .os-toast-action {
+    pointer-events: auto;
+}
+
 .os-toast-msg.sticky .os-toast-close {
     background: none;
     border: 1px solid currentColor;
