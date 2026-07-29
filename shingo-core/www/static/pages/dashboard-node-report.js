@@ -95,6 +95,29 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     }
   }
 
+  function renderTransit(rows) {
+    var el = document.getElementById('nr-transit');
+    if (!el) return;
+    if (!rows || rows.length === 0) {
+      el.innerHTML = '';
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = 'block';
+    var parts = [];
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var arrow = '\u2192 ' + esc(r.payload_code);
+      if (r.dest_node) {
+        arrow += ' \u2192 ' + esc(r.dest_node);
+      } else {
+        arrow += ' in transit';
+      }
+      parts.push(arrow);
+    }
+    el.innerHTML = parts.join('  \u2502  ');
+  }
+
   function load() {
     fetch('/api/dashboards/' + encodeURIComponent(dashboardId) + '/node-report?t=' + Date.now())
       .then(function (r) {
@@ -111,6 +134,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
           if (subEl) subEl.textContent = data.layout + ' \u00b7 ' + count + ' ' + label + (count !== 1 ? 's' : '');
         }
         render(data.layout, data.rows || []);
+        renderTransit(data.transit || []);
       })
       .catch(function (e) {
         console.error('node-report: load failed:', e);

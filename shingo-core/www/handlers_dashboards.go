@@ -10,6 +10,7 @@ import (
 
 	"shingocore/domain"
 	"shingocore/service"
+	"shingo/protocol"
 )
 
 // dashboardTemplates maps a wall-display kind to the chromeless template that
@@ -361,6 +362,13 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 		UOPRemaining int    `json:"uop_remaining"`
 	}
 
+	type transitRow struct {
+		PayloadCode  string `json:"payload_code"`
+		DestNode     string `json:"dest_node"`
+		RobotID      string `json:"robot_id,omitempty"`
+		UOPRemaining int    `json:"uop_remaining"`
+	}
+
 	resp := map[string]any{
 		"loader_name": loader.Name,
 		"layout":      loader.Layout,
@@ -378,20 +386,25 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 			h.jsonError(w, bErr.Error(), http.StatusInternalServerError)
 			return
 		}
+		allNodes, _ := nodeSvc.ListNodes()
+		nodeParent := make(map[string]string, len(allNodes))
+		nodeTypeByName := make(map[string]string, len(allNodes))
+		for _, n := range allNodes {
+			if n.ParentName != "" {
+				nodeParent[n.Name] = n.ParentName
+			}
+			nodeTypeByName[n.Name] = n.NodeTypeCode
+		}
 		binByPayload := make(map[string]*domain.Bin, len(allBins))
 		for i := range allBins {
 			b := allBins[i]
 			if b.PayloadCode != "" && b.Status != "retired" {
+				if nodeTypeByName[b.NodeName] != protocol.NodeClassSTOR {
+					continue
+				}
 				if _, exists := binByPayload[b.PayloadCode]; !exists {
 					binByPayload[b.PayloadCode] = b
 				}
-			}
-		}
-		allNodes, _ := nodeSvc.ListNodes()
-		nodeParent := make(map[string]string, len(allNodes))
-		for _, n := range allNodes {
-			if n.ParentName != "" {
-				nodeParent[n.Name] = n.ParentName
 			}
 		}
 		rows := make([]payloadRow, 0, len(payloads))
@@ -406,6 +419,44 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 			rows = append(rows, row)
 		}
 		resp["rows"] = rows
+		activeOrders, _ := h.engine.OrderService().ListActiveOrders()
+		orderDest := make(map[int64]string, len(activeOrders))
+		orderRobot := make(map[int64]string, len(activeOrders))
+		for _, o := range activeOrders {
+			if o.BinID != nil && o.DeliveryNode != "" {
+				orderDest[*o.BinID] = o.DeliveryNode
+				orderRobot[*o.BinID] = o.RobotID
+			}
+		}
+		payloadSet := make(map[string]bool, len(payloads))
+		for _, p := range payloads {
+			payloadSet[p.PayloadCode] = true
+		}
+		transit := make([]transitRow, 0)
+		for _, b := range allBins {
+			if b.PayloadCode == "" || b.Status == "retired" {
+				continue
+			}
+			if !payloadSet[b.PayloadCode] {
+				continue
+			}
+			if b.NodeName != domain.TransitNodeName {
+				continue
+			}
+			dest := ""
+			robot := ""
+			if b.ClaimedBy != nil {
+				dest = orderDest[*b.ClaimedBy]
+				robot = orderRobot[*b.ClaimedBy]
+			}
+			transit = append(transit, transitRow{
+				PayloadCode:  b.PayloadCode,
+				DestNode:     dest,
+				RobotID:      robot,
+				UOPRemaining: b.UOPRemaining,
+			})
+		}
+		resp["transit"] = transit
 	} else {
 		homes, err := svc.Homes(cfg.LoaderID)
 		if err != nil {
@@ -416,6 +467,9 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 		for _, hm := range homes {
 			node, nErr := nodeSvc.GetNode(hm.PositionNodeID)
 			if nErr != nil || node == nil {
+				continue
+			}
+			if node.NodeTypeCode != protocol.NodeClassSTOR {
 				continue
 			}
 			row := nodeRow{NodeName: node.Name}
@@ -440,6 +494,40 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 		}
 		resp["homes_count"] = len(homes)
 		resp["rows"] = rows
+		allBins, bErr := h.engine.BinService().ListBins()
+		if bErr == nil {
+			activeOrders, _ := h.engine.OrderService().ListActiveOrders()
+			orderDest := make(map[int64]string, len(activeOrders))
+			orderRobot := make(map[int64]string, len(activeOrders))
+			for _, o := range activeOrders {
+				if o.BinID != nil && o.DeliveryNode != "" {
+					orderDest[*o.BinID] = o.DeliveryNode
+					orderRobot[*o.BinID] = o.RobotID
+				}
+			}
+			transit := make([]transitRow, 0)
+			for _, b := range allBins {
+				if b.PayloadCode == "" || b.Status == "retired" {
+					continue
+				}
+				if b.NodeName != domain.TransitNodeName {
+					continue
+				}
+				dest := ""
+				robot := ""
+				if b.ClaimedBy != nil {
+					dest = orderDest[*b.ClaimedBy]
+					robot = orderRobot[*b.ClaimedBy]
+				}
+				transit = append(transit, transitRow{
+					PayloadCode:  b.PayloadCode,
+					DestNode:     dest,
+					RobotID:      robot,
+					UOPRemaining: b.UOPRemaining,
+				})
+			}
+			resp["transit"] = transit
+		}
 	}
 
 	w.Header().Set("Cache-Control", "no-store")

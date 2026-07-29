@@ -1552,12 +1552,39 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   font-size: 0.9rem;
   color: var(--text-muted);
 }
+.nr-transit-bar {
+  display: none;
+  padding: 0.75rem 1.25rem;
+  margin-bottom: 0.5rem;
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-family: var(--font-mono, monospace);
+  background: rgba(210, 153, 34, 0.12);
+  border: 2px solid rgba(210, 153, 34, 0.4);
+  border-radius: 6px;
+  color: #d29922;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+  animation: nr-transit-pulse 2s ease-in-out infinite;
+}
+@keyframes nr-transit-pulse {
+  0%, 100% { border-color: rgba(210, 153, 34, 0.4); }
+  50% { border-color: rgba(210, 153, 34, 0.9); }
+}
+body[data-dashboard-kind="node-report"] #dash-main {
+  display: flex;
+  flex-direction: column;
+}
 .nr-columns {
   display: flex;
   align-items: stretch;
   gap: 0;
   width: 100%;
-  height: calc(100vh - 140px);
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 .nr-col-table {
@@ -1567,16 +1594,20 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
 }
 .nr-col-table thead {
+  flex-shrink: 0;
   display: table;
   width: 100%;
   table-layout: fixed;
 }
 .nr-col-table tbody {
-  display: table;
+  display: block;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  table-layout: fixed;
 }
 .nr-col-table thead th {
   text-align: left;
@@ -1590,6 +1621,9 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   background: var(--surface);
 }
 .nr-col-table tbody tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
   border-bottom: 1px solid var(--border);
   transition: background 0.15s;
 }
