@@ -30,11 +30,15 @@ type Config struct {
 	// It rides the backup archive (backup/snapshot.go includes the config), so
 	// a restore is the other way a replacement box gets it back.
 	//
-	// Empty means unenrolled. During the migration window that is tolerated and
-	// the legacy namespace.line_id derivation applies; after the enrollment
-	// deploy it is a startup refusal.
+	// Empty means unenrolled, and since the enrollment deploy that is a startup
+	// REFUSAL rather than a derivation — there is no default left to compose
+	// one from. See main.mustHaveIdentity.
 	StationUID string `yaml:"station_uid"`
 
+	// Namespace / LineID are LABELS NOW, not identity. They no longer compose
+	// a station id and they no longer have defaults; they survive because
+	// existing plant configs carry them and silently dropping fields a plant
+	// has written is its own kind of surprise.
 	Namespace    string        `yaml:"namespace"`
 	LineID       string        `yaml:"line_id"`
 	DatabasePath string        `yaml:"database_path"`
@@ -329,8 +333,14 @@ type SimOperatorsConfig struct {
 // Defaults returns a Config with sane defaults.
 func Defaults() *Config {
 	return &Config{
-		Namespace:    "plant-a",
-		LineID:       "line-1",
+		// NO Namespace / LineID DEFAULTS. They were `plant-a` and `line-1`,
+		// and Config.stationID() composed them into the station identity every
+		// unenrolled edge in the fleet ran under — a value nobody typed and
+		// nobody chose. install-edge.sh writes a placeholder config containing
+		// only database_path, so a fresh install COULD NOT come up as anything
+		// else. The duplicate-edge failure was never somebody making a
+		// mistake; it was the system having a default answer to a question
+		// that has no default.
 		DatabasePath: "shingoedge.db",
 		PollRate:     time.Second,
 		WarLink: WarLinkConfig{
@@ -425,23 +435,19 @@ func (c *Config) Save(path string) error {
 
 // stationID returns the station identity without locking (for internal use).
 //
-// PRECEDENCE, AND THE ORDER IS THE MIGRATION. station_uid is Core-minted at
-// enrollment and wins outright. The two legacy sources below it are the
-// compatibility window: an edge that has not been enrolled yet keeps answering
-// with the string it has always answered with, so it registers against the uid
-// v66 backfilled from that same string and the plant does not notice the
-// deploy. Enrollment is what moves it off them, one edge at a time.
+// THE UID, OR THE EXPLICIT OVERRIDE, AND NOTHING COMPOSED. The migration
+// window's third branch — Namespace + "." + LineID — is gone with the defaults
+// that fed it. An edge with neither value returns "" and mustHaveIdentity
+// refuses to start; there is no longer a string this function can invent.
 //
-// The legacy branches go away with guard 1 (the enrollment deploy), at which
-// point an empty station_uid is a startup refusal rather than a derivation.
+// Messaging.StationID survives as a deliberate operator override for a
+// development or bench edge that is not enrolled against a Core. It is not a
+// default: somebody has to write it in the file.
 func (c *Config) stationID() string {
 	if c.StationUID != "" {
 		return c.StationUID
 	}
-	if c.Messaging.StationID != "" {
-		return c.Messaging.StationID
-	}
-	return c.Namespace + "." + c.LineID
+	return c.Messaging.StationID
 }
 
 // StationID returns this edge's identity as it appears on the wire —

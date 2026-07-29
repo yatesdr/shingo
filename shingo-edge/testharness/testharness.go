@@ -92,10 +92,13 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 	t.Helper()
 	db := OpenDB(t)
 
+	// StationID is set explicitly on both fields: the harness hands a station
+	// id in, and nothing derives one from namespace/line_id any more.
 	cfg := &config.Config{
-		Namespace: "test",
-		LineID:    "edge-test",
-		CoreAPI:   coreAPI,
+		StationUID: stationID,
+		Namespace:  "test",
+		LineID:     "edge-test",
+		CoreAPI:    coreAPI,
 		Messaging: config.MessagingConfig{
 			StationID: stationID,
 		},

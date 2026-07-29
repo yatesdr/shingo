@@ -150,22 +150,34 @@ func mustLoadConfig(path string, portOverride int) *config.Config {
 // failure this whole change exists to end was not somebody making a mistake.
 // It was the system having a default answer to a question that has no default.
 //
-// ── DELETE THE TOLERANT HALF IN THE SECOND DEPLOY ───────────────────────────
-// Today this WARNS. It must not refuse before there is an enrolled edge to
-// refuse in favour of: shipping the refusal in the same deploy as the schema
-// would take both plants down between the Core migration and the enrollment
-// step. The enrollment deploy replaces the log.Printf below with log.Fatalf
-// and deletes the Namespace/LineID defaults in config.Defaults() — one commit,
-// and the rollout note names both.
+// THE REFUSAL SHIPPED IN ITS OWN DEPLOY, AND THAT SEPARATION IS THE POINT.
+// It cannot ride the same deploy as the schema: between the Core migration and
+// the enrollment step there IS no enrolled edge, so a refusal there takes both
+// plants down. One deploy tolerates and warns; this one refuses. Which
+// behaviour a plant has is answered by what is deployed, not by a flag — a
+// toggle would have made "is this plant refusing yet" a question about state.
+//
+// Messaging.StationID still satisfies it, because somebody had to type that
+// into the file. What is refused is the value nobody typed.
 func mustHaveIdentity(cfg *config.Config, stationID string) {
-	if cfg.StationUIDOrEmpty() != "" {
+	if stationID != "" {
 		return
 	}
-	log.Printf("shingoedge: WARNING — this edge is NOT ENROLLED. It is running under the legacy "+
-		"derived station id %q, which is a value composed from config defaults rather than an "+
-		"identity Core issued. Enroll it on Core (Dashboard → Edges → Enroll, or "+
-		"POST /api/edges/enroll), then put `station_uid: <uid>` in %s and restart. After the "+
-		"enrollment deploy this is a startup refusal, not a warning.", stationID, "shingoedge.yaml")
+	log.Fatal("shingoedge: REFUSING TO START — this edge has no identity.\n" +
+		"  There is no station_uid in the config and no explicit messaging.station_id, and " +
+		"there is no longer a default to fall back on: the previous default composed " +
+		"plant-a.line-1 out of two struct fields, which is the identity every unenrolled " +
+		"edge in the fleet shared and the cause of the duplicate-edge failure this refusal " +
+		"exists to end.\n" +
+		"  ENROLL IT on Core (auth-gated API; there is no UI for it yet):\n" +
+		"    POST /api/edges/enroll  {\"display_name\":\"PLANT / EDGE-1\"}\n" +
+		"  Core mints a station_uid and returns it.\n" +
+		"  IF THIS IS REPLACEMENT HARDWARE for a station that already exists, do NOT enroll — " +
+		"that would mint a second identity for one station and split its history. Read the " +
+		"EXISTING uid off Core (GET /api/edges), use that one, and POST " +
+		"/api/edges/rebind?uid=<uid> once this box has registered.\n" +
+		"  THEN: put `station_uid: <uid>` at the top of /etc/shingo/shingoedge.yaml, delete any " +
+		"`group_id:` line under messaging.kafka, and restart.")
 }
 
 func mustOpenDatabase(path string) *store.DB {

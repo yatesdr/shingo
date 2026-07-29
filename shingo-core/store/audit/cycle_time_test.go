@@ -98,9 +98,23 @@ func TestAppliedDeltaStillCarriesNoNode(t *testing.T) {
 	// And the positive half: the station really is arriving as the actor, which is
 	// the column ListCycleEvents reads. Without this, "no node_id" would be
 	// consistent with a query that reads nothing at all.
-	if !strings.Contains(src, "d.Station") {
-		t.Error("the applier no longer passes d.Station into the audit INSERT — " +
-			"ListCycleEvents reads the actor column for the station and would now return " +
-			"one nameless key for the whole site")
+	//
+	// THE TOKEN CHANGED FROM `d.Station` TO `station` AND THE ASSERTION IS
+	// STRONGER FOR IT. The station is no longer a field on the delta payload —
+	// it was carried twice in one envelope, once by the transport and once by
+	// the sender, and the handler's `if station == "" { … }` reconciliation was
+	// a rule with two possible answers. It is now the applier's first argument,
+	// taken from Envelope.Src.Station. So `d.Station` cannot appear here, and
+	// looking for a bare `station` would match almost anything in this file.
+	//
+	// Matching the ARGUMENT PAIR pins the position, not just the presence: this
+	// is the actor slot of the applied-delta INSERT specifically, immediately
+	// after payload_code. A future edit that keeps the variable but moves it out
+	// of the actor position still fails here, which a substring check on the
+	// identifier alone would not.
+	if !strings.Contains(src, "d.PayloadCode, station,") {
+		t.Error("the applier no longer passes the envelope station into the audit INSERT's " +
+			"actor position — ListCycleEvents reads the actor column for the station and " +
+			"would now return one nameless key for the whole site")
 	}
 }

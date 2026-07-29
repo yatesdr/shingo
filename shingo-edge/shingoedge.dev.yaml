@@ -1,7 +1,13 @@
 # shingoedge.dev.yaml — LOCAL DEV / SIMULATION ONLY. NOT FOR PRODUCTION.
 # Loaded by a shingoedge built with -tags sim; refuses to start without
 # SHINGO_ALLOW_SIM=1 (T0.3). warlink.enabled:false on purpose — sim mode starts
-# the poll loop explicitly against the fake WarLink (T1.3). Station = devplant.line1.
+# the poll loop explicitly against the fake WarLink (T1.3).
+#
+# station_uid IS EXPLICIT NOW. Nothing composes a station id from namespace/line_id
+# any more — that composition was the fleet-wide shared identity the v66 work
+# removed — so the dev stack names its own, exactly as a plant Pi carries the uid
+# Core minted for it. namespace/line_id below are labels only.
+station_uid: devplant.line1
 namespace: devplant
 line_id: line1
 database_path: /data/shingoedge.db

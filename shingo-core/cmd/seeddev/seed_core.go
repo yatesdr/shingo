@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
+	"shingocore/store/registry"
 )
 
 // seedCore writes the plant's core (Postgres) topology through store accessors,
@@ -180,6 +182,23 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 	// map stamps them onto each loader's payload/home UOPThreshold, which the aggregate
 	// derivation reads back. Must run AFTER the loaders exist.
 	stationID := p.Namespace + "." + p.LineID
+
+	// ENROLL THE STATION. This is the sim's stand-in for the production
+	// enrollment step, and without it the dev stack is permanently broken after
+	// the enrollment deploy: a register from an unenrolled uid is REFUSED and
+	// writes nothing, so the Edge would heartbeat, publish, and never appear.
+	//
+	// The uid is the composed devplant.line1 rather than a minted stn-… for the
+	// same reason both live plants keep theirs: it is what shingoedge.dev.yaml
+	// carries, it never changes, and readable-but-immutable is not the defect —
+	// self-asserted-and-mutable was.
+	//
+	// Already-enrolled is the normal case on a re-seed and is not an error.
+	if _, err := db.EnrollEdge(stationID, p.Namespace+" "+p.LineID, stationID); err != nil &&
+		!errors.Is(err, registry.ErrAlreadyEnrolled) {
+		return fmt.Errorf("enroll station %s: %w", stationID, err)
+	}
+
 	if err := seedBinLoaders(db, p); err != nil {
 		return fmt.Errorf("seed bin loaders: %w", err)
 	}

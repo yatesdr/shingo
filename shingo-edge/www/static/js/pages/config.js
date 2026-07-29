@@ -53,9 +53,9 @@ async function testBroker(button) {
 async function saveIdentity() {
     try {
         await api.put('/api/config/station-id', {
-            station_id: document.getElementById('station-id-input').value.trim()
+            station_uid: document.getElementById('station-uid-input').value.trim()
         });
-        toast('Station identity saved', 'success');
+        toast('Station identity saved — RESTART shingoedge for it to take effect', 'success');
     } catch (e) {
         toast('Error: ' + e, 'error');
     }

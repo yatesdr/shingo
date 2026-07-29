@@ -7,7 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"shingocore/store/registry"
+	"shingocore/domain"
+	"shingocore/service"
 )
 
 // The edge-station identity surface.
@@ -34,7 +35,7 @@ func (h *Handlers) apiEdges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if edges == nil {
-		edges = []registry.Edge{}
+		edges = []domain.RegistryEdge{}
 	}
 	h.jsonOK(w, edges)
 }
@@ -57,7 +58,7 @@ func (h *Handlers) apiEdgeEnroll(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
 	e, err := h.engine.NodeService().EnrollEdge(strings.TrimSpace(req.DisplayName))
-	if errors.Is(err, registry.ErrAlreadyEnrolled) {
+	if errors.Is(err, service.ErrAlreadyEnrolled) {
 		h.jsonError(w, "station uid already enrolled", http.StatusConflict)
 		return
 	}

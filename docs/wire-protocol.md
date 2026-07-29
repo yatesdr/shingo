@@ -32,11 +32,36 @@ Edges never see each other's order traffic. Core never sees its own replies echo
 | Parameter | Value |
 |-----------|-------|
 | Consumer group (Core) | `shingo-core` on `shingo.orders` |
-| Consumer group (Edge) | `shingo-edge-{station_id}` on `shingo.dispatch` |
-| Start offset (new consumers) | Latest (no replay of stale backlog on first join) |
-| Message key (orders topic) | `src.station` (ordering per edge's messages) |
-| Message key (dispatch topic) | `dst.station` (ordering per edge's replies) |
-| Topic retention | 24 hours (configurable server-side) |
+| Consumer group (Edge) | `shingo-edge-{station_uid}` on `shingo.dispatch`, always derived — there is no configurable override |
+| Start offset (new consumers) | **Earliest.** `kafka-go` `ReaderConfig.StartOffset` defaults to `FirstOffset` and neither service sets it, so a group id that changes replays the topic from the start of retention |
+| Message key | `station_uid` on Edge publishes; `dst.station` on Core publishes where the path knows one |
+| Partitions | **1** (`ensureTopics`), which makes the message key and the balancer inert today — see below |
+| Topic retention | broker default (no `ConfigEntries` are sent at topic creation) |
+
+Three corrections to what this table used to say, all of them the kind that
+matter only when somebody plans a change against them:
+
+- **Start offset was documented as "Latest (no replay of stale backlog on first
+  join)". It is Earliest.** Nothing in either service assigns `StartOffset`, and
+  the library's documented default is `FirstOffset`. The consequence is bounded
+  rather than dangerous — `Ingestor.HandleRaw` checks expiry BEFORE the station
+  filter, so a replayed dispatch envelope is dropped, not executed — but a new
+  consumer group does read the retained backlog and log every message of it.
+- **The message keys were documented as already set. They were not** until the
+  identity change; both `Publish` implementations sent `kafka.Message{Topic,
+  Value}` with no `Key`.
+- **And a key alone would not have done anything.** The writer balancer was
+  `kafka.LeastBytes`, which never reads `msg.Key` — it routes by accumulated
+  bytes per partition (`kafka-go` v0.4.50 `balancer.go:87-109`). It is
+  `kafka.Hash` now. With `NumPartitions: 1` both are still no-ops; raising the
+  partition count is what activates per-station ordering and per-edge partition
+  assignment, and it is a broker-side operation.
+
+**The consumer group is why a duplicate edge goes deaf.** One partition is
+assigned to exactly one group member, so two edges sharing a station id share a
+group and one of them receives no dispatch traffic at all while still
+heartbeating, registering and publishing. Distinct `station_uid`s are what
+prevent that today — not partitioning.
 
 ---
 
@@ -292,25 +317,43 @@ These schemas are used as the `data` field inside `data`-type messages. See [Dat
 
 #### EdgeRegister
 
-Sent by an edge node on startup and on every reconnect via `data` message with subject `edge.register`. Triggers an upsert in core's edge registry.
+Sent by an edge node on startup and on every reconnect via `data` message with subject `edge.register`.
+
+**It is no longer an upsert.** Core resolves the station by `station_uid` and
+UPDATEs it; a uid Core has never enrolled is REFUSED and writes nothing. An edge
+cannot bring a station into existence by asserting a name — enrollment is a
+separate, deliberate act on Core (`POST /api/edges/enroll`). See
+[edge-identity-rollout.md](edge-identity-rollout.md).
 
 ```json
 {
-  "station_id": "plant-a.line-1",
+  "station_id": "stn-4f8a1c02b7e39d15",
   "hostname":   "edge-01.local",
-  "version":    "1.2.0",
-  "line_ids":   ["line-1"]
+  "instance":   "9a3f7c21d0b45e88",
+  "version":    "1.2.0"
 }
 ```
 
 | Field | JSON Key | Type | Required | Description |
 |---|---|---|---|---|
-| Station ID | `station_id` | string | Yes | Unique edge station identifier. Convention: `"{namespace}.{line_id}"`. |
-| Hostname | `hostname` | string | No | OS hostname of the edge machine. Informational. |
+| Station ID | `station_id` | string | Yes | **The station UID**, minted by Core at enrollment. The field keeps its name because `Address.Station`'s VALUE is the identity — what changed is who mints it and that it never changes. Legacy plants carry the pre-v66 string as their uid. |
+| Hostname | `hostname` | string | No | OS hostname. Attribute data and a weak duplicate signal — two Pis flashed from one SD image share it. |
+| Instance | `instance` | string | No | Random per-PROCESS id, drawn once at boot. Additive/omitempty; absent means "cannot judge". It is the only field that separates two clones of one SD card, and Core alarms when a displaced instance RETURNS — a single machine cannot produce that, because a reboot draws a value it has never used and a live process reuses the one it holds. |
 | Version | `version` | string | No | Software version of the edge application. |
-| Line IDs | `line_ids` | string[] | No | Production line identifiers this edge manages. JSON array of strings. |
 
-The factory identifier is derived from the envelope `src.factory` field, not the registration payload.
+`line_ids` is **RETIRED** (v66). It sent `[cfg.LineID]` regardless of any station
+override, so it was always `["line-1"]`, and its only consumer composed
+`station + "." + line` into a dashboard scope no order row could match. The
+column is dropped from `edge_registry` too.
+
+**Payload copies of the station are gone** from `production.tick`
+(`CounterSnapshot`), `downtime.event` (`DowntimeEvent`),
+`lineside_bucket_delta` (`LinesideBucketDelta` — which carried it twice in one
+envelope) and `bin_uop_delta` (`BinUOPDelta`). Every handler now reads
+`Envelope.Src.Station`. The old `if station == "" { station = env.Src.Station }`
+reconciliation was a rule with two possible answers that only ever produced one
+because a plant had exactly one station; distinct per-edge identity is precisely
+what makes the two copies able to disagree.
 
 #### EdgeHeartbeat
 

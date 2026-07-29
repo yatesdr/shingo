@@ -589,10 +589,26 @@ if [ ! -f /etc/shingo/shingoedge.yaml ]; then
             echo "database_path: /var/lib/shingo-edge/shingoedge.db" >> /etc/shingo/shingoedge.yaml
         fi
     else
+        # THE PLACEHOLDER IS WHY EVERY EDGE HAD THE SAME IDENTITY. It carried
+        # only database_path, so a fresh install fell through to the config
+        # defaults and came up as `plant-a.line-1` — a value nobody typed and
+        # nobody could have typed differently. station_uid is now empty and
+        # commented, and an empty one is a startup refusal that names this step.
         echo "==> Writing placeholder /etc/shingo/shingoedge.yaml..."
         cat > /etc/shingo/shingoedge.yaml <<'YAML'
 # shingo-edge configuration. Configure other settings via the web UI
 # after first boot (http://<host>:<port>/system-config).
+
+# REQUIRED. Core mints this when the station is enrolled:
+#   curl -sS -X POST http://<core>:8083/api/edges/enroll \
+#        -H 'content-type: application/json' -d '{"display_name":"PLANT / EDGE-1"}'
+# REPLACING THE BOX FOR A STATION THAT ALREADY EXISTS? Do not enroll — that
+# mints a second identity for one station and splits its history. Read the
+# EXISTING uid off Core (GET /api/edges) and paste that one here; the station's
+# history follows the uid, not the hardware.
+# shingoedge REFUSES TO START until this is set.
+station_uid: ""
+
 database_path: /var/lib/shingo-edge/shingoedge.db
 YAML
     fi

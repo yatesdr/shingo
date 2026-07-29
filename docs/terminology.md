@@ -94,7 +94,26 @@ A logical grouping of nodes, typically corresponding to a physical area of the f
 
 ### Station
 
-A Shingo Edge instance identity. Each edge station has a unique station ID derived from its namespace and line identifier (e.g., `plant-a.line-1`). Stations are registered in core's edge registry and monitored via heartbeats.
+A Shingo Edge instance identity. **Three things that used to be one string**, and
+separating them is what stopped a rename from being a plant stop:
+
+| | What it is | Owner | Mutable? |
+|---|---|---|---|
+| `station_uid` | the identity Core correlates all history to | **Core**, minted at enrollment | **never** |
+| `display_name` | `SPRINGFIELD / EDGE-2` | operator, edited on Core | freely |
+| `Address.Station` | the transport routing selector | derived — its VALUE *is* the `station_uid` | never |
+
+Before v66 the uid was DERIVED from namespace + line id (`plant-a.line-1`) and
+asserted by the Edge, which meant every unenrolled edge in the fleet shared one
+identity and a relabel rewrote a key six tables and a backup manifest were built
+on. Now Core mints it, and a station is REGISTERED only after it has been
+ENROLLED — a register carrying a uid Core has never issued is refused and writes
+nothing.
+
+The uid being re-issuable is the whole reason Core mints it rather than the Pi:
+replace the hardware for an existing station and Core hands the new box the
+EXISTING uid, so the station's history does not move because its identity did
+not move. See [edge-identity-rollout.md](edge-identity-rollout.md).
 
 ### Process
 

@@ -349,32 +349,15 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 
 	conflict, err := s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version)
 	if errors.Is(err, registry.ErrUnknownStation) {
-		// ── THE COMPATIBILITY WINDOW, AND THE ONLY PIECE OF IT ─────────────
-		//
-		// DELETE THIS BRANCH IN THE SECOND DEPLOY. It is the entire difference
-		// between "tolerate" and "refuse", it is deliberately one contiguous
-		// block, and the rollout note names it by function.
-		//
-		// It exists because of an ordering constraint that cannot be avoided:
-		// the guard that refuses an unenrolled edge must not ship BEFORE there
-		// is an enrolled edge, or the first deploy is a plant with no Edge. v66
-		// backfills station_uid = station_id so both live plants resolve
-		// without this branch ever running; it covers the cases the backfill
-		// cannot reach — a Core database that predates the plant it is talking
-		// to, a fresh dev/docker stack, a sim.
-		//
-		// It is NOT a config toggle and there is nothing to flip at runtime.
-		// The two behaviours are two commits, and which one a plant has is
-		// answered by what is deployed. A flag would have made "is this plant
-		// refusing yet" a question about state instead of about version.
-		if _, eerr := s.db.EnrollEdge(uid, "", uid); eerr != nil {
-			log.Printf("core_handler: auto-enroll unknown station %s: %v", uid, eerr)
-			return
-		}
-		log.Printf("core_handler: AUTO-ENROLLED unknown station %s during the identity migration "+
-			"window. This is expected exactly once per edge and only until the enrollment deploy; "+
-			"after it, an unenrolled edge is refused.", uid)
-		conflict, err = s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version)
+		// GUARD 2, IN ITS FINAL FORM. The migration window's auto-enroll
+		// recovery branch lived here and is deleted; a station Core has never
+		// enrolled cannot come into existence by an Edge asserting a name at
+		// it. Nothing was written — see registry.Register.
+		log.Printf("core_handler: REFUSED register from unenrolled station %s (hostname=%s). "+
+			"Enroll it on Core and put the returned station_uid in that Pi's shingoedge.yaml; "+
+			"if this is replacement hardware for an existing station, use that station's "+
+			"EXISTING uid instead of enrolling a new one.", uid, p.Hostname)
+		return
 	}
 	if err != nil {
 		log.Printf("core_handler: register edge %s: %v", uid, err)

@@ -361,6 +361,15 @@ func (s *NodeService) ApplyAssignments(nodeID int64, a NodeAssignments) error {
 //
 // The second is the case a first-boot UUID cannot express at all.
 
+// ErrAlreadyEnrolled / ErrUnknownStation re-export the registry sentinels so
+// handlers can classify an enrollment outcome without importing store/registry
+// — the same shape as ErrInventoryDeltaSkipped, and required by the
+// www-no-direct-store depguard rule.
+var (
+	ErrAlreadyEnrolled = registry.ErrAlreadyEnrolled
+	ErrUnknownStation  = registry.ErrUnknownStation
+)
+
 // EnrollEdge mints a station identity. displayName is the operator's label and
 // is not an identifier; pass "" to default it to the uid.
 func (s *NodeService) EnrollEdge(displayName string) (*registry.Edge, error) {
