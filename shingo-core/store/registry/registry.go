@@ -11,6 +11,7 @@ package registry
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"strconv"
 	"time"
 
@@ -25,22 +26,164 @@ import (
 // to the admin UI.
 type Edge = domain.RegistryEdge
 
+// Conflict reports that a register arrived from a machine other than the one
+// this station id is bound to.
+//
+// It is NOT an error type on purpose. Register still succeeds and still writes
+// the row; see Register's comment for why refusing is the wrong shape today.
+type Conflict struct {
+	StationID string
+	// Bound is the hostname that first registered this station id, and the
+	// one Register keeps. Never reassigned except by Rebind.
+	Bound string
+	// Claimant is the hostname that just registered and does not match.
+	Claimant string
+	// Count is how many mismatching registers this station has now seen,
+	// including this one. A count that keeps climbing means two machines are
+	// alive and taking turns; a count that stopped at a small number and an
+	// old ConflictAt means the station moved boxes once.
+	Count      int64
+	ConflictAt time.Time
+}
+
+func (c *Conflict) String() string {
+	return "station " + c.StationID + " is bound to hostname " + c.Bound +
+		" but " + c.Claimant + " just registered as it (" +
+		strconv.FormatInt(c.Count, 10) + " mismatching register(s) so far)"
+}
+
 // Register upserts an edge registration. If the station_id already
 // exists, it updates the record and resets status to active.
-func Register(db *sql.DB, stationID, hostname, version string, lineIDs []string) error {
+//
+// IT ALSO DETECTS TWO MACHINES CLAIMING ONE STATION ID, which is the thing this
+// statement previously made unobservable. `hostname = excluded.hostname`
+// overwrites the only evidence that a second machine exists, and station_id is
+// UNIQUE, so a second Pi does not collide — it takes turns owning the row. Every
+// downstream consequence follows from that one row being shared: HandleEdgeRegister
+// re-derives demand_registry and re-stales edge_cells per station, so each
+// register wipes the other machine's routing and catalog; production_tick_dedup
+// is keyed on the station string; and because Kafka topics are created with one
+// partition and the consumer group is derived from the station id, ONE OF THE TWO
+// EDGES RECEIVES NO DISPATCH TRAFFIC AT ALL while still heartbeating,
+// registering and publishing. There is no error anywhere in that picture. The
+// conflict returned here is the only thing in the system that names the cause.
+//
+// A DETECTOR AND NOT A GATE, and the reason is the signal rather than caution.
+// "Different hostname" is equally the signature of a legitimate hardware
+// replacement — a reimaged Pi, a DHCP-derived name change, a rename — and Core
+// cannot tell the two apart, because it has no enrollment step at which a human
+// says which one this is. Refusing would make a replaced Pi into a plant with no
+// Edge, recoverable only by hand-editing Core's Postgres. And in the other
+// direction the signal has a false NEGATIVE that matters more: two Pis flashed
+// from one SD image share a hostname, which is exactly how additional edges get
+// stood up, and this detector is blind to that case. A signal that
+// false-positives on the benign case and false-negatives on the expected one is
+// not a gate. It is evidence, and it is recorded as evidence.
+//
+// SO THE REGISTER PROCEEDS EXACTLY AS BEFORE — same row written, same catalog and
+// demand-registry work downstream. Behaviour is unchanged; only the evidence is
+// added. Refusing the register, or even just skipping the downstream re-derive,
+// would deny routing to a machine that might be the plant's only Edge.
+//
+// ONE STATEMENT, NOT READ-THEN-WRITE. Two edges racing a read-compare-write
+// would each read the other's row and neither would record a conflict. The
+// CASE expressions all read the PRE-UPDATE row (that is what the table name
+// means inside DO UPDATE, as against `excluded`), so the comparison and the
+// overwrite are the same atomic statement.
+//
+// EVERY BRANCH ALSO REQUIRES A NON-EMPTY INCOMING HOSTNAME, because
+// os.Hostname() failing on the Edge yields an empty string (heartbeat.go
+// discards the error), and an unknown hostname must read as "cannot judge"
+// rather than as a different machine — in either direction. It must not raise a
+// false alarm against the bound host, and it must not become the binding, which
+// would then make the REAL hostname look like the intruder.
+func Register(db *sql.DB, stationID, hostname, version string, lineIDs []string) (*Conflict, error) {
 	lineJSON, _ := json.Marshal(lineIDs)
 
-	_, err := db.Exec(`
-		INSERT INTO edge_registry (station_id, hostname, version, line_ids, registered_at, status)
-		VALUES ($1, $2, $3, $4, NOW(), 'active')
+	var bound string
+	var count int64
+	var at sql.NullTime
+	err := db.QueryRow(`
+		INSERT INTO edge_registry (station_id, hostname, version, line_ids, registered_at, status, bound_hostname)
+		VALUES ($1, $2, $3, $4, NOW(), 'active', $2)
 		ON CONFLICT(station_id) DO UPDATE SET
 			hostname = excluded.hostname,
 			version = excluded.version,
 			line_ids = excluded.line_ids,
 			registered_at = excluded.registered_at,
-			status = 'active'
-	`, stationID, hostname, version, string(lineJSON))
-	return err
+			status = 'active',
+			bound_hostname = CASE
+				WHEN edge_registry.bound_hostname = '' THEN excluded.hostname
+				ELSE edge_registry.bound_hostname END,
+			conflict_hostname = CASE
+				WHEN edge_registry.bound_hostname NOT IN ('', excluded.hostname)
+				     AND excluded.hostname <> '' THEN excluded.hostname
+				ELSE edge_registry.conflict_hostname END,
+			conflict_count = edge_registry.conflict_count + CASE
+				WHEN edge_registry.bound_hostname NOT IN ('', excluded.hostname)
+				     AND excluded.hostname <> '' THEN 1
+				ELSE 0 END,
+			conflict_at = CASE
+				WHEN edge_registry.bound_hostname NOT IN ('', excluded.hostname)
+				     AND excluded.hostname <> '' THEN NOW()
+				ELSE edge_registry.conflict_at END
+		RETURNING bound_hostname, conflict_count, conflict_at
+	`, stationID, hostname, version, string(lineJSON)).Scan(&bound, &count, &at)
+	if err != nil {
+		return nil, err
+	}
+	if hostname == "" || bound == "" || bound == hostname {
+		return nil, nil
+	}
+	c := &Conflict{StationID: stationID, Bound: bound, Claimant: hostname, Count: count}
+	if at.Valid {
+		c.ConflictAt = at.Time
+	}
+	// LOGGED HERE, NOT LEFT TO THE CALLER. The alarm is the entire value of the
+	// detection, and an alarm a caller has to remember to raise is one a second
+	// caller will not. The returned Conflict is for callers that can do MORE
+	// than log — CoreDataService names the incumbent in the registration ack so
+	// the line appears in the claimant's own journal too.
+	log.Printf("registry: DUPLICATE EDGE IDENTITY — %s. "+
+		"Two machines configured with one station id share one registry row, one of them "+
+		"receives no dispatch traffic (single-partition consumer group), and each register "+
+		"wipes the other's demand routing and cell catalog. Give each edge a unique "+
+		"namespace/line_id in shingoedge.yaml, or if this station moved to a new box, "+
+		"rebind it deliberately.", c)
+	return c, nil
+}
+
+// Rebind moves a station's hostname binding to a new machine and clears the
+// conflict record. Reports whether a row matched.
+//
+// THIS EXISTS SO THE ALARM CAN BE TURNED OFF, and that is not a convenience.
+// bound_hostname is never reassigned by a register, so after a legitimate box
+// replacement every subsequent register mismatches and conflict_at stays
+// permanently fresh. A signal that cannot be cleared is a signal people learn to
+// ignore — the same latching defect this repository already fixed once in the
+// Core Health db-waits gauge. Rebind is the sanctioned "yes, this station lives
+// here now", and it is deliberately a separate, explicit act rather than
+// something a register can do to itself.
+//
+// It is also the seam the eventual enrollment step lands on: enrollment is this
+// operation plus an identity Core issues, with a human on the other end of it.
+func Rebind(db *sql.DB, stationID, hostname string) (bool, error) {
+	res, err := db.Exec(`
+		UPDATE edge_registry
+		SET bound_hostname = $2, conflict_hostname = '', conflict_count = 0, conflict_at = NULL
+		WHERE station_id = $1
+	`, stationID, hostname)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n > 0 {
+		log.Printf("registry: station %s rebound to hostname %s (conflict record cleared)", stationID, hostname)
+	}
+	return n > 0, nil
 }
 
 // UpdateHeartbeat upserts last_heartbeat and sets status to active. If
@@ -61,9 +204,16 @@ func UpdateHeartbeat(db *sql.DB, stationID string) (isNew bool, err error) {
 }
 
 // List returns all registered edges.
+//
+// The binding columns are selected because this is the read every existing
+// surface already goes through — the nodes page data builder, the loader
+// service, the JSON API. Carrying them on the row means a conflict is available
+// wherever a station is displayed, without a second query anybody has to know
+// to add.
 func List(db *sql.DB) ([]Edge, error) {
 	rows, err := db.Query(`
-		SELECT id, station_id, hostname, version, line_ids, registered_at, last_heartbeat, status
+		SELECT id, station_id, hostname, version, line_ids, registered_at, last_heartbeat, status,
+		       bound_hostname, conflict_hostname, conflict_count, conflict_at
 		FROM edge_registry ORDER BY station_id
 	`)
 	if err != nil {
@@ -75,7 +225,9 @@ func List(db *sql.DB) ([]Edge, error) {
 	for rows.Next() {
 		var e Edge
 		var lineJSON string
-		if err := rows.Scan(&e.ID, &e.StationID, &e.Hostname, &e.Version, &lineJSON, &e.RegisteredAt, &e.LastHeartbeat, &e.Status); err != nil {
+		if err := rows.Scan(&e.ID, &e.StationID, &e.Hostname, &e.Version, &lineJSON,
+			&e.RegisteredAt, &e.LastHeartbeat, &e.Status,
+			&e.BoundHostname, &e.ConflictHostname, &e.ConflictCount, &e.ConflictAt); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(lineJSON), &e.LineIDs)

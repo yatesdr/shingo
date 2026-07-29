@@ -40,19 +40,71 @@ type DB struct {
 //
 //	connect_timeout: bounds the initial TCP connect attempt.
 //	pool_max_conn_lifetime / statement_timeout (ms): caps each query.
+//	lock_timeout (ms): caps how long a statement WAITS FOR A LOCK. See below.
 //
 // The connection-health loop re-probes every 30s, so a short bound is
 // the right shape — failed configs surface as "disconnected" in seconds,
 // not minutes.
+//
+// WHY lock_timeout EXISTS, AND WHY IT IS NOT JUST "ANOTHER TIMEOUT".
+//
+// Without it, lock_timeout is 0 — wait forever — so statement_timeout is what
+// bounds a lock wait, and it bounds it at THIRTY SECONDS. MEASURED, against a
+// real Postgres 16, before this change: a waiter for ACCESS EXCLUSIVE on
+// `orders` aborted after 29.9997793s with SQLSTATE 57014. That is the
+// deploy-night hazard on DEPLOY-WATCH-LIST-2026-07-27 W-2e, reproduced.
+//
+// It matters at startup, because startup is where this database takes ACCESS
+// EXCLUSIVE. migrateAddBaselineColumns ALTERs `orders` five times on the pool,
+// schema.Apply builds indexes, and migrations 55/59/61 each take ACCESS
+// EXCLUSIVE on `orders` or `order_history`. Any one of them meeting an open
+// transaction on those tables waits, aborts, fails migrate(), and Core does not
+// start.
+//
+// TWO THINGS CHANGE, and the second is the bigger one:
+//
+//  1. The failure arrives in 3s instead of 30s, and systemd's
+//     Restart=always/RestartSec=5s (shingo-core.service:17-18) turns that into
+//     an actual retry loop rather than a 35-second one.
+//
+//  2. It stops Core's start attempt from blockading the plant's own database.
+//     A pending ACCESS EXCLUSIVE request QUEUES EVERY LATER LOCK REQUEST BEHIND
+//     IT — that is Postgres lock-queue semantics, not a shingo behaviour — so
+//     for as long as the ALTER waits, every other reader of `orders` waits too.
+//     At the plants Postgres is off-box and SHARED (dashboards, reports, psql),
+//     and Core is stopped during the install, so those other readers are the
+//     only clients there are. A restart loop with a 30s wait per attempt holds
+//     that blockade for most of every cycle; at 3s it holds it for a fraction.
+//
+// AND IT NAMES THE CAUSE. 55P03 lock_not_available says "something holds the
+// lock". 57014 says "a statement was slow" and could be anything. On the night,
+// the difference between those two codes in the journal is the difference
+// between running the pg_stat_activity query in W-2e and guessing.
+//
+// THREE SECONDS, and it is bounded on both sides. Below statement_timeout by
+// 10x or it would be dead code. Above every transaction this codebase actually
+// holds — the rehearsed migrations complete in 4-81ms once they hold the lock,
+// and the only explicit row-lock wait in shingo-core is one FOR UPDATE in
+// store/recovery (recovery.go), with no advisory locks anywhere. So the
+// behaviour change is confined to the 3s-30s band, and a statement that waited
+// in that band previously did not succeed either — it aborted at 30s. Nothing
+// that used to commit stops committing.
+//
+// IT APPLIES TO EVERY SESSION, not only the migration ones, deliberately. The
+// DDL runs on pool connections (schema.Apply takes *sql.DB, runOneMigration
+// takes any connection db.Begin hands it), so a per-session SET would have to
+// bound a connection nobody chooses. A session default in the startup packet
+// covers every statement wherever it runs, which is the property being bought.
 const (
 	connectTimeoutSeconds   = 5
 	statementTimeoutSeconds = 30
+	lockTimeoutSeconds      = 3
 )
 
 func dsn(cfg *config.PostgresConfig) string {
-	return fmt.Sprintf("host=%s port=%d dbname=%s user=%s password=%s sslmode=%s connect_timeout=%d statement_timeout=%d",
+	return fmt.Sprintf("host=%s port=%d dbname=%s user=%s password=%s sslmode=%s connect_timeout=%d statement_timeout=%d lock_timeout=%d",
 		cfg.Host, cfg.Port, cfg.Database, cfg.User, cfg.Password, cfg.SSLMode,
-		connectTimeoutSeconds, statementTimeoutSeconds*1000)
+		connectTimeoutSeconds, statementTimeoutSeconds*1000, lockTimeoutSeconds*1000)
 }
 
 // pgxConnConfig parses the DSN and pins the session TimeZone to UTC.

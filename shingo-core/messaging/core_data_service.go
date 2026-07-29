@@ -348,7 +348,8 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	log.Printf("core_handler: edge registered: %s (hostname=%s, version=%s, lines=%v)",
 		p.StationID, p.Hostname, p.Version, p.LineIDs)
 
-	if err := s.db.RegisterEdge(p.StationID, p.Hostname, p.Version, p.LineIDs); err != nil {
+	conflict, err := s.db.RegisterEdge(p.StationID, p.Hostname, p.Version, p.LineIDs)
+	if err != nil {
 		log.Printf("core_handler: register edge %s: %v", p.StationID, err)
 		return
 	}
@@ -370,8 +371,24 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 		}
 	}
 
+	// THE ACK CARRIES THE CONFLICT, so the warning appears in the EDGE's journal
+	// as well as Core's. On the floor you are stood in front of a Pi, not in
+	// front of Core, and main.go's edge.registered handler already prints
+	// `msg=%s` — so this costs nothing on the Edge side and puts the sentence
+	// where the person diagnosing it is looking.
+	//
+	// It reaches whichever edge holds the topic partition, which with two
+	// duplicate edges is not necessarily the one that registered — that is
+	// exactly the single-partition consumer-group defect, and it is why Core's
+	// journal and the persisted conflict_* columns are the primary record and
+	// this is the extra one.
+	msg := "registered"
+	if conflict != nil {
+		msg = "registered, BUT " + conflict.String() +
+			" — give each edge a unique namespace/line_id in shingoedge.yaml"
+	}
 	s.resp.replyData(env, protocol.SubjectEdgeRegistered,
-		&protocol.EdgeRegistered{StationID: p.StationID, Message: "registered"})
+		&protocol.EdgeRegistered{StationID: p.StationID, Message: msg})
 	s.resp.dbg("reply published: subject=edge.registered station=%s", p.StationID)
 
 	// Derive demand_registry for this station from the Core-owned loader aggregate

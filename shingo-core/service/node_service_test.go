@@ -970,7 +970,8 @@ func TestNodeService_ListEdges_ReturnsRegisteredStation(t *testing.T) {
 	db := testDB(t)
 	svc := NewNodeService(db)
 
-	testutil.MustNoErr(t, db.RegisterEdge("edge-svc-1", "host-svc", "v1", []string{"L1"}), "RegisterEdge")
+	_, regErr := db.RegisterEdge("edge-svc-1", "host-svc", "v1", []string{"L1"})
+	testutil.MustNoErr(t, regErr, "RegisterEdge")
 
 	edges, err := svc.ListEdges()
 	if err != nil {

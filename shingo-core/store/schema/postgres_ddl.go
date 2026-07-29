@@ -287,15 +287,30 @@ CREATE TABLE IF NOT EXISTS scene_edges (
 );
 CREATE INDEX IF NOT EXISTS idx_scene_edges_area ON scene_edges(area_name);
 
+-- bound_hostname / conflict_* are the duplicate-edge detector (v64).
+--
+-- station_id is UNIQUE, and Register's upsert sets hostname = excluded.hostname
+-- on conflict, so two machines configured with the same station id do not
+-- collide — they take turns owning one row, and the statement that lets them do
+-- it also DELETES THE EVIDENCE that there were two. bound_hostname keeps the
+-- first claimant so the overwrite becomes visible instead of silent.
+--
+-- The conflict_* three are the alarm's persisted state, not a derived view: a
+-- log line lives in a journal that rotates, and the question "has this ever
+-- happened here" has to be answerable in SQL months later.
 CREATE TABLE IF NOT EXISTS edge_registry (
-    id              BIGSERIAL PRIMARY KEY,
-    station_id      TEXT NOT NULL UNIQUE,
-    hostname        TEXT NOT NULL DEFAULT '',
-    version         TEXT NOT NULL DEFAULT '',
-    line_ids        TEXT NOT NULL DEFAULT '[]',
-    registered_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_heartbeat  TIMESTAMPTZ,
-    status          TEXT NOT NULL DEFAULT 'active'
+    id                BIGSERIAL PRIMARY KEY,
+    station_id        TEXT NOT NULL UNIQUE,
+    hostname          TEXT NOT NULL DEFAULT '',
+    version           TEXT NOT NULL DEFAULT '',
+    line_ids          TEXT NOT NULL DEFAULT '[]',
+    registered_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_heartbeat    TIMESTAMPTZ,
+    status            TEXT NOT NULL DEFAULT 'active',
+    bound_hostname    TEXT NOT NULL DEFAULT '',
+    conflict_hostname TEXT NOT NULL DEFAULT '',
+    conflict_count    BIGINT NOT NULL DEFAULT 0,
+    conflict_at       TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS demands (

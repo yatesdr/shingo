@@ -36,7 +36,7 @@ func registerBinding(t *testing.T, db *store.DB, b thresholdEntry) {
 // could have heard from this Edge in the first place.
 func registerActiveEdge(t *testing.T, db *store.DB, stationID string) {
 	t.Helper()
-	if err := db.RegisterEdge(stationID, "test-host", "test", nil); err != nil {
+	if _, err := db.RegisterEdge(stationID, "test-host", "test", nil); err != nil {
 		t.Fatalf("register edge: %v", err)
 	}
 	if _, err := db.UpdateHeartbeat(stationID); err != nil {
@@ -50,7 +50,7 @@ func registerActiveEdge(t *testing.T, db *store.DB, stationID string) {
 // under a status-based reachability check it reads as perfectly healthy.
 func registerEdgeWithoutHeartbeat(t *testing.T, db *store.DB, stationID string) {
 	t.Helper()
-	if err := db.RegisterEdge(stationID, "test-host", "test", nil); err != nil {
+	if _, err := db.RegisterEdge(stationID, "test-host", "test", nil); err != nil {
 		t.Fatalf("register edge: %v", err)
 	}
 }

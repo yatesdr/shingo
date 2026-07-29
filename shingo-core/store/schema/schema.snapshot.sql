@@ -393,7 +393,11 @@ CREATE TABLE public.edge_registry (
     line_ids text DEFAULT '[]'::text NOT NULL,
     registered_at timestamp with time zone DEFAULT now() NOT NULL,
     last_heartbeat timestamp with time zone,
-    status text DEFAULT 'active'::text NOT NULL
+    status text DEFAULT 'active'::text NOT NULL,
+    bound_hostname text DEFAULT ''::text NOT NULL,
+    conflict_hostname text DEFAULT ''::text NOT NULL,
+    conflict_count bigint DEFAULT 0 NOT NULL,
+    conflict_at timestamp with time zone
 );
 
 CREATE SEQUENCE public.edge_registry_id_seq

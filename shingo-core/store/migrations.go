@@ -735,6 +735,42 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool {
 				return schema.ColumnType(q, "demand_origins", "process_id") == "text"
 			}},
+		// THE STATEMENT THAT HANDLES A DUPLICATE EDGE IS THE STATEMENT THAT
+		// DESTROYS THE EVIDENCE OF ONE.
+		//
+		// edge_registry.station_id is UNIQUE and Register's upsert explicitly
+		// sets `hostname = excluded.hostname` on conflict. So two Pis configured
+		// with the same station id never collide: they take turns owning one
+		// row, each register overwriting the other's hostname, and nothing
+		// anywhere records that a second machine exists. Today's Edge defaults
+		// (namespace `plant-a`, line `line-1`) guarantee that shape on the
+		// second Pi, and install-edge.sh writes a config carrying only
+		// database_path — so a fresh install cannot come up as anything else.
+		//
+		// bound_hostname holds the FIRST hostname to register a station and is
+		// never reassigned by a register. The conflict_* three record the most
+		// recent mismatching claimant, when, and how many there have been.
+		//
+		// THE BACKFILL IS WHAT MAKES THIS SILENT AT THE PLANTS. Setting
+		// bound_hostname = hostname for the existing rows binds each live plant
+		// to the box it is already running on, so the first register after
+		// deploy matches and nothing fires. A DEFAULT '' with no backfill would
+		// instead have the first register CLAIM the lease, which is the same end
+		// state one register later — but it would leave a window where a swap
+		// during the deploy silently rebound the station, and the whole point is
+		// that no rebind is silent.
+		//
+		// DETECTOR, NOT GATE — deliberately, and the reason is in the signal
+		// rather than in caution. A differing hostname is equally the signature
+		// of a legitimate box replacement, which Core cannot presently
+		// distinguish because it has no enrollment step to ask about. Refusing
+		// on it would turn a reimaged Pi into a plant with no Edge.
+		{64, "edge_registry bound_hostname + conflict_* (two machines, one station id)",
+			v64EdgeRegistryHostnameBinding,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "edge_registry", "bound_hostname") &&
+					schema.ColumnExists(q, "edge_registry", "conflict_at")
+			}},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2700,6 +2736,42 @@ func v63DemandOriginProcessIDText(tx *sql.Tx) error {
 	if _, err := tx.Exec(
 		`ALTER TABLE demand_origins ALTER COLUMN process_id SET DEFAULT ''`); err != nil {
 		return fmt.Errorf("set demand_origins.process_id default: %w", err)
+	}
+	return nil
+}
+
+// v64EdgeRegistryHostnameBinding adds the duplicate-edge detector's columns.
+//
+// Metadata-only on every plant: four nullable-or-non-volatile-defaulted adds on
+// a table holding one row per station (Springfield: one). PG 11+ does not
+// rewrite for these, which is the same property the B1 rehearsal measured
+// across migrations 53-62.
+//
+// THE BACKFILL BINDS EACH LIVE PLANT TO THE BOX IT IS ALREADY ON. Without it,
+// bound_hostname sits at ” and the first register after deploy claims it —
+// same end state, but it means the deploy itself is a window in which a
+// hostname change is accepted without comment. The whole guard is that no
+// rebind happens without somebody being told, so it must not start life with
+// one.
+//
+// The predicate is `hostname <> ”`: a row created by UpdateHeartbeat's minimal
+// insert has never carried a hostname, so there is nothing to bind it to and ”
+// correctly means "unclaimed".
+func v64EdgeRegistryHostnameBinding(tx *sql.Tx) error {
+	for _, ddl := range []string{
+		`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS bound_hostname TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS conflict_hostname TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS conflict_count BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS conflict_at TIMESTAMPTZ`,
+	} {
+		if _, err := tx.Exec(ddl); err != nil {
+			return fmt.Errorf("edge_registry column add: %w", err)
+		}
+	}
+	if _, err := tx.Exec(
+		`UPDATE edge_registry SET bound_hostname = hostname
+		  WHERE bound_hostname = '' AND hostname <> ''`); err != nil {
+		return fmt.Errorf("bind existing edge_registry rows to their current hostname: %w", err)
 	}
 	return nil
 }

@@ -20,4 +20,18 @@ type RegistryEdge struct {
 	RegisteredAt  time.Time  `json:"registered_at"`
 	LastHeartbeat *time.Time `json:"last_heartbeat"`
 	Status        string     `json:"status"`
+
+	// BoundHostname is the first hostname to have registered this station id.
+	// Hostname above is LAST-SEEN and is overwritten on every register; this
+	// one is not, which is what makes a second machine visible at all.
+	BoundHostname string `json:"bound_hostname"`
+	// ConflictHostname / ConflictCount / ConflictAt record the most recent
+	// register that arrived from a machine other than BoundHostname. Count 0
+	// means it has never happened. A count that keeps climbing means two
+	// machines are alive and taking turns; a count frozen at a small number
+	// with an old ConflictAt means the station moved boxes once and nobody
+	// ran registry.Rebind.
+	ConflictHostname string     `json:"conflict_hostname"`
+	ConflictCount    int64      `json:"conflict_count"`
+	ConflictAt       *time.Time `json:"conflict_at"`
 }
