@@ -36,6 +36,7 @@ import (
 	"shingo/protocol/router"
 	"shingocore/config"
 	"shingocore/countgroup"
+	"shingocore/dispatch"
 	"shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
@@ -343,6 +344,20 @@ func main() {
 	defer eng.Stop()
 
 	eng.Dispatcher().DebugLog = dbg.Func("dispatch")
+
+	// Futility detector (observe-only). Logs through the DEFAULT logger, not
+	// debuglog: when this fires it is the loudest thing in the journal by
+	// design, and the debug stream is gated by logging.stderr_subsystems.
+	if fd := cfg.Dispatch.Futility; fd.Enabled {
+		eng.Dispatcher().EnableFutilityDetector(dispatch.FutilityConfig{
+			Enabled:       fd.Enabled,
+			Threshold:     fd.Threshold,
+			Window:        fd.Window,
+			AlertThrottle: fd.AlertThrottle,
+		}, log.Printf)
+		log.Printf("shingocore: futility detector armed (observe-only) — %d futile terminals per tuple in %s, repeats suppressed for %s",
+			fd.Threshold, fd.Window, fd.AlertThrottle)
+	}
 
 	// ── Protocol ingestor (inbound from ShinGo Edge) ───────────────────
 	coreHandler := messaging.NewCoreHandler(db, msgClient, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, eng.Dispatcher())

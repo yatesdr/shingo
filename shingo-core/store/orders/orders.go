@@ -12,6 +12,7 @@ package orders
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -190,6 +191,21 @@ func UpdateStatus(db *sql.DB, id int64, status, detail string) error {
 // Same terminal-write refusal as UpdateStatus — terminal transitions go
 // through TerminalizeOrder, which also releases claims + reservations.
 func UpdateStatusFrom(db *sql.DB, id int64, from, to, detail string) (bool, error) {
+	return UpdateStatusFromWithReason(db, id, from, to, detail, "", "", nil)
+}
+
+// UpdateStatusFromWithReason is UpdateStatusFrom plus the typed reason for the
+// history row (migration 55): code, actor, and the JSON-encoded reference.
+//
+// The →queued row is the one that matters most here. orders.queue_code is a
+// LIVE column overwritten in place every time an order re-queues, so it only
+// ever answers "why is this stuck right now" — the single reason
+// starvation-by-cause has been unqueryable. Writing the code onto the HISTORY
+// row makes it a time series.
+//
+// refJSON is nil for "no reference", which stores SQL NULL and keeps the
+// partial index small.
+func UpdateStatusFromWithReason(db *sql.DB, id int64, from, to, detail, code, actor string, refJSON any) (bool, error) {
 	if protocol.IsTerminal(protocol.Status(to)) {
 		return false, fmt.Errorf("UpdateStatusFrom: refusing raw terminal write to %q (id=%d) — route terminal transitions through TerminalizeOrder", to, id)
 	}
@@ -209,7 +225,10 @@ func UpdateStatusFrom(db *sql.DB, id int64, from, to, detail string) (bool, erro
 	if n, _ := res.RowsAffected(); n == 0 {
 		return false, nil
 	}
-	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1, $2, $3, $4)`, id, to, detail, clock.Now().UTC()); err != nil {
+	if _, err := tx.Exec(
+		`INSERT INTO order_history (order_id, status, detail, code, actor, ref, created_at)
+		 VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), $6, $7)`,
+		id, to, detail, code, actor, refJSON, clock.Now().UTC()); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()
@@ -234,9 +253,44 @@ func UpdateWaitIndex(db *sql.DB, id int64, waitIndex int) error {
 // written directly. queue_code/queue_cause are nullable; NULL means a
 // pre-schema row (no backfill) or a cleared reason.
 func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
-	_, err := db.Exec(`UPDATE orders SET queue_reason=$1, queue_code=$4, queue_cause=$5, updated_at=$3 WHERE id=$2`,
-		reason, id, clock.Now().UTC(), nullableText(code), nullableText(cause))
-	return err
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+
+	if _, err := tx.Exec(`UPDATE orders SET queue_reason=$1, queue_code=$4, queue_cause=$5, updated_at=$3 WHERE id=$2`,
+		reason, id, clock.Now().UTC(), nullableText(code), nullableText(cause)); err != nil {
+		return err
+	}
+
+	// Stamp the code onto this queue EPISODE's history row.
+	//
+	// orders.queue_code is a live column overwritten in place, so it only ever
+	// answers "why is this order stuck right now" — which is the single reason
+	// starvation-by-cause has been unqueryable. There is no record anywhere of
+	// what an order waited for last Tuesday.
+	//
+	// The code is not known at the moment of the →queued transition (the
+	// scanner discovers the reason on a later pass), so this updates the most
+	// recent queued row rather than inserting a new one. Re-queueing creates a
+	// fresh queued row, so each EPISODE keeps its own reason; successive
+	// updates within one episode overwrite that episode's row, which is
+	// correct — the last known reason is why it was still waiting.
+	//
+	// Clearing (empty code, on successful dispatch) deliberately does NOT wipe
+	// the history row: the order waited for that reason, and it having stopped
+	// waiting does not unmake the fact.
+	if code != "" {
+		if _, err := tx.Exec(
+			`UPDATE order_history SET code = $2
+			 WHERE id = (SELECT id FROM order_history
+			             WHERE order_id = $1 AND status = 'queued'
+			             ORDER BY id DESC LIMIT 1)`, id, code); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // nullableText maps a Go empty string to a SQL NULL (the queue_code/queue_cause
@@ -498,7 +552,8 @@ func ListActiveBoardFiltered(db *sql.DB, stations []string) ([]*Order, error) {
 
 // ListHistory returns the audit log entries for an order, oldest first.
 func ListHistory(db *sql.DB, orderID int64) ([]*History, error) {
-	rows, err := db.Query(`SELECT id, order_id, status, detail, created_at FROM order_history WHERE order_id=$1 ORDER BY id`, orderID)
+	rows, err := db.Query(`SELECT id, order_id, status, detail, code, actor, ref, created_at
+		FROM order_history WHERE order_id=$1 ORDER BY id`, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -506,12 +561,41 @@ func ListHistory(db *sql.DB, orderID int64) ([]*History, error) {
 	var history []*History
 	for rows.Next() {
 		var h History
-		if err := rows.Scan(&h.ID, &h.OrderID, &h.Status, &h.Detail, &h.CreatedAt); err != nil {
+		var code, actor sql.NullString
+		var ref []byte
+		if err := rows.Scan(&h.ID, &h.OrderID, &h.Status, &h.Detail, &code, &actor, &ref, &h.CreatedAt); err != nil {
 			return nil, err
+		}
+		h.Code, h.Actor = code.String, actor.String
+		// A malformed ref is left nil rather than failing the whole read: the
+		// history row's job is the timeline, and one bad JSON blob must not
+		// hide an order's transitions.
+		if len(ref) > 0 {
+			var r protocol.TermRef
+			if err := json.Unmarshal(ref, &r); err == nil {
+				h.Ref = &r
+			}
 		}
 		history = append(history, &h)
 	}
 	return history, rows.Err()
+}
+
+// EverReachedStatus reports whether the order ever recorded the given status.
+//
+// Asked of order_history rather than of the order's current status, because
+// the question is about the PAST: an order that is now `cancelled` may or may
+// not have had a robot moving for it, and only the history distinguishes those
+// two. Uses idx_order_history_order.
+func EverReachedStatus(db *sql.DB, orderID int64, status string) (bool, error) {
+	var found bool
+	err := db.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM order_history WHERE order_id=$1 AND status=$2)`,
+		orderID, status).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("order %d ever %s: %w", orderID, status, err)
+	}
+	return found, nil
 }
 
 // UpdatePriority rewrites the priority field.

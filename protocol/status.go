@@ -3,6 +3,7 @@ package protocol
 import (
 	"database/sql/driver"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -141,6 +142,161 @@ func ValidQueueCode(c QueueCode) bool {
 		}
 	}
 	return false
+}
+
+// TermCode is the typed reason an order reached a terminal status — the
+// terminal-side counterpart to QueueCode.
+//
+// These values were free-text constants in dispatch/planning_service.go,
+// matched as string literals at producer and consumer sites and serialised
+// verbatim into the DB. Promoting them here does three things: it puts the
+// persisted vocabulary in the module both services share, it gives the same
+// exhaustiveness guarantee QueueCode has, and it replaces the substring
+// matching in domain/telemetry.go — the bug class that once classified 100%
+// of failures as "Robot blocked" by looking for a word in a prose sentence.
+//
+// The string values are a PERSISTED, COMPARED CONTRACT: renaming a constant is
+// safe, changing the string it holds is not.
+type TermCode string
+
+const (
+	// TermNoSourceBin: nothing could be found to source from. One of only two
+	// values that occur in practice at Springfield — which is why the
+	// REFERENCE matters far more than the code (see order_history.ref).
+	TermNoSourceBin TermCode = "no_source_bin"
+	// TermGraceTimeout: the fleet reported FAILED and the grace period expired
+	// without recovery. The other of the two live values.
+	TermGraceTimeout TermCode = "grace_timeout"
+	// TermNoPayload: the order carried no payload code to resolve.
+	TermNoPayload TermCode = "no_payload"
+	// TermNoBin: no bin matched the request.
+	TermNoBin TermCode = "no_bin"
+	// TermNoStorage: no storage destination could be resolved.
+	TermNoStorage TermCode = "no_storage"
+	// TermNoShuffleSlot: a reshuffle had nowhere to park the blocking bins.
+	TermNoShuffleSlot TermCode = "no_shuffle_slot"
+	// TermMissingSource: the request named no source and none could be derived.
+	TermMissingSource TermCode = "missing_source"
+	// TermInvalidNode: a named node does not exist or is not usable.
+	TermInvalidNode TermCode = "invalid_node"
+	// TermSameNode: source and destination resolved to the same node.
+	TermSameNode TermCode = "same_node"
+	// TermNodeError: a node lookup or state read failed.
+	TermNodeError TermCode = "node_error"
+	// TermClaimFailed: the bin or slot claim lost its race and did not recover.
+	TermClaimFailed TermCode = "claim_failed"
+	// TermLaneLocked: the lane was held by another order and stayed held.
+	TermLaneLocked TermCode = "lane_locked"
+	// TermReshuffleError: reshuffle planning failed structurally.
+	TermReshuffleError TermCode = "reshuffle_error"
+	// TermStructural: the request is malformed in a way retrying cannot fix.
+	TermStructural TermCode = "structural"
+	// TermUnknownType: no planner is registered for the order type.
+	TermUnknownType TermCode = "unknown_type"
+	// TermAbandoned: reconciliation gave up on an order stuck past its window.
+	TermAbandoned TermCode = "abandoned"
+	// TermOperatorCancelled: a human cancelled it. Deliberate, not a failure.
+	TermOperatorCancelled TermCode = "operator_cancelled"
+	// TermPeerTerminal: a swap sibling died and this leg was unwound with it.
+	TermPeerTerminal TermCode = "peer_terminal"
+	// TermNotNeeded: the work turned out to be unnecessary (the skip case —
+	// every pickup node was already empty).
+	TermNotNeeded TermCode = "not_needed"
+)
+
+// AllTermCodes returns every terminal code defined in this module. Used by the
+// exhaustiveness test — walk every code through the classifier so an unhandled
+// one is a test failure rather than a silent Other bucket. The empty string is
+// intentionally NOT a member: it means "no code / pre-migration row".
+func AllTermCodes() []TermCode {
+	return []TermCode{
+		TermNoSourceBin,
+		TermGraceTimeout,
+		TermNoPayload,
+		TermNoBin,
+		TermNoStorage,
+		TermNoShuffleSlot,
+		TermMissingSource,
+		TermInvalidNode,
+		TermSameNode,
+		TermNodeError,
+		TermClaimFailed,
+		TermLaneLocked,
+		TermReshuffleError,
+		TermStructural,
+		TermUnknownType,
+		TermAbandoned,
+		TermOperatorCancelled,
+		TermPeerTerminal,
+		TermNotNeeded,
+	}
+}
+
+// ValidTermCode reports whether c is a defined terminal code. The empty string
+// is valid — it means "uncoded", which every row written before the column
+// existed is.
+func ValidTermCode(c TermCode) bool {
+	if c == "" {
+		return true
+	}
+	for _, v := range AllTermCodes() {
+		if c == v {
+			return true
+		}
+	}
+	return false
+}
+
+// TermRef is what a terminal reason CONCERNS — VDA 5050's errorReferences
+// idea. It is not decoration.
+//
+// The live terminal-code distribution at Springfield is two values,
+// no_source_bin and grace_timeout, so the code alone partitions a hundred
+// failures into two buckets and answers nothing. "no_source_bin" is a
+// category; "no_source_bin at PLN_01.R1 for 74577-6SA0A.06" is a job. The
+// reference IS the resolution, which is why it is designed in from the start
+// rather than added when a bare code column turns out to age badly.
+//
+// Stored as JSONB so starvation-by-cause is a GROUP BY (ref->>'payload')
+// rather than a LIKE over prose.
+type TermRef struct {
+	// Node is the process / delivery node the reason concerns, dot-named.
+	Node string `json:"node,omitempty"`
+	// Payload is the part number that could not be sourced, delivered or found.
+	Payload string `json:"payload,omitempty"`
+	// Peer is the sibling order whose fate caused this one — swap legs unwound
+	// together, reshuffle children abandoned with their parent.
+	Peer int64 `json:"peer,omitempty"`
+	// Detail is free text for the cases the three fields above do not cover.
+	// Deliberately last and deliberately optional: anything that ends up here
+	// repeatedly is a missing field, not a place to put prose.
+	Detail string `json:"detail,omitempty"`
+}
+
+// Empty reports whether the reference carries nothing worth storing.
+func (r TermRef) Empty() bool {
+	return r.Node == "" && r.Payload == "" && r.Peer == 0 && r.Detail == ""
+}
+
+// String renders the reference the way the design writes it — the form that
+// belongs in a log line beside the code:
+//
+//	node=PLN_01.R1, payload=74577-6SA0A.06
+func (r TermRef) String() string {
+	parts := make([]string, 0, 4)
+	if r.Node != "" {
+		parts = append(parts, "node="+r.Node)
+	}
+	if r.Payload != "" {
+		parts = append(parts, "payload="+r.Payload)
+	}
+	if r.Peer != 0 {
+		parts = append(parts, "peer="+strconv.FormatInt(r.Peer, 10))
+	}
+	if r.Detail != "" {
+		parts = append(parts, r.Detail)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ─── Status set predicates ────────────────────────────────────────────────

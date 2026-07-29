@@ -18,20 +18,33 @@ import (
 
 // recordMissionEvent captures a state transition with robot position snapshot for telemetry.
 func (e *Engine) recordMissionEvent(ev OrderStatusChangedEvent) {
+	// Same fallback as finalizeMissionTelemetry below, for the same reason:
+	// terminal and sim transitions routinely carry no robot on the EVENT, so
+	// taking it from the event alone left mission_events.robot_id blank — and
+	// robot_x/y/angle/battery/station NULL, because the position snapshot is
+	// gated on the same id. The fix landed in one of the two places; this is
+	// the other one. No reviewer across three rounds caught it.
+	robotID := ev.RobotID
+	if robotID == "" {
+		if order, err := e.db.GetOrder(ev.OrderID); err == nil && order != nil {
+			robotID = order.RobotID
+		}
+	}
+
 	me := &telemetry.Event{
 		OrderID:       ev.OrderID,
 		VendorOrderID: ev.VendorOrderID,
 		OldState:      ev.OldStatus,
 		NewState:      ev.NewStatus,
-		RobotID:       ev.RobotID,
+		RobotID:       robotID,
 		Detail:        ev.Detail,
 		BlocksJSON:    "[]",
 		ErrorsJSON:    "[]",
 	}
 
 	// Snapshot robot position from cache
-	if ev.RobotID != "" {
-		if rs, ok := e.GetCachedRobotStatus(ev.RobotID); ok {
+	if robotID != "" {
+		if rs, ok := e.GetCachedRobotStatus(robotID); ok {
 			me.RobotX = &rs.X
 			me.RobotY = &rs.Y
 			me.RobotAngle = &rs.Angle

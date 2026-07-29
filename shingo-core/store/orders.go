@@ -6,6 +6,7 @@ package store
 // bins tables in a single transaction.
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"shingo/protocol"
@@ -81,6 +82,14 @@ func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
 // orders.UpdateStatusFrom. Returns false when the order already moved on.
 func (db *DB) UpdateOrderStatusFrom(id int64, from, to, detail string) (bool, error) {
 	return orders.UpdateStatusFrom(db.DB, id, from, to, detail)
+}
+
+// UpdateOrderStatusFromWithReason is the CAS status write plus the typed
+// reason for the history row (migration 55). The →queued row is the important
+// caller: orders.queue_code is overwritten in place, so the history row is the
+// only place a queue reason becomes a time series.
+func (db *DB) UpdateOrderStatusFromWithReason(id int64, from, to, detail string, reason HistoryReason) (bool, error) {
+	return orders.UpdateStatusFromWithReason(db.DB, id, from, to, detail, reason.Code, reason.Actor, reason.refJSON())
 }
 
 // UpdateOrderWaitIndex increments the wait_index for a complex order after
@@ -166,6 +175,12 @@ func (db *DB) ListOrderHistory(orderID int64) ([]*orders.History, error) {
 	return orders.ListHistory(db.DB, orderID)
 }
 
+// OrderEverReachedStatus reports whether the order ever recorded the status —
+// see orders.EverReachedStatus.
+func (db *DB) OrderEverReachedStatus(orderID int64, status string) (bool, error) {
+	return orders.EverReachedStatus(db.DB, orderID, status)
+}
+
 func (db *DB) UpdateOrderPriority(id int64, priority int) error {
 	return orders.UpdatePriority(db.DB, id, priority)
 }
@@ -248,7 +263,41 @@ func (db *DB) ActiveOrdersByBin(binID int64) ([]*orders.Order, error) {
 // persisted for every terminal except the clean success 'confirmed' (which would
 // otherwise surface receipt text as an "error"); order_history keeps the full
 // detail regardless. Cross-aggregate.
+// HistoryReason is the typed reason recorded on an order_history row —
+// order_history.code / actor / ref (migration 55).
+//
+// Zero value means "uncoded", which is correct for a transition with no
+// category: most of them. Never invent a code to fill it.
+type HistoryReason struct {
+	Code  string           // protocol.TermCode on a terminal, protocol.QueueCode on a →queued row
+	Actor string           // who caused it
+	Ref   protocol.TermRef // what it concerns: node / payload / peer
+}
+
+// refJSON renders Ref for the JSONB column, or nil when it carries nothing —
+// so an empty reference is SQL NULL rather than the string "{}", and the
+// partial indexes stay small.
+func (r HistoryReason) refJSON() any {
+	if r.Ref.Empty() {
+		return nil
+	}
+	b, err := json.Marshal(r.Ref)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
+
 func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail string) (bool, error) {
+	return db.TerminalizeOrderWithReason(orderID, status, detail, HistoryReason{})
+}
+
+// TerminalizeOrderWithReason is TerminalizeOrder plus the typed reason for the
+// history row. Event.ErrorCode and Event.Actor were being set at every Fail
+// and Skip call site and dropped in transition(), which passed only the prose
+// detail down here — so the categories existed in memory and never reached
+// disk.
+func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, detail string, reason HistoryReason) (bool, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return false, err
@@ -298,7 +347,11 @@ func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail str
 	// History only for the winner — a losing terminalize must not add a second
 	// terminal row to the order's audit trail.
 	if won {
-		if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1, $2, $3, $4)`, orderID, string(status), detail, clock.Now().UTC()); err != nil {
+		if _, err := tx.Exec(
+			`INSERT INTO order_history (order_id, status, detail, code, actor, ref, created_at)
+			 VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), $6, $7)`,
+			orderID, string(status), detail,
+			reason.Code, reason.Actor, reason.refJSON(), clock.Now().UTC()); err != nil {
 			return false, err
 		}
 	}

@@ -597,6 +597,14 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool { return schema.TableExists(q, "edge_lineside_reports") }},
 		{53, "backfill mission_telemetry.robot_id from orders (was written blank)",
 			v53BackfillTelemetryRobotID, nil},
+		{54, "backfill mission_events.robot_id from orders (the other half of 53)",
+			v54BackfillMissionEventRobotID, nil},
+		{55, "order_history += code, actor, ref (the reason, typed, pointing at what it concerns)",
+			v55OrderHistoryReasonColumns,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "order_history", "ref") }},
+		{56, "sourceability_events — persist the verdict changes the monitor already computes",
+			v56SourceabilityEvents,
+			func(q schema.Querier) bool { return schema.TableExists(q, "sourceability_events") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2147,6 +2155,124 @@ func v53BackfillTelemetryRobotID(tx *sql.Tx) error {
 		FROM orders o
 		WHERE mt.order_id = o.id
 		  AND mt.robot_id = ''
+		  AND o.robot_id <> ''`)
+	return err
+}
+
+// v54BackfillMissionEventRobotID is the other half of 53.
+//
+// 53 repaired mission_telemetry and the summary writer. The per-transition
+// writer immediately above it in the same file — recordMissionEvent — kept
+// taking the robot from the EVENT, so mission_events.robot_id stayed blank on
+// every transition where the vendor carried no vehicle. That is all sim
+// DriveState calls and most terminal transitions, which is most of the table.
+//
+// The blank id is not the only casualty: recordMissionEvent gates its robot
+// position snapshot on the same value, so those rows also have NULL
+// robot_x/y/angle/battery/station. Those cannot be backfilled — the position
+// was a point-in-time cache read and is gone. This recovers the identity,
+// which is what the per-robot breakdown and the robot filter need.
+//
+// Not verify-gated, same reasoning as 53: "no blank robot_id" is legitimately
+// unreachable for orders that never had a robot, so a verify would re-run
+// this forever.
+// v56SourceabilityEvents persists the verdict changes SourceabilityMonitor
+// already computes and throws away every two minutes.
+//
+// The monitor recomputes per-(process, style) sourceability, already runs the
+// edge-triggered diff (wireChanged), broadcasts the result to Edge — and
+// stores nothing. The 2026-07-21 incident's root physical condition was zero
+// system stock on 74577-6SA0A.06. ShinGo knew, continuously, and did not write
+// it down.
+//
+// Column vocabulary follows bin_uop_audit (op / source / actor / metadata)
+// rather than inventing a new one — that table is the newest and best-designed
+// shape in this schema and new tables converge on it.
+//
+// Write volume is near zero in steady state: edge-triggered on an
+// operator-visible verdict change, so dozens of verdicts per cycle produce
+// rows only when one actually moves.
+func v56SourceabilityEvents(tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS sourceability_events (
+			id              BIGSERIAL PRIMARY KEY,
+			process_key     TEXT NOT NULL,
+			style_id        TEXT NOT NULL DEFAULT '',
+			payload_code    TEXT NOT NULL DEFAULT '',
+			sourceable      BOOLEAN NOT NULL,
+			status          TEXT NOT NULL DEFAULT '',
+			reason          TEXT NOT NULL DEFAULT '',
+			missing_payload TEXT NOT NULL DEFAULT '',
+			op              TEXT NOT NULL DEFAULT 'sourceability_change',
+			source          TEXT NOT NULL DEFAULT '',
+			actor           TEXT NOT NULL DEFAULT 'system',
+			metadata        JSONB,
+			observed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		// "when did this process last change verdict" and "what happened to
+		// this payload" are the two questions; both are covered.
+		`CREATE INDEX IF NOT EXISTS idx_sourceability_events_key_time
+			ON sourceability_events(process_key, style_id, observed_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sourceability_events_payload_time
+			ON sourceability_events(missing_payload, observed_at DESC)
+			WHERE missing_payload <> ''`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("v56 %q: %w", stmt, err)
+		}
+	}
+	return nil
+}
+
+// v55OrderHistoryReasonColumns adds the typed reason to the history row.
+//
+// order_history is the oldest and most load-bearing table in the schema and
+// has been (order_id, status, detail, created_at) with one index the whole
+// time. `detail` is prose, so every consumer that wanted a category had to
+// substring-match it — the bug class that once classified 100% of failures as
+// "Robot blocked" by finding a word in a sentence.
+//
+//	code   protocol.TermCode on a terminal row, protocol.QueueCode on a
+//	       →queued row. Both are typed, exhaustiveness-tested vocabularies.
+//	actor  who caused it. Already set at every Fail/Skip call site and
+//	       dropped on the floor by transition().
+//	ref    what the reason CONCERNS — the VDA 5050 errorReferences idea.
+//	       JSONB so `ref->>'payload'` is a GROUP BY rather than a LIKE.
+//
+// queue_code on the →queued row is the other half. orders.queue_code is a LIVE
+// column overwritten in place, so it only ever answers "what is stuck right
+// now" — which is the single reason starvation-by-cause has been unqueryable.
+//
+// Additive and nullable. No backfill: rows written before this have no code,
+// and inferring one from `detail` would rebuild the substring matching this
+// replaces. Uncoded is the honest value.
+func v55OrderHistoryReasonColumns(tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`ALTER TABLE order_history ADD COLUMN IF NOT EXISTS code TEXT`,
+		`ALTER TABLE order_history ADD COLUMN IF NOT EXISTS actor TEXT`,
+		`ALTER TABLE order_history ADD COLUMN IF NOT EXISTS ref JSONB`,
+		// Purpose-built, matching bin_uop_audit's shape: the questions are
+		// "what happened for this reason" and "what happened to this payload".
+		// Partial — the columns are NULL on every pre-migration row and on
+		// every uncoded transition, which is most of them.
+		`CREATE INDEX IF NOT EXISTS idx_order_history_code
+			ON order_history(code, created_at) WHERE code IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_order_history_ref_payload
+			ON order_history((ref->>'payload')) WHERE ref IS NOT NULL`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("v55 %q: %w", stmt, err)
+		}
+	}
+	return nil
+}
+
+func v54BackfillMissionEventRobotID(tx *sql.Tx) error {
+	_, err := tx.Exec(`UPDATE mission_events me
+		SET robot_id = o.robot_id
+		FROM orders o
+		WHERE me.order_id = o.id
+		  AND me.robot_id = ''
 		  AND o.robot_id <> ''`)
 	return err
 }

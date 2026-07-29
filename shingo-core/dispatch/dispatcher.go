@@ -530,3 +530,13 @@ func (d *Dispatcher) LaneLock() *LaneLock { return d.laneLock }
 
 // Lifecycle returns the dispatcher's lifecycle service for external use (e.g. auto-confirm).
 func (d *Dispatcher) Lifecycle() *LifecycleService { return d.lifecycle }
+
+// EnableFutilityDetector installs the rate-per-tuple detector (futility.go).
+// A no-op when cfg.Enabled is false. Wired from the composition root after
+// config load, like DebugLog — NewDispatcher takes no config, and the
+// thresholds must come from YAML rather than a constant here.
+func (d *Dispatcher) EnableFutilityDetector(cfg FutilityConfig, logFn func(string, ...any)) *FutilityDetector {
+	det := NewFutilityDetector(cfg, logFn, d.db)
+	d.lifecycle.futility = det
+	return det
+}

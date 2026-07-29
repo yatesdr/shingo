@@ -3,8 +3,43 @@ package telemetry
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 )
+
+// queryNoJIT runs a query with JIT compilation disabled, handing the rows to
+// scan before the transaction closes.
+//
+// The concurrency queries are cheap to EXECUTE and expensive to PLAN: at
+// Springfield, 322ms of GetHourlyConcurrency's 526ms was JIT compilation. The
+// planner's cost estimate crosses jit_above_cost because of the
+// generate_series x correlated-subquery shape, then spends most of the budget
+// compiling a query that touches a few thousand rows.
+//
+// SET LOCAL needs a transaction — a bare SET on a pooled connection leaks the
+// setting to whatever runs next on it. The callback shape is what keeps the tx
+// alive for exactly as long as the cursor and no longer; read-only, so the
+// deferred rollback is the correct close in every path.
+func queryNoJIT(db *sql.DB, query string, args []any, scan func(*sql.Rows) error) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // read-only; rollback is the close
+
+	if _, err := tx.Exec(`SET LOCAL jit = off`); err != nil {
+		// Not fatal: a Postgres built without JIT rejects this. Run the query
+		// anyway rather than failing the panel over a planner hint.
+		log.Printf("telemetry: SET LOCAL jit=off unavailable, running with JIT: %v", err)
+	}
+
+	rows, err := tx.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	return scan(rows)
+}
 
 // RobotMissionAgg is per-robot mission activity over a window — the basis for
 // the v1 utilization bar (% of the window a robot spent executing missions)
@@ -71,10 +106,19 @@ func GetHourlyConcurrency(db *sql.DB, dayStart time.Time, stationID string) ([]H
 		stationCond = " AND exec.station_id = $2"
 		args = append(args, stationID)
 	}
+	// The exec CTE is bounded by the caller's window. Unbounded it ran the two
+	// correlated order_history subqueries over EVERY mission ever recorded to
+	// answer a question about 24 hours, and grew with the table forever.
+	//
+	// core_created/core_completed bracket the computed execution interval
+	// (assignment >= created, completion <= terminal), so this is a superset
+	// filter: it cannot drop a mission that genuinely overlaps the day.
 	q := fmt.Sprintf(`WITH exec AS (
 			SELECT mt.robot_id, mt.station_id, %s AS started, %s AS ended
 			FROM mission_telemetry mt
 			WHERE mt.robot_id <> ''
+			  AND mt.core_completed >= $1::timestamptz
+			  AND mt.core_created <= $1::timestamptz + interval '24 hours'
 		)
 		SELECT gs AS hour, COUNT(DISTINCT exec.robot_id) AS concurrency
 		FROM generate_series($1::timestamptz, $1::timestamptz + interval '23 hours', interval '1 hour') gs
@@ -83,20 +127,21 @@ func GetHourlyConcurrency(db *sql.DB, dayStart time.Time, stationID string) ([]H
 		  AND exec.started < gs + interval '1 hour'
 		  AND exec.ended >= gs%s
 		GROUP BY gs ORDER BY gs`, assignmentExpr("mt"), completionExpr("mt"), stationCond)
-	rows, err := db.Query(q, args...)
+	var out []HourConcurrency
+	err := queryNoJIT(db, q, args, func(rows *sql.Rows) error {
+		for rows.Next() {
+			var h HourConcurrency
+			if err := rows.Scan(&h.Hour, &h.Concurrency); err != nil {
+				return err
+			}
+			out = append(out, h)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []HourConcurrency
-	for rows.Next() {
-		var h HourConcurrency
-		if err := rows.Scan(&h.Hour, &h.Concurrency); err != nil {
-			return nil, err
-		}
-		out = append(out, h)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // DayConcurrency is one day's fleet-concurrency rollup for the multi-day Fleet
@@ -125,10 +170,13 @@ func GetDailyConcurrency(db *sql.DB, since, until time.Time, stationID string) (
 		stationCond = " AND exec.station_id = $3"
 		args = append(args, stationID)
 	}
+	// Same window bound as GetHourlyConcurrency — see the note there.
 	q := fmt.Sprintf(`WITH exec AS (
 			SELECT mt.robot_id, mt.station_id, %s AS started, %s AS ended
 			FROM mission_telemetry mt
 			WHERE mt.robot_id <> ''
+			  AND mt.core_completed >= $1::timestamptz
+			  AND mt.core_created <= $2::timestamptz + interval '1 hour'
 		),
 		hourly AS (
 			SELECT gs AS hour, COUNT(DISTINCT exec.robot_id) AS concurrency
@@ -144,18 +192,19 @@ func GetDailyConcurrency(db *sql.DB, since, until time.Time, stationID string) (
 			AVG(concurrency)::float8 AS avg
 		FROM hourly
 		GROUP BY 1 ORDER BY 1`, assignmentExpr("mt"), completionExpr("mt"), stationCond)
-	rows, err := db.Query(q, args...)
+	var out []DayConcurrency
+	err := queryNoJIT(db, q, args, func(rows *sql.Rows) error {
+		for rows.Next() {
+			var d DayConcurrency
+			if err := rows.Scan(&d.Day, &d.Peak, &d.Avg); err != nil {
+				return err
+			}
+			out = append(out, d)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []DayConcurrency
-	for rows.Next() {
-		var d DayConcurrency
-		if err := rows.Scan(&d.Day, &d.Peak, &d.Avg); err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+	return out, nil
 }

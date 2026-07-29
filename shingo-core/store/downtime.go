@@ -25,3 +25,10 @@ func (db *DB) EnsureDowntimePartitions(ref time.Time) error {
 func (db *DB) EnsureDowntimePartitionsRange(start, end time.Time) error {
 	return downtime.EnsurePartitionsRange(db.DB, start, end)
 }
+
+// DropOldDowntimePartitions prunes downtime_events partitions older than
+// keepDays. The store/heartbeat twin of this existed from the start; the copy
+// that became store/downtime dropped it, so nothing pruned.
+func (db *DB) DropOldDowntimePartitions(keepDays int, now time.Time) (int, error) {
+	return downtime.DropOldPartitions(db.DB, keepDays, now)
+}

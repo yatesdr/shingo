@@ -128,3 +128,34 @@ func (db *DB) UnconfirmBinManifest(binID int64) error { return bins.UnconfirmMan
 func (db *DB) BinHasNotes(binIDs []int64) (map[int64]bool, error) {
 	return bins.HasNotes(db.DB, binIDs)
 }
+
+// ── Ledger integrity (read-side) ─────────────────────────────────────────
+//
+// See store/bins/ledger_integrity.go for what these answer and why the
+// negative values are deliberately NOT clamped away.
+
+// NegativeLedgerPayloads returns payload codes whose plant-wide bin total is
+// below zero, mapped to that total — the payloads the threshold monitor is
+// refusing to signal replenishment for.
+func (db *DB) NegativeLedgerPayloads() (map[string]int, error) {
+	return bins.NegativePayloads(db.DB)
+}
+
+// OpenNegativeBins lists bins whose ledger is negative right now. The
+// exception list — blank on a good day.
+func (db *DB) OpenNegativeBins() ([]bins.OpenNegativeBin, error) {
+	return bins.OpenNegativeBins(db.DB)
+}
+
+// NegativeLedgerExcursions returns zero-crossings since `since`, newest first,
+// each carrying the delta that caused it and whether a release preceded it
+// within releaseWindow (the standing race hypothesis).
+func (db *DB) NegativeLedgerExcursions(since time.Time, releaseWindow time.Duration, limit int) ([]bins.NegativeExcursion, error) {
+	return bins.NegativeExcursions(db.DB, since, releaseWindow, limit)
+}
+
+// InventoryRecordAccuracy reports count staleness and correction magnitude —
+// the standard warehouse accuracy read, previously unmeasured here.
+func (db *DB) InventoryRecordAccuracy(since time.Time, staleAfter time.Duration) (*bins.RecordAccuracy, error) {
+	return bins.GetRecordAccuracy(db.DB, since, staleAfter)
+}

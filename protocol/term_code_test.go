@@ -1,0 +1,116 @@
+package protocol
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+// TermCode is a PERSISTED, COMPARED contract: the strings land in
+// order_history.code and are compared by readers. Renaming a constant is safe;
+// changing the string it holds silently reclassifies history.
+
+func TestAllTermCodes_NoDuplicatesNoEmpty(t *testing.T) {
+	seen := map[TermCode]bool{}
+	for _, c := range AllTermCodes() {
+		if c == "" {
+			t.Fatal(`"" must not be a member — it means "uncoded", not a category`)
+		}
+		if seen[c] {
+			t.Fatalf("duplicate term code %q", c)
+		}
+		seen[c] = true
+	}
+}
+
+// Exhaustiveness: every declared code must classify, so adding one without
+// deciding its outcome bucket is a test failure rather than a silent
+// default-to-failure.
+func TestAllTermCodes_EveryCodeClassifies(t *testing.T) {
+	for _, c := range AllTermCodes() {
+		if !ValidTermCode(c) {
+			t.Errorf("%q is declared but ValidTermCode rejects it", c)
+		}
+	}
+	if !ValidTermCode("") {
+		t.Error(`"" must be valid — every pre-migration row carries it`)
+	}
+	if ValidTermCode("definitely_not_a_code") {
+		t.Error("unknown codes must not validate")
+	}
+}
+
+// The two values that actually occur at Springfield. If either string changes,
+// every historical row silently stops matching.
+func TestTermCodes_LiveValuesArePinned(t *testing.T) {
+	if TermNoSourceBin != "no_source_bin" {
+		t.Errorf("TermNoSourceBin = %q, want no_source_bin", TermNoSourceBin)
+	}
+	if TermGraceTimeout != "grace_timeout" {
+		t.Errorf("TermGraceTimeout = %q, want grace_timeout", TermGraceTimeout)
+	}
+}
+
+// TermRef renders the way the design writes it, because that string goes in a
+// log line next to the code and someone reads it at 3am.
+func TestTermRef_String(t *testing.T) {
+	r := TermRef{Node: "PLN_01.R1", Payload: "74577-6SA0A.06"}
+	if got, want := r.String(), "node=PLN_01.R1, payload=74577-6SA0A.06"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+	if (TermRef{}).String() != "" {
+		t.Error("an empty reference renders as nothing, not as punctuation")
+	}
+	if got := (TermRef{Peer: 4812}).String(); got != "peer=4812" {
+		t.Errorf("peer render = %q", got)
+	}
+}
+
+func TestTermRef_Empty(t *testing.T) {
+	if !(TermRef{}).Empty() {
+		t.Error("zero value is empty")
+	}
+	for _, r := range []TermRef{
+		{Node: "n"}, {Payload: "p"}, {Peer: 1}, {Detail: "d"},
+	} {
+		if r.Empty() {
+			t.Errorf("%+v should not be empty", r)
+		}
+	}
+}
+
+// Empty fields are omitted so the JSONB column holds only what is known — a
+// ref of {"node":"","payload":"","peer":0} would make ref->>'payload' return
+// "" instead of NULL and quietly join the empty string into every GROUP BY.
+func TestTermRef_JSONOmitsEmptyFields(t *testing.T) {
+	b, err := json.Marshal(TermRef{Payload: "74577-6SA0A.06"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(b)
+	if got != `{"payload":"74577-6SA0A.06"}` {
+		t.Fatalf("marshal = %s, want only the set field", got)
+	}
+	for _, absent := range []string{"node", "peer", "detail"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("empty %q should be omitted, got %s", absent, got)
+		}
+	}
+}
+
+// Round-trip: the column is written by Core and read back by Core, so a
+// symmetric encode/decode is the whole contract.
+func TestTermRef_RoundTrip(t *testing.T) {
+	want := TermRef{Node: "ALN_003", Payload: "74577-6SA0A.06", Peer: 991, Detail: "evac sibling terminal"}
+	b, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got TermRef
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got != want {
+		t.Fatalf("round-trip lost data: %+v -> %+v", want, got)
+	}
+}

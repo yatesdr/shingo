@@ -23,6 +23,43 @@ type Config struct {
 	Sourceability SourceabilityConfig `yaml:"sourceability"`
 	Replenishment ReplenishmentConfig `yaml:"replenishment"`
 	Logging       LoggingConfig       `yaml:"logging"`
+	Dispatch      DispatchConfig      `yaml:"dispatch"`
+}
+
+// DispatchConfig tunes planner-side safety nets.
+type DispatchConfig struct {
+	Futility FutilityConfig `yaml:"futility"`
+}
+
+// FutilityConfig tunes the rate-per-tuple futility detector — the net for the
+// class of failure where the planner turns a bounded physical condition into
+// unbounded orchestration work (Springfield 2026-07-21: 484 doomed swaps in
+// under two hours, none of which reached a robot, every surface green
+// throughout).
+//
+// The threshold is ABSOLUTE and rate-based. A consecutive-run threshold is
+// refuted by 120 days of plant history — normal operation produces runs of
+// 5, 6, 8, 9 and one of 26, with no knee — while rate separates cleanly:
+// ~4/h for the worst legitimate case against ~242/h for the cascade.
+//
+// A learned baseline is not on the table: 30 days of history spanning the
+// incident would be trained on it, and the database has a 2.5-week hole
+// (2026-06-27 → 07-15) that mis-baselines anything computed across it.
+type FutilityConfig struct {
+	// Enabled gates the whole detector. Off by default: it ships observe-only
+	// and a plant opts in.
+	Enabled bool `yaml:"enabled"`
+	// Threshold is how many futile terminals on one
+	// (station, process_node, payload) inside Window trip the record.
+	// Start at 20 — comfortably above the ~4/h worst legitimate case and far
+	// below the cascade's ~242/h.
+	Threshold int `yaml:"threshold"`
+	// Window is the rolling window the count is taken over.
+	Window time.Duration `yaml:"window"`
+	// AlertThrottle suppresses repeat records for the same tuple. Modelled on
+	// ThresholdMonitor's swapContradictionWindow, which is 15m for the same
+	// reason: the condition persists, so the record should not repeat per-order.
+	AlertThrottle time.Duration `yaml:"alert_throttle"`
 }
 
 // LoggingConfig gates what reaches stderr — under systemd, journald.
@@ -272,6 +309,14 @@ func Defaults() *Config {
 		},
 		Logging: LoggingConfig{
 			StderrSubsystems: DefaultStderrSubsystems(),
+		},
+		Dispatch: DispatchConfig{
+			Futility: FutilityConfig{
+				Enabled:       false, // observe-only, opt-in per plant
+				Threshold:     20,
+				Window:        60 * time.Minute,
+				AlertThrottle: 15 * time.Minute,
+			},
 		},
 		Replenishment: ReplenishmentConfig{
 			// R1 LIVE by default: decide off the Edge lineside reports (ledger +

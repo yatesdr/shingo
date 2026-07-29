@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store/plantclaims"
 	"shingocore/store/sourceability"
 )
@@ -183,6 +184,7 @@ func (m *SourceabilityMonitor) recomputeKeys(keys []plantclaims.ProcessKey) {
 	states := sourceability.Compute(in, m.cfg, time.Now())
 
 	var changed []sourceability.StyleState
+	var persist []verdictChange
 	m.mu.Lock()
 	for _, s := range states {
 		k := plantclaims.ProcessKey{ProcessID: s.ProcessID, StyleID: s.StyleID}
@@ -190,6 +192,11 @@ func (m *SourceabilityMonitor) recomputeKeys(keys []plantclaims.ProcessKey) {
 		m.state[k] = s
 		if !existed || wireChanged(old, s) {
 			changed = append(changed, s)
+			prev := ""
+			if existed {
+				prev = string(old.Status)
+			}
+			persist = append(persist, verdictChange{k.ProcessID, k.StyleID, s, prev})
 		}
 	}
 	m.recomputes++
@@ -200,7 +207,39 @@ func (m *SourceabilityMonitor) recomputeKeys(keys []plantclaims.ProcessKey) {
 	if len(changed) > 0 && m.publishFn != nil {
 		m.publishFn(toReport(changed, false))
 	}
+	// This is the path that runs on a real plant change — the debounced,
+	// scoped recompute. recomputeAll is the periodic safety net. Both persist,
+	// or the history only ever records what the two-minute sweep happened to
+	// catch.
+	m.persistChanges(persist)
 	m.emitSourcingUpdated(len(changed))
+}
+
+// verdictChange is one persisted verdict movement, collected under the
+// monitor's lock and written outside it — a DB round trip must not hold a
+// mutex that the SSE broadcast and every read path also take.
+type verdictChange struct {
+	processID, styleID string
+	state              sourceability.StyleState
+	prevStatus         string
+}
+
+// persistChanges writes verdict movements to sourceability_events.
+//
+// This is the whole point of Phase 5: the diff has existed since the monitor
+// was written, has been broadcast to every Edge, and has never been persisted
+// — so the root physical condition of 2026-07-21 (zero system stock on
+// 74577-6SA0A.06) was known continuously and recorded nowhere.
+//
+// Edge-triggered, so steady state writes nothing. Best-effort: a failed write
+// is logged, never fatal — losing a history row must not stop the monitor
+// telling Edge what it can source.
+func (m *SourceabilityMonitor) persistChanges(changes []verdictChange) {
+	for _, c := range changes {
+		if err := sourceability.RecordChange(m.eng.db.DB, c.processID, c.styleID, c.state, c.prevStatus); err != nil {
+			m.eng.logFn("sourceability: record verdict change %s/%s: %v", c.processID, c.styleID, err)
+		}
+	}
 }
 
 // emitSourcingUpdated tells the Core SSE layer that a verdict MOVED. It is the
@@ -245,9 +284,19 @@ func (m *SourceabilityMonitor) recomputeAll() {
 	// refresh the page on a timer forever. Count real verdict movement instead,
 	// including styles that disappeared from the mirror.
 	changed := 0
+	// persist collects the changes to write down. Built under the lock,
+	// written outside it — a DB round trip must not hold the monitor's mutex,
+	// which the SSE broadcast and every read path also take.
+	var persist []verdictChange
 	for k, s := range newState {
-		if old, existed := m.state[k]; !existed || wireChanged(old, s) {
+		old, existed := m.state[k]
+		if !existed || wireChanged(old, s) {
 			changed++
+			prev := ""
+			if existed {
+				prev = string(old.Status)
+			}
+			persist = append(persist, verdictChange{k.ProcessID, k.StyleID, s, prev})
 		}
 	}
 	for k := range m.state {
@@ -271,6 +320,9 @@ func (m *SourceabilityMonitor) recomputeAll() {
 	if m.publishFn != nil && (len(states) > 0 || prevCount > 0) {
 		m.publishFn(toReport(states, true))
 	}
+
+	m.persistChanges(persist)
+
 	m.emitSourcingUpdated(changed)
 }
 
@@ -403,4 +455,14 @@ func (m *SourceabilityMonitor) Snapshot() []sourceability.StyleState {
 		out = append(out, s)
 	}
 	return out
+}
+
+// SourceabilityEvents returns recorded verdict changes since `since`, newest
+// first — the persisted half of the diff this monitor computes. processID /
+// payload "" mean "all".
+//
+// "SNF2 went unsourceable at 09:14 missing -6SA0B.06, recovered 09:41" is the
+// sentence this answers, and the substrate for starvation minutes.
+func (e *Engine) SourceabilityEvents(since time.Time, processID, payload string, limit int) ([]domain.SourceabilityEvent, error) {
+	return e.db.ListSourceabilityEvents(since, processID, payload, limit)
 }

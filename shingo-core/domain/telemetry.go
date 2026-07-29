@@ -487,21 +487,63 @@ func ClassifyTermination(terminalState, detail string) string {
 	case "skipped":
 		return OutcomeSkipped
 	case "stopped", "cancelled", "canceled":
-		d := strings.ToLower(detail)
-		// Actor-attributed cancels are deliberate cancels (Q-030), even if the
-		// detail also mentions a failure-ish word — attribution wins. "aborted by"
-		// was previously only caught by the conservative default.
-		if strings.Contains(d, "cancelled by") || strings.Contains(d, "canceled by") ||
-			strings.Contains(d, "aborted by") {
-			return OutcomeCancelled
-		}
-		if strings.Contains(d, "grace") || strings.Contains(d, "timeout") ||
-			strings.Contains(d, "structural") || strings.Contains(d, "abandon") {
-			return OutcomeFailed
-		}
-		return OutcomeCancelled
+		return classifyCancelByDetail(detail)
 	default:
 		return OutcomeOther
+	}
+}
+
+// classifyCancelByDetail is the PRE-MIGRATION FALLBACK for cancels.
+//
+// Every other arm of ClassifyTermination is now a plain status switch. This
+// one still reads prose because a cancel is genuinely ambiguous — an operator
+// cancel and a grace-timeout abandon are both `cancelled` — and rows written
+// before order_history.code (migration 55) carry no other signal.
+//
+// It is a fallback, not the mechanism. A row that HAS a code should be
+// classified from protocol.TermCode, and this reached for only when the code
+// is empty. Substring-matching prose is the bug class that once classified
+// 100% of failures as "Robot blocked"; it survives here only because deleting
+// it would silently reclassify years of existing rows.
+func classifyCancelByDetail(detail string) string {
+	d := strings.ToLower(detail)
+	// Actor-attributed cancels are deliberate (Q-030), even when the detail
+	// also mentions a failure-ish word — attribution wins.
+	if strings.Contains(d, "cancelled by") || strings.Contains(d, "canceled by") ||
+		strings.Contains(d, "aborted by") {
+		return OutcomeCancelled
+	}
+	if strings.Contains(d, "grace") || strings.Contains(d, "timeout") ||
+		strings.Contains(d, "structural") || strings.Contains(d, "abandon") {
+		return OutcomeFailed
+	}
+	return OutcomeCancelled
+}
+
+// ClassifyTermCode maps a typed protocol.TermCode to an outcome bucket — the
+// replacement for reading prose, for every row written after migration 55.
+//
+// Returns ok=false for the empty code, which is what a pre-migration row and
+// an uncoded transition both carry; callers fall back to
+// ClassifyTermination on the status + detail.
+func ClassifyTermCode(status protocol.Status, code protocol.TermCode) (string, bool) {
+	if code == "" {
+		return "", false
+	}
+	switch code {
+	case protocol.TermOperatorCancelled, protocol.TermNotNeeded, protocol.TermPeerTerminal:
+		// Deliberate or unnecessary — not fulfillment failures. TermNotNeeded
+		// is the skip case; TermPeerTerminal is a leg unwound with its sibling,
+		// and counting both halves of one dead swap as two failures would
+		// double-count the same event.
+		if status == protocol.StatusSkipped {
+			return OutcomeSkipped, true
+		}
+		return OutcomeCancelled, true
+	default:
+		// Everything else in the vocabulary is a thing that went wrong:
+		// no_source_bin, grace_timeout, structural, claim_failed, and the rest.
+		return OutcomeFailed, true
 	}
 }
 

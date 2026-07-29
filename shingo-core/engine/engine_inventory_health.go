@@ -3,7 +3,9 @@ package engine
 import (
 	"context"
 	"sort"
+	"time"
 
+	"shingocore/domain"
 	"shingocore/service"
 )
 
@@ -28,6 +30,21 @@ type PayloadHealth struct {
 	// payload while the ledger read it as fully stocked (P2-C9) — surfaced as a
 	// right-hand chip on the Replenishment Health row.
 	SwapContradiction bool `json:"swap_contradiction"`
+	// LedgerNegative is true when this payload's plant-wide bin total is
+	// BELOW ZERO, which means the threshold monitor is refusing to signal
+	// replenishment for it (checkBindings' validity floor).
+	//
+	// This is the upstream end of the 2026-07-21 chain: ledger negative →
+	// replenishment suppressed → the payload genuinely runs dry → the
+	// changeover arms on a dry source. Springfield logged that refusal 1,119
+	// times a day and it appeared on no surface, so nobody could act on it.
+	//
+	// "We are not ordering material for this payload because we do not know
+	// what is in it" is the sentence this chip makes available.
+	LedgerNegative bool `json:"ledger_negative"`
+	// LedgerTotal is the negative bin total, for the chip's tooltip. Only
+	// meaningful when LedgerNegative.
+	LedgerTotal int `json:"ledger_total,omitempty"`
 }
 
 // ReplenishmentHealth builds the per-payload rollup behind the inventory
@@ -73,6 +90,16 @@ func (e *Engine) ReplenishmentHealth(ctx context.Context) ([]PayloadHealth, erro
 		uopByCode[c.PayloadCode] = c
 	}
 
+	// Payloads whose bin total is negative — the ones replenishment is
+	// suppressed for. One grouped read, not one per row.
+	negative, err := e.db.NegativeLedgerPayloads()
+	if err != nil {
+		// Degrade to no chip rather than failing the page: the rest of the
+		// rollup is still correct and useful without it.
+		e.logFn("replenishment health: negative ledger payloads: %v", err)
+		negative = map[string]int{}
+	}
+
 	descs, err := e.db.PayloadDescriptions()
 	if err != nil {
 		// Descriptions are cosmetic — degrade to codes only rather than fail the
@@ -91,6 +118,10 @@ func (e *Engine) ReplenishmentHealth(ctx context.Context) ([]PayloadHealth, erro
 			BucketUOP:   u.BucketUOP,
 			OnHand:      u.TotalUOP,
 		}
+		if total, neg := negative[p]; neg {
+			row.LedgerNegative = true
+			row.LedgerTotal = total
+		}
 		if s, ok := byPayload[p]; ok {
 			row.Monitored = true
 			row.Bindings = s.Bindings
@@ -105,4 +136,33 @@ func (e *Engine) ReplenishmentHealth(ctx context.Context) ([]PayloadHealth, erro
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PayloadCode < out[j].PayloadCode })
 	return out, nil
+}
+
+// ── Ledger-integrity reads (Phase 4.6) ───────────────────────────────────
+//
+// Read-side only: every value comes from bins and bin_uop_audit, which are
+// already on disk. See store/bins/ledger_integrity.go for what each answers
+// and why the negatives are deliberately not clamped away.
+
+// OpenNegativeBins lists bins whose UOP ledger is negative right now — the
+// exception list, blank on a good day.
+func (e *Engine) OpenNegativeBins() ([]domain.OpenNegativeBin, error) {
+	return e.db.OpenNegativeBins()
+}
+
+// NegativeLedgerPayloads maps payload code to its negative plant-wide bin
+// total: the payloads replenishment is currently suppressed for.
+func (e *Engine) NegativeLedgerPayloads() (map[string]int, error) {
+	return e.db.NegativeLedgerPayloads()
+}
+
+// NegativeLedgerExcursions returns zero-crossings since `since` with the delta
+// that caused each one.
+func (e *Engine) NegativeLedgerExcursions(since time.Time, releaseWindow time.Duration, limit int) ([]domain.NegativeExcursion, error) {
+	return e.db.NegativeLedgerExcursions(since, releaseWindow, limit)
+}
+
+// InventoryRecordAccuracy reports count staleness and correction magnitude.
+func (e *Engine) InventoryRecordAccuracy(since time.Time, staleAfter time.Duration) (*domain.RecordAccuracy, error) {
+	return e.db.InventoryRecordAccuracy(since, staleAfter)
 }

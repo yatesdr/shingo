@@ -124,14 +124,36 @@ CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_vendor ON orders(vendor_order_id);
 CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node);
 
+-- order_history — every status transition an order made, in order.
+--
+-- The canonical timing source. Both endpoints of execution time come from
+-- here rather than mission_telemetry precisely because these rows are written
+-- by Core's own state machine, on Core's clock.
+--
+-- code / actor / ref are the TYPED reason (migration 55):
+--   code   protocol.TermCode on a terminal row, protocol.QueueCode on a
+--          to-queued row. Prefer it over parsing detail, which is prose.
+--   actor  who caused the transition.
+--   ref    what the reason concerns, as JSONB — node / payload / peer. The
+--          live code distribution is two values, so the reference is what
+--          makes a reason actionable: ref->>payload is the GROUP BY that
+--          turns "no_source_bin" into starvation-by-cause.
+-- All three are NULL on rows written before 55 and on uncoded transitions.
 CREATE TABLE IF NOT EXISTS order_history (
     id          BIGSERIAL PRIMARY KEY,
     order_id    BIGINT NOT NULL REFERENCES orders(id),
     status      TEXT NOT NULL,
     detail      TEXT NOT NULL DEFAULT '',
+    code        TEXT,
+    actor       TEXT,
+    ref         JSONB,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_order_history_order ON order_history(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_history_code
+    ON order_history(code, created_at) WHERE code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_order_history_ref_payload
+    ON order_history((ref->>'payload')) WHERE ref IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS outbox (
     id          BIGSERIAL PRIMARY KEY,
@@ -351,6 +373,23 @@ CREATE TABLE IF NOT EXISTS cms_transactions (
 CREATE INDEX IF NOT EXISTS idx_cms_txn_node ON cms_transactions(node_id);
 CREATE INDEX IF NOT EXISTS idx_cms_txn_created ON cms_transactions(created_at);
 
+-- mission_events — RAW VENDOR OBSERVATIONS, one row per transition.
+--
+-- Answers: "what did the fleet report, in what order, with the robot where".
+-- Fed by the RDS status poller, so new_state holds VENDOR states (RUNNING,
+-- WAITING, FINISHED — SEER's vocabulary), NOT Core's canonical order statuses.
+-- The one exception is BLOCK_FINISHED, Core's own per-leg marker; it is
+-- deliberately not a vendor state so a reader filtering on real states does
+-- not pick it up.
+--
+-- NOT the source for canonical timing. Two clocks meet here — vendor poll and
+-- Core lifecycle — and order_history is the one written by Core's own state
+-- machine. execution.go is right to source both its endpoints from there.
+--
+-- Relationship to mission_telemetry: same subject, different grain and
+-- different question. Do not merge them, and do not expand this into a leg
+-- table beyond the per-block rows it already carries. The confusion between
+-- the two has now caused two separate bugs.
 CREATE TABLE IF NOT EXISTS mission_events (
     id              BIGSERIAL PRIMARY KEY,
     order_id        BIGINT NOT NULL,
@@ -370,6 +409,24 @@ CREATE TABLE IF NOT EXISTS mission_events (
 );
 CREATE INDEX IF NOT EXISTS idx_mission_events_order ON mission_events(order_id);
 
+-- mission_telemetry — WHAT THE ROBOTS DID, one row per mission.
+--
+-- Answers: "what did the fleet actually carry out" — not "what happened to
+-- the orders". Written only when an order reaches a VENDOR terminal
+-- (finalizeMissionTelemetry, gated on fleet.IsTerminalState), so
+--
+--     76.6% of terminal orders have NO row here.
+--
+-- That is survivorship bias by construction and it is CORRECT for the
+-- question this table answers: every skip and most cancels never reached a
+-- robot, so they are not missions. It is wrong for any question about order
+-- outcomes — those belong to orders + order_history. Reading failure counts
+-- from here was a real bug (see GetFailures), and it is the one this comment
+-- exists to prevent recurring.
+--
+-- duration_ms is LEAD time (created → terminal, queue included). Execution
+-- time — what the robot actually spent, faulted dwell excluded — is computed
+-- on read from order_history; see store/telemetry/execution.go.
 CREATE TABLE IF NOT EXISTS mission_telemetry (
     id                 BIGSERIAL PRIMARY KEY,
     order_id           BIGINT NOT NULL UNIQUE,

@@ -5,46 +5,52 @@ import (
 	"fmt"
 	"sort"
 
+	"shingo/protocol"
 	"shingocore/domain"
 )
 
 // FailureReason is the §3.G Pareto row type.
 type FailureReason = domain.FailureReason
 
-// GetFailures classifies failed missions in the window into categorical
-// reasons for the §3.G failure Pareto. It folds in BOTH hard FAILED missions
-// and system-initiated stops — STOPPED/cancelled missions whose terminal
-// order_history detail classifies as a failure (grace timeouts, abandons,
-// structural faults) per domain.ClassifyTermination (Q-013). Operator and RDS
-// cancels stay excluded. Each row is classified in Go via
-// domain.PrimaryFailureReason (robot_alarms → errors → blocks); when those give
-// nothing — the usual system-stop case — the reason is derived from the
-// terminal detail via domain.SystemStopReason. Returns the top-10 reasons by
-// count with up to 5 sample order IDs each. Mission counts are
-// low-thousands/month, so pulling + classifying in Go is fine.
+// GetFailures classifies failed orders in the window into categorical reasons
+// for the §3.G failure Pareto.
+//
+// Reads ORDERS, not mission_telemetry. mission_telemetry only gets a row when
+// an order reaches a VENDOR terminal, so 76.6% of terminal orders have no row
+// at all — every skip, most cancels, and every failure that dies in Core's own
+// pipeline (empty payload_code, no source bin, RDS POST failure, reshuffle
+// planning failure, grace-timeout abandon) never becomes a mission. On a live
+// plant that is the bulk of real failures, and this page was blind to all of
+// them while the Overview tile beside it counted from orders. Two populations,
+// two pages, nothing reconciling them.
+//
+// EXPECT THE COUNT TO JUMP. That is the fix, not a regression.
+//
+// mission_telemetry is still LEFT JOINed for the vendor signal — robot alarms,
+// block and error payloads — because that is genuinely what it holds. An order
+// with no mission row simply classifies from its terminal detail instead.
+//
+// Same windowing and filters as the v2 outcome counts (orderOutcomeWhere), so
+// the Pareto and the success-rate tile finally describe one population.
+// Returns the top-10 reasons by count with up to 5 sample order IDs each.
 func GetFailures(db *sql.DB, f Filter) ([]FailureReason, error) {
-	where, args := buildWhere(f)
-	// Pull hard failures AND the stop/cancel bucket; the latter is reclassified
-	// in Go so only the system-stop subset counts as a failure.
-	cond := "terminal_state IN ('FAILED','failed','STOPPED','stopped','cancelled','canceled')"
-	if where == "" {
-		where = " WHERE " + cond
-	} else {
-		where += " AND " + cond
-	}
-	// LEFT JOIN LATERAL → the terminal order_history detail (one row per
-	// mission, '' when no history), the same shape classifyStops uses. The three
-	// signal columns (robot_alarms_json is the Q-026 priority source, NULL until
-	// the alarm-snapshot ingestion lands) feed PrimaryFailureReason. All are
-	// JSONB; ::text before COALESCE-against-'' dodges the 22P02 that 500'd
-	// /api/missions/failures historically.
-	q := fmt.Sprintf(`SELECT mt.order_id, mt.terminal_state,
+	where, args := orderOutcomeWhere("o", f)
+	// orderOutcomeWhere already restricts to terminal statuses; narrow to the
+	// ones that can classify as a failure. 'confirmed' never can, and neither
+	// can 'skipped' — ClassifyTermination buckets it as skipped regardless of
+	// detail. The cancels are pulled because only a SUBSET of them are
+	// failures (grace / timeout / structural / abandon), decided in Go below;
+	// operator and RDS cancels drop out there.
+	where += " AND o.status IN ('failed','cancelled','canceled')"
+
+	q := fmt.Sprintf(`SELECT o.id, o.status,
 			COALESCE(mt.robot_alarms_json::text,''), COALESCE(mt.blocks_json::text,''), COALESCE(mt.errors_json::text,''),
-			COALESCE(oh.detail,'')
-		FROM mission_telemetry mt
+			COALESCE(oh.detail,''), COALESCE(oh.code,'')
+		FROM orders o
+		LEFT JOIN mission_telemetry mt ON mt.order_id = o.id
 		LEFT JOIN LATERAL (
-			SELECT detail FROM order_history oh
-			WHERE oh.order_id = mt.order_id
+			SELECT detail, code FROM order_history oh
+			WHERE oh.order_id = o.id
 			ORDER BY oh.created_at DESC, oh.id DESC
 			LIMIT 1
 		) oh ON TRUE%s`, where)
@@ -58,17 +64,28 @@ func GetFailures(db *sql.DB, f Filter) ([]FailureReason, error) {
 	samples := map[string][]int64{}
 	for rows.Next() {
 		var orderID int64
-		var ts, robotAlarms, blocks, errors, detail string
-		if err := rows.Scan(&orderID, &ts, &robotAlarms, &blocks, &errors, &detail); err != nil {
+		var ts, robotAlarms, blocks, errors, detail, code string
+		if err := rows.Scan(&orderID, &ts, &robotAlarms, &blocks, &errors, &detail, &code); err != nil {
 			return nil, err
 		}
-		// Hard FAILED always counts; a stop/cancel counts only when
-		// ClassifyTermination places it in the failed bucket (grace/timeout/
-		// structural/abandon). Operator + RDS cancels fall out here.
-		if domain.ClassifyTermination(ts, detail) != domain.OutcomeFailed {
+		// Prefer the TYPED code (migration 55). Fall back to reading the prose
+		// detail only for rows written before the column existed — that
+		// substring matching is the bug class that once classified 100% of
+		// failures as "Robot blocked", so it is a compatibility shim, not the
+		// mechanism.
+		outcome, typed := domain.ClassifyTermCode(protocol.Status(ts), protocol.TermCode(code))
+		if !typed {
+			outcome = domain.ClassifyTermination(ts, detail)
+		}
+		if outcome != domain.OutcomeFailed {
 			continue
 		}
+		// The vendor signal wins when there is one — a robot alarm names the
+		// physical fault, which a code cannot.
 		reason := domain.PrimaryFailureReason(robotAlarms, blocks, errors)
+		if reason == domain.FailOther && code != "" {
+			reason = code
+		}
 		if reason == domain.FailOther {
 			if d := domain.SystemStopReason(detail); d != "" {
 				reason = d

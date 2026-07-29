@@ -25,6 +25,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/store"
 	"shingocore/store/orders"
 )
 
@@ -86,6 +87,11 @@ type Event struct {
 	FinalCount     int64
 	ErrorCode      string
 	ErrorDetail    string
+	// Ref is what the reason CONCERNS — node / payload / peer. Persisted to
+	// order_history.ref as JSONB (migration 55). The live terminal-code
+	// distribution is two values, so the code alone answers nothing and the
+	// reference is what makes a reason actionable.
+	Ref protocol.TermRef
 }
 
 // Action runs after the status update is persisted. Actions may write to
@@ -224,7 +230,7 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		// status write and the history row belong to the winner — so a refusal
 		// here never strands a hold.
 		var won bool
-		won, err = s.db.TerminalizeOrder(ord.ID, to, detail)
+		won, err = s.db.TerminalizeOrderWithReason(ord.ID, to, detail, s.historyReason(ord, to, ev))
 		if err == nil && !won {
 			return ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
 		}
@@ -240,7 +246,7 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		// fulfillment tick's queued→sourcing resurrected an order the
 		// recovery op had just cancelled.
 		var moved bool
-		moved, err = s.db.UpdateOrderStatusFrom(ord.ID, string(from), string(to), detail)
+		moved, err = s.db.UpdateOrderStatusFromWithReason(ord.ID, string(from), string(to), detail, s.historyReason(ord, to, ev))
 		if err == nil && !moved {
 			return ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
 		}
@@ -250,12 +256,98 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 	}
 	ord.Status = to
 
+	// Futility accounting. Placed here because transition() is the one
+	// chokepoint every status write goes through, so the detector cannot be
+	// bypassed by a new call site the way a per-caller hook could.
+	s.noteFutility(ord, from, to, ev)
+
 	for _, action := range actionMap[transitionKey{from, to}] {
 		if err := action(s, ord, ev); err != nil {
 			log.Printf("dispatch: action failed on %s→%s for order %d: %v", from, to, ord.ID, err)
 		}
 	}
 	return nil
+}
+
+// historyReason assembles the typed reason for the order_history row.
+//
+// Event.ErrorCode and Event.Actor were already being set at every Fail and
+// Skip call site and then dropped here — transition() passed only the prose
+// detail to the store, so the categories existed in memory and never reached
+// disk. This is the thread-through.
+//
+// On a →queued row the code is the QUEUE code, not a terminal one: the order
+// is not ending, it is waiting, and orders.queue_code is overwritten in place
+// so the history row is the only place that reason becomes a time series.
+//
+// The reference defaults to the order's own node and payload when the call
+// site did not set one. That is not a guess — it is the node and payload the
+// order is FOR, which is exactly what "no_source_bin" concerns.
+func (s *LifecycleService) historyReason(ord *orders.Order, to protocol.Status, ev Event) store.HistoryReason {
+	r := store.HistoryReason{Code: ev.ErrorCode, Actor: ev.Actor, Ref: ev.Ref}
+
+	if to == StatusQueued {
+		// A terminal code on a queued row would be a category error.
+		r.Code = ord.QueueCode
+	}
+
+	if r.Ref.Empty() {
+		r.Ref = protocol.TermRef{Node: ord.ProcessNode, Payload: ord.PayloadCode}
+		if r.Ref.Node == "" {
+			r.Ref.Node = ord.DeliveryNode
+		}
+	}
+	return r
+}
+
+// noteFutility feeds the rate-per-tuple detector: in_transit resets the
+// tuple, and a terminal that never reached in_transit increments it.
+//
+// No-op when the detector is disabled (nil), which is also the whole cost on
+// a plant that has not turned it on.
+func (s *LifecycleService) noteFutility(ord *orders.Order, from, to protocol.Status, ev Event) {
+	if s.futility == nil {
+		return
+	}
+	key := FutilityKey{
+		StationID:   ord.StationID,
+		ProcessNode: ord.ProcessNode,
+		PayloadCode: ord.PayloadCode,
+	}
+
+	if to == StatusInTransit {
+		s.futility.NoteInTransit(key)
+		return
+	}
+	if !protocol.IsTerminal(to) {
+		return
+	}
+
+	// Did THIS order ever get a robot moving? `from` is not enough to answer
+	// it — an order can reach a terminal from half a dozen states, and
+	// in_transit → staged → cancelled is not futile while
+	// queued → cancelled is. Only the history distinguishes them.
+	//
+	// One indexed EXISTS per terminal. Terminals run ~50/day at a plant and
+	// ~242/h at the worst moment on record, so the cost is not a
+	// consideration; being wrong about which orders count is.
+	reached, err := s.db.OrderEverReachedStatus(ord.ID, string(StatusInTransit))
+	if err != nil {
+		// Fail closed: do not count an order we could not classify. An
+		// over-count here would put a false FUTILITY line in the journal,
+		// which is worse than a missed one on an observe-only detector.
+		s.dbg("futility: classify order %d: %v", ord.ID, err)
+		return
+	}
+	if reached {
+		return
+	}
+
+	reason := ev.Reason
+	if reason == "" {
+		reason = ev.ErrorDetail
+	}
+	s.futility.NoteFutileTerminal(key, ord.ID, string(to), reason)
 }
 
 // ── Public typed methods ────────────────────────────────────────────────

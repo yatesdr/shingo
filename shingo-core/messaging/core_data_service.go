@@ -21,6 +21,10 @@ import (
 // heartbeatRetentionDays is the cell_part_events retention window (plan §12).
 const heartbeatRetentionDays = 90
 
+// downtimeRetentionDays matches heartbeatRetentionDays. Same event-log shape,
+// same 90-day window; no reason for the two to differ.
+const downtimeRetentionDays = 90
+
 type coreDataResponder interface {
 	dbg(format string, args ...any)
 	replyData(env *protocol.Envelope, subject string, payload any)
@@ -712,6 +716,13 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 // and partition manager (G9). Call once at the composition root after subject
 // registration. Mirrors StartHeartbeatProjection: HandleDowntimeEvent enqueues,
 // this worker does the INSERT.
+//
+// downtime_events is scaffolding for the sim's downtime model — deliberate,
+// and not currently fed by any plant (0 rows at Springfield; the only producer
+// is behind //go:build sim). It is kept and maintained, not deleted, because
+// the sim work that consumes it is planned. What it must NOT do meanwhile is
+// accumulate one empty partition a month forever, which is what happened while
+// this loop was missing.
 func (s *CoreDataService) StartDowntimeProjection() {
 	if err := s.db.EnsureDowntimePartitions(clock.Now().UTC()); err != nil {
 		log.Printf("core_handler: ensure downtime partitions at boot: %v", err)
@@ -720,6 +731,26 @@ func (s *CoreDataService) StartDowntimeProjection() {
 		for e := range s.downtimeCh {
 			if err := s.db.InsertDowntimeEvent(e); err != nil {
 				log.Printf("core_handler: project downtime_event station=%s plc=%s edge_id=%d: %v", e.Station, e.PLCName, e.EdgeEventID, err)
+			}
+		}
+	}()
+	// Daily maintenance, mirroring StartHeartbeatProjection. Two things were
+	// missing here, not one: EnsurePartitions only creates the current and next
+	// month, so with no daily tick a Core up longer than two months runs out of
+	// partitions; and the copy that became store/downtime dropped
+	// DropOldPartitions entirely, so nothing ever pruned.
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for range t.C {
+			now := clock.Now().UTC()
+			if err := s.db.EnsureDowntimePartitions(now); err != nil {
+				log.Printf("core_handler: ensure downtime partitions: %v", err)
+			}
+			if dropped, err := s.db.DropOldDowntimePartitions(downtimeRetentionDays, now); err != nil {
+				log.Printf("core_handler: drop old downtime partitions: %v", err)
+			} else if dropped > 0 {
+				log.Printf("core_handler: dropped %d expired downtime partition(s)", dropped)
 			}
 		}
 	}()

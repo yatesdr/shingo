@@ -57,10 +57,42 @@ func completionExpr(alias string) string {
 		WHERE oh.order_id = %s.order_id AND oh.status IN (`+completionStatesSQL+`))`, alias)
 }
 
+// faultedDwellMSExpr returns SQL for the total time a mission spent `faulted`,
+// in milliseconds — the sum over each faulted transition of the gap to
+// whatever status came next.
+//
+// Subtracted from execution time because a faulted robot is not working. The
+// grace period is 'faulted' precisely so a transient fleet failure can recover
+// (faulted→in_transit) or be finished by hand (faulted→delivered), and a
+// mission that sat faulted for 45 minutes and then recovered has assignment
+// long before completion — so without this, that 45 minutes reads as robot
+// busy time. Utilization then inflates exactly on the days robots are stuck,
+// which is precisely backwards.
+//
+// LEAD over the order's own history gives each faulted interval its end; a
+// mission still faulted at its terminal gets the gap up to that terminal row,
+// which is correct — it was stuck right up until it was given up on.
+func faultedDwellMSExpr(alias string) string {
+	return fmt.Sprintf(`COALESCE((
+		SELECT SUM(EXTRACT(EPOCH FROM (h.next_at - h.created_at))) * 1000
+		FROM (
+			SELECT oh.created_at, oh.status,
+			       LEAD(oh.created_at) OVER (ORDER BY oh.created_at, oh.id) AS next_at
+			FROM order_history oh WHERE oh.order_id = %s.order_id
+		) h
+		WHERE h.status = 'faulted' AND h.next_at IS NOT NULL
+	), 0)`, alias)
+}
+
 // executionMSExpr returns SQL for execution time in milliseconds for one
-// mission: completion − assignment, both from order_history. NULL when the
-// mission has no assignment (never executed); aggregate callers COALESCE/AVG
-// (NULLs skipped) or filter `> 0`. alias is the mission_telemetry table alias.
+// mission: completion − assignment (both from order_history) MINUS the time
+// the mission spent faulted. NULL when the mission has no assignment (never
+// executed); aggregate callers COALESCE/AVG (NULLs skipped) or filter `> 0`.
+// alias is the mission_telemetry table alias.
+//
+// Floored at 0: execution time is never negative, and a mission whose faulted
+// dwell exceeds its span is a data problem, not a robot that worked backwards.
 func executionMSExpr(alias string) string {
-	return fmt.Sprintf(`(EXTRACT(EPOCH FROM (%s - %s)) * 1000)`, completionExpr(alias), assignmentExpr(alias))
+	return fmt.Sprintf(`GREATEST(EXTRACT(EPOCH FROM (%s - %s)) * 1000 - %s, 0)`,
+		completionExpr(alias), assignmentExpr(alias), faultedDwellMSExpr(alias))
 }

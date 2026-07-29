@@ -42,6 +42,11 @@ type LifecycleService struct {
 	resolver    NodeResolver
 	binManifest *service.BinManifestService
 	debug       func(string, ...any)
+
+	// futility is the rate-per-tuple detector (futility.go). nil = disabled,
+	// which is the default until a plant turns it on in YAML; every method on
+	// it is nil-safe.
+	futility *FutilityDetector
 }
 
 func newLifecycleService(db *store.DB, backend fleet.Backend, emitter Emitter, resolver NodeResolver, binManifest *service.BinManifestService, debug func(string, ...any)) *LifecycleService {

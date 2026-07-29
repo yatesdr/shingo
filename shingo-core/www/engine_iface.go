@@ -2,10 +2,12 @@ package www
 
 import (
 	"context"
+	"time"
 
 	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/dispatch/eta"
+	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/messaging"
@@ -88,6 +90,14 @@ type ServiceAccess interface {
 	// cached total (for drift detection), and configured thresholds. A pure read
 	// of the monitor snapshot + inventory.
 	ReplenishmentHealth(ctx context.Context) ([]engine.PayloadHealth, error)
+
+	// Ledger-integrity exception list (Phase 4.6). Read-side only.
+	OpenNegativeBins() ([]domain.OpenNegativeBin, error)
+	NegativeLedgerPayloads() (map[string]int, error)
+	NegativeLedgerExcursions(since time.Time, releaseWindow time.Duration, limit int) ([]domain.NegativeExcursion, error)
+
+	// SourceabilityEvents is the persisted verdict-change history (Phase 5).
+	SourceabilityEvents(since time.Time, processID, payload string, limit int) ([]domain.SourceabilityEvent, error)
 	// ValidateAdvancedLoadSequence checks a payload's configured load-sequence
 	// task names against the RDS binTask keys of its assigned node locations. A
 	// pure read (no side effects): a missing key at a real location returns an

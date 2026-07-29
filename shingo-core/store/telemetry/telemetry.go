@@ -124,20 +124,34 @@ func GetMission(db *sql.DB, orderID int64) (*Mission, error) {
 		source_node, delivery_node, terminal_state,
 		vendor_created, vendor_completed, core_created, core_completed,
 		duration_ms, vendor_duration_ms,
-		blocks_json, errors_json, warnings_json, notices_json, created_at
+		blocks_json, errors_json, warnings_json, notices_json, robot_alarms_json, created_at
 		FROM mission_telemetry WHERE order_id=$1`, orderID)
 	return scanMission(row)
 }
 
+// scanMission reads one mission_telemetry row.
+//
+// robot_alarms_json is in this list because it was written by UpsertMission
+// and absent here, so GetMission and ListMissions never returned it and the
+// detail page could not show the alarm even when one was captured. That is
+// the Q-026 signal the failure Pareto classifies first — on a FAILED mission
+// the causal fault is still active on the robot.
 func scanMission(row interface{ Scan(...any) error }) (*Mission, error) {
 	t := &Mission{}
+	var robotAlarms sql.NullString
 	err := row.Scan(&t.ID, &t.OrderID, &t.VendorOrderID, &t.RobotID, &t.StationID, &t.OrderType,
 		&t.SourceNode, &t.DeliveryNode, &t.TerminalState,
 		&t.VendorCreated, &t.VendorCompleted, &t.CoreCreated, &t.CoreCompleted,
 		&t.DurationMS, &t.VendorDurationMS,
-		&t.BlocksJSON, &t.ErrorsJSON, &t.WarningsJSON, &t.NoticesJSON, &t.CreatedAt)
+		&t.BlocksJSON, &t.ErrorsJSON, &t.WarningsJSON, &t.NoticesJSON, &robotAlarms, &t.CreatedAt)
 	if err != nil {
 		return nil, err
+	}
+	// NULL on every row written before the column existed; "[]" is what the
+	// writer stores for "no alarms", so a reader can treat them alike.
+	t.RobotAlarmsJSON = robotAlarms.String
+	if t.RobotAlarmsJSON == "" {
+		t.RobotAlarmsJSON = "[]"
 	}
 	return t, nil
 }
@@ -162,7 +176,7 @@ func ListMissions(db *sql.DB, f Filter) ([]*Mission, int, error) {
 		source_node, delivery_node, terminal_state,
 		vendor_created, vendor_completed, core_created, core_completed,
 		duration_ms, vendor_duration_ms,
-		blocks_json, errors_json, warnings_json, notices_json, created_at
+		blocks_json, errors_json, warnings_json, notices_json, robot_alarms_json, created_at
 		FROM mission_telemetry%s ORDER BY core_completed DESC NULLS LAST LIMIT $%d OFFSET $%d`,
 		where, len(args)+1, len(args)+2)
 	args = append(args, limit, f.Offset)

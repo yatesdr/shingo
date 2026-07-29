@@ -3,10 +3,13 @@ package www
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/xuri/excelize/v2"
 	"shingo/protocol"
+	"shingo/shared/clock"
+	"shingocore/domain"
 )
 
 // InventoryInvariant is the Item 13 plant-wide running totals shape.
@@ -70,6 +73,102 @@ func (h *Handlers) apiInventoryMonitorTotals(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	h.jsonOK(w, rows)
+}
+
+// apiInventoryLedgerExceptions returns the ledger-integrity exception list:
+// bins whose UOP is negative right now, and the payloads whose plant-wide
+// total is negative — the ones the threshold monitor is refusing to signal
+// replenishment for.
+//
+// BLANK ON A GOOD DAY. That is the design: a page of charts computed from a
+// handful of points is worse than nothing, and a list that is empty until
+// something is wrong is the right instrument.
+//
+// Read-side only — every value comes from bins and bin_uop_audit, which are
+// already on disk. No new table.
+//
+// ?since=<RFC3339> and ?limit= control the excursion history (default 7 days,
+// 200 rows). Excursions are the forensics; the two lists above are the
+// actionable part.
+func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.Request) {
+	openBins, err := h.engine.OpenNegativeBins()
+	if err != nil {
+		h.jsonError(w, "open negative bins: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	payloads, err := h.engine.NegativeLedgerPayloads()
+	if err != nil {
+		h.jsonError(w, "negative ledger payloads: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	since := clock.Now().UTC().AddDate(0, 0, -7)
+	if v := r.URL.Query().Get("since"); v != "" {
+		if t, perr := time.Parse(time.RFC3339, v); perr == nil {
+			since = t.UTC()
+		}
+	}
+	limit := 200
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, cerr := strconv.Atoi(v); cerr == nil && n > 0 {
+			limit = n
+		}
+	}
+	// A release and the delta it races are seconds apart, so the window only
+	// needs to be wide enough to survive queue latency.
+	excursions, err := h.engine.NegativeLedgerExcursions(since, 5*time.Minute, limit)
+	if err != nil {
+		h.jsonError(w, "negative ledger excursions: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if openBins == nil {
+		openBins = []domain.OpenNegativeBin{}
+	}
+	if excursions == nil {
+		excursions = []domain.NegativeExcursion{}
+	}
+	h.jsonOK(w, map[string]any{
+		"since":             since,
+		"open_bins":         openBins,
+		"negative_payloads": payloads,
+		"excursions":        excursions,
+	})
+}
+
+// apiSourceabilityEvents serves the persisted sourceability verdict-change
+// history: when a (process, style) stopped being sourceable, what it was
+// missing, and when it recovered.
+//
+// The monitor has computed this diff every two minutes since it was written
+// and never wrote it down, so the root physical condition of 2026-07-21 —
+// zero system stock on 74577-6SA0A.06 — was known continuously and recorded
+// nowhere.
+//
+// ?since=<RFC3339> (default 7 days), ?process=, ?payload=, ?limit=.
+func (h *Handlers) apiSourceabilityEvents(w http.ResponseWriter, r *http.Request) {
+	since := clock.Now().UTC().AddDate(0, 0, -7)
+	if v := r.URL.Query().Get("since"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			since = t.UTC()
+		}
+	}
+	limit := 200
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	rows, err := h.engine.SourceabilityEvents(since,
+		r.URL.Query().Get("process"), r.URL.Query().Get("payload"), limit)
+	if err != nil {
+		h.jsonError(w, "sourceability events: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == nil {
+		rows = []domain.SourceabilityEvent{}
+	}
+	h.jsonOK(w, map[string]any{"since": since, "events": rows})
 }
 
 // apiInventoryAnomalySummary returns the read-only rejected-delta + stale-staged

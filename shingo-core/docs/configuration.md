@@ -146,6 +146,46 @@ Notes:
 - Retention itself is a separate, host-wide decision — see
   `shingo-core/deploy/README.md`.
 
+### dispatch.futility
+
+The rate-per-tuple futility detector: a net for the class of failure where the
+planner turns a bounded physical condition into unbounded orchestration work.
+Springfield 2026-07-21 produced 484 doomed swaps in under two hours, none of
+which reached a robot, while every surface stayed green.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Off by default — observe-only, opt in per plant |
+| `threshold` | int | `20` | Futile terminals on one (station, process_node, payload) inside the window |
+| `window` | duration | `60m` | Rolling window the count is taken over |
+| `alert_throttle` | duration | `15m` | Repeat suppression per tuple |
+
+```yaml
+dispatch:
+    futility:
+        enabled: true
+        threshold: 20
+        window: 60m
+        alert_throttle: 15m
+```
+
+A "futile" terminal is an order that reached a terminal status without ever
+having reached `in_transit` — planned, then abandoned before a robot moved.
+Any order for the same tuple reaching `in_transit` resets the count.
+
+**Rate, not a run count.** A consecutive-run threshold is refuted by the
+plant's own history: over 120 days on real tuples, off the incident window,
+normal operation produced runs of 5 (×6), 6 (×2), 8, 9 (×3) and one of 26 —
+a power-law tail with no knee. Time separates them cleanly: the worst
+legitimate case ran ~4/h, the cascade ~242/h.
+
+**Absolute, not learned.** A 30-day trailing baseline would have been trained
+on the incident, and the database has a 2.5-week hole (2026-06-27 → 07-15)
+that mis-baselines anything computed across it.
+
+**Observe-only.** One log line and one `audit_log` row per trigger. No chip,
+no alert, no brake — a brake on an unmeasured threshold stops real work.
+
 ### Duration Format
 
 Duration fields accept Go duration strings: `5s`, `10s`, `1m`, `500ms`, `2m30s`.
