@@ -11,20 +11,28 @@
 //
 //	UPDATE bins SET uop_remaining = uop_remaining + $1 WHERE id=$2
 //
-// No clamp, no guard. A negative total therefore means the BIN side is wrong,
-// which is why ThresholdMonitor.checkBindings refuses to signal replenishment
-// on one and says so loudly — 1,119 times a day at Springfield.
+// No clamp, no guard. A negative total means the BIN side is wrong — the count
+// drifted from the shelf, which happens for ordinary physical reasons: a press
+// overpacked, a fork truck delivered parts outside ShinGo, someone moved a bin
+// by hand.
 //
-// That refusal is the first link in the 07-21 chain: ledger goes negative →
-// replenishment suppressed → the payload genuinely runs dry → the changeover
-// arms → supply parks on a dry source → evac dies → 484 doomed swaps. The
-// futility detector catches the last step. This is upstream of all of it.
+// IT DOES NOT STOP REPLENISHMENT, AND MUST NOT. checkBindings used to refuse to
+// signal on a negative total, and that was the first link in the 2026-07-21
+// chain: ledger negative, replenishment silent, payload genuinely dry, the
+// changeover then arming onto a dry source. Springfield logged that refusal
+// 1,119 times a day. The reading is too LOW, so the honest response to it is to
+// order material — over-ordering is recoverable, starving a line because a
+// count was wrong is not. The suppression is gone; the flag is not.
 //
-// DO NOT CLAMP uop_remaining AT ZERO. The current design — go negative, refuse
-// to signal, log — is correct: it makes the ledger LOUDLY wrong. Clamping
-// makes it SILENTLY wrong, which is strictly worse, and removes the only
-// evidence that something debits without a matching credit. The bug is
-// upstream; this file is for finding it.
+// So what this file is FOR is narrower and more useful than it first appeared:
+// finding which counts drifted, when, how far, and behind what — so a person
+// can go and recount them.
+//
+// DO NOT CLAMP uop_remaining AT ZERO. Going negative is what makes the drift
+// LOUDLY wrong; clamping makes it SILENTLY wrong, and destroys the only
+// evidence of what happened. Storing the honest number and acting sensibly on
+// it are two different decisions — keep the first, and the second is
+// "keep ordering, and tell someone".
 //
 // Everything here is computable TODAY, retroactively, from bin_uop_audit —
 // which records before_uop and after_uop on every delta (~4k rows/day, 234k

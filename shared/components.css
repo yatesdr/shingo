@@ -317,8 +317,17 @@
 .bar-row--clickable { cursor: pointer; }
 .bar-row--clickable:hover .bar-row__label { color: var(--primary); }
 .bar-row__label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bar-row__track { background: var(--bg-dark); border-radius: 3px; height: 0.7rem; overflow: hidden; }
-.bar-row__fill { background: var(--primary); height: 100%; border-radius: 3px; transition: width 0.25s ease; }
+/* display:block on BOTH, and it is load-bearing. These are <span>s (BarList.js
+   builds them with el('span')). The track is a grid ITEM of .bar-row so it gets
+   blockified for free and sizes correctly — but the fill is a child of the
+   track, not a grid item, so it stayed INLINE, and width/height do not apply to
+   a non-replaced inline element. The fill computed to 0x0 on every BarList in
+   the app: the breakdowns and parts lists rendered as rows of bare near-black
+   tracks (--bg-dark is #0d1117 in dark theme) with no bar in them at all.
+   The inline width BarList sets was correct the whole time; nothing could
+   apply it. */
+.bar-row__track { display: block; background: var(--bg-dark); border-radius: 3px; height: 0.7rem; overflow: hidden; }
+.bar-row__fill { display: block; background: var(--primary); height: 100%; border-radius: 3px; transition: width 0.25s ease; }
 .bar-row__value { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ─── Threshold meter — on-hand vs replenishment threshold ────────────────

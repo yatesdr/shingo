@@ -31,16 +31,18 @@ type PayloadHealth struct {
 	// right-hand chip on the Replenishment Health row.
 	SwapContradiction bool `json:"swap_contradiction"`
 	// LedgerNegative is true when this payload's plant-wide bin total is
-	// BELOW ZERO, which means the threshold monitor is refusing to signal
-	// replenishment for it (checkBindings' validity floor).
+	// BELOW ZERO — physically impossible, so the count is wrong.
 	//
-	// This is the upstream end of the 2026-07-21 chain: ledger negative →
-	// replenishment suppressed → the payload genuinely runs dry → the
-	// changeover arms on a dry source. Springfield logged that refusal 1,119
-	// times a day and it appeared on no surface, so nobody could act on it.
+	// It does NOT mean ordering has stopped. It used to: checkBindings
+	// refused to signal on a negative total, which paired a number saying the
+	// line is empty with a system that ordered nothing, and was the first link
+	// in the 2026-07-21 chain. That suppression is gone — a count goes
+	// negative for mundane reasons (a press overpacked, a fork truck delivered
+	// parts off the books, a manual move) and none of them are a reason to
+	// starve a line.
 	//
-	// "We are not ordering material for this payload because we do not know
-	// what is in it" is the sentence this chip makes available.
+	// What it means now: someone should recount these bins. Ordering carries
+	// on from the best reading available meanwhile.
 	LedgerNegative bool `json:"ledger_negative"`
 	// LedgerTotal is the negative bin total, for the chip's tooltip. Only
 	// meaningful when LedgerNegative.

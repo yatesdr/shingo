@@ -586,19 +586,21 @@ func TestThresholdMonitor_LedgerMode_RevertsToPreR1(t *testing.T) {
 	}
 }
 
-// TestThresholdMonitor_NegativeTotal_EmitsNoSignal is the end-to-end half of
-// the validity floor: with a negative in-loop total, NOTHING reaches the
-// outbox. The unit-level counterpart
-// (TestThresholdMonitor_CheckBindings_NegativeTotal_NoFire) proves the branch;
-// this proves the observable contract against a real engine, and exercises the
-// real logFn path that the nil-eng harness cannot.
+// TestThresholdMonitor_NegativeTotal_StillEmitsSignal is the end-to-end half
+// of the suppression REVERSAL: with a negative in-loop total, a signal still
+// reaches the outbox.
 //
-// The refusal log line itself is not asserted: Engine's logFn is wired at
-// construction (LogFunc: t.Logf here) with no capture hook, and adding one to
-// production Engine purely for this assertion would be a worse trade than
-// asserting the outcome that actually matters — no robot traffic off a broken
-// ledger.
-func TestThresholdMonitor_NegativeTotal_EmitsNoSignal(t *testing.T) {
+// It used to assert the opposite. The floor refused to signal on a negative
+// total, on the reasoning that a broken ledger must not arm replenishment —
+// and on a plant floor that is backwards. A count goes negative because a
+// press overpacked, or a fork truck delivered parts off the books, or someone
+// moved a bin by hand. None of those are a reason to stop feeding the line,
+// and the reading is too LOW, so the honest response is to order material.
+//
+// Suppressing paired a number saying the line is empty with a system that
+// ordered nothing — the first link in the 2026-07-21 chain, logged 1,119 times
+// a day at Springfield.
+func TestThresholdMonitor_NegativeTotal_StillEmitsSignal(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
@@ -637,16 +639,15 @@ func TestThresholdMonitor_NegativeTotal_EmitsNoSignal(t *testing.T) {
 	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
 
 	// Drive the hot path the way a real delta would: the monitor re-reads the
-	// authoritative sum (-443), which is trivially "below threshold" but caught
-	// by the negative-total floor.
+	// authoritative sum (-443), which is below threshold and must be acted on.
 	m.OnBinUOPDelta(payload, -1)
 
 	time.Sleep(300 * time.Millisecond)
 
 	msgs, _ := db.ListPendingOutbox(50)
-	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
-		t.Errorf("negative in-loop total produced %d new LoopBelowThresholdSignal(s); want 0 — a broken ledger must not arm replenishment (outbox=%v)",
-			got-preCount, outboxSummary(msgs))
+	if got := countLoopBelowThresholdSignals(msgs, stationID); got <= preCount {
+		t.Errorf("negative in-loop total produced no LoopBelowThresholdSignal; want at least one — a wrong count must not starve the line (outbox=%v)",
+			outboxSummary(msgs))
 	}
 }
 
@@ -761,20 +762,18 @@ func countLoopBelowThresholdSignals(msgs []*messaging.OutboxMessage, stationID s
 	return n
 }
 
-// TestThresholdMonitor_StartupSweep_NegativeTotal_EmitsNoSignal pins the floor
-// on the RESTART path.
+// TestThresholdMonitor_StartupSweep_NegativeTotal_StillEmitsSignal pins the
+// same reversal on the RESTART path.
 //
-// startupSweep used to make its own fire decision — its own total < threshold
-// compare plus a direct fireSignalCached — which meant it bypassed every guard
-// checkBindings applies, the negative-total floor included. That is the worst
-// possible path to miss: restarting Core is the remedy an operator reaches for
-// BECAUSE the ledger looks wrong, and the sweep would then fire on the garbage
-// total, twice per binding (it seeds warm-up first, and warm-up bypasses
-// debounce).
+// Restart is the case that matters most here: restarting Core is the remedy an
+// operator reaches for BECAUSE the counts look wrong. Under the old floor the
+// sweep came up, saw a negative total, and deliberately ordered nothing — so
+// the one action a person took to fix a starving line guaranteed it stayed
+// starving.
 //
-// The sweep now routes through checkBindings, so there is one fire decision
-// with one set of guards.
-func TestThresholdMonitor_StartupSweep_NegativeTotal_EmitsNoSignal(t *testing.T) {
+// The sweep routes through checkBindings, so there is one fire decision with
+// one set of guards, and this pins that the decision is now "order".
+func TestThresholdMonitor_StartupSweep_NegativeTotal_StillEmitsSignal(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
@@ -806,18 +805,18 @@ func TestThresholdMonitor_StartupSweep_NegativeTotal_EmitsNoSignal(t *testing.T)
 	eng.thresholdMonitor.startupSweep(context.Background())
 
 	msgs, _ := db.ListPendingOutbox(50)
-	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
-		t.Errorf("startup sweep emitted %d signal(s) on a negative in-loop total; want 0 — a restart must not arm replenishment off a broken ledger (outbox=%v)",
-			got-preCount, outboxSummary(msgs))
+	if got := countLoopBelowThresholdSignals(msgs, stationID); got <= preCount {
+		t.Errorf("startup sweep emitted no signal on a negative in-loop total; want at least one — a restart is what an operator does BECAUSE the counts look wrong, and it must not leave the line unserved (outbox=%v)",
+			outboxSummary(msgs))
 	}
 }
 
 // seedBinWithUOP creates one available bin carrying the given uop_remaining for
 // a payload, so that payload's authoritative in-loop total (SystemUOPForPayload)
-// reflects it. Used both to seed a negative total (bins may legitimately go
-// negative under the SME overpack/underpack lock; buckets cannot — CHECK
-// qty >= 0 — which is why a negative TOTAL always means the bin side is wrong)
-// and to seed a stocked total that must NOT fire.
+// reflects it. Used both to seed a negative total (bins go negative under the
+// SME overpack/underpack lock; buckets cannot — CHECK qty >= 0 — so a negative
+// TOTAL always means the bin count drifted) and to seed a stocked total that
+// must NOT fire.
 func seedBinWithUOP(t *testing.T, db *store.DB, payloadCode string, uop int) {
 	t.Helper()
 	sd := testdb.SetupStandardData(t, db)

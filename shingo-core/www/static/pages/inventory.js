@@ -320,33 +320,37 @@ function renderLedgerExceptions() {
   const rows = openBins.map((b) => {
     const since = b.negative_since
       ? ' since ' + new Date(b.negative_since).toLocaleString()
-      // The crossing predates the audit retention. Say so rather than
-      // implying it just happened.
-      : ' (crossing older than the audit trail)';
+      // The crossing predates the audit trail — say so rather than implying it
+      // just happened.
+      : ' (start unknown)';
     const where = b.node_name ? ' at ' + escapeHtml(b.node_name) : '';
     return '<li><code>' + escapeHtml(b.label || ('bin ' + b.bin_id)) + '</code>'
       + (b.payload_code ? ' <span class="text-muted-xs">' + escapeHtml(b.payload_code) + '</span>' : '')
-      + where + ' reads <b>' + b.uop_remaining + '</b>' + escapeHtml(since) + '</li>';
+      + where + ' counts <b>' + b.uop_remaining + '</b>' + escapeHtml(since) + '</li>';
   }).join('');
 
+  // Short. An earlier version explained overpacks and fork trucks in a
+  // paragraph — that belongs in this comment, not on the page. It also
+  // overstated: it claimed replenishment was suppressed, which was true of one
+  // part rather than all three, and is no longer true of any.
   host.innerHTML = '<div class="ledger-exceptions">'
     + '<div class="ledger-exceptions__head">'
-    + '<span class="chip chip-err">Ledger negative</span> '
+    + '<span class="chip chip-err">Count below zero</span> '
     + openBins.length + ' bin' + (openBins.length === 1 ? '' : 's')
-    + ' below zero — replenishment is suppressed for the payloads they carry'
-    + '</div><ul class="ledger-exceptions__list">' + rows + '</ul></div>';
+    + ' reporting a negative count'
+    + '</div>'
+    + '<div class="ledger-exceptions__why">Ordering is unaffected. Recount to correct.</div>'
+    + '<ul class="ledger-exceptions__list">' + rows + '</ul></div>';
 }
 
 function chipsHtml(r) {
   const st = healthState(r);
   let chips = '';
   if (st === 'err') {
-    // on_hand < 0: the threshold monitor is REFUSING to signal replenishment
-    // for this payload (a negative in-loop total means the bins ledger is
-    // broken). Surface the refusal, not just "error".
-    const tip = 'In-loop total is negative (' + r.on_hand + '); the monitor refuses to '
-      + 'signal replenishment for this payload until the bins ledger is reconciled.';
-    chips += '<span class="chip chip-err" title="' + escapeHtml(tip) + '">Ledger error — monitor refusing to signal</span>';
+    // on_hand < 0. Ordering CONTINUES on this reading — a wrong count must not
+    // starve a line — but the number is not real and needs a recount.
+    const tip = 'On-hand is ' + r.on_hand + '. Ordering is unaffected; recount to correct.';
+    chips += '<span class="chip chip-err" title="' + escapeHtml(tip) + '">Count below zero</span>';
   }
   else if (st === 'below') chips += '<span class="chip chip-below">Below — order due</span>';
   else if (st === 'near') chips += '<span class="chip chip-near">Near threshold</span>';

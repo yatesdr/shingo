@@ -75,7 +75,7 @@ const thresholdDebounceWindow = 15 * time.Second
 // claim config and apply the ceiling.
 const warmUpFloor = 2
 
-// negativeLogWindow throttles the broken-ledger refusal line. The floor is
+// negativeLogWindow throttles the negative-count warning line. The warning is
 // evaluated on every incoming delta — i.e. every consume tick — so an
 // unthrottled log would emit per binding per tick and bury the plant log in
 // the one situation where an operator most needs to read it. Once a minute per
@@ -134,6 +134,14 @@ type thresholdEntry struct {
 type ThresholdMonitor struct {
 	eng *Engine
 
+	// fireHook intercepts a fired signal instead of sending it. Test seam
+	// only, same pattern as SourceabilityMonitor's publishFn: nil in
+	// production, so the send path below is the only one that ever runs. It
+	// exists because fireSignalCached dereferences eng, which the pure unit
+	// harness leaves nil — without it, "did this fire?" is only answerable by
+	// standing up a whole engine.
+	fireHook func(b thresholdEntry, total int, reason string)
+
 	mu sync.Mutex
 	// debounce is the last-fired timestamp per (station, loader,
 	// payload) key. A SendLoopBelowThresholdSignal is only emitted
@@ -152,7 +160,7 @@ type ThresholdMonitor struct {
 	// payload at what threshold), NOT a UOP tally — the UOP total is read
 	// fresh from the DB on every evaluation.
 	thresholdsByPayload map[string][]thresholdEntry
-	// negativeLogged is the last time the broken-ledger refusal was logged
+	// negativeLogged is the last time the negative-count warning was logged
 	// per binding. Deliberately SEPARATE from debounce: debounce is
 	// signal-eligibility budget, this is log volume. Sharing one stamp would
 	// mean a negative total consumed the binding's right to fire the moment
@@ -400,11 +408,10 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 		//
 		// This block used to compare total < threshold and call fireSignalCached
 		// itself, which meant the startup path silently bypassed every guard
-		// checkBindings applies — including the negative-total floor. Restart is
-		// exactly when that matters: restarting Core is the remedy an operator
-		// reaches for BECAUSE the ledger looks wrong, and the sweep would then
-		// fire on the garbage total, twice per binding (warm-up bypasses
-		// debounce). One fire decision, one set of guards.
+		// checkBindings applies. One fire decision, one set of guards — which
+		// matters more now, not less: a negative total no longer suppresses,
+		// and restart is exactly when that shows up, because restarting Core is
+		// the remedy an operator reaches for BECAUSE the counts look wrong.
 		//
 		// Warm-up is still seeded here, and still only for bindings that are
 		// currently below threshold — that is the sweep's own cold-start concern
@@ -538,20 +545,31 @@ func (m *ThresholdMonitor) recordSwapContradiction(payloadCode string) bool {
 // checkBindings evaluates all threshold bindings for a given total and
 // fires signals for any that are below threshold and past debounce.
 func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, reason string) {
-	// Validity floor. A negative plant-wide in-loop total is never a real
-	// demand signal — it is always a broken ledger. bins.uop_remaining is
-	// allowed to go negative by SME lock (overpack/underpack), buckets are
-	// CHECK (qty >= 0), so a negative SUM means the bin side is wrong, not
-	// that the plant owes itself parts. Springfield 2026-07-21 signalled
-	// 74577-6SA0A.06 at an in-loop total of −443.
+	// A NEGATIVE TOTAL NO LONGER SUPPRESSES REPLENISHMENT.
 	//
-	// Firing on that produces legitimate-LOOKING L1s off garbage input, and
-	// the fleet has no way to tell you the number was wrong. Refuse to signal
-	// and say so loudly instead — a monitored payload going quiet with a log
-	// line beats robot traffic nobody can trace. This is input validation,
-	// not a toggle: there is nothing to turn on or off.
+	// It used to. The reasoning was "a negative total is a broken ledger, so
+	// refusing to act on it is input validation" — and that is exactly
+	// backwards on a plant floor.
 	//
-	// Zero is NOT rejected: a genuinely out-of-stock payload is real demand.
+	// What a negative count actually means, per the people who run the line:
+	// a press overpacked, or a fork truck delivered parts outside ShinGo and
+	// nobody told it, or some other human intervention it cannot see. It is a
+	// data-quality problem for a person to look at. It is NOT a reason to stop
+	// the plant.
+	//
+	// And the direction is wrong too. A negative reading is too LOW, not too
+	// high — so the honest response to it is "order material", which is what
+	// the threshold check below already does. Suppressing instead produced the
+	// worst possible pairing: a number saying the line is empty, and a system
+	// answering by ordering nothing. Springfield logged that refusal 1,119
+	// times a DAY, and it is the first link in the 2026-07-21 chain —
+	// ledger negative, replenishment silent, payload genuinely dry, changeover
+	// arming onto a dry source.
+	//
+	// So: fall through and evaluate normally. The count still gets flagged for
+	// a human — loudly here, and as an exception row on the inventory page —
+	// but the line keeps getting material while they sort it out. Over-ordering
+	// is recoverable. Starving a line because a count was wrong is not.
 	if total < 0 {
 		for _, b := range bindings {
 			if b.threshold <= 0 {
@@ -560,17 +578,16 @@ func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, r
 			// Throttled per binding: this runs on every incoming delta, so an
 			// unthrottled line would bury the plant log exactly when it needs
 			// reading. shouldLogNegative touches ONLY negativeLogged — the
-			// binding's debounce budget is untouched, so it stays immediately
-			// eligible for the moment the ledger is corrected.
+			// binding's debounce budget is untouched.
 			if !m.shouldLogNegative(bindingKey(b.stationID, b.coreNodeName, b.payloadCode)) {
 				continue
 			}
 			if m.eng != nil { // nil in the pure unit harness (newTestMonitor)
-				m.eng.logFn("threshold_monitor: REFUSING to signal station=%s loader=%s payload=%s — in-loop total is negative (total=%d threshold=%d); the bins ledger for this payload is broken, reconcile it before trusting replenishment (further occurrences suppressed for %s)",
+				m.eng.logFn("threshold_monitor: NEGATIVE COUNT station=%s loader=%s payload=%s — in-loop total is %d (threshold %d); the bins ledger for this payload is wrong (overpack, an untracked delivery, or a manual move) and needs a recount. Replenishment CONTINUES on this reading — a wrong count must not starve the line (further occurrences suppressed for %s)",
 					b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold, negativeLogWindow)
 			}
 		}
-		return
+		// Deliberately NO return — fall through to the normal evaluation.
 	}
 	for _, b := range bindings {
 		if b.threshold <= 0 {
@@ -581,8 +598,13 @@ func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, r
 		}
 		key := bindingKey(b.stationID, b.coreNodeName, b.payloadCode)
 		if !m.allow(key) {
-			m.eng.dbg("threshold_monitor: suppress station=%s loader=%s payload=%s total=%d threshold=%d (debounce)",
-				b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold)
+			// nil-guarded like every other eng use here. Unreachable with a
+			// nil eng until now: a negative total used to return before this
+			// point, so the pure unit harness never got here.
+			if m.eng != nil {
+				m.eng.dbg("threshold_monitor: suppress station=%s loader=%s payload=%s total=%d threshold=%d (debounce)",
+					b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold)
+			}
 			continue
 		}
 		m.fireSignalCached(b, total, reason)
@@ -628,6 +650,10 @@ func (m *ThresholdMonitor) allow(key string) bool {
 // cached threshold entry. Used by checkBindings in steady state and
 // by the startup sweep (which constructs a thresholdEntry inline).
 func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason string) {
+	if m.fireHook != nil {
+		m.fireHook(b, total, reason)
+		return
+	}
 	signal := &protocol.LoopBelowThresholdSignal{
 		PayloadCode:  b.payloadCode,
 		CurrentUOP:   total,
