@@ -29,9 +29,9 @@ func (h *Handlers) apiPartsProduced(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"rows": rows})
 }
 
-func (h *Handlers) apiPartsCycleTime(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiPartsMissionDuration(w http.ResponseWriter, r *http.Request) {
 	f := parseMissionFilter(r)
-	rows, err := h.engine.PartsService().CycleTime(f.Since, f.Until, partsTop(r))
+	rows, err := h.engine.PartsService().MissionDuration(f.Since, f.Until, partsTop(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

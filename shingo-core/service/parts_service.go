@@ -22,8 +22,11 @@ func (s *PartsService) Produced(since, until *time.Time, top int) ([]parts.Produ
 	return s.db.GetPartsProduced(since, until, top)
 }
 
-func (s *PartsService) CycleTime(since, until *time.Time, top int) ([]parts.Cycle, error) {
-	return s.db.GetPartsCycleTime(since, until, top)
+// MissionDuration is how long the missions carrying a part took — NOT its cycle
+// time. See parts.MissionDuration for why the two are different measurements and
+// why only one of them gets the word.
+func (s *PartsService) MissionDuration(since, until *time.Time, top int) ([]parts.MissionDuration, error) {
+	return s.db.GetPartsMissionDuration(since, until, top)
 }
 
 func (s *PartsService) Consumption(since, until *time.Time, top int) ([]parts.Consumption, error) {

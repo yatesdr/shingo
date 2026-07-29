@@ -25,8 +25,28 @@ type Produced struct {
 	Missions   int64  `json:"missions"`
 }
 
-// Cycle is one part's payload-level cycle time over the window.
-type Cycle struct {
+// MissionDuration is how long the missions carrying one part took, over the
+// window.
+//
+// ── IT IS NOT A CYCLE TIME, AND IT WAS CALLED ONE ───────────────────────────
+//
+// This type was `Cycle`, behind /api/parts/cycle-time, and the word was doing
+// two jobs. A cycle time is the interval between consecutive units at a station
+// — /cycle-time (5.10) measures exactly that, off consecutive PLC ticks in
+// bin_uop_audit. This measures mission_telemetry.duration_ms: how long a ROBOT
+// took to carry a payload, attributed to every part in that payload's manifest.
+// One order's journey, not one part crossing a station. Different table,
+// different grain, different key, and only one of the two is a cycle time.
+//
+// dashboards/plan-mission-telemetry-v1.md already conceded the point in its own
+// caveat — "the cycle time shown is the duration of the payload that carried
+// that part, not the part's individual cycle" — which is a note explaining that
+// the name is wrong rather than a note about a limitation.
+//
+// The JSON field names never claimed otherwise: avg_duration_ms and
+// p95_duration_ms say duration, and they are unchanged. Only the label that
+// disagreed with them moved.
+type MissionDuration struct {
 	PartNumber    string `json:"part_number"`
 	AvgDurationMS int64  `json:"avg_duration_ms"`
 	P95DurationMS int64  `json:"p95_duration_ms"`
@@ -93,10 +113,10 @@ func GetProduced(db *sql.DB, since, until *time.Time, top int) ([]Produced, erro
 	return out, rows.Err()
 }
 
-// GetCycleTime returns the top-N parts by average payload-level cycle time
-// over finished missions in the window (plan §3.E.2). The duration is the
-// carrying payload's, attributed to each part in its manifest.
-func GetCycleTime(db *sql.DB, since, until *time.Time, top int) ([]Cycle, error) {
+// GetMissionDuration returns the top-N parts by average carrying-mission
+// duration over finished missions in the window (plan §3.E.2). The duration is
+// the carrying payload's, attributed to each part in its manifest.
+func GetMissionDuration(db *sql.DB, since, until *time.Time, top int) ([]MissionDuration, error) {
 	if top <= 0 {
 		top = 10
 	}
@@ -116,9 +136,9 @@ func GetCycleTime(db *sql.DB, since, until *time.Time, top int) ([]Cycle, error)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Cycle
+	var out []MissionDuration
 	for rows.Next() {
-		var r Cycle
+		var r MissionDuration
 		if err := rows.Scan(&r.PartNumber, &r.AvgDurationMS, &r.P95DurationMS, &r.Missions); err != nil {
 			return nil, err
 		}
