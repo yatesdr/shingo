@@ -299,7 +299,7 @@ function meterHtml(r) {
 }
 // ── ledger exceptions ─────────────────────────────────────────────────────
 //
-// Bins whose UOP ledger is negative RIGHT NOW. Blank on a good day, and that
+// Bins whose UoP ledger is negative RIGHT NOW. Blank on a good day, and that
 // is the whole design — a list that stays empty until something is wrong is a
 // better instrument than a panel that always shows something.
 //
@@ -359,16 +359,16 @@ function renderLedgerExceptions() {
 //
 // TWO FIGURES, AND THEY MUST NOT BE MIXED.
 //
-//   UOP lost      — stale_epoch_dropped + payload_mismatch_dropped ONLY.
-//   Mixed contents — payload_rebound_with_inventory, as a COUNT with no UOP
+//   UoP lost      — stale_epoch_dropped + payload_mismatch_dropped ONLY.
+//   Mixed contents — payload_rebound_with_inventory, as a COUNT with no UoP
 //                    total. A rebind is not a drop: the applier rebinds the
 //                    payload and APPLIES the delta, so the tote's unit total
 //                    stays correct and the bin is flagged for a cycle count of
-//                    what is physically in it. Summing it into UOP lost
+//                    what is physically in it. Summing it into UoP lost
 //                    inflates the figure and corrupts the one comparison this
 //                    panel exists to make.
 //
-// "UOP lost" is a NET, signed toward the ledger: dropped credits minus dropped
+// "UoP lost" is a NET, signed toward the ledger: dropped credits minus dropped
 // consumes, so a positive number means the count reads BELOW reality by that
 // much — directly comparable to the negative total printed beside it. If a
 // payload reads -443 and shows +443 lost, the answer is on the screen.
@@ -394,7 +394,7 @@ function renderDeltaIntegrity() {
       const tip = 'Dropped credits ' + r.credits_dropped + ', dropped consumes ' + r.consumes_dropped
         + '. Net effect: the count reads ' + Math.abs(r.uop_lost) + ' ' + dir + ' reality.'
         + ' Across ' + r.bins + ' bin' + (r.bins === 1 ? '' : 's') + '.';
-      line += ' <b title="' + escapeHtml(tip) + '">' + Math.abs(r.uop_lost) + ' UOP</b>'
+      line += ' <b title="' + escapeHtml(tip) + '">' + Math.abs(r.uop_lost) + ' UoP</b>'
         + ' of count never landed — reads ' + dir + ' reality'
         + ' <span class="text-muted-xs">(' + r.drop_rows + ' dropped delta'
         + (r.drop_rows === 1 ? '' : 's')
@@ -402,12 +402,12 @@ function renderDeltaIntegrity() {
     }
 
     if (r.mixed_contents > 0) {
-      // Deliberately no UOP figure here. Nothing was lost — the delta was
+      // Deliberately no UoP figure here. Nothing was lost — the delta was
       // applied — so a number would read as a loss and would be added to the
       // one above by anyone skimming.
       const tip = 'A bin\'s payload was rebound while it still held units under the old label. '
         + 'Counting CONTINUED and the unit total is correct; the bin needs a cycle count of what '
-        + 'is physically in it. This is NOT lost count and has no UOP figure.';
+        + 'is physically in it. This is NOT lost count and has no UoP figure.';
       line += (r.drop_rows > 0 ? ' · ' : ' ')
         + '<span class="chip chip-warn" title="' + escapeHtml(tip) + '">'
         + r.mixed_contents + ' mixed contents</span>';

@@ -513,7 +513,7 @@ function refreshBinRow(id) {
       }
       var tds = row.querySelectorAll('td');
       var off = row.querySelector('.bin-cb') ? 1 : 0;
-      // Location, Payload, UOP, Status, Flags
+      // Location, Payload, UoP, Status, Flags
       tds[off + 2].innerHTML = b.node_name ? escapeHtml(b.node_name) : '<span class="text-muted">-</span>';
       tds[off + 3].innerHTML = b.payload_code ? '<code>' + escapeHtml(b.payload_code) + '</code>' : '<span class="text-muted">-</span>';
       tds[off + 4].innerHTML = b.payload_code ? String(b.uop_remaining) : '<span class="text-muted">-</span>';

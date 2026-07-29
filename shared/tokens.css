@@ -120,16 +120,63 @@
   --status-blocked-dot:     #f85149;   /* red = alarm */
   --status-delivered-dot:   #3fb950;   /* green */
 
+  /* Substrate ramp (U8) — the neutral steel scaffold that static structure is
+   * drawn from. "Structure recedes, state glows" says structure carries no
+   * saturated colour; until this ramp existed there was no steel token outside
+   * --map-*, so implementers reached for --border (a neutral grey, not steel) or
+   * hardcoded an rgba by eye. --chart-grid was the tell: it was
+   * color-mix(--text-muted 25%), i.e. gridlines derived from the TEXT ramp
+   * because structure had nowhere else to come from. That token is now this
+   * ramp's step 1 and no longer exists separately — a second structure token
+   * beside this one would recreate the two-colliding-.chip-systems bug in a
+   * different property.
+   *
+   * The ramp OWNS: gridlines, axes, table rules, panel edges,
+   * empty/skeleton/disabled states, and tracks with NO semantic fill. It does
+   * NOT own a meter track whose fill carries state — that stays neutral
+   * --bg-dark (U9); a desaturated state colour placed in structure is precisely
+   * what the principle forbids.
+   *
+   * Steps, weakest to strongest:
+   *   1  hairline rules, gridlines, row separators, empty/disabled fills
+   *   2  panel edges, card borders, a table's outer edge
+   *   3  axes and header rules — structure you are meant to read along
+   *   4  tick marks, structural dots — marks that carry meaning (must clear 3:1)
+   *   5  emphasis structure
+   *
+   * Dark is the reference: steps 2-5 ARE the map's steel (--map-* now alias
+   * them), because the map is the surface this look was generalized from. Step 1
+   * is new, extrapolated below bay-ring for hairlines.
+   *
+   * LIGHT IS NOT A HUE FLIP. Inverting HSL lightness leaves the top of the ramp
+   * far too weak — sRGB luminance is not symmetric about mid-grey — and the
+   * flipped first pass put light step 4 at 2.33:1, so a tick mark that reads in
+   * dark would have shipped invisible in light. Each light step keeps its dark
+   * counterpart's hue and saturation and has its LIGHTNESS solved so its
+   * contrast against --elev-surface reproduces the dark step's: 1.40 / 1.92 /
+   * 2.31 / 3.74 / 4.97 against #fff vs 1.39 / 1.92 / 2.31 / 3.75 / 5.00 in dark,
+   * with identical step-to-step separation (1.38 / 1.20 / 1.62 / 1.33) in both
+   * themes. Steps 4 and 5 clear the 3:1 non-text-contrast floor in BOTH themes.
+   * Re-derive the same way if any step moves; do not eyeball a light value. */
+  --sub-1: #d4dbe4;
+  --sub-2: #b1bccd;
+  --sub-3: #9cacc1;
+  --sub-4: #76859d;
+  --sub-5: #5e718d;
+
   /* Map floor-plan palette — promoted here from dashboard.css / dashboard-map.js
    * so the map's colours come from tokens rather than inline hex, and so the
    * material layer is a second consumer of the same set. The map renders
-   * dark-only (the kiosk pins data-theme=dark), so these are single-value dark
-   * tokens with no light override. */
+   * dark-only (the kiosk pins data-theme=dark on <html>), so the four steel
+   * tokens can alias the substrate ramp and always resolve to its dark values.
+   * They keep their map-domain names because the map reads them by meaning
+   * ("aisle", "bay ring"), not by ramp position. --map-floor and the class
+   * palette are map-specific and stay literal. */
   --map-floor:       #131a24;   /* floor plate, lifted off near-black */
-  --map-aisle:       #45566e;   /* travel network, receded steel */
-  --map-node:        #66768f;   /* waypoint dots */
-  --map-node-action: #7a8ba6;   /* action point, one step brighter than --map-node */
-  --map-bay-ring:    #3c4a5e;   /* empty charge/park outline */
+  --map-aisle:       var(--sub-3);   /* travel network, receded steel */
+  --map-node:        var(--sub-4);   /* waypoint dots */
+  --map-node-action: var(--sub-5);   /* action point, one step brighter than --map-node */
+  --map-bay-ring:    var(--sub-2);   /* empty charge/park outline */
   --map-bay-glyph:   #6b7a90;   /* faint charge bolt on an empty bay */
   --map-robot-idle:  #8b949e;   /* idle-moving robot, neutral grey */
   --map-dock-charge: #e3b341;   /* occupied charge point, amber */
@@ -146,8 +193,8 @@
   /* Dashboard / charts (mission-telemetry plan §4). These reference the
    * semantic tokens above, so they resolve per-theme without a dark-mode
    * override. --kpi-up / --kpi-down are aliases for delta arrows so they
-   * can be retuned without a find-replace across the dashboards. */
-  --chart-grid: color-mix(in srgb, var(--text-muted) 25%, transparent);
+   * can be retuned without a find-replace across the dashboards.
+   * Gridlines are NOT here any more — they are --sub-1, see the substrate ramp. */
   --kpi-up: var(--viz-green);   /* P19: delta arrows — green up/good */
   --kpi-down: var(--viz-coral); /* coral down/bad */
 
@@ -204,6 +251,17 @@
   --text-muted: #8b949e;
   --text-strong: #e6edf3;
   --text-tertiary: #6e7681;
+
+  /* Substrate ramp (U8) — dark is the reference. Steps 2-5 are the map's own
+   * steel, which is where the ramp was generalized from; --map-bay-ring /
+   * --map-aisle / --map-node / --map-node-action alias back to them. Step 1 is
+   * the new hairline, extrapolated below bay-ring. See the :root block for the
+   * role table and how the light counterpart was derived. */
+  --sub-1: #2b3543;
+  --sub-2: #3c4a5e;
+  --sub-3: #45566e;
+  --sub-4: #66768f;
+  --sub-5: #7a8ba6;
 
   /* Accent — Indigo (dark). --primary aliases --accent (kept explicit in this
    * block so the token-presence drift test sees it in both themes). Status dots

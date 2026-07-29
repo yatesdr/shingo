@@ -1163,9 +1163,14 @@ textarea.form-input {
 
 /* === Debug Log Beautification — color-group tinting === */
 
+/* Row rule from the substrate ramp (U8). It was rgba(48,54,61,0.4) — the DARK
+   --border hex, hardcoded with an alpha. In dark that landed at 1.13:1, fainter
+   than the header rule below it (correct by luck); in LIGHT it composited to
+   #acafb1 at 2.21:1, i.e. every body rule was heavier than the header rule, and
+   the table read upside down. --sub-1 is theme-aware and is the hairline step. */
 .debug-log-table td {
     padding: 0.4rem 0.75rem;
-    border-bottom: 1px solid rgba(48,54,61,0.4);
+    border-bottom: 1px solid var(--sub-1);
     vertical-align: top;
 }
 .debug-log-table th {

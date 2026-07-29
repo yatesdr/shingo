@@ -91,12 +91,12 @@ function renderRows() {
     const rows = document.getElementById('load-bin-rows');
     rows.innerHTML = '';
 
-    // UOP Count — tappable display that opens the numeric keypad. Replaces
+    // UoP Count — tappable display that opens the numeric keypad. Replaces
     // the up/down number-input arrows that were too small for the touchscreen.
     const uopRow = document.createElement('div');
     uopRow.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;margin-bottom:12px;padding:10px;background:#1a2a1a;border-radius:6px;border:1px solid #2a4a2a';
     uopRow.innerHTML =
-        '<div style="font-size:16px;font-weight:600;color:#fff">UOP Count</div>' +
+        '<div style="font-size:16px;font-weight:600;color:#fff">UoP Count</div>' +
         '<button type="button" id="os-load-uop-display" ' +
             'style="min-width:120px;background:#0f141a;border:1px solid var(--os-border);' +
             'border-radius:8px;padding:10px 16px;color:#fff;font-size:24px;font-weight:700;' +
@@ -106,7 +106,7 @@ function renderRows() {
     document.getElementById('os-load-uop-display').addEventListener('click', openUopKeypad);
 
     // Manifest line items — display-only. Operators can see what the payload
-    // template expects (part numbers + qty per UOP) but can't edit; the values
+    // template expects (part numbers + qty per UoP) but can't edit; the values
     // come from the catalog and sending operator-edited counts here would let
     // a typo silently corrupt the bin's manifest.
     state.manifest.forEach(function(item) {
@@ -129,7 +129,7 @@ function openUopKeypad() {
     const state = loadBinState;
     if (!state || state.submitting) return;
     openKeypad(0, state.uopCount, {
-        title: 'UOP Count',
+        title: 'UoP Count',
         onOk: function(_nodeID, qty) {
             state.uopCount = qty > 0 ? qty : 0;
             renderRows();
@@ -168,7 +168,7 @@ async function submitLoadBin() {
         return;
     }
     if (state.uopCount <= 0) {
-        showToast('Set UOP Count first', 'error');
+        showToast('Set UoP Count first', 'error');
         return;
     }
     const body = {
@@ -184,7 +184,7 @@ async function submitLoadBin() {
         closeLoadBin();
     } else {
         // postAction already toasted the server error — re-enable so the
-        // operator can correct UOP and retry without dismissing the modal.
+        // operator can correct UoP and retry without dismissing the modal.
         setSubmittingUI(false);
     }
 }

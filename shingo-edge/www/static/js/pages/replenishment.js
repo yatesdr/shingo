@@ -11,7 +11,7 @@ import { confirm, delegateActions, toast } from '/static/js/shingoedge.js';
 // SCOPE NOTE — this file used to carry a loader-threshold half: apply/delete
 // on loader_payload_thresholds, plus a seven-input calculator modal and a
 // recalculate-all sweep. It was deleted 2026-07-21 along with its server side.
-// Core owns the loader UOP threshold (Nodes -> loader config -> demand_registry
+// Core owns the loader UoP threshold (Nodes -> loader config -> demand_registry
 // -> the threshold monitor); the Edge write path terminated in SendClaimSync(),
 // a no-op stub retired when Core took ownership of the loader aggregate. Every
 // one of those controls accepted input, reported success, and changed nothing.

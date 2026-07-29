@@ -47,7 +47,7 @@ export function renderModal(entry) {
         const roleLabel = claim.role === 'produce' ? 'Loader' : 'Unloader';
         html += '<div class="modal-payload">' + roleLabel + ' - Bin: ' + esc(binLabel) + (binPayload ? ' (' + esc(binPayload) + ')' : '') + '</div>';
         html += '<div class="modal-fill-row">';
-        html += '<div class="modal-fill-text" style="font-size:18px;font-weight:600">' + (remaining > 0 ? 'LOADED (' + remaining + ' UOP)' : 'EMPTY') + '</div>';
+        html += '<div class="modal-fill-text" style="font-size:18px;font-weight:600">' + (remaining > 0 ? 'LOADED (' + remaining + ' UoP)' : 'EMPTY') + '</div>';
         html += '</div>';
     } else {
         const binState = entry.bin_state;

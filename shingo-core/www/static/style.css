@@ -442,10 +442,13 @@ textarea { resize: vertical; min-height: 60px; }
   font-size: 0.75rem;
   margin-left: 0.15rem;
 }
+/* Meter track — neutral --bg-dark (U9). Was a hardcoded black alpha here plus a
+   white alpha in the dark block; --bg-dark already carries both values, so the
+   theme override below it is gone. */
 .robot-battery {
   width: 80%;
   height: 6px;
-  background: rgba(0,0,0,0.12);
+  background: var(--bg-dark);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -577,7 +580,8 @@ textarea { resize: vertical; min-height: 60px; }
 [data-theme="dark"] .debug-row.debug-warn { background: #3d2e00; color: #d29922; }
 
 [data-theme="dark"] .modal { box-shadow: 0 8px 30px rgba(0,0,0,0.6); }
-[data-theme="dark"] .robot-battery { background: rgba(255,255,255,0.12); }
+/* .robot-battery dark override removed: the track is var(--bg-dark), which is
+ * already theme-aware (U9 — meter tracks stay neutral). */
 /* Node tile dark overrides removed: the tile states now use theme-aware tokens
  * (var(--success)/(--status-staged-dot)/(--warning)/(--danger)/(--bg-dark)),
  * which already carry their dark values. */
@@ -685,7 +689,7 @@ textarea { resize: vertical; min-height: 60px; }
 .bd-field label { font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0; display:block; }
 .bd-field span { font-size:0.85rem; }
 
-/* UOP capacity bar */
+/* UoP capacity bar */
 .uop-bar { display:inline-block; width:60px; height:6px; background:var(--border); border-radius:3px; vertical-align:middle; margin-left:4px; }
 .uop-bar-fill { height:100%; border-radius:3px; transition:width 0.3s; }
 .uop-bar-fill.uop-ok { background:var(--success); }
@@ -708,7 +712,9 @@ textarea { resize: vertical; min-height: 60px; }
 /* Cycle count bin card */
 .cc-bin-card { background:var(--surface); border:2px solid var(--border); border-radius:0.5rem; padding:1.5rem; text-align:center; margin-bottom:1rem; }
 .cc-bin-card .cc-label { font-size:1.5rem; font-weight:700; font-family:monospace; }
-.cc-progress { height:4px; background:var(--border); border-radius:2px; margin-bottom:0.5rem; }
+/* Meter track — neutral --bg-dark (U9), not --border. A border token used as a
+   fill is how the track ends up at whatever weight the border happens to be. */
+.cc-progress { height:4px; background:var(--bg-dark); border-radius:2px; margin-bottom:0.5rem; }
 .cc-progress-fill { height:100%; background:var(--primary); border-radius:2px; transition:width 0.3s; }
 
 /* Action button groups */
@@ -1510,7 +1516,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .board-filters select {
   padding: 0.35rem 0.5rem;
   border-radius: 4px;
-  border: 1px solid rgba(255,255,255,0.15);
+  border: 1px solid var(--sub-2);
   background: rgba(255,255,255,0.08);
   color: #e2e8f0;
   font-size: 0.85rem;
@@ -1526,12 +1532,19 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   overflow-x: auto;
 }
 
+/* Table chrome from the substrate ramp (U8), not three white alphas picked by
+   eye. The old .15/.10/.05 stack had no relationship between the weights: the
+   outer edge and the header rule were identical (both 1.34:1) so the header did
+   not read as a header at all. Now outer edge = --sub-2 (panel edge, 1.92:1),
+   header rule = --sub-3 (an axis is what a header rule is, 2.31:1), row rule =
+   --sub-1 (hairline, 1.39:1). Deliberately a step up from the old flat 1.14-1.34
+   band — this board is read from across a plant floor. */
 .board-table {
   width: 100%;
   border-collapse: collapse;
   font-family: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
   font-size: 0.9rem;
-  border-bottom: 1px solid rgba(255,255,255,0.1);
+  border-bottom: 1px solid var(--sub-2);
 }
 
 .board-table thead th {
@@ -1542,12 +1555,12 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   font-weight: 600;
   letter-spacing: 0.08rem;
   color: #94a3b8;
-  border-bottom: 1px solid rgba(255,255,255,0.1);
+  border-bottom: 1px solid var(--sub-3);
   white-space: nowrap;
 }
 
 .board-table tbody tr {
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid var(--sub-1);
   transition: opacity 0.3s ease;
 }
 
@@ -2006,11 +2019,18 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .cs-meter.is-hidden { display: none; }
 .cs-val.is-bad { color: var(--danger); }
 
-/* Meter: a ratio against a limit. Track is the fill hue at low alpha so state
-   reads across the whole bar, not just the filled part. */
+/* Meter: a ratio against a limit. The TRACK IS NEUTRAL --bg-dark (U9) — it was
+   color-mix(--accent 16%), a tone-on-tone track carrying a desaturated copy of
+   the fill hue. That is the external dataviz convention, and ShinGo's own
+   "structure recedes, state glows" overrides it: a desaturated state colour
+   placed in structure is exactly what the principle forbids. It was also
+   incoherent here, because the fill retints to --warning/--danger while the
+   track stayed indigo. Every other meter in the app (.thr-meter,
+   .bar-row__track, .util-bar, .progress-bar-container) was already neutral;
+   this one was the outlier. */
 .cs-meter {
   position: relative; height: 6px; border-radius: 3px; overflow: hidden;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: var(--bg-dark);
 }
 .cs-meter-fill {
   position: absolute; inset: 0 auto 0 0; width: 0;
@@ -2019,7 +2039,9 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 }
 .cs-meter-fill.is-warn { background: var(--warning); }
 .cs-meter-fill.is-bad  { background: var(--danger); }
-.cs-meter.is-unavailable { background: var(--border); }
+/* No reading available — an empty/disabled fill, which the substrate ramp owns
+   (--border is a neutral grey, not steel, and is the border token besides). */
+.cs-meter.is-unavailable { background: var(--sub-1); }
 
 /* Sparkline: goroutines only. The VALUE is meaningless; the DIRECTION is the
    leak signal. Path recedes; only the current point takes the accent. */

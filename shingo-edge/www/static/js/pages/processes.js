@@ -703,7 +703,7 @@ async function loadPayloadCatalog() {
     _payloadCatalog.forEach(function(p) {
         var opt = document.createElement('option');
         opt.value = p.code;
-        opt.textContent = p.code + (p.name ? ' — ' + p.name : '') + (p.uop_capacity ? ' (' + p.uop_capacity + ' UOP)' : '');
+        opt.textContent = p.code + (p.name ? ' — ' + p.name : '') + (p.uop_capacity ? ' (' + p.uop_capacity + ' UoP)' : '');
         opt.dataset.capacity = p.uop_capacity || 0;
         sel.appendChild(opt);
     });
@@ -760,7 +760,7 @@ function renderClaimRow(c) {
         '<td class="mono">' + esc(c.core_node_name) + '</td>' +
         '<td><span class="badge">' + esc(ROLE_LABELS[c.role] || c.role) + '</span>' + flagStr + '</td>' +
         '<td>' + esc(swapLabel) + '</td>' +
-        '<td>' + esc(wants) + (c.uop_capacity ? ' <span style="color:var(--text-muted);font-size:0.8rem">(' + c.uop_capacity + ' UOP)</span>' : '') + '</td>' +
+        '<td>' + esc(wants) + (c.uop_capacity ? ' <span style="color:var(--text-muted);font-size:0.8rem">(' + c.uop_capacity + ' UoP)</span>' : '') + '</td>' +
         '<td class="mono">' + esc(c.inbound_staging || '—') + '</td>' +
         '<td class="mono">' + esc(c.outbound_staging || '—') + '</td>' +
         '<td class="mono" style="font-size:0.8rem">' + esc(c.inbound_source || '—') + '</td>' +
@@ -1260,7 +1260,7 @@ function buildAllowedPayloadPicker(selected) {
         cb.addEventListener('change', updateAutoRequestDropdown);
         label.appendChild(cb);
         var span = document.createElement('span');
-        span.textContent = p.code + (p.name ? ' — ' + p.name : '') + (p.uop_capacity ? ' (' + p.uop_capacity + ' UOP)' : '');
+        span.textContent = p.code + (p.name ? ' — ' + p.name : '') + (p.uop_capacity ? ' (' + p.uop_capacity + ' UoP)' : '');
         label.appendChild(span);
         picker.appendChild(label);
     });

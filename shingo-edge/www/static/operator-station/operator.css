@@ -306,7 +306,7 @@ body {
 }
 
 /* ETA pill row — one pill per active in-transit order. Two-robot swap
-   stacks two pills (Order A on top, Order B below). Sits between the UOP
+   stacks two pills (Order A on top, Order B below). Sits between the UoP
    count and the bottom-anchored payload code. Only rendered when at least
    one order on the tile is in_transit/staged; hidden otherwise so idle
    tiles stay clean. */
@@ -388,7 +388,7 @@ body {
 /* In-transit: purple. Priority sits between changeover (orange) and the
    fill-state colors — when a robot is en route the operator's eye should
    leave fill level behind and lock onto "stock is coming". CO and
-   release-ready still override (they need a click). The UOP number stays
+   release-ready still override (they need a click). The UoP number stays
    visible in text so fill level isn't lost, just demoted. */
 .os-node-btn.os-in-transit {
     background: var(--os-purple);
@@ -435,7 +435,7 @@ body {
 }
 
 /* Keypad sits above ALL other modals because LoadBin (and any future modal)
-   opens it for UOP entry. Using a wide gap above the backdrop's z-index
+   opens it for UoP entry. Using a wide gap above the backdrop's z-index
    so any new modal can't accidentally tie. !important guards against any
    stray inline style or future overrides. Pre-fix the load-bin modal painted
    on top (equal z-index, later DOM order) and trapped focus behind it. */
@@ -1045,12 +1045,12 @@ body {
 .os-board-tag-queued { background: #2a3a6a; color: #8af; }
 .os-board-tag-request { background: #2a3a4a; color: #9ac; }
 .os-board-tag-nodemand { background: #2a2f3a; color: #889; }
-/* Transitional idle-card tags: ACTIVE shows lineside UOP (blue, info), PRELOAD
+/* Transitional idle-card tags: ACTIVE shows lineside UoP (blue, info), PRELOAD
    shows a stage hint (violet) — match the coverage badge/tint hues. */
 .os-board-tag-lineside { background: #1a2540; color: #cfe0ff; }
 .os-board-tag-preload { background: #241f33; color: #d8cdf0; }
 
-/* Lineside UOP line on transitional ACTIVE cards — the replenishment cue. */
+/* Lineside UoP line on transitional ACTIVE cards — the replenishment cue. */
 .os-board-lineside {
     font-size: 20px;
     font-weight: 600;

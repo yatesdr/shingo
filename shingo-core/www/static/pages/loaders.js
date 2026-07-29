@@ -5,7 +5,7 @@ import { apiGet, apiPost, delegateActions, escapeHtml, toast, uiConfirm } from '
 // only CREATES a loader (name/role/layout/inbound/outbound); membership is edited
 // on the grid: drag a node tile into a dedicated loader to add a position, ⠿-drag
 // to reorder (persisted via sort_order), × to remove. shared_window loaders hold a
-// payload set instead of nodes (chips). Per-payload UOP thresholds + the lead-time
+// payload set instead of nodes (chips). Per-payload UoP thresholds + the lead-time
 // Calc live on the Inventory page; this surface is structure only.
 //
 // Coexistence with the supermarket drag code: a loader box's drop handler calls
@@ -73,7 +73,7 @@ function setLayoutFlowVisibility() {
 }
 
 // setReplenishmentOptions populates the replenishment <select> with role-aware
-// options: a produce loader picks operator-driven vs auto/UOP-threshold; a consume
+// options: a produce loader picks operator-driven vs auto/UoP-threshold; a consume
 // loader (unloader) only drains today (consume-threshold is wired but dormant, so
 // it shows greyed). `preferred` pre-selects a value (edit); otherwise the prior /
 // operator default holds. Writes loaders.Replenishment (operator | threshold).

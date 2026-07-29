@@ -510,7 +510,7 @@ function showPullFromMarketPicker(nodeID) {
                 var payloadEl = el('div', { textContent: b.payload_code });
                 payloadEl.style.cssText = 'font-size:17px;font-weight:600;margin-top:5px;';
 
-                var uopEl = el('div', { textContent: 'UOP: ' + b.uop_remaining });
+                var uopEl = el('div', { textContent: 'UoP: ' + b.uop_remaining });
                 uopEl.style.cssText = 'font-size:13px;margin-top:3px;opacity:0.7;';
 
                 btn.appendChild(nodeEl);
@@ -589,7 +589,7 @@ function buildLoaderCard(entry, code, counters, opts) {
         var starved = (entry.starved_payloads || {})[code] === true;
         card.appendChild(el('div', {
             className: 'os-board-lineside' + (starved ? ' os-board-lineside--starved' : ''),
-            textContent: 'Lineside ' + lsUOP + ' UOP' + (starved ? ' — PRELOAD' : ''),
+            textContent: 'Lineside ' + lsUOP + ' UoP' + (starved ? ' — PRELOAD' : ''),
         }));
         if (starved) card.classList.add('os-board-card--starved');
     }
@@ -684,7 +684,7 @@ function renderPayloadBoard(entry) {
         '</div>' +
         '<div style="text-align:right">' +
             '<div style="font-size:28px;font-weight:600;color:#fff">Bin: ' + esc(binLabel) + '</div>' +
-            (binPayload ? '<div style="font-size:20px;color:#aab;margin-top:4px">' + esc(binPayload) + ' | UOP: ' + remaining + '</div>' : '') +
+            (binPayload ? '<div style="font-size:20px;color:#aab;margin-top:4px">' + esc(binPayload) + ' | UoP: ' + remaining + '</div>' : '') +
             '<div style="display:inline-block;font-size:22px;font-weight:700;padding:8px 20px;border-radius:6px;margin-top:8px;' +
                 hb.color + '">' + hb.text +
             '</div>' +
@@ -760,7 +760,7 @@ function renderPayloadBoard(entry) {
 
         // PULL FROM MARKET — produce loaders with an outbound_destination.
         // Pulls a specific bin from the supermarket back to this window; Edge
-        // auto-clears (zeroes UOP) when the bin is delivered so the operator
+        // auto-clears (zeroes UoP) when the bin is delivered so the operator
         // doesn't need a separate Clear Bin step.
         if (isProduce && claim.outbound_destination) {
             var pullBtn = el('button', {

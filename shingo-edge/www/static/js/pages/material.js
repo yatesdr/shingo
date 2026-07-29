@@ -50,7 +50,7 @@ function viewBinContents() {
     var body = document.getElementById('view-bin-body');
     var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:1rem">';
     html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Payload</div><strong>' + escapeHtml(binState.payload_code || 'empty') + '</strong></div>';
-    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">UOP Remaining</div><strong>' + (binState.uop_remaining || 0) + '</strong></div>';
+    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">UoP Remaining</div><strong>' + (binState.uop_remaining || 0) + '</strong></div>';
     html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Bin Type</div>' + escapeHtml(binState.bin_type_code || '-') + '</div>';
     html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Confirmed</div>' + (binState.manifest_confirmed ? 'Yes' : 'No') + '</div>';
     html += '</div>';
@@ -161,7 +161,7 @@ async function onLoadPayloadChanged() {
         }
         var uopRow = document.createElement('div');
         uopRow.style.cssText = 'display:grid;grid-template-columns:1fr 80px;gap:0.5rem;align-items:center;margin-bottom:0.75rem;padding:0.5rem;border:2px solid var(--primary, #4a9);border-radius:4px';
-        uopRow.innerHTML = '<div style="font-weight:600">UOP Count</div>' +
+        uopRow.innerHTML = '<div style="font-weight:600">UoP Count</div>' +
             '<input type="number" id="rb-uop-count" class="form-input" value="' + uopCapacity + '" style="text-align:center;font-weight:600">';
         rows.appendChild(uopRow);
         items.forEach(function(item) {

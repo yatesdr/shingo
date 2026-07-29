@@ -161,31 +161,31 @@ function renderReleasePromptStep1() {
         html += '<div class="os-release-partial-count">';
         html += '<div class="os-release-primary-label">Bin returning to supermarket with:</div>';
         html += '<button type="button" class="os-release-qty-display"' +
-            ' data-action="release-partial-edit">' + partialCount + ' UOP</button>';
+            ' data-action="release-partial-edit">' + partialCount + ' UoP</button>';
         html += '</div>';
     }
 
     html += '<div class="modal-actions">';
-    // Label reflects the actual action: bin still has UOP → returns as-is
+    // Label reflects the actual action: bin still has UoP → returns as-is
     // (partial); bin is at zero → manifest cleared (empty). Same wire
     // disposition mapping as before; just makes it visible to the operator.
     const submitLabel = remainingUOP > 0 ? 'RELEASE PARTIAL' : 'RELEASE EMPTY';
     const submitTitle = remainingUOP > 0
-        ? 'No parts pulled to lineside. Bin returns to the supermarket with its current UOP intact.'
+        ? 'No parts pulled to lineside. Bin returns to the supermarket with its current UoP intact.'
         : 'No parts pulled to lineside. Bin is empty — manifest cleared.';
     html += '<button type="button" class="os-action-btn release-empty"' +
         ' data-action="release-submit"' +
         ' title="' + esc(submitTitle) + '">' +
         submitLabel + '</button>';
     // Underpack release: bin physically empty before count reaches zero.
-    // Only offered when the system still thinks the bin has UOP — otherwise
+    // Only offered when the system still thinks the bin has UoP — otherwise
     // RELEASE EMPTY is the right path. Routes through a confirmation
     // modal because it's a destructive-ish action: the missing inventory
     // is recorded as a forensics signal.
     if (remainingUOP > 0) {
         html += '<button type="button" class="os-action-btn release-empty"' +
             ' data-action="release-underpack-confirm"' +
-            ' title="Bin is physically empty, but the system still shows UOP remaining. Records the gap as missing inventory.">' +
+            ' title="Bin is physically empty, but the system still shows UoP remaining. Records the gap as missing inventory.">' +
             'BIN EMPTY (UNDER COUNT)</button>';
     }
     html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
@@ -244,12 +244,12 @@ function renderReleasePromptUnderpackConfirm() {
     let html = '';
     html += '<div class="modal-header">';
     html += '<div class="modal-node-name">Declare bin empty?</div>';
-    html += '<div class="modal-payload">Confirm: bin is physically empty, system shows UOP remaining.</div>';
+    html += '<div class="modal-payload">Confirm: bin is physically empty, system shows UoP remaining.</div>';
     html += '</div>';
 
     html += '<div class="os-release-prompt">';
     html += '<div class="os-release-primary-label">';
-    html += 'System shows <strong>' + esc(String(remainingUOP)) + ' UOP</strong> remaining.<br>';
+    html += 'System shows <strong>' + esc(String(remainingUOP)) + ' UoP</strong> remaining.<br>';
     html += 'This will record <strong>' + esc(String(remainingUOP)) + ' units</strong> as missing inventory.';
     html += '</div>';
     html += '</div>';
@@ -363,7 +363,7 @@ async function handleReleasePromptAction(evt) {
     if (action === 'release-partial-edit') {
         const current = state.partialCount != null ? state.partialCount : 0;
         openKeypad(0, current, {
-            title: 'Bin remaining (UOP)',
+            title: 'Bin remaining (UoP)',
             onOk: function(_nodeID, qty) {
                 state.partialCount = qty > 0 ? qty : 0;
                 renderReleasePromptStep1();
@@ -380,7 +380,7 @@ async function handleReleasePromptAction(evt) {
     }
 
     //   release-submit            "RELEASE PARTIAL" / "RELEASE EMPTY"
-    //                              → send_partial_back when the bin still has UOP
+    //                              → send_partial_back when the bin still has UoP
     //                                (preserve manifest); capture_lineside empty
     //                                when the bin is already empty (operator
     //                                confirms zero, manifest cleared). Label is

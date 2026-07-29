@@ -187,6 +187,63 @@ The original operator tokens used visual names. Rename to semantic:
    one hard line: indigo is **never a status hue** — status lives in the
    `--status-*-dot` tokens and the `.badge-*` classes; don't cross the streams.
 
+### The substrate ramp (U8)
+
+**Static structure is drawn from `--sub-1` … `--sub-5`, and from nothing else.**
+
+"Structure recedes, state glows" (see Visual principles) says static structure
+carries no saturated colour. That principle was stated and **unenforced**: there
+was no steel token outside `--map-*`, so anyone implementing a table rule or a
+gridline reached for `--border` (`#30363d` — a neutral grey, not steel) or
+hardcoded an `rgba()` by eye. `--chart-grid` was the tell — it was
+`color-mix(in srgb, var(--text-muted) 25%, transparent)`, i.e. **gridlines
+derived from the text ramp**, because structure had nowhere else to come from.
+
+The ramp **owns**: gridlines, axes, table rules, panel edges,
+empty/skeleton/disabled states, and tracks with **no** semantic fill.
+
+| Step | Role |
+|---|---|
+| `--sub-1` | hairline rules, gridlines, row separators, empty/disabled fills |
+| `--sub-2` | panel edges, card borders, a table's outer edge |
+| `--sub-3` | axes and header rules — structure you are meant to read *along* |
+| `--sub-4` | tick marks, structural dots — marks that carry meaning (must clear 3:1) |
+| `--sub-5` | emphasis structure |
+
+`--chart-grid` **no longer exists.** It was absorbed as step 1 rather than left
+sitting beside the ramp: two token families for one property is how U5's two
+colliding `.chip` systems produced a 1.2:1 invisible chip, and a ramp that does
+not consolidate recreates that bug in a different property. Charts read
+`--sub-1` for gridlines.
+
+**Dark is the reference.** Steps 2–5 *are* the map's steel — `--map-bay-ring` /
+`--map-aisle` / `--map-node` / `--map-node-action` now alias them — because the
+map is the surface this whole look was generalized from. Step 1 is new,
+extrapolated below bay-ring for hairlines. (The map pins `data-theme="dark"` on
+`<html>`, so its aliases always resolve to the dark ramp.)
+
+**Light is not a hue flip.** Inverting HSL lightness leaves the top of the ramp
+far too weak, because sRGB luminance is not symmetric about mid-grey. The
+first-pass flipped values put light step 4 at **2.33:1** — below the 3:1
+non-text-contrast floor — so a tick mark that reads in dark would have shipped
+invisible in light. Each light step keeps its dark counterpart's hue and
+saturation and has its **lightness solved** so its contrast against
+`--elev-surface` reproduces the dark step's:
+
+| Step | Dark hex | vs `#161b22` | Light hex | vs `#ffffff` |
+|---|---|---|---|---|
+| 1 | `#2b3543` | 1.39 | `#d4dbe4` | 1.40 |
+| 2 | `#3c4a5e` | 1.92 | `#b1bccd` | 1.92 |
+| 3 | `#45566e` | 2.31 | `#9cacc1` | 2.31 |
+| 4 | `#66768f` | 3.75 | `#76859d` | 3.74 |
+| 5 | `#7a8ba6` | 5.00 | `#5e718d` | 4.97 |
+
+Step-to-step separation is identical in both themes (1.38 / 1.20 / 1.62 / 1.33),
+which is the property that makes them the same ramp rather than two ramps that
+happen to share a hue. Steps 4 and 5 clear 3:1 in **both** themes.
+
+**If a step moves, re-derive it the same way — never eyeball a light value.**
+
 ### Type scale
 
 Five named steps, defined in `tokens.css`, replace the ~12 ad-hoc `rem` sizes
@@ -550,13 +607,22 @@ the number that just changed. This is the generalization of the map's look — a
 calm grey scaffold with a few vivid, meaningful marks on top.
 
 Concretely:
-- **Tables** — muted header/border chrome; color lives only in the status chips
+- **Tables** — muted header/border chrome, drawn from the substrate ramp
+  (`--sub-*`, see Design tokens); color lives only in the status chips
   and health dots, never in the row fill (except a soft state tint like the
   >30 d staleness wash).
 - **Tiles / node cells** — neutral base; the state color (has-payload, staged,
   maintenance) is the one saturated thing on the tile.
 - **Meters** — the track is `--bg-dark`; only the fill and the threshold tick
-  carry hue.
+  carry hue. **A meter track is NEVER tone-on-tone with its fill (U9).** The
+  external dataviz convention says to tint the track with a desaturated copy of
+  the fill hue so state reads across the whole bar; ShinGo does not, and this
+  line exists so nobody re-imports that rule. A desaturated state colour placed
+  in structure is precisely what this principle forbids, and a tinted track is
+  wrong on its own terms the moment the fill retints — `.cs-meter` had an indigo
+  track under a fill that turns amber and red. A track carries no state; it is
+  either a neutral `--bg-dark` (the fill is semantic) or a `--sub-1` substrate
+  step (the fill is not).
 
 If a surface feels loud, the fix is almost always *desaturate the structure*,
 not *tone down the state* — the state is the point.
@@ -1248,7 +1314,57 @@ Reconciliation is opportunistic adjacency — bundle these into the consistency 
 
 | Term | Definition | Casing rule |
 |---|---|---|
-| **UoP** | Units of Production — the count of finished parts a bin/payload carries, or that a cell has consumed. The atomic quantity the threshold monitor sums and reorder thresholds fire on. | Always **"UoP"** in UI text — labels, headers, table columns, prose, toasts, tooltips. Never "UOP" or "uop". The all-caps form had drifted across pages (34× "UOP" vs 7× "UoP"); standardized 2026-07. **Display text only:** code identifiers, JSON keys, struct fields, and `data-*` attributes keep their existing casing (`UOPRemaining`, `uop_remaining`, `data-uop`) — renaming a serialized field is out of scope and would break the protocol. |
+| **UoP** | Units of Production — the count of finished parts a bin/payload carries, or that a cell has consumed. The atomic quantity the threshold monitor sums and reorder thresholds fire on. | Always **"UoP"** in UI text — labels, headers, table columns, prose, toasts, tooltips. Never "UOP" or "uop". **Display text only:** code identifiers, JSON keys, struct fields, and `data-*` attributes keep their existing casing (`UOPRemaining`, `uop_remaining`, `data-uop`) — renaming a serialized field is out of scope and would break the protocol. |
+
+**Casing history — and a warning about how it was mis-measured twice.**
+
+`752dec99` (2026-07-22) swept nine files and **held perfectly**: not one of them
+has regressed. `2c0d3c48`'s follow-up (2026-07-26) finished the job across the
+files that sweep never covered. What went wrong in between was the *measurement*,
+not the code, and it went wrong the same way twice.
+
+**Raw `UOP` counts are meaningless here.** Most occurrences in the tree are
+supposed to be uppercase — `{{.UOPRemaining}}`, `UOPCapacity`, `remainingUOP`,
+`lsUOP`, `data-uop`, `bin_uop_audit`. An unfiltered grep returns ~199 and reads
+as catastrophic drift; a differently-scoped one returned "34 vs 7" and then
+"44 vs 30", which reads as a rule actively decaying. **Neither number described
+a real problem**, and the second was used to justify re-opening an item that had
+in fact held. Never quote an unfiltered count for this term.
+
+The only question that means anything is: **which rendered text says `UOP`?**
+Sort every hit into a bucket before touching anything:
+
+| Bucket | Verdict |
+|---|---|
+| Identifier / field ref / `data-*` attribute | Correct. Leave it. Renaming a serialized field breaks the protocol |
+| Rendered text in a file a previous sweep covered | A real regression |
+| Rendered text in a file no sweep ever covered | Not drift — an unswept surface |
+| Prose in a comment | Not the product, but it is where the next implementer copies the casing from |
+
+Applied to the 2026-07-26 pass, all 19 rendered hits were in the **third**
+bucket. `752dec99` enumerated templates plus three Core page scripts; the
+**entire Operator HMI** (`shingo-edge/www/static/operator-station/`) and Edge's
+`static/js/pages/` were never in its scope. The highest-visibility surface in
+the system — what an operator reads all shift — had simply never been swept.
+Comments were swept in the second pass on purpose, reversing the first pass's
+call, on the grounds above.
+
+**The discriminator, if you write a guard.** A test that bans the string `UOP`
+fails against a *correct* tree, because it cannot tell a label from a field ref.
+The predicate that can is a word-boundary match:
+
+```
+(?<![A-Za-z0-9_])UOP(?![A-Za-z0-9_])
+```
+
+Verify it **both ways** before trusting it — it must fire on `>UOP Remaining<`
+and `' UOP)'`, and stay silent on `{{.UOPRemaining}}`, `data-uop-capacity`,
+`remainingUOP` and `MinHysteresisUOP`. A guard that cannot separate those two
+lists is not a guard. No such test exists yet.
+
+**The checkable end state:** that pattern returns nothing in any `.js` / `.css` /
+`.html` under `shingo-core/www`, `shingo-edge/www` or `shared/`. Verifiable in
+ten seconds, unlike a count in a table.
 
 ### Working principle
 

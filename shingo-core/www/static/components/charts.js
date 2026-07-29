@@ -18,7 +18,11 @@ function cssVar(name, fallback) {
 
 export function chartColors() {
     return {
-        grid: cssVar('--chart-grid', 'rgba(120,120,120,0.25)'),
+        // Gridlines come from the substrate ramp's hairline step (U8), not from
+        // a token of their own. --chart-grid used to be
+        // color-mix(--text-muted 25%) — structure derived from the TEXT ramp,
+        // because there was no steel token to derive it from. There is now.
+        grid: cssVar('--sub-1', '#2b3543'),
         text: cssVar('--text-muted', '#6c757d'),
         surface: cssVar('--surface', '#ffffff'),
         primary: cssVar('--primary', '#7c7cf0'),
