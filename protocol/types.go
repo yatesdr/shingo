@@ -108,28 +108,26 @@ const (
 	// boot-time coverage assertion.
 	SubjectProductionTick = "production.tick"
 
-	// SubjectDemandOriginOpened / SubjectDemandOriginClosed — Edge → Core, the
-	// demand episodes Edge owns (cell and changeover kinds).
+	// SubjectDemandOrigin — Edge → Core, the demand episodes Edge owns (the
+	// cell and changeover kinds), carried as WHOLE STATE rather than events.
+	//
+	// ONE subject, not an opened/closed pair. Core upserts on origin_id guarded
+	// by a monotonic revision, which makes duplicate delivery a no-op,
+	// out-of-order arrival lose the comparison, and the LAST message sufficient
+	// on its own. Rebuilding Core-side state by replaying events would be a
+	// second copy maintained by replay — the uopCache mistake in a new place.
 	//
 	// A NEW SUBJECT IS REQUIRED because a ZERO-ORDER EPISODE CANNOT RIDE AN
-	// ORDER MESSAGE — and a zero-order episode is the single most valuable row
-	// on the demand surface: four hours of a cell asking for material and
-	// nothing arriving. Attaching the episode to its first order would make
-	// exactly the episodes that matter most invisible.
+	// ORDER MESSAGE — and a cell that asked for four hours and got nothing is
+	// the most valuable row on the surface, so attaching episodes to their first
+	// order would hide exactly the ones that matter.
 	//
-	// origin.opened is an UPSERT on origin_id, not an insert. That is what
-	// lets a re-request update rerequest_count on an OPEN episode without a
-	// third subject: the alternative is an episode that reads 0 re-requests
-	// until it closes, which is the wrong moment to learn an operator pushed
-	// the button six times.
-	//
-	// Both ride the existing shingo.orders topic as new SUBJECTS (the
+	// Rides the existing shingo.orders topic as a new SUBJECT (the
 	// SubjectProductionTick precedent), on the durable outbox, so an episode
-	// survives a Core that is down when it opens. Old-Core safety is the same
+	// survives a Core that is down when it changes. Old-Core safety is the same
 	// as production.tick's: an unregistered subject logs and returns, and the
 	// Edge outbox acks on publish rather than on Core handling.
-	SubjectDemandOriginOpened = "demand.origin_opened"
-	SubjectDemandOriginClosed = "demand.origin_closed"
+	SubjectDemandOrigin = "demand.origin"
 
 	// SubjectDowntimeEvent — Edge → Core persisted downtime event (G9).
 	// Carries DowntimeEvent. Emitted by the sim's downtime model on

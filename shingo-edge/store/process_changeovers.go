@@ -35,6 +35,14 @@ func (db *DB) GetActiveProcessChangeover(processID int64) (*processes.Changeover
 	return processes.GetActiveChangeover(db.DB, processID)
 }
 
+// GetProcessChangeoverByID returns one changeover, or nil when the row
+// is gone. The demand reconciler asks by id, because "did THIS
+// changeover end, and how" is not the same question as "is this process
+// mid-changeover".
+func (db *DB) GetProcessChangeoverByID(id int64) (*processes.Changeover, error) {
+	return processes.GetChangeoverByID(db.DB, id)
+}
+
 // UpdateProcessChangeoverState changes the state on a
 // process_changeover.
 func (db *DB) UpdateProcessChangeoverState(id int64, state domain.ChangeoverState) error {

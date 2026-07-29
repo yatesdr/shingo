@@ -124,10 +124,34 @@ CREATE TABLE counter_snapshots (
 CREATE TABLE demand_origins_open (
     episode_key     TEXT PRIMARY KEY,
     origin_id       TEXT NOT NULL,
-    -- rerequest_count is operator pushes that JOINED this episode rather than
-    -- opening one. Six re-requests against one demand is a better signal than
-    -- six demands of one order each.
+    -- revision is monotonic per episode and is what Core's upsert compares.
+    -- NOT a timestamp: two services cannot agree on one, and the whole point of
+    -- the guard is that it settles ordering without agreement.
+    revision        INTEGER NOT NULL DEFAULT 1,
+    -- The identity fields. Redundant with episode_key, which encodes most of
+    -- them, but stored rather than re-parsed: the message is assembled from
+    -- this row and a parse that can fail has no business on the emit path.
+    kind            TEXT NOT NULL,
+    direction       TEXT NOT NULL DEFAULT '',
+    trigger_kind    TEXT NOT NULL DEFAULT '',
+    trigger_ref     TEXT NOT NULL DEFAULT '',
+    process_id      INTEGER NOT NULL DEFAULT 0,
+    core_node_name  TEXT NOT NULL DEFAULT '',
+    payload_code    TEXT NOT NULL DEFAULT '',
+    -- Stamped once at the falling edge and never recomputed.
+    opened_total    INTEGER NOT NULL DEFAULT 0,
+    threshold       INTEGER NOT NULL DEFAULT 0,
+    -- NULLABLE: a denominator that is UNKNOWABLE is a different state from one
+    -- that is 1, and both 0 and 1 render as a real ratio somebody would draw a
+    -- conclusion from. expected_unknown_reason says why, because a NULL with no
+    -- reason is indistinguishable from a bug.
+    expected_orders INTEGER,
+    expected_unknown_reason TEXT NOT NULL DEFAULT '',
+    -- rerequest_count is operator pushes that JOINED this episode. Six
+    -- re-requests against one demand is a better signal than six demands of
+    -- one order each.
     rerequest_count INTEGER NOT NULL DEFAULT 0,
+    discretionary   INTEGER NOT NULL DEFAULT 0,
     opened_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

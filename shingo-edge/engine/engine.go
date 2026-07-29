@@ -313,6 +313,13 @@ func (e *Engine) Start() {
 	// binds or moves anything.
 	e.startStrandedMonitor()
 
+	// Demand-episode reconciler: closes any open cell or changeover episode
+	// whose precondition no longer holds, however it stopped holding. The six
+	// notification close paths are the fast path; this is the floor under
+	// them, because a claim can quietly stop existing and nothing fires when
+	// it does. Edge's half of the split — Core sweeps threshold episodes.
+	e.startDemandReconciler()
+
 	// R1 shadow read-model: push per-consuming-node lineside on-hand to Core
 	// every 60s so Core can shadow its replenishment ledger against Edge's
 	// authoritative counts. Reporting only; Core decides off the ledger.

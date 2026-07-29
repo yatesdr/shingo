@@ -106,6 +106,29 @@ func GetActiveChangeover(db *sql.DB, processID int64) (*Changeover, error) {
 	return &c, nil
 }
 
+// GetChangeoverByID returns one changeover, or nil when the row is gone.
+//
+// The demand reconciler needs the row BY ID rather than by process:
+// "is this process mid-changeover" and "did THIS changeover end, and how"
+// are different questions, and only the second can distinguish
+// changeover_complete from cancelled. Merging them would hide every
+// abandoned changeover behind the successful one that followed it.
+func GetChangeoverByID(db *sql.DB, id int64) (*Changeover, error) {
+	c, err := scanChangeover(db.QueryRow(`SELECT `+changeoverSelect+`
+		FROM process_changeovers c
+		LEFT JOIN processes p ON p.id = c.process_id
+		LEFT JOIN styles fs ON fs.id = c.from_style_id
+		LEFT JOIN styles ts ON ts.id = c.to_style_id
+		WHERE c.id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 // UpdateChangeoverState changes the state on a process_changeover,
 // setting completed_at when transitioning to a terminal state. Does
 // NOT touch triggered_by — callers that record a trigger source should

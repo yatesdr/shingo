@@ -264,6 +264,48 @@ func TestCloseCellEpisode_IsIdempotent(t *testing.T) {
 	}
 }
 
+// A CLOSE THAT NEVER REACHED THE OUTBOX MUST NOT DELETE ITS ROW.
+//
+// enqueue-then-delete only buys anything if the delete is CONDITIONAL on the
+// enqueue. Unconditional, the forward order loses a close exactly the way the
+// reverse order does: the row is gone, so nothing will ever say the episode
+// ended, and no sweep can notice because the sweep reads this table. Core would
+// hold it open until the aging sweep called it `unattributed` —
+// indistinguishable from a dead-letter, which is the one thing that reason is
+// supposed to mean.
+//
+// Dropping the outbox table is the bluntest genuine enqueue failure available
+// and needs no injection seam: the INSERT fails the way it fails on a full disk
+// or a locked database.
+func TestCloseEpisode_KeepsRowWhenEnqueueFails(t *testing.T) {
+	eng, db, procID, claim := episodeFixture(t, "ENQFAIL-PROC", "ALN_009", 50)
+
+	origin, _, err := eng.openCellEpisode(procID, claim,
+		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := db.Exec(`DROP TABLE outbox`); err != nil {
+		t.Fatalf("drop outbox: %v", err)
+	}
+
+	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered)
+
+	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
+	open, err := db.GetOpenDemandOrigin(key)
+	if err != nil {
+		t.Fatalf("episode must survive a close whose state never got enqueued, got err=%v", err)
+	}
+	if open.OriginID != origin {
+		t.Errorf("surviving episode is %s, want the original %s", open.OriginID, origin)
+	}
+	// The revision was still bumped, so whenever the reconciler closes this
+	// again its re-send outranks anything Core already holds for the origin.
+	if open.Revision < 2 {
+		t.Errorf("revision = %d, want >= 2 so the eventual re-send wins at Core", open.Revision)
+	}
+}
+
 // RESTART DURABILITY. Edge restarts more often than anything else in the
 // system. If the open episode lived only in memory, a `systemctl restart
 // shingoedge` mid-episode would lose it, the next tick would mint a duplicate,

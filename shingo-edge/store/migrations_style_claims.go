@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 
 	"shingoedge/store/schema"
@@ -54,6 +55,16 @@ func (db *DB) rebuildStyleNodeClaims() error {
 	// the branch was pushed, so anyone who ran it has an empty stray table.
 	// One line, and the alternative is a name nobody can explain.
 	db.Exec(`DROP TABLE IF EXISTS demand_episodes`)
+
+	// demand_origins_open was four columns for two commits on this branch,
+	// before the seam changed from event pairs to STATE TRANSFER and the table
+	// had to be able to assemble its own close message. Nothing is deployed, so
+	// the honest fix is to drop and let schema.Apply rebuild the current shape
+	// rather than write an ALTER chain for a shape that never reached a plant.
+	// The table holds only OPEN episodes, so there is nothing to preserve.
+	if hasNarrowDemandOrigins(db.DB) {
+		db.Exec(`DROP TABLE IF EXISTS demand_origins_open`)
+	}
 
 	present, err := schema.TableExists(db.DB, "style_node_claims")
 	if err != nil || !present {
@@ -213,3 +224,18 @@ SELECT
 FROM style_node_claims_legacy;
 DROP TABLE style_node_claims_legacy;
 `
+
+// hasNarrowDemandOrigins reports whether demand_origins_open exists in the
+// pre-state-transfer four-column shape. Keyed on `revision`, which arrived with
+// the widening and is the one column that cannot be present in the old shape.
+func hasNarrowDemandOrigins(db *sql.DB) bool {
+	present, err := schema.TableExists(db, "demand_origins_open")
+	if err != nil || !present {
+		return false
+	}
+	hasRevision, err := schema.TableHasColumn(db, "demand_origins_open", "revision")
+	if err != nil {
+		return false
+	}
+	return !hasRevision
+}

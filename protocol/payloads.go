@@ -1181,22 +1181,39 @@ type SourcingAtRisk struct {
 	TimeToEmptySeconds float64 `json:"time_to_empty_seconds"`
 }
 
-// DemandOriginOpened announces a demand episode Edge owns. Subject
-// demand.origin_opened, on the durable outbox.
+// DemandOriginState is the WHOLE episode row, sent on every change.
 //
-// UPSERT ON ORIGIN_ID, NOT INSERT. Re-sending it is how a re-request updates
-// an OPEN episode's RerequestCount without a third subject — and the count is
-// worth seeing while the episode is open, not only after it closes.
+// STATE TRANSFER, NOT EVENTS, and the reason is a lesson this repo already
+// learned once. The threshold monitor used to keep a private incremental UOP
+// tally that drifted from the database — Springfield stuck at 139 while truth
+// was 31 — and the fix was to stop accumulating deltas and read the
+// authoritative value every time. Rebuilding episode state on Core by replaying
+// opened/closed events is that same mistake in a new place: a second copy,
+// maintained by replay, that can diverge from the one Edge holds.
 //
-// A ZERO-ORDER EPISODE CANNOT RIDE AN ORDER MESSAGE, which is the whole reason
-// this subject exists. An episode that produces no orders at all — a cell
-// asking for four hours and getting nothing — is the most valuable row on the
-// surface, and it has no order to travel on.
-type DemandOriginOpened struct {
+// Core upserts on origin_id, guarded by Revision. What that buys is
+// STRUCTURAL rather than handled:
+//
+//	duplicate delivery   same revision, no-op. No conflict error to train
+//	                     somebody to ignore.
+//	out-of-order arrival the older message loses the comparison. No parking
+//	                     queue, no reconcile branch.
+//	lost message         the next state change carries current truth.
+//	the LAST message     is sufficient on its own — lose everything except the
+//	                     close and Core still converges. With events, a lost
+//	                     "opened" is unrecoverable.
+//
+// Test the reversed and repeated cases explicitly. Both happen during a network
+// event, which is when nobody is reading logs.
+type DemandOriginState struct {
 	OriginID string `json:"origin_id"`
+	// Revision is monotonic per origin, stamped by Edge on every change. It is
+	// the ONLY thing that decides whether an arriving message is newer than
+	// what Core holds — not a timestamp, which two services cannot agree on.
+	Revision int64 `json:"revision"`
 	// EpisodeKey is the computed identity. Core keys its partial unique index
-	// on it, so the two services must build it identically — both call the
-	// constructors in episode_key.go rather than formatting their own.
+	// on it, so both services build it with the constructors in episode_key.go
+	// rather than formatting their own.
 	EpisodeKey string `json:"episode_key"`
 	Kind       string `json:"kind"`
 	Direction  string `json:"direction,omitempty"`
@@ -1218,34 +1235,34 @@ type DemandOriginOpened struct {
 	// ExpectedOrders is the system's own stated intent, STAMPED ONCE at the
 	// falling edge and never recomputed or accumulated.
 	//
+	// NULLABLE, and that is deliberate. The threshold kind's formula divides by
+	// the payload catalog's UOPCapacity, and tryCreateL1 explicitly guards
+	// `entry.UOPCapacity <= 0` — which means somebody has hit it. Neither 0 nor
+	// 1 is honest there: both render as a real ratio and invite a conclusion
+	// from a denominator that does not exist. A demand whose denominator is
+	// UNKNOWABLE is a different state from one whose denominator is 1, and the
+	// surface shows it as "—".
+	//
 	// For a cell episode it is len(plan orders) — what BuildConsumePlan said it
 	// would create — NOT the literal 1 that RequestNodeMaterial takes as a BIN
-	// count. The plan expands that into 1 order on a simple-move downgrade, 2
-	// on a swap, plus N primes on a press-index downgrade; copying the literal
-	// crosses units and reads 2x+ high.
-	//
-	// Accumulating it per re-fire is the failure mode most likely to look
-	// correct in review: it would render 2026-07-21 as ratio 1.0 — normal, and
-	// invisible.
-	ExpectedOrders int `json:"expected_orders"`
+	// count. Accumulating it per re-fire is the failure mode most likely to
+	// look correct in review: it would render 2026-07-21 as ratio 1.0.
+	ExpectedOrders *int `json:"expected_orders,omitempty"`
+	// ExpectedUnknownReason says WHY the denominator is unknowable, when it is.
+	// A NULL with no reason is indistinguishable from a bug.
+	ExpectedUnknownReason string `json:"expected_unknown_reason,omitempty"`
 	// RerequestCount is operator pushes that JOINED this episode.
 	RerequestCount int `json:"rerequest_count,omitempty"`
 	// Discretionary marks an operator request with no open episode on a node
-	// ABOVE its level. Either the ledger is wrong or the reorder point is —
-	// or the operator knows something the system does not. FLAG, DO NOT
-	// CONCLUDE.
+	// the system reads as fine. Either the ledger is wrong, or the reorder
+	// point is, or the operator knows something the count does not. FLAG, DO
+	// NOT CONCLUDE.
 	Discretionary bool `json:"discretionary,omitempty"`
-}
-
-// DemandOriginClosed ends an episode. Subject demand.origin_closed.
-type DemandOriginClosed struct {
-	OriginID string    `json:"origin_id"`
-	ClosedAt time.Time `json:"closed_at"`
-	// CloseReason is one of the CloseReason* constants.
-	CloseReason string `json:"close_reason"`
-	// RerequestCount is the final count, so a Core that missed an interim
-	// upsert still lands on the right number.
-	RerequestCount int `json:"rerequest_count,omitempty"`
+	// ClosedAt is nil while the episode is open. Its presence IS the close —
+	// there is no separate close message to lose.
+	ClosedAt *time.Time `json:"closed_at,omitempty"`
+	// CloseReason is one of the CloseReason* constants. Empty while open.
+	CloseReason string `json:"close_reason,omitempty"`
 }
 
 // Episode close reasons.
@@ -1263,6 +1280,13 @@ const (
 	CloseReasonThresholdChanged = "threshold_changed"
 	// CloseReasonThresholdRemoved — the binding went away underneath it.
 	CloseReasonThresholdRemoved = "threshold_removed"
+	// CloseReasonClaimRemoved — the cell-side mirror of threshold_removed: the
+	// claim that was below its level is gone, or the process swapped to a style
+	// that does not claim that payload there. The need did not recover; it
+	// stopped being asked. Reachable only from the reconciler, because nothing
+	// fires when a claim quietly stops existing — which is the whole reason the
+	// reconciler exists.
+	CloseReasonClaimRemoved = "claim_removed"
 	// CloseReasonUnattributed — a childless episode aged out. NOT OPTIONAL:
 	// childless episodes are reachable even at full version parity, because
 	// Edge already silently drops threshold signals it cannot resolve. An

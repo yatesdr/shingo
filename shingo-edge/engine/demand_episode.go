@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -60,58 +62,79 @@ func (e *Engine) openCellEpisode(
 	if claim == nil {
 		return "", false, nil
 	}
-	station := e.cfg.StationID()
-	key := protocol.CellEpisodeKey(station, processID, string(claim.PayloadCode), direction)
+	key := protocol.CellEpisodeKey(e.cfg.StationID(), processID, string(claim.PayloadCode), direction)
 
 	if open, err := e.db.GetOpenDemandOrigin(key); err == nil && open != nil {
-		count, jerr := e.db.JoinDemandOrigin(key)
+		joined, jerr := e.db.JoinDemandOrigin(key)
 		if jerr != nil {
 			return open.OriginID, true, jerr
 		}
-		e.logFn("demand_episode: JOINED origin=%s key=%s trigger=%s rerequests=%d — same demand, expressed again",
-			open.OriginID, key, trigger, count)
-		// Re-send as an upsert so the open episode's count is current on Core.
-		e.emitOriginOpened(protocol.DemandOriginOpened{
-			OriginID: open.OriginID, EpisodeKey: key,
-			Kind: protocol.EpisodeKindCell, Direction: direction, Trigger: trigger,
-			TriggerRef: claimTriggerRef(claim), ProcessID: processID,
-			CoreNodeName: claim.CoreNodeName, PayloadCode: string(claim.PayloadCode),
-			OpenedAt: open.OpenedAt, RerequestCount: count,
-		})
-		return open.OriginID, true, nil
-	} else if err != nil && err != store.ErrOriginNotOpen {
+		e.logFn("demand_episode: JOINED origin=%s key=%s trigger=%s rerequests=%d rev=%d — same demand, expressed again",
+			joined.OriginID, key, trigger, joined.RerequestCount, joined.Revision)
+		// Re-send the WHOLE state at the new revision, so the count is current
+		// on Core while the episode is still open — which is the only time
+		// knowing an operator pushed six times is any use.
+		//
+		// Ignored deliberately: the row is still on disk, so a failed enqueue
+		// costs a stale rerequest_count on Core until the next change, and the
+		// close re-sends everything regardless.
+		_ = e.emitOriginState(joined, nil, "")
+		return joined.OriginID, true, nil
+	} else if err != nil && !errors.Is(err, store.ErrOriginNotOpen) {
 		return "", false, err
 	}
 
-	originID := uuid.NewString()
-	openedAt := time.Now().UTC()
-	if err := e.db.OpenDemandOrigin(key, originID, openedAt); err != nil {
+	expected := expectedOrders
+	row := &store.OpenOrigin{
+		EpisodeKey: key,
+		OriginID:   uuid.NewString(),
+		Kind:       protocol.EpisodeKindCell,
+		Direction:  direction,
+		// TriggerKind, not Trigger: SQLite reserves TRIGGER as a keyword.
+		TriggerKind:    trigger,
+		TriggerRef:     claimTriggerRef(claim),
+		ProcessID:      processID,
+		CoreNodeName:   claim.CoreNodeName,
+		PayloadCode:    string(claim.PayloadCode),
+		OpenedTotal:    openedTotal,
+		Threshold:      claim.ReorderPoint,
+		ExpectedOrders: &expected,
+		Discretionary:  discretionary,
+		OpenedAt:       time.Now().UTC(),
+	}
+	if err := e.db.OpenDemandOrigin(row); err != nil {
 		return "", false, err
 	}
 	e.logFn("demand_episode: OPENED origin=%s key=%s trigger=%s expected_orders=%d opened_total=%d discretionary=%v",
-		originID, key, trigger, expectedOrders, openedTotal, discretionary)
-
-	e.emitOriginOpened(protocol.DemandOriginOpened{
-		OriginID: originID, EpisodeKey: key,
-		Kind: protocol.EpisodeKindCell, Direction: direction, Trigger: trigger,
-		TriggerRef: claimTriggerRef(claim), ProcessID: processID,
-		CoreNodeName: claim.CoreNodeName, PayloadCode: string(claim.PayloadCode),
-		OpenedAt: openedAt, OpenedTotal: openedTotal, Threshold: claim.ReorderPoint,
-		ExpectedOrders: expectedOrders, Discretionary: discretionary,
-	})
-	return originID, false, nil
+		row.OriginID, key, trigger, expected, openedTotal, discretionary)
+	// Ignored deliberately — see emitOriginState. A lost OPEN self-heals: the
+	// row is durable and the close carries the whole episode.
+	_ = e.emitOriginState(row, nil, "")
+	return row.OriginID, false, nil
 }
 
 // closeCellEpisode ends the episode for a place, if one is open.
+func (e *Engine) closeCellEpisode(processID int64, payload, direction, reason string) {
+	e.closeEpisode(protocol.CellEpisodeKey(e.cfg.StationID(), processID, payload, direction), reason)
+}
+
+// closeEpisode is the ONE close path for every kind Edge owns.
+//
+// ENQUEUE FIRST, THEN DELETE. The reverse order can lose a close entirely — the
+// row is gone and nothing will ever say so — while this order can at worst
+// re-send one, and a re-send is a no-op under Core's revision guard. Once the
+// message is on the durable outbox, delivery is the outbox's job: it retries
+// and dead-letters on its own, which is what lets this table keep meaning
+// "episodes that are open" rather than "episodes we are still responsible for".
 //
 // Closing something already closed is a NO-OP, not an error: the falling edge
-// is evaluated from more than one site (a recovery tick, and the state-change
-// pokes that exist because a node which stops consuming produces no ticks at
-// all), so two of them racing to close one episode is ordinary.
-func (e *Engine) closeCellEpisode(processID int64, payload, direction, reason string) {
-	key := protocol.CellEpisodeKey(e.cfg.StationID(), processID, payload, direction)
+// is evaluated from more than one site — a recovery tick, the state-change
+// pokes that exist because a node which stops consuming produces no ticks, and
+// the reconciling sweep — so two of them racing to close one episode is
+// ordinary rather than exceptional.
+func (e *Engine) closeEpisode(key, reason string) {
 	closed, err := e.db.CloseDemandOrigin(key)
-	if err == store.ErrOriginNotOpen {
+	if errors.Is(err, store.ErrOriginNotOpen) {
 		return
 	}
 	if err != nil {
@@ -119,12 +142,31 @@ func (e *Engine) closeCellEpisode(processID int64, payload, direction, reason st
 		return
 	}
 	closedAt := time.Now().UTC()
-	e.logFn("demand_episode: CLOSED origin=%s key=%s reason=%s duration=%s rerequests=%d",
-		closed.OriginID, key, reason, closedAt.Sub(closed.OpenedAt).Round(time.Second), closed.RerequestCount)
-	e.emitOriginClosed(protocol.DemandOriginClosed{
-		OriginID: closed.OriginID, ClosedAt: closedAt,
-		CloseReason: reason, RerequestCount: closed.RerequestCount,
-	})
+	e.logFn("demand_episode: CLOSED origin=%s key=%s reason=%s duration=%s rerequests=%d rev=%d",
+		closed.OriginID, key, reason, closedAt.Sub(closed.OpenedAt).Round(time.Second),
+		closed.RerequestCount, closed.Revision)
+
+	if err := e.emitOriginState(closed, &closedAt, reason); err != nil {
+		// KEEP THE ROW. The close never reached the outbox, so deleting here
+		// would lose it outright — nothing would ever tell Core the episode
+		// ended, and no sweep could notice, because the sweep reads this very
+		// table. That is the failure the enqueue-then-delete order exists to
+		// prevent, and skipping the delete is what actually collects it: the
+		// episode stays open, the reconciler closes it again at a higher
+		// revision, and the re-send is a no-op under Core's guard.
+		//
+		// production.tick does the same thing in its own shape — it restores
+		// the delta snapshot when the enqueue fails, rather than trusting the
+		// outbox with something that never got there.
+		e.logFn("demand_episode: close %s kept open — state not enqueued: %v", key, err)
+		return
+	}
+	if err := e.db.DeleteDemandOrigin(key); err != nil {
+		// The state IS enqueued, so Core converges regardless. A row left
+		// behind reads as still-open until the reconciler sweeps it and sends
+		// the close again — harmless under the revision guard.
+		e.logFn("demand_episode: delete closed episode %s: %v", key, err)
+	}
 }
 
 // evaluateCellLevel is the falling/rising edge for one claim.
@@ -260,43 +302,67 @@ func itoa64(n int64) string {
 	return string(b[i:])
 }
 
-// emitOriginOpened / emitOriginClosed put an episode on the DURABLE OUTBOX.
+// emitOriginState puts the WHOLE episode row on the DURABLE OUTBOX.
 //
 // The outbox, not a direct send, because a zero-order episode has no order
 // message to ride on and is the most valuable row on the surface — a cell that
-// asked for four hours and got nothing. If Core is down when it opens, the
+// asked for four hours and got nothing. If Core is down when it changes, the
 // episode still arrives.
 //
-// Best-effort by design: a failure to record the episode must never fail the
+// STATE, NOT AN EVENT. Core upserts on origin_id guarded by the revision, so a
+// duplicate is a no-op, a reordered pair resolves by comparison rather than by
+// a parking queue, and the LAST message is sufficient on its own — lose
+// everything except the close and Core still converges. Rebuilding episode
+// state on Core by replaying opened/closed events would be a second copy
+// maintained by replay, which is the uopCache mistake in a new place.
+//
+// ONE emitter, deliberately: the message shape cannot drift between two call
+// paths if there is only one.
+//
+// Best-effort by design: a failure to record an episode must never fail the
 // material request it describes. Observability does not get to stop the plant.
-func (e *Engine) emitOriginOpened(p protocol.DemandOriginOpened) {
-	e.enqueueOrigin(protocol.SubjectDemandOriginOpened, &p, p.OriginID)
-}
-
-func (e *Engine) emitOriginClosed(p protocol.DemandOriginClosed) {
-	e.enqueueOrigin(protocol.SubjectDemandOriginClosed, &p, p.OriginID)
-}
-
-func (e *Engine) enqueueOrigin(subject string, payload any, originID string) {
-	station := e.cfg.StationID()
+//
+// IT RETURNS THE ERROR ANYWAY, because one caller must act on it. On OPEN and
+// JOIN a failed enqueue self-heals — the row stays on disk and the close
+// carries the whole episode, so losing an open costs nothing once the last
+// message lands. On CLOSE it does not: the row is about to be deleted, and
+// deleting it after a failed enqueue loses the close outright, with no sweep
+// able to notice because the sweep reads that table. So close checks this and
+// keeps the row; the open paths deliberately ignore it.
+func (e *Engine) emitOriginState(o *store.OpenOrigin, closedAt *time.Time, closeReason string) error {
+	if o == nil {
+		return nil
+	}
+	msg := protocol.DemandOriginState{
+		OriginID: o.OriginID, Revision: o.Revision, EpisodeKey: o.EpisodeKey,
+		Kind: o.Kind, Direction: o.Direction, Trigger: o.TriggerKind,
+		TriggerRef: o.TriggerRef, ProcessID: o.ProcessID,
+		CoreNodeName: o.CoreNodeName, PayloadCode: o.PayloadCode,
+		OpenedAt: o.OpenedAt, OpenedTotal: o.OpenedTotal, Threshold: o.Threshold,
+		ExpectedOrders: o.ExpectedOrders, ExpectedUnknownReason: o.ExpectedUnknownReason,
+		RerequestCount: o.RerequestCount, Discretionary: o.Discretionary,
+		ClosedAt: closedAt, CloseReason: closeReason,
+	}
 	env, err := protocol.NewDataEnvelope(
-		subject,
-		protocol.Address{Role: protocol.RoleEdge, Station: station},
+		protocol.SubjectDemandOrigin,
+		protocol.Address{Role: protocol.RoleEdge, Station: e.cfg.StationID()},
 		protocol.Address{Role: protocol.RoleCore},
-		payload,
+		&msg,
 	)
 	if err != nil {
-		log.Printf("demand_episode: build %s envelope origin=%s: %v", subject, originID, err)
-		return
+		log.Printf("demand_episode: build envelope origin=%s: %v", o.OriginID, err)
+		return fmt.Errorf("build envelope origin=%s: %w", o.OriginID, err)
 	}
 	data, err := env.Encode()
 	if err != nil {
-		log.Printf("demand_episode: encode %s origin=%s: %v", subject, originID, err)
-		return
+		log.Printf("demand_episode: encode origin=%s: %v", o.OriginID, err)
+		return fmt.Errorf("encode origin=%s: %w", o.OriginID, err)
 	}
-	if _, err := e.db.EnqueueOutbox(data, subject); err != nil {
-		log.Printf("demand_episode: enqueue %s origin=%s: %v", subject, originID, err)
+	if _, err := e.db.EnqueueOutbox(data, protocol.SubjectDemandOrigin); err != nil {
+		log.Printf("demand_episode: enqueue origin=%s: %v", o.OriginID, err)
+		return fmt.Errorf("enqueue origin=%s: %w", o.OriginID, err)
 	}
+	return nil
 }
 
 // openChangeoverEpisode mints the episode for a changeover.
@@ -311,35 +377,47 @@ func (e *Engine) enqueueOrigin(subject string, payload any, originID string) {
 // threshold. So there is no hysteresis here and no falling edge to stamp — the
 // arming IS the edge.
 //
-// The origin id lands on process_changeovers.origin_id, which makes it durable
-// across an Edge restart for free.
+// IT LIVES IN THE SAME TABLE AS THE CELL KINDS, and process_changeovers.
+// origin_id stays as the durable back-pointer from a changeover to its demand.
+// Two emission paths for one subject is where the second one drifts — and the
+// state message needs content, above all expected_orders, that the changeover
+// row has nowhere to put.
 func (e *Engine) openChangeoverEpisode(co *processes.Changeover, expectedOrders int) string {
 	if co == nil {
 		return ""
 	}
-	station := e.cfg.StationID()
-	key := protocol.ChangeoverEpisodeKey(station, co.ID)
-	originID := uuid.NewString()
-	openedAt := time.Now().UTC()
-
-	if err := e.db.SetChangeoverOriginID(co.ID, originID); err != nil {
-		e.logFn("demand_episode: stamp changeover origin co=%d: %v", co.ID, err)
-		return ""
+	key := protocol.ChangeoverEpisodeKey(e.cfg.StationID(), co.ID)
+	if open, err := e.db.GetOpenDemandOrigin(key); err == nil && open != nil {
+		return open.OriginID // already minted — a changeover arms once
 	}
-	e.logFn("demand_episode: OPENED origin=%s key=%s kind=changeover process=%d expected_orders=%d",
-		originID, key, co.ProcessID, expectedOrders)
 
-	e.emitOriginOpened(protocol.DemandOriginOpened{
-		OriginID: originID, EpisodeKey: key,
-		Kind: protocol.EpisodeKindChangeover,
+	expected := expectedOrders
+	row := &store.OpenOrigin{
+		EpisodeKey: key,
+		OriginID:   uuid.NewString(),
+		Kind:       protocol.EpisodeKindChangeover,
 		// TriggerRef is the changeover row, which is also the identity here —
 		// unlike the cell kind, where the claim is forensic and the process is
 		// the identity.
-		TriggerRef: "changeover:" + itoa64(co.ID),
-		ProcessID:  co.ProcessID,
-		OpenedAt:   openedAt, ExpectedOrders: expectedOrders,
-	})
-	return originID
+		TriggerRef:     "changeover:" + itoa64(co.ID),
+		ProcessID:      co.ProcessID,
+		ExpectedOrders: &expected,
+		OpenedAt:       time.Now().UTC(),
+	}
+	if err := e.db.OpenDemandOrigin(row); err != nil {
+		e.logFn("demand_episode: open changeover episode co=%d: %v", co.ID, err)
+		return ""
+	}
+	if err := e.db.SetChangeoverOriginID(co.ID, row.OriginID); err != nil {
+		// The back-pointer is a convenience for reading a changeover row; the
+		// episode itself is already durable, so this logs and does not fail.
+		e.logFn("demand_episode: stamp changeover back-pointer co=%d: %v", co.ID, err)
+	}
+	e.logFn("demand_episode: OPENED origin=%s key=%s kind=changeover process=%d expected_orders=%d",
+		row.OriginID, key, co.ProcessID, expected)
+	// Ignored deliberately — see emitOriginState.
+	_ = e.emitOriginState(row, nil, "")
+	return row.OriginID
 }
 
 // closeChangeoverEpisode ends a changeover's episode.
@@ -348,20 +426,9 @@ func (e *Engine) openChangeoverEpisode(co *processes.Changeover, expectedOrders 
 // and cancelled. They are not the same outcome and a surface that merged them
 // would hide every abandoned changeover behind a wall of successful ones.
 //
-// Idempotent: a changeover whose origin is already cleared closes to nothing.
+// The changeover row keeps its origin_id as a durable back-pointer even after
+// the episode closes — it is the link from a changeover to its demand, and
+// clearing it would throw that away to save nothing.
 func (e *Engine) closeChangeoverEpisode(changeoverID int64, reason string) {
-	originID, err := e.db.GetChangeoverOriginID(changeoverID)
-	if err != nil || originID == "" {
-		return
-	}
-	closedAt := time.Now().UTC()
-	e.logFn("demand_episode: CLOSED origin=%s kind=changeover co=%d reason=%s", originID, changeoverID, reason)
-	e.emitOriginClosed(protocol.DemandOriginClosed{
-		OriginID: originID, ClosedAt: closedAt, CloseReason: reason,
-	})
-	// The row keeps its origin_id as a durable back-pointer — it is the link
-	// from a changeover to its demand, and clearing it would throw that away to
-	// save nothing. Emitting twice is prevented by the state guard on
-	// UpdateChangeoverStateWithTrigger: a terminal row cannot re-enter a
-	// non-terminal state, so a changeover terminalises once.
+	e.closeEpisode(protocol.ChangeoverEpisodeKey(e.cfg.StationID(), changeoverID), reason)
 }
