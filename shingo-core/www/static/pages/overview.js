@@ -77,7 +77,12 @@ async function loadFilterOptions() {
         const stations = await apiGet('/api/stations');
         const sel = document.getElementById('ops-station');
         const list = Array.isArray(stations) ? stations : (stations && stations.stations) || [];
-        if (sel) addOptions(sel, list, (s) => (typeof s === 'string' ? s : (s.id || s.station_id || s.name)));
+        // /api/stations returns {id, label}. The option's VALUE stays the id —
+        // it goes into the filter query and is matched against
+        // orders.station_id exactly — and only the visible text is the label.
+        if (sel) addOptions(sel, list,
+            (s) => (typeof s === 'string' ? s : (s.id || s.station_id || s.name)),
+            (s) => (typeof s === 'string' ? s : (s.label || s.id || s.station_id || s.name)));
     } catch (e) { /* non-fatal: filter still usable as "all" */ }
     try {
         const robots = await apiGet('/api/robots');
@@ -87,14 +92,17 @@ async function loadFilterOptions() {
     } catch (e) { /* non-fatal */ }
 }
 
-function addOptions(sel, list, pick) {
+// pickLabel is optional; without it the option reads as its own value, which is
+// what the robot list wants and what every list did before stations grew labels.
+function addOptions(sel, list, pick, pickLabel) {
     const seen = new Set();
     for (const item of list) {
         const id = pick(item);
         if (!id || seen.has(id)) continue;
         seen.add(id);
         const opt = document.createElement('option');
-        opt.value = id; opt.textContent = id;
+        opt.value = id;
+        opt.textContent = pickLabel ? pickLabel(item) : id;
         sel.appendChild(opt);
     }
 }

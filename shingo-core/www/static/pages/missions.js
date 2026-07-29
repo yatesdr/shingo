@@ -461,10 +461,40 @@ function initFilterBar() {
     });
 }
 
+// addOptions fills a <select> by element id.
+//
+// THIS FUNCTION WAS CALLED HERE AND DEFINED NOWHERE, and both filter dropdowns
+// on this page have been empty ever since. It exists as a module-local in
+// overview.js; ES modules do not share scope, so every call below threw
+// ReferenceError straight into the "non-fatal" catch — no console error a
+// casual look would catch, just two selects that never populated. Defined
+// locally here rather than exported from a shared module: two copies of six
+// lines is not yet worth a shared home, and the fix for the next occurrence is
+// a linter, not an abstraction.
+//
+// The option's VALUE is the id the filter submits; the text is what a person
+// reads. For stations those now differ.
+function addOptions(selID, list, pick, pickLabel) {
+    const sel = document.getElementById(selID);
+    if (!sel) return;
+    const seen = new Set();
+    for (const item of list) {
+        const id = pick(item);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = pickLabel ? pickLabel(item) : id;
+        sel.appendChild(opt);
+    }
+}
+
 async function loadFilterOptions() {
     try {
         const stations = await apiGet('/api/stations');
-        addOptions('m-station', Array.isArray(stations) ? stations : (stations && stations.stations) || [], (s) => (typeof s === 'string' ? s : (s.id || s.station_id || s.name)));
+        addOptions('m-station', Array.isArray(stations) ? stations : (stations && stations.stations) || [],
+            (s) => (typeof s === 'string' ? s : (s.id || s.station_id || s.name)),
+            (s) => (typeof s === 'string' ? s : (s.label || s.id || s.station_id || s.name)));
     } catch (e) { /* non-fatal */ }
     try {
         const robots = await apiGet('/api/robots');

@@ -19,7 +19,7 @@ No authentication required. Read-only.
 | `GET` | `/api/nodestate` | Node state cache |
 | `GET` | `/api/map/points` | Fleet scene map points |
 | `GET` | `/api/map/edges` | Fleet scene path segments (advanced curves) between map points |
-| `GET` | `/api/stations` | Selectable station IDs for dashboard area scoping (from orders + edge registry) |
+| `GET` | `/api/stations` | Selectable stations for pickers and filters (from orders + edge registry). `[{"id","label"}]` — `id` is the opaque station identity a caller submits and stores; `label` is `edge_registry.display_name`, for display only |
 
 #### GET /api/nodes
 

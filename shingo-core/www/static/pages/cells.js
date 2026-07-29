@@ -12,8 +12,27 @@ import { el, apiGet, apiPost, apiDelete, toast, uiConfirm } from '/static/app.js
 
 var cells = [];
 
+// Station id -> operator label, loaded once. cell_config.station stores the id;
+// this only ever affects what the table prints, so a failed load degrades to
+// showing ids rather than blocking the page.
+var stationLabels = {};
+function stationLabel(id) {
+  if (!id) return '';
+  return stationLabels[id] || id;
+}
+
+function loadStationLabels() {
+  return apiGet('/api/stations').then(function (list) {
+    (list || []).forEach(function (s) {
+      if (s && typeof s === 'object' && s.id) stationLabels[s.id] = s.label || s.id;
+    });
+  }).catch(function () { /* labels are cosmetic; ids still render */ });
+}
+
 function load() {
-  apiGet('/api/cells').then(function (list) {
+  loadStationLabels().then(function () {
+    return apiGet('/api/cells');
+  }).then(function (list) {
     cells = list || [];
     renderTable();
   }).catch(function (e) {
@@ -37,7 +56,7 @@ function rowFor(c) {
     ? c.sub_process_ids.join(', ') : '—';
   return el('tr', {}, [
     el('td', {}, [el('strong', {}, c.cell_id), c.display_name ? el('div', { className: 'muted' }, c.display_name) : '']),
-    el('td', { className: 'muted' }, c.station),
+    el('td', { className: 'muted' }, stationLabel(c.station)),
     el('td', {}, String(c.primary_process_id)),
     el('td', { className: 'muted' }, subs),
     el('td', {}, [
@@ -83,8 +102,17 @@ function openModal(c) {
   // that hasn't been seen by the order path yet can still be typed.
   var stationList = el('datalist', { id: 'cell-stations' });
   var stationInput = el('input', { className: 'form-input', type: 'text', value: c ? c.station : '', list: 'cell-stations' });
+  // The datalist option's VALUE is the station id, and picking one puts that id
+  // — not the label — into the text input, which is what gets saved to
+  // cell_config.station. The label rides along as the option's text so the
+  // dropdown is readable. Free-text is preserved deliberately (see above), so a
+  // station nobody has enrolled can still be typed.
   apiGet('/api/stations').then(function (list) {
-    (list || []).forEach(function (s) { stationList.appendChild(el('option', { value: s })); });
+    (list || []).forEach(function (s) {
+      var id = typeof s === 'string' ? s : s.id;
+      var label = typeof s === 'string' ? s : (s.label || s.id);
+      stationList.appendChild(el('option', { value: id }, label === id ? undefined : label));
+    });
   }).catch(function () {});
 
   var primarySelect = el('select', { className: 'form-input' });

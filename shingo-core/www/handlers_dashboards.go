@@ -274,11 +274,35 @@ func (h *Handlers) apiStations(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, oErr.Error(), http.StatusInternalServerError)
 		return
 	}
-	out := make([]string, 0, len(set))
-	for s := range set {
-		out = append(out, s)
+	// THE ID IS WHAT ROUND-TRIPS; THE LABEL IS ONLY EVER READ.
+	//
+	// Every consumer of this list is a picker or a filter, and each one sends a
+	// value back: dashboards.stations_json stores the selected ids,
+	// cell_config.station stores the typed one, and the missions/overview
+	// filters put theirs in a query string that is matched against
+	// orders.station_id exactly. So the option carries both — the caller binds
+	// `id` to the value it will submit and `label` to the text a person reads.
+	// Collapsing them back into one string is how a display name ends up in a
+	// stored column, which is the failure the whole display-name split exists
+	// to prevent (store/registry/registry.go:345-350).
+	//
+	// Unenrolled stations resolve to themselves, so core-spot / core-direct /
+	// core-test render as they always have.
+	type stationOption struct {
+		ID    string `json:"id"`
+		Label string `json:"label"`
 	}
-	sort.Strings(out)
+	ids := make([]string, 0, len(set))
+	for s := range set {
+		ids = append(ids, s)
+	}
+	sort.Strings(ids)
+
+	ns := h.engine.NodeService()
+	out := make([]stationOption, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, stationOption{ID: id, Label: ns.StationName(id)})
+	}
 	h.jsonOK(w, out)
 }
 

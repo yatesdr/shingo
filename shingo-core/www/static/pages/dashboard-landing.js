@@ -39,9 +39,26 @@ if (resync) {
     });
 }
 
+// Station id -> operator label. Loaded once for the card scope lines; the modal
+// picker fetches its own copy because it needs the full option list anyway.
+// Purely cosmetic, so a failed load degrades to showing ids.
+const stationLabels = {};
+function stationLabel(id) { return stationLabels[id] || id; }
+
+function loadStationLabels() {
+    return apiGet('/api/stations')
+        .then((list) => {
+            (list || []).forEach((s) => {
+                if (s && typeof s === 'object' && s.id) stationLabels[s.id] = s.label || s.id;
+            });
+        })
+        .catch(() => { /* labels are cosmetic; ids still render */ });
+}
+
 // ── Hub: dashboard cards ─────────────────────────────────────────────────────
 function load() {
-    apiGet('/api/dashboards')
+    loadStationLabels()
+        .then(() => apiGet('/api/dashboards'))
         .then((list) => { dashboards = list || []; render(); })
         .catch((e) => toast('Load dashboards failed: ' + e, 'error'));
 }
@@ -64,7 +81,11 @@ function render() {
         return;
     }
     dashboards.forEach((d) => {
-        const scope = (d.stations && d.stations.length) ? d.stations.join(', ') : 'Whole plant';
+        // The card prints labels; d.stations itself is untouched and is what
+        // gets posted back if this dashboard is edited.
+        const scope = (d.stations && d.stations.length)
+            ? d.stations.map(stationLabel).join(', ')
+            : 'Whole plant';
         grid.appendChild(card({
             name: d.name, kindText: kindLabel(d.kind), meta: scope + (d.enabled ? '' : ' · disabled'),
             open: '/wall-display/' + d.id, fullscreen: '/wall-display/' + d.id + '?kiosk=1',
@@ -120,21 +141,39 @@ function openModal(d) {
         el('span', { className: 'muted' }, 'Loading stations…'));
     apiGet('/api/stations').then((list) => renderPicker(list || [])).catch(() => renderPicker([]));
 
+    // WHAT GOES IN `selected` IS THE ID, ALWAYS. This Set is posted verbatim as
+    // `stations` and stored in dashboards.stations_json, and the board filter
+    // matches orders.station_id EXACTLY — so a display name in here scopes the
+    // board to nothing, silently, and does it by writing a mutable label into a
+    // data column. The label is rendered beside the checkbox and never read
+    // back.
     function renderPicker(available) {
         pickerBox.innerHTML = '';
-        const all = available.slice();
-        selected.forEach((s) => { if (all.indexOf(s) === -1) all.push(s); });
-        all.sort();
+        const labels = {};
+        const knownIDs = [];
+        (available || []).forEach((s) => {
+            const id = typeof s === 'string' ? s : s.id;
+            if (!id) return;
+            labels[id] = typeof s === 'string' ? s : (s.label || s.id);
+            knownIDs.push(id);
+        });
+
+        // Ids already saved on this dashboard but absent from the live list stay
+        // visible so a stale scope can be unchecked rather than lingering.
+        const all = knownIDs.slice();
+        selected.forEach((id) => { if (all.indexOf(id) === -1) all.push(id); });
+        all.sort((a, b) => (labels[a] || a).localeCompare(labels[b] || b));
+
         if (!all.length) {
             pickerBox.appendChild(el('span', { className: 'muted' }, 'No stations seen yet — leave empty for whole plant.'));
             return;
         }
-        all.forEach((s) => {
+        all.forEach((id) => {
             const cb = el('input', { type: 'checkbox' });
-            cb.checked = selected.has(s);
-            cb.addEventListener('change', () => { if (cb.checked) selected.add(s); else selected.delete(s); });
-            const parts = [cb, ' ' + s];
-            if (available.indexOf(s) === -1) parts.push(el('span', { className: 'muted' }, ' — not a known station; uncheck to drop'));
+            cb.checked = selected.has(id);
+            cb.addEventListener('change', () => { if (cb.checked) selected.add(id); else selected.delete(id); });
+            const parts = [cb, ' ' + (labels[id] || id)];
+            if (knownIDs.indexOf(id) === -1) parts.push(el('span', { className: 'muted' }, ' — not a known station; uncheck to drop'));
             pickerBox.appendChild(el('label', { style: { display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.15rem 0', fontWeight: '400' } }, parts));
         });
     }
