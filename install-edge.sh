@@ -314,11 +314,21 @@ echo "==> Building binary..."
 # Stamp the build. Edge's version is not merely a log line: it is what the
 # heartbeat reports and what Core persists in edge_registry.version, and until
 # 2026-07-25 the value was a hardcoded "dev" in main.go — so that column said
-# "dev" for every edge in every plant. Degrades to dev/unknown rather than
-# failing when git is unreadable (installer runs under sudo; a repo owned by
-# another user trips "dubious ownership").
-BUILD_VERSION=$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)
-BUILD_COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+# "dev" for every edge in every plant.
+#
+# THE 2026-07-25 FIX WAS INCOMPLETE, and this side is the one that writes to a
+# database. The installer runs under sudo while $REPO_ROOT is owned by the
+# login user, so git refuses it as "dubiously owned", both commands fall
+# through to their defaults, and edge_registry.version goes on saying "dev" —
+# the exact column the fix existed to populate. Springfield's core showed the
+# same shape on 2026-07-29 (version=dev, commit=unknown).
+#
+# -c safe.directory scopes the exemption to THIS repo for THIS invocation,
+# rather than mutating root's global git config on a plant box as an install
+# side effect.
+GIT_STAMP=(git -c "safe.directory=$REPO_ROOT" -C "$REPO_ROOT")
+BUILD_VERSION=$("${GIT_STAMP[@]}" describe --tags --always --dirty 2>/dev/null || echo dev)
+BUILD_COMMIT=$("${GIT_STAMP[@]}" rev-parse --short HEAD 2>/dev/null || echo unknown)
 echo "    stamping version=${BUILD_VERSION} commit=${BUILD_COMMIT}"
 (cd "$REPO_ROOT/shingo-edge" && "$GO_BIN" build \
     -ldflags "-s -w -X main.Version=${BUILD_VERSION} -X main.Commit=${BUILD_COMMIT}" \

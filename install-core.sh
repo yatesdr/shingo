@@ -299,12 +299,23 @@ fi
 echo "==> Building binary..."
 # Stamp the build. This build had no -ldflags at all until 2026-07-25, so the
 # plant binary reported "shingocore dev" and the boot markers in the journal
-# had no join key to a commit. If git can't be read here (installer runs under
-# sudo; a repo owned by another user trips "dubious ownership") the stamp
-# degrades to "dev" and says so in the echo below rather than failing the
-# install.
-BUILD_VERSION=$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)
-BUILD_COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+# had no join key to a commit.
+#
+# AND THE -ldflags ALONE WERE NOT ENOUGH. The degradation this comment used to
+# merely warn about is what Springfield actually shipped: on 2026-07-29 its
+# core reported version=dev commit=unknown, so /api/core/health could not say
+# which commit was running and the deployed SHA had to be read off the box's
+# checkout by hand. The installer runs under sudo, $REPO_ROOT is owned by the
+# login user, and git refuses a repo it considers "dubiously owned" — so both
+# commands below failed and both fell through to their defaults, silently,
+# because the || is doing exactly what it was written to do.
+#
+# -c safe.directory scopes the exemption to THIS repo for THIS invocation. Not
+# `git config --global`, which would mutate root's config on a plant box as a
+# side effect of an install, and not `--system`, same reason.
+GIT_STAMP=(git -c "safe.directory=$REPO_ROOT" -C "$REPO_ROOT")
+BUILD_VERSION=$("${GIT_STAMP[@]}" describe --tags --always --dirty 2>/dev/null || echo dev)
+BUILD_COMMIT=$("${GIT_STAMP[@]}" rev-parse --short HEAD 2>/dev/null || echo unknown)
 echo "    stamping version=${BUILD_VERSION} commit=${BUILD_COMMIT}"
 (cd "$REPO_ROOT/shingo-core" && "$GO_BIN" build \
     -ldflags "-s -w -X main.Version=${BUILD_VERSION} -X main.Commit=${BUILD_COMMIT}" \
