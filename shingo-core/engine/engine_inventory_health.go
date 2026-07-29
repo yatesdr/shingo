@@ -168,6 +168,13 @@ func (e *Engine) DeltaIntegrityByPayload(since time.Time) ([]domain.DeltaIntegri
 	return e.db.DeltaIntegrityByPayload(since)
 }
 
+// DeltaIntegrityDaily reports the same drops bucketed by plant-local day. The
+// "when" axis: the per-payload split cannot distinguish an incident from a
+// trend, and at Springfield the difference was 76% of a month in one day.
+func (e *Engine) DeltaIntegrityDaily(since time.Time, tz string) ([]domain.DeltaDay, error) {
+	return e.db.DeltaIntegrityDaily(since, tz)
+}
+
 // CarrierBindings lists every carrier, the payload ShinGo believes it holds and
 // when that belief last started. The read behind 5.11's stale-binding candidates
 // (/material-flags), and it selects nothing — the candidate rule is a pure

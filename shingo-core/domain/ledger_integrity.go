@@ -61,6 +61,42 @@ type DeltaIntegrity struct {
 	LastAt  *time.Time `json:"last_at,omitempty"`
 }
 
+// DeltaDay is one plant-day of dropped deltas: the net effect on the ledger,
+// and how it was arrived at.
+//
+// WHY A DAILY SERIES AND NOT A WINDOW TOTAL. The drops are EPISODIC, not a
+// rate. Springfield, 30 days to 2026-07-29: nine days with any drops at all,
+// and 2026-07-21 alone carries -27,011 of the -35,432 total — 76% of it, from
+// 2,875 rows averaging ~9.4 UoP each against roughly 1 on every other day.
+// That day is the already-root-caused zero-system-stock cascade. A single
+// 7-day total renders that spike and a quiet Tuesday as one number, which is
+// the reading that makes an incident look like a trend and a trend look like
+// an incident.
+//
+// SIGN. NetDelta is the sum of the dropped deltas themselves, so it is
+// NEGATIVE when consumption failed to land (the count reads HIGH) and POSITIVE
+// when credit failed to land (the count reads LOW). It is not an absolute
+// value: the direction is the finding, and flattening it is how a panel ends
+// up asserting that dropped consumes explain a negative ledger.
+type DeltaDay struct {
+	// Day is midnight local plant time. Local, not UTC, because a shift is the
+	// unit a reader is comparing against and a UTC day splits one in two.
+	Day time.Time `json:"day"`
+	// NetDelta is the signed sum. See the sign note above.
+	NetDelta int `json:"net_delta"`
+	// DropRows is how many deltas were dropped that day.
+	DropRows int `json:"drop_rows"`
+	// StaleEpochRows / PayloadMismatchRows split DropRows by cause. The mix
+	// moves: Springfield's 07-20 was 953 mismatch against 12 stale, its 07-23
+	// was 2,414 stale against 328 mismatch. One number cannot show that.
+	StaleEpochRows      int `json:"stale_epoch_rows"`
+	PayloadMismatchRows int `json:"payload_mismatch_rows"`
+	// Payloads / Bins is how wide the day's damage was. One payload at 438 rows
+	// is a different event from seven payloads at 60 each.
+	Payloads int `json:"payloads"`
+	Bins     int `json:"bins"`
+}
+
 type NegativeExcursion struct {
 	BinID       int64  `json:"bin_id"`
 	PayloadCode string `json:"payload_code"`

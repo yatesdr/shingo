@@ -102,6 +102,9 @@ type ServiceAccess interface {
 	// list: how much count was dropped per payload, against that payload's
 	// current ledger total. Also read-side only.
 	DeltaIntegrityByPayload(since time.Time) ([]domain.DeltaIntegrity, error)
+	// DeltaIntegrityDaily is the same population on the time axis, bucketed by
+	// plant-local day. Rides the same request as the panel above.
+	DeltaIntegrityDaily(since time.Time, tz string) ([]domain.DeltaDay, error)
 	// CarrierBindings is 5.11's ledger half: every carrier, the payload ShinGo
 	// believes it holds, and when that belief last started. Unfiltered — the
 	// candidate rule is a pure function in this package.

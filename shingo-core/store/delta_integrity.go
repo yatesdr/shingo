@@ -126,6 +126,51 @@ func deltaIntegrityByPayload(db *sql.DB, since time.Time) ([]domain.DeltaIntegri
 	return out, nil
 }
 
+// deltaIntegrityDaily buckets dropped deltas by PLANT-LOCAL day.
+//
+// The per-payload panel answers "which parts", this answers "when", and the
+// second question is the one a 7-day total cannot answer at all. See
+// domain.DeltaDay for the measured reason: at Springfield one day carried 76%
+// of a month's net effect, and the stale-epoch / payload-mismatch mix inverted
+// between two consecutive days.
+//
+// tz is an IANA name, bucketed in SQL for the same reason opDayCounts does it
+// there — a shift is the comparison unit and a UTC day cuts one in half. Days
+// with no drops are omitted rather than zero-filled: the gaps are weekends and
+// the plant being down, and drawing them as measured zeroes would assert a
+// quiet day where there was no day.
+func deltaIntegrityDaily(db *sql.DB, since time.Time, tz string) ([]domain.DeltaDay, error) {
+	rows, err := db.Query(`
+		SELECT (applied_at AT TIME ZONE $4)::date                                  AS day,
+		       COALESCE(SUM(COALESCE((metadata->>'delta')::INTEGER, 0)), 0)::INTEGER AS net_delta,
+		       COUNT(*)::INTEGER                                                   AS drop_rows,
+		       COUNT(*) FILTER (WHERE op = $1)::INTEGER                            AS stale_epoch_rows,
+		       COUNT(*) FILTER (WHERE op = $2)::INTEGER                            AS payload_mismatch_rows,
+		       COUNT(DISTINCT payload_code)::INTEGER                               AS payloads,
+		       COUNT(DISTINCT bin_id)::INTEGER                                     AS bins
+		  FROM bin_uop_audit
+		 WHERE op IN ($1, $2)
+		   AND applied_at >= $3
+		 GROUP BY 1
+		 ORDER BY 1`,
+		audit.OpStaleEpochDropped, audit.OpPayloadMismatchDropped, since.UTC(), tz)
+	if err != nil {
+		return nil, fmt.Errorf("delta integrity daily: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.DeltaDay
+	for rows.Next() {
+		var d domain.DeltaDay
+		if err := rows.Scan(&d.Day, &d.NetDelta, &d.DropRows,
+			&d.StaleEpochRows, &d.PayloadMismatchRows, &d.Payloads, &d.Bins); err != nil {
+			return nil, fmt.Errorf("scan delta day: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // payloadLedgerTotals is every payload's plant-wide in-loop bin total,
 // including the non-negative ones — deltaIntegrityByPayload needs the total
 // whatever its sign, because "drops happened and the ledger is FINE" is also
@@ -158,4 +203,11 @@ func payloadLedgerTotals(db *sql.DB) (map[string]int, error) {
 // sits next to the ledger-exception list.
 func (db *DB) DeltaIntegrityByPayload(since time.Time) ([]domain.DeltaIntegrity, error) {
 	return deltaIntegrityByPayload(db.DB, since)
+}
+
+// DeltaIntegrityDaily reports dropped deltas bucketed by plant-local day since
+// `since` — the "when" axis for the same population DeltaIntegrityByPayload
+// splits by part.
+func (db *DB) DeltaIntegrityDaily(since time.Time, tz string) ([]domain.DeltaDay, error) {
+	return deltaIntegrityDaily(db.DB, since, tz)
 }

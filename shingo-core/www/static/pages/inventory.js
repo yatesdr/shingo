@@ -428,9 +428,70 @@ function renderDeltaIntegrity() {
     + totalDrops + ' delta' + (totalDrops === 1 ? '' : 's')
     + ' dropped across ' + shown.length + ' payload' + (shown.length === 1 ? '' : 's')
     + '</div>'
-    + '<div class="delta-integrity__why">Set against the ledger total beside it: a payload reading '
-    + 'negative by about what it dropped has found its cause.</div>'
+    // WHY THIS NO LONGER CLAIMS A CAUSE. It used to read "a payload reading
+    // negative by about what it dropped has found its cause", which reads a
+    // NEGATIVE ledger off drops that may point either way. Dropped consumes
+    // leave the count reading HIGH; only dropped credits leave it reading low.
+    // Springfield has 12,514 dropped consumes and has never recorded a single
+    // dropped credit, so every row here reads "above reality" while the
+    // ledgers beside them read negative — opposite directions, and the old
+    // sentence invited closing one finding with the other's evidence. Same
+    // failure family as I2, refuted on sign.
+    + '<div class="delta-integrity__why">Direction is the reading: <b>above</b> means '
+    + 'consumption never landed and the count is too high; <b>below</b> means credit never '
+    + 'landed. Only <b>below</b> can explain a negative ledger beside it — a payload that '
+    + 'reads above while its ledger reads negative has two separate problems, not one.</div>'
+    + renderDeltaDaily()
     + '<ul class="delta-integrity__list">' + items + '</ul></div>';
+}
+
+// renderDeltaDaily draws the drop trend as one bar per plant-local day.
+//
+// A DAILY SERIES, NOT A WINDOW TOTAL, because the population is episodic and a
+// total cannot say so. Bars are scaled against the largest ABSOLUTE net in the
+// window, so a single incident day does not flatten every ordinary day to
+// nothing while still being visibly the outlier.
+//
+// Gaps are left as gaps. Days with no drops are not in the data and are not
+// drawn as zero-height bars: at Springfield those days are weekends and the
+// plant being down, and a zero bar would assert a measured quiet day where
+// there was no production at all. Absence is not zero — the number doctrine's
+// rule 4, at the one place on this panel it can bite.
+function renderDeltaDaily() {
+  const days = (ledgerExceptions && ledgerExceptions.delta_daily) || [];
+  if (!days.length) return '';
+
+  const peak = days.reduce((m, d) => Math.max(m, Math.abs(d.net_delta)), 0);
+  if (!peak) return '';
+
+  const bars = days.map((d) => {
+    const pct = Math.max(2, Math.round((Math.abs(d.net_delta) / peak) * 100));
+    // Sign drives the class, not the magnitude: the two directions are
+    // different findings and must not share a colour.
+    const dir = d.net_delta < 0 ? 'dd-bar--above' : 'dd-bar--below';
+    const causes = [];
+    if (d.stale_epoch_rows) causes.push(d.stale_epoch_rows + ' stale epoch');
+    if (d.payload_mismatch_rows) causes.push(d.payload_mismatch_rows + ' payload mismatch');
+    const tip = d.day.slice(0, 10) + ': net ' + d.net_delta + ' UoP across '
+      + d.drop_rows + ' dropped delta' + (d.drop_rows === 1 ? '' : 's')
+      + (causes.length ? ' (' + causes.join(', ') + ')' : '')
+      + ' · ' + d.payloads + ' payload' + (d.payloads === 1 ? '' : 's')
+      + ', ' + d.bins + ' bin' + (d.bins === 1 ? '' : 's');
+    return '<span class="dd-bar ' + dir + '" style="height:' + pct + '%" '
+      + 'title="' + escapeHtml(tip) + '"></span>';
+  }).join('');
+
+  const net = days.reduce((n, d) => n + d.net_delta, 0);
+  const first = days[0].day.slice(0, 10);
+  const last = days[days.length - 1].day.slice(0, 10);
+  return '<div class="delta-daily">'
+    + '<div class="delta-daily__head">'
+    + '<span class="cs-lbl">Daily net</span> '
+    + '<span class="dd-net">' + net + ' UoP</span> '
+    + '<span class="text-muted-xs">' + days.length + ' day'
+    + (days.length === 1 ? '' : 's') + ' with drops · ' + first + ' → ' + last + '</span>'
+    + '</div>'
+    + '<div class="delta-daily__chart">' + bars + '</div></div>';
 }
 
 function chipsHtml(r) {

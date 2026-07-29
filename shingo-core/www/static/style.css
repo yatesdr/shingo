@@ -1946,6 +1946,37 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
    exists for, so it reads as a peer of the number before it, not an aside. */
 .di-ledger { color: var(--danger); font-variant-numeric: tabular-nums; }
 
+/* ── Daily drop trend ──────────────────────────────────────────────────────
+ * One bar per plant-local day WITH DROPS. Days with none are absent from the
+ * data and absent here: a zero-height bar would assert a measured quiet day
+ * where the plant was simply down, which is rule 4 of the number doctrine
+ * (no data must not render as zero) at the one spot on this panel it bites.
+ *
+ * The bar is a magnitude and the tooltip carries the signed number, the row
+ * count and the cause split — colour distinguishes the two DIRECTIONS but is
+ * never the only carrier of the reading. Heights scale to the window's peak,
+ * because the finding this exists to show is that one day can carry most of a
+ * month, and a fixed scale hides exactly that. */
+.delta-daily { margin: 0.5rem 0 0.6rem; }
+.delta-daily__head {
+  display: flex; align-items: baseline; gap: 0.4rem;
+  font-size: 0.78rem; margin-bottom: 0.25rem;
+}
+.dd-net { color: var(--viz-amber); font-variant-numeric: tabular-nums; font-weight: 600; }
+.delta-daily__chart {
+  display: flex; align-items: flex-end; gap: 2px;
+  height: 34px;
+}
+.dd-bar {
+  flex: 1 1 0; min-width: 3px; border-radius: 1px 1px 0 0;
+  background: var(--viz-amber);
+}
+/* Above reality (consumption never landed) is the common Springfield shape;
+   below reality (credit never landed) is the one that can explain a negative
+   ledger. Two findings, two marks — see the panel's __why copy. */
+.dd-bar--above { background: var(--viz-amber); }
+.dd-bar--below { background: var(--danger); }
+
 /* ── Demand episodes (Phase 6: 5.1, 5.4, 5.5, 5.6, 5.14) ──────────────────
  *
  * NO COLOUR LITERALS. Every value here is a token. Where a token this surface

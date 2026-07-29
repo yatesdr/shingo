@@ -12,6 +12,18 @@ import (
 	"shingocore/domain"
 )
 
+// deltaDailyDays is how far back the daily drop trend reaches.
+//
+// Wider than the per-payload panel's 7 days on purpose. The drops are
+// episodic: Springfield's 30 days to 2026-07-29 had drops on nine of them and
+// one day carrying 76% of the net. At 7 days that spike has nothing to be a
+// spike ABOVE, and a reader cannot tell an incident from the new normal —
+// which is the exact judgement this trend exists to support.
+//
+// Not a sim-derived constant: it is a window, not a threshold. Nothing is
+// classified by it and no verdict turns on it.
+const deltaDailyDays = 30
+
 // InventoryInvariant is the Item 13 plant-wide running totals shape.
 // BinSum is signed because the SME lock allows bins to go negative
 // (overpack/underpack); over time the signed sum drifts in either
@@ -134,6 +146,19 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// The time axis for the same drops. Deliberately a WIDER window than the
+	// panel above: a trend needs enough days to have a shape, and 7 of them at
+	// Springfield showed one spike and nothing to compare it against.
+	dailySince := clock.Now().UTC().AddDate(0, 0, -deltaDailyDays)
+	if dailySince.After(since) {
+		dailySince = since
+	}
+	deltaDaily, err := h.engine.DeltaIntegrityDaily(dailySince, plantLocation.String())
+	if err != nil {
+		h.jsonError(w, "delta integrity daily: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	if openBins == nil {
 		openBins = []domain.OpenNegativeBin{}
 	}
@@ -143,12 +168,17 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 	if deltaIntegrity == nil {
 		deltaIntegrity = []domain.DeltaIntegrity{}
 	}
+	if deltaDaily == nil {
+		deltaDaily = []domain.DeltaDay{}
+	}
 	h.jsonOK(w, map[string]any{
 		"since":             since,
 		"open_bins":         openBins,
 		"negative_payloads": payloads,
 		"excursions":        excursions,
 		"delta_integrity":   deltaIntegrity,
+		"delta_daily":       deltaDaily,
+		"delta_daily_since": dailySince,
 	})
 }
 
