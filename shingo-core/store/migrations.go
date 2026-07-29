@@ -685,6 +685,31 @@ func (db *DB) runVersionedMigrations() error {
 		{61, "orders.orphan_aged_at (aging is a timestamp, not a fourth origin_class)",
 			v61OrphanAgedAt,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "orphan_aged_at") }},
+		// THE DRAWN NETWORK BECOMES THE DRIVEN NETWORK. A scene edge is a lane
+		// the fleet actually drives, and SEER states its shape with two
+		// cubic-Bezier handles that shingo discarded at decode. The map drew
+		// the chord instead, which at Springfield puts the painted lane up to
+		// 1.30 m from the real one (LM10-LM113, a 7.17 m aisle), so robots
+		// visibly leave the network as painted, and the route lengths derived
+		// from those segments run up to 24% short.
+		//
+		// FOUR NULLABLE COLUMNS, NOT FOUR ZEROED ONES. The origin is a real
+		// coordinate on a plant map; a straight aisle whose handles defaulted
+		// to (0,0) would render sweeping tens of metres across the floor. NULL
+		// is the only value that means "this lane has no bend", and it must be
+		// distinguishable from a bend that happens to pass near (0,0).
+		//
+		// SINGLE-HOMED HERE, NOT IN THE BASELINE — B9. Nothing indexes these,
+		// so they carry none of the claim orders.origin_id has, and an ALTER
+		// runs identically on the fresh and aged convergence paths.
+		//
+		// No backfill. Scene sync deletes and re-inserts every area on each
+		// pass, so the handles arrive on the first sync after deploy. Until
+		// then every row reads NULL, which renders as today's straight line —
+		// the pre-migration behaviour exactly, not a wrong bend.
+		{62, "scene_edges control handles (draw the lane the robot drives)",
+			v62SceneEdgeControlHandles,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "scene_edges", "ctrl2_y") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2580,6 +2605,24 @@ func v61OrphanAgedAt(tx *sql.Tx) error {
 		       orphan_aged_at = COALESCE(orphan_aged_at, NOW())
 		 WHERE origin_class = 'orphan_aged'`); err != nil {
 		return fmt.Errorf("convert orphan_aged orders back to orphan: %w", err)
+	}
+	return nil
+}
+
+// v62SceneEdgeControlHandles adds the cubic-Bezier control handles to
+// scene_edges.
+//
+// The verify checks ctrl2_y — the LAST column this adds, for the reason v59
+// records: everything here runs in one transaction so a partial apply is not
+// reachable, but a post-condition that passes while the tail is missing would
+// be a self-heal that never heals, and which end it checks costs nothing to
+// get right.
+func v62SceneEdgeControlHandles(tx *sql.Tx) error {
+	for _, col := range []string{"ctrl1_x", "ctrl1_y", "ctrl2_x", "ctrl2_y"} {
+		if _, err := tx.Exec(
+			`ALTER TABLE scene_edges ADD COLUMN IF NOT EXISTS ` + col + ` DOUBLE PRECISION`); err != nil {
+			return fmt.Errorf("add scene_edges.%s: %w", col, err)
+		}
 	}
 	return nil
 }

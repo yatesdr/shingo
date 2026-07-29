@@ -103,13 +103,14 @@ func DeleteByArea(db *sql.DB, areaName string) error {
 // (mirroring the scene.Point = domain.ScenePoint alias above).
 type Edge = domain.SceneEdge
 
-const edgeCols = `id, area_name, instance_name, class_name, from_name, to_name, from_x, from_y, to_x, to_y, synced_at`
+const edgeCols = `id, area_name, instance_name, class_name, from_name, to_name, from_x, from_y, to_x, to_y, ctrl1_x, ctrl1_y, ctrl2_x, ctrl2_y, synced_at`
 
 func scanEdge(row interface{ Scan(...any) error }) (*Edge, error) {
 	var se Edge
 	err := row.Scan(&se.ID, &se.AreaName, &se.InstanceName, &se.ClassName,
 		&se.FromName, &se.ToName,
 		&se.FromX, &se.FromY, &se.ToX, &se.ToY,
+		&se.Ctrl1X, &se.Ctrl1Y, &se.Ctrl2X, &se.Ctrl2Y,
 		&se.SyncedAt)
 	if err != nil {
 		return nil, err
@@ -118,17 +119,28 @@ func scanEdge(row interface{ Scan(...any) error }) (*Edge, error) {
 }
 
 // UpsertEdge inserts or updates a scene edge keyed by (area_name, instance_name).
+//
+// The control-handle columns are in the UPDATE clause as well as the INSERT,
+// and that half is load bearing rather than symmetry: a scene edit that
+// straightens a lane must NULL the handles that are already stored, or the
+// map keeps drawing the bend after the floor has lost it. Scene sync deletes
+// an area before re-inserting it, so the UPDATE branch only runs when two
+// areas share an instance name — rare, and exactly the case where a stale
+// handle would survive unnoticed.
 func UpsertEdge(db *sql.DB, se *Edge) error {
-	_, err := db.Exec(`INSERT INTO scene_edges (area_name, instance_name, class_name, from_name, to_name, from_x, from_y, to_x, to_y, synced_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+	_, err := db.Exec(`INSERT INTO scene_edges (area_name, instance_name, class_name, from_name, to_name, from_x, from_y, to_x, to_y, ctrl1_x, ctrl1_y, ctrl2_x, ctrl2_y, synced_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
 		ON CONFLICT (area_name, instance_name) DO UPDATE SET
 			class_name=EXCLUDED.class_name, from_name=EXCLUDED.from_name,
 			to_name=EXCLUDED.to_name,
 			from_x=EXCLUDED.from_x, from_y=EXCLUDED.from_y,
 			to_x=EXCLUDED.to_x, to_y=EXCLUDED.to_y,
+			ctrl1_x=EXCLUDED.ctrl1_x, ctrl1_y=EXCLUDED.ctrl1_y,
+			ctrl2_x=EXCLUDED.ctrl2_x, ctrl2_y=EXCLUDED.ctrl2_y,
 			synced_at=EXCLUDED.synced_at`,
 		se.AreaName, se.InstanceName, se.ClassName, se.FromName, se.ToName,
-		se.FromX, se.FromY, se.ToX, se.ToY)
+		se.FromX, se.FromY, se.ToX, se.ToY,
+		se.Ctrl1X, se.Ctrl1Y, se.Ctrl2X, se.Ctrl2Y)
 	return err
 }
 

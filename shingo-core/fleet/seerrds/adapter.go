@@ -274,7 +274,7 @@ func (a *Adapter) GetSceneAreas() ([]fleet.SceneArea, error) {
 			if c.StartPos.InstanceName == "" && c.EndPos.InstanceName == "" {
 				continue
 			}
-			fa.Edges = append(fa.Edges, fleet.SceneEdge{
+			e := fleet.SceneEdge{
 				ClassName:    c.ClassName,
 				InstanceName: c.InstanceName,
 				FromName:     c.StartPos.InstanceName,
@@ -283,7 +283,16 @@ func (a *Adapter) GetSceneAreas() ([]fleet.SceneArea, error) {
 				FromY:        c.StartPos.Pos.Y,
 				ToX:          c.EndPos.Pos.X,
 				ToY:          c.EndPos.Pos.Y,
-			})
+			}
+			// The shape between the endpoints, when the scene states one.
+			// ControlPoints already rejects the all-zero pair SEER writes on
+			// straight segments, so a nil here means "the fleet drives this
+			// straight", never "we lost it".
+			if c1, c2, ok := c.ControlPoints(); ok {
+				e.Ctrl1 = &fleet.ScenePos{X: c1.X, Y: c1.Y}
+				e.Ctrl2 = &fleet.ScenePos{X: c2.X, Y: c2.Y}
+			}
+			fa.Edges = append(fa.Edges, e)
 		}
 		areas[i] = fa
 	}

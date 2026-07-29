@@ -109,6 +109,19 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea) (int, map[str
 				ToX:          ed.ToX,
 				ToY:          ed.ToY,
 			}
+			// Both handles or neither. A half-written pair is three of the
+			// four numbers a cubic needs, and the renderer would have to
+			// invent the fourth.
+			//
+			// Copied out rather than pointed at: &ed.Ctrl1.X would alias the
+			// caller's fleet payload into a row we are about to persist, so
+			// anything that reused that slice would silently move an aisle.
+			if ed.Ctrl1 != nil && ed.Ctrl2 != nil {
+				c1x, c1y := ed.Ctrl1.X, ed.Ctrl1.Y
+				c2x, c2y := ed.Ctrl2.X, ed.Ctrl2.Y
+				se.Ctrl1X, se.Ctrl1Y = &c1x, &c1y
+				se.Ctrl2X, se.Ctrl2Y = &c2x, &c2y
+			}
 			if err := db.UpsertSceneEdge(se); err != nil {
 				log("scenesync: upsert edge %s: %v", ed.InstanceName, err)
 			}

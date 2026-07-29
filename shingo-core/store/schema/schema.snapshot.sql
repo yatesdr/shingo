@@ -858,7 +858,11 @@ CREATE TABLE public.scene_edges (
     from_y double precision DEFAULT 0 NOT NULL,
     to_x double precision DEFAULT 0 NOT NULL,
     to_y double precision DEFAULT 0 NOT NULL,
-    synced_at timestamp with time zone DEFAULT now() NOT NULL
+    synced_at timestamp with time zone DEFAULT now() NOT NULL,
+    ctrl1_x double precision,
+    ctrl1_y double precision,
+    ctrl2_x double precision,
+    ctrl2_y double precision
 );
 
 CREATE SEQUENCE public.scene_edges_id_seq

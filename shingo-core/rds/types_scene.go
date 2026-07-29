@@ -53,15 +53,53 @@ type CurveEnd struct {
 
 // AdvancedCurve is a drivable path segment between two advanced points
 // (className e.g. "StraightPath", "BezierPath", "DegenerateBezier"; the
-// instance name is conventionally "<from>-<to>"). Control points and
-// vendor properties beyond the endpoints are not modeled — shingo only
-// needs the connectivity and endpoint coordinates.
+// instance name is conventionally "<from>-<to>").
+//
+// ControlPos1/ControlPos2 are the segment's two cubic-Bezier control handles,
+// in the start→end direction. SEER writes them as TOP-LEVEL siblings of
+// startPos/endPos, NOT inside Property — Property carries exactly one key
+// across all 377 of Springfield's curves (bindRobotMap) and no geometry
+// whatsoever. Some segments omit the two keys entirely, so they are pointers:
+// absent stays absent instead of collapsing into a coordinate at the origin.
+//
+// Vendor properties beyond the endpoints and these handles are still not
+// modeled. shingo needs the connectivity, the endpoint coordinates, and the
+// shape the robot actually drives between them.
 type AdvancedCurve struct {
 	ClassName    string          `json:"className"`
 	InstanceName string          `json:"instanceName"`
 	StartPos     CurveEnd        `json:"startPos"`
 	EndPos       CurveEnd        `json:"endPos"`
+	ControlPos1  *Pos3D          `json:"controlPos1,omitempty"`
+	ControlPos2  *Pos3D          `json:"controlPos2,omitempty"`
 	Property     []SceneProperty `json:"property,omitempty"`
+}
+
+// ControlPoints returns the curve's two cubic-Bezier handles and whether they
+// describe real geometry.
+//
+// ABSENT IS NOT THE ONLY WAY THE SCENE SAYS "NO HANDLES". Of Springfield's 111
+// StraightPath segments, 57 omit the keys and the other 54 carry {0,0,0}
+// twice — one meaning, two encodings. The origin is a real coordinate on a
+// SEER map (Springfield has scene points within a metre of it), so an all-zero
+// pair cannot be read as geometry: honouring it drags a straight aisle through
+// (0,0), which on LM197-LM137 is 52 m of error on a 1.4 m segment. The
+// all-zero pair is the vendor's sentinel and reads here as absent.
+//
+// The sentinel test is deliberately asymmetric — EITHER handle being all-zero
+// disqualifies the pair, not both. A one-zero-one-real pair has never appeared
+// in a plant scene, and the two ways of being wrong about it are not the same
+// size: mistaking a real handle for a sentinel costs sub-metre accuracy on a
+// single segment, while mistaking a sentinel for a real handle is the 52 m bug
+// this function exists to prevent.
+func (c AdvancedCurve) ControlPoints() (Pos3D, Pos3D, bool) {
+	if c.ControlPos1 == nil || c.ControlPos2 == nil {
+		return Pos3D{}, Pos3D{}, false
+	}
+	if *c.ControlPos1 == (Pos3D{}) || *c.ControlPos2 == (Pos3D{}) {
+		return Pos3D{}, Pos3D{}, false
+	}
+	return *c.ControlPos1, *c.ControlPos2, true
 }
 
 type BinLocation struct {

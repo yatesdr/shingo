@@ -193,6 +193,11 @@ type SceneArea struct {
 // points (SEER "advanced curves"). Endpoints carry both the point instance
 // name and raw coordinates so consumers can use the segment even when an
 // endpoint wasn't synced as a point.
+//
+// Ctrl1/Ctrl2 are the segment's cubic-Bezier control handles in the From→To
+// direction, nil on a segment the fleet drives straight. A curved segment
+// whose handles are dropped is drawn as its chord, which at Springfield puts
+// the painted lane up to 1.30 m from the one the robot drives.
 type SceneEdge struct {
 	ClassName    string
 	InstanceName string
@@ -202,6 +207,16 @@ type SceneEdge struct {
 	FromY        float64
 	ToX          float64
 	ToY          float64
+	Ctrl1        *ScenePos
+	Ctrl2        *ScenePos
+}
+
+// ScenePos is a plane coordinate in scene/world units. Only x and y are
+// carried: every control handle in every plant scene has z = 0, and the map
+// is a plan view that has nowhere to put a third axis.
+type ScenePos struct {
+	X float64
+	Y float64
 }
 
 // ScenePoint is a vendor-neutral point in the fleet scene.

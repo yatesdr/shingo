@@ -26,6 +26,23 @@
 // along it. Nothing is derived from point proximity (a derived graph invented
 // links through walls); with no synced edges the network is simply empty and
 // routes fall back to a straight robot→destination hint line.
+//
+// A curved segment is DRAWN CURVED and WEIGHED CURVED. SEER states each
+// segment's shape with two cubic-Bezier handles, which arrive as
+// ctrl1_x/ctrl1_y/ctrl2_x/ctrl2_y; the map used to drop them and draw the
+// chord, which at Springfield paints a lane up to 1.30 m from the one the
+// robot drives (LM10-LM113, off a 7.17 m chord), so the fleet visibly leaves
+// the network as painted. The same handles fix the Dijkstra weight, which on
+// a chord runs up to 24% short of the distance actually driven.
+//
+// THE DECISION IS THE HANDLES, NOT THE CLASS NAME. className says
+// "DegenerateBezier" on 264 of Springfield's 377 segments; 171 of those sit
+// within a centimetre of their chord (a cubic spelling a straight line), 93
+// bow further, and 58 bow more than 10 cm. The scene holds exactly TWO
+// BezierPaths, both at 0.17 m. Meanwhile "StraightPath" segments carry no
+// handles at all, or an all-zero pair Core rejects before this file sees it.
+// Every class name in the scene therefore covers both shapes, and only the
+// geometry says which one a given lane is.
 
 import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
@@ -708,21 +725,31 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       }
       return byKey[k];
     }
-    function addEdge(a, b, w) {
+    function addEdge(a, b, w, c) {
       tadj[a] = tadj[a] || [];
-      if (!tadj[a].some(function (e) { return e.n === b; })) tadj[a].push({ n: b, w: w });
+      if (!tadj[a].some(function (e) { return e.n === b; })) tadj[a].push({ n: b, w: w, c: c || null });
     }
     sceneEdges.forEach(function (e) {
       if (!isFinite(e.from_x) || !isFinite(e.from_y) || !isFinite(e.to_x) || !isFinite(e.to_y)) return;
       var a = vertex(e.from_name, e.from_x, e.from_y);
       var b = vertex(e.to_name, e.to_x, e.to_y);
       if (a === b) return;
-      var w = Math.sqrt(dist2(tnodes[a], tnodes[b]));
+      // The handles, when the scene states a shape. All four or none: three
+      // coordinates describe no cubic. Core already rejects SEER's all-zero
+      // "no handles" pair, so a real coordinate here is real geometry.
+      var c = null;
+      if (isCoord(e.ctrl1_x) && isCoord(e.ctrl1_y) && isCoord(e.ctrl2_x) && isCoord(e.ctrl2_y)) {
+        c = [e.ctrl1_x, e.ctrl1_y, e.ctrl2_x, e.ctrl2_y];
+      }
+      var w = c ? cubicLength(tnodes[a], c, tnodes[b]) : Math.sqrt(dist2(tnodes[a], tnodes[b]));
       if (!(w > 0)) return;
       lens.push(w);
       // Curves are stored directed; for display routing robots drive them
-      // either way, so the graph is undirected.
-      addEdge(a, b, w); addEdge(b, a, w);
+      // either way, so the graph is undirected. The reverse handle order is
+      // swapped with it — the same curve read end-to-start — so whichever
+      // direction the renderer picks up, it draws the shape SEER authored.
+      addEdge(a, b, w, c);
+      addEdge(b, a, w, c && [c[2], c[3], c[0], c[1]]);
     });
     for (var i = 0; i < tnodes.length; i++) if (!tadj[i]) tadj[i] = [];
     lens.sort(function (a, b) { return a - b; });
@@ -730,6 +757,44 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   }
 
   function dist2(p, q) { var dx = p.x - q.x, dy = p.y - q.y; return dx * dx + dy * dy; }
+
+  // isCoord is isFinite plus a type check, and the type check is the point:
+  // isFinite(null) is TRUE because null coerces to 0, and 0 is a real
+  // coordinate on a plant map. A JSON null on one handle would otherwise
+  // become a control point at the origin and sweep the lane across the floor
+  // — the same failure the all-zero sentinel exists to prevent, arriving one
+  // layer later.
+  function isCoord(v) { return typeof v === 'number' && isFinite(v); }
+
+  // CUBIC_SAMPLES is the polyline resolution used to measure a curved segment.
+  // 24 is well past the point where more samples change a Springfield lane
+  // length in the third decimal, and this runs once per edge per graph rebuild,
+  // not per frame.
+  var CUBIC_SAMPLES = 24;
+
+  // cubicPoint evaluates the cubic Bezier p0 → (c[0],c[1]) → (c[2],c[3]) → p3
+  // at t, in world coordinates.
+  function cubicPoint(p0, c, p3, t) {
+    var mt = 1 - t, a = mt * mt * mt, b = 3 * mt * mt * t, d = 3 * mt * t * t, e = t * t * t;
+    return {
+      x: a * p0.x + b * c[0] + d * c[2] + e * p3.x,
+      y: a * p0.y + b * c[1] + d * c[3] + e * p3.y
+    };
+  }
+
+  // cubicLength is the driven distance along a curved segment. The chord is
+  // what the graph used to weigh, and on Springfield's bowed lanes it is up to
+  // 24% short — which makes the shortest path prefer a route the robot does
+  // not actually find shorter.
+  function cubicLength(p0, c, p3) {
+    var total = 0, prev = p0;
+    for (var i = 1; i <= CUBIC_SAMPLES; i++) {
+      var pt = cubicPoint(p0, c, p3, i / CUBIC_SAMPLES);
+      total += Math.sqrt(dist2(prev, pt));
+      prev = pt;
+    }
+    return total;
+  }
 
   function nearestTNode(wx, wy) {
     var best = -1, bd = Infinity, q = { x: wx, y: wy };
@@ -1304,22 +1369,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
     drawBackdrop(svg, unit);
 
-    // travel network edges — faint connective tissue under everything.
-    if (tnodes.length > 1) {
-      var seen = {};
-      for (var a = 0; a < tadj.length; a++) {
-        var edges = tadj[a] || [];
-        for (var e = 0; e < edges.length; e++) {
-          var b = edges[e].n, key = a < b ? a + '_' + b : b + '_' + a;
-          if (seen[key]) continue; seen[key] = true;
-          var pa = proj(tnodes[a].x, tnodes[a].y), pb = proj(tnodes[b].x, tnodes[b].y);
-          svg.appendChild(svgEl('line', {
-            x1: pa[0], y1: pa[1], x2: pb[0], y2: pb[1],
-            class: 'map-aisle', 'stroke-width': nodeR * 0.48
-          }));
-        }
-      }
-    }
+    drawAisles(svg, nodeR);
 
     // ── routes ────────────────────────────────────────────────────────
     // Three honest visual states, so the map shows what's REALLY happening:
@@ -1531,6 +1581,45 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     renderLegend(); // live fleet counts track every robot/order tick
     renderRail();
     rebuildMinimap(); // rebuild static network layer + robot dots + viewport rect
+  }
+
+  // drawAisles paints the travel network — the faint connective tissue under
+  // everything else on the map.
+  //
+  // A segment whose adjacency entry carries handles draws as a cubic <path>;
+  // one without stays a <line>. Both get the same map-aisle class and the same
+  // stroke width, so a bend never reads as a different KIND of lane — only as
+  // the shape the fleet actually drives. <path> needs fill:none explicitly:
+  // SVG's default fill is black, and a filled aisle would blot the floor.
+  //
+  // The dedup keeps the a<b entry, whose handles were stored in the a→b
+  // direction by buildGraph, so the control points project across in order.
+  function drawAisles(svg, nodeR) {
+    if (tnodes.length < 2) return;
+    var seen = {};
+    for (var a = 0; a < tadj.length; a++) {
+      var edges = tadj[a] || [];
+      for (var e = 0; e < edges.length; e++) {
+        var b = edges[e].n, key = a < b ? a + '_' + b : b + '_' + a;
+        if (seen[key]) continue; seen[key] = true;
+        var pa = proj(tnodes[a].x, tnodes[a].y), pb = proj(tnodes[b].x, tnodes[b].y);
+        var ctl = edges[e].c;
+        if (ctl) {
+          var q1 = proj(ctl[0], ctl[1]), q2 = proj(ctl[2], ctl[3]);
+          svg.appendChild(svgEl('path', {
+            d: 'M' + pa[0] + ' ' + pa[1] + 'C' + q1[0] + ' ' + q1[1] +
+               ' ' + q2[0] + ' ' + q2[1] + ' ' + pb[0] + ' ' + pb[1],
+            fill: 'none',
+            class: 'map-aisle', 'stroke-width': nodeR * 0.48
+          }));
+        } else {
+          svg.appendChild(svgEl('line', {
+            x1: pa[0], y1: pa[1], x2: pb[0], y2: pb[1],
+            class: 'map-aisle', 'stroke-width': nodeR * 0.48
+          }));
+        }
+      }
+    }
   }
 
   // Faint grid + corner brackets — gives the floor a frame so the scene reads
