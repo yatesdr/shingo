@@ -92,6 +92,30 @@
   --viz-coral: #e11d48;
   --viz-green: #059669;
 
+  /* Chip ink — the LABEL colour of a health chip, chosen independently of the
+   * chip's fill. This group exists because a chip that colours its label with
+   * the same token it washes its fill from cannot satisfy a text floor: the
+   * fill is a wash of the label's own colour, so the two move together and the
+   * gap between them is bounded by the mix percentage. The --viz-* tokens are
+   * MARK colours, held to the 3:1 non-text floor; using one as type is the
+   * same category error as using a --sub-* structure step as type. An ink is
+   * a TYPE colour, held to 4.5:1.
+   *
+   * Light values are the --viz-* hue scaled toward black in sRGB (hue kept,
+   * lightness dropped) by the smallest step that clears 4.5:1 against the
+   * composited fill on the WORSE of --surface and --bg. Dark needed no
+   * derivation at all: every dark chip already cleared the floor, so the dark
+   * block aliases the mark tokens -- with one exception, recorded there.
+   * Derivation and per-chip measurements: shared/chip_contrast_test.go. */
+  --chip-ink-ok:    #04714f;   /* --viz-green  x0.753 -> 4.63:1 worst */
+  --chip-ink-near:  #984608;   /* --viz-amber  x0.843 -> 4.60:1 worst, shared with warn */
+  --chip-ink-below: #b6173a;   /* --viz-coral  x0.808 -> 4.62:1 worst */
+  --chip-ink-muted: #5c646c;   /* --text-muted x0.886 -> 4.61:1 worst */
+  /* .chip-err is the one OPAQUE chip, so its ink sits on --viz-coral itself
+   * rather than on a wash. White on that crimson is 4.70:1; the same
+   * white-on-solid-fill pattern --accent-solid exists for. */
+  --chip-ink-err:   #ffffff;
+
   /* Sequential + diverging viz ramps. Complete the palette: categorical (above)
    * + semantic (green/coral/amber) + sequential + diverging. Steps are ordered
    * by luminance (monotonic light->dark) so a heatmap reads correctly in
@@ -341,6 +365,24 @@
   --viz-amber: #facc5b;
   --viz-coral: #fb7185;
   --viz-green: #34d399;
+
+  /* Chip ink (dark) — see the light block for what this group is for.
+   * Dark needed no new hues: on a dark surface a 15-20% wash of a bright mark
+   * token leaves the fill close to the surface, and the bright token already
+   * reads on it. So these alias the mark tokens.
+   *
+   * --chip-ink-muted is the ONE exception and is deliberately not an alias.
+   * --text-muted on .chip-muted's own 15% wash measures 4.5014:1 — it clears
+   * the floor by fourteen ten-thousandths. That is not a floor being met, it
+   * is a coincidence: --text-muted is the app's secondary text colour with
+   * consumers all over both surfaces, so any future nudge to it silently
+   * breaks a chip nobody was thinking about. Pinning an ink here decouples the
+   * chip from that token and buys real margin (4.99:1). */
+  --chip-ink-ok:    var(--viz-green);
+  --chip-ink-near:  var(--viz-amber);
+  --chip-ink-below: var(--viz-coral);
+  --chip-ink-muted: #949ca6;
+  --chip-ink-err:   #1b0508;
 
   /* Sequential + diverging ramps — dark inverts the sequential direction
    * so higher magnitude reads brighter on the dark canvas; diverging keeps

@@ -383,21 +383,35 @@
   font-weight: 600;
   white-space: nowrap;
 }
-.chip-ok    { background: color-mix(in srgb, var(--viz-green) 16%, transparent); color: var(--viz-green); }
-.chip-near  { background: color-mix(in srgb, var(--viz-amber) 18%, transparent); color: var(--viz-amber); }
-.chip-below { background: color-mix(in srgb, var(--viz-coral) 18%, transparent); color: var(--viz-coral); }
-.chip-muted { background: color-mix(in srgb, var(--text-muted) 15%, transparent); color: var(--text-muted); }
-.chip-err   { background: var(--viz-coral); color: #1b0508; }
-.chip-drift { background: color-mix(in srgb, var(--viz-violet) 20%, transparent); color: var(--viz-violet); cursor: help; }
+/* FILL is a wash of the state hue; INK is a separate token. They were the same
+ * token until 4.4, which is why fourteen of the fourteen light-theme
+ * combinations sat below AA. See the --chip-ink-* block in tokens.css for why
+ * one token cannot serve both roles, and chip_contrast_test.go for the
+ * per-chip numbers. Change a fill and you must re-derive its ink; the test
+ * fails if you do not. */
+.chip-ok    { background: color-mix(in srgb, var(--viz-green) 16%, transparent); color: var(--chip-ink-ok); }
+.chip-near  { background: color-mix(in srgb, var(--viz-amber) 18%, transparent); color: var(--chip-ink-near); }
+.chip-below { background: color-mix(in srgb, var(--viz-coral) 18%, transparent); color: var(--chip-ink-below); }
+.chip-muted { background: color-mix(in srgb, var(--text-muted) 15%, transparent); color: var(--chip-ink-muted); }
+.chip-err   { background: var(--viz-coral); color: var(--chip-ink-err); }
 /* .chip-warn: a caution that is not yet an error — "this needs a look", where
- * .chip-err is "this is wrong". Amber like .chip-near, but at .chip-drift's
- * weight because it marks a finding rather than a band on a meter.
+ * .chip-err is "this is wrong". Amber like .chip-near, and it SHARES
+ * .chip-near's ink: the two fills differ by two percentage points, so one
+ * amber ink clears the floor on both and a second value would be a
+ * distinction with no reader. Weight separates them, not hue.
  *
  * It was referenced by inventory.js for two whole releases with NO rule
  * anywhere, so it rendered as bare .chip: shaped like a chip, coloured like
  * the page behind it. Second invisible chip after .chip-err's 1.2:1 contrast;
  * chip_drift_test.go closes the class. */
-.chip-warn  { background: color-mix(in srgb, var(--viz-amber) 20%, transparent); color: var(--viz-amber); }
+.chip-warn  { background: color-mix(in srgb, var(--viz-amber) 20%, transparent); color: var(--chip-ink-near); }
+
+/* .chip-drift was DELETED in 4.4. It had a rule, a contrast-table entry and
+ * the only chip use of --viz-violet, and zero use sites in any template or
+ * script — the mirror image of the .chip-warn incident, which was a use site
+ * with no rule. An unused chip is not free: it was one of the seven inks this
+ * stage was chartered to derive, and it carried the single dark-theme
+ * combination that failed the text floor. Re-add it WITH its use site. */
 
 /* Chart box wrapper for Chart.js canvases. */
 .chart-box { position: relative; }

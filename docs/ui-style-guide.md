@@ -341,29 +341,63 @@ number. A hue separation never looks like that. `shared/signal_cvd_test.go`
 measures every adjacent pair and every same-family pair, and pins each one that
 falls short with the value it actually measures.
 
-### The two chip floors
+### The chip floors
 
-Both apply to any pill — Signal badge or health chip — and they are separate
-questions:
+Two questions were asked of every pill. Only the first turned out to be a floor
+for a *health chip*; the second belongs to badges and marks. Both are still
+listed because knowing why the second was dropped is what stops it coming back.
 
 1. **Text on pill ≥ 4.5:1.** Can you read the label. Enforced for badges by
-   `TestSignalBadgeTextClearsAA`.
-2. **Pill against surface ≥ 3:1.** Can you see there *is* a pill, against both
-   `--surface` (cards) and `--bg` (the page). WCAG 2.2 SC 1.4.11.
+   `TestSignalBadgeTextClearsAA` and for chips by `TestChipContrast`. A hard
+   gate for both.
+2. **Pill against surface ≥ 3:1.** Can you see there *is* a pill. WCAG 2.2
+   SC 1.4.11 — asserted for **opaque** pills only.
 
-**The `.chip-*` health vocabulary meets neither yet, and the reason is
-structural rather than a tuning miss.** A chip's fill is `color-mix` of *its own
-label colour* over the surface, so the two floors pull against each other: lower
-the mix percentage and the text gets more readable while the pill gets more
-invisible; raise it and the reverse. No percentage satisfies both. A badge
-escapes this because its foreground and background are chosen independently.
-Fifteen of twenty-eight (theme × chip × surface) combinations are below AA on
-text — worst `.chip-ok` at 2.89:1 — and nothing in the family reaches 3:1 on
-the boundary. **`.chip-err`, the one that was fixed after the 1.2:1 incident,
-measures 4.17:1 and is still under the floor.** The fix is an ink colour per
-chip, distinct from its fill; until then `shared/chip_contrast_test.go` holds
-both floors as ratchets at the measured worst so nothing degrades further, and
-fails when a ratchet goes stale so improvement is recorded rather than lost.
+**The structural diagnosis was right and the prescription was wrong.** A chip's
+fill was `color-mix` of *its own label colour*, so the two floors pulled against
+each other: lower the mix percentage and the text gets more readable while the
+pill gets more invisible; raise it and the reverse. No percentage satisfied
+both. A badge escapes this because its foreground and background are chosen
+independently. Fifteen of twenty-eight (theme × chip × surface) combinations
+were below AA on text, worst `.chip-ok` at 2.89:1.
+
+The recorded fix — "an ink colour per chip, seven new values" — was measured in
+4.4 and corrected in three ways:
+
+- **Ink cannot move the second floor at all.** That ratio is fill-vs-surface;
+  no text term appears in it. Per-chip ink closes the 15 text failures and
+  leaves all 24 boundary failures untouched. The two floors were never one fix.
+- **It was four values, not seven, and one theme.** `.chip-drift` had no use
+  site and was deleted rather than derived; `.chip-near` and `.chip-warn` are
+  amber two points apart and share an ink; **every dark combination already
+  cleared the floor**. What remained was four light hues plus one dark pin.
+- **The second floor does not reach a labelled translucent chip.** SC 1.4.11
+  covers UI components and graphics "required to understand the content". A
+  health chip is neither: it is not interactive, and its meaning is the word
+  printed inside it. The pill is redundant encoding around a text label. The
+  floor was borrowed from the `--viz-*` MARK tokens, where it *does* apply
+  because a chart mark is the information and has no text alternative.
+
+  Satisfying it would also have cost the vocabulary its reason to exist: a
+  15%-wash fill only reaches 3:1 by ceasing to be a wash, which measures at
+  69–89% opacity — i.e. by becoming a Signal badge, the loud vocabulary these
+  chips were built quiet against. `TestChipBoundaryNeedsNearOpacity` pins that
+  measurement so the ruling can be checked rather than believed, and fails if a
+  chip ever reaches the floor cheaply enough for the ruling to be revisited.
+
+**Precondition on the ruling: every chip prints a label.** An icon-only chip
+puts the meaning back in the shape and the boundary floor applies to it again.
+
+Ink lives in `--chip-ink-*` (tokens.css), never in a `--viz-*` or `--sub-*`
+token: those are MARK and STRUCTURE colours held to 3:1, and using one as type
+is the same category error in either direction. `TestChipInkIsNotItsFill`
+asserts the separation directly, so a re-collapse fails even where the
+resulting ratio happens to survive.
+
+**Both ratchets are gone.** They were the right instrument while the family was
+structurally unable to pass; once it can, a ratchet parked under reality is
+weaker than the floor it stands in for. The text floor is now a hard 4.5:1 and
+the opaque-boundary floor a hard 3:1, both green.
 
 **Hue rule — warm is for alerts.** `faulted` moved off amber to orange because
 amber put it in the same hue family as `sourcing`'s sand: pill *weight* was the
