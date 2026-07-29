@@ -138,7 +138,8 @@
     <tbody>
       {{range .Rows}}
       <tr class="de-row de-band-{{.Band}}{{if .Open}} de-open{{end}}">
-        <td class="text-muted tnum">{{.OpenedAt.Format "15:04"}}</td>
+        {{/* 5.12 — the way in to origin-indexed forensics for this one demand. */}}
+        <td class="tnum"><a href="/demand-episodes/{{.OriginID}}">{{.OpenedAt.Format "15:04"}}</a></td>
         <td>{{.KindLabel}}{{if .Direction}} <span class="text-muted">· {{.Direction}}</span>{{end}}</td>
         <td>
           <div>{{if .Payload}}{{.Payload}}{{else}}<span class="text-muted">—</span>{{end}}</div>
@@ -202,4 +203,11 @@
   definition living here it parsed cleanly and failed at RENDER time with "no
   such template de-cell" — a 500 on a page whose whole job is to be readable on
   the day something is wrong. Shared doctrine belongs in a shared partial.
+
+  THREE lanes hit this independently — /orphans (5.7), the episode detail page
+  (5.12) and /cycle-time (5.10) — and each moved the block to a partial of its
+  own naming. cells.html is the one that survived the merge, because the
+  renderer is not demand-specific: naming it demand-cell.html would have
+  misnamed it the moment the third surface arrived, and the third surface has
+  arrived.
 */}}

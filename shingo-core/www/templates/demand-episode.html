@@ -1,0 +1,198 @@
+{{define "content"}}
+{{/*
+  demand-episode.html — origin-indexed forensics for ONE demand (5.12, N2).
+
+  THE TEMPLATE DOES NO ARITHMETIC AND MAKES NO DECISIONS. Every figure, band,
+  label and absence-state arrives already rendered from
+  demand_episode_detail_view.go. What is here is markup and class selection.
+
+  No colour literals; no .chip-* classes. The band is a ring plus its printed
+  name, the same construction the list page uses.
+*/}}
+<div>
+  <p class="mb-1"><a href="/demand-episodes">&larr; Back to demand episodes</a></p>
+
+  {{if .LoadError}}
+  {{/*
+    A READ FAILURE, SHOWN AS ITSELF. The alternative — rendering "no such
+    episode" — would tell someone their link was wrong when the truth is that
+    the store is unreachable. Different fact, different action.
+  */}}
+  <div class="card">
+    <strong>Could not read this episode.</strong>
+    <div class="text-muted mt-1">{{.LoadError}}</div>
+    <div class="text-muted mt-1">
+      This is a read failure, not a missing episode. Nothing below is a
+      statement about whether episode <span class="tnum">{{.OriginID}}</span>
+      exists.
+    </div>
+  </div>
+  {{else}}{{with .Detail}}
+
+  <div class="flex flex-between mb-1">
+    <h1>{{.KindLabel}} demand{{if .Payload}} · {{.Payload}}{{end}}</h1>
+  </div>
+  <p class="text-muted mb-2">
+    {{.Station}}{{if .CoreNode}} · {{.CoreNode}}{{end}} —
+    {{if .Open}}open now{{else}}closed{{end}}.
+    Every order stamped with this demand's origin id, oldest first.
+  </p>
+
+  {{/* ── The header: what was asked, and what it cost ─────────────────── */}}
+  <div class="card mb-2 deo-header de-band-{{.Band}}">
+    <div class="de-summary">
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Duration</div>
+        <div class="kpi-value tnum de-ramp-{{.RampStep}}">{{.DurationText}}</div>
+        {{if .BandLabel}}<span class="de-band-name">{{.BandLabel}}</span>{{end}}
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Orders</div>
+        {{template "de-cell-value" .Orders}}
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Expected</div>
+        {{template "de-cell-value" .Expected}}
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Ratio</div>
+        {{template "de-cell-value" .Ratio}}
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Close reason</div>
+        {{template "de-cell-value" .CloseReason}}
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Closed by</div>
+        {{template "de-cell-value" .ClosedBy}}
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-2">
+    <table class="table de-table">
+      <tbody>
+        <tr><th>Episode key</th><td class="tnum">{{.EpisodeKey}}</td></tr>
+        <tr><th>Origin id</th><td class="tnum">{{.OriginID}}</td></tr>
+        <tr><th>Kind</th><td>{{.KindLabel}}{{if .Direction}} · {{.Direction}}{{end}}</td></tr>
+        <tr><th>Trigger</th><td>{{if .Trigger}}{{.Trigger}}{{else}}<span class="de-nodata" title="no trigger recorded">&mdash;</span>{{end}}</td></tr>
+        <tr><th>Trigger reference</th><td class="tnum">{{template "de-cell" .TriggerRef}}</td></tr>
+        <tr><th>Opened</th><td class="tnum">{{formatTime .OpenedAt}}</td></tr>
+        <tr><th>Closed</th><td class="tnum">
+          {{if .ClosedAt}}{{formatTime .ClosedAt}}{{else}}<span class="de-na" title="still open — it has not closed">n/a</span>{{end}}
+        </td></tr>
+        <tr><th>Level at open</th><td class="col-num tnum">{{.OpenedTotal}}</td></tr>
+        <tr><th>Threshold</th><td class="col-num tnum">{{template "de-cell" .Threshold}}</td></tr>
+        <tr><th>Re-requests</th><td class="col-num tnum">{{.Rerequests}}</td></tr>
+        <tr><th>Discretionary</th><td>{{if .Discretionary}}yes{{else}}no{{end}}</td></tr>
+        <tr><th>Process id</th><td class="col-num tnum">{{.ProcessID}}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  {{/* ── The children ─────────────────────────────────────────────────── */}}
+  <h2 class="mb-1">Orders this demand caused</h2>
+
+  {{if .ChildrenError}}
+  {{/*
+    THE RULE THIS PAGE EXISTS FOR. An episode whose child query failed must
+    never render as an episode with no orders — an empty table under a real
+    demand is the most alarming reading this surface has, and it has to be
+    earned. No empty-state below; there is no empty result to report.
+  */}}
+  <div class="card">
+    <strong>Could not read this episode's orders.</strong>
+    <div class="text-muted mt-1">{{.ChildrenError}}</div>
+    <div class="text-muted mt-1">
+      This is not zero orders. The number of orders this demand caused is
+      unknown &mdash; nothing has been counted.
+    </div>
+  </div>
+
+  {{else if .Children}}
+  {{if .ChildrenTruncated}}
+  <div class="card mb-2">
+    <strong>Showing the first {{.ChildrenLimit}} orders.</strong>
+    <span class="text-muted">This demand caused more than are listed here.</span>
+  </div>
+  {{end}}
+  <table class="table de-table">
+    <thead>
+      <tr>
+        <th>Order</th>
+        <th class="col-num">After open</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th>Route</th>
+        <th>Robot</th>
+        <th class="col-num">Took</th>
+        <th>Attribution</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Children}}
+      <tr class="de-row">
+        <td class="tnum">
+          <a href="{{.MissionHref}}">#{{.OrderID}}</a>
+          {{/* The Edge's own id for this order — the string that appears in an
+               Edge log line, and the only handle that crosses the service
+               boundary. On a forensics page it is the join key someone actually
+               needs. */}}
+          {{if .EdgeUUID}}<div class="de-sub">{{.EdgeUUID}}</div>{{end}}
+        </td>
+        <td class="col-num tnum">{{template "de-cell" .SinceOpen}}</td>
+        <td>{{.OrderType}}</td>
+        <td>
+          {{.Status}}
+          {{if .ErrorDetail}}<div class="de-sub" title="{{.ErrorDetail}}">{{.ErrorDetail}}</div>{{end}}
+        </td>
+        <td>
+          <div>{{if .SourceNode}}{{.SourceNode}}{{else}}<span class="de-nodata" title="no source node recorded">&mdash;</span>{{end}}
+            &rarr;
+            {{if .DeliveryNode}}{{.DeliveryNode}}{{else}}<span class="de-nodata" title="no delivery node recorded">&mdash;</span>{{end}}</div>
+          {{if .PayloadCode}}<div class="de-sub">{{.PayloadCode}}</div>{{end}}
+        </td>
+        <td>{{template "de-cell" .Robot}}</td>
+        <td class="col-num tnum">{{template "de-cell" .Took}}</td>
+        <td>
+          {{/*
+            Printed, not assumed. Every row here was found BY its origin_id, so
+            anything other than "attached" means the two columns disagree about
+            the same order — a finding, and the reason this column exists.
+          */}}
+          {{if .OriginClassDisagrees}}
+          <span class="deo-disagrees" title="this order was found by its origin_id but is not classed as attached — the two columns disagree about the same row">
+            {{if .OriginClassLabel}}{{.OriginClassLabel}}{{else}}(no class recorded){{end}}
+          </span>
+          {{else}}{{.OriginClassLabel}}{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p class="de-note">
+    &ldquo;After open&rdquo; is how long after this demand opened each order was
+    created. A greyed ratio above has a denominator below {{$.MinExpected}}.
+    Worry at {{$.WorryAfter}}, concern at {{$.ConcernAfter}}.
+  </p>
+
+  {{else}}
+  {{/*
+    A MEASURED ZERO, and it is the worst thing the demand grain can show: a
+    place asked for material and nothing was ever created for it. It reads
+    loudly BECAUSE it is measured — the read-failure branch above is what keeps
+    this from ever being printed about a query that did not run.
+  */}}
+  <div class="card">
+    <strong>No orders were created for this demand.</strong>
+    <div class="text-muted mt-1">
+      The query ran and returned nothing. This is a measured zero, not a missing
+      feed &mdash; a place asked for material and no order was ever created to
+      serve it.
+    </div>
+  </div>
+  {{end}}
+
+  {{end}}{{end}}
+</div>
+{{end}}

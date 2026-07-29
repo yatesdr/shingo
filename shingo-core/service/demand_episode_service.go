@@ -5,6 +5,7 @@ import (
 
 	"shingocore/domain"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // DemandEpisodeService reads the demand grain for the Phase 6 surfaces.
@@ -71,4 +72,30 @@ func (s *DemandEpisodeService) OrphanTrend(since time.Time, bucket time.Duration
 // what a page can render whole, the findings list is the drill-down.
 func (s *DemandEpisodeService) OrphanSites() ([]domain.OrphanSite, error) {
 	return s.db.SummarizeOrphansBySite()
+}
+
+// Get reads one episode's header. Returns (nil, nil) when there is no such
+// episode, which the caller must render as 404 rather than as a read failure.
+//
+// The nil-nil is not a wart; it is the distinction the detail page turns on. "No
+// episode with this id" and "the episode store could not be read" are different
+// facts and only one of them is a system problem. A signature that returned
+// sql.ErrNoRows would make the handler classify a string comparison to tell them
+// apart, and the first refactor that wrapped the error would silently reclassify
+// every unknown id as an outage.
+func (s *DemandEpisodeService) Get(originID string) (*domain.DemandOrigin, error) {
+	return s.db.GetDemandOrigin(originID)
+}
+
+// Orders returns every order this episode spawned, oldest first, capped at
+// limit; the bool reports whether the cap bit.
+//
+// A SEPARATE CALL FROM Get, AND THAT IS THE POINT. The child read can fail on
+// its own, and when it does the page must say "an unknown number of orders",
+// never "no orders". Folding the two into one call that returned a single error
+// would leave the handler unable to tell a headerless episode from a childless
+// one, and the childless rendering — an empty table under a real demand — is the
+// single most alarming thing this surface can display. It has to be earned.
+func (s *DemandEpisodeService) Orders(originID string, limit int) ([]*domain.Order, bool, error) {
+	return orders.ListByOrigin(s.db.DB, originID, limit)
 }

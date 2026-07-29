@@ -143,6 +143,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		// Phase 6: the demand GRAIN, a different concept from the quota page
 		// above. Distinct path on purpose — see handlers_demand_episodes.go.
 		r.Get("/demand-episodes", h.handleDemandEpisodes)
+		// 5.12 — origin-indexed forensics: one demand and every order it
+		// spawned, each linking to its /missions/{orderID} detail below.
+		r.Get("/demand-episodes/{originID}", h.handleDemandEpisodeDetail)
 		// Phase 6 (5.7): orders that should have carried an origin and did not.
 		// A different GRAIN from the page above — an orphan has no episode by
 		// definition, so it has no row there. See handlers_orphans.go.

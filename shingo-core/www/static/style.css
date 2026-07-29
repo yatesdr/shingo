@@ -2279,3 +2279,41 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .or-bar-8  { height: 80%; }
 .or-bar-9  { height: 90%; }
 .or-bar-10 { height: 100%; }
+
+/* Numeric columns are RIGHT-ALIGNED — docs/ui-style-guide.md § "Tabular
+ * figures, always": tabular-nums aligns the glyphs, only right-alignment
+ * aligns the MAGNITUDES, which is what makes a column scannable.
+ *
+ * This class had no rule on any page that loads this stylesheet. Its only
+ * declaration lived in an inline <style> block inside templates/demand.html —
+ * the production-quota page — so every `class="col-num"` on the demand-episodes
+ * table was inert: the markup said "numeric column" and nothing happened. Same
+ * failure shape as the .chip-warn case the chip drift test exists for, in a
+ * class that scan does not cover.
+ *
+ * demand.html is unaffected: its inline block redeclares .col-num later in the
+ * document at equal specificity, so its own centring still wins there. */
+.col-num { text-align: right; }
+
+/* ── Episode detail (5.12 — origin-indexed forensics) ─────────────────────
+ *
+ * Prefix is deo-, not de-, so the two demand surfaces' styles stay separable.
+ * No chips here either, for the reason the list page records. */
+
+/* The header card carries the duration band as a ring, and the ring must be
+ * ADDITIVE: .card's own box-shadow is its elevation, and .de-band-* would
+ * replace it outright and flatten the card. Two classes beat one, so these win
+ * over the bare .de-band-* rules above and keep both shadows. */
+.deo-header.de-band-worry   { box-shadow: var(--shadow-sm), inset 3px 0 0 0 var(--sub-5); }
+.deo-header.de-band-concern { box-shadow: var(--shadow-sm), inset 3px 0 0 0 var(--accent); }
+
+/* An order found BY its origin_id whose origin_class is not `attached` — the
+ * two columns disagreeing about one row. The READING is carried by the printed
+ * class name itself ("Orphan", "No demand", "(no class recorded)"), which is
+ * already different text from the normal case; the colour and rule are emphasis
+ * on top of that, never the only channel. */
+.deo-disagrees {
+  color: var(--accent);
+  border-bottom: 1px dotted var(--accent);
+  cursor: help;
+}
