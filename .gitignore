@@ -88,3 +88,7 @@ CLAUDE.md
 AGENTS.md
 .claude/
 **/.claude/
+
+# scripts/gate.sh docker logs. PER-WORKTREE on purpose — they used to be one
+# shared /tmp path that concurrent lanes truncated out from under each other.
+.gate/

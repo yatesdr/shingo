@@ -124,9 +124,39 @@ step_lint() {
     echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4"
     return 1
   fi
+  # --allow-serial-runners IS NOT OPTIONAL WHEN LANES RUN CONCURRENTLY.
+  #
+  # golangci-lint takes a MACHINE-GLOBAL file lock at startup, and its own
+  # --help says what happens without this flag: "golangci-lint exits with an
+  # error if it fails to acquire file lock on start". So a second lane's gate
+  # does not queue behind yours — it FAILS yours, or fails itself, with
+  #
+  #     Error: parallel golangci-lint is running
+  #
+  # and exit 3. That is indistinguishable in `gate.sh` output from a real lint
+  # finding: `step_lint` sees a non-zero exit and prints "FAIL lint".
+  #
+  # MEASURED on this host, golangci-lint v2.11.4, three concurrent runs of the
+  # same module, same instant:
+  #
+  #   without the flag:  exit 0, exit 0, exit 3 ("parallel golangci-lint is running")
+  #   with the flag:     exit 0, exit 0, exit 0  ("0 issues." x3)
+  #
+  # IT IS INTERMITTENT, which is why it reads as flakiness rather than as this.
+  # The lock is held over part of a run, not all of it, so two lanes offset by a
+  # few seconds often both pass — and the same two lanes started together do
+  # not. Four round-3 agents hit it independently.
+  #
+  # SERIAL AND NOT --allow-parallel-runners, deliberately. Parallel drops the
+  # lock entirely and lets N instances write the shared content-addressed cache
+  # at once; serial keeps the lock and WAITS for it. The cost is wall time on
+  # whichever lane arrives second — bounded, because the lock is per
+  # invocation and this loop makes five short ones per module set rather than
+  # one long one. The thing being bought is that the gate's verdict is about
+  # the code. A gate that can fail for a reason outside the diff is not a gate.
   local m failed=0
   for m in $MODULES; do
-    ( cd "$ROOT/$m" && golangci-lint run --build-tags docker \
+    ( cd "$ROOT/$m" && golangci-lint run --allow-serial-runners --build-tags docker \
         --config="$ROOT/.golangci.yml" --issues-exit-code=1 ./... ) || failed=1
   done
   [ "$failed" -eq 0 ] && echo "ok   lint" || echo "FAIL lint"
@@ -240,17 +270,44 @@ step_scope() {
 # module that starts carrying docker-tagged tests is picked up by both at
 # once, or by neither — never by scope alone, which would report NEEDED and
 # then run nothing.
+#
+# THE LOG GOES UNDER $ROOT, NOT UNDER /tmp, AND THAT IS A CORRECTNESS FIX.
+#
+# It used to be /tmp/gate-docker-$m.log. On Git Bash /tmp IS %TEMP% — one
+# directory for the whole machine — and $m is a module name, which every
+# worktree of this repo shares. So every concurrent lane wrote the SAME FILE:
+#
+#   C:/Users/<user>/AppData/Local/Temp/gate-docker-shingo-core.log
+#
+# `>` truncates on open, so the second lane to start emptied the first lane's
+# log mid-write. A round-3 agent watched it go 5,455 -> 1,315 bytes and then
+# printed another lane's stack traces as its own failure.
+#
+# THE EXIT CODES WERE ALWAYS RIGHT — `go test`'s status is not routed through
+# this file, so no lane ever passed a gate it should have failed. What was
+# wrong was the EXCERPT: the thirty lines a human reads to find out what broke
+# could belong to somebody else's tree. A gate that reports the wrong reason is
+# worse than one that reports none, because the reason is what gets acted on.
+#
+# $ROOT/.gate/ and not $$: a worktree is the unit that collides here, and the
+# per-worktree path also keeps the log at a STABLE, findable place after the
+# run — which is the whole reason to write a file instead of streaming. Two
+# gates inside one worktree at the same moment would still share it, and are
+# not worth designing for: they would already be fighting over the same
+# testcontainers and the same Docker daemon, and the log is the least of it.
 step_docker() {
-  local m failed=0 mods
+  local m failed=0 mods logdir
   mods="$(docker_modules)"
   if [ -z "$mods" ]; then
     echo "ok   docker (no module carries a go:build docker test)"
     return 0
   fi
+  logdir="$ROOT/.gate"
+  mkdir -p "$logdir" || { echo "FAIL docker — cannot create $logdir"; return 1; }
   for m in $mods; do
     echo "  docker: $m"
-    ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p 1 ./... >/tmp/gate-docker-$m.log 2>&1 ) \
-      || { failed=1; echo "  --- $m ---"; grep -Ev '^ok |no test files' "/tmp/gate-docker-$m.log" | head -30; }
+    ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p 1 ./... >"$logdir/docker-$m.log" 2>&1 ) \
+      || { failed=1; echo "  --- $m ($logdir/docker-$m.log) ---"; grep -Ev '^ok |no test files' "$logdir/docker-$m.log" | head -30; }
   done
   [ "$failed" -eq 0 ] && echo "ok   docker" || echo "FAIL docker"
   return $failed
