@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"shingocore/store/reconciliation"
 )
 
 // buildInfo is stamped once at boot by the composition root. Version and
@@ -159,9 +161,13 @@ type CoreHealth struct {
 
 	// Already computed by the reconciliation loop; surfaced rather than
 	// recomputed.
-	DeadLetters         int `json:"dead_letters"`
+	DeadLetters int `json:"dead_letters"`
+	// CompletionAnomalies is the WINDOWED count — the one the verdict reads.
 	CompletionAnomalies int `json:"completion_anomalies"`
-	SSEClients          int `json:"sse_clients"`
+	// CompletionAnomaliesTotal is every one on record, so a green strip can
+	// still say "and there are 10 older ones" rather than implying none exist.
+	CompletionAnomaliesTotal int `json:"completion_anomalies_total"`
+	SSEClients               int `json:"sse_clients"`
 }
 
 const (
@@ -213,6 +219,7 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 	if recon, err := h.engine.Reconciliation().Summary(); err == nil && recon != nil {
 		c.DeadLetters = recon.DeadLetters
 		c.CompletionAnomalies = recon.CompletionAnomalies
+		c.CompletionAnomaliesTotal = recon.CompletionAnomaliesTotal
 	}
 
 	if !depsOK {
@@ -252,12 +259,39 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 		reasons = append(reasons, fmt.Sprintf("load %.2f over %d cores", c.Load1, c.Cores))
 	}
 	if c.DeadLetters > 0 {
-		reasons = append(reasons, fmt.Sprintf("%d dead letter(s)", c.DeadLetters))
+		reasons = append(reasons, fmt.Sprintf("%d %s", c.DeadLetters,
+			plural(c.DeadLetters, "dead letter", "dead letters")))
 	}
+	// Named, windowed, and it says which. "Core degraded" on its own sent a
+	// reader looking for a dependency outage; the condition is an order-
+	// completion anomaly and the sentence now says so, with the window
+	// attached so nobody has to guess whether it means "now" or "ever".
 	if c.CompletionAnomalies > 0 {
-		reasons = append(reasons, fmt.Sprintf("%d completion anomal(ies)", c.CompletionAnomalies))
+		reasons = append(reasons, fmt.Sprintf("%d order-completion %s in the last %s",
+			c.CompletionAnomalies,
+			plural(c.CompletionAnomalies, "anomaly", "anomalies"),
+			formatWindow(reconciliation.CompletionAnomalyWindow)))
 	}
 	return reasons
+}
+
+// plural picks the singular or plural WORD for n. Two call sites were writing
+// "anomal(ies)" and "letter(s)" — a parenthesis is what you print when you do
+// not know the count, and here it is always known.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// formatWindow renders a whole-hour duration as "24h", falling back to the
+// stdlib form for anything finer.
+func formatWindow(d time.Duration) string {
+	if d >= time.Hour && d%time.Hour == 0 {
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	}
+	return d.String()
 }
 
 // formatUptime renders the largest meaningful unit and the one below it.

@@ -25,6 +25,21 @@ import (
 const criticalOutboxAge = 5 * time.Minute
 const stuckOrderAge = 30 * time.Minute
 
+// CompletionAnomalyWindow is how far back a completion anomaly still counts
+// AS A VERDICT.
+//
+// The list is deliberately still all-time — a completed order with a NULL
+// bin_id is a real inconsistency whenever it happened, and hiding the old ones
+// would make them unfindable. What changes is what "Core degraded" MEANS.
+//
+// Measured at Springfield 2026-07-29: ten anomalies, every one an order
+// created and completed between 2026-03-30 and 2026-04-06, pinning the strip
+// red for four months while database, fleet and messaging were all up and the
+// pool was idle. An unbounded count turns a health verdict into a permanent
+// latch on the oldest mistake anyone ever made — the strip says "something is
+// wrong now" and means "something was wrong once".
+const CompletionAnomalyWindow = 24 * time.Hour
+
 // CompletionAnomaly describes drift between terminal orders and bin
 // claim state.
 type CompletionAnomaly struct {
@@ -33,6 +48,13 @@ type CompletionAnomaly struct {
 	OrderStatus string `json:"order_status"`
 	BinStatus   string `json:"bin_status,omitempty"`
 	Issue       string `json:"issue"`
+	// ObservedAt is when the order reached the state being complained about:
+	// completed_at where there is one, updated_at for the confirmed-but-never-
+	// completed case, which by definition has no completed_at. Carried on the
+	// row rather than derived in the caller so the anomaly LIST can print an
+	// age — the thing that would have made the Springfield ten obvious on
+	// sight instead of costing a psql session.
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
 }
 
 // Anomaly describes one reconciliation finding.
@@ -52,7 +74,17 @@ type Anomaly struct {
 
 // Summary aggregates reconciliation counts for the health endpoint.
 type Summary struct {
-	CompletionAnomalies int        `json:"completion_anomalies"`
+	// CompletionAnomalies counts only those inside CompletionAnomalyWindow.
+	// This is the one the verdict reads.
+	CompletionAnomalies int `json:"completion_anomalies"`
+	// CompletionAnomaliesTotal is every one on record. Reported so a windowed
+	// zero cannot be mistaken for "there are none" — the old rows are still
+	// real, still worth fixing, and still one query away.
+	CompletionAnomaliesTotal int `json:"completion_anomalies_total"`
+	// CompletionAnomalyWindowHours is CompletionAnomalyWindow, reported rather
+	// than restated: the strip labels its tile from this, so the label cannot
+	// drift from the constant the verdict actually uses.
+	CompletionAnomalyWindowHours int        `json:"completion_anomaly_window_hours"`
 	StuckOrders         int        `json:"stuck_orders"`
 	ExpiredStagedBins   int        `json:"expired_staged_bins"`
 	StaleEdges          int        `json:"stale_edges"`
@@ -67,16 +99,16 @@ type Summary struct {
 // terminal orders and bin claim state.
 func ListOrderCompletionAnomalies(db *sql.DB) ([]*CompletionAnomaly, error) {
 	rows, err := db.Query(fmt.Sprintf(`
-		SELECT o.id AS order_id, b.id AS bin_id, o.status AS order_status, b.status AS bin_status, 'terminal_order_still_claims_bin' AS issue
+		SELECT o.id AS order_id, b.id AS bin_id, o.status AS order_status, b.status AS bin_status, 'terminal_order_still_claims_bin' AS issue, COALESCE(o.completed_at, o.updated_at) AS observed_at
 		FROM orders o
 		JOIN bins b ON b.claimed_by = o.id
 		WHERE o.completed_at IS NOT NULL OR o.status IN (%s)
 		UNION ALL
-		SELECT o.id AS order_id, NULL::bigint AS bin_id, o.status AS order_status, '' AS bin_status, 'completed_order_missing_bin' AS issue
+		SELECT o.id AS order_id, NULL::bigint AS bin_id, o.status AS order_status, '' AS bin_status, 'completed_order_missing_bin' AS issue, COALESCE(o.completed_at, o.updated_at) AS observed_at
 		FROM orders o
 		WHERE o.completed_at IS NOT NULL AND o.bin_id IS NULL
 		UNION ALL
-		SELECT o.id AS order_id, o.bin_id AS bin_id, o.status AS order_status, COALESCE(b.status, '') AS bin_status, 'confirmed_without_completed_at' AS issue
+		SELECT o.id AS order_id, o.bin_id AS bin_id, o.status AS order_status, COALESCE(b.status, '') AS bin_status, 'confirmed_without_completed_at' AS issue, COALESCE(o.completed_at, o.updated_at) AS observed_at
 		FROM orders o
 		LEFT JOIN bins b ON b.id = o.bin_id
 		WHERE o.status = 'confirmed' AND o.completed_at IS NULL
@@ -90,13 +122,31 @@ func ListOrderCompletionAnomalies(db *sql.DB) ([]*CompletionAnomaly, error) {
 	for rows.Next() {
 		var a CompletionAnomaly
 		var binID *int64
-		if err := rows.Scan(&a.OrderID, &binID, &a.OrderStatus, &a.BinStatus, &a.Issue); err != nil {
+		var observedAt *time.Time
+		if err := rows.Scan(&a.OrderID, &binID, &a.OrderStatus, &a.BinStatus, &a.Issue, &observedAt); err != nil {
 			return nil, err
 		}
 		a.BinID = binID
+		a.ObservedAt = observedAt
 		anomalies = append(anomalies, &a)
 	}
 	return anomalies, rows.Err()
+}
+
+// countRecent returns how many of the anomalies fall inside the window.
+//
+// A row with no timestamp counts as recent. The alternative — silently
+// dropping it — makes a NULL look like health, which is the failure family
+// this whole panel exists to catch.
+func countRecent(anomalies []*CompletionAnomaly, now time.Time, window time.Duration) int {
+	cutoff := now.Add(-window)
+	n := 0
+	for _, a := range anomalies {
+		if a.ObservedAt == nil || a.ObservedAt.After(cutoff) {
+			n++
+		}
+	}
+	return n
 }
 
 // ListAnomalies returns all reconciliation findings across categories.
@@ -328,8 +378,10 @@ func GetSummary(db *sql.DB) (*Summary, error) {
 	}
 
 	summary := &Summary{
-		CompletionAnomalies: len(completion),
-		TotalAnomalies:      len(anomalies),
+		CompletionAnomalies:          countRecent(completion, time.Now().UTC(), CompletionAnomalyWindow),
+		CompletionAnomaliesTotal:     len(completion),
+		CompletionAnomalyWindowHours: int(CompletionAnomalyWindow / time.Hour),
+		TotalAnomalies:               len(anomalies),
 	}
 
 	row := db.QueryRow(`SELECT COUNT(*), MIN(created_at) FROM outbox WHERE sent_at IS NULL AND retries < $1`, messaging.MaxOutboxRetries)
