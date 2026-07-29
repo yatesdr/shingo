@@ -53,13 +53,55 @@ const (
 	EpisodeTriggerOperator = "operator"
 )
 
+// THE STATION IS SCOPE FOR ONE KIND AND FRAGMENTATION FOR THE OTHER TWO.
+//
+// All three constructors used to embed the station. That was invisible while
+// `station` was a CONSTANT across a plant — one edge_registry row, one value,
+// and a one-valued component is not a discriminator. The day each edge gets a
+// distinct id is the day it becomes one, and two of these three keys fragment.
+//
+// The rule is NOT "drop the station". It is:
+//
+//	A qualifier belongs in an identity exactly when the thing being identified
+//	is not already unique at plant scope.
+//
+// Applied per kind, that gives three different answers, and a blanket rewrite
+// would get the third one wrong:
+//
+//   - THRESHOLD — keyed on a Core node name. nodes.name is TEXT NOT NULL
+//     UNIQUE, so the name is already plant-unique. Station DROPPED.
+//   - CELL — keyed on the Edge process NAME, which Core already treats as
+//     plant-unique everywhere else: process_styles' PRIMARY KEY is
+//     (process_id, style_id) and style_claims carries no station column at
+//     all. Station DROPPED — see CellEpisodeKey.
+//   - CHANGEOVER — keyed on process_changeovers.id, an Edge-local SQLite row
+//     id that two edges both reach. Station KEPT, as the counter space that
+//     id lives in. Same reasoning as inventory_delta_dedup's station column.
+//
+// FREE TO CHANGE, AND ONLY UNTIL THE FIRST DEPLOY. demand_origins is created
+// by migration v59; both live plants are measured at schema_migrations = 52,
+// and their deployed binaries (Springfield 4527c4d6, Hopkinsville ef99421f)
+// contain no v59 at all — max registered migration 52 in both trees. No plant
+// has the table, so no stored key is being invalidated. After v59 ships, every
+// change to these strings breaks episode continuity and needs a migration.
+
 // ThresholdEpisodeKey identifies a Core threshold episode.
 //
-// The format deliberately reproduces Core's own bindingKey — station, node,
-// payload — with a kind prefix. Inventing a second format for a binding's
-// identity would leave two strings meaning the same thing.
-func ThresholdEpisodeKey(station, coreNodeName, payloadCode string) string {
-	return strings.Join([]string{"thr", station, coreNodeName, payloadCode}, "|")
+// NO STATION COMPONENT, and that is a deliberate narrowing from the original
+// format, which reproduced Core's own bindingKey verbatim — station, node,
+// payload. The bindingKey is a RUNTIME map key inside one process, where the
+// station is free; this is a PERSISTED identity compared across services and
+// across time, where it is not.
+//
+// nodes.name is TEXT NOT NULL UNIQUE (store/schema/postgres_ddl.go), so the
+// Core node name alone names the place. Adding the reporting edge to it would
+// mean one loader's replenishment demand splits into two episode streams the
+// moment a second edge reports the same node, and neither side could detect
+// it: the close carries a key with no matching open, SupersedeOpenEpisode
+// finds nothing, a second episode mints, and the first sits open until the
+// sweep gives up on it as unattributed.
+func ThresholdEpisodeKey(coreNodeName, payloadCode string) string {
+	return strings.Join([]string{"thr", coreNodeName, payloadCode}, "|")
 }
 
 // CellEpisodeKey identifies an Edge cell episode.
@@ -96,8 +138,28 @@ func ThresholdEpisodeKey(station, coreNodeName, payloadCode string) string {
 // no longer satisfies the precondition, so the sweep closes the episode. It is a
 // real exposure and it is the same one process_styles and plant-claims already
 // carry, which is the point: one exposure, not two identity systems.
-func CellEpisodeKey(station, processID, payloadCode, direction string) string {
-	return fmt.Sprintf("cell|%s|%s|%s|%s", station, processID, payloadCode, direction)
+//
+// AND THAT LAST SENTENCE IS WHY THERE IS NO STATION IN THIS KEY EITHER.
+//
+// v63 changed processID from the SQLite row id to the name so Core would stop
+// carrying two unjoinable identity systems for the same processes. It fixed
+// half the divergence. The other half was the station sitting in front of the
+// name: Core's mirror of these same processes — process_styles, PRIMARY KEY
+// (process_id, style_id), and style_claims — has NO station column anywhere.
+// So Core already asserts, in the deployed schema, that a process name is
+// plant-unique. A key of (station, process) asserts it is not. Two statements
+// about one fact, and the query that tries to put an episode next to its
+// process's claims is the one that finds out.
+//
+// The concrete failure the station caused, in the grain this comment already
+// argues for: a press-index process served by two edges, or moved from one to
+// another, is ONE place needing ONE payload. Keyed with the station, the close
+// carries a key the open never had. SupersedeOpenEpisode matches nothing, a
+// second episode mints for a demand already open, and the first is only ever
+// resolved by the sweep marking it unattributed. Cross-service, so neither end
+// sees a contradiction — Edge closed something, Core recorded something else.
+func CellEpisodeKey(processID, payloadCode, direction string) string {
+	return fmt.Sprintf("cell|%s|%s|%s", processID, payloadCode, direction)
 }
 
 // ChangeoverEpisodeKey identifies an Edge changeover episode.
@@ -106,13 +168,42 @@ func CellEpisodeKey(station, processID, payloadCode, direction string) string {
 // nothing re-targets a row, so the row's lifetime IS the episode's.
 // Cancel-and-redirect cancels this row and inserts a fresh one — a new id, and
 // correctly a new episode.
+//
+// THE STATION STAYS HERE, ALONE AMONG THE THREE, AND REMOVING IT IS THE
+// MISTAKE THIS COMMENT EXISTS TO PREVENT.
+//
+// processChangeoverID is process_changeovers.id — an AUTOINCREMENT row id in
+// ONE EDGE'S SQLite file. It is not plant-unique and never was; every edge
+// starts at 1 and every edge eventually reaches 7. The other two kinds are
+// keyed on names that Core has already made plant-unique (nodes.name is
+// UNIQUE; process_styles keys on the process name with no station), so their
+// station component was pure fragmentation. This one is the opposite: the
+// station is the COUNTER SPACE the id is drawn from, and without it two
+// plants' changeover 7 collide on one key under the partial unique index on
+// demand_origins(episode_key) WHERE closed_at IS NULL — the second edge's
+// changeover episode silently superseding the first edge's.
+//
+// This is the same distinction inventory_delta_dedup's station column carries
+// ("whose Edge-local sequence counter space is this"), and it is why "strip
+// the station everywhere" is the wrong shape for this change. A rewrite that
+// treats all three keys alike gets exactly one of the three wrong, and it is
+// this one.
 func ChangeoverEpisodeKey(station string, processChangeoverID int64) string {
 	return fmt.Sprintf("co|%s|%d", station, processChangeoverID)
 }
 
 // ParsedEpisodeKey is what an episode key says about itself.
 type ParsedEpisodeKey struct {
-	Kind      string
+	Kind string
+	// Station is populated for the CHANGEOVER kind ONLY, because that is the
+	// only kind whose key still carries one — it scopes an Edge-local row id.
+	// Threshold and cell keys leave this empty by construction.
+	//
+	// Nothing reads it. Core takes the reporting station from env.Src.Station
+	// (messaging/demand_origin_handler.go), which is the routing address and
+	// the right source for "who told me"; the key answers "which place", and
+	// those are different questions. Kept because ChangeoverID is meaningless
+	// without the space it was counted in.
 	Station   string
 	Payload   string
 	Direction string
@@ -134,15 +225,20 @@ func ParseEpisodeKey(key string) (ParsedEpisodeKey, error) {
 	}
 	switch parts[0] {
 	case "thr":
-		if len(parts) != 4 {
-			return ParsedEpisodeKey{}, fmt.Errorf("threshold episode key %q: want 4 parts, got %d", key, len(parts))
+		if len(parts) != 3 {
+			return ParsedEpisodeKey{}, fmt.Errorf("threshold episode key %q: want 3 parts, got %d", key, len(parts))
+		}
+		if parts[1] == "" {
+			return ParsedEpisodeKey{}, fmt.Errorf(
+				"threshold episode key %q: empty Core node name — the node IS the place here, so a "+
+					"key without one identifies nothing and collides with every other such key", key)
 		}
 		return ParsedEpisodeKey{
-			Kind: EpisodeKindThreshold, Station: parts[1], CoreNode: parts[2], Payload: parts[3],
+			Kind: EpisodeKindThreshold, CoreNode: parts[1], Payload: parts[2],
 		}, nil
 	case "cell":
-		if len(parts) != 5 {
-			return ParsedEpisodeKey{}, fmt.Errorf("cell episode key %q: want 5 parts, got %d", key, len(parts))
+		if len(parts) != 4 {
+			return ParsedEpisodeKey{}, fmt.Errorf("cell episode key %q: want 4 parts, got %d", key, len(parts))
 		}
 		// NO NUMERIC PARSE, because the process component is a name now.
 		//
@@ -153,17 +249,17 @@ func ParseEpisodeKey(key string) (ParsedEpisodeKey, error) {
 		// unnamed processes would collide on one key under the partial unique
 		// index. Dropping the Sscanf without this would have quietly narrowed
 		// what the parser rejects.
-		pid := parts[2]
+		pid := parts[1]
 		if pid == "" {
 			return ParsedEpisodeKey{}, fmt.Errorf(
 				"cell episode key %q: empty process name — the process IS the grain here, so a "+
 					"key without one identifies no place and collides with every other such key", key)
 		}
-		if parts[4] != EpisodeDirectionSupply && parts[4] != EpisodeDirectionEvacuate {
-			return ParsedEpisodeKey{}, fmt.Errorf("cell episode key %q: unknown direction %q", key, parts[4])
+		if parts[3] != EpisodeDirectionSupply && parts[3] != EpisodeDirectionEvacuate {
+			return ParsedEpisodeKey{}, fmt.Errorf("cell episode key %q: unknown direction %q", key, parts[3])
 		}
 		return ParsedEpisodeKey{
-			Kind: EpisodeKindCell, Station: parts[1], ProcessID: pid, Payload: parts[3], Direction: parts[4],
+			Kind: EpisodeKindCell, ProcessID: pid, Payload: parts[2], Direction: parts[3],
 		}, nil
 	case "co":
 		if len(parts) != 3 {

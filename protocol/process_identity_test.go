@@ -81,7 +81,7 @@ func TestProcessIdentityHasOneTypeAcrossEveryWire(t *testing.T) {
 // the single invariant the whole surface rests on.
 func TestCellEpisodeKeyCarriesTheProcessNameVerbatim(t *testing.T) {
 	const name = "PLN-01/L"
-	key := protocol.CellEpisodeKey("PLANT.LINE1", name, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(name, "PANEL-B", protocol.EpisodeDirectionSupply)
 
 	if !strings.Contains(key, name) {
 		t.Fatalf("CellEpisodeKey(%q) = %q — the process name is not in it verbatim. If it "+

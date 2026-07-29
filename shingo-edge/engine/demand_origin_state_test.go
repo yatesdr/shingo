@@ -189,7 +189,7 @@ func TestOriginState_CloseIsEnqueuedBeforeTheRowGoes(t *testing.T) {
 	}
 	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("the row must be gone after a close, got err=%v", err)
 	}

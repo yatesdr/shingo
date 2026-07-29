@@ -1121,10 +1121,10 @@ ALTER TABLE ONLY public.inventory_delta_dedup
     ADD CONSTRAINT inventory_delta_dedup_pkey PRIMARY KEY (station, scope_kind, scope_key, epoch);
 
 ALTER TABLE ONLY public.lineside_buckets
-    ADD CONSTRAINT lineside_buckets_pkey PRIMARY KEY (id);
+    ADD CONSTRAINT lineside_buckets_node_pair_style_part_key UNIQUE (core_node_name, pair_key, style_id, part_number);
 
 ALTER TABLE ONLY public.lineside_buckets
-    ADD CONSTRAINT lineside_buckets_station_core_node_pair_style_part_key UNIQUE (station, core_node_name, pair_key, style_id, part_number);
+    ADD CONSTRAINT lineside_buckets_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.load_sequences
     ADD CONSTRAINT load_sequences_pkey PRIMARY KEY (name);

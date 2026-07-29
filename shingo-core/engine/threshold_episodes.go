@@ -69,7 +69,7 @@ func (m *ThresholdMonitor) openThresholdEpisode(key string, b thresholdEntry, to
 	expected, reason := m.expectedOrdersForThreshold(b, total)
 	origin := store.DemandOrigin{
 		OriginID:   uuid.NewString(),
-		EpisodeKey: protocol.ThresholdEpisodeKey(b.stationID, b.coreNodeName, b.payloadCode),
+		EpisodeKey: protocol.ThresholdEpisodeKey(b.coreNodeName, b.payloadCode),
 		Kind:       protocol.EpisodeKindThreshold,
 		// The binding is the identity here, and bindingKey IS the episode key's
 		// payload — recorded so a reader does not have to re-derive it.

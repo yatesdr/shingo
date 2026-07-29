@@ -537,8 +537,21 @@ CREATE INDEX IF NOT EXISTS idx_demand_registry_payload ON demand_registry(payloa
 -- this table makes the bucket row translation-free from the wire all
 -- the way to the Core admin UI. core_node_name resolves to nodes.id
 -- via GetNodeByName for joins/aggregations.
+--
+-- v65 (identity prerequisite): station left the uniqueness key, which
+-- is the OTHER HALF of that same Obs-8 mistake — an Edge-scoped
+-- identifier inside the identity of a Core-owned physical fact. Which
+-- node holds the parts is the fact; which Pi reported it is not. The
+-- column survives as last-reporter attribute data.
+--
+-- The key is NAMED rather than inline-UNIQUE so a fresh database and a
+-- migrated one agree on the constraint's name and not merely its
+-- columns; the convergence test compares names. store.LinesideBucketsUniqueConstraint
+-- is the single declaration and v65 uses the same constant.
 CREATE TABLE IF NOT EXISTS lineside_buckets (
     id BIGSERIAL PRIMARY KEY,
+    -- Attribute data, NOT identity: the station that last reported this
+    -- bucket. Never a predicate — see v65.
     station TEXT NOT NULL,
     core_node_name TEXT NOT NULL,
     pair_key TEXT NOT NULL,
@@ -553,7 +566,8 @@ CREATE TABLE IF NOT EXISTS lineside_buckets (
     payload_code TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (station, core_node_name, pair_key, style_id, part_number)
+    CONSTRAINT lineside_buckets_node_pair_style_part_key
+        UNIQUE (core_node_name, pair_key, style_id, part_number)
 );
 CREATE INDEX IF NOT EXISTS idx_lineside_buckets_node_style ON lineside_buckets(core_node_name, style_id);
 CREATE INDEX IF NOT EXISTS idx_lineside_buckets_payload ON lineside_buckets(payload_code);

@@ -224,7 +224,7 @@ func TestOpenCellEpisode_SecondFireJoinsRatherThanMints(t *testing.T) {
 		t.Errorf("the join minted a new origin (%s != %s) — 07-21 would render as 484 demands", second, first)
 	}
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	open, err := db.GetOpenDemandOrigin(key)
 	if err != nil {
 		t.Fatalf("read open episode: %v", err)
@@ -258,7 +258,7 @@ func TestCloseCellEpisode_IsIdempotent(t *testing.T) {
 	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("after close the episode must be gone, got err=%v", err)
 	}
@@ -298,7 +298,7 @@ func TestCloseEpisode_KeepsRowWhenEnqueueFails(t *testing.T) {
 
 	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	open, err := db.GetOpenDemandOrigin(key)
 	if err != nil {
 		t.Fatalf("episode must survive a close whose state never got enqueued, got err=%v", err)
@@ -430,7 +430,7 @@ func TestConsumeOrders_CarryTheEpisodesOrigin(t *testing.T) {
 	}
 	_ = res
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	open, err := db.GetOpenDemandOrigin(key)
 	if err != nil {
 		t.Skipf("no episode opened in this fixture (%v) — the stamping path is covered by the unit assertions below", err)

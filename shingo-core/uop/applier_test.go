@@ -271,6 +271,88 @@ func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T
 	}
 }
 
+// TestInventoryDelta_LinesideBucketOneNodeOneRowAcrossStations is the v65
+// identity prerequisite, expressed as behaviour rather than as a constraint
+// definition.
+//
+// ONE PHYSICAL BUCKET IS ONE ROW NO MATTER WHICH EDGE REPORTS IT. The row
+// describes parts sitting at a Core node; which Pi noticed them is not part of
+// where they are. With `station` in the uniqueness key the same physical
+// bucket reported by two edges became TWO rows, and the damage was not the
+// duplication — it was that the duplication is invisible from the read side:
+//
+//   - SystemUOPForPayload's bucket term (service/inventory_system_count.go)
+//     groups by payload with NO station predicate, so it sums both rows.
+//   - An inflated on-hand total sits ABOVE the replenishment threshold, so no
+//     replenishment is requested. That is the Springfield 74576 shape — a
+//     stranded 250-qty bucket holding the total up — reached by a second
+//     route, and this one has no stranded bucket to find.
+//
+// The reason this is a PREREQUISITE and not a bug report: `station` is
+// one-valued per plant today (Springfield: one edge_registry row, one distinct
+// value across every station-bearing table), so the duplicate cannot currently
+// be constructed in production. Per-edge identity constructs it. The test uses
+// two station strings to reach the state identity is about to make reachable.
+func TestInventoryDelta_LinesideBucketOneNodeOneRowAcrossStations(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	nodeName := sd.StorageNode.Name
+
+	// The SAME physical bucket — same node, pair, style, part — reported by two
+	// different edges. Distinct SequenceIDs are not enough to keep these apart
+	// and are not meant to be: claimDeltaSequence scopes the at-most-once guard
+	// BY STATION, so both deltas legitimately apply. That is correct, and it is
+	// the other family — see ApplyLinesideBucketDelta's doc comment.
+	first := makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", 30, 1, protocol.ReasonCaptureFill)
+	first.Station = "PLANT.EDGE-1"
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(first), "edge-1 capture_fill")
+
+	second := makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", 12, 1, protocol.ReasonCaptureFill)
+	second.Station = "PLANT.EDGE-2"
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(second), "edge-2 capture_fill")
+
+	var rows, qty int
+	var station string
+	if err := db.QueryRow(`SELECT count(*), COALESCE(SUM(qty),0), COALESCE(MAX(station),'')
+		FROM lineside_buckets
+		WHERE core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND part_number='PART-A'`,
+		nodeName).Scan(&rows, &qty, &station); err != nil {
+		t.Fatalf("read bucket: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("one physical bucket reported by two edges produced %d rows, want 1.\n"+
+			"SystemUOPForPayload sums buckets with no station predicate, so a second row is a "+
+			"silent overcount of on-hand inventory, and an overcount SUPPRESSES replenishment.", rows)
+	}
+	if qty != 42 {
+		t.Errorf("bucket qty = %d, want 42 (30 + 12 — both deltas are real observations "+
+			"of one bucket and both must land on the one row)", qty)
+	}
+	// The column survives as attribute data: last reporter wins, and that is
+	// all it claims to be now.
+	if station != "PLANT.EDGE-2" {
+		t.Errorf("station = %q, want the last reporter PLANT.EDGE-2 — the column is "+
+			"attribute data now, not identity, and a stale value would misreport who last saw it", station)
+	}
+
+	// And the zero-GC has to be station-free too, or the edge that empties a
+	// bucket is not the edge whose name is on the row and the DELETE matches
+	// nothing — leaving a qty=0 orphan that never clears.
+	drain := makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", -42, 2, protocol.ReasonConsumeDrain)
+	drain.Station = "PLANT.EDGE-1"
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(drain), "edge-1 drains what edge-2 last touched")
+
+	_ = db.QueryRow(`SELECT count(*) FROM lineside_buckets
+		WHERE core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND part_number='PART-A'`,
+		nodeName).Scan(&rows)
+	if rows != 0 {
+		t.Errorf("emptied bucket left %d row(s), want 0 — a station-scoped GC cannot delete a row "+
+			"another edge last stamped, so the orphan would linger at qty=0", rows)
+	}
+}
+
 // TestInventoryDelta_LinesideBucketDelta_RejectsUnderflow pins the
 // CHECK (qty >= 0) constraint. A delta that would drive a bucket
 // negative is rejected. Reconciliation in Phase 2 surfaces the

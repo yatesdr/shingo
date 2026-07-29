@@ -771,6 +771,25 @@ func (db *DB) runVersionedMigrations() error {
 				return schema.ColumnExists(q, "edge_registry", "bound_hostname") &&
 					schema.ColumnExists(q, "edge_registry", "conflict_at")
 			}},
+		// PREREQUISITE of per-edge identity. `station` is one-valued today, so
+		// this merges nothing; it stops being one-valued the moment each edge
+		// gets its own id, and then a station-scoped write against a
+		// station-blind SUM double-counts physical inventory. See the function
+		// comment for why the repo has already made this mistake in this key.
+		{65, "lineside_buckets: drop station from the uniqueness key (identity prerequisite)",
+			v65LinesideBucketsDropStationFromKey,
+			func(q schema.Querier) bool {
+				var n int
+				if err := q.QueryRow(`
+					SELECT count(*) FROM pg_constraint con
+					JOIN pg_class rel ON rel.oid = con.conrelid
+					WHERE rel.relname = 'lineside_buckets'
+					  AND con.contype = 'u'
+					  AND pg_get_constraintdef(con.oid) LIKE '%station%'`).Scan(&n); err != nil {
+					return false
+				}
+				return n == 0
+			}},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2772,6 +2791,137 @@ func v64EdgeRegistryHostnameBinding(tx *sql.Tx) error {
 		`UPDATE edge_registry SET bound_hostname = hostname
 		  WHERE bound_hostname = '' AND hostname <> ''`); err != nil {
 		return fmt.Errorf("bind existing edge_registry rows to their current hostname: %w", err)
+	}
+	return nil
+}
+
+// LinesideBucketsUniqueConstraint is the name of the uniqueness constraint on
+// lineside_buckets, declared once and used by BOTH homes — the baseline
+// CREATE TABLE in postgres_ddl.go and v65 below.
+//
+// NAMED, NOT AUTO-NAMED, AND THAT IS THE POINT OF THE CONSTANT. An inline
+// `UNIQUE (...)` gets a name Postgres derives from the column list, so a fresh
+// database and a database migrated into the same shape end up with the same
+// constraint under two different names. TestSchemaConvergesAcrossVintages
+// compares canonicalised pg_dump output and Canonical does not strip
+// constraint names — it sorts statements — so that difference is a
+// convergence failure waiting for whoever next runs the docker suite.
+const LinesideBucketsUniqueConstraint = "lineside_buckets_node_pair_style_part_key"
+
+// v65LinesideBucketsDropStationFromKey removes `station` from the
+// lineside_buckets uniqueness key, leaving
+// (core_node_name, pair_key, style_id, part_number).
+//
+// THIS IS A PREREQUISITE OF PER-EDGE IDENTITY, NOT A FOLLOW-UP TO IT, and the
+// distinction is the whole reason it lands now. `station` is a CONSTANT across
+// a plant today — Springfield's edge_registry holds exactly one row and all
+// 4 lineside_buckets rows, all 62 demand_registry rows and all 257
+// inventory_delta_dedup rows carry the single value `plant-a.line-1`. A
+// one-valued column is not a discriminator, so today's key is already
+// (core_node_name, pair_key, style_id, part_number) in everything but
+// spelling, and this migration merges zero rows.
+//
+// The day each edge gets a distinct id is the day it starts discriminating,
+// and then the table breaks in a direction that hides itself:
+//
+//   - The three WRITE statements in ApplyLinesideBucketDelta are all
+//     station-scoped — the conflict target, the negative-delta existence
+//     check, and the qty=0 garbage collect.
+//   - The two READ paths are station-BLIND — SystemUOPForPayload's bucket
+//     term (service/inventory_system_count.go) and the per-node ledger
+//     (service/inventory_lineside_ledger.go) both GROUP BY without ever
+//     mentioning station.
+//
+// Move a process between edges with the column discriminating and the same
+// physical bucket exists as two rows: the new edge's writes never GC the old
+// edge's row, and the station-blind SUM counts both. An inflated on-hand total
+// suppresses replenishment — the Springfield 74576 failure reached by another
+// route, and one nobody would look for in a uniqueness constraint.
+//
+// THE REPO HAS ALREADY MADE AND FIXED THIS EXACT MISTAKE IN THIS EXACT KEY.
+// v21 (Round-3 Obs 8) replaced `node_id BIGINT` because Edge's int64 namespace
+// was being used as if it were Core's, producing the Springfield 6883
+// stuck-bucket and the Hopkinsville Core-only orphan. `station` is the
+// surviving half of that same key and the same mistake: an Edge-scoped
+// identifier inside the identity of a Core-owned physical fact. Which node
+// holds the parts is the fact; which Pi mentioned it is not.
+//
+// The column SURVIVES as attribute data — last reporter, useful forensics,
+// same status `edge_registry.hostname` has. What it stops being is identity.
+// It is deliberately NOT rewritten to some plant-level constant: Core has no
+// plant identifier to write, and inventing one here would land a second
+// identity concept ahead of the first.
+//
+// REFUSES RATHER THAN MERGES. If a database somehow does hold two rows
+// differing only by station, they are two claims about one physical bucket and
+// summing them would be the double-count this migration exists to prevent —
+// while keeping one would silently discard counted parts. Springfield is
+// measured clean (4 rows, 4 distinct keys). A plant that is not is a finding,
+// and the deploy should stop and produce one.
+func v65LinesideBucketsDropStationFromKey(tx *sql.Tx) error {
+	var dupes int
+	if err := tx.QueryRow(`
+		SELECT COALESCE(SUM(n - 1), 0) FROM (
+			SELECT count(*) AS n
+			FROM lineside_buckets
+			GROUP BY core_node_name, pair_key, style_id, part_number
+			HAVING count(*) > 1
+		) d`).Scan(&dupes); err != nil {
+		return fmt.Errorf("check lineside_buckets for cross-station duplicates: %w", err)
+	}
+	if dupes > 0 {
+		return fmt.Errorf(
+			"lineside_buckets holds %d row(s) that differ only by `station` — dropping station from the "+
+				"uniqueness key would merge them, and neither merge is safe: summing double-counts one "+
+				"physical bucket, keeping one discards counted parts. This also contradicts the premise "+
+				"of the change, which is that `station` is a single plant-wide value. Resolve the rows "+
+				"first:\n"+
+				"  SELECT station, core_node_name, pair_key, style_id, part_number, qty FROM lineside_buckets\n"+
+				"   WHERE (core_node_name, pair_key, style_id, part_number) IN (\n"+
+				"     SELECT core_node_name, pair_key, style_id, part_number FROM lineside_buckets\n"+
+				"      GROUP BY 1,2,3,4 HAVING count(*) > 1)\n"+
+				"   ORDER BY core_node_name, part_number, station", dupes)
+	}
+
+	// Drop whichever unique constraint currently carries `station`, by
+	// introspection: it may be v21's explicit name or the baseline's
+	// auto-generated one, and which of the two a given database has depends on
+	// the vintage it was created at. Same pg_constraint pattern v21 used, one
+	// step narrower — only constraints whose definition mentions the column.
+	if _, err := tx.Exec(`
+		DO $$
+		DECLARE c RECORD;
+		BEGIN
+			FOR c IN
+				SELECT con.conname
+				FROM pg_constraint con
+				JOIN pg_class rel ON rel.oid = con.conrelid
+				WHERE rel.relname = 'lineside_buckets'
+				  AND con.contype = 'u'
+				  AND pg_get_constraintdef(con.oid) LIKE '%station%'
+			LOOP
+				EXECUTE 'ALTER TABLE lineside_buckets DROP CONSTRAINT ' || quote_ident(c.conname);
+			END LOOP;
+		END $$`); err != nil {
+		return fmt.Errorf("drop station-bearing lineside_buckets unique constraint: %w", err)
+	}
+
+	// Add the station-free constraint under its declared name. Guarded because
+	// Postgres has no ADD CONSTRAINT IF NOT EXISTS, and because a fresh
+	// database got this constraint from the baseline before the migration
+	// pipeline ran.
+	if _, err := tx.Exec(fmt.Sprintf(`DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_constraint con
+				JOIN pg_class rel ON rel.oid = con.conrelid
+				WHERE rel.relname = 'lineside_buckets' AND con.contype = 'u'
+			) THEN
+				ALTER TABLE lineside_buckets
+					ADD CONSTRAINT %s UNIQUE (core_node_name, pair_key, style_id, part_number);
+			END IF;
+		END $$`, LinesideBucketsUniqueConstraint)); err != nil {
+		return fmt.Errorf("add station-free lineside_buckets unique constraint: %w", err)
 	}
 	return nil
 }

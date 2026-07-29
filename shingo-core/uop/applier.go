@@ -513,10 +513,23 @@ func (s *InventoryDeltaService) RejectedDeltaDetail() ([]RejectedDeltaBin, error
 }
 
 // ApplyLinesideBucketDelta applies a LinesideBucketDelta against the
-// lineside_buckets row keyed on (station, core_node_name, pair_key,
-// style_id, part_number). Creates the row on first sight via UPSERT;
-// deletes when qty reaches zero (Option C — empty buckets carry no
-// useful information).
+// lineside_buckets row keyed on (core_node_name, pair_key, style_id,
+// part_number). Creates the row on first sight via UPSERT; deletes when
+// qty reaches zero (Option C — empty buckets carry no useful information).
+//
+// TWO USES OF d.Station IN ONE FUNCTION, AND THEY ARE NOT THE SAME KIND OF
+// THING — this is the distinction v65 turns on:
+//
+//   - claimDeltaSequence(tx, d.Station, ...) — station STAYS. SequenceID is an
+//     Edge-local counter, so "which edge's counter space" is exactly what
+//     makes the at-most-once guard correct. Per-edge identity FIXES this one:
+//     two edges sharing a station id today share a sequence space they are
+//     each numbering independently.
+//   - The lineside_buckets row itself — station is NOT a predicate. The row is
+//     a physical fact about a Core node, and the reporting edge is not part of
+//     where the parts are.
+//
+// A change that treated both the same way would get one of them wrong.
 //
 // Round-3 Obs 8: validates d.CoreNodeName resolves to a known node via
 // GetNodeByName before insert. If the name doesn't resolve, the delta
@@ -584,8 +597,8 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(d *protocol.LinesideBuc
 	if d.Delta < 0 {
 		var exists bool
 		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM lineside_buckets
-			WHERE station=$1 AND core_node_name=$2 AND pair_key=$3 AND style_id=$4 AND part_number=$5)`,
-			d.Station, d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber).Scan(&exists); err != nil {
+			WHERE core_node_name=$1 AND pair_key=$2 AND style_id=$3 AND part_number=$4)`,
+			d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber).Scan(&exists); err != nil {
 			return fmt.Errorf("check bucket exists for negative LinesideBucketDelta (core_node_name=%q part=%q): %w",
 				d.CoreNodeName, d.PartNumber, err)
 		}
@@ -606,13 +619,20 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(d *protocol.LinesideBuc
 	// carry a code" (rare — older Edge build or an envelope built
 	// outside the capture-from-order-context path); we don't want
 	// such a delta to clobber a previously-latched payload code.
+	//
+	// STATION IS WRITTEN, NEVER MATCHED ON (v65). The conflict target is the
+	// physical bucket — node, pair, style, part — and the station rides along
+	// as "who last reported this". Matching on it would mean a bucket reported
+	// by a second edge inserts a SECOND row for one physical place, which the
+	// station-blind SUM in SystemUOPForPayload would then count twice.
 	res, err := tx.Exec(`
 		INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty, payload_code)
 		VALUES ($1, $2, $3, $4, $5, GREATEST($6, 0), $7)
-		ON CONFLICT (station, core_node_name, pair_key, style_id, part_number)
+		ON CONFLICT (core_node_name, pair_key, style_id, part_number)
 		DO UPDATE SET
 			qty = lineside_buckets.qty + $6,
 			payload_code = CASE WHEN $7 = '' THEN lineside_buckets.payload_code ELSE $7 END,
+			station = $1,
 			updated_at = NOW()`,
 		d.Station, d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber, d.Delta, d.PayloadCode)
 	if err != nil {
@@ -629,10 +649,14 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(d *protocol.LinesideBuc
 
 	// Garbage-collect rows that have hit zero. Option C — empty
 	// buckets carry no useful information.
+	// Station-free, matching the conflict target above. A station-scoped GC is
+	// how an emptied bucket survives its own emptying once two edges exist:
+	// the edge that zeroed it is not the edge whose station is on the row, so
+	// the DELETE matches nothing and a qty=0 row lingers as an orphan.
 	if _, err := tx.Exec(`DELETE FROM lineside_buckets
-		WHERE station=$1 AND core_node_name=$2 AND pair_key=$3 AND style_id=$4 AND part_number=$5
+		WHERE core_node_name=$1 AND pair_key=$2 AND style_id=$3 AND part_number=$4
 		AND qty=0`,
-		d.Station, d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber); err != nil {
+		d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber); err != nil {
 		return fmt.Errorf("gc empty bucket core_node_name=%q part=%q: %w", d.CoreNodeName, d.PartNumber, err)
 	}
 
@@ -797,6 +821,22 @@ func (s *InventoryDeltaService) SumInvariant() (InventoryInvariant, error) {
 // ListBucketsForStation returns every authoritative bucket row for
 // the given station. Edge filters down to its node set client-side
 // (cheap; bucket rows per station are few).
+//
+// KNOWN GAP, AND IT OPENS THE DAY EACH EDGE GETS ITS OWN ID — not fixed here
+// because the fix changes what Edge has to send, which is a wire decision.
+//
+// After v65 `station` is the LAST REPORTER, not an ownership claim, so this
+// filter answers "buckets some edge most recently mentioned" when the caller
+// (Edge's drift reconciliation, via www/handlers_telemetry.go) is asking
+// "buckets at the nodes I own". Those coincide only while every edge shares
+// one station string. With distinct ids, a bucket at one of edge A's nodes
+// that edge B last touched becomes invisible to A's reconciliation — the
+// drift it exists to detect is exactly the drift it would stop seeing.
+//
+// The correct filter is the NODE SET, and the shape is already sitting next to
+// it: ListBinUOPForNodes takes node names, and the SAME handler already builds
+// a node list for the bins half of the same response. The buckets half is the
+// only part still keyed on the station.
 func (s *InventoryDeltaService) ListBucketsForStation(station string) ([]LinesideBucketRow, error) {
 	if station == "" {
 		return nil, nil

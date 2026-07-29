@@ -80,7 +80,7 @@ func TestReconciler_LeavesBreachedEpisodeOpen(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != nil {
 		t.Fatalf("a still-breached episode must stay open, got err=%v", err)
 	}
@@ -104,7 +104,7 @@ func TestReconciler_ClosesRecoveredEpisode(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("recovered episode must be closed by the sweep, got err=%v", err)
 	}
@@ -145,7 +145,7 @@ func TestReconciler_ClosesEpisodeWhenClaimGone(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("episode must close when its claim is no longer active, got err=%v", err)
 	}
@@ -197,7 +197,7 @@ func TestReconciler_KeepsEpisodeOpenWhileAnyClaimBelow(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != nil {
 		t.Fatalf("the process still needs the payload while B is below, got err=%v", err)
 	}
@@ -271,7 +271,7 @@ func TestReconciler_IgnoresThresholdEpisodes(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	key := protocol.ThresholdEpisodeKey(eng.cfg.StationID(), "SLN_002", "PANEL-B")
+	key := protocol.ThresholdEpisodeKey("SLN_002", "PANEL-B")
 	if err := db.OpenDemandOrigin(&store.OpenOrigin{
 		EpisodeKey: key, OriginID: "11111111-1111-1111-1111-111111111111",
 		Kind: protocol.EpisodeKindThreshold, CoreNodeName: "SLN_002",

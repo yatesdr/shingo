@@ -68,7 +68,7 @@ func (e *Engine) openCellEpisode(
 		// empty origin id by attaching nothing and letting Core classify.
 		return "", false, nil
 	}
-	key := protocol.CellEpisodeKey(e.cfg.StationID(), name, string(claim.PayloadCode), direction)
+	key := protocol.CellEpisodeKey(name, string(claim.PayloadCode), direction)
 
 	if open, err := e.db.GetOpenDemandOrigin(key); err == nil && open != nil {
 		joined, jerr := e.db.JoinDemandOrigin(key)
@@ -165,7 +165,7 @@ func (e *Engine) closeCellEpisode(processID int64, payload, direction, reason, c
 		// one on its own pass — which is the sweep's whole purpose.
 		return
 	}
-	e.closeEpisode(protocol.CellEpisodeKey(e.cfg.StationID(), name, payload, direction), reason, closedBy)
+	e.closeEpisode(protocol.CellEpisodeKey(name, payload, direction), reason, closedBy)
 }
 
 // closeEpisode is the ONE close path for every kind Edge owns.
