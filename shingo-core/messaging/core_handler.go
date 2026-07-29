@@ -32,7 +32,7 @@ type CoreHandler struct {
 	// before the stale-detection loop marks it stale and reaps its
 	// demand_registry rows. Composition root sets this after
 	// construction from MessagingConfig; zero falls back to
-	// defaultStaleEdgeThreshold.
+	// DefaultStaleEdgeThreshold.
 	StaleEdgeThreshold time.Duration
 
 	// Background goroutine for stale edge detection
@@ -40,12 +40,20 @@ type CoreHandler struct {
 	stopCh   chan struct{}
 }
 
-// defaultStaleEdgeThreshold is the fallback used when the caller leaves
+// DefaultStaleEdgeThreshold is the fallback used when the caller leaves
 // StaleEdgeThreshold unset. 15 minutes matches the operations guidance
 // in docs/bin-loader-unloader-architecture.md — long enough to ride out
 // flaky links, short enough to bound how long stale demand signals
 // target a dead edge after a hard crash.
-const defaultStaleEdgeThreshold = 15 * time.Minute
+//
+// EXPORTED BECAUSE IT IS NOW ANSWERING TWO QUESTIONS, and they must not be
+// allowed to drift apart. The demand reconciler asks the same thing this loop
+// asks — "has this station been quiet long enough that we should stop believing
+// anything about it?" — and it asks it of the heartbeat timestamp directly
+// rather than of the flag this loop sets. Two numbers for one question would
+// mean a window in which the reaper has given up on a station while the sweep
+// is still closing episodes on the strength of its silence.
+const DefaultStaleEdgeThreshold = 15 * time.Minute
 
 // NewCoreHandler creates a handler for the order-channel inbound
 // messages and stale-edge management.
@@ -181,7 +189,7 @@ func (h *CoreHandler) staleEdgeLoop() {
 	defer ticker.Stop()
 	threshold := h.StaleEdgeThreshold
 	if threshold <= 0 {
-		threshold = defaultStaleEdgeThreshold
+		threshold = DefaultStaleEdgeThreshold
 	}
 	for {
 		select {

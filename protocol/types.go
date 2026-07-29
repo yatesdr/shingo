@@ -127,6 +127,34 @@ const (
 	// survives a Core that is down when it changes. Old-Core safety is the same
 	// as production.tick's: an unregistered subject logs and returns, and the
 	// Edge outbox acks on publish rather than on Core handling.
+	//
+	// THE SEND IS NOT ATOMIC WITH THE ROW DELETE, AND MUST NOT BE MADE SO.
+	// Edge closes an episode by enqueuing the closing state and then deleting
+	// demand_origins_open's row. That is four autocommit statements, not one
+	// transaction, and it structurally cannot be one as written: Enqueue takes
+	// *sql.DB, not *sql.Tx.
+	//
+	// It does not need to be. The ORDERING is what carries the guarantee —
+	// enqueue, then delete, plus the branch that KEEPS THE ROW when the enqueue
+	// fails — and that blocks the only direction that loses a close. The
+	// surviving crash window (message enqueued, row still present) is the safe
+	// direction: Edge's reconciler re-sends at a higher revision and Core's
+	// upsert guard makes the duplicate a no-op. The indefinite-disagreement
+	// scenario the design originally worried about was written before that
+	// reconciler existed. `revision` is a persisted column on
+	// demand_origins_open and cannot be re-used, because a new episode for the
+	// same episode_key carries a new origin_id — which is what the guard keys
+	// on.
+	//
+	// DO NOT "FIX" THIS BY GIVING Enqueue A Tx. production.tick is not
+	// transactional either: it is the same compensating shape — enqueue, restore
+	// the snapshot on failure — so it is not a counterexample to copy away from,
+	// it is the precedent this matches. Converting one of them makes the
+	// compensating pattern read as a bug somebody fixed, and the next person
+	// converts production.tick too, where the compensating branch is
+	// LOAD-BEARING and the atomic version is not obviously equivalent. A
+	// refactor whose main effect is to make the remaining instance of a
+	// deliberate pattern look like an oversight costs more than it buys.
 	SubjectDemandOrigin = "demand.origin"
 
 	// SubjectDowntimeEvent — Edge → Core persisted downtime event (G9).

@@ -44,6 +44,61 @@ func registerActiveEdge(t *testing.T, db *store.DB, stationID string) {
 	}
 }
 
+// registerEdgeWithoutHeartbeat is the state a station is in between Core
+// booting and that station's first heartbeat landing: a registry row, status
+// 'active', last_heartbeat NULL. Core has never heard a word from it — and
+// under a status-based reachability check it reads as perfectly healthy.
+func registerEdgeWithoutHeartbeat(t *testing.T, db *store.DB, stationID string) {
+	t.Helper()
+	if err := db.RegisterEdge(stationID, "test-host", "test", nil); err != nil {
+		t.Fatalf("register edge: %v", err)
+	}
+}
+
+// silenceEdge ages a station's last heartbeat WITHOUT touching its status —
+// which is exactly the tree a broken, unstarted or misconfigured MarkStaleEdges
+// leaves behind, because MarkStaleEdges is the only thing that ever moves status
+// off 'active'.
+func silenceEdge(t *testing.T, db *store.DB, stationID string, silentFor time.Duration) {
+	t.Helper()
+	if _, err := db.Exec(`UPDATE edge_registry SET last_heartbeat = $1 WHERE station_id = $2`,
+		time.Now().UTC().Add(-silentFor), stationID); err != nil {
+		t.Fatalf("silence edge: %v", err)
+	}
+}
+
+// mustEdgeStatus reads edge_registry.status back so a test can PROVE the stale
+// flag was never set, rather than assuming it.
+func mustEdgeStatus(t *testing.T, db *store.DB, stationID string) string {
+	t.Helper()
+	var status string
+	if err := db.QueryRow(`SELECT status FROM edge_registry WHERE station_id = $1`,
+		stationID).Scan(&status); err != nil {
+		t.Fatalf("read edge status: %v", err)
+	}
+	return status
+}
+
+// openCellEpisode writes an Edge-authored cell episode at revision 1, the way
+// one arrives over the state-transfer seam, backdated past the childless grace.
+func openCellEpisode(t *testing.T, db *store.DB, stationID, payloadCode string, processID int64, age time.Duration) string {
+	t.Helper()
+	originID := uuid.NewString()
+	if err := db.UpsertDemandOrigin(store.DemandOrigin{
+		OriginID:   originID,
+		Revision:   1,
+		EpisodeKey: protocol.CellEpisodeKey(stationID, processID, payloadCode, protocol.EpisodeDirectionSupply),
+		Kind:       protocol.EpisodeKindCell,
+		Direction:  protocol.EpisodeDirectionSupply,
+		StationID:  stationID,
+		ProcessID:  processID,
+		OpenedAt:   time.Now().UTC().Add(-age),
+	}); err != nil {
+		t.Fatalf("upsert cell episode: %v", err)
+	}
+	return originID
+}
+
 // backdateEpisode ages an open episode past a grace period. Tests pin their own
 // inputs: driving this off the wall clock would mean waiting fifteen minutes or
 // asserting nothing.
@@ -301,6 +356,133 @@ func TestDemandReconciler_ChildlessOnAnUnreachableEdgeIsNotAFinding(t *testing.T
 	}
 }
 
+// REACHABILITY IS A POSITIVE ASSERTION, NOT AN ABSENT FLAG.
+//
+// The sweep's licence to close a childless episode rests entirely on Core being
+// able to say it WOULD have received a child if one had been created. The first
+// version of that check asked `edge_registry.status == 'active'` — and status is
+// written 'active' by Register and by every heartbeat, and moved off 'active' by
+// exactly one thing: MarkStaleEdges, a 60-second loop in CoreHandler, a
+// different service from the one running this sweep.
+//
+// So the check inferred "this Edge is fine" from the ABSENCE OF A MARK, and a
+// staleness tracker that is unstarted, misconfigured or itself broken reads
+// identically to a healthy plant — at which point the sweep closes EVERY OPEN
+// CELL EPISODE IN THE PLANT on the strength of a signal that was never computed.
+// A check must know whether it had the input to check, and that rule applies to
+// the tiebreak's own input.
+//
+// Both halves are broken here WITHOUT breaking any code: the tree is exactly
+// what production leaves behind when the stale loop does not run.
+func TestDemandReconciler_ReachabilityIsAPositiveAssertionNotAnAbsentFlag(t *testing.T) {
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+
+	// (a) Registered at boot, never heartbeated. Core has heard NOTHING from
+	// this station, and nothing is broken — this is the ordinary state of every
+	// station for the first minute after Core starts.
+	registerEdgeWithoutHeartbeat(t, db, "PLANT.MUTE")
+	mute := openCellEpisode(t, db, "PLANT.MUTE", "PANEL-RC6", 3, 6*time.Hour)
+
+	// (b) Heartbeated once, then went quiet six hours ago, and NOTHING marked it
+	// stale — MarkStaleEdges never ran.
+	registerActiveEdge(t, db, "PLANT.DEAF")
+	silenceEdge(t, db, "PLANT.DEAF", 6*time.Hour)
+	deaf := openCellEpisode(t, db, "PLANT.DEAF", "PANEL-RC7", 4, 6*time.Hour)
+
+	// PROVE THE PREMISE. If the stale loop had run, this test would be measuring
+	// the stale loop rather than the guard, and it would pass for the wrong
+	// reason on a tree where the guard had been deleted.
+	for _, station := range []string{"PLANT.MUTE", "PLANT.DEAF"} {
+		if got := mustEdgeStatus(t, db, station); got != "active" {
+			t.Fatalf("setup: %s status = %q, want \"active\" — something marked this edge stale, so this test is no longer about a staleness tracker that never ran",
+				station, got)
+		}
+	}
+
+	eng.reconcileDemandEpisodes()
+
+	if got := mustGetOrigin(t, db, mute); got.ClosedAt != nil {
+		t.Errorf("the sweep closed an episode on a station Core has NEVER heard from (reason=%q, by=%q) — a missing input was rendered as a finding",
+			got.CloseReason, got.ClosedBy)
+	}
+	if got := mustGetOrigin(t, db, deaf); got.ClosedAt != nil {
+		t.Errorf("the sweep closed an episode on a station silent for six hours whose status was still 'active' (reason=%q, by=%q) — reachability was read off the absence of a staleness flag",
+			got.CloseReason, got.ClosedBy)
+	}
+
+	// (c) And the guard is about RECENCY, not about never closing. One heartbeat
+	// lands and the same two episodes become decidable — otherwise the two
+	// assertions above are satisfied by a sweep that closes nothing at all.
+	if _, err := db.UpdateHeartbeat("PLANT.MUTE"); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+	if _, err := db.UpdateHeartbeat("PLANT.DEAF"); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+	eng.reconcileDemandEpisodes()
+	for name, id := range map[string]string{"PLANT.MUTE": mute, "PLANT.DEAF": deaf} {
+		got := mustGetOrigin(t, db, id)
+		if got.ClosedAt == nil {
+			t.Errorf("%s: a six-hour childless episode stayed open after its Edge heartbeated — the guard is refusing to close rather than refusing to guess", name)
+			continue
+		}
+		if got.CloseReason != protocol.CloseReasonUnattributed {
+			t.Errorf("%s: close_reason = %q, want %q", name, got.CloseReason, protocol.CloseReasonUnattributed)
+		}
+	}
+}
+
+// THE A1 RIDER, ASSERTED RATHER THAN ASSUMED.
+//
+// Core closing a childless CELL episode is Core ending something it does not
+// own: the precondition lives in Edge's claims, and Core cannot evaluate it. The
+// only thing that makes that safe is that the close is PROVISIONAL — three
+// specific facts, all three load-bearing, none of them previously pinned:
+//
+//   - close_reason `unattributed`, because what Core actually knows is that no
+//     order was ever attributed to this demand, not that the demand recovered or
+//     was cancelled;
+//   - closed_by `sweep`, because the sweep's share of the closing is the only
+//     signal that would say the notification paths have silently stopped firing;
+//   - THE REVISION DOES NOT MOVE. Edge's real close arrives carrying the
+//     revision Edge stamped on it. If Core's guess bumped, that close would lose
+//     `WHERE revision < EXCLUDED.revision`, be discarded without an error, and
+//     Core's guess would outrank the owner's truth forever.
+//
+// The no-bump rule may already hold via the general inferred-close path. "May
+// already hold" is not the standard, and a rule nothing asserts is one refactor
+// from being gone.
+func TestDemandReconciler_ChildlessCellCloseIsProvisional(t *testing.T) {
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+	registerActiveEdge(t, db, "PLANT.RIDER")
+
+	originID := openCellEpisode(t, db, "PLANT.RIDER", "PANEL-RC8", 5, 3*time.Hour)
+	if pre := mustGetOrigin(t, db, originID); pre.Revision != 1 {
+		t.Fatalf("setup: revision = %d, want 1 — the assertion below is about a revision that did not move from THIS number", pre.Revision)
+	}
+
+	eng.reconcileDemandEpisodes()
+
+	got := mustGetOrigin(t, db, originID)
+	if got.ClosedAt == nil {
+		t.Fatal("a three-hour childless cell episode on a reachable Edge stayed open")
+	}
+	if got.CloseReason != protocol.CloseReasonUnattributed {
+		t.Errorf("close_reason = %q, want %q", got.CloseReason, protocol.CloseReasonUnattributed)
+	}
+	if got.ClosedBy != protocol.ClosedBySweep {
+		t.Errorf("closed_by = %q, want %q", got.ClosedBy, protocol.ClosedBySweep)
+	}
+	// The specific number, not "unchanged-ish". A bump to 2 is the value that
+	// silently loses Edge's real close.
+	if got.Revision != 1 {
+		t.Errorf("revision = %d, want 1 — an inferred close bumped the revision, so Edge's real close will lose `WHERE revision < EXCLUDED.revision` and be discarded in silence",
+			got.Revision)
+	}
+}
+
 // CORE'S INFERENCE MUST NOT OUTRANK EDGE'S TRUTH.
 //
 // Edge authors cell and changeover episodes and stamps a monotonic revision on
@@ -372,14 +554,76 @@ func TestDemandReconciler_AgesOutOldOrphansOnly(t *testing.T) {
 	// create site by orders that are structurally originless.
 	insertOrderWithOrigin(t, db, "", protocol.OriginClassNoDemand, 48*time.Hour)
 
+	before := time.Now().UTC()
 	eng.reconcileDemandEpisodes()
 
-	counts := map[string]int{}
+	// AGING DOES NOT RECLASSIFY. origin_class is what the create site decided
+	// and no clock rewrites it: both orphans are still `orphan` afterwards, and
+	// the fourth value does not exist. Counting classes is how a reclassifying
+	// sweep would be caught, because the aged row would leave this bucket.
+	counts := orderClassCounts(t, db)
+	if counts[protocol.OriginClassOrphan] != 2 {
+		t.Errorf("orphan = %d, want 2 — aging retires a finding, it does not rewrite how the order related to a demand at creation",
+			counts[protocol.OriginClassOrphan])
+	}
+	if counts["orphan_aged"] != 0 {
+		t.Errorf("orphan_aged = %d, want 0 — a clock mutating origin_class leaves the row unable to say what its class was at creation",
+			counts["orphan_aged"])
+	}
+	if counts[protocol.OriginClassNoDemand] != 1 {
+		t.Errorf("no_demand = %d, want 1 — the sweep must not touch orders that were never a finding",
+			counts[protocol.OriginClassNoDemand])
+	}
+
+	// And the column is read BACK and asserted on the VALUE, not on presence.
+	// A tree that stamped created_at instead of the sweep's clock passes any
+	// "is it set" check and is wrong by two days.
+	findings, err := db.ListOrphanFindings()
+	if err != nil {
+		t.Fatalf("list orphan findings: %v", err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("orphan findings = %d, want 2", len(findings))
+	}
+	fresh, aged := findings[0], findings[1] // ORDER BY orphan_aged_at NULLS FIRST
+	if fresh.AgedAt != nil {
+		t.Errorf("the one-hour-old orphan was aged out at %s — it is still a live finding", fresh.AgedAt)
+	}
+	if aged.AgedAt == nil {
+		t.Fatal("the two-day-old orphan has no orphan_aged_at — it never stopped being asked about")
+	}
+	if aged.AgedAt.Before(before) || aged.AgedAt.After(time.Now().UTC().Add(time.Minute)) {
+		t.Errorf("orphan_aged_at = %s, want the sweep's own clock (between %s and now) — a timestamp taken from the order rather than the sweep is wrong by the whole grace period",
+			aged.AgedAt.UTC(), before)
+	}
+
+	// A SECOND PASS MUST NOT MOVE IT. The sweep runs every minute forever;
+	// without the `orphan_aged_at IS NULL` guard "when did this stop being asked
+	// about" would permanently read "a minute ago", and Phase 6's trend line
+	// would be flat by construction.
+	firstStamp := *aged.AgedAt
+	eng.reconcileDemandEpisodes()
+	again, err := db.ListOrphanFindings()
+	if err != nil {
+		t.Fatalf("list orphan findings (second pass): %v", err)
+	}
+	if len(again) != 2 || again[1].AgedAt == nil {
+		t.Fatalf("second pass lost the aged orphan: %+v", again)
+	}
+	if !again[1].AgedAt.Equal(firstStamp) {
+		t.Errorf("orphan_aged_at moved from %s to %s on the second sweep — the timestamp is measuring the sweep, not the order",
+			firstStamp, again[1].AgedAt.UTC())
+	}
+}
+
+func orderClassCounts(t *testing.T, db *store.DB) map[string]int {
+	t.Helper()
 	rows, err := db.Query(`SELECT origin_class, COUNT(*) FROM orders GROUP BY origin_class`)
 	if err != nil {
 		t.Fatalf("count classes: %v", err)
 	}
 	defer rows.Close()
+	counts := map[string]int{}
 	for rows.Next() {
 		var c string
 		var n int
@@ -388,16 +632,5 @@ func TestDemandReconciler_AgesOutOldOrphansOnly(t *testing.T) {
 		}
 		counts[c] = n
 	}
-	if counts[protocol.OriginClassOrphanAged] != 1 {
-		t.Errorf("orphan_aged = %d, want 1 — the two-day-old orphan should have stopped being asked about",
-			counts[protocol.OriginClassOrphanAged])
-	}
-	if counts[protocol.OriginClassOrphan] != 1 {
-		t.Errorf("orphan = %d, want 1 — the one-hour-old orphan is still a live finding",
-			counts[protocol.OriginClassOrphan])
-	}
-	if counts[protocol.OriginClassNoDemand] != 1 {
-		t.Errorf("no_demand = %d, want 1 — the sweep must not touch orders that were never a finding",
-			counts[protocol.OriginClassNoDemand])
-	}
+	return counts
 }

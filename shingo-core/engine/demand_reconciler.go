@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/messaging"
 	"shingocore/store"
 )
 
@@ -115,13 +116,18 @@ func (e *Engine) reconcileDemandEpisodes() {
 // signals it cannot resolve, and that demand produces nothing either.
 //
 // A CHECK MUST KNOW WHETHER IT HAD THE INPUT TO CHECK. Zero children is
-// evidence only if Core could have received children. When the owning Edge is
-// stale — or was never registered at all — it is not evidence, it is a missing
-// input, and rendering a missing input as a finding is the exact failure this
-// branch has now paid for several times over. So those episodes are DECORATED,
-// NEVER CLOSED: "this episode's Edge has been unreachable since X" is an honest
-// unknown. It is a log line today because the demand surface does not exist
-// yet; the query behind it is the one that surface will render.
+// evidence only if Core could have received children. When Core cannot say when
+// it last heard from the owning Edge it is not evidence, it is a missing input,
+// and rendering a missing input as a finding is the exact failure this branch
+// has now paid for several times over. So those episodes are DECORATED, NEVER
+// CLOSED: "Core has not heard from its Edge since X" is an honest unknown. It is
+// a log line today because the demand surface does not exist yet; the query
+// behind it is the one that surface will render.
+//
+// AND THE CHECK ON THE INPUT IS ITSELF POSITIVE — see classifyEdgeContact. The
+// question is "when did we last hear from this Edge", answered from a timestamp
+// Core wrote when a message actually arrived, not "has anything marked this Edge
+// stale", which is satisfied by a staleness tracker that never ran.
 //
 // The decoration is not stored on the row. It is derivable from
 // edge_registry.last_heartbeat at read time, and this design's standing rule is
@@ -142,14 +148,17 @@ func (e *Engine) reconcileChildlessEpisodes() (closed int, unreachable int) {
 		// must not be read as "no waiting required".
 		grace = 15 * time.Minute
 	}
-	cutoff := time.Now().UTC().Add(-grace)
+	now := time.Now().UTC()
+	cutoff := now.Add(-grace)
+	horizon := e.edgeSilenceHorizon()
 
 	for i := range states {
 		s := &states[i]
-		if !s.EdgeReachable {
+		contact := classifyEdgeContact(s.EdgeLastSeen, now, horizon)
+		if contact != edgeContactRecent {
 			unreachable++
 			e.dbg("demand_reconciler: episode %s (%s, station=%s) left open — %s",
-				s.OriginID, s.Kind, s.StationID, describeEdgeSilence(s))
+				s.OriginID, s.Kind, s.StationID, describeEdgeSilence(s, contact, horizon))
 			continue
 		}
 		if s.Children > 0 {
@@ -163,8 +172,13 @@ func (e *Engine) reconcileChildlessEpisodes() (closed int, unreachable int) {
 		// happened is that no order was ever attributed to it, and the word has
 		// to keep saying that or the surface loses the only signal that
 		// distinguishes a dead-lettered close from an Edge that never spoke.
+		//
+		// INFERRED, so it does not bump the revision: this is a PROVISIONAL
+		// close over an episode Core does not own, and the owner's real close
+		// arrives at a higher revision and replaces it. See
+		// CloseDemandOriginInferred.
 		ok, err := e.db.CloseDemandOriginInferred(s.OriginID, protocol.CloseReasonUnattributed,
-			protocol.ClosedBySweep, time.Now().UTC())
+			protocol.ClosedBySweep, now)
 		if err != nil {
 			e.logFn("demand_reconciler: close childless episode %s: %v", s.OriginID, err)
 			continue
@@ -175,25 +189,86 @@ func (e *Engine) reconcileChildlessEpisodes() (closed int, unreachable int) {
 		closed++
 		e.logFn("demand_reconciler: CLOSED %s origin=%s key=%s kind=%s — open %s with zero orders against it",
 			protocol.CloseReasonUnattributed, s.OriginID, s.EpisodeKey, s.Kind,
-			time.Since(s.OpenedAt).Round(time.Second))
+			now.Sub(s.OpenedAt).Round(time.Second))
 	}
 	return closed, unreachable
+}
+
+// edgeContact is what Core can POSITIVELY assert about hearing from a station.
+//
+// It is a tri-state rather than a bool because two of the three values are
+// different kinds of "we do not know", and an operator has to be able to tell
+// them apart — but only ONE value licenses a close, so the two unknowns behave
+// identically to the sweep and differ only in what they say.
+type edgeContact int
+
+const (
+	// edgeContactNever — Core holds no heartbeat timestamp for this station at
+	// all: no registry row, or a row that registered and then went quiet before
+	// its first heartbeat. Core has never heard a word from it, so it cannot
+	// have missed hearing one either.
+	edgeContactNever edgeContact = iota
+	// edgeContactSilent — Core has a timestamp and it is older than the
+	// horizon. The station was up and is not now.
+	edgeContactSilent
+	// edgeContactRecent — Core heard from this station inside the horizon. THE
+	// ONLY VALUE THAT LICENSES CLOSING AN EPISODE ON A ZERO CHILD COUNT,
+	// because it is the only one under which a child would have reached Core if
+	// one had been created.
+	edgeContactRecent
+)
+
+// classifyEdgeContact answers "when did Core last hear from this Edge" and
+// grades the answer. NO TIMESTAMP IS NOT A NO — it is an unknown.
+//
+// This is deliberately not `edge_registry.status != 'stale'`. That flag is
+// written 'active' on registration and on every heartbeat and is only ever moved
+// off it by MarkStaleEdges, a 60-second loop in a different service; reading
+// reachability off it means the sweep infers "this Edge is fine" from the
+// absence of a mark, and an unstarted, misconfigured or broken staleness tracker
+// then reads as a healthy plant — at which point the sweep closes EVERY OPEN
+// EPISODE against a signal that was never computed. A check must know whether it
+// had the input to check, and that rule applies to the tiebreak's own input.
+func classifyEdgeContact(lastSeen *time.Time, now time.Time, horizon time.Duration) edgeContact {
+	if lastSeen == nil {
+		return edgeContactNever
+	}
+	if now.Sub(lastSeen.UTC()) > horizon {
+		return edgeContactSilent
+	}
+	return edgeContactRecent
+}
+
+// edgeSilenceHorizon is how long a station may be quiet before Core stops
+// treating the absence of its orders as evidence about anything.
+//
+// It is the SAME number the stale-edge reaper uses, read from the same config
+// key, because it answers the same question. Two knobs would open a window in
+// which the reaper has already given up on a station and deleted its demand
+// bindings while this sweep is still closing that station's episodes on the
+// strength of its silence.
+func (e *Engine) edgeSilenceHorizon() time.Duration {
+	if e.cfg == nil || e.cfg.Messaging.StaleEdgeThreshold <= 0 {
+		return messaging.DefaultStaleEdgeThreshold
+	}
+	return e.cfg.Messaging.StaleEdgeThreshold
 }
 
 // describeEdgeSilence renders the honest unknown for an episode Core cannot
 // judge, naming WHICH unknown it is.
 //
-// "Never sent a heartbeat" and "stopped sending one at 09:14" are different
-// facts — one is a station that has never been up since Core booted, the other
-// is a station that went away mid-episode — and collapsing them into "edge
-// unreachable" throws away the half of the message that tells an operator where
-// to look.
-func describeEdgeSilence(s *store.OpenEpisodeState) string {
-	if s.EdgeLastSeen == nil {
-		return "its Edge (" + s.StationID + ") has never sent a heartbeat, so a zero order count proves nothing"
+// "Never heard from" and "stopped answering at 09:14" are different facts — one
+// is a station that has never been up since Core booted, the other is a station
+// that went away mid-episode — and collapsing them into "edge unreachable"
+// throws away the half of the message that tells an operator where to look.
+func describeEdgeSilence(s *store.OpenEpisodeState, c edgeContact, horizon time.Duration) string {
+	if c == edgeContactNever || s.EdgeLastSeen == nil {
+		return "Core has never heard from its Edge (" + s.StationID +
+			"), so a zero order count proves nothing"
 	}
-	return "its Edge (" + s.StationID + ") has been unreachable since " +
-		s.EdgeLastSeen.UTC().Format(time.RFC3339) + ", so a zero order count proves nothing"
+	return "Core has not heard from its Edge (" + s.StationID + ") since " +
+		s.EdgeLastSeen.UTC().Format(time.RFC3339) + ", over " + horizon.String() +
+		" ago, so a zero order count proves nothing"
 }
 
 // reconcileOrphanOrders retires orphan findings older than the grace period.
@@ -204,6 +279,12 @@ func describeEdgeSilence(s *store.OpenEpisodeState) string {
 // human — so the finding set only ever grows, and an alarm that never clears is
 // indistinguishable from a broken one.
 //
+// RETIRING IS A TIMESTAMP, NOT A RECLASSIFICATION. The row keeps origin_class
+// `orphan`, because that is what it was at creation and no clock gets to
+// rewrite it; orphan_aged_at records when it stopped being asked about. An aged
+// orphan is STILL A FINDING — aging changes which lane it sits in and who is
+// expected to act, not whether it is a problem.
+//
 // It lives in this sweep rather than in a timer of its own because it is the
 // same act: ending something that has stopped being live. A second timer would
 // be a second cadence, a second config knob and a second place to look when the
@@ -213,7 +294,8 @@ func (e *Engine) reconcileOrphanOrders() int {
 	if grace <= 0 {
 		grace = 24 * time.Hour
 	}
-	n, err := e.db.AgeOutOrphanOrders(time.Now().UTC().Add(-grace))
+	now := time.Now().UTC()
+	n, err := e.db.AgeOutOrphanOrders(now.Add(-grace), now)
 	if err != nil {
 		e.logFn("demand_reconciler: age out orphan orders: %v", err)
 		return 0

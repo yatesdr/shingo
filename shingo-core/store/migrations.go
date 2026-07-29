@@ -665,6 +665,26 @@ func (db *DB) runVersionedMigrations() error {
 		{60, "demand_origins.closed_by (which mechanism ended the episode)",
 			v60DemandOriginClosedBy,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "demand_origins", "closed_by") }},
+		// AGING IS A TIMESTAMP, NOT A FOURTH CLASS. origin_class answers HOW
+		// DID THIS ORDER RELATE TO A DEMAND — attached, structurally
+		// originless, or it should have had an episode and didn't. That is a
+		// create-time fact and it is true forever. The reconciling sweep was
+		// overwriting it with `orphan_aged`, which leaves the row unable to
+		// answer what it was classified as when it was created: a FACT
+		// OVERWRITTEN BY A DERIVATION, the uopCache mistake in a fourth
+		// costume.
+		//
+		// It also matches the shape this schema already uses everywhere for
+		// exactly this — closed_at beside close_reason, anomaly_at beside the
+		// bin: a nullable timestamp NEXT TO the fact, never a state value
+		// inside it.
+		//
+		// AN AGED ORPHAN IS STILL A FINDING. Aging changes which lane it sits
+		// in and who is expected to act on it, not whether it is a problem.
+		// Never deleted, never auto-attached.
+		{61, "orders.orphan_aged_at (aging is a timestamp, not a fourth origin_class)",
+			v61OrphanAgedAt,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "orphan_aged_at") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2513,6 +2533,53 @@ func v60DemandOriginClosedBy(tx *sql.Tx) error {
 	if _, err := tx.Exec(
 		`ALTER TABLE demand_origins ADD COLUMN IF NOT EXISTS closed_by TEXT`); err != nil {
 		return fmt.Errorf("add demand_origins.closed_by: %w", err)
+	}
+	return nil
+}
+
+// v61OrphanAgedAt moves orphan aging off origin_class and onto its own
+// nullable timestamp.
+//
+// SINGLE-HOMED HERE, NOT IN THE BASELINE. postgres_ddl.go runs ahead of the
+// versioned migrations on every startup, fresh and aged alike, so a column
+// declared in both places has one live copy and one dead one and no test can
+// report which is which — the trap B9 was written for.
+//
+// orders.origin_id/origin_class are the one exception on this table and they
+// earn it: the BASELINE declares idx_orders_origin_id, an index that runs
+// inside schema.Apply ahead of this whole pipeline, so an aged plant DB needs
+// the column present before then or startup dies on "column does not exist".
+// NOTHING INDEXES orphan_aged_at, so it has no such claim and gets one home.
+// Convergence still holds because an ALTER runs identically on both paths —
+// what a baseline CREATE TABLE would break is the aged path, where the CREATE
+// is a no-op.
+//
+// The UPDATE is for trees that already ran the fourth value. `orphan_aged` was
+// only ever written by the reconciling sweep and never by any create site, so
+// reversing it is exact rather than a guess: the class goes back to what the
+// create site stamped, and the aging that value was carrying is preserved in
+// the new column instead of being thrown away. NOW() rather than NULL because
+// those rows HAVE aged and merely had nowhere to say so — NULL is reserved for
+// "still a live finding", and defaulting them to it would resurrect every
+// retired orphan as a fresh alarm.
+//
+// Literal 'orphan_aged'/'orphan' rather than the protocol constants: the
+// constant for the fourth value is deleted in this same change, and a migration
+// is a historical record of what a database HELD, not a re-render of today's
+// vocabulary. A migration that renders constants stops describing the past the
+// moment somebody edits one. migrations.go imports no protocol for this reason,
+// even though the rest of package store does.
+func v61OrphanAgedAt(tx *sql.Tx) error {
+	if _, err := tx.Exec(
+		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS orphan_aged_at TIMESTAMPTZ`); err != nil {
+		return fmt.Errorf("add orders.orphan_aged_at: %w", err)
+	}
+	if _, err := tx.Exec(`
+		UPDATE orders
+		   SET origin_class   = 'orphan',
+		       orphan_aged_at = COALESCE(orphan_aged_at, NOW())
+		 WHERE origin_class = 'orphan_aged'`); err != nil {
+		return fmt.Errorf("convert orphan_aged orders back to orphan: %w", err)
 	}
 	return nil
 }

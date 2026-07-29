@@ -219,7 +219,7 @@ func (db *DB) OpenThresholdEpisode(o DemandOrigin, usedEdgeReports bool) error {
 func (db *DB) CloseDemandOriginByID(originID, reason, closedBy string, at time.Time) (bool, error) {
 	res, err := db.Exec(`
 		UPDATE demand_origins
-		   SET closed_at = $1, close_reason = $2, closed_by = $3, revision = revision + 1
+		   SET closed_at = $1, close_reason = $2, closed_by = $3
 		 WHERE origin_id = $4 AND closed_at IS NULL`,
 		at, reason, nullIfEmpty(closedBy), originID)
 	if err != nil {
@@ -265,8 +265,8 @@ func (db *DB) CloseDemandOriginInferred(originID, reason, closedBy string, at ti
 // OpenEpisodeState is one open episode as the reconciling sweep sees it: the
 // identity, plus the two facts the sweep decides on that are NOT on the row.
 //
-// Children and the Edge's reachability are computed in the same query as the
-// episode because deciding on them one round trip at a time would be N+1 over a
+// Children and the last-contact timestamp are computed in the same query as the
+// episode because fetching them one round trip at a time would be N+1 over a
 // set whose whole cost argument is that it is small.
 type OpenEpisodeState struct {
 	OriginID   string
@@ -279,20 +279,34 @@ type OpenEpisodeState struct {
 	// the childless auto-close.
 	Children int
 
-	// EdgeReachable is whether edge_registry currently calls this station
-	// active. FALSE COVERS TWO DIFFERENT UNKNOWNS and both must behave the
-	// same: the Edge has gone stale (status flipped by MarkStaleEdges), or Core
-	// has no registry row for the station at all. In either case Core cannot
-	// have been receiving this station's orders, so a child count of zero is
-	// not evidence of anything — it is a missing input.
-	EdgeReachable bool
-	// EdgeLastSeen is the last heartbeat, nil if the station never sent one.
-	// This is the X in "this episode's Edge has been unreachable since X".
+	// EdgeLastSeen is WHEN CORE LAST HEARD FROM THIS STATION —
+	// edge_registry.last_heartbeat — and nil when Core cannot say at all:
+	// either there is no registry row, or there is one that registered and then
+	// never sent a heartbeat.
+	//
+	// IT IS DELIBERATELY THE TIMESTAMP AND NOT edge_registry.status, and that is
+	// this struct's whole point. status is written 'active' by Register and by
+	// every heartbeat, and exactly one thing ever moves it off 'active':
+	// MarkStaleEdges, on a 60-second ticker inside CoreHandler — a different
+	// service from the one running this sweep. Deciding reachability from
+	// status therefore infers it from the ABSENCE OF A STALENESS FLAG, so a
+	// stale-edge loop that is unstarted, misconfigured or itself broken leaves
+	// every station in the plant reading 'active' forever and the sweep closes
+	// EVERY OPEN EPISODE on the strength of a signal that was never computed.
+	// The sharpest case needs nothing broken at all: a station that registers at
+	// boot and never heartbeats has status 'active' and last_heartbeat NULL, and
+	// Core has never heard one word from it.
+	//
+	// So the sweep asks the positive question instead — when did we last hear
+	// from this Edge? — and the answer being absent is an UNKNOWN, not a "no".
+	// An unknown decorates; it never closes. See engine.classifyEdgeContact,
+	// which owns that decision, so a future reader cannot reintroduce the
+	// inverted one by adding a column back to this query.
 	EdgeLastSeen *time.Time
 }
 
 // ListOpenEpisodeStates returns every open episode with its child count and the
-// reachability of the Edge that owns it.
+// time Core last heard from the Edge that owns it.
 //
 // COST IS BOUNDED BY OPEN-EPISODE COUNT, which is one per place currently short
 // of material. That is what makes a per-episode subquery affordable here where
@@ -302,7 +316,7 @@ func (db *DB) ListOpenEpisodeStates() ([]OpenEpisodeState, error) {
 	rows, err := db.Query(`
 		SELECT o.origin_id, o.episode_key, o.kind, o.station_id, o.opened_at,
 		       (SELECT COUNT(*) FROM orders c WHERE c.origin_id = o.origin_id),
-		       COALESCE(e.status, ''), e.last_heartbeat
+		       e.last_heartbeat
 		  FROM demand_origins o
 		  LEFT JOIN edge_registry e ON e.station_id = o.station_id
 		 WHERE o.closed_at IS NULL
@@ -314,15 +328,11 @@ func (db *DB) ListOpenEpisodeStates() ([]OpenEpisodeState, error) {
 
 	var out []OpenEpisodeState
 	for rows.Next() {
-		var (
-			s      OpenEpisodeState
-			status string
-		)
+		var s OpenEpisodeState
 		if err := rows.Scan(&s.OriginID, &s.EpisodeKey, &s.Kind, &s.StationID,
-			&s.OpenedAt, &s.Children, &status, &s.EdgeLastSeen); err != nil {
+			&s.OpenedAt, &s.Children, &s.EdgeLastSeen); err != nil {
 			return nil, fmt.Errorf("scan open episode state: %w", err)
 		}
-		s.EdgeReachable = status == "active"
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -330,23 +340,81 @@ func (db *DB) ListOpenEpisodeStates() ([]OpenEpisodeState, error) {
 
 // AgeOutOrphanOrders retires orphan findings older than the cutoff.
 //
-// An UPDATE rather than a delete or a NULL: the row still records that this
-// order should have carried an origin. What changes is only whether it is still
-// being ASKED ABOUT. See protocol.OriginClassOrphanAged.
+// IT STAMPS A TIMESTAMP AND LEAVES origin_class ALONE. origin_class answers
+// "how did this order relate to a demand" — a create-time fact, true forever —
+// so a sweep that rewrote it would leave the row unable to say what it was
+// classified as at creation, which is a fact overwritten by a derivation. The
+// row still records that this order should have carried an origin; what changes
+// is only whether it is still being ASKED ABOUT. See migration 61.
+//
+// `orphan_aged_at IS NULL` IS NOT DECORATION. Without it the sweep restamps the
+// same rows on every pass, and "when did this stop being asked about" would
+// permanently read "a minute ago" — the timestamp would be measuring the sweep
+// rather than the order, and the trend line Phase 6 draws off it would be flat
+// by construction.
 //
 // Returns the number retired, because a sweep that acts silently is
 // unauditable by construction — the same reason closed_by exists.
-func (db *DB) AgeOutOrphanOrders(createdBefore time.Time) (int64, error) {
+func (db *DB) AgeOutOrphanOrders(createdBefore, agedAt time.Time) (int64, error) {
 	res, err := db.Exec(`
 		UPDATE orders
-		   SET origin_class = $1
-		 WHERE origin_class = $2 AND created_at < $3`,
-		protocol.OriginClassOrphanAged, protocol.OriginClassOrphan, createdBefore)
+		   SET orphan_aged_at = $1
+		 WHERE origin_class = $2
+		   AND orphan_aged_at IS NULL
+		   AND created_at < $3`,
+		agedAt, protocol.OriginClassOrphan, createdBefore)
 	if err != nil {
 		return 0, fmt.Errorf("age out orphan orders: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
+}
+
+// OrphanFinding is one order that should have carried an origin and didn't.
+type OrphanFinding struct {
+	EdgeUUID  string
+	StationID string
+	CreatedAt time.Time
+
+	// AgedAt is when the sweep stopped asking about this one. NIL MEANS IT IS
+	// STILL A LIVE FINDING — the whole aged/fresh split is this one predicate,
+	// and it is derived here rather than stored as a class because the class
+	// answers a different question that was already answered at create time.
+	AgedAt *time.Time
+}
+
+// ListOrphanFindings returns the orphan bucket, live findings first.
+//
+// A NEW COLUMN IS NOT DONE UNTIL SOMETHING READS IT BACK AND ASSERTS ON THE
+// VALUE. closed_by shipped on this same table with a migration, a struct field
+// and every writer, and no reader — every read returned "" through a full green
+// gate, because the write path and the read path are different code and only
+// the one just written was tested. orphan_aged_at gets its reader in the commit
+// that creates it.
+//
+// Unbounded deliberately. The orphan bucket is orders whose origin went
+// missing, which should be near-empty; if it is large, that IS the finding, and
+// a LIMIT here would hide it behind a page boundary.
+func (db *DB) ListOrphanFindings() ([]OrphanFinding, error) {
+	rows, err := db.Query(`
+		SELECT edge_uuid, station_id, created_at, orphan_aged_at
+		  FROM orders
+		 WHERE origin_class = $1
+		 ORDER BY orphan_aged_at NULLS FIRST, created_at`, protocol.OriginClassOrphan)
+	if err != nil {
+		return nil, fmt.Errorf("list orphan findings: %w", err)
+	}
+	defer rows.Close()
+
+	var out []OrphanFinding
+	for rows.Next() {
+		var f OrphanFinding
+		if err := rows.Scan(&f.EdgeUUID, &f.StationID, &f.CreatedAt, &f.AgedAt); err != nil {
+			return nil, fmt.Errorf("scan orphan finding: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
 }
 
 // ListOpenThresholdEpisodes returns every open Core-owned threshold episode.

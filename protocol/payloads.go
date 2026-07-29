@@ -98,11 +98,33 @@ type OrderRequest struct {
 	OriginClass string `json:"origin_class,omitempty"`
 }
 
-// Order origin classes.
+// Order origin classes. THREE VALUES, AND AGING DOES NOT ADD A FOURTH.
 //
 // Without the enum, `origin_id IS NULL` selects every consume-side order, every
 // opportunistic stage, every admin action, and — buried in there — the actual
 // lost origins. A haystack with the needle in it.
+//
+// An `orphan_aged` value existed here briefly and is gone: an aged orphan is an
+// `orphan` whose orders.orphan_aged_at is set (Core migration 61), and
+// aged-ness is DERIVED from that timestamp.
+//
+// origin_class answers HOW DID THIS ORDER RELATE TO A DEMAND. That is a
+// create-time fact and it is true forever. Letting a clock mutate it means the
+// row can no longer answer what its class was at creation — a fact overwritten
+// by a derivation, which is the uopCache mistake in a fourth costume. It also
+// matches the shape the schema already uses everywhere for exactly this:
+// closed_at beside close_reason, anomaly_at beside the bin. A nullable
+// timestamp NEXT TO the fact, never a state value inside it.
+//
+// AN AGED ORPHAN IS STILL A FINDING. Aging changes which lane it sits in and
+// who is expected to act on it, not whether it is a problem. There is no
+// deferred attach — an orphan that later matches an open episode stays orphaned
+// and reconciles by a human — so the expiry exists only because an alarm that
+// never clears is indistinguishable from a broken one. Never deleted, never
+// auto-attached.
+//
+// Edge stamps only attached and no_demand; orphan is assigned on Core, at
+// intake, when an order arrives with no origin on it.
 const (
 	// OriginClassAttached: the order has an episode.
 	OriginClassAttached = "attached"
@@ -113,20 +135,6 @@ const (
 	// OriginClassOrphan: it should have had an episode and didn't. THE ONLY ONE
 	// THAT IS A FINDING.
 	OriginClassOrphan = "orphan"
-	// OriginClassOrphanAged: it was an orphan, and it is old enough that nobody
-	// is going to work out which demand it belonged to now.
-	//
-	// WRITTEN ONLY BY THE RECONCILING SWEEP. No create site ever stamps it —
-	// this is the sweep ending a finding, the same act as closing an episode,
-	// and it is a separate value rather than a reversion to `no_demand` because
-	// clearing an alarm must not rewrite history into "there was never anything
-	// wrong here". The row still says the order should have had an origin.
-	//
-	// The expiry exists because there is no deferred attach: §10 of the design
-	// is explicit that an orphan matching a later episode stays orphaned and
-	// reconciles by a human. So the finding set only ever grows, and an alarm
-	// that never clears is indistinguishable from a broken one.
-	OriginClassOrphanAged = "orphan_aged"
 )
 
 // OrderCancel cancels an existing order.

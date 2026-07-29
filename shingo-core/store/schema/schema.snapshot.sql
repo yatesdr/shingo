@@ -660,7 +660,8 @@ CREATE TABLE public.orders (
     coordinated boolean DEFAULT false NOT NULL,
     remaining_uop integer,
     origin_id uuid,
-    origin_class text DEFAULT ''::text NOT NULL
+    origin_class text DEFAULT ''::text NOT NULL,
+    orphan_aged_at timestamp with time zone
 );
 
 CREATE SEQUENCE public.orders_id_seq
