@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/orders"
 )
 
 // manualSwapWindowSlots is how many bins a single manual_swap core node can
@@ -166,7 +167,7 @@ func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal
 	if member == "" {
 		member = domain.NodeID(sig.CoreNodeName)
 	}
-	created, err := e.tryCreateL1(loader, pay, L1LoopThreshold, desiredBins, member)
+	created, err := e.tryCreateL1(loader, pay, L1LoopThreshold, desiredBins, member, thresholdOrigin(sig))
 	if err != nil {
 		e.logFn("loop_threshold: loader=%s payload=%s — L1 creation failed after %d created: %v",
 			loader.ID(), sig.PayloadCode, created, err)
@@ -439,7 +440,11 @@ func loaderEmptySource(l *domain.Loader) string {
 // old manualSwapNode shim). The operator-driven gate is applied here; the count→fire
 // atomicity, the per-payload dedup, the capacity cap, and the decision record all
 // live in reserveLoaderBins. count is the desired total in-flight for the payload.
-func (e *Engine) tryCreateL1(loader *domain.Loader, payload domain.PayloadCode, source L1Source, count int, member domain.NodeID) (int, error) {
+// origin attributes the L1s this call creates. It comes from the CALLER, not
+// from a lookup here: tryCreateL1 is shared between the threshold path (which
+// serves a Core demand episode) and the opportunistic push (which serves
+// nothing at all), and only the caller knows which of those it is.
+func (e *Engine) tryCreateL1(loader *domain.Loader, payload domain.PayloadCode, source L1Source, count int, member domain.NodeID, origin orders.Origin) (int, error) {
 	if loader == nil {
 		return 0, nil
 	}
@@ -468,9 +473,9 @@ func (e *Engine) tryCreateL1(loader *domain.Loader, payload domain.PayloadCode, 
 				return made, fmt.Errorf("%s: no process_node for delivery target %s: %w", source.logTag(), deliveryNode, nerr)
 			}
 			nodeID := node.ID
-			order, cerr := e.orderMgr.CreateRetrieveOrder(
+			order, cerr := e.orderMgr.CreateRetrieveOrderWithOrigin(
 				&nodeID, true, 1, deliveryNode, loaderEmptySource(loader), "",
-				"standard", string(payload), false, true,
+				"standard", string(payload), false, true, origin,
 			)
 			if cerr != nil {
 				return made, fmt.Errorf("%s: create L1 %d/%d loader=%s payload=%s: %w",
@@ -554,7 +559,7 @@ func (e *Engine) maybeStageLoaderEmpty(loader *domain.Loader) {
 	// nothing. The empty is staged payload-AGNOSTIC (blank code) — the operator
 	// picks the payload at LoadBin; L1LoaderPush is exempt from the operator-driven
 	// suppression in tryCreateL1 (it IS the operator-driven supply path).
-	if _, err := e.tryCreateL1(loader, "", L1LoaderPush, 1, ""); err != nil { // opportunistic push: payload-agnostic, no member
+	if _, err := e.tryCreateL1(loader, "", L1LoaderPush, 1, "", orders.NoDemand()); err != nil { // opportunistic push: payload-agnostic, no member
 		e.logFn("loader-push: stage empty at loader=%s failed: %v", loader.ID(), err)
 	}
 }
@@ -592,4 +597,18 @@ func (e *Engine) SweepPushLoaders() {
 	if swept > 0 {
 		log.Printf("loader-push: startup sweep covered %d operator-staged loader(s)", swept)
 	}
+}
+
+// thresholdOrigin attributes an L1 to the Core threshold episode that asked for
+// it, via the origin_id riding on the signal (seam 1).
+//
+// An EMPTY origin id — an older Core that predates the seam, or a signal that
+// carried none — leaves the class unstated rather than guessing. Core decides
+// what an unattributed order is; inventing "no_demand" here would be a lie,
+// since something did ask.
+func thresholdOrigin(sig *protocol.LoopBelowThresholdSignal) orders.Origin {
+	if sig == nil || sig.OriginID == "" {
+		return orders.Origin{}
+	}
+	return orders.Attached(sig.OriginID)
 }

@@ -228,14 +228,27 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 			canAccept, reason := e.CanAcceptOrders(node.ID)
 			e.logFn("autoreorder eval: claim=%d node=%s remaining=%d threshold=%d canAccept=%v reason=%s gate=below_threshold",
 				claim.ID, node.Name, newRemaining, claim.ReorderPoint, canAccept, reason)
+			// Record the FALLING EDGE regardless of canAccept. The demand
+			// exists whether or not we are able to act on it right now, and an
+			// episode that only opens when an order can be created cannot
+			// represent the row that matters most: a place that asked and got
+			// nothing.
+			e.evaluateCellLevel(claim, newRemaining)
 			if canAccept {
-				if _, err := e.RequestNodeMaterial(node.ID, 1); err != nil {
+				if _, err := e.requestNodeMaterialFor(node.ID, 1, protocol.EpisodeTriggerAutoreorder); err != nil {
 					log.Printf("auto-reorder for node %s: %v", node.Name, err)
 				}
 			}
 		} else {
 			e.debugFn("autoreorder eval: claim=%d node=%s remaining=%d threshold=%d gate=above_threshold",
 				claim.ID, node.Name, newRemaining, claim.ReorderPoint)
+			// RISING EDGE, and only once clear of the hysteresis margin. This
+			// is the only place a healthy cell's episode ends, so it is
+			// evaluated on every tick above the level, not just the first.
+			if _, shouldClose := e.evaluateCellLevel(claim, newRemaining); shouldClose {
+				e.closeCellEpisode(node.ProcessID, string(claim.PayloadCode),
+					protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered)
+			}
 		}
 	}
 }
@@ -293,12 +306,23 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 		} else if newRemaining < claim.UOPCapacity {
 			e.debugFn("autoreorder eval (produce): claim=%d node=%s remaining=%d capacity=%d gate=below_capacity",
 				claim.ID, node.Name, newRemaining, claim.UOPCapacity)
+			// The evacuate direction's rising edge: the full bin left and the
+			// count has dropped clear of the margin. Same shape as the consume
+			// side's recovery, and evaluated on every tick below capacity
+			// rather than only the first.
+			if _, shouldClose := e.evaluateProduceLevel(claim, newRemaining); shouldClose {
+				e.closeCellEpisode(node.ProcessID, string(claim.PayloadCode),
+					protocol.EpisodeDirectionEvacuate, protocol.CloseReasonRecovered)
+			}
 		} else {
 			canAccept, reason := e.CanAcceptOrders(node.ID)
 			e.logFn("autoreorder eval (produce): claim=%d node=%s remaining=%d capacity=%d canAccept=%v reason=%s gate=produce_tick",
 				claim.ID, node.Name, newRemaining, claim.UOPCapacity, canAccept, reason)
+			// Record the edge regardless of canAccept — a node that is full and
+			// cannot be relieved is precisely the demand worth seeing.
+			e.evaluateProduceLevel(claim, newRemaining)
 			if canAccept {
-				if _, err := e.RequestProduceSwap(node.ID); err != nil {
+				if _, err := e.requestProduceSwapFor(node.ID, protocol.EpisodeTriggerAutoreorder); err != nil {
 					log.Printf("auto-relief for produce node %s: %v", node.Name, err)
 				}
 			}

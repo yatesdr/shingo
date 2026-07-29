@@ -1,0 +1,77 @@
+# shingo-edge shipped defaults — generated, do not edit by hand.
+# See config/defaults_snapshot.go. Regenerate: make defaults-snapshot
+
+[FIELDS]
+backup.enabled = false
+backup.keep_daily = 14
+backup.keep_hourly = 48
+backup.keep_monthly = 12
+backup.keep_weekly = 8
+backup.s3.access_key = <unset>
+backup.s3.bucket = 
+backup.s3.endpoint = 
+backup.s3.insecure_skip_tls_verify = false
+backup.s3.region = us-east-1
+backup.s3.secret_key = <unset>
+backup.s3.use_path_style = true
+backup.schedule_interval = 1h0m0s
+core_api = 
+count_groups.ack_dead = 10s
+count_groups.ack_warn = 2s
+count_groups.bindings = <empty>
+count_groups.codes = map[off:2 on:1]
+count_groups.heartbeat_interval = 1s
+count_groups.heartbeat_plc = 
+count_groups.heartbeat_tag = 
+counter.jump_threshold = 1000
+database_path = shingoedge.db
+demand.hysteresis_percent = <unset>
+line_id = line-1
+loaders_multi_window = <unset>
+messaging.dispatch_topic = shingo.dispatch
+messaging.kafka.brokers = <empty>
+messaging.kafka.group_id = 
+messaging.orders_topic = shingo.orders
+messaging.outbox_drain_interval = 5s
+messaging.signing_key = <unset>
+messaging.station_id = 
+namespace = plant-a
+poll_rate = 1s
+sim.anchor_wall = 0001-01-01 00:00:00 +0000 UTC
+sim.calendar.enabled = false
+sim.calendar.shifts = <empty>
+sim.calendar.weekend = <empty>
+sim.downtime.enabled = false
+sim.downtime.machines = <empty>
+sim.enabled = false
+sim.epoch = 0001-01-01 00:00:00 +0000 UTC
+sim.max_speed = 0
+sim.operators.changeover_auto_cutover = true
+sim.operators.cutover_delay = 10s
+sim.operators.enabled = false
+sim.operators.loader_auto_load = 5s
+sim.operators.unloader_auto_clear = 8s
+sim.processes = <empty>
+sim.seed = 0
+sim.speed = 0
+timezone = 
+warlink.enabled = true
+warlink.host = localhost
+warlink.mode = sse
+warlink.poll_rate = 2s
+warlink.port = 8080
+web.auto_confirm = false
+web.host = 0.0.0.0
+web.port = 8081
+web.session_secret = <set: generated or shipped>
+
+[RESOLVED]
+demand.hysteresis_margin(reorder_point=0) = 1
+demand.hysteresis_margin(reorder_point=5) = 1
+demand.hysteresis_margin(reorder_point=10) = 1
+demand.hysteresis_margin(reorder_point=50) = 5
+demand.hysteresis_margin(reorder_point=100) = 10
+demand.hysteresis_margin(reorder_point=300) = 30
+demand.default_hysteresis_percent = 10
+demand.min_hysteresis_uop = 1
+loaders_multi_window.resolved = true

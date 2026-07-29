@@ -268,6 +268,22 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- 'manual' = engineer typed a value.
     -- 'calculated' = applied from the unified calculator.
     reorder_point_source    TEXT NOT NULL DEFAULT 'legacy',
+    -- below_reorder_since is the FALLING EDGE of this claim's level: the
+    -- instant remaining UOP first went at-or-below reorder_point, cleared when
+    -- it recovers above reorder_point + margin. NULL means "not below".
+    --
+    -- It is the durable half of the demand episode's hot path. The level is
+    -- evaluated on every PLC consume tick, so the timestamp is held in memory
+    -- and written through only ON TRANSITION; this column exists because Edge
+    -- restarts (systemctl restart shingoedge) more often than anything else in
+    -- the system, and an in-memory-only edge means a restart mid-episode loses
+    -- it, the next tick mints a duplicate, and the first never closes.
+    --
+    -- On the CLAIM rather than the episode because it is a per-claim level
+    -- observation and the claim is the row the predicate already reads. The
+    -- episode itself is keyed per PROCESS and lives in demand_origins_open — see
+    -- O8 in demand-origin-design-2026-07-25.md.
+    below_reorder_since     TEXT,
     created_at              TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(style_id, core_node_name)
 );
@@ -379,7 +395,59 @@ CREATE TABLE IF NOT EXISTS process_changeovers (
     completed_at    TEXT,
     triggered_by    TEXT NOT NULL DEFAULT '',
     verify_live_catid TEXT NOT NULL DEFAULT '',
+    -- origin_id is this changeover's demand episode. Empty until minted.
+    --
+    -- It goes on THIS row rather than in demand_origins_open because this row
+    -- already has exactly the episode's lifetime: one changeover is one
+    -- episode (to_style_id is written only at INSERT, nothing re-targets a
+    -- row, and cancel-and-redirect cancels this one and inserts a fresh one —
+    -- a new row and a new episode). Restart-durable for free.
+    origin_id       TEXT NOT NULL DEFAULT '',
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- demand_origins_open — the OPEN cell-kind demand episodes this Edge owns.
+--
+-- ONE NOUN, BOTH SERVICES. Core's table is demand_origins and holds HISTORY,
+-- every episode open or closed; this one holds only what is open right now and
+-- deletes a row on close. The "_open" suffix is the whole difference, and
+-- saying it in the name is why these are not two words for one thing —
+-- sibling_order_id / sibling_order_uuid is what that costs.
+--
+-- "origin" rather than "episode" because origin_id and origin_class are the
+-- names carried on BOTH order tables and across the wire
+-- (demand.origin_opened / demand.origin_closed), and those are the hardest
+-- names to change later. "Episode" stays as the English word for the period an
+-- origin covers — hence episode_key, which identifies one continuous period
+-- rather than one row.
+--
+-- Small on purpose: the key IS the identity, so nothing else has to be stored
+-- to know what an episode is about. episode_key is
+-- "cell|<station>|<process_id>|<payload>|<direction>", the same string Core
+-- keys demand_origins on, built by one shared helper so the two sides cannot
+-- spell it differently.
+--
+-- WHY A TABLE AND NOT A COLUMN ON style_node_claims (O8, resolved 2026-07-25).
+-- The episode is per PROCESS; claims are per node. A/B sequential puts TWO
+-- same-payload claims in one process — plants/demo.yaml PRESS-2, PLN_003 and
+-- PLN_004, both auto_reorder — and FlipABNode fires RequestNodeMaterial on the
+-- paired node. A current_origin_id column on the claim would hold the open
+-- episode on claim A where claim B cannot see it, so B's fire would mint a
+-- second episode for a place that already has one. The design's own grain rule
+-- says the process needs the payload and which position is pulling is not a
+-- second demand, so B must JOIN A's episode — which it can only do if the open
+-- episode is addressable by the thing they share.
+--
+-- Rows are DELETED on close; this table holds only what is open. The history
+-- lives on Core in demand_origins, which is the service that keeps history.
+CREATE TABLE IF NOT EXISTS demand_origins_open (
+    episode_key     TEXT PRIMARY KEY,
+    origin_id       TEXT NOT NULL,
+    -- rerequest_count is operator pushes that JOINED this episode rather than
+    -- opening one. Six re-requests against one demand is a better signal than
+    -- six demands of one order each.
+    rerequest_count INTEGER NOT NULL DEFAULT 0,
+    opened_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS changeover_station_tasks (

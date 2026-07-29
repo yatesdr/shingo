@@ -228,17 +228,29 @@ type NodeClaim struct {
 	// silent-inert default); 'manual' = engineer typed a value;
 	// 'calculated' = applied from the unified calculator. Surfaced in
 	// the replenishment UI as a small badge per row.
-	ReorderPointSource   string   `json:"reorder_point_source"`
-	AutoReorder          bool     `json:"auto_reorder"`
-	InboundStaging       string   `json:"inbound_staging"`
-	OutboundStaging      string   `json:"outbound_staging"`
-	InboundSource        string   `json:"inbound_source"`
-	OutboundDestination  string   `json:"outbound_destination"`
-	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
-	AutoRequestPayload   string   `json:"auto_request_payload"`
-	KeepStaged           bool     `json:"keep_staged"`
-	EvacuateOnChangeover bool     `json:"evacuate_on_changeover"`
-	PairedCoreNode       string   `json:"paired_core_node"`
+	ReorderPointSource string `json:"reorder_point_source"`
+	AutoReorder        bool   `json:"auto_reorder"`
+	// BelowReorderSince is the FALLING EDGE of this claim's level: when
+	// remaining UOP first went at-or-below ReorderPoint. Nil means not below.
+	//
+	// It is what turns a LEVEL into an EDGE. Without it the predicate can only
+	// answer "is it below right now", which cannot tell one below-threshold
+	// episode from the next — so an origin minted from it would be a fresh
+	// "demand" per tick, i.e. an id per ORDER, which is the paperwork-counting
+	// failure the demand grain exists to avoid.
+	//
+	// Written through ON TRANSITION ONLY; the level is read on every consume
+	// tick. Nullable because "not below" is genuinely absent, not a zero time.
+	BelowReorderSince    *time.Time `json:"below_reorder_since,omitempty"`
+	InboundStaging       string     `json:"inbound_staging"`
+	OutboundStaging      string     `json:"outbound_staging"`
+	InboundSource        string     `json:"inbound_source"`
+	OutboundDestination  string     `json:"outbound_destination"`
+	AllowedPayloadCodes  []string   `json:"allowed_payload_codes"`
+	AutoRequestPayload   string     `json:"auto_request_payload"`
+	KeepStaged           bool       `json:"keep_staged"`
+	EvacuateOnChangeover bool       `json:"evacuate_on_changeover"`
+	PairedCoreNode       string     `json:"paired_core_node"`
 	// SecondPairedCoreNode is the optional third (back-most) position for
 	// two_robot_press_index. When set, the layout is C → B → A and R1's
 	// final dropoff goes to C instead of B. Empty = legacy 2-position.

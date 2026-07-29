@@ -2359,6 +2359,21 @@ func v54BackfillMissionEventRobotID(tx *sql.Tx) error {
 // inserts from silently filling in the UNKNOWN value for a column that is part
 // of the table's uniqueness. Every insert site names the column explicitly, so
 // nothing loses a value it was relying on.
+//
+// THIS IS THE FORWARD HALF ONLY, and the data half is deliberately not here.
+// If a plant already carries lineside_buckets rows with core_node_name = ”,
+// they are still there and still inside
+// UNIQUE (station, core_node_name, pair_key, style_id, part_number) — where
+// unrelated nodes' buckets would have collided into one row. A blind DELETE or
+// backfill from this migration would be guessing at data it cannot see.
+//
+// So it is a question for the plant-dump rehearsal (B1/O5), one query:
+//
+//	SELECT count(*) FROM lineside_buckets WHERE core_node_name = '';
+//
+// If that is zero at every plant, say so HERE and the question is closed
+// forever. If it is not, the cleanup is its own migration written against
+// what the rows actually turn out to be.
 func v58DropLinesideCoreNodeNameDefault(tx *sql.Tx) error {
 	if !schema.ColumnExists(tx, "lineside_buckets", "core_node_name") {
 		return nil

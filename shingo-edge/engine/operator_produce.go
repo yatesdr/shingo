@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	ordermgr "shingoedge/orders"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -25,7 +26,14 @@ import (
 // one, and calling robots early (desirable) widened that window on purpose.
 // Non-two-robot modes have no staged release step, so request time IS
 // release time for them and the paperwork stays here.
+// RequestProduceSwap is the OPERATOR entry point for the evacuate direction —
+// the mirror of RequestNodeMaterial, with the same dual-trigger shape. Tick-
+// driven callers use requestProduceSwapFor with the autoreorder trigger.
 func (e *Engine) RequestProduceSwap(nodeID int64) (*NodeOrderResult, error) {
+	return e.requestProduceSwapFor(nodeID, protocol.EpisodeTriggerOperator)
+}
+
+func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrderResult, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
@@ -58,14 +66,60 @@ func (e *Engine) RequestProduceSwap(nodeID int64) (*NodeOrderResult, error) {
 		}
 	}
 
-	return e.applyProducePlan(node, runtime, claim, plan)
+	// The evacuate-direction episode, opened after the plan exists and before
+	// any order does — same ordering and same reasoning as the consume side.
+	//
+	// A produce node's level runs the OTHER WAY: it fills toward capacity
+	// rather than draining toward a reorder point, so "needs attention" is a
+	// HIGH reading. The episode still means one thing — this process needs
+	// material moved, in this direction — which is why direction is part of the
+	// episode key and not a separate kind.
+	origin := e.openEpisodeForProduce(node, runtime, claim, plan, trigger)
+
+	return e.applyProducePlan(node, runtime, claim, plan, origin)
+}
+
+// openEpisodeForProduce opens or joins the evacuate-direction episode.
+//
+// Best-effort: observability must never fail an evacuation. A full bin gets
+// taken away whether or not we could record why.
+func (e *Engine) openEpisodeForProduce(
+	node *processes.Node, runtime *processes.RuntimeState,
+	claim *processes.NodeClaim, plan *ProducePlan, trigger string,
+) ordermgr.Origin {
+	remaining := 0
+	if runtime != nil {
+		remaining = runtime.RemainingUOPCached
+	}
+	// DISCRETIONARY on this side means an operator called a swap on a bin the
+	// system does not consider full. Same rule as the consume side: flag it,
+	// conclude nothing. The count may be wrong, the capacity may be wrong, or
+	// the operator may be clearing the line for a reason the system cannot see.
+	discretionary := trigger == protocol.EpisodeTriggerOperator &&
+		claim.UOPCapacity > 0 && remaining < claim.UOPCapacity
+
+	originID, _, err := e.openCellEpisode(
+		node.ProcessID, claim,
+		protocol.EpisodeDirectionEvacuate, trigger,
+		plan.OrderCount(), remaining, discretionary,
+	)
+	if err != nil {
+		e.logFn("demand_episode: open evacuate episode node=%s: %v", node.Name, err)
+	}
+	if originID == "" {
+		// No episode, so nothing to attach to. Say NOTHING rather than
+		// guessing: an unstated class lets Core classify, where a wrong one
+		// here would be indistinguishable from a real answer.
+		return ordermgr.Origin{}
+	}
+	return ordermgr.Attached(originID)
 }
 
 // applyProducePlan is the impure half of the produce-finalize pipeline:
 // it manifests the filled bin, dispatches the planned complex orders,
 // resets node UOP, and re-reads the resulting orders. Direction-specific
 // glue around the shared SwapDispatch.
-func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, plan *ProducePlan) (*NodeOrderResult, error) {
+func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, plan *ProducePlan, origin ordermgr.Origin) (*NodeOrderResult, error) {
 	nodeID := node.ID
 
 	// Fix D: two-robot modes DEFER the paperwork (manifest ingest + count
@@ -83,7 +137,7 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	// Produce always has a swap mode now (BuildProducePlan errors otherwise), so
 	// Dispatch is always set.
 	dispatch := plan.Dispatch
-	orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "")
+	orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", origin)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +146,7 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	if dispatch.StepsB != nil {
 		// Removal/evac leg carries the supply leg's UUID so Core can pair
 		// them at intake (before this leg's dispatch claims the line bin).
-		orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID)
+		orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, origin)
 		if err != nil {
 			return nil, err
 		}
@@ -219,12 +273,22 @@ func runtimeRemaining(runtime *processes.RuntimeState) int {
 // is the line node both legs of a swap belong to (= claim.CoreNodeName);
 // threaded into ComplexOrderRequest.ProcessNode so Core picks the line
 // bin for order.BinID.
-func (e *Engine) dispatchComplexLeg(nodeID int64, quantity int64, steps []protocol.ComplexOrderStep, deliveryNode, processNodeName string, autoConfirm bool, siblingUUID string) (*orders.Order, error) {
+// dispatchComplexLeg creates one leg of a swap.
+//
+// THE ORIGIN IS ON THE SIGNATURE AND PASSED BY THE CALLER, never resolved
+// inside. This function is SHARED with origin-less callers, and a lookup here
+// would have to guess which episode a leg belongs to from the node — which is
+// exactly the read-time attribution the stamp-forward rule exists to avoid.
+// The caller knows, because the caller opened the episode.
+//
+// Both legs of a pair are given the SAME origin: one fire of the plan is one
+// demand served by two rows.
+func (e *Engine) dispatchComplexLeg(nodeID int64, quantity int64, steps []protocol.ComplexOrderStep, deliveryNode, processNodeName string, autoConfirm bool, siblingUUID string, origin ordermgr.Origin) (*orders.Order, error) {
 	dn := deliveryNode
 	if autoConfirm {
 		dn = ""
 	}
-	return e.orderMgr.CreateComplexOrderSibling(&nodeID, quantity, dn, processNodeName, steps, autoConfirm, "", siblingUUID)
+	return e.orderMgr.CreateComplexOrderSiblingWithOrigin(&nodeID, quantity, dn, processNodeName, steps, autoConfirm, "", siblingUUID, origin)
 }
 
 // resetProduceRuntime stamps the dispatched legs on the runtime and, when

@@ -70,3 +70,33 @@ type NodeAction struct {
 type Plan struct {
 	Actions []NodeAction
 }
+
+// OrderCount is how many ORDER ROWS applying this plan will create — the
+// changeover episode's expected_orders.
+//
+// The design calls this "the sourcing plan's bin count", and this IS that
+// count: one order per bin the plan intends to move. Taking it from the plan
+// rather than from the node or action count is the same principle as the cell
+// kind's — the system's own stated intent, captured once, in the unit the ratio
+// is measured in. A node can contribute zero orders (unchanged), one (a drop or
+// an add), or two (a swap), so counting nodes would be wrong on every
+// changeover that mixes them.
+//
+// Actions with a planning-time error contribute nothing: the applier creates no
+// orders for them, so counting them would make a changeover that failed
+// pre-flight look as if it had under-delivered.
+func (p Plan) OrderCount() int {
+	n := 0
+	for _, a := range p.Actions {
+		if a.Err != nil {
+			continue
+		}
+		if a.SupplyOrder != nil {
+			n++
+		}
+		if a.EvacOrder != nil {
+			n++
+		}
+	}
+	return n
+}

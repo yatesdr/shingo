@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	ordermgr "shingoedge/orders"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -598,13 +599,13 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 					return nil, err
 				}
 			}
-			orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "")
+			orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", ordermgr.Origin{})
 			if err != nil {
 				return nil, err
 			}
 			var orderB *orders.Order
 			if dispatch.StepsB != nil {
-				orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID)
+				orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, ordermgr.Origin{})
 				if err != nil {
 					return nil, err
 				}

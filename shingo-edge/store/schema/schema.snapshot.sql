@@ -121,6 +121,16 @@ CREATE TABLE counter_snapshots (
     recorded_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE demand_origins_open (
+    episode_key     TEXT PRIMARY KEY,
+    origin_id       TEXT NOT NULL,
+    -- rerequest_count is operator pushes that JOINED this episode rather than
+    -- opening one. Six re-requests against one demand is a better signal than
+    -- six demands of one order each.
+    rerequest_count INTEGER NOT NULL DEFAULT 0,
+    opened_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE home_location_loaders (
     core_node_name TEXT NOT NULL,
     updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
@@ -275,6 +285,14 @@ CREATE TABLE process_changeovers (
     completed_at    TEXT,
     triggered_by    TEXT NOT NULL DEFAULT '',
     verify_live_catid TEXT NOT NULL DEFAULT '',
+    -- origin_id is this changeover's demand episode. Empty until minted.
+    --
+    -- It goes on THIS row rather than in demand_origins_open because this row
+    -- already has exactly the episode's lifetime: one changeover is one
+    -- episode (to_style_id is written only at INSERT, nothing re-targets a
+    -- row, and cancel-and-redirect cancels this one and inserts a fresh one —
+    -- a new row and a new episode). Restart-durable for free.
+    origin_id       TEXT NOT NULL DEFAULT '',
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -401,6 +419,22 @@ CREATE TABLE style_node_claims (
     -- 'manual' = engineer typed a value.
     -- 'calculated' = applied from the unified calculator.
     reorder_point_source    TEXT NOT NULL DEFAULT 'legacy',
+    -- below_reorder_since is the FALLING EDGE of this claim's level: the
+    -- instant remaining UOP first went at-or-below reorder_point, cleared when
+    -- it recovers above reorder_point + margin. NULL means "not below".
+    --
+    -- It is the durable half of the demand episode's hot path. The level is
+    -- evaluated on every PLC consume tick, so the timestamp is held in memory
+    -- and written through only ON TRANSITION; this column exists because Edge
+    -- restarts (systemctl restart shingoedge) more often than anything else in
+    -- the system, and an in-memory-only edge means a restart mid-episode loses
+    -- it, the next tick mints a duplicate, and the first never closes.
+    --
+    -- On the CLAIM rather than the episode because it is a per-claim level
+    -- observation and the claim is the row the predicate already reads. The
+    -- episode itself is keyed per PROCESS and lives in demand_origins_open — see
+    -- O8 in demand-origin-design-2026-07-25.md.
+    below_reorder_since     TEXT,
     created_at              TEXT NOT NULL DEFAULT (datetime('now')), staging_node TEXT NOT NULL DEFAULT '', release_node TEXT NOT NULL DEFAULT '', inbound_source_node TEXT NOT NULL DEFAULT '', inbound_source_node_group TEXT NOT NULL DEFAULT '', outbound_source_node TEXT NOT NULL DEFAULT '', outbound_source_node_group TEXT NOT NULL DEFAULT '', outbound_source TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'loader', second_paired_core_node TEXT NOT NULL DEFAULT '',
     UNIQUE(style_id, core_node_name)
 );

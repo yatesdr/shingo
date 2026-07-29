@@ -27,6 +27,20 @@ type ProducePlan struct {
 	Dispatch *SwapDispatch
 }
 
+// OrderCount is how many ORDER ROWS applying this plan will create — the
+// evacuate direction's expected_orders, and the exact mirror of
+// ConsumePlan.OrderCount. See that method for why the unit matters.
+func (p *ProducePlan) OrderCount() int {
+	if p == nil || p.Dispatch == nil {
+		return 0
+	}
+	n := 1 // StepsA
+	if p.Dispatch.StepsB != nil {
+		n++
+	}
+	return n
+}
+
 // BuildProducePlan validates the (node, runtime, claim) triple and composes
 // the produce-finalization plan for the claim's swap mode. Pure — no DB,
 // fleet, or order-manager calls.

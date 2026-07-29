@@ -564,6 +564,20 @@ func (db *DB) migrate() error {
 	// merge if this collides.
 	db.Exec("ALTER TABLE payload_catalog ADD COLUMN catid TEXT NOT NULL DEFAULT ''")
 
+	// v33 (2026-07-25, demand episodes): the Edge half of the origin work needs
+	// DURABLE episode state. Edge restarts more often than anything else in the
+	// system, and an in-memory-only episode is lost by a `systemctl restart
+	// shingoedge` — after which the next tick mints a duplicate and the first
+	// never closes.
+	//
+	// Two idempotent adds and one table rebuild. See rebuildStyleNodeClaims for
+	// why the rebuild is unavoidable and what else it folds in.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN below_reorder_since TEXT")
+	db.Exec("ALTER TABLE process_changeovers ADD COLUMN origin_id TEXT NOT NULL DEFAULT ''")
+	if err := db.rebuildStyleNodeClaims(); err != nil {
+		return err
+	}
+
 	return nil
 }
 

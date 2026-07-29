@@ -5,6 +5,7 @@ package engine
 
 import (
 	"log"
+	"shingo/protocol"
 
 	"shingoedge/domain"
 	"shingoedge/orders"
@@ -74,6 +75,11 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	if err := e.db.UpdateProcessChangeoverState(changeover.ID, domain.ChangeoverCancelled); err != nil {
 		return err
 	}
+	// The episode ends CANCELLED, not complete. They are different outcomes and
+	// merging them would hide every abandoned changeover behind the successful
+	// ones. Cancel-and-redirect then inserts a fresh changeover row, which
+	// correctly opens a NEW episode rather than continuing this one.
+	e.closeChangeoverEpisode(changeover.ID, protocol.CloseReasonCancelled)
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {
 		return err
 	}

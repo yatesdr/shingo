@@ -54,6 +54,40 @@ type SimplePrime struct {
 	Dest   string
 }
 
+// OrderCount is how many ORDER ROWS applying this plan will create.
+//
+// This is a demand episode's expected_orders, and getting the UNIT right is the
+// point. RequestNodeMaterial(node.ID, 1) passes ONE BIN, not one order, and the
+// plan expands that bin into a variable number of rows: 1 on the simple-move
+// downgrade, 2 on a swap, plus one per primed paired position on a press-index
+// downgrade. Copying the literal 1 into expected_orders crosses units and reads
+// 2x or more too high — which makes a healthy swap episode look like waste and
+// a genuinely bad one look ordinary.
+//
+// Taking it from the plan means the number is the SYSTEM'S OWN STATED INTENT,
+// captured once, with no per-mode special-casing: a healthy episode is ratio
+// 1.0 whatever choreography it used.
+//
+// The validation is 2026-07-21: 484 actual over 2 expected = 242x, which is
+// futility.go's independently-derived "~242/h" and the fix commit's "242
+// skipped + 242 cancelled".
+func (p *ConsumePlan) OrderCount() int {
+	if p == nil {
+		return 0
+	}
+	if p.SimpleMove {
+		return 1 + len(p.PrimePairedPositions)
+	}
+	if p.Dispatch == nil {
+		return 0
+	}
+	n := 1 // StepsA
+	if p.Dispatch.StepsB != nil {
+		n++
+	}
+	return n
+}
+
 // BuildConsumePlan validates the (node, runtime, claim) triple and
 // composes the consume-request plan for the claim's swap mode. Pure — no
 // DB, fleet, or order-manager calls.

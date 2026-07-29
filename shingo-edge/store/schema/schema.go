@@ -66,3 +66,30 @@ func TableExists(db *sql.DB, tableName string) (bool, error) {
 	defer rows.Close()
 	return rows.Next(), rows.Err()
 }
+
+// ColumnDefault returns the named column's DEFAULT expression and whether it
+// has one at all.
+//
+// SQLite has no ALTER COLUMN DROP DEFAULT, so a default can only be changed by
+// rebuilding the table — which makes the default itself the predicate a rebuild
+// migration branches on to stay idempotent. It returns the VALUE, not just
+// presence, because "has a default" is usually the wrong question: a column can
+// converge on a different default rather than on none, and a presence check
+// would then rebuild the table on every startup forever.
+//
+// Returns ("", false, nil) for a missing table or column.
+func ColumnDefault(db *sql.DB, tableName, columnName string) (string, bool, error) {
+	rows, err := db.Query(`SELECT dflt_value FROM pragma_table_info('`+tableName+`') WHERE name = ?`, columnName)
+	if err != nil {
+		return "", false, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", false, rows.Err()
+	}
+	var dflt sql.NullString
+	if err := rows.Scan(&dflt); err != nil {
+		return "", false, err
+	}
+	return dflt.String, dflt.Valid, rows.Err()
+}

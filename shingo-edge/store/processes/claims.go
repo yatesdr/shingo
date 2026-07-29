@@ -62,18 +62,26 @@ const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code
 	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
-	reuse_compatible_bins, auto_push, created_at`
+	reuse_compatible_bins, auto_push, below_reorder_since, created_at`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
 	var createdAt, allowedJSON string
+	var belowSince sql.NullString
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&c.UOPCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &allowedJSON, &c.AutoRequestPayload,
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
-		&c.ReuseCompatibleBins, &c.AutoPush, &createdAt); err != nil {
+		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt); err != nil {
 		return c, err
+	}
+	// NULL means "not below", which is the ordinary state — a zero time would
+	// read as an episode that opened at the epoch.
+	if belowSince.Valid && belowSince.String != "" {
+		if t := helpers.ScanTime(belowSince.String); !t.IsZero() {
+			c.BelowReorderSince = &t
+		}
 	}
 	c.CreatedAt = helpers.ScanTime(createdAt)
 	if allowedJSON != "" {

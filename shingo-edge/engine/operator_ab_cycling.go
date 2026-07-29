@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"shingo/protocol"
 
 	"shingoedge/store/processes"
 )
@@ -91,7 +92,7 @@ func (e *Engine) FlipABNode(nodeID int64) error {
 		if pairedClaim != nil && pairedRuntime != nil &&
 			pairedClaim.AutoReorder && pairedRuntime.RemainingUOPCached <= pairedClaim.ReorderPoint {
 			if ok, _ := e.CanAcceptOrders(pairedNode.ID); ok {
-				if _, err := e.RequestNodeMaterial(pairedNode.ID, 1); err != nil {
+				if _, err := e.requestNodeMaterialFor(pairedNode.ID, 1, protocol.EpisodeTriggerAutoreorder); err != nil {
 					log.Printf("A/B flip auto-reorder for depleted node %s: %v", pairedNode.Name, err)
 				}
 			}

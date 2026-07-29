@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"shingoedge/orders"
 	"strings"
 	"sync"
 	"testing"
@@ -62,7 +63,7 @@ func TestRace_LoaderBudget_ConcurrentSignalsAndOperator(t *testing.T) {
 			defer wg.Done()
 			if g%2 == 0 {
 				// automatic/threshold path: wants 2, seam caps to the budget (1)
-				_, _ = eng.tryCreateL1(dl, "P1", L1LoopThreshold, 2, "")
+				_, _ = eng.tryCreateL1(dl, "P1", L1LoopThreshold, 2, "", orders.Origin{})
 			} else {
 				// operator path: a single empty request through the same seam
 				_, _ = eng.RequestEmptyBin(nodeID, "P1")

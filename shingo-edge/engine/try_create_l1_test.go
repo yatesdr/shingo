@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"shingoedge/orders"
 	"testing"
 
 	"shingoedge/domain"
@@ -38,11 +39,11 @@ func TestTryCreateL1_BoundedByNodeWindowCapAndReturnsCreated(t *testing.T) {
 	loader := resolveLoader(t, eng, "PART-Z")
 
 	// Want 1, window empty -> 1 created.
-	if created, err := eng.tryCreateL1(loader, "PART-Z", L1LoopThreshold, 1, ""); err != nil || created != 1 {
+	if created, err := eng.tryCreateL1(loader, "PART-Z", L1LoopThreshold, 1, "", orders.Origin{}); err != nil || created != 1 {
 		t.Fatalf("seed fire: created=%d err=%v, want 1, nil", created, err)
 	}
 	// Want 3, but the one-window loader already holds its empty -> node cap fires 0.
-	if created, err := eng.tryCreateL1(loader, "PART-Z", L1LoopThreshold, 3, ""); err != nil || created != 0 {
+	if created, err := eng.tryCreateL1(loader, "PART-Z", L1LoopThreshold, 3, "", orders.Origin{}); err != nil || created != 0 {
 		t.Errorf("node cap: created=%d err=%v, want 0, nil (window already holds 1)", created, err)
 	}
 
@@ -77,7 +78,7 @@ func TestTryCreateL1_OperatorDrivenSuppressesThresholdSource(t *testing.T) {
 	// aggregate snapshot), so the loader must be (re)resolved to observe it.
 	// Representative of production, where each demand signal re-resolves the loader.
 	loader := resolveLoader(t, eng, "PART-T")
-	if created, err := eng.tryCreateL1(loader, "PART-T", L1LoopThreshold, 2, ""); err != nil || created != 0 {
+	if created, err := eng.tryCreateL1(loader, "PART-T", L1LoopThreshold, 2, "", orders.Origin{}); err != nil || created != 0 {
 		t.Errorf("L1LoopThreshold on operator-driven: created=%d err=%v, want 0, nil", created, err)
 	}
 	ords, _ := db.ListActiveOrdersByProcessNode(nodeID)
@@ -91,7 +92,7 @@ func TestTryCreateL1_OperatorDrivenSuppressesThresholdSource(t *testing.T) {
 	seedCoreLoader(t, eng, sharedLoaderInfo("TR-LOADER", "produce", "threshold", "PART-T", 0, 0))
 	loader = resolveLoader(t, eng, "PART-T") // re-resolve so the snapshot reflects the change
 	// Bounded by the one-window node cap to a single empty.
-	if created, err := eng.tryCreateL1(loader, "PART-T", L1LoopThreshold, 2, ""); err != nil || created != 1 {
+	if created, err := eng.tryCreateL1(loader, "PART-T", L1LoopThreshold, 2, "", orders.Origin{}); err != nil || created != 1 {
 		t.Errorf("after switching to threshold: created=%d err=%v, want 1, nil", created, err)
 	}
 }

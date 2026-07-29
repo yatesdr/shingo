@@ -40,6 +40,72 @@ type Config struct {
 	// false` to opt back into anchor-funnel. The reservation seam keys per-loader,
 	// so this never fragments the never-2N budget.
 	LoadersMultiWindow *bool `yaml:"loaders_multi_window"`
+
+	Demand DemandConfig `yaml:"demand"`
+}
+
+// DemandConfig tunes demand-episode detection.
+type DemandConfig struct {
+	// HysteresisPercent is the recovery margin, as a percentage of the claim's
+	// reorder_point. A cell episode opens when remaining UOP falls to or below
+	// reorder_point and closes only once it climbs back ABOVE
+	// reorder_point + margin.
+	//
+	// WITHOUT A MARGIN a cell sitting exactly at its reorder point mints an
+	// episode every time a tick nudges it across — thousands of 20-second noise
+	// episodes, and the demand surface becomes unreadable at precisely the
+	// plants where each episode matters most. Bites hardest at a low-mix plant,
+	// which is why it goes in from the start rather than after someone sees it.
+	//
+	// THE NUMBER IS NOT DERIVED FROM ANYTHING. The design says "close above
+	// threshold + margin" and deliberately names no value, so this is a
+	// conservative default and a knob, not a constant someone reverse-engineers
+	// later. 10% of the reorder point, floored at 1 UOP so a small reorder point
+	// still gets a real margin.
+	//
+	// It is small on purpose: in normal operation a swap refills the node to
+	// roughly bin capacity, far above any margin, so this only governs the
+	// oscillation case. Raise it if a plant reports flapping episodes.
+	//
+	// TUNING IT ON THE SIM IS ONLY MEANINGFUL AFTER THE CLOCK INJECTION that
+	// landed with this work: the threshold monitor's windows previously ran on
+	// wall time while the activity they gate ran at 15x sim speed, so anything
+	// calibrated against them was calibrated against the wrong ratio.
+	//
+	// A specific number for a specific plant is a question for a human, not a
+	// default to quietly change here.
+	HysteresisPercent *float64 `yaml:"hysteresis_percent"`
+}
+
+// DefaultHysteresisPercent is the recovery margin as a fraction of
+// reorder_point when nothing is configured. See DemandConfig.
+const DefaultHysteresisPercent = 10.0
+
+// MinHysteresisUOP is the floor on the computed margin. A reorder point of 5
+// would otherwise get a margin of 0 and no hysteresis at all — which is the
+// case that needs it most, since a small reorder point is crossed by ordinary
+// tick noise.
+const MinHysteresisUOP = 1
+
+// HysteresisMargin returns the UOP a claim must recover ABOVE its reorder point
+// before its episode closes.
+func (c *Config) HysteresisMargin(reorderPoint int) int {
+	c.mu.RLock()
+	pct := c.Demand.HysteresisPercent
+	c.mu.RUnlock()
+
+	p := DefaultHysteresisPercent
+	if pct != nil {
+		p = *pct
+	}
+	if p < 0 || reorderPoint <= 0 {
+		return MinHysteresisUOP
+	}
+	margin := int(float64(reorderPoint) * p / 100.0)
+	if margin < MinHysteresisUOP {
+		return MinHysteresisUOP
+	}
+	return margin
 }
 
 // CountGroupsConfig holds the edge side of the advanced-zone light feature.

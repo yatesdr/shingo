@@ -118,16 +118,37 @@ func UpdateChangeoverState(db *sql.DB, id int64, state domain.ChangeoverState) e
 // non-empty) the triggered_by audit field together. Empty triggeredBy
 // leaves the existing value untouched, so callers that don't have a
 // source distinction don't blank it out on later state writes.
+//
+// A TERMINAL ROW STAYS TERMINAL. This was a bare UPDATE … WHERE id=? with no
+// state guard, so anything holding a changeover id could move a completed or
+// cancelled row back to an active state — and the round-2 review flagged it as
+// a latent hazard on the grounds that nothing then depended on it.
+//
+// Something does now: ProcessChangeoverID keys a demand episode. Reviving a
+// terminal changeover would reopen a demand that already ended, and the episode
+// would have two closes and no defined ending. The guard makes the revival
+// impossible rather than merely unlikely.
+//
+// Terminal transitions are still allowed from any state (a cancel must always
+// land), and re-writing the SAME terminal state is a no-op rather than an
+// error, so an idempotent completion path keeps working.
 func UpdateChangeoverStateWithTrigger(db *sql.DB, id int64, state domain.ChangeoverState, triggeredBy string) error {
 	completedAt := sql.NullString{}
 	if state.IsTerminal() {
 		completedAt = sql.NullString{Valid: true, String: clock.Now().UTC().Format(helpers.TimeLayout)}
 	}
 	now := clock.Now().UTC().Format(helpers.TimeLayout)
+
+	// The guard is on the ROW's current state, not the target: a non-terminal
+	// target may only be written to a row that is not already finished.
+	guard := ``
+	if !state.IsTerminal() {
+		guard = ` AND completed_at IS NULL`
+	}
 	_, err := db.Exec(`UPDATE process_changeovers SET state=?,
 		completed_at=CASE WHEN ? != '' THEN ? ELSE completed_at END,
 		triggered_by=CASE WHEN ? != '' THEN ? ELSE triggered_by END,
-		updated_at=? WHERE id=?`,
+		updated_at=? WHERE id=?`+guard,
 		state, completedAt.String, completedAt.String,
 		triggeredBy, triggeredBy, now, id)
 	return err

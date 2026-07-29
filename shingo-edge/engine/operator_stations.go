@@ -25,7 +25,17 @@ type NodeOrderResult struct {
 	ProcessNodeID int64                `json:"process_node_id"`
 }
 
+// RequestNodeMaterial is the OPERATOR entry point for the supply direction.
+//
+// The trigger matters to the demand episode and cannot be inferred here:
+// neither entry point checks AutoReorder or the level, so an operator can
+// request on a node the system considers perfectly fine. Tick-driven callers
+// use requestNodeMaterialFor with the autoreorder trigger instead.
 func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderResult, error) {
+	return e.requestNodeMaterialFor(nodeID, quantity, protocol.EpisodeTriggerOperator)
+}
+
+func (e *Engine) requestNodeMaterialFor(nodeID int64, quantity int64, trigger string) (*NodeOrderResult, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
@@ -37,7 +47,7 @@ func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderRe
 		quantity = 1
 	}
 
-	return e.requestNodeFromClaim(node, runtime, claim, quantity)
+	return e.requestNodeFromClaim(node, runtime, claim, quantity, trigger)
 }
 
 // claimOccupancy resolves Core-telemetry occupancy for the head node plus
@@ -85,7 +95,7 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
 // If the node is physically empty (no bin per Core telemetry), the planner
 // downgrades any non-simple swap mode to a simple move — there is nothing
 // to swap out.
-func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, quantity int64) (*NodeOrderResult, error) {
+func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, quantity int64, trigger string) (*NodeOrderResult, error) {
 	// A2 (hop 2026-07-23): refuse outgoing-style relief while a changeover is
 	// armed on this process — don't let a produce/consume swap race the cutover.
 	if err := e.guardStyleTransition(node, claim); err != nil {
@@ -130,18 +140,64 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 		}
 	}
 
-	return e.applyConsumePlan(node, plan)
+	// The demand episode is opened HERE — after the plan exists and before any
+	// order does. That ordering is the whole reason expected_orders can be the
+	// plan's own order count rather than a guess: the system's stated intent,
+	// captured once, at the moment it is stated.
+	//
+	// Everything from here on belongs to this episode, including the primes and
+	// both swap legs. Choreography is not demand.
+	origin := e.openEpisodeForConsume(node, runtime, claim, plan, trigger)
+
+	return e.applyConsumePlan(node, plan, origin)
+}
+
+// openEpisodeForConsume opens or joins the supply-direction episode for a
+// consume request.
+//
+// Best-effort throughout: observability must never fail a material request. A
+// cell that needs a bin gets its bin whether or not we could record why.
+func (e *Engine) openEpisodeForConsume(
+	node *processes.Node, runtime *processes.RuntimeState,
+	claim *processes.NodeClaim, plan *ConsumePlan, trigger string,
+) orders.Origin {
+	remaining := 0
+	if runtime != nil {
+		remaining = runtime.RemainingUOPCached
+	}
+	// DISCRETIONARY: an operator asked on a node the system reads as fine.
+	// Either the ledger is wrong, or the reorder point is too low, or the
+	// operator knows something the count does not. FLAG, DO NOT CONCLUDE —
+	// this records that it happened and says nothing about who was right.
+	discretionary := trigger == protocol.EpisodeTriggerOperator &&
+		claim.ReorderPoint > 0 && remaining > claim.ReorderPoint
+
+	originID, _, err := e.openCellEpisode(
+		node.ProcessID, claim,
+		protocol.EpisodeDirectionSupply, trigger,
+		plan.OrderCount(), remaining, discretionary,
+	)
+	if err != nil {
+		e.logFn("demand_episode: open supply episode node=%s: %v", node.Name, err)
+	}
+	if originID == "" {
+		// No episode, so nothing to attach to. Say NOTHING rather than
+		// guessing: an unstated class lets Core classify, where a wrong one
+		// here would be indistinguishable from a real answer.
+		return orders.Origin{}
+	}
+	return orders.Attached(originID)
 }
 
 // applyConsumePlan is the impure half of the consume-request pipeline:
 // it issues the move order or planned complex order(s), records the
 // runtime-orders linkage, and re-reads the resulting orders. Direction-
 // specific glue around the shared SwapDispatch.
-func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan) (*NodeOrderResult, error) {
+func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origin orders.Origin) (*NodeOrderResult, error) {
 	nodeID := node.ID
 
 	if plan.SimpleMove {
-		order, err := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, plan.SimpleSource, plan.SimpleDest, plan.AutoConfirm)
+		order, err := e.orderMgr.CreateMoveOrderWithOrigin(&nodeID, plan.Quantity, plan.SimpleSource, plan.SimpleDest, plan.AutoConfirm, origin)
 		if err != nil {
 			return nil, err
 		}
@@ -160,7 +216,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan) (*Nod
 		// error so the operator sees that priming was incomplete.
 		var primes []*storeorders.Order
 		for _, p := range plan.PrimePairedPositions {
-			po, perr := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, p.Source, p.Dest, plan.AutoConfirm)
+			po, perr := e.orderMgr.CreateMoveOrderWithOrigin(&nodeID, plan.Quantity, p.Source, p.Dest, plan.AutoConfirm, origin)
 			if perr != nil {
 				return nil, fmt.Errorf("prime %s: %w", p.Dest, perr)
 			}
@@ -174,14 +230,14 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan) (*Nod
 	}
 
 	dispatch := plan.Dispatch
-	orderA, err := e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "")
+	orderA, err := e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", origin)
 	if err != nil {
 		return nil, err
 	}
 
 	var orderB *storeorders.Order
 	if dispatch.StepsB != nil {
-		orderB, err = e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID)
+		orderB, err = e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, origin)
 		if err != nil {
 			return nil, err
 		}

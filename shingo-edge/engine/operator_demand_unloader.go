@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"shingoedge/domain"
+	"shingoedge/orders"
 )
 
 // unloaderHasUsableFullPresent is the consumer-side counterpart to the
@@ -93,9 +94,26 @@ func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode 
 			// U1 = a FULL (retrieve_empty=false) pulled from the unloader's inbound FG
 			// supermarket (blank → Core global FIFO). autoConfirm MUST be false — the
 			// operator processes the bin before U2 fires (same rule as L1).
-			if _, cerr := e.orderMgr.CreateRetrieveOrder(
+			//
+			// NO_DEMAND, and this is O7's "one more look" answered against the
+			// code rather than the trace. Three things say loader-family, not
+			// cell-family, and none of them is close:
+			//
+			//   - It is EVENT-driven, not level-driven. Its callers are "a full
+			//     arrived at FG storage" and a lineside release — it reacts to
+			//     material APPEARING, which is the opposite direction from a
+			//     place needing material. There is no threshold and no edge.
+			//   - It has no PROCESS grain. It resolves a *domain.Loader by
+			//     payload, so there is no process_id to key a cell episode on.
+			//   - want is a fixed 1, not a plan's order count.
+			//
+			// So nothing asked for this bin: a full showed up and the system
+			// pulled it in, the same shape as the loader's opportunistic push.
+			// If it were ever to become real demand that would be a column
+			// value here, not a redesign.
+			if _, cerr := e.orderMgr.CreateRetrieveOrderWithOrigin(
 				&nodeID, false, 1, deliveryNode, loader.InboundSource(), "",
-				"standard", payloadCode, false, true,
+				"standard", payloadCode, false, true, orders.NoDemand(),
 			); cerr != nil {
 				return made, fmt.Errorf("side-cycle: create U1 loader=%s payload=%s: %w", lid, payloadCode, cerr)
 			}

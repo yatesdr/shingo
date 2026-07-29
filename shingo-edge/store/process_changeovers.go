@@ -13,6 +13,7 @@ package store
 // would otherwise have to thread *sql.Tx through several files.
 
 import (
+	"fmt"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -140,4 +141,23 @@ func (db *DB) IsChangeoverParticipant(processID int64, coreNodeName string) (boo
 // ListParticipantsWithStation resolves each participant's release station.
 func (db *DB) ListParticipantsWithStation(changeoverID int64) ([]processes.ParticipantWithStation, error) {
 	return processes.ListParticipantsWithStation(db.DB, changeoverID)
+}
+
+// SetChangeoverOriginID stamps the demand episode a changeover opened.
+func (db *DB) SetChangeoverOriginID(changeoverID int64, originID string) error {
+	_, err := db.Exec(`UPDATE process_changeovers SET origin_id=? WHERE id=?`, originID, changeoverID)
+	if err != nil {
+		return fmt.Errorf("set changeover origin co=%d: %w", changeoverID, err)
+	}
+	return nil
+}
+
+// GetChangeoverOriginID reads a changeover's episode id, empty when unset.
+func (db *DB) GetChangeoverOriginID(changeoverID int64) (string, error) {
+	var originID string
+	if err := db.QueryRow(`SELECT origin_id FROM process_changeovers WHERE id=?`, changeoverID).
+		Scan(&originID); err != nil {
+		return "", err
+	}
+	return originID, nil
 }

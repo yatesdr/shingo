@@ -1,7 +1,10 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -45,4 +48,106 @@ func TestDevYAMLParses(t *testing.T) {
 	if !cfg.Sim.Operators.Enabled || cfg.Sim.Operators.LoaderAutoLoad != 5*time.Second {
 		t.Errorf("operators = %+v, want enabled + 5s load", cfg.Sim.Operators)
 	}
+}
+
+// The hysteresis margin is a KNOB with a conservative default, not a constant.
+// The design says "close above threshold + margin" and names no value, so
+// nothing here should read as a derived number — these pin the shape (scales
+// with the reorder point, never zero, configurable) rather than blessing 10%.
+func TestHysteresisMargin(t *testing.T) {
+	var cfg Config
+
+	// Default: 10% of the reorder point.
+	if got := cfg.HysteresisMargin(50); got != 5 {
+		t.Errorf("default margin for reorder_point=50 = %d, want 5", got)
+	}
+	// Floored at 1. A reorder point of 5 would otherwise get no hysteresis at
+	// all — and a small reorder point is exactly what ordinary tick noise
+	// crosses back and forth.
+	if got := cfg.HysteresisMargin(5); got != MinHysteresisUOP {
+		t.Errorf("margin for reorder_point=5 = %d, want the floor %d", got, MinHysteresisUOP)
+	}
+	// A claim with no reorder point still gets a margin rather than zero.
+	if got := cfg.HysteresisMargin(0); got != MinHysteresisUOP {
+		t.Errorf("margin for reorder_point=0 = %d, want the floor %d", got, MinHysteresisUOP)
+	}
+
+	// Configured: a plant that reports flapping raises it, without a rebuild.
+	pct := 40.0
+	cfg.Demand.HysteresisPercent = &pct
+	if got := cfg.HysteresisMargin(50); got != 20 {
+		t.Errorf("configured 40%% margin for reorder_point=50 = %d, want 20", got)
+	}
+
+	// A nonsense value falls back to the floor rather than producing a negative
+	// margin, which would make the close condition looser than the open one and
+	// leave episodes that can never close.
+	neg := -5.0
+	cfg.Demand.HysteresisPercent = &neg
+	if got := cfg.HysteresisMargin(50); got < MinHysteresisUOP {
+		t.Errorf("negative configuration produced margin %d — an episode must never be unclosable", got)
+	}
+}
+
+// TestDefaultsSnapshotIsCurrent is Phase 1's staleness test applied to
+// BEHAVIOUR instead of schema, and the parallel is exact.
+//
+// The shipped defaults are the schema of how this system behaves when nobody
+// has said otherwise. There was no file you could open to see them, they are
+// scattered across Defaults() and accessor fallbacks, and retuning one is a
+// one-character edit that is invisible in review. Nobody catches a default
+// drifting by reading code; they catch it by seeing a line change colour.
+//
+// This pins the SHIPPED default, not a plant's yaml. A plant overriding
+// hysteresis_percent locally does not touch this file — which is right, because
+// a local tuning decision is local. Changing what EVERYONE gets is what should
+// require acknowledgement.
+func TestDefaultsSnapshotIsCurrent(t *testing.T) {
+	// DefaultsSnapshotPath is module-root relative; the test runs in config/.
+	path := filepath.Join("..", filepath.FromSlash(DefaultsSnapshotPath))
+	committed, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v\n\nrun `%s` and commit the result", DefaultsSnapshotPath, err, DefaultsRegenCommand)
+	}
+	want := strings.ReplaceAll(string(committed), "\r\n", "\n")
+	got := RenderDefaults()
+	if got == want {
+		return
+	}
+	t.Fatalf("the shipped defaults have changed and the snapshot has not — run `%s` and commit it.\n\n"+
+		"If this is deliberate, the diff is the point: somebody should be able to ask what depended on the old value.\n\n%s",
+		DefaultsRegenCommand, firstDefaultsDiff(want, got))
+}
+
+// The rendering must be identical run to run, or the staleness test fails
+// forever on a tree nobody has touched. Defaults() GENERATES a random session
+// secret, which is exactly the trap — secrets are redacted, both for this and
+// because a snapshot that renders them is a snapshot that commits them.
+func TestRenderDefaults_IsDeterministicAndRedactsSecrets(t *testing.T) {
+	first, second := RenderDefaults(), RenderDefaults()
+	if first != second {
+		t.Fatalf("RenderDefaults is not deterministic:\n%s", firstDefaultsDiff(first, second))
+	}
+	// Defaults() generates a session secret; it must never reach the file.
+	cfg := Defaults()
+	if cfg.Web.SessionSecret == "" {
+		t.Skip("no generated session secret in this build — nothing to leak")
+	}
+	if strings.Contains(first, cfg.Web.SessionSecret) {
+		t.Error("the generated session secret was rendered into the snapshot — it would be committed to git")
+	}
+}
+
+func firstDefaultsDiff(a, b string) string {
+	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")
+	for i := 0; i < len(al) && i < len(bl); i++ {
+		if al[i] != bl[i] {
+			return "- committed: " + al[i] + "\n+ built:     " + bl[i]
+		}
+	}
+	if len(al) != len(bl) {
+		return "(the two renderings have different lengths: " +
+			strconv.Itoa(len(al)) + " vs " + strconv.Itoa(len(bl)) + " lines)"
+	}
+	return "(identical)"
 }

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"shingoedge/orders"
 	"testing"
 
 	"shingo/protocol"
@@ -37,7 +38,7 @@ func TestTier1_BUG1_OperatorAndDemandShareLockKey(t *testing.T) {
 	if err != nil || dl == nil {
 		t.Fatalf("LoaderAt(PLK_X1) = %v, %v", dl, err)
 	}
-	if _, err := eng.tryCreateL1(dl, "PART-X", L1LoopThreshold, 1, ""); err != nil {
+	if _, err := eng.tryCreateL1(dl, "PART-X", L1LoopThreshold, 1, "", orders.Origin{}); err != nil {
 		t.Fatalf("tryCreateL1: %v", err)
 	}
 

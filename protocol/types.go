@@ -108,6 +108,29 @@ const (
 	// boot-time coverage assertion.
 	SubjectProductionTick = "production.tick"
 
+	// SubjectDemandOriginOpened / SubjectDemandOriginClosed — Edge → Core, the
+	// demand episodes Edge owns (cell and changeover kinds).
+	//
+	// A NEW SUBJECT IS REQUIRED because a ZERO-ORDER EPISODE CANNOT RIDE AN
+	// ORDER MESSAGE — and a zero-order episode is the single most valuable row
+	// on the demand surface: four hours of a cell asking for material and
+	// nothing arriving. Attaching the episode to its first order would make
+	// exactly the episodes that matter most invisible.
+	//
+	// origin.opened is an UPSERT on origin_id, not an insert. That is what
+	// lets a re-request update rerequest_count on an OPEN episode without a
+	// third subject: the alternative is an episode that reads 0 re-requests
+	// until it closes, which is the wrong moment to learn an operator pushed
+	// the button six times.
+	//
+	// Both ride the existing shingo.orders topic as new SUBJECTS (the
+	// SubjectProductionTick precedent), on the durable outbox, so an episode
+	// survives a Core that is down when it opens. Old-Core safety is the same
+	// as production.tick's: an unregistered subject logs and returns, and the
+	// Edge outbox acks on publish rather than on Core handling.
+	SubjectDemandOriginOpened = "demand.origin_opened"
+	SubjectDemandOriginClosed = "demand.origin_closed"
+
 	// SubjectDowntimeEvent — Edge → Core persisted downtime event (G9).
 	// Carries DowntimeEvent. Emitted by the sim's downtime model on
 	// readiness-gate state transitions (running→down and down→running).

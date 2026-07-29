@@ -88,7 +88,32 @@ type OrderRequest struct {
 	// arrives, bypassing the operator and immediately triggering the outbound
 	// leg (L2/U2) while the bin is still empty/full.
 	SkipAutoConfirm bool `json:"skip_auto_confirm,omitempty"`
+	// OriginID / OriginClass attribute this order to the demand episode that
+	// asked for it. SEAM 2, Edge -> Core. Additive omitempty; SiblingOrderUUID
+	// on ComplexOrderRequest is the exact template.
+	//
+	// An order arriving with no OriginID from an Edge that predates this lands
+	// as an ORPHAN, not an error — see OriginClass.
+	OriginID    string `json:"origin_id,omitempty"`
+	OriginClass string `json:"origin_class,omitempty"`
 }
+
+// Order origin classes.
+//
+// Without the enum, `origin_id IS NULL` selects every consume-side order, every
+// opportunistic stage, every admin action, and — buried in there — the actual
+// lost origins. A haystack with the needle in it.
+const (
+	// OriginClassAttached: the order has an episode.
+	OriginClassAttached = "attached"
+	// OriginClassNoDemand: structurally originless, and stamped as such AT THE
+	// CREATE SITE, where it is known. Opportunistic loader staging, unloader
+	// full-ins, Core direct orders, Core spot orders. Not a finding.
+	OriginClassNoDemand = "no_demand"
+	// OriginClassOrphan: it should have had an episode and didn't. THE ONLY ONE
+	// THAT IS A FINDING.
+	OriginClassOrphan = "orphan"
+)
 
 // OrderCancel cancels an existing order.
 type OrderCancel struct {
@@ -308,6 +333,14 @@ type ComplexOrderRequest struct {
 	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
 	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
 	RemainingUOP *int `json:"remaining_uop,omitempty"`
+	// OriginID / OriginClass attribute this order to the demand episode that
+	// asked for it. SEAM 2, Edge -> Core, same shape as OrderRequest's.
+	//
+	// BOTH legs of a swap pair carry the SAME OriginID: one fire of
+	// applyConsumePlan is one demand served by two order rows, and counting it
+	// as two demands would read every swap-mode episode 2x high.
+	OriginID    string `json:"origin_id,omitempty"`
+	OriginClass string `json:"origin_class,omitempty"`
 }
 
 // UOPDispositionKind names the operator's release-time intent. Values map
@@ -959,6 +992,17 @@ type LoopBelowThresholdSignal struct {
 	// before then — the Edge resolves via CoreNodeName until the cutover.
 	LoaderKey string `json:"loader_key,omitempty"`
 	Reason    string `json:"reason"`
+	// OriginID is the demand episode this signal belongs to, so the orders the
+	// Edge creates in response can be stamped as its children.
+	//
+	// SEAM 1, Core -> Edge, and the leg the first draft of the design omitted
+	// entirely. Additive omitempty with a receiver-side fallback, the same
+	// pattern MemberNodeName and LoaderKey above already use twice: an old Edge
+	// ignores it and its orders land unattributed, a new Edge against an old
+	// Core sees "" and behaves exactly as it does today. There is no version
+	// gate in this system to negotiate with — protocol.Version is stamped and
+	// never read.
+	OriginID string `json:"origin_id,omitempty"`
 }
 
 // UOPAdjustment carries an absolute UOP value set by an admin via Core's
@@ -1136,3 +1180,92 @@ type SourcingAtRisk struct {
 	Node               string  `json:"node,omitempty"`
 	TimeToEmptySeconds float64 `json:"time_to_empty_seconds"`
 }
+
+// DemandOriginOpened announces a demand episode Edge owns. Subject
+// demand.origin_opened, on the durable outbox.
+//
+// UPSERT ON ORIGIN_ID, NOT INSERT. Re-sending it is how a re-request updates
+// an OPEN episode's RerequestCount without a third subject — and the count is
+// worth seeing while the episode is open, not only after it closes.
+//
+// A ZERO-ORDER EPISODE CANNOT RIDE AN ORDER MESSAGE, which is the whole reason
+// this subject exists. An episode that produces no orders at all — a cell
+// asking for four hours and getting nothing — is the most valuable row on the
+// surface, and it has no order to travel on.
+type DemandOriginOpened struct {
+	OriginID string `json:"origin_id"`
+	// EpisodeKey is the computed identity. Core keys its partial unique index
+	// on it, so the two services must build it identically — both call the
+	// constructors in episode_key.go rather than formatting their own.
+	EpisodeKey string `json:"episode_key"`
+	Kind       string `json:"kind"`
+	Direction  string `json:"direction,omitempty"`
+	Trigger    string `json:"trigger,omitempty"`
+	// TriggerRef is the claim key or ProcessChangeoverID behind the mint —
+	// forensic, not identity.
+	TriggerRef string `json:"trigger_ref,omitempty"`
+	// ProcessID is THE GRAIN for a cell episode: choreography spans nodes, the
+	// process does not.
+	ProcessID int64 `json:"process_id,omitempty"`
+	// CoreNodeName is the head node. Forensic, not the key.
+	CoreNodeName string    `json:"core_node_name,omitempty"`
+	PayloadCode  string    `json:"payload_code,omitempty"`
+	OpenedAt     time.Time `json:"opened_at"`
+	// OpenedTotal is the reading at the falling edge — the number the decision
+	// was made from, whatever its quality.
+	OpenedTotal int `json:"opened_total"`
+	Threshold   int `json:"threshold"`
+	// ExpectedOrders is the system's own stated intent, STAMPED ONCE at the
+	// falling edge and never recomputed or accumulated.
+	//
+	// For a cell episode it is len(plan orders) — what BuildConsumePlan said it
+	// would create — NOT the literal 1 that RequestNodeMaterial takes as a BIN
+	// count. The plan expands that into 1 order on a simple-move downgrade, 2
+	// on a swap, plus N primes on a press-index downgrade; copying the literal
+	// crosses units and reads 2x+ high.
+	//
+	// Accumulating it per re-fire is the failure mode most likely to look
+	// correct in review: it would render 2026-07-21 as ratio 1.0 — normal, and
+	// invisible.
+	ExpectedOrders int `json:"expected_orders"`
+	// RerequestCount is operator pushes that JOINED this episode.
+	RerequestCount int `json:"rerequest_count,omitempty"`
+	// Discretionary marks an operator request with no open episode on a node
+	// ABOVE its level. Either the ledger is wrong or the reorder point is —
+	// or the operator knows something the system does not. FLAG, DO NOT
+	// CONCLUDE.
+	Discretionary bool `json:"discretionary,omitempty"`
+}
+
+// DemandOriginClosed ends an episode. Subject demand.origin_closed.
+type DemandOriginClosed struct {
+	OriginID string    `json:"origin_id"`
+	ClosedAt time.Time `json:"closed_at"`
+	// CloseReason is one of the CloseReason* constants.
+	CloseReason string `json:"close_reason"`
+	// RerequestCount is the final count, so a Core that missed an interim
+	// upsert still lands on the right number.
+	RerequestCount int `json:"rerequest_count,omitempty"`
+}
+
+// Episode close reasons.
+const (
+	// CloseReasonRecovered — the level came back above its threshold plus the
+	// hysteresis margin. The ordinary ending.
+	CloseReasonRecovered = "recovered"
+	// CloseReasonChangeoverComplete / CloseReasonCancelled — the changeover
+	// kind's two endings.
+	CloseReasonChangeoverComplete = "changeover_complete"
+	CloseReasonCancelled          = "cancelled"
+	// CloseReasonThresholdChanged — the denominator moved, so the episode ends
+	// and a new one opens. Continuing would make cost_ratio a division by a
+	// number that was never in force.
+	CloseReasonThresholdChanged = "threshold_changed"
+	// CloseReasonThresholdRemoved — the binding went away underneath it.
+	CloseReasonThresholdRemoved = "threshold_removed"
+	// CloseReasonUnattributed — a childless episode aged out. NOT OPTIONAL:
+	// childless episodes are reachable even at full version parity, because
+	// Edge already silently drops threshold signals it cannot resolve. An
+	// alarm that never clears is indistinguishable from a broken one.
+	CloseReasonUnattributed = "unattributed"
+)
