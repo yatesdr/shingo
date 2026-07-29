@@ -1,10 +1,18 @@
-# Dashboard Platform
+# Wall Display Platform
 
-Floor-facing **dashboards** for shingo-core: saved, named, station-scoped views
-of Core's live data, each rendered as a chromeless full-screen page you point a
-wall monitor at. The AMR Task Board is the first dashboard *kind*; the platform
-is built to host more (throughput, andon, a robot map, …) without growing Core's
-nav or its binary surface.
+> **Naming, and where the seam is.** Owner decision 11 renamed the human-facing
+> concept to **wall displays**, so the PAGE routes are `/wall-display/{id}` and
+> `/wall-displays`. Everything else deliberately kept the old name: the
+> `dashboards` table, the `/api/.../dashboards` namespace, `DashboardService`,
+> `domain.Dashboard`. A page rename is undoable with a redirect; an API rename
+> is not, and a table name is not something a passer-by reads off a screen.
+> Expect both words in this file — that is the state of the code, not drift.
+
+Floor-facing **wall displays** for shingo-core: saved, named, station-scoped
+views of Core's live data, each rendered as a chromeless full-screen page you
+point a wall monitor at. The AMR Task Board was the first *kind*; there are four
+now (`task-board`, `robot-map`, `heartbeat`, `node-report`), hosted without
+growing Core's nav or its binary surface.
 
 A dashboard is **pure presentation** — it owns no operational data beyond its
 own definition. It reads Core's existing public order API and SSE stream; the
@@ -19,22 +27,53 @@ A dashboard is a row in the `dashboards` table:
 
 | Field           | Meaning                                                             |
 |-----------------|--------------------------------------------------------------------|
-| `name`          | Display title (shown on the board header, in the admin list)       |
-| `kind`          | Renderer selector. v1: `task-board`                                |
+| `name`          | Display title. **Every kiosk template renders it in its own header** — a chromeless screen has to say what it is |
+| `kind`          | Renderer selector: `task-board`, `robot-map`, `heartbeat`, `node-report` |
 | `stations_json` | The **area filter** — a JSON list of station IDs; empty = whole plant |
-| `config_json`   | Per-kind options, opaque to the platform (reserved; unused in v1)  |
-| `enabled`       | Organizational flag (does not gate the display in v1)              |
-| `sort_order`    | Stable ordering in the admin list                                  |
+| `config_json`   | Per-kind options, opaque to the platform (`node-report` stores `loader_id` here) |
+| `enabled`       | Gates seeding and the kind-resolution redirects; does not gate a direct link |
+| `sort_order`    | Stable ordering, and the tie-break for "first display of this kind"  |
 
-Two surfaces:
+### `?kiosk=1` is the load-bearing part of the URL
 
-- **Display** (public, chromeless): `GET /dashboard/{id}` — full-screen kiosk
-  page for a monitor. No nav, no login. Config is baked into the page
-  server-side; the page's JS pulls live data scoped to this dashboard.
-- **Admin** (auth-gated): `GET /dashboards` — create / edit / delete dashboards
-  and copy each one's display link. Lives in the **Admin** nav dropdown.
+`GET /wall-display/{id}` serves **two different pages**:
 
-The old `/board` tab is gone; `/board` 301-redirects to `/dashboards`.
+- **bare** — framed inside Core's chrome (nav stays, plus a Fullscreen link),
+  which is what a person clicking from the hub should get;
+- **`?kiosk=1`** — the chromeless page itself, which is what a wall monitor is
+  pointed at, and what the frame loads in its iframe.
+
+So any redirect that lands on this route **must carry the query string**.
+Dropping it does not 404 and does not error; it quietly returns a framed page
+with a nav bar to a screen bolted to a wall. `GET /dashboard/{id}` 301s here
+preserving the query for exactly this reason
+(`TestWallDisplayMoved_PreservesQueryString`), and `/heartbeat`'s redirect had
+the same bug in the other direction — it never attached `?kiosk=1` at all.
+
+### Where they are managed
+
+There is **no admin page**. Refactor #3 retired the standalone Manage table;
+wall displays are created and edited on the **hub at `/`** (the Dashboard page,
+`static/pages/dashboard-landing.js`). `GET /wall-displays` and `GET /dashboards`
+both redirect there. `templates/dashboards.html` + `static/pages/dashboards.js`
+still exist but **nothing serves them** — they are kept alive only by
+`template_parse_test.go`.
+
+The old `/board` tab is gone; `/board` 301-redirects to `/dashboards`, which
+then redirects to `/`.
+
+### Defaults are seeded, not created
+
+`engine.Start()` calls `DashboardService.SeedDefaultDashboards()`, which creates
+an enabled whole-plant display for any of `heartbeat` / `task-board` /
+`robot-map` that has none — "Plant Heartbeat", "Plant Flight Board", "Plant
+Robot Map". Idempotent and per-kind, so it never clobbers curation.
+
+Two consequences worth knowing before reasoning about this table: **every Core
+has a heartbeat display from first boot** (so code branching on "does one
+exist?" always takes the yes arm), and **most rows at a plant are seed rather
+than curation** — at the 2026-07-27 measurement Springfield had 4 rows and
+Hopkinsville 3, both carrying "Plant Heartbeat" under the seed's exact name.
 
 ---
 
@@ -45,7 +84,7 @@ The old `/board` tab is gone; `/board` 301-redirects to `/dashboards`.
 ```
             ┌─────────────────────── Core ───────────────────────┐
 Wall        │                                                     │
-monitor ──▶ GET /dashboard/{id}      (chromeless page, config baked in)
+monitor ──▶ GET /wall-display/{id}?kiosk=1   (chromeless page, config baked in)
   │         │                                                     │
   │ JS pulls scoped data:                                         │
   ├──────▶  GET /api/board/orders?dashboard={id}                  │
@@ -83,7 +122,7 @@ work and belongs in the query.
 - **`store/orders/orders.go`** — `ListActiveBoardFiltered(stations)`: the board query with a positional-placeholder `IN (...)` station filter. Empty = unscoped.
 - **`service/dashboard_service.go`** — `DashboardService`: CRUD wrapper + input normalization (trim name, default `kind`, de-dup stations).
 - **`engine/engine_board.go`** — `GetActiveOrdersWithRobotLocationFiltered(stations)`; the unscoped method delegates to it with `nil`.
-- **`www/handlers_dashboards.go`** — display handler (kind→template registry), admin page handler, and the CRUD/read API. `handlers_board.go` extends `/api/board/orders` with `?dashboard=`.
+- **`www/handlers_dashboards.go`** — display handler (kind→template registry), the `/dashboard/{id}` → `/wall-display/{id}` 301 (query-preserving), the hub redirects, and the CRUD/read API. `handlers_board.go` extends `/api/board/orders` with `?dashboard=`.
 - **`www/router.go`** — routes + `renderBare` (executes a standalone template, not the nav `layout`, for chromeless pages).
 
 ### Frontend
@@ -91,7 +130,8 @@ work and belongs in the query.
 - **`templates/dashboard-display.html`** — chromeless `<!DOCTYPE>` kiosk page; bakes in `data-dashboard-id` / `data-dashboard-kind`.
 - **`static/pages/dashboard.js`** — display renderer (task-board kind): scoped fetch + change-ping refetch, reconnect backoff, clock, connection dot, and build-id auto-reload (a kiosk adopts a new Core build by reloading).
 - **`static/dashboard.css`** — self-contained dark kiosk styling; large fonts and status color-coding for across-the-aisle legibility.
-- **`templates/dashboards.html` + `static/pages/dashboards.js`** — admin CRUD (built with `el()` + real handlers; no inline events / no `data-action` strings).
+- **`static/pages/dashboard-landing.js`** — the hub on `/`: cards, create/edit modal, and the Open / Fullscreen links.
+- **`templates/dashboards.html` + `static/pages/dashboards.js`** — the retired admin CRUD. **Unreachable**: no route renders them. Kept alive by `template_parse_test.go` only.
 
 ---
 
@@ -191,9 +231,10 @@ the variation. That's the platform's whole reason for existing.
 | `www/router.go`                               | routes + `renderBare`                  |
 | `www/templates/dashboard-display.html`        | chromeless kiosk page (task-board)     |
 | `www/templates/dashboard-map.html`            | chromeless kiosk page (robot-map)      |
-| `www/templates/dashboards.html`               | admin page                             |
+| `www/templates/dashboards.html`               | retired admin page — UNREACHABLE       |
 | `www/static/pages/dashboard.js`              | task-board renderer                    |
 | `www/static/pages/dashboard-map.js`          | robot-map renderer (SVG)               |
-| `www/static/pages/dashboards.js`             | admin CRUD                             |
-| `www/static/dashboard.css`                    | kiosk styling (both kinds)             |
-| `www/templates/layout.html`                   | nav: Task Board tab → Dashboards (Admin) |
+| `www/static/pages/dashboards.js`             | retired admin CRUD — UNREACHABLE       |
+| `www/static/pages/dashboard-landing.js`      | the hub on `/` (where displays are made) |
+| `www/static/dashboard.css`                    | kiosk styling (all kinds)              |
+| `www/templates/layout.html`                   | nav: "Dashboard" → `/` (the hub)         |

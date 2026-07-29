@@ -12,10 +12,16 @@ import (
 	"shingocore/service"
 )
 
-// dashboardTemplates maps a dashboard kind to the chromeless template that
+// dashboardTemplates maps a wall-display kind to the chromeless template that
 // renders it. This is the platform's extensibility seam: the platform itself
-// is kind-agnostic; adding a new dashboard kind means registering a renderer
-// template here (and a matching branch in dashboard.js). v1 ships one kind.
+// is kind-agnostic; adding a kind means registering a renderer template here
+// (and a matching branch in the page JS).
+//
+// FOUR KINDS, and the map is the count. The comment here read "v1 ships one
+// kind" while the literal below it registered four — a line that was true when
+// written and has been wrong through three additions since, which is exactly
+// how a reader ends up trusting prose over the code beside it. Both plants run
+// three of the four today (Springfield also runs node-report).
 var dashboardTemplates = map[string]string{
 	"task-board":  "dashboard-display.html",
 	"robot-map":   "dashboard-map.html",
@@ -23,16 +29,21 @@ var dashboardTemplates = map[string]string{
 	"node-report": "dashboard-node-report.html",
 }
 
-// handleDashboardDisplay renders a dashboard. By default it renders INSIDE
+// handleWallDisplay renders one wall display. By default it renders INSIDE
 // Core's chrome (nav stays — you're never stranded off-core, SB's call): a thin
 // frame with a Fullscreen link around the kiosk page in an iframe. With
 // ?kiosk=1 it renders the chromeless wall-monitor page itself (what the iframe
-// loads, and what Fullscreen opens). The dashboard config is baked in
-// server-side; the kiosk JS pulls live data from the public board API.
-func (h *Handlers) handleDashboardDisplay(w http.ResponseWriter, r *http.Request) {
+// loads, and what Fullscreen opens). The config is baked in server-side; the
+// kiosk JS pulls live data from the public board API.
+//
+// Each kiosk template renders the display's own NAME in its header — see
+// dashboard-frame.html's comment, which records that the frame drops its title
+// precisely because all four kiosks carry theirs. A chromeless screen has to
+// say what it is; the framed one must not say it twice.
+func (h *Handlers) handleWallDisplay(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		http.Error(w, "invalid dashboard id", http.StatusBadRequest)
+		http.Error(w, "invalid wall display id", http.StatusBadRequest)
 		return
 	}
 	d, err := h.engine.DashboardService().Get(id)
@@ -56,11 +67,43 @@ func (h *Handlers) handleDashboardDisplay(w http.ResponseWriter, r *http.Request
 	h.render(w, r, "dashboard-frame.html", map[string]any{"Page": "dashboard", "Dashboard": d})
 }
 
-// handleBoardKindRedirect powers the nav's Dashboards dropdown entries
-// (Flight Board / Robot Map): redirect to the first enabled board of {kind} by
-// sort order. With none configured, fall through to the manage page so the
-// operator can create one (rather than a dead 404). Heartbeat has its own
-// route (/heartbeat) because it additionally falls back to a bare kiosk.
+// handleWallDisplayMoved answers the old /dashboard/{id} with a permanent
+// redirect to /wall-display/{id}.
+//
+// IT CARRIES THE QUERY STRING, and that is the whole reason this is a handler
+// and not a one-line closure. ?kiosk=1 selects the chromeless page; the bare
+// path selects the framed one. A wall monitor is pointed at the kiosk form and
+// a person clicks the framed form, so a redirect that drops the query does not
+// 404 and does not error — it quietly returns every floor screen in the plant
+// with Core's nav bar across the top, and nobody finds out until they look at
+// a monitor. Both plants run three enabled displays each; there is no version
+// of this worth shipping a round later than the rename.
+//
+// The id is re-parsed rather than pasted through, so the Location this emits
+// is always a number this route could have produced.
+func (h *Handlers) handleWallDisplayMoved(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid wall display id", http.StatusBadRequest)
+		return
+	}
+	target := "/wall-display/" + strconv.FormatInt(id, 10)
+	if q := r.URL.RawQuery; q != "" {
+		target += "?" + q
+	}
+	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
+// handleBoardKindRedirect resolves /board/{kind} to the first enabled wall
+// display of that kind by sort order, for a typed or bookmarked URL. With none
+// configured it falls through to the hub so the operator can create one rather
+// than hit a dead 404. Heartbeat has its own route (/heartbeat) because it
+// additionally falls back to a bare kiosk.
+//
+// The framed form is right here: this route is reached by a person, never by a
+// monitor. It used to be described as powering "the nav's Dashboards dropdown
+// entries (Flight Board / Robot Map)" — there is no such dropdown in
+// layout.html and nothing in the repo links to /board/{kind} at all.
 func (h *Handlers) handleBoardKindRedirect(w http.ResponseWriter, r *http.Request) {
 	kind := chi.URLParam(r, "kind")
 	if boards, err := h.engine.DashboardService().List(); err == nil {
@@ -72,17 +115,24 @@ func (h *Handlers) handleBoardKindRedirect(w http.ResponseWriter, r *http.Reques
 			}
 		}
 		if best >= 0 {
-			http.Redirect(w, r, "/dashboard/"+strconv.FormatInt(boards[best].ID, 10), http.StatusFound)
+			http.Redirect(w, r, "/wall-display/"+strconv.FormatInt(boards[best].ID, 10), http.StatusFound)
 			return
 		}
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther) // none configured → the hub
 }
 
-// handleDashboardsAdmin is retired (refactor #3): the standalone Manage table is
-// replaced by the dashboard hub on the Dashboard page. Kept as a redirect so old
-// bookmarks/links land on the hub rather than 404.
-func (h *Handlers) handleDashboardsAdmin(w http.ResponseWriter, r *http.Request) {
+// handleWallDisplaysMoved backs both /wall-displays and the old /dashboards.
+// Neither is a page: the standalone Manage table was retired in refactor #3 and
+// wall displays are made and edited on the hub at "/", so both send you there.
+//
+// /wall-displays is registered so the URL owner decision 11 names resolves to
+// something. It is NOT a new management page — decision 11 read as if
+// /dashboards still managed them, and it has not since refactor #3.
+//
+// Both are PUBLIC; see the routing comment for why /dashboards moved out of the
+// auth group. This handler reads nothing and can leak nothing.
+func (h *Handlers) handleWallDisplaysMoved(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 

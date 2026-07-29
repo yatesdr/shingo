@@ -592,13 +592,17 @@ CREATE TABLE IF NOT EXISTS inventory_delta_dedup (
     PRIMARY KEY (station, scope_kind, scope_key, epoch)
 );
 
--- dashboards: floor-facing display definitions for the dashboard platform.
--- A dashboard is a saved, named view of Core's live data, scoped to a set
--- of stations ("area"). Rendered chromeless at /dashboard/{id} for a wall
--- monitor; managed via the /dashboards admin page. Pure presentation — it
--- owns no operational data beyond its own definition. kind selects the
--- renderer (v1 = task-board); stations_json is the area filter; config_json
--- carries per-kind options.
+-- dashboards: floor-facing definitions for the wall-display platform.
+-- A row is a saved, named view of Core's live data, scoped to a set of
+-- stations ("area"). Rendered chromeless at /wall-display/{id}?kiosk=1 for a
+-- wall monitor; managed on the hub at "/". Pure presentation — it owns no
+-- operational data beyond its own definition. kind selects the renderer
+-- (task-board, robot-map, heartbeat, node-report); stations_json is the area
+-- filter; config_json carries per-kind options.
+--
+-- The table name did NOT change with the round-5 page rename: it matches the
+-- /api/.../dashboards namespace and domain.Dashboard, and a table name is not
+-- something a passer-by reads off a screen.
 CREATE TABLE IF NOT EXISTS dashboards (
     id            BIGSERIAL PRIMARY KEY,
     name          TEXT NOT NULL,

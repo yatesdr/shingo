@@ -9,10 +9,11 @@ import { createStore, onSSE, debounce } from '/static/shared/utils.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
 // BarList is no longer imported here: U3 replaced both breakdown panels with
-// tables, and this was its last consumer in the repo. The component and its
-// .bar-list / .bar-row CSS are left in place rather than deleted — unlike the
-// dead .board-* block, it is a general primitive another panel could reuse, and
-// deleting a shared component is the owner's call. Flagged, not swept.
+// tables, and this was its last consumer in the repo. The owner has since made
+// the call and components/BarList.js is DELETED — a primitive with no consumer
+// is not a primitive, it is a file that has to be kept correct for nobody.
+// Its .bar-row* CSS is a separate question and is annotated where it lives
+// (shared/components.css); .bar-list itself is still live on /overview.
 import { makeChart, chartColors, installChartThemeHook } from '/static/components/charts.js';
 
 const filters = createStore({ since: '', until: '', station: '', robot: '', state: '' });

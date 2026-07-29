@@ -100,9 +100,27 @@ func (h *Handlers) handleCellsAdmin(w http.ResponseWriter, r *http.Request) {
 // — a grid of cell tiles plus a live rhythm strip, fed by cell-heartbeat SSE.
 // Public (no nav); meant to run full-screen on a floor monitor.
 func (h *Handlers) handleHeartbeatKiosk(w http.ResponseWriter, r *http.Request) {
-	// Wave 2 (Q-035): prefer a configured heartbeat board so wall displays land
-	// on the scoped view; fall back to the unscoped kiosk so existing displays
-	// don't break. First enabled heartbeat board by sort order wins.
+	// Wave 2 (Q-035): prefer a configured heartbeat display so wall monitors
+	// land on the scoped view; fall back to the unscoped kiosk so existing
+	// displays don't break. First enabled heartbeat display by sort order wins.
+	//
+	// ?kiosk=1 IS REQUIRED ON THIS HOP AND WAS MISSING. /heartbeat is a
+	// chromeless route — the fallback below is renderBare — but the redirect
+	// landed on the FRAMED page, so a monitor pointed here grew Core's nav bar
+	// and an iframe border. Same dropped-query failure the /dashboard/{id}
+	// redirect is written to prevent, reached from the other direction: there
+	// the query is lost in transit, here it was never attached.
+	//
+	// AND IT WAS NEVER CONDITIONAL, which is the part worth carrying.
+	// engine.Start() calls SeedDefaultDashboards, which creates an enabled
+	// full-plant "Plant Heartbeat" whenever no heartbeat display exists — so
+	// every Core has had one since refactor #5, this branch has always been
+	// taken, and the renderBare below has been unreachable on a started engine
+	// for just as long. Both plants carry a row named exactly "Plant
+	// Heartbeat": the seed, unrenamed. The fallback is left standing rather
+	// than deleted — whether /heartbeat should still be able to render
+	// unscoped is a design question, not a redirect fix — but nothing reaches
+	// it today. TestHeartbeatKiosk_RedirectStaysChromeless pins both facts.
 	if boards, err := h.engine.DashboardService().List(); err == nil {
 		best := -1
 		for i := range boards {
@@ -112,7 +130,7 @@ func (h *Handlers) handleHeartbeatKiosk(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 		if best >= 0 {
-			http.Redirect(w, r, "/dashboard/"+strconv.FormatInt(boards[best].ID, 10), http.StatusFound)
+			http.Redirect(w, r, "/wall-display/"+strconv.FormatInt(boards[best].ID, 10)+"?kiosk=1", http.StatusFound)
 			return
 		}
 	}

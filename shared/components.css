@@ -317,15 +317,26 @@
 .bar-row--clickable { cursor: pointer; }
 .bar-row--clickable:hover .bar-row__label { color: var(--primary); }
 .bar-row__label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* display:block on BOTH, and it is load-bearing. These are <span>s (BarList.js
-   builds them with el('span')). The track is a grid ITEM of .bar-row so it gets
-   blockified for free and sizes correctly — but the fill is a child of the
-   track, not a grid item, so it stayed INLINE, and width/height do not apply to
-   a non-replaced inline element. The fill computed to 0x0 on every BarList in
-   the app: the breakdowns and parts lists rendered as rows of bare near-black
-   tracks (--bg-dark is #0d1117 in dark theme) with no bar in them at all.
-   The inline width BarList sets was correct the whole time; nothing could
-   apply it. */
+/* THE SPLIT IN THIS BLOCK IS REAL, and a grep for "bar-" hides it.
+
+   .bar-list above is LIVE: overview/fleet.js gives #fl-rows that class, and it
+   is the only thing supplying the column's flex direction and 0.35rem row gap.
+   The rows themselves come from RobotTile.js as .fleet-row and use no .bar-row*
+   class at all — so deleting .bar-list does not blank the section, it silently
+   un-gaps it, which is the harder kind of regression to notice.
+
+   .bar-row / .bar-row__* below have NO consumer. Their only one was
+   components/BarList.js, deleted after U3 replaced both breakdown panels with
+   tables. They are kept for now because the sweep is a separate call from the
+   component deletion the owner made; if nothing claims them, they go.
+
+   The display:block that follows was load-bearing while BarList lived, and the
+   reasoning is worth keeping because the shape recurs: BarList built the track
+   and fill as <span>s. The track was a grid ITEM of .bar-row so it blockified
+   for free, but the fill was a child of the track, NOT a grid item, so it
+   stayed inline — and width/height do not apply to a non-replaced inline
+   element. Every bar computed to 0x0. The inline width was correct the whole
+   time; nothing could apply it. */
 .bar-row__track { display: block; background: var(--bg-dark); border-radius: 3px; height: 0.7rem; overflow: hidden; }
 .bar-row__fill { display: block; background: var(--primary); height: 100%; border-radius: 3px; transition: width 0.25s ease; }
 .bar-row__value { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }

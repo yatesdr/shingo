@@ -1,4 +1,14 @@
-// dashboards.js — admin management for the dashboard platform. Lists saved
+// dashboards.js — UNREACHABLE. Nothing serves the page this drives.
+//
+// Its only template is dashboards.html, whose only route was GET /dashboards,
+// which has redirected to "/" since refactor #3 retired the standalone Manage
+// table in favour of the hub. The pair is kept alive solely by
+// template_parse_test.go, which parses every template. Deleting them is a
+// separate call from the round-5 rename and needs that test edited too; the
+// URLs below were carried to /wall-display so a grep for the old path comes
+// back clean rather than pointing a future reader at a route that is now a 301.
+//
+// What it was: admin management for the dashboard platform. Lists saved
 // dashboards and provides create / edit / delete plus a one-click way to grab
 // the chromeless display link to put on a wall monitor.
 //
@@ -46,7 +56,7 @@ function renderTable() {
 
 function rowFor(d) {
   var stations = (d.stations && d.stations.length) ? d.stations.join(', ') : 'Whole plant';
-  var displayPath = '/dashboard/' + d.id;
+  var displayPath = '/wall-display/' + d.id;
   return el('tr', {}, [
     el('td', {}, d.name),
     el('td', {}, kindLabel(d.kind)),

@@ -35,7 +35,7 @@ const cellIndex = new Map();  // cell_id -> stable index (rhythm color)
 let cellList = [];
 const cellStateTimers = {};
 
-// When rendered as a saved heartbeat board (/dashboard/<id>) the body carries
+// When rendered as a saved heartbeat wall display (/wall-display/<id>) the body carries
 // data-dashboard-id; read that board's resolved cells (station scope + the
 // board's own cell overrides applied server-side, refactor #4). The bare
 // /heartbeat kiosk has no id → the global cell list, plant-wide. data-stations

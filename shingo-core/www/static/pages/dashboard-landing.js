@@ -1,7 +1,12 @@
-// dashboard-landing.js — the "/" Dashboard page, now the dashboard HUB
-// (consolidation refactor #3). You see, make, and open every dashboard here,
-// in-core; the old standalone /dashboards Manage table is retired. Also wires
+// dashboard-landing.js — the "/" Dashboard page, and the WALL-DISPLAY HUB
+// (consolidation refactor #3). You see, make, and open every wall display here,
+// in-core; the old standalone /dashboards Manage table is retired, and
+// /wall-displays redirects here rather than being a page of its own. Also wires
 // the "Re-sync edges" button (Q-034: ask edges to re-send their catalog).
+//
+// The nav label stays "Dashboard" (owner decision 11) — this page is the plant
+// dashboard AND the place wall displays are managed. The API and the stored
+// entity are still `dashboard`; only the page routes moved.
 //
 // Create/edit logic is ported from the old dashboards.js so the modal behaves
 // identically (kind picker + station-scope checkboxes). Edit/Delete only render
@@ -62,7 +67,7 @@ function render() {
         const scope = (d.stations && d.stations.length) ? d.stations.join(', ') : 'Whole plant';
         grid.appendChild(card({
             name: d.name, kindText: kindLabel(d.kind), meta: scope + (d.enabled ? '' : ' · disabled'),
-            open: '/dashboard/' + d.id, fullscreen: '/dashboard/' + d.id + '?kiosk=1',
+            open: '/wall-display/' + d.id, fullscreen: '/wall-display/' + d.id + '?kiosk=1',
             edit: canEdit ? d : null,
         }));
     });

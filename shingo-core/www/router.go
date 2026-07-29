@@ -162,17 +162,46 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Get("/missions", h.handleMissions)
 		r.Get("/missions/{orderID}", h.handleMissionDetail)
 		r.Get("/traffic", h.handleTraffic)
-		// Dashboard platform: chromeless per-instance display for wall
-		// monitors (public, no nav). The old /board tab is superseded —
-		// redirect bookmarks to the management page.
-		r.Get("/dashboard/{id}", h.handleDashboardDisplay)
+		// Wall displays: the per-instance display for a floor monitor
+		// (public, no nav). Framed by default so a person clicking from the
+		// hub keeps Core's chrome; ?kiosk=1 is the chromeless page a monitor
+		// actually loads.
+		//
+		// THE NAME BOUNDARY IS DELIBERATE AND IT IS ONLY HERE. Owner decision
+		// 11 renamed what a passer-by reads off a screen, so the PAGE routes
+		// moved. The stored entity is still a `dashboard`: the table, the API
+		// namespace under /api, DashboardService and domain.Dashboard all keep
+		// that name. Renaming those serves nothing a passer-by can see and
+		// would break every kiosk and script holding an API URL — and unlike a
+		// page rename, an API rename is not undoable with a redirect.
+		r.Get("/wall-display/{id}", h.handleWallDisplay)
+		// The old path, 301 and CARRYING THE QUERY STRING. See
+		// handleWallDisplayMoved: dropping it silently reframes every monitor.
+		r.Get("/dashboard/{id}", h.handleWallDisplayMoved)
 		// Production-heartbeat kiosk (Phase F): chromeless wall display of cell
 		// rhythm. Public, no nav — open full-screen on a floor monitor.
 		r.Get("/heartbeat", h.handleHeartbeatKiosk)
 		r.Get("/board", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/dashboards", http.StatusMovedPermanently)
 		})
-		// Dashboards-dropdown links resolve to the first enabled board of a kind.
+		// Both land on the hub at "/", which is where wall displays are made
+		// and edited. /wall-displays exists so the URL owner decision 11 names
+		// resolves to something; /dashboards is the old one.
+		//
+		// PUBLIC, and /dashboards MOVED HERE to be. It sat in the auth group,
+		// which meant a route whose entire body is `Redirect(w, r, "/")` —
+		// to handleDashboard, registered public in this same group — demanded
+		// a login first.
+		// The visible effect is on /board, the old public board URL: its 301
+		// lands on /dashboards, so a shop-floor bookmark walked into a login
+		// wall on the way to a page it was always allowed to see. Nothing is
+		// exposed by this; the destination was already public and the handler
+		// reads nothing.
+		r.Get("/wall-displays", h.handleWallDisplaysMoved)
+		r.Get("/dashboards", h.handleWallDisplaysMoved)
+		// First enabled wall display of a kind, for a typed or bookmarked URL.
+		// NOT a nav dropdown — the comment that said so outlived the dropdown;
+		// nothing in layout.html has linked here for some time.
 		r.Get("/board/{kind}", h.handleBoardKindRedirect)
 
 		// ── API routes ─────────────────────────────────────────
@@ -259,6 +288,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 			// Dashboards (read) — public so a wall display (or a future
 			// standalone display host) can fetch definitions without auth.
+			//
+			// STILL `dashboards`, on purpose, after the page routes became
+			// /wall-display. This is the stored entity's name and it matches
+			// the table; a URL a monitor or a script holds is not a thing a
+			// passer-by reads, which is all decision 11 was about.
 			r.Get("/dashboards", h.apiListDashboards)
 			r.Get("/dashboards/{id}", h.apiGetDashboard)
 			r.Get("/dashboards/{id}/cells", h.apiDashboardCells) // refactor #4: per-dashboard heartbeat cells
@@ -464,7 +498,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/config", h.handleConfig)
 			r.Post("/config/save", h.handleConfigSave)
 			r.Get("/fleet-explorer", h.handleFleetExplorer)
-			r.Get("/dashboards", h.handleDashboardsAdmin)
 			r.Get("/admin/cells", h.handleCellsAdmin)
 
 			// Traffic (count group CRUD)

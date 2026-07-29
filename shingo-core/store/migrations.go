@@ -345,10 +345,15 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "sibling_order_uuid") }},
 
 		// v27 adds the dashboards table — saved floor-display definitions
-		// for the dashboard platform (task board + future kinds). A
-		// dashboard is a named, station-scoped view of Core's live data,
-		// served chromeless at /dashboard/{id}. Pure presentation config;
+		// for the wall-display platform (task board + three kinds since). A
+		// row is a named, station-scoped view of Core's live data, served
+		// chromeless at /wall-display/{id}?kiosk=1. Pure presentation config;
 		// it owns no operational state, so there is no data to backfill.
+		//
+		// The TABLE is still `dashboards` after the round-5 page rename, and
+		// deliberately: it matches the /api/.../dashboards namespace and the
+		// Go type, and renaming it would leave those three disagreeing for a
+		// name nobody reads off a screen.
 		{27, "add dashboards table for the floor display platform",
 			v27Dashboards,
 			func(q schema.Querier) bool { return schema.TableExists(q, "dashboards") }},

@@ -783,8 +783,11 @@ function supp(label, value) {
 function showOnMap() {
   // Deep-link stub for the map material layer (a later map task). The map does
   // not consume a payload highlight yet, so this just opens the map hub.
-  toast('Map material-layer highlight is not wired yet — opening the map.', 'info');
-  window.open('/dashboards', '_blank');
+  // "/" is the hub, and this opened /dashboards — a route that has redirected
+  // there since refactor #3 AND sits behind auth, so the promised "opening the
+  // map" landed a signed-out reader on the login page. Go to the hub directly.
+  toast('Map material-layer highlight is not wired yet — opening the hub.', 'info');
+  window.open('/', '_blank');
 }
 function closeDrill() { document.getElementById('inv-drill').classList.remove('active'); }
 

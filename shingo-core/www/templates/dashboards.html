@@ -1,13 +1,17 @@
+{{/* UNREACHABLE — see the header of static/pages/dashboards.js. No route
+     renders this template; GET /dashboards redirects to the hub at "/". Kept
+     alive only by template_parse_test.go. */}}
 {{define "content"}}
 <div class="flex flex-between mb-2">
-  <h1>Dashboards</h1>
-  <button class="btn btn-primary" id="dash-new">+ New Dashboard</button>
+  <h1>Wall displays</h1>
+  <button class="btn btn-primary" id="dash-new">+ New wall display</button>
 </div>
 
 <p class="muted mb-2">
-  Saved floor displays. Each renders chromeless at <code>/dashboard/&lt;id&gt;</code> —
-  open that link full-screen on a wall monitor. Scope a board to a plant area by
-  listing its station IDs; leave the area empty to show the whole plant.
+  Saved floor displays. Each renders chromeless at
+  <code>/wall-display/&lt;id&gt;?kiosk=1</code> — open that link full-screen on a
+  wall monitor. Scope one to a plant area by listing its station IDs; leave the
+  area empty to show the whole plant.
 </p>
 
 <table class="table" id="dash-table">
