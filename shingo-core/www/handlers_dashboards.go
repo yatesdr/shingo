@@ -469,9 +469,6 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 			if nErr != nil || node == nil {
 				continue
 			}
-			if node.NodeTypeCode != protocol.NodeClassSTOR {
-				continue
-			}
 			row := nodeRow{NodeName: node.Name}
 			if node.ParentName != "" {
 				row.GroupName = node.ParentName
@@ -505,9 +502,18 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 					orderRobot[*o.BinID] = o.RobotID
 				}
 			}
+			payloadSet := make(map[string]bool, len(rows))
+			for _, r := range rows {
+				if r.PayloadCode != "" {
+					payloadSet[r.PayloadCode] = true
+				}
+			}
 			transit := make([]transitRow, 0)
 			for _, b := range allBins {
 				if b.PayloadCode == "" || b.Status == "retired" {
+					continue
+				}
+				if !payloadSet[b.PayloadCode] {
 					continue
 				}
 				if b.NodeName != domain.TransitNodeName {
