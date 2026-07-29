@@ -66,6 +66,12 @@ func (db *DB) rebuildStyleNodeClaims() error {
 		db.Exec(`DROP TABLE IF EXISTS demand_origins_open`)
 	}
 
+	// An interrupted PRIOR run has to be caught before the idempotency guard
+	// below, because that guard cannot see it. See assertNoStrandedRebuild.
+	if err := db.assertNoStrandedRebuild(); err != nil {
+		return err
+	}
+
 	present, err := schema.TableExists(db.DB, "style_node_claims")
 	if err != nil || !present {
 		return err
@@ -113,12 +119,101 @@ func (db *DB) rebuildStyleNodeClaims() error {
 	// of every later ALTER in the process.
 	defer db.Exec(`PRAGMA legacy_alter_table = OFF`)
 
-	// One statement string in one call: a failure part-way cannot leave the
-	// database with the legacy table renamed and no replacement.
+	// Assert the pragma actually took, rather than trusting that Exec returning
+	// nil means the mode changed. The comment above calls this line load-bearing
+	// and it is: without it the RENAME re-points three columns in two other
+	// tables at the scratch table, and the DROP below leaves them dangling
+	// invisibly, because Edge runs with foreign_keys OFF. A pragma that silently
+	// no-ops is indistinguishable from one that worked, which is the same shape
+	// as the ignored-error ALTER pattern schema_assert.go exists to backstop.
+	var legacyMode int
+	if err := db.QueryRow(`PRAGMA legacy_alter_table`).Scan(&legacyMode); err != nil {
+		return fmt.Errorf("style_node_claims rebuild: read back legacy_alter_table: %w", err)
+	}
+	if legacyMode != 1 {
+		return fmt.Errorf(
+			"style_node_claims rebuild: PRAGMA legacy_alter_table did not take (reads %d, want 1) — "+
+				"refusing to rename, because SQLite would rewrite REFERENCES style_node_claims(id) in "+
+				"changeover_node_tasks and process_node_runtime_states to point at the scratch table, "+
+				"and the DROP would then leave all three dangling with foreign_keys OFF to hide it",
+			legacyMode)
+	}
+
+	// NOT atomic, despite how this reads. modernc.org/sqlite v1.51.0 prepares and
+	// steps each statement of a multi-statement string in turn with no wrapping
+	// transaction, so a failure part-way commits everything before it. Measured
+	// 2026-07-28 against the Springfield dump: faulting the INSERT leaves the
+	// rename and the CREATE applied — an empty style_node_claims beside a
+	// style_node_claims_legacy holding all 35 rows. The data survives; what does
+	// not survive is anyone noticing. assertNoStrandedRebuild above is what turns
+	// that state into a startup failure on the next boot.
 	if _, err := db.Exec(styleNodeClaimsRebuildSQL); err != nil {
 		return fmt.Errorf("style_node_claims rebuild: %w", err)
 	}
 	return nil
+}
+
+// assertNoStrandedRebuild fails startup when a previous rebuild died between its
+// RENAME and its DROP.
+//
+// The rebuild is four statements and is NOT executed atomically (see the note at
+// the Exec below), so process death or a failing statement can leave
+// style_node_claims_legacy behind holding the plant's claims.
+//
+// Nothing else detects that. rebuildStyleNodeClaims decides whether to run by
+// reading the LIVE table's column defaults — and after a half-finished rebuild
+// those defaults are already the new, correct ones, because the CREATE is what
+// wrote them. So the guard returns "already the current shape" and migrate()
+// succeeds. verifySchema then passes too, because every required table and
+// column really is present; it asserts shape, and the shape is right. The table
+// is simply empty.
+//
+// Measured against the 2026-07-27 Springfield dump, killing the rebuild after
+// statement 1 or 2 leaves 0 live claims and 35 stranded, and Open() returns no
+// error. An interrupted rebuild is therefore indistinguishable from a completed
+// one — a NEVER-migrated database is distinguishable (auto_reorder still
+// DEFAULT 1), but a half-migrated one is not. The stranded table is the only
+// evidence there is.
+//
+// Row counts decide the verdict, because the two survivable cases differ:
+//
+//	live < legacy   the copy never completed. Refuse to start: continuing would
+//	                run the plant on a claim set that is missing rows, and
+//	                nothing downstream would report it.
+//	live >= legacy  the copy completed and only the DROP was lost. Finish it,
+//	                which is what the interrupted run was going to do anyway.
+func (db *DB) assertNoStrandedRebuild() error {
+	present, err := schema.TableExists(db.DB, "style_node_claims_legacy")
+	if err != nil || !present {
+		return err
+	}
+
+	var legacyRows, liveRows int
+	if err := db.QueryRow(`SELECT count(*) FROM style_node_claims_legacy`).Scan(&legacyRows); err != nil {
+		return fmt.Errorf("stranded rebuild check: count style_node_claims_legacy: %w", err)
+	}
+	// A missing live table counts as zero, which is the RENAME-only case.
+	_ = db.QueryRow(`SELECT count(*) FROM style_node_claims`).Scan(&liveRows)
+
+	if liveRows >= legacyRows {
+		// The copy landed; only the DROP was lost. Completing it is exactly what
+		// the interrupted run intended, and leaving it means every later start
+		// re-enters this branch and the dangling REFERENCES styles_legacy clause
+		// the scratch table carries never goes away.
+		if _, err := db.Exec(`DROP TABLE style_node_claims_legacy`); err != nil {
+			return fmt.Errorf("stranded rebuild check: completing the interrupted DROP: %w", err)
+		}
+		return nil
+	}
+
+	return fmt.Errorf(
+		"style_node_claims rebuild was interrupted and the plant's claims are stranded: "+
+			"style_node_claims has %d row(s), style_node_claims_legacy holds %d. "+
+			"Refusing to start, because this database looks fully migrated to every other check "+
+			"and Edge would otherwise run with an incomplete claim set.\n\n"+
+			"The data is intact in style_node_claims_legacy. To recover, copy the missing rows back "+
+			"and drop the scratch table, or restore the pre-deploy database backup.",
+		liveRows, legacyRows)
 }
 
 // styleNodeClaimsColumnGuards makes the copy's column list safe to name on a
