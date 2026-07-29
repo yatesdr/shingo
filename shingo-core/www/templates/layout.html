@@ -25,32 +25,6 @@
       <a href="/orders"{{if eq .Page "orders"}} class="active"{{end}}>Orders</a>
       <a href="/missions"{{if eq .Page "missions"}} class="active"{{end}}>Missions</a>
       <a href="/robots"{{if eq .Page "robots"}} class="active"{{end}}>Robots</a>
-      <a href="/traffic"{{if eq .Page "traffic"}} class="active"{{end}}>Traffic</a>
-      <a href="/sourcing"{{if eq .Page "sourcing"}} class="active"{{end}}>Sourcing</a>
-      {{/* "Episodes", not "Demand" — Admin › Demand below is the production-quota
-           page and has been for far longer. Two unrelated aggregates behind one
-           word at two scales is the overloading the style guide already names as
-           the worst in this codebase; reconciling them is an IA decision, not a
-           rename to make while adding a page. */}}
-      <a href="/demand-episodes"{{if eq .Page "demand-episodes"}} class="active"{{end}}>Episodes</a>
-      {{/* 5.7. "Orphans" and not "Reconciliation" — the page is about a named
-           finding on a named column (origin_class = 'orphan'), and naming it
-           after the process rather than the thing would make it the second page
-           in this nav whose label does not match the noun it lists. */}}
-      <a href="/orphans"{{if eq .Page "orphans"}} class="active"{{end}}>Orphans</a>
-      {{/* "Cycle time", not "Takt" — the page reports the interval it measured
-           between two ticks, which is what a cycle time is. Takt is a demand
-           figure (available time ÷ required units) and this page has neither
-           term of it; borrowing the word would claim a comparison nothing here
-           computes. */}}
-      <a href="/cycle-time"{{if eq .Page "cycle-time"}} class="active"{{end}}>Cycle time</a>
-      {{/* 5.11. "Flags", not "Material downtime" — ShinGo records that a place
-           asked for material and when it stopped asking; it records nothing
-           about whether a line was stopped or anybody was waiting, so the
-           downtime word would put a claim in the nav that the data cannot
-           support. "Flags" is also the constraint: a flag, never an
-           attribution. */}}
-      <a href="/material-flags"{{if eq .Page "material-flags"}} class="active"{{end}}>Flags</a>
       <span class="nav-sep"></span>
       <div class="nav-dropdown">
         <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "inventory") (eq .Page "nodes") (eq .Page "bins") (eq .Page "payloads")}} active{{end}}">Assets</a>
@@ -62,10 +36,67 @@
         </div>
       </div>
       {{if .Authenticated}}
+      {{/* PREVIEW — pages that are built but not finished, grouped so the top
+           bar reads as the set of things you can rely on.
+
+           THIS HIDES THE LINK, NOT THE PAGE. Every route in here except
+           /sourcing is registered in the PUBLIC group (router.go, above the
+           requireAuth boundary at :498) because "public = shop floor read
+           access". Moving the routes would change who can reach them and could
+           break a bookmark or a floor screen; that is a separate decision from
+           tidying the nav, so it has not been made here.
+
+           WHY THESE THREE. Episodes, Orphans and Flags all read
+           DemandEpisodeService, whose table `demand_origins` is created by
+           migration v59 and DOES NOT EXIST AT EITHER PLANT — both are measured
+           at schema_migrations 53. They render nothing in production today.
+           Sourcing joins them as the other in-flight surface.
+
+           Cycle time is here on the owner's call, and the call corrects a bad
+           test on my part: I had kept it out because bin_uop_audit is populated
+           (253k rows at Springfield) and the query reads `actor`, not the empty
+           `station` column — so the data is there. But "has data" is not the
+           question this group asks. The question is whether the surface is
+           finished, which is a product judgement and not one a row count
+           settles. It renders "No cycles in the last…" on the seeded sim. */}}
       <div class="nav-dropdown">
-        <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "demand") (eq .Page "test-orders") (eq .Page "fleet-explorer") (eq .Page "logs") (eq .Page "config") (eq .Page "edges")}} active{{end}}">Admin</a>
+        <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "sourcing") (eq .Page "demand-episodes") (eq .Page "orphans") (eq .Page "material-flags") (eq .Page "cycle-time")}} active{{end}}">Preview</a>
+        <div class="nav-dropdown-menu">
+          <a href="/sourcing"{{if eq .Page "sourcing"}} class="active"{{end}}>Sourcing</a>
+          {{/* "Cycle time", not "Takt" — the page reports the interval it measured
+               between two ticks, which is what a cycle time is. Takt is a demand
+               figure (available time ÷ required units) and this page has neither
+               term of it; borrowing the word would claim a comparison nothing here
+               computes. */}}
+          <a href="/cycle-time"{{if eq .Page "cycle-time"}} class="active"{{end}}>Cycle time</a>
+          {{/* "Episodes", not "Demand" — Admin › Demand below is the production-quota
+               page and has been for far longer. Two unrelated aggregates behind one
+               word at two scales is the overloading the style guide already names as
+               the worst in this codebase; reconciling them is an IA decision, not a
+               rename to make while adding a page. */}}
+          <a href="/demand-episodes"{{if eq .Page "demand-episodes"}} class="active"{{end}}>Episodes</a>
+          {{/* 5.7. "Orphans" and not "Reconciliation" — the page is about a named
+               finding on a named column (origin_class = 'orphan'), and naming it
+               after the process rather than the thing would make it the second page
+               in this nav whose label does not match the noun it lists. */}}
+          <a href="/orphans"{{if eq .Page "orphans"}} class="active"{{end}}>Orphans</a>
+          {{/* 5.11. "Flags", not "Material downtime" — ShinGo records that a place
+               asked for material and when it stopped asking; it records nothing
+               about whether a line was stopped or anybody was waiting, so the
+               downtime word would put a claim in the nav that the data cannot
+               support. "Flags" is also the constraint: a flag, never an
+               attribution. */}}
+          <a href="/material-flags"{{if eq .Page "material-flags"}} class="active"{{end}}>Flags</a>
+        </div>
+      </div>
+      <div class="nav-dropdown">
+        <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "demand") (eq .Page "test-orders") (eq .Page "fleet-explorer") (eq .Page "logs") (eq .Page "config") (eq .Page "edges") (eq .Page "traffic")}} active{{end}}">Admin</a>
         <div class="nav-dropdown-menu">
           <a href="/edges"{{if eq .Page "edges"}} class="active"{{end}}>Stations</a>
+          {{/* Traffic configures the count-group PLC interlock — bindings and
+               thresholds, not a floor read. It sits with Config and Logs for
+               the same reason they do. */}}
+          <a href="/traffic"{{if eq .Page "traffic"}} class="active"{{end}}>Traffic</a>
           <a href="/demand"{{if eq .Page "demand"}} class="active"{{end}}>Demand</a>
           <a href="/test-orders"{{if eq .Page "test-orders"}} class="active"{{end}}>Test Orders</a>
           <a href="/fleet-explorer"{{if eq .Page "fleet-explorer"}} class="active"{{end}}>Fleet Explorer</a>
