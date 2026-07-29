@@ -72,6 +72,7 @@ type Engine struct {
 	nodeService           *service.NodeService
 	auditService          *service.AuditService
 	demandService         *service.DemandService
+	demandEpisodeService  *service.DemandEpisodeService
 	loaderService         *service.LoaderService
 	calculatorService     *service.ThresholdCalculatorService
 	payloadService        *service.PayloadService
@@ -175,6 +176,7 @@ func New(c Config) *Engine {
 
 	e.auditService = service.NewAuditService(e.db)
 	e.demandService = service.NewDemandService(e.db)
+	e.demandEpisodeService = service.NewDemandEpisodeService(e.db)
 	e.payloadService = service.NewPayloadService(e.db)
 	e.missionService = service.NewMissionService(e.db)
 	e.testCmdService = service.NewTestCommandService(e.db)

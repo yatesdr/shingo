@@ -1,0 +1,181 @@
+{{define "content"}}
+{{/*
+  demand-episodes.html — the demand browser (5.1, 5.4, 5.5, 5.6, 5.14).
+
+  THE TEMPLATE DOES NO ARITHMETIC AND MAKES NO DECISIONS. Every figure, band,
+  label and absence-state arrives already rendered from demand_episodes_view.go,
+  because a rule that lives in a template is a rule with no test. What is here is
+  markup and class selection only.
+
+  No colour literals. Everything comes from the shared tokens.
+*/}}
+<div>
+  <div class="flex flex-between mb-2">
+    <h1>Demand episodes</h1>
+  </div>
+
+  <p class="text-muted mb-2">
+    One row per continuous period during which a place needed material.
+    Open episodes always shown; closed ones from the last {{.WindowHours}} hours.
+    Sorted by cost ratio, worst first — with the rows the ratio cannot rank
+    floated to the top rather than buried at the bottom.
+  </p>
+
+  {{if .LoadError}}
+  <div class="card mb-2">
+    <strong>Could not read demand episodes.</strong>
+    <div class="text-muted mt-1">{{.LoadError}}</div>
+    <div class="text-muted mt-1">
+      This is a read failure, not an empty floor. The table below is not showing
+      you zero episodes — it is showing you nothing at all.
+    </div>
+  </div>
+  {{else}}
+
+  {{/* ── 5.6: closed_by as a visible number ─────────────────────────── */}}
+  {{if .ClosedByError}}
+  <div class="card mb-2">
+    <span class="kpi-label">Closes by mechanism</span>
+    <div class="text-muted">Unavailable: {{.ClosedByError}}</div>
+  </div>
+  {{else}}{{with .ClosedBy}}
+  <div class="card mb-2">
+    <div class="card-header-row">
+      <span class="kpi-label">Closes in the last {{$.WindowHours}}h, by mechanism</span>
+    </div>
+    <div class="de-summary">
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Swept</div>
+        <div class="kpi-value tnum">{{.Sweep}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Notified</div>
+        <div class="kpi-value tnum">{{.Notification}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Not recorded</div>
+        <div class="kpi-value tnum">{{.Unrecorded}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Unrecognised</div>
+        <div class="kpi-value tnum">{{.Other}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Sweep share</div>
+        {{template "de-cell-value" .SweepShare}}
+      </div>
+    </div>
+    <p class="de-note">
+      The sweep is the correctness floor under six notification close paths. Its
+      share climbing toward 100% means those paths have stopped firing — and
+      nothing else in the system would say so.
+    </p>
+  </div>
+  {{end}}{{end}}
+
+  {{if .Truncated}}
+  <div class="card mb-2">
+    <strong>Showing the first {{.Limit}} episodes.</strong>
+    <span class="text-muted">More exist in this window than are displayed here.</span>
+  </div>
+  {{end}}
+
+  {{if .Rows}}
+  <table class="table de-table">
+    <thead>
+      <tr>
+        <th>Opened</th>
+        <th>Kind</th>
+        <th>Place</th>
+        <th class="col-num">Duration</th>
+        <th>Band</th>
+        <th class="col-num">Orders</th>
+        <th class="col-num">Expected</th>
+        <th class="col-num">Ratio</th>
+        <th>Close reason</th>
+        <th>Closed by</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr class="de-row de-band-{{.Band}}{{if .Open}} de-open{{end}}">
+        <td class="text-muted tnum">{{.OpenedAt.Format "15:04"}}</td>
+        <td>{{.KindLabel}}{{if .Direction}} <span class="text-muted">· {{.Direction}}</span>{{end}}</td>
+        <td>
+          <div>{{if .Payload}}{{.Payload}}{{else}}<span class="text-muted">—</span>{{end}}</div>
+          <div class="de-sub">{{.Station}}{{if .CoreNode}} · {{.CoreNode}}{{end}}</div>
+        </td>
+        {{/*
+          5.14 — the ramp carries magnitude ONLY up to the worry line, and the
+          band is carried by the ring class AND the printed name beside it.
+          Never colour alone.
+        */}}
+        <td class="col-num tnum de-ramp-{{.RampStep}}">{{.DurationText}}</td>
+        <td>
+          {{if .BandLabel}}<span class="de-band-name">{{.BandLabel}}</span>{{else}}<span class="de-na"></span>{{end}}
+        </td>
+        <td class="col-num tnum de-orders">{{.OrdersText}}</td>
+        <td class="col-num tnum">{{template "de-cell" .Expected}}</td>
+        <td class="col-num tnum">{{template "de-cell" .Ratio}}</td>
+        <td>{{template "de-cell" .CloseReason}}</td>
+        <td>{{template "de-cell" .ClosedBy}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p class="de-note">
+    A greyed ratio has a denominator below {{.MinExpected}} and is not a reliable
+    comparison — read the order count beside it. Worry at {{.WorryAfter}},
+    concern at {{.ConcernAfter}}.
+  </p>
+  {{else}}
+  {{/*
+    A chart or table with no rows gets an EMPTY STATE, not an empty frame. A
+    drawn frame with nothing in it reads as "measured, all zero".
+  */}}
+  <div class="card">
+    <strong>No demand episodes.</strong>
+    <div class="text-muted mt-1">
+      Nothing is open, and nothing closed in the last {{.WindowHours}} hours.
+      That is a measured result, not a missing feed — the query ran and returned
+      no rows.
+    </div>
+  </div>
+  {{end}}
+  {{end}}
+</div>
+{{end}}
+
+{{/*
+  de-cell — the number doctrine's three states, rendered so they look different
+  from each other. This is the one rule this surface exists to get right.
+
+    value  → the figure, plain, in normal text. INCLUDING ZERO.
+    nodata → an em dash in muted text, with a title saying WHICH absence it is.
+    na     → the quietest possible mark, for a question that does not apply.
+
+  Muted is a fourth thing and NOT one of the three: the value exists and is
+  shown, it is just not load-bearing (5.4). Greyed and dashed-out are different
+  claims and must not collapse into one.
+*/}}
+{{define "de-cell"}}
+  {{if eq .Kind "value"}}
+    {{if .Muted}}<span class="de-muted" title="{{.Title}}">{{.Text}}</span>
+    {{else}}{{.Text}}{{end}}
+  {{else if eq .Kind "nodata"}}
+    <span class="de-nodata" title="{{.Title}}">{{.Text}}</span>
+  {{else}}
+    <span class="de-na" title="{{.Title}}">{{.Text}}</span>
+  {{end}}
+{{end}}
+
+{{/* Same three states at KPI-value weight, for the summary strip. */}}
+{{define "de-cell-value"}}
+  {{if eq .Kind "value"}}
+    <div class="kpi-value tnum">{{.Text}}</div>
+  {{else if eq .Kind "nodata"}}
+    <div class="kpi-value tnum de-nodata" title="{{.Title}}">{{.Text}}</div>
+  {{else}}
+    <div class="kpi-value tnum de-na" title="{{.Title}}">{{.Text}}</div>
+  {{end}}
+{{end}}

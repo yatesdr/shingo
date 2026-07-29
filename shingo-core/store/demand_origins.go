@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/domain"
 )
 
 // demand_origins.go — Core's history of every demand episode.
@@ -31,49 +32,23 @@ import (
 
 // DemandOrigin is one episode as Core stores it.
 //
-// It carries only what Edge authors. signal_count, uop_delivered,
-// used_edge_reports and parent_origin_id are CORE-OWNED and deliberately absent
-// — see UpsertDemandOrigin, which must not zero them.
-type DemandOrigin struct {
-	OriginID   string
-	Revision   int64
-	EpisodeKey string
-	Kind       string
-	Direction  string
-	Trigger    string
-	TriggerRef string
-	StationID  string
+// THE TYPE LIVES IN domain/, not here, and this is an alias. www handlers must
+// not import shingocore/store (a depguard rule with no remaining exemptions),
+// so any row shape a handler needs to name has to be declared where a handler
+// can reach it. Internal store callers compile unchanged through the alias —
+// the pattern Stage 2A.2 established when it drained the original 17-file
+// ratchet, and the same arrangement sourceability_event.go uses.
+type DemandOrigin = domain.DemandOrigin
 
-	ProcessID    int64
-	CoreNodeName string
-	PayloadCode  string
-
-	OpenedAt              time.Time
-	OpenedTotal           int
-	Threshold             int
-	ExpectedOrders        *int
-	ExpectedUnknownReason string
-	RerequestCount        int
-	Discretionary         bool
-
-	ClosedAt    *time.Time
-	CloseReason string
-	ClosedBy    string
-}
+// DemandEpisode is an episode plus its child-order count. Also domain-owned;
+// see the note above.
+type DemandEpisode = domain.DemandEpisode
 
 // Close reasons Core assigns on its own. Edge's live in protocol.
 const (
-	// CloseReasonSuperseded — a NEW episode opened for a place this one still
-	// held open, which is proof this one ended: Edge enforces one open episode
-	// per episode_key with a PRIMARY KEY, so it could not have minted the new
-	// one while this was still open there.
-	//
-	// It is a PLACEHOLDER, not a verdict. The real close is still in flight or
-	// was dead-lettered; if it lands, its higher revision overwrites this with
-	// the true reason. And if it never lands, "superseded" still says more than
-	// "unattributed" — it says we know this ended because something else
-	// started here, we just never heard how.
-	CloseReasonSuperseded = "superseded"
+	// CloseReasonSuperseded is domain-owned for the same reason as the type.
+	// The reasoning behind the value lives with it.
+	CloseReasonSuperseded = domain.CloseReasonSuperseded
 )
 
 // UpsertDemandOrigin applies one state message under the revision guard.
@@ -497,4 +472,110 @@ func nullIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// ListDemandEpisodes returns episodes newest-first for the demand browser
+// (Stage 5.1), each joined to its child-order count.
+//
+// SCOPE IS "OPEN, PLUS ANYTHING THAT CLOSED INSIDE THE WINDOW", not "opened
+// inside the window". An episode that has been open for six hours is the single
+// most important row this page can show, and a window on opened_at would drop it
+// off the page precisely as it got bad enough to matter — the surface would go
+// quiet exactly when it should be loudest.
+//
+// LIMIT IS A HARD CAP, NOT A PAGE. Cardinality at a plant is unmeasured (the
+// sweep's cost is bounded by open-episode count, which nobody has counted at
+// Springfield yet), so an unbounded SELECT here is a query whose cost nobody
+// knows. The caller is told when the cap bit — see the returned truncated flag —
+// because a silently truncated list is a list that lies about what the floor is
+// doing.
+//
+// The child count is a correlated subquery over idx_orders_origin_id, a partial
+// index on exactly this lookup. Same construction ListOpenEpisodeStates uses and
+// for the same reason: nothing computed is ever stored, so cost is counted at
+// read time. A stored rollup starts drifting from what it summarises.
+func (db *DB) ListDemandEpisodes(since time.Time, limit int) (episodes []DemandEpisode, truncated bool, err error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := db.Query(`
+		SELECT o.origin_id, o.revision, o.episode_key, o.kind, o.direction,
+		       o.trigger_kind, o.trigger_ref, o.station_id, o.process_id,
+		       o.core_node_name, o.payload_code, o.opened_at, o.opened_total,
+		       o.threshold, o.expected_orders, o.expected_reason,
+		       o.rerequest_count, o.discretionary, o.closed_at, o.close_reason,
+		       o.closed_by,
+		       (SELECT COUNT(*) FROM orders c WHERE c.origin_id = o.origin_id)
+		  FROM demand_origins o
+		 WHERE o.closed_at IS NULL OR o.closed_at >= $1
+		 ORDER BY o.opened_at DESC
+		 LIMIT $2`, since, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list demand episodes: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			e        DemandEpisode
+			closedAt *time.Time
+			closedBy sql.NullString
+		)
+		// expected_orders and closed_by are scanned through nullable carriers
+		// deliberately. Both have a NULL that MEANS something different from any
+		// value they could hold — "the denominator is unknowable" and "the sender
+		// did not say" — and a scan into a plain int or string would destroy that
+		// here, before any renderer could tell the two apart.
+		if err := rows.Scan(&e.OriginID, &e.Revision, &e.EpisodeKey, &e.Kind,
+			&e.Direction, &e.Trigger, &e.TriggerRef, &e.StationID, &e.ProcessID,
+			&e.CoreNodeName, &e.PayloadCode, &e.OpenedAt, &e.OpenedTotal,
+			&e.Threshold, &e.ExpectedOrders, &e.ExpectedUnknownReason,
+			&e.RerequestCount, &e.Discretionary, &closedAt, &e.CloseReason,
+			&closedBy, &e.Children); err != nil {
+			return nil, false, fmt.Errorf("scan demand episode: %w", err)
+		}
+		e.ClosedAt = closedAt
+		e.ClosedBy = closedBy.String
+		episodes = append(episodes, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("list demand episodes: %w", err)
+	}
+
+	// One row over the limit was requested so the cap can be REPORTED rather
+	// than inferred. Asking for exactly `limit` leaves "got limit rows"
+	// ambiguous between a full page and a truncated one.
+	if len(episodes) > limit {
+		return episodes[:limit], true, nil
+	}
+	return episodes, false, nil
+}
+
+// ListClosedBySince returns the closed_by value of every episode closed since
+// `since`, with NULL preserved as the empty string.
+//
+// FEEDS 5.6, AND THE NULL IS THE POINT. The sweep's share of closes climbing
+// toward 100% means the notification paths have silently stopped firing, and
+// nothing else in the system would say so. Aggregating in SQL with a GROUP BY
+// would be cheaper and would fold NULL into whatever the caller defaulted it to;
+// returning the raw values keeps the third state intact all the way to the
+// summariser, which counts it separately on purpose.
+func (db *DB) ListClosedBySince(since time.Time) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT closed_by FROM demand_origins
+		 WHERE closed_at IS NOT NULL AND closed_at >= $1`, since)
+	if err != nil {
+		return nil, fmt.Errorf("list closed_by: %w", err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var v sql.NullString
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("scan closed_by: %w", err)
+		}
+		out = append(out, v.String)
+	}
+	return out, rows.Err()
 }

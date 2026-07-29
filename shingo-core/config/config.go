@@ -25,6 +25,12 @@ type Config struct {
 	Logging       LoggingConfig       `yaml:"logging"`
 	Dispatch      DispatchConfig      `yaml:"dispatch"`
 	Demand        DemandConfig        `yaml:"demand"`
+
+	// Display holds the Phase 6 surfaces' numeric constants. Read it through
+	// DisplayConstants(), not directly — see provenance.go, which also carries
+	// the record of where each of these numbers came from and which of them a
+	// plant has to re-derive.
+	Display DisplayConfig `yaml:"display"`
 }
 
 // DemandConfig tunes Core's reconciling sweep over demand episodes — the
@@ -409,6 +415,9 @@ func Defaults() *Config {
 			TransitTime: 5 * time.Second,
 			JitterPct:   0.2,
 		},
+		// Values and the reasoning behind each of them live in provenance.go,
+		// together, so that neither can be edited without the other in view.
+		Display: DisplayDefaults(),
 	}
 }
 

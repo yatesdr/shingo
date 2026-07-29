@@ -2131,3 +2131,60 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 /* The ledger total printed beside the drop total — the comparison the panel
    exists for, so it reads as a peer of the number before it, not an aside. */
 .di-ledger { color: var(--danger); font-variant-numeric: tabular-nums; }
+
+/* ── Demand episodes (Phase 6: 5.1, 5.4, 5.5, 5.6, 5.14) ──────────────────
+ *
+ * NO COLOUR LITERALS. Every value here is a token. Where a token this surface
+ * needed did not exist it is reported as substrate debt rather than invented
+ * inline — see the round's report. The two that were needed and absent:
+ *   - a per-chip INK colour (Stage 4's open .chip-* item). Worked around by
+ *     using no chips at all on this page; the band is a ring plus text.
+ *   - a "ring" treatment token. Built from --sub-* and --accent below, which
+ *     is the substrate ramp doing the job it was promoted for.
+ */
+
+/* The three absence states, which MUST look different from each other. */
+.de-nodata { color: var(--text-muted); cursor: help; }
+.de-na     { color: var(--sub-3); cursor: help; font-size: var(--font-xs); }
+/* Muted is a fourth thing: a real value whose denominator cannot support it
+ * (5.4). Shown, not hidden — greying and dashing out are different claims. */
+.de-muted  { color: var(--text-muted); cursor: help; }
+
+.de-table td { vertical-align: top; }
+.de-sub { font-size: var(--font-xs); color: var(--text-muted); }
+.de-orders { font-weight: var(--fw-bold); }
+.de-note { font-size: var(--font-xs); color: var(--text-muted); margin-top: 0.5rem; }
+.de-summary { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+
+/* ── 5.14: the ramp carries magnitude ONLY up to the worry line ───────────
+ *
+ * Five steps because shared/tokens.css defines five --viz-seq tokens; the
+ * count is pinned by TestRampStepsMatchesTokenSet. The ramp SATURATES at
+ * step 5 and everything past the worry line renders the same, deliberately:
+ * a smooth scale must never encode a threshold, or a 61-minute episode and a
+ * three-hour one would render identically and the discrimination would be
+ * lost exactly past the line where it matters most.
+ *
+ * Colour on the TEXT, not a fill, so a long duration reads as emphasis
+ * rather than as a status wash — structure recedes, state glows.
+ */
+.de-ramp-0 { color: var(--text-muted); }
+.de-ramp-1 { color: var(--viz-seq-1); }
+.de-ramp-2 { color: var(--viz-seq-2); }
+.de-ramp-3 { color: var(--viz-seq-3); }
+.de-ramp-4 { color: var(--viz-seq-4); }
+.de-ramp-5 { color: var(--viz-seq-5); }
+
+/* Crossing a line takes its OWN channel: a ring on the row plus the printed
+ * band name in the Band column. Never colour alone — the name is always
+ * present, so the reading survives greyscale, print and any CVD. */
+.de-band-name {
+  font-size: var(--font-xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.de-band-worry   { box-shadow: inset 3px 0 0 0 var(--sub-5); }
+.de-band-concern { box-shadow: inset 3px 0 0 0 var(--accent); }
+.de-band-worry   .de-band-name { color: var(--sub-5); }
+.de-band-concern .de-band-name { color: var(--accent); }

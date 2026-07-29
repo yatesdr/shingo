@@ -140,6 +140,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Get("/robots", h.handleRobots)
 		r.Get("/inventory", h.handleInventory)
 		r.Get("/demand", h.handleDemand)
+		// Phase 6: the demand GRAIN, a different concept from the quota page
+		// above. Distinct path on purpose — see handlers_demand_episodes.go.
+		r.Get("/demand-episodes", h.handleDemandEpisodes)
 		r.Get("/missions", h.handleMissions)
 		r.Get("/missions/{orderID}", h.handleMissionDetail)
 		r.Get("/traffic", h.handleTraffic)

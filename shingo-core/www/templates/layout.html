@@ -27,6 +27,12 @@
       <a href="/robots"{{if eq .Page "robots"}} class="active"{{end}}>Robots</a>
       <a href="/traffic"{{if eq .Page "traffic"}} class="active"{{end}}>Traffic</a>
       <a href="/sourcing"{{if eq .Page "sourcing"}} class="active"{{end}}>Sourcing</a>
+      {{/* "Episodes", not "Demand" — Admin › Demand below is the production-quota
+           page and has been for far longer. Two unrelated aggregates behind one
+           word at two scales is the overloading the style guide already names as
+           the worst in this codebase; reconciling them is an IA decision, not a
+           rename to make while adding a page. */}}
+      <a href="/demand-episodes"{{if eq .Page "demand-episodes"}} class="active"{{end}}>Episodes</a>
       <span class="nav-sep"></span>
       <div class="nav-dropdown">
         <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "inventory") (eq .Page "nodes") (eq .Page "bins") (eq .Page "payloads")}} active{{end}}">Assets</a>

@@ -57,6 +57,9 @@ type ServiceAccess interface {
 	NodeService() *service.NodeService
 	AuditService() *service.AuditService
 	DemandService() *service.DemandService
+	// DemandEpisodeService reads the demand grain (Phase 6). Distinct from
+	// DemandService, which is the production-quota CRUD behind /demand.
+	DemandEpisodeService() *service.DemandEpisodeService
 	LoaderService() *service.LoaderService
 	CalculatorService() *service.ThresholdCalculatorService
 	PayloadService() *service.PayloadService

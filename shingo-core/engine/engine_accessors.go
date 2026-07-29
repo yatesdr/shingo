@@ -33,7 +33,11 @@ func (e *Engine) OrderService() *service.OrderService      { return e.orderServi
 func (e *Engine) NodeService() *service.NodeService        { return e.nodeService }
 func (e *Engine) AuditService() *service.AuditService      { return e.auditService }
 func (e *Engine) DemandService() *service.DemandService    { return e.demandService }
-func (e *Engine) LoaderService() *service.LoaderService    { return e.loaderService }
+
+func (e *Engine) DemandEpisodeService() *service.DemandEpisodeService {
+	return e.demandEpisodeService
+}
+func (e *Engine) LoaderService() *service.LoaderService { return e.loaderService }
 func (e *Engine) CalculatorService() *service.ThresholdCalculatorService {
 	return e.calculatorService
 }
