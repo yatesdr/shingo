@@ -1245,7 +1245,14 @@ type DemandOriginState struct {
 	TriggerRef string `json:"trigger_ref,omitempty"`
 	// ProcessID is THE GRAIN for a cell episode: choreography spans nodes, the
 	// process does not.
-	ProcessID int64 `json:"process_id,omitempty"`
+	//
+	// THE EDGE PROCESS NAME ("SNF2"), NOT ITS SQLITE ROW ID. It was an int64 row
+	// id, which made Core hold two unjoinable identity systems for one set of
+	// processes — this field against process_styles.process_id and
+	// PlantClaimsReport.ProcessID, both of which are the name. See
+	// CellEpisodeKey in episode_key.go for the full argument and for the one
+	// exposure the change adds.
+	ProcessID string `json:"process_id,omitempty"`
 	// CoreNodeName is the head node. Forensic, not the key.
 	CoreNodeName string    `json:"core_node_name,omitempty"`
 	PayloadCode  string    `json:"payload_code,omitempty"`

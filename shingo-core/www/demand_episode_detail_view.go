@@ -113,7 +113,7 @@ type EpisodeDetail struct {
 	Station    string
 	Payload    string
 	CoreNode   string
-	ProcessID  int64
+	ProcessID  string
 
 	// Trigger and TriggerRef are what asked. Absent on Core-minted threshold
 	// episodes, which are not triggered by anything — a monitor noticed a level.

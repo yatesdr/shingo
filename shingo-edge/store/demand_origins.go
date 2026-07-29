@@ -33,11 +33,17 @@ type OpenOrigin struct {
 	// Revision is monotonic per episode and is what Core's upsert compares.
 	Revision int64
 
-	Kind         string
-	Direction    string
-	TriggerKind  string
-	TriggerRef   string
-	ProcessID    int64
+	Kind        string
+	Direction   string
+	TriggerKind string
+	TriggerRef  string
+	// ProcessID is the process NAME ("SNF2"), not this database's processes.id.
+	// It is what the episode key carries and what Core's demand_origins.process_id
+	// stores — the same value process_styles.process_id and
+	// PlantClaimsReport.ProcessID already carry, which is what makes the demand
+	// grain joinable with the plant-claims mirror at all. Resolved from the row id
+	// once, at the mint boundary: Engine.processName.
+	ProcessID    string
 	CoreNodeName string
 	PayloadCode  string
 
@@ -221,18 +227,23 @@ func (db *DB) ListOpenDemandOrigins() ([]OpenOrigin, error) {
 // ANY claim, not the minting one: an A/B pair is two claims on one process and
 // the process needs the payload while EITHER half is below. That is the same
 // grain rule that put the episode on the process instead of the node.
-func (db *DB) CellLevelStillBreached(processID int64, payloadCode, role string) (bool, error) {
+// PROCESSNAME, NOT A ROW ID, and it joins on processes.name — which is UNIQUE in
+// this schema, so it selects exactly the same single row p.id did. The episode
+// row carries the name because that is what the whole demand grain is keyed on;
+// re-deriving an id here just to join by it would put the translation back in a
+// second place.
+func (db *DB) CellLevelStillBreached(processName, payloadCode, role string) (bool, error) {
 	var n int
 	if err := db.QueryRow(`
 		SELECT COUNT(*)
 		  FROM style_node_claims c
 		  JOIN processes p ON p.active_style_id = c.style_id
-		 WHERE p.id = ? AND c.payload_code = ? AND c.role = ?
+		 WHERE p.name = ? AND c.payload_code = ? AND c.role = ?
 		   AND c.below_reorder_since IS NOT NULL
 		   AND c.below_reorder_since != ''`,
-		processID, payloadCode, role).Scan(&n); err != nil {
-		return false, fmt.Errorf("cell level still breached process=%d payload=%q role=%q: %w",
-			processID, payloadCode, role, err)
+		processName, payloadCode, role).Scan(&n); err != nil {
+		return false, fmt.Errorf("cell level still breached process=%q payload=%q role=%q: %w",
+			processName, payloadCode, role, err)
 	}
 	return n > 0, nil
 }
@@ -246,16 +257,16 @@ func (db *DB) CellLevelStillBreached(processID int64, payloadCode, role string) 
 // existing. Those are a healthy ending and a silent disappearance, and a
 // close_reason that merged them would make the second invisible — which is
 // precisely the failure the reconciler is here to catch.
-func (db *DB) CellPayloadStillClaimed(processID int64, payloadCode, role string) (bool, error) {
+func (db *DB) CellPayloadStillClaimed(processName, payloadCode, role string) (bool, error) {
 	var n int
 	if err := db.QueryRow(`
 		SELECT COUNT(*)
 		  FROM style_node_claims c
 		  JOIN processes p ON p.active_style_id = c.style_id
-		 WHERE p.id = ? AND c.payload_code = ? AND c.role = ?`,
-		processID, payloadCode, role).Scan(&n); err != nil {
-		return false, fmt.Errorf("cell payload still claimed process=%d payload=%q role=%q: %w",
-			processID, payloadCode, role, err)
+		 WHERE p.name = ? AND c.payload_code = ? AND c.role = ?`,
+		processName, payloadCode, role).Scan(&n); err != nil {
+		return false, fmt.Errorf("cell payload still claimed process=%q payload=%q role=%q: %w",
+			processName, payloadCode, role, err)
 	}
 	return n > 0, nil
 }

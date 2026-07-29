@@ -435,7 +435,7 @@ CREATE TABLE IF NOT EXISTS process_changeovers (
 -- can at worst re-send one, and a re-send is a no-op under the revision guard.
 --
 -- episode_key is
--- "cell|<station>|<process_id>|<payload>|<direction>", the same string Core
+-- "cell|<station>|<process name>|<payload>|<direction>", the same string Core
 -- keys demand_origins on, built by one shared helper so the two sides cannot
 -- spell it differently.
 --
@@ -466,7 +466,18 @@ CREATE TABLE IF NOT EXISTS demand_origins_open (
     direction       TEXT NOT NULL DEFAULT '',
     trigger_kind    TEXT NOT NULL DEFAULT '',
     trigger_ref     TEXT NOT NULL DEFAULT '',
-    process_id      INTEGER NOT NULL DEFAULT 0,
+    -- THE EDGE PROCESS NAME ("SNF2"), NOT THIS DATABASE'S processes.id.
+    -- It was INTEGER holding the row id, and Core's demand_origins.process_id
+    -- was BIGINT to match — while process_styles.process_id and
+    -- PlantClaimsReport.ProcessID, both already deployed, carry the name. Core
+    -- therefore held two unjoinable descriptions of one set of processes. Fixed
+    -- on both sides (Core migration v63) before any plant ran Core's v59.
+    --
+    -- NOT A FOREIGN KEY, and it never was one usefully: this row must survive
+    -- long enough to assemble its own close message, and Edge runs with
+    -- foreign_keys OFF anyway (see store.Open), so the old REFERENCES-shaped
+    -- INTEGER bought nothing that the name does not.
+    process_id      TEXT NOT NULL DEFAULT '',
     core_node_name  TEXT NOT NULL DEFAULT '',
     payload_code    TEXT NOT NULL DEFAULT '',
     -- Stamped once at the falling edge and never recomputed.

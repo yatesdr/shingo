@@ -85,7 +85,14 @@
         <tr><th>Threshold</th><td class="col-num tnum">{{template "de-cell" .Threshold}}</td></tr>
         <tr><th>Re-requests</th><td class="col-num tnum">{{.Rerequests}}</td></tr>
         <tr><th>Discretionary</th><td>{{if .Discretionary}}yes{{else}}no{{end}}</td></tr>
-        <tr><th>Process id</th><td class="col-num tnum">{{.ProcessID}}</td></tr>
+        {{/* "Process" and not "Process id", with no col-num and no tnum.
+             The column holds the Edge process NAME now ("SNF2") rather than a
+             SQLite row id, so right-alignment and tabular figures are both
+             claims about a number this cell no longer contains — and a name
+             right-aligned in a label column reads as a quantity. Absent is a
+             real state: threshold episodes are Core-minted against a loader
+             binding and have no process at all. */}}
+        <tr><th>Process</th><td>{{if .ProcessID}}{{.ProcessID}}{{else}}<span class="de-na" title="no process: this episode is not keyed on one — a threshold episode is about a loader binding">n/a</span>{{end}}</td></tr>
       </tbody>
     </table>
   </div>

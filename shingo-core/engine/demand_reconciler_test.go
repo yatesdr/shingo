@@ -81,7 +81,7 @@ func mustEdgeStatus(t *testing.T, db *store.DB, stationID string) string {
 
 // openCellEpisode writes an Edge-authored cell episode at revision 1, the way
 // one arrives over the state-transfer seam, backdated past the childless grace.
-func openCellEpisode(t *testing.T, db *store.DB, stationID, payloadCode string, processID int64, age time.Duration) string {
+func openCellEpisode(t *testing.T, db *store.DB, stationID, payloadCode, processID string, age time.Duration) string {
 	t.Helper()
 	originID := uuid.NewString()
 	if err := db.UpsertDemandOrigin(store.DemandOrigin{
@@ -325,11 +325,11 @@ func TestDemandReconciler_ChildlessOnAnUnreachableEdgeIsNotAFinding(t *testing.T
 	if err := db.UpsertDemandOrigin(store.DemandOrigin{
 		OriginID:   originID,
 		Revision:   1,
-		EpisodeKey: protocol.CellEpisodeKey("PLANT.DARK", 7, "PANEL-RC4", protocol.EpisodeDirectionSupply),
+		EpisodeKey: protocol.CellEpisodeKey("PLANT.DARK", "SNF7", "PANEL-RC4", protocol.EpisodeDirectionSupply),
 		Kind:       protocol.EpisodeKindCell,
 		Direction:  protocol.EpisodeDirectionSupply,
 		StationID:  "PLANT.DARK",
-		ProcessID:  7,
+		ProcessID:  "SNF7",
 		OpenedAt:   time.Now().UTC().Add(-6 * time.Hour),
 	}); err != nil {
 		t.Fatalf("upsert cell episode: %v", err)
@@ -382,13 +382,13 @@ func TestDemandReconciler_ReachabilityIsAPositiveAssertionNotAnAbsentFlag(t *tes
 	// this station, and nothing is broken — this is the ordinary state of every
 	// station for the first minute after Core starts.
 	registerEdgeWithoutHeartbeat(t, db, "PLANT.MUTE")
-	mute := openCellEpisode(t, db, "PLANT.MUTE", "PANEL-RC6", 3, 6*time.Hour)
+	mute := openCellEpisode(t, db, "PLANT.MUTE", "PANEL-RC6", "SNF3", 6*time.Hour)
 
 	// (b) Heartbeated once, then went quiet six hours ago, and NOTHING marked it
 	// stale — MarkStaleEdges never ran.
 	registerActiveEdge(t, db, "PLANT.DEAF")
 	silenceEdge(t, db, "PLANT.DEAF", 6*time.Hour)
-	deaf := openCellEpisode(t, db, "PLANT.DEAF", "PANEL-RC7", 4, 6*time.Hour)
+	deaf := openCellEpisode(t, db, "PLANT.DEAF", "PANEL-RC7", "SNF4", 6*time.Hour)
 
 	// PROVE THE PREMISE. If the stale loop had run, this test would be measuring
 	// the stale loop rather than the guard, and it would pass for the wrong
@@ -458,7 +458,7 @@ func TestDemandReconciler_ChildlessCellCloseIsProvisional(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 	registerActiveEdge(t, db, "PLANT.RIDER")
 
-	originID := openCellEpisode(t, db, "PLANT.RIDER", "PANEL-RC8", 5, 3*time.Hour)
+	originID := openCellEpisode(t, db, "PLANT.RIDER", "PANEL-RC8", "SNF5", 3*time.Hour)
 	if pre := mustGetOrigin(t, db, originID); pre.Revision != 1 {
 		t.Fatalf("setup: revision = %d, want 1 — the assertion below is about a revision that did not move from THIS number", pre.Revision)
 	}
@@ -501,7 +501,7 @@ func TestDemandReconciler_InferredCloseStepsAsideForTheRealOne(t *testing.T) {
 	registerActiveEdge(t, db, "PLANT.LINE1")
 
 	originID := uuid.NewString()
-	key := protocol.CellEpisodeKey("PLANT.LINE1", 11, "PANEL-RC5", protocol.EpisodeDirectionEvacuate)
+	key := protocol.CellEpisodeKey("PLANT.LINE1", "SNF11", "PANEL-RC5", protocol.EpisodeDirectionEvacuate)
 	base := store.DemandOrigin{
 		OriginID:   originID,
 		Revision:   1,
@@ -509,7 +509,7 @@ func TestDemandReconciler_InferredCloseStepsAsideForTheRealOne(t *testing.T) {
 		Kind:       protocol.EpisodeKindCell,
 		Direction:  protocol.EpisodeDirectionEvacuate,
 		StationID:  "PLANT.LINE1",
-		ProcessID:  11,
+		ProcessID:  "SNF11",
 		OpenedAt:   time.Now().UTC().Add(-2 * time.Hour),
 	}
 	if err := db.UpsertDemandOrigin(base); err != nil {

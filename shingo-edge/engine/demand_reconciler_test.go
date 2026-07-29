@@ -68,7 +68,7 @@ func lastOriginState(t *testing.T, db *store.DB) protocol.DemandOriginState {
 // with short false episodes for demands that never ended. This is the guard
 // against the sweep being too eager, and it is the one that matters most.
 func TestReconciler_LeavesBreachedEpisodeOpen(t *testing.T) {
-	eng, db, procID, claim := episodeFixture(t, "RECON-LIVE", "ALN_020", 50)
+	eng, db, procID, procName, claim := episodeFixture(t, "RECON-LIVE", "ALN_020", 50)
 
 	if below, _ := eng.evaluateCellLevel(claim, 40); !below {
 		t.Fatal("fixture should start below its reorder point")
@@ -80,7 +80,7 @@ func TestReconciler_LeavesBreachedEpisodeOpen(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != nil {
 		t.Fatalf("a still-breached episode must stay open, got err=%v", err)
 	}
@@ -90,7 +90,7 @@ func TestReconciler_LeavesBreachedEpisodeOpen(t *testing.T) {
 // close never ran. Nothing else will ever close this episode, and an episode
 // that never closes reads as a permanent unmet demand.
 func TestReconciler_ClosesRecoveredEpisode(t *testing.T) {
-	eng, db, procID, claim := episodeFixture(t, "RECON-RECOVERED", "ALN_021", 50)
+	eng, db, procID, procName, claim := episodeFixture(t, "RECON-RECOVERED", "ALN_021", 50)
 
 	eng.evaluateCellLevel(claim, 40)
 	if _, _, err := eng.openCellEpisode(procID, claim,
@@ -104,7 +104,7 @@ func TestReconciler_ClosesRecoveredEpisode(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("recovered episode must be closed by the sweep, got err=%v", err)
 	}
@@ -124,7 +124,7 @@ func TestReconciler_ClosesRecoveredEpisode(t *testing.T) {
 // It must NOT close as `recovered`: nothing recovered. A surface that said so
 // would report a satisfied demand every time a claim was edited away.
 func TestReconciler_ClosesEpisodeWhenClaimGone(t *testing.T) {
-	eng, db, procID, claim := episodeFixture(t, "RECON-GONE", "ALN_022", 50)
+	eng, db, procID, procName, claim := episodeFixture(t, "RECON-GONE", "ALN_022", 50)
 
 	eng.evaluateCellLevel(claim, 40)
 	if _, _, err := eng.openCellEpisode(procID, claim,
@@ -145,7 +145,7 @@ func TestReconciler_ClosesEpisodeWhenClaimGone(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("episode must close when its claim is no longer active, got err=%v", err)
 	}
@@ -160,7 +160,7 @@ func TestReconciler_ClosesEpisodeWhenClaimGone(t *testing.T) {
 // the sweep asked only about the claim that minted the episode, half a swap
 // cycle would close a demand that is still live.
 func TestReconciler_KeepsEpisodeOpenWhileAnyClaimBelow(t *testing.T) {
-	eng, db, procID, claimA := episodeFixture(t, "RECON-AB", "ALN_023", 50)
+	eng, db, procID, procName, claimA := episodeFixture(t, "RECON-AB", "ALN_023", 50)
 
 	if _, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: "ALN_024", Code: "ALN_024", Name: "ALN_024",
@@ -197,7 +197,7 @@ func TestReconciler_KeepsEpisodeOpenWhileAnyClaimBelow(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != nil {
 		t.Fatalf("the process still needs the payload while B is below, got err=%v", err)
 	}

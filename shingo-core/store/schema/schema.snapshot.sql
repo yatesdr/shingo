@@ -279,7 +279,7 @@ CREATE TABLE public.demand_origins (
     trigger_ref text DEFAULT ''::text NOT NULL,
     parent_origin_id uuid,
     station_id text DEFAULT ''::text NOT NULL,
-    process_id bigint DEFAULT 0 NOT NULL,
+    process_id text DEFAULT ''::text NOT NULL,
     core_node_name text DEFAULT ''::text NOT NULL,
     payload_code text DEFAULT ''::text NOT NULL,
     opened_at timestamp with time zone NOT NULL,

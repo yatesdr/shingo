@@ -36,8 +36,8 @@ func TestEpisodeKeyFormats_ArePinned(t *testing.T) {
 		},
 		{
 			name: "cell is keyed on the PROCESS, with direction in the identity",
-			got:  protocol.CellEpisodeKey("PLANT.LINE1", 42, "PANEL-B", protocol.EpisodeDirectionSupply),
-			want: "cell|PLANT.LINE1|42|PANEL-B|supply",
+			got:  protocol.CellEpisodeKey("PLANT.LINE1", "SNF2", "PANEL-B", protocol.EpisodeDirectionSupply),
+			want: "cell|PLANT.LINE1|SNF2|PANEL-B|supply",
 		},
 		{
 			name: "changeover is keyed on the changeover row",
@@ -80,17 +80,17 @@ func TestEpisodeKeys_EveryKindIsParseable(t *testing.T) {
 		},
 		{
 			name: "cell supply",
-			key:  protocol.CellEpisodeKey("line-1", 42, "PANEL-B", protocol.EpisodeDirectionSupply),
+			key:  protocol.CellEpisodeKey("line-1", "SNF2", "PANEL-B", protocol.EpisodeDirectionSupply),
 			want: protocol.ParsedEpisodeKey{
-				Kind: protocol.EpisodeKindCell, Station: "line-1", ProcessID: 42,
+				Kind: protocol.EpisodeKindCell, Station: "line-1", ProcessID: "SNF2",
 				Payload: "PANEL-B", Direction: protocol.EpisodeDirectionSupply,
 			},
 		},
 		{
 			name: "cell evacuate",
-			key:  protocol.CellEpisodeKey("line-1", 42, "ASSY", protocol.EpisodeDirectionEvacuate),
+			key:  protocol.CellEpisodeKey("line-1", "SNF2", "ASSY", protocol.EpisodeDirectionEvacuate),
 			want: protocol.ParsedEpisodeKey{
-				Kind: protocol.EpisodeKindCell, Station: "line-1", ProcessID: 42,
+				Kind: protocol.EpisodeKindCell, Station: "line-1", ProcessID: "SNF2",
 				Payload: "ASSY", Direction: protocol.EpisodeDirectionEvacuate,
 			},
 		},
@@ -123,8 +123,8 @@ func TestEpisodeKeys_EveryKindIsParseable(t *testing.T) {
 //     That is the grain rule, and it is what makes an A/B pair's two claims
 //     join one episode instead of minting two for the same need (O8).
 func TestCellEpisodeKey_ProcessGrainAndDirection(t *testing.T) {
-	supply := protocol.CellEpisodeKey("line-1", 42, "PANEL-B", protocol.EpisodeDirectionSupply)
-	evac := protocol.CellEpisodeKey("line-1", 42, "PANEL-B", protocol.EpisodeDirectionEvacuate)
+	supply := protocol.CellEpisodeKey("line-1", "SNF2", "PANEL-B", protocol.EpisodeDirectionSupply)
+	evac := protocol.CellEpisodeKey("line-1", "SNF2", "PANEL-B", protocol.EpisodeDirectionEvacuate)
 	if supply == evac {
 		t.Fatal("direction must be part of the identity — in and out are two demands")
 	}
@@ -132,18 +132,18 @@ func TestCellEpisodeKey_ProcessGrainAndDirection(t *testing.T) {
 	// The A/B case: PLN_003 and PLN_004 are two claims on one process for one
 	// payload. Nothing about the node enters the key, so both resolve to the
 	// same episode.
-	a := protocol.CellEpisodeKey("line-1", 42, "PANEL-B", protocol.EpisodeDirectionSupply)
-	b := protocol.CellEpisodeKey("line-1", 42, "PANEL-B", protocol.EpisodeDirectionSupply)
+	a := protocol.CellEpisodeKey("line-1", "SNF2", "PANEL-B", protocol.EpisodeDirectionSupply)
+	b := protocol.CellEpisodeKey("line-1", "SNF2", "PANEL-B", protocol.EpisodeDirectionSupply)
 	if a != b {
 		t.Fatal("two claims on one process must resolve to ONE episode key")
 	}
 
 	// Different processes are different places.
-	if protocol.CellEpisodeKey("line-1", 43, "PANEL-B", protocol.EpisodeDirectionSupply) == supply {
+	if protocol.CellEpisodeKey("line-1", "SNF3", "PANEL-B", protocol.EpisodeDirectionSupply) == supply {
 		t.Error("two processes must not share an episode")
 	}
 	// And so are two stations.
-	if protocol.CellEpisodeKey("line-2", 42, "PANEL-B", protocol.EpisodeDirectionSupply) == supply {
+	if protocol.CellEpisodeKey("line-2", "SNF2", "PANEL-B", protocol.EpisodeDirectionSupply) == supply {
 		t.Error("two stations must not share an episode")
 	}
 }
@@ -154,7 +154,7 @@ func TestCellEpisodeKey_ProcessGrainAndDirection(t *testing.T) {
 func TestEpisodeKeys_KindsDoNotCollide(t *testing.T) {
 	keys := map[string]string{
 		"threshold":  protocol.ThresholdEpisodeKey("line-1", "N1", "P"),
-		"cell":       protocol.CellEpisodeKey("line-1", 1, "P", protocol.EpisodeDirectionSupply),
+		"cell":       protocol.CellEpisodeKey("line-1", "P1", "P", protocol.EpisodeDirectionSupply),
 		"changeover": protocol.ChangeoverEpisodeKey("line-1", 1),
 	}
 	seen := map[string]string{}
@@ -166,6 +166,14 @@ func TestEpisodeKeys_KindsDoNotCollide(t *testing.T) {
 	}
 }
 
+// "cell|line-1|notanumber|PANEL-B|supply" IS NO LONGER MALFORMED and was
+// removed from this list deliberately: the process component is the Edge process
+// NAME now, so "notanumber" is a perfectly good one. What the removed
+// fmt.Sscanf(parts[2], "%d") ALSO rejected was the empty string, and that is
+// still a defect — a cell key with no process names no place and collides with
+// every other such key under the partial unique index. The empty case took its
+// place in this list rather than the coverage quietly shrinking by one.
+//
 // A key built by hand instead of through the constructors must be rejected
 // rather than silently half-understood — that is the whole value of parsing it
 // back. A mismatched key does not error at the database; it just fails to find
@@ -173,13 +181,13 @@ func TestEpisodeKeys_KindsDoNotCollide(t *testing.T) {
 func TestParseEpisodeKey_RejectsMalformed(t *testing.T) {
 	for _, bad := range []string{
 		"",
-		"cell|line-1|42|PANEL-B",                // missing direction
-		"cell|line-1|notanumber|PANEL-B|supply", // process id is not a number
-		"cell|line-1|42|PANEL-B|sideways",       // direction is not a direction
-		"thr|line-1|SMN_001",                    // missing payload
-		"co|line-1",                             // missing id
-		"threshold|line-1|SMN_001|P",            // the kind's NAME, not its prefix
-		"line-1|SMN_001|P",                      // a bare bindingKey with no kind
+		"cell|line-1|SNF2|PANEL-B",          // missing direction
+		"cell|line-1||PANEL-B|supply",       // no process — names no place
+		"cell|line-1|SNF2|PANEL-B|sideways", // direction is not a direction
+		"thr|line-1|SMN_001",                // missing payload
+		"co|line-1",                         // missing id
+		"threshold|line-1|SMN_001|P",        // the kind's NAME, not its prefix
+		"line-1|SMN_001|P",                  // a bare bindingKey with no kind
 	} {
 		if got, err := protocol.ParseEpisodeKey(bad); err == nil {
 			t.Errorf("ParseEpisodeKey(%q) accepted a malformed key as %+v", bad, got)

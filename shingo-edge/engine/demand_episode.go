@@ -62,7 +62,13 @@ func (e *Engine) openCellEpisode(
 	if claim == nil {
 		return "", false, nil
 	}
-	key := protocol.CellEpisodeKey(e.cfg.StationID(), processID, string(claim.PayloadCode), direction)
+	name := e.processName(processID)
+	if name == "" {
+		// No episode rather than a nameless one. The callers already handle an
+		// empty origin id by attaching nothing and letting Core classify.
+		return "", false, nil
+	}
+	key := protocol.CellEpisodeKey(e.cfg.StationID(), name, string(claim.PayloadCode), direction)
 
 	if open, err := e.db.GetOpenDemandOrigin(key); err == nil && open != nil {
 		joined, jerr := e.db.JoinDemandOrigin(key)
@@ -93,7 +99,7 @@ func (e *Engine) openCellEpisode(
 		// TriggerKind, not Trigger: SQLite reserves TRIGGER as a keyword.
 		TriggerKind:    trigger,
 		TriggerRef:     claimTriggerRef(claim),
-		ProcessID:      processID,
+		ProcessID:      name,
 		CoreNodeName:   claim.CoreNodeName,
 		PayloadCode:    string(claim.PayloadCode),
 		OpenedTotal:    openedTotal,
@@ -113,9 +119,53 @@ func (e *Engine) openCellEpisode(
 	return row.OriginID, false, nil
 }
 
+// processName resolves an Edge process row id to the process NAME, which is what
+// identifies a process everywhere the demand grain is visible.
+//
+// ── WHY THE LOOKUP EXISTS AT ALL ─────────────────────────────────────────────
+//
+// The call sites have a *processes.Node and therefore a row id, because that is
+// what a node row carries. The episode key and demand_origins.process_id carry
+// the name, because that is what process_styles.process_id and
+// PlantClaimsReport.ProcessID already carry — and holding one description on
+// each side is what made Core unable to join its own tables. So the translation
+// happens once, here, at the boundary between "what a node row knows" and "what
+// the demand grain is keyed on".
+//
+// ON THE HOT PATH? NO. This is called when an episode OPENS or CLOSES — a
+// transition that happens twice per episode — never per tick. One indexed
+// primary-key read on a local SQLite file.
+//
+// AN EMPTY RETURN IS A REFUSAL, NOT A DEFAULT, and the callers treat it as one.
+// A key built with an empty process component names no place and would collide
+// with every other such key under Core's partial unique index, so minting one is
+// worse than minting nothing. protocol.ParseEpisodeKey rejects the shape for the
+// same reason.
+func (e *Engine) processName(processID int64) string {
+	proc, err := processes.Get(e.db.DB, processID)
+	if err != nil || proc == nil {
+		e.logFn("demand_episode: cannot resolve process %d to a name (%v) — no episode will be "+
+			"minted or closed for it. A key with no process names no place.", processID, err)
+		return ""
+	}
+	if proc.Name == "" {
+		e.logFn("demand_episode: process %d has an empty name — no episode will be minted or "+
+			"closed for it.", processID)
+		return ""
+	}
+	return proc.Name
+}
+
 // closeCellEpisode ends the episode for a place, if one is open.
 func (e *Engine) closeCellEpisode(processID int64, payload, direction, reason, closedBy string) {
-	e.closeEpisode(protocol.CellEpisodeKey(e.cfg.StationID(), processID, payload, direction), reason, closedBy)
+	name := e.processName(processID)
+	if name == "" {
+		// Nothing to close by key. The row is still on disk and the reconciling
+		// sweep reads ROWS rather than reconstructing keys, so it closes this
+		// one on its own pass — which is the sweep's whole purpose.
+		return
+	}
+	e.closeEpisode(protocol.CellEpisodeKey(e.cfg.StationID(), name, payload, direction), reason, closedBy)
 }
 
 // closeEpisode is the ONE close path for every kind Edge owns.
@@ -399,8 +449,12 @@ func (e *Engine) openChangeoverEpisode(co *processes.Changeover, expectedOrders 
 		// TriggerRef is the changeover row, which is also the identity here —
 		// unlike the cell kind, where the claim is forensic and the process is
 		// the identity.
-		TriggerRef:     "changeover:" + itoa64(co.ID),
-		ProcessID:      co.ProcessID,
+		TriggerRef: "changeover:" + itoa64(co.ID),
+		// The NAME, like every other kind. A changeover episode is not keyed on
+		// the process — ChangeoverEpisodeKey uses the changeover row id — but the
+		// column is the same column and must hold the same kind of value, or a
+		// query grouping episodes by process silently drops the changeovers.
+		ProcessID:      e.processName(co.ProcessID),
 		ExpectedOrders: &expected,
 		OpenedAt:       time.Now().UTC(),
 	}

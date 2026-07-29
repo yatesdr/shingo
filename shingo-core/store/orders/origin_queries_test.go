@@ -31,7 +31,7 @@ func seedOriginRow(t *testing.T, db *store.DB, originID string) {
 		Kind:        "cell",
 		Direction:   "supply",
 		StationID:   "devplant.line1",
-		ProcessID:   3,
+		ProcessID:   "SNF2",
 		PayloadCode: "PANEL-A",
 		OpenedAt:    time.Now().UTC().Add(-time.Hour),
 	}), "seed episode")

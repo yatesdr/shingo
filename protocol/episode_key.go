@@ -73,8 +73,31 @@ func ThresholdEpisodeKey(station, coreNodeName, payloadCode string) string {
 //
 // Direction is part of the identity because a cell can genuinely need material
 // brought IN and taken OUT at the same time — those are two demands, not one.
-func CellEpisodeKey(station string, processID int64, payloadCode, direction string) string {
-	return fmt.Sprintf("cell|%s|%d|%s|%s", station, processID, payloadCode, direction)
+//
+// PROCESSID IS THE EDGE PROCESS NAME ("SNF2"), NOT ITS SQLITE ROW ID.
+//
+// It was the row id, and that made Core carry two mutually unjoinable identity
+// systems for the same processes: demand_origins.process_id held a number while
+// the deployed process_styles.process_id and PlantClaimsReport.ProcessID both
+// hold the name. Two wires describing the same processes, and no query able to
+// put them side by side. Changed here, before Springfield ran migration 59, at
+// the cost of one column type and one protocol field.
+//
+// THE NAME IS ALSO THE BETTER KEY, not merely the one that matches. An Edge row
+// id is meaningless to Core and does not survive a reinstall — and a reinstall
+// is the failure that actually happens, after which id 42 can belong to a
+// different process and silently join an old episode as though it were the same
+// place. A recreated "SNF2" re-identifies the same place correctly.
+//
+// THE COST, STATED: renaming a process now changes the key of any episode open
+// at that moment, orphaning it. That window is small (this table holds only what
+// is open, for minutes) and it self-heals, because the reconciling sweep
+// iterates the open ROWS rather than reconstructing keys — the renamed process
+// no longer satisfies the precondition, so the sweep closes the episode. It is a
+// real exposure and it is the same one process_styles and plant-claims already
+// carry, which is the point: one exposure, not two identity systems.
+func CellEpisodeKey(station, processID, payloadCode, direction string) string {
+	return fmt.Sprintf("cell|%s|%s|%s|%s", station, processID, payloadCode, direction)
 }
 
 // ChangeoverEpisodeKey identifies an Edge changeover episode.
@@ -89,12 +112,15 @@ func ChangeoverEpisodeKey(station string, processChangeoverID int64) string {
 
 // ParsedEpisodeKey is what an episode key says about itself.
 type ParsedEpisodeKey struct {
-	Kind         string
-	Station      string
-	Payload      string
-	Direction    string
-	CoreNode     string
-	ProcessID    int64
+	Kind      string
+	Station   string
+	Payload   string
+	Direction string
+	CoreNode  string
+	// ProcessID is the Edge process NAME, matching demand_origins.process_id,
+	// process_styles.process_id and PlantClaimsReport.ProcessID. See
+	// CellEpisodeKey for why it is not the SQLite row id.
+	ProcessID    string
 	ChangeoverID int64
 }
 
@@ -118,9 +144,20 @@ func ParseEpisodeKey(key string) (ParsedEpisodeKey, error) {
 		if len(parts) != 5 {
 			return ParsedEpisodeKey{}, fmt.Errorf("cell episode key %q: want 5 parts, got %d", key, len(parts))
 		}
-		var pid int64
-		if _, err := fmt.Sscanf(parts[2], "%d", &pid); err != nil {
-			return ParsedEpisodeKey{}, fmt.Errorf("cell episode key %q: process id %q: %w", key, parts[2], err)
+		// NO NUMERIC PARSE, because the process component is a name now.
+		//
+		// THE EMPTINESS CHECK IS NOT NEW COVERAGE, IT IS PRESERVED COVERAGE.
+		// The removed step was fmt.Sscanf(parts[2], "%d"), which rejected
+		// "notanumber" — no longer a defect — but also rejected "", which very
+		// much still is: a cell key with no process names no place, and two
+		// unnamed processes would collide on one key under the partial unique
+		// index. Dropping the Sscanf without this would have quietly narrowed
+		// what the parser rejects.
+		pid := parts[2]
+		if pid == "" {
+			return ParsedEpisodeKey{}, fmt.Errorf(
+				"cell episode key %q: empty process name — the process IS the grain here, so a "+
+					"key without one identifies no place and collides with every other such key", key)
 		}
 		if parts[4] != EpisodeDirectionSupply && parts[4] != EpisodeDirectionEvacuate {
 			return ParsedEpisodeKey{}, fmt.Errorf("cell episode key %q: unknown direction %q", key, parts[4])

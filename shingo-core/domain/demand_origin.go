@@ -66,7 +66,12 @@ type DemandOrigin struct {
 	TriggerRef string
 	StationID  string
 
-	ProcessID    int64
+	// ProcessID is the Edge process NAME ("SNF2"), the same value
+	// process_styles.process_id and style_claims.process_id carry — which is
+	// what makes those tables joinable with this one. It was an Edge SQLite row
+	// id (BIGINT), unjoinable with either. See migration v63 and
+	// protocol.CellEpisodeKey.
+	ProcessID    string
 	CoreNodeName string
 	PayloadCode  string
 

@@ -13,7 +13,7 @@ import (
 func originAt(key, id string, rev int64, opened time.Time) store.DemandOrigin {
 	return store.DemandOrigin{
 		OriginID: id, Revision: rev, EpisodeKey: key, Kind: "cell",
-		Direction: "supply", StationID: "PLANT.LINE1", ProcessID: 42,
+		Direction: "supply", StationID: "PLANT.LINE1", ProcessID: "SNF2",
 		PayloadCode: "PANEL-B", OpenedAt: opened,
 	}
 }

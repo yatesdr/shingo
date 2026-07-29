@@ -40,7 +40,7 @@ func seedEpisode(t *testing.T, db *store.DB, originID string, opened time.Time) 
 		Trigger:     "autoreorder",
 		TriggerRef:  "claim-77",
 		StationID:   "devplant.line1",
-		ProcessID:   3,
+		ProcessID:   "SNF2",
 		PayloadCode: "PANEL-A",
 		OpenedAt:    opened,
 	}

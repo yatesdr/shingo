@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"shingoedge/store/schema"
 )
@@ -62,7 +63,16 @@ func (db *DB) rebuildStyleNodeClaims() error {
 	// the honest fix is to drop and let schema.Apply rebuild the current shape
 	// rather than write an ALTER chain for a shape that never reached a plant.
 	// The table holds only OPEN episodes, so there is nothing to preserve.
-	if hasNarrowDemandOrigins(db.DB) {
+	// The SAME argument covers the process_id retype: the column was declared
+	// INTEGER to hold this database's processes.id and now holds the process
+	// NAME, so that Core's demand_origins.process_id can be the one value
+	// process_styles and plant-claims already use. CREATE TABLE IF NOT EXISTS
+	// cannot change a column's type on a table that already exists, and SQLite
+	// would not have complained anyway — it is dynamically typed, so an INTEGER
+	// column accepts "SNF2" and stores it as text. That is exactly why this has
+	// to be detected rather than left to fail: nothing breaks, the schema simply
+	// stops describing the data.
+	if hasNarrowDemandOrigins(db.DB) || hasIntegerProcessIDDemandOrigins(db.DB) {
 		db.Exec(`DROP TABLE IF EXISTS demand_origins_open`)
 	}
 
@@ -333,4 +343,30 @@ func hasNarrowDemandOrigins(db *sql.DB) bool {
 		return false
 	}
 	return !hasRevision
+}
+
+// hasIntegerProcessIDDemandOrigins reports whether demand_origins_open still
+// declares process_id as INTEGER — the pre-rename shape, keyed on the Edge
+// SQLite row id rather than on the process name.
+//
+// DROP AND REBUILD IS THE RIGHT MIGRATION HERE, not an ALTER chain, and for the
+// reason the caller states about the other shape: this table holds ONLY OPEN
+// episodes, nothing is deployed carrying it, and Core keeps the history. The
+// worst case is that an episode open at the moment of the upgrade is lost — and
+// that case is already covered, because Core's reconciling sweep exists
+// precisely to close an episode whose Edge-side notification never arrives.
+//
+// Compared case-insensitively against the DECLARED type. A column can hold
+// perfectly good text under an INTEGER declaration in SQLite, so the values say
+// nothing about whether the migration has run.
+func hasIntegerProcessIDDemandOrigins(db *sql.DB) bool {
+	present, err := schema.TableExists(db, "demand_origins_open")
+	if err != nil || !present {
+		return false
+	}
+	declared, ok, err := schema.ColumnType(db, "demand_origins_open", "process_id")
+	if err != nil || !ok {
+		return false
+	}
+	return strings.EqualFold(declared, "INTEGER")
 }

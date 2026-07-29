@@ -710,6 +710,31 @@ func (db *DB) runVersionedMigrations() error {
 		{62, "scene_edges control handles (draw the lane the robot drives)",
 			v62SceneEdgeControlHandles,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "scene_edges", "ctrl2_y") }},
+		// TWO IDENTITY SYSTEMS FOR ONE SET OF PROCESSES, RECONCILED.
+		//
+		// v59 declared demand_origins.process_id as BIGINT, holding an Edge
+		// SQLite row id. The DEPLOYED process_styles.process_id and
+		// style_claims.process_id are TEXT, holding the Edge process NAME
+		// ("SNF2") — as is PlantClaimsReport.ProcessID on the wire. So Core held
+		// two descriptions of the same processes with no query able to put them
+		// side by side, which killed two Phase 6 designs outright.
+		//
+		// FREE NOW, EXPENSIVE LATER, and that is the whole reason it is here.
+		// v59 is above every plant's applied version, so no plant has this table
+		// and no row is being rewritten anywhere. After the first plant runs v59
+		// this stops being a column type and becomes a data migration on live
+		// forensic history.
+		//
+		// A NEW MIGRATION RATHER THAN AN EDIT TO v59, for the reason v60 already
+		// records on itself: v59 is pushed, and a migration anyone may already
+		// have run is not a file you go back and change. A fresh database
+		// therefore creates the column as BIGINT and converts it one step later,
+		// which is the same two-step v58 and v61 take.
+		{63, "demand_origins.process_id BIGINT -> TEXT (one identity for a process, not two)",
+			v63DemandOriginProcessIDText,
+			func(q schema.Querier) bool {
+				return schema.ColumnType(q, "demand_origins", "process_id") == "text"
+			}},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2640,4 +2665,41 @@ func columnHasDefault(q schema.Querier, table, column string) bool {
 		table, column,
 	).Scan(&has)
 	return has
+}
+
+// v63DemandOriginProcessIDText converts demand_origins.process_id from the Edge
+// SQLite row id to the Edge process NAME, matching process_styles.process_id,
+// style_claims.process_id and PlantClaimsReport.ProcessID.
+//
+// THE USING CLAUSE IS A CAST AND NOT A LOOKUP, and it has to be: Core has no
+// table mapping an Edge row id to an Edge process name — that mapping is exactly
+// what did not exist and is the reason for the change. So any row that somehow
+// predates this migration keeps its number as the string of that number, which
+// is a value that joins nothing. That is the honest outcome and it costs nothing
+// real, because no plant has run v59: the only databases this can touch are dev
+// boxes and the sim, where the table is empty or disposable.
+//
+// The DEFAULT moves with the type. It was 0, meaning "no process"; ” means the
+// same thing for a text column and matches what every other identity column on
+// this table already uses for absence.
+func v63DemandOriginProcessIDText(tx *sql.Tx) error {
+	// DROP THE DEFAULT FIRST. Postgres will not re-type a column whose default
+	// cannot be cast to the new type, and 0 -> text is exactly that case; the
+	// error it gives ("default for column ... cannot be cast automatically")
+	// names the default and not the column, which is a confusing place to land.
+	if _, err := tx.Exec(
+		`ALTER TABLE demand_origins ALTER COLUMN process_id DROP DEFAULT`); err != nil {
+		return fmt.Errorf("drop demand_origins.process_id default: %w", err)
+	}
+	if _, err := tx.Exec(`
+		ALTER TABLE demand_origins
+		    ALTER COLUMN process_id TYPE TEXT
+		    USING (CASE WHEN process_id = 0 THEN '' ELSE process_id::text END)`); err != nil {
+		return fmt.Errorf("retype demand_origins.process_id to text: %w", err)
+	}
+	if _, err := tx.Exec(
+		`ALTER TABLE demand_origins ALTER COLUMN process_id SET DEFAULT ''`); err != nil {
+		return fmt.Errorf("set demand_origins.process_id default: %w", err)
+	}
+	return nil
 }

@@ -15,7 +15,14 @@ import (
 
 // episodeFixture builds a consume claim at a real process node, plus the engine
 // that owns it. reorderPoint drives the level under test.
-func episodeFixture(t *testing.T, procName, node string, reorderPoint int) (*Engine, *store.DB, int64, *processes.NodeClaim) {
+//
+// RETURNS BOTH THE ROW ID AND THE NAME, because since the process_id retype the
+// two are used for different things and a test needs both: the mint path takes
+// the row id (that is what a *processes.Node carries at the call sites), and the
+// episode KEY carries the name. A fixture returning only one of them would make
+// every key assertion re-derive the other, which is the translation the engine
+// deliberately does in exactly one place.
+func episodeFixture(t *testing.T, procName, node string, reorderPoint int) (*Engine, *store.DB, int64, string, *processes.NodeClaim) {
 	t.Helper()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -49,7 +56,7 @@ func episodeFixture(t *testing.T, procName, node string, reorderPoint int) (*Eng
 	if err != nil || claim == nil {
 		t.Fatalf("read claim %d: %v", claimID, err)
 	}
-	return eng, db, procID, claim
+	return eng, db, procID, procName, claim
 }
 
 // THE EDGE. reorder_point is a LEVEL — "remaining <= 50" is true continuously,
@@ -60,7 +67,7 @@ func episodeFixture(t *testing.T, procName, node string, reorderPoint int) (*Eng
 // below_reorder_since converts the level into an EDGE. It is stamped ONCE, on
 // the crossing, and everything until the recovery is ONE demand.
 func TestEvaluateCellLevel_FallingEdgeStampsOnce(t *testing.T) {
-	eng, db, _, claim := episodeFixture(t, "EDGE-PROC", "ALN_003", 50)
+	eng, db, _, _, claim := episodeFixture(t, "EDGE-PROC", "ALN_003", 50)
 
 	below, shouldClose := eng.evaluateCellLevel(claim, 40)
 	if !below || shouldClose {
@@ -117,7 +124,7 @@ func TestEvaluateCellLevel_FallingEdgeStampsOnce(t *testing.T) {
 func TestEvaluateCellLevel_HysteresisBand(t *testing.T) {
 	for _, pct := range []float64{1, 5, 10, 25, 50} {
 		t.Run(strconv.FormatFloat(pct, 'g', -1, 64)+"pct", func(t *testing.T) {
-			eng, _, _, claim := episodeFixture(t,
+			eng, _, _, _, claim := episodeFixture(t,
 				"HYST-PROC-"+strconv.FormatFloat(pct, 'g', -1, 64), "ALN_004", 50)
 			p := pct
 			eng.cfg.Demand.HysteresisPercent = &p
@@ -176,7 +183,7 @@ func TestEvaluateCellLevel_HysteresisBand(t *testing.T) {
 // A claim with no reorder point has opted out: no level, no episodes. It must
 // not mint one on every tick.
 func TestEvaluateCellLevel_OptedOutClaimHasNoEpisodes(t *testing.T) {
-	eng, _, _, claim := episodeFixture(t, "OPTOUT-PROC", "ALN_005", 0)
+	eng, _, _, _, claim := episodeFixture(t, "OPTOUT-PROC", "ALN_005", 0)
 
 	below, shouldClose := eng.evaluateCellLevel(claim, -500)
 	if below || shouldClose {
@@ -191,7 +198,7 @@ func TestEvaluateCellLevel_OptedOutClaimHasNoEpisodes(t *testing.T) {
 // This is the A/B case from O8 in miniature. Two claims on one process would
 // resolve to this same key.
 func TestOpenCellEpisode_SecondFireJoinsRatherThanMints(t *testing.T) {
-	eng, db, procID, claim := episodeFixture(t, "JOIN-PROC", "ALN_006", 50)
+	eng, db, procID, procName, claim := episodeFixture(t, "JOIN-PROC", "ALN_006", 50)
 
 	first, joined, err := eng.openCellEpisode(procID, claim,
 		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false)
@@ -217,7 +224,7 @@ func TestOpenCellEpisode_SecondFireJoinsRatherThanMints(t *testing.T) {
 		t.Errorf("the join minted a new origin (%s != %s) — 07-21 would render as 484 demands", second, first)
 	}
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	open, err := db.GetOpenDemandOrigin(key)
 	if err != nil {
 		t.Fatalf("read open episode: %v", err)
@@ -242,7 +249,7 @@ func TestOpenCellEpisode_SecondFireJoinsRatherThanMints(t *testing.T) {
 // which stops consuming produces no ticks at all — so two of them racing to
 // close one episode is ordinary, not an error.
 func TestCloseCellEpisode_IsIdempotent(t *testing.T) {
-	eng, db, procID, claim := episodeFixture(t, "CLOSE-PROC", "ALN_007", 50)
+	eng, db, procID, procName, claim := episodeFixture(t, "CLOSE-PROC", "ALN_007", 50)
 
 	if _, _, err := eng.openCellEpisode(procID, claim,
 		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
@@ -251,7 +258,7 @@ func TestCloseCellEpisode_IsIdempotent(t *testing.T) {
 	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("after close the episode must be gone, got err=%v", err)
 	}
@@ -278,7 +285,7 @@ func TestCloseCellEpisode_IsIdempotent(t *testing.T) {
 // and needs no injection seam: the INSERT fails the way it fails on a full disk
 // or a locked database.
 func TestCloseEpisode_KeepsRowWhenEnqueueFails(t *testing.T) {
-	eng, db, procID, claim := episodeFixture(t, "ENQFAIL-PROC", "ALN_009", 50)
+	eng, db, procID, procName, claim := episodeFixture(t, "ENQFAIL-PROC", "ALN_009", 50)
 
 	origin, _, err := eng.openCellEpisode(procID, claim,
 		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false)
@@ -291,7 +298,7 @@ func TestCloseEpisode_KeepsRowWhenEnqueueFails(t *testing.T) {
 
 	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	open, err := db.GetOpenDemandOrigin(key)
 	if err != nil {
 		t.Fatalf("episode must survive a close whose state never got enqueued, got err=%v", err)
@@ -311,7 +318,7 @@ func TestCloseEpisode_KeepsRowWhenEnqueueFails(t *testing.T) {
 // shingoedge` mid-episode would lose it, the next tick would mint a duplicate,
 // and the first would never close.
 func TestDemandOrigin_SurvivesRestart(t *testing.T) {
-	eng, db, procID, claim := episodeFixture(t, "RESTART-PROC", "ALN_008", 50)
+	eng, db, procID, _, claim := episodeFixture(t, "RESTART-PROC", "ALN_008", 50)
 
 	original, _, err := eng.openCellEpisode(procID, claim,
 		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false)
@@ -413,7 +420,7 @@ func TestChangeoverEpisode_MintsAndClosesOnce(t *testing.T) {
 // shingo-core, one level deep, and the synthetic restore parent sets none at
 // all, so a walk dead-ends at the boundary the rule exists to cross.
 func TestConsumeOrders_CarryTheEpisodesOrigin(t *testing.T) {
-	eng, db, procID, claim := episodeFixture(t, "STAMP-PROC", "ALN_009", 50)
+	eng, db, _, procName, claim := episodeFixture(t, "STAMP-PROC", "ALN_009", 50)
 
 	res, err := eng.requestNodeMaterialFor(claim.ID, 1, protocol.EpisodeTriggerAutoreorder)
 	if err != nil {
@@ -423,7 +430,7 @@ func TestConsumeOrders_CarryTheEpisodesOrigin(t *testing.T) {
 	}
 	_ = res
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	open, err := db.GetOpenDemandOrigin(key)
 	if err != nil {
 		t.Skipf("no episode opened in this fixture (%v) — the stamping path is covered by the unit assertions below", err)

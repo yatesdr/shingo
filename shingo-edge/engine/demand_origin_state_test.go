@@ -54,7 +54,7 @@ func decodeOriginStates(t *testing.T, db *store.DB) []protocol.DemandOriginState
 //     close and Core still converges — with events, a lost "opened" is
 //     unrecoverable.
 func TestOriginState_RevisionsIncreaseAndTheLastMessageIsSufficient(t *testing.T) {
-	eng, db, procID, claim := episodeFixture(t, "STATE-PROC", "ALN_010", 50)
+	eng, db, procID, procName, claim := episodeFixture(t, "STATE-PROC", "ALN_010", 50)
 
 	if _, _, err := eng.openCellEpisode(procID, claim,
 		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
@@ -101,8 +101,12 @@ func TestOriginState_RevisionsIncreaseAndTheLastMessageIsSufficient(t *testing.T
 		last.Direction != protocol.EpisodeDirectionSupply {
 		t.Errorf("the final message lost its identity: %+v", last)
 	}
-	if last.ProcessID != procID || last.PayloadCode != "PANEL-B" {
-		t.Errorf("the final message lost its grain: process=%d payload=%q", last.ProcessID, last.PayloadCode)
+	// THE NAME, not the row id. The grain assertion is the same assertion it
+	// always was; what changed is which of the two values on the wire IS the
+	// grain, and a test still comparing the row id would pass on a message that
+	// Core cannot join to anything.
+	if last.ProcessID != procName || last.PayloadCode != "PANEL-B" {
+		t.Errorf("the final message lost its grain: process=%q payload=%q", last.ProcessID, last.PayloadCode)
 	}
 	if last.ExpectedOrders == nil || *last.ExpectedOrders != 2 {
 		t.Errorf("the final message lost expected_orders: %v", last.ExpectedOrders)
@@ -177,7 +181,7 @@ func TestOriginState_ChangeoverUsesTheSamePath(t *testing.T) {
 // is harmless; a row deleted before its close is enqueued is a demand that
 // never ends, on a surface where a long-open episode is the loudest row.
 func TestOriginState_CloseIsEnqueuedBeforeTheRowGoes(t *testing.T) {
-	eng, db, procID, claim := episodeFixture(t, "ORDER-PROC", "ALN_011", 50)
+	eng, db, procID, procName, claim := episodeFixture(t, "ORDER-PROC", "ALN_011", 50)
 
 	if _, _, err := eng.openCellEpisode(procID, claim,
 		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
@@ -185,7 +189,7 @@ func TestOriginState_CloseIsEnqueuedBeforeTheRowGoes(t *testing.T) {
 	}
 	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
-	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procName, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("the row must be gone after a close, got err=%v", err)
 	}

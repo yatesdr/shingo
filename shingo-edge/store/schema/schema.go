@@ -93,3 +93,30 @@ func ColumnDefault(db *sql.DB, tableName, columnName string) (string, bool, erro
 	}
 	return dflt.String, dflt.Valid, rows.Err()
 }
+
+// ColumnType returns the named column's DECLARED type ("TEXT", "INTEGER", ...),
+// and whether the column exists at all.
+//
+// The declared type, not the storage class of whatever happens to be in there.
+// SQLite is dynamically typed, so a column declared INTEGER accepts the string
+// "SNF2" and stores it as text — which means a wrong declaration does not
+// error, it just makes the schema a document that disagrees with the data. This
+// is how a rebuild migration detects that case, since CREATE TABLE IF NOT
+// EXISTS cannot correct a column type on a table that already exists.
+//
+// Returns ("", false, nil) for a missing table or column.
+func ColumnType(db *sql.DB, tableName, columnName string) (string, bool, error) {
+	rows, err := db.Query(`SELECT type FROM pragma_table_info('`+tableName+`') WHERE name = ?`, columnName)
+	if err != nil {
+		return "", false, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", false, rows.Err()
+	}
+	var t string
+	if err := rows.Scan(&t); err != nil {
+		return "", false, err
+	}
+	return t, true, rows.Err()
+}
