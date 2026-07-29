@@ -54,11 +54,11 @@
                         {{if .ActiveClaim}}
                             {{if eq .ActiveClaim.SwapMode "manual_swap"}}
                                 {{if .Runtime}}
-                                    {{if gt .Runtime.RemainingUOP 0}}<strong>{{.Runtime.RemainingUOP}}</strong>{{else}}<span style="color:var(--text-muted)">0</span>{{end}}
+                                    {{if gt .Runtime.RemainingUOPCached 0}}<strong>{{.Runtime.RemainingUOPCached}}</strong>{{else}}<span style="color:var(--text-muted)">0</span>{{end}}
                                 {{else}}--{{end}}
                             {{else}}
                                 {{if .Runtime}}
-                                    <strong>{{.Runtime.RemainingUOP}}</strong>
+                                    <strong>{{.Runtime.RemainingUOPCached}}</strong>
                                     {{if .ActiveClaim}}/ {{.ActiveClaim.UOPCapacity}}{{end}}
                                 {{else}}--{{end}}
                             {{end}}
@@ -93,7 +93,7 @@
                             <button class="btn btn-sm" data-action="viewBinContents" data-bin-state="{{json .BinState}}" title="View bin contents">View</button>
                                 {{end}}
                             <button class="btn btn-sm btn-primary" data-action="openLoadBinModal" data-node-id="{{.Node.ID}}" data-allowed-payloads="{{json .ActiveClaim.AllowedPayloads}}" data-uop-capacity="{{.ActiveClaim.UOPCapacity}}" title="Load bin with payload manifest">Load Bin</button>
-                                {{if .Runtime}}{{if gt .Runtime.RemainingUOP 0}}
+                                {{if .Runtime}}{{if gt .Runtime.RemainingUOPCached 0}}
                             <button class="btn btn-sm btn-danger" hx-post="/api/process-nodes/{{.Node.ID}}/clear-bin" hx-swap="none" title="Clear bin manifest (fix mis-load)">Clear Bin</button>
                                 {{end}}{{end}}
                             {{end}}
