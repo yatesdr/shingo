@@ -51,6 +51,12 @@ func TestStyleSourcingViewFrom_NotConfigured(t *testing.T) {
 	if v.Note != "no sourceability claims" {
 		t.Errorf("note = %q, want the reason it cannot be offered", v.Note)
 	}
+	// This is the case where Status and Code diverge, and the operator station's
+	// changeover picker colours its buttons off Code precisely because of it. Collapse
+	// the two fields and the picker would be switching on the words "not set up".
+	if v.Code != "not_configured" {
+		t.Errorf("code = %q, want the RAW verdict — Status is display text here", v.Code)
+	}
 }
 
 // TestStyleSourcingViewFrom_UnknownStatusIsNotSelectable is the forward-compat

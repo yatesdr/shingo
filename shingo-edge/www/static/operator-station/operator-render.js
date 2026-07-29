@@ -98,6 +98,43 @@ function isBoardMode() {
         && nodes[0].active_claim.swap_mode === 'manual_swap';
 }
 
+// pickerVerdictClass / pickerVerdictLabel turn Core's sourceability verdict into the
+// changeover button's colour and sub-label. They switch on `code` (the raw verdict),
+// never on `status` — status is display text, so not_configured arrives as the words
+// "not set up" and switching on it would be switching on a label.
+//
+// Only green and red get a colour. yellow (at-risk) ships DARK from Core today
+// (EnableAtRisk false), so it is mapped but should not be seen; not_configured and any
+// verdict this Edge doesn't recognise get NO colour at all, because "we have no verdict"
+// must never read as either a green light or an accusation of no parts. Their note still
+// renders, so the operator sees "not set up" rather than an unexplained plain button.
+function pickerVerdictClass(src) {
+    if (!src) return '';
+    switch (src.code) {
+        case 'green': return 'sourceable';
+        case 'red': return 'unsourceable';
+        case 'yellow': return 'at-risk';
+        default: return '';
+    }
+}
+
+function pickerVerdictLabel(src) {
+    if (!src) return '';
+    var head;
+    switch (src.code) {
+        case 'green': head = 'PARTS AVAILABLE'; break;
+        case 'red': head = 'NO PARTS AVAILABLE'; break;
+        case 'yellow': head = 'RUNNING LOW'; break;
+        // Core's own words for the unverdicted cases — "not set up" / the
+        // unrecognised-verdict sentence. Better than inventing a phrase here.
+        default: head = src.status || '';
+    }
+    // The note names the payloads (missing for red, low for yellow). Core computes it;
+    // the operator's first question after "no parts" is "which parts".
+    if (src.note) return head ? head + ' — ' + src.note : src.note;
+    return head;
+}
+
 function openChangeoverPicker() {
     const view = getView();
     const styles = view.available_styles || [];
@@ -112,8 +149,21 @@ function openChangeoverPicker() {
     const panel = el('div', { className: 'os-co-picker' });
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Change over to:' }));
 
+    const sourcing = view.sourcing_by_style || {};
     for (const s of others) {
-        const btn = el('button', { className: 'os-co-picker-btn', textContent: s.name });
+        // Core's sourceability verdict for this style, keyed by style NAME (that is
+        // what SourcingState.StyleID carries). Absent = the feed has no verdict for
+        // it, which is NOT the same as "no parts" — an unannotated style renders
+        // exactly as it always did rather than being accused of anything.
+        const src = sourcing[s.name] || null;
+        const btn = el('button', { className: 'os-co-picker-btn ' + pickerVerdictClass(src) });
+        btn.appendChild(el('div', { className: 'os-co-picker-style', textContent: s.name }));
+        const sub = pickerVerdictLabel(src);
+        if (sub) btn.appendChild(el('div', { className: 'os-co-picker-verdict', textContent: sub }));
+        // Red is SELECTABLE on purpose. The admin changeover page blocks it
+        // (styleSourcingView.Blocked), but the operator is allowed to change over
+        // onto a style Core can't source yet and let the orders queue until parts
+        // arrive — the colour is information, not a gate. Owner's call, 2026-07-29.
         btn.addEventListener('click', () => {
             overlay.remove();
             startChangeover(s.id, s.name);

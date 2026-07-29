@@ -65,12 +65,29 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	_ = h.engine.StationService().Touch(id, "online")
+	// Per-style sourceability for the operator's changeover picker, from the SAME
+	// mapping the admin changeover page uses (styleSourcingViewFrom) so the two
+	// screens can't disagree about whether a style is sourceable. Read from Edge's
+	// local sourcing_state cache — no Core round-trip on the board's poll path,
+	// which is load-bearing here (see the coalescing comment above).
+	//
+	// Note the picker deliberately does NOT honour Blocked: on the admin page a red
+	// style is unselectable, but the operator is allowed to change over onto one and
+	// let the orders queue. The field ships anyway rather than being filtered out —
+	// it is the admin policy, and hiding it here would make the two views look like
+	// they disagree about the verdict when they only differ on what to do about it.
+	sourcing := map[string]styleSourcingView{}
+	for _, s := range h.engine.SourcingStateForProcess(view.Process.Name) {
+		sourcing[s.StyleID] = styleSourcingViewFrom(s)
+	}
 	writeJSON(w, struct {
 		*domain.OperatorStationView
 		PayloadBinTypes []protocol.PayloadBinTypeInfo `json:"payload_bin_types,omitempty"`
+		SourcingByStyle map[string]styleSourcingView  `json:"sourcing_by_style,omitempty"`
 	}{
 		OperatorStationView: view,
 		PayloadBinTypes:     h.engine.PayloadBinTypes(),
+		SourcingByStyle:     sourcing,
 	})
 }
 
