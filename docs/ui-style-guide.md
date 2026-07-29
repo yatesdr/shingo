@@ -33,6 +33,25 @@ These three surfaces have **intentionally different rendering models**. Do
 not try to converge them. Do try to share primitives (tokens, utilities,
 status vocabulary).
 
+**Known: the Operator HMI does not follow this guide, and never has.** Every
+consistency pass this document records — the token work, the shared component
+CSS, the status vocabulary, the icon sprite — landed on Core admin and, less
+completely, on Edge admin. The HMI got none of it. As of 2026-07-26,
+`operator-display.html` loads exactly one stylesheet, `operator.css`, and pulls
+in neither `shared/tokens.css`, `shared/components.css` nor
+`shared/status-classes.css`; `operator.css` declares its own parallel
+twenty-token `--os-*` palette in raw hex and then uses a further 122 hardcoded
+hex literals across 1,223 lines; there is no light theme and no icon sprite. It
+is a fourth design system that happens to share a repo with the other three, and
+it is the surface an operator looks at for an entire shift. Treat any HMI file
+you touch as un-migrated — the conventions below describe where it should end
+up, not where it is. The scoped item is queued in `PLAN-master-2026-07-26.md`
+(Stage 4).
+
+The one rule the HMI *is* already held to is the no-emoji policy: Edge's
+`//go:embed static/*` is recursive, so `TestNoEmojiInTemplatesAndPageJS` walks
+`static/operator-station/` along with everything else.
+
 ## Code organization
 
 ### Shared module structure
@@ -503,6 +522,195 @@ Edge admin's `orders-body.html` and similar partials need updating to match.
 
 ## Data visualization
 
+### Which shape answers which question
+
+**Pick the form from the question, not from the page.** Phase 6 adds the first
+real charts to this system. The failure mode is that each page picks a shape for
+itself and the reader relearns the encoding on every screen — so this rule is
+written before the charts exist, which is the only cheap moment to write it.
+
+Say the question out loud first. The question names the shape.
+
+| The question | The form | Why that one |
+|---|---|---|
+| *How much? Which is bigger?* | **Bars**, baseline at zero | Length from a common baseline is the most accurately-read encoding there is. Sort by value unless the categories have a natural order |
+| *Is it moving, and which way?* | **Line**, time on x | A line asserts continuity between its points, which is a claim. Use one only where the gap between points is genuinely traversed |
+| *What is it made of?* | **Stacked bar or area — only when the totals beat the parts** | See the trap below |
+| *What does normal look like?* | **Histogram** (box or violin when comparing groups) | The plant's numbers are heavy-tailed. A median hides precisely the tail you are looking for |
+| *Does A move with B?* | **Scatter**, with `n` printed on it | Below roughly 30 points a scatter shows a shape that is not in the data |
+| *Where is it happening?* | **The map**, as an overlay on the real floor plan | Spatial clustering is the one thing a table structurally cannot render |
+| *Is this one number OK?* | **Not a chart.** Print the number | |
+
+**Bars start at zero; lines need not.** A bar's *length* is the value, so a
+truncated baseline turns a 3% difference into a 3× one. A line encodes position,
+not length, and may start wherever the data lives.
+
+**The stacked trap.** In a stacked bar only the bottom band sits on a common
+baseline; every band above it is measured against a floor that moves. Readers
+compare the bands anyway, and get it wrong. So: **stack only when the question is
+about the total and the composition is a bonus.** *"How many closes a day, and
+roughly how do they split"* — stack it. *"Is the sweep's share of closes
+climbing?"* (5.6) is a question about **one part**, and it wants a line of that
+part's share, where a drift toward 100% is visible at a glance and reads as the
+alarm it is. When several parts each matter on their own, small multiples beat
+one stack.
+
+**The forms we do not draw, and why:**
+
+- **No pie or donut charts.** Angle is read less accurately than length and the
+  labels never fit. A sorted bar answers every question a pie does.
+- **No gauges or speedometers.** Enormous ink for one number against one
+  threshold. Use the number plus a meter track — neutral track, the fill carries
+  the state (see Visual principles).
+- **No dual y-axes.** The crossing point is an artifact of two arbitrary scales
+  and someone will read it as an event. Two stacked panels sharing an x-axis.
+- **No 3D, no drop shadows under marks, no animated draw-on.** Motion means
+  motion; a bar growing on page load is decoration.
+- **No two-point line.** `47 → 52` is the entire content. Print it.
+
+**Reach for the table more often than feels right.** Under about five categories
+a sorted table is faster to read than a bar chart, carries the exact figures, and
+can be pasted into a spreadsheet — which is what the reader was going to do
+anyway. Phase 6's demand browser (5.1) is a table for exactly this reason; a
+chart earns its place only where the table cannot answer the question.
+
+**Applied to Phase 6**, so the rule is checkable rather than decorative:
+
+| Phase 6 item | Form | Because |
+|---|---|---|
+| `cost_ratio` across episodes (5.1 / 5.4) | Histogram, never a mean | The question is *what does a normal ratio look like*, and the answer is a shape. The mean of a ratio distribution is close to meaningless |
+| Cause mix (5.2) | Chips on the row; small multiples for the trend | Four causes on one stack hide the one that is growing |
+| `closed_by` share (5.6) | One line — the sweep's share | The alarm is a slope toward 100% |
+| Transition matrix (5.9) | Heat-map matrix, greyed below minimum `n` | Two categorical axes and one value. Bars would need twenty of them |
+| Orphan reconciliation (5.7) | Line of the count over time | The plan already says it: *the trend is the number that matters* |
+| Cycle time (5.10) | Distribution per `(node, payload)`; median annotated **on** it, never alone | The tail is the material-downtime signal |
+
+### The numbers themselves
+
+Four rules. The first is the one that gets broken.
+
+**1 — Never print more precision than the measurement supports.**
+
+The temptation is mechanical: the float holds `47.2831`, the formatter will
+happily print it, and it *looks* more rigorous than `47`. It is the opposite.
+**Precision is a claim about the measurement, not about the arithmetic.** Every
+digit beyond what the input supports is an assertion the data cannot back, made
+by a formatter that has no idea what the data is.
+
+Work it through on the number Phase 6 actually ships. Cycle time (5.10) is a
+difference between two `bin_uop_audit` timestamps on a stream that is
+deliberately lossy in known ways — roughly 1,779 stale-epoch drops and 1,779
+replays a day, which manufacture phantom gaps until the dedup pass removes them —
+stamped by service clocks not synchronised to the millisecond. That number is
+worth about two significant figures. `47.283 s` asserts a millisecond-accurate
+interval from a source that cannot supply one; **"about 47 seconds"** is what was
+actually measured.
+
+This is not cosmetic. An engineer who reads `47.283` will chase a 0.3-second
+regression that is entirely quantisation noise, and will stop trusting the panel
+when the chase comes up empty. **Round to the digit you would defend to the
+person who has to act on it.**
+
+| Kind of number | Precision |
+|---|---|
+| A count | Exact — `1,779`. A count is not an estimate |
+| A derived duration | Whole seconds under ten minutes, whole minutes above |
+| A percentage | Whole percent, unless the denominator runs to thousands |
+| A ratio | One decimal (`3.2×`), **greyed below the minimum `n`** (5.4, 5.9) |
+| A figure from an upstream system | Exactly as that system publishes it, unchanged |
+
+Two mechanical corollaries:
+
+- **Carry full precision through the arithmetic and round once, at the render.**
+  Rounding mid-pipeline produces totals that disagree with their own parts, and
+  the reader finds that before you do.
+- **Where the number is soft and there is room to say so, say so.** *"about
+  47 s"* costs six characters. Where there is no room the rounding itself carries
+  the message — which is exactly why the rounding has to be right.
+
+**2 — Tabular figures, always.**
+
+Already law (see Type scale): every count, quantity, duration and metric takes
+`font-variant-numeric: tabular-nums` via `.tnum`, so digits do not dance as live
+values tick. Two things that rule does not say and that get missed:
+
+- **Numeric columns are right-aligned.** Tabular figures align the glyphs; only
+  right-alignment aligns the *magnitudes*, which is what makes a column scannable
+  for the big one.
+- **A column commits to one decimal count.** `2` and `2.00` in the same column
+  move the decimal point and defeat tabular-nums entirely. Pick the precision for
+  the column, not per cell.
+
+**3 — One abbreviation rule, and this is it.**
+
+Stated once, here, so nobody re-decides it per page:
+
+- **Below 10,000, print in full with a thousands separator** — `9,481`.
+- **At or above 10,000, and only in space-constrained chrome** (axis ticks,
+  chips, tile heroes): `k` / `M`, at most one decimal, no space before the
+  suffix — `12.4k`, `1.2M`.
+- **Tables and detail views never abbreviate.** A table is where someone reads
+  the exact figure and copies it out; `12.4k` destroys both uses.
+- **Durations are compound, never decimal hours** — `1h 04m`, `4m 07s`, `47 s`.
+  Never `0.78 h`; nobody converts that in their head.
+- **One space before a unit word, none before a magnitude suffix** — `47 s`,
+  `12.4k UoP`, `86%`.
+
+**4 — No data, zero, and not applicable must look different from each other.**
+
+This is the load-bearing rule in this section.
+
+| State | What it means | How it renders |
+|---|---|---|
+| **Zero** | We measured, and the answer is zero | `0` — a real number, normal text colour, tabular |
+| **No data** | We have not heard, the window holds no rows, or the source is unreachable | `—` (em dash) in `--text-muted`, with a title saying *which* of those it is |
+| **Not applicable** | The question does not apply to this row | Empty cell, or `n/a` in the quietest text tone |
+
+**Never coalesce absence into zero.** The bug has a face at every layer of the
+stack and they are all the same bug:
+
+```
+COALESCE(x, 0)      -- SQL, on a display column
+int                 // Go, whose zero value is indistinguishable from unset
+x || 0              // JS, where null and 0 collapse identically
+{{.Count}}          <!-- template, rendering a zero it has no way to question -->
+```
+
+The fix is at the **type**, not at the CSS: `*int`, `sql.NullInt64`,
+`x != null ? x : null` — so the renderer still holds the information to tell the
+two apart by the time it gets there. If the value arrives as a plain `int` the
+distinction was destroyed upstream and no amount of styling recovers it. This is
+the UI face of the principle in `AGENTS.md`: **a check must know whether it had
+the input to check.**
+
+**Why this one is load-bearing.** The A1 reachability defect on this very branch
+was this exact mistake one layer down: the sweep inferred *"Core has recent
+contact with this Edge"* from *"nothing has marked this Edge stale"* — reading an
+unset flag as a positive finding — and closed real episodes in bulk whenever a
+ticker in another service was wedged. A tile printing `0` where the truth is *"we
+never heard"* is the same defect in a different costume, and worse in one
+respect: a human reads it and acts on it. Phase 6 makes that concrete — **zero
+orders against a real demand** is the plan's worst case, the one the heat-map
+mockup calls out as *worse than a high ratio*. A UI that cannot separate that
+from a dead feed will send someone to the floor to inspect a healthy cell, and
+will say nothing at all on the day the feed genuinely breaks.
+
+Three riders:
+
+- **Do not over-rotate.** A real measured zero stays `0`, plainly. Dashing out
+  true zeros hides the finding from the other direction — the same error
+  mirrored.
+- **A chart with no rows gets an empty state, not an empty axis frame.** A drawn
+  frame with nothing in it reads as *"measured, all zero"*. Say what is missing
+  and over what window. `.empty-cell` covers the table-cell case.
+- **An unrecognised value is not an absent one.** Every `close_reason` /
+  `origin_class` switch needs a `default` that renders the unknown value **as
+  itself** (5.5). That vocabulary has already grown twice — `claim_removed`,
+  `superseded` — and a `default` rendering blank turns every future addition into
+  a silent data-loss bug in the UI.
+
+### The palette
+
 Charts, KPI numbers, and other data marks use ONE **curated, vibrant palette**
 (P19) — a single designed set, used generously and consistently. This supersedes
 two earlier dead ends: the original ad-hoc "grab a semantic token per series"
@@ -688,6 +896,16 @@ sort-asc/desc, lock, box, map-pin, layers, zoom-in/out, crosshair,
 alert-triangle, info, check, trash, pencil, download, battery. Add one by copying
 the Lucide 24×24 geometry into a new `<symbol id="icon-…">` (geometry only — no
 per-shape stroke/fill, so it inherits `.icon`).
+
+**Adoption, as of 2026-07-26 — the sprite is wired on Core only.**
+`{{iconSprite}}` is a Core template func (`shingo-core/www/helpers.go`) injected
+by Core's `layout.html` and `dashboard-map.html`; thirteen `<use href="#icon-…">`
+sites across six Core files resolve against it. **Neither Edge admin nor the
+Operator HMI injects the sprite**, so a `<use>` reference on those surfaces
+resolves to nothing — Edge's `header.html` still hand-inlines two raw bell SVGs
+and `operator-display.html` includes no sprite at all. The sprite, the shared
+detector and both drift tests exist and are green; what is outstanding is the
+Edge and HMI *wiring*, not the asset.
 
 ### Drift test
 
@@ -1319,9 +1537,11 @@ Reconciliation is opportunistic adjacency — bundle these into the consistency 
 **Casing history — and a warning about how it was mis-measured twice.**
 
 `752dec99` (2026-07-22) swept nine files and **held perfectly**: not one of them
-has regressed. `2c0d3c48`'s follow-up (2026-07-26) finished the job across the
+has regressed. `8272aac0`'s follow-up (2026-07-26) finished the job across the
 files that sweep never covered. What went wrong in between was the *measurement*,
-not the code, and it went wrong the same way twice.
+not the code, and it went wrong the same way twice. (This paragraph first cited
+`2c0d3c48` — the `--sub-*` substrate-ramp commit from the same merge. A wrong
+SHA inside the passage about getting the record wrong; corrected here.)
 
 **Raw `UOP` counts are meaningless here.** Most occurrences in the tree are
 supposed to be uppercase — `{{.UOPRemaining}}`, `UOPCapacity`, `remainingUOP`,
