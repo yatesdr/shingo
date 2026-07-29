@@ -56,6 +56,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 	"shingocore/store/demands"
 	"shingocore/store/loaders"
 )
@@ -175,6 +176,23 @@ type ThresholdMonitor struct {
 	// pick which in-loop total the fire gate decides off. Empty is treated as the
 	// edge_reports default (the nil-eng unit harness leaves it unset).
 	linesideMode string
+
+	// now supplies every timestamp this monitor measures an interval against.
+	//
+	// It exists because all four of them used to call bare time.Now() while
+	// everything they gate moves in SIM time: sim startup installs a
+	// fast-forward clock globally (clock.BuildSimClock → clock.SetDefault,
+	// cmd/shingocore/sim_enabled.go:47,61) and the rest of the engine reads
+	// clock.Now(). So in the sim the 15s debounce, the 60s negative-log window
+	// and the 15-minute contradiction window all ran on WALL time while the
+	// activity they throttle ran 15× faster — one debounce covering fifteen
+	// times more simulated work than it would at a plant. The hysteresis
+	// margins get tuned on that sim.
+	//
+	// Defaults to clock.Now, which IS time.Now in production. Tests that need
+	// to drive it set the field; the ones that back-date the maps directly
+	// (threshold_monitor_test.go) keep working untouched.
+	now func() time.Time
 }
 
 // NewThresholdMonitor constructs the monitor. Call Run() to perform
@@ -199,7 +217,20 @@ func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
 		negativeLogged:      make(map[string]time.Time),
 		swapContradiction:   make(map[string]time.Time),
 		linesideMode:        resolveLinesideMode(rawMode, warnf),
+		now:                 clock.Now,
 	}
+}
+
+// nowFn returns the monitor's clock, falling back to the shared default.
+//
+// The fallback is for monitors built as a struct literal rather than through
+// NewThresholdMonitor — the pure unit harness does exactly that — so a
+// zero-value monitor keeps working instead of panicking on a nil func.
+func (m *ThresholdMonitor) nowFn() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return clock.Now()
 }
 
 // decisionMode reports the resolved R1 lineside decision mode. Any value other
@@ -241,7 +272,7 @@ type MonitorSnapshotEntry struct {
 // Taken under the monitor lock; safe to call from an HTTP handler. It reports
 // only the monitored-set + thresholds; the caller reads DB on-hand itself.
 func (m *ThresholdMonitor) Snapshot() []MonitorSnapshotEntry {
-	now := time.Now()
+	now := m.nowFn()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]MonitorSnapshotEntry, 0, len(m.thresholdsByPayload))
@@ -532,7 +563,7 @@ func (m *ThresholdMonitor) NoteSwapRequestContradiction(payloadCode string) {
 // recorded (i.e. should be logged now). Fixed-window throttle: the log fires
 // once per window and the chip reads the stamp for the rest of it.
 func (m *ThresholdMonitor) recordSwapContradiction(payloadCode string) bool {
-	now := time.Now()
+	now := m.nowFn()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if last, ok := m.swapContradiction[payloadCode]; ok && now.Sub(last) < swapContradictionWindow {
@@ -616,7 +647,7 @@ func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, r
 // it never touches debounce or warm-up, so refusing to signal on a garbage
 // total costs the binding nothing once the total is real again.
 func (m *ThresholdMonitor) shouldLogNegative(key string) bool {
-	now := time.Now()
+	now := m.nowFn()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if last, seen := m.negativeLogged[key]; seen && now.Sub(last) < negativeLogWindow {
@@ -630,7 +661,7 @@ func (m *ThresholdMonitor) shouldLogNegative(key string) bool {
 // + warm-up policy. Records the firing time on success so a follow-up
 // call within the window returns false.
 func (m *ThresholdMonitor) allow(key string) bool {
-	now := time.Now()
+	now := m.nowFn()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if w, ok := m.warmUp[key]; ok && w > 0 {

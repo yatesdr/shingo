@@ -123,17 +123,32 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Delta integrity rides the same request and the same window. It belongs
+	// beside the exception list, not on its own endpoint: the exception list
+	// says "this payload is negative" and this says "and here is the mechanism
+	// that probably did it", and the two are only worth anything read
+	// together. One fetch means they cannot drift apart in the UI either.
+	deltaIntegrity, err := h.engine.DeltaIntegrityByPayload(since)
+	if err != nil {
+		h.jsonError(w, "delta integrity: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	if openBins == nil {
 		openBins = []domain.OpenNegativeBin{}
 	}
 	if excursions == nil {
 		excursions = []domain.NegativeExcursion{}
 	}
+	if deltaIntegrity == nil {
+		deltaIntegrity = []domain.DeltaIntegrity{}
+	}
 	h.jsonOK(w, map[string]any{
 		"since":             since,
 		"open_bins":         openBins,
 		"negative_payloads": payloads,
 		"excursions":        excursions,
+		"delta_integrity":   deltaIntegrity,
 	})
 }
 

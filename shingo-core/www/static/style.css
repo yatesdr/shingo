@@ -2083,3 +2083,29 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
   font-variant-numeric: tabular-nums;
 }
 .ledger-exceptions__list b { color: var(--danger); }
+
+/* ── Delta integrity (inventory) ───────────────────────────────────────────
+   Sits directly under the ledger exceptions and is read WITH it. Deliberately
+   the quieter of the two: this panel names a MECHANISM, its neighbour names a
+   broken count. Amber, not red — nothing here is itself a fault. Blank on a
+   good day; the JS emits nothing when there is nothing to say. */
+.delta-integrity {
+  border: 1px solid var(--viz-amber);
+  border-radius: 4px;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.75rem;
+  background: color-mix(in srgb, var(--viz-amber) 5%, transparent);
+}
+.delta-integrity__head { font-size: 0.85rem; margin-bottom: 0.35rem; }
+.delta-integrity__why {
+  font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.35rem;
+}
+.delta-integrity__list {
+  margin: 0; padding-left: 1.1rem;
+  font-size: 0.8rem; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.delta-integrity__list b { color: var(--viz-amber); }
+/* The ledger total printed beside the drop total — the comparison the panel
+   exists for, so it reads as a peer of the number before it, not an aside. */
+.di-ledger { color: var(--danger); font-variant-numeric: tabular-nums; }

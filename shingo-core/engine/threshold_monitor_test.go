@@ -357,3 +357,107 @@ func TestThresholdMonitor_NegativeCount_LogThrottleDoesNotGateOrdering(t *testin
 		t.Error("a fired signal must record its debounce stamp")
 	}
 }
+
+// THE SIM DEFECT. Every interval this monitor measures used to call bare
+// time.Now() while everything it gates moves in SIM time: sim startup installs
+// a fast-forward clock globally (clock.BuildSimClock → clock.SetDefault,
+// cmd/shingocore/sim_enabled.go:47,61) and the rest of the engine reads
+// clock.Now().
+//
+// So at 15× the 15-second debounce covered fifteen times more SIMULATED
+// activity than the same debounce covers at a plant — and the hysteresis
+// margins for the demand-episode work get tuned on that sim. Same for the
+// 60-second negative-log window and the 15-minute contradiction window.
+//
+// This drives a clock forward the way the sim does and asserts each window
+// closes on ITS clock. Against the pre-fix code every case fails, because
+// nothing the test does to the clock is visible to the monitor.
+func TestThresholdMonitor_WindowsRunOnTheInjectedClock(t *testing.T) {
+	t.Parallel()
+
+	// A monitor whose clock is ours, moved by hand — exactly what a sim clock
+	// does to it, just deterministically.
+	simNow := time.Date(2026, 7, 25, 6, 0, 0, 0, time.UTC)
+	tm := newTestMonitor()
+	tm.now = func() time.Time { return simNow }
+
+	t.Run("debounce", func(t *testing.T) {
+		key := bindingKey("station-1", "MS-LOADER", "WIDGET-A")
+		if !tm.allow(key) {
+			t.Fatal("first allow should pass")
+		}
+		// Wall time has not moved and never will in this test. If the monitor
+		// were still reading it, the window would never close.
+		simNow = simNow.Add(thresholdDebounceWindow + time.Second)
+		if !tm.allow(key) {
+			t.Error("the debounce window must close on the monitor's clock, not the wall clock")
+		}
+	})
+
+	t.Run("negative log", func(t *testing.T) {
+		key := bindingKey("station-1", "MS-LOADER", "WIDGET-B")
+		if !tm.shouldLogNegative(key) {
+			t.Fatal("first negative log should fire")
+		}
+		if tm.shouldLogNegative(key) {
+			t.Error("a second within the window must be throttled")
+		}
+		simNow = simNow.Add(negativeLogWindow + time.Second)
+		if !tm.shouldLogNegative(key) {
+			t.Error("the negative-log window must close on the monitor's clock")
+		}
+	})
+
+	t.Run("swap contradiction", func(t *testing.T) {
+		// Snapshot reports per MONITORED payload, and the production caller
+		// returns early for an unmonitored one, so the chip is only reachable
+		// with a binding present.
+		tm.mu.Lock()
+		tm.thresholdsByPayload["WIDGET-C"] = []thresholdEntry{
+			{stationID: "station-1", coreNodeName: "MS-LOADER", payloadCode: "WIDGET-C", threshold: 100},
+		}
+		tm.mu.Unlock()
+
+		if !tm.recordSwapContradiction("WIDGET-C") {
+			t.Fatal("first contradiction should record")
+		}
+		if tm.recordSwapContradiction("WIDGET-C") {
+			t.Error("a second within the window must be throttled")
+		}
+		// The chip reads the same stamp against the same clock, so it must
+		// still be showing here.
+		if !hasContradiction(tm.Snapshot(), "WIDGET-C") {
+			t.Error("the contradiction chip must be lit inside its window")
+		}
+		simNow = simNow.Add(swapContradictionWindow + time.Second)
+		if !tm.recordSwapContradiction("WIDGET-C") {
+			t.Error("the contradiction window must close on the monitor's clock")
+		}
+	})
+}
+
+// A monitor built as a struct literal — which the pure unit harness does — has
+// a nil clock, and must fall back rather than panic.
+func TestThresholdMonitor_ZeroValueClockFallsBack(t *testing.T) {
+	t.Parallel()
+	tm := newTestMonitor() // deliberately leaves tm.now nil
+	if tm.now != nil {
+		t.Fatal("fixture changed — this test is about the nil case")
+	}
+	key := bindingKey("station-1", "MS-LOADER", "WIDGET-Z")
+	if !tm.allow(key) {
+		t.Fatal("a monitor with no clock must still work")
+	}
+	if tm.allow(key) {
+		t.Error("and must still debounce")
+	}
+}
+
+func hasContradiction(snap []MonitorSnapshotEntry, payload string) bool {
+	for _, e := range snap {
+		if e.PayloadCode == payload {
+			return e.SwapContradiction
+		}
+	}
+	return false
+}

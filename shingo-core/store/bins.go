@@ -136,7 +136,7 @@ func (db *DB) BinHasNotes(binIDs []int64) (map[int64]bool, error) {
 
 // NegativeLedgerPayloads returns payload codes whose plant-wide bin total is
 // below zero, mapped to that total — the payloads the threshold monitor is
-// refusing to signal replenishment for.
+// deciding on from a count it cannot trust.
 func (db *DB) NegativeLedgerPayloads() (map[string]int, error) {
 	return bins.NegativePayloads(db.DB)
 }

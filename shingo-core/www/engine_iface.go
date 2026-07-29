@@ -95,6 +95,10 @@ type ServiceAccess interface {
 	OpenNegativeBins() ([]domain.OpenNegativeBin, error)
 	NegativeLedgerPayloads() (map[string]int, error)
 	NegativeLedgerExcursions(since time.Time, releaseWindow time.Duration, limit int) ([]domain.NegativeExcursion, error)
+	// DeltaIntegrityByPayload is the mechanism panel beside the exception
+	// list: how much count was dropped per payload, against that payload's
+	// current ledger total. Also read-side only.
+	DeltaIntegrityByPayload(since time.Time) ([]domain.DeltaIntegrity, error)
 
 	// SourceabilityEvents is the persisted verdict-change history (Phase 5).
 	SourceabilityEvents(since time.Time, processID, payload string, limit int) ([]domain.SourceabilityEvent, error)

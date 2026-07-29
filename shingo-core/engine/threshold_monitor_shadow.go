@@ -75,6 +75,15 @@ func (m *ThresholdMonitor) linesideDecisionTotal(ctx context.Context, payload st
 
 	// Adjustment = sum over FRESH reported nodes of (edge view − ledger view).
 	// Stale nodes fall back to the ledger (no adjustment) and are flagged.
+	//
+	// DELIBERATELY time.Now(), not the monitor's injected clock. This is the
+	// one interval here measured against a timestamp from ANOTHER PROCESS:
+	// r.ReportedAt is stamped by the Edge with time.Now().UTC()
+	// (shingo-edge/engine/lineside_reporter.go:70), which is wall time whether
+	// or not Core is running a sim clock. Comparing a wall stamp against sim
+	// time would make every report look hours stale the moment the sim
+	// fast-forwards. Wall-to-wall is the correct pairing; the monitor's own
+	// four interval reads were not, and those are the ones that moved.
 	now := time.Now()
 	adjustment := 0
 	freshNodes := 0

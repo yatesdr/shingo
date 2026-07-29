@@ -38,6 +38,13 @@
          panel of charts computed from a handful of points is worse than
          nothing. Fed by /api/inventory/ledger-exceptions. -->
     <div id="rh-ledger-exceptions"></div>
+    <!-- Delta integrity, beside the exception list because only the pair is
+         useful: that panel says "this payload is negative", this one says
+         "and here is the mechanism that probably did it". Read-side only —
+         every drop is already an observation row in bin_uop_audit with the
+         dropped quantity in its metadata. Blank on a good day, like its
+         neighbour. -->
+    <div id="rh-delta-integrity"></div>
     <div class="table-scroll-y">
       <table class="rh-table">
         <thead>

@@ -8,6 +8,59 @@ package domain
 
 import "time"
 
+// DeltaIntegrity is one payload's delta-drop total over a window, set beside
+// that payload's current plant-wide ledger total.
+//
+// The comparison IS the panel. If 74577-6SA0A.06 reads -443 in-loop and shows
+// ~443 UOP of dropped credits over the same window, the mechanism behind the
+// negative count is visible on sight rather than hypothesised.
+//
+// TWO FIGURES, AND THEY DO NOT MIX. UOPLost counts only the two DROP ops.
+// MixedContents counts payload_rebound_with_inventory and carries NO UOP total,
+// because a rebind is not a drop: the applier rebinds the payload and APPLIES
+// the delta ("counting CONTINUES ... the bin is anomaly-flagged for a later
+// cycle count of the mixed contents"). Summing it into UOP lost would inflate
+// the number and corrupt the one comparison this panel exists to make.
+type DeltaIntegrity struct {
+	PayloadCode string `json:"payload_code"`
+
+	// UOPLost is the NET effect of dropped deltas on the ledger: how much the
+	// count reads BELOW reality because of them. Positive means dropped credits
+	// dominate, which is the shape that produces a negative in-loop total.
+	//
+	// Net, not magnitude, because the sign is what makes it comparable to the
+	// ledger total sitting next to it. The two directions are broken out below
+	// for anyone who needs to see how it was arrived at.
+	UOPLost int `json:"uop_lost"`
+	// CreditsDropped is the units of INBOUND count that never landed — the
+	// ledger reads low by this much.
+	CreditsDropped int `json:"credits_dropped"`
+	// ConsumesDropped is the units of consumption that never landed — the
+	// ledger reads high by this much.
+	ConsumesDropped int `json:"consumes_dropped"`
+	// DropRows is how many deltas were dropped, across both ops.
+	DropRows int `json:"drop_rows"`
+	// StaleEpochRows / PayloadMismatchRows split DropRows by cause. Two
+	// different bugs; a panel that says only "42 drops" cannot tell you which.
+	StaleEpochRows      int `json:"stale_epoch_rows"`
+	PayloadMismatchRows int `json:"payload_mismatch_rows"`
+
+	// MixedContents is how many bins had their payload rebound while holding
+	// units under the old label. A COUNT ONLY — no UOP total, deliberately.
+	// Each needs a cycle count; none is a loss.
+	MixedContents int `json:"mixed_contents"`
+
+	// LedgerTotal is the payload's current plant-wide in-loop total, negative
+	// when the ledger is broken. The number UOPLost is meant to be read
+	// against.
+	LedgerTotal int `json:"ledger_total"`
+	// Bins is how many distinct bins are involved in the drops.
+	Bins int `json:"bins"`
+	// FirstAt / LastAt bracket the drops in the window.
+	FirstAt *time.Time `json:"first_at,omitempty"`
+	LastAt  *time.Time `json:"last_at,omitempty"`
+}
+
 type NegativeExcursion struct {
 	BinID       int64  `json:"bin_id"`
 	PayloadCode string `json:"payload_code"`

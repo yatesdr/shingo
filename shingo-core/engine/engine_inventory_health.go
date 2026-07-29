@@ -161,6 +161,13 @@ func (e *Engine) NegativeLedgerPayloads() (map[string]int, error) {
 	return e.db.NegativeLedgerPayloads()
 }
 
+// DeltaIntegrityByPayload reports dropped deltas per payload since `since`,
+// each set beside that payload's current ledger total. The panel that says
+// "and here is the mechanism" next to the one that says "this is negative".
+func (e *Engine) DeltaIntegrityByPayload(since time.Time) ([]domain.DeltaIntegrity, error) {
+	return e.db.DeltaIntegrityByPayload(since)
+}
+
 // NegativeLedgerExcursions returns zero-crossings since `since` with the delta
 // that caused each one.
 func (e *Engine) NegativeLedgerExcursions(since time.Time, releaseWindow time.Duration, limit int) ([]domain.NegativeExcursion, error) {

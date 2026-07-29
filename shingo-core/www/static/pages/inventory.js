@@ -146,6 +146,7 @@ function renderAll() {
   renderKpis();
   renderAlerts();
   renderLedgerExceptions();
+  renderDeltaIntegrity();
   renderHealth();
   renderBuckets();
   const asof = document.getElementById('inv-asof');
@@ -347,6 +348,89 @@ function renderLedgerExceptions() {
     + '</div>'
     + '<div class="ledger-exceptions__why">Ordering is unaffected. Recount to correct.</div>'
     + '<ul class="ledger-exceptions__list">' + rows + '</ul></div>';
+}
+
+// ── delta integrity ───────────────────────────────────────────────────────
+//
+// The mechanism panel. Its neighbour above says "this payload is negative";
+// this says "and here is what happened to the counts". Read-side only: every
+// dropped delta is already an observation row in bin_uop_audit (before == after,
+// because the count did not move) with the dropped quantity in its metadata.
+//
+// TWO FIGURES, AND THEY MUST NOT BE MIXED.
+//
+//   UOP lost      — stale_epoch_dropped + payload_mismatch_dropped ONLY.
+//   Mixed contents — payload_rebound_with_inventory, as a COUNT with no UOP
+//                    total. A rebind is not a drop: the applier rebinds the
+//                    payload and APPLIES the delta, so the tote's unit total
+//                    stays correct and the bin is flagged for a cycle count of
+//                    what is physically in it. Summing it into UOP lost
+//                    inflates the figure and corrupts the one comparison this
+//                    panel exists to make.
+//
+// "UOP lost" is a NET, signed toward the ledger: dropped credits minus dropped
+// consumes, so a positive number means the count reads BELOW reality by that
+// much — directly comparable to the negative total printed beside it. If a
+// payload reads -443 and shows +443 lost, the answer is on the screen.
+function renderDeltaIntegrity() {
+  const host = document.getElementById('rh-delta-integrity');
+  if (!host) return;
+  const rows = (ledgerExceptions && ledgerExceptions.delta_integrity) || [];
+  // A payload with nothing dropped and nothing rebound is not worth a row.
+  const shown = rows.filter((r) => r.drop_rows > 0 || r.mixed_contents > 0);
+  if (!shown.length) { host.innerHTML = ''; return; }
+
+  // Worst first: the biggest ledger effect, then the biggest count of drops.
+  shown.sort((a, b) => Math.abs(b.uop_lost) - Math.abs(a.uop_lost) || b.drop_rows - a.drop_rows);
+
+  const items = shown.map((r) => {
+    let line = '<code>' + escapeHtml(r.payload_code) + '</code>';
+
+    if (r.drop_rows > 0) {
+      const dir = r.uop_lost >= 0 ? 'below' : 'above';
+      const causes = [];
+      if (r.stale_epoch_rows) causes.push(r.stale_epoch_rows + ' stale epoch');
+      if (r.payload_mismatch_rows) causes.push(r.payload_mismatch_rows + ' payload mismatch');
+      const tip = 'Dropped credits ' + r.credits_dropped + ', dropped consumes ' + r.consumes_dropped
+        + '. Net effect: the count reads ' + Math.abs(r.uop_lost) + ' ' + dir + ' reality.'
+        + ' Across ' + r.bins + ' bin' + (r.bins === 1 ? '' : 's') + '.';
+      line += ' <b title="' + escapeHtml(tip) + '">' + Math.abs(r.uop_lost) + ' UOP</b>'
+        + ' of count never landed — reads ' + dir + ' reality'
+        + ' <span class="text-muted-xs">(' + r.drop_rows + ' dropped delta'
+        + (r.drop_rows === 1 ? '' : 's')
+        + (causes.length ? ': ' + causes.join(', ') : '') + ')</span>';
+    }
+
+    if (r.mixed_contents > 0) {
+      // Deliberately no UOP figure here. Nothing was lost — the delta was
+      // applied — so a number would read as a loss and would be added to the
+      // one above by anyone skimming.
+      const tip = 'A bin\'s payload was rebound while it still held units under the old label. '
+        + 'Counting CONTINUED and the unit total is correct; the bin needs a cycle count of what '
+        + 'is physically in it. This is NOT lost count and has no UOP figure.';
+      line += (r.drop_rows > 0 ? ' · ' : ' ')
+        + '<span class="chip chip-warn" title="' + escapeHtml(tip) + '">'
+        + r.mixed_contents + ' mixed contents</span>';
+    }
+
+    // The comparison. Printing the ledger total beside the drop total is the
+    // whole design: the two numbers matching IS the finding.
+    if (r.ledger_total < 0) {
+      line += ' <span class="di-ledger">ledger reads ' + r.ledger_total + '</span>';
+    }
+    return '<li>' + line + '</li>';
+  }).join('');
+
+  const totalDrops = shown.reduce((n, r) => n + r.drop_rows, 0);
+  host.innerHTML = '<div class="delta-integrity">'
+    + '<div class="delta-integrity__head">'
+    + '<span class="chip chip-warn">Counts not landing</span> '
+    + totalDrops + ' delta' + (totalDrops === 1 ? '' : 's')
+    + ' dropped across ' + shown.length + ' payload' + (shown.length === 1 ? '' : 's')
+    + '</div>'
+    + '<div class="delta-integrity__why">Set against the ledger total beside it: a payload reading '
+    + 'negative by about what it dropped has found its cause.</div>'
+    + '<ul class="delta-integrity__list">' + items + '</ul></div>';
 }
 
 function chipsHtml(r) {
