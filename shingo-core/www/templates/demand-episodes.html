@@ -73,6 +73,44 @@
   </div>
   {{end}}{{end}}
 
+  {{/* ── 5.2: the child-outcome mix, page-wide ─────────────────────── */}}
+  {{if .CauseError}}
+  <div class="card mb-2">
+    <span class="kpi-label">Child-order outcomes</span>
+    <div class="text-muted">Unavailable: {{.CauseError}}</div>
+    <div class="text-muted mt-1">
+      The Cause column below reads as no-data for every row, which is the truth:
+      the mix could not be read. It is NOT the "no orders" finding.
+    </div>
+  </div>
+  {{else}}{{with .CauseTotals}}
+  <div class="card mb-2">
+    <div class="card-header-row">
+      <span class="kpi-label">Child-order outcomes across these episodes</span>
+    </div>
+    {{/*
+      SMALL MULTIPLES, NOT A STACKED BAR. Only the bottom band of a stack sits
+      on a common baseline, and readers compare the bands anyway. "Four causes
+      on one stack hide the one that is growing" — and the one that is growing
+      is the entire question 5.2 asks.
+    */}}
+    <div class="de-causes">
+      {{range .Classes}}
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">{{.Label}}</div>
+        <div class="kpi-value tnum">{{.Count}}</div>
+      </div>
+      {{end}}
+    </div>
+    <p class="de-note">
+      "Cancelled early" is orders cancelled before the fleet vendor ever
+      acknowledged them. Re-arm churn lives in that bucket — so does anything
+      that failed to reach the vendor for another reason, and the schema records
+      no way to tell them apart. Read it as an upper bound, not a churn count.
+    </p>
+  </div>
+  {{end}}{{end}}
+
   {{if .Truncated}}
   <div class="card mb-2">
     <strong>Showing the first {{.Limit}} episodes.</strong>
@@ -90,6 +128,7 @@
         <th class="col-num">Duration</th>
         <th>Band</th>
         <th class="col-num">Orders</th>
+        <th>Cause</th>
         <th class="col-num">Expected</th>
         <th class="col-num">Ratio</th>
         <th>Close reason</th>
@@ -115,6 +154,14 @@
           {{if .BandLabel}}<span class="de-band-name">{{.BandLabel}}</span>{{else}}<span class="de-na"></span>{{end}}
         </td>
         <td class="col-num tnum de-orders">{{.OrdersText}}</td>
+        {{/*
+          5.2 — the dominant child outcome, as a PRINTED NAME plus a ring on
+          the three classes that carry a finding. No chip: the .chip-* family
+          fails both contrast floors structurally, worst 2.89:1.
+        */}}
+        <td class="de-cause-{{.CauseClass}}">
+          <span class="de-cause-name">{{template "de-cell" .Cause}}</span>
+        </td>
         <td class="col-num tnum">{{template "de-cell" .Expected}}</td>
         <td class="col-num tnum">{{template "de-cell" .Ratio}}</td>
         <td>{{template "de-cell" .CloseReason}}</td>
@@ -147,35 +194,12 @@
 {{end}}
 
 {{/*
-  de-cell — the number doctrine's three states, rendered so they look different
-  from each other. This is the one rule this surface exists to get right.
+  de-cell and de-cell-value MOVED to templates/partials/cells.html.
 
-    value  → the figure, plain, in normal text. INCLUDING ZERO.
-    nodata → an em dash in muted text, with a title saying WHICH absence it is.
-    na     → the quietest possible mark, for a question that does not apply.
-
-  Muted is a fourth thing and NOT one of the three: the value exists and is
-  shown, it is just not load-bearing (5.4). Greyed and dashed-out are different
-  claims and must not collapse into one.
+  Each page template is cloned from (layout + partials) SEPARATELY, so a
+  {{define}} written in this file is reachable from this page and from nowhere
+  else. That is not a style point: /orphans consumes de-cell too, and with the
+  definition living here it parsed cleanly and failed at RENDER time with "no
+  such template de-cell" — a 500 on a page whose whole job is to be readable on
+  the day something is wrong. Shared doctrine belongs in a shared partial.
 */}}
-{{define "de-cell"}}
-  {{if eq .Kind "value"}}
-    {{if .Muted}}<span class="de-muted" title="{{.Title}}">{{.Text}}</span>
-    {{else}}{{.Text}}{{end}}
-  {{else if eq .Kind "nodata"}}
-    <span class="de-nodata" title="{{.Title}}">{{.Text}}</span>
-  {{else}}
-    <span class="de-na" title="{{.Title}}">{{.Text}}</span>
-  {{end}}
-{{end}}
-
-{{/* Same three states at KPI-value weight, for the summary strip. */}}
-{{define "de-cell-value"}}
-  {{if eq .Kind "value"}}
-    <div class="kpi-value tnum">{{.Text}}</div>
-  {{else if eq .Kind "nodata"}}
-    <div class="kpi-value tnum de-nodata" title="{{.Title}}">{{.Text}}</div>
-  {{else}}
-    <div class="kpi-value tnum de-na" title="{{.Title}}">{{.Text}}</div>
-  {{end}}
-{{end}}

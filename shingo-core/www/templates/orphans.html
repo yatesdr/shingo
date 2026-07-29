@@ -1,0 +1,146 @@
+{{define "content"}}
+{{/*
+  orphans.html — Stage 5.7, the orphan lane and its trend.
+
+  THE TEMPLATE DOES NO ARITHMETIC AND MAKES NO DECISIONS. Every figure, rate and
+  absence-state arrives already rendered from orphan_trend_view.go. A rule that
+  lives in a template is a rule with no test.
+
+  No colour literals; no .chip-* classes. Magnitude is a bar height, state is a
+  printed word.
+*/}}
+<div>
+  <div class="flex flex-between mb-2">
+    <h1>Orphan reconciliation</h1>
+  </div>
+
+  <p class="text-muted mb-2">
+    An orphan is an order that should have carried a demand origin and did not.
+    Findings are never deleted and never auto-attached — the record is the
+    evidence that a reconciliation gap existed. Live findings are the actionable
+    ones; aged findings are those the sweep has stopped asking about.
+  </p>
+
+  {{/* ── The lane ─────────────────────────────────────────────────────── */}}
+  {{if .LaneError}}
+  <div class="card mb-2">
+    <strong>Could not read the orphan lane.</strong>
+    <div class="text-muted mt-1">{{.LaneError}}</div>
+    <div class="text-muted mt-1">
+      This is a read failure, not a clean plant. An empty lane is the most
+      reassuring thing this page can say and it is not what you are looking at.
+    </div>
+  </div>
+  {{else}}{{with .Lane}}
+  <div class="card mb-2">
+    <div class="card-header-row">
+      <span class="kpi-label">Orphan findings, by station</span>
+    </div>
+    <div class="de-summary mb-2">
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Live</div>
+        <div class="kpi-value tnum">{{.LiveTotal}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Aged</div>
+        <div class="kpi-value tnum">{{.AgedTotal}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Total recorded</div>
+        <div class="kpi-value tnum">{{.Total}}</div>
+      </div>
+    </div>
+
+    {{if .Sites}}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Station</th>
+          <th class="col-num">Live</th>
+          <th class="col-num">Aged</th>
+          <th class="col-num">Total</th>
+          <th class="col-num">Oldest live</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Sites}}
+        <tr class="or-row{{if gt .Live 0}} or-live{{end}}">
+          <td>{{.StationID}}</td>
+          <td class="col-num tnum de-orders">{{.LiveText}}</td>
+          <td class="col-num tnum">{{.AgedText}}</td>
+          <td class="col-num tnum">{{.Total}}</td>
+          <td class="col-num tnum">{{template "de-cell" .OldestLive}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="text-muted">
+      No orphan findings at any station. That is a measured result — the query
+      ran and returned no rows.
+    </div>
+    {{end}}
+  </div>
+  {{end}}{{end}}
+
+  {{/* ── The trend ────────────────────────────────────────────────────── */}}
+  {{if .TrendError}}
+  <div class="card">
+    <strong>Could not read the orphan trend.</strong>
+    <div class="text-muted mt-1">{{.TrendError}}</div>
+    <div class="text-muted mt-1">
+      A trend drawn from a failed read is a flat line at zero, which is exactly
+      what a healthy plant looks like. So there is no chart here.
+    </div>
+  </div>
+  {{else}}{{with .Trend}}
+  <div class="card">
+    <div class="card-header-row">
+      <span class="kpi-label">Orphans per {{$.BucketLabel}}, last {{$.WindowDays}} days</span>
+    </div>
+    <p class="de-note mb-2">
+      Bars carry the orphan COUNT, which every bucket has. The RATE beside it
+      needs a denominator, and a bucket in which no orders were created has
+      none — those read as unmeasured, never as 0%. A rate over fewer than
+      {{$.MinBucketOrders}} orders is greyed: one orphan would dominate it.
+    </p>
+
+    {{/*
+      Bars, not a line. A line asserts continuity between its points, and the
+      buckets with no orders are gaps that were not traversed — a line would
+      have to bridge them (a claim the data does not support) or fragment.
+      Bars make no continuity claim, and start at zero.
+    */}}
+    <div class="or-chart">
+      {{range .}}
+      <div class="or-bucket{{if .Empty}} or-bucket-empty{{end}}"
+           title="{{.Label}} — {{.OrphansText}} orphan(s) of {{.OrdersText}} orders">
+        <div class="or-bar or-bar-{{.BarStep}}"></div>
+      </div>
+      {{end}}
+    </div>
+
+    <table class="table de-table mt-2">
+      <thead>
+        <tr>
+          <th>Bucket</th>
+          <th class="col-num">Orders</th>
+          <th class="col-num">Orphans</th>
+          <th class="col-num">Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .}}
+        <tr class="or-row">
+          <td class="text-muted tnum">{{.Start.Format "Jan 02 15:04"}}</td>
+          <td class="col-num tnum">{{.OrdersText}}</td>
+          <td class="col-num tnum de-orders">{{.OrphansText}}</td>
+          <td class="col-num tnum">{{template "de-cell" .Rate}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}{{end}}
+</div>
+{{end}}

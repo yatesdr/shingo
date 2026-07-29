@@ -1,0 +1,42 @@
+{{/*
+  cells.html — the number doctrine's three states, as one shared renderer.
+
+  IN partials/ AND NOT IN A PAGE, because router.go clones (layout + partials)
+  per page: a {{define}} inside a page template is invisible to every other
+  page. These two are consumed by /demand-episodes and /orphans and by anything
+  Phase 6 adds next, and a second page redefining them by copy-paste is exactly
+  how two surfaces start disagreeing about what an em dash means.
+*/}}
+{{/*
+  de-cell — the number doctrine's three states, rendered so they look different
+  from each other. This is the one rule this surface exists to get right.
+
+    value  → the figure, plain, in normal text. INCLUDING ZERO.
+    nodata → an em dash in muted text, with a title saying WHICH absence it is.
+    na     → the quietest possible mark, for a question that does not apply.
+
+  Muted is a fourth thing and NOT one of the three: the value exists and is
+  shown, it is just not load-bearing (5.4). Greyed and dashed-out are different
+  claims and must not collapse into one.
+*/}}
+{{define "de-cell"}}
+  {{if eq .Kind "value"}}
+    {{if .Muted}}<span class="de-muted" title="{{.Title}}">{{.Text}}</span>
+    {{else}}{{.Text}}{{end}}
+  {{else if eq .Kind "nodata"}}
+    <span class="de-nodata" title="{{.Title}}">{{.Text}}</span>
+  {{else}}
+    <span class="de-na" title="{{.Title}}">{{.Text}}</span>
+  {{end}}
+{{end}}
+
+{{/* Same three states at KPI-value weight, for the summary strip. */}}
+{{define "de-cell-value"}}
+  {{if eq .Kind "value"}}
+    <div class="kpi-value tnum">{{.Text}}</div>
+  {{else if eq .Kind "nodata"}}
+    <div class="kpi-value tnum de-nodata" title="{{.Title}}">{{.Text}}</div>
+  {{else}}
+    <div class="kpi-value tnum de-na" title="{{.Title}}">{{.Text}}</div>
+  {{end}}
+{{end}}

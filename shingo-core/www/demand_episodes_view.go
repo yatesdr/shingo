@@ -368,6 +368,23 @@ type EpisodeRow struct {
 	CloseReason Cell
 	ClosedBy    Cell
 
+	// Outcomes, Cause and CauseClass are 5.2, filled by AttachCauses from a
+	// SECOND query rather than by BuildEpisodeRow. They are deliberately not
+	// built here: the child mix is not on the episode row, and threading a
+	// per-row lookup through this function would make a pure transform of one
+	// stored row into something that needs the whole result set. See
+	// demand_causes_view.go, which owns every rule about them.
+	//
+	// CAUSE IS THE AUTHORITATIVE ONE; Outcomes is the detail behind it. When the
+	// mix could not be read Cause is no-data and Outcomes is the zero struct —
+	// all-zero counts that MEAN NOTHING, because the query failed rather than
+	// returning nothing. Render Outcomes only where Cause has already said the
+	// read succeeded, or the page prints six confident zeroes for a number
+	// nobody has.
+	Outcomes   ChildOutcomes
+	Cause      Cell
+	CauseClass string
+
 	// SortGroup orders the two unrankable classes above the ranked body. See
 	// SortRows.
 	SortGroup int

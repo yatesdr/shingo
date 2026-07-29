@@ -2201,3 +2201,81 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .de-band-concern { box-shadow: inset 3px 0 0 0 var(--accent); }
 .de-band-worry   .de-band-name { color: var(--sub-5); }
 .de-band-concern .de-band-name { color: var(--accent); }
+
+/* ══ Stage 5.2 — the cause column ═════════════════════════════════════════
+ *
+ * NO .chip-* CLASSES, and that is not a style preference. The chip family
+ * fails both contrast floors STRUCTURALLY: a chip's fill is a color-mix of
+ * its own label colour over the surface, so lowering the mix makes the text
+ * readable and the pill invisible, and raising it does the reverse. Fifteen
+ * of twenty-eight (theme x chip x surface) combinations are below AA on
+ * text, worst .chip-ok at 2.89:1. Phase 6 is the surface that would deepen
+ * that debt at scale, so the cause takes the treatment the duration band
+ * already takes here: A PRINTED NAME plus a ring. Never colour alone.
+ */
+.de-cause-name { font-size: var(--font-sm); }
+
+/* The ring, from the substrate ramp — structure recedes, state glows. Only
+ * the three classes that carry a FINDING get one; consumed and still-running
+ * are the ordinary readings and get no emphasis, because a page where every
+ * row is marked has marked nothing. */
+.de-cause-cancelled_early { box-shadow: inset 3px 0 0 0 var(--sub-5); }
+.de-cause-skipped         { box-shadow: inset 3px 0 0 0 var(--sub-5); }
+.de-cause-failed          { box-shadow: inset 3px 0 0 0 var(--accent); }
+.de-cause-cancelled_early .de-cause-name,
+.de-cause-skipped         .de-cause-name { color: var(--sub-5); }
+.de-cause-failed          .de-cause-name { color: var(--accent); }
+
+/* The page-level strip: counts per cause, side by side. SMALL MULTIPLES, not
+ * a stacked bar — "four causes on one stack hide the one that is growing"
+ * (ui-style-guide.md, Applied to Phase 6). Every class is emitted including
+ * the ones at zero, so a cause that just dropped to zero is visible AS zero
+ * rather than silently absent. */
+.de-causes { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+
+/* ══ Stage 5.7 — the orphan lane and trend ════════════════════════════════ */
+
+.or-row td { vertical-align: middle; }
+/* A station with live findings gets the ring; the counts beside it are always
+ * printed, so the ring is emphasis and never the only carrier. */
+.or-live { box-shadow: inset 3px 0 0 0 var(--sub-5); }
+
+/* The magnitude bars. Baseline at zero — a bar's LENGTH is the value, so a
+ * truncated baseline turns a small difference into a large one.
+ *
+ * TEN STEPS, and the count is pinned by TestBarStepsMatchesCSSClassSet. A
+ * class set and a config number that disagree would quantise a bucket to a
+ * step whose rule does not exist, and it would render at zero height: a
+ * bucket with orphans drawn as a bucket with none.
+ *
+ * Height is a CLASS and not an inline style= because inline style is
+ * forbidden for new code, and because a bar drawn to the pixel asserts a
+ * resolution the eye cannot read off a narrow column anyway. */
+.or-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 96px;
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--sub-3);
+}
+.or-bucket { flex: 1 1 0; height: 100%; display: flex; align-items: flex-end; }
+.or-bar { width: 100%; background: var(--viz-teal); border-radius: 1px; }
+
+/* An empty bucket — no orders at all — draws a HATCHED GROUND rather than a
+ * zero-height bar. A bucket that ran clean and a bucket nobody measured are
+ * opposite findings and an absent bar renders them identically. */
+.or-bucket-empty { background: repeating-linear-gradient(
+    45deg, transparent, transparent 3px, var(--sub-1) 3px, var(--sub-1) 5px); }
+
+.or-bar-0  { height: 0; }
+.or-bar-1  { height: 10%; }
+.or-bar-2  { height: 20%; }
+.or-bar-3  { height: 30%; }
+.or-bar-4  { height: 40%; }
+.or-bar-5  { height: 50%; }
+.or-bar-6  { height: 60%; }
+.or-bar-7  { height: 70%; }
+.or-bar-8  { height: 80%; }
+.or-bar-9  { height: 90%; }
+.or-bar-10 { height: 100%; }

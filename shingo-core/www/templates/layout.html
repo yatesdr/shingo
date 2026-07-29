@@ -33,6 +33,11 @@
            the worst in this codebase; reconciling them is an IA decision, not a
            rename to make while adding a page. */}}
       <a href="/demand-episodes"{{if eq .Page "demand-episodes"}} class="active"{{end}}>Episodes</a>
+      {{/* 5.7. "Orphans" and not "Reconciliation" — the page is about a named
+           finding on a named column (origin_class = 'orphan'), and naming it
+           after the process rather than the thing would make it the second page
+           in this nav whose label does not match the noun it lists. */}}
+      <a href="/orphans"{{if eq .Page "orphans"}} class="active"{{end}}>Orphans</a>
       <span class="nav-sep"></span>
       <div class="nav-dropdown">
         <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "inventory") (eq .Page "nodes") (eq .Page "bins") (eq .Page "payloads")}} active{{end}}">Assets</a>

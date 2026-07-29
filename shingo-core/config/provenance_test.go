@@ -322,3 +322,54 @@ func TestDisplayConstantsFallsBackPerField(t *testing.T) {
 		t.Errorf("negative values were honoured rather than treated as unset: %+v", got)
 	}
 }
+
+// TestBarStepsMatchesCSSClassSet turns the second STRUCTURAL claim into a check.
+//
+// Same mechanism as TestRampStepsMatchesTokenSet and the same reason: a
+// "structural" label with nothing checking it is an assertion, which is the
+// exact thing the provenance mechanism exists to stop.
+//
+// THE FAILURE THIS PREVENTS IS SILENT AND POINTS THE WRONG WAY. If BarSteps
+// exceeds the class set, a tall bucket quantises to a step whose CSS rule does
+// not exist and the bar renders at its default height — zero. A bucket with the
+// MOST orphans would draw as a bucket with NONE, which is the single most
+// misleading thing this chart could do, and every test would still be green
+// because the arithmetic is correct.
+func TestBarStepsMatchesCSSClassSet(t *testing.T) {
+	path := filepath.Join("..", "www", "static", "style.css")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v (this test is the only thing holding bar_steps to "+
+			"reality; if the file moved, repoint it rather than deleting the test)", path, err)
+	}
+
+	found := map[int]bool{}
+	for _, m := range regexp.MustCompile(`\.or-bar-(\d+)\s*\{`).FindAllStringSubmatch(string(src), -1) {
+		n, convErr := strconv.Atoi(m[1])
+		if convErr != nil {
+			t.Fatalf("unparseable .or-bar-%s", m[1])
+		}
+		found[n] = true
+	}
+	if len(found) == 0 {
+		t.Fatal("no .or-bar-N rules in style.css at all — the bars render at zero " +
+			"height for every bucket, which reads as a plant with no orphans")
+	}
+
+	want := DisplayDefaults().BarSteps
+	// Step 0 is the zero-count case and must exist; steps 1..BarSteps are the
+	// magnitudes. Both directions matter: a missing high step draws the tallest
+	// bucket as empty, and an extra one is a rule nothing can ever select.
+	for n := 0; n <= want; n++ {
+		if !found[n] {
+			t.Errorf(".or-bar-%d is missing from style.css but display.bar_steps is %d. "+
+				"A bucket quantising to that step renders at zero height — the bucket "+
+				"with the most orphans would draw as the bucket with none.", n, want)
+		}
+		delete(found, n)
+	}
+	for n := range found {
+		t.Errorf("style.css defines .or-bar-%d but display.bar_steps is %d, so nothing "+
+			"can ever select it. Either the constant is short or the rule is dead.", n, want)
+	}
+}

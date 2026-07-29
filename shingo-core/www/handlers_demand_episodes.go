@@ -62,6 +62,23 @@ func (h *Handlers) handleDemandEpisodes(w http.ResponseWriter, r *http.Request) 
 	}
 	SortRows(rows)
 
+	// ── 5.2 — the child-outcome mix ──────────────────────────────────────────
+	//
+	// A SECOND QUERY, AND A FAILURE HERE IS NOT A FAILURE OF THE PAGE. The
+	// episode list is worth rendering without the cause column; what is not
+	// acceptable is rendering the cause column as though it had been read. `ok`
+	// is false on error and AttachCauses puts every row's cause into no-data —
+	// which is the truth, and looks nothing like the zero-order finding it
+	// would otherwise be confused with.
+	counts, causeErr := h.engine.DemandEpisodeService().ChildOutcomesSince(since)
+	byOrigin := FoldChildCounts(counts)
+	AttachCauses(rows, byOrigin, causeErr == nil)
+	if causeErr != nil {
+		data["CauseError"] = causeErr.Error()
+	} else {
+		data["CauseTotals"] = SummarizeCauses(byOrigin)
+	}
+
 	data["Rows"] = rows
 	data["Truncated"] = truncated
 	data["Limit"] = episodeLimit

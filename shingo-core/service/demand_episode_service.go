@@ -43,3 +43,32 @@ func (s *DemandEpisodeService) List(since time.Time, limit int) ([]domain.Demand
 func (s *DemandEpisodeService) ClosedBySince(since time.Time) ([]string, error) {
 	return s.db.ListClosedBySince(since)
 }
+
+// ChildOutcomesSince returns the raw (episode, status, reached-vendor) tally for
+// every episode in the browser's window. Feeds 5.2.
+//
+// RAW, NOT CLASSIFIED. The categories — consumption, dying orders, cancels
+// either side of dispatch — are display rules that change as the protocol
+// grows, and they live in one tested pure function in www rather than being
+// split between a SQL CASE, a service method and a renderer.
+func (s *DemandEpisodeService) ChildOutcomesSince(since time.Time) ([]domain.ChildStatusCount, error) {
+	return s.db.CountChildrenByStatus(since)
+}
+
+// OrphanTrend returns per-bucket orphan and total order counts since `since`,
+// keyed on orders.created_at. Feeds 5.7.
+//
+// ONLY NON-EMPTY BUCKETS COME BACK — see www.BuildOrphanTrend, which generates
+// the full series and renders the gaps as unmeasured rather than as zero.
+func (s *DemandEpisodeService) OrphanTrend(since time.Time, bucket time.Duration) ([]domain.OrphanBucket, error) {
+	return s.db.OrphanRateBuckets(since, bucket)
+}
+
+// OrphanSites returns the per-station orphan lane, worst first. Feeds 5.7.
+//
+// Bounded by station count, unlike DB.ListOrphanFindings which is deliberately
+// unbounded and returns every individual finding. Both are wanted: the lane is
+// what a page can render whole, the findings list is the drill-down.
+func (s *DemandEpisodeService) OrphanSites() ([]domain.OrphanSite, error) {
+	return s.db.SummarizeOrphansBySite()
+}

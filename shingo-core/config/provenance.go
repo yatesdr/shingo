@@ -141,6 +141,36 @@ type DisplayConfig struct {
 	// is shown at full strength. Below it the ratio is greyed and the absolute
 	// order count carries the row.
 	MinExpectedOrders int `yaml:"min_expected_orders"`
+
+	// OrphanBucket is the time-bucket width for the orphan-rate trend (5.7).
+	//
+	// It is a DISPLAY constant and not merely a query scope, which is the
+	// distinction episodeWindow sits on the other side of. A window states
+	// itself on the page in words and nobody reads "the last 24 hours" as a
+	// claim about the floor; a bucket width silently decides what the trend can
+	// resolve. Too wide and a rate that climbed for an hour is averaged away;
+	// too narrow and every bucket falls under MinBucketOrders and the whole
+	// line greys out. That is a judgement about the data, so it carries
+	// provenance.
+	OrphanBucket time.Duration `yaml:"orphan_bucket"`
+
+	// MinBucketOrders is the smallest order count for which an orphan RATE is
+	// shown at full strength (5.7). Below it the rate is greyed and the raw
+	// orphan count carries the bucket.
+	//
+	// The same rule as MinExpectedOrders, one surface along, and it is here for
+	// the same reason: a rate over a denominator too small to support it is a
+	// number that looks like knowledge. Distinct from a ZERO denominator, which
+	// is not a small rate but no rate at all.
+	MinBucketOrders int `yaml:"min_bucket_orders"`
+
+	// BarSteps is how many steps the orphan-trend magnitude bars quantise to.
+	//
+	// STRUCTURAL, exactly like RampSteps: it is not a measurement, it is the
+	// size of the CSS class set the bars render through, and a plant cannot
+	// re-derive it because real orphan counts have no opinion about how many
+	// .or-bar-N rules exist.
+	BarSteps int `yaml:"bar_steps"`
 }
 
 // displayProvenance is the registry. One entry per DisplayConfig field, no more
@@ -194,6 +224,56 @@ var displayProvenance = []ConstantProvenance{
 			"conditioned on it — the floor belongs wherever the ratio stops being " +
 			"dominated by the granularity of its own denominator. Springfield has the " +
 			"episodes to answer that; the sim does not.",
+	},
+	{
+		Path: "display.orphan_bucket",
+		Kind: ProvenanceSimDerived,
+		Note: "CHOSEN WITHOUT PLANT DATA, and it could not have been otherwise: the " +
+			"quantity this width has to be matched to is the plant's order-creation " +
+			"RATE, and the sim's rate is a property of demo.yaml's tick rates rather " +
+			"than of any floor. One hour is chosen so that a bucket has a chance of " +
+			"clearing min_bucket_orders on a running line while still resolving a rate " +
+			"that climbs over a shift. Both halves of that sentence are guesses. THE " +
+			"FAILURE MODE IF IT IS WRONG IS NOT A WRONG NUMBER BUT A SILENT ONE: too " +
+			"narrow and every bucket falls under the floor and the entire trend renders " +
+			"greyed, which reads as 'nothing to see' rather than as 'badly bucketed'. " +
+			"WHAT A PLANT SHOULD MEASURE INSTEAD: the distribution of orders created per " +
+			"candidate bucket width over a fortnight, and pick the narrowest width whose " +
+			"TENTH PERCENTILE bucket still clears min_bucket_orders — the tenth and not " +
+			"the median, because the quiet buckets are the ones that grey out and a " +
+			"median-tuned width greys half the line.",
+	},
+	{
+		Path: "display.min_bucket_orders",
+		Kind: ProvenanceSimDerived,
+		Note: "CHOSEN WITHOUT PLANT DATA and by arithmetic, the same way and for the " +
+			"same reason as min_expected_orders. The reasoning: in a bucket of n orders " +
+			"a single orphan reads as 1/n, so the floor belongs where one orphan stops " +
+			"DOMINATING the reading. Requiring one orphan to move the rate by no more " +
+			"than five points gives 1/n <= 0.05, so n >= 20. Below that the line is " +
+			"drawing individual events as though they were a rate, and the slope — which " +
+			"is the entire signal — becomes a function of how many orders happened to be " +
+			"created rather than of how often they orphaned. WHAT A PLANT SHOULD MEASURE " +
+			"INSTEAD: the orphan rate's own distribution across buckets at the chosen " +
+			"width, and put the floor where the bucket-to-bucket variance stops being " +
+			"dominated by the granularity of 1/n. Springfield has the order volume to " +
+			"answer this; the sim's orphan count is zero, so the sim cannot answer it " +
+			"even in principle.",
+	},
+	{
+		Path: "display.bar_steps",
+		Kind: ProvenanceStructural,
+		Note: "Not a measurement, and the same kind of claim as ramp_steps. The " +
+			"orphan-trend bars quantise to as many steps as there are .or-bar-N rules " +
+			"in shingo-core/www/static/style.css, because the style guide forbids " +
+			"inline style= in new code and a bar height therefore has to be a class. " +
+			"A plant cannot re-derive this: real orphan counts have no opinion about " +
+			"how many CSS rules exist. It is CHECKED rather than validated — " +
+			"TestBarStepsMatchesCSSClassSet counts the rules and fails if this number " +
+			"and that count disagree, which is what turns a structural claim into a " +
+			"checkable one. Without the check, a bar could quantise to a step whose " +
+			"class does not exist and would render at zero height: a bucket with " +
+			"orphans drawn as a bucket with none.",
 	},
 }
 
@@ -258,6 +338,9 @@ func DisplayDefaults() DisplayConfig {
 		ConcernAfter:      60 * time.Minute,
 		RampSteps:         5,
 		MinExpectedOrders: 2,
+		OrphanBucket:      time.Hour,
+		MinBucketOrders:   20,
+		BarSteps:          10,
 	}
 }
 
@@ -293,6 +376,15 @@ func (c *Config) DisplayConstants() DisplayConfig {
 	}
 	if d.MinExpectedOrders <= 0 {
 		d.MinExpectedOrders = def.MinExpectedOrders
+	}
+	if d.OrphanBucket <= 0 {
+		d.OrphanBucket = def.OrphanBucket
+	}
+	if d.MinBucketOrders <= 0 {
+		d.MinBucketOrders = def.MinBucketOrders
+	}
+	if d.BarSteps <= 0 {
+		d.BarSteps = def.BarSteps
 	}
 	return d
 }

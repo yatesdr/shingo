@@ -59,10 +59,19 @@ const (
 // relationship at all.
 //
 // ON UPDATE IT TOUCHES ONLY WHAT EDGE AUTHORS. signal_count and uop_delivered
-// are accumulated on Core from its own signals and its own audit trail, and
-// used_edge_reports records which total decided a Core-side threshold. Listing
-// them in the SET clause would zero Core's own facts on every Edge message —
-// silently, and only for episodes that get more than one.
+// are MEANT to be accumulated on Core from its own signals and its own audit
+// trail, and used_edge_reports records which total decided a Core-side
+// threshold. Listing them in the SET clause would zero Core's own facts on every
+// Edge message — silently, and only for episodes that get more than one.
+//
+// "MEANT TO BE" IS DOING WORK IN THAT SENTENCE, and it used to read as a
+// statement of fact. `uop_delivered` has no writer anywhere in this repository
+// and no reader either; the clause below protects a value nothing produces, and
+// TestUpsertDemandOrigin_DoesNotZeroCoreOwnedFields seeds it with raw SQL, which
+// makes the column look exercised when it is not. Keep the exclusion — the
+// protection has to exist before the writer does, not after — but do not read it
+// as evidence the column carries data. See domain.DemandOrigin, which carries
+// the full finding and what it means for Stage 5.3.
 func (db *DB) UpsertDemandOrigin(o DemandOrigin) error {
 	var expected any
 	if o.ExpectedOrders != nil {
@@ -325,8 +334,18 @@ func (db *DB) ListOpenEpisodeStates() ([]OpenEpisodeState, error) {
 // `orphan_aged_at IS NULL` IS NOT DECORATION. Without it the sweep restamps the
 // same rows on every pass, and "when did this stop being asked about" would
 // permanently read "a minute ago" — the timestamp would be measuring the sweep
-// rather than the order, and the trend line Phase 6 draws off it would be flat
-// by construction.
+// rather than the order.
+//
+// CORRECTED 2026-07-28 (5.7): the clause above used to end "...and the trend
+// line Phase 6 draws off it would be flat by construction", which anticipated
+// the Phase 6 trend being keyed on THIS column. IT IS NOT, and building it that
+// way would have been a defect. The guard is still right and still necessary —
+// for the fresh/aged split, which is the question this column genuinely answers
+// — but orphan_aged_at is the wrong axis for a trend, most simply because it is
+// NULL on every orphan younger than the grace period, so the most recent
+// buckets are structurally empty and the line cannot see a rate that has just
+// started climbing. The trend is keyed on orders.created_at; the full reasoning
+// lives on domain.OrphanBucket.
 //
 // Returns the number retired, because a sweep that acts silently is
 // unauditable by construction — the same reason closed_by exists.
