@@ -168,6 +168,15 @@ func (e *Engine) DeltaIntegrityByPayload(since time.Time) ([]domain.DeltaIntegri
 	return e.db.DeltaIntegrityByPayload(since)
 }
 
+// CarrierBindings lists every carrier, the payload ShinGo believes it holds and
+// when that belief last started. The read behind 5.11's stale-binding candidates
+// (/material-flags), and it selects nothing — the candidate rule is a pure
+// function in www so it can be tested at its boundary and can include the rows
+// whose binding age is unknowable.
+func (e *Engine) CarrierBindings() ([]domain.CarrierBinding, error) {
+	return e.db.CarrierBindings()
+}
+
 // NegativeLedgerExcursions returns zero-crossings since `since` with the delta
 // that caused each one.
 func (e *Engine) NegativeLedgerExcursions(since time.Time, releaseWindow time.Duration, limit int) ([]domain.NegativeExcursion, error) {

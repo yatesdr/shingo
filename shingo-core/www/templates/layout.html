@@ -44,6 +44,13 @@
            term of it; borrowing the word would claim a comparison nothing here
            computes. */}}
       <a href="/cycle-time"{{if eq .Page "cycle-time"}} class="active"{{end}}>Cycle time</a>
+      {{/* 5.11. "Flags", not "Material downtime" — ShinGo records that a place
+           asked for material and when it stopped asking; it records nothing
+           about whether a line was stopped or anybody was waiting, so the
+           downtime word would put a claim in the nav that the data cannot
+           support. "Flags" is also the constraint: a flag, never an
+           attribution. */}}
+      <a href="/material-flags"{{if eq .Page "material-flags"}} class="active"{{end}}>Flags</a>
       <span class="nav-sep"></span>
       <div class="nav-dropdown">
         <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "inventory") (eq .Page "nodes") (eq .Page "bins") (eq .Page "payloads")}} active{{end}}">Assets</a>

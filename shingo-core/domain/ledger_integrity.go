@@ -99,6 +99,82 @@ type OpenNegativeBin struct {
 	LastCountedAt *time.Time `json:"last_counted_at,omitempty"`
 }
 
+// CarrierBinding is one carrier and the binding ShinGo currently believes about
+// it: which payload, since when, and what the ledger reads against it.
+//
+// A BINDING IS THE GRAIN 5.11's LEDGER HALF IS MEASURED ON, and it is not the
+// same thing as a negative excursion. A binding starts when an epoch-bumping op
+// retires the previous one (audit.EpochBumpOps) and runs until the next; the
+// count ShinGo accepts during it is counted against one belief about one carrier.
+// Its AGE is how long that belief has stood unrefreshed, which is the axis that
+// says "this count has had time to drift" — a claim about ShinGo's knowledge,
+// not about the shelf.
+//
+// EVERY ABSENCE HERE IS A POINTER, NEVER A ZERO. Four separate things can be
+// unknown on one row and they mean four different things: no payload bound at
+// all, a bound payload whose bind predates the audit trail, a payload with no
+// capacity recorded, and a carrier nobody has ever counted. A plain int or a
+// zero time would flatten all four into "0", and the number doctrine's rule 4
+// says the fix belongs at the type — so it is here and not in the renderer.
+type CarrierBinding struct {
+	BinID int64  `json:"bin_id"`
+	Label string `json:"label"`
+
+	// PayloadCode is "" when the carrier holds no payload. That is NOT a missing
+	// reading: an empty carrier has no binding, so it has no binding age, and it
+	// is not a stale-binding candidate however long it has sat there.
+	PayloadCode string `json:"payload_code"`
+	NodeName    string `json:"node_name"`
+
+	// UOPRemaining is the live ledger. Always a real measured number INCLUDING
+	// ZERO and including negatives, which are deliberately never clamped — see
+	// store/bins/ledger_integrity.go.
+	UOPRemaining int `json:"uop_remaining"`
+
+	// UOPCapacity is the bound payload's nominal units per carrier, nil when the
+	// payload has none recorded (payloads.uop_capacity <= 0, which
+	// BinService.RecordCount already guards against as un-countable). Without it
+	// a negative cannot be sized in binloads at all, and the surface says so
+	// rather than dividing by zero or by one.
+	UOPCapacity *int `json:"uop_capacity,omitempty"`
+
+	// BoundAt is when the current binding started — the newest EpochBumpOps row
+	// for this carrier. Nil means the audit trail holds no boundary for it: the
+	// bind predates retention, or the carrier has never been through one. NOT
+	// "just now", and NOT "forever ago"; unknown.
+	BoundAt *time.Time `json:"bound_at,omitempty"`
+
+	// LastCountedAt is the last physical cycle count. Nil means never counted,
+	// which is a measured fact about the carrier and not a read failure.
+	LastCountedAt *time.Time `json:"last_counted_at,omitempty"`
+
+	// AnomalyAt is the applier's visibility flag: this carrier has had deltas
+	// refused or a payload rebound over inventory. Nil means no anomaly recorded.
+	// It gates nothing (see uop/applier.go) and it is shown here as corroboration
+	// only.
+	AnomalyAt *time.Time `json:"anomaly_at,omitempty"`
+}
+
+// BindingAge returns how long the current binding has stood, and whether that is
+// knowable at all.
+//
+// The bool is the whole point of the signature: a (0, false) that a caller can
+// ignore would let "we have no boundary row for this carrier" render as a
+// freshly-bound carrier, which is the reassuring reading and the wrong one.
+func (b CarrierBinding) BindingAge(now time.Time) (time.Duration, bool) {
+	if b.PayloadCode == "" || b.BoundAt == nil {
+		return 0, false
+	}
+	d := now.Sub(*b.BoundAt)
+	if d < 0 {
+		// Clock skew between the audit writer and the reader. Clamp for
+		// arithmetic; the caller says so in the title rather than the number
+		// lying about the direction.
+		d = 0
+	}
+	return d, true
+}
+
 type RecordAccuracy struct {
 	// BinsWithCount / BinsNeverCounted split the population.
 	BinsWithCount    int `json:"bins_with_count"`

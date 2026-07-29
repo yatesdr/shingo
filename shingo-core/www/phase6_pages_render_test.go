@@ -159,6 +159,110 @@ func TestDemandEpisodesPageRendersTheCauseColumn(t *testing.T) {
 	}
 }
 
+// TestMaterialFlagsPageRenders is 5.11's page, and it holds the two things no
+// Go unit test can see: that both sections are on the page at once, and that the
+// copy makes no claim the data cannot support.
+func TestMaterialFlagsPageRenders(t *testing.T) {
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	c := disp()
+
+	// One expectation of 1 so the ratio renders MUTED — a real value whose
+	// denominator cannot support it, which is the fourth state and not one of the
+	// three absences.
+	thin := 1
+	flagRows := []EpisodeRow{
+		BuildEpisodeRow(domain.DemandEpisode{DemandOrigin: domain.DemandOrigin{
+			OriginID: "o1", EpisodeKey: "k1", Kind: "cell", StationID: "S1",
+			PayloadCode: "PANEL-A", OpenedAt: now.Add(-3 * time.Hour),
+			ExpectedOrders: &thin,
+		}, Children: 3}, now, c),
+	}
+	flags, flagSummary := SelectMaterialFlags(flagRows)
+
+	bound := now.Add(-9 * 24 * time.Hour)
+	capacity := 250
+	counted := now.Add(-30 * 24 * time.Hour)
+	bindings, bindingSummary := BuildBindingRows([]domain.CarrierBinding{
+		// Beyond one binload: the one reading that carries a ring.
+		{BinID: 1, Label: "CARRIER-0001", PayloadCode: "PANEL-A", NodeName: "SMN_001",
+			UOPRemaining: -800, UOPCapacity: &capacity, BoundAt: &bound, LastCountedAt: &counted},
+		// Settled ledger on an old binding: binloads is NOT APPLICABLE (de-na),
+		// and the carrier has never been counted (de-nodata).
+		{BinID: 2, Label: "CARRIER-0002", PayloadCode: "PANEL-B", NodeName: "SMN_002",
+			UOPRemaining: 420, UOPCapacity: &capacity, BoundAt: &bound},
+		// Within one binload — the Springfield bin-27 shape: a long binding whose
+		// ledger is shallow enough for one overpack to explain. It is a candidate
+		// on its AGE, and its reading gets no ring.
+		{BinID: 5, Label: "CARRIER-0005", PayloadCode: "PANEL-D", NodeName: "SMN_005",
+			UOPRemaining: -50, UOPCapacity: &capacity, BoundAt: &bound},
+		// Negative with no capacity recorded: the READING says "Cannot size" as
+		// words and the FIGURE column carries the em dash. One absence per fact.
+		{BinID: 6, Label: "CARRIER-0006", PayloadCode: "PANEL-GHOST", NodeName: "SMN_006",
+			UOPRemaining: -9, BoundAt: &bound},
+		// No boundary row: binding age unknowable (de-nodata) and it is listed.
+		{BinID: 3, Label: "CARRIER-0003", PayloadCode: "PANEL-C", UOPRemaining: 0},
+		// Unbound: counted in the summary, never a candidate row.
+		{BinID: 4, Label: "CARRIER-0004"},
+	}, now, c)
+
+	out := renderPage(t, "material-flags.html", map[string]any{
+		"Page": "material-flags", "WorryAfter": FormatDuration(c.WorryAfter),
+		"ConcernAfter":      FormatDuration(c.ConcernAfter),
+		"StaleBindingAfter": FormatDuration(c.StaleBindingAfter),
+		"OverpackBinloads":  FormatRatio(c.OverpackBinloads),
+		"Flags":             flags, "FlagSummary": flagSummary, "FlagLimit": 200,
+		"Bindings": bindings, "BindingSummary": bindingSummary,
+	})
+
+	// ALL FOUR STATES IN ONE RENDERING. The unit tests hold them apart as values;
+	// this holds them apart as MARKUP, which is where they are finally either
+	// different or not.
+	for _, want := range []string{
+		"de-nodata",                                           // an unknowable binding age, and a never-counted carrier
+		"de-na",                                               // a settled ledger has no negative to size
+		"de-muted",                                            // a ratio whose denominator is below the floor
+		"mf-read-beyond",                                      // the one ledger reading that carries a ring
+		"Beyond one binload", "Within one binload", "Settled", // the printed names
+		"Cannot size",        // the unsizeable negative says so IN WORDS, not as a dash
+		"mf-heading--second", // BOTH sections rendered, not one
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered /material-flags is missing %q", want)
+		}
+	}
+
+	// THE TWO OWNERS ARE NAMED, which is the disambiguation the row exists for. A
+	// reader who cannot tell which section is theirs is the reader the old
+	// "material downtime" wording misled.
+	for _, want := range []string{"Owner: whoever moves material", "Owner: whoever cycle counts"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered /material-flags does not name an owner: missing %q", want)
+		}
+	}
+
+	// NO CLAIM THE DATA CANNOT SUPPORT, all the way to the pixel. Constraints 1
+	// and 2: nothing attributes, and nothing accumulates into a downtime metric.
+	// The page is allowed to say the word "downtime" while DENYING it — which is
+	// why these are phrases and not the bare word.
+	for _, forbidden := range []string{
+		"Total waiting", "Total downtime", "Downtime minutes", "minutes of downtime",
+		"Minutes lost", "caused by", "responsible for",
+	} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("rendered /material-flags contains %q. Constraint 1 is flag-never-"+
+				"attribution and constraint 2 is no-metric-grading-anyone; a total of "+
+				"durations or a named cause breaks one of them.", forbidden)
+		}
+	}
+	// And the denial itself has to be present — a page that merely omits the claim
+	// leaves the reader to make it.
+	if !strings.Contains(out, "It does not record whether a line was stopped") {
+		t.Error("the page does not state what it cannot see. Constraint 3 is state " +
+			"confidence honestly, and the reader has to be told that no line-stopped " +
+			"signal exists anywhere in this data")
+	}
+}
+
 // TestPhase6PagesUseNoChips holds the earned constraint at the markup level.
 //
 // The .chip-* family fails both contrast floors STRUCTURALLY — a chip's fill is
@@ -175,6 +279,7 @@ func TestPhase6PagesUseNoChips(t *testing.T) {
 	for _, page := range []string{
 		"templates/demand-episodes.html",
 		"templates/orphans.html",
+		"templates/material-flags.html",
 		"templates/partials/cells.html",
 	} {
 		raw, err := templateFS.ReadFile(page)

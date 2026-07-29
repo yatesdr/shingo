@@ -43,6 +43,7 @@ package bins
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"shingocore/domain"
@@ -54,7 +55,121 @@ type (
 	NegativeExcursion = domain.NegativeExcursion
 	OpenNegativeBin   = domain.OpenNegativeBin
 	RecordAccuracy    = domain.RecordAccuracy
+	CarrierBinding    = domain.CarrierBinding
 )
+
+// CarrierBindings returns every carrier with the binding ShinGo currently holds
+// about it: the payload, when that binding started, and what the ledger reads.
+//
+// ── WHY THIS IS NOT A FILTERED QUERY ─────────────────────────────────────────
+//
+// It returns ALL carriers and selects none. The selection rule for 5.11 — which
+// bindings are stale-binding candidates — lives in one tested pure function in
+// www, for two reasons. A WHERE clause cannot be unit-tested at its boundary,
+// and more importantly the rule has to be able to include the rows it CANNOT
+// judge: a carrier whose bind predates the audit trail has an unknowable binding
+// age, and a SQL predicate on that column would silently drop it. An absence
+// filtered out by the query is an absence the page can never say it had.
+//
+// Fleet sizes make this affordable: Springfield runs 29 carriers, and the page
+// reads them once per load.
+//
+// ── THE BINDING BOUNDARY, AND WHY IT IS NOT bins.loaded_at ───────────────────
+//
+// bound_at comes from the newest audit.EpochBumpOps row, not from
+// bins.loaded_at. MEASURED, Springfield 2026-07-27: bin 12 carried
+// loaded_at = 07-21 14:46 against a set_for_production at 07-23 15:07, and bin
+// 29 read loaded_at = 07-16 against a boundary at 07-23. loaded_at tracks the
+// physical load and is not written by every path that starts a new count, so it
+// runs EARLIER than the binding and would report ages that are too long — the
+// direction that manufactures candidates.
+//
+// A carrier with no boundary row at all returns NULL rather than being hidden:
+// same rule as OpenNegativeBins and NegativeSince.
+//
+// ── WHY boundaryOps IS A PARAMETER AND NOT audit.EpochBumpOps INLINE ─────────
+//
+// It is exactly that slice, and the caller is store.DB.CarrierBindings, one
+// level up. The op set cannot be referenced from here: depguard's
+// store-sub-pkg-isolation rule forbids a store sub-package from importing a
+// sibling aggregate, because cross-aggregate orchestration belongs at the outer
+// store/ level, and store/audit is a sibling.
+//
+// SO THE ONE THING NOT TO DO IS TYPE THE OPS OUT HERE. A hardcoded op list
+// beside a computed one is the exact drift that flat-lined the velocity chart
+// (Q-036: live unloads write released_capture_empty and released_underpack,
+// which a hand-written three-op filter missed). The parameter keeps one source
+// of truth on the other side of the boundary the linter is enforcing.
+func CarrierBindings(db *sql.DB, boundaryOps []string) ([]CarrierBinding, error) {
+	if len(boundaryOps) == 0 {
+		// An empty set would make bound_at NULL for every carrier — which the view
+		// renders as "age unknown" and lists as a candidate, so EVERY carrier would
+		// be flagged. Refuse rather than produce that: a page where every row is
+		// flagged has flagged nothing, and it would look like a finding.
+		return nil, fmt.Errorf("carrier bindings: no boundary ops supplied — every " +
+			"binding age would read as unknown and every carrier would be a candidate")
+	}
+	// pq.Array is unavailable here (this package takes a bare *sql.DB and the
+	// driver is wired above it), so the op set is expanded as a positional IN list.
+	ph := make([]string, len(boundaryOps))
+	args := make([]any, len(boundaryOps))
+	for i, op := range boundaryOps {
+		ph[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = op
+	}
+
+	q := `
+SELECT b.id, COALESCE(b.label,''), COALESCE(b.payload_code,''), COALESCE(n.name,''),
+       b.uop_remaining,
+       p.uop_capacity,
+       (SELECT MAX(a.applied_at) FROM bin_uop_audit a
+         WHERE a.bin_id = b.id AND a.op IN (` + strings.Join(ph, ",") + `)) AS bound_at,
+       b.last_counted_at,
+       b.anomaly_at
+FROM bins b
+LEFT JOIN nodes n ON n.id = b.node_id
+LEFT JOIN payloads p ON b.payload_code <> '' AND p.code = b.payload_code
+ORDER BY b.id`
+
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("carrier bindings: %w", err)
+	}
+	defer rows.Close()
+
+	var out []CarrierBinding
+	for rows.Next() {
+		var c CarrierBinding
+		// capacity is NULL for an unbound carrier and for a payload row that does
+		// not exist; ZERO for a payload that exists with no capacity set. Both
+		// mean "cannot size a negative", and both are carried as nil rather than
+		// as 0 — a 0 here would divide, and the quotient would render.
+		var capacity sql.NullInt64
+		var boundAt, counted, anomaly sql.NullTime
+		if err := rows.Scan(&c.BinID, &c.Label, &c.PayloadCode, &c.NodeName,
+			&c.UOPRemaining, &capacity, &boundAt, &counted, &anomaly); err != nil {
+			return nil, fmt.Errorf("scan carrier binding: %w", err)
+		}
+		if capacity.Valid && capacity.Int64 > 0 {
+			v := int(capacity.Int64)
+			c.UOPCapacity = &v
+		}
+		if boundAt.Valid {
+			t := boundAt.Time
+			c.BoundAt = &t
+		}
+		if counted.Valid {
+			t := counted.Time
+			c.LastCountedAt = &t
+		}
+		if anomaly.Valid {
+			t := anomaly.Time
+			c.AnomalyAt = &t
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
 
 // NegativeExcursions finds every crossing of zero since `since`, newest first.
 //

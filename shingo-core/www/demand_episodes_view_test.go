@@ -421,6 +421,11 @@ func TestFormatDurationIsCompoundAtTheRightPrecision(t *testing.T) {
 		{45 * time.Minute, "45m"},
 		{time.Hour + 4*time.Minute, "1h 04m"},
 		{4*time.Hour + 12*time.Minute, "4h 12m"},
+		// The days tier, added for 5.11's stale bindings. 23h 59m is still hours;
+		// a day is days. Below the boundary nothing about the ladder moved.
+		{23*time.Hour + 59*time.Minute, "23h 59m"},
+		{24 * time.Hour, "1d 00h"},
+		{22*24*time.Hour + 23*time.Hour + 51*time.Minute, "22d 23h"},
 	} {
 		if got := FormatDuration(tc.d); got != tc.want {
 			t.Errorf("FormatDuration(%s) = %q, want %q", tc.d, got, tc.want)

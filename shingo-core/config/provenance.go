@@ -48,17 +48,35 @@ const (
 	// waiting on material means; the simulator does not and cannot.
 	ProvenanceSME Provenance = "SME-JUDGEMENT"
 
-	// ProvenanceSimDerived — chosen WITHOUT PLANT DATA.
+	// ProvenanceSimDerived — chosen WITHOUT DATA FROM THE PLANT IT WILL RUN AT.
 	//
-	// That covers two methods with one consequence: measured against the
-	// simulator, or reasoned from the code's own arithmetic in the absence of
-	// anything better. Both must be re-derived from real data at a plant, and
-	// both must appear on the deploy watch list. The Note says which it was.
+	// That covers THREE methods with one consequence:
 	//
-	// Kept as one value rather than split because the split would be a
-	// distinction with no operational difference — every SIM-DERIVED constant
-	// takes the same action — and a vocabulary that draws lines nobody acts on
-	// is a vocabulary people stop maintaining.
+	//   1. measured against the simulator;
+	//   2. reasoned from the code's own arithmetic in the absence of anything
+	//      better;
+	//   3. MEASURED AT ONE PLANT, over one window — which is a fact about that
+	//      plant and not about the next one.
+	//
+	// All three must be re-derived from real data at a plant, and all three must
+	// appear on the deploy watch list. The Note says which it was, and for (3) it
+	// must say WHICH plant, WHICH window and HOW MANY samples, because those are
+	// what a reader needs in order to judge whether the number travels.
+	//
+	// The third method was added 2026-07-27 with the 5.11 constants, whose values
+	// come off the Springfield 2026-07-27 dump. The label still reads SIM-DERIVED
+	// and that is now slightly a misnomer; the value was left alone deliberately.
+	// THE VOCABULARY IS ABOUT CONSEQUENCE, NOT METHOD (see above), and (3) takes
+	// exactly the same action as (1) and (2). A fourth Provenance value was
+	// considered and rejected on that rule: it would have split the watch-list
+	// predicate in two for a distinction nobody acts on differently, and a
+	// vocabulary that draws lines nobody acts on is a vocabulary people stop
+	// maintaining.
+	//
+	// The one thing method (3) must NOT be recorded as is ProvenanceSME. A
+	// measurement is not a judgement, SME is the kind that ships without
+	// re-derivation, and taking that exemption for a single-plant measurement is
+	// the exact failure TestSMEExemptionsArePinned exists to make deliberate.
 	ProvenanceSimDerived Provenance = "SIM-DERIVED"
 
 	// ProvenanceStructural — not a measurement at all.
@@ -218,6 +236,32 @@ type DisplayConfig struct {
 	// index of one trip. Those are different failures and one number cannot
 	// express both.
 	RouteIndexMinRobotSamples int `yaml:"route_index_min_robot_samples"`
+
+	// ── Material flags (5.11) ────────────────────────────────────────────────
+
+	// StaleBindingAfter is how long a carrier may hold one binding before that
+	// binding is a CANDIDATE for having gone stale — ShinGo still believes the
+	// carrier holds payload P at node N while the floor has moved on around it.
+	//
+	// THIS IS THE SELECTOR FOR THE LEDGER HALF OF /material-flags, AND THE
+	// LEDGER'S SIGN IS NOT. That is the whole design of the surface: a flag hung
+	// off "uop_remaining < 0" inherits the ledger's noise, and the Springfield
+	// data says so in both directions at once — see the provenance note.
+	StaleBindingAfter time.Duration `yaml:"stale_binding_after"`
+
+	// OverpackBinloads is where a negative ledger stops being explicable as ONE
+	// overpacked carrier, expressed in multiples of that carrier's own payload
+	// capacity rather than in units.
+	//
+	// It CLASSIFIES A READING AND SELECTS NOTHING. A negative shallower than this
+	// is overpack-shaped: more parts went into the carrier than were declared,
+	// which is a cycle count. Deeper than this and one overpack cannot account for
+	// it — more than a binload of parts moved without ShinGo seeing it. Both are
+	// cycle counts and neither is an outage.
+	//
+	// In multiples, not units, because 250-unit and 3,600-unit payloads share this
+	// page: −300 is more than a full carrier of one and a twelfth of the other.
+	OverpackBinloads float64 `yaml:"overpack_binloads"`
 }
 
 // displayProvenance is the registry. One entry per DisplayConfig field, no more
@@ -437,6 +481,52 @@ var displayProvenance = []ConstantProvenance{
 			"and not answerable in the sim, whose robots are interchangeable by " +
 			"construction so every real index is 1.0 and the floor cannot be exercised.",
 	},
+	{
+		Path: "display.stale_binding_after",
+		Kind: ProvenanceSimDerived,
+		Note: "MEASURED AT ONE PLANT AND THEREFORE NOT AT YOURS — method (3) on " +
+			"ProvenanceSimDerived. Source: the Springfield dump of 2026-07-27, " +
+			"bin_uop_audit, 234,725 rows over 82.2 days (2026-05-04 to 2026-07-25) across " +
+			"29 carriers, segmented into 531 completed bindings at the epoch-bumping " +
+			"boundaries (audit.EpochBumpOps). That distribution: p50 = 2h 54m, p90 = 1.98 " +
+			"days, p95 = 4.17 days, p99 = 20.98 days, longest = 22.99 days. 72 hours sits " +
+			"between p90 and p95 and selects 37 of the 531 (7.0%) — roughly one candidate " +
+			"every two days at Springfield's carrier count, which is the actual criterion: " +
+			"a candidate list is only worth anything at a rate a cycle-count owner can work " +
+			"through, and it must be neither empty nor a wall. " +
+			"THE RATE IS PROPORTIONAL TO FLEET SIZE, so this number does not travel: a " +
+			"plant with three times the carriers gets three times the rows from the same " +
+			"threshold, and one running longer campaigns per carrier gets them from a " +
+			"longer line. WHAT A PLANT SHOULD MEASURE INSTEAD: its own binding-duration " +
+			"distribution over a fortnight, segmented the same way, then put the line where " +
+			"the resulting candidate rate matches what the person doing the counting can " +
+			"absorb — and re-check it after any change to campaign length or fleet size, " +
+			"because both move it and neither is a change anyone would think to re-derive a " +
+			"display constant for.",
+	},
+	{
+		Path: "display.overpack_binloads",
+		Kind: ProvenanceSimDerived,
+		Note: "MEASURED AT ONE PLANT (method (3)) against a physical argument, and it " +
+			"CLASSIFIES A READING RATHER THAN SELECTING A ROW — which is the more important " +
+			"half of its provenance, because getting that backwards is the failure the " +
+			"whole surface is built against. The argument for 1.0: an overpack is bounded " +
+			"by what physically fits in one carrier, so a ledger at or past one full " +
+			"capacity below zero cannot be a single overpacked binload however generous the " +
+			"operator was. Springfield agrees that the line separates two populations — of " +
+			"191 negative bindings, 148 (77%) are shallower than one binload with a median " +
+			"duration of 0.10 days, and 43 are deeper with a median of 1.48 days. " +
+			"BUT BOTH TAILS CROSS IT, WHICH IS WHY THIS SELECTS NOTHING: the longest " +
+			"binding in the dump (bin 27, 22.99 days) reads only 0.17 binloads below zero, " +
+			"and the deepest ledger in the dump (bin 39, -10,214 = 10.2 binloads) sat on a " +
+			"binding 1.6 hours old. Depth against binding age correlates at Pearson 0.553 " +
+			"over the negative population — related, and nowhere near the same axis. " +
+			"WHAT A PLANT SHOULD MEASURE INSTEAD: its own depth-in-binloads distribution, " +
+			"and specifically whether it is bimodal at all. The two-population reading " +
+			"above is Springfield's; a plant whose overpacks are routinely two binloads " +
+			"(deeper dunnage, a mis-set capacity) has its shallow mode on the other side of " +
+			"this line and every overpack would read as something worse.",
+	},
 }
 
 // DisplayProvenance returns every display constant's provenance record.
@@ -511,6 +601,8 @@ func DisplayDefaults() DisplayConfig {
 
 		RouteIndexMinRouteSamples: 8,
 		RouteIndexMinRobotSamples: 10,
+		StaleBindingAfter:         72 * time.Hour,
+		OverpackBinloads:          1.0,
 	}
 }
 
@@ -574,6 +666,12 @@ func (c *Config) DisplayConstants() DisplayConfig {
 	if d.RouteIndexMinRobotSamples <= 0 {
 		d.RouteIndexMinRobotSamples = def.RouteIndexMinRobotSamples
 	}
+	if d.StaleBindingAfter <= 0 {
+		d.StaleBindingAfter = def.StaleBindingAfter
+	}
+	if d.OverpackBinloads <= 0 {
+		d.OverpackBinloads = def.OverpackBinloads
+	}
 	return d
 }
 
@@ -597,6 +695,23 @@ func (c *Config) DisplayConstants() DisplayConfig {
 // Returned rather than logged, and never applied as a silent correction: a plant
 // that sets these has made a decision the surface cannot honour, and quietly
 // substituting a value would render numbers nobody chose.
+//
+// STALE_BINDING_AFTER AND OVERPACK_BINLOADS ARE DELIBERATELY ABSENT, and the
+// reasoning is recorded so nobody adds a range check for its own sake. Neither
+// participates in a relationship with another constant: the binding age and the
+// episode duration are independent axes on /material-flags and coupling them
+// here would invent a dependency the surface does not have. Their degenerate
+// values — zero or negative — are already unreachable, because DisplayConstants
+// treats those as unset and falls back to the shipped default. A check that
+// cannot fire is a check that reads as coverage.
+//
+// CALLED FROM handleMaterialFlags, AND BEFORE 2026-07-27 FROM NOWHERE. This
+// function had no production caller at all — only two tests — so the
+// worry/concern ordering it protects was unenforced against a real config file
+// for as long as it has existed. It is reported on the page rather than refused
+// at startup: a display constant must not be able to stop a plant's core from
+// booting. /demand-episodes and /orphans still do not consult it; wiring them is
+// a tail, named here rather than done in passing.
 func (d DisplayConfig) Validate() error {
 	if d.WorryAfter >= d.ConcernAfter {
 		return fmt.Errorf("display: worry_after (%s) must be strictly less than concern_after (%s)",

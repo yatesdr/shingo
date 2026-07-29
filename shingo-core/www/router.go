@@ -152,6 +152,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Get("/orphans", h.handleOrphans)
 		// Phase 6 (5.10): cycle time from the applied-BinUOPDelta audit trail.
 		r.Get("/cycle-time", h.handleCycleTime)
+		// Phase 6 (5.11): the two readings a starved cell can produce, kept
+		// apart — an open demand episode past its worry line, and a carrier
+		// whose binding ShinGo has held long enough for the count to have
+		// drifted. NOT "material downtime": nothing here records whether a line
+		// stopped, and a negative ledger is a cycle count. See
+		// handlers_material_flags.go.
+		r.Get("/material-flags", h.handleMaterialFlags)
 		r.Get("/missions", h.handleMissions)
 		r.Get("/missions/{orderID}", h.handleMissionDetail)
 		r.Get("/traffic", h.handleTraffic)

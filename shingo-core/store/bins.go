@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"shingocore/domain"
+	"shingocore/store/audit"
 	"shingocore/store/bins"
 )
 
@@ -145,6 +146,20 @@ func (db *DB) NegativeLedgerPayloads() (map[string]int, error) {
 // exception list — blank on a good day.
 func (db *DB) OpenNegativeBins() ([]bins.OpenNegativeBin, error) {
 	return bins.OpenNegativeBins(db.DB)
+}
+
+// CarrierBindings lists every carrier with the binding ShinGo currently holds
+// about it and when that binding started. Unfiltered on purpose — the selection
+// rule is a tested pure function in www, and it has to be able to include the
+// carriers whose binding age is unknowable.
+//
+// THE OP SET IS SUPPLIED HERE BECAUSE THIS IS WHERE IT CAN BE. store/bins may
+// not import store/audit (depguard's store-sub-pkg-isolation: cross-aggregate
+// orchestration belongs at this level), so the binding boundary's definition
+// crosses the seam as an argument rather than being retyped on the far side.
+// audit.EpochBumpOps stays the single source of truth for what starts a binding.
+func (db *DB) CarrierBindings() ([]bins.CarrierBinding, error) {
+	return bins.CarrierBindings(db.DB, audit.EpochBumpOps)
 }
 
 // NegativeLedgerExcursions returns zero-crossings since `since`, newest first,

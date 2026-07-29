@@ -1,0 +1,317 @@
+{{define "content"}}
+{{/*
+  material-flags.html — Stage 5.11.
+
+  THE TEMPLATE DOES NO ARITHMETIC AND MAKES NO DECISIONS. Every figure, band,
+  label and absence state arrives already rendered from material_flags_view.go,
+  because a rule that lives in a template is a rule with no test. What is here is
+  markup, class selection and the copy.
+
+  No colour literals, no inline style, and no .chip-* — the family fails both
+  contrast floors structurally (worst 2.89:1), so a classification is a printed
+  name plus a ring, exactly as the duration band and the cause column already do.
+
+  THE TWO SECTIONS ARE NEVER COMBINED INTO ONE INDICATOR. There is no total, no
+  score and no shared count across them. That is the row's whole correction.
+*/}}
+<div>
+  <div class="flex flex-between mb-2">
+    <h1>Material flags</h1>
+  </div>
+
+  <p class="text-muted mb-2">
+    Two readings that look alike on a bad day and go to different people.
+    <strong>A place that has been asking for material</strong>, and
+    <strong>a carrier whose count ShinGo may no longer be entitled to.</strong>
+    They are selected on different columns, they are listed separately, and
+    there is no combined number — reading them as one is what used to send every
+    deep negative to the wrong owner.
+  </p>
+  <p class="mf-caveat mb-2">
+    <strong>Neither section attributes anything, and neither is a downtime
+    figure.</strong> ShinGo records that a place asked for material and when it
+    stopped asking. It does not record whether a line was stopped, whether
+    anybody was waiting, or what it cost — so nothing here is a total of
+    minutes, and nothing here should become one. A count of what is open right
+    now cannot be accumulated into a scorecard; a sum of durations can, which is
+    why there isn't one.
+  </p>
+
+  {{if .ConfigError}}
+  <div class="card mb-2">
+    <strong>The display constants are inconsistent.</strong>
+    <div class="text-muted mt-1">{{.ConfigError}}</div>
+    <div class="text-muted mt-1">
+      The page below is rendering with the resolved values anyway, so read the
+      bands with this in mind. Nothing has been silently substituted.
+    </div>
+  </div>
+  {{end}}
+
+  {{/* ══ SECTION ONE — the flag ══════════════════════════════════════════ */}}
+  <h2 class="mf-heading">Open demand, past the worry line</h2>
+  <p class="text-muted mf-lede">
+    One row per place asking for material right now that has been asking for
+    longer than {{.WorryAfter}}. <strong>Owner: whoever moves material.</strong>
+    Open the episode to see what was ordered against it.
+  </p>
+
+  {{if .FlagError}}
+  <div class="card mb-2">
+    <strong>Could not read demand episodes.</strong>
+    <div class="text-muted mt-1">{{.FlagError}}</div>
+    <div class="text-muted mt-1">
+      This is a read failure, not a quiet floor. The section below is not
+      showing you zero flags — it is showing you nothing at all.
+    </div>
+  </div>
+  {{else}}
+
+  {{with .FlagSummary}}
+  <div class="card mb-2">
+    <div class="card-header-row">
+      <span class="kpi-label">Open episodes right now</span>
+    </div>
+    <div class="de-summary">
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Open</div>
+        <div class="kpi-value tnum">{{.OpenTotal}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Past worry</div>
+        <div class="kpi-value tnum">{{.PastWorry}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Past concern</div>
+        <div class="kpi-value tnum">{{.PastConcern}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Longest open</div>
+        {{template "de-cell-value" .Longest}}
+      </div>
+    </div>
+    {{/*
+      DELIBERATELY NO "TOTAL WAITING" TILE. A sum over durations is the one step
+      that turns this into a downtime-minutes metric, and the data cannot
+      support one — see the caveat above.
+    */}}
+  </div>
+  {{end}}
+
+  {{if .FlagsTruncated}}
+  <div class="card mb-2">
+    <strong>Showing the first {{.FlagLimit}} episodes.</strong>
+    <span class="text-muted">More are open than were read, so the counts above
+    are a floor rather than a total.</span>
+  </div>
+  {{end}}
+
+  {{if .Flags}}
+  <table class="table de-table mf-table">
+    <thead>
+      <tr>
+        <th>Opened</th>
+        <th>Kind</th>
+        <th>Place</th>
+        <th class="col-num">Asking for</th>
+        <th>Band</th>
+        <th class="col-num">Orders</th>
+        <th class="col-num">Expected</th>
+        <th class="col-num">Ratio</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Flags}}
+      <tr class="de-row de-band-{{.Band}} de-open">
+        {{/* THE DOOR. 5.12's forensics for this one demand. */}}
+        <td class="tnum"><a href="/demand-episodes/{{.OriginID}}">{{.OpenedAt.Format "15:04"}}</a></td>
+        <td>{{.KindLabel}}{{if .Direction}} <span class="text-muted">· {{.Direction}}</span>{{end}}</td>
+        <td>
+          <div>{{if .Payload}}{{.Payload}}{{else}}<span class="text-muted">—</span>{{end}}</div>
+          <div class="de-sub">{{.Station}}{{if .CoreNode}} · {{.CoreNode}}{{end}}</div>
+        </td>
+        {{/*
+          The teal ramp carries magnitude only up to the worry line and
+          saturates there; the band is carried by the ring on the row AND the
+          printed name beside it. Never colour alone.
+        */}}
+        <td class="col-num tnum de-ramp-{{.RampStep}}">{{.DurationText}}</td>
+        <td>
+          {{if .BandLabel}}<span class="de-band-name">{{.BandLabel}}</span>{{else}}<span class="de-na"></span>{{end}}
+        </td>
+        <td class="col-num tnum de-orders">{{.OrdersText}}</td>
+        <td class="col-num tnum">{{template "de-cell" .Expected}}</td>
+        <td class="col-num tnum">{{template "de-cell" .Ratio}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p class="de-note">
+    <strong>Confidence:</strong> the duration is exact — it is the difference
+    between two recorded timestamps. Whether it mattered is not recorded
+    anywhere and this page does not guess: a cell can sit past
+    {{.ConcernAfter}} with a full buffer beside it, and a cell can be starved
+    at four minutes. Worry at {{.WorryAfter}}, concern at {{.ConcernAfter}} —
+    both are one person's domain judgement, recorded as such in
+    config/provenance.go, and neither is a measurement.
+  </p>
+  {{else}}
+  <div class="card mb-2">
+    <strong>No open episode is past {{.WorryAfter}}.</strong>
+    <div class="text-muted mt-1">
+      That is a measured result, not a missing feed — the query ran and every
+      open episode is inside the calm band. The counts above say how many are
+      open.
+    </div>
+  </div>
+  {{end}}
+  {{end}}
+
+  {{/* ══ SECTION TWO — a different question ══════════════════════════════ */}}
+  <h2 class="mf-heading mf-heading--second">Bindings ShinGo has held a long time</h2>
+  <p class="text-muted mf-lede">
+    One row per carrier whose <em>binding</em> — the payload ShinGo believes it
+    holds — has stood for longer than {{.StaleBindingAfter}} with no load, clear
+    or release in between. <strong>Owner: whoever cycle counts.</strong>
+  </p>
+  <p class="mf-caveat mb-2">
+    <strong>Selected on the age of the binding, never on the ledger's sign.</strong>
+    A long binding means ShinGo's count has had a long time to drift from the
+    shelf. It does not mean the count <em>is</em> wrong, and it does not mean
+    anything stopped. The ledger column beside it is context: it says what kind
+    of cycle count to expect, not whether to do one.
+  </p>
+
+  {{if .BindingError}}
+  <div class="card mb-2">
+    <strong>Could not read carrier bindings.</strong>
+    <div class="text-muted mt-1">{{.BindingError}}</div>
+    <div class="text-muted mt-1">
+      A read failure, not an absence of candidates. No carrier was examined.
+    </div>
+  </div>
+  {{else}}
+
+  {{with .BindingSummary}}
+  <div class="card mb-2">
+    <div class="card-header-row">
+      <span class="kpi-label">Carriers examined</span>
+    </div>
+    <div class="de-summary">
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Carriers</div>
+        <div class="kpi-value tnum">{{.Carriers}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Holding a payload</div>
+        <div class="kpi-value tnum">{{.Bound}}</div>
+      </div>
+      {{/*
+        THE THREE ABSENCE CATEGORIES, COUNTED APART. "No binding to age" is a
+        question that does not apply — an empty carrier's count cannot have
+        drifted from anything. "Age unknown" is a missing reading, and those
+        carriers ARE listed below, because an age nobody can compute is not an
+        age that can be ruled out.
+      */}}
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">No binding to age</div>
+        <div class="kpi-value tnum">{{.Unbound}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Age unknown</div>
+        <div class="kpi-value tnum">{{.UnknownAge}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Oldest binding</div>
+        {{template "de-cell-value" .Oldest}}
+      </div>
+    </div>
+  </div>
+  {{end}}
+
+  {{if .Bindings}}
+  <table class="table de-table mf-table">
+    <thead>
+      <tr>
+        <th>Carrier</th>
+        <th>Payload</th>
+        <th>At</th>
+        <th class="col-num">Binding age</th>
+        <th>Bound since</th>
+        <th class="col-num">Ledger</th>
+        <th>Ledger reading</th>
+        <th class="col-num">vs capacity</th>
+        <th>Last counted</th>
+        <th>Applier</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Bindings}}
+      <tr class="mf-row mf-read-{{.ReadingClass}}">
+        {{/*
+          TWO DOORS, AND NEITHER IS INVENTED. /bins is where a carrier is
+          actually counted; it takes NO deep-link parameter today, so this links
+          to the page plainly rather than to a ?bin= that nothing reads — an
+          affordance that looks like a jump and silently does nothing is worse
+          than a plain link. Making /bins deep-linkable is a tail, not a thing
+          to fake here. The bound-since timestamp links to the evidence FOR that
+          timestamp: /api/audit/bin/{id} is the carrier's bin_uop_audit
+          timeline, which is where the binding boundary was read from.
+        */}}
+        <td><a href="/bins">{{if .Label}}{{.Label}}{{else}}#{{.BinID}}{{end}}</a></td>
+        <td>{{.Payload}}</td>
+        <td>{{template "de-cell" .Node}}</td>
+        <td class="col-num tnum">{{template "de-cell" .AgeCell}}</td>
+        <td class="tnum de-sub">
+          <a href="/api/audit/bin/{{.BinID}}">{{template "de-cell" .BoundAt}}</a>
+        </td>
+        <td class="col-num tnum">{{template "de-cell" .LedgerCell}}</td>
+        {{/*
+          The reading is a PRINTED NAME plus a ring on the one class that
+          carries a finding. No chip, and never colour alone.
+        */}}
+        <td><span class="mf-read-name">{{template "de-cell" .ReadingCell}}</span></td>
+        <td class="col-num tnum">{{template "de-cell" .Binloads}}</td>
+        <td class="tnum">{{template "de-cell" .LastCounted}}</td>
+        <td class="de-sub">{{template "de-cell" .Anomaly}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p class="de-note">
+    <strong>A negative ledger is a cycle count, not an outage.</strong> It means
+    more parts went into the carrier than were declared, or parts arrived off
+    the books. It does <em>not</em> suppress replenishment and must not: the
+    reading is too low, so the honest response is to keep ordering and get the
+    carrier counted.
+  </p>
+  <p class="de-note">
+    <strong>Confidence:</strong> the binding age is exact where it is shown, and
+    a dash means the audit trail holds no load, clear or release for that
+    carrier — an age nobody knows, not a new binding. Whether a long binding has
+    actually drifted is what the count tells you; this page only says which
+    counts have had the longest to.
+  </p>
+  <p class="de-note">
+    <strong>Why the ledger does not select these rows.</strong> Measured at
+    Springfield over 531 bindings: the longest binding on record — 22d 23h —
+    carried a ledger only 0.2× of one binload below zero, so a depth filter
+    would have missed it, and the deepest ledger on record (10.2× of a binload)
+    sat on a binding 1.6 hours old, so a depth filter would have flagged it.
+    166 of 191 negative bindings lasted under three days. The line at
+    {{.OverpackBinloads}} of a carrier's own capacity is where one overpack
+    stops explaining the number — it classifies the reading and selects nothing.
+  </p>
+  {{else}}
+  <div class="card">
+    <strong>No binding is older than {{.StaleBindingAfter}}.</strong>
+    <div class="text-muted mt-1">
+      A measured result: every carrier holding a payload has been loaded,
+      cleared or released more recently than that, and none has a binding whose
+      age is unknown. The counts above say how many carriers were examined.
+    </div>
+  </div>
+  {{end}}
+  {{end}}
+</div>
+{{end}}

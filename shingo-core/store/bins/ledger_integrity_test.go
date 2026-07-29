@@ -9,6 +9,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/audit"
 	"shingocore/store/bins"
 )
 
@@ -163,5 +164,133 @@ func TestOpenNegativeBins_EmptyWhenHealthy(t *testing.T) {
 	testutil.MustNoErr(t, err, "NegativePayloads")
 	if len(payloads) != 0 {
 		t.Fatalf("healthy plant must produce no negative payloads, got %+v", payloads)
+	}
+}
+
+// ── CarrierBindings (5.11) ───────────────────────────────────────────────────
+//
+// The binding boundary is the one thing here that cannot be checked without a
+// database: it is a correlated MAX over an op set, and getting the set wrong is
+// silent and points the reassuring way. A boundary op MISSING joins two bindings
+// and reports an age too long; a NON-boundary op included cuts one binding in
+// half and hides a real stale one.
+
+func TestCarrierBindings_BoundAtIsTheNewestEpochBumpOnly(t *testing.T) {
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	// TRUNCATED TO THE MICROSECOND, which is Postgres timestamptz's resolution.
+	// Without it the round-trip drops the sub-microsecond nanoseconds Go's clock
+	// supplies and time.Equal fails by ~700ns — a comparison artefact that reads
+	// as a wrong boundary op and sends the next reader after the wrong bug.
+	base := time.Now().UTC().Add(-30 * 24 * time.Hour).Truncate(time.Microsecond)
+
+	b := &bins.Bin{BinTypeID: sd.BinType.ID, Label: "BIND-1", PayloadCode: "PART-A"}
+	testutil.MustNoErr(t, bins.Create(db.DB, b), "create bin")
+	_, err := db.DB.Exec(`UPDATE bins SET uop_remaining=-40, payload_code='PART-A' WHERE id=$1`, b.ID)
+	testutil.MustNoErr(t, err, "set ledger")
+
+	// THE SPRINGFIELD BIN-27 SHAPE, which is why this test exists. A binding
+	// opened by set_for_production, a CYCLE COUNT in the middle of it, and no
+	// boundary since. The binding is 30 days old and must report as 30 days —
+	// RecordCount does not bump delta_epoch, so a recount corrects the count
+	// INSIDE the binding. Treating it as a boundary would report 20 days here
+	// and would have hidden the longest binding in the dump.
+	seedAudit(t, db, b.ID, 0, 2000, "set_for_production", "PART-A", base)
+	seedAudit(t, db, b.ID, 2000, 2000, "manifest_confirmed", "PART-A", base.Add(time.Minute))
+	seedAudit(t, db, b.ID, -700, 4500, "cycle_count", "PART-A", base.Add(10*24*time.Hour))
+	seedAudit(t, db, b.ID, 40, -40, "bin_uop_delta", "PART-A", base.Add(20*24*time.Hour))
+	// Two applier observation rows. Neither bumps the epoch (uop/applier.go says
+	// so in as many words), so neither may move bound_at.
+	seedAudit(t, db, b.ID, -40, -40, "stale_epoch_dropped", "PART-A", base.Add(25*24*time.Hour))
+	seedAudit(t, db, b.ID, -40, -40, "payload_mismatch_dropped", "PART-A", base.Add(26*24*time.Hour))
+
+	got, err := bins.CarrierBindings(db.DB, audit.EpochBumpOps)
+	testutil.MustNoErr(t, err, "CarrierBindings")
+
+	var row *bins.CarrierBinding
+	for i := range got {
+		if got[i].BinID == b.ID {
+			row = &got[i]
+		}
+	}
+	if row == nil {
+		t.Fatalf("bin %d missing from CarrierBindings: %+v", b.ID, got)
+	}
+	if row.BoundAt == nil {
+		t.Fatal("bound_at is nil, but a set_for_production row exists")
+	}
+	if !row.BoundAt.Equal(base) {
+		t.Errorf("bound_at = %s, want %s (the set_for_production). A cycle count, a "+
+			"manifest confirm, a delta or an applier drop row must NOT move it — none of "+
+			"them bumps delta_epoch, and treating one as a boundary cuts the binding short "+
+			"and hides a genuinely stale one.", row.BoundAt, base)
+	}
+	if row.UOPRemaining != -40 {
+		t.Errorf("uop_remaining = %d, want -40 (never clamped)", row.UOPRemaining)
+	}
+	if row.UOPCapacity == nil || *row.UOPCapacity != 1000 {
+		t.Errorf("uop_capacity = %v, want 1000 — without it a negative cannot be sized", row.UOPCapacity)
+	}
+
+	// And a release AFTER all of it does start a new binding.
+	later := base.Add(28 * 24 * time.Hour)
+	seedAudit(t, db, b.ID, -40, 0, "released_underpack", "PART-A", later)
+	got2, err := bins.CarrierBindings(db.DB, audit.EpochBumpOps)
+	testutil.MustNoErr(t, err, "CarrierBindings after release")
+	for _, r := range got2 {
+		if r.BinID == b.ID && (r.BoundAt == nil || !r.BoundAt.Equal(later)) {
+			t.Errorf("after a release, bound_at = %v, want %s", r.BoundAt, later)
+		}
+	}
+}
+
+// A carrier with no boundary row at all reports NIL, not the zero time and not
+// "just bound". The absence has to survive the query, or the page can never say
+// it had it.
+func TestCarrierBindings_PreservesEveryAbsence(t *testing.T) {
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+
+	noHistory := &bins.Bin{BinTypeID: sd.BinType.ID, Label: "NO-HISTORY", PayloadCode: "PART-A"}
+	testutil.MustNoErr(t, bins.Create(db.DB, noHistory), "create bin")
+	_, err := db.DB.Exec(`UPDATE bins SET payload_code='PART-A', uop_remaining=5 WHERE id=$1`, noHistory.ID)
+	testutil.MustNoErr(t, err, "bind it")
+
+	unbound := &bins.Bin{BinTypeID: sd.BinType.ID, Label: "UNBOUND"}
+	testutil.MustNoErr(t, bins.Create(db.DB, unbound), "create unbound bin")
+
+	// A bound payload that is NOT in the payloads table at all: capacity has to
+	// come back nil rather than zero, so a negative on it renders as "cannot
+	// size" instead of as zero binloads.
+	unknownPayload := &bins.Bin{BinTypeID: sd.BinType.ID, Label: "UNKNOWN-PAYLOAD"}
+	testutil.MustNoErr(t, bins.Create(db.DB, unknownPayload), "create bin")
+	_, err = db.DB.Exec(`UPDATE bins SET payload_code='PART-GHOST', uop_remaining=-9 WHERE id=$1`, unknownPayload.ID)
+	testutil.MustNoErr(t, err, "bind a payload with no catalog row")
+
+	got, err := bins.CarrierBindings(db.DB, audit.EpochBumpOps)
+	testutil.MustNoErr(t, err, "CarrierBindings")
+
+	by := map[int64]bins.CarrierBinding{}
+	for _, r := range got {
+		by[r.BinID] = r
+	}
+
+	if r := by[noHistory.ID]; r.BoundAt != nil {
+		t.Errorf("a carrier with no boundary row reported bound_at = %s. NIL is the only "+
+			"honest answer — a zero time would render as an age of decades and the epoch "+
+			"as an age of zero, and both are inventions", r.BoundAt)
+	}
+	if r := by[unbound.ID]; r.PayloadCode != "" {
+		t.Errorf("unbound carrier reported payload %q", r.PayloadCode)
+	}
+	if r := by[unbound.ID]; r.UOPCapacity != nil {
+		t.Errorf("unbound carrier reported a capacity (%v); there is no payload to have one", r.UOPCapacity)
+	}
+	if r := by[unknownPayload.ID]; r.UOPCapacity != nil {
+		t.Errorf("a payload with no catalog row reported capacity %v, want nil. Zero would "+
+			"be divided by, and the quotient would render as a measurement", r.UOPCapacity)
+	}
+	if r := by[unknownPayload.ID]; r.UOPRemaining != -9 {
+		t.Errorf("uop_remaining = %d, want -9", r.UOPRemaining)
 	}
 }

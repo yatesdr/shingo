@@ -102,6 +102,10 @@ type ServiceAccess interface {
 	// list: how much count was dropped per payload, against that payload's
 	// current ledger total. Also read-side only.
 	DeltaIntegrityByPayload(since time.Time) ([]domain.DeltaIntegrity, error)
+	// CarrierBindings is 5.11's ledger half: every carrier, the payload ShinGo
+	// believes it holds, and when that belief last started. Unfiltered — the
+	// candidate rule is a pure function in this package.
+	CarrierBindings() ([]domain.CarrierBinding, error)
 
 	// SourceabilityEvents is the persisted verdict-change history (Phase 5).
 	SourceabilityEvents(since time.Time, processID, payload string, limit int) ([]domain.SourceabilityEvent, error)

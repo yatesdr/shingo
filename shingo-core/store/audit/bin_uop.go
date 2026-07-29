@@ -138,6 +138,57 @@ var ReleaseFamilyOps = []string{
 	OpReleasedUnderpack,
 }
 
+// EpochBumpOps is the canonical set of ops whose write also bumps the bin's
+// delta_epoch — i.e. every op that RETIRES ONE BINDING AND STARTS THE NEXT.
+//
+// A "binding" is the span between two of these: the period during which ShinGo
+// believes one carrier holds one payload and every delta it accepts is counted
+// against that belief. It is the grain the 5.11 stale-binding candidates are
+// measured on (store/bins.CarrierBindings), and it is derivable from
+// bin_uop_audit alone because a bump always writes one of these rows in the same
+// transaction (service/bin_manifest.go — bumpEpoch is called from five places and
+// each one appends an op below).
+//
+// A SUPERSET OF ReleaseFamilyOps, AND THE DIFFERENCE IS THE POINT. That set
+// answers "was the carrier emptied" and deliberately excludes clear_and_claim,
+// because a clear that immediately re-assigns the bin is a re-purpose rather than
+// an unload. This set answers "did the count start over", and clear_and_claim
+// does start it over — so does set_for_production, which is not an unload at all.
+// Two questions, two sets; folding them would make one of the two answers wrong.
+//
+// NOT included, and each for a checked reason:
+//
+//   - cycle_count — service/bin_service.go:RecordCount does NOT bump the epoch.
+//     It corrects the count INSIDE the binding, which is why a bin can carry a
+//     22-day binding with a recount in the middle of it (Springfield bin 27).
+//     Treating it as a boundary would have cut that binding in two and hidden
+//     the longest one in the dump.
+//   - manifest_confirmed — a confirmation of the manifest just written, not a
+//     new one.
+//   - the two DROP ops and the two payload-bind ops — observation rows
+//     (before == after) written by the applier, which explicitly does not bump
+//     (see uop/applier.go: "Deliberately NO delta_epoch bump in either case").
+//   - operator_override_release_partial / operator_override_pull_parts —
+//     AuditReleaseOverride writes them on s.db with no transaction and no bump.
+//     They record that the operator's number differed from the suggested one
+//     ALONGSIDE a release that has its own row in this set; counting them would
+//     double a boundary rather than add one.
+//
+// TestEpochBumpOpsCoversEveryBumpSite pins the five call sites, so a sixth
+// arrives as a failing test pointing here rather than as a binding age that is
+// silently too long.
+var EpochBumpOps = []string{
+	OpSetForProduction,
+	OpClearAndClaim,
+	OpClearForReuse,
+	OpReleasedEmpty,
+	OpReleasedPartial,
+	OpReleasedEmptyFallback,
+	OpReleasedPartialFallback,
+	OpReleasedCaptureEmpty,
+	OpReleasedUnderpack,
+}
+
 // BinUOPExecer is the minimal interface satisfied by *sql.Tx and *sql.DB.
 // AppendBinUOP takes it so the audit insert participates in the caller's
 // transaction when one exists, falling back to the connection pool when

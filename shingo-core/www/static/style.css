@@ -2204,3 +2204,59 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
   min-width: 170px;
 }
 .ct-axis-mid { color: var(--accent); }
+
+/* ══ Stage 5.11 — material flags ═══════════════════════════════════════════
+ *
+ * NO COLOUR LITERALS, no .chip-*, no inline style. The two classifications on
+ * this page — the duration band and the ledger reading — each take a PRINTED
+ * NAME plus a ring from the substrate ramp, which is the treatment 5.2 and 5.14
+ * already established here: structure recedes, state glows, and never colour
+ * alone.
+ *
+ * The page reuses .de-* wholesale (the three absence states, the table, the
+ * duration ramp, the band ring, the summary strip) rather than restating them
+ * under an mf- prefix. A second copy of the absence styling is how two surfaces
+ * start disagreeing about what an em dash means — the same argument
+ * partials/cells.html makes for the renderer. What is genuinely new is below,
+ * and it is only the two-section chrome plus the ledger reading's ring.
+ */
+
+/* The section headings. This page carries TWO grains on purpose, so each one
+ * has to read as its own section rather than as a continuation of the last —
+ * the tick is what stops the second table looking like more rows of the first. */
+.mf-heading {
+  font-size: var(--font-lg);
+  margin-bottom: 0.25rem;
+  padding-left: 0.6rem;
+  border-left: 3px solid var(--accent);
+}
+.mf-heading--second { margin-top: 2rem; }
+.mf-lede { font-size: var(--font-sm); margin-bottom: 0.5rem; }
+
+/* The caveat paragraphs carry the constraints — flag not attribution, no
+ * downtime total, selected on age and not on the ledger's sign. Set apart from
+ * body copy because they are load-bearing rather than introductory, and drawn
+ * from the substrate ramp because a caveat is structure, not state. */
+.mf-caveat {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  border-left: 2px solid var(--sub-2);
+  padding-left: 0.6rem;
+}
+
+.mf-table td { vertical-align: middle; }
+.mf-row td { vertical-align: middle; }
+.mf-read-name { font-size: var(--font-sm); }
+
+/* THE RING GOES ON ONE READING ONLY. "Beyond one binload" is the reading that
+ * carries a finding: one overpacked carrier cannot account for the number, so
+ * more than a binload of parts moved without ShinGo seeing it. Settled, within
+ * one binload, and cannot-size are the ordinary readings and get no emphasis —
+ * a page where every row is marked has marked nothing.
+ *
+ * NOT A SEVERITY RAMP, and deliberately not on the row's ledger value. The row
+ * was selected by its BINDING AGE; the reading is context. Emphasising it as
+ * though it were the selector is exactly the conflation this surface exists to
+ * undo. */
+.mf-read-beyond { box-shadow: inset 3px 0 0 0 var(--accent); }
+.mf-read-beyond .mf-read-name { color: var(--accent); }
