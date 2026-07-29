@@ -24,8 +24,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"shingocore/store/reconciliation"
 )
 
 // buildInfo is stamped once at boot by the composition root. Version and
@@ -167,7 +165,12 @@ type CoreHealth struct {
 	// CompletionAnomaliesTotal is every one on record, so a green strip can
 	// still say "and there are 10 older ones" rather than implying none exist.
 	CompletionAnomaliesTotal int `json:"completion_anomalies_total"`
-	SSEClients               int `json:"sse_clients"`
+	// CompletionAnomalyWindowHours comes off the reconciliation summary rather
+	// than from the constant directly: www may not import the store (depguard
+	// 'www-no-direct-store'), and carrying the number on the payload keeps the
+	// sentence and the rule that produced it from drifting apart anyway.
+	CompletionAnomalyWindowHours int `json:"completion_anomaly_window_hours"`
+	SSEClients                   int `json:"sse_clients"`
 }
 
 const (
@@ -220,6 +223,7 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 		c.DeadLetters = recon.DeadLetters
 		c.CompletionAnomalies = recon.CompletionAnomalies
 		c.CompletionAnomaliesTotal = recon.CompletionAnomaliesTotal
+		c.CompletionAnomalyWindowHours = recon.CompletionAnomalyWindowHours
 	}
 
 	if !depsOK {
@@ -270,7 +274,7 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 		reasons = append(reasons, fmt.Sprintf("%d order-completion %s in the last %s",
 			c.CompletionAnomalies,
 			plural(c.CompletionAnomalies, "anomaly", "anomalies"),
-			formatWindow(reconciliation.CompletionAnomalyWindow)))
+			formatWindow(c.CompletionAnomalyWindowHours)))
 	}
 	return reasons
 }
@@ -285,13 +289,14 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-// formatWindow renders a whole-hour duration as "24h", falling back to the
-// stdlib form for anything finer.
-func formatWindow(d time.Duration) string {
-	if d >= time.Hour && d%time.Hour == 0 {
-		return fmt.Sprintf("%dh", int(d/time.Hour))
+// formatWindow renders the anomaly window for the reason sentence. Takes hours
+// rather than a Duration because the value arrives on the summary payload —
+// see CompletionAnomalyWindowHours for why it is not read off the constant.
+func formatWindow(hours int) string {
+	if hours <= 0 {
+		return "the window"
 	}
-	return d.String()
+	return fmt.Sprintf("%dh", hours)
 }
 
 // formatUptime renders the largest meaningful unit and the one below it.

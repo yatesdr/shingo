@@ -85,14 +85,14 @@ type Summary struct {
 	// than restated: the strip labels its tile from this, so the label cannot
 	// drift from the constant the verdict actually uses.
 	CompletionAnomalyWindowHours int        `json:"completion_anomaly_window_hours"`
-	StuckOrders         int        `json:"stuck_orders"`
-	ExpiredStagedBins   int        `json:"expired_staged_bins"`
-	StaleEdges          int        `json:"stale_edges"`
-	TotalAnomalies      int        `json:"total_anomalies"`
-	OutboxPending       int        `json:"outbox_pending"`
-	OldestOutboxAt      *time.Time `json:"oldest_outbox_at,omitempty"`
-	DeadLetters         int        `json:"dead_letters"`
-	Status              string     `json:"status"`
+	StuckOrders                  int        `json:"stuck_orders"`
+	ExpiredStagedBins            int        `json:"expired_staged_bins"`
+	StaleEdges                   int        `json:"stale_edges"`
+	TotalAnomalies               int        `json:"total_anomalies"`
+	OutboxPending                int        `json:"outbox_pending"`
+	OldestOutboxAt               *time.Time `json:"oldest_outbox_at,omitempty"`
+	DeadLetters                  int        `json:"dead_letters"`
+	Status                       string     `json:"status"`
 }
 
 // ListOrderCompletionAnomalies surfaces high-risk drift between
