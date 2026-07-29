@@ -65,18 +65,26 @@ var signalConcernPairs = [][2]string{
 	// confused with "a robot is stuck"; this asks whether the ramp's ENDS
 	// stayed apart too, which is the question the adjacent check misses.
 	//
-	// It is the headline B2 result and it is NOT a knownCollapses entry,
-	// because the pill's TEXT rescues it (16.7 protanopia, 10.0
-	// deuteranopia) and the floor below passes a pair on its best channel.
-	// On the BACKGROUND channel alone — which is the channel the palette
-	// header promises operators can read "without reading the label" — the
-	// dark theme's warm ramp does flatten: sourcing #2b2410 and failed
-	// #450a0a are 22.5 apart for normal vision and 2.70 / 3.32 apart under
-	// protanopia / deuteranopia. It also REORDERS. The three simulate to
-	// #252510 (sourcing), #2e2e05 (faulted) and #1e1e09 (failed), so the
-	// benign end and the failure end land beside each other with the
-	// attention state outside them. The -v log prints the background and
-	// text columns separately; that is where this is visible.
+	// It was the headline B2 result, and it is FIXED as of 2026-07-26.
+	//
+	// What it found: on the BACKGROUND channel alone — the channel the
+	// palette header promises operators can read "without reading the label"
+	// — the dark warm ramp flattened. sourcing #2b2410 and failed #450a0a
+	// measured 22.5 apart for normal vision and 2.70 / 3.32 under protanopia
+	// / deuteranopia, and they also REORDERED: the three simulated to
+	// #252510 (sourcing), #2e2e05 (faulted) and #1e1e09 (failed), putting the
+	// benign end beside the failure end with the attention state outside
+	// them. It was never a knownCollapses entry because the pill's TEXT
+	// rescued it (16.7 / 10.0) and the floor passes a pair on its best
+	// channel — which is precisely how a background-channel defect hides
+	// from a best-channel floor.
+	//
+	// Fixed by lifting dark sourcing to #3e3a1e — on lightness, not hue,
+	// because measurement said the hue move the style guide asks for has
+	// nowhere to go. Now 9.79 protanopia and 6.15 deuteranopia on the
+	// background alone. The pair stays listed: it is the ends of a
+	// three-step ramp, so it has to keep being measured, and a pair that
+	// stops being checked once it passes is a pair that quietly regresses.
 	{"sourcing", "failed"},
 	// teal vs green: "bin is at the destination, waiting for the next step"
 	// against "this order is finished". The most expensive confusion on the
@@ -122,16 +130,15 @@ var knownCollapses = []knownCollapse{
 	{"dark", "dispatched", "in_transit", "tritanopia", 4.624, "blue vs cyan, the top of the same cool band"},
 	{"light", "dispatched", "in_transit", "tritanopia", 4.822, "blue vs cyan"},
 
-	// ── pending vs skipped: the finding that needs no colour deficiency at
-	// all. Both are quiet slate and their BACKGROUNDS are 0.58 apart in
-	// light and 1.41 in dark for NORMAL vision. The comment on .badge-skipped
-	// records the collision it was avoiding (cancelled grey) and it did avoid
-	// that one; nothing compared it against pending.
-	{"light", "pending", "skipped", "normal", 4.628, "backgrounds 0.58 apart for NORMAL vision; only the label separates them"},
-	{"light", "pending", "skipped", "protanopia", 4.604, "as normal vision — the collision is not a CVD effect"},
-	{"light", "pending", "skipped", "deuteranopia", 4.513, "as normal vision"},
-	{"light", "pending", "skipped", "tritanopia", 4.166, "as normal vision"},
-	{"dark", "pending", "skipped", "tritanopia", 4.885, "backgrounds 1.60 apart"},
+	// ── pending vs skipped was five entries here and is now none of them.
+	// It was the finding that needed no colour deficiency at all — two
+	// quiet slates 0.58 apart in light and 1.41 in dark for NORMAL vision,
+	// carried entirely by their labels. Fixed by re-stepping the pair on
+	// the slate ramp rather than re-hueing either one (see
+	// .badge-skipped in status-classes.css): backgrounds now separate by
+	// 7.4 in light and 6.1 in dark, and by almost exactly that same number
+	// under all three dichromacies, because lightness is the axis none of
+	// them remove. This test is what said the entries had gone stale.
 
 	// ── staged vs reshuffling under deuteranopia: teal against pink. Both
 	// are mid-lightness and both lose their distinguishing channel.

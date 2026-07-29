@@ -35,7 +35,16 @@
    * brightest body text (floor boards), --text-tertiary the faintest labels.
    * Never pure white/black. */
   --text: #212529;
-  --text-muted: #6c757d;
+  /* Was #6c757d, which cleared AA on a card (4.69:1) and missed it on the
+   * page (4.33:1) — and it is the app's secondary text everywhere, plus the
+   * alias behind --viz-secondary, so "meets AA depending on what it happens
+   * to be sitting on" was the actual shipped behaviour. Nudged one step
+   * darker until the WORSE of the two surfaces clears: 4.58:1 on --bg and
+   * 4.96:1 on --surface. A token used in two places has to pass in the
+   * worse one; holding it to the better one is measuring the case that
+   * cannot fail. Dark's #8b949e already clears both (6.15 / 5.62) and is
+   * deliberately untouched. */
+  --text-muted: #68717a;
   --text-strong: #11161c;
   --text-tertiary: #8a929c;
 

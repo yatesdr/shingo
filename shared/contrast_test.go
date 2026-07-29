@@ -224,11 +224,18 @@ var vizRoles = map[string]vizRole{
 // number exists at all.
 //
 // Chart text is held to AA against --surface and only to the non-text floor
-// against --bg, because charts are painted inside .card. That is a real
-// dependency and worth writing down: --viz-secondary aliases --text-muted,
-// which is 4.69:1 on a card and 4.33:1 on the page. Move a chart's labels out
-// of a card and they stop meeting AA — not because this token changed, but
-// because --text-muted has never met AA on --bg for anything.
+// against --bg, because charts are painted inside .card. That asymmetry used
+// to be load-bearing: --viz-secondary aliases --text-muted, which measured
+// 4.69:1 on a card and 4.33:1 on the page, so moving a chart's labels out of
+// a card stopped them meeting AA — and not because of anything chart-shaped,
+// but because --text-muted had never met AA on --bg for anything.
+//
+// --text-muted was nudged to #68717a on 2026-07-26 and now clears AA on both
+// surfaces (4.58:1 on --bg, 4.96:1 on --surface), so that particular trap is
+// gone. The asymmetry in the floors STAYS, because it is about where charts
+// live rather than about this one token: a future --viz-* mark colour is
+// still only held to 3:1 on the page, and the reason to keep measuring both
+// surfaces is that the second number exists at all.
 func TestVizTokenContrastAgainstSurfaces(t *testing.T) {
 	src := readShared(t, "tokens.css")
 	themes := tokenThemes(t, src)

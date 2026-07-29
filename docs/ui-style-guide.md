@@ -328,6 +328,43 @@ EARLY (3 graduated calm tints:           →  SUBMITTED (steel blue)
 light (L≥86) and dark text stays bright (L≥68); only `faulted` and `failed` may
 go below that. All text-on-pill pairs clear WCAG AA (≥4.5:1) in both themes.
 
+**Step rule — two pills one step apart in the story must be more than one step
+apart in colour.** `pending` and `skipped` shipped 0.58 CIEDE2000 apart in
+light for *normal* vision — a tenth of the 5.0 distinction floor, i.e. the same
+colour with two labels — while meaning opposite ends of an order's life
+("nothing has started" against "this was never needed"). Neither rule above
+catches that: both pills were individually legal. Fixed by re-stepping the pair
+on the slate ramp rather than re-hueing either one, which separates them on
+**lightness** — the one axis all three dichromacies preserve, and the reason
+the four measured values (7.43 / 7.46 / 7.85 / 7.39) are almost the same
+number. A hue separation never looks like that. `shared/signal_cvd_test.go`
+measures every adjacent pair and every same-family pair, and pins each one that
+falls short with the value it actually measures.
+
+### The two chip floors
+
+Both apply to any pill — Signal badge or health chip — and they are separate
+questions:
+
+1. **Text on pill ≥ 4.5:1.** Can you read the label. Enforced for badges by
+   `TestSignalBadgeTextClearsAA`.
+2. **Pill against surface ≥ 3:1.** Can you see there *is* a pill, against both
+   `--surface` (cards) and `--bg` (the page). WCAG 2.2 SC 1.4.11.
+
+**The `.chip-*` health vocabulary meets neither yet, and the reason is
+structural rather than a tuning miss.** A chip's fill is `color-mix` of *its own
+label colour* over the surface, so the two floors pull against each other: lower
+the mix percentage and the text gets more readable while the pill gets more
+invisible; raise it and the reverse. No percentage satisfies both. A badge
+escapes this because its foreground and background are chosen independently.
+Fifteen of twenty-eight (theme × chip × surface) combinations are below AA on
+text — worst `.chip-ok` at 2.89:1 — and nothing in the family reaches 3:1 on
+the boundary. **`.chip-err`, the one that was fixed after the 1.2:1 incident,
+measures 4.17:1 and is still under the floor.** The fix is an ink colour per
+chip, distinct from its fill; until then `shared/chip_contrast_test.go` holds
+both floors as ratchets at the measured worst so nothing degrades further, and
+fails when a ratchet goes stale so improvement is recorded rather than lost.
+
 **Hue rule — warm is for alerts.** `faulted` moved off amber to orange because
 amber put it in the same hue family as `sourcing`'s sand: pill *weight* was the
 only thing distinguishing "quietly looking for material" from "a robot is
@@ -336,6 +373,30 @@ now reads as three separable steps — sand (benign, early) → orange (attentio
 → red (failed) — which also tracks the lifecycle, since `faulted` either
 recovers or becomes `failed`. When adding a status, do not put a benign state
 on a warm hue.
+
+**Amended 2026-07-26 — state the invariant, not the proxy.** The rule above is
+a proxy, and the palette ran out of room to satisfy it. `sourcing` is a benign
+state on a warm hue and always was; the dark theme showed the cost, with
+`sourcing` and `failed` collapsing to 2.70 CIEDE2000 under protanopia and the
+three warm steps *reordering* — benign beside dead-order, attention outside
+them. The literal fix is unavailable: measured, every cool candidate for
+`sourcing` lands 0.77–1.2 from `in_transit`, `pending` or `queued`, because
+the cool band already carries eight statuses, and violet is barred by P13. A
+13-status palette at one flat weight has no free hue.
+
+**The invariant the proxy was protecting: a benign state must never be
+confusable with an alert state, on any channel, under any of the three
+dichromacies.** Hue is the usual way to get that and it is still the default.
+When hue is unavailable, take it on **lightness** — the one axis all three
+dichromacies preserve, which is why a lightness separation measures the same
+number four times and a hue separation never does. `sourcing` was lifted to
+`#3e3a1e` in dark and every pair it touches now clears the floor. Light was
+left alone, because the same deepening there drops `delivered` to 0.52 under
+protanopia — worse than the problem.
+
+The real conclusion is about the palette rather than about `sourcing`: **13
+statuses at one calm weight is at capacity.** The next status added cannot be
+given a hue; it will have to be given a weight, or something has to leave.
 
 **Per-phase hues in the active band:**
 

@@ -78,7 +78,7 @@
  * quiet and clearly "waiting", but each stage distinct: pending is the
  * coolest slate, sourcing warms to sand ("actively looking for material"),
  * queued shifts to periwinkle, leading into the submitted steel blue. */
-.badge-pending      { background: #e2e8f0; color: #475569; border-color: #cbd5e1; }
+.badge-pending      { background: #eef2f7; color: #475569; border-color: #dbe2ea; }
 .badge-sourcing     { background: #fef3e2; color: #92660c; border-color: #fce0b8; }
 .badge-queued       { background: #dde6fb; color: #3457b0; border-color: #c4cff5; }
 
@@ -112,8 +112,30 @@
 
 /* ── Terminal — no-op ─────────────────────────────────────────────────
  * skipped is a benign "work was never needed" — a muted cool slate-blue,
- * deliberately NOT the cancelled grey (grey is reserved for cancelled). */
-.badge-skipped      { background: #e0e7f0; color: #51607a; border-color: #c3cede; }
+ * deliberately NOT the cancelled grey (grey is reserved for cancelled).
+ *
+ * RE-STEPPED, not re-hued. skipped and pending were slate-200 and a
+ * near-twin of it: 0.58 CIEDE2000 apart in light for NORMAL vision, which
+ * is a tenth of the distinction floor and well inside "the same colour".
+ * The original comment records the collision it was avoiding — cancelled's
+ * grey — and it did avoid that one; nothing ever compared it against
+ * pending, which is the more expensive confusion of the two because the
+ * states are semantically distant. "Nothing has started" and "this was
+ * never needed" are opposite ends of the order's life.
+ *
+ * The fix is a full step on the same slate ramp rather than a new hue,
+ * and the pair moves apart from both sides: pending goes up to slate-100
+ * and skipped down to slate-300. That separates them on LIGHTNESS, which
+ * is the axis all three dichromacies preserve — measured 7.43 normal,
+ * 7.46 protanopia, 7.85 deuteranopia, 7.39 tritanopia, i.e. essentially
+ * the same number four times, which is what a lightness separation looks
+ * like and what a hue separation never does. Re-hueing into the cool band
+ * was rejected on measurement: it is already carrying eight statuses and
+ * every candidate traded the pending collision for a new one against
+ * queued or dispatched.
+ *
+ * Text moves with the background to hold AA: 6.02:1 on the new pill. */
+.badge-skipped      { background: #cbd5e1; color: #3d4a61; border-color: #aeb9c9; }
 
 /* ── Terminal — needs attention ───────────────────────────────────────
  * Deep orange — the order completed abnormally and a human needs to act.
@@ -143,7 +165,33 @@
 
 /* Early lifecycle — dark (three graduated calm tints, matching light) */
 [data-theme="dark"] .badge-pending      { background: #1a1f2b; color: #94a3b8; border-color: #2b323f; }
-[data-theme="dark"] .badge-sourcing     { background: #2b2410; color: #d8a531; border-color: #3f3318; }
+/* Sourcing — dark. LIFTED off the warm ramp's dark end, and the hue stays.
+ *
+ * The defect: at #2b2410 this pill and failed's #450a0a simulated to near
+ * neighbours under protanopia (2.70) and deuteranopia (3.34), with faulted
+ * landing BETWEEN them — so the ramp did not merely flatten, it reordered,
+ * and the benign end sat next to the dead-order end. warn was 0.93 away
+ * under tritanopia and confirmed 1.58 under protanopia.
+ *
+ * The obvious fix was to take sourcing off the warm hue entirely, which the
+ * style guide's own rule asks for. Measured, and it is not available: every
+ * cool candidate lands 0.77-1.2 from in_transit, pending or queued, because
+ * the cool band already carries eight statuses; and violet is barred by P13,
+ * which vacated it deliberately for the UI accent. A 13-status palette at one
+ * flat weight has no free hue left.
+ *
+ * So the separation is taken on LIGHTNESS instead — the axis all three
+ * dichromacies preserve, and the same move that fixed pending/skipped. At
+ * #3e3a1e nothing sourcing touches is below the floor: failed 9.79 protanopia
+ * and 6.15 deuteranopia, faulted 5.11, confirmed 6.10, warn 6.66, and the
+ * reorder is gone because the three warm steps now separate by weight in the
+ * order they mean. Text is unchanged at #d8a531 and still clears AA (5.11:1).
+ *
+ * The cost is honest: this is a heavier pill than its band-mates in dark, and
+ * "early states are quiet" gives up a little to "benign is never confusable
+ * with dead". Light is deliberately NOT changed — the same deepening there
+ * drops delivered to 0.52 under protanopia, i.e. strictly worse. */
+[data-theme="dark"] .badge-sourcing     { background: #3e3a1e; color: #d8a531; border-color: #5a5430; }
 [data-theme="dark"] .badge-queued       { background: #181d39; color: #9fb0ff; border-color: #283058; }
 
 /* Submitted / acknowledged — dark */
@@ -161,7 +209,15 @@
 [data-theme="dark"] .badge-confirmed    { background: #052e16; color: #4ade80; border-color: #14532d; }
 
 /* No-op (skipped) — dark: muted slate-blue, distinct from cancelled grey */
-[data-theme="dark"] .badge-skipped      { background: #1b2230; color: #8593ad; border-color: #2b3445; }
+/* Dark: skipped alone carries the re-step, and pending deliberately does
+ * NOT move with it. The light theme separates the pair from both sides,
+ * but the equivalent move here — pending darker, toward the page — was
+ * measured and rejected: at #161c27 it lands 0.61 CIEDE2000 from
+ * reshuffling under protanopia, trading a fixed collision for a worse one.
+ * Lifting skipped alone is enough (6.12–6.55 across the four vision types,
+ * up from 1.41–1.60) and leaves every other pending relationship
+ * untouched. Text lifts with it: 5.98:1. */
+[data-theme="dark"] .badge-skipped      { background: #273044; color: #9fb0c9; border-color: #3a4761; }
 
 /* Cancelled — dark: the one allowed grey, contrast-corrected */
 [data-theme="dark"] .badge-cancelled    { background: #1c1f26; color: #9ca3af; border-color: #2d313c; }

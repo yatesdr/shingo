@@ -35,9 +35,24 @@ test:
 
 # Reap any testcontainers (and their anonymous volumes) left behind by the
 # docker-tagged tests. The testdb harness shares one postgres:16-alpine per
-# test process and doesn't store the handle to Terminate it, and Ryuk (the
-# testcontainers auto-reaper) is off in our runs — so without this, every
-# `test-all`/`cover` leaks one container + its ~80MB data volume per package.
+# test process and doesn't store the handle to Terminate it, so nothing in
+# this repo can call Terminate on one.
+#
+# CORRECTED 2026-07-26. This comment used to say "Ryuk (the testcontainers
+# auto-reaper) is off in our runs". It is not. Measured on WSL here: a
+# docker-tagged run starts testcontainers/ryuk:0.13.0 alongside its postgres
+# and reaps BOTH — 25s after a clean exit, and within 40s after the run was
+# killed mid-test. The old sentence is recorded rather than deleted because it
+# was load-bearing: docs/coverage-map.md justified `-p 1` with the opposite
+# assumption, and each wrong claim made the other look reasonable.
+#
+# What is actually true is the shape both were reaching for: cleanup here has
+# exactly ONE mechanism and that mechanism lives in a container. Off,
+# on-but-never-started, and blamed-for-the-wrong-thing all look identical from
+# outside — containers stay up and the next run starts its own on top of them.
+# That is why `internal/testdb` now reaps on startup on its own grounds (an
+# owned container past its creator's declared deadline), and why this target
+# still exists as the belt to that braces. See ledger item I7.
 # -v removes the anonymous volumes along with the containers.
 clean-testcontainers:
 	@ids=$$(docker ps -aq --filter label=org.testcontainers=true 2>/dev/null) ; \

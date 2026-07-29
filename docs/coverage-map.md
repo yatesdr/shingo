@@ -434,9 +434,26 @@ GOROOT="" go test -tags=docker -coverprofile=coverage-protocol.out -cover ./...
 GOROOT="" go tool cover -func=coverage-protocol.out
 ```
 
-Note: `-p 1` is required for shingo-core to prevent testcontainers' ryuk
-reaper from killing in-use Postgres containers when packages finish
-concurrently.
+Note: `-p 1` is required for shingo-core. **The reason given here until
+2026-07-26 was wrong and is left in place so the correction has something to
+attach to:** *"to prevent testcontainers' ryuk reaper from killing in-use
+Postgres containers when packages finish concurrently."*
+
+That mechanism cannot happen. Ryuk reaps by `org.testcontainers.sessionId`,
+which testcontainers assigns per test **process**, so a session's Ryuk can only
+ever reap containers from its own session — it has no way to touch another
+package's in-use container. The claim was not merely unobserved; it is
+impossible as stated.
+
+The real reason is contention, not reaping: 31 of this module's packages carry
+`//go:build docker` tests, every one of them starts its own
+`postgres:16-alpine` and clones the same `template_test` database, and running
+those binaries concurrently is what `shingo-core/Makefile` declares unsafe.
+`-p 1` bounds how many containers exist **at once**. It is complementary to the
+startup reap in `internal/testdb`, which removes containers that should not
+exist **at all** — drop `-p 1` and 31 packages still start 31 containers; drop
+the reap and every missed cleanup accumulates until the accumulation is itself
+the contention. See ledger item I7.
 
 ---
 
