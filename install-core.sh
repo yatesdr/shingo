@@ -301,16 +301,24 @@ echo "==> Building binary..."
 # plant binary reported "shingocore dev" and the boot markers in the journal
 # had no join key to a commit.
 #
-# AND THE -ldflags ALONE WERE NOT ENOUGH. The degradation this comment used to
-# merely warn about is what Springfield actually shipped: on 2026-07-29 its
-# core reported version=dev commit=unknown, so /api/core/health could not say
-# which commit was running and the deployed SHA had to be read off the box's
-# checkout by hand. The installer runs under sudo, $REPO_ROOT is owned by the
-# login user, and git refuses a repo it considers "dubiously owned" — so both
-# commands below failed and both fell through to their defaults, silently,
-# because the || is doing exactly what it was written to do.
+# THE DUBIOUS-OWNERSHIP EXPLANATION FOR THIS IS REFUTED — recorded here so it
+# is not re-derived. Springfield's core did report version=dev commit=unknown
+# on 2026-07-29, and "the installer runs under sudo against a repo owned by
+# the login user, so git refuses it" is the obvious reading. It is wrong:
+# measured on that box, `sudo git -C /home/setup/shingo describe` returns
+# v0.0.14-941-g7c21ef3f with no complaint. Every other link checks out too —
+# main.Version/main.Commit exist for -X to target, and the stamping code was
+# already in the deployed commit. The 01:33 build simply did not come through
+# this path; deploy night had manual intervention. Confirmed by the next
+# install through it, which stamped v0.0.14-946-g6ff16bdc correctly.
 #
-# -c safe.directory scopes the exemption to THIS repo for THIS invocation. Not
+# `git describe --always` CANNOT return empty, so "dev" requires git to fail
+# outright. That is what makes this a refutation rather than a maybe: there is
+# no partial-failure path that yields the observed value.
+#
+# safe.directory is kept as hardening — scoped to THIS repo for THIS
+# invocation, so it is a no-op where git already works and covers a box
+# configured differently. It is NOT the fix for anything observed here. Not
 # `git config --global`, which would mutate root's config on a plant box as a
 # side effect of an install, and not `--system`, same reason.
 GIT_STAMP=(git -c "safe.directory=$REPO_ROOT" -C "$REPO_ROOT")

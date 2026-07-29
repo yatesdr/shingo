@@ -316,16 +316,18 @@ echo "==> Building binary..."
 # 2026-07-25 the value was a hardcoded "dev" in main.go — so that column said
 # "dev" for every edge in every plant.
 #
-# THE 2026-07-25 FIX WAS INCOMPLETE, and this side is the one that writes to a
-# database. The installer runs under sudo while $REPO_ROOT is owned by the
-# login user, so git refuses it as "dubiously owned", both commands fall
-# through to their defaults, and edge_registry.version goes on saying "dev" —
-# the exact column the fix existed to populate. Springfield's core showed the
-# same shape on 2026-07-29 (version=dev, commit=unknown).
+# WHY THIS MATTERS MORE ON THIS SIDE: the value is what the heartbeat reports
+# and what Core persists in edge_registry.version, so a silent fallthrough
+# writes "dev" into a database column rather than into a log line.
 #
-# -c safe.directory scopes the exemption to THIS repo for THIS invocation,
-# rather than mutating root's global git config on a plant box as an install
-# side effect.
+# The dubious-ownership explanation for the observed dev/unknown is REFUTED —
+# see the same block in install-core.sh for the measurement. Springfield's git
+# does not refuse root, every link in the -X chain works, and the next install
+# through this path stamped correctly. safe.directory is kept as hardening for
+# a box configured differently; it is a no-op where git already works and it
+# is NOT the fix for anything observed. Scoped to THIS repo for THIS
+# invocation rather than mutating root's global git config on a plant box as
+# an install side effect.
 GIT_STAMP=(git -c "safe.directory=$REPO_ROOT" -C "$REPO_ROOT")
 BUILD_VERSION=$("${GIT_STAMP[@]}" describe --tags --always --dirty 2>/dev/null || echo dev)
 BUILD_COMMIT=$("${GIT_STAMP[@]}" rev-parse --short HEAD 2>/dev/null || echo unknown)
