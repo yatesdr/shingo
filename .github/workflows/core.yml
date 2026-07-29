@@ -1,14 +1,20 @@
 name: Core
 
+# This workflow triggers on itself as well as on the code it tests.
+# lint.yml already does this; core.yml did not, so a change to the test
+# invocation below could only be exercised by a later, unrelated Go
+# commit. A gate whose own edits do not run it cannot report on them.
 on:
   push:
     paths:
       - "shingo-core/**"
       - "protocol/**"
+      - ".github/workflows/core.yml"
   pull_request:
     paths:
       - "shingo-core/**"
       - "protocol/**"
+      - ".github/workflows/core.yml"
   workflow_call:
 
 # Coalesce overlapping runs on the same branch / PR so a quick burst
@@ -73,11 +79,28 @@ jobs:
         # ubuntu-latest runner provides Docker. -count=1 prevents
         # stale-cache false positives on integration tests;
         # -timeout=10m accommodates cold-runner container startup.
+        #
+        # -p 1 matches shingo-core/Makefile's `cover` target, which is
+        # this repo's declared invocation for the docker-tagged suite:
+        # "runs sequentially (-p 1) to avoid container contention".
+        # docs/coverage-map.md states the same. 31 of this module's 59
+        # packages carry //go:build docker tests --
+        #   grep -rln 'go:build docker' shingo-core/ --include='*.go' \
+        #     | xargs -n1 dirname | sort -u | wc -l
+        # -- and every one of them shares the single postgres:16-alpine
+        # container and clones the same template_test database; running
+        # those test binaries concurrently is what the Makefile is
+        # declaring unsafe. CI ran without the flag, which is the
+        # divergence, not a tuning choice. The count is a scale
+        # indicator, not a threshold: nothing below re-reads it, so it
+        # may drift without consequence, but the command above is how
+        # to re-derive it rather than trust it.
+        #
         # TODO(stage-2a.2): tighten -timeout to ~2x the observed
         # runtime once the workflow has run a few times. Standard
         # warm-runner integration tests should land well under 5m;
         # 10m exists today only because we lack measured data.
-        run: go test -tags=docker -timeout=10m -count=1 -coverprofile=build/coverage-docker ./...
+        run: go test -tags=docker -timeout=10m -count=1 -p 1 -coverprofile=build/coverage-docker ./...
 
       - name: Coverage report (Docker)
         working-directory: shingo-core
@@ -86,4 +109,7 @@ jobs:
       - name: Test (Docker integration, race)
         working-directory: shingo-core
         # Promoted to gating in Phase 2 (2026-05-22).
-        run: go test -tags=docker -race -timeout=25m -count=1 ./...
+        # -p 1 for the same reason as the step above — it is the same
+        # suite against the same shared container, and the race
+        # detector's slowdown makes the contention worse, not better.
+        run: go test -tags=docker -race -timeout=25m -count=1 -p 1 ./...
