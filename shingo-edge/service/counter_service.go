@@ -163,3 +163,32 @@ func (s *CounterService) ListHourlyCounts(processID, styleID int64, countDate st
 func (s *CounterService) HourlyTotals(processID int64, countDate string) (map[int]int64, error) {
 	return s.db.HourlyCountTotals(processID, countDate)
 }
+
+// ── Daily counts ─────────────────────────────────────────────────
+
+// DailyCounts returns per-style day totals for one process over an
+// inclusive date range.
+//
+// This is where production goes once counters.PurgeRolledUpHourly has
+// taken the hours underneath it. Deleting detail is only defensible if
+// the summary is reachable, so this read and its handler
+// (www.apiGetDailyCounts) ship with the purge rather than after it.
+//
+// It goes straight to store/counters rather than through a *store.DB
+// delegate, per the method-surface convention at the top of store/store.go.
+//
+// The empty case is normalised HERE, not in the handler. A nil slice marshals
+// to `null` and every JS caller iterates the result, but www may not import
+// store/counters at all — the depguard rule "www handlers must use a service
+// interface, not *store.DB directly" makes the handler unable to name the
+// element type, so this is the only layer that can spell the empty value.
+func (s *CounterService) DailyCounts(processID int64, fromDate, toDate string) ([]counters.DailyCount, error) {
+	out, err := counters.ListDaily(s.db.DB, processID, fromDate, toDate)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []counters.DailyCount{}
+	}
+	return out, nil
+}

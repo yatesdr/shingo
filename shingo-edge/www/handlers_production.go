@@ -171,3 +171,40 @@ func (h *Handlers) apiGetHourlyCounts(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, counts)
 }
+
+// apiGetDailyCounts serves the permanent end of the counting ladder:
+// GET /api/daily-counts?process_id=N&from=YYYY-MM-DD&to=YYYY-MM-DD.
+//
+// It exists because counters.PurgeRolledUpHourly deletes hourly detail after
+// 90 days, and detail deleted into a table nothing can read is just deleted.
+// `from` defaults to 90 days back and `to` to today, so the bare
+// ?process_id=N answers "what did this process make recently" — the window
+// where the hourly chart is about to stop being able to.
+//
+// Deliberately no style join: a daily row outlives its style, and resolving a
+// name here would be the one read that breaks when a style is finally gone.
+// The style_id is returned raw and the caller pairs it with GET /api/styles,
+// which still resolves retired styles by id.
+func (h *Handlers) apiGetDailyCounts(w http.ResponseWriter, r *http.Request) {
+	processID, _ := strconv.ParseInt(r.URL.Query().Get("process_id"), 10, 64)
+	if processID == 0 {
+		writeJSON(w, []any{})
+		return
+	}
+
+	toDate := r.URL.Query().Get("to")
+	if toDate == "" {
+		toDate = time.Now().Format("2006-01-02")
+	}
+	fromDate := r.URL.Query().Get("from")
+	if fromDate == "" {
+		fromDate = time.Now().AddDate(0, 0, -90).Format("2006-01-02")
+	}
+
+	counts, err := h.engine.CounterService().DailyCounts(processID, fromDate, toDate)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, counts)
+}

@@ -46,6 +46,12 @@ var requiredTables = []string{
 	"changeover_participants",
 	"process_node_runtime_states",
 	"sourcing_state",
+	// daily_counts is asserted because the retention ticker DELETES against
+	// it: PurgeRolledUpHourly only removes an hour whose day is summarised
+	// here. A stale binary whose schema.Apply never created this table would
+	// leave the purge deleting nothing forever, which is the silent-no-op
+	// failure this manifest exists to make loud.
+	"daily_counts",
 }
 
 // requiredColumn is one (table, column) pair added by an unconditional

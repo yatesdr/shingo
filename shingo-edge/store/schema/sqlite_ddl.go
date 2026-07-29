@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS reporting_points (
 -- That is the edge that blocks enabling enforcement at all, so it is a schema
 -- decision and not a preference. The cost is bounded by counters.SnapshotRetention
 -- (14 days), so a style deletion destroys at most two weeks of raw readings —
--- the durable rollup lives in hourly_counts.
+-- the rollups live in hourly_counts (90 days) and daily_counts (permanent).
 CREATE TABLE IF NOT EXISTS counter_snapshots (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     reporting_point_id INTEGER NOT NULL REFERENCES reporting_points(id) ON DELETE CASCADE,
@@ -180,6 +180,16 @@ CREATE TABLE IF NOT EXISTS shifts (
     end_time     TEXT NOT NULL
 );
 
+-- hourly_counts is the MIDDLE rung of the counting ladder, and as of 2026-07 it
+-- is the only one with a bounded life:
+--
+--     counter_snapshots  raw, one row per poll   14 days  (counters.SnapshotRetention)
+--     hourly_counts      per process/style/hour  90 days  (counters.HourlyRetention)
+--     daily_counts       per process/style/day   permanent
+--
+-- The 90-day window is only safe because daily_counts already holds the total,
+-- and counters.PurgeRolledUpHourly enforces that literally rather than by
+-- convention — it refuses to delete an hour whose day has no daily_counts row.
 CREATE TABLE IF NOT EXISTS hourly_counts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
@@ -189,6 +199,50 @@ CREATE TABLE IF NOT EXISTS hourly_counts (
     delta        INTEGER NOT NULL DEFAULT 0,
     updated_at   TEXT DEFAULT (datetime('now')),
     UNIQUE(process_id, style_id, count_date, hour)
+);
+
+-- daily_counts is the permanent end of the ladder: one row per process, style
+-- and calendar date, ~1,900 rows a year at Springfield's measured rate. Written
+-- only by counters.RollUpDaily, never deleted.
+--
+-- IT CARRIES NO FOREIGN KEYS, AND THAT IS THE DESIGN, NOT AN OVERSIGHT. Its
+-- sibling hourly_counts declares ON DELETE CASCADE on both process_id and
+-- style_id. Copying that here would mean:
+--
+--  1. A HARD DELETE OF A PROCESS DESTROYS THE PERMANENT RECORD. Styles are
+--     soft-deleted now (store/processes/styles.go, DeleteStyle sets deleted_at)
+--     precisely so that retiring a part number stops destroying what it
+--     counted. processes is still a hard DELETE
+--     (store/processes/processes.go, DeleteProcess), so a CASCADE from there
+--     would take every year of daily totals with it on a routine config
+--     action. That is the same defect one table over.
+--
+--  2. THE ALTERNATIVE — RESTRICT — REBUILDS THE TRAP DIRECTLY ABOVE. A NO
+--     ACTION clause on a NOT NULL child column is exactly what made 6 of 8
+--     style deletions impossible on the Springfield dump. A new child table
+--     with a restricting edge is that bug with a different name.
+--
+--  3. THE ROLLUP COULD THEN FAIL ON DATA THAT ALREADY EXISTS. The Springfield
+--     database of 2026-07-27 carries 457 hourly_counts rows whose style row is
+--     gone (styles 8, 10, 11, 32 — measured on edge-golden.db). After
+--     RUNBOOK-0.5's ordered data plan one survives: id 144030, style 32,
+--     count_date 2026-06-25. With foreign_keys(1) enabled and an FK here, the
+--     rollup's INSERT for that row is refused and the whole retention pass
+--     errors — a stale row would become a broken background job.
+--
+-- The integrity that FKs would buy is bought instead by having exactly one
+-- writer: RollUpDaily aggregates rows that are already in hourly_counts, so
+-- there is no ingress that could invent a process_id or style_id. And a table
+-- with no FK clauses contributes zero rows to PRAGMA foreign_key_check, so it
+-- cannot regress the enforcement gate that RUNBOOK-0.5 exists to open.
+CREATE TABLE IF NOT EXISTS daily_counts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id   INTEGER NOT NULL,
+    style_id     INTEGER NOT NULL,
+    count_date   TEXT NOT NULL,
+    total        INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(process_id, style_id, count_date)
 );
 
 CREATE TABLE IF NOT EXISTS payload_catalog (

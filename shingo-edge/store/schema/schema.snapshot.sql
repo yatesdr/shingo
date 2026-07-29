@@ -127,6 +127,16 @@ CREATE TABLE counter_snapshots (
     recorded_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE daily_counts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id   INTEGER NOT NULL,
+    style_id     INTEGER NOT NULL,
+    count_date   TEXT NOT NULL,
+    total        INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(process_id, style_id, count_date)
+);
+
 CREATE TABLE demand_origins_open (
     episode_key     TEXT PRIMARY KEY,
     origin_id       TEXT NOT NULL,

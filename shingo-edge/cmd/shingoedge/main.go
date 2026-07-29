@@ -697,11 +697,25 @@ func main() {
 	})
 
 	// ── Retention ticker ───────────────────────────────────────────────
-	// counter_snapshots is the only unbounded table on the Edge with a real
-	// growth driver: roughly one row per part produced, 472 per counter per
-	// calendar day, and no purge until now. The window is
-	// counters.SnapshotRetention (14 days); unconfirmed jumps survive it at
-	// any age because they are the operator's popover.
+	// One pass over the counting ladder, four times a day:
+	//
+	//   counter_snapshots  raw poll rows           14 days   counters.SnapshotRetention
+	//   hourly_counts      per process/style/hour  90 days   counters.HourlyRetention
+	//   daily_counts       per process/style/day   permanent counters.RollUpDaily
+	//
+	// ORDER IS LOAD-BEARING AT THE TOP AND CONVENIENT AT THE BOTTOM. Rolling
+	// up before purging hourly is the obvious sequence, but it is NOT what
+	// makes it safe — counters.PurgeRolledUpHourly refuses to delete an hour
+	// whose day is not already in daily_counts, so a failed rollup deletes
+	// nothing no matter when it is called. Each step therefore logs and
+	// continues rather than aborting the pass; a broken rollup must not stop
+	// counter_snapshots being purged. The VACUUM genuinely does want to be
+	// last, so it sees every page all three purges freed.
+	//
+	// counter_snapshots is the table with a real growth driver: roughly one
+	// row per part produced, 472 per counter per calendar day, and no purge
+	// until now. Unconfirmed jumps survive that window at any age because
+	// they are the operator's popover.
 	//
 	// A DEDICATED TICKER, NOT A SECOND COUNTER ON THE OUTBOX DRAINER.
 	// PurgeOldOutbox rides Drainer.run() every hundredth cycle, and bolting
@@ -726,6 +740,13 @@ func main() {
 	// /var/lib/shingo-edge/shingoedge.db alongside the install is enough, and
 	// it must happen on the deploy, not afterwards.
 	//
+	// THE HOURLY PURGE IS INSIDE THAT SENTENCE, WITH ONE QUALIFIER. It deletes
+	// only rows daily_counts already holds the total for, so no production
+	// disappears in aggregate — but the HOUR-LEVEL resolution does, and for
+	// dates before Core's 2026-06-08 archive start there is no second copy of
+	// it anywhere. Springfield's first pass takes 78 such rows, all from
+	// 2026-04-22..27. The same one file copy covers it; no separate step.
+	//
 	// Nothing here enforces that, deliberately — a switch to disable a purge
 	// is a switch someone leaves off. What the schedule does give is room: the
 	// ticker fires on the tick and not at boot, so the first pass is six hours
@@ -736,6 +757,21 @@ func main() {
 	// its own copy — Step 1 refuses to run while a shingoedge process is
 	// alive, and install-edge.sh stops the unit before calling it — so this
 	// purge cannot run inside the gate's window and cannot fail it.
+	//
+	// NO NEW VACUUM, AND THAT IS A DECISION. VacuumIfFragmented's 20% freelist
+	// threshold already covers both new cases. The hourly purge is far too
+	// small to move it — 78 rows, ~6 KB, measured on the restored Springfield
+	// database — so it correctly never fires on that account. Hopkinsville's
+	// standing 14.83 MB freelist (70.2% of a 21.13 MB file, measured 2026-07-30)
+	// is over the threshold and will be reclaimed on its first tick after this
+	// deploys, without anything new being written. Incremental vacuum was the
+	// alternative and is rejected: switching auto_vacuum NONE -> INCREMENTAL on
+	// an existing file needs a full VACUUM anyway to build the pointer-map
+	// pages, so it costs the same one-time rebuild AND then charges every
+	// future write on the SD card for ptrmap maintenance — a recurring cost to
+	// avoid a rebuild that the threshold already makes a once-ever event. It
+	// also never defragments, which is the half that matters on flash.
+	bucketLoc := engine.BucketLocation(cfg.Timezone)
 	retentionStop := make(chan struct{})
 	defer close(retentionStop)
 	goSafe("store-retention", func() {
@@ -746,14 +782,26 @@ func main() {
 			case <-retentionStop:
 				return
 			case <-ticker.C:
-				n, err := counters.PurgeOldSnapshots(db.DB, counters.SnapshotRetention)
-				if err != nil {
-					log.Printf("retention: purge counter snapshots: %v", err)
-					continue
+				cutoff := counters.CutoffDate(time.Now(), bucketLoc, counters.HourlyRetention)
+
+				if n, err := counters.RollUpDaily(db.DB, cutoff); err != nil {
+					log.Printf("retention: roll up daily counts: %v", err)
+				} else if n > 0 {
+					log.Printf("retention: rolled %d daily count rows up from hourly_counts", n)
 				}
-				if n > 0 {
+
+				if n, err := counters.PurgeRolledUpHourly(db.DB, cutoff); err != nil {
+					log.Printf("retention: purge hourly counts: %v", err)
+				} else if n > 0 {
+					log.Printf("retention: purged %d hourly counts before %s (already rolled up)", n, cutoff)
+				}
+
+				if n, err := counters.PurgeOldSnapshots(db.DB, counters.SnapshotRetention); err != nil {
+					log.Printf("retention: purge counter snapshots: %v", err)
+				} else if n > 0 {
 					log.Printf("retention: purged %d counter snapshots older than %s", n, counters.SnapshotRetention)
 				}
+
 				vacuumed, err := db.VacuumIfFragmented(store.VacuumFreeFraction)
 				if err != nil {
 					log.Printf("retention: vacuum: %v", err)

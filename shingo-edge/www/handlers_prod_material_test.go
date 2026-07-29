@@ -2,8 +2,12 @@ package www
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -31,6 +35,7 @@ func newProdMaterialRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		r.Get("/shifts", h.apiListShifts)
 		r.Put("/shifts", h.apiSaveShifts)
 		r.Get("/hourly-counts", h.apiGetHourlyCounts)
+		r.Get("/daily-counts", h.apiGetDailyCounts)
 	})
 	return h, r
 }
@@ -137,6 +142,66 @@ func TestApiGetHourlyCounts_WithProcessIDReturnsMap(t *testing.T) {
 
 	resp := doRequest(t, router, "GET", "/api/hourly-counts?process_id="+itoa(pid), nil, nil)
 	assertStatus(t, resp, http.StatusOK)
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// apiGetDailyCounts
+//
+// This endpoint is what makes counters.PurgeRolledUpHourly defensible:
+// after 90 days the hour buckets are gone and this is where the day's
+// production went. Asserting the BODY rather than just the status is the
+// point — a 200 carrying `null` would satisfy the status check and break
+// every caller that iterates it, and `null` is exactly what a Go nil slice
+// marshals to.
+// ═══════════════════════════════════════════════════════════════════════
+
+func TestApiGetDailyCounts_EmptyIsAnArrayNotNull(t *testing.T) {
+	_, router := newProdMaterialRouter(t)
+	pid := seedProcess(t, "ProdDailyEmptyProc")
+
+	resp := doRequest(t, router, "GET", "/api/daily-counts?process_id="+itoa(pid), nil, nil)
+	assertStatus(t, resp, http.StatusOK)
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if got := strings.TrimSpace(string(body)); got != "[]" {
+		t.Errorf("body = %q, want %q — a nil slice marshals to null and every caller iterates this", got, "[]")
+	}
+}
+
+func TestApiGetDailyCounts_ReturnsTheDayTotal(t *testing.T) {
+	_, router := newProdMaterialRouter(t)
+	pid := seedProcess(t, "ProdDailyProc")
+	sid, err := testDB.CreateStyle("ProdDailyStyle", "", pid)
+	if err != nil {
+		t.Fatalf("create style: %v", err)
+	}
+	if _, err := testDB.Exec(
+		`INSERT INTO daily_counts (process_id, style_id, count_date, total) VALUES (?, ?, ?, ?)`,
+		pid, sid, time.Now().Format("2006-01-02"), 137); err != nil {
+		t.Fatalf("seed daily count: %v", err)
+	}
+
+	resp := doRequest(t, router, "GET", "/api/daily-counts?process_id="+itoa(pid), nil, nil)
+	assertStatus(t, resp, http.StatusOK)
+
+	var got []struct {
+		ProcessID int64  `json:"process_id"`
+		StyleID   int64  `json:"style_id"`
+		CountDate string `json:"count_date"`
+		Total     int64  `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want 1 — the default date window should cover today", len(got))
+	}
+	if got[0].Total != 137 || got[0].StyleID != sid {
+		t.Errorf("got style %d total %d, want style %d total 137", got[0].StyleID, got[0].Total, sid)
+	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════

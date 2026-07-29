@@ -29,6 +29,17 @@ type HourlyCount struct {
 	Delta     int64  `json:"delta"`
 }
 
+// DailyCount is one calendar day of production for a Process + Style —
+// the sum of that day's HourlyCount deltas. It is the permanent end of
+// the counting ladder (raw 14 days, hourly 90 days, daily forever), so
+// it is what remains once the detail underneath it has aged out.
+type DailyCount struct {
+	ProcessID int64  `json:"process_id"`
+	StyleID   int64  `json:"style_id"`
+	CountDate string `json:"count_date"`
+	Total     int64  `json:"total"`
+}
+
 // ReportingPoint is one PLC counter binding — the (PLC, tag) pair, the
 // Process + Style it scores for, and the last polled count value used
 // to compute the next CounterSnapshot delta. WarlinkManaged means the

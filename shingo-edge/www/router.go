@@ -338,6 +338,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Get("/node/{name}/children", h.apiNodeChildren)
 			r.Get("/payload/{code}/manifest", h.apiPayloadManifest)
 			r.Get("/hourly-counts", h.apiGetHourlyCounts)
+			r.Get("/daily-counts", h.apiGetDailyCounts)
 			r.Get("/core-nodes", h.apiGetCoreNodes)
 			r.Get("/payload-catalog", h.apiListPayloadCatalog)
 
