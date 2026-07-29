@@ -248,8 +248,8 @@ func TestCloseCellEpisode_IsIdempotent(t *testing.T) {
 		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered)
-	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered)
+	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
+	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
 	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
@@ -289,7 +289,7 @@ func TestCloseEpisode_KeepsRowWhenEnqueueFails(t *testing.T) {
 		t.Fatalf("drop outbox: %v", err)
 	}
 
-	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered)
+	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
 	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
 	open, err := db.GetOpenDemandOrigin(key)

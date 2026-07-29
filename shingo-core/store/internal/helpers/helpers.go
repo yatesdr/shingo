@@ -34,6 +34,18 @@ func NullableInt64(p *int64) any {
 	return nil
 }
 
+// NullableText maps a Go empty string to a SQL NULL. For columns where "" and
+// NULL are meaningfully different — queue_code/queue_cause (a pre-schema row
+// reads back NULL, not the empty code) and orders.origin_id (a UUID column that
+// rejects "" outright, and whose partial index keys on IS NOT NULL). Non-empty
+// strings pass through.
+func NullableText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // NullableTime converts *time.Time to a UTC value safe for SQL params (nil-safe).
 func NullableTime(p *time.Time) any {
 	if p != nil {

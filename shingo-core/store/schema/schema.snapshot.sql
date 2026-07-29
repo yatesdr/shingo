@@ -270,6 +270,34 @@ CREATE SEQUENCE public.dashboards_id_seq
 
 ALTER SEQUENCE public.dashboards_id_seq OWNED BY public.dashboards.id;
 
+CREATE TABLE public.demand_origins (
+    origin_id uuid NOT NULL,
+    episode_key text NOT NULL,
+    kind text NOT NULL,
+    direction text DEFAULT ''::text NOT NULL,
+    trigger_kind text DEFAULT ''::text NOT NULL,
+    trigger_ref text DEFAULT ''::text NOT NULL,
+    parent_origin_id uuid,
+    station_id text DEFAULT ''::text NOT NULL,
+    process_id bigint DEFAULT 0 NOT NULL,
+    core_node_name text DEFAULT ''::text NOT NULL,
+    payload_code text DEFAULT ''::text NOT NULL,
+    opened_at timestamp with time zone NOT NULL,
+    opened_total integer DEFAULT 0 NOT NULL,
+    threshold integer DEFAULT 0 NOT NULL,
+    used_edge_reports boolean DEFAULT false NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    expected_orders integer,
+    expected_reason text DEFAULT ''::text NOT NULL,
+    uop_delivered integer DEFAULT 0 NOT NULL,
+    rerequest_count integer DEFAULT 0 NOT NULL,
+    signal_count integer DEFAULT 0 NOT NULL,
+    discretionary boolean DEFAULT false NOT NULL,
+    closed_at timestamp with time zone,
+    close_reason text DEFAULT ''::text NOT NULL,
+    closed_by text
+);
+
 CREATE TABLE public.demand_registry (
     id bigint NOT NULL,
     station_id text NOT NULL,
@@ -630,7 +658,9 @@ CREATE TABLE public.orders (
     sibling_order_uuid text DEFAULT ''::text NOT NULL,
     source_intent text DEFAULT ''::text NOT NULL,
     coordinated boolean DEFAULT false NOT NULL,
-    remaining_uop integer
+    remaining_uop integer,
+    origin_id uuid,
+    origin_class text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.orders_id_seq
@@ -1045,6 +1075,9 @@ ALTER TABLE ONLY public.corrections
 ALTER TABLE ONLY public.dashboards
     ADD CONSTRAINT dashboards_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.demand_origins
+    ADD CONSTRAINT demand_origins_pkey PRIMARY KEY (origin_id);
+
 ALTER TABLE ONLY public.demand_registry
     ADD CONSTRAINT demand_registry_pkey PRIMARY KEY (id);
 
@@ -1227,6 +1260,10 @@ CREATE INDEX idx_cms_txn_created ON public.cms_transactions USING btree (created
 
 CREATE INDEX idx_cms_txn_node ON public.cms_transactions USING btree (node_id);
 
+CREATE UNIQUE INDEX idx_demand_origins_open_key ON public.demand_origins USING btree (episode_key) WHERE (closed_at IS NULL);
+
+CREATE INDEX idx_demand_origins_opened_at ON public.demand_origins USING btree (opened_at);
+
 CREATE INDEX idx_demand_registry_payload ON public.demand_registry USING btree (payload_code);
 
 CREATE INDEX idx_downtime_events_station_time ON ONLY public.downtime_events USING btree (station, started_at);
@@ -1262,6 +1299,8 @@ CREATE INDEX idx_order_history_order ON public.order_history USING btree (order_
 CREATE INDEX idx_order_history_ref_payload ON public.order_history USING btree (((ref ->> 'payload'::text))) WHERE (ref IS NOT NULL);
 
 CREATE INDEX idx_orders_delivery_node ON public.orders USING btree (delivery_node);
+
+CREATE INDEX idx_orders_origin_id ON public.orders USING btree (origin_id) WHERE (origin_id IS NOT NULL);
 
 CREATE INDEX idx_orders_status ON public.orders USING btree (status);
 

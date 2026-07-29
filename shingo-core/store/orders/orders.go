@@ -39,7 +39,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop, origin_id, origin_class`
 
 // Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
 // CountActive) return EVERY order type. They used to exclude reshuffle_restore —
@@ -57,15 +57,22 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var parentOrderID, binID sql.NullInt64
 	var remainingUOP sql.NullInt64
 	var queueCode, queueCause sql.NullString
+	// origin_id is a nullable UUID — NULL is the honest reading for an order
+	// nothing asked for, and it is what the partial index on the column keys off.
+	var originID sql.NullString
 
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
-		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &o.SourceIntent, &o.Coordinated, &remainingUOP)
+		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &o.SourceIntent, &o.Coordinated, &remainingUOP,
+		&originID, &o.OriginClass)
 	if err != nil {
 		return nil, err
+	}
+	if originID.Valid {
+		o.OriginID = originID.String
 	}
 	if parentOrderID.Valid {
 		o.ParentOrderID = &parentOrderID.Int64
@@ -114,12 +121,13 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 // is a sim-fidelity fix, not a plant-correctness one.
 func Create(db *sql.DB, o *Order) error {
 	now := clock.Now().UTC()
-	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $20) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, origin_id, origin_class, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $22) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
 		helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
 		helpers.NullableInt64(o.BinID), o.PayloadCode, o.SkipAutoConfirm, o.SiblingOrderUUID, o.SourceIntent, o.Coordinated,
+		helpers.NullableText(o.OriginID), o.OriginClass,
 		now)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
@@ -260,7 +268,7 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
 
 	if _, err := tx.Exec(`UPDATE orders SET queue_reason=$1, queue_code=$4, queue_cause=$5, updated_at=$3 WHERE id=$2`,
-		reason, id, clock.Now().UTC(), nullableText(code), nullableText(cause)); err != nil {
+		reason, id, clock.Now().UTC(), helpers.NullableText(code), helpers.NullableText(cause)); err != nil {
 		return err
 	}
 
@@ -291,16 +299,6 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 		}
 	}
 	return tx.Commit()
-}
-
-// nullableText maps a Go empty string to a SQL NULL (the queue_code/queue_cause
-// columns are nullable; "" and NULL are distinguished so a pre-schema row reads
-// back as NULL, not as the empty code). Non-empty strings pass through.
-func nullableText(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 // LinkSiblingsByEdgeUUID records a two-robot swap pairing (supply ↔ evac)

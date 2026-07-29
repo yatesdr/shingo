@@ -24,6 +24,56 @@ type Config struct {
 	Replenishment ReplenishmentConfig `yaml:"replenishment"`
 	Logging       LoggingConfig       `yaml:"logging"`
 	Dispatch      DispatchConfig      `yaml:"dispatch"`
+	Demand        DemandConfig        `yaml:"demand"`
+}
+
+// DemandConfig tunes Core's reconciling sweep over demand episodes — the
+// correctness floor under the six notification close paths.
+//
+// Every one of those paths is a notification: something happens, so something
+// fires. SyncRegistry is the one that gets missed, because it is the only one
+// where NOTHING fires — a binding can vanish and reappear in a single
+// transaction with no RegistryChange emitted, and you cannot wire up an
+// absence. The sweep closes any open episode whose precondition no longer
+// holds regardless of how it stopped holding, which turns a missed close from
+// "stranded forever" into "closed one sweep late".
+//
+// All three knobs are latency, not correctness: a longer interval means an
+// ended demand keeps showing as open for longer, and nothing else.
+type DemandConfig struct {
+	// ReconcileInterval is the sweep cadence. Not a hot path — cost is bounded
+	// by open-episode count, which is one per place currently short of
+	// material — so a minute of latency on the rare miss costs nothing.
+	// <= 0 disables the sweep entirely, which leaves the notification paths as
+	// the only close mechanism; that is the pre-sweep behaviour and is
+	// deliberately reachable for a plant that wants to bisect a problem.
+	ReconcileInterval time.Duration `yaml:"reconcile_interval"`
+
+	// ChildlessGrace is how long an episode may stay open with ZERO orders
+	// against it before the sweep closes it `unattributed`.
+	//
+	// NOT OPTIONAL, and the reason is the deploy skew: a new Core against an
+	// older Edge opens episodes whose orders come back with no origin on them,
+	// so every open episode has zero children and — by the design's own display
+	// rules, where a long-open episode is the loudest row on the page — the
+	// whole surface reads as a plant-wide emergency that is really a deploy
+	// artifact. Childless episodes are reachable at full parity too: Edge
+	// silently drops threshold signals it cannot resolve.
+	//
+	// 15 minutes because a real demand that produces no order in that time is
+	// itself the finding, and `unattributed` is how it gets said.
+	ChildlessGrace time.Duration `yaml:"childless_grace"`
+
+	// OrphanGrace is how long an order stamped `orphan` stays in the finding
+	// set before the sweep ages it out.
+	//
+	// An orphan is an order that SHOULD have carried an origin and didn't, and
+	// it is the only origin_class that is a finding. There is no deferred
+	// attach — an orphan that later matches an open episode stays orphaned and
+	// reconciles by a human — so without an expiry the finding set only ever
+	// grows, and an alarm that never clears is indistinguishable from a broken
+	// one. A day is long enough that a shift and a half can look at it.
+	OrphanGrace time.Duration `yaml:"orphan_grace"`
 }
 
 // DispatchConfig tunes planner-side safety nets.
@@ -322,6 +372,16 @@ func Defaults() *Config {
 			// R1 LIVE by default: decide off the Edge lineside reports (ledger +
 			// fresh-node adjustments). Set "ledger" to revert to pure-ledger.
 			LinesideDecisionMode: "edge_reports",
+		},
+		Demand: DemandConfig{
+			// ON by default, unlike the futility detector. That detector CREATES
+			// records a plant has to interpret; this one only ends episodes that
+			// have already ended, and shipping it opt-out would mean the
+			// correctness floor is absent exactly at the plants that never
+			// edited a YAML.
+			ReconcileInterval: 60 * time.Second,
+			ChildlessGrace:    15 * time.Minute,
+			OrphanGrace:       24 * time.Hour,
 		},
 		Messaging: MessagingConfig{
 			Kafka: KafkaConfig{

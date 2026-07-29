@@ -174,6 +174,17 @@ func (d *Dispatcher) scheduleRestoreIfEnabled(
 		OrderType:   OrderTypeReshuffleRestore,
 		Status:      StatusReshuffling,
 		PayloadDesc: fmt.Sprintf("reshuffle restore: %d blockers for parent %d", len(blockers), complexParent.ID),
+		// Derivative site 2 of 2, and THE ONE THAT PROVES WHY THE RULE IS
+		// STAMP-FORWARD. This synthetic parent sets no ParentOrderID at all —
+		// its only link to complexParent is a formatted EdgeUUID string and an
+		// in-memory map that does not survive a restart — so nothing downstream
+		// could ever walk from it back to the demand. Its own children then
+		// inherit from it through CreateCompoundChildrenOnly, which is how the
+		// origin reaches the restock moves two levels from the episode.
+		//
+		// Putting the blockers back is part of what the parent's demand cost.
+		OriginID:    complexParent.OriginID,
+		OriginClass: complexParent.OriginClass,
 	}
 	if err := d.db.CreateOrder(syn); err != nil {
 		log.Printf("dispatch: create synthetic restore parent for complex %d: %v", complexParent.ID, err)

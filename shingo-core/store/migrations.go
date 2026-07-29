@@ -91,6 +91,16 @@ func (db *DB) migrateAddBaselineColumns() error {
 		// the migration pipeline.
 		{"orders", "queue_code", `ALTER TABLE orders ADD COLUMN IF NOT EXISTS queue_code TEXT`},
 		{"orders", "queue_cause", `ALTER TABLE orders ADD COLUMN IF NOT EXISTS queue_cause TEXT`},
+		// origin_id / origin_class on orders: the demand grain's link from an
+		// order back to the demand it served. The baseline declares both, and
+		// the baseline ALSO declares idx_orders_origin_id over origin_id — an
+		// index that runs inside schema.Apply, ahead of versioned migrations.
+		// On a plant DB predating v59 that index would hit "column does not
+		// exist" and stop startup before migration 59 ever ran. This is the
+		// same shape as the misplaced code/ref index that already cost us
+		// once: fine on a fresh install, broken at the plant.
+		{"orders", "origin_id", `ALTER TABLE orders ADD COLUMN IF NOT EXISTS origin_id UUID`},
+		{"orders", "origin_class", `ALTER TABLE orders ADD COLUMN IF NOT EXISTS origin_class TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, a := range adds {
 		if !schema.TableExists(db.DB, a.table) {
@@ -627,6 +637,34 @@ func (db *DB) runVersionedMigrations() error {
 		{58, "drop lineside_buckets.core_node_name's DEFAULT (converge aged DBs with fresh)",
 			v58DropLinesideCoreNodeNameDefault,
 			func(q schema.Querier) bool { return !columnHasDefault(q, "lineside_buckets", "core_node_name") }},
+		// The demand grain. demand_origins is Core's history of every episode;
+		// orders gains the link back to the demand it served.
+		//
+		// The verify checks the LAST thing this migration creates, not the
+		// first. Everything here runs in one transaction (runOneMigration), so
+		// a partial apply is not reachable — but a post-condition that passes
+		// while the tail is missing would be a self-heal that never heals, and
+		// which end it checks costs nothing to get right.
+		{59, "demand_origins + orders.origin_id/origin_class (the demand grain)",
+			v59DemandOrigins,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "demand_origins") &&
+					schema.ColumnExists(q, "orders", "origin_class")
+			}},
+		// WHICH MECHANISM CLOSED IT. The reconciling sweep deliberately uses the
+		// SAME close_reason codes as the notification paths, so the surface does
+		// not grow a second vocabulary for the same facts about the plant. The
+		// cost of that choice is that a silent failure of every notification
+		// path looks identical to a healthy system — the sweep quietly picks up
+		// all the work and every surface stays green. closed_by makes the
+		// sweep's share of the work a number somebody can look at.
+		//
+		// Separate migration rather than an edit to 59: 59 is pushed, and a
+		// migration anyone may already have run is not a file you go back and
+		// change.
+		{60, "demand_origins.closed_by (which mechanism ended the episode)",
+			v60DemandOriginClosedBy,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "demand_origins", "closed_by") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -2380,6 +2418,101 @@ func v58DropLinesideCoreNodeNameDefault(tx *sql.Tx) error {
 	}
 	if _, err := tx.Exec(`ALTER TABLE lineside_buckets ALTER COLUMN core_node_name DROP DEFAULT`); err != nil {
 		return fmt.Errorf("drop lineside_buckets.core_node_name default: %w", err)
+	}
+	return nil
+}
+
+// v59DemandOrigins creates the demand grain: one row per continuous period
+// during which a place needed material, plus the link from each order back to
+// the demand it served.
+//
+// THIS IS THE TABLE'S ONLY HOME. It is deliberately NOT in postgres_ddl.go,
+// and that is not a style preference.
+//
+// schema.Apply runs the baseline DDL before the versioned migrations, on both
+// fresh and aged databases. So a CREATE TABLE IF NOT EXISTS in the baseline
+// always wins and the migration's copy never runs anywhere — two copies of
+// one DDL with only one live, and no test able to tell you they disagree,
+// because both convergence paths would be sourcing the table from the
+// baseline. That was verified the expensive way: a deliberate DEFAULT
+// divergence between the two copies passed TestSchemaConvergesAcrossVintages.
+//
+// Single-homed here, both convergence paths run THIS code, so a divergence
+// has somewhere to show up. sourceability_events (v56) is the precedent.
+//
+// The orders ALTERs below are a different case and correctly live in three
+// places — see the comment on them.
+func v59DemandOrigins(tx *sql.Tx) error {
+	if _, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS demand_origins (
+		    origin_id         UUID PRIMARY KEY,
+		    episode_key       TEXT NOT NULL,
+		    kind              TEXT NOT NULL,
+		    direction         TEXT NOT NULL DEFAULT '',
+		    trigger_kind      TEXT NOT NULL DEFAULT '',
+		    trigger_ref       TEXT NOT NULL DEFAULT '',
+		    parent_origin_id  UUID,
+		    station_id        TEXT NOT NULL DEFAULT '',
+		    process_id        BIGINT NOT NULL DEFAULT 0,
+		    core_node_name    TEXT NOT NULL DEFAULT '',
+		    payload_code      TEXT NOT NULL DEFAULT '',
+		    opened_at         TIMESTAMPTZ NOT NULL,
+		    opened_total      INTEGER NOT NULL DEFAULT 0,
+		    threshold         INTEGER NOT NULL DEFAULT 0,
+		    used_edge_reports BOOLEAN NOT NULL DEFAULT false,
+		    revision          BIGINT NOT NULL DEFAULT 1,
+		    expected_orders   INTEGER,
+		    expected_reason   TEXT NOT NULL DEFAULT '',
+		    uop_delivered     INTEGER NOT NULL DEFAULT 0,
+		    rerequest_count   INTEGER NOT NULL DEFAULT 0,
+		    signal_count      INTEGER NOT NULL DEFAULT 0,
+		    discretionary     BOOLEAN NOT NULL DEFAULT false,
+		    closed_at         TIMESTAMPTZ,
+		    close_reason      TEXT NOT NULL DEFAULT ''
+		)`); err != nil {
+		return fmt.Errorf("create demand_origins: %w", err)
+	}
+	if _, err := tx.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_demand_origins_open_key
+		    ON demand_origins(episode_key) WHERE closed_at IS NULL`); err != nil {
+		return fmt.Errorf("create demand_origins open-key index: %w", err)
+	}
+	if _, err := tx.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_demand_origins_opened_at
+		    ON demand_origins(opened_at)`); err != nil {
+		return fmt.Errorf("create demand_origins opened_at index: %w", err)
+	}
+	// Idempotent, and deliberately duplicating migrateAddBaselineColumns:
+	// that runs pre-baseline on every startup to keep an aged DB bootable,
+	// this is the versioned record of when the columns became required. Same
+	// pairing queue_code/queue_cause already use.
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS origin_id UUID`); err != nil {
+		return fmt.Errorf("add orders.origin_id: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS origin_class TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add orders.origin_class: %w", err)
+	}
+	// idx_orders_origin_id is NOT created here. Every other idx_orders_* lives
+	// in postgres_ddl.go, which runs ahead of this and would win — the same
+	// only-one-copy-runs trap as the table above, so the index keeps its home
+	// with its siblings and this migration does not carry a second copy.
+	return nil
+}
+
+// v60DemandOriginClosedBy records which mechanism ended an episode:
+// "notification" (a close path fired) or "sweep" (the reconciler noticed).
+//
+// NO DEFAULT, DELIBERATELY. NULL means "the sender did not say" — an older Edge,
+// or a row written before this column existed — and that is a different fact
+// from "the notification path closed it". Defaulting to 'notification' would
+// make those two indistinguishable and would report the notification paths as
+// carrying work they may never have done. That is the lying-default pattern
+// this branch has now hit six times: absence of data rendering as presence of a
+// finding.
+func v60DemandOriginClosedBy(tx *sql.Tx) error {
+	if _, err := tx.Exec(
+		`ALTER TABLE demand_origins ADD COLUMN IF NOT EXISTS closed_by TEXT`); err != nil {
+		return fmt.Errorf("add demand_origins.closed_by: %w", err)
 	}
 	return nil
 }

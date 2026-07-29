@@ -100,6 +100,13 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 
 	sourceNode, deliveryNode := extractEndpoints(resolvedSteps)
 
+	// Intake site 2 of 3 for the demand grain. BOTH LEGS OF A SWAP CARRY THE
+	// SAME ORIGIN — one fire of applyConsumePlan is one demand served by two
+	// order rows, so Edge sends the pair with one id and Core stores it twice.
+	// Counting the legs as two demands would read every swap-mode episode 2x
+	// high, which is the ratio the whole surface is built to read.
+	originID, originClass := classifyInboundOrigin(p.OriginID, p.OriginClass, stationID, p.OrderUUID)
+
 	order := &orders.Order{
 		EdgeUUID:     p.OrderUUID,
 		StationID:    stationID,
@@ -126,6 +133,8 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		// "" for non-swap orders. The bidirectional back-link (supply→evac) is
 		// still reconciled below / on-read.
 		SiblingOrderUUID: p.SiblingOrderUUID,
+		OriginID:         originID,
+		OriginClass:      originClass,
 	}
 
 	if err := d.db.CreateOrder(order); err != nil {

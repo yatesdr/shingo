@@ -117,12 +117,27 @@ CREATE TABLE IF NOT EXISTS orders (
     sibling_order_uuid TEXT NOT NULL DEFAULT '',
     source_intent   TEXT NOT NULL DEFAULT '',
     coordinated     BOOLEAN NOT NULL DEFAULT false,
-    remaining_uop   INTEGER
+    remaining_uop   INTEGER,
+    -- The demand this order was created to serve, and whether it should have
+    -- had one. origin_class is what makes origin_id IS NULL answerable:
+    -- without it that predicate selects every consume-side order, every
+    -- opportunistic stage and every admin action, with the actual lost
+    -- origins buried in there. Only 'orphan' is a finding.
+    origin_id       UUID,
+    origin_class    TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_vendor ON orders(vendor_order_id);
 CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node);
+-- The child lookup. cost_ratio is COUNT(*) WHERE origin_id = X, which is the
+-- central query of the whole demand surface, so this index is earned before
+-- the surface exists rather than after the table is large. Partial because
+-- most orders are structurally originless and indexing their NULLs buys
+-- nothing. Safe against aged DBs only because migrateAddBaselineColumns adds
+-- origin_id pre-baseline — the misplaced code/ref index is the precedent for
+-- what happens otherwise.
+CREATE INDEX IF NOT EXISTS idx_orders_origin_id ON orders(origin_id) WHERE origin_id IS NOT NULL;
 
 -- order_history — every status transition an order made, in order.
 --
@@ -472,6 +487,25 @@ CREATE TABLE IF NOT EXISTS demand_registry (
     UNIQUE(station_id, core_node_name, payload_code)
 );
 CREATE INDEX IF NOT EXISTS idx_demand_registry_payload ON demand_registry(payload_code);
+
+-- demand_origins — THE DEMAND GRAIN — is DELIBERATELY NOT DECLARED HERE.
+-- It lives in migration v59 and nowhere else.
+--
+-- A NEW TABLE GETS EXACTLY ONE HOME, and this file is the wrong one for a
+-- table added now. schema.Apply runs this DDL on every startup BEFORE the
+-- versioned migrations, on fresh and aged databases alike — so a
+-- CREATE TABLE IF NOT EXISTS here always wins the race and the migration's
+-- copy never executes on any path. Declaring it in both places produces two
+-- copies of the DDL where only one runs, and nothing can tell you they have
+-- drifted: TestSchemaConvergesAcrossVintages compares the two paths, and both
+-- paths would be getting the table from THIS file. Verified: a deliberate
+-- DEFAULT divergence between the two copies passed convergence.
+--
+-- sourceability_events (v56) is the precedent — migration only, absent here.
+-- mission_telemetry and demand_registry are the other pattern, baseline only
+-- with no migration. Both are single-homed. Only the migration home is
+-- actually exercised by the convergence test, and it is the direction B7
+-- points (retire the baseline; migrations own everything).
 
 -- Phase 1 of the UOP bin-as-truth refactor — Core mirror of the Edge
 -- bucket model. NO state column (Option C — buckets are location-only;

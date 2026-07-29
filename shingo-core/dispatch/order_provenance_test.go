@@ -73,3 +73,67 @@ func TestStage3_AssertSimpleNotCoordinated_DoesNotPanic(t *testing.T) {
 	AssertSimpleNotCoordinated(&orders.Order{OrderType: OrderTypeMove, StepsJSON: `[{"a":1}]`})   // plain w/ steps — clean
 	AssertSimpleNotCoordinated(&orders.Order{OrderType: OrderTypeComplex, Coordinated: true})     // complex — ignored
 }
+
+// TestClassifyInboundOrigin is the intake classification matrix. Every row is a
+// message an Edge can actually send, including the ones it should not.
+//
+// The two that carry the design: an UNSTATED origin lands `orphan`, not
+// `no_demand`, because Edge ships before Core and the skew window is precisely
+// when every threshold order arrives bare — silencing it there would hide real
+// losses for the length of a rollout. And a MALFORMED id lands orphan rather
+// than failing the order: origin_id is a UUID column, so storing "not-a-uuid"
+// would abort the INSERT and lose the transport work over a telemetry field.
+func TestClassifyInboundOrigin(t *testing.T) {
+	t.Parallel()
+	const good = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+	cases := []struct {
+		name      string
+		id, class string
+		wantID    string
+		wantClass string
+	}{
+		{"attached: id and class agree", good, protocol.OriginClassAttached, good, protocol.OriginClassAttached},
+		{"attached: id wins over a blank class", good, "", good, protocol.OriginClassAttached},
+		{"attached: id wins over a contradicting class", good, protocol.OriginClassNoDemand, good, protocol.OriginClassAttached},
+		{"no_demand: stamped by Edge at its create site", "", protocol.OriginClassNoDemand, "", protocol.OriginClassNoDemand},
+		{"orphan: said nothing at all (an Edge that predates origins)", "", "", "", protocol.OriginClassOrphan},
+		{"orphan: claimed attached with nothing to attach to", "", protocol.OriginClassAttached, "", protocol.OriginClassOrphan},
+		{"orphan: said orphan outright", "", protocol.OriginClassOrphan, "", protocol.OriginClassOrphan},
+		{"orphan: class off the enum", "", "sort-of-attached", "", protocol.OriginClassOrphan},
+		{"orphan: id that is not a UUID (must not fail the order)", "not-a-uuid", protocol.OriginClassAttached, "", protocol.OriginClassOrphan},
+		{"orphan: id that is nearly a UUID", good + "x", protocol.OriginClassAttached, "", protocol.OriginClassOrphan},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotID, gotClass := classifyInboundOrigin(c.id, c.class, "line-1", "uuid-test")
+			if gotID != c.wantID {
+				t.Errorf("origin_id = %q, want %q", gotID, c.wantID)
+			}
+			if gotClass != c.wantClass {
+				t.Errorf("origin_class = %q, want %q", gotClass, c.wantClass)
+			}
+		})
+	}
+}
+
+// TestClassifyInboundOrigin_NeverReturnsAnEmptyClass is the property the enum
+// exists for. An empty origin_class is the state the column was added to
+// abolish: "origin_id IS NULL AND the class is empty" is the old unanswerable
+// question wearing a new column, and a row in it belongs to no bucket on the
+// surface — invisible rather than merely uninteresting.
+func TestClassifyInboundOrigin_NeverReturnsAnEmptyClass(t *testing.T) {
+	t.Parallel()
+	ids := []string{"", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "garbage", "  "}
+	classes := []string{"", protocol.OriginClassAttached, protocol.OriginClassNoDemand, protocol.OriginClassOrphan, "junk"}
+	for _, id := range ids {
+		for _, cl := range classes {
+			gotID, gotClass := classifyInboundOrigin(id, cl, "line-1", "uuid-test")
+			if gotClass == "" {
+				t.Errorf("classifyInboundOrigin(%q, %q) returned an EMPTY class — that row lands in no bucket", id, cl)
+			}
+			if gotID != "" && gotClass != protocol.OriginClassAttached {
+				t.Errorf("classifyInboundOrigin(%q, %q) = (%q, %q): an id may only ever come back attached", id, cl, gotID, gotClass)
+			}
+		}
+	}
+}

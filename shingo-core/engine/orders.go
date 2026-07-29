@@ -78,6 +78,12 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 		Priority:     req.Priority,
 		PayloadDesc:  req.Desc,
 		BinID:        &srcBinID,
+		// NO_DEMAND, stamped here where it is known. A direct order is an
+		// engineer moving a bin from A to B; no place asked for material, so
+		// there is no episode and its absence is not a finding. Left blank it
+		// would land orphan and put an admin action in the one bucket that is
+		// supposed to mean "we lost a demand link."
+		OriginClass: protocol.OriginClassNoDemand,
 	}
 	if err := e.db.CreateOrder(order); err != nil {
 		return nil, fmt.Errorf("create order: %w", err)

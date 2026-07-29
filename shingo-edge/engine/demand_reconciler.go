@@ -83,7 +83,7 @@ func (e *Engine) reconcileDemandEpisodes() {
 		}
 		e.logFn("demand_reconciler: closing %s (origin=%s kind=%s) — precondition no longer holds: %s",
 			ep.EpisodeKey, ep.OriginID, ep.Kind, reason)
-		e.closeEpisode(ep.EpisodeKey, reason)
+		e.closeEpisode(ep.EpisodeKey, reason, protocol.ClosedBySweep)
 	}
 }
 

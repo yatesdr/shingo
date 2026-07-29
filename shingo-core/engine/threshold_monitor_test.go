@@ -235,7 +235,7 @@ func TestThresholdMonitor_CheckBindings_AboveThreshold_NoFire(t *testing.T) {
 	// the threshold check short-circuits correctly.
 	tm.checkBindings([]thresholdEntry{
 		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
-	}, 100, "below_threshold")
+	}, 100, "below_threshold", false)
 }
 
 // TestThresholdMonitor_CheckBindings_NegativeTotal_StillFires pins the
@@ -266,7 +266,7 @@ func TestThresholdMonitor_CheckBindings_NegativeTotal_StillFires(t *testing.T) {
 
 	tm.checkBindings([]thresholdEntry{
 		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
-	}, -443, "below_threshold")
+	}, -443, "below_threshold", false)
 
 	if len(fired) != 1 {
 		t.Fatalf("a negative total must still order material, got %d signals", len(fired))
@@ -340,7 +340,7 @@ func TestThresholdMonitor_NegativeCount_LogThrottleDoesNotGateOrdering(t *testin
 	// (which applies to every fire, negative or not) — NOT by the negative
 	// path, which no longer gates anything.
 	for range 25 {
-		tm.checkBindings([]thresholdEntry{entry}, -443, "below_threshold")
+		tm.checkBindings([]thresholdEntry{entry}, -443, "below_threshold", false)
 	}
 
 	if fires == 0 {

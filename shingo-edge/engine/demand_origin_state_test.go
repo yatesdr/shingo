@@ -67,7 +67,7 @@ func TestOriginState_RevisionsIncreaseAndTheLastMessageIsSufficient(t *testing.T
 			t.Fatalf("join: %v", err)
 		}
 	}
-	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered)
+	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
 	states := decodeOriginStates(t, db)
 	if len(states) != 4 {
@@ -146,7 +146,7 @@ func TestOriginState_ChangeoverUsesTheSamePath(t *testing.T) {
 	if originID == "" {
 		t.Fatal("no origin minted")
 	}
-	eng.closeChangeoverEpisode(coID, protocol.CloseReasonChangeoverComplete)
+	eng.closeChangeoverEpisode(coID, protocol.CloseReasonChangeoverComplete, protocol.ClosedByNotification)
 
 	states := decodeOriginStates(t, db)
 	if len(states) != 2 {
@@ -183,7 +183,7 @@ func TestOriginState_CloseIsEnqueuedBeforeTheRowGoes(t *testing.T) {
 		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered)
+	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
 	key := protocol.CellEpisodeKey(eng.cfg.StationID(), procID, "PANEL-B", protocol.EpisodeDirectionSupply)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {

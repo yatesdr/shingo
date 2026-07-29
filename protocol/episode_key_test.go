@@ -6,6 +6,57 @@ import (
 	"shingo/protocol"
 )
 
+// THE THREE FORMATS ARE A WIRE CONTRACT — PINNED, NOT ROUND-TRIPPED.
+//
+// Once Core stores keys it did not compute, the episode-key FORMAT is a
+// cross-service contract: Edge authors cell and changeover keys, Core stores
+// and compares them, and Core's partial unique index enforces "one open
+// episode per place" over the literal string. Change the format and old rows
+// and new rows describe the same place differently — the index stops seeing
+// them as one place, and a plant ends up with keys in both shapes. Version
+// skew on a FORMAT rather than a field, which is the kind nobody looks for
+// because nothing in protocol/ declares it as a field.
+//
+// A round-trip test cannot catch this. Every other test in this file builds a
+// key with the constructors and parses it with ParseEpisodeKey, so it stays
+// green under any format change as long as the two agree — self-consistency,
+// not a contract. THIS test is the only thing standing between a format
+// change and a silent split, so it hard-codes the strings: changing one has
+// to be acknowledged in a diff rather than merged.
+func TestEpisodeKeyFormats_ArePinned(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{
+			name: "threshold reproduces Core's bindingKey shape",
+			got:  protocol.ThresholdEpisodeKey("PLANT.LINE1", "SLN_002", "74577-6SA0A.06"),
+			want: "thr|PLANT.LINE1|SLN_002|74577-6SA0A.06",
+		},
+		{
+			name: "cell is keyed on the PROCESS, with direction in the identity",
+			got:  protocol.CellEpisodeKey("PLANT.LINE1", 42, "PANEL-B", protocol.EpisodeDirectionSupply),
+			want: "cell|PLANT.LINE1|42|PANEL-B|supply",
+		},
+		{
+			name: "changeover is keyed on the changeover row",
+			got:  protocol.ChangeoverEpisodeKey("PLANT.LINE1", 7),
+			want: "co|PLANT.LINE1|7",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("episode key format CHANGED\n got: %s\nwant: %s\n\n"+
+					"This is a cross-service wire contract, not an internal string. Edge authors "+
+					"these keys and Core stores them verbatim under a unique index. If this change "+
+					"is intended, it needs a migration for existing demand_origins rows and "+
+					"coordinated deploys — not just a new expectation here.", tc.got, tc.want)
+			}
+		})
+	}
+}
+
 // THREE KINDS, THREE IDENTITIES. This is why episode identity is a computed
 // string and not a column tuple: a tuple wide enough for all three is mostly
 // NULL, and NULLs do not participate in a unique index the way "one open

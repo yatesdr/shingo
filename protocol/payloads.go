@@ -113,6 +113,20 @@ const (
 	// OriginClassOrphan: it should have had an episode and didn't. THE ONLY ONE
 	// THAT IS A FINDING.
 	OriginClassOrphan = "orphan"
+	// OriginClassOrphanAged: it was an orphan, and it is old enough that nobody
+	// is going to work out which demand it belonged to now.
+	//
+	// WRITTEN ONLY BY THE RECONCILING SWEEP. No create site ever stamps it —
+	// this is the sweep ending a finding, the same act as closing an episode,
+	// and it is a separate value rather than a reversion to `no_demand` because
+	// clearing an alarm must not rewrite history into "there was never anything
+	// wrong here". The row still says the order should have had an origin.
+	//
+	// The expiry exists because there is no deferred attach: §10 of the design
+	// is explicit that an orphan matching a later episode stays orphaned and
+	// reconciles by a human. So the finding set only ever grows, and an alarm
+	// that never clears is indistinguishable from a broken one.
+	OriginClassOrphanAged = "orphan_aged"
 )
 
 // OrderCancel cancels an existing order.
@@ -1263,6 +1277,13 @@ type DemandOriginState struct {
 	ClosedAt *time.Time `json:"closed_at,omitempty"`
 	// CloseReason is one of the CloseReason* constants. Empty while open.
 	CloseReason string `json:"close_reason,omitempty"`
+	// ClosedBy is "notification" or "sweep" — WHICH MECHANISM ended the
+	// episode. Empty means the sender did not say, which is a different fact
+	// from "a notification path closed it": an older Edge sends nothing here.
+	// It exists because the reconciling sweep uses the same close_reason codes
+	// as the notification paths deliberately, so without this a total silent
+	// failure of every notification path is indistinguishable from health.
+	ClosedBy string `json:"closed_by,omitempty"`
 }
 
 // Episode close reasons.
@@ -1292,4 +1313,16 @@ const (
 	// Edge already silently drops threshold signals it cannot resolve. An
 	// alarm that never clears is indistinguishable from a broken one.
 	CloseReasonUnattributed = "unattributed"
+)
+
+// Which mechanism ended an episode. Values for DemandOriginState.ClosedBy and
+// demand_origins.closed_by.
+//
+// The sweep uses the SAME close_reason codes as the notification paths, on
+// purpose — one vocabulary for one set of facts about the plant. This is how
+// you tell which machinery is actually doing the work, and therefore the only
+// way a total silent failure of the notification paths is visible at all.
+const (
+	ClosedByNotification = "notification"
+	ClosedBySweep        = "sweep"
 )

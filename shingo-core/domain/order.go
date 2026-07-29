@@ -87,4 +87,21 @@ type Order struct {
 	// follow-up carries the count in the persisted plan and this retires. See
 	// dispatch.planTransport.
 	RemainingUOP *int `json:"remaining_uop,omitempty"`
+	// OriginID is the demand episode this order was created to serve, and
+	// OriginClass says whether it should have had one. STAMPED FORWARD at the
+	// create site, never resolved by walking parent_order_id: that column is
+	// written in exactly one place in all of shingo-core (dispatch/compound.go),
+	// is one level deep, and the synthetic restore parent sets none at all — so a
+	// read-time walk dead-ends at exactly the boundary the rule exists to cross.
+	//
+	// An order created in service of another order inherits its origin AND its
+	// class. sibling_order_uuid is the precedent: a durable forward link written
+	// with the row rather than reconstructed on read.
+	//
+	// OriginClass is one of protocol.OriginClass* and is what makes
+	// `origin_id IS NULL` answerable — without it that predicate selects every
+	// consume-side order, every opportunistic stage and every admin action, with
+	// the actual lost origins buried in there. Only `orphan` is a finding.
+	OriginID    string `json:"origin_id,omitempty"`
+	OriginClass string `json:"origin_class,omitempty"`
 }

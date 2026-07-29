@@ -46,6 +46,19 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 	}
 	sourceNode, deliveryNode := extractEndpoints(resolvedSteps)
 
+	// INTAKE SITE 3 OF 3, AND IT IS INTAKE — NOT A DERIVATIVE.
+	//
+	// This function is reached from HandleComplexOrderRequest's ResolutionBuried
+	// branch, which RETURNS rather than falling through, so the order built here
+	// is the complex parent itself and its origin comes off the same envelope
+	// (p.OriginID) as the main path's. The reshuffle compound created below IS
+	// derivative and inherits from this row via CreateCompoundOrder.
+	//
+	// Miss this site and every complex order that happens to arrive on a buried
+	// bin becomes an orphan — a bucket that fills in proportion to how full the
+	// lanes are, i.e. worst exactly when the surface matters most.
+	originID, originClass := classifyInboundOrigin(p.OriginID, p.OriginClass, stationID, p.OrderUUID)
+
 	order := &orders.Order{
 		EdgeUUID:     p.OrderUUID,
 		StationID:    stationID,
@@ -64,6 +77,8 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 		// Persist the swap sibling on the buried path too (durable forward
 		// link) — same contract as the main intake path above.
 		SiblingOrderUUID: p.SiblingOrderUUID,
+		OriginID:         originID,
+		OriginClass:      originClass,
 	}
 	if err := d.db.CreateOrder(order); err != nil {
 		log.Printf("dispatch: create complex parent for buried reshuffle: %v", err)

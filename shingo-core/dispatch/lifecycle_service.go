@@ -69,6 +69,9 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	if p.RetrieveEmpty && p.OrderType == OrderTypeRetrieve {
 		orderType = OrderTypeRetrieveEmpty
 	}
+	// Intake site 1 of 3 for the demand grain. Stamped from the envelope here,
+	// where the sender's statement is in hand; never inferred later from a NULL.
+	originID, originClass := classifyInboundOrigin(p.OriginID, p.OriginClass, stationID, p.OrderUUID)
 	order := &orders.Order{
 		EdgeUUID:        p.OrderUUID,
 		StationID:       stationID,
@@ -84,6 +87,8 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		// Stage 4: stamp the sourcing intent as data at intake (label→data
 		// carve-out) so the finder + scanner read it, not the type.
 		SourceIntent: SourceIntentForType(orderType),
+		OriginID:     originID,
+		OriginClass:  originClass,
 	}
 	if payloadCode != "" {
 		if _, err := s.db.GetPayloadByCode(payloadCode); err != nil {

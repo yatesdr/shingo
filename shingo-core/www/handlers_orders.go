@@ -256,6 +256,18 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 	src := protocol.Address{Role: protocol.RoleCore, Station: "core-spot"}
 	dst := protocol.Address{Role: protocol.RoleCore}
 
+	// EVERY SPOT ORDER ON THIS PAGE IS no_demand, and each of the six create
+	// sites below says so itself. Four of them synthesize a protocol request and
+	// hand it to the real intake path, which classifies from the envelope — an
+	// unstamped request would arrive indistinguishable from an old Edge's and
+	// land ORPHAN, putting an operator's deliberate action into the bucket that
+	// exists to mean "we lost a demand link." The other two write a domain.Order
+	// directly and never reach a classifier at all.
+	//
+	// Stamped at the create site rather than inferred from StationID ==
+	// "core-spot" downstream: the class is known HERE, and a magic-string read at
+	// intake is the inference this whole column exists to make unnecessary.
+
 	switch req.OrderType {
 	case "staged":
 		h.submitSpotComplexOrder(w, req.SourceNode, req.StagingNode, req.DeliveryNode,
@@ -297,6 +309,7 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 				SourceNode:   req.SourceNode,
 				DeliveryNode: req.DeliveryNode,
 				Priority:     req.Priority,
+				OriginClass:  protocol.OriginClassNoDemand,
 			}
 			env, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, orderReq)
 			if err != nil {
@@ -328,6 +341,7 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 		SourceNode:   req.SourceNode,
 		DeliveryNode: req.DeliveryNode,
 		Priority:     req.Priority,
+		OriginClass:  protocol.OriginClassNoDemand,
 	}
 
 	env, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, orderReq)
@@ -361,6 +375,7 @@ func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc str
 		DeliveryNode: destNode.Name,
 		Priority:     priority,
 		PayloadDesc:  desc,
+		OriginClass:  protocol.OriginClassNoDemand,
 	}
 	orders := h.engine.OrderService()
 	if err := orders.Create(order); err != nil {
@@ -417,6 +432,7 @@ func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
 		PayloadDesc: desc,
 		Quantity:    1,
 		Priority:    priority,
+		OriginClass: protocol.OriginClassNoDemand,
 		Steps: []protocol.ComplexOrderStep{
 			{Action: "pickup", Node: sourceNode},
 			{Action: "dropoff", Node: stagingNode},
@@ -496,6 +512,7 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		Priority:     priority,
 		PayloadDesc:  desc,
 		BinID:        &bin.ID,
+		OriginClass:  protocol.OriginClassNoDemand,
 	}
 	orders := h.engine.OrderService()
 	if err := orders.Create(order); err != nil {
@@ -564,6 +581,7 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 		DeliveryNode: targetNode,
 		Priority:     priority,
 		PayloadDesc:  desc,
+		OriginClass:  protocol.OriginClassNoDemand,
 	}
 	retrieveEnv, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, retrieveReq)
 	if err != nil {

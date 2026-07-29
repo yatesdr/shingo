@@ -78,7 +78,7 @@ func (e *Engine) openCellEpisode(
 		// Ignored deliberately: the row is still on disk, so a failed enqueue
 		// costs a stale rerequest_count on Core until the next change, and the
 		// close re-sends everything regardless.
-		_ = e.emitOriginState(joined, nil, "")
+		_ = e.emitOriginState(joined, nil, "", "")
 		return joined.OriginID, true, nil
 	} else if err != nil && !errors.Is(err, store.ErrOriginNotOpen) {
 		return "", false, err
@@ -109,13 +109,13 @@ func (e *Engine) openCellEpisode(
 		row.OriginID, key, trigger, expected, openedTotal, discretionary)
 	// Ignored deliberately — see emitOriginState. A lost OPEN self-heals: the
 	// row is durable and the close carries the whole episode.
-	_ = e.emitOriginState(row, nil, "")
+	_ = e.emitOriginState(row, nil, "", "")
 	return row.OriginID, false, nil
 }
 
 // closeCellEpisode ends the episode for a place, if one is open.
-func (e *Engine) closeCellEpisode(processID int64, payload, direction, reason string) {
-	e.closeEpisode(protocol.CellEpisodeKey(e.cfg.StationID(), processID, payload, direction), reason)
+func (e *Engine) closeCellEpisode(processID int64, payload, direction, reason, closedBy string) {
+	e.closeEpisode(protocol.CellEpisodeKey(e.cfg.StationID(), processID, payload, direction), reason, closedBy)
 }
 
 // closeEpisode is the ONE close path for every kind Edge owns.
@@ -132,7 +132,7 @@ func (e *Engine) closeCellEpisode(processID int64, payload, direction, reason st
 // pokes that exist because a node which stops consuming produces no ticks, and
 // the reconciling sweep — so two of them racing to close one episode is
 // ordinary rather than exceptional.
-func (e *Engine) closeEpisode(key, reason string) {
+func (e *Engine) closeEpisode(key, reason, closedBy string) {
 	closed, err := e.db.CloseDemandOrigin(key)
 	if errors.Is(err, store.ErrOriginNotOpen) {
 		return
@@ -146,7 +146,7 @@ func (e *Engine) closeEpisode(key, reason string) {
 		closed.OriginID, key, reason, closedAt.Sub(closed.OpenedAt).Round(time.Second),
 		closed.RerequestCount, closed.Revision)
 
-	if err := e.emitOriginState(closed, &closedAt, reason); err != nil {
+	if err := e.emitOriginState(closed, &closedAt, reason, closedBy); err != nil {
 		// KEEP THE ROW. The close never reached the outbox, so deleting here
 		// would lose it outright — nothing would ever tell Core the episode
 		// ended, and no sweep could notice, because the sweep reads this very
@@ -329,7 +329,7 @@ func itoa64(n int64) string {
 // deleting it after a failed enqueue loses the close outright, with no sweep
 // able to notice because the sweep reads that table. So close checks this and
 // keeps the row; the open paths deliberately ignore it.
-func (e *Engine) emitOriginState(o *store.OpenOrigin, closedAt *time.Time, closeReason string) error {
+func (e *Engine) emitOriginState(o *store.OpenOrigin, closedAt *time.Time, closeReason, closedBy string) error {
 	if o == nil {
 		return nil
 	}
@@ -341,7 +341,7 @@ func (e *Engine) emitOriginState(o *store.OpenOrigin, closedAt *time.Time, close
 		OpenedAt: o.OpenedAt, OpenedTotal: o.OpenedTotal, Threshold: o.Threshold,
 		ExpectedOrders: o.ExpectedOrders, ExpectedUnknownReason: o.ExpectedUnknownReason,
 		RerequestCount: o.RerequestCount, Discretionary: o.Discretionary,
-		ClosedAt: closedAt, CloseReason: closeReason,
+		ClosedAt: closedAt, CloseReason: closeReason, ClosedBy: closedBy,
 	}
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectDemandOrigin,
@@ -416,7 +416,7 @@ func (e *Engine) openChangeoverEpisode(co *processes.Changeover, expectedOrders 
 	e.logFn("demand_episode: OPENED origin=%s key=%s kind=changeover process=%d expected_orders=%d",
 		row.OriginID, key, co.ProcessID, expected)
 	// Ignored deliberately — see emitOriginState.
-	_ = e.emitOriginState(row, nil, "")
+	_ = e.emitOriginState(row, nil, "", "")
 	return row.OriginID
 }
 
@@ -429,6 +429,6 @@ func (e *Engine) openChangeoverEpisode(co *processes.Changeover, expectedOrders 
 // The changeover row keeps its origin_id as a durable back-pointer even after
 // the episode closes — it is the link from a changeover to its demand, and
 // clearing it would throw that away to save nothing.
-func (e *Engine) closeChangeoverEpisode(changeoverID int64, reason string) {
-	e.closeEpisode(protocol.ChangeoverEpisodeKey(e.cfg.StationID(), changeoverID), reason)
+func (e *Engine) closeChangeoverEpisode(changeoverID int64, reason, closedBy string) {
+	e.closeEpisode(protocol.ChangeoverEpisodeKey(e.cfg.StationID(), changeoverID), reason, closedBy)
 }

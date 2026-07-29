@@ -41,12 +41,20 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 		// created_at/updated_at explicit, same reasoning as orders.Create:
 		// omitting them takes the database's clock while every duration is
 		// measured against clock.Now().
-		err := tx.QueryRow(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15) RETURNING id`,
+		//
+		// THIS IS A SECOND, INDEPENDENT INSERT INTO orders — it is not
+		// orders.Create with a transaction. A column added to one and not the
+		// other is silently dropped on this path, which is where the compound
+		// CHILDREN are written, i.e. exactly the rows the demand grain needs to
+		// count. origin_id/origin_class are named here for that reason.
+		err := tx.QueryRow(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, origin_id, origin_class, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17) RETURNING id`,
 			o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 			o.Quantity,
 			o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
 			helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
-			helpers.NullableInt64(o.BinID), clock.Now().UTC()).Scan(&id)
+			helpers.NullableInt64(o.BinID),
+			helpers.NullableText(o.OriginID), o.OriginClass,
+			clock.Now().UTC()).Scan(&id)
 		if err != nil {
 			return fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}

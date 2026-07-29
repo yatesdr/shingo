@@ -140,6 +140,14 @@ func (e *Engine) Start() {
 	// Start staged bin expiry sweep
 	go e.stagedBinSweepLoop()
 
+	// Demand-episode reconciler: the correctness floor under the notification
+	// close paths. Started AFTER the threshold monitor is constructed (New
+	// builds it) but independently of its startup sweep — the reconciler reads
+	// the database, not the monitor's caches, so it does not need the sweep to
+	// have finished to be correct. If it happens to run first it finds the
+	// bindings in demand_registry exactly as they are.
+	e.startDemandReconciler()
+
 	// Start periodic reconciliation logging and auto-confirm
 	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered, e.cfg.Staging.AbandonStuck)
 

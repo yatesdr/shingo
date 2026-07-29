@@ -385,7 +385,7 @@ func (e *Engine) finalizeChangeoverRow(processID, changeoverID int64, triggeredB
 	if err := e.db.UpdateProcessChangeoverStateWithTrigger(changeoverID, domain.ChangeoverCompleted, triggeredBy); err != nil {
 		return err
 	}
-	e.closeChangeoverEpisode(changeoverID, protocol.CloseReasonChangeoverComplete)
+	e.closeChangeoverEpisode(changeoverID, protocol.CloseReasonChangeoverComplete, protocol.ClosedByNotification)
 	// Open the post-cutover part-id verification watch: within a short window, if
 	// the press's live CATID still disagrees with the new active style, this
 	// changeover is flagged for operator confirmation on the station.

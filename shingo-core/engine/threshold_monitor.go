@@ -171,6 +171,34 @@ type ThresholdMonitor struct {
 	// payload the ledger read as fully stocked (P2-C9). Keyed by payload_code;
 	// drives the Replenishment Health contradiction chip and throttles the log.
 	swapContradiction map[string]time.Time
+	// belowThresholdSince converts a LEVEL into an EDGE, keyed by bindingKey.
+	//
+	// checkBindings is level-triggered: "total < threshold" is true
+	// continuously, for as long as it is true, and a level has no memory. That
+	// is why 2026-07-21 read as hundreds of unrelated firings rather than one
+	// demand — every incoming delta re-asked the same question and got the same
+	// yes. debounce and warmUp exist to paper over exactly that absence.
+	//
+	// Stamped on the FIRST crossing, cleared on recovery. The episode between
+	// the two edges is the demand.
+	//
+	// IN MEMORY, beside thresholdsByPayload and under the same mutex, because
+	// Core has nowhere free to hang it. Edge could put its equivalent on the
+	// claim row the hot path already loads; here evaluatePayload reads a
+	// computed AGGREGATE (SystemUOPForPayload, a SUM over bins and buckets),
+	// not a row, and it cannot go on demand_registry — SyncRegistry DELETEs and
+	// re-inserts the whole station on every Edge reconnect. A DB read per
+	// below-threshold evaluation would land worst precisely where it matters:
+	// a binding stuck below threshold is re-evaluated on EVERY delta.
+	belowThresholdSince map[string]time.Time
+	// openOrigins is the open episode's id per bindingKey — what every signal
+	// fired for that demand gets stamped with, so the orders Edge mints in
+	// response are children of it.
+	//
+	// REHYDRATED BY startupSweep, not rebuilt empty. See
+	// rehydrateThresholdEpisodes.
+	openOrigins map[string]openEpisodeRef
+
 	// linesideMode is the resolved R1 decision mode (edge_reports | ledger),
 	// validated once at construction from config. Read on every evaluation to
 	// pick which in-loop total the fire gate decides off. Empty is treated as the
@@ -216,6 +244,8 @@ func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
 		thresholdsByPayload: make(map[string][]thresholdEntry),
 		negativeLogged:      make(map[string]time.Time),
 		swapContradiction:   make(map[string]time.Time),
+		belowThresholdSince: make(map[string]time.Time),
+		openOrigins:         make(map[string]openEpisodeRef),
 		linesideMode:        resolveLinesideMode(rawMode, warnf),
 		now:                 clock.Now,
 	}
@@ -380,7 +410,7 @@ func (m *ThresholdMonitor) evaluatePayload(payloadCode, reason string) {
 		decisionTotal = edgeTotal
 	}
 	m.auditLinesideDecision(payloadCode, bindings, ledgerTotal, edgeTotal, usedEdge)
-	m.checkBindings(bindings, decisionTotal, reason)
+	m.checkBindings(bindings, decisionTotal, reason, usedEdge)
 }
 
 // startupSweep iterates every (loader, payload) with threshold > 0,
@@ -389,6 +419,14 @@ func (m *ThresholdMonitor) evaluatePayload(payloadCode, reason string) {
 // firing signals for any already below threshold. It holds no UOP tally
 // afterwards; every later evaluation reads the DB again.
 func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
+	// REHYDRATE BEFORE EVALUATING ANYTHING. The sweep below re-evaluates every
+	// binding, and any that is still below threshold looks like a first
+	// crossing to empty maps — so it would mint a second episode for a place
+	// that already has one open, on every restart, for every hungry loader.
+	// This must come before the early return below too: a ListDemandThresholds
+	// failure still leaves the monitor running.
+	m.rehydrateThresholdEpisodes()
+
 	entries, err := m.eng.db.ListDemandThresholds()
 	if err != nil {
 		m.eng.logFn("threshold_monitor: startup sweep ListDemandThresholds: %v", err)
@@ -465,7 +503,7 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 			})
 		}
 		m.mu.Unlock()
-		m.checkBindings(tes, total, "warm_up_startup_sweep")
+		m.checkBindings(tes, total, "warm_up_startup_sweep", false)
 	}
 
 	m.mu.Lock()
@@ -555,7 +593,7 @@ func (m *ThresholdMonitor) NoteSwapRequestContradiction(payloadCode string) {
 		}
 	}
 	// Immediately re-evaluate — a re-read now. Creates no orders when stocked.
-	m.checkBindings(bindings, total, "manual_swap_recheck")
+	m.checkBindings(bindings, total, "manual_swap_recheck", false)
 }
 
 // recordSwapContradiction stamps a swap-vs-ledger contradiction for the payload
@@ -575,7 +613,7 @@ func (m *ThresholdMonitor) recordSwapContradiction(payloadCode string) bool {
 
 // checkBindings evaluates all threshold bindings for a given total and
 // fires signals for any that are below threshold and past debounce.
-func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, reason string) {
+func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, reason string, usedEdgeReports bool) {
 	// A NEGATIVE TOTAL NO LONGER SUPPRESSES REPLENISHMENT.
 	//
 	// It used to. The reasoning was "a negative total is a broken ledger, so
@@ -625,9 +663,22 @@ func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, r
 			continue
 		}
 		if total >= b.threshold {
+			// THE RISING EDGE. Until the demand grain existed this branch did
+			// nothing at all — recovery was simply the absence of firing, which
+			// is why there was no way to say when a demand ENDED, and therefore
+			// no way to say what one had cost.
+			m.closeThresholdEpisode(bindingKey(b.stationID, b.coreNodeName, b.payloadCode),
+				protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 			continue
 		}
 		key := bindingKey(b.stationID, b.coreNodeName, b.payloadCode)
+		// THE FALLING EDGE, AND IT IS MINTED BEFORE THE DEBOUNCE GATE ON
+		// PURPOSE. The episode is the DEMAND; the signal is the ACTION taken
+		// about it. Debounce decides how often it is worth acting — it must not
+		// decide whether the need is recorded, or a demand that fired once and
+		// then stayed suppressed for hours would look like it lasted an
+		// instant. The episode opens when the place goes hungry.
+		m.openThresholdEpisode(key, b, total, usedEdgeReports)
 		if !m.allow(key) {
 			// nil-guarded like every other eng use here. Unreachable with a
 			// nil eng until now: a negative total used to return before this
@@ -704,6 +755,13 @@ func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason 
 	if b.loaderID > 0 {
 		signal.LoaderKey = loaders.Key(b.loaderID)
 	}
+	// SEAM 1: the demand travels with the signal, so the orders Edge mints in
+	// response come back as CHILDREN of it. Without this the round trip loses
+	// the link at its first hop and every threshold-driven order arrives on
+	// Core as an orphan — the whole grain, defeated by the leg that carries the
+	// request. Additive and omitempty: an older Edge ignores it and its orders
+	// land with a NULL origin, which is the documented skew and harmless.
+	signal.OriginID = m.currentThresholdOrigin(bindingKey(b.stationID, b.coreNodeName, b.payloadCode))
 	if err := m.eng.SendDataToEdge(protocol.SubjectLoopBelowThreshold, b.stationID, signal); err != nil {
 		m.eng.logFn("threshold_monitor: send LoopBelowThresholdSignal to %s loader=%s payload=%s: %v",
 			b.stationID, b.coreNodeName, b.payloadCode, err)
@@ -746,6 +804,16 @@ func (m *ThresholdMonitor) OnThresholdChanges(changes []demands.RegistryChange) 
 		}
 	}
 	m.mu.Unlock()
+
+	// The denominator moved, so the episode ends here and the re-evaluation
+	// inside engagePayloads opens a fresh one if the place is still hungry.
+	// Carrying one episode across the change would measure it against a
+	// threshold that was not in force for most of its life.
+	//
+	// It runs BEFORE engagePayloads, or the re-evaluation would find the old
+	// episode still open, treat the level as already-stamped, and the new
+	// threshold would never get an episode of its own.
+	m.closeThresholdEpisodesForChangedBindings(changes)
 
 	m.engagePayloads(affectedPayloads)
 }
@@ -818,6 +886,16 @@ func (m *ThresholdMonitor) engagePayloads(affectedPayloads map[string]bool) {
 				loaderID:     e.LoaderID,
 			})
 		}
+		// Which bindings SURVIVED the rebuild. Any open episode for this payload
+		// whose binding is not among them lost its precondition — the config
+		// went away underneath a live demand, and this is the only site that
+		// can notice.
+		live := make(map[string]bool, len(tes))
+		for _, te := range tes {
+			live[bindingKey(te.stationID, te.coreNodeName, te.payloadCode)] = true
+		}
+		m.closeThresholdEpisodesForPayloadNotIn(payload, live)
+
 		m.mu.Lock()
 		if len(tes) == 0 {
 			delete(m.thresholdsByPayload, payload)
@@ -845,6 +923,6 @@ func (m *ThresholdMonitor) engagePayloads(affectedPayloads map[string]bool) {
 			total = 0
 		}
 
-		m.checkBindings(tes, total, "below_threshold")
+		m.checkBindings(tes, total, "below_threshold", false)
 	}
 }

@@ -56,6 +56,20 @@ func (d *Dispatcher) CreateCompoundChildrenOnly(parentOrder *orders.Order, plan 
 			Sequence:      step.Sequence,
 			PayloadDesc:   fmt.Sprintf("reshuffle %s: bin %d", step.StepType, step.BinID),
 			BinID:         &step.BinID,
+			// Derivative site 1 of 2. An order created in service of another
+			// order inherits its origin AND ITS CLASS — a shuffle move exists
+			// only because the parent needed a buried bin, so it is part of the
+			// cost of the parent's demand and belongs in that episode's count.
+			//
+			// STAMPED FORWARD, NOT WALKED. parent_order_id is set four lines
+			// up, which makes a read-time walk look available here, and it is
+			// the wrong instrument: it is one level deep and the synthetic
+			// restore parent (restore_listeners.go) sets none at all, so the
+			// walk dead-ends at exactly the boundary the inheritance rule
+			// exists to cross. Copying the class too is what stops a
+			// no_demand parent's shuffles arriving as three fresh orphans.
+			OriginID:    parentOrder.OriginID,
+			OriginClass: parentOrder.OriginClass,
 		}
 
 		if step.FromNode != nil {

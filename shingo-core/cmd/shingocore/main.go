@@ -33,7 +33,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/debuglog"
-	"shingo/protocol/router"
 	"shingocore/config"
 	"shingocore/countgroup"
 	"shingocore/dispatch"
@@ -371,11 +370,10 @@ func main() {
 	defer coreHandler.Stop()
 
 	// ── Subject router (Data sub-dispatch) ─────────────────────────────
-	// Every Subject Core handles is registered explicitly here against
-	// a CoreDataService method — same shape as cmd/shingoedge/main.go's
-	// SubjectRouter wiring. CoreDataService is constructed at this
-	// composition root rather than buried inside NewCoreHandler so the
-	// dispatch table is grep-able from one place.
+	// The dispatch table itself lives in routers.go so a test can build it;
+	// see the header there. CoreDataService is constructed at this composition
+	// root rather than buried inside NewCoreHandler so the wiring is grep-able
+	// from one place.
 	coreDataService := messaging.NewCoreDataService(db, coreHandler)
 	// Wire the UOP-threshold monitor so claim-sync threshold changes
 	// reset debounce timers and bucket-applied events drive
@@ -383,23 +381,13 @@ func main() {
 	// and kicked its startup-sweep goroutine.
 	coreDataService.SetThresholdMonitor(eng.ThresholdMonitor())
 
-	subjectRouter := router.NewSubject()
-	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegister, coreDataService.HandleEdgeRegister)
-	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeat, coreDataService.HandleEdgeHeartbeat)
-	router.RegisterSubjectBare(subjectRouter, protocol.SubjectNodeListRequest, coreDataService.HandleNodeListRequest)
-	router.RegisterSubject(subjectRouter, protocol.SubjectProductionReport, coreDataService.HandleProductionReport)
-	router.RegisterSubject(subjectRouter, protocol.SubjectTagVerifyRequest, coreDataService.HandleTagVerifyRequest)
-	router.RegisterSubjectBare(subjectRouter, protocol.SubjectCatalogPayloadsRequest, coreDataService.HandleCatalogPayloadsRequest)
-	router.RegisterSubject(subjectRouter, protocol.SubjectNodeStateRequest, coreDataService.HandleNodeStateRequest)
-	router.RegisterSubject(subjectRouter, protocol.SubjectOrderStatusRequest, coreDataService.HandleOrderStatusRequest)
-	router.RegisterSubject(subjectRouter, protocol.SubjectClaimSync, coreDataService.HandleClaimSync)
-	router.RegisterSubject(subjectRouter, protocol.SubjectCountGroupAck, coreDataService.HandleCountGroupAck)
-	router.RegisterSubject(subjectRouter, protocol.SubjectBinUOPDelta, coreDataService.HandleBinUOPDelta)
-	router.RegisterSubject(subjectRouter, protocol.SubjectLinesideBucketDelta, coreDataService.HandleLinesideBucketDelta)
-	router.RegisterSubject(subjectRouter, protocol.SubjectProductionTick, coreDataService.HandleProductionTick)
-	router.RegisterSubject(subjectRouter, protocol.SubjectDowntimeEvent, coreDataService.HandleDowntimeEvent)
-	router.RegisterSubject(subjectRouter, protocol.SubjectPlantClaims, coreDataService.HandlePlantClaims)
-	router.RegisterSubject(subjectRouter, protocol.SubjectLinesideLevelReport, coreDataService.HandleLinesideLevelReport)
+	subjectRouter, err := buildSubjectRouter(coreDataService)
+	if err != nil {
+		// Second line of defence: TestSubjectRouter_CoversEveryInboundSubject
+		// fails the build first. Reaching this means a binary was shipped
+		// without the suite, and at boot it is still fatal.
+		log.Fatalf("shingocore: %v — composition root is incomplete", err)
+	}
 	// Fan projected ticks out to the engine event bus so the SSE layer can
 	// rebroadcast them as cell-heartbeat (Phase E). Set before the projection
 	// worker starts so it reads the emitter race-free.
@@ -412,11 +400,6 @@ func main() {
 	// (plan §12). Must follow registration; the handler only enqueues.
 	coreDataService.StartHeartbeatProjection()
 	coreDataService.StartDowntimeProjection()
-	for _, s := range protocol.CoreInboundSubjects() {
-		if !subjectRouter.Has(s) {
-			log.Fatalf("shingocore: subject router missing handler for %s — composition root is incomplete", s)
-		}
-	}
 
 	ingestor := protocol.NewIngestor(func(_ *protocol.RawHeader) bool { return true })
 	ingestor.DebugLog = dbg.Func("protocol")
@@ -426,53 +409,17 @@ func main() {
 	}
 
 	// ── Protocol router (envelope Type dispatch) ───────────────────────
-	// Each envelope Type registers directly against coreHandler.HandleX
-	// (or, for TypeData, a closure into subjectRouter.Dispatch). The 8
-	// order-channel Types share the inbox-dedup middleware via UseFor;
-	// TypeData and the reply-channel Types pass through ungated (the
-	// order-channel scoping matches the legacy InboxDedup decorator
-	// contract this middleware replaced).
-	protoRouter := router.New[string]()
-	dedupMW := middleware.NewInboxDedup(db, dbg.Func("inbox_dedup"))
-	protoRouter.UseFor(dedupMW,
-		protocol.TypeOrderRequest,
-		protocol.TypeOrderCancel,
-		protocol.TypeOrderReceipt,
-		protocol.TypeOrderRedirect,
-		protocol.TypeComplexOrderRequest,
-		protocol.TypeOrderRelease,
-		protocol.TypeOrderIngest,
+	// The dispatch table lives in routers.go; see the header there.
+	protoRouter, err := buildProtocolRouter(
+		coreHandler,
+		subjectRouter,
+		middleware.NewInboxDedup(db, dbg.Func("inbox_dedup")),
+		dbg.Func("core_handler"),
 	)
-	dataDbg := dbg.Func("core_handler")
-	router.Register(protoRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
-		dataDbg("data: subject=%s body_size=%d from=%s", p.Subject, len(p.Body), env.Src.Station)
-		subjectRouter.Dispatch(env, p)
-	})
-	router.Register(protoRouter, protocol.TypeOrderRequest, coreHandler.HandleOrderRequest)
-	router.Register(protoRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
-	router.Register(protoRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
-	router.Register(protoRouter, protocol.TypeOrderRedirect, coreHandler.HandleOrderRedirect)
-	router.Register(protoRouter, protocol.TypeComplexOrderRequest, coreHandler.HandleComplexOrderRequest)
-	router.Register(protoRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
-	router.Register(protoRouter, protocol.TypeOrderIngest, coreHandler.HandleOrderIngest)
-	// Core sends these reply-channel types to Edge but never receives
-	// them. Register as inline no-ops so the Phase 3.5 startup assertion
-	// (every type in protocol.AllTypes() has a handler) is satisfied
-	// without inventing a junk MessageHandler implementation. The
-	// "no handler registered" router log makes accidental inbound
-	// reply-channel traffic visible if it ever shows up.
-	router.Register(protoRouter, protocol.TypeOrderAck, func(*protocol.Envelope, *protocol.OrderAck) {})
-	router.Register(protoRouter, protocol.TypeOrderWaybill, func(*protocol.Envelope, *protocol.OrderWaybill) {})
-	router.Register(protoRouter, protocol.TypeOrderUpdate, func(*protocol.Envelope, *protocol.OrderUpdate) {})
-	router.Register(protoRouter, protocol.TypeOrderDelivered, func(*protocol.Envelope, *protocol.OrderDelivered) {})
-	router.Register(protoRouter, protocol.TypeOrderError, func(*protocol.Envelope, *protocol.OrderError) {})
-	router.Register(protoRouter, protocol.TypeOrderCancelled, func(*protocol.Envelope, *protocol.OrderCancelled) {})
-	router.Register(protoRouter, protocol.TypeOrderStaged, func(*protocol.Envelope, *protocol.OrderStaged) {})
-	router.Register(protoRouter, protocol.TypeOrderSkipped, func(*protocol.Envelope, *protocol.OrderSkipped) {})
-	for _, t := range protocol.AllTypes() {
-		if !protoRouter.Has(t) {
-			log.Fatalf("shingocore: protocol router missing handler for envelope type %s — composition root is incomplete", t)
-		}
+	if err != nil {
+		// Second line of defence, as above:
+		// TestProtocolRouter_CoversEveryEnvelopeType fails the build first.
+		log.Fatalf("shingocore: %v — composition root is incomplete", err)
 	}
 	protoRouter.LogRegistration(log.Printf)
 	ingestor.Dispatch = func(env *protocol.Envelope) {

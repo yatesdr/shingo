@@ -3,6 +3,13 @@
 // MsgClient publish). Used by the operator-facing /test-orders page
 // to drive simple orders, cancels, receipts, and complex orders
 // through the same wire path real Edge traffic uses.
+//
+// THESE DELIBERATELY CARRY NO ORIGIN and therefore land `orphan`, unlike the
+// /orders spot page (handlers_orders.go) whose six create sites all stamp
+// `no_demand`. The difference is what each page IS: a spot order is an operator
+// doing something, while these publish from station "core-test" as an EDGE, and
+// an Edge order with no origin is precisely what orphan means. Stamping them
+// no_demand would leave nothing able to reproduce the skew case on a dev box.
 
 package www
 

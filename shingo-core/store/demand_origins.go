@@ -1,0 +1,432 @@
+package store
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"shingo/protocol"
+)
+
+// demand_origins.go — Core's history of every demand episode.
+//
+// A DEMAND EPISODE is a continuous period during which a specific place needed
+// material. Edge keeps only what is open, in demand_origins_open, and deletes
+// the row on close; this table keeps every episode, open and closed. That is
+// the whole difference between the two names.
+//
+// STATE TRANSFER, NOT EVENTS. Edge sends the WHOLE episode row on every change,
+// stamped with a monotonic revision, and Core upserts it under a revision
+// guard. Rebuilding episode state here by replaying opened/closed events would
+// be a second copy maintained by replay — the uopCache mistake in a new place,
+// where a private incremental tally drifted from the database and left
+// Springfield reading 139 against a truth of 31.
+//
+// What the guard buys STRUCTURALLY rather than by handling: a duplicate
+// delivery is a no-op at equal revision, an out-of-order pair resolves by
+// comparison instead of a parking queue, a lost message self-heals on the next
+// change, and the LAST message is sufficient on its own — lose everything
+// except the close and this table still converges.
+
+// DemandOrigin is one episode as Core stores it.
+//
+// It carries only what Edge authors. signal_count, uop_delivered,
+// used_edge_reports and parent_origin_id are CORE-OWNED and deliberately absent
+// — see UpsertDemandOrigin, which must not zero them.
+type DemandOrigin struct {
+	OriginID   string
+	Revision   int64
+	EpisodeKey string
+	Kind       string
+	Direction  string
+	Trigger    string
+	TriggerRef string
+	StationID  string
+
+	ProcessID    int64
+	CoreNodeName string
+	PayloadCode  string
+
+	OpenedAt              time.Time
+	OpenedTotal           int
+	Threshold             int
+	ExpectedOrders        *int
+	ExpectedUnknownReason string
+	RerequestCount        int
+	Discretionary         bool
+
+	ClosedAt    *time.Time
+	CloseReason string
+	ClosedBy    string
+}
+
+// Close reasons Core assigns on its own. Edge's live in protocol.
+const (
+	// CloseReasonSuperseded — a NEW episode opened for a place this one still
+	// held open, which is proof this one ended: Edge enforces one open episode
+	// per episode_key with a PRIMARY KEY, so it could not have minted the new
+	// one while this was still open there.
+	//
+	// It is a PLACEHOLDER, not a verdict. The real close is still in flight or
+	// was dead-lettered; if it lands, its higher revision overwrites this with
+	// the true reason. And if it never lands, "superseded" still says more than
+	// "unattributed" — it says we know this ended because something else
+	// started here, we just never heard how.
+	CloseReasonSuperseded = "superseded"
+)
+
+// UpsertDemandOrigin applies one state message under the revision guard.
+//
+// THE GUARD IS PER origin_id, and that is exactly why SupersedeOpenEpisode
+// exists alongside it — see the handler. Revisions are comparable only within
+// one episode; two different episodes for the same place have no ordering
+// relationship at all.
+//
+// ON UPDATE IT TOUCHES ONLY WHAT EDGE AUTHORS. signal_count and uop_delivered
+// are accumulated on Core from its own signals and its own audit trail, and
+// used_edge_reports records which total decided a Core-side threshold. Listing
+// them in the SET clause would zero Core's own facts on every Edge message —
+// silently, and only for episodes that get more than one.
+func (db *DB) UpsertDemandOrigin(o DemandOrigin) error {
+	var expected any
+	if o.ExpectedOrders != nil {
+		expected = *o.ExpectedOrders
+	}
+	_, err := db.Exec(`
+		INSERT INTO demand_origins (
+		    origin_id, revision, episode_key, kind, direction, trigger_kind,
+		    trigger_ref, station_id, process_id, core_node_name, payload_code,
+		    opened_at, opened_total, threshold, expected_orders,
+		    expected_reason, rerequest_count, discretionary, closed_at, close_reason,
+		    closed_by
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+		ON CONFLICT (origin_id) DO UPDATE SET
+		    revision         = EXCLUDED.revision,
+		    episode_key      = EXCLUDED.episode_key,
+		    kind             = EXCLUDED.kind,
+		    direction        = EXCLUDED.direction,
+		    trigger_kind     = EXCLUDED.trigger_kind,
+		    trigger_ref      = EXCLUDED.trigger_ref,
+		    station_id       = EXCLUDED.station_id,
+		    process_id       = EXCLUDED.process_id,
+		    core_node_name   = EXCLUDED.core_node_name,
+		    payload_code     = EXCLUDED.payload_code,
+		    opened_at        = EXCLUDED.opened_at,
+		    opened_total     = EXCLUDED.opened_total,
+		    threshold        = EXCLUDED.threshold,
+		    expected_orders  = EXCLUDED.expected_orders,
+		    expected_reason  = EXCLUDED.expected_reason,
+		    rerequest_count  = EXCLUDED.rerequest_count,
+		    discretionary    = EXCLUDED.discretionary,
+		    closed_at        = EXCLUDED.closed_at,
+		    close_reason     = EXCLUDED.close_reason,
+		    closed_by        = EXCLUDED.closed_by
+		WHERE demand_origins.revision < EXCLUDED.revision`,
+		o.OriginID, o.Revision, o.EpisodeKey, o.Kind, o.Direction, o.Trigger,
+		o.TriggerRef, o.StationID, o.ProcessID, o.CoreNodeName, o.PayloadCode,
+		o.OpenedAt, o.OpenedTotal, o.Threshold, expected,
+		o.ExpectedUnknownReason, o.RerequestCount, o.Discretionary,
+		o.ClosedAt, o.CloseReason, nullIfEmpty(o.ClosedBy))
+	if err != nil {
+		return fmt.Errorf("upsert demand origin %s: %w", o.OriginID, err)
+	}
+	return nil
+}
+
+// SupersedeOpenEpisode closes any OTHER episode still holding this place open.
+//
+// WHY THIS IS NEEDED AT ALL. The revision guard orders messages within one
+// origin_id; the partial unique index enforces one OPEN episode per
+// episode_key. Those are two different identities, and the gap between them is
+// reachable: the outbox drainer does not stop at a failed message, so a close
+// for episode A can fail to publish while a subsequent open for episode B on
+// the same key succeeds. B then arrives at a key A still holds, and without
+// this the insert violates the index and B is lost — the newer, truer episode
+// discarded to protect a stale one.
+//
+// WHY IT IS SOUND. Edge cannot have minted B while A was open there:
+// demand_origins_open has episode_key as its PRIMARY KEY, so the invariant is
+// structural, not a convention someone might have broken. B's existence is
+// therefore proof that A ended.
+//
+// IT DOES NOT BUMP THE REVISION, and that is the point. A's real close is still
+// out there at a higher revision; leaving A's revision alone means that close
+// still wins when it lands and replaces this placeholder with the true reason.
+// Bumping would make Core's own guess outrank the truth.
+func (db *DB) SupersedeOpenEpisode(episodeKey, newOriginID string, at time.Time) (int64, error) {
+	res, err := db.Exec(`
+		UPDATE demand_origins
+		   SET closed_at = $1, close_reason = $2
+		 WHERE episode_key = $3
+		   AND origin_id <> $4
+		   AND closed_at IS NULL`,
+		at, CloseReasonSuperseded, episodeKey, newOriginID)
+	if err != nil {
+		return 0, fmt.Errorf("supersede open episode %q: %w", episodeKey, err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// OpenThresholdEpisode mints a Core-owned threshold episode at revision 1.
+//
+// A plain INSERT, deliberately, and the partial unique index is the point: if
+// something already holds this place open the write FAILS rather than quietly
+// creating a second demand for one need. "One open episode per place" is the
+// invariant the whole surface rests on, and a mint race is worth surfacing
+// rather than resolving into whichever wrote last.
+//
+// Core mints only this kind. Cell and changeover episodes are authored on Edge
+// and arrive through the state-transfer seam.
+func (db *DB) OpenThresholdEpisode(o DemandOrigin, usedEdgeReports bool) error {
+	var expected any
+	if o.ExpectedOrders != nil {
+		expected = *o.ExpectedOrders
+	}
+	_, err := db.Exec(`
+		INSERT INTO demand_origins (
+		    origin_id, revision, episode_key, kind, trigger_ref, station_id,
+		    core_node_name, payload_code, opened_at, opened_total, threshold,
+		    used_edge_reports, expected_orders, expected_reason, signal_count
+		) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,0)`,
+		o.OriginID, o.EpisodeKey, o.Kind, o.TriggerRef, o.StationID,
+		o.CoreNodeName, o.PayloadCode, o.OpenedAt, o.OpenedTotal, o.Threshold,
+		usedEdgeReports, expected, o.ExpectedUnknownReason)
+	if err != nil {
+		return fmt.Errorf("open threshold episode %s (%s): %w", o.OriginID, o.EpisodeKey, err)
+	}
+	return nil
+}
+
+// CloseDemandOriginByID ends an episode Core owns, bumping the revision.
+//
+// The bump is not bookkeeping. Core's threshold episodes never cross the seam
+// inbound, but the revision still has to move so that anything comparing
+// versions of this row — the reconciler re-closing what a notification path
+// already closed, a future read model — sees the close as newer. Closing an
+// already-closed episode is a NO-OP rather than an error: the level edges are
+// evaluated from several sites and the sweep runs underneath all of them, so
+// two of them racing to close one episode is ordinary.
+//
+// ONLY FOR EPISODES CORE MINTS. Applying it to an Edge-authored episode would
+// push demand_origins.revision past the number Edge is about to send, and the
+// real close would then lose the upsert guard's comparison and be dropped —
+// see CloseDemandOriginInferred, which exists for exactly that case.
+//
+// Returns whether a row actually moved, so a caller that reports what it closed
+// reports work it did rather than work it attempted.
+func (db *DB) CloseDemandOriginByID(originID, reason, closedBy string, at time.Time) (bool, error) {
+	res, err := db.Exec(`
+		UPDATE demand_origins
+		   SET closed_at = $1, close_reason = $2, closed_by = $3, revision = revision + 1
+		 WHERE origin_id = $4 AND closed_at IS NULL`,
+		at, reason, nullIfEmpty(closedBy), originID)
+	if err != nil {
+		return false, fmt.Errorf("close demand origin %s: %w", originID, err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// CloseDemandOriginInferred ends an episode Core did NOT author, WITHOUT
+// touching the revision.
+//
+// THE REVISION IS DELIBERATELY LEFT ALONE, and this is the same reasoning
+// SupersedeOpenEpisode is built on. An Edge-authored episode's true close is
+// still out there — in flight, or dead-lettered and awaiting a retry — carrying
+// the revision Edge stamped on it. Bumping here would put Core's local revision
+// at or above that number, and the upsert guard (`WHERE revision < EXCLUDED.
+// revision`) would then silently DISCARD the real close when it lands. Core's
+// inference would permanently outrank the truth, and the surface would show
+// `unattributed` for an episode Edge knows ended `claim_removed`.
+//
+// So this close is a PLACEHOLDER by construction: it stops an ended demand
+// rendering as a permanent alarm, and it steps aside the moment the owner says
+// what actually happened.
+//
+// It is also the right shape for Core's own aging closes. Nothing else writes
+// those rows, so preserving the revision costs nothing there, and one rule —
+// "an inferred close never bumps" — is easier to keep true than a rule that
+// depends on remembering which kind you are holding.
+func (db *DB) CloseDemandOriginInferred(originID, reason, closedBy string, at time.Time) (bool, error) {
+	res, err := db.Exec(`
+		UPDATE demand_origins
+		   SET closed_at = $1, close_reason = $2, closed_by = $3
+		 WHERE origin_id = $4 AND closed_at IS NULL`,
+		at, reason, nullIfEmpty(closedBy), originID)
+	if err != nil {
+		return false, fmt.Errorf("close demand origin (inferred) %s: %w", originID, err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// OpenEpisodeState is one open episode as the reconciling sweep sees it: the
+// identity, plus the two facts the sweep decides on that are NOT on the row.
+//
+// Children and the Edge's reachability are computed in the same query as the
+// episode because deciding on them one round trip at a time would be N+1 over a
+// set whose whole cost argument is that it is small.
+type OpenEpisodeState struct {
+	OriginID   string
+	EpisodeKey string
+	Kind       string
+	StationID  string
+	OpenedAt   time.Time
+
+	// Children is COUNT(orders WHERE origin_id = this). Zero is the input to
+	// the childless auto-close.
+	Children int
+
+	// EdgeReachable is whether edge_registry currently calls this station
+	// active. FALSE COVERS TWO DIFFERENT UNKNOWNS and both must behave the
+	// same: the Edge has gone stale (status flipped by MarkStaleEdges), or Core
+	// has no registry row for the station at all. In either case Core cannot
+	// have been receiving this station's orders, so a child count of zero is
+	// not evidence of anything — it is a missing input.
+	EdgeReachable bool
+	// EdgeLastSeen is the last heartbeat, nil if the station never sent one.
+	// This is the X in "this episode's Edge has been unreachable since X".
+	EdgeLastSeen *time.Time
+}
+
+// ListOpenEpisodeStates returns every open episode with its child count and the
+// reachability of the Edge that owns it.
+//
+// COST IS BOUNDED BY OPEN-EPISODE COUNT, which is one per place currently short
+// of material. That is what makes a per-episode subquery affordable here where
+// it would be indefensible on a tick path — and idx_orders_origin_id is a
+// partial index on exactly this lookup.
+func (db *DB) ListOpenEpisodeStates() ([]OpenEpisodeState, error) {
+	rows, err := db.Query(`
+		SELECT o.origin_id, o.episode_key, o.kind, o.station_id, o.opened_at,
+		       (SELECT COUNT(*) FROM orders c WHERE c.origin_id = o.origin_id),
+		       COALESCE(e.status, ''), e.last_heartbeat
+		  FROM demand_origins o
+		  LEFT JOIN edge_registry e ON e.station_id = o.station_id
+		 WHERE o.closed_at IS NULL
+		 ORDER BY o.opened_at`)
+	if err != nil {
+		return nil, fmt.Errorf("list open episode states: %w", err)
+	}
+	defer rows.Close()
+
+	var out []OpenEpisodeState
+	for rows.Next() {
+		var (
+			s      OpenEpisodeState
+			status string
+		)
+		if err := rows.Scan(&s.OriginID, &s.EpisodeKey, &s.Kind, &s.StationID,
+			&s.OpenedAt, &s.Children, &status, &s.EdgeLastSeen); err != nil {
+			return nil, fmt.Errorf("scan open episode state: %w", err)
+		}
+		s.EdgeReachable = status == "active"
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// AgeOutOrphanOrders retires orphan findings older than the cutoff.
+//
+// An UPDATE rather than a delete or a NULL: the row still records that this
+// order should have carried an origin. What changes is only whether it is still
+// being ASKED ABOUT. See protocol.OriginClassOrphanAged.
+//
+// Returns the number retired, because a sweep that acts silently is
+// unauditable by construction — the same reason closed_by exists.
+func (db *DB) AgeOutOrphanOrders(createdBefore time.Time) (int64, error) {
+	res, err := db.Exec(`
+		UPDATE orders
+		   SET origin_class = $1
+		 WHERE origin_class = $2 AND created_at < $3`,
+		protocol.OriginClassOrphanAged, protocol.OriginClassOrphan, createdBefore)
+	if err != nil {
+		return 0, fmt.Errorf("age out orphan orders: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// ListOpenThresholdEpisodes returns every open Core-owned threshold episode.
+//
+// THIS IS WHAT startupSweep REHYDRATES FROM, and without it every Core restart
+// mints a duplicate for every place that is currently below threshold while the
+// original stays open forever. That is not an edge case: restarting Core is the
+// remedy an operator reaches for BECAUSE the counts look wrong, which is
+// exactly when open episodes exist.
+func (db *DB) ListOpenThresholdEpisodes() ([]DemandOrigin, error) {
+	rows, err := db.Query(`
+		SELECT origin_id, revision, episode_key, station_id, core_node_name,
+		       payload_code, opened_at, opened_total, threshold
+		  FROM demand_origins
+		 WHERE kind = $1 AND closed_at IS NULL`, "threshold")
+	if err != nil {
+		return nil, fmt.Errorf("list open threshold episodes: %w", err)
+	}
+	defer rows.Close()
+
+	var out []DemandOrigin
+	for rows.Next() {
+		var o DemandOrigin
+		if err := rows.Scan(&o.OriginID, &o.Revision, &o.EpisodeKey, &o.StationID,
+			&o.CoreNodeName, &o.PayloadCode, &o.OpenedAt, &o.OpenedTotal, &o.Threshold); err != nil {
+			return nil, fmt.Errorf("scan open threshold episode: %w", err)
+		}
+		o.Kind = "threshold"
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// GetDemandOrigin reads one episode back. Returns nil when absent.
+//
+// closed_by is read as a NullString because the column has no default and NULL
+// is a real value with its own meaning — "the sender did not say", i.e. an
+// older Edge or a row written before the column existed. It is a different fact
+// from "a notification path closed it", and a scan that could not distinguish
+// them would collapse the two, which is the entire reason the column has no
+// default in the first place.
+func (db *DB) GetDemandOrigin(originID string) (*DemandOrigin, error) {
+	var (
+		o        DemandOrigin
+		expected *int
+		closedAt *time.Time
+		closedBy sql.NullString
+	)
+	err := db.QueryRow(`
+		SELECT origin_id, revision, episode_key, kind, direction, trigger_kind,
+		       trigger_ref, station_id, process_id, core_node_name, payload_code,
+		       opened_at, opened_total, threshold, expected_orders,
+		       expected_reason, rerequest_count, discretionary, closed_at,
+		       close_reason, closed_by
+		  FROM demand_origins WHERE origin_id = $1`, originID).Scan(
+		&o.OriginID, &o.Revision, &o.EpisodeKey, &o.Kind, &o.Direction, &o.Trigger,
+		&o.TriggerRef, &o.StationID, &o.ProcessID, &o.CoreNodeName, &o.PayloadCode,
+		&o.OpenedAt, &o.OpenedTotal, &o.Threshold, &expected,
+		&o.ExpectedUnknownReason, &o.RerequestCount, &o.Discretionary,
+		&closedAt, &o.CloseReason, &closedBy)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get demand origin %s: %w", originID, err)
+	}
+	o.ExpectedOrders = expected
+	o.ClosedAt = closedAt
+	o.ClosedBy = closedBy.String
+	return &o, nil
+}
+
+// nullIfEmpty writes SQL NULL for an empty string.
+//
+// closed_by has no default and must stay NULL when nobody said — "the sender
+// did not tell us" is a different fact from "a notification path closed it",
+// and writing ” would collapse them into one indistinguishable value.
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}

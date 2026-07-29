@@ -228,6 +228,7 @@ func CoreInboundSubjects() []string {
 		SubjectDowntimeEvent,
 		SubjectPlantClaims,
 		SubjectLinesideLevelReport,
+		SubjectDemandOrigin,
 	}
 }
 

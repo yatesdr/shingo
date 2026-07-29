@@ -3,6 +3,8 @@ package dispatch
 import (
 	"log"
 
+	"github.com/google/uuid"
+
 	"shingo/protocol"
 	"shingocore/store/orders"
 )
@@ -31,6 +33,64 @@ func SourceIntentForType(t protocol.OrderType) string {
 	default:
 		// Retrieve (full) falls here — a payload-matched full bin via the finder.
 		return SourceIntentFull
+	}
+}
+
+// classifyInboundOrigin is the intake half of the demand grain: it turns what an
+// Edge said about an order's origin into the (origin_id, origin_class) pair Core
+// stores. Called at the THREE intake sites — CreateInboundOrder,
+// HandleComplexOrderRequest and handleComplexBuriedAtIntake — and nowhere else.
+// Derivative orders do not come through here; they inherit the parent's pair
+// verbatim, because re-classifying a child would let a parent's judgement be
+// overturned one level down.
+//
+// The three outcomes, and why an absent origin is NOT automatically a finding:
+//
+//   - an id, and it parses          → attached. The id wins over whatever class
+//     came with it; an order carrying an episode IS attached by definition.
+//   - no id, class says no_demand   → no_demand. Edge stamped this at ITS create
+//     site, where the answer was known. Opportunistic loader staging and the
+//     unloader U1 full-in are the two that reach here.
+//   - anything else                 → orphan. Should have had an episode and
+//     didn't.
+//
+// SKEW IS THE MOTIVATING CASE AND IT LANDS ORPHAN ON PURPOSE. Edge ships before
+// Core, so during the window a plant runs new Core against an old Edge every
+// threshold-driven order arrives with no origin at all — indistinguishable, at
+// this seam, from a genuine lost origin. Guessing no_demand to keep the bucket
+// quiet would hide the real ones for as long as the skew lasted; orphan is the
+// honest reading, and the Core sweep's childless auto-close is what keeps the
+// deploy artifact from reading as a permanent alarm.
+//
+// A MALFORMED ID DOES NOT FAIL THE ORDER. origin_id is a UUID column, so a
+// non-UUID string would abort the INSERT and lose the transport work over a
+// telemetry field. It lands orphan with a loud log instead — the same
+// accept-and-log posture HandleDemandOrigin takes on an unparseable episode key,
+// and for the same reason: the order is worth more than its attribution, and
+// dropping the evidence is what makes such a bug unfindable.
+func classifyInboundOrigin(originID, originClass, station, orderUUID string) (string, string) {
+	if originID != "" {
+		if _, err := uuid.Parse(originID); err != nil {
+			log.Printf("dispatch: MALFORMED origin_id %q on order %s from station=%s: %v — "+
+				"order created as an ORPHAN rather than rejected; some mint site is not using uuid",
+				originID, orderUUID, station, err)
+			return "", protocol.OriginClassOrphan
+		}
+		return originID, protocol.OriginClassAttached
+	}
+	switch originClass {
+	case protocol.OriginClassNoDemand:
+		return "", protocol.OriginClassNoDemand
+	case "", protocol.OriginClassOrphan, protocol.OriginClassAttached:
+		// "" is the old-Edge / unstated case. `attached` with no id is a
+		// contradiction the sender got wrong; it has nothing to attach TO, so
+		// it is exactly what orphan describes.
+		return "", protocol.OriginClassOrphan
+	default:
+		log.Printf("dispatch: UNKNOWN origin_class %q on order %s from station=%s — "+
+			"order created as an ORPHAN; origin_class is a closed enum (see protocol.OriginClass*)",
+			originClass, orderUUID, station)
+		return "", protocol.OriginClassOrphan
 	}
 }
 
