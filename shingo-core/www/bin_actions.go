@@ -180,25 +180,38 @@ func (h *Handlers) binLoadPayload(b *domain.Bin, params json.RawMessage) error {
 
 func (h *Handlers) binClear(b *domain.Bin, _ json.RawMessage) error {
 	oldCode := b.PayloadCode
-	// Epoch return discarded — same rationale as binLoad above.
-	if _, err := h.engine.BinService().Manifest().ClearForReuse(b.ID, nil); err != nil {
+	epoch, err := h.engine.BinService().Manifest().ClearForReuse(b.ID, nil)
+	if err != nil {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "cleared", oldCode, "", protocol.AuditActorUI)
 	h.emitBinUpdate(b, "cleared", "")
-	// Release the bin from Edge's runtime so the press HMI count resets
-	// immediately via SSE rather than waiting for the next page load.
-	// Mirrors the release leg of binMove — Released=true clears active_bin_id
-	// and emits EventUOPAdjusted which SSE broadcasts as counter-update.
+	// Tell Edge the bin at this node is now EMPTY — not that it left.
+	//
+	// This used to send Released=true, borrowed from binMove. Released means "the
+	// bin was moved OFF this node", so Edge unbinds active_bin_id and stops
+	// attributing PLC ticks to it. Clear moves nothing: the carrier is still
+	// physically on the node, it is merely empty now. Unbinding it stranded the
+	// slot — ticks piled into pending_uop_delta against no bin — and on a node
+	// that was ALREADY unbound the correction was rejected outright ("bin N not
+	// active at node X — bound elsewhere, ignoring"), so Clear could not even
+	// repair what it had broken. That is the trap behind HK 2026-07-28: the
+	// operator's instinctive fix was the one action that guaranteed no recovery.
+	//
+	// A plain count correction to 0 is right in both states: a bound node keeps
+	// its binding and zeroes the tile, and an unbound node BINDS the staged
+	// carrier through the count-correction repair path. Released stays in use by
+	// binMove, where the bin genuinely did leave.
 	if b.NodeName != "" {
 		if err := h.orchestration.SendDataToEdge(protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
 			BinID:        b.ID,
 			CoreNodeName: b.NodeName,
-			Released:     true,
+			NewRemaining: 0,
+			Epoch:        epoch,
 			Actor:        protocol.AuditActorUI,
 			AdjustedAt:   time.Now().UTC(),
 		}); err != nil {
-			log.Printf("bin_clear: release-from-edge broadcast bin %d (node %s): %v", b.ID, b.NodeName, err)
+			log.Printf("bin_clear: zero-count broadcast bin %d (node %s): %v", b.ID, b.NodeName, err)
 		}
 	}
 	return nil

@@ -313,25 +313,61 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		for i := range nodes {
 			known[nodes[i].ID] = true
 		}
+		// Does THIS board own any of the changeover's work? Computed from the
+		// station's own nodes, before any adoption, so it answers "is this
+		// changeover being run from here" rather than "did we adopt something".
+		// It is the anchor for the orphan fallback below.
+		stationRunsChangeover := false
+		for i := range nodes {
+			if _, ok := nodeTaskMap[nodes[i].ID]; ok {
+				stationRunsChangeover = true
+				break
+			}
+		}
 		parts, perr := s.db.ListParticipantsWithStation(view.ActiveChangeover.ID)
 		if perr != nil {
 			log.Printf("station view: resolve participant stations for changeover %d: %v", view.ActiveChangeover.ID, perr)
 		}
 		for _, p := range parts {
-			// Only adopt participants that (a) have a node row at all, (b)
-			// resolve to THIS station, (c) resolve via their OWNER rather than
-			// their own station — a node with its own station is already in the
-			// list — and (d) aren't already present.
-			if p.ProcessNodeID == nil || p.StationID == nil ||
-				*p.StationID != stationID || p.StationSource != "owner" || known[*p.ProcessNodeID] {
+			if p.ProcessNodeID == nil || known[*p.ProcessNodeID] {
+				continue
+			}
+			// Two ways a participant belongs on this board:
+			//
+			//  - OWNER: it has no station of its own but the task that owns it
+			//    does, and that station is us. The press-index case — PLN_02 is
+			//    an `indexed_over` seat of PLN_01's task, so it rides along.
+			//
+			//  - ORPHAN: it resolves to NO station at all. That happens when a
+			//    changeover FANS OUT and gives the seat its OWN task: station
+			//    resolution walks own -> owning-task's-node, and for a
+			//    self-owning task both are the same stationless row, so it
+			//    lands nil and the seat renders NOWHERE. Hopkinsville
+			//    2026-07-28: a tote->bin changeover dropped all four press
+			//    positions independently, PLN_02/PLN_05 vanished from the
+			//    board, and the two robots parked at them could not be
+			//    released — there was no tile to press. Adopt onto the board
+			//    already running this changeover.
+			//
+			// Adoption stays inside the ActiveChangeover guard, so these seats
+			// appear only while they have work and disappear afterwards. That
+			// matters: a paired on-deck position must NOT be a permanent tile —
+			// LoadBin refuses to stamp a part there precisely because doing so
+			// hung a press-index swap once already.
+			byOwner := p.StationID != nil && *p.StationID == stationID && p.StationSource == "owner"
+			orphan := p.StationID == nil && stationRunsChangeover
+			if !byOwner && !orphan {
 				continue
 			}
 			child, gerr := s.db.GetProcessNode(*p.ProcessNodeID)
 			if gerr != nil || child == nil {
 				continue
 			}
+			// Render as a child of the node whose task owns it — but never of
+			// itself. A fanned-out seat owns its own task, so naming it its own
+			// parent would be meaningless; it stands as its own tile instead.
 			if p.OwningTaskID != nil {
-				if owner, ok := taskByID[*p.OwningTaskID]; ok {
+				if owner, ok := taskByID[*p.OwningTaskID]; ok && owner.ProcessNodeID != child.ID {
 					childOf[child.ID] = owner.NodeName
 				}
 			}

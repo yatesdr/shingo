@@ -703,26 +703,10 @@ func (e *Engine) releaseIfReleasable(orderID int64, label string, disp ReleaseDi
 	return true, nil
 }
 
-// AbortNodeOrders cancels all non-terminal orders tracked in a node's
-// runtime state and clears the runtime order references.
-func (e *Engine) AbortNodeOrders(nodeID int64) {
-	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
-	if err != nil || runtime == nil {
-		return
-	}
-	for _, orderID := range []*int64{runtime.ActiveOrderID, runtime.StagedOrderID} {
-		if orderID == nil {
-			continue
-		}
-		order, err := e.db.GetOrder(*orderID)
-		if err != nil || orders.IsTerminal(order.Status) {
-			continue
-		}
-		if err := e.orderMgr.AbortOrder(order.ID); err != nil {
-			log.Printf("abort node orders: order %s on node %d: %v", order.UUID, nodeID, err)
-		}
-	}
-	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, nil, nil); err != nil {
-		e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
-	}
-}
+// (AbortNodeOrders removed 2026-07-28. Its only caller was
+// StartProcessChangeover, which used it to cancel every in-flight order on the
+// nodes a changeover was about to touch. On a press-index swap those orders are
+// frequently carrying the empty carriers the changeover's own index legs must
+// pick up, so cancelling them mid-delivery deadlocks the changeover it was
+// meant to clear the way for. StartProcessChangeover now refuses and names the
+// blocking order instead — see nodesWithOrdersInFlight.)

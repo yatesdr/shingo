@@ -186,3 +186,156 @@ func TestBuildView_TaskAttachesWithoutAStationTaskRow(t *testing.T) {
 	}
 	t.Fatal("press node missing from its own station view")
 }
+
+// fanOutScenario is the seat scenario's sibling, and the shape that broke at
+// Hopkinsville on 2026-07-28. Instead of riding along as an `indexed_over`
+// child of the press's task, the stationless seat gets its OWN task — which is
+// what a changeover does when it fans out and drops every press position
+// independently (a tote->bin style change, where all four positions leave).
+//
+// Station resolution walks own -> owning-task's-node. For a SELF-owning task
+// both hops land on the same stationless row, so the seat resolves to NO
+// station and renders on no board at all. Two robots parked at those seats
+// could not be released because there was no tile to press.
+func fanOutScenario(t *testing.T) (db *store.DB, stationID, pressNodeID, seatNodeID int64) {
+	t.Helper()
+	db = testdb.Open(t)
+
+	processID, err := db.CreateProcess("FANOUT-PROC", "fan out", "active_production", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	stationID, err = db.CreateOperatorStation(stations.Input{
+		ProcessID: processID, Code: "FAN-ST", Name: "Fan Station", Sequence: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create station: %v", err)
+	}
+	pressNodeID, err = db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, OperatorStationID: &stationID,
+		CoreNodeName: "PLN_B1", Code: "PLNB1", Name: "Press B1", Sequence: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create press node: %v", err)
+	}
+	seatNodeID, err = db.CreateProcessNode(processes.NodeInput{
+		ProcessID:    processID,
+		CoreNodeName: "PLN_B2", Code: "PLNB2", Name: "Press B2 Seat", Sequence: 2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create seat node: %v", err)
+	}
+
+	res, err := db.Exec(`INSERT INTO process_changeovers (process_id, to_style_id, state, called_by)
+		VALUES (?, 1, 'active', 'test')`, processID)
+	if err != nil {
+		t.Fatalf("insert changeover: %v", err)
+	}
+	changeoverID, _ := res.LastInsertId()
+
+	// The fan-out: BOTH positions get their own drop task.
+	mkTask := func(nodeID int64) int64 {
+		tres, terr := db.Exec(`INSERT INTO changeover_node_tasks
+			(process_changeover_id, process_node_id, situation, state)
+			VALUES (?, ?, 'drop', 'staging_requested')`, changeoverID, nodeID)
+		if terr != nil {
+			t.Fatalf("insert task for node %d: %v", nodeID, terr)
+		}
+		id, _ := tres.LastInsertId()
+		return id
+	}
+	pressTaskID := mkTask(pressNodeID)
+	seatTaskID := mkTask(seatNodeID)
+
+	// Both participants are role=task owning their OWN task — the seat's owner
+	// is itself, which is what collapses station resolution to nil.
+	for _, p := range []struct {
+		name  string
+		node  int64
+		owner int64
+	}{
+		{"PLN_B1", pressNodeID, pressTaskID},
+		{"PLN_B2", seatNodeID, seatTaskID},
+	} {
+		if _, err := db.Exec(`INSERT INTO changeover_participants
+			(process_changeover_id, core_node_name, process_node_id, role, owning_task_id)
+			VALUES (?, ?, ?, ?, ?)`, changeoverID, p.name, p.node, domain.ParticipantRoleTask, p.owner); err != nil {
+			t.Fatalf("insert participant %s: %v", p.name, err)
+		}
+	}
+	return db, stationID, pressNodeID, seatNodeID
+}
+
+// TestBuildView_FannedOutSeatStillRenders is the regression pin for HK
+// 2026-07-28: a stationless seat that owns its OWN task must still appear on
+// the board running the changeover, or the robot parked there can never be
+// released.
+func TestBuildView_FannedOutSeatStillRenders(t *testing.T) {
+	db, stationID, _, seatNodeID := fanOutScenario(t)
+	svc := NewStationService(db)
+
+	view, err := svc.BuildView(context.Background(), stationID)
+	if err != nil {
+		t.Fatalf("BuildView: %v", err)
+	}
+
+	var seat *domain.StationNodeView
+	for i := range view.Nodes {
+		if view.Nodes[i].Node.ID == seatNodeID {
+			seat = &view.Nodes[i]
+			break
+		}
+	}
+	if seat == nil {
+		t.Fatal("fanned-out stationless seat is absent from the board running its changeover — " +
+			"its parked robot would have no tile to release from (HK 2026-07-28)")
+	}
+	// It owns real work, so it must carry its task: isReleaseReady reads
+	// changeover_task and bails without it, so no task means no blue
+	// release-ready glow no matter how the tile renders.
+	if seat.ChangeoverTask == nil {
+		t.Fatal("fanned-out seat has no ChangeoverTask — the release-ready glow keys on it")
+	}
+	// Owning its own task, it is nobody's child; naming itself its own parent
+	// would be meaningless.
+	if seat.ChildOfNode != "" {
+		t.Errorf("ChildOfNode = %q, want empty — a self-owning seat is its own tile", seat.ChildOfNode)
+	}
+}
+
+// TestBuildView_StationlessSeatStaysOffUnrelatedBoards guards the blast radius
+// of the orphan fallback: adopting "any stationless participant" must not leak
+// a seat onto a station that owns none of the changeover's work. A permanent
+// tile on a paired on-deck position is actively harmful — LoadBin refuses to
+// stamp a part there because doing so hung a press-index swap once already.
+func TestBuildView_StationlessSeatStaysOffUnrelatedBoards(t *testing.T) {
+	db, _, _, seatNodeID := fanOutScenario(t)
+
+	// A second station on the same process that owns NO changeover task.
+	var processID int64
+	if err := db.QueryRow(`SELECT process_id FROM process_nodes WHERE id=?`, seatNodeID).Scan(&processID); err != nil {
+		t.Fatalf("read process id: %v", err)
+	}
+	otherID, err := db.CreateOperatorStation(stations.Input{
+		ProcessID: processID, Code: "OTHER-ST", Name: "Other Station", Sequence: 2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create other station: %v", err)
+	}
+	if _, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, OperatorStationID: &otherID,
+		CoreNodeName: "PLN_Z9", Code: "PLNZ9", Name: "Unrelated", Sequence: 1, Enabled: true,
+	}); err != nil {
+		t.Fatalf("create unrelated node: %v", err)
+	}
+
+	view, err := NewStationService(db).BuildView(context.Background(), otherID)
+	if err != nil {
+		t.Fatalf("BuildView: %v", err)
+	}
+	for i := range view.Nodes {
+		if view.Nodes[i].Node.ID == seatNodeID {
+			t.Fatal("stationless seat leaked onto a board that owns none of the changeover's work")
+		}
+	}
+}

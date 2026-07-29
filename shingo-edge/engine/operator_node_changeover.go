@@ -245,7 +245,20 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	needsUOPReset := runtimeErr != nil || runtime == nil ||
 		runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != claimID
 	if needsUOPReset {
-		uop := claim.UOPCapacity
+		// Role-correct seed. This used to be claim.UOPCapacity unconditionally,
+		// which is right for CONSUME (a full bin arrives and counts down) and
+		// wrong for PRODUCE (an empty carrier arrives and fills up). On a produce
+		// node the capacity value renders a FULL bin on a slot that is empty —
+		// and because the switch binds no active_bin_id, nothing ever corrects it.
+		// HK 2026-07-28: PLN_01/PLN_04 sat at 4200/4200 with no bin while the
+		// presses ran, and the held ticks piled up in pending_uop_delta.
+		//
+		// deliveredFallbackUOP is the same role split the delivery path already
+		// uses (produce → 0, everything else → capacity), so the two seeds agree
+		// instead of disagreeing by a full bin. Consume behaviour is unchanged:
+		// it still seeds capacity, which keeps it above its reorder point during
+		// the window between the switch and its bin landing.
+		uop := deliveredFallbackUOP(claim)
 		if e.inventoryDelta != nil {
 			if err := e.inventoryDelta.SetClaimAndCount(nodeID, &claimID, uop); err != nil {
 				return err

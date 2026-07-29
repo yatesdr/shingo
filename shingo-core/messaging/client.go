@@ -19,6 +19,22 @@ import (
 
 type MessageHandler func(topic string, payload []byte)
 
+// writerBatchTimeout bounds how long the Kafka writer waits to fill a batch
+// before flushing it.
+//
+// kafka-go defaults this to 1 SECOND when left unset, and the outbox drainer
+// (protocol/outbox) publishes synchronously, one message at a time — so the
+// writer's batch never reaches BatchSize and every single Publish blocks for
+// the full default timeout, capping the wire at ~1 msg/sec. See the matching
+// constant in shingo-edge/messaging for the Hopkinsville incident that surfaced
+// this (2026-07-28: orders wedged in "submitted" behind minutes of queued
+// telemetry).
+//
+// Keep the writer SYNCHRONOUS. The drainer relies on WriteMessages returning
+// the publish error to drive its retry and dead-letter path; setting
+// Async: true would swallow that and silently drop messages.
+const writerBatchTimeout = 10 * time.Millisecond
+
 type Client struct {
 	mu         sync.RWMutex
 	cfg        *config.MessagingConfig
@@ -109,8 +125,9 @@ func (c *Client) Connect() error {
 	c.kafka = &kafkaState{
 		readers: make(map[string]*kafka.Reader),
 		writer: &kafka.Writer{
-			Addr:     kafka.TCP(c.cfg.Kafka.Brokers...),
-			Balancer: &kafka.Hash{},
+			Addr:         kafka.TCP(c.cfg.Kafka.Brokers...),
+			Balancer:     &kafka.Hash{},
+			BatchTimeout: writerBatchTimeout,
 		},
 	}
 	return nil

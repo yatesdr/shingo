@@ -1311,3 +1311,51 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	_ = toStyleID
 	_ = pairedID
 }
+
+// TestStartChangeover_RefusesWhileNodeHasOrderInFlight pins the replacement for
+// the old AbortNodeOrders sweep. A changeover must NOT start while a
+// participating node still has a non-terminal order attached to its runtime, and
+// the refusal must name the node and the order so the operator knows what to
+// wait for.
+//
+// The sweep this replaced cancelled those orders instead. On a press-index swap
+// they are frequently carrying the empty carriers the changeover's own index
+// legs need to pick up, so cancelling them mid-delivery deadlocks the changeover
+// (HK 2026-07-28: the sweep MISSED orders 1249/1251 and that near-miss is the
+// only reason the swap recovered).
+func TestStartChangeover_RefusesWhileNodeHasOrderInFlight(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
+	eng := testEngine(t, db)
+
+	orderID, err := db.CreateOrder("uuid-inflight-co", orders.TypeRetrieve,
+		&nodeID, false, 1, "CO-NODE", "", "", "", false, "PART-OLD")
+	testutil.MustNoErr(t, err, "create in-flight order")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil), "attach order to runtime")
+
+	_, err = eng.StartProcessChangeover(processID, toStyleID, "test", "")
+	if err == nil {
+		t.Fatal("changeover started while a participating node had an order in flight — must refuse")
+	}
+	if !strings.Contains(err.Error(), "in flight") {
+		t.Errorf("refusal = %q, want it to say the node has an order in flight", err)
+	}
+	if !strings.Contains(err.Error(), "Changeover Node") {
+		t.Errorf("refusal = %q, want it to NAME the blocking node", err)
+	}
+
+	// The in-flight order must still be alive — the whole point is that we no
+	// longer cancel the operator's work to clear the way.
+	order, gerr := db.GetOrder(orderID)
+	testutil.MustNoErr(t, gerr, "reload in-flight order")
+	if orders.IsTerminal(order.Status) {
+		t.Fatalf("in-flight order was terminated (status=%s) — refusing must never cancel it", order.Status)
+	}
+
+	// Clear the runtime pointer (the order landed) → the changeover proceeds.
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, nil), "clear runtime slots")
+	if _, err := eng.StartProcessChangeover(processID, toStyleID, "test", ""); err != nil {
+		t.Fatalf("changeover must start once the node is clear: %v", err)
+	}
+}

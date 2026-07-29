@@ -57,9 +57,11 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if delivered.ProcessNodeID == nil || delivered.BinID == nil {
 		switch {
 		case delivered.ProcessNodeID == nil && delivered.BinID != nil && delivered.DeliveryNode != "":
-			// Core-admin order (no Edge order row): ProcessNodeID is nil but a bin
-			// and destination are present. Resolve the node from DeliveryNode and
-			// bind — the legitimate fallback path, not a silent skip.
+			// No Edge process node on the order, but a bin and a destination name
+			// are present. Two shapes land here: a Core-admin order with no Edge
+			// order row at all, and an Edge order whose row simply carries no
+			// process_node_id (a manual move order is created against a Core node
+			// name). Both resolve by name — the legitimate fallback, not a skip.
 			e.handleFallbackDelivered(delivered)
 		case delivered.ProcessNodeID != nil && delivered.BinID == nil:
 			// Multi-bin delivery whose envelope carries no per-bin id. Post-F1b
@@ -69,6 +71,15 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 			// process node — a genuine gap worth naming, not a routine multi-tote
 			// delivery. Alarm, bind nothing.
 			e.raiseDeliveredNotBound(delivered, "", "multi-bin delivery carried no bin id — no bin resolved to this node (F1b backstop)")
+		default:
+			// NOTHING matched, and before this arm existed that meant a silent
+			// return: the bin bound nowhere and not one line was written about it.
+			// That is exactly how HK 2026-07-28 happened — two move orders with no
+			// process_node_id and (then) no DeliveryNode matched neither case, so
+			// two presses counted into pending_uop_delta against no bin with zero
+			// diagnostics. Any unmatched combination is a real gap; say so.
+			e.raiseDeliveredNotBound(delivered, "",
+				"delivery matched no bind path (process_node_id and delivery_node both absent, or bin id missing) — nothing bound")
 		}
 		return
 	}
@@ -201,13 +212,25 @@ func deliveredFallbackUOP(claim *processes.NodeClaim) int {
 func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 	node, err := e.db.GetProcessNodeByCoreNodeName(delivered.DeliveryNode)
 	if err != nil || node == nil {
+		// NOT an alarm. Most deliveries that reach here land at a supermarket,
+		// staging, or empty-tote node that is not an Edge process node at all —
+		// "we don't own this destination" is the common, correct answer and
+		// alarming on it would bury the real ones. Debug only.
+		e.logFn("delivered fallback: %s is not an Edge process node — nothing to bind", delivered.DeliveryNode)
 		return
 	}
+	// Past this point the bin landed at a node we DO own, so every remaining exit
+	// is a genuine failure to bind and must be loud. These were silent returns
+	// until 2026-07-28, which is why a press counting into nothing produced no
+	// evidence at all.
 	if _, err := e.db.EnsureProcessNodeRuntime(node.ID); err != nil {
+		e.raiseDeliveredNotBound(delivered, node.CoreNodeName,
+			fmt.Sprintf("could not open runtime row for the node: %v", err))
 		return
 	}
 	claim := findActiveClaim(e.db, node)
 	if claim == nil {
+		e.raiseDeliveredNotBound(delivered, node.CoreNodeName, "no active claim at node")
 		return
 	}
 	cacheValue := deliveredFallbackUOP(claim)
@@ -215,11 +238,17 @@ func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 		cacheValue = *delivered.BinUOP
 	}
 	claimID := claim.ID
-	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.OnDelivered(node.ID, &claimID, *delivered.BinID, delivered.BinEpoch, cacheValue); err != nil {
-			log.Printf("delivered fallback: node %s bin %d: %v", delivered.DeliveryNode, *delivered.BinID, err)
-		}
+	if e.inventoryDelta == nil {
+		e.raiseDeliveredNotBound(delivered, node.CoreNodeName, "inventory delta sink not wired")
+		return
 	}
+	if err := e.inventoryDelta.OnDelivered(node.ID, &claimID, *delivered.BinID, delivered.BinEpoch, cacheValue); err != nil {
+		e.raiseDeliveredNotBound(delivered, node.CoreNodeName,
+			fmt.Sprintf("runtime write failed: %v", err))
+		return
+	}
+	log.Printf("delivered fallback: bound bin %d to node %s (remaining=%d epoch=%d) via delivery-node resolution",
+		*delivered.BinID, node.CoreNodeName, cacheValue, delivered.BinEpoch)
 }
 
 // raiseDeliveredNotBound surfaces a delivery that arrived at one of our nodes

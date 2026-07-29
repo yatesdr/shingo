@@ -19,6 +19,23 @@ import (
 // DebugLogFunc is a nil-safe debug logging function.
 type DebugLogFunc = types.DebugLogFunc
 
+// writerBatchTimeout bounds how long the Kafka writer waits to fill a batch
+// before flushing it.
+//
+// kafka-go defaults this to 1 SECOND when left unset, and the outbox drainer
+// (protocol/outbox) publishes synchronously, one message at a time — so the
+// writer's batch never reaches BatchSize and every single Publish blocks for
+// the full default timeout. That capped the Edge->Core wire at ~1 msg/sec.
+// Hopkinsville generates ~0.7-0.9 msg/sec of telemetry, i.e. 70-90% of that
+// budget, so bursts queued for minutes: order.complex_request measured a 252s
+// mean and a 446s worst case in the edge outbox on 2026-07-28, which the
+// operator saw as orders wedged in "submitted".
+//
+// Keep the writer SYNCHRONOUS. The drainer relies on WriteMessages returning
+// the publish error to drive its retry and dead-letter path; setting
+// Async: true would swallow that and silently drop messages.
+const writerBatchTimeout = 10 * time.Millisecond
+
 // Client is the Kafka messaging client.
 type Client struct {
 	mu         sync.RWMutex
@@ -78,6 +95,7 @@ func (c *Client) Connect() error {
 		Addr:         kafkago.TCP(c.cfg.Kafka.Brokers...),
 		Balancer:     &kafkago.Hash{},
 		RequiredAcks: kafkago.RequireOne,
+		BatchTimeout: writerBatchTimeout,
 	}
 	c.DebugLog.Log("connected to brokers %v", c.cfg.Kafka.Brokers)
 	return nil
@@ -102,6 +120,7 @@ func (c *Client) Reconnect() error {
 		Addr:         kafkago.TCP(c.cfg.Kafka.Brokers...),
 		Balancer:     &kafkago.Hash{},
 		RequiredAcks: kafkago.RequireOne,
+		BatchTimeout: writerBatchTimeout,
 	}
 
 	log.Printf("kafka writer reconnected to %v", c.cfg.Kafka.Brokers)

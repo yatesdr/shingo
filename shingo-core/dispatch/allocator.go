@@ -191,12 +191,29 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 			if nodeHadBins {
 				anyMissWithBins = true // bins present but unavailable — sourceable eventually
 			}
+			// Name the miss. The caller only sees len(assigned) and logs "holding N
+			// partial(s)", which says an order is stuck but never why — at HK on
+			// 2026-07-28 two changeover legs sat on "holding 0 partial(s)" for
+			// minutes and the reason (their carriers were still in transit on a
+			// prior order) had to be reconstructed afterwards from the bin audit
+			// trail. The two cases read very differently to an operator: an empty
+			// node needs material, a node WITH bins needs whoever holds them to
+			// finish.
+			if nodeHadBins {
+				a.dbg("reserve miss: order %d step %d at %s — bins present but none available (claimed/reserved/locked elsewhere)",
+					order.ID, pk.stepIndex, pk.step.Node)
+			} else {
+				a.dbg("reserve miss: order %d step %d at %s — no bins at node",
+					order.ID, pk.stepIndex, pk.step.Node)
+			}
 			continue
 		}
 		aerr := a.binManifest.ReserveForDispatch(bin.ID, order.ID)
 		if errors.Is(aerr, reservations.ErrReservationConflict) {
 			missing++
 			anyMissWithBins = true // the bin exists, another order holds it — retry next tick
+			a.dbg("reserve miss: order %d step %d at %s — bin %d taken by another order between find and acquire",
+				order.ID, pk.stepIndex, pk.step.Node, bin.ID)
 			continue
 		}
 		if aerr != nil {

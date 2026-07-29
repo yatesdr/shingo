@@ -139,7 +139,20 @@ func TestChangeover_AutoCompleteFiresOnTerminalTransition(t *testing.T) {
 // TestChangeover_OrphanCancelStampsTask pins the orphan-cancellation
 // handler. When a linked order transitions to StatusCancelled outside
 // cancelProcessChangeoverInternal — e.g. via the operator's per-order
-// cancel button — the handler must stamp the task to "cancelled".
+// cancel button — the handler stamps the task ABANDONED, and crucially that
+// state must be TERMINAL.
+//
+// It used to stamp NodeTaskCancelled, which is deliberately excluded from
+// IsTerminal on the documented assumption that cancelled is "only set by
+// cancelProcessChangeoverInternal", where the changeover row goes to cancelled
+// and the completion gate is never consulted. This handler broke that
+// assumption — it fires while the changeover is still ACTIVE — so the gate did
+// reach a non-terminal task and blocked cutover forever with no operator route
+// out. Hopkinsville 2026-07-28: two evac orders cancelled to free robots parked
+// for an hour, and the changeover could not be finished afterwards.
+//
+// The terminality assertion below is the regression pin; the state name alone
+// would not have caught it.
 func TestChangeover_OrphanCancelStampsTask(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -166,8 +179,16 @@ func TestChangeover_OrphanCancelStampsTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get task after orphan cancel: %v", err)
 	}
-	if updated.State != domain.NodeTaskCancelled {
-		t.Errorf("expected task state cancelled, got %s", updated.State)
+	if updated.State != domain.NodeTaskAbandoned {
+		t.Errorf("expected task state abandoned, got %s", updated.State)
+	}
+	// The point of the whole fix: the gate must be able to move past it.
+	if !domain.IsNodeTaskStateTerminal(updated.State, updated.Situation) {
+		t.Fatalf("task state %q (situation %q) is NOT terminal — an operator cancel "+
+			"has wedged the cutover gate again", updated.State, updated.Situation)
+	}
+	if updated.SkipNote == "" {
+		t.Error("expected an operator-facing skip note explaining why the node was skipped")
 	}
 }
 
