@@ -15,10 +15,11 @@ import (
 // startup. The handler-test fixtures use an empty tmpls map, so without this
 // nothing exercises the real parse pipeline.
 //
-// It also smoke-executes the two dashboard templates: the chromeless display
-// (run by its own file name via the renderBare path) and the admin page (run
-// through the shared "layout"). This catches a bad field reference or template
-// function the parse step alone would not.
+// It also smoke-executes the two chromeless dashboard templates, each by its
+// own file name via the renderBare path. This catches a bad field reference or
+// template function the parse step alone would not. Pages that render through
+// the shared "layout" are executed by phase6_pages_render_test.go's renderPage,
+// which is the closer mirror of what router.go does.
 func TestTemplatesParse(t *testing.T) {
 	base := template.Must(template.New("").Funcs(templateFuncs(nil)).
 		ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
@@ -65,15 +66,5 @@ func TestTemplatesParse(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "Plant Map") || !strings.Contains(buf.String(), `data-dashboard-kind="robot-map"`) {
 		t.Errorf("map output missing baked-in config; got:\n%s", buf.String())
-	}
-
-	// Admin page: executed through the shared layout chrome.
-	adm, ok := tmpls["dashboards.html"]
-	if !ok {
-		t.Fatal("dashboards.html not parsed")
-	}
-	buf.Reset()
-	if err := adm.ExecuteTemplate(&buf, "layout", map[string]any{"Page": "dashboards", "Authenticated": true}); err != nil {
-		t.Fatalf("execute dashboards.html via layout: %v", err)
 	}
 }

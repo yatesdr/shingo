@@ -5,7 +5,7 @@
 // opaque — each option carries a style/payload/tick-count hint.
 //
 // Built with el(...) + real handlers (the app.js DOM builder), matching
-// dashboards.js. Upsert is POST /api/cells for both create and edit (the
+// dashboard-landing.js. Upsert is POST /api/cells for both create and edit (the
 // backend keys on cell_id via ON CONFLICT).
 
 import { el, apiGet, apiPost, apiDelete, toast, uiConfirm } from '/static/app.js';

@@ -55,9 +55,9 @@ the same bug in the other direction — it never attached `?kiosk=1` at all.
 There is **no admin page**. Refactor #3 retired the standalone Manage table;
 wall displays are created and edited on the **hub at `/`** (the Dashboard page,
 `static/pages/dashboard-landing.js`). `GET /wall-displays` and `GET /dashboards`
-both redirect there. `templates/dashboards.html` + `static/pages/dashboards.js`
-still exist but **nothing serves them** — they are kept alive only by
-`template_parse_test.go`.
+both redirect there. The retired `templates/dashboards.html` +
+`static/pages/dashboards.js` pair was deleted once nothing referenced it but the
+template-parse test.
 
 The old `/board` tab is gone; `/board` 301-redirects to `/dashboards`, which
 then redirects to `/`.
@@ -131,7 +131,6 @@ work and belongs in the query.
 - **`static/pages/dashboard.js`** — display renderer (task-board kind): scoped fetch + change-ping refetch, reconnect backoff, clock, connection dot, and build-id auto-reload (a kiosk adopts a new Core build by reloading).
 - **`static/dashboard.css`** — self-contained dark kiosk styling; large fonts and status color-coding for across-the-aisle legibility.
 - **`static/pages/dashboard-landing.js`** — the hub on `/`: cards, create/edit modal, and the Open / Fullscreen links.
-- **`templates/dashboards.html` + `static/pages/dashboards.js`** — the retired admin CRUD. **Unreachable**: no route renders them. Kept alive by `template_parse_test.go` only.
 
 ---
 
@@ -190,7 +189,9 @@ way — no schema, nav, or service change:
 3. **Add the renderer JS** — branch on `data-dashboard-kind` in `dashboard.js`
    (or a separate module) and draw onto a canvas/SVG. Reuse the same scoping +
    SSE-as-ping pattern; the `robot-update` event is your live position feed.
-4. **List the kind** in `dashboards.js` `KINDS` so the admin form offers it.
+4. **List the kind** in `dashboard-landing.js` `KINDS` so the hub's create/edit
+   form offers it. (This step named `dashboards.js` until that file was deleted
+   — it was the retired admin CRUD, and editing it changed nothing on screen.)
 
 No schema change, no nav change, no new service — `kind` + `config_json` carry
 the variation. That's the platform's whole reason for existing.
@@ -231,10 +232,8 @@ the variation. That's the platform's whole reason for existing.
 | `www/router.go`                               | routes + `renderBare`                  |
 | `www/templates/dashboard-display.html`        | chromeless kiosk page (task-board)     |
 | `www/templates/dashboard-map.html`            | chromeless kiosk page (robot-map)      |
-| `www/templates/dashboards.html`               | retired admin page — UNREACHABLE       |
 | `www/static/pages/dashboard.js`              | task-board renderer                    |
 | `www/static/pages/dashboard-map.js`          | robot-map renderer (SVG)               |
-| `www/static/pages/dashboards.js`             | retired admin CRUD — UNREACHABLE       |
 | `www/static/pages/dashboard-landing.js`      | the hub on `/` (where displays are made) |
 | `www/static/dashboard.css`                    | kiosk styling (all kinds)              |
 | `www/templates/layout.html`                   | nav: "Dashboard" → `/` (the hub)         |
