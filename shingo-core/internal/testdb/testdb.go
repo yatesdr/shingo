@@ -37,12 +37,20 @@ import (
 const templateDBName = "template_test"
 
 // containerState holds the shared Postgres container started once per test process.
+// containerID is recorded so a test can read the labels back off the container
+// this process actually created — see reaper.go for why they matter.
 var (
 	containerOnce sync.Once
 	containerHost string
 	containerPort int
+	containerID   string
 	containerErr  error
 )
+
+// ContainerID returns the Docker ID of this process's shared Postgres
+// container, or "" before startContainer has run. Exported for the reaper
+// test, which asserts the container carries the labels it is reaped by.
+func ContainerID() string { return containerID }
 
 // templateState gates one-time template-DB construction. setupTemplate runs
 // migrations against templateDBName and then marks it IS_TEMPLATE=true so
@@ -98,12 +106,26 @@ func startContainer() {
 	}()
 	const attempts = 3
 	ctx := context.Background()
+
+	// Clear other processes' abandoned containers BEFORE creating ours, so
+	// this process can never be a candidate for its own reap. Best effort:
+	// see reaper.go.
+	reapOrphansBestEffort()
+
 	var lastErr error
 	for i := 0; i < attempts; i++ {
 		container, err := postgres.Run(ctx, "postgres:16-alpine",
 			postgres.WithDatabase("postgres"),
 			postgres.WithUsername("test"),
 			postgres.WithPassword("test"),
+			// Declare, at creation time, when this container's creator is
+			// provably gone. Stamped per attempt so a retry re-derives it
+			// from the current clock rather than inheriting a stale one.
+			testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
+				ContainerRequest: testcontainers.ContainerRequest{
+					Labels: containerLabels(time.Now()),
+				},
+			}),
 			// Wait for BOTH the postgres ready log AND the mapped host port to be
 			// listening. Log-only waits caused MappedPort to return 0 under
 			// heavy parallelism — the container had crossed the log threshold
@@ -127,6 +149,7 @@ func startContainer() {
 		if hostErr == nil && portErr == nil && host != "" && port.Int() != 0 {
 			containerHost = host
 			containerPort = port.Int()
+			containerID = container.GetContainerID()
 			return
 		}
 		lastErr = fmt.Errorf("container host/port not ready (hostErr=%v host=%q portErr=%v portVal=%d)", hostErr, host, portErr, port.Int())
