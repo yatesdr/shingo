@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -36,12 +37,15 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 	for _, c := range children {
 		o := c.Order
 		var id int64
-		err := tx.QueryRow(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
+		// created_at/updated_at explicit, same reasoning as orders.Create:
+		// omitting them takes the database's clock while every duration is
+		// measured against clock.Now().
+		err := tx.QueryRow(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15) RETURNING id`,
 			o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 			o.Quantity,
 			o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
 			helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
-			helpers.NullableInt64(o.BinID)).Scan(&id)
+			helpers.NullableInt64(o.BinID), clock.Now().UTC()).Scan(&id)
 		if err != nil {
 			return fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}
@@ -277,8 +281,12 @@ func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail str
 	for i, t := range terminals {
 		terminalNames[i] = string(t)
 	}
-	res, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=NOW()
-		WHERE id=$3 AND status <> ALL($4)`, string(status), errDetail, orderID, terminalNames)
+	// updated_at from clock.Now(), not the database's NOW(): the daily
+	// terminal-volume histogram buckets on COALESCE(completed_at, updated_at),
+	// so a DB-clock stamp here puts a sim order's terminal in a different
+	// (real-time) day from its creation.
+	res, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$5
+		WHERE id=$3 AND status <> ALL($4)`, string(status), errDetail, orderID, terminalNames, clock.Now().UTC())
 	if err != nil {
 		return false, err
 	}
@@ -290,7 +298,7 @@ func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail str
 	// History only for the winner — a losing terminalize must not add a second
 	// terminal row to the order's audit trail.
 	if won {
-		if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, $2, $3)`, orderID, string(status), detail); err != nil {
+		if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1, $2, $3, $4)`, orderID, string(status), detail, clock.Now().UTC()); err != nil {
 			return false, err
 		}
 	}

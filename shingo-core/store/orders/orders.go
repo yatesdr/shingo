@@ -99,13 +99,27 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 }
 
 // Create inserts a new order row and sets o.ID on success.
+//
+// created_at/updated_at are written explicitly from clock.Now(). They carry
+// DDL defaults of NOW(), and omitting them from the column list took the
+// DATABASE's wall clock while every duration in the system is measured against
+// clock.Now() — so under the sim's fast-forward clock an order was "created"
+// hours after the transitions that follow it, and duration_ms came out
+// non-positive on most rows. That is why four telemetry queries carry a
+// FILTER (WHERE duration_ms > 0) guard and why execution.go sources both
+// endpoints from order_history to sidestep it.
+//
+// At a plant the two clocks agree to ~40ms (0 of 1878 rows affected), so this
+// is a sim-fidelity fix, not a plant-correctness one.
 func Create(db *sql.DB, o *Order) error {
-	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id`,
+	now := clock.Now().UTC()
+	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $20) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
 		helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
-		helpers.NullableInt64(o.BinID), o.PayloadCode, o.SkipAutoConfirm, o.SiblingOrderUUID, o.SourceIntent, o.Coordinated)
+		helpers.NullableInt64(o.BinID), o.PayloadCode, o.SkipAutoConfirm, o.SiblingOrderUUID, o.SourceIntent, o.Coordinated,
+		now)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}
@@ -152,7 +166,7 @@ func UpdateStatus(db *sql.DB, id int64, status, detail string) error {
 	if _, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$4 WHERE id=$3`, status, errDetail, id, clock.Now().UTC()); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, $2, $3)`, id, status, detail); err != nil {
+	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1, $2, $3, $4)`, id, status, detail, clock.Now().UTC()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -195,7 +209,7 @@ func UpdateStatusFrom(db *sql.DB, id int64, from, to, detail string) (bool, erro
 	if n, _ := res.RowsAffected(); n == 0 {
 		return false, nil
 	}
-	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, $2, $3)`, id, to, detail); err != nil {
+	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1, $2, $3, $4)`, id, to, detail, clock.Now().UTC()); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()

@@ -194,6 +194,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/missions/alerts", h.apiMissionsAlerts)
 			r.Get("/missions/timeseries", h.apiMissionTimeseries)
 			r.Get("/missions/breakdown", h.apiMissionBreakdown)
+			r.Get("/missions/dwell", h.apiMissionDwell)
 			r.Get("/missions/failures", h.apiMissionFailures)
 			r.Get("/missions/{orderID}", h.apiGetMission)
 

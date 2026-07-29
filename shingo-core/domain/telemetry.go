@@ -166,6 +166,46 @@ type TelemetryBreakdownRow struct {
 	AvgDurationMS int64  `json:"avg_duration_ms"`
 }
 
+// DwellPair names one order_history state transition to measure. Exported so
+// callers can ask for a pair outside the standard set without a new query.
+type DwellPair struct {
+	// Key is the stable name the UI and any consumer keys on. From/To are the
+	// order_history statuses; changing them changes what the key means, so
+	// treat the triple as one unit.
+	Key  string `json:"key"`
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// DwellStat is the p50/p95 of one DwellPair over a window, in seconds.
+//
+// Count is not decoration. At Springfield a single (node, payload) tuple sees
+// a handful of orders a day, and a p95 over four samples is noise wearing a
+// statistic's clothes. Anything rendering this must show Count beside the
+// percentiles, and should say so rather than draw a chart when Count is small.
+type DwellStat struct {
+	DwellPair
+	P50Seconds float64 `json:"p50_seconds"`
+	P95Seconds float64 `json:"p95_seconds"`
+	Count      int64   `json:"count"`
+}
+
+// FlowDwellPairs is the standard per-state dwell set: where an order's time
+// actually goes between being asked for and being confirmed.
+//
+// staged has two exits in the state machine (staged→in_transit when the wait
+// is released, staged→delivered when the staged leg IS the last one), and they
+// answer different questions, so both are measured rather than merged.
+func FlowDwellPairs() []DwellPair {
+	return []DwellPair{
+		{Key: "time_to_dispatch", From: "queued", To: "acknowledged"},
+		{Key: "transit", From: "in_transit", To: "delivered"},
+		{Key: "staged_release", From: "staged", To: "in_transit"},
+		{Key: "staged_delivery", From: "staged", To: "delivered"},
+		{Key: "operator_fill", From: "delivered", To: "confirmed"},
+	}
+}
+
 // Termination outcome buckets returned by ClassifyTermination.
 const (
 	OutcomeConfirmed = "confirmed"

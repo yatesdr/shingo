@@ -3,7 +3,9 @@ package service
 import (
 	"time"
 
+	"shingocore/domain"
 	"shingocore/store"
+	"shingocore/store/orders"
 	"shingocore/store/telemetry"
 )
 
@@ -55,6 +57,24 @@ func (s *MissionService) HourlyConcurrency(dayStart time.Time, stationID string)
 // until] for the Fleet Load chart's multi-day (7d/30d) view (plan §15.C).
 func (s *MissionService) DailyConcurrency(since, until time.Time, stationID string) ([]telemetry.DayConcurrency, error) {
 	return s.db.GetDailyConcurrency(since, until, stationID)
+}
+
+// DwellStats returns p50/p95/count for each requested order_history
+// transition over [start, end] — the per-state dwell answer the missions page
+// needs: time-to-dispatch, transit, staged dwell, operator fill.
+//
+// Reads order_history, NOT mission_telemetry: 76.6% of terminal orders have no
+// mission_telemetry row (it is written only on a vendor terminal, so every
+// skip and most cancels never produce one). Dwell is a question about what
+// happened to the ORDERS, which is what order_history answers.
+//
+// Pass nil pairs for the standard set. payloadCode / orderType "" mean "all".
+func (s *MissionService) DwellStats(pairs []domain.DwellPair, payloadCode, orderType string, start, end time.Time) ([]domain.DwellStat, error) {
+	if len(pairs) == 0 {
+		pairs = domain.FlowDwellPairs()
+	}
+	return orders.DwellStats(s.db.DB, pairs, payloadCode, orderType,
+		orders.LeadTimeRange{Start: start, End: end})
 }
 
 // Breakdown returns the top-10 mission groups by robot or route (plan §3.F).

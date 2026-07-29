@@ -28,6 +28,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"shingocore/domain"
 )
 
 // LeadTimeRange brackets a calculate window. Inclusive of both endpoints; UTC
@@ -80,6 +82,63 @@ func CountCompletedOrdersInWindow(db *sql.DB, orderType, terminalStatus, payload
 		return 0, fmt.Errorf("count %s/%s: %w", orderType, terminalStatus, err)
 	}
 	return n, nil
+}
+
+// DwellPair / DwellStat / FlowDwellPairs: see domain/telemetry.go.
+type (
+	DwellPair = domain.DwellPair
+	DwellStat = domain.DwellStat
+)
+
+// FlowDwellPairs is the standard dwell set — re-exported so callers of this
+// package don't need to import domain for the common case.
+func FlowDwellPairs() []DwellPair { return domain.FlowDwellPairs() }
+
+// DwellStats returns p50, p95 and a sample count for each requested transition
+// over the window. payloadCode / orderType "" mean "all".
+//
+// This is the per-state dwell answer — where an order's time goes between
+// being asked for and being confirmed — and it needs no new query engine:
+// transitionCTE below already computes any-state-to-any-state durations, and
+// has had exactly one caller (the threshold calculator) since it was written.
+// The four named helpers above are its other users and are untouched.
+//
+// One round trip per pair. At five pairs against a 3k-row orders table that is
+// cheaper than the machinery to avoid it — transitionCTE runs in ~1.5ms and
+// the design explicitly refused the (status, created_at) index on that basis.
+//
+// Inherited semantics, worth knowing before reading a number:
+//
+//   - MAX(from)→MAX(to) per order, so an order that visits a state twice is
+//     measured across the OUTERMOST span, and one whose last to-state precedes
+//     its last from-state drops out entirely (the WHERE to_ts > from_ts
+//     filter). This is the existing collapse-retries behaviour, not new.
+//   - The window bounds the FROM transition. A transition that starts inside
+//     the window and ends after it is still counted, at its full duration.
+func DwellStats(db *sql.DB, pairs []DwellPair, payloadCode, orderType string, r LeadTimeRange) ([]DwellStat, error) {
+	out := make([]DwellStat, 0, len(pairs))
+	for _, p := range pairs {
+		cte, args := transitionCTE(p.From, p.To, payloadCode, orderType, r)
+		args = append(args, 0.5, 0.95)
+		q := cte + fmt.Sprintf(`
+			SELECT PERCENTILE_CONT($%d::float8) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (to_ts - from_ts))),
+			       PERCENTILE_CONT($%d::float8) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (to_ts - from_ts))),
+			       COUNT(*)
+			FROM transitions WHERE to_ts > from_ts`, len(args)-1, len(args))
+
+		var p50, p95 sql.NullFloat64
+		var n int64
+		if err := db.QueryRow(q, args...).Scan(&p50, &p95, &n); err != nil {
+			return nil, fmt.Errorf("dwell %s (%s→%s): %w", p.Key, p.From, p.To, err)
+		}
+		out = append(out, DwellStat{
+			DwellPair:  p,
+			P50Seconds: p50.Float64, // NULL → 0, the package's "no signal" contract
+			P95Seconds: p95.Float64,
+			Count:      n,
+		})
+	}
+	return out, nil
 }
 
 // transitionCTE builds the shared "every fromState→toState duration in the

@@ -19,7 +19,7 @@ import (
 // the source slot is freed immediately.
 type PollerEmitter interface {
 	EmitOrderStatusChanged(orderID int64, rdsOrderID, oldStatus, newStatus, robotID, detail string, orderDetail *OrderDetail)
-	EmitBlockCompleted(orderID int64, rdsOrderID, blockID, location, binTask string)
+	EmitBlockCompleted(orderID int64, rdsOrderID, blockID, location, binTask string, startTime, terminateTime int64)
 	EmitGraceExpired(orderID int64, rdsOrderID string)
 }
 
@@ -302,7 +302,10 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 	if !ok {
 		prev = make(map[string]OrderState, len(detail.Blocks))
 	}
-	type blockTransition struct{ blockID, location, binTask string }
+	type blockTransition struct {
+		blockID, location, binTask string
+		startTime, terminateTime   int64
+	}
 	var newlyFinished []blockTransition
 	for _, b := range detail.Blocks {
 		if b.BlockID == "" {
@@ -316,11 +319,17 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 		// Only fire on the transition INTO FINISHED â€” once. Subsequent
 		// polls keep `prev[blockID] = FINISHED` so the equality check
 		// above short-circuits.
+		//
+		// startTime/terminateTime ride along from the same snapshot. They are
+		// only meaningful on a FINISHED block (an in-flight one has no
+		// terminate), which is exactly when this fires. 0 = not reported.
 		if b.State == StateFinished && old != StateFinished {
 			newlyFinished = append(newlyFinished, blockTransition{
-				blockID:  b.BlockID,
-				location: b.Location,
-				binTask:  b.BinTask,
+				blockID:       b.BlockID,
+				location:      b.Location,
+				binTask:       b.BinTask,
+				startTime:     b.StartTime,
+				terminateTime: b.TerminateTime,
 			})
 		}
 	}
@@ -346,7 +355,8 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 	}
 
 	for _, b := range newlyFinished {
-		p.dbg("block FINISHED %s/%s @ %s (binTask=%s)", rdsID, b.blockID, b.location, b.binTask)
-		p.emitter.EmitBlockCompleted(orderID, rdsID, b.blockID, b.location, b.binTask)
+		p.dbg("block FINISHED %s/%s @ %s (binTask=%s start=%d terminate=%d)",
+			rdsID, b.blockID, b.location, b.binTask, b.startTime, b.terminateTime)
+		p.emitter.EmitBlockCompleted(orderID, rdsID, b.blockID, b.location, b.binTask, b.startTime, b.terminateTime)
 	}
 }

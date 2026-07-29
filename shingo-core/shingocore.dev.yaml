@@ -93,6 +93,13 @@ sim:
   # every consume cell (supply cycle 180-240s >> drain window 80s). fleet 20 @ 15-20s.
   transit_min: 15s
   transit_max: 20s
+  # fleet_size also names the fleet: the driver mints AMR-01..AMR-20 at boot and
+  # hands them out FIFO, so per-robot breakdown / robot filter / utilization /
+  # hourly concurrency have a real population to aggregate over. (It used to
+  # stamp one synthetic robot per order, which made every fleet-shaped metric a
+  # sample of one.) Set 7 to mirror Springfield's actual fleet — but not here:
+  # the demo's rate balance above needs 20 to keep the supply cycle inside the
+  # drain window.
   fleet_size: 20
   jitter_pct: 0.2
   fail_rate: 0.0

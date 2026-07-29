@@ -150,6 +150,23 @@ type BlockDetail struct {
 	OperationArgs map[string]any `json:"operation_args"`
 	ScriptArgs    map[string]any `json:"script_args"`
 	ScriptName    string         `json:"script_name"`
+
+	// Per-block timing, epoch SECONDS (not millis — the order-level
+	// createTime/terminalTime on OrderDetail are millis; these are not).
+	// 0 means the vendor did not report it.
+	//
+	// These are what makes leg decomposition possible: without them a nine-
+	// minute mission is one number, and travel-to-source, load, travel-to-dest
+	// and unload are indistinguishable. They have been on the wire the whole
+	// time — verified on a live Springfield /orderDetails, 2026-07-25 — and
+	// this struct simply had no fields to park them in, which is why the work
+	// was recorded as blocked on a vendor limitation for two years.
+	//
+	// CAVEAT: the live sample was a SINGLE-block order. Whether every block of
+	// a MULTI-block order carries times is unverified; if they don't, capture
+	// still works and the leg maths just has fewer legs to work with.
+	StartTime     int64 `json:"startTime"`
+	TerminateTime int64 `json:"terminateTime"`
 }
 
 type OrderListResponse struct {

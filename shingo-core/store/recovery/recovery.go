@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"time"
 
+	"shingo/shared/clock"
 	"shingocore/store/internal/helpers"
 )
 
@@ -79,7 +80,7 @@ func RepairConfirmedOrderCompletion(db *sql.DB, orderID, binID, toNodeID int64, 
 	if affected == 0 {
 		return fmt.Errorf("order %d is not awaiting completion repair", orderID)
 	}
-	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'confirmed', 'order completion repaired')`, orderID); err != nil {
+	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1, 'confirmed', 'order completion repaired', $2)`, orderID, clock.Now().UTC()); err != nil {
 		return fmt.Errorf("insert history: %w", err)
 	}
 	// Reconcile occupancy in the same tx before placing the repaired bin — the

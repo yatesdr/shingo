@@ -248,6 +248,13 @@ type BlockCompletedEvent struct {
 	BlockID       string
 	Location      string
 	BinTask       string
+
+	// Vendor per-block timing, epoch SECONDS. 0 = the vendor did not report
+	// it. This is the leg-decomposition substrate: terminate−start is how
+	// long THIS leg took, which is the difference between knowing a mission
+	// took nine minutes and knowing where the nine minutes went.
+	StartTime     int64
+	TerminateTime int64
 }
 
 // BinEnteredTransitEvent fires when a bin's NodeID transitions to the

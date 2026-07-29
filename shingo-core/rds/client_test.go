@@ -297,11 +297,13 @@ type pollerEvent struct {
 }
 
 type blockEvent struct {
-	orderID    int64
-	rdsOrderID string
-	blockID    string
-	location   string
-	binTask    string
+	orderID       int64
+	rdsOrderID    string
+	blockID       string
+	location      string
+	binTask       string
+	startTime     int64
+	terminateTime int64
 }
 
 func (m *mockPollerEmitter) EmitOrderStatusChanged(orderID int64, rdsOrderID, oldStatus, newStatus, robotID, detail string, orderDetail *OrderDetail) {
@@ -310,10 +312,10 @@ func (m *mockPollerEmitter) EmitOrderStatusChanged(orderID int64, rdsOrderID, ol
 	m.events = append(m.events, pollerEvent{orderID, rdsOrderID, oldStatus, newStatus, robotID})
 }
 
-func (m *mockPollerEmitter) EmitBlockCompleted(orderID int64, rdsOrderID, blockID, location, binTask string) {
+func (m *mockPollerEmitter) EmitBlockCompleted(orderID int64, rdsOrderID, blockID, location, binTask string, startTime, terminateTime int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.blockEvents = append(m.blockEvents, blockEvent{orderID, rdsOrderID, blockID, location, binTask})
+	m.blockEvents = append(m.blockEvents, blockEvent{orderID, rdsOrderID, blockID, location, binTask, startTime, terminateTime})
 }
 
 type mockResolver struct{}

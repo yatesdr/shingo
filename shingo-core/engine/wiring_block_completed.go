@@ -35,11 +35,14 @@
 package engine
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 
 	"shingo/protocol"
 	"shingo/shared/clock"
 	"shingocore/store/orders"
+	"shingocore/store/telemetry"
 )
 
 // handleBlockCompleted is called from wiring.go's EventBlockCompleted
@@ -47,11 +50,98 @@ import (
 // bin lifecycle transition: pickups free the source slot (→ _TRANSIT),
 // intermediate storage dropoffs record the bin at its slot immediately.
 func (e *Engine) handleBlockCompleted(ev BlockCompletedEvent) {
+	// Record the observation before routing it. This handler was the sole
+	// subscriber and it threw the block away after moving the bin, so every
+	// leg the fleet reported — travel-to-source, load, travel-to-dest, unload —
+	// existed for the duration of one function call and was never written down.
+	e.recordBlockLeg(ev)
+
 	switch {
 	case isPickupBlock(ev.BinTask):
 		e.handlePickupBlockCompleted(ev)
 	case isDropoffBlock(ev.BinTask):
 		e.handleStoreBlockCompleted(ev)
+	}
+}
+
+// blockLegState is the mission_events.new_state marker for a per-block
+// completion.
+//
+// Deliberately NOT a vendor OrderState value. These rows are a finer grain
+// than the order-level transitions beside them, so a reader filtering on real
+// vendor states must not pick them up by accident — and one that wants legs
+// can select exactly this.
+const blockLegState = "BLOCK_FINISHED"
+
+// blockLeg is the per-block record stored in mission_events.blocks_json.
+// Epoch seconds, verbatim from the vendor; DurationSeconds is derived and 0
+// when either endpoint is missing.
+type blockLeg struct {
+	BlockID         string `json:"blockId"`
+	Location        string `json:"location"`
+	BinTask         string `json:"binTask"`
+	StartTime       int64  `json:"startTime"`
+	TerminateTime   int64  `json:"terminateTime"`
+	DurationSeconds int64  `json:"durationSeconds"`
+}
+
+// recordBlockLeg writes one mission_events row per completed block — roughly
+// two rows per order, into a JSONB column that already exists, so no schema
+// change and no new table.
+//
+// This is the leg decomposition the design has wanted since round 1. It was
+// recorded as blocked on the vendor not reporting per-block times; the times
+// were on the wire the whole time and rds.BlockDetail simply had no fields to
+// hold them.
+//
+// Best-effort: a failure here logs and returns. Losing a telemetry row must
+// never stop the bin from moving.
+func (e *Engine) recordBlockLeg(ev BlockCompletedEvent) {
+	leg := blockLeg{
+		BlockID:       ev.BlockID,
+		Location:      ev.Location,
+		BinTask:       ev.BinTask,
+		StartTime:     ev.StartTime,
+		TerminateTime: ev.TerminateTime,
+	}
+	// Only derive a duration from two real endpoints. A vendor that reports
+	// neither leaves this 0, which reads as "unknown" — not as "instant".
+	if ev.StartTime > 0 && ev.TerminateTime >= ev.StartTime {
+		leg.DurationSeconds = ev.TerminateTime - ev.StartTime
+	}
+
+	blocks, err := json.Marshal([]blockLeg{leg})
+	if err != nil {
+		e.logFn("telemetry: marshal block leg for order %d: %v", ev.OrderID, err)
+		return
+	}
+
+	// The robot comes from the ORDER. Block events carry no vehicle at all —
+	// neither the poller's EmitBlockCompleted nor the simulator's has ever had
+	// one — so without this every leg row would have a blank robot_id and the
+	// per-robot leg breakdown would be empty for the same reason the mission
+	// summaries were.
+	robotID := ""
+	if order, oerr := e.db.GetOrder(ev.OrderID); oerr == nil && order != nil {
+		robotID = order.RobotID
+	}
+
+	detail := fmt.Sprintf("block %s @ %s (binTask=%s)", ev.BlockID, ev.Location, ev.BinTask)
+	if leg.DurationSeconds > 0 {
+		detail += fmt.Sprintf(" took %ds", leg.DurationSeconds)
+	}
+
+	if err := e.db.InsertMissionEvent(&telemetry.Event{
+		OrderID:       ev.OrderID,
+		VendorOrderID: ev.VendorOrderID,
+		OldState:      "",
+		NewState:      blockLegState,
+		RobotID:       robotID,
+		BlocksJSON:    string(blocks),
+		ErrorsJSON:    "[]",
+		Detail:        detail,
+	}); err != nil {
+		e.logFn("telemetry: record block leg for order %d: %v", ev.OrderID, err)
 	}
 }
 

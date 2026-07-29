@@ -40,7 +40,7 @@ func (f *fakeTrackerEmitter) EmitOrderStatusChanged(orderID int64, vendorOrderID
 	f.snapshot = snapshot
 }
 
-func (f *fakeTrackerEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string) {
+func (f *fakeTrackerEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string, _, _ int64) {
 	f.blockCalls++
 	f.blockOrderID = orderID
 	f.blockVendorID = vendorOrderID

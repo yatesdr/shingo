@@ -121,13 +121,15 @@ func (e *pollerEmitter) EmitGraceExpired(orderID int64, vendorOrderID string) {
 	}})
 }
 
-func (e *pollerEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string) {
+func (e *pollerEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string, startTime, terminateTime int64) {
 	e.bus.Emit(Event{Type: EventBlockCompleted, Payload: BlockCompletedEvent{
 		OrderID:       orderID,
 		VendorOrderID: vendorOrderID,
 		BlockID:       blockID,
 		Location:      location,
 		BinTask:       binTask,
+		StartTime:     startTime,
+		TerminateTime: terminateTime,
 	}})
 }
 

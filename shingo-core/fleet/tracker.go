@@ -18,7 +18,7 @@ type OrderTracker interface {
 // "Unload", "Wait") so the engine handler can route by block kind.
 type TrackerEmitter interface {
 	EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string, snapshot *OrderSnapshot)
-	EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string)
+	EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string, startTime, terminateTime int64)
 	EmitGraceExpired(orderID int64, vendorOrderID string)
 }
 

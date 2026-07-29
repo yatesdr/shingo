@@ -14,11 +14,17 @@ package simulator
 // independently skips any dropoff whose location is the order's delivery node,
 // so emitting the last block here would be a harmless no-op either way.
 //
+// startTime/terminateTime are epoch SECONDS on the sim clock, matching what
+// SEER puts on a FINISHED block (rds.BlockDetail). The driver passes the real
+// interval the block occupied, so leg-duration maths can be validated end to
+// end here instead of waiting for a plant call. Pass 0/0 for "vendor did not
+// report", which is the honest value for a caller that doesn't track it.
+//
 // Resolve + emit happen outside s.mu — the EventBus dispatches synchronously and
 // a subscriber that reads simulator state would deadlock if we held the lock
 // (same discipline as DriveState). Returns true if an event was emitted; false
 // if the order, emitter, or resolver is absent (e.g. before InitTracker).
-func (s *SimulatorBackend) CompleteBlock(vendorOrderID, blockID, location, binTask string) bool {
+func (s *SimulatorBackend) CompleteBlock(vendorOrderID, blockID, location, binTask string, startTime, terminateTime int64) bool {
 	s.mu.RLock()
 	emitter := s.emitter
 	resolver := s.resolver
@@ -32,6 +38,6 @@ func (s *SimulatorBackend) CompleteBlock(vendorOrderID, blockID, location, binTa
 	if err != nil {
 		return false
 	}
-	emitter.EmitBlockCompleted(orderID, vendorOrderID, blockID, location, binTask)
+	emitter.EmitBlockCompleted(orderID, vendorOrderID, blockID, location, binTask, startTime, terminateTime)
 	return true
 }

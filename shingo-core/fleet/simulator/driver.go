@@ -4,6 +4,7 @@ package simulator
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -38,7 +39,8 @@ type orderProgress struct {
 	phase       driverPhase
 	blockIndex  int       // next block to complete
 	deadline    time.Time // when the next transition is due
-	hasRobot    bool      // holds a robot from the finite fleet (G16)
+	robotID     string    // non-empty while holding a robot from the pool (G16)
+	blockStart  time.Time // when the in-flight block began — the sim's startTime (8c)
 	queuedSince time.Time // non-zero while waiting for a free robot (G16)
 	staged      bool      // driven to WAITING (status "staged") at a wait dwell
 	heldAt      string    // non-empty while stalled at an occupied position (log-once)
@@ -66,12 +68,30 @@ type Driver struct {
 	fleetSize   int
 	robotsInUse int
 	queuedCount int
-	maxInUse    int
-	maxQueued   int
-	lastMetric  time.Time     // instant of the last metric accrual
-	robotBusy   time.Duration // ∫ robotsInUse dt
-	queueWait   time.Duration // ∫ queuedCount dt
-	elapsed     time.Duration // ∫ dt since the first step
+
+	// Robot identity. Until 2026-07-25 the driver stamped "sim-bot-"+vendorID
+	// on every RUNNING transition, so every order had its own one-mission
+	// "robot" — which silently disabled the per-robot breakdown, the robot
+	// filter, utilization and hourly concurrency. Every fleet-shaped metric in
+	// store/telemetry was untestable.
+	//
+	// freeRobots is a FIFO of available names. FIFO, not LIFO, so a lightly
+	// loaded sim rotates through the pool instead of pinning AMR-01 — which
+	// also happens to be what a real dispatcher does (longest-idle first).
+	//
+	// Finite fleet: pre-minted at construction, exactly fleetSize names, never
+	// grows (advance only acquires after confirming a robot is free).
+	// Infinite fleet: starts empty and mints on demand, so the pool settles at
+	// the run's peak concurrency. Identity is exclusive either way — two live
+	// orders never share a name.
+	freeRobots []string
+	mintedBots int
+	maxInUse   int
+	maxQueued  int
+	lastMetric time.Time     // instant of the last metric accrual
+	robotBusy  time.Duration // ∫ robotsInUse dt
+	queueWait  time.Duration // ∫ queuedCount dt
+	elapsed    time.Duration // ∫ dt since the first step
 }
 
 // NewDriver builds a Driver from sim config. Exported so callers can construct
@@ -92,7 +112,7 @@ func NewDriver(sim *SimulatorBackend, cfg config.SimConfig, clk clock.Clock, rng
 		transitMin = cfg.Scaled(transitMin)
 		transitMax = cfg.Scaled(transitMax)
 	}
-	return &Driver{
+	d := &Driver{
 		sim:        sim,
 		clk:        clk,
 		rng:        rng,
@@ -105,6 +125,21 @@ func NewDriver(sim *SimulatorBackend, cfg config.SimConfig, clk clock.Clock, rng
 		progress:   make(map[string]*orderProgress),
 		fleetSize:  cfg.FleetSize,
 	}
+	// Mint the named fleet up front for a finite pool (sim.fleet_size in the
+	// YAML — 20 on the dev plant, 7 at Springfield). The infinite fleet mints
+	// on demand instead; see the freeRobots comment.
+	for i := 0; i < cfg.FleetSize; i++ {
+		d.mintedBots++
+		d.freeRobots = append(d.freeRobots, robotName(d.mintedBots))
+	}
+	return d
+}
+
+// robotName renders a pool slot as a plant-style vehicle ID. Two digits keeps
+// AMR-01..AMR-99 sorting lexically, which is how every per-robot breakdown
+// orders its rows.
+func robotName(n int) string {
+	return fmt.Sprintf("AMR-%02d", n)
 }
 
 // StartDriver constructs the driver and runs its tick loop until ctx is done.
@@ -214,11 +249,16 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 		// waybill — and thus the acknowledged→in_transit transition — on first
 		// robot assignment (wiring_vendor_status.go). Real RDS reports a vehicle
 		// ID here; the plain DriveState passes "" and the order stalls at
-		// acknowledged (staged then can't apply). One bot per order suits the
-		// infinite fleet; a finite pool of reused IDs is a G16 follow-up.
-		d.sim.DriveStateWithRobot(vid, "RUNNING", "sim-bot-"+vid)
+		// acknowledged (staged then can't apply).
+		//
+		// The ID comes from the pool, not from the order. It used to be
+		// "sim-bot-"+vid — one robot per order, so the fleet had as many
+		// members as the run had orders and every fleet-shaped metric read as
+		// a population of one.
+		d.sim.DriveStateWithRobot(vid, "RUNNING", p.robotID)
 		p.phase = phaseRunning
 		p.blockIndex = 0
+		p.blockStart = now
 		p.deadline = d.nextDeadline(now)
 
 	case phaseRunning:
@@ -251,6 +291,9 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 		if p.staged {
 			d.sim.DriveState(vid, "RUNNING")
 			p.staged = false
+			// The staged dwell belongs to the WAIT, not to the block that
+			// follows it, so the block clock restarts on resume.
+			p.blockStart = now
 		}
 
 		if d.maybeFault(vid) {
@@ -274,8 +317,9 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 		if d.holdForPosition(now, vid, b.Location, b.BinTask, p) {
 			return
 		}
-		d.sim.CompleteBlock(vid, b.BlockID, b.Location, b.BinTask)
+		d.sim.CompleteBlock(vid, b.BlockID, b.Location, b.BinTask, p.blockStart.Unix(), now.Unix())
 		p.blockIndex++
+		p.blockStart = now
 		p.deadline = d.nextDeadline(now)
 	}
 }
@@ -306,9 +350,18 @@ func (d *Driver) dequeue(p *orderProgress) {
 	}
 }
 
-// acquireRobot takes a robot from the finite pool. Call only after confirming a
-// robot is free; a no-op for the infinite fleet.
+// acquireRobot takes a robot from the pool and records its ID on the order.
+// For the finite fleet the caller has already confirmed one is free, so the
+// pre-minted free list is never empty here; for the infinite fleet the pool
+// grows by one name when it runs dry.
 func (d *Driver) acquireRobot(p *orderProgress) {
+	if len(d.freeRobots) == 0 {
+		d.mintedBots++
+		d.freeRobots = append(d.freeRobots, robotName(d.mintedBots))
+	}
+	p.robotID = d.freeRobots[0]
+	d.freeRobots = append(d.freeRobots[:0], d.freeRobots[1:]...)
+
 	if d.fleetSize <= 0 {
 		return
 	}
@@ -316,14 +369,17 @@ func (d *Driver) acquireRobot(p *orderProgress) {
 	if d.robotsInUse > d.maxInUse {
 		d.maxInUse = d.robotsInUse
 	}
-	p.hasRobot = true
 }
 
-// releaseRobot returns a held robot to the pool.
+// releaseRobot returns a held robot to the back of the pool.
 func (d *Driver) releaseRobot(p *orderProgress) {
-	if p.hasRobot {
+	if p.robotID == "" {
+		return
+	}
+	d.freeRobots = append(d.freeRobots, p.robotID)
+	p.robotID = ""
+	if d.fleetSize > 0 {
 		d.robotsInUse--
-		p.hasRobot = false
 	}
 }
 

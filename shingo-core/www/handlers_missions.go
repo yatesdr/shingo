@@ -154,6 +154,46 @@ func (h *Handlers) apiMissionBreakdown(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"by": by, "rows": rows})
 }
 
+// apiMissionDwell serves per-state dwell: p50/p95/count for each leg of an
+// order's life — time-to-dispatch, transit, staged dwell, operator fill.
+//
+// Answers "where did the time go", which no surface answered before: every
+// existing mission stat is a single created→terminal duration, so a mission
+// that spent eight of its nine minutes queued behind material looks identical
+// to one that spent them driving.
+//
+// Window/filter args match the rest of the missions API (?since=&until=
+// as plant-local dates, ?payload_code=, ?order_type=). Defaults to the last
+// 30 days. Each row carries its sample count — read the percentiles with it,
+// not without it.
+func (h *Handlers) apiMissionDwell(w http.ResponseWriter, r *http.Request) {
+	f := parseMissionFilter(r)
+	end := clock.Now().UTC()
+	if f.Until != nil {
+		end = *f.Until
+	}
+	start := end.AddDate(0, 0, -30)
+	if f.Since != nil {
+		start = *f.Since
+	}
+
+	rows, err := h.engine.MissionService().DwellStats(nil,
+		r.URL.Query().Get("payload_code"), r.URL.Query().Get("order_type"), start, end)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == nil {
+		rows = []domain.DwellStat{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"since": start,
+		"until": end,
+		"rows":  rows,
+	})
+}
+
 // apiMissionFailures serves the §3.G failure Pareto: classified failure
 // reasons with counts and sample order IDs, sorted desc.
 func (h *Handlers) apiMissionFailures(w http.ResponseWriter, r *http.Request) {

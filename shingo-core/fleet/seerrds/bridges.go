@@ -22,8 +22,8 @@ func (b *emitterBridge) EmitGraceExpired(orderID int64, rdsOrderID string) {
 	b.emitter.EmitGraceExpired(orderID, rdsOrderID)
 }
 
-func (b *emitterBridge) EmitBlockCompleted(orderID int64, rdsOrderID, blockID, location, binTask string) {
-	b.emitter.EmitBlockCompleted(orderID, rdsOrderID, blockID, location, binTask)
+func (b *emitterBridge) EmitBlockCompleted(orderID int64, rdsOrderID, blockID, location, binTask string, startTime, terminateTime int64) {
+	b.emitter.EmitBlockCompleted(orderID, rdsOrderID, blockID, location, binTask, startTime, terminateTime)
 }
 
 // resolverBridge adapts fleet.OrderIDResolver to rds.OrderIDResolver.

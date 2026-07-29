@@ -21,6 +21,7 @@ import (
 	"log"
 	"strings"
 
+	"shingo/shared/clock"
 	"shingocore/domain"
 )
 
@@ -39,14 +40,19 @@ type (
 
 // InsertEvent writes a mission-event row.
 func InsertEvent(db *sql.DB, e *Event) error {
+	// created_at explicit from clock.Now(), not the DDL's NOW(): this table is
+	// the mission timeline and ListEvents ORDERs BY it, so under the sim's
+	// fast-forward clock a DB stamp puts every event in the wrong order
+	// relative to the order_history rows beside it. Same leak as the orders /
+	// order_history INSERTs.
 	_, err := db.Exec(`INSERT INTO mission_events
 		(order_id, vendor_order_id, old_state, new_state, robot_id,
 		 robot_x, robot_y, robot_angle, robot_battery, robot_station,
-		 blocks_json, errors_json, detail)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		 blocks_json, errors_json, detail, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		e.OrderID, e.VendorOrderID, e.OldState, e.NewState, e.RobotID,
 		e.RobotX, e.RobotY, e.RobotAngle, e.RobotBattery, e.RobotStation,
-		e.BlocksJSON, e.ErrorsJSON, e.Detail)
+		e.BlocksJSON, e.ErrorsJSON, e.Detail, clock.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("insert mission event: %w", err)
 	}

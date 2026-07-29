@@ -18,18 +18,22 @@ type capturedBlock struct {
 // captureEmitter records EmitBlockCompleted calls (and order status changes,
 // used by the driver determinism test) for assertions.
 type captureEmitter struct {
-	mu     sync.Mutex
-	blocks []capturedBlock
-	status []string // "vendorOrderID:newState", in emit order
+	mu       sync.Mutex
+	blocks   []capturedBlock
+	status   []string // "vendorOrderID:newState", in emit order
+	assigned []string // "vendorOrderID:robotID", only for non-empty robot IDs
 }
 
-func (c *captureEmitter) EmitOrderStatusChanged(_ int64, vendorOrderID, _, newStatus, _, _ string, _ *fleet.OrderSnapshot) {
+func (c *captureEmitter) EmitOrderStatusChanged(_ int64, vendorOrderID, _, newStatus, robotID, _ string, _ *fleet.OrderSnapshot) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.status = append(c.status, vendorOrderID+":"+newStatus)
+	if robotID != "" {
+		c.assigned = append(c.assigned, vendorOrderID+":"+robotID)
+	}
 }
 func (c *captureEmitter) EmitGraceExpired(int64, string) {}
-func (c *captureEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string) {
+func (c *captureEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string, _, _ int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.blocks = append(c.blocks, capturedBlock{orderID, vendorOrderID, blockID, location, binTask})
@@ -52,7 +56,7 @@ func TestCompleteBlockEmitsRoutableEvents(t *testing.T) {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}
 	for _, b := range blocks {
-		if !s.CompleteBlock(vid, b.BlockID, b.Location, b.BinTask) {
+		if !s.CompleteBlock(vid, b.BlockID, b.Location, b.BinTask, 0, 0) {
 			t.Fatalf("CompleteBlock returned false for %s", b.BlockID)
 		}
 	}
@@ -84,7 +88,7 @@ func looksPickup(binTask string) bool {
 func TestCompleteBlockNoEmitWithoutTracker(t *testing.T) {
 	s := New()
 	vid := mkTransport(t, s, "o1")
-	if s.CompleteBlock(vid, "blk", "A", "JackLoad") {
+	if s.CompleteBlock(vid, "blk", "A", "JackLoad", 0, 0) {
 		t.Fatal("CompleteBlock should be a no-op before InitTracker")
 	}
 }
@@ -92,7 +96,7 @@ func TestCompleteBlockNoEmitWithoutTracker(t *testing.T) {
 func TestCompleteBlockUnknownOrder(t *testing.T) {
 	s := New()
 	s.InitTracker(&captureEmitter{}, fixedResolver{id: 1})
-	if s.CompleteBlock("does-not-exist", "blk", "A", "JackLoad") {
+	if s.CompleteBlock("does-not-exist", "blk", "A", "JackLoad", 0, 0) {
 		t.Fatal("CompleteBlock should be false for an unknown order")
 	}
 }
