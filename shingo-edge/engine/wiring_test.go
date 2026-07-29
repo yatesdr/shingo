@@ -63,7 +63,7 @@ func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (process
 		prefix = "CONSUME"
 	}
 
-	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" test", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 
-	processID, err := db.CreateProcess("BL-PROC", "manual swap test", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("BL-PROC", "manual swap test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestHandlePayloadCatalog_PruneDeletedEntries(t *testing.T) {
 func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleID, claimAID, claimBID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("AB-PROC", "a/b cycling test", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("AB-PROC", "a/b cycling test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -667,7 +667,7 @@ func TestWiring_ABCycling_UnpairedNodeAlwaysDecrements(t *testing.T) {
 func seedABProducePair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleID, claimAID, claimBID int64) {
 	t.Helper()
 
-	processID, _ = db.CreateProcess("ABP-PROC", "a/b produce test", "active_production", "", "", false, false)
+	processID, _ = db.CreateProcess("ABP-PROC", "a/b produce test", "active_production", "", "", false)
 	nodeAID, _ = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "ABP-A", Code: "PA1", Name: "Produce A", Sequence: 1, Enabled: true,
 	})
@@ -705,7 +705,7 @@ func seedABProducePair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID,
 func seedAsymmetricABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleID, claimAID, claimBID int64) {
 	t.Helper()
 
-	processID, _ = db.CreateProcess("ASYM-PROC", "asymmetric a/b", "active_production", "", "", false, false)
+	processID, _ = db.CreateProcess("ASYM-PROC", "asymmetric a/b", "active_production", "", "", false)
 	nodeAID, _ = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "ASYM-A", Code: "AA1", Name: "Asym A", Sequence: 1, Enabled: true,
 	})

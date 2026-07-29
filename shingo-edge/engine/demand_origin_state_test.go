@@ -125,7 +125,7 @@ func TestOriginState_ChangeoverUsesTheSamePath(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	procID, err := db.CreateProcess("CO-STATE-PROC", "", "active_production", "", "", false, false)
+	procID, err := db.CreateProcess("CO-STATE-PROC", "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

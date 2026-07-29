@@ -24,7 +24,7 @@ import (
 func TestFindActiveClaim_AddNodeChangeoverFallback(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, err := db.CreateProcess("ADD-PROC", "add-node test", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("ADD-PROC", "add-node test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestFindActiveClaim_AddNodeChangeoverFallback(t *testing.T) {
 func TestFindActiveClaim_PrefersActiveOverTarget(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, _ := db.CreateProcess("PREF-PROC", "prefer-active test", "active_production", "", "", false, false)
+	processID, _ := db.CreateProcess("PREF-PROC", "prefer-active test", "active_production", "", "", false)
 	fromStyleID, _ := db.CreateStyle("PREF-FROM", "from", processID)
 	toStyleID, _ := db.CreateStyle("PREF-TO", "to", processID)
 	db.SetActiveStyle(processID, &fromStyleID)

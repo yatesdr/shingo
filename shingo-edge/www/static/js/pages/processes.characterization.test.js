@@ -138,7 +138,6 @@ function buildDOM() {
     add('counter-plc', { tag: 'select' });
     add('counter-tag', { tag: 'input' });
     add('counter-enabled', { tag: 'input', type: 'checkbox' });
-    add('auto-cutover-enabled', { tag: 'input', type: 'checkbox' });
 
     // Style modal
     add('style-id', { tag: 'input', type: 'hidden' });

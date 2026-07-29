@@ -229,12 +229,41 @@ func (m *Manager) warlinkPollLoop() {
 	}
 }
 
-func (m *Manager) warlinkPollTick() {
+// warlinkPollTick is the poll-mode entry point. REST *is* the transport there,
+// so a failed fetch genuinely means WarLink is unreachable and this owns the
+// connection state.
+func (m *Manager) warlinkPollTick() { m.warlinkSync(true) }
+
+// warlinkSync re-derives every PLC's status from WarLink's authoritative list.
+//
+// ownsConnState decides whether this call may also declare the WarLink
+// CONNECTION up or down. That distinction is the whole reason the parameter
+// exists:
+//
+//   - Poll mode (true): REST is the transport. A failed fetch means WarLink is
+//     unreachable, and saying so is correct.
+//   - SSE reconcile (false): the STREAM is the transport and REST is only a
+//     reconciliation channel. A transient REST hiccup — an 8s timeout, a
+//     momentary 503 — says nothing about a stream that is healthy and
+//     delivering events. Letting the reconcile mark the connection down there
+//     would flap the indicator and fire spurious disconnect alerts once a
+//     minute on a perfectly good stream, which is a phantom outage of exactly
+//     the kind this whole mechanism exists to stop people chasing.
+//
+// Either way a failed fetch returns early WITHOUT touching per-PLC statuses,
+// so a bad reconcile is a clean no-op for the state it exists to repair.
+func (m *Manager) warlinkSync(ownsConnState bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 
 	plcs, err := m.fetchPLCs(ctx)
 	if err != nil {
+		if !ownsConnState {
+			// Reconcile-only: log and skip this cycle. The stream, not this
+			// call, decides whether WarLink is up.
+			m.DebugLog.Log("warlink reconcile fetch failed (stream unaffected): %v", err)
+			return
+		}
 		m.mu.Lock()
 		wasConnected := m.warlinkConnected
 		if wasConnected {
@@ -250,14 +279,17 @@ func (m *Manager) warlinkPollTick() {
 		return
 	}
 
-	m.mu.Lock()
-	wasDisconnected := !m.warlinkConnected
-	m.warlinkConnected = true
-	m.warlinkError = nil
-	m.mu.Unlock()
-	if wasDisconnected {
-		log.Printf("WarLink connected: %s", m.baseURL())
-		m.DebugLog.Log("warlink connected: %s", m.baseURL())
+	wasDisconnected := false
+	if ownsConnState {
+		m.mu.Lock()
+		wasDisconnected = !m.warlinkConnected
+		m.warlinkConnected = true
+		m.warlinkError = nil
+		m.mu.Unlock()
+		if wasDisconnected {
+			log.Printf("WarLink connected: %s", m.baseURL())
+			m.DebugLog.Log("warlink connected: %s", m.baseURL())
+		}
 	}
 
 	// Track which PLCs we've seen this tick for status transitions

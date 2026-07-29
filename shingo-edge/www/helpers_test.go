@@ -442,7 +442,7 @@ func assertJSONPath(t *testing.T, resp *http.Response, path string, want any) {
 // seedProcess creates a process and returns its ID.
 func seedProcess(t *testing.T, name string) int64 {
 	t.Helper()
-	id, err := testDB.CreateProcess(name, "test process", "", "", "", false, false)
+	id, err := testDB.CreateProcess(name, "test process", "", "", "", false)
 	if err != nil {
 		t.Fatalf("seed process %q: %v", name, err)
 	}

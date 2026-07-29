@@ -104,7 +104,6 @@ async function saveProcess() {
             counter_plc_name: document.getElementById('counter-plc') ? document.getElementById('counter-plc').value : '',
             counter_tag_name: document.getElementById('counter-tag') ? document.getElementById('counter-tag').value.trim() : '',
             counter_enabled: document.getElementById('counter-enabled') ? document.getElementById('counter-enabled').checked : false,
-            auto_cutover_enabled: document.getElementById('auto-cutover-enabled') ? document.getElementById('auto-cutover-enabled').checked : false,
             changeover_auto_arm: document.getElementById('changeover-auto-arm') ? document.getElementById('changeover-auto-arm').value : 'auto'
         });
         toast('Process saved', 'success');

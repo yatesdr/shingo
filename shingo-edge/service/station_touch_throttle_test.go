@@ -12,7 +12,7 @@ import (
 // touchStation seeds one station and returns its id.
 func touchStation(t *testing.T, db *store.DB) int64 {
 	t.Helper()
-	processID, err := db.CreateProcess("T-PROC", "touch", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("T-PROC", "touch", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

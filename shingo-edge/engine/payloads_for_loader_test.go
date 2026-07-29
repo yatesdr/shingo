@@ -24,7 +24,7 @@ func TestPayloadsForLoader_UnionsAcrossProcessesActiveVsAll(t *testing.T) {
 
 	// A third process whose ACTIVE style does not claim the loader, but an
 	// INACTIVE style does (PART-C) — contributes to `all` only.
-	procID, err := db.CreateProcess("SNF4", "", "active_production", "", "", false, false)
+	procID, err := db.CreateProcess("SNF4", "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

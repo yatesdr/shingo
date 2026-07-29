@@ -12,6 +12,18 @@ import (
 	"time"
 )
 
+// sseReconcileInterval is how often SSE mode re-runs the level-triggered
+// warlinkPollTick while a stream is up, so a stale per-PLC status cannot
+// persist indefinitely. See the rationale at its use site in sseConnect.
+//
+// 60s is chosen against the failure it bounds, not against load: the cost is
+// one REST call a minute, and the alternative observed in the field was three
+// and a half days of a cell not counting.
+//
+// A var rather than a const so tests can shorten it; nothing in production
+// writes it.
+var sseReconcileInterval = 60 * time.Second
+
 // --- SSE event payload types (from WarLink) ---
 
 type sseValueChange struct {
@@ -117,8 +129,12 @@ func (m *Manager) sseConnect() error {
 	}
 	defer stream.Close()
 
-	// Connected — REST bootstrap to populate cache before processing SSE events
-	m.warlinkPollTick()
+	// Connected — REST bootstrap to populate the cache before processing SSE
+	// events. ownsConnState=false: the block just below sets warlinkConnected
+	// from the stream, which is the authority here; letting the bootstrap
+	// declare the connection DOWN moments before the stream declares it UP was
+	// always pointless and became misleading once this ran on a timer too.
+	m.warlinkSync(false)
 
 	m.mu.Lock()
 	wasDisconnected := !m.warlinkConnected
@@ -132,6 +148,11 @@ func (m *Manager) sseConnect() error {
 
 	// Stall detection: cancel the SSE context if no data arrives within 120s.
 	// This catches silent TCP drops that leave the reader blocked forever.
+	//
+	// Note this does NOT catch the failure sseReconcileInterval addresses: a
+	// stream that is healthy and delivering value-change events, while the
+	// per-PLC connection statuses it carries are stale. Springfield's stream
+	// was never stalled — it was talking the whole weekend.
 	const stallTimeout = 120 * time.Second
 	stallTimer := time.NewTimer(stallTimeout)
 	defer stallTimer.Stop()
@@ -143,6 +164,29 @@ func (m *Manager) sseConnect() error {
 		case <-ctx.Done():
 		}
 	}()
+
+	// Periodic reconciliation — the self-healing half of SSE mode.
+	//
+	// status-change is EDGE-triggered: WarLink emits it on a transition, not
+	// as a standing truth. The bootstrap warlinkPollTick above is level-
+	// triggered, but it runs exactly ONCE per connection. When WarLink and
+	// this edge come back at the same time — a core-box reboot, a WarLink
+	// relocation — that single poll lands while WarLink is still opening its
+	// own PLC connections, so the cache captures "Connecting" for most of
+	// them. The transitions that would promote them then either predate our
+	// subscription or are missed on the stream, and nothing ever re-asks.
+	// IsConnected keeps returning false, pollReportingPoint early-returns,
+	// and the cell silently stops counting until a human restarts the service.
+	//
+	// Observed at Springfield 2026-07-24: WarLink held 49/50 PLCs Connected
+	// while the edge showed 10/50, for three and a half days, across a
+	// weekend. Counting only resumed on a manual restart.
+	//
+	// Poll mode never had this failure, because warlinkPollTick runs every
+	// PollRate. Re-running the same proven reconcile on a slow timer bounds
+	// the wedge to one interval instead of "until somebody notices", and
+	// costs one REST call a minute.
+	go m.sseReconcileLoop(ctx)
 
 	reader := NewSSEReader(stream)
 	for {
@@ -175,6 +219,25 @@ func (m *Manager) sseConnect() error {
 			m.handleSSEHealth(ev.Data)
 		default:
 			// Ignore unknown event types
+		}
+	}
+}
+
+// sseReconcileLoop re-runs the level-triggered warlinkPollTick every
+// sseReconcileInterval until ctx is cancelled. Returns when the SSE
+// connection it belongs to goes away, so each connection owns exactly one.
+func (m *Manager) sseReconcileLoop(ctx context.Context) {
+	t := time.NewTicker(sseReconcileInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			// ownsConnState=false: the STREAM owns whether WarLink is up. A
+			// transient REST failure here must not flap the indicator or fire
+			// a disconnect alert on a healthy stream.
+			m.warlinkSync(false)
+		case <-ctx.Done():
+			return
 		}
 	}
 }

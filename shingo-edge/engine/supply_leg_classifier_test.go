@@ -16,7 +16,7 @@ import (
 // selects the press-index layout: "" is 2-position, a node name is 3-position.
 func seedSwapClaim(t *testing.T, db *store.DB, swapMode protocol.SwapMode, secondPaired string) (nodeID int64, node *processes.Node, claim *processes.NodeClaim) {
 	t.Helper()
-	processID, err := db.CreateProcess("SUP-PROC", "", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("SUP-PROC", "", "active_production", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "PRESS", Code: "sup-press", Name: "PRESS", Enabled: true,

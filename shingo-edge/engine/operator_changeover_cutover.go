@@ -316,14 +316,6 @@ func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
 	return e.completeCutover(processID, "operator-hmi")
 }
 
-// CompleteProcessProductionCutoverFromPLC is the entry point used by
-// the PLC-driven cutover monitor. Identical to the operator-driven
-// path except the changeover row records "plc-auto" as the trigger
-// source for audit/postmortem.
-func (e *Engine) CompleteProcessProductionCutoverFromPLC(processID int64) error {
-	return e.completeCutover(processID, "plc-auto")
-}
-
 func (e *Engine) completeCutover(processID int64, triggeredBy string) error {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {

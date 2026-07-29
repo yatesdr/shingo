@@ -122,7 +122,7 @@ func TestLoaderIdentityCutover_ResolveByKey(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	procID, err := db.CreateProcess("CUT-PROC", "", "active_production", "", "", false, false)
+	procID, err := db.CreateProcess("CUT-PROC", "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

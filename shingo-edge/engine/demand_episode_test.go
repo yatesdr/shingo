@@ -28,7 +28,7 @@ func episodeFixture(t *testing.T, procName, node string, reorderPoint int) (*Eng
 	eng := testEngine(t, db)
 	eng.catalogService = service.NewCatalogService(db)
 
-	procID, err := db.CreateProcess(procName, "", "active_production", "", "", false, false)
+	procID, err := db.CreateProcess(procName, "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestChangeoverEpisode_MintsAndClosesOnce(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	procID, err := db.CreateProcess("CO-EP-PROC", "", "active_production", "", "", false, false)
+	procID, err := db.CreateProcess("CO-EP-PROC", "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

@@ -35,7 +35,7 @@ func capTestPayloads(n int) []string {
 // one physical node). Returns the process_node id.
 func seedCapManualSwap(t *testing.T, db *store.DB, proc, coreNode string, role protocol.ClaimRole, payloads []string, reorderPoint int, autoPush bool) int64 {
 	t.Helper()
-	procID, err := db.CreateProcess(proc, "", "active_production", "", "", false, false)
+	procID, err := db.CreateProcess(proc, "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process %s: %v", proc, err)
 	}
@@ -98,7 +98,7 @@ func capActiveOrders(t *testing.T, db *store.DB, nodeID int64, wantEmpty bool) [
 func seedActiveManualSwapLoader(t *testing.T, db *store.DB, procName, coreNode, payload string) (procID, nodeID, styleID int64) {
 	t.Helper()
 	var err error
-	procID, err = db.CreateProcess(procName, "", "active_production", "", "", false, false)
+	procID, err = db.CreateProcess(procName, "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process %s: %v", procName, err)
 	}

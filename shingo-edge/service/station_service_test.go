@@ -23,7 +23,7 @@ func TestStation_SetNodes(t *testing.T) {
 	db := testdb.Open(t)
 	svc := NewStationService(db)
 
-	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 	id, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 
 	// Initial set.
@@ -78,7 +78,7 @@ func TestStation_SetNodesDisablesRatherThanDeletesWhenOrdersActive(t *testing.T)
 	db := testdb.Open(t)
 	svc := NewStationService(db)
 
-	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 	id, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 
 	svc.SetNodes(id, []string{"N-KEEP"})
@@ -119,7 +119,7 @@ func TestStation_SetNodes_AdoptsOrphanInsteadOfDuplicating(t *testing.T) {
 	db := testdb.Open(t)
 	svc := NewStationService(db)
 
-	pid, _ := db.CreateProcess("P400", "", "", "", "", false, false)
+	pid, _ := db.CreateProcess("P400", "", "", "", "", false)
 	stationA, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "A"})
 
 	// Station A claims PLN_01, then drops it. The row survives, orphaned — this is

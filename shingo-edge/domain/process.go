@@ -21,17 +21,16 @@ type Process struct {
 	CounterPLCName  string `json:"counter_plc_name"`
 	CounterTagName  string `json:"counter_tag_name"`
 	CounterEnabled  bool   `json:"counter_enabled"`
-	// AutoCutoverEnabled subscribes to the PLC's Changeover_Active tag
-	// derived from CounterTagName's parent struct. Falling edge (with
-	// 2s debounce) calls CompleteProcessProductionCutover so shingo's
-	// active_style_id follows PLC reality without a separate operator
-	// click. Default false; opt-in per process. Operator still clicks
-	// Start Changeover in shingo first — auto-cutover only drives the
-	// completion side. The Theme B canCompleteChangeover gate provides
-	// the safety net for spurious PLC triggers (PLC restart, fault
-	// recovery): a falling edge with non-terminal tasks is a no-op,
-	// logged.
-	AutoCutoverEnabled bool `json:"auto_cutover_enabled"`
+	// PLC-driven cutover (the Changeover_Active subscription) was REMOVED.
+	// It read a tag that was never wired at any plant, so the feature could
+	// not fire — and its opt-in flag actively HID the operator station's
+	// CUTOVER button (operator-render.js), which would have stranded a
+	// changeover with neither an automatic nor a manual way to complete it.
+	// CATID auto-arm below is the mechanism that replaced it. The
+	// processes.auto_cutover_enabled COLUMN is retained and unread: dropping
+	// it means a SQLite table rebuild, and a rebuild is precisely what
+	// generates the dangling REFERENCES clauses the FK repair exists to fix.
+	//
 	// ChangeoverAutoArm controls the PLC CATID auto-arm behavior for this
 	// process, a 3-value mode (auto | prompt | off):
 	//   "auto"   — on a STABLE, confirmed CATID change that maps to a configured

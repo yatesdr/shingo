@@ -26,7 +26,7 @@ func seatScenario(t *testing.T) (db *store.DB, stationID, pressNodeID, seatNodeI
 	t.Helper()
 	db = testdb.Open(t)
 
-	processID, err := db.CreateProcess("SEAT-PROC", "child tile", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("SEAT-PROC", "child tile", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

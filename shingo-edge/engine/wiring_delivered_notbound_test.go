@@ -139,7 +139,7 @@ func TestF1b_MultiToteDelivered_Binds(t *testing.T) {
 func TestDeliveredNotBound_NoActiveClaimRaisesAlarm(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	pid, _ := db.CreateProcess("NC-PROC", "no-claim test", "active_production", "", "", false, false)
+	pid, _ := db.CreateProcess("NC-PROC", "no-claim test", "active_production", "", "", false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:         pid,

@@ -55,7 +55,7 @@ func TestHandleLoopBelowThreshold_FiresForInactiveStyleLoader(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 
-	processID, err := db.CreateProcess("OBS9-PROC", "obs9 test", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("OBS9-PROC", "obs9 test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestHandleLoopBelowThreshold_CeilsToWholeBins(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 
-	processID, err := db.CreateProcess("CEIL-PROC", "ceil test", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("CEIL-PROC", "ceil test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestHandleLoopBelowThreshold_SkipsWhenProjectedUOPCoversThreshold(t *testin
 	t.Parallel()
 	db := testEngineDB(t)
 
-	processID, err := db.CreateProcess("SKIP-PROC", "skip test", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("SKIP-PROC", "skip test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestHandleLoopBelowThreshold_SkipsOnMissingCatalogCapacity(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 
-	processID, err := db.CreateProcess("MISS-PROC", "missing-capacity test", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("MISS-PROC", "missing-capacity test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -480,7 +480,7 @@ func TestHandleLoopBelowThreshold_ParksAndReplaysBeforeCacheSync(t *testing.T) {
 
 	// The loader's core node needs an Edge process_node (the L1 delivery target) and
 	// the payload needs a catalog capacity for the UOP-space math.
-	procID, err := db.CreateProcess("RACE-PROC", "", "active_production", "", "", false, false)
+	procID, err := db.CreateProcess("RACE-PROC", "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

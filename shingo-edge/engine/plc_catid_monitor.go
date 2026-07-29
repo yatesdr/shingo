@@ -19,7 +19,7 @@ import (
 // autoArmStableReads consecutive confirmed (debounced) reads AND for at least
 // autoArmStableWindow — on top of the value-change debounce. Any flicker, zero,
 // unreadable read, or double-flip resets the tracker so it can never arm inside the
-// window. Stronger than the single cutoverDebounce confirm the prompt/guard use.
+// window. Stronger than the single plcEdgeDebounce confirm the prompt/guard use.
 const (
 	autoArmStableReads  = 3
 	autoArmStableWindow = 60 * time.Second
@@ -51,11 +51,11 @@ type autoArmIntent struct {
 //     alert (Hopkinsville 2026-07-23). (Commit 3 also emits a prompt-arm event
 //     on a value CHANGE; see raiseCATIDChangePrompt.)
 //
-// Unlike the cutover monitor, this runs for EVERY process with a counter
-// binding — NOT only auto-cutover-enabled ones. The part-identity guard is an
-// independent safety feature; coupling it to auto-cutover would leave it inert
-// on lines that have not opted into PLC-driven completion. Reuses the cutover
-// monitor's poll interval and debounce so it reads/debounces "the same way".
+// This runs for EVERY process with a counter binding. It used to be contrasted
+// with a PLC-driven cutover monitor that ran only for opted-in processes; that
+// monitor has been removed (its Changeover_Active tag was never wired at any
+// plant), so CATID auto-arm is now the only PLC-driven changeover mechanism.
+// Poll interval and debounce come from plc_tag_poll.go.
 //
 // The whole monitor is inert when no process yields a CATID tag (plant does not
 // publish the MES struct) — reads fail, the guard stays fail-open, no alert.
@@ -69,7 +69,7 @@ type catidState struct {
 	lastConfirmed string
 	seenValue     bool // false until the first successful read
 	// pending / pendingSince hold a candidate new value while it settles for
-	// cutoverDebounce before being confirmed. nil outside a change window.
+	// plcEdgeDebounce before being confirmed. nil outside a change window.
 	pending      *string
 	pendingSince *time.Time
 	// Auto-arm stability tracker (B1). armCandidate is the debounced value being
@@ -165,7 +165,7 @@ func (cm *catidMonitor) prime() {
 }
 
 func (cm *catidMonitor) run() {
-	ticker := time.NewTicker(cutoverPollInterval)
+	ticker := time.NewTicker(plcPollInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -330,7 +330,7 @@ func applyCatidEdge(st *catidState, cur string, ok bool, now time.Time) (confirm
 		return false, false
 	}
 	// Same candidate still present — confirm once it has settled.
-	if now.Sub(*st.pendingSince) >= cutoverDebounce {
+	if now.Sub(*st.pendingSince) >= plcEdgeDebounce {
 		st.lastConfirmed = cur
 		st.pending = nil
 		st.pendingSince = nil

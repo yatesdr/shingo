@@ -218,7 +218,7 @@ func TestReconciler_ClosesChangeoverOnTerminalState(t *testing.T) {
 			db := testEngineDB(t)
 			eng := testEngine(t, db)
 
-			procID, err := db.CreateProcess("RECON-CO-"+tc.name, "", "active_production", "", "", false, false)
+			procID, err := db.CreateProcess("RECON-CO-"+tc.name, "", "active_production", "", "", false)
 			if err != nil {
 				t.Fatalf("create process: %v", err)
 			}

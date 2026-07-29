@@ -19,7 +19,7 @@ import (
 func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (processID, nodeID, styleID, claimID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("PRODUCE-PROC", "produce test", "active_production", "", "", false, false)
+	processID, err := db.CreateProcess("PRODUCE-PROC", "produce test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
