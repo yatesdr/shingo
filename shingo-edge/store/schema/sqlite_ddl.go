@@ -34,6 +34,21 @@ CREATE TABLE IF NOT EXISTS processes (
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- deleted_at is a SOFT DELETE, and it is a foreign-key decision before it is
+-- a UX one. Seven columns across six tables carry REFERENCES styles(id), four
+-- of them ON DELETE CASCADE, and one of those (reporting_points) cascades
+-- again into counter_snapshots. A hard DELETE of one style on the Springfield
+-- edge takes up to 91,581 rows with it — measured, style 12, of which 91,256
+-- are raw counter readings. Retiring a part number is a routine operator
+-- action; destroying a quarter of the plant's counting history is not, and it
+-- is not reversible. A soft-deleted row never leaves the table, so nothing
+-- that points at it can dangle and the decision can be undone.
+--
+-- The uniqueness constraint moved OUT of the table and into a partial index
+-- below, because UNIQUE(process_id, name) as a table constraint applies to
+-- tombstoned rows too, which would make "delete style A, create style A again"
+-- fail — an operator-visible regression that soft delete would otherwise
+-- introduce silently.
 CREATE TABLE IF NOT EXISTS styles (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id     INTEGER REFERENCES processes(id) ON DELETE CASCADE,
@@ -41,8 +56,12 @@ CREATE TABLE IF NOT EXISTS styles (
     description    TEXT NOT NULL DEFAULT '',
     expected_catid TEXT NOT NULL DEFAULT '',
     created_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(process_id, name)
+    deleted_at     TEXT
 );
+-- idx_styles_process_name_live is created in migrations.go, not here, for the
+-- same reason as idx_orders_source_node: Apply runs against legacy-shaped
+-- tables whose styles still carries line_id, where an index on process_id
+-- fails and takes the whole DDL with it.
 
 CREATE TABLE IF NOT EXISTS reporting_points (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,9 +75,24 @@ CREATE TABLE IF NOT EXISTS reporting_points (
     UNIQUE(plc_name, tag_name)
 );
 
+-- ON DELETE CASCADE, not the bare (NO ACTION) it carried until 2026-07.
+--
+-- A reporting point belongs to its style: styles -> reporting_points is
+-- CASCADE, so deleting a style tries to take its reporting points with it —
+-- and used to hit this clause as a restrict, because NO ACTION on a NOT NULL
+-- column means refuse. The whole delete then aborted. Measured against the
+-- Springfield dump of 2026-07-27 with foreign_keys ON: 6 of 8 style deletions
+-- were REFUSED with FOREIGN KEY constraint failed (787), and the 6 were
+-- exactly the styles the plant had actually been running. With this clause as
+-- CASCADE the same probe deletes all 57 cleanly.
+--
+-- That is the edge that blocks enabling enforcement at all, so it is a schema
+-- decision and not a preference. The cost is bounded by counters.SnapshotRetention
+-- (14 days), so a style deletion destroys at most two weeks of raw readings —
+-- the durable rollup lives in hourly_counts.
 CREATE TABLE IF NOT EXISTS counter_snapshots (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    reporting_point_id INTEGER NOT NULL REFERENCES reporting_points(id),
+    reporting_point_id INTEGER NOT NULL REFERENCES reporting_points(id) ON DELETE CASCADE,
     count_value        INTEGER NOT NULL,
     delta              INTEGER NOT NULL DEFAULT 0,
     anomaly            TEXT,
@@ -203,8 +237,18 @@ CREATE TABLE IF NOT EXISTS process_nodes (
     enabled             INTEGER NOT NULL DEFAULT 1,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(process_id, code)
+    -- Soft delete, for the same reason styles has one. Deleting a
+    -- process_node CASCADEs into process_node_runtime_states and
+    -- changeover_node_tasks — and changeover_node_tasks.process_node_id is
+    -- NOT NULL, so per-node changeover detail is destroyed outright with no
+    -- SET NULL option. 118 such rows already exist on the Springfield edge
+    -- whose node is gone while all 118 parent changeovers survive: readable
+    -- history with an unreadable middle. The uniqueness constraint moved to a
+    -- partial index below so a re-created node can reuse a retired code.
+    deleted_at          TEXT
 );
+-- idx_process_nodes_process_code_live is created in migrations.go — see the
+-- note on idx_styles_process_name_live above.
 
 CREATE TABLE IF NOT EXISTS process_node_runtime_states (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,

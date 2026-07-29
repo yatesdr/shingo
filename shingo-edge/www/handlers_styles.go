@@ -92,6 +92,30 @@ func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+// apiStyleDeleteImpact answers "what is behind this delete button".
+//
+// The delete itself is a soft delete and destroys nothing, so this is not a
+// warning — it is the confirmation being honest about scope. On the Springfield
+// edge the same button covers a style carrying one row and a style carrying
+// 91,581, and the operator currently cannot tell those apart. It is also the
+// exact cost of a future hard purge, which is the number that had never been
+// put in front of anybody.
+func (h *Handlers) apiStyleDeleteImpact(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid ID")
+		return
+	}
+	imp, err := h.engine.StyleService().DeleteImpact(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, imp)
+}
+
+// apiDeleteStyle RETIRES a style. The row survives, so changeover history keeps
+// resolving its name and nothing that points at it is left dangling.
 func (h *Handlers) apiDeleteStyle(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -103,6 +127,27 @@ func (h *Handlers) apiDeleteStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("style-deleted")
+	// A retired style's claims must leave Core's demand_registry, exactly as a
+	// hard delete's would have: ListStylesByProcess (which is what the publisher
+	// walks) no longer returns it.
+	h.requestSpecChangePublish()
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// apiRestoreStyle un-retires a style. Soft delete without an undo is just a
+// slower delete.
+func (h *Handlers) apiRestoreStyle(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid ID")
+		return
+	}
+	if err := h.engine.StyleService().Restore(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.requestBackup("style-restored")
+	h.requestSpecChangePublish()
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

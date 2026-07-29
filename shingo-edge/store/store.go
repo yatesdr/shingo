@@ -127,8 +127,38 @@ func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
 // strands its claims. Measured on the same dump — deleting style 24 succeeds
 // and takes the orphan-claim count from 8 to 11. That is the defect, and it is
 // why this is worth finishing, not why it is safe to switch on today.
+//
+// STATUS 2026-07-27 — steps 1 and 3 are DONE IN CODE; step 2 is done in a
+// runbook that has not been run at a plant. That is the whole gate now, and it
+// is worth being precise about which parts moved:
+//
+//   - Step 3 is closed. counter_snapshots.reporting_point_id is ON DELETE
+//     CASCADE (schema/sqlite_ddl.go, and migrateCounterSnapshotCascade for
+//     databases that already exist). Re-probed on the repaired dump: 0 of 57
+//     style deletions refused, where 6 of 8 were before.
+//   - Step 1's GENERATOR is closed — db.rebuildTable now holds
+//     legacy_alter_table across every rename-rebuild, so no new dangling clause
+//     can be created. The EXISTING 11 on the Springfield disk are not, and no
+//     code change can close them: they are stored schema text on a plant's file
+//     and need RUNBOOK-0.5-edge-fk-repair-2026-07-27.md run on the box.
+//   - Step 2 is rehearsed, not applied. Against the repaired dump the full
+//     ordered plan takes 1,764 -> 1 in ~11 ms, and the 1 is a single
+//     hourly_counts row on style 32 that 90-day retention removes on its own.
+//
+// So the flip is one word — `&_pragma=foreign_keys(1)` on the DSN below — and
+// it is NOT taken here, because the condition is a property of a PLANT'S FILE
+// and not of this repository. Measured on the three states of the Springfield
+// database, using a probe that rewrites every FK-participating column:
+//
+//	unrepaired                      19 of 37 FK-column writes blocked
+//	after the §0.5 clause repair    12 of 37
+//	after the ordered data plan       1 of 37   (the style-32 hourly_counts row)
+//
+// Enable it only against an edge that has been through §0.5 and measured. The
+// assertion in open_pragmas_test.go is where that decision gets made in the
+// open, and it carries its own reason so changing it cannot be a silent edit.
 func Open(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path)
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path) // + "&_pragma=foreign_keys(1)" — see open_pragmas_test.go before adding
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)

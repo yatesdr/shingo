@@ -57,9 +57,20 @@ func (s *StyleService) SetExpectedCATID(id int64, expectedCATID string) error {
 	return s.db.SetStyleExpectedCATID(id, expectedCATID)
 }
 
-// Delete removes a style row by id.
+// Delete RETIRES a style by id. Nothing is destroyed; see store DeleteStyle.
 func (s *StyleService) Delete(id int64) error {
 	return s.db.DeleteStyle(id)
+}
+
+// Restore un-retires a style by id.
+func (s *StyleService) Restore(id int64) error {
+	return s.db.RestoreStyle(id)
+}
+
+// DeleteImpact reports what the style is carrying, for the confirmation the
+// operator sees before retiring it.
+func (s *StyleService) DeleteImpact(id int64) (*processes.StyleImpact, error) {
+	return s.db.StyleDeleteImpact(id)
 }
 
 // Clone duplicates an existing style (same process) along with every

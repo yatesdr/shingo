@@ -603,9 +603,24 @@ func TestOperatorStations_DeleteProcessNode_Success(t *testing.T) {
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 
-	// Verify DB state
-	if _, err := testDB.GetProcessNode(nodeID); err == nil {
-		t.Error("expected error getting deleted process node")
+	// Retired, not removed: changeover_node_tasks.process_node_id is NOT NULL
+	// with ON DELETE CASCADE, so a hard delete destroys per-node changeover
+	// detail outright. The row survives and resolves by id; it leaves the list.
+	n, err := testDB.GetProcessNode(nodeID)
+	if err != nil {
+		t.Fatalf("retired node must still resolve by id: %v", err)
+	}
+	if n.DeletedAt == nil {
+		t.Error("retired process_node has no deleted_at")
+	}
+	nodes, err := testDB.ListProcessNodesByProcess(pid)
+	if err != nil {
+		t.Fatalf("ListProcessNodesByProcess: %v", err)
+	}
+	for _, ln := range nodes {
+		if ln.ID == nodeID {
+			t.Errorf("retired node %d is still listed for its process", nodeID)
+		}
 	}
 }
 

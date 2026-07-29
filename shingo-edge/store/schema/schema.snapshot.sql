@@ -33,9 +33,15 @@ CREATE INDEX idx_orders_uuid ON orders(uuid);
 
 CREATE INDEX idx_outbox_pending ON outbox(sent_at) WHERE sent_at IS NULL;
 
+CREATE UNIQUE INDEX idx_process_nodes_process_code_live
+		ON process_nodes(process_id, code) WHERE deleted_at IS NULL;
+
 CREATE UNIQUE INDEX idx_process_nodes_process_core_name
-		ON process_nodes(process_id, core_node_name)
-		WHERE core_node_name <> '';
+				ON process_nodes(process_id, core_node_name)
+				WHERE core_node_name <> '' AND deleted_at IS NULL;
+
+CREATE UNIQUE INDEX idx_styles_process_name_live
+			ON styles(process_id, name) WHERE deleted_at IS NULL;
 
 CREATE TABLE admin_users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,7 +119,7 @@ CREATE TABLE core_loaders (
 
 CREATE TABLE counter_snapshots (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    reporting_point_id INTEGER NOT NULL REFERENCES reporting_points(id),
+    reporting_point_id INTEGER NOT NULL REFERENCES reporting_points(id) ON DELETE CASCADE,
     count_value        INTEGER NOT NULL,
     delta              INTEGER NOT NULL DEFAULT 0,
     anomaly            TEXT,
@@ -365,7 +371,15 @@ CREATE TABLE process_nodes (
     enabled             INTEGER NOT NULL DEFAULT 1,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(process_id, code)
+    -- Soft delete, for the same reason styles has one. Deleting a
+    -- process_node CASCADEs into process_node_runtime_states and
+    -- changeover_node_tasks — and changeover_node_tasks.process_node_id is
+    -- NOT NULL, so per-node changeover detail is destroyed outright with no
+    -- SET NULL option. 118 such rows already exist on the Springfield edge
+    -- whose node is gone while all 118 parent changeovers survive: readable
+    -- history with an unreadable middle. The uniqueness constraint moved to a
+    -- partial index below so a re-created node can reuse a retired code.
+    deleted_at          TEXT
 );
 
 CREATE TABLE processes (
@@ -481,5 +495,5 @@ CREATE TABLE styles (
     description    TEXT NOT NULL DEFAULT '',
     expected_catid TEXT NOT NULL DEFAULT '',
     created_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(process_id, name)
+    deleted_at     TEXT
 );

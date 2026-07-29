@@ -191,7 +191,7 @@ func makeReadinessGate(db *sql.DB) simwarlink.ReadinessFunc {
 			FROM reporting_points rp
 			JOIN styles s ON rp.style_id = s.id
 			JOIN processes p ON s.process_id = p.id
-			WHERE rp.plc_name = ? AND rp.enabled = 1
+			WHERE rp.plc_name = ? AND rp.enabled = 1 AND s.deleted_at IS NULL
 			LIMIT 1`, plcName).Scan(&processID, &styleID)
 		if err != nil {
 			return true // fail-open on DB error

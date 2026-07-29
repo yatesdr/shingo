@@ -46,9 +46,20 @@ func (db *DB) SetStyleExpectedCATID(id int64, expectedCATID string) error {
 	return processes.SetStyleExpectedCATID(db.DB, id, expectedCATID)
 }
 
-// DeleteStyle removes a style row by id.
+// DeleteStyle RETIRES a style by id (soft delete). See processes.DeleteStyle.
 func (db *DB) DeleteStyle(id int64) error {
 	return processes.DeleteStyle(db.DB, id)
+}
+
+// RestoreStyle un-retires a style by id.
+func (db *DB) RestoreStyle(id int64) error {
+	return processes.RestoreStyle(db.DB, id)
+}
+
+// StyleDeleteImpact counts every row a HARD delete of this style would destroy,
+// so the operator confirmation can name the number instead of implying it.
+func (db *DB) StyleDeleteImpact(id int64) (*processes.StyleImpact, error) {
+	return processes.StyleDeleteImpact(db.DB, id)
 }
 
 // CloneStyle creates a new style in src's process, copying all of src's

@@ -215,10 +215,17 @@ func PayloadsForManualSwapNodes(db *sql.DB) (map[string]map[protocol.ClaimRole]P
 	// does not. The INNER join reproduces the walk's reachable set exactly: a
 	// style whose process_id does not resolve was never visited, because the walk
 	// started from List(processes).
+	//
+	// RETIRED styles are excluded, and that is load-bearing rather than tidy.
+	// This set decides which payloads the manual-swap board offers the operator.
+	// Without the predicate, retiring a style would leave its payloads on a live
+	// loader window — soft delete would introduce a board regression that the
+	// old hard delete did not have.
 	activeByStyle := map[int64]bool{}
 	styleRows, err := db.Query(`SELECT s.id,
 		CASE WHEN p.active_style_id IS NOT NULL AND p.active_style_id = s.id THEN 1 ELSE 0 END
-		FROM styles s JOIN processes p ON p.id = s.process_id`)
+		FROM styles s JOIN processes p ON p.id = s.process_id
+		WHERE s.deleted_at IS NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("manual-swap payloads: active styles: %w", err)
 	}

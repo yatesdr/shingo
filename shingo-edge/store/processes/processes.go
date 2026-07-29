@@ -144,7 +144,13 @@ func SetChangeoverAutoArm(db *sql.DB, processID int64, mode string) error {
 // --- process nodes ---
 
 const nodeSelect = `n.id, n.process_id, n.operator_station_id, n.core_node_name, n.code, n.name,
-	n.sequence, n.enabled, n.created_at, n.updated_at, COALESCE(s.name, ''), COALESCE(p.name, '')`
+	n.sequence, n.enabled, n.created_at, n.updated_at, n.deleted_at, COALESCE(s.name, ''), COALESCE(p.name, '')`
+
+// liveNodes is the WHERE fragment for "process_nodes that still exist as far as
+// the plant is concerned". Applied to the LIST paths, which are pickers and
+// board sources, and NOT to GetNode / GetNodeByCoreNodeName, which resolve an
+// id or a name somebody already holds — the same split as liveStyles.
+const liveNodes = ` n.deleted_at IS NULL`
 
 const nodeJoin = `FROM process_nodes n
 	LEFT JOIN operator_stations s ON s.id = n.operator_station_id
@@ -154,15 +160,17 @@ func scanNode(scanner interface{ Scan(...any) error }) (Node, error) {
 	var n Node
 	var createdAt, updatedAt string
 	var stationID sql.NullInt64
+	var deletedAt sql.NullString
 	err := scanner.Scan(
 		&n.ID, &n.ProcessID, &stationID, &n.CoreNodeName, &n.Code, &n.Name,
-		&n.Sequence, &n.Enabled, &createdAt, &updatedAt, &n.StationName, &n.ProcessName,
+		&n.Sequence, &n.Enabled, &createdAt, &updatedAt, &deletedAt, &n.StationName, &n.ProcessName,
 	)
 	if err != nil {
 		return n, err
 	}
 	n.CreatedAt = helpers.ScanTime(createdAt)
 	n.UpdatedAt = helpers.ScanTime(updatedAt)
+	n.DeletedAt = helpers.ScanTimePtr(deletedAt)
 	if stationID.Valid {
 		id := stationID.Int64
 		n.OperatorStationID = &id
@@ -182,9 +190,9 @@ func scanNodes(rows helpers.RowScanner) ([]Node, error) {
 	return out, rows.Err()
 }
 
-// ListNodes returns every process_nodes row.
+// ListNodes returns every LIVE process_nodes row.
 func ListNodes(db *sql.DB) ([]Node, error) {
-	rows, err := db.Query(`SELECT ` + nodeSelect + ` ` + nodeJoin + ` ORDER BY n.process_id, n.sequence, n.name`)
+	rows, err := db.Query(`SELECT ` + nodeSelect + ` ` + nodeJoin + ` WHERE` + liveNodes + ` ORDER BY n.process_id, n.sequence, n.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +202,7 @@ func ListNodes(db *sql.DB) ([]Node, error) {
 
 // ListNodesByProcess returns process_nodes rows for one process.
 func ListNodesByProcess(db *sql.DB, processID int64) ([]Node, error) {
-	rows, err := db.Query(`SELECT `+nodeSelect+` `+nodeJoin+` WHERE n.process_id=? ORDER BY n.sequence, n.name`, processID)
+	rows, err := db.Query(`SELECT `+nodeSelect+` `+nodeJoin+` WHERE n.process_id=? AND`+liveNodes+` ORDER BY n.sequence, n.name`, processID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +212,7 @@ func ListNodesByProcess(db *sql.DB, processID int64) ([]Node, error) {
 
 // ListNodesByStation returns process_nodes rows for one operator_station.
 func ListNodesByStation(db *sql.DB, stationID int64) ([]Node, error) {
-	rows, err := db.Query(`SELECT `+nodeSelect+` `+nodeJoin+` WHERE n.operator_station_id=? ORDER BY n.sequence, n.name`, stationID)
+	rows, err := db.Query(`SELECT `+nodeSelect+` `+nodeJoin+` WHERE n.operator_station_id=? AND`+liveNodes+` ORDER BY n.sequence, n.name`, stationID)
 	if err != nil {
 		return nil, err
 	}
@@ -299,9 +307,42 @@ func UpdateNode(db *sql.DB, id int64, in NodeInput) error {
 	return err
 }
 
-// DeleteNode removes a process_node row.
+// DeleteNode RETIRES a process_node: it sets deleted_at rather than removing
+// the row.
+//
+// The reason is narrower and sharper than the styles one.
+// changeover_node_tasks.process_node_id is NOT NULL and declares ON DELETE
+// CASCADE, so a hard delete does not detach that node's per-node changeover
+// detail — it destroys it, with no SET NULL alternative available. The
+// Springfield edge already carries 118 such rows whose node is gone while all
+// 118 parent changeovers survive: a changeover you can open and read, with the
+// part that says what each node was supposed to do missing.
+//
+// It also cascades into process_node_runtime_states, which is genuinely
+// ephemeral, so that row IS deleted here — carrying stale runtime state for a
+// node nobody can address is how a phantom badge appears.
 func DeleteNode(db *sql.DB, id int64) error {
-	_, err := db.Exec(`DELETE FROM process_nodes WHERE id=?`, id)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE process_nodes SET deleted_at = datetime('now'), updated_at = datetime('now')
+		WHERE id=? AND deleted_at IS NULL`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM process_node_runtime_states WHERE process_node_id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RestoreNode un-retires a process_node. The runtime state row is NOT restored
+// — it is rebuilt from live state by EnsureNodeRuntime, and inventing one here
+// would assert a bin position nobody has observed.
+func RestoreNode(db *sql.DB, id int64) error {
+	_, err := db.Exec(`UPDATE process_nodes SET deleted_at = NULL, updated_at = datetime('now')
+		WHERE id=? AND deleted_at IS NOT NULL`, id)
 	return err
 }
 

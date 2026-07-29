@@ -298,10 +298,38 @@ func TestApiConfig_StylesCRUD(t *testing.T) {
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 
-	_, err = testDB.GetStyle(styleID)
-	if err == nil {
-		t.Error("expected error getting deleted style")
+	// Delete is a RETIREMENT, not a removal, and the two halves of that are
+	// both worth asserting because getting either wrong is silent.
+	//
+	// The row must SURVIVE: GetStyle is how a changeover row, an hourly count
+	// and a reporting point resolve a name they already hold an id for, and a
+	// hard delete is what made those render blank.
+	s, err = testDB.GetStyle(styleID)
+	if err != nil {
+		t.Fatalf("retired style must still resolve by id (display joins depend on it): %v", err)
 	}
+	if s.DeletedAt == nil {
+		t.Error("retired style has no deleted_at")
+	}
+
+	// And it must LEAVE the picker.
+	live, err := testDB.ListStyles()
+	if err != nil {
+		t.Fatalf("ListStyles: %v", err)
+	}
+	for _, ls := range live {
+		if ls.ID == styleID {
+			t.Errorf("retired style %d is still offered by ListStyles", styleID)
+		}
+	}
+
+	// The name it held is free again. Under the old table-level
+	// UNIQUE(process_id, name) this failed, which is the regression soft delete
+	// would have shipped silently.
+	resp = doRequest(t, router, "POST", "/api/styles", map[string]any{
+		"name": "Blue Widget", "description": "reborn", "process_id": pid,
+	}, cookie)
+	assertStatus(t, resp, http.StatusOK)
 }
 
 func TestApiConfig_CreateStyle_MissingProcessID(t *testing.T) {

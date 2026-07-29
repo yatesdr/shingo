@@ -186,6 +186,22 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Soft delete + the counter_snapshots cascade. These run LAST of the
+	// rebuilds on purpose: migrateStyleSoftDelete and
+	// migrateProcessNodeSoftDelete rebuild tables the earlier helpers still
+	// expect in their old shape, and migrateProcessNodeSoftDelete re-points the
+	// core_node_name index that collapseDuplicateProcessNodes above creates.
+	// See migrations_soft_delete.go for what each one is for.
+	if err := db.migrateStyleSoftDelete(); err != nil {
+		return err
+	}
+	if err := db.migrateProcessNodeSoftDelete(); err != nil {
+		return err
+	}
+	if err := db.migrateCounterSnapshotCascade(); err != nil {
+		return err
+	}
+
 	// Remove vestigial loaded_bin_label and loaded_at columns (safe no-ops if absent)
 	db.Exec("ALTER TABLE process_node_runtime_states DROP COLUMN loaded_bin_label")
 	db.Exec("ALTER TABLE process_node_runtime_states DROP COLUMN loaded_at")
@@ -598,6 +614,62 @@ func hasLegacyLinesideStyleIndex(db *DB) bool {
 
 // ── Table rebuild helpers (rename-rebuild pattern) ───────────────────
 
+// rebuildTable runs a rename/create/copy/drop script with
+// PRAGMA legacy_alter_table ON, and refuses to run it if the pragma did not
+// take.
+//
+// THIS IS THE FUNCTION THAT WOULD HAVE PREVENTED THE PLANT FK DAMAGE. Since
+// SQLite 3.25, ALTER TABLE ... RENAME rewrites the REFERENCES clauses stored in
+// OTHER tables so they follow the rename. Every helper below renames a table
+// that other tables reference, so each one silently re-points its children at
+// the scratch name, and the DROP at the end of the script then leaves those
+// children pointing at a table that no longer exists. Edge runs with
+// foreign_keys OFF (store.Open), so nothing complains — the damage is invisible
+// until somebody runs PRAGMA foreign_key_check years later.
+//
+// That is not a hypothetical. Measured on the Springfield edge database dumped
+// 2026-07-27 (shingo-dumps/springfield-2026-07-27/edge.sql): 11 REFERENCES
+// clauses across 8 tables name styles_legacy, processes_legacy or
+// reporting_points_legacy, and they account for 232,860 of that database's
+// 234,624 foreign-key violations. The three names map exactly onto the renames
+// in migrateStyleColumns, migrateProcessColumns and
+// migrateReportingPointColumns below. Reproduced from first principles in a
+// two-table scratch database: rename with the pragma OFF and the child's stored
+// clause becomes REFERENCES "styles_legacy"(id) — the same double-quoted shape
+// the plant carries; rename with it ON and the clause is untouched.
+//
+// rebuildStyleNodeClaims in migrations_soft_delete.go's sibling file
+// (migrations_style_claims.go) already did this correctly and explains why at
+// length. This helper is that argument extracted so the other rebuilds cannot
+// keep getting it wrong, and so a NEW rebuild gets it for free.
+func (db *DB) rebuildTable(what, script string) error {
+	if _, err := db.Exec(`PRAGMA legacy_alter_table = ON`); err != nil {
+		return fmt.Errorf("%s rebuild: enable legacy_alter_table: %w", what, err)
+	}
+	// Restored whatever happens below: leaving it on would change the behaviour
+	// of every later ALTER in this process.
+	defer db.Exec(`PRAGMA legacy_alter_table = OFF`)
+
+	// Assert the pragma took rather than trusting that Exec returned nil. A
+	// pragma that silently no-ops is indistinguishable from one that worked,
+	// and the consequence of guessing wrong is the plant damage described above.
+	var legacyMode int
+	if err := db.QueryRow(`PRAGMA legacy_alter_table`).Scan(&legacyMode); err != nil {
+		return fmt.Errorf("%s rebuild: read back legacy_alter_table: %w", what, err)
+	}
+	if legacyMode != 1 {
+		return fmt.Errorf(
+			"%s rebuild: PRAGMA legacy_alter_table did not take (reads %d, want 1) — refusing to "+
+				"rename, because SQLite would rewrite every REFERENCES %s(id) clause in the child "+
+				"tables to name the scratch table, and the DROP would leave them dangling with "+
+				"foreign_keys OFF to hide it", what, legacyMode, what)
+	}
+	if _, err := db.Exec(script); err != nil {
+		return fmt.Errorf("%s rebuild: %w", what, err)
+	}
+	return nil
+}
+
 // migrateProcessColumns renames active_job_style_id → active_style_id
 func (db *DB) migrateProcessColumns() error {
 	has, err := schema.TableHasColumn(db.DB, "processes", "active_job_style_id")
@@ -608,7 +680,7 @@ func (db *DB) migrateProcessColumns() error {
 		return err
 	}
 	// Rebuild table with new column names
-	_, err = db.Exec(`
+	return db.rebuildTable("processes", `
 ALTER TABLE processes RENAME TO processes_legacy;
 CREATE TABLE processes (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -629,7 +701,6 @@ SELECT id, name, description, active_job_style_id,
 FROM processes_legacy;
 DROP TABLE processes_legacy;
 `)
-	return err
 }
 
 // migrateStyleColumns renames line_id → process_id
@@ -644,7 +715,7 @@ func (db *DB) migrateStyleColumns() error {
 		return nil
 	}
 	// Has line_id — rebuild.
-	_, err = db.Exec(`
+	return db.rebuildTable("styles", `
 ALTER TABLE styles RENAME TO styles_legacy;
 CREATE TABLE styles (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -659,7 +730,6 @@ SELECT id, line_id, name, description, created_at
 FROM styles_legacy;
 DROP TABLE styles_legacy;
 `)
-	return err
 }
 
 // stripDeadStyleColumns removes unused is_default and active columns from styles.
@@ -668,7 +738,7 @@ func (db *DB) stripDeadStyleColumns() error {
 	if !has {
 		return nil
 	}
-	_, err := db.Exec(`
+	return db.rebuildTable("styles", `
 ALTER TABLE styles RENAME TO styles_strip;
 CREATE TABLE styles (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -683,7 +753,6 @@ SELECT id, process_id, name, description, created_at
 FROM styles_strip;
 DROP TABLE styles_strip;
 `)
-	return err
 }
 
 // migrateReportingPointColumns renames job_style_id → style_id
@@ -692,7 +761,7 @@ func (db *DB) migrateReportingPointColumns() error {
 	if err != nil || !has {
 		return err
 	}
-	_, err = db.Exec(`
+	return db.rebuildTable("reporting_points", `
 ALTER TABLE reporting_points RENAME TO reporting_points_legacy;
 CREATE TABLE reporting_points (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -710,7 +779,6 @@ SELECT id, job_style_id, plc_name, tag_name, last_count, last_poll_at, enabled, 
 FROM reporting_points_legacy;
 DROP TABLE reporting_points_legacy;
 `)
-	return err
 }
 
 // migrateHourlyCountColumns renames line_id → process_id, job_style_id → style_id
@@ -719,7 +787,7 @@ func (db *DB) migrateHourlyCountColumns() error {
 	if err != nil || !has {
 		return err
 	}
-	_, err = db.Exec(`
+	return db.rebuildTable("hourly_counts", `
 ALTER TABLE hourly_counts RENAME TO hourly_counts_legacy;
 CREATE TABLE hourly_counts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -736,7 +804,6 @@ SELECT id, line_id, job_style_id, count_date, hour, delta, updated_at
 FROM hourly_counts_legacy;
 DROP TABLE hourly_counts_legacy;
 `)
-	return err
 }
 
 // migrateHourlyCountFKs adds foreign keys to hourly_counts if missing.
@@ -752,7 +819,7 @@ func (db *DB) migrateHourlyCountFKs() error {
 	// Prune orphans before adding FK constraints
 	db.Exec(`DELETE FROM hourly_counts WHERE process_id NOT IN (SELECT id FROM processes)`)
 	db.Exec(`DELETE FROM hourly_counts WHERE style_id NOT IN (SELECT id FROM styles)`)
-	_, err = db.Exec(`
+	return db.rebuildTable("hourly_counts", `
 ALTER TABLE hourly_counts RENAME TO hourly_counts_nofk;
 CREATE TABLE hourly_counts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -769,7 +836,6 @@ SELECT id, process_id, style_id, count_date, hour, delta, updated_at
 FROM hourly_counts_nofk;
 DROP TABLE hourly_counts_nofk;
 `)
-	return err
 }
 
 // migrateOperatorStationColumns removes parent_station_id and expected_client_type
@@ -785,7 +851,7 @@ func (db *DB) migrateOperatorStationColumns() error {
 		db.Exec("ALTER TABLE operator_stations ADD COLUMN controller_node_id TEXT NOT NULL DEFAULT ''")
 		return nil
 	}
-	_, err = db.Exec(`
+	return db.rebuildTable("operator_stations", `
 ALTER TABLE operator_stations RENAME TO operator_stations_legacy;
 CREATE TABLE operator_stations (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -814,7 +880,6 @@ SELECT
 FROM operator_stations_legacy;
 DROP TABLE operator_stations_legacy;
 `)
-	return err
 }
 
 // ── Process node ownership migration ────────────────────────────────
@@ -844,7 +909,7 @@ func (db *DB) migrateProcessNodeOwnership() error {
 		}
 		if !hasInlineFK {
 			// Need to rebuild process_nodes with inline FK (simplified schema)
-			_, err = db.Exec(`
+			err = db.rebuildTable("process_nodes", `
 ALTER TABLE process_nodes RENAME TO process_nodes_legacy;
 CREATE TABLE process_nodes (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -931,7 +996,7 @@ func (db *DB) stripLegacyRuntimeStateColumns() error {
 	if !hasOldCol {
 		return nil
 	}
-	_, err := db.Exec(`
+	return db.rebuildTable("process_node_runtime_states", `
 ALTER TABLE process_node_runtime_states RENAME TO process_node_runtime_states_old;
 CREATE TABLE process_node_runtime_states (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -947,7 +1012,6 @@ SELECT id, process_node_id, remaining_uop, active_order_id, staged_order_id, upd
 FROM process_node_runtime_states_old;
 DROP TABLE process_node_runtime_states_old;
 `)
-	return err
 }
 
 func (db *DB) stripLegacyProcessNodeColumns() error {
@@ -955,7 +1019,7 @@ func (db *DB) stripLegacyProcessNodeColumns() error {
 	if !hasPositionType {
 		return nil // already stripped
 	}
-	_, err := db.Exec(`
+	return db.rebuildTable("process_nodes", `
 ALTER TABLE process_nodes RENAME TO process_nodes_old;
 CREATE TABLE process_nodes (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -975,7 +1039,6 @@ SELECT id, process_id, operator_station_id, COALESCE(core_node_name, ''), code, 
 FROM process_nodes_old;
 DROP TABLE process_nodes_old;
 `)
-	return err
 }
 
 func (db *DB) rebuildFromOpStationNodes() error {
@@ -1049,7 +1112,7 @@ func (db *DB) rebuildLegacyOrders() error {
 	if err != nil || !has {
 		return err
 	}
-	_, err = db.Exec(`
+	return db.rebuildTable("orders", `
 ALTER TABLE orders RENAME TO orders_legacy;
 CREATE TABLE orders (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1089,7 +1152,6 @@ CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(uuid);
 CREATE INDEX IF NOT EXISTS idx_orders_process_node_id ON orders(process_node_id);
 `)
-	return err
 }
 
 func (db *DB) rebuildLegacyChangeoverNodeTasks() error {

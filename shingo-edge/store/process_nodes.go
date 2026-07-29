@@ -44,7 +44,13 @@ func (db *DB) UpdateProcessNode(id int64, in processes.NodeInput) error {
 	return processes.UpdateNode(db.DB, id, in)
 }
 
-// DeleteProcessNode removes a process_node row.
+// DeleteProcessNode RETIRES a process_node row (soft delete). See
+// processes.DeleteNode.
 func (db *DB) DeleteProcessNode(id int64) error {
 	return processes.DeleteNode(db.DB, id)
+}
+
+// RestoreProcessNode un-retires a process_node row.
+func (db *DB) RestoreProcessNode(id int64) error {
+	return processes.RestoreNode(db.DB, id)
 }

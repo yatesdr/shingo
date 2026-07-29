@@ -90,6 +90,12 @@ type Style struct {
 	// ground-truth "is the right part physically on the press" check
 	// (Hopkinsville 2026-07-23).
 	ExpectedCATID string `json:"expected_catid"`
+	// DeletedAt marks a RETIRED style. Non-nil means the operator removed it;
+	// the row survives so that changeover history, hourly counts and reporting
+	// points keep resolving a name instead of rendering blank, and so the
+	// removal can be undone. Pickers exclude these (see liveStyles in
+	// store/processes/styles.go); display joins deliberately do not.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 // StyleVariant describes one style to scaffold by cloning a base style
@@ -133,6 +139,11 @@ type Node struct {
 	Enabled           bool      `json:"enabled"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	// DeletedAt marks a RETIRED node — see Style.DeletedAt. Deleting a
+	// process_node CASCADEs into changeover_node_tasks, whose process_node_id
+	// is NOT NULL, so a hard delete destroys per-node changeover detail with no
+	// SET NULL alternative.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 	// Joined fields
 	StationName string `json:"station_name"`
 	ProcessName string `json:"process_name"`

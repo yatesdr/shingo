@@ -137,6 +137,11 @@ func GetClaimByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim,
 // hung the Hopkinsville press-index swap (2026-07-23). A blank coreNodeName
 // never matches (blank paired fields on non-press-index claims must not
 // false-positive).
+//
+// RETIRED styles are excluded. This decides live behaviour rather than
+// rendering text: a claim belonging to a style nobody can run any more must not
+// keep a node marked as an on-deck position, because that would go on refusing
+// a part-number stamp on a node the plant has moved on from.
 func IsPairedOnDeckNode(db *sql.DB, processID int64, coreNodeName string) (bool, error) {
 	name := strings.TrimSpace(coreNodeName)
 	if name == "" {
@@ -148,6 +153,7 @@ func IsPairedOnDeckNode(db *sql.DB, processID int64, coreNodeName string) (bool,
 			SELECT 1 FROM style_node_claims c
 			JOIN styles s ON c.style_id = s.id
 			WHERE s.process_id = ?
+			  AND s.deleted_at IS NULL
 			  AND (c.paired_core_node = ? OR c.second_paired_core_node = ?)
 		)`, processID, name, name).Scan(&exists)
 	if err != nil {
