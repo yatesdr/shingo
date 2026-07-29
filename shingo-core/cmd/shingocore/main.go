@@ -46,7 +46,14 @@ import (
 	"shingocore/www"
 )
 
-var Version = "dev"
+// Build stamp, fed by -ldflags at build time from the shingo-core Makefile
+// and install-core.sh (git describe / git rev-parse). Left at these defaults
+// a binary cannot say which commit it is, which is what made the five boots
+// on 2026-07-24 impossible to tie to a deploy.
+var (
+	Version = "dev"
+	Commit  = "unknown"
+)
 
 // coreFlags holds parsed command-line flags.
 type coreFlags struct {
@@ -72,7 +79,7 @@ func parseFlags() coreFlags {
 		os.Exit(0)
 	}
 	if *showVersion {
-		fmt.Println("shingocore", Version)
+		fmt.Println("shingocore", Version, "("+Commit+")")
 		os.Exit(0)
 	}
 
@@ -98,6 +105,11 @@ func printUsage() {
 	fmt.Println("  outbox        Outbox drain cycles and delivery")
 	fmt.Println("  core_handler  Inbound message handler dispatch")
 	fmt.Println("  engine        Engine wiring, vendor status changes")
+	fmt.Println("  countgroup    Advanced-zone occupancy changes")
+	fmt.Println()
+	fmt.Println("--log-debug gates the FILE only. What reaches stderr (journald under")
+	fmt.Println("systemd) is logging.stderr_subsystems in the YAML; the browser log UI")
+	fmt.Println("shows every subsystem regardless.")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  shingocore --log-debug              # all subsystems to file")
@@ -118,6 +130,29 @@ func mustInitDebugLog(fileFilter []string) *debuglog.Logger {
 		}
 	}
 	return dbg
+}
+
+// applyLogGate narrows debuglog's stderr mirror to the configured allow-list.
+//
+// Runs after config load, so the handful of lines emitted during early boot
+// still reach the journal unconditionally — that window is where a fatal
+// config or DB error lands, and it is a few lines, not a firehose.
+//
+// The effective list is logged because the allow-list is default-deny: a
+// subsystem added later is silently absent from the journal until someone
+// opts it in, and this line is where that becomes visible.
+func applyLogGate(dbg *debuglog.Logger, cfg *config.Config) {
+	allow := cfg.Logging.ResolveStderrSubsystems()
+	dbg.SetStderrSubsystems(allow)
+	if allow == nil {
+		log.Printf("shingocore: debug log mirroring ALL subsystems to stderr (logging.stderr_subsystems: all)")
+		return
+	}
+	if len(allow) == 0 {
+		log.Printf("shingocore: debug log stderr mirror disabled (ring buffer and log UI unaffected)")
+		return
+	}
+	log.Printf("shingocore: debug log mirroring to stderr: %s", strings.Join(allow, ","))
 }
 
 func mustLoadConfig(path string) *config.Config {
@@ -211,10 +246,17 @@ func main() {
 	// ── Flags & config ──────────────────────────────────────────────────
 	flags := parseFlags()
 
+	// Build stamp first, before anything that can fatal. Deliberately not
+	// beside the "ready" line: a boot that dies during config or DB open
+	// never reaches ready, and those are exactly the boots worth attributing
+	// to a commit (five restarts in fifteen minutes, 2026-07-24).
+	log.Printf("shingocore: starting version=%s commit=%s config=%s", Version, Commit, flags.configPath)
+
 	dbg := mustInitDebugLog(flags.fileFilter)
 	defer dbg.Close()
 
 	cfg := mustLoadConfig(flags.configPath)
+	applyLogGate(dbg, cfg)
 	if cfg.Sim.Enabled {
 		simGuard() // sim_enabled.go (sim build) / sim_disabled.go (!sim build)
 	}

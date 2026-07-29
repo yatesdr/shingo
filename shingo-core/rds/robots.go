@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 )
 
 // GetRobotsInCountGroup returns the robot IDs currently in the named advanced zone.
@@ -23,6 +25,13 @@ import (
 // Compression note: this RDS server falls back to identity for Go clients
 // (Go's stdlib advertises gzip only). No compression handling required here.
 // Postman shows br because Postman advertises br by default.
+//
+// LOGGING: this method is edge-triggered, not per-tick. It runs at the
+// count-group poll interval (500ms) and its request/response trace pair was
+// 334,361 lines/day at Springfield, 53% of the journal, overwhelmingly
+// "still empty". Every exit path funnels through logCountGroupChange, which
+// logs only when the outcome differs from the previous poll of that group.
+// Nothing about the poll itself, the debounce or the fail-safe changes.
 func (c *Client) GetRobotsInCountGroup(group string) ([]string, error) {
 	req := struct {
 		Group string `json:"group"`
@@ -33,24 +42,28 @@ func (c *Client) GetRobotsInCountGroup(group string) ([]string, error) {
 	}
 
 	fullURL := c.url("/robotsInCountGroup")
-	c.dbg("-> POST %s body=%s", fullURL, string(body))
 
 	resp, err := c.httpClient.Post(fullURL, "application/json", bytes.NewReader(body))
 	if err != nil {
-		c.dbg("<- POST /robotsInCountGroup error: %v", err)
+		// Keyed on "unreachable" rather than the error text so a varying
+		// message (dial vs timeout vs reset) doesn't re-log every tick. The
+		// detail is on the Runner's outageLogger line, which carries the
+		// duration and attempt count.
+		c.logCountGroupChange(group, "unreachable")
 		return nil, fmt.Errorf("rds POST /robotsInCountGroup: %w", err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
+		c.logCountGroupChange(group, "unreadable body")
 		return nil, fmt.Errorf("rds read body: %w", err)
 	}
-	c.dbg("<- POST /robotsInCountGroup %d body=%s", resp.StatusCode, truncate(data, 2048))
 
 	if resp.StatusCode == 200 {
 		// Decode A: bare array — the documented empirical contract today.
 		var robots []string
 		if err := json.Unmarshal(data, &robots); err == nil {
+			c.logCountGroupChange(group, formatOccupancy(robots))
 			return robots, nil
 		}
 		// Decode B: wrapped success envelope with array under .report.
@@ -69,18 +82,35 @@ func (c *Client) GetRobotsInCountGroup(group string) ([]string, error) {
 			Report []string `json:"report"`
 		}
 		if err := json.Unmarshal(data, &wrapped); err == nil && wrapped.Code == 0 && wrapped.Report != nil {
+			c.logCountGroupChange(group, formatOccupancy(wrapped.Report))
 			return wrapped.Report, nil
 		}
 		// Neither shape decoded. Surface as a failure (advances fail-safe timer)
 		// rather than silently returning [] and misleading downstream debounce.
+		// The body goes on this line because an undecodable 200 is the one case
+		// where the payload is the whole diagnosis.
+		c.logCountGroupChange(group, "undecodable 200 body="+truncate(data, 256))
 		return nil, fmt.Errorf("rds /robotsInCountGroup: cannot decode 200 body: %s", truncate(data, 256))
 	}
 
 	// Non-200: always wrapped envelope.
 	var env Response
 	_ = json.Unmarshal(data, &env)
+	c.logCountGroupChange(group, fmt.Sprintf("HTTP %d code=%d", resp.StatusCode, env.Code))
 	return nil, fmt.Errorf("rds /robotsInCountGroup HTTP %d code=%d: %s",
 		resp.StatusCode, env.Code, env.Msg)
+}
+
+// formatOccupancy renders a count-group membership answer for the change-only
+// log. Sorted so that a reordered-but-identical response from RDS is not
+// mistaken for a transition.
+func formatOccupancy(robots []string) string {
+	if len(robots) == 0 {
+		return "empty"
+	}
+	sorted := slices.Clone(robots)
+	slices.Sort(sorted)
+	return "occupied by [" + strings.Join(sorted, " ") + "]"
 }
 
 // GetRobotsStatus retrieves status for all robots.

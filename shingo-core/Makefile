@@ -2,11 +2,17 @@
 # Build for multiple platforms
 
 BINARY_NAME=shingocore
-VERSION?=0.1.0
 BUILD_DIR=build
 
+# Build stamp. Until 2026-07-25 VERSION defaulted to a hardcoded 0.1.0 and
+# install-core.sh passed no -ldflags at all, so every plant binary reported
+# "shingocore dev" and no boot could be tied to a commit. Feed git describe
+# instead; override explicitly for a release build (make build VERSION=1.2.3).
+VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+
 # Build flags
-LDFLAGS=-ldflags "-s -w -X main.Version=$(VERSION)"
+LDFLAGS=-ldflags "-s -w -X main.Version=$(VERSION) -X main.Commit=$(COMMIT)"
 
 .PHONY: all clean linux windows macos build run test test-explain
 

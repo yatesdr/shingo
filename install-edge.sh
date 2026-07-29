@@ -338,7 +338,18 @@ fi
 # Build
 # ----------------------------------------------------------------------
 echo "==> Building binary..."
-(cd "$REPO_ROOT/shingo-edge" && "$GO_BIN" build -o /tmp/shingoedge ./cmd/shingoedge)
+# Stamp the build. Edge's version is not merely a log line: it is what the
+# heartbeat reports and what Core persists in edge_registry.version, and until
+# 2026-07-25 the value was a hardcoded "dev" in main.go — so that column said
+# "dev" for every edge in every plant. Degrades to dev/unknown rather than
+# failing when git is unreadable (installer runs under sudo; a repo owned by
+# another user trips "dubious ownership").
+BUILD_VERSION=$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)
+BUILD_COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+echo "    stamping version=${BUILD_VERSION} commit=${BUILD_COMMIT}"
+(cd "$REPO_ROOT/shingo-edge" && "$GO_BIN" build \
+    -ldflags "-s -w -X main.Version=${BUILD_VERSION} -X main.Commit=${BUILD_COMMIT}" \
+    -o /tmp/shingoedge ./cmd/shingoedge)
 echo "==> Build succeeded"
 
 # ----------------------------------------------------------------------

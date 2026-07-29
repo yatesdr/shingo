@@ -297,7 +297,18 @@ fi
 # Build
 # ----------------------------------------------------------------------
 echo "==> Building binary..."
-(cd "$REPO_ROOT/shingo-core" && "$GO_BIN" build -o /tmp/shingocore ./cmd/shingocore)
+# Stamp the build. This build had no -ldflags at all until 2026-07-25, so the
+# plant binary reported "shingocore dev" and the boot markers in the journal
+# had no join key to a commit. If git can't be read here (installer runs under
+# sudo; a repo owned by another user trips "dubious ownership") the stamp
+# degrades to "dev" and says so in the echo below rather than failing the
+# install.
+BUILD_VERSION=$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)
+BUILD_COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+echo "    stamping version=${BUILD_VERSION} commit=${BUILD_COMMIT}"
+(cd "$REPO_ROOT/shingo-core" && "$GO_BIN" build \
+    -ldflags "-s -w -X main.Version=${BUILD_VERSION} -X main.Commit=${BUILD_COMMIT}" \
+    -o /tmp/shingocore ./cmd/shingocore)
 echo "==> Build succeeded"
 
 # ----------------------------------------------------------------------
@@ -614,7 +625,22 @@ echo " Service status: active"
 echo " Binary:  /opt/shingo/shingocore"
 echo " Config:  /etc/shingo/shingocore.yaml"
 echo " Backup:  $BACKUP_PATH"
+echo " Version: ${BUILD_VERSION} (${BUILD_COMMIT})"
 echo " Logs:    sudo journalctl -u shingo-core -f"
+# Journal retention is host-wide, so the installer points at the drop-in
+# rather than writing it (see shingo-core/deploy/README.md). Unconfigured
+# retention is how Springfield ended up holding ~15 days of journal — less
+# than the age of the incident it was being read for.
+if ! grep -qsE '^\s*(MaxRetentionSec|SystemMaxUse)=' \
+        /etc/systemd/journald.conf /etc/systemd/journald.conf.d/* 2>/dev/null; then
+    echo ""
+    echo " NOTE: journald retention is unconfigured on this host, so it"
+    echo " defaults to a size cap that depends on filesystem size and has"
+    echo " no time bound. To make it explicit (host-wide change):"
+    echo "   sudo cp $REPO_ROOT/shingo-core/deploy/journald-shingo.conf \\"
+    echo "        /etc/systemd/journald.conf.d/10-shingo.conf"
+    echo "   sudo systemctl restart systemd-journald"
+fi
 if [ "$MODE" = "FRESH" ]; then
     echo ""
     echo " IMPORTANT: edit /etc/shingo/shingocore.yaml to set the"

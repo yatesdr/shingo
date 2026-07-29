@@ -44,8 +44,15 @@ Use `--log-debug=subsystem1,subsystem2` to filter debug output:
 | `core_handler` | Inbound message handling |
 | `nodestate` | Node state cache operations |
 | `engine` | Engine lifecycle events |
+| `countgroup` | Advanced-zone occupancy polls (logs on occupancy *change*, not per 500ms tick) |
 
 Without a filter (`--log-debug`), all subsystems are logged.
+
+`--log-debug` controls the optional **file** (`shingo-debug.log`) only. What
+reaches **stderr** — and therefore journald under systemd — is controlled by
+`logging.stderr_subsystems` in the YAML; see [logging](#logging) below. The
+in-memory ring buffer behind the browser log UI (`/logs`) is never filtered by
+either: every subsystem always lands there.
 
 ## Runtime Configuration
 
@@ -100,6 +107,44 @@ Configurable via web UI.
 | `dispatch_topic` | string | `shingo.dispatch` | Kafka topic for core-to-edge messages |
 | `outbox_drain_interval` | duration | `5s` | How often to drain the outbox to Kafka |
 | `station_id` | string | `core` | This core instance's station identifier |
+
+### logging
+
+Gates which debuglog subsystems are mirrored to stderr. Under systemd that is
+journald, so this is the journal-volume knob.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `stderr_subsystems` | string[] | `[dispatch, engine, core_handler, kafka, outbox, protocol]` | Allow-list of subsystems mirrored to stderr |
+
+```yaml
+logging:
+    stderr_subsystems: [dispatch, engine, core_handler, kafka, outbox, protocol]
+```
+
+Semantics:
+
+| Value | Effect |
+|---|---|
+| _(key absent)_ | The default list above — everything except `countgroup` and `rds` |
+| `[all]` | Mirror every subsystem (the incident escape hatch) |
+| `[]` or `null` | Mirror nothing |
+| `[a, b]` | Mirror exactly those |
+
+Notes:
+
+- **It is an allow-list, not a mute-list.** A subsystem added to the code later
+  stays out of the journal until someone opts it in. Core logs the effective
+  list at boot (`shingocore: debug log mirroring to stderr: …`) so the omission
+  is visible rather than silent.
+- **Muting is not disabling.** `countgroup` and `rds` are off the default list
+  because they were 334,361 and 125,817 lines/day at Springfield — 75% of a
+  journal whose retention had collapsed to ~15 days. Both pollers still run
+  unchanged; the count-group interlock in particular returns robots ~6,265
+  times a day and is load-bearing.
+- **Nothing is lost to the UI.** The ring buffer behind `/logs` is unfiltered.
+- Retention itself is a separate, host-wide decision — see
+  `shingo-core/deploy/README.md`.
 
 ### Duration Format
 

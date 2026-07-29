@@ -46,6 +46,19 @@ import (
 	"shingoedge/www"
 )
 
+// Build stamp, fed by -ldflags from install-edge.sh (git describe /
+// git rev-parse), mirroring shingo-core.
+//
+// This one is not just a log line: Version is what the heartbeat reports and
+// what Core persists in edge_registry.version, so until 2026-07-25 — when the
+// value was the hardcoded literal "dev" at the NewHeartbeater call below —
+// every edge in every plant registered as "dev" and the column answered
+// nothing.
+var (
+	Version = "dev"
+	Commit  = "unknown"
+)
+
 // edgeFlags holds parsed command-line flags.
 type edgeFlags struct {
 	configPath  string
@@ -170,7 +183,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	}
 
 	// ── Heartbeater (built early so subject-router closures can capture it) ──
-	hb := messaging.NewHeartbeater(msgClient, stationID, "dev", []string{cfg.LineID}, cfg.Messaging.OrdersTopic, func() int {
+	hb := messaging.NewHeartbeater(msgClient, stationID, Version, []string{cfg.LineID}, cfg.Messaging.OrdersTopic, func() int {
 		return db.CountActiveOrders()
 	})
 	hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
@@ -491,6 +504,11 @@ func main() {
 
 	// ── Flags & restore ─────────────────────────────────────────────────
 	flags := parseFlags()
+
+	// Build stamp first, before anything that can fatal — same reasoning as
+	// shingo-core: a boot that dies during config or DB open is exactly the
+	// boot worth attributing to a commit.
+	log.Printf("shingoedge: starting version=%s commit=%s config=%s", Version, Commit, flags.configPath)
 
 	if flags.debugFlag {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)

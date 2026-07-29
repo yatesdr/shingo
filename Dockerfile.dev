@@ -24,11 +24,23 @@ RUN go work sync \
  && (cd shingo-edge && go mod download)
 
 # 2) source + build (CGO off → static binaries that run on alpine)
+#
+# The build context includes .git, so the sim binary carries the same version
+# stamp as a plant build (main.Version / main.Commit — see shingo-core/Makefile
+# and install-core.sh). Without it the sim boots as "version=dev
+# commit=unknown", which makes the boot line and the Overview health strip
+# untestable here. safe.directory because the copied .git is root-owned in the
+# build stage; the || fallbacks keep a context without .git building.
 COPY . .
-RUN CGO_ENABLED=0 go build -tags sim -o /out/shingocore      ./shingo-core/cmd/shingocore \
+RUN git config --global --add safe.directory /src \
+ && VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \
+ && COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+ && LDFLAGS="-X main.Version=${VERSION} -X main.Commit=${COMMIT}" \
+ && echo "building sim binaries: ${VERSION} (${COMMIT})" \
+ && CGO_ENABLED=0 go build -tags sim -ldflags "$LDFLAGS" -o /out/shingocore      ./shingo-core/cmd/shingocore \
  && CGO_ENABLED=0 go build -tags sim -o /out/seeddev         ./shingo-core/cmd/seeddev \
  && CGO_ENABLED=0 go build -tags sim -o /out/migrateloaders  ./shingo-core/cmd/migrateloaders \
- && CGO_ENABLED=0 go build -tags sim -o /out/shingoedge      ./shingo-edge/cmd/shingoedge
+ && CGO_ENABLED=0 go build -tags sim -ldflags "$LDFLAGS" -o /out/shingoedge      ./shingo-edge/cmd/shingoedge
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates tzdata

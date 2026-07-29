@@ -215,7 +215,20 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// which stay coordinated (role gate + fast-path + their hard slot claim).
 	if dispatch.IsCoordinated(order) {
 		if err := s.dispatcher.DispatchPreparedComplex(order); err != nil {
-			s.logFn("fulfillment: coordinated order %d dispatch failed: %v", order.ID, err)
+			// Debug, not info: this fires on every transient hold — a swap leg
+			// waiting on its sibling, a finder pool with no bin yet — and the
+			// scanner retries on the next tick. Springfield emitted ~4,000/day
+			// of it into the default logger, the same ~25k/day stream that
+			// carries the TERMINAL "engine: order N failed:" line, burying the
+			// signal at roughly 800:1.
+			//
+			// Nothing is lost by moving it: the dispatcher already logs the
+			// same reason to the debug stream one frame deeper (1,997 vs 1,999
+			// lines/day for the finder-pool-empty pair alone), so this line was
+			// a duplicate that happened to be louder than the original.
+			if s.debugLog != nil {
+				s.debugLog("fulfillment: coordinated order %d dispatch failed: %v", order.ID, err)
+			}
 			return false
 		}
 		// Clear stale queue_reason on success (DispatchPreparedComplex also clears

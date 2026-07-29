@@ -35,6 +35,15 @@ type Logger struct {
 	// stderr/journal coverage that ops may grep during incidents.
 	stderr io.Writer
 
+	// stderrFilter restricts which subsystems reach the stderr mirror.
+	// nil = every subsystem mirrors, which is both the pre-2026-07-25
+	// behaviour and the state during early boot before config is read.
+	//
+	// This gates the journal only. The ring buffer and the browser log UI
+	// below are deliberately unfiltered — muting a subsystem here still
+	// leaves it fully readable in the UI during an incident.
+	stderrFilter map[string]bool
+
 	onEntry func(Entry)
 }
 
@@ -97,6 +106,44 @@ func (l *Logger) SetStderr(w io.Writer) {
 	l.mu.Unlock()
 }
 
+// SetStderrSubsystems restricts the stderr mirror to the named subsystems.
+// nil clears the restriction (every subsystem mirrors); a non-nil empty slice
+// mutes the mirror entirely.
+//
+// Under systemd, stderr is journald. Until 2026-07-25 the mirror was
+// unconditional and Springfield's journal ran at 633,129 lines/day — 53% of it
+// the two countgroup poll lines at a 500ms tick — which collapsed retention to
+// ~15 days, shorter than the incidents being investigated. The allow-list is
+// the knob that makes journal retention a decision instead of a side effect.
+//
+// The ring buffer and the browser log UI are unaffected: a muted subsystem is
+// still fully readable there.
+func (l *Logger) SetStderrSubsystems(subsystems []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if subsystems == nil {
+		l.stderrFilter = nil
+		return
+	}
+	m := make(map[string]bool, len(subsystems))
+	for _, s := range subsystems {
+		m[s] = true
+	}
+	l.stderrFilter = m
+}
+
+// StderrMirrors reports whether the given subsystem currently reaches the
+// stderr mirror. Exists so callers can log the effective allow-list at boot
+// and so tests can assert the gate without capturing output.
+func (l *Logger) StderrMirrors(subsystem string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.stderr == nil {
+		return false
+	}
+	return l.stderrFilter == nil || l.stderrFilter[subsystem]
+}
+
 // Log writes an entry to the ring buffer (always), mirrors to stderr (if
 // configured), and writes to the file (if enabled and subsystem passes filter).
 func (l *Logger) Log(subsystem, format string, args ...any) {
@@ -115,6 +162,9 @@ func (l *Logger) Log(subsystem, format string, args ...any) {
 	}
 	cb := l.onEntry
 	stderr := l.stderr
+	if l.stderrFilter != nil && !l.stderrFilter[subsystem] {
+		stderr = nil
+	}
 	l.mu.Unlock()
 
 	if cb != nil {

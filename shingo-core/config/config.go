@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -21,6 +22,60 @@ type Config struct {
 	Sim           SimConfig           `yaml:"sim"`
 	Sourceability SourceabilityConfig `yaml:"sourceability"`
 	Replenishment ReplenishmentConfig `yaml:"replenishment"`
+	Logging       LoggingConfig       `yaml:"logging"`
+}
+
+// LoggingConfig gates what reaches stderr — under systemd, journald.
+//
+// debuglog mirrors every dbg() call to stderr. That mirror was unconditional
+// until 2026-07-25, which put Springfield's journal at 633,129 lines/day (53%
+// of it the two countgroup poll lines at a 500ms tick) and collapsed journald
+// retention to ~15 days — shorter than the incidents being investigated.
+//
+// The ring buffer and the browser log UI are NOT gated by this. A muted
+// subsystem is still fully readable in the UI; only the journal is quieter.
+type LoggingConfig struct {
+	// StderrSubsystems is the allow-list of debuglog subsystems mirrored to
+	// stderr. Semantics:
+	//
+	//   absent          — the DefaultStderrSubsystems() list below
+	//   ["all"]         — mirror everything (the incident escape hatch:
+	//                     restore the full firehose without a rebuild)
+	//   []  or  null    — mirror nothing; ring buffer and UI only
+	//   ["a","b"]       — mirror exactly those
+	//
+	// Deliberately an allow-list, not a mute-list: a subsystem added later
+	// stays out of the journal until someone opts it in, which is the
+	// conservative direction for a resource that had already rotated away
+	// the evidence this branch was written to preserve. Its absence is
+	// visible — Core logs the effective list at boot, and the browser UI
+	// shows every subsystem regardless.
+	StderrSubsystems []string `yaml:"stderr_subsystems"`
+}
+
+// DefaultStderrSubsystems is the allow-list applied when logging config is
+// absent: everything except the two poll loops. countgroup (334,361 lines/day)
+// and rds (125,817) are 75% of the journal between them and neither carries a
+// signal that is not also in the ring buffer.
+//
+// Muting countgroup's logging is NOT disabling countgroup. The interlock
+// returns 1-2 robots 6,265 times a day and stays enabled; see rds/robots.go.
+func DefaultStderrSubsystems() []string {
+	return []string{"dispatch", "engine", "core_handler", "kafka", "outbox", "protocol"}
+}
+
+// ResolveStderrSubsystems maps the YAML into debuglog.SetStderrSubsystems'
+// argument: nil for "no restriction", otherwise the explicit allow-list.
+func (l LoggingConfig) ResolveStderrSubsystems() []string {
+	if slices.Contains(l.StderrSubsystems, "all") {
+		return nil
+	}
+	if l.StderrSubsystems == nil {
+		// Only reachable via an explicit `stderr_subsystems:` / `null` in the
+		// YAML, since Defaults() prefills the field. Reads as "none".
+		return []string{}
+	}
+	return l.StderrSubsystems
 }
 
 // ReplenishmentConfig tunes the UOP-threshold replenishment monitor (R1).
@@ -214,6 +269,9 @@ func Defaults() *Config {
 			EnableAtRisk: false, // green/red only until the owner validates the rate window on plant data
 			RateWindow:   30 * time.Minute,
 			Horizon:      30 * time.Minute,
+		},
+		Logging: LoggingConfig{
+			StderrSubsystems: DefaultStderrSubsystems(),
 		},
 		Replenishment: ReplenishmentConfig{
 			// R1 LIVE by default: decide off the Edge lineside reports (ledger +
