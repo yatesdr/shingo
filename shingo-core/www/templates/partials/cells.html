@@ -1,11 +1,44 @@
 {{/*
-  cells.html — the number doctrine's three states, as one shared renderer.
+  cells.html — the number doctrine's three states, as ONE shared renderer.
 
   IN partials/ AND NOT IN A PAGE, because router.go clones (layout + partials)
   per page: a {{define}} inside a page template is invisible to every other
-  page. These two are consumed by /demand-episodes and /orphans and by anything
-  Phase 6 adds next, and a second page redefining them by copy-paste is exactly
-  how two surfaces start disagreeing about what an em dash means.
+  page. These two are consumed by /demand-episodes, /demand-episodes/{originID},
+  /orphans and /cycle-time, and a second page redefining them by copy-paste is
+  exactly how two surfaces start disagreeing about what an em dash means.
+
+  ── THREE LANES BUILT THIS INDEPENDENTLY. THIS IS THE MERGED ONE ─────────────
+
+  Round 3 produced partials/cells.html (5.7), partials/demand-cell.html (5.12)
+  and partials/num-cell.html (5.10) — the same three-state renderer, three
+  times, because each lane hit the clone-per-page rule on its own. The name
+  kept is cells.html: the renderer is not demand-specific (cycle time consumes
+  it) and it is not number-specific either (close_reason, closed_by, robot and
+  trigger-ref all render through it), so demand-cell and num-cell were both
+  names that had stopped being true before they were written.
+
+  THE THREE COPIES WERE NOT IDENTICAL, and the difference was a live rendering
+  decision rather than whitespace. num-cell's plain-value arm emitted
+  <span title="{{"{{.Title}}"}}">{{"{{.Text}}"}}</span>; de-cell's emitted a bare
+  {{"{{.Text}}"}}. Taking either one wholesale was wrong in a different direction:
+
+    - de-cell as-is DROPS the only real value-level tooltip on /cycle-time —
+      the Tail cut column, whose title spells out "median + k × (p90 − median)"
+      for a number nobody can otherwise derive from the row.
+    - num-cell as-is emits title="" on every OTHER plain value, because Value()
+      constructs a Cell with no Title. MEASURED on one healthy cycle-time row:
+      five empty title attributes against one real one. An empty title is not a
+      neutral no-op — per HTML it asserts that no advisory text applies here AND
+      that an ancestor's does not either, so it suppresses rather than defers.
+
+  So the value arm is CONDITIONAL: a tooltip when the cell has something to say,
+  no attribute at all when it does not.
+
+  nodata and na stay unconditional on purpose. NoData(why) and NA(why) both take
+  the reason as a required argument, so an absence with no title is a bug, and
+  the empty title="" on the page is that bug made visible. Hiding it behind the
+  same {{"{{if}}"}} would make the one case that must never happen the one case
+  that renders cleanly.
 */}}
 {{/*
   de-cell — the number doctrine's three states, rendered so they look different
@@ -21,7 +54,8 @@
 */}}
 {{define "de-cell"}}
   {{if eq .Kind "value"}}
-    {{if .Muted}}<span class="de-muted" title="{{.Title}}">{{.Text}}</span>
+    {{if .Muted}}<span class="de-muted"{{if .Title}} title="{{.Title}}"{{end}}>{{.Text}}</span>
+    {{else if .Title}}<span title="{{.Title}}">{{.Text}}</span>
     {{else}}{{.Text}}{{end}}
   {{else if eq .Kind "nodata"}}
     <span class="de-nodata" title="{{.Title}}">{{.Text}}</span>
@@ -33,7 +67,7 @@
 {{/* Same three states at KPI-value weight, for the summary strip. */}}
 {{define "de-cell-value"}}
   {{if eq .Kind "value"}}
-    <div class="kpi-value tnum">{{.Text}}</div>
+    <div class="kpi-value tnum"{{if .Title}} title="{{.Title}}"{{end}}>{{.Text}}</div>
   {{else if eq .Kind "nodata"}}
     <div class="kpi-value tnum de-nodata" title="{{.Title}}">{{.Text}}</div>
   {{else}}

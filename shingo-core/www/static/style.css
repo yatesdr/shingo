@@ -2317,3 +2317,89 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
   border-bottom: 1px dotted var(--accent);
   cursor: help;
 }
+/* ── Cycle time (Phase 6: 5.10) ───────────────────────────────────────────
+ *
+ * NO COLOUR LITERALS and NO .chip-* CLASSES. Stage 4 has fifteen of
+ * twenty-eight chip combinations below AA, and this is exactly the surface
+ * that would deepen that debt by consuming the broken tokens at scale. Every
+ * state here is carried by a printed word plus structure, with colour as a
+ * redundant third channel — so the page reads in greyscale, in print, and
+ * under any colour vision deficiency.
+ */
+
+.ct-table td { vertical-align: top; }
+.ct-sub  { font-size: var(--font-xs); color: var(--text-muted); }
+.ct-note { font-size: var(--font-xs); color: var(--text-muted); margin-top: 0.5rem; }
+
+/* A state flag is PRINTED TEXT, not a colour. A reader must never have to know
+ * what a grey row means — the row says what it is. */
+.ct-flag {
+  font-size: var(--font-xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  cursor: help;
+}
+
+/* A median at or below the Edge flush cadence is measuring the transport, not
+ * the cell. Ring on the row, matching the treatment 5.14 established — the
+ * word "flush-bound" printed in the row is what actually carries the reading. */
+.ct-flushbound { box-shadow: inset 3px 0 0 0 var(--sub-5); }
+
+/* ── The distribution ─────────────────────────────────────────────────────
+ *
+ * Bands are relative to each key's own median, so one strip renders a 25-second
+ * line and a 75-second line on the same axis. Scaled to the TALLEST band rather
+ * than to n: with 57% of Springfield's mass in one bucket, scaling to n leaves
+ * every other band invisible and the shape unreadable.
+ *
+ * The bar height arrives as an inline --ct-bar custom property. That is the
+ * style guide's first named exception to the inline-style ban ("truly dynamic
+ * values that depend on data ... prefer CSS custom properties") and the exact
+ * form it asks for.
+ */
+.ct-hist {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 34px;
+  min-width: 170px;
+}
+.ct-bin {
+  flex: 1 1 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  cursor: help;
+}
+.ct-bar {
+  width: 100%;
+  height: var(--ct-bar, 0%);
+  background: var(--sub-5);
+}
+
+/* THE MEDIAN IS ANNOTATED ON THE DISTRIBUTION — the style guide's requirement
+ * for this surface, and the thing a median printed only in a neighbouring
+ * column does not do. The band is emphasised in the picture AND named under it
+ * by the axis label, which sits at the centre because the bands are symmetric
+ * about the median by construction. */
+.ct-bin--median .ct-bar { background: var(--accent); }
+
+/* The tail band is the material-downtime signal. Outlined rather than filled,
+ * so it separates by SHAPE and survives greyscale — and its count and share are
+ * printed as their own columns, which is where the actual reading happens. */
+.ct-bin--tail { border-left: 1px solid var(--sub-3); }
+.ct-bin--tail .ct-bar {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--sub-5);
+}
+
+.ct-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  min-width: 170px;
+}
+.ct-axis-mid { color: var(--accent); }

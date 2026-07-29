@@ -1,0 +1,170 @@
+{{define "content"}}
+{{/*
+  cycle-time.html — cycle time from the BinUOPDelta truth path (5.10).
+
+  THE TEMPLATE DOES NO ARITHMETIC AND MAKES NO DECISIONS. Every figure, band,
+  label and absence state arrives already rendered from cycle_time_view.go,
+  because a rule that lives in a template is a rule with no test.
+
+  No colour literals; no .chip-* classes. The one inline style is a data-driven
+  custom property (--ct-bar), which is the style guide's first named exception
+  and the form it asks for.
+*/}}
+<div>
+  <div class="flex flex-between mb-2">
+    <h1>Cycle time</h1>
+  </div>
+
+  <p class="text-muted mb-2">
+    One distribution per station, part and direction, from the applied
+    <code>BinUOPDelta</code> audit trail — the path that actually moved the
+    count. Last {{.WindowHours}} hours.
+  </p>
+
+  {{if .LoadError}}
+  <div class="card mb-2">
+    <strong>Could not read the delta audit trail.</strong>
+    <div class="text-muted mt-1">{{.LoadError}}</div>
+    <div class="text-muted mt-1">
+      This is a read failure, not an idle floor. The table below is not showing
+      you zero cycles — it is showing you nothing at all.
+    </div>
+  </div>
+  {{else}}
+
+  <div class="card mb-2">
+    <p class="ct-note">
+      <strong>What is being measured.</strong> The interval between consecutive
+      ticks for the same part at the same station. Edge accumulates deltas and
+      flushes them every {{.FlushInterval}}, so that is the resolution of every
+      figure here and nothing finer is printed. A median at or below it is
+      measuring the transport rather than the cell, and its row says so.
+    </p>
+    <p class="ct-note">
+      <strong>Station, not node.</strong> The applied-delta audit row carries no
+      node — the writer populates neither <code>node_id</code> nor the station
+      column and passes the station as the actor — so the grain here is station,
+      part and direction. Attributing these to a node needs a change at the
+      ingest path, not at this page.
+    </p>
+    <p class="ct-note">
+      <strong>Percentiles are order statistics, not interpolations.</strong>
+      Every figure printed is an interval that actually occurred. Bands are
+      relative to each key&rsquo;s own median so a 25-second line and a
+      75-second line can be read on one axis, and they are tolerance ranges —
+      never equality, never whole-second buckets.
+    </p>
+  </div>
+
+  {{if .Truncated}}
+  <div class="card mb-2">
+    <strong>Window narrowed to the most recent {{.Limit}} events.</strong>
+    <span class="text-muted">
+      More rows exist in the last {{.WindowHours}} hours than were read. The
+      distributions below are correct for the shorter window — no gap spans an
+      unread row — but their sample counts are not the full window&rsquo;s.
+    </span>
+  </div>
+  {{end}}
+
+  {{if .Rows}}
+  <table class="table ct-table">
+    <thead>
+      <tr>
+        <th>Station</th>
+        <th>Part</th>
+        <th>Direction</th>
+        <th class="col-num">Cycles</th>
+        <th class="col-num">Median</th>
+        <th class="col-num">p90</th>
+        <th class="col-num">p99</th>
+        <th class="col-num">Tail cut</th>
+        <th class="col-num">Past cut</th>
+        <th class="col-num">Share</th>
+        <th>Distribution</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr class="ct-row{{if .FlushBound}} ct-flushbound{{end}}{{if .Underpowered}} ct-underpowered{{end}}">
+        <td>{{.Station}}</td>
+        <td>
+          <div>{{.Payload}}</div>
+          {{if .SpanText}}<div class="ct-sub">over {{.SpanText}}</div>{{end}}
+        </td>
+        <td>
+          {{.DirLabel}}
+          {{/* Every state is PRINTED as well as styled — a grey row must never
+               be the only thing telling a reader why it is grey. */}}
+          {{if .FlushBound}}<div class="ct-flag" title="{{.FlushNote}}">flush-bound</div>{{end}}
+          {{if .Underpowered}}<div class="ct-flag" title="{{.SampleNote}}">small sample</div>{{end}}
+        </td>
+        <td class="col-num tnum">{{.SamplesText}}</td>
+        <td class="col-num tnum">{{template "de-cell" .Median}}</td>
+        <td class="col-num tnum">{{template "de-cell" .P90}}</td>
+        <td class="col-num tnum">{{template "de-cell" .P99}}</td>
+        <td class="col-num tnum">{{template "de-cell" .TailCut}}</td>
+        <td class="col-num tnum">{{template "de-cell" .TailCount}}</td>
+        <td class="col-num tnum">{{template "de-cell" .TailShare}}</td>
+        <td>
+          {{if .HaveBands}}
+          {{/* The median is annotated ON the distribution, which is what the
+               style guide asks for and what the printed p50 alone does not do. */}}
+          <div class="ct-hist">
+            {{range .Bands}}
+            <div class="ct-bin{{if .HoldsMedian}} ct-bin--median{{end}}{{if .IsTail}} ct-bin--tail{{end}}"
+                 title="{{.Label}} · {{.Title}}">
+              <div class="ct-bar" style="--ct-bar: {{.BarPct}}"></div>
+            </div>
+            {{end}}
+          </div>
+          <div class="ct-axis">
+            <span>shorter</span>
+            <span class="ct-axis-mid">median</span>
+            <span>longer &rarr;</span>
+          </div>
+          {{else}}
+          <span class="de-nodata" title="no distribution: this key has no positive median to scale one against">&mdash;</span>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+
+  <p class="ct-note">
+    Read from {{.Events}} applied delta rows.
+    {{if gt .Unattributable 0}}
+    <strong>{{.UnattributableText}}</strong> carried no part number and could not
+    join any distribution — they are excluded from every figure above and counted
+    here rather than folded into a neighbouring key.
+    {{else}}
+    Every one of them carried a part number.
+    {{end}}
+  </p>
+  <p class="ct-note">
+    A greyed median has fewer than {{.MinSamples}} cycles behind it and is a
+    reading rather than a takt; p90 and p99 are withheld entirely below that
+    count, because at those sample sizes the nearest-rank p90 is simply the
+    largest gap observed. The tail cut is
+    <span class="tnum">median + {{.SpreadMultiple}} &times; (p90 &minus; median)</span>,
+    taken from each key&rsquo;s own spread — Springfield&rsquo;s slow parts are
+    steadier than its fast ones, so a cut expressed as a percentage of takt would
+    over-trigger on one family and under-trigger on the other.
+  </p>
+  {{else}}
+  {{/* A table with no rows gets an EMPTY STATE, not an empty frame. A drawn
+       frame with nothing in it reads as "measured, all zero". */}}
+  <div class="card">
+    <strong>No cycles in the last {{.WindowHours}} hours.</strong>
+    <div class="text-muted mt-1">
+      The query ran and returned no applied produce or consume ticks. That is a
+      measured result, not a missing feed — but on a running plant it is also
+      what a stalled delta path looks like, so it is worth confirming against the
+      bins page before reading it as an idle floor.
+    </div>
+  </div>
+  {{end}}
+  {{end}}
+</div>
+{{end}}

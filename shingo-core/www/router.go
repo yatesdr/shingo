@@ -150,6 +150,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		// A different GRAIN from the page above — an orphan has no episode by
 		// definition, so it has no row there. See handlers_orphans.go.
 		r.Get("/orphans", h.handleOrphans)
+		// Phase 6 (5.10): cycle time from the applied-BinUOPDelta audit trail.
+		r.Get("/cycle-time", h.handleCycleTime)
 		r.Get("/missions", h.handleMissions)
 		r.Get("/missions/{orderID}", h.handleMissionDetail)
 		r.Get("/traffic", h.handleTraffic)

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"html/template"
 	"io/fs"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -256,6 +258,238 @@ func TestSharedCellDefinesLiveInPartials(t *testing.T) {
 			t.Errorf("%s defines de-cell. It belongs in a partial, once — a page-local "+
 				"copy is reachable from that page and from nowhere else.", p)
 		}
+	}
+}
+
+// TestNoSecondCellRendererUnderAnotherName is the NAME-AGNOSTIC half.
+//
+// ── WHY THE TEST ABOVE IS NOT ENOUGH, MEASURED ───────────────────────────────
+//
+// TestSharedCellDefinesLiveInPartials asserts on the strings `de-cell` and
+// `de-cell-value`. It is filename-agnostic and that was the right call — two
+// lanes moved the defines to partials of their own naming and it passed both.
+// But it is not NAME-agnostic, and a third lane wrote the same renderer as
+// `num-cell`. With partials/cells.html and partials/num-cell.html both present
+// after the round-3 merge, that test PASSED: `de-cell` still lived in exactly
+// one partial, and `num-cell` was invisible to every assertion in this file.
+// Verified by running it in that state before consolidating.
+//
+// That is the whole failure mode of a name-based guard on a copy-paste problem.
+// The next lane will not call it de-cell either — it will call it stat-cell, or
+// value-cell, or figure — and the assertion above will pass again.
+//
+// So this one asserts on SHAPE. A Cell renderer is recognisable without its
+// name: it dispatches on .Kind across at least two of the three states, and it
+// emits a specific set of CSS classes. Two defines with the same (kinds,
+// classes) signature are the same renderer whatever they are called.
+//
+// A genuinely NEW weight is still allowed, and that is deliberate rather than a
+// gap: de-cell-value dispatches on the same kinds but emits kpi-value/tnum
+// instead of the span classes, so it has its own signature and passes. The rule
+// is "one implementation per rendered form", not "one define".
+//
+// PAGES ARE SCANNED TOO. A structural copy in a page file is the original 500 —
+// invisible to every other page — and a page-local copy under a fresh name is
+// exactly what the name-based check cannot see.
+func TestNoSecondCellRendererUnderAnotherName(t *testing.T) {
+	type home struct {
+		file string
+		def  string
+	}
+	bySignature := map[string][]home{}
+
+	files, err := fs.Glob(templateFS, "templates/partials/*.html")
+	if err != nil {
+		t.Fatalf("glob partials: %v", err)
+	}
+	pages, err := fs.Glob(templateFS, "templates/*.html")
+	if err != nil {
+		t.Fatalf("glob pages: %v", err)
+	}
+	files = append(files, pages...)
+
+	for _, f := range files {
+		raw, readErr := templateFS.ReadFile(f)
+		if readErr != nil {
+			continue
+		}
+		for name, body := range templateDefines(stripTemplateComments(string(raw))) {
+			sig, ok := cellRendererSignature(body)
+			if !ok {
+				continue
+			}
+			bySignature[sig] = append(bySignature[sig], home{file: f, def: name})
+		}
+	}
+
+	if len(bySignature) == 0 {
+		t.Fatal("no Cell renderer found in any template. Either the doctrine was deleted or " +
+			"cellRendererSignature has stopped recognising it — and a guard that recognises " +
+			"nothing passes forever.")
+	}
+
+	for sig, homes := range bySignature {
+		if len(homes) < 2 {
+			continue
+		}
+		var names []string
+		for _, h := range homes {
+			names = append(names, h.def+" in "+h.file)
+		}
+		sort.Strings(names)
+		t.Errorf("%d defines are the SAME Cell renderer under different names: %s\n"+
+			"  signature: %s\n"+
+			"  partials/*.html parses all of them, so a caller silently gets whichever "+
+			"copy it happens to name, and the two copies drift the first time one is "+
+			"corrected. Three round-3 lanes wrote this renderer independently; keep one, "+
+			"in a partial, and repoint the callers.", len(homes), strings.Join(names, "; "), sig)
+	}
+}
+
+var (
+	reTemplateAction = regexp.MustCompile(`\{\{-?\s*(\w+)`)
+	reKindLiteral    = regexp.MustCompile(`eq\s+\.Kind\s+"([a-z_]+)"`)
+	reClassAttr      = regexp.MustCompile(`class="([^"]*)"`)
+)
+
+// templateDefines returns each {{define "name"}}…{{end}} body in src.
+//
+// Depth-counted rather than matched on the first {{end}}: every one of these
+// renderers is a three-arm {{if}}/{{else if}}/{{else}}, so a first-{{end}} scan
+// would cut the body off inside the value arm and the signature would miss the
+// two classes that distinguish it.
+func templateDefines(src string) map[string]string {
+	out := map[string]string{}
+	const open = `{{define "`
+	for i := 0; ; {
+		j := strings.Index(src[i:], open)
+		if j < 0 {
+			return out
+		}
+		start := i + j + len(open)
+		q := strings.Index(src[start:], `"`)
+		if q < 0 {
+			return out
+		}
+		name := src[start : start+q]
+		rest := src[start+q:]
+		if k := strings.Index(rest, "}}"); k >= 0 {
+			rest = rest[k+2:]
+		}
+		depth := 1
+		body := rest
+		for _, m := range reTemplateAction.FindAllStringSubmatchIndex(rest, -1) {
+			switch rest[m[2]:m[3]] {
+			case "if", "range", "with", "block", "define":
+				depth++
+			case "end":
+				depth--
+				if depth == 0 {
+					body = rest[:m[0]]
+				}
+			}
+			if depth == 0 {
+				break
+			}
+		}
+		out[name] = body
+		i = start + q
+	}
+}
+
+// cellRendererSignature reduces a define body to what makes it a Cell renderer,
+// with the name — the only thing three lanes disagreed about — thrown away.
+//
+// Two components, and both are needed. The .Kind literals alone would collide
+// de-cell with de-cell-value, which are two legitimate weights of one doctrine.
+// The class set alone would collide any two defines that happen to style the
+// same thing without dispatching on absence at all.
+//
+// Reported as not-a-renderer unless it dispatches on at least TWO kinds: a
+// single mention of .Kind is a caller or a special case, not the doctrine.
+func cellRendererSignature(body string) (string, bool) {
+	kinds := map[string]bool{}
+	for _, m := range reKindLiteral.FindAllStringSubmatch(body, -1) {
+		kinds[m[1]] = true
+	}
+	if len(kinds) < 2 {
+		return "", false
+	}
+	classes := map[string]bool{}
+	for _, m := range reClassAttr.FindAllStringSubmatch(body, -1) {
+		// A class attribute built from a template action is not a literal class
+		// set and cannot be compared as one.
+		if strings.Contains(m[1], "{{") {
+			continue
+		}
+		for _, tok := range strings.Fields(m[1]) {
+			classes[tok] = true
+		}
+	}
+	return "kinds=" + sortedKeys(kinds) + " classes=" + sortedKeys(classes), true
+}
+
+func sortedKeys(m map[string]bool) string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ",")
+}
+
+// TestPlainValueCellEmitsNoEmptyTitle holds the rendering decision the merge
+// made, at the markup level.
+//
+// The three round-3 copies disagreed here and only here. num-cell's plain-value
+// arm emitted `<span title="{{.Title}}">`; de-cell's emitted bare text. Value()
+// leaves Title empty, so num-cell put title="" on every plain value that had
+// nothing to say — five per healthy /cycle-time row, measured. de-cell as-is
+// dropped the one plain value that DOES have something to say: the Tail cut
+// column's derivation.
+//
+// The merged partial emits the attribute if and only if there is a title, so
+// both halves of that are assertions and this test holds both.
+//
+// VERIFIED RED BY: reverting the value arm to num-cell's unconditional
+// `<span title="{{.Title}}">` — the empty-title assertion fired with 5. And by
+// reverting it to de-cell's bare `{{.Text}}` — the Tail-cut assertion fired.
+func TestPlainValueCellEmitsNoEmptyTitle(t *testing.T) {
+	c := disp()
+	rows := []EpisodeRow{{
+		Expected:    Value("4"),                       // a plain value, no title
+		Ratio:       Value("50%"),                     // ditto
+		CloseReason: NoData("no reason was recorded"), // an absence, title required
+		Cause:       NA("no children yet"),
+		ClosedBy:    Value("sweep"),
+		OriginID:    "o1", KindLabel: "cell", OpenedAt: time.Now().UTC(),
+	}}
+	out := renderPage(t, "demand-episodes.html", map[string]any{
+		"Page": "demand-episodes", "WindowHours": 24,
+		"WorryAfter": FormatDuration(c.WorryAfter), "ConcernAfter": FormatDuration(c.ConcernAfter),
+		"MinExpected": c.MinExpectedOrders, "Rows": rows, "Limit": 200,
+	})
+	if n := strings.Count(out, `title=""`); n != 0 {
+		t.Errorf("rendered /demand-episodes carries %d empty title attributes. An empty title "+
+			"is not a neutral no-op: HTML defines it as asserting that no advisory text applies "+
+			"here AND that an ancestor's does not either, so it suppresses a tooltip rather than "+
+			"deferring to one. Emit the attribute only when there is something to say.", n)
+	}
+	// And the other half: a value WITH a title still gets one.
+	titled := renderPage(t, "demand-episodes.html", map[string]any{
+		"Page": "demand-episodes", "WindowHours": 24,
+		"WorryAfter": FormatDuration(c.WorryAfter), "ConcernAfter": FormatDuration(c.ConcernAfter),
+		"MinExpected": c.MinExpectedOrders, "Limit": 200,
+		"Rows": []EpisodeRow{{
+			OriginID: "o2", KindLabel: "cell", OpenedAt: time.Now().UTC(),
+			Expected: Cell{Kind: CellValue, Text: "4", Title: "why four"},
+		}},
+	})
+	if !strings.Contains(titled, `title="why four"`) {
+		t.Error(`a plain value carrying a Title rendered without it. The Tail cut column on ` +
+			`/cycle-time is exactly this case — its title spells out "median + k × (p90 − ` +
+			`median)" for a number nobody can derive from the row — and dropping it is what ` +
+			`taking de-cell's arm unchanged would have done.`)
 	}
 }
 

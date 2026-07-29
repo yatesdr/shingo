@@ -1,6 +1,9 @@
 package service
 
 import (
+	"time"
+
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/audit"
 )
@@ -58,4 +61,13 @@ func (s *AuditService) ListBinUOPOverridesByStation(station string, limit, offse
 // release-empties that still carried counted parts). No separate table.
 func (s *AuditService) ListBinUOPDiscrepancies(limit, offset int) ([]audit.BinUOPRow, error) {
 	return audit.ListBinUOPDiscrepancies(s.db.DB, limit, offset)
+}
+
+// ListCycleEvents exposes the truth-path delta rows the cycle-time surface
+// (5.10) computes its distributions from. Returns the events oldest-first plus
+// whether the row cap bit — the page has to be able to say its window was
+// narrowed, because a distribution over a silently shortened window misreports
+// its own n.
+func (s *AuditService) ListCycleEvents(since time.Time, limit int) ([]domain.CycleEvent, bool, error) {
+	return audit.ListCycleEvents(s.db.DB, since, limit)
 }

@@ -171,6 +171,27 @@ type DisplayConfig struct {
 	// re-derive it because real orphan counts have no opinion about how many
 	// .or-bar-N rules exist.
 	BarSteps int `yaml:"bar_steps"`
+	// ── Cycle time (5.10) ────────────────────────────────────────────────────
+
+	// CycleMinSamples is the fewest gaps a (station, payload, direction) key
+	// needs before its p90 and p99 are reported at all.
+	CycleMinSamples int `yaml:"cycle_min_samples"`
+
+	// CycleSpreadMultiple sets where a key's tail begins:
+	// median + k × (p90 − median). Expressed against the key's OWN spread rather
+	// than as a percentage of its takt, because dispersion inverts between
+	// Springfield's fast and slow payload families and a percentage would
+	// over-trigger on one and under-trigger on the other.
+	CycleSpreadMultiple float64 `yaml:"cycle_spread_multiple"`
+
+	// CycleBandWidth is the histogram band width, in multiples of the key's own
+	// median. The band count follows from it — see domain.CycleBands.
+	CycleBandWidth float64 `yaml:"cycle_band_width"`
+
+	// CycleFlushInterval is the Edge accumulator's delta flush cadence. A key
+	// whose median cycle is at or below it is measuring the transport, not the
+	// cell, and the page says so instead of printing the number as a takt.
+	CycleFlushInterval time.Duration `yaml:"cycle_flush_interval"`
 }
 
 // displayProvenance is the registry. One entry per DisplayConfig field, no more
@@ -275,6 +296,76 @@ var displayProvenance = []ConstantProvenance{
 			"class does not exist and would render at zero height: a bucket with " +
 			"orphans drawn as a bucket with none.",
 	},
+	{
+		Path: "display.cycle_min_samples",
+		Kind: ProvenanceSimDerived,
+		Note: "CHOSEN WITHOUT PLANT DATA, and by arithmetic rather than measurement. The " +
+			"quantiles here are NEAREST RANK, so the p90 of n samples is the element at " +
+			"index ceil(0.9n). For every n up to 9 that index IS n — the p90 and the " +
+			"maximum are the same observation, and a column headed p90 would be printing " +
+			"the largest gap in the window under a label saying nine in ten are below it. " +
+			"At n = 10 the index is 9 of 10 and the two separate for the first time. So the " +
+			"floor is the smallest n at which the statistic stops being a synonym for the " +
+			"maximum, and nothing more is claimed for it. WHAT A PLANT SHOULD MEASURE " +
+			"INSTEAD: the sampling distribution of the p90 across real keys — resample a " +
+			"long-running key's gaps at increasing n and find where the p90 estimate stops " +
+			"moving. That is a question about how noisy a real cell is, which no amount of " +
+			"arithmetic answers and the simulator answers wrongly.",
+	},
+	{
+		Path: "display.cycle_spread_multiple",
+		Kind: ProvenanceSimDerived,
+		Note: "CHOSEN WITHOUT PLANT DATA. Sets the tail cut at median + k × (p90 − median). " +
+			"The SHAPE of that expression is defensible from measured Springfield data and " +
+			"the value of k is not. Measured: dispersion INVERTS between the two payload " +
+			"families — the slow family (70–80 s median) is the steadiest at CV 0.27–0.32 " +
+			"and the fast family (20–31 s) is the noisiest at CV 0.42–0.86 — so any cut " +
+			"expressed as a percentage of takt over-triggers on fast lines and " +
+			"under-triggers on slow ones. Taking the spread from the key's own history " +
+			"removes that failure without keying the constant per payload. The 3 is the " +
+			"conventional three-sigma shape with (p90 − median) standing in for sigma; for a " +
+			"normal that is about 3.8 sigma, and for a right-skewed real distribution it is " +
+			"wider. THAT IS A SHAPE ASSUMPTION THE DATA DOES NOT CONFIRM. WHAT A PLANT " +
+			"SHOULD MEASURE INSTEAD: the gap distribution per key ABOVE its own p90, for " +
+			"the slow family in particular — the published Springfield percentiles give " +
+			"p05/p50/p75/p95/p99 for the fast family only, so the slow family's tail shape " +
+			"is entirely unmeasured and k cannot be derived for it. Then set k where the " +
+			"count past the cut correlates with something a person on the floor recognises " +
+			"as a stop.",
+	},
+	{
+		Path: "display.cycle_band_width",
+		Kind: ProvenanceSimDerived,
+		Note: "CHOSEN WITHOUT PLANT DATA — derived from Springfield's measured MODES rather " +
+			"than from any judgement about what a good cycle looks like. The distribution " +
+			"is strongly trimodal: 25 s (30.3%), 30 s (13.9%) and 20 s (13.1%) hold roughly " +
+			"57% of all intervals. Bands are centred on the key's own median and are " +
+			"half-open float ranges, never equality and never integer buckets — only 29 of " +
+			"219,465 intervals are exact multiples of five (the raw values are 24.995826 " +
+			"and 29.999909), so anything that rounds or compares for equality finds " +
+			"nothing. At 0.25 the three modes land in three DIFFERENT bands relative to a " +
+			"25 s median: 0.8 in [0.625,0.875), 1.0 in [0.875,1.125), 1.2 in [1.125,1.375). " +
+			"Widen it and the modes merge; narrow it and the picture becomes noise. WHAT A " +
+			"PLANT SHOULD MEASURE INSTEAD: the modal structure per key rather than pooled. " +
+			"The pooled figures above are a mixture over at least two families with " +
+			"different takts, and a width that separates the pooled modes need not separate " +
+			"any single key's own.",
+	},
+	{
+		Path: "display.cycle_flush_interval",
+		Kind: ProvenanceStructural,
+		Note: "Not a measurement and not a judgement — it is a number that already exists " +
+			"elsewhere in this repo, restated here because Core cannot import it. Edge " +
+			"accumulates UOP deltas and flushes them on a timer: " +
+			"defaultInventoryDeltaInterval in shingo-edge/uop/accumulator.go. That cadence " +
+			"is the resolution of every interval this surface computes, which is why a " +
+			"naive median over the un-partitioned audit stream reads 4.99 s at Springfield " +
+			"— the flush, not a cycle. A plant cannot re-derive this because it is not a " +
+			"property of the floor; if Edge's cadence changes, this follows. It is CHECKED " +
+			"rather than validated: TestCycleFlushIntervalMatchesEdge reads the Edge source " +
+			"and fails if the two disagree, which is what turns a structural claim into a " +
+			"checkable one.",
+	},
 }
 
 // DisplayProvenance returns every display constant's provenance record.
@@ -341,6 +432,11 @@ func DisplayDefaults() DisplayConfig {
 		OrphanBucket:      time.Hour,
 		MinBucketOrders:   20,
 		BarSteps:          10,
+
+		CycleMinSamples:     10,
+		CycleSpreadMultiple: 3,
+		CycleBandWidth:      0.25,
+		CycleFlushInterval:  5 * time.Second,
 	}
 }
 
@@ -386,24 +482,50 @@ func (c *Config) DisplayConstants() DisplayConfig {
 	if d.BarSteps <= 0 {
 		d.BarSteps = def.BarSteps
 	}
+	if d.CycleMinSamples <= 0 {
+		d.CycleMinSamples = def.CycleMinSamples
+	}
+	if d.CycleSpreadMultiple <= 0 {
+		d.CycleSpreadMultiple = def.CycleSpreadMultiple
+	}
+	if d.CycleBandWidth <= 0 {
+		d.CycleBandWidth = def.CycleBandWidth
+	}
+	if d.CycleFlushInterval <= 0 {
+		d.CycleFlushInterval = def.CycleFlushInterval
+	}
 	return d
 }
 
 // Validate reports every display constant that is internally inconsistent.
 //
-// Only one relationship is load-bearing and it is the one a retune breaks:
-// WorryAfter must be strictly below ConcernAfter. Inverted, the bands become
-// unreachable in an order no rendering code checks for — an episode would be
-// "concern" before it was ever "worry", and the ramp would carry magnitude past
-// the very line it is supposed to stop at.
+// Only relationships a retune can genuinely break belong here, not range checks
+// for their own sake. Two qualify.
 //
-// Returned rather than logged, and never applied as a silent correction: a
-// plant that inverts these has made a decision the surface cannot honour, and
-// quietly swapping them would render numbers nobody chose.
+// FIRST: WorryAfter must be strictly below ConcernAfter. Inverted, the bands
+// become unreachable in an order no rendering code checks for — an episode would
+// be "concern" before it was ever "worry", and the ramp would carry magnitude
+// past the very line it is supposed to stop at.
+//
+// SECOND: CycleSpreadMultiple must be strictly above 1. At exactly 1 the tail cut
+// IS the p90, so the tail count becomes 10% of every key's sample size BY
+// CONSTRUCTION — the same number on a healthy line and a stopped one. That is
+// precisely the quantile failure mode the spread-based cut exists to avoid, and
+// it is reachable by typing a smaller number into a config file. Below 1 the cut
+// sits between the median and the p90 and flags more than a tenth of everything.
+//
+// Returned rather than logged, and never applied as a silent correction: a plant
+// that sets these has made a decision the surface cannot honour, and quietly
+// substituting a value would render numbers nobody chose.
 func (d DisplayConfig) Validate() error {
 	if d.WorryAfter >= d.ConcernAfter {
 		return fmt.Errorf("display: worry_after (%s) must be strictly less than concern_after (%s)",
 			d.WorryAfter, d.ConcernAfter)
+	}
+	if d.CycleSpreadMultiple <= 1 {
+		return fmt.Errorf("display: cycle_spread_multiple (%g) must be strictly above 1 — at 1 the "+
+			"tail cut is the p90 itself, so the tail count is 10%% of every key by construction",
+			d.CycleSpreadMultiple)
 	}
 	return nil
 }

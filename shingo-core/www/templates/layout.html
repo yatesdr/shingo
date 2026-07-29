@@ -38,6 +38,12 @@
            after the process rather than the thing would make it the second page
            in this nav whose label does not match the noun it lists. */}}
       <a href="/orphans"{{if eq .Page "orphans"}} class="active"{{end}}>Orphans</a>
+      {{/* "Cycle time", not "Takt" — the page reports the interval it measured
+           between two ticks, which is what a cycle time is. Takt is a demand
+           figure (available time ÷ required units) and this page has neither
+           term of it; borrowing the word would claim a comparison nothing here
+           computes. */}}
+      <a href="/cycle-time"{{if eq .Page "cycle-time"}} class="active"{{end}}>Cycle time</a>
       <span class="nav-sep"></span>
       <div class="nav-dropdown">
         <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "inventory") (eq .Page "nodes") (eq .Page "bins") (eq .Page "payloads")}} active{{end}}">Assets</a>
