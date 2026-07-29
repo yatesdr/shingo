@@ -31,9 +31,11 @@
   --elev-surface: #ffffff;
   --elev-raised: #ffffff;
 
-  /* Text — primary/secondary stay as --text/--text-muted. --text-strong is the
-   * brightest body text (floor boards), --text-tertiary the faintest labels.
-   * Never pure white/black. */
+  /* Text — TWO steps and a floor-board maximum, and that is the whole ramp.
+   * --text is primary, --text-muted is secondary AND the quietest readable
+   * tone, --text-strong is the brightest body text (floor boards). There is no
+   * third quiet step; see the note below --text-strong for why one cannot
+   * exist. Never pure white/black. */
   --text: #212529;
   /* Was #6c757d, which cleared AA on a card (4.69:1) and missed it on the
    * page (4.33:1) — and it is the app's secondary text everywhere, plus the
@@ -46,7 +48,40 @@
    * deliberately untouched. */
   --text-muted: #68717a;
   --text-strong: #11161c;
-  --text-tertiary: #8a929c;
+  /* --text-tertiary was DELETED here, and there is no replacement on purpose.
+   *
+   * It was documented as "the faintest labels" and measured 3.15:1 on a card /
+   * 2.91:1 on the page in light, and 3.77:1 on a card / 3.27:1 on a raised
+   * panel in dark — below the 4.5:1 normal-text floor on every surface that
+   * hosts it, in both themes, live on the KPI strips, the overview support
+   * panels and the Replenishment Health threshold editor. Nothing measured it,
+   * because every contrast test in this repo measured a SPECIALISED ink (badge,
+   * chip, chart) and none measured the body-text ramp. text_contrast_test.go
+   * now does.
+   *
+   * It could not be fixed by moving it. Solving for the lightest grey of its own
+   * hue and saturation that clears 4.5:1 on every light surface gives #656d78 —
+   * darker than --text-muted's #68717a immediately above. --text-muted was
+   * already nudged to sit just over the floor (4.58:1 on the worse light
+   * surface), so the ramp has no room underneath it: a third step quiet enough
+   * to read as quieter than muted is too quiet to read at all, and one that
+   * clears the floor is not quieter. The ramp inverts either way.
+   *
+   * So THERE IS NO TOKEN FOR QUIET TYPE, and that is the answer rather than a
+   * gap. Quiet type is --text-muted; what makes a label read as a label is its
+   * size, its case and its letter-spacing, which every one of the fifteen
+   * former declarations already set — four in components.css, eleven in Core's
+   * style.css. A one-step luminance difference on top of that is not an
+   * encoding; it is colour-alone signalling for a distinction the type already
+   * carries, which is the same ruling U5 reached for .de-muted vs .de-nodata.
+   * (Sixteenth site, and not type at all: the map's offline-robot dot, moved to
+   * --sub-4. This comment first said "nineteen" for the type sites, carried from
+   * an unrelated count elsewhere in the guide and never checked. Fifteen is from
+   * the diff.)
+   *
+   * Two steps of body text, and the ramp is full. If a future surface genuinely
+   * needs a third, it has to come from WEIGHT or SIZE, not from luminance —
+   * the same conclusion the Signal palette reached at 13 statuses. */
 
   /* UI accent — Indigo. Reserved for UI/interactive chrome ONLY (links, focus
    * rings, selection, primary action, live pill, map focus ring). NEVER a
@@ -332,7 +367,11 @@
   --text: #c9d1d9;
   --text-muted: #8b949e;
   --text-strong: #e6edf3;
-  --text-tertiary: #6e7681;
+  /* No --text-tertiary in dark either. Its #6e7681 was the WORSE of the two
+   * themes on the surface that matters most: 3.27:1 on --elev-raised, which is
+   * where the overview support panel and the Replenishment Health editor put it.
+   * The record that flagged this token cited 3.77:1 (its --elev-surface figure)
+   * for dark, so the failure was reported milder than it measured. See :root. */
 
   /* Substrate ramp (U8) — dark is the reference. Steps 2-5 are the map's own
    * steel, which is where the ramp was generalized from; --map-bay-ring /

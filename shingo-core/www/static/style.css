@@ -236,14 +236,14 @@ textarea { resize: vertical; min-height: 60px; }
 .manifest-head { padding-bottom: 0.6rem; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border); }
 .manifest-hero { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .manifest-route { font-size: var(--font-lg); font-weight: var(--fw-bold); letter-spacing: -0.01em; }
-.manifest-arrow { color: var(--text-tertiary); font-weight: 400; margin: 0 0.15rem; }
+.manifest-arrow { color: var(--text-muted); font-weight: 400; margin: 0 0.15rem; }
 .manifest-elapsed { color: var(--text-muted); font-size: var(--font-xs); }
 /* Identity strip — everything that is context rather than headline. */
 .manifest-ident { margin-top: 0.3rem; color: var(--text-muted); font-size: var(--font-xs); }
-.manifest-dot { margin: 0 0.45rem; color: var(--text-tertiary); }
+.manifest-dot { margin: 0 0.45rem; color: var(--text-muted); }
 .manifest-head .manifest-uuid {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.72rem; color: var(--text-tertiary); word-break: break-all; margin-top: 0.15rem;
+  font-size: 0.72rem; color: var(--text-muted); word-break: break-all; margin-top: 0.15rem;
 }
 .manifest-head .manifest-id { font-size: 1.1rem; font-weight: var(--fw-bold); }
 
@@ -258,7 +258,7 @@ textarea { resize: vertical; min-height: 60px; }
  * before, when every caption was bold and the data was not. */
 .manifest-field label {
   display: block; font-size: 0.68rem; text-transform: uppercase;
-  letter-spacing: 0.05em; color: var(--text-tertiary);
+  letter-spacing: 0.05em; color: var(--text-muted);
   font-weight: 400; line-height: 1.3;
 }
 .manifest-field span { font-size: 0.85rem; color: var(--text); }
@@ -473,10 +473,18 @@ textarea { resize: vertical; min-height: 60px; }
 .badge-robot-error { background: #f8d7da; color: #842029; }
 .badge-robot-offline { background: #e2e3e5; color: #41464b; }
 
-/* Utility */
+/* Utility
+   Two of these were bare-class collisions with shared/components.css, found by
+   TestNoBareClassDeclaredInTwoCoLoadedStylesheets. Both are gone:
+   - .mb-3 declared 1.5rem here against shared's 0.75rem and had ZERO use sites
+     in Core markup, so it existed only to disagree. Core markup that reaches
+     for .mb-3 now gets shared's documented value.
+   - .flex-end was byte-identical to shared's, i.e. pure duplication.
+   .mb-2 / .mt-2 / .badge-sm still collide and are PINNED in that test with the
+   measured divergence: unlike these two, picking a winner there moves margins
+   on shipped pages. */
 .mb-1 { margin-bottom: 0.5rem; }
 .mb-2 { margin-bottom: 1rem; }
-.mb-3 { margin-bottom: 1.5rem; }
 .mt-2 { margin-top: 1rem; }
 .text-muted { color: var(--text-muted); }
 .text-right { text-align: right; }
@@ -487,7 +495,6 @@ textarea { resize: vertical; min-height: 60px; }
 .gap-2 { gap: 1rem; }
 .flex-col { display: flex; flex-direction: column; }
 .flex-center { display: flex; align-items: center; }
-.flex-end { display: flex; justify-content: flex-end; }
 .flex-wrap { flex-wrap: wrap; }
 .items-center { align-items: center; }
 .ml-05 { margin-left: 0.5rem; }
@@ -613,57 +620,71 @@ textarea { resize: vertical; min-height: 60px; }
 .wizard-step.active { border-bottom-color: var(--primary); font-weight: 600; }
 .wizard-step.done { border-bottom-color: var(--success); }
 
-/* Chip picker */
-.chip-picker { position: relative; }
-.chip-picker .mode-select { margin-bottom: 0.4rem; }
-.chip-container {
+/* ── Tag field (was the "chip picker") ────────────────────────────────────
+ * A multi-select whose chosen values render as removable pills: bin types and
+ * operator stations on the node-detail modal.
+ *
+ * RENAMED OUT OF THE `chip` NAMESPACE (U5). shared/components.css owns `.chip`
+ * — the derived-health vocabulary (.chip-ok / .chip-near / .chip-below /
+ * .chip-err). This widget's pill was ALSO called `.chip`, also (0,1,0), and
+ * layout.html loads this file after components.css, so this background silently
+ * won on every health chip in the app. .chip-ok/near/below survived on luck (a
+ * bright ink that happened to read on this navy); .chip-err did not, because it
+ * sets near-black ink expecting its own coral fill, and on the navy that is
+ * about 1.2:1. The loudest state on the Replenishment Health page was the one
+ * you could not read.
+ *
+ * d01156b1 fixed the pixel by scoping this rule to `.chip-container .chip`.
+ * That is a specificity fix for a naming problem: both names survived, and the
+ * next bare `.chip` here would have re-broken it. The names are now disjoint,
+ * so the scope is gone and the pill is a plain `.tag` again.
+ * TestNoBareClassDeclaredInTwoCoLoadedStylesheets is what keeps it that way.
+ *
+ * NOT `.tag-picker` / `.tag-select`, deliberately. Both are already taken in
+ * shingo-edge/www/static/css/shingoedge.css by the PLC-tag autocomplete, where
+ * "tag" means a PLC tag. Those sheets never load together so nothing would
+ * break — but minting a second meaning for an existing class name is the
+ * naming drift docs/ui-style-guide.md's glossary calls a defect ("Station"
+ * meaning two things at two scales), and this change exists precisely because
+ * two components sharing one name is expensive. Hence `.tag-field`. */
+.tag-field { position: relative; }
+.tag-field .mode-select { margin-bottom: 0.4rem; }
+.tag-list {
   display: flex; flex-wrap: wrap; gap: 0.3rem;
   padding: 0.3rem; min-height: 30px;
   border: 1px solid var(--border); border-radius: 0.35rem;
   background: var(--surface);
 }
-/* SCOPED to .chip-container on purpose. This is the chip-PICKER's removable
-   tag pill, a different thing from the status chips in shared/components.css
-   (.chip-ok / .chip-near / .chip-below / .chip-err). Both were called .chip,
-   both are (0,1,0), and style.css loads after components.css — so this
-   background silently won on every status chip in the app.
-   .chip-ok/near/below survived by luck: they set a bright text colour that
-   happens to read on this navy. .chip-err did not — it sets near-black text
-   (#1b0508) because it expects its own coral FILL, and on the navy that is
-   about 1.2:1 contrast. The loudest state on the Replenishment Health page
-   was the one you could not read.
-   Every picker chip is appended into a .chip-container (nodes-detail.js), so
-   scoping costs the widget nothing. */
-.chip-container .chip {
+.tag {
   display: inline-flex; align-items: center; gap: 0.25rem;
   padding: 0.15rem 0.4rem; font-size: 0.8rem;
   background: color-mix(in srgb, var(--primary) 12%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border));
   border-radius: 0.25rem; white-space: nowrap;
 }
-.chip-remove {
+.tag-remove {
   background: none; border: none; cursor: pointer;
   color: var(--text-muted); font-size: 0.9rem; line-height: 1;
   padding: 0 0.1rem;
 }
-.chip-remove:hover { color: var(--danger); }
-.chip-filter {
+.tag-remove:hover { color: var(--danger); }
+.tag-filter {
   width: 100%; padding: 0.3rem 0.5rem; font-size: 0.8rem;
   border: 1px solid var(--border); border-radius: 0.35rem;
   background: var(--surface); color: var(--text);
   margin-top: 0.3rem;
 }
-.chip-dropdown {
+.tag-dropdown {
   max-height: 120px; overflow-y: auto;
   border: 1px solid var(--border); border-radius: 0.35rem;
   background: var(--surface); margin-top: 0.15rem;
 }
-.chip-dropdown-item {
+.tag-dropdown-item {
   padding: 0.25rem 0.5rem; font-size: 0.8rem;
   cursor: pointer;
 }
-.chip-dropdown-item:hover { background: color-mix(in srgb, var(--primary) 10%, var(--surface)); }
-.chip-dropdown-empty {
+.tag-dropdown-item:hover { background: color-mix(in srgb, var(--primary) 10%, var(--surface)); }
+.tag-dropdown-empty {
   padding: 0.25rem 0.5rem; font-size: 0.8rem;
   color: var(--text-muted); font-style: italic;
 }
@@ -1389,256 +1410,36 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
    two representations (the node stays on the grid; the box holds a member chip). */
 .node-tile.loader-linked { outline: 2px solid #0a8f6a; outline-offset: 1px; }
 
-/* ── AMR Task Board ─────────────────────────────────── */
+/* ── AMR Task Board — DELETED, the whole section ─────────────────────────
+   Entered as a bare-class collision and came out as dead code.
 
-.board-page {
-  background: #0a0f1a;
-  min-height: calc(100vh - 6rem);
-}
+   TestNoBareClassDeclaredInTwoCoLoadedStylesheets flagged .board-table and
+   .board-empty: declared BOTH here and in dashboard.css, and
+   dashboard-node-report.html links both sheets with style.css second, so this
+   file won. Checking the use sites to decide which side should rename showed
+   there was nothing to rename. Every class in the section — .board-page,
+   -header, -header-right, -title, -connection(.board-connected/-disconnected),
+   -filters, -table-wrap, -table, -cell, -robot, -payload, -current, -status,
+   -eta, @keyframes board-pulse — has ZERO use sites in any template, page
+   script or handler, in either module, INCLUDING its full [data-theme="light"]
+   counterpart. .board-table's one use site in the repo is
+   dashboard-display.html, which links tokens.css + dashboard.css and not this
+   file. (`.os-board-header` in the Operator HMI is a different class; it is
+   what an unanchored grep for "board-header" finds.)
 
-[data-theme="light"] .board-page {
-  background: #f8fafc;
-}
+   So the section reached exactly ONE live element: #nr-empty on the node-report
+   kiosk page, where it silently replaced dashboard.css's 1.6rem/--dash-muted
+   empty state with 1.1rem/#64748b. The same class rendered at two different
+   sizes on two kiosk pages, decided by which sheets each page happened to link.
+   Floor-display styling is dashboard.css's; ~26 hardcoded hex literals left
+   this file with the section.
 
-[data-theme="light"] .board-title {
-  color: #1e293b;
-}
-
-[data-theme="light"] .board-connection.board-connected {
-  background: #22c55e;
-  box-shadow: 0 0 4px #22c55e;
-}
-
-[data-theme="light"] .board-connection.board-disconnected {
-  background: #ef4444;
-  box-shadow: 0 0 4px #ef4444;
-}
-
-[data-theme="light"] .board-filters select {
-  border-color: #cbd5e1;
-  background: #ffffff;
-  color: #334155;
-}
-[data-theme="light"] .board-filters select option {
-  background: #ffffff;
-  color: #334155;
-}
-
-[data-theme="light"] .board-table {
-  border-bottom-color: #e2e8f0;
-}
-
-[data-theme="light"] .board-table thead th {
-  color: #64748b;
-  border-bottom-color: #e2e8f0;
-}
-
-[data-theme="light"] .board-table tbody tr {
-  border-bottom-color: #f1f5f9;
-}
-
-[data-theme="light"] .board-table tbody tr:hover:not(.status-flash-green):not(.status-flash-red) {
-  background: #f1f5f9;
-}
-
-[data-theme="light"] .board-cell {
-  color: #1e293b;
-}
-
-[data-theme="light"] .board-robot {
-  color: #0f172a;
-}
-
-[data-theme="light"] .board-current {
-  color: #64748b;
-}
-
-[data-theme="light"] .board-status.status-in_transit {
-  color: #1e293b;
-}
-
-[data-theme="light"] .board-status.status-dispatched {
-  color: #1e40af;
-}
-
-[data-theme="light"] .board-status.status-staged {
-  color: #0f766e;
-}
-
-[data-theme="light"] .board-status.status-delivered,
-[data-theme="light"] .board-status.status-completed,
-[data-theme="light"] .board-status.status-confirmed {
-  color: #166534;
-}
-
-[data-theme="light"] .board-payload {
-  color: #4f46e5;
-}
-
-[data-theme="light"] .board-empty {
-  color: #94a3b8;
-}
-
-.board-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-
-.board-title {
-  font-size: 1.6rem;
-  font-weight: 700;
-  letter-spacing: 0.15rem;
-  margin: 0;
-}
-
-.board-header-right {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.board-connection {
-  width: 0.6rem;
-  height: 0.6rem;
-  border-radius: 50%;
-  display: inline-block;
-}
-.board-connection.board-connected {
-  background: #22c55e;
-  box-shadow: 0 0 4px #22c55e;
-  animation: board-pulse 2s ease-in-out infinite;
-}
-.board-connection.board-disconnected {
-  background: #ef4444;
-  box-shadow: 0 0 4px #ef4444;
-}
-
-@keyframes board-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-.board-filters {
-  display: flex;
-  gap: 0.5rem;
-}
-.board-filters select {
-  padding: 0.35rem 0.5rem;
-  border-radius: 4px;
-  border: 1px solid var(--sub-2);
-  background: rgba(255,255,255,0.08);
-  color: #e2e8f0;
-  font-size: 0.85rem;
-  font-family: inherit;
-  cursor: pointer;
-}
-.board-filters select option {
-  background: #1e293b;
-  color: #e2e8f0;
-}
-
-.board-table-wrap {
-  overflow-x: auto;
-}
-
-/* Table chrome from the substrate ramp (U8), not three white alphas picked by
-   eye. The old .15/.10/.05 stack had no relationship between the weights: the
-   outer edge and the header rule were identical (both 1.34:1) so the header did
-   not read as a header at all. Now outer edge = --sub-2 (panel edge, 1.92:1),
-   header rule = --sub-3 (an axis is what a header rule is, 2.31:1), row rule =
-   --sub-1 (hairline, 1.39:1). Deliberately a step up from the old flat 1.14-1.34
-   band — this board is read from across a plant floor. */
-.board-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
-  font-size: 0.9rem;
-  border-bottom: 1px solid var(--sub-2);
-}
-
-.board-table thead th {
-  text-align: left;
-  padding: 0.6rem 0.75rem;
-  text-transform: uppercase;
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.08rem;
-  color: #94a3b8;
-  border-bottom: 1px solid var(--sub-3);
-  white-space: nowrap;
-}
-
-.board-table tbody tr {
-  border-bottom: 1px solid var(--sub-1);
-  transition: opacity 0.3s ease;
-}
-
-.board-table tbody tr:hover:not(.status-flash-green):not(.status-flash-red) {
-  background: rgba(255,255,255,0.03);
-}
-
-.board-cell {
-  padding: 0.6rem 0.75rem;
-  white-space: nowrap;
-  color: #e2e8f0;
-}
-
-.board-robot {
-  font-weight: 600;
-  color: #f8fafc;
-}
-
-.board-payload {
-  color: #a5b4fc;
-}
-
-.board-current {
-  color: #94a3b8;
-}
-
-.board-status {
-  font-weight: 500;
-}
-.board-status.status-dispatched {
-  color: #93c5fd;
-}
-.board-status.status-acknowledged {
-  color: #94a3b8;
-}
-.board-status.status-in_transit {
-  color: #f8fafc;
-}
-.board-status.status-staged {
-  color: #5eead4;
-}
-.board-status.status-blocked {
-  color: #f87171;
-}
-.board-status.status-failed,
-.board-status.status-cancelled {
-  color: #f87171;
-}
-.board-status.status-delivered,
-.board-status.status-completed,
-.board-status.status-confirmed {
-  color: #86efac;
-}
-
-.board-eta {
-  color: #94a3b8;
-}
-
-.board-empty {
-  text-align: center;
-  padding: 4rem 1rem;
-  color: #64748b;
-  font-size: 1.1rem;
-  letter-spacing: 0.05rem;
-}
+   ONE THING THIS DELETION DOES NOT FIX, and it is worth carrying: the deleted
+   .board-table carried a careful comment deriving its edge/header/row rules
+   from --sub-2/--sub-3/--sub-1 because "this board is read from across a plant
+   floor". That U8 derivation was applied to rules no floor board loads. The
+   live board still draws its chrome from --dash-*, so the substrate ramp has
+   not actually reached the floor displays. Open, and not this change's. */
 
 /* Flash animations */
 
@@ -1857,7 +1658,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .inv-bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.7rem 0; border-bottom: 1px solid var(--border); }
 .inv-bar .inv-title { font-size: var(--font-xl); margin: 0 auto 0 0; font-weight: var(--fw-bold); }
 .inv-search { min-width: 240px; }
-.inv-live-stamp { font-size: var(--font-xs); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.inv-live-stamp { font-size: var(--font-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 /* KPI bin-lifecycle stacked bar. */
 .lifebar { display: flex; height: 0.9rem; border-radius: 3px; overflow: hidden; margin-top: 0.55rem; gap: 2px; }
@@ -1879,28 +1680,28 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .rh-row:hover { background: var(--elev-raised); }
 .rh-num { text-align: right; font-variant-numeric: tabular-nums; }
 .rh-neg { color: var(--viz-coral); }
-.rh-split { font-size: var(--font-xs); color: var(--text-tertiary); }
-.chev { display: inline-block; transition: transform var(--dur-fast, 0.15s) var(--ease, ease); color: var(--text-tertiary); }
+.rh-split { font-size: var(--font-xs); color: var(--text-muted); }
+.chev { display: inline-block; transition: transform var(--dur-fast, 0.15s) var(--ease, ease); color: var(--text-muted); }
 .rh-row.open .chev { transform: rotate(90deg); }
 
 /* Expanded editor row. */
 .rh-editor > td { background: var(--elev-raised); padding: 0.9rem 1rem; }
 .thr-edit-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
-.thr-edit-table th { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
+.thr-edit-table th { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
 .thr-edit-table td { padding: 0.4rem 0.5rem; vertical-align: middle; }
 .thr-edit-table input[type="number"] { width: 90px; text-align: right; }
 .row-dirty { outline: 1px solid var(--viz-amber); outline-offset: -1px; border-radius: 4px; }
 .dirty-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--viz-amber); margin-right: 0.35rem; vertical-align: middle; }
-.kind-pill { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); border: 1px solid var(--border); border-radius: 999px; padding: 0.05rem 0.45rem; }
+.kind-pill { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 0.05rem 0.45rem; }
 .calc-pop { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 0.8rem 1rem; margin-top: 0.6rem; max-width: 520px; }
 .calc-pop b { font-variant-numeric: tabular-nums; }
 .conf-high { color: var(--viz-green); }
 .conf-low { color: var(--viz-amber); }
 
 /* Holding-bins mini list inside the expanded row. */
-.holding-title { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); margin: 0.8rem 0 0.3rem; }
+.holding-title { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 0.8rem 0 0.3rem; }
 .holding-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
-.holding-table th { font-size: var(--font-xs); color: var(--text-tertiary); text-transform: uppercase; text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border); }
+.holding-table th { font-size: var(--font-xs); color: var(--text-muted); text-transform: uppercase; text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border); }
 .holding-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
 
 /* Lineside bucket staleness. */

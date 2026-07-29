@@ -8,7 +8,11 @@ import { apiGet, el, formatDuration, timeAgo, toast } from '/static/app.js';
 import { createStore, onSSE, debounce } from '/static/shared/utils.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
-import { renderBarList } from '/static/components/BarList.js';
+// BarList is no longer imported here: U3 replaced both breakdown panels with
+// tables, and this was its last consumer in the repo. The component and its
+// .bar-list / .bar-row CSS are left in place rather than deleted — unlike the
+// dead .board-* block, it is a general primitive another panel could reuse, and
+// deleting a shared component is the owner's call. Flagged, not swept.
 import { makeChart, chartColors, installChartThemeHook } from '/static/components/charts.js';
 
 const filters = createStore({ since: '', until: '', station: '', robot: '', state: '' });
@@ -286,24 +290,137 @@ function renderPareto(reasons) {
 function refreshAll(state) { refresh(state); }
 const onFilterChange = debounce(refresh, 150);
 
+// §3.F breakdowns, U3 — TABLES, and an INDEXED per-robot figure.
+//
+// The bar list this replaces showed each robot's mean mission duration. Five
+// reviewers wanted that retired outright and were right about why: RDS assigns
+// the routes, so a per-robot mean measures which routes that robot happened to
+// draw. A robot parked on supermarket hauls reads slow and is not — so the panel
+// reliably concluded "AMR-04 is slow" about the one variable it could not see.
+//
+// The figure is now duration ÷ that route's median duration, aggregated as a
+// MEDIAN OF RATIOS per robot. 1.00x means the robot runs its routes in the time
+// those routes normally take. It is a sentence about the robot rather than about
+// the route mix.
+//
+// A TABLE and not a bar list, because a bar encodes ONE number as length and
+// this panel now has three (volume, duration, index) — the form could not hold
+// the content. Under ten rows a sorted table also reads faster and carries the
+// exact figures.
+//
+// THE SMALL-n RULES, both of them, and they are different rules:
+//   - no route cleared min_route_samples  → the Index COLUMN IS DROPPED, and a
+//     note says why. An empty column reads as a claim about the robots.
+//   - a robot's index is over fewer than min_robot_samples missions → the figure
+//     is greyed AND its sample count is printed, per 5.4/5.9. Greying alone is
+//     colour-only signalling; the number is what makes it actionable.
+//   - a robot ran on no qualifying route at all → route_index is null from the
+//     server and the cell is an em dash with a title. Not 0.00x, which would
+//     read as infinitely fast.
+//
+// LABELS. The duration column says "Avg mission" and not "cycle time". These
+// figures average mission_telemetry.duration_ms, which is a TRANSPORT duration —
+// the same distinction that renamed /api/parts/cycle-time to
+// /api/parts/mission-duration. A cycle time is a cell's, not a robot's.
+function fmtIndex(x) {
+    // One decimal, per the number doctrine's row for a ratio. Two would assert a
+    // precision a median of a few dozen heavy-tailed ratios cannot support.
+    return x.toFixed(1) + '×';
+}
+
+function breakdownTable(container, rows, opts) {
+    if (!container) return;
+    if (!rows || !rows.length) {
+        container.innerHTML = '<div class="dash-empty">No missions in this window.</div>';
+        return;
+    }
+    const showIndex = !!opts.showIndex;
+    const minRobot = opts.minRobotSamples || 0;
+
+    const head = '<thead><tr>'
+        + '<th>' + opts.labelHead + '</th>'
+        + '<th class="col-num">Missions</th>'
+        + '<th class="col-num" title="Average of mission_telemetry.duration_ms — a TRANSPORT duration, not a cell cycle time">Avg mission</th>'
+        + (showIndex ? '<th class="col-num" title="Median over this robot’s missions of (duration ÷ that route’s median duration). 1.0× means the robot runs its routes in the time those routes normally take.">Route index</th>' : '')
+        + '</tr></thead>';
+
+    const body = rows.map((r) => {
+        const label = String(opts.label(r));
+        let idxCell = '';
+        if (showIndex) {
+            if (r.route_index === null || r.route_index === undefined) {
+                idxCell = '<td class="col-num u3-nodata" title="This robot ran no missions on a route with enough samples to be a denominator, so it has no index. Not the same as a fast one.">&mdash;</td>';
+            } else {
+                const thin = r.index_samples < minRobot;
+                idxCell = '<td class="col-num' + (thin ? ' u3-thin' : '') + '"'
+                    + (thin ? ' title="Indexed over ' + r.index_samples + ' missions, below the ' + minRobot + ' this surface needs before the figure is stable."' : '')
+                    + '>' + fmtIndex(r.route_index)
+                    + (thin ? ' <span class="u3-n">n=' + r.index_samples + '</span>' : '')
+                    + '</td>';
+            }
+        }
+        return '<tr' + (opts.onClick ? ' class="u3-row" data-label="' + escapeAttr(label) + '"' : '') + '>'
+            + '<td title="' + escapeAttr(label) + '">' + escapeText(label) + '</td>'
+            + '<td class="col-num tnum">' + r.count + '</td>'
+            + '<td class="col-num tnum">' + escapeText(formatDuration(r.avg_duration_ms)) + '</td>'
+            + idxCell
+            + '</tr>';
+    }).join('');
+
+    container.innerHTML = (opts.note ? '<p class="u3-note">' + escapeText(opts.note) + '</p>' : '')
+        + '<table class="u3-tbl">' + head + '<tbody>' + body + '</tbody></table>';
+
+    if (opts.onClick) {
+        container.querySelectorAll('.u3-row').forEach((tr) => {
+            tr.addEventListener('click', () => opts.onClick(tr.dataset.label));
+        });
+    }
+}
+
+function escapeText(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function escapeAttr(s) {
+    return escapeText(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // §3.F breakdowns: top robots and routes. Robot rows are clickable → add the
 // robot to the global filter; route isn't a filter facet so route rows are
 // informational (Q-012).
 function refreshBreakdowns(state) {
     const base = filterQS(state, {});
     apiGet('/api/missions/breakdown?by=robot&' + base).then((d) => {
-        renderBarList(document.getElementById('m-bd-robot'), (d && d.rows) || [], {
-            label: (r) => r.label, raw: (r) => r.count,
-            value: (r) => r.count + ' · ' + formatDuration(r.avg_duration_ms),
-            color: 'var(--primary)',
-            onClick: (r) => { filters.set({ robot: r.label }); const sel = document.getElementById('m-robot'); if (sel) sel.value = r.label; },
+        const rows = (d && d.rows) || [];
+        // index_available is the server's answer to "did ANY route qualify".
+        // Defaulting it to true here would drop the distinction the endpoint was
+        // extended to carry; defaulting to false would hide a live column on an
+        // older server. Read it, and treat a missing field as "no index" — an
+        // absent answer is not a positive finding.
+        const showIndex = !!(d && d.index_available);
+        const minRoute = (d && d.min_route_samples) || 0;
+        breakdownTable(document.getElementById('m-bd-robot'), rows, {
+            labelHead: 'Robot',
+            label: (r) => r.label,
+            showIndex,
+            minRobotSamples: (d && d.min_robot_samples) || 0,
+            note: showIndex
+                ? ''
+                : 'Route index not shown: no route in this window has the '
+                  + minRoute + ' missions needed for its median to be a denominator. '
+                  + 'Widen the window rather than reading the durations as a robot comparison — '
+                  + 'the routes differ more than the robots do.',
+            onClick: (label) => {
+                filters.set({ robot: label });
+                const sel = document.getElementById('m-robot');
+                if (sel) sel.value = label;
+            },
         });
     }).catch(() => {});
     apiGet('/api/missions/breakdown?by=route&' + base).then((d) => {
-        renderBarList(document.getElementById('m-bd-route'), (d && d.rows) || [], {
-            label: (r) => r.label, raw: (r) => r.count,
-            value: (r) => r.count + ' · ' + formatDuration(r.avg_duration_ms),
-            color: 'var(--info)',
+        breakdownTable(document.getElementById('m-bd-route'), (d && d.rows) || [], {
+            labelHead: 'Route',
+            label: (r) => r.label,
+            showIndex: false,
         });
     }).catch(() => {});
 }

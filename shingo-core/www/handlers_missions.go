@@ -136,13 +136,43 @@ func (h *Handlers) apiMissionTimeseries(w http.ResponseWriter, r *http.Request) 
 
 // apiMissionBreakdown serves the §3.F breakdown panels: top-10 missions
 // grouped by robot or route. ?by=robot (default) | route.
+//
+// The by=robot response carries U3's route index — duration ÷ that route's median
+// — alongside two things the client cannot work out for itself:
+//
+//	index_available   false when NO route had enough missions to be a denominator.
+//	                  The client drops the whole column, rather than rendering one
+//	                  that is empty for every row: an empty column reads as "these
+//	                  robots have no index", which is a claim about the robots
+//	                  instead of about the sample.
+//	min_route_samples the floor that decision was made against, echoed so the
+//	                  panel can say WHY the column is gone rather than just
+//	                  omitting it. A surface that silently loses a column is
+//	                  indistinguishable from one that never had it.
+//
+// Per-row, route_index is null (never 0) where the robot ran on no qualifying
+// route, and index_samples says how many of its missions the index is actually
+// over.
 func (h *Handlers) apiMissionBreakdown(w http.ResponseWriter, r *http.Request) {
 	f := parseMissionFilter(r)
 	by := r.URL.Query().Get("by")
 	if by != "route" {
 		by = "robot"
 	}
-	rows, err := h.engine.MissionService().Breakdown(f, by)
+
+	resp := map[string]any{"by": by}
+	var rows []domain.TelemetryBreakdownRow
+	var err error
+	if by == "robot" {
+		disp := h.engine.AppConfig().DisplayConstants()
+		var available bool
+		rows, available, err = h.engine.MissionService().BreakdownByRobot(f, disp.RouteIndexMinRouteSamples)
+		resp["index_available"] = available
+		resp["min_route_samples"] = disp.RouteIndexMinRouteSamples
+		resp["min_robot_samples"] = disp.RouteIndexMinRobotSamples
+	} else {
+		rows, err = h.engine.MissionService().Breakdown(f, by)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -150,8 +180,9 @@ func (h *Handlers) apiMissionBreakdown(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []domain.TelemetryBreakdownRow{}
 	}
+	resp["rows"] = rows
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"by": by, "rows": rows})
+	json.NewEncoder(w).Encode(resp)
 }
 
 // apiMissionDwell serves per-state dwell: p50/p95/count for each leg of an

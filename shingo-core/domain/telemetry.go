@@ -164,6 +164,36 @@ type TelemetryBreakdownRow struct {
 	Label         string `json:"label"`
 	Count         int64  `json:"count"`
 	AvgDurationMS int64  `json:"avg_duration_ms"`
+
+	// RouteIndex is the U3 figure: the median over this robot's missions of
+	// (mission duration ÷ the median duration of that mission's route). 1.0 means
+	// the robot runs its routes in the time those routes normally take; 1.3 means
+	// it takes 30% longer.
+	//
+	// A POINTER, and that is the whole point of it. The raw per-robot mean this
+	// replaces measured which ROUTES a robot was given, not the robot — RDS
+	// assigns the routes, so a robot parked on long hauls reliably reads slow and
+	// is not. Indexing fixes that, and introduces an absence: a robot whose
+	// missions all ran on routes below RouteIndexMinRouteSamples has no index at
+	// all. `float64` would render that as 0.0 — "infinitely fast" — which is the
+	// absence-as-value defect the number doctrine's load-bearing rule is about,
+	// and no amount of styling recovers the distinction once the type has lost it.
+	// nil means "not computable"; the renderer prints an em dash and says why.
+	RouteIndex *float64 `json:"route_index"`
+
+	// IndexSamples is how many of this row's missions actually contributed to
+	// RouteIndex — i.e. ran on a route that cleared the route-sample floor. It is
+	// always <= Count, is 0 exactly when RouteIndex is nil, and must be rendered
+	// beside the index: a median of ratios over four missions is not the same
+	// claim as one over four hundred, and this is the number that says which.
+	IndexSamples int64 `json:"index_samples"`
+}
+
+// TelemetryRouteIndex is the per-robot route index and its sample count, keyed
+// by robot outside this struct.
+type TelemetryRouteIndex struct {
+	Index   float64
+	Samples int64
 }
 
 // DwellPair names one order_history state transition to measure. Exported so

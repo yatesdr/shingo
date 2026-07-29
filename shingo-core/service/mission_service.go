@@ -82,6 +82,34 @@ func (s *MissionService) Breakdown(f telemetry.Filter, by string) ([]telemetry.B
 	return s.db.GetMissionBreakdown(f, by)
 }
 
+// BreakdownByRobot returns the by-robot breakdown with U3's route index attached,
+// and reports whether ANY route cleared minRouteSamples.
+//
+// The bool is not a nicety. "No route had enough missions to be a denominator"
+// and "this robot ran on none of the routes that did" are different facts and get
+// different UI — the first drops the column, the second dashes one cell — and
+// neither can be inferred from a nil index. A caller handed only the rows would
+// have to guess, and the guess it would make is the absence-as-value one.
+func (s *MissionService) BreakdownByRobot(f telemetry.Filter, minRouteSamples int) ([]telemetry.BreakdownRow, bool, error) {
+	rows, err := s.db.GetMissionBreakdown(f, "robot")
+	if err != nil {
+		return nil, false, err
+	}
+	idx, qualifyingRoutes, err := s.db.GetRobotRouteIndex(f, minRouteSamples)
+	if err != nil {
+		return nil, false, err
+	}
+	for i := range rows {
+		if ri, ok := idx[rows[i].Label]; ok {
+			v := ri.Index
+			rows[i].RouteIndex = &v
+			rows[i].IndexSamples = ri.Samples
+		}
+		// else: RouteIndex stays nil. Not zero — see the field's comment.
+	}
+	return rows, qualifyingRoutes > 0, nil
+}
+
 // Failures returns the classified failure-reason Pareto (plan §3.G).
 func (s *MissionService) Failures(f telemetry.Filter) ([]telemetry.FailureReason, error) {
 	return s.db.GetMissionFailures(f)

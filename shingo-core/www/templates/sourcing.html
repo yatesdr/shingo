@@ -102,6 +102,31 @@
   /* No-JS: every pane is visible and stacked. JS adds .src-js to switch to
      one-at-a-time, so the page is usable before the script runs. */
   .src-js .src-pane[hidden] { display:none; }
+
+  /* ── Verdict history (7.2 / S4) ──────────────────────────────────────────
+     A read-side panel over GET /api/sourceability/events, which shipped in
+     4975247c with zero UI consumers. It lands HERE rather than beside the
+     ledger-exceptions panel on /inventory: the events table is keyed by
+     (process_key, style_id), which is exactly this page's rail-and-pane key, so
+     inside the pane the history needs no filter UI at all — the pane IS the
+     filter. The ledger-exceptions panel is keyed by bin/carrier and its subject
+     is UOP ledger integrity, so putting verdict history there would make the
+     reader re-supply a process context that page does not have.
+
+     A TABLE, and no chips. The verdict reuses this page's own .src-v-* pill
+     vocabulary so one screen has one encoding for one thing. Durations are
+     compound per the number doctrine, and "still current" is a different cell
+     from a measured zero and from an absence. */
+  .src-hist-note { font-size:0.68rem; color:var(--text-muted); margin:0.15rem 0 0.35rem; }
+  .src-hist-when { white-space:nowrap; }
+  /* The state a row ESTABLISHED, and how long it held. Tabular so the column
+     scans; muted because it is derived from the neighbouring row rather than
+     measured on this one. */
+  .src-hist-held { white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .src-hist-now  { color:var(--success); font-weight:650; }
+  /* An absence is an em dash plus a title saying WHICH absence it is — never a
+     zero, and never an empty cell (an empty cell means "not applicable"). */
+  .src-hist-nodata { color:var(--text-muted); }
 </style>
 
 <div class="flex-between mb-2">
@@ -273,6 +298,16 @@
       </tbody>
     </table>
     {{end}}
+
+    {{/* Verdict history. Filled client-side from /api/sourceability/events —
+         the endpoint already exists and both recompute paths already write to
+         it; this is purely a read side. Rendered empty rather than omitted so
+         the JS has somewhere to put the answer, and so a reader who never gets
+         a response sees "not loaded" instead of nothing. */}}
+    <div class="src-k">Verdict history</div>
+    <div class="src-history" data-process="{{$p.ProcessID}}">
+      <p class="src-none">Loading&hellip;</p>
+    </div>
   </div>
   {{end}}
 </div>

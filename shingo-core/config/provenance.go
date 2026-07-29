@@ -192,6 +192,32 @@ type DisplayConfig struct {
 	// whose median cycle is at or below it is measuring the transport, not the
 	// cell, and the page says so instead of printing the number as a takt.
 	CycleFlushInterval time.Duration `yaml:"cycle_flush_interval"`
+
+	// ── Route index (U3, the per-robot breakdown) ────────────────────────────
+
+	// RouteIndexMinRouteSamples is the fewest missions a route needs before its
+	// median may be used as the denominator of a robot's route index.
+	//
+	// It is the load-bearing one: the index is duration / that route's median, so
+	// a route with two missions has a "median" that IS one of the two durations,
+	// and the ratio it produces measures nothing. Routes below this floor are
+	// excluded from the index entirely rather than greyed, and if NO route clears
+	// it the column is dropped from the table.
+	RouteIndexMinRouteSamples int `yaml:"route_index_min_route_samples"`
+
+	// RouteIndexMinRobotSamples is the fewest indexed missions a robot needs
+	// before ITS index is shown at full strength. Below it the figure is greyed
+	// and the mission count carries the row — the same rule as
+	// MinExpectedOrders and MinBucketOrders, one surface along.
+	//
+	// Separate from RouteIndexMinRouteSamples because the two floors protect
+	// different things: the route floor protects the DENOMINATOR from being a
+	// non-median, and the robot floor protects the AGGREGATE from being one
+	// unlucky trip. A robot with 40 missions all on unqualified routes has an
+	// index of nothing; a robot with one mission on a well-sampled route has an
+	// index of one trip. Those are different failures and one number cannot
+	// express both.
+	RouteIndexMinRobotSamples int `yaml:"route_index_min_robot_samples"`
 }
 
 // displayProvenance is the registry. One entry per DisplayConfig field, no more
@@ -366,6 +392,51 @@ var displayProvenance = []ConstantProvenance{
 			"and fails if the two disagree, which is what turns a structural claim into a " +
 			"checkable one.",
 	},
+	{
+		Path: "display.route_index_min_route_samples",
+		Kind: ProvenanceSimDerived,
+		Note: "CHOSEN WITHOUT PLANT DATA, and by arithmetic rather than measurement — the " +
+			"sim could not have supplied it, because its route mix is a property of " +
+			"demo.yaml's node graph rather than of any floor. The reasoning: this number " +
+			"is the sample count behind a MEDIAN that is then used as a DENOMINATOR. At " +
+			"n=2 the 'median' is the mean of the only two observations, so a robot's " +
+			"index against it is that robot's duration divided by a number it half " +
+			"determined — the ratio is partly self-referential and cannot be 1.0 by " +
+			"accident. At n=3 one outlier still IS the median. Requiring the median to " +
+			"survive the removal of any single observation needs n>=5, and requiring it " +
+			"to survive any two needs n>=7; 8 is the first even value clearing that with " +
+			"a margin, and even is worth having because percentile_cont interpolates " +
+			"between the two central values rather than picking one. WHAT A PLANT SHOULD " +
+			"MEASURE INSTEAD: the distribution of missions-per-route over a fortnight, " +
+			"and the spread of each route's duration. The floor belongs wherever a " +
+			"route's median stops moving materially when one mission is added — which is " +
+			"a question about that route's own dispersion, and Springfield's route mix is " +
+			"heavy-tailed enough that the answer will differ between the supermarket " +
+			"hauls and the lineside hops. THE FAILURE MODE IF IT IS TOO HIGH IS SILENT " +
+			"IN THE OTHER DIRECTION from the usual one: no route qualifies, the index " +
+			"column DISAPPEARS, and the panel looks like it never had one.",
+	},
+	{
+		Path: "display.route_index_min_robot_samples",
+		Kind: ProvenanceSimDerived,
+		Note: "CHOSEN WITHOUT PLANT DATA, same family as min_expected_orders and " +
+			"min_bucket_orders and by the same arithmetic. The quantity is a median of " +
+			"RATIOS, so the question is how many ratios before one bad trip stops " +
+			"dominating it: at n=5 a single 3x trip moves the median a full step; " +
+			"requiring the median ratio to be robust to any one observation gives n>=5 " +
+			"and to any two gives n>=7. 10 is taken rather than 7 for a reason specific " +
+			"to what this column ASSERTS — it is read as a claim about a robot, and a " +
+			"claim about a robot that flips when it makes one slow trip will be " +
+			"disbelieved after the first time it does. Ten also matches " +
+			"cycle_min_samples, and two small-n floors on adjacent analytics surfaces " +
+			"agreeing is worth more than each being individually optimal. WHAT A PLANT " +
+			"SHOULD MEASURE INSTEAD: the per-robot ratio distribution, and put the floor " +
+			"where the robot-to-robot variance stops being dominated by sample size — " +
+			"concretely, where a robot's index computed on its first half of missions " +
+			"agrees with the index on its second half. That is answerable at Springfield " +
+			"and not answerable in the sim, whose robots are interchangeable by " +
+			"construction so every real index is 1.0 and the floor cannot be exercised.",
+	},
 }
 
 // DisplayProvenance returns every display constant's provenance record.
@@ -437,6 +508,9 @@ func DisplayDefaults() DisplayConfig {
 		CycleSpreadMultiple: 3,
 		CycleBandWidth:      0.25,
 		CycleFlushInterval:  5 * time.Second,
+
+		RouteIndexMinRouteSamples: 8,
+		RouteIndexMinRobotSamples: 10,
 	}
 }
 
@@ -493,6 +567,12 @@ func (c *Config) DisplayConstants() DisplayConfig {
 	}
 	if d.CycleFlushInterval <= 0 {
 		d.CycleFlushInterval = def.CycleFlushInterval
+	}
+	if d.RouteIndexMinRouteSamples <= 0 {
+		d.RouteIndexMinRouteSamples = def.RouteIndexMinRouteSamples
+	}
+	if d.RouteIndexMinRobotSamples <= 0 {
+		d.RouteIndexMinRobotSamples = def.RouteIndexMinRobotSamples
 	}
 	return d
 }

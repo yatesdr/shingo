@@ -181,11 +181,11 @@ function renderReshuffleTargetChips() {
   container.innerHTML = '';
   _reshuffleTargets.forEach(function(name) {
     var chip = document.createElement('span');
-    chip.className = 'chip';
+    chip.className = 'tag';
     chip.textContent = name;
     var btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'chip-remove';
+    btn.className = 'tag-remove';
     btn.innerHTML = '&times;';
     btn.onclick = function() {
       _reshuffleTargets = _reshuffleTargets.filter(function(n) { return n !== name; });
@@ -245,7 +245,7 @@ function clearChipPicker(name) {
   _chipSelections[name] = [];
   var chips = document.getElementById('cp-' + name + '-chips');
   if (chips) chips.innerHTML = '';
-  var filter = document.querySelector('#cp-' + name + ' .chip-filter');
+  var filter = document.querySelector('#cp-' + name + ' .tag-filter');
   if (filter) filter.value = '';
 }
 
@@ -259,11 +259,11 @@ function renderChips(name) {
   container.innerHTML = '';
   _chipSelections[name].forEach(function(item) {
     var chip = document.createElement('span');
-    chip.className = 'chip';
+    chip.className = 'tag';
     chip.textContent = item.label;
     var btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'chip-remove';
+    btn.className = 'tag-remove';
     btn.innerHTML = '&times;';
     btn.onclick = function() { removeChip(name, item.id); };
     chip.appendChild(btn);
@@ -275,20 +275,20 @@ function renderChips(name) {
 function renderChipDropdown(name) {
   var cfg = getPickerConfig(name);
   var dd = document.getElementById('cp-' + name + '-dropdown');
-  var filter = document.querySelector('#cp-' + name + ' .chip-filter');
+  var filter = document.querySelector('#cp-' + name + ' .tag-filter');
   var q = (filter ? filter.value : '').toLowerCase();
   var selectedIds = _chipSelections[name].map(function(i) { return i.id; });
   var available = cfg.all.filter(function(item) {
     return selectedIds.indexOf(item.id) < 0 && (!q || item.label.toLowerCase().indexOf(q) >= 0);
   });
   if (available.length === 0) {
-    dd.innerHTML = '<div class="chip-dropdown-empty">No items</div>';
+    dd.innerHTML = '<div class="tag-dropdown-empty">No items</div>';
     return;
   }
   dd.innerHTML = '';
   available.forEach(function(item) {
     var div = document.createElement('div');
-    div.className = 'chip-dropdown-item';
+    div.className = 'tag-dropdown-item';
     div.textContent = item.label;
     div.onclick = function() { addChip(name, item); };
     dd.appendChild(div);
@@ -321,7 +321,7 @@ function hideChipDropdown(name) {
 }
 
 function serializeChipPickers() {
-  document.querySelectorAll('input.chip-hidden').forEach(function(el) { el.remove(); });
+  document.querySelectorAll('input.tag-hidden').forEach(function(el) { el.remove(); });
   var form = document.getElementById('node-form');
   ['bin-types', 'stations'].forEach(function(name) {
     var cfg = getPickerConfig(name);
@@ -330,7 +330,7 @@ function serializeChipPickers() {
     _chipSelections[name].forEach(function(item) {
       var inp = document.createElement('input');
       inp.type = 'hidden'; inp.name = cfg.inputName; inp.value = item.id;
-      inp.className = 'chip-hidden';
+      inp.className = 'tag-hidden';
       form.appendChild(inp);
     });
   });

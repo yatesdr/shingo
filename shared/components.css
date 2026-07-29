@@ -459,7 +459,13 @@
 /* ─── P8b hero hierarchy (overview sections) ──────────────────────────────
  * One big hero number per section; supporting stats demoted to small muted
  * figures. Two weights only — 500 (numbers) and 400 (labels). Colors via
- * tokens: hero/value inherit --text, labels use --text-tertiary. */
+ * tokens: hero/value inherit --text, labels use --text-muted.
+ *
+ * Labels used --text-tertiary until that token was deleted for measuring below
+ * AA in both themes with no room to move (see tokens.css). What separates these
+ * labels from body text is their SIZE, CASE and LETTER-SPACING, all set right
+ * here — the luminance step was carrying nothing the type was not already
+ * saying, and it was carrying it below the readability floor. */
 
 /* Top KPI strip reframed: a Success-rate hero + a quiet supporting row. */
 .ops-kpi-hero {
@@ -478,10 +484,10 @@
 /* P18: the single focal metric (Success rate) gets a thin indigo underline —
  * the whole indigo budget for the KPI strip. inline-block so it hugs the number. */
 .kpi-tile--hero .kpi-value { display: inline-block; align-self: flex-start; border-bottom: 2px solid var(--accent); padding-bottom: 0.08rem; }
-.kpi-tile--hero .kpi-label { font-size: 0.72rem; color: var(--text-tertiary); }
+.kpi-tile--hero .kpi-label { font-size: 0.72rem; color: var(--text-muted); }
 /* Demoted supporting tiles — quiet and small. */
 .kpi-tile--mini .kpi-value { font-size: 1rem; font-weight: 500; }
-.kpi-tile--mini .kpi-label { font-size: 0.68rem; color: var(--text-tertiary); }
+.kpi-tile--mini .kpi-label { font-size: 0.68rem; color: var(--text-muted); }
 .kpi-tile--mini .kpi-delta { font-size: 0.72rem; }
 .kpi-tile--mini .kpi-spark { display: none; }
 
@@ -490,12 +496,12 @@
 .ov-hero { display: flex; flex-direction: column; gap: 0.05rem; }
 .ov-hero__value { font-size: 2.2rem; font-weight: 500; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--viz-primary); }
 .ov-hero__sub.is-ceiling { color: var(--viz-amber); } /* P19: "at ceiling" = amber (semantic limit) */
-.ov-hero__label { font-size: 0.7rem; font-weight: 400; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); }
+.ov-hero__label { font-size: 0.7rem; font-weight: 400; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
 .ov-hero__sub { font-size: 0.82rem; font-weight: 400; color: var(--text-muted); margin-top: 0.1rem; }
 .ov-support { display: flex; flex-wrap: wrap; gap: 0.9rem 1.75rem; margin: 0.7rem 0 1rem; }
 .ov-support__item { display: flex; flex-direction: column; gap: 0.02rem; }
 .ov-support__value { font-size: 0.95rem; font-weight: 500; font-variant-numeric: tabular-nums; }
-.ov-support__label { font-size: 0.7rem; font-weight: 400; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); }
+.ov-support__label { font-size: 0.7rem; font-weight: 400; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
 
 /* Fleet Load chart box (§15.C) and footprint headline numbers (§15.D). */
 .fleet-load-box {

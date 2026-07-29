@@ -181,8 +181,15 @@
 }
 .icon-btn:hover { background: #e9ecef; }
 .icon-btn-danger:hover { background: #f8d7da; color: #dc3545; }
-.btn-danger { background: #dc3545; color: #fff; border-color: #dc3545; }
-.btn-danger:hover { background: #c82333; }
+{{/* The bare .btn-danger / .btn-danger:hover rules that sat here are DELETED.
+     Found by TestNoBareClassDeclaredInTwoCoLoadedStylesheets: style.css already
+     declares .btn-danger, and an inline <style> in the body is later in the
+     document at equal specificity, so this block won on the whole page. It was
+     not a harmless duplicate — it hardcoded #dc3545 where style.css uses
+     var(--danger), and --danger is #f85149 in dark, so /demand was the one page
+     whose danger buttons ignored the theme. The `border-color` it also set was
+     inert: .btn declares `border: none`. Deleting it is a no-op in light and a
+     fix in dark. */}}
 .demand-form-input { width:100%; padding:.4rem .5rem; border:1px solid #ced4da; border-radius:4px; font-size:inherit; box-sizing:border-box; }
 .demand-label { display:block; margin-bottom:.25rem; font-weight:600; }
 </style>

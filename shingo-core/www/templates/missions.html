@@ -1,4 +1,32 @@
 {{define "content"}}
+<style>
+  /* ── U3 breakdown tables ──────────────────────────────────────────────────
+     Table chrome from the substrate ramp (--sub-*), not from --border or an
+     rgba() picked by eye: "structure recedes, state glows" means the rules are
+     steel and the only colour on the panel is the thin-sample marker. Header
+     rule is --sub-3 (an axis is what a header rule is), row rule --sub-1
+     (hairline), outer edge --sub-2 (a panel edge).
+     Numeric columns take the existing .col-num + .tnum, so alignment and
+     tabular figures come from the same place as every other numeric column. */
+  .u3-tbl { width:100%; border-collapse:collapse; font-size:0.82rem; border-bottom:1px solid var(--sub-2); }
+  .u3-tbl th { text-align:left; padding:0.35rem 0.5rem; font-size:0.68rem; font-weight:600;
+               text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted);
+               border-bottom:1px solid var(--sub-3); white-space:nowrap; }
+  .u3-tbl td { padding:0.35rem 0.5rem; border-bottom:1px solid var(--sub-1); }
+  .u3-tbl tbody tr:last-child td { border-bottom:none; }
+  .u3-tbl td:first-child { max-width:16rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .u3-row { cursor:pointer; }
+  .u3-row:hover { background:var(--elev-raised); }
+  /* An index over too few missions is greyed AND prints its n. Greying alone
+     would be colour-only signalling for the one thing the reader has to act on
+     (5.4 / 5.9), so the count travels with the figure. */
+  .u3-thin { color:var(--text-muted); }
+  .u3-n { font-size:0.68rem; color:var(--text-muted); }
+  /* No index at all is an em dash with a title — never 0.0x, which would read as
+     a robot faster than instantaneous. */
+  .u3-nodata { color:var(--text-muted); }
+  .u3-note { font-size:0.7rem; color:var(--text-muted); margin:0 0 0.4rem; }
+</style>
 <div class="missions-dash">
 
   <!-- Sticky global filter bar (plan §2 / §3.H): the single filter that
@@ -49,8 +77,16 @@
   <section class="card" id="m-breakdowns">
     <div class="section-head"><h2>Breakdowns</h2></div>
     <div class="grid grid-2">
-      <div><div class="chart-caption">By robot (top 10 by volume)</div><div class="bar-list" id="m-bd-robot"></div></div>
-      <div><div class="chart-caption">By route (top 10 by volume)</div><div class="bar-list" id="m-bd-route"></div></div>
+      {{/* U3 — TABLES, not bar lists (6/6 agreed). A bar list encodes one
+           number as length and has nowhere to put a second, so the panel could
+           show volume OR duration but not both, and could not show the route
+           index at all. Under ten categories a sorted table is faster to read
+           than a bar chart, carries the exact figures, and can be pasted into a
+           spreadsheet — which is what the reader was going to do anyway (see
+           docs/ui-style-guide.md, "Reach for the table more often than feels
+           right"). Filled by missions.js. */}}
+      <div><div class="chart-caption">By robot (top 10 by volume)</div><div id="m-bd-robot"></div></div>
+      <div><div class="chart-caption">By route (top 10 by volume)</div><div id="m-bd-route"></div></div>
     </div>
   </section>
 

@@ -23,11 +23,16 @@ import (
 // applies the base `chip` class, capturing the whole class list so the
 // modifiers can be pulled out of it.
 //
-// Requiring the base class is the point of the predicate: `chip-hidden` is a
-// JS marker on a hidden <input> and `plc-chip-connected` is a different
-// component's own vocabulary. Neither is a chip modifier and neither needs a
-// colour rule. Only a class list that says `chip` AND `chip-<x>` is making the
-// promise this test holds it to.
+// Requiring the base class is the point of the predicate: `plc-chip-connected`
+// (shingoedge.css) is a different component's own vocabulary, not a chip
+// modifier, and needs no colour rule. Only a class list that says `chip` AND
+// `chip-<x>` is making the promise this test holds it to.
+//
+// Core's node-detail picker used to supply a second example here — a marker
+// class `chip-hidden` on a hidden <input>. It is `tag-hidden` now: that widget
+// left the `chip` namespace entirely in U5's rename, because its PILL was also
+// called `.chip` and silently overrode the health chips app-wide. The predicate
+// is unchanged; there is simply one less near-miss for it to survive.
 var chipUsePattern = regexp.MustCompile(`class(?:Name)?\s*=\s*["']([^"']*\bchip\b[^"']*)["']`)
 
 // chipModifierPattern pulls the `chip-<x>` tokens out of one class list.

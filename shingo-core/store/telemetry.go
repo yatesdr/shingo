@@ -56,6 +56,10 @@ func (db *DB) GetMissionBreakdown(f telemetry.Filter, by string) ([]telemetry.Br
 	return telemetry.GetBreakdown(db.DB, f, by)
 }
 
+func (db *DB) GetRobotRouteIndex(f telemetry.Filter, minRouteSamples int) (map[string]telemetry.RouteIndex, int, error) {
+	return telemetry.GetRobotRouteIndex(db.DB, f, minRouteSamples)
+}
+
 func (db *DB) GetMissionFailures(f telemetry.Filter) ([]telemetry.FailureReason, error) {
 	return telemetry.GetFailures(db.DB, f)
 }

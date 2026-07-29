@@ -12,7 +12,16 @@
     "#sim-strip{position:sticky;top:0;z-index:var(--z-chrome);display:flex;align-items:center;gap:8px;",
     "padding:6px 14px;background:#161d29;color:#cfe3ff;border-bottom:1px solid #34435c;",
     "font:600 12px/1.5 system-ui,'Segoe UI',sans-serif}",
-    "#sim-strip .tag{background:#caa11a;color:#161d29;padding:1px 7px;border-radius:3px;letter-spacing:.4px}",
+    // .sim-tag, not .tag: style.css now owns a bare `.tag` (the node-detail
+    // tag field's pill, renamed out of the `.chip` namespace in U5). This
+    // script is injected by layout.html, so its rules land in the SAME document
+    // as style.css. `#sim-strip .tag` outranks `.tag` and would have kept its
+    // own background — but every property style.css's `.tag` sets and this rule
+    // does not (display:inline-flex, gap, font-size, border, white-space) would
+    // have leaked straight into this badge. That is the `.chip` bug again, at a
+    // smaller scale, and it is invisible to the collision drift test because a
+    // JS-injected <style> is not a <link>.
+    "#sim-strip .sim-tag{background:#caa11a;color:#161d29;padding:1px 7px;border-radius:3px;letter-spacing:.4px}",
     "#sim-strip .spd{color:#fff;font-size:15px;min-width:56px}",
     "#sim-strip .clk{color:#8fb3da;font-weight:500}",
     "#sim-strip button{background:#222c3c;border:1px solid #3a4a63;color:#cfe3ff;border-radius:4px;",
@@ -25,7 +34,7 @@
 
   var bar = document.createElement("div");
   bar.id = "sim-strip";
-  var html = '<span class="tag">SIM</span><span>speed</span><span class="spd" id="sim-spd">—</span>';
+  var html = '<span class="sim-tag">SIM</span><span>speed</span><span class="spd" id="sim-spd">—</span>';
   PRESETS.forEach(function (p) {
     html += '<button data-spd="' + p + '">' + p + "×</button>";
   });

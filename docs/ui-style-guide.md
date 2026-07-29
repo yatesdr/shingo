@@ -527,11 +527,63 @@ mode inverts to light-cards-on-grey):
 | `--elev-surface` | `#161B22` | cards / panels |
 | `--elev-raised` | `#1F2733` | raised elements on a card |
 
-Text: `--text` primary (`#E6EDF3` dark via `--text-strong` on boards) ·
-`--text-muted` secondary (`#8B949E`) · `--text-tertiary` faint labels
-(`#6E7681`). **Never pure white or black.** Chart series use the **curated
-data-viz palette** (`--viz-*`) — one designed, vibrant set used generously (P19,
-see Data visualization); hero numbers stay white.
+Text: `--text` primary · `--text-muted` secondary (`#8B949E` dark / `#68717A`
+light) · `--text-strong` the brightest body text (`#E6EDF3`, floor boards).
+**Never pure white or black.** Chart series use the **curated data-viz palette**
+(`--viz-*`) — one designed, vibrant set used generously (P19, see Data
+visualization); hero numbers stay white.
+
+### The text ramp is two steps, and `--text-muted` is the quiet one
+
+**There is no `--text-tertiary`, and there cannot be a third quiet step.** It
+existed, it was documented here as "the faintest labels", and it was **below the
+4.5:1 normal-text floor on every surface that hosted it, in both themes** —
+3.15:1 on a card and 2.91:1 on the page in light; 3.77:1 on a card and
+**3.27:1 on a raised panel** in dark. It was live on the KPI strips, the
+overview support panels and the Replenishment Health threshold editor.
+
+Nothing had measured it, and the reason generalises: every contrast test in the
+repo measured a **specialised** ink — badge, chip, chart mark — and none measured
+the ramp that paints ordinary text. `--text-muted` had been measured exactly
+once and by accident, because `--viz-secondary` aliases it and it rode in through
+the chart-ink test. `shared/text_contrast_test.go` measures the family directly
+now, and its exhaustiveness check is the load-bearing half: **every `--text*`
+token in `tokens.css` must appear in its table**, so a new one cannot be added
+unmeasured.
+
+**The interesting part is that it could not be fixed by moving it.** Solve for
+the lightest grey of its own hue and saturation that clears 4.5:1 on every light
+surface and you get `#656D78` — *darker* than `--text-muted`'s `#68717A`
+directly above it. `--text-muted` was already nudged to sit barely over the floor
+(**4.58:1** on the worse light surface, the worst figure in the whole family). So
+the ramp has no room underneath: a third step quiet enough to read as quieter
+than muted is too quiet to read, and one that clears the floor is not quieter.
+The ramp inverts either way. **Two steps of body text is capacity** — the same
+conclusion the Signal palette reached at 13 statuses, in a different property.
+
+What makes a label read as a label is its **size, case and letter-spacing**,
+which every one of the fifteen former declarations already set — four in
+`components.css`, eleven in Core's `style.css`. A one-step
+luminance difference on top of that is not an encoding; it is colour-alone
+signalling for a distinction the type already carries — the ruling U5 reached for
+`.de-muted` vs `.de-nodata`, applied to the token layer. **If a future surface
+genuinely needs a third step, take it from weight or size, never from luminance.**
+
+Two riders worth keeping:
+
+- **A text token is not a mark token, in either direction.** The map's
+  offline-robot dot was painted with `--text-tertiary`; it now reads `--sub-4`,
+  whose documented role *is* "structural dots — marks that carry meaning". A
+  nudge to a text token for a text reason would otherwise have silently moved a
+  robot dot. (`paused` is still on `--text-muted` and is the same error, left
+  alone: what replaces it is a question about the robot-state vocabulary.)
+- **Measure against the worst surface a token actually lands on, and no others.**
+  The record that first flagged this token quoted 2.91 light / 3.77 dark — two
+  true figures measured against two *different* elevation steps, and the dark one
+  was not that theme's worst (`--elev-raised`, 3.27, is). Going the other way,
+  `--elev-canvas` is the weakest surface in the file and has **zero use sites**,
+  so measuring against it would invent failures nobody can see. The surface list
+  in the test carries the evidence for each entry.
 
 **Rule: Core and Edge admin surfaces consume `shared/status-classes.css`
 exclusively for order-lifecycle badges.** Core's local `style.css` must not

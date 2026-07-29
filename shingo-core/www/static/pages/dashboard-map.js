@@ -80,12 +80,27 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   };
   // Robot states unchanged (P13): ready green, error red, offline gray; a moving
   // robot with no order falls back to the in-transit cyan.
+  //
+  // `offline` reads --sub-4, not --text-tertiary. Two reasons, and the second is
+  // the one that matters. --text-tertiary was deleted for measuring below the
+  // normal-text floor in both themes (see shared/tokens.css). But it should not
+  // have been here even at a legal value: a robot dot is a MARK, held to 3:1,
+  // and --sub-4's documented role is exactly "tick marks, structural dots —
+  // marks that carry meaning". Painting a mark with a type token is the mirror
+  // of the category error TestChipInkIsNotItsFill guards, and a nudge to a text
+  // token for a text reason would have silently moved this dot.
+  // --sub-4 is #66768f dark / #76859d light, clearing 3:1 in both.
+  //
+  // `paused` is still on --text-muted and is the same category error, unfixed:
+  // it is a live token so nothing breaks, and picking its replacement is a
+  // question about the robot-state vocabulary (is paused structure or status?)
+  // rather than about this deletion.
   var STATE_COLOR = {
     ready: cssVar('--status-delivered-dot', '#3fb950'),
     busy: cssVar('--status-in-transit-dot', '#34c3e0'),
     paused: cssVar('--text-muted', '#8b949e'),
     error: cssVar('--status-blocked-dot', '#f85149'),
-    offline: cssVar('--text-tertiary', '#6e7681')
+    offline: cssVar('--sub-4', '#66768f')
   };
   // Bays as sockets: a robot docked on a charge/park point takes the bay's
   // hue, so an occupied ring reads as a filled socket and an empty ring as an

@@ -141,22 +141,22 @@
       <div class="grid grid-2 mb-1" id="nf-assoc-section">
         <div class="form-group">
           <label>Allowed Bins</label>
-          <div class="chip-picker" id="cp-bin-types">
+          <div class="tag-field" id="cp-bin-types">
             <select class="mode-select text-sm" id="nf-bt-mode" name="bin_type_mode" data-action-change="onModeChange:bin-types">
               <option value="all">Any</option>
               <option value="inherit">Inherit</option>
               <option value="specific">Selected</option>
             </select>
             <div id="cp-bin-types-specific" class="hide">
-              <div class="chip-container" id="cp-bin-types-chips"></div>
-              <input type="text" class="chip-filter" placeholder="Filter bins..." data-action-input="filterChipDropdown:bin-types" data-action-focus="showChipDropdown:bin-types" data-action-blur="hideChipDropdown:bin-types">
-              <div class="chip-dropdown hide" id="cp-bin-types-dropdown"></div>
+              <div class="tag-list" id="cp-bin-types-chips"></div>
+              <input type="text" class="tag-filter" placeholder="Filter bins..." data-action-input="filterChipDropdown:bin-types" data-action-focus="showChipDropdown:bin-types" data-action-blur="hideChipDropdown:bin-types">
+              <div class="tag-dropdown hide" id="cp-bin-types-dropdown"></div>
             </div>
           </div>
         </div>
         <div class="form-group">
           <label>Allowed Stations</label>
-          <div class="chip-picker" id="cp-stations">
+          <div class="tag-field" id="cp-stations">
             <select class="mode-select text-sm" id="nf-st-mode" name="station_mode" data-action-change="onModeChange:stations">
               <option value="all">Any</option>
               <option value="none">None (Core only)</option>
@@ -164,9 +164,9 @@
               <option value="specific">Selected</option>
             </select>
             <div id="cp-stations-specific" class="hide">
-              <div class="chip-container" id="cp-stations-chips"></div>
-              <input type="text" class="chip-filter" placeholder="Filter stations..." data-action-input="filterChipDropdown:stations" data-action-focus="showChipDropdown:stations" data-action-blur="hideChipDropdown:stations">
-              <div class="chip-dropdown hide" id="cp-stations-dropdown"></div>
+              <div class="tag-list" id="cp-stations-chips"></div>
+              <input type="text" class="tag-filter" placeholder="Filter stations..." data-action-input="filterChipDropdown:stations" data-action-focus="showChipDropdown:stations" data-action-blur="hideChipDropdown:stations">
+              <div class="tag-dropdown hide" id="cp-stations-dropdown"></div>
             </div>
           </div>
         </div>
@@ -198,7 +198,7 @@
       <div class="grid grid-2 text-sm">
         <div class="form-group">
           <label>Reshuffle Target Nodes</label>
-          <div id="nf-reshuffle-targets-chips" class="chip-container"></div>
+          <div id="nf-reshuffle-targets-chips" class="tag-list"></div>
           <select id="nf-reshuffle-targets-add" class="text-sm" data-action-change="addReshuffleTarget">
             <option value="">+ Add target node…</option>
           </select>
