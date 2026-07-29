@@ -228,6 +228,55 @@
   --dur-base: 250ms;   /* panel/where-something-moves transitions */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
 
+  /* Layer scale (D19) — ONE ordering for the whole app, theme-invariant.
+   *
+   * Before this there were 32 raw z-index values across 10 files and 12
+   * distinct numbers, and THREE separate layers each claiming to be the top:
+   * 2000 (Core's field tip, Edge's confirm overlay), 9999 (Core's toast, the
+   * shared refresh banner, the sim strip) and 10000 (Core's and Edge's toast
+   * containers). Three topmost layers means no topmost layer — which of them
+   * wins was decided by whichever file the reader happened to open, and the
+   * only way to be sure of covering something was to pick a bigger number
+   * than the last person did. That is the ratchet 9999 and 10000 are.
+   *
+   * The rungs are ROLES, not sizes, and they are close together on purpose:
+   * a gap invites "I will just slot in at 45", which is how the ratchet
+   * restarts. A new layer earns a NAME here or it uses an existing one.
+   *
+   *   raised     a sibling lifting out of the flow — a tile on hover, a
+   *              control floating over the canvas it belongs to
+   *   sticky     a sticky table header or filter bar, over its own scrolled
+   *              rows and nothing else
+   *   tooltip    a hover tip anchored to page content
+   *   dropdown   a menu / combobox / notification panel opened from chrome
+   *   chrome     fixed page furniture — a bulk-action bar, the sim strip
+   *   modal      a dialog and its backdrop. THE BACKDROP IS THE SAME RUNG AS
+   *              THE DIALOG: they are one component, and splitting them is
+   *              how a dialog ends up behind its own scrim
+   *   modal-over a dialog that must cover another dialog, because it was
+   *              opened FROM one (the operator keypad, a confirm prompt)
+   *   popover    a help tip that has to clear an open dialog
+   *   toast      transient notification. Nothing goes above this; a message
+   *              rendered under something is a message that did not happen
+   *
+   * If two things share a rung they never coexist, or the later one in the
+   * DOM should win — which for dialogs means "the one opened most recently",
+   * i.e. the right answer.
+   *
+   * NOTE: shingo-edge/www/static/operator-station/operator.css does NOT load
+   * this file (operator-display.html links only its own stylesheet) so it
+   * redeclares this scale in its own :root. TestOperatorStationZLayerScale-
+   * MatchesShared in shingo-edge/www holds the two copies together. */
+  --z-raised: 1;
+  --z-sticky: 10;
+  --z-tooltip: 20;
+  --z-dropdown: 30;
+  --z-chrome: 40;
+  --z-modal: 50;
+  --z-modal-over: 60;
+  --z-popover: 70;
+  --z-toast: 80;
+
   /* Geometry */
   --radius: 6px;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);

@@ -57,7 +57,7 @@ nav .nav-sep { width: 1px; height: 1.2rem; background: var(--border); flex-shrin
   white-space: normal; width: max-content; max-width: 240px;
   text-align: left; pointer-events: none;
   opacity: 0; transition: opacity 0.15s;
-  z-index: 10;
+  z-index: var(--z-tooltip);
 }
 .stat[data-tip]:hover::after { opacity: 1; }
 
@@ -172,7 +172,7 @@ textarea { resize: vertical; min-height: 60px; }
   right: 0;
   top: 100%;
   margin-top: 0.25rem;
-  z-index: 20;
+  z-index: var(--z-dropdown);
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
@@ -186,7 +186,7 @@ textarea { resize: vertical; min-height: 60px; }
 .node-tile:hover {
   transform: scale(1.08);
   box-shadow: 0 3px 12px rgba(0,0,0,0.18);
-  z-index: 1;
+  z-index: var(--z-raised);
 }
 .tile-loc {
   font-weight: 700;
@@ -220,7 +220,7 @@ textarea { resize: vertical; min-height: 60px; }
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.45);
-  z-index: 1000;
+  z-index: var(--z-modal);
   align-items: center;
   justify-content: center;
 }
@@ -430,7 +430,7 @@ textarea { resize: vertical; min-height: 60px; }
 .robot-tile:hover {
   transform: scale(1.06);
   box-shadow: 0 4px 14px rgba(0,0,0,0.18);
-  z-index: 1;
+  z-index: var(--z-raised);
 }
 .robot-name {
   font-weight: 700;
@@ -520,7 +520,7 @@ textarea { resize: vertical; min-height: 60px; }
   position: sticky;
   top: 0;
   background: var(--surface);
-  z-index: 1;
+  z-index: var(--z-sticky);
 }
 .debug-row.debug-error { background: #fff5f5; color: #842029; }
 .debug-row.debug-warn { background: #fffbeb; color: #856404; }
@@ -698,7 +698,7 @@ textarea { resize: vertical; min-height: 60px; }
 
 /* Bulk action bar */
 .bulk-bar { position:fixed; bottom:0; left:0; right:0; background:var(--surface); border-top:2px solid var(--primary);
-            padding:0.75rem 1.5rem; display:flex; align-items:center; gap:0.75rem; z-index:500;
+            padding:0.75rem 1.5rem; display:flex; align-items:center; gap:0.75rem; z-index:var(--z-chrome);
             box-shadow:0 -4px 12px rgba(0,0,0,0.1); }
 
 /* Bin flags column */
@@ -807,7 +807,7 @@ textarea { resize: vertical; min-height: 60px; }
   border-radius: 0.4rem;
   padding: 0.3rem 0;
   min-width: 150px;
-  z-index: 100;
+  z-index: var(--z-dropdown);
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
 .nav-dropdown:hover .nav-dropdown-menu { display: block; }
@@ -906,7 +906,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .orders-table code, .orders-robot { white-space:nowrap; }
 /* Header stays put while a 100-row page scrolls. */
 .orders-table thead th {
-  position:sticky; top:0; z-index:1;
+  position:sticky; top:0; z-index:var(--z-sticky);
   background:var(--surface); box-shadow:inset 0 -1px 0 var(--border);
 }
 .orders-subtext { font-size:var(--font-xs); color:var(--text-muted); }
@@ -988,7 +988,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .to-btn-danger { border-color:#dc3545; color:#dc3545; }
 .to-btn-danger:hover { background:#f8d7da; }
 .to-toast {
-  position:fixed; top:1rem; right:1rem; z-index:9999;
+  position:fixed; top:1rem; right:1rem; z-index:var(--z-toast);
   padding:.75rem 1.25rem; border-radius:.5rem; font-size:.9rem; font-weight:500;
   box-shadow:0 4px 12px rgba(0,0,0,.15); opacity:0; transform:translateX(100%);
   transition:opacity .3s, transform .3s; max-width:450px;
@@ -1033,7 +1033,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 }
 .help-btn:hover { background:var(--accent-solid); color:#fff; border-color:var(--accent-solid); }
 .field-tip {
-  position:fixed; z-index:2000;
+  position:fixed; z-index:var(--z-popover);
   background:#1a1a2e; color:#e8e8e8;
   border-radius:0.4rem; padding:0.6rem 0.75rem;
   font-size:0.8rem; line-height:1.5;

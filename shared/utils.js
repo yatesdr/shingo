@@ -274,7 +274,7 @@ export function showRefreshBanner() {
     const banner = document.createElement('div');
     banner.id = 'shingo-refresh-banner';
     banner.setAttribute('role', 'status');
-    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;'
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:var(--z-toast);'
         + 'background:#fff3cd;border-bottom:1px solid #ffe69c;color:#664d03;'
         + 'padding:0.6rem 1rem;display:flex;align-items:center;gap:0.75rem;'
         + 'justify-content:center;font-size:0.95rem;'

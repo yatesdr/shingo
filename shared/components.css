@@ -436,7 +436,7 @@
 .ops-filter-bar {
   position: sticky;
   top: 0;
-  z-index: 30;
+  z-index: var(--z-sticky);
   align-items: center;
   background: var(--bg);
 }

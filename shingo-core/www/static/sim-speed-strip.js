@@ -9,7 +9,7 @@
 
   var css = document.createElement("style");
   css.textContent = [
-    "#sim-strip{position:sticky;top:0;z-index:9999;display:flex;align-items:center;gap:8px;",
+    "#sim-strip{position:sticky;top:0;z-index:var(--z-chrome);display:flex;align-items:center;gap:8px;",
     "padding:6px 14px;background:#161d29;color:#cfe3ff;border-bottom:1px solid #34435c;",
     "font:600 12px/1.5 system-ui,'Segoe UI',sans-serif}",
     "#sim-strip .tag{background:#caa11a;color:#161d29;padding:1px 7px;border-radius:3px;letter-spacing:.4px}",

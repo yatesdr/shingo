@@ -31,12 +31,14 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # All four Go modules. integration was missing from the original
+      # All five Go modules. integration was missing from the original
       # matrix even though it carries //go:build docker test files —
       # adding it here closes that coverage gap (it lints clean today,
-      # both passes).
+      # both passes). shared was missing for the same reason and worse:
+      # it was in no workflow at all, so its seven test files ran
+      # nowhere in CI. It lints clean today.
       matrix:
-        module: [protocol, shingo-core, shingo-edge, integration]
+        module: [protocol, shared, shingo-core, shingo-edge, integration]
     steps:
       - uses: actions/checkout@v4
 

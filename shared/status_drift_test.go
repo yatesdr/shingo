@@ -93,6 +93,15 @@ func TestTokensCSSHasRequiredSemantic(t *testing.T) {
 		"--text", "--text-muted",
 		"--primary", "--primary-hover",
 		"--success", "--danger", "--warning", "--info",
+		// The substrate ramp (U8). It is theme-dependent in the strongest
+		// sense in this file — dark is the reference and each light step has
+		// its LIGHTNESS separately solved, so the two themes share no value.
+		// A step present in :root and missing from the dark block would not
+		// look broken; it would render a light hairline over a near-black
+		// panel, which reads as a hard white rule rather than as an absent
+		// token. That is the failure mode this list exists to catch, and the
+		// ramp shipped outside it.
+		"--sub-1", "--sub-2", "--sub-3", "--sub-4", "--sub-5",
 	}
 	for _, tok := range colorTokens {
 		if extractTokenValue(light, tok) == "" {

@@ -1,0 +1,63 @@
+name: Shared
+
+# shingo/shared is a Go module with its own go.mod and seven test files, and
+# until this workflow existed CI ran NONE of them. It appeared in no matrix,
+# no path filter and no working-directory: not build, not vet, not test, not
+# lint. Core and Edge both import it, and both of their workflows are
+# path-filtered to their own tree plus protocol/**, so a change under
+# shared/** did not even trigger the two modules it can break.
+#
+# The tests it holds are exactly the ones that only pay off when a machine
+# runs them — the status-class drift guard, the emoji ban, the token-presence
+# guard, and now the contrast guards. A drift test nobody runs is not a weak
+# check, it is a comment that compiles.
+
+on:
+  push:
+    paths:
+      - "shared/**"
+      - "protocol/**"
+  pull_request:
+    paths:
+      - "shared/**"
+      - "protocol/**"
+  workflow_call:
+
+# See core.yml for rationale - same idempotent burst-coalescing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+
+      - name: Build
+        working-directory: shared
+        run: go build ./...
+
+      - name: Vet
+        working-directory: shared
+        run: go vet ./...
+
+      - name: Prepare build dir
+        working-directory: shared
+        run: mkdir -p build
+
+      - name: Test
+        working-directory: shared
+        run: go test -v -coverprofile=build/coverage ./...
+
+      - name: Test (race)
+        working-directory: shared
+        run: go test -race -count=1 ./...
+
+      - name: Coverage report
+        working-directory: shared
+        run: go tool cover -func=build/coverage

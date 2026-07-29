@@ -5,10 +5,15 @@ on:
     paths:
       - "shingo-edge/**"
       - "protocol/**"
+      # shared/** is a real dependency: Edge's www package imports
+      # shingo/shared and embeds its stylesheets. Without it here, a
+      # change that breaks Edge's build lands with Edge CI never running.
+      - "shared/**"
   pull_request:
     paths:
       - "shingo-edge/**"
       - "protocol/**"
+      - "shared/**"
   workflow_call:
 
 # See core.yml for rationale - same idempotent burst-coalescing.

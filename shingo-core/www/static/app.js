@@ -196,7 +196,7 @@ export function toast(message, level, opts) {
   if (!container) {
     container = document.createElement('div');
     container.id = 'toast-container';
-    container.style.cssText = 'position:fixed;top:1rem;right:1rem;display:flex;flex-direction:column;gap:0.5rem;z-index:10000;pointer-events:none';
+    container.style.cssText = 'position:fixed;top:1rem;right:1rem;display:flex;flex-direction:column;gap:0.5rem;z-index:var(--z-toast);pointer-events:none';
     document.body.appendChild(container);
   }
   var t = document.createElement('div');

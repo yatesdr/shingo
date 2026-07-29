@@ -401,7 +401,7 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   position: absolute;
   left: 0.75rem;
   bottom: 0.75rem;
-  z-index: 5;
+  z-index: var(--z-raised);
   display: none;
   align-items: center;
   gap: 0.35rem;

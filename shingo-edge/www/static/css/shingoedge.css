@@ -128,7 +128,7 @@ body {
     border-radius: var(--radius);
     padding: 0.3rem 0;
     min-width: 150px;
-    z-index: 100;
+    z-index: var(--z-dropdown);
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
 .nav-dropdown:hover .nav-dropdown-menu { display: block; }
@@ -453,7 +453,7 @@ textarea.form-input {
     top: 100%;
     left: 0;
     right: 0;
-    z-index: 100;
+    z-index: var(--z-dropdown);
     max-height: 220px;
     overflow-y: auto;
     background: var(--surface);
@@ -523,7 +523,7 @@ textarea.form-input {
     display: none;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    z-index: var(--z-modal);
 }
 
 .modal-overlay.active {
@@ -571,7 +571,7 @@ textarea.form-input {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 2000;
+    z-index: var(--z-modal-over);
 }
 
 .confirm-box {
@@ -592,7 +592,7 @@ textarea.form-input {
     position: fixed;
     top: 60px;
     right: 16px;
-    z-index: 10000;
+    z-index: var(--z-toast);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -911,7 +911,7 @@ textarea.form-input {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow-lg);
-    z-index: 1000;
+    z-index: var(--z-dropdown);
 }
 
 .anomaly-popover-header {
@@ -1041,7 +1041,7 @@ textarea.form-input {
     border-top: none;
     border-radius: 0 0 var(--radius) var(--radius);
     box-shadow: var(--shadow-lg);
-    z-index: 100;
+    z-index: var(--z-dropdown);
 }
 
 .tag-picker-item {
@@ -1157,7 +1157,7 @@ textarea.form-input {
   position: sticky;
   top: 0;
   background: var(--surface);
-  z-index: 1;
+  z-index: var(--z-sticky);
 }
 
 

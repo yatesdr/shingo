@@ -9,11 +9,17 @@ on:
     paths:
       - "shingo-core/**"
       - "protocol/**"
+      # shared/** is a real dependency: Core's www package imports
+      # shingo/shared (chip_drift_test.go walks shared.Files) and the
+      # templates load its stylesheets. Without it here, a change that
+      # breaks Core's build lands with Core CI never running.
+      - "shared/**"
       - ".github/workflows/core.yml"
   pull_request:
     paths:
       - "shingo-core/**"
       - "protocol/**"
+      - "shared/**"
       - ".github/workflows/core.yml"
   workflow_call:
 

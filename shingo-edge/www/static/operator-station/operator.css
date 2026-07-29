@@ -22,6 +22,34 @@
     --os-grid-gap: 10px;
     --os-header-h: 72px;
     --os-footer-h: 40px;
+
+    /* Layer scale (D19) — a VERBATIM copy of the block in
+     * shared/tokens.css, and it is a copy on purpose.
+     * operator-display.html links only this stylesheet: it does not load
+     * shared/tokens.css the way header.html and layout.html do, so a
+     * var(--z-modal) here would resolve to nothing, z-index would be an
+     * invalid declaration, and the element would fall back to auto. That
+     * failure is silent and it lands on the keypad, which is the one
+     * element on this screen that MUST be above another.
+     *
+     * The alternative was to link shared/tokens.css from
+     * operator-display.html. Rejected: this surface deliberately owns a
+     * self-contained --os-* palette for a 10" touch screen, and pulling in
+     * the admin token set to get nine integers imports every colour
+     * decision with them.
+     *
+     * TestOperatorStationZLayerScaleMatchesShared in shingo-edge/www fails
+     * if these nine values ever stop matching the shared block. See
+     * shared/tokens.css for what each rung means. */
+    --z-raised: 1;
+    --z-sticky: 10;
+    --z-tooltip: 20;
+    --z-dropdown: 30;
+    --z-chrome: 40;
+    --z-modal: 50;
+    --z-modal-over: 60;
+    --z-popover: 70;
+    --z-toast: 80;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -167,7 +195,7 @@ body {
 /* ===== Changeover Picker ===== */
 .os-co-picker-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.7);
-    display: flex; align-items: center; justify-content: center; z-index: 200;
+    display: flex; align-items: center; justify-content: center; z-index: var(--z-modal);
 }
 .os-co-picker {
     background: var(--os-surface, #1a1f2e); border-radius: 16px; padding: 24px;
@@ -426,7 +454,7 @@ body {
     display: none;
     align-items: center;
     justify-content: center;
-    z-index: 100;
+    z-index: var(--z-modal);
     animation: os-fade-in 0.15s ease-out;
 }
 
@@ -435,11 +463,22 @@ body {
 }
 
 /* Keypad sits above ALL other modals because LoadBin (and any future modal)
-   opens it for UoP entry. Using a wide gap above the backdrop's z-index
-   so any new modal can't accidentally tie. !important guards against any
-   stray inline style or future overrides. Pre-fix the load-bin modal painted
-   on top (equal z-index, later DOM order) and trapped focus behind it. */
-#keypad-modal { z-index: 1000 !important; }
+   opens it for UoP entry. Pre-fix, the load-bin modal painted on top of it
+   (equal z-index, later DOM order) and trapped focus behind it.
+   --z-modal-over is the rung that exists for exactly this: a dialog opened
+   FROM a dialog. Any future modal that stays on --z-modal cannot tie with it.
+
+   The !important is gone and three things were checked before removing it:
+   (1) #keypad-modal is specificity 1-0-0 against .modal-overlay.modal--touch's
+   0-2-0, so an ID beats two classes and this rule already wins on its own;
+   (2) !important additionally outranks an inline style, and nothing writes
+   one — operator-keypad.js touches this element only via
+   classList.add/remove('active'), and no operator-station JS sets style.zIndex
+   or cssText on it; (3) the comment's own stated cause was an EQUAL z-index,
+   which the named rungs now make impossible to reintroduce by accident.
+   An !important on a z-index is what makes a layer system unenforceable —
+   it is the escape hatch the next person copies. */
+#keypad-modal { z-index: var(--z-modal-over); }
 
 @keyframes os-fade-in {
     from { opacity: 0; }
@@ -771,7 +810,10 @@ body {
     bottom: 56px;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 200;
+    /* Was 200 — under the keypad's 1000, so a toast fired while the keypad
+     * was open rendered behind it. Every other surface in the app already
+     * puts its toast at the top of the stack; this makes the station agree. */
+    z-index: var(--z-toast);
     pointer-events: none;
 }
 
