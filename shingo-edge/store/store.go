@@ -68,15 +68,24 @@ func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
 // _foreign_keys=on` was used here from the start and is silently ignored —
 // modernc's applyQueryParams reads only `_pragma`, `_time_format` and
 // `_txlock`, and both SQLite and the driver drop unrecognised URI parameters
-// without complaint. Confirmed on the Springfield edge 2026-07-24: `PRAGMA
-// journal_mode` returned `delete`, and no -wal/-shm files existed beside the
-// 31 MB database. So WAL and the busy timeout have never actually been on.
+// without complaint.
+//
+// That WAS the state on the Springfield edge on 2026-07-24, before the DSN was
+// fixed: `PRAGMA journal_mode` returned `delete` and no -wal/-shm files existed
+// beside the 31 MB database. It is no longer the state anywhere the fix is
+// deployed, and the two plants differ — so do not read the paragraph above as a
+// description of a live box. Springfield runs 4527c4d6, which contains this
+// fix, and is genuinely in WAL. Hopkinsville runs ef99421f, which does not, and
+// is still on the rollback journal. Anything that reasons about the on-disk
+// sidecar files (backups, db-migration.sh, an operator with sqlite3) has to
+// establish which of the two it is looking at, per plant, from the deployed
+// commit — not from this file.
 //
 // journal_mode(WAL) suits this workload — many small writes (outbox drain,
 // inventory deltas, PLC counters) on SD-card storage, where a rollback
 // journal's create/write/fsync/delete per commit is the expensive path. The
 // hourly wal_checkpoint(TRUNCATE) in cmd/shingoedge/main.go was written for
-// this and has been a no-op until now; deploy/db-migration.sh likewise already
+// this and was a no-op until the fix; deploy/db-migration.sh likewise already
 // expects WAL and a regenerable -shm.
 //
 // busy_timeout(5000) makes a lock conflict wait rather than fail instantly.
@@ -84,14 +93,40 @@ func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
 // reader — backups, db-migration.sh, an operator running sqlite3 — was getting
 // an immediate "database is locked".
 //
-// foreign_keys is deliberately NOT set here. SQLite defaults it off, so the
-// schema's 17 ON DELETE CASCADE and 15 ON DELETE SET NULL clauses have never
-// been enforced on any edge. Turning them all on at once against a live plant
-// database would activate dormant cascades — a delete that removed one row
-// would start removing children — and would likely surface pre-existing
-// violations as new runtime errors. That needs a PRAGMA foreign_key_check
-// audit against a copy of a real plant DB and its own change; it is not a
-// safe rider on a performance fix.
+// foreign_keys is deliberately NOT set here, and the modernc spelling that
+// would set it is `_pragma=foreign_keys(1)` — the mattn `_foreign_keys=on`
+// above reads as if it did and does not. Measured on the Springfield dump:
+// with the mattn spelling `PRAGMA foreign_keys` returns 0, with the _pragma
+// spelling it returns 1. Whichever way this ends up being set, assert the
+// pragma's VALUE, never the DSN text (see open_pragmas_test.go).
+//
+// SQLite defaults enforcement off, so the schema's 18 ON DELETE CASCADE and 16
+// ON DELETE SET NULL clauses (plus 3 NO ACTION) have never been enforced on any
+// edge. The foreign_key_check audit this comment used to ask for has now been
+// run against the Springfield dump of 2026-07-27, and the answer is that
+// enabling enforcement is a three-step change, not a one-line one:
+//
+//  1. 11 REFERENCES clauses across 8 tables still name the pre-rename tables
+//     (styles_legacy, reporting_points_legacy, processes_legacy). 8 name a table
+//     that no longer exists at all. With enforcement on, 11 of 37 FK-touching
+//     writes are refused — some as `no such table: main.styles_legacy`, some as
+//     plain `FOREIGN KEY constraint failed` because processes_legacy still
+//     exists but is empty. Repairing the schema text has to come first.
+//  2. 1,764 rows genuinely reference parents that are gone. Several of those
+//     groups are production history, so what happens to them is an owner
+//     decision, not a migration detail.
+//  3. Even with both done, deleting a style becomes IMPOSSIBLE rather than
+//     merely lossy. styles -> reporting_points is CASCADE, but
+//     counter_snapshots -> reporting_points is NO ACTION, so the cascade hits a
+//     restrict and the whole delete is refused. Measured: of 8 styles probed, 6
+//     (those with a reporting point that has snapshots) were refused and 2 were
+//     deleted cleanly. That edge needs resolving before enforcement is a
+//     behaviour anyone wants.
+//
+// The reason to want it: with enforcement off, deleting a style silently
+// strands its claims. Measured on the same dump — deleting style 24 succeeds
+// and takes the orphan-claim count from 8 to 11. That is the defect, and it is
+// why this is worth finishing, not why it is safe to switch on today.
 func Open(path string) (*DB, error) {
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path)
 	sqlDB, err := sql.Open("sqlite", dsn)

@@ -441,16 +441,38 @@ fi
 # then -shm as three separate files with writes landing between them. That
 # is not a backup of any state the database was ever in:
 #
-#   * WAL mode (Springfield, and any edge on f34d5cad or later): the -wal
-#     is a moving target. tar can capture a .db page-set from time T and a
-#     -wal from time T+n, and recovery replays frames that assume pages the
-#     .db copy does not have.
+#   * WAL mode (Springfield, and any edge on f34d5cad or later): the main
+#     .db is stable only BETWEEN checkpoints. A checkpoint concurrent with
+#     the copy rewrites .db pages in place while tar is reading them and
+#     resets the -wal underneath it. Edge runs an hourly
+#     wal_checkpoint(TRUNCATE), so this is a scheduled collision, not a
+#     freak one.
 #   * Rollback-journal mode (Hopkinsville, and any edge predating f34d5cad
-#     where the mattn-style DSN meant WAL never actually engaged): worse.
-#     There the main .db is modified IN PLACE during a transaction and the
-#     original pages live in shingoedge.db-journal — which this list never
-#     collected. A hot copy mid-transaction is a half-applied database with
-#     nothing to roll it back.
+#     where the mattn-style DSN meant WAL never actually engaged): the main
+#     .db is modified IN PLACE during every transaction and the original
+#     pages live in shingoedge.db-journal — which this list never collected.
+#
+# MEASURED on a restored copy of the Springfield dump (20 MB,
+# modernc.org/sqlite, writer running), not asserted from the docs:
+#
+#   WAL, ~750ms three-file copy under load
+#       hot  -> integrity_check: "database disk image is malformed",
+#               hundreds of btreeInitPage errors. Unreadable.
+#       cold -> ok, all rows present
+#   rollback journal, same shape
+#       hot  -> "database disk image is malformed"
+#       cold -> ok
+#   rollback journal, copied DURING an uncommitted transaction, no -journal
+#       hot  -> integrity_check "ok", and sum(n) = 29937 where the true
+#               value is 20000. Half of a rolled-back UPDATE, presented as
+#               committed. That is the dangerous one: it passes every check
+#               you would think to run and is still wrong.
+#
+# What decides corruption is how long the copy window is, not which sidecars
+# are in the list — a back-to-back read survived, the same read with a
+# quarter-second between files did not. So the fix is to stop first, not to
+# tune the list. And the window is far worse on a Pi, where 30 MB off an SD
+# card takes seconds rather than milliseconds.
 #
 # After `systemctl stop` there is no writer, so the copy is consistent by
 # construction. A clean SQLite close also checkpoints and removes -wal/-shm,

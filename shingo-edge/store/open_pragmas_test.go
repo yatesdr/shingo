@@ -39,4 +39,26 @@ func TestOpen_AppliesConnectionPragmas(t *testing.T) {
 	if busyTimeout != 5000 {
 		t.Errorf("busy_timeout = %d, want 5000", busyTimeout)
 	}
+
+	// foreign_keys is asserted OFF, and that is not this test pinning an
+	// accident. Enforcement cannot be switched on until the plant databases are
+	// repaired: measured against the Springfield dump of 2026-07-27, enabling it
+	// today refuses 11 of 37 FK-touching writes, because 11 REFERENCES clauses
+	// still name the pre-rename tables. See the ordered argument in Open's
+	// comment.
+	//
+	// The point of asserting the value is that the change is a one-word DSN edit
+	// — `_pragma=foreign_keys(1)` — whose effect is invisible in review and
+	// which would surface at a plant as writes failing, not as a test failing.
+	// When the repair is done, this assertion is where the flip gets made
+	// deliberately: change the want, and the migration ordering has to have
+	// happened first.
+	var foreignKeys int
+	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+		t.Fatalf("read foreign_keys: %v", err)
+	}
+	if foreignKeys != 0 {
+		t.Errorf("foreign_keys = %d, want 0 until the plant FK repair has shipped "+
+			"(enabling it against an unrepaired plant DB blocks writes on 8 tables)", foreignKeys)
+	}
 }
