@@ -67,7 +67,7 @@ func TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup(t *testi
 	edge := edgeharness.NewEdge(t, stationID)
 
 	// ── Seed: process + styles + node + claims for a Phase-3 swap ──
-	processID, err := edge.DB.CreateProcess("P3-PROC", "phase3 swap test", "active_production", "", "", false, false)
+	processID, err := edge.DB.CreateProcess("P3-PROC", "phase3 swap test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

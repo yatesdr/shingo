@@ -49,7 +49,7 @@ func TestScenario_ReleaseIsChangeoverIndependent(t *testing.T) {
 	// Node B's claim is identical across both styles → "unchanged" task,
 	// no changeover-driven orders on node B. We then create an
 	// independent retrieve order on node B and exercise its release.
-	processID, err := edge.DB.CreateProcess("INDEP-PROC", "release independence", "active_production", "", "", false, false)
+	processID, err := edge.DB.CreateProcess("INDEP-PROC", "release independence", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
