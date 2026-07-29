@@ -73,6 +73,12 @@ func BaselineFromGit(repoRoot, rev string) (string, error) {
 		}
 		return ddl, nil
 	}
+	// A revision that is entirely absent is a DIFFERENT failure from a
+	// revision whose file cannot be parsed, and conflating them is what
+	// made the CI failure opaque.
+	if !revisionExists(repoRoot, rev) {
+		return "", fmt.Errorf("%s", missingRevisionHint(rev))
+	}
 	return "", fmt.Errorf("no baseline DDL found at %s (tried %s)", rev, strings.Join(errs, "; "))
 }
 
@@ -100,4 +106,26 @@ func extractDDLConst(src string) (string, error) {
 		return "", fmt.Errorf("extracted literal contains no CREATE TABLE — wrong const")
 	}
 	return ddl, nil
+}
+
+// missingRevisionHint recognises the shallow-clone failure and says what it
+// means.
+//
+// It cost a full local reproduction to work out that "exit status 128" was a
+// CI checkout-depth problem rather than a real convergence failure — the error
+// named the file it could not read and said nothing about why. A test whose
+// failure mode needs an investigation to interpret is only half a test.
+func missingRevisionHint(rev string) string {
+	return fmt.Sprintf(
+		"revision %s is not present in this clone.\n"+
+			"If this is CI: actions/checkout defaults to a SHALLOW clone, where older\n"+
+			"commits and tags do not exist, so the workflow needs fetch-depth: 0.\n"+
+			"This is NOT a convergence failure — the test could not run at all.", rev)
+}
+
+// revisionExists reports whether git can resolve rev at all.
+func revisionExists(repoRoot, rev string) bool {
+	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	cmd.Dir = repoRoot
+	return cmd.Run() == nil
 }

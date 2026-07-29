@@ -151,3 +151,43 @@ func firstDefaultsDiff(a, b string) string {
 	}
 	return "(identical)"
 }
+
+// THE GOLDEN-FILE GENERATOR IS ITSELF CODE WHOSE FAILURE MODE IS SILENT, so it
+// needs tests more than most. Both ways it has already broken were invisible:
+// a non-deterministic value fails the staleness test forever on a tree nobody
+// touched, and an unredacted secret is a credential in git that nobody notices.
+//
+// Rendering twice and comparing catches random values, timestamps and
+// map-iteration order all at once — whatever the source, without having to
+// anticipate which.
+func TestRenderDefaults_Deterministic(t *testing.T) {
+	first, second := RenderDefaults(), RenderDefaults()
+	if first != second {
+		t.Fatalf("RenderDefaults is not deterministic — the staleness test would fail forever:\n%s",
+			firstDefaultsDiff(first, second))
+	}
+}
+
+// The output scan is the backstop behind the struct tag and the name
+// heuristic. It is deliberately dumb: it does not know what a secret is, only
+// that a long opaque blob has no business in a defaults file.
+func TestRenderDefaults_NoUnredactedSecrets(t *testing.T) {
+	if bad := ScanForUnredactedSecrets(RenderDefaults()); len(bad) > 0 {
+		t.Errorf("credential-shaped values reached the snapshot — these would be committed to git:\n  %s",
+			strings.Join(bad, "\n  "))
+	}
+}
+
+// And the scan has to be able to FAIL, or it is decoration. A generated secret
+// rendered verbatim is exactly the thing it exists to catch.
+func TestScanForUnredactedSecrets_CatchesALeak(t *testing.T) {
+	leaked := "web.session_secret = d9c7c94ef0d19db0f5be0f88f44494d3456162d74abcafc507d38e2c5d8db10e"
+	if bad := ScanForUnredactedSecrets(leaked); len(bad) == 0 {
+		t.Error("the scan did not catch a rendered 64-char secret — it would pass anything")
+	}
+	// And it must not cry wolf on ordinary config.
+	ordinary := "backup.s3.region = us-east-1\nmessaging.orders_topic = shingo.orders\nposll_rate = 1s"
+	if bad := ScanForUnredactedSecrets(ordinary); len(bad) > 0 {
+		t.Errorf("the scan flagged ordinary values, which would make it noise: %v", bad)
+	}
+}

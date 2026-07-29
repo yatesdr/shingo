@@ -142,9 +142,12 @@ type WarLinkConfig struct {
 
 // WebConfig defines the web server settings.
 type WebConfig struct {
-	Host          string `yaml:"host"`
-	Port          int    `yaml:"port"`
-	SessionSecret string `yaml:"session_secret"`
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+	// snapshot:"secret" keeps this out of the defaults rendering. It is
+	// GENERATED per Defaults() call, so rendering it would both leak a
+	// credential into git and make the snapshot differ from itself every run.
+	SessionSecret string `yaml:"session_secret" snapshot:"secret"`
 	AutoConfirm   bool   `yaml:"auto_confirm"`
 }
 

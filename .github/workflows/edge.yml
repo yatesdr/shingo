@@ -21,6 +21,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # FULL HISTORY, and it is load-bearing.
+          #
+          # TestSchemaConvergesAcrossVintages builds an "aged" database from a
+          # baseline read out of git at a pinned revision — `git show
+          # <rev>:store/schema/...`. actions/checkout defaults to a SHALLOW
+          # clone (fetch-depth 1), where neither an older commit nor a tag
+          # exists, so every pinned vintage fails with "invalid object name"
+          # and the test that exists to catch upgrade-path bugs cannot run at
+          # all.
+          #
+          # Skipping the test when the revision is missing would be worse than
+          # this cost: it would go green in CI while asserting nothing, which is
+          # the exact failure class the convergence test was written to close.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:

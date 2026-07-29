@@ -120,6 +120,18 @@ func TestSchemaConvergesAcrossVintages(t *testing.T) {
 		})
 	}
 
+	// ONLY IF EVERY VINTAGE ACTUALLY RAN. A vintage that could not be built
+	// observed nothing, so "this recorded divergence no longer occurs" would be
+	// a statement about a comparison that never happened — and it fired exactly
+	// that way against a shallow CI clone, burying the real failure under four
+	// confident and wrong ones.
+	//
+	// An allowlist check is only meaningful when the thing it allows had a
+	// chance to appear.
+	if t.Failed() {
+		t.Log("skipping the stale-entry check: at least one vintage did not run, so nothing was observed")
+		return
+	}
 	for key, why := range unseen {
 		t.Errorf("recorded divergence no longer occurs — delete it from KnownDivergences:\n  %s\n  (%s)", key, why)
 	}

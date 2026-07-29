@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -113,7 +114,7 @@ func renderStruct(prefix string, v reflect.Value) []string {
 			out = append(out, renderStruct(path, fv)...)
 			continue
 		}
-		if isSecret(name) {
+		if isSecretField(f, name) {
 			// TWO REASONS, either sufficient. Defaults() GENERATES a random
 			// session secret, so rendering it would make this file differ from
 			// itself on every run and the staleness test would fail
@@ -157,21 +158,61 @@ func renderValue(v reflect.Value) string {
 	}
 }
 
-// secretMarkers name the field-name fragments that mean "this value is a
-// credential". Matching on the NAME rather than an explicit allowlist is
-// deliberate: a new secret field added later is redacted by default, and the
-// failure mode of a false positive (one redacted non-secret) is far cheaper
-// than the failure mode of a miss (a credential in git).
-var secretMarkers = []string{"secret", "password", "key", "token", "credential"}
+// SECRET DETECTION IS BELT AND BRACES, because the failure mode is a
+// credential in git and there is no undoing that.
+//
+//  1. An explicit `snapshot:"secret"` struct tag — the declaration, which is
+//     the only signal that cannot be defeated by a rename.
+//  2. A field-NAME heuristic, as the safety net for a field whose author did
+//     not know about the tag.
+//  3. A scan of the RENDERED OUTPUT (see scanForUnredactedSecrets) that fails
+//     the test if anything got through anyway.
+//
+// The name heuristic alone was the original design and it is not enough: it
+// breaks the day somebody adds `apiToken` spelled `bearer` or `pat`. The tag
+// alone is not enough either, because it has to be remembered. The output scan
+// is what makes a miss loud rather than silent.
+var secretMarkers = []string{"secret", "password", "key", "token", "credential", "passwd", "auth"}
 
-func isSecret(name string) bool {
-	lower := strings.ToLower(name)
+func isSecretField(f reflect.StructField, name string) bool {
+	if tag := f.Tag.Get("snapshot"); tag == "secret" {
+		return true
+	}
+	lower := strings.ToLower(name + " " + f.Name)
 	for _, m := range secretMarkers {
 		if strings.Contains(lower, m) {
 			return true
 		}
 	}
 	return false
+}
+
+// secretLike matches a rendered VALUE that looks like a credential regardless
+// of what its field is called: a long unbroken run of hex or base64-ish
+// characters is not a hostname, a path or a duration.
+var secretLike = regexp.MustCompile(`[A-Za-z0-9+/=_-]{24,}`)
+
+// ScanForUnredactedSecrets returns the rendered lines whose value looks like a
+// credential. Empty is the only acceptable result.
+//
+// This is the backstop that makes the two detectors above fail LOUDLY instead
+// of silently. It is deliberately dumb: it does not know what a secret is, only
+// that a 24-character opaque blob has no business in a defaults file.
+func ScanForUnredactedSecrets(rendered string) []string {
+	var bad []string
+	for line := range strings.SplitSeq(rendered, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		_, value, found := strings.Cut(line, " = ")
+		if !found || strings.HasPrefix(value, "<") {
+			continue
+		}
+		if secretLike.MatchString(value) {
+			bad = append(bad, line)
+		}
+	}
+	return bad
 }
 
 // secretState reports only whether a secret has a value, never what it is.
