@@ -273,3 +273,82 @@ func TestBuildSwapDispatch_TwoRobotPressIndex_MissingFields(t *testing.T) {
 		t.Fatalf("expected error for missing outbound_destination")
 	}
 }
+
+// TestBuildSwapDispatch_TwoLegModes_RejectBlankOutboundDestination pins the
+// plan-time half of the pairing invariant, over EVERY two-leg mode rather than
+// at one point, because the two modes disagreed about this and nothing noticed.
+//
+// The rule: a mode that emits two legs must validate every field BOTH legs need
+// before it returns a dispatch at all. The apply step creates leg A, ships it to
+// Core, and only then builds leg B; there is no rollback and none is available,
+// because leg A is already committed at Core behind a durable outbox. So a field
+// only leg B reads has to be checked HERE — the last place where refusing costs
+// nothing — or its absence surfaces as a leg A that Core has accepted and can
+// never pair.
+//
+// OutboundDestination is exactly such a field. Both two-leg builders route their
+// evac leg to it via buildStep, which emits a dropoff with NO NODE when it is
+// blank (material_orders.go). Core cannot reject that: a node-less dropoff is
+// the legitimate deferred-destination form reserved for dedicated-loader
+// placement (complex_steps.go, resolveComplexSteps). So a blank here is
+// indistinguishable at Core from a deliberate deferral, and the check cannot be
+// made downstream.
+//
+// SPRINGFIELD, 2026-06-23 17:34:38. Edge order 2207 (the supply leg) reached
+// Core as order 2217 and lives there today with sibling_order_uuid=”. Its evac
+// sibling, Edge order 2208, was built with steps
+// [wait ALN_001, pickup ALN_001, dropoff <no node>] — a blank
+// OutboundDestination on the ALN_001 claim — and has no Core row at all. Edge's
+// sibling_order_id says the pair is intact; Core says the supply is a single
+// leg. Nothing reconciles the two. Post-cutover that is 2 of 3,162 Core orders,
+// and those 2 are the whole population of Core-side orphans: every other
+// unpaired complex order in the dump is single-leg by design.
+//
+// Scoped to the two-leg modes deliberately. sequential and single_robot route to
+// OutboundDestination through the same buildStep and will emit the same
+// node-less dropoff, but they emit ONE order, so a blank there strands nothing
+// and pairs nothing — a different defect with a different fix, and widening this
+// test to cover it would assert a rule this change does not make true.
+func TestBuildSwapDispatch_TwoLegModes_RejectBlankOutboundDestination(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []protocol.SwapMode{
+		protocol.SwapModeTwoRobot,
+		protocol.SwapModeTwoRobotPressIndex,
+	} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+
+			// A blank OutboundDestination must be refused outright. Returning a
+			// dispatch with a usable leg A and a malformed leg B is the failure
+			// this exists to prevent: the caller has no way to decline half of it.
+			c := dispatchClaim(mode)
+			c.OutboundDestination = ""
+			d, err := BuildSwapDispatch(dispatchNode(), c)
+			if err == nil {
+				t.Fatalf("blank outbound_destination accepted; the evac leg would carry a node-less dropoff and orphan leg A at Core")
+			}
+			if d != nil {
+				t.Errorf("BuildSwapDispatch returned a dispatch alongside its error (%+v); a rejected plan must yield nothing to dispatch", d)
+			}
+
+			// And the property the error stands in for: whatever a validated
+			// dispatch does return, no leg of it drops a bin nowhere. Asserted on
+			// the accepted case so the check cannot go vacuous the day the error
+			// message or the blank-field spelling changes.
+			ok, err := BuildSwapDispatch(dispatchNode(), dispatchClaim(mode))
+			if err != nil {
+				t.Fatalf("fully-configured claim rejected: %v", err)
+			}
+			for name, steps := range map[string][]protocol.ComplexOrderStep{
+				"StepsA": ok.StepsA, "StepsB": ok.StepsB,
+			} {
+				for i, s := range steps {
+					if s.Action == protocol.ActionDropoff && s.Node == "" {
+						t.Errorf("%s[%d] is a dropoff with no node; Core reads that as a deferred dedicated-loader destination, not as a misconfiguration", name, i)
+					}
+				}
+			}
+		})
+	}
+}

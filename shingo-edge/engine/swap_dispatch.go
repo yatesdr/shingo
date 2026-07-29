@@ -130,6 +130,28 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		if claim.InboundStaging == "" {
 			return nil, fmt.Errorf("node %s: two-robot swap requires inbound staging node", node.Name)
 		}
+		// The EVAC leg's only dropoff, validated alongside the SUPPLY leg's
+		// field because both legs come out of one builder and the caller cannot
+		// decline half a dispatch. applyConsumePlan / applyProducePlan create
+		// the supply leg and SHIP IT TO CORE before they build this one, behind
+		// a durable outbox with no compensating cancel — so a field only the
+		// evac leg reads is unrecoverable by the time the evac leg fails.
+		//
+		// Nor can Core catch it: buildStep emits a dropoff with NO NODE when
+		// this is blank, and a node-less dropoff is the legitimate deferred
+		// destination reserved for dedicated-loader placement
+		// (dispatch/complex_steps.go). Core cannot tell a missing config from a
+		// deliberate deferral, so this is the last boundary that can.
+		//
+		// two_robot_press_index has checked this since it was written; this
+		// mode never did. Springfield, 2026-06-23 17:34:38: the ALN_001 claim
+		// had no outbound_destination, the evac leg went out as
+		// [wait ALN_001, pickup ALN_001, dropoff <nowhere>] and never got a Core
+		// row, and its supply leg — Core order 2217 — is unpaired there to this
+		// day while Edge's sibling_order_id still says the pair is intact.
+		if claim.OutboundDestination == "" {
+			return nil, fmt.Errorf("node %s: two-robot swap requires outbound destination (the evac leg's dropoff)", node.Name)
+		}
 		stepsA, stepsB := BuildTwoRobotSwapSteps(claim)
 		return &SwapDispatch{
 			CycleMode:               protocol.SwapModeTwoRobot,

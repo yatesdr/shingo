@@ -140,12 +140,46 @@ import { onSSE } from '/static/shared/utils.js';
   // travelling between them. That gives travel-to-source, load, travel-to-dest,
   // unload without inventing anything.
   //
-  // Two rules that matter more than the drawing:
-  //   - A leg with no vendor time is UNKNOWN, never zero-length. Absent is not
-  //     instant, and a zero-width segment would read as "took no time".
-  //   - Legs sum to the mission duration or the difference is shown as
-  //     unaccounted. Rescaling to fit would be a lie that looks tidy.
+  // A leg's duration is one of THREE things, and they are not interchangeable.
+  // `no data`, `zero` and `not applicable` are three different answers, and a
+  // bar that renders two of them the same way is asserting something it does
+  // not know:
+  //
+  //   - UNKNOWN. The fleet reported no usable endpoints (no startTime, or a
+  //     terminate before its start). Hatched, fixed width, claims no share of
+  //     the timeline. Absent is not instant, and a zero-width segment would
+  //     read as "took no time".
+  //
+  //   - ZERO. Both endpoints reported, equal, on a block that ran: it finished
+  //     inside the vendor's one-second resolution. That is a MEASUREMENT, so it
+  //     is drawn — at minimum width — and labelled `0s`. Rendering it as "-"
+  //     would demote a real reading to a missing one, which is the same mistake
+  //     pointing the other way.
+  //
+  //   - NOT RUN. Equal endpoints on a mission the fleet STOPPED. Tearing an
+  //     order down stamps its outstanding blocks rather than executing them, so
+  //     the equal timestamps record the teardown and not the work. `0s` here
+  //     would say a leg that never happened happened instantly. Drawn like
+  //     unknown — it occupied none of the timeline, so it may claim none — but
+  //     labelled `not run`, because `unknown` means "we cannot say" and here we
+  //     can.
+  //
+  // The third rule is scoped to the TRAILING run of zero-duration blocks, not
+  // to every zero on a stopped mission. A block before the stop may genuinely
+  // have been sub-second, and demoting that reading is the same error over
+  // again; the teardown can only affect what had not run yet. Walk back from
+  // the end and stop at the first block with duration.
+  //
+  // And the rule that outlives the drawing: legs sum to the mission duration or
+  // the difference is shown as unaccounted. Rescaling to fit would be a lie
+  // that looks tidy.
   var BLOCK_LEG_STATE = 'BLOCK_FINISHED';
+
+  // STOPPED is the fleet's teardown state. Read the mission's disposition from
+  // the EVENT STREAM rather than the ShinGo order status: the teardown is the
+  // fleet's act, the RDS state is where it is recorded, and a ShinGo status can
+  // reach a terminal of its own without the fleet ever having stopped anything.
+  var STOPPED_STATE = 'STOPPED';
 
   function isBlockLegEvent(ev) {
     return ev && ev.new_state === BLOCK_LEG_STATE;
@@ -180,10 +214,40 @@ import { onSSE } from '/static/shared/utils.js';
   // formatDuration renders 0 as "-", which is right for a summary field that
   // may be absent and wrong for a leg: a block whose start and terminate are
   // the same second genuinely took under a second, and "-" reads as "not
-  // reported". Absent is `unknown` (handled separately); zero is `0s`.
+  // reported". Absent is `unknown` and never-ran is `not run` (both handled in
+  // buildLegs, both arriving here as ms === null); a zero that reaches this
+  // function is a real reading and renders `0s`.
   function formatLegDuration(ms) {
     if (ms <= 0) return '0s';
     return formatDuration(ms);
+  }
+
+  // missionWasStopped reports whether the fleet tore this mission down.
+  function missionWasStopped(events) {
+    for (var i = 0; i < events.length; i++) {
+      if (events[i] && events[i].new_state === STOPPED_STATE) return true;
+    }
+    return false;
+  }
+
+  // trailingNotRunBoundary returns the index from which every remaining block
+  // is a teardown stamp rather than a leg: the start of the unbroken run of
+  // zero-duration blocks at the END of the list. Returns blocks.length when
+  // there is no such run, i.e. nothing is reclassified.
+  //
+  // An UNKNOWN block breaks the run rather than extending it. It already has a
+  // form that claims nothing, and a block with no endpoints reported is not
+  // evidence about what came after it — treating it as part of the teardown
+  // would be inferring a fact from missing data.
+  function trailingNotRunBoundary(blocks) {
+    var i = blocks.length;
+    while (i > 0) {
+      var blk = blocks[i - 1];
+      if (!hasVendorTimes(blk)) break;
+      if (blk.terminateTime !== blk.startTime) break;
+      i--;
+    }
+    return i;
   }
 
   function legLabel(blk) {
@@ -200,12 +264,22 @@ import { onSSE } from '/static/shared/utils.js';
   // moving (in_transit), a block is the robot stopped at a node doing work
   // (staged). Absence gets no hue at all, because "we do not know" is not a
   // phase.
-  function buildLegs(blocks, totalMs) {
+  function buildLegs(blocks, totalMs, stopped) {
     var legs = [];
     var knownMs = 0;
+    var notRunFrom = stopped ? trailingNotRunBoundary(blocks) : blocks.length;
 
     for (var i = 0; i < blocks.length; i++) {
       var blk = blocks[i];
+
+      // A block that never ran, and therefore no travel INTO it either: the
+      // robot did not drive to a leg it did not perform, so the gap before it
+      // is not travel and must not be drawn as any. Handled ahead of the travel
+      // arithmetic for exactly that reason.
+      if (i >= notRunFrom) {
+        legs.push({ label: legLabel(blk), ms: null, notRun: true, color: 'var(--text-muted)' });
+        continue;
+      }
 
       // Travel INTO this block: the gap since the previous block ended. Both
       // endpoints are vendor times, so this arithmetic never crosses clocks.
@@ -249,12 +323,20 @@ import { onSSE } from '/static/shared/utils.js';
       var swatch, seg;
 
       if (leg.ms === null) {
-        // Fixed width, hatched: it occupies space so it is visible and
-        // countable, but claims no share of the timeline it cannot measure.
-        seg = '<div class="duration-segment leg-unknown" style="flex:0 0 52px"'
-            + ' title="' + leg.label + ': duration not reported by the fleet"></div>';
-        swatch = '<span class="leg-swatch leg-unknown"></span>';
-        legendHtml += '<span>' + swatch + leg.label + ': <span class="leg-unknown-text">unknown</span></span>';
+        // Fixed width, no hue: it occupies space so it is visible and
+        // countable, but claims no share of the timeline. Two reasons a leg
+        // lands here and they get two forms, because "we could not measure it"
+        // and "it did not happen" are different statements and the operator is
+        // entitled to know which one they are looking at.
+        var cls = leg.notRun ? 'leg-notrun' : 'leg-unknown';
+        var why = leg.notRun
+          ? ': not run — the fleet stopped this mission before this leg'
+          : ': duration not reported by the fleet';
+        seg = '<div class="duration-segment ' + cls + '" style="flex:0 0 52px"'
+            + ' title="' + leg.label + why + '"></div>';
+        swatch = '<span class="leg-swatch ' + cls + '"></span>';
+        legendHtml += '<span>' + swatch + leg.label + ': <span class="leg-unknown-text">'
+            + (leg.notRun ? 'not run' : 'unknown') + '</span></span>';
       } else {
         sumMs += leg.ms;
         var pct = totalMs > 0 ? Math.max((leg.ms / totalMs) * 100, 1) : 1;
@@ -269,10 +351,15 @@ import { onSSE } from '/static/shared/utils.js';
 
     bar.innerHTML = html;
     // State the arithmetic so the bar can be checked rather than trusted.
-    var unknownCount = legs.filter(function(l) { return l.ms === null; }).length;
+    var unknownCount = legs.filter(function(l) { return l.ms === null && !l.notRun; }).length;
+    var notRunCount = legs.filter(function(l) { return l.notRun; }).length;
     var footer = '<span class="leg-total">legs ' + formatDuration(sumMs)
       + ' of ' + formatDuration(totalMs) + ' total';
+    // Counted separately. Folding them into one tally would put a leg that did
+    // not happen and a leg we failed to time under the same number, which is
+    // the conflation the three forms exist to prevent.
     if (unknownCount > 0) footer += ' · ' + unknownCount + ' leg(s) unknown';
+    if (notRunCount > 0) footer += ' · ' + notRunCount + ' leg(s) not run';
     footer += '</span>';
     legend.innerHTML = legendHtml + footer;
   }
@@ -285,7 +372,7 @@ import { onSSE } from '/static/shared/utils.js';
     var blocks = parseBlockLegs(events);
     if (blocks.length > 0) {
       var totalMs = (telemetry && telemetry.duration_ms) || 0;
-      renderLegBar(bar, legend, buildLegs(blocks, totalMs), totalMs);
+      renderLegBar(bar, legend, buildLegs(blocks, totalMs, missionWasStopped(events)), totalMs);
       return;
     }
 
