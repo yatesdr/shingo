@@ -47,3 +47,28 @@ dev-fleet: ## Estimate the AMR fleet the plant needs. Override: make dev-fleet A
 	cd shingo-core && go run ./cmd/simcalc -fleet -plant ../plants/demo.yaml -edge ../shingo-edge/shingoedge.dev.yaml $(ARGS)
 
 # dev-wipe target added in Phase 4 (T4.5).
+
+# ── The pre-push gate ────────────────────────────────────────────────
+#
+# The gate itself lives in scripts/gate.sh, not here, because `make` is not
+# installed on the Windows dev host or in its WSL distro — a Makefile-only
+# gate would be one nobody there can run, which is the same failure it exists
+# to fix. These targets are for anyone who does have make.
+#
+# See scripts/gate.sh for what it runs and why gofmt goes first.
+.PHONY: gate gate-fmt gate-vet gate-lint gate-test
+
+gate: ## Everything CI enforces except the docker suites
+	@bash scripts/gate.sh
+
+gate-fmt:
+	@bash scripts/gate.sh fmt
+
+gate-vet:
+	@bash scripts/gate.sh vet
+
+gate-lint:
+	@bash scripts/gate.sh lint
+
+gate-test:
+	@bash scripts/gate.sh test
