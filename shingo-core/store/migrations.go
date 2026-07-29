@@ -101,6 +101,28 @@ func (db *DB) migrateAddBaselineColumns() error {
 		// once: fine on a fresh install, broken at the plant.
 		{"orders", "origin_id", `ALTER TABLE orders ADD COLUMN IF NOT EXISTS origin_id UUID`},
 		{"orders", "origin_class", `ALTER TABLE orders ADD COLUMN IF NOT EXISTS origin_class TEXT NOT NULL DEFAULT ''`},
+		// station_uid on edge_registry: the identity v66 introduces. THE SAME
+		// SHAPE AS origin_id ABOVE, AND CAUGHT THE SAME WAY — the baseline
+		// declares edge_registry_station_uid_key over the column, that index
+		// runs inside schema.Apply ahead of every versioned migration, and on
+		// any database predating v66 it fails with `column "station_uid" does
+		// not exist` and stops startup before v66 can add it.
+		//
+		// VERIFIED RED. TestSchemaConvergesAcrossVintages failed on all three
+		// vintages with exactly that error before this line existed. That is
+		// the third time this class has been caught by that test and the
+		// second time it would otherwise have reached a plant, which is why
+		// the rule is written down at the head of this function rather than
+		// remembered.
+		//
+		// ONLY station_uid, not all five of v66's columns, and the distinction
+		// is the rule's actual content: this list exists for columns the
+		// BASELINE ASSUMES PRESENT, not for every new column. display_name,
+		// bound_instance, prev_instance and bound_at are referenced by no
+		// baseline statement, so schema.Apply never touches them and v66 adds
+		// them in the ordinary way. Adding them here too would work and would
+		// obscure which one is load-bearing.
+		{"edge_registry", "station_uid", `ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS station_uid TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, a := range adds {
 		if !schema.TableExists(db.DB, a.table) {
@@ -794,6 +816,19 @@ func (db *DB) runVersionedMigrations() error {
 					return false
 				}
 				return n == 0
+			}},
+		// EDGE IDENTITY. Backfilling station_uid = station_id is what makes
+		// this deployable ahead of the Edge that knows about uids: for one
+		// window the uid and the legacy routing string are the same characters,
+		// so a legacy Edge's register resolves against the uid key unchanged.
+		// See the function comment — the compatibility is in the data, not in a
+		// branch, which is why nothing has to be unwound later.
+		{66, "edge_registry: station_uid + display_name + binding lease; line_ids retired",
+			v66EdgeIdentity,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "edge_registry", "station_uid") &&
+					schema.ColumnExists(q, "edge_registry", "bound_at") &&
+					!schema.ColumnExists(q, "edge_registry", "line_ids")
 			}},
 	}
 
@@ -2927,6 +2962,77 @@ func v65LinesideBucketsDropStationFromKey(tx *sql.Tx) error {
 			END IF;
 		END $$`, LinesideBucketsUniqueConstraint)); err != nil {
 		return fmt.Errorf("add station-free lineside_buckets unique constraint: %w", err)
+	}
+	return nil
+}
+
+// v66EdgeIdentity splits the one string that was doing three jobs.
+//
+// THE COLUMN ADDS ARE METADATA-ONLY. Six adds, all either nullable or
+// non-volatile-defaulted, on a table holding one row per station (Springfield:
+// one, measured). PG 11+ does not rewrite for these — the same property the B1
+// rehearsal measured across 53-62 and v64 relied on.
+//
+// THE BACKFILL IS THE WHOLE COMPATIBILITY WINDOW, and it is one line:
+//
+//	station_uid = station_id
+//
+// After it runs, the legacy Edge at both plants — which sends
+// `station_id: plant-a.line-1` and knows nothing about uids — registers by a
+// uid that IS 'plant-a.line-1', so `WHERE station_uid = $1` finds the row it
+// has always found. "Core accepts either" is not a branch anywhere in the
+// code; it is this UPDATE making the two spellings the same string for one
+// deploy. That is why guards 1-3 can ship in their final form NOW and the
+// separate deploy only has to delete a recovery branch — there is no dual
+// acceptance path to unwind.
+//
+// The uid stops being the legacy string at enrollment, which is a deliberate
+// human act (Core mints, an operator puts it in shingoedge.yaml). Until then
+// the plant runs on a uid that reads like its old name, which is exactly the
+// behaviour a rollback wants.
+//
+// display_name = station_id for the same reason: the operator-facing string
+// starts as what the operator already sees, and is free to change from the
+// first minute WITHOUT touching anything the wire or the history is keyed on.
+// That is the property the rename case never had.
+//
+// bound_at = registered_at where a hostname binding already exists, so v64's
+// leases carry a plausible age instead of NULL. bound_instance stays ” — no
+// Edge has ever sent one, and inventing a value would make the first register
+// after deploy look like a lease MOVE rather than the first claim it is.
+//
+// line_ids IS DROPPED, and dropping it is the retirement rather than half of
+// one. Leaving the column would leave Springfield's stored ["line-1"] in place
+// and the phantom dashboard scope 'plant-a.line-1.line-1' with it; the field
+// shipped []string{cfg.LineID} regardless of any station override, so it never
+// carried information, only a wrong composition. Its sole consumer
+// (apiStations) is deleted in the same commit.
+func v66EdgeIdentity(tx *sql.Tx) error {
+	for _, ddl := range []string{
+		`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS station_uid TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS bound_instance TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS prev_instance TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS bound_at TIMESTAMPTZ`,
+	} {
+		if _, err := tx.Exec(ddl); err != nil {
+			return fmt.Errorf("v66 edge_registry column add: %w", err)
+		}
+	}
+	if _, err := tx.Exec(
+		`UPDATE edge_registry
+		    SET station_uid  = CASE WHEN station_uid  = '' THEN station_id ELSE station_uid END,
+		        display_name = CASE WHEN display_name = '' THEN station_id ELSE display_name END,
+		        bound_at     = CASE WHEN bound_at IS NULL AND bound_hostname <> ''
+		                            THEN registered_at ELSE bound_at END`); err != nil {
+		return fmt.Errorf("v66 backfill edge identity from the legacy station id: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS edge_registry_station_uid_key
+		ON edge_registry (station_uid) WHERE station_uid <> ''`); err != nil {
+		return fmt.Errorf("v66 station_uid unique index: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE edge_registry DROP COLUMN IF EXISTS line_ids`); err != nil {
+		return fmt.Errorf("v66 drop retired line_ids: %w", err)
 	}
 	return nil
 }

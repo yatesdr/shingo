@@ -34,9 +34,14 @@ func registerBinding(t *testing.T, db *store.DB, b thresholdEntry) {
 // is a missing input rather than a finding, and the childless pass correctly
 // refuses to act — so any test about childlessness has to establish that Core
 // could have heard from this Edge in the first place.
+// ENROLL THEN REGISTER, because a register can no longer bring a station into
+// existence — that is guard 2, and this fixture is the first place it shows.
 func registerActiveEdge(t *testing.T, db *store.DB, stationID string) {
 	t.Helper()
-	if _, err := db.RegisterEdge(stationID, "test-host", "test", nil); err != nil {
+	if _, err := db.EnrollEdge(stationID, "", stationID); err != nil {
+		t.Fatalf("enroll edge: %v", err)
+	}
+	if _, err := db.RegisterEdge(stationID, "test-host", "test-inst", "test"); err != nil {
 		t.Fatalf("register edge: %v", err)
 	}
 	if _, err := db.UpdateHeartbeat(stationID); err != nil {
@@ -50,7 +55,10 @@ func registerActiveEdge(t *testing.T, db *store.DB, stationID string) {
 // under a status-based reachability check it reads as perfectly healthy.
 func registerEdgeWithoutHeartbeat(t *testing.T, db *store.DB, stationID string) {
 	t.Helper()
-	if _, err := db.RegisterEdge(stationID, "test-host", "test", nil); err != nil {
+	if _, err := db.EnrollEdge(stationID, "", stationID); err != nil {
+		t.Fatalf("enroll edge: %v", err)
+	}
+	if _, err := db.RegisterEdge(stationID, "test-host", "test-inst", "test"); err != nil {
 		t.Fatalf("register edge: %v", err)
 	}
 }

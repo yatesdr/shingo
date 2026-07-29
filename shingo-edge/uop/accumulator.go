@@ -588,7 +588,6 @@ func (r *accumulator) flushBuckets() {
 			protocol.Address{Role: protocol.RoleEdge, Station: r.stationID},
 			protocol.Address{Role: protocol.RoleCore},
 			&protocol.LinesideBucketDelta{
-				Station:      r.stationID,
 				CoreNodeName: sCoreNodeName,
 				PairKey:      sPairKey,
 				StyleID:      sStyleID,

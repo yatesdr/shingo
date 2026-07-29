@@ -36,17 +36,14 @@ func (h *Handlers) handleManualMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	ordersJSON, _ := json.Marshal(orderSummaries)
 	coreNodesJSON, _ := json.Marshal(coreNodeNames)
-	lineIDsJSON, _ := json.Marshal([]string{cfg.LineID})
 
 	data := map[string]any{
 		"Page":              "manual-message",
 		"StationID":         cfg.StationID(),
-		"LineIDs":           []string{cfg.LineID},
 		"Orders":            orders,
 		"CoreNodes":         coreNodeNames,
 		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
-		"LineIDsJSON":       string(lineIDsJSON),
 		"OrdersJSON":        string(ordersJSON),
 		"CoreNodesJSON":     string(coreNodesJSON),
 	}
@@ -76,19 +73,20 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 	// --- Data channel messages ---
 	case "edge.register":
 		var p struct {
-			Version string   `json:"version"`
-			LineIDs []string `json:"line_ids"`
+			Version string `json:"version"`
 		}
 		if e := json.Unmarshal(req.Payload, &p); e != nil {
 			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
 			return
 		}
 		hostname, _ := os.Hostname()
+		// No Instance: a hand-fired register from the debug page is not this
+		// process claiming the station, and stamping the real instance here
+		// would let a click move the binding lease.
 		env, err = protocol.NewDataEnvelope(protocol.SubjectEdgeRegister, src, dst, &protocol.EdgeRegister{
 			StationID: stationID,
 			Hostname:  hostname,
 			Version:   p.Version,
-			LineIDs:   p.LineIDs,
 		})
 
 	case "edge.heartbeat":

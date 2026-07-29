@@ -370,6 +370,15 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				// Edges — ask edge(s) to re-send their registration + catalog (Q-034)
 				r.Post("/edges/reregister", h.apiEdgeReregister)
 
+				// Edge identity (v66). See handlers_edges.go for why there is
+				// no "re-issue" endpoint: handing an existing uid to
+				// replacement hardware is the operator reading it off this
+				// list, and Core still holding it is the entire design.
+				r.Get("/edges", h.apiEdges)
+				r.Post("/edges/enroll", h.apiEdgeEnroll)
+				r.Post("/edges/rename", h.apiEdgeRename)
+				r.Post("/edges/rebind", h.apiEdgeRebind)
+
 				// Node management
 				r.Post("/nodes/generate-test", h.apiGenerateTestNodes)
 				r.Post("/nodes/delete-test", h.apiDeleteTestNodes)

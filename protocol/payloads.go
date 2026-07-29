@@ -33,14 +33,34 @@ type CellCatalogEntry struct {
 
 // EdgeRegister is sent by an edge on startup.
 //
+// StationID CARRIES THE STATION UID, and the field is deliberately NOT
+// renamed. Address.Station is a routing selector whose VALUE is the identity
+// Core minted at enrollment, so the identity change is a change in what the
+// string means and who mints it — not in the field's name. Renaming would have
+// broken the one direction the rollout actually creates: Edge deploys before
+// Core, so for a window a NEW edge talks to an OLD core, which would read
+// StationID as "".
+//
+// Instance is a random id the edge draws ONCE PER PROCESS at boot. It exists
+// for the case the hostname check is blind to: two Pis flashed from one SD
+// image share a hostname AND a station_uid, and only the instance distinguishes
+// them. Additive and omitempty — an old core ignores it and an old edge omits
+// it, which Core reads as "cannot judge", the same as an empty hostname.
+//
 // Catalog is an ADDITIVE Q-034 field (omitempty): an old core unmarshals and
 // ignores it, an old edge simply omits it — absent catalog means "no catalog",
 // not an error. No envelope/version bump (see version-skew-research.md).
+//
+// LineIDs is RETIRED. It shipped []string{cfg.LineID} regardless of any station
+// override — always ["line-1"] — and its only consumer composed
+// station + "." + line into 'plant-a.line-1.line-1', a dashboard scope no row
+// from ListOrderStations() can match. A field that carries one constant into
+// one wrong answer is not vestigial, it is a defect with a schema.
 type EdgeRegister struct {
 	StationID string             `json:"station_id"`
 	Hostname  string             `json:"hostname"`
+	Instance  string             `json:"instance,omitempty"`
 	Version   string             `json:"version"`
-	LineIDs   []string           `json:"line_ids"`
 	Catalog   []CellCatalogEntry `json:"catalog,omitempty"`
 }
 
@@ -902,8 +922,21 @@ type BinUOPDelta struct {
 // heartbeat needs to know the cell physically fired even when inventory
 // attribution is operator-gated) and downstream decides whether jumps count
 // toward MTBF/cycle math (§8 #20).
+// THE PAYLOAD COPY OF THE STATION IS GONE (identity change). Every one of
+// these envelopes carried the station twice — once in Envelope.Src.Station,
+// where the transport put it, and once in the body, where the Edge put it —
+// and every handler resolved the disagreement with
+// `if station == "" { station = env.Src.Station }`. That is a rule with two
+// possible answers, and the only reason it never produced a wrong one is that
+// a plant has exactly one station, so the two copies could not differ. Distinct
+// per-edge identity is precisely the change that makes them able to. Deleting
+// the body copy leaves ONE source of the station, and it is the one the
+// transport authenticated rather than the one the sender asserted.
+//
+// It is also the safe direction across the deploy skew: a NEW edge omits the
+// field, an OLD core reads "" and takes env.Src.Station — the fallback this
+// change deletes is what makes deleting it survivable.
 type CounterSnapshot struct {
-	Station          string    `json:"station"`            // envelope source, from Edge identity
 	ReportingPointID int64     `json:"reporting_point_id"` // Edge-local; provenance only, not a Core join key
 	EdgeSnapshotID   int64     `json:"edge_snapshot_id"`   // counter_snapshots.id — composite with Station for dedup
 	ProcessID        int64     `json:"process_id"`         // enriched at emit time from rp.ProcessID
@@ -920,9 +953,9 @@ type CounterSnapshot struct {
 // Two events per outage: one "down" (started) and one "up" (ended).
 // The end event carries duration_ms for convenience; the start event
 // sets duration_ms = 0 and ended_at to the zero value.
-// Core deduplicates on (station, edge_event_id).
+// Core deduplicates on (station, edge_event_id), taking the station from the
+// envelope — see CounterSnapshot for why the payload copy was deleted.
 type DowntimeEvent struct {
-	Station     string    `json:"station"`       // envelope source (Edge identity)
 	PLCName     string    `json:"plc_name"`      // the machine that went down
 	Reason      string    `json:"reason"`        // "breakdown" (sim); extensible for real plant
 	IsDown      bool      `json:"is_down"`       // true = machine went down, false = machine came back up
@@ -964,8 +997,12 @@ type DowntimeEvent struct {
 // NodeStructureChanged sibling at protocol/payloads.go:484 (still
 // Core's authoritative ID — safe direction Core→Edge) and the
 // earlier Item 14 (D6) drop of NodeID on another envelope.
+//
+// The payload copy of the station is deleted — see CounterSnapshot. This one
+// carried it TWICE in one envelope, and Core's dedup scope key is Edge-local
+// (`claimDeltaSequence`), so which copy answers "whose sequence counter space
+// is this" is not a cosmetic question.
 type LinesideBucketDelta struct {
-	Station      string                    `json:"station"`
 	CoreNodeName string                    `json:"core_node_name"`
 	PairKey      string                    `json:"pair_key"`
 	StyleID      int64                     `json:"style_id"`

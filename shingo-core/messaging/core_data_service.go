@@ -16,6 +16,7 @@ import (
 	"shingocore/store/heartbeat"
 	"shingocore/store/nodes"
 	"shingocore/store/plantclaims"
+	"shingocore/store/registry"
 )
 
 // heartbeatRetentionDays is the cell_part_events retention window (plan §12).
@@ -162,11 +163,13 @@ func (s *CoreDataService) StartHeartbeatProjection() {
 // commits before the (best-effort) projection, projection is at-most-once — an
 // acceptable trade for a dashboard that is not an inventory truth source; a
 // dropped/failed projection is logged, not retried.
+// THE STATION COMES FROM THE ENVELOPE, FULL STOP. It used to come from the
+// payload with the envelope as a fallback, which is a rule with two possible
+// answers that only ever produced one because a plant had exactly one station.
+// Per-edge identity is the change that makes them able to disagree, so the
+// payload copy is gone and this reads the source the transport carried.
 func (s *CoreDataService) HandleProductionTick(env *protocol.Envelope, snap *protocol.CounterSnapshot) {
-	station := snap.Station
-	if station == "" {
-		station = env.Src.Station
-	}
+	station := env.Src.Station
 	isNew, err := s.db.TryProductionTickDedup(station, snap.EdgeSnapshotID)
 	if err != nil {
 		log.Printf("core_handler: production.tick dedup station=%s edge_id=%d: %v", station, snap.EdgeSnapshotID, err)
@@ -226,25 +229,22 @@ func isProductionTick(snap *protocol.CounterSnapshot) bool {
 // Core applies deltas authoritatively against bins.uop_remaining;
 // Edge's runtime cache trails authoritative state via the reconciler.
 func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.BinUOPDelta) {
-	// Edge sets the station from its own identity at outbox time. Trust
-	// the envelope source for routing — preserves the two-edge case
-	// where d.Station is set on Edge before the message hits the wire
-	// but we still want to attribute by the verified envelope source.
-	if d.Station == "" {
-		d.Station = env.Src.Station
-	}
-	if err := s.inventoryDelta.ApplyBinUOPDelta(d); err != nil {
+	// The station is the ENVELOPE's, which is the one the transport carried
+	// rather than the one the sender asserted in its own body. See
+	// HandleProductionTick.
+	station := env.Src.Station
+	if err := s.inventoryDelta.ApplyBinUOPDelta(station, d); err != nil {
 		if errors.Is(err, service.ErrInventoryDeltaSkipped) {
 			s.resp.dbg("bin_uop_delta replay station=%s bin=%d seq=%d — already applied",
-				d.Station, d.BinID, d.SequenceID)
+				station, d.BinID, d.SequenceID)
 			return
 		}
 		log.Printf("core_handler: apply BinUOPDelta station=%s bin=%d seq=%d delta=%d reason=%s: %v",
-			d.Station, d.BinID, d.SequenceID, d.Delta, d.Reason, err)
+			station, d.BinID, d.SequenceID, d.Delta, d.Reason, err)
 		return
 	}
 	s.resp.dbg("bin_uop_delta applied station=%s bin=%d seq=%d delta=%d reason=%s",
-		d.Station, d.BinID, d.SequenceID, d.Delta, d.Reason)
+		station, d.BinID, d.SequenceID, d.Delta, d.Reason)
 
 	// Notify the UOP-threshold monitor so the delta is applied to the
 	// cached UOP total and thresholds are checked. The monitor does
@@ -273,11 +273,11 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 			qty = -qty
 		}
 		s.resp.dbg("production via bin_uop_delta: payload=%s station=%s qty=%d reason=%s",
-			d.PayloadCode, d.Station, qty, d.Reason)
+			d.PayloadCode, station, qty, d.Reason)
 		if err := s.db.IncrementProduced(d.PayloadCode, qty); err != nil {
 			log.Printf("core_handler: increment produced payload=%s qty=%d: %v", d.PayloadCode, qty, err)
 		}
-		if err := s.db.LogProduction(d.PayloadCode, d.Station, qty); err != nil {
+		if err := s.db.LogProduction(d.PayloadCode, station, qty); err != nil {
 			log.Printf("core_handler: log production payload=%s: %v", d.PayloadCode, err)
 		}
 	}
@@ -305,28 +305,26 @@ func isProductionReason(reason protocol.BinUOPDeltaReason) bool {
 // deltas (no PLC) — a delta arriving from a manual-swap node would
 // indicate an Edge bug.
 func (s *CoreDataService) HandleLinesideBucketDelta(env *protocol.Envelope, d *protocol.LinesideBucketDelta) {
-	if d.Station == "" {
-		d.Station = env.Src.Station
-	}
-	if err := s.inventoryDelta.ApplyLinesideBucketDelta(d); err != nil {
+	station := env.Src.Station
+	if err := s.inventoryDelta.ApplyLinesideBucketDelta(station, d); err != nil {
 		if errors.Is(err, service.ErrInventoryDeltaSkipped) {
 			s.resp.dbg("lineside_bucket_delta replay station=%s core_node=%q part=%q seq=%d — already applied",
-				d.Station, d.CoreNodeName, d.PartNumber, d.SequenceID)
+				station, d.CoreNodeName, d.PartNumber, d.SequenceID)
 			return
 		}
 		log.Printf("core_handler: apply LinesideBucketDelta station=%s core_node=%q part=%q seq=%d delta=%d reason=%s: %v",
-			d.Station, d.CoreNodeName, d.PartNumber, d.SequenceID, d.Delta, d.Reason, err)
+			station, d.CoreNodeName, d.PartNumber, d.SequenceID, d.Delta, d.Reason, err)
 		return
 	}
 	s.resp.dbg("lineside_bucket_delta applied station=%s core_node=%q part=%q seq=%d delta=%d reason=%s",
-		d.Station, d.CoreNodeName, d.PartNumber, d.SequenceID, d.Delta, d.Reason)
+		station, d.CoreNodeName, d.PartNumber, d.SequenceID, d.Delta, d.Reason)
 
 	// Notify the UOP-threshold monitor so a bucket drain or capture
 	// re-evaluates loop totals. The monitor's debounce + opt-in gating
 	// inside is what keeps this from being noisy. Empty payload_code is
 	// fine — the monitor short-circuits on unknown payload.
 	if s.thresholdMonitor != nil {
-		s.thresholdMonitor.OnBucketApplied(d.Station, d.CoreNodeName, d.PayloadCode, d.Delta, d.Reason)
+		s.thresholdMonitor.OnBucketApplied(station, d.CoreNodeName, d.PayloadCode, d.Delta, d.Reason)
 	}
 }
 
@@ -345,12 +343,41 @@ func (s *CoreDataService) HandleCountGroupAck(env *protocol.Envelope, ack *proto
 }
 
 func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol.EdgeRegister) {
-	log.Printf("core_handler: edge registered: %s (hostname=%s, version=%s, lines=%v)",
-		p.StationID, p.Hostname, p.Version, p.LineIDs)
+	uid := p.StationID
+	log.Printf("core_handler: edge registered: uid=%s (hostname=%s, instance=%s, version=%s)",
+		uid, p.Hostname, p.Instance, p.Version)
 
-	conflict, err := s.db.RegisterEdge(p.StationID, p.Hostname, p.Version, p.LineIDs)
+	conflict, err := s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version)
+	if errors.Is(err, registry.ErrUnknownStation) {
+		// ── THE COMPATIBILITY WINDOW, AND THE ONLY PIECE OF IT ─────────────
+		//
+		// DELETE THIS BRANCH IN THE SECOND DEPLOY. It is the entire difference
+		// between "tolerate" and "refuse", it is deliberately one contiguous
+		// block, and the rollout note names it by function.
+		//
+		// It exists because of an ordering constraint that cannot be avoided:
+		// the guard that refuses an unenrolled edge must not ship BEFORE there
+		// is an enrolled edge, or the first deploy is a plant with no Edge. v66
+		// backfills station_uid = station_id so both live plants resolve
+		// without this branch ever running; it covers the cases the backfill
+		// cannot reach — a Core database that predates the plant it is talking
+		// to, a fresh dev/docker stack, a sim.
+		//
+		// It is NOT a config toggle and there is nothing to flip at runtime.
+		// The two behaviours are two commits, and which one a plant has is
+		// answered by what is deployed. A flag would have made "is this plant
+		// refusing yet" a question about state instead of about version.
+		if _, eerr := s.db.EnrollEdge(uid, "", uid); eerr != nil {
+			log.Printf("core_handler: auto-enroll unknown station %s: %v", uid, eerr)
+			return
+		}
+		log.Printf("core_handler: AUTO-ENROLLED unknown station %s during the identity migration "+
+			"window. This is expected exactly once per edge and only until the enrollment deploy; "+
+			"after it, an unenrolled edge is refused.", uid)
+		conflict, err = s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version)
+	}
 	if err != nil {
-		log.Printf("core_handler: register edge %s: %v", p.StationID, err)
+		log.Printf("core_handler: register edge %s: %v", uid, err)
 		return
 	}
 
@@ -385,7 +412,7 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	msg := "registered"
 	if conflict != nil {
 		msg = "registered, BUT " + conflict.String() +
-			" — give each edge a unique namespace/line_id in shingoedge.yaml"
+			" — enroll the second edge as its own station on Core and put ITS station_uid in that Pi's shingoedge.yaml"
 	}
 	s.resp.replyData(env, protocol.SubjectEdgeRegistered,
 		&protocol.EdgeRegistered{StationID: p.StationID, Message: msg})
@@ -411,8 +438,17 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	}
 }
 
+// HandleEdgeHeartbeat marks an enrolled station alive.
+//
+// THE HEARTBEAT NO LONGER CREATES ROWS, and that is half of guard 2 rather
+// than a tidy-up. Refusing at Register alone would have been theatre: the old
+// UpdateHeartbeat upserted and set status='active', so an unknown machine's
+// row appeared sixty seconds later anyway — with no hostname and no version on
+// it, which is strictly worse evidence than the register would have left.
+// found=false drives the same edge.register_request the old isNew flag did;
+// the difference is that the request is now the only outcome.
 func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
-	isNew, err := s.db.UpdateHeartbeat(p.StationID)
+	found, err := s.db.UpdateHeartbeat(p.StationID)
 	if err != nil {
 		log.Printf("core_handler: update heartbeat for %s: %v", p.StationID, err)
 		return
@@ -421,10 +457,10 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	s.resp.replyData(env, protocol.SubjectEdgeHeartbeatAck,
 		&protocol.EdgeHeartbeatAck{StationID: p.StationID, ServerTS: clock.Now().UTC()})
 
-	if isNew {
-		log.Printf("core_handler: unregistered edge %s detected via heartbeat, requesting registration", p.StationID)
+	if !found {
+		log.Printf("core_handler: heartbeat from unenrolled station %s, requesting registration", p.StationID)
 		s.resp.sendData(protocol.SubjectEdgeRegisterRequest, p.StationID,
-			&protocol.EdgeRegisterRequest{StationID: p.StationID, Reason: "unregistered edge detected"})
+			&protocol.EdgeRegisterRequest{StationID: p.StationID, Reason: "station not enrolled"})
 	}
 }
 
@@ -790,10 +826,7 @@ func (s *CoreDataService) StartDowntimeProjection() {
 // it can never back-pressure the Kafka consumer. Best-effort: a dropped
 // projection is logged, not retried.
 func (s *CoreDataService) HandleDowntimeEvent(env *protocol.Envelope, d *protocol.DowntimeEvent) {
-	station := d.Station
-	if station == "" {
-		station = env.Src.Station
-	}
+	station := env.Src.Station
 	isNew, err := s.db.TryDowntimeEventDedup(station, d.EdgeEventID)
 	if err != nil {
 		log.Printf("core_handler: downtime event dedup station=%s edge_id=%d: %v", station, d.EdgeEventID, err)

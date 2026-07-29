@@ -84,16 +84,24 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 //   - bins: per-bin authoritative uop_remaining for every bin at any
 //     of the requested nodes. Edge's reconciler compares against
 //     local runtime cache and self-heals from this value.
-//   - buckets: per-bucket authoritative qty for the calling station.
+//   - buckets: per-bucket authoritative qty at those same nodes.
 //     Edge compares against its local node_lineside_bucket table to
 //     detect bucket-side drift.
 //
-// GET /api/telemetry/uop-state?station=ALN_001&nodes=NODE-A,NODE-B
+// GET /api/telemetry/uop-state?nodes=NODE-A,NODE-B
+//
+// `station` is accepted and ignored: Edge still sends it, and both arrays are
+// now node-scoped. See ListBucketsForNodes for why the buckets half stopped
+// filtering on it.
 //
 // Read-only — no mutation of bin or bucket state.
 func (h *Handlers) apiTelemetryUOPState(w http.ResponseWriter, r *http.Request) {
-	station := strings.TrimSpace(r.URL.Query().Get("station"))
-	nodesParam := r.URL.Query().Get("nodes")
+	var nodeNames []string
+	for _, name := range strings.Split(r.URL.Query().Get("nodes"), ",") {
+		if t := strings.TrimSpace(name); t != "" {
+			nodeNames = append(nodeNames, t)
+		}
+	}
 
 	type uopStateResponse struct {
 		Bins    []service.BinUOPRow         `json:"bins"`
@@ -103,25 +111,23 @@ func (h *Handlers) apiTelemetryUOPState(w http.ResponseWriter, r *http.Request) 
 
 	svc := h.engine.InventoryDeltaService()
 
-	if nodesParam != "" {
-		var names []string
-		for _, name := range strings.Split(nodesParam, ",") {
-			if t := strings.TrimSpace(name); t != "" {
-				names = append(names, t)
-			}
+	if len(nodeNames) > 0 {
+		rows, err := svc.ListBinUOPForNodes(nodeNames)
+		if err != nil {
+			h.jsonError(w, "list bin uop: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
-		if len(names) > 0 {
-			rows, err := svc.ListBinUOPForNodes(names)
-			if err != nil {
-				h.jsonError(w, "list bin uop: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			resp.Bins = rows
-		}
+		resp.Bins = rows
 	}
 
-	if station != "" {
-		rows, err := svc.ListBucketsForStation(station)
+	// BUCKETS ARE FILTERED BY THE SAME NODE SET AS BINS, not by the station.
+	// The caller is Edge's drift reconciliation asking "what is authoritative
+	// at the nodes I own"; `station` on a bucket row is the last reporter, and
+	// the two answers diverge the moment two edges have distinct ids. The node
+	// list was already on this request — it is what the bins half is built
+	// from — so reading it for both halves needs nothing new from Edge.
+	if len(nodeNames) > 0 {
+		rows, err := svc.ListBucketsForNodes(nodeNames)
 		if err != nil {
 			h.jsonError(w, "list buckets: "+err.Error(), http.StatusInternalServerError)
 			return

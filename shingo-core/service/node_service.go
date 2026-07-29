@@ -343,3 +343,45 @@ func (s *NodeService) ApplyAssignments(nodeID int64, a NodeAssignments) error {
 
 	return errors.Join(errs...)
 }
+
+// ── Edge station enrollment (identity, v66) ──────────────────────────────
+//
+// ENROLLMENT IS AN ADMIN ACT WITH A HUMAN IN IT, and that is the design rather
+// than an unfinished automation. Core cannot distinguish "a new station has
+// arrived" from "this station's hardware was replaced" by looking at a Pi —
+// the two look identical from the network, which is exactly why the old code
+// could not tell them apart and silently picked one interpretation. The human
+// who is physically holding the box is the only party that knows, so the
+// answer is expressed by which of these two things they do:
+//
+//	NEW STATION       → EnrollEdge, take the fresh uid, put it on the Pi.
+//	REPLACED HARDWARE → do NOT enroll. Read the existing uid off Core
+//	                    (GetEdgeByUID / the edges list), put THAT on the new
+//	                    Pi, and RebindEdgeHostname to move the lease.
+//
+// The second is the case a first-boot UUID cannot express at all.
+
+// EnrollEdge mints a station identity. displayName is the operator's label and
+// is not an identifier; pass "" to default it to the uid.
+func (s *NodeService) EnrollEdge(displayName string) (*registry.Edge, error) {
+	uid, err := registry.NewStationUID()
+	if err != nil {
+		return nil, err
+	}
+	return s.db.EnrollEdge(uid, displayName, uid)
+}
+
+// GetEdge returns one enrolled station by uid.
+func (s *NodeService) GetEdge(uid string) (*registry.Edge, error) { return s.db.GetEdgeByUID(uid) }
+
+// RenameEdge sets the operator-facing display name. Free of consequence by
+// construction — see registry.SetDisplayName.
+func (s *NodeService) RenameEdge(uid, displayName string) (bool, error) {
+	return s.db.RenameEdge(uid, displayName)
+}
+
+// RebindEdge moves a station's binding to a new machine and clears its
+// conflict record. The sanctioned "yes, this station lives here now".
+func (s *NodeService) RebindEdge(uid, hostname string) (bool, error) {
+	return s.db.RebindEdgeHostname(uid, hostname)
+}

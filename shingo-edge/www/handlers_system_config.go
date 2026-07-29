@@ -95,9 +95,31 @@ func (h *Handlers) apiUpdateMessaging(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+// apiUpdateStationID writes this edge's identity into shingoedge.yaml.
+//
+// IT TAKES EFFECT ON RESTART, AND SAYING SO IS THE FIX. This endpoint used to
+// return a bare {"status":"ok"} while the running station id stayed exactly
+// where it was — captured once at main.go's identity block and closed over by
+// the Kafka ingest filter. Its sibling apiUpdateMessaging calls ReconnectKafka;
+// this one cannot, because the station id is not one connection, it is the
+// ingest filter, the envelope source address, the consumer group and the backup
+// manifest. Rewiring all of those live is a larger change than telling the
+// truth, so it tells the truth.
+//
+// THE OTHER HALF OF THE OLD DEFECT IS ALREADY GONE. Saving used to persist the
+// derived Kafka group id alongside the station id — KafkaConfig.GroupID carried
+// a yaml tag and Save marshals the whole struct — which pinned the consumer
+// group to the OLD station id forever. Renaming through this endpoint therefore
+// made the "one edge is deaf" condition permanent rather than fixing it. The
+// field is `yaml:"-"` now, so no Save can write it and no config can override
+// the derivation. See config.KafkaConfig.GroupID.
+//
+// station_uid is the enrolled identity Core minted. station_id is the legacy
+// override and is accepted for the migration window only.
 func (h *Handlers) apiUpdateStationID(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		StationID string `json:"station_id"`
+		StationUID string `json:"station_uid"`
+		StationID  string `json:"station_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -106,7 +128,12 @@ func (h *Handlers) apiUpdateStationID(w http.ResponseWriter, r *http.Request) {
 
 	cfg := h.engine.AppConfig()
 	cfg.Lock()
-	cfg.Messaging.StationID = req.StationID
+	if req.StationUID != "" {
+		cfg.StationUID = req.StationUID
+	}
+	if req.StationID != "" {
+		cfg.Messaging.StationID = req.StationID
+	}
 	cfg.Unlock()
 
 	if err := cfg.Save(h.engine.ConfigPath()); err != nil {
@@ -114,7 +141,10 @@ func (h *Handlers) apiUpdateStationID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("station-id")
-	writeJSON(w, map[string]string{"status": "ok"})
+	writeJSON(w, map[string]string{
+		"status": "ok",
+		"note":   "written to shingoedge.yaml — RESTART shingoedge for it to take effect",
+	})
 }
 
 func (h *Handlers) apiTestKafka(w http.ResponseWriter, r *http.Request) {

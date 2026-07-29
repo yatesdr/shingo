@@ -254,17 +254,21 @@ func (h *Handlers) apiStations(w http.ResponseWriter, r *http.Request) {
 			set[s] = true
 		}
 	}
+	// ONE ENTRY PER REGISTERED EDGE, ITS STATION ID, AND NOTHING COMPOSED.
+	//
+	// This used to also emit e.StationID + "." + ln for every line id on the
+	// row, which at Springfield produced 'plant-a.line-1.line-1' — an option in
+	// the dashboard scope picker that NO row from ListOrderStations() can ever
+	// match, so selecting it scoped a board to nothing. It was not a typo: the
+	// register payload sent []string{cfg.LineID} regardless of any station
+	// override, so 'line-1' was the only value it could ever carry and the
+	// composition was wrong for every plant, always. The field is retired.
 	edges, eErr := h.engine.NodeService().ListEdges()
 	for _, e := range edges {
 		if e.StationID == "" {
 			continue
 		}
-		if len(e.LineIDs) == 0 {
-			set[e.StationID] = true
-		}
-		for _, ln := range e.LineIDs {
-			set[e.StationID+"."+ln] = true
-		}
+		set[e.StationID] = true
 	}
 	if oErr != nil && eErr != nil {
 		h.jsonError(w, oErr.Error(), http.StatusInternalServerError)

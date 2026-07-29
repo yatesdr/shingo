@@ -110,11 +110,11 @@ func NewInventoryDeltaService(db *store.DB, binManifest ManifestClearer) *Invent
 // doesn't exist or the payload code mismatches — callers log and
 // continue (the delta is dropped; reconciliation will catch the
 // divergence).
-func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error {
+func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.BinUOPDelta) error {
 	if d == nil {
 		return fmt.Errorf("nil BinUOPDelta")
 	}
-	if d.Station == "" {
+	if station == "" {
 		return fmt.Errorf("BinUOPDelta missing station")
 	}
 	if d.BinID <= 0 {
@@ -175,7 +175,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 			// bin_uop_delta rows.
 			if err := audit.AppendBinUOPOverride(tx, d.BinID, before, before,
 				audit.OpStaleEpochDropped, "service/inventory_delta_service.go:staleEpoch",
-				nil, d.PayloadCode, d.Station, metadata); err != nil {
+				nil, d.PayloadCode, station, metadata); err != nil {
 				return err
 			}
 			// Flag the bin so the bins page surfaces a carrier whose deltas are
@@ -204,7 +204,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 		}
 	}
 
-	applied, err := claimDeltaSequence(tx, d.Station, invDeltaScopeBin, scopeKey, d.Epoch, d.SequenceID)
+	applied, err := claimDeltaSequence(tx, station, invDeltaScopeBin, scopeKey, d.Epoch, d.SequenceID)
 	if err != nil {
 		return err
 	}
@@ -269,7 +269,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 			}
 			if err := audit.AppendBinUOPOverride(tx, d.BinID, valueBefore, valueBefore,
 				audit.OpPayloadBoundFirstDelta, "service/inventory_delta_service.go:firstDeltaBind",
-				nil, d.PayloadCode, d.Station, metadata); err != nil {
+				nil, d.PayloadCode, station, metadata); err != nil {
 				return err
 			}
 		} else {
@@ -290,7 +290,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 			}
 			if err := audit.AppendBinUOPOverride(tx, d.BinID, valueBefore, valueBefore,
 				audit.OpPayloadReboundWithInventory, "service/inventory_delta_service.go:reboundWithInventory",
-				nil, d.PayloadCode, d.Station, metadata); err != nil {
+				nil, d.PayloadCode, station, metadata); err != nil {
 				return err
 			}
 			log.Printf("BinUOPDelta payload REBOUND with inventory bin=%d %q→%q units_aboard=%d seq=%d — counting continues; bin flagged for cycle count",
@@ -307,7 +307,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 		// writes go through s.db, NOT this tx — the return below rolls the
 		// tx back so the dedup seq stays unconsumed (replay semantics
 		// unchanged), and the tx holds no bins-row lock on this path.
-		s.recordRejectedDelta(d, havePayloadCode, valueBefore, anomalyFlagged)
+		s.recordRejectedDelta(station, d, havePayloadCode, valueBefore, anomalyFlagged)
 		return fmt.Errorf("BinUOPDelta payload mismatch bin=%d wire=%q have=%q",
 			d.BinID, d.PayloadCode, havePayloadCode)
 	}
@@ -339,7 +339,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata)
 		VALUES ($1, $2, $3, 'bin_uop_delta', 'service/inventory_delta_service.go', $4, $5, $6)`,
 		d.BinID, valueBefore, valueBefore+d.Delta,
-		d.PayloadCode, d.Station, string(metadata),
+		d.PayloadCode, station, string(metadata),
 	); err != nil {
 		return fmt.Errorf("audit BinUOPDelta bin=%d: %w", d.BinID, err)
 	}
@@ -391,7 +391,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(d *protocol.BinUOPDelta) error 
 // masks the reject itself. This path can never gate dispatch or the press:
 // anomaly_at is a visibility timestamp, read by the bins page only — it
 // feeds no claim predicate (BinUnavailableReason does not read it).
-func (s *InventoryDeltaService) recordRejectedDelta(d *protocol.BinUOPDelta, havePayloadCode string, valueBefore int, anomalyFlagged bool) {
+func (s *InventoryDeltaService) recordRejectedDelta(station string, d *protocol.BinUOPDelta, havePayloadCode string, valueBefore int, anomalyFlagged bool) {
 	metadata, err := json.Marshal(struct {
 		WirePayload string `json:"wire_payload"`
 		BinPayload  string `json:"bin_payload"`
@@ -404,7 +404,7 @@ func (s *InventoryDeltaService) recordRejectedDelta(d *protocol.BinUOPDelta, hav
 	}
 	if err := audit.AppendBinUOPOverride(s.db.DB, d.BinID, valueBefore, valueBefore,
 		audit.OpPayloadMismatchDropped, "service/inventory_delta_service.go:payloadMismatch",
-		nil, d.PayloadCode, d.Station, metadata); err != nil {
+		nil, d.PayloadCode, station, metadata); err != nil {
 		log.Printf("audit rejected delta bin=%d: %v", d.BinID, err)
 	}
 	if !anomalyFlagged {
@@ -517,10 +517,10 @@ func (s *InventoryDeltaService) RejectedDeltaDetail() ([]RejectedDeltaBin, error
 // part_number). Creates the row on first sight via UPSERT; deletes when
 // qty reaches zero (Option C — empty buckets carry no useful information).
 //
-// TWO USES OF d.Station IN ONE FUNCTION, AND THEY ARE NOT THE SAME KIND OF
+// TWO USES OF station IN ONE FUNCTION, AND THEY ARE NOT THE SAME KIND OF
 // THING — this is the distinction v65 turns on:
 //
-//   - claimDeltaSequence(tx, d.Station, ...) — station STAYS. SequenceID is an
+//   - claimDeltaSequence(tx, station, ...) — station STAYS. SequenceID is an
 //     Edge-local counter, so "which edge's counter space" is exactly what
 //     makes the at-most-once guard correct. Per-edge identity FIXES this one:
 //     two edges sharing a station id today share a sequence space they are
@@ -541,20 +541,20 @@ func (s *InventoryDeltaService) RejectedDeltaDetail() ([]RejectedDeltaBin, error
 // applied delta would drive qty below zero (the CHECK constraint
 // catches this; we surface it as a typed error so the caller can log
 // without confusing a genuine SQL fault for a delta bug).
-func (s *InventoryDeltaService) ApplyLinesideBucketDelta(d *protocol.LinesideBucketDelta) error {
+func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *protocol.LinesideBucketDelta) error {
 	if d == nil {
 		return fmt.Errorf("nil LinesideBucketDelta")
 	}
-	if d.Station == "" {
+	if station == "" {
 		return fmt.Errorf("LinesideBucketDelta missing station")
 	}
 	if d.CoreNodeName == "" {
 		return fmt.Errorf("LinesideBucketDelta missing core_node_name (station=%s style=%d part=%q)",
-			d.Station, d.StyleID, d.PartNumber)
+			station, d.StyleID, d.PartNumber)
 	}
 	if d.PartNumber == "" {
 		return fmt.Errorf("LinesideBucketDelta missing part_number (station=%s core_node_name=%s style=%d)",
-			d.Station, d.CoreNodeName, d.StyleID)
+			station, d.CoreNodeName, d.StyleID)
 	}
 
 	// Insert-time validation: refuse to land a delta on a name Core
@@ -566,7 +566,7 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(d *protocol.LinesideBuc
 	// drop the delta loudly and let the operator investigate.
 	if _, err := s.db.GetNodeByName(d.CoreNodeName); err != nil {
 		return fmt.Errorf("LinesideBucketDelta core_node_name=%q does not resolve to a Core node (station=%s part=%q): %w",
-			d.CoreNodeName, d.Station, d.PartNumber, err)
+			d.CoreNodeName, station, d.PartNumber, err)
 	}
 
 	tx, err := s.db.Begin()
@@ -581,7 +581,7 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(d *protocol.LinesideBuc
 	// already clears the dedup row on the existing lifecycle exit paths.
 	// If buckets ever exhibit the same drift pattern as bins, a follow-up
 	// migration can introduce a bucket-side epoch with Edge-side tracking.
-	applied, err := claimDeltaSequence(tx, d.Station, invDeltaScopeBucket, scopeKey, 0, d.SequenceID)
+	applied, err := claimDeltaSequence(tx, station, invDeltaScopeBucket, scopeKey, 0, d.SequenceID)
 	if err != nil {
 		return err
 	}
@@ -634,7 +634,7 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(d *protocol.LinesideBuc
 			payload_code = CASE WHEN $7 = '' THEN lineside_buckets.payload_code ELSE $7 END,
 			station = $1,
 			updated_at = NOW()`,
-		d.Station, d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber, d.Delta, d.PayloadCode)
+		station, d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber, d.Delta, d.PayloadCode)
 	if err != nil {
 		// Most likely cause: CHECK (qty >= 0) violation when the
 		// DO UPDATE branch tried to drive qty negative. Wrap.
@@ -818,33 +818,49 @@ func (s *InventoryDeltaService) SumInvariant() (InventoryInvariant, error) {
 	}, nil
 }
 
-// ListBucketsForStation returns every authoritative bucket row for
-// the given station. Edge filters down to its node set client-side
-// (cheap; bucket rows per station are few).
+// ListBucketsForNodes returns every authoritative bucket row at the given
+// Core nodes. This is the drift reconciler's read.
 //
-// KNOWN GAP, AND IT OPENS THE DAY EACH EDGE GETS ITS OWN ID — not fixed here
-// because the fix changes what Edge has to send, which is a wire decision.
+// IT USED TO FILTER ON `station`, AND THAT WAS THE SIXTH STATION-KEYED SITE.
+// After v65 `station` on a bucket row is the LAST REPORTER, not an ownership
+// claim, so the old filter answered "buckets some edge most recently
+// mentioned" while the caller was asking "buckets at the nodes I own". Those
+// coincide only while every edge shares one station string — which is the
+// condition the identity change ends. With distinct ids, a bucket at one of
+// edge A's nodes that edge B last touched becomes invisible to A's
+// reconciliation: the drift detector stops seeing exactly the drift it exists
+// for, and silently, because an empty result and a clean result look the same.
 //
-// After v65 `station` is the LAST REPORTER, not an ownership claim, so this
-// filter answers "buckets some edge most recently mentioned" when the caller
-// (Edge's drift reconciliation, via www/handlers_telemetry.go) is asking
-// "buckets at the nodes I own". Those coincide only while every edge shares
-// one station string. With distinct ids, a bucket at one of edge A's nodes
-// that edge B last touched becomes invisible to A's reconciliation — the
-// drift it exists to detect is exactly the drift it would stop seeing.
+// IT WAS DEFERRED ON THE GROUNDS THAT FIXING IT WOULD CHANGE WHAT EDGE SENDS.
+// It does not. Edge already sends the node set on this same request —
+// CoreClient.FetchUOPState puts BOTH `station=` and `nodes=` on the query
+// string, and its only caller (Engine.BucketBackfillNeeded) builds `nodes`
+// from ListProcessNodes()'s core_node_name, which is the literal definition of
+// "the nodes I own". Both halves of the answer were already on the wire; only
+// the server was reading the wrong one. So this is a server-side correction
+// with no protocol change and no Edge deploy ordering attached to it.
 //
-// The correct filter is the NODE SET, and the shape is already sitting next to
-// it: ListBinUOPForNodes takes node names, and the SAME handler already builds
-// a node list for the bins half of the same response. The buckets half is the
-// only part still keyed on the station.
-func (s *InventoryDeltaService) ListBucketsForStation(station string) ([]LinesideBucketRow, error) {
-	if station == "" {
+// The shape was already sitting next to it: ListBinUOPForNodes takes node
+// names, and the SAME handler builds that list for the bins half of the same
+// response.
+func (s *InventoryDeltaService) ListBucketsForNodes(names []string) ([]LinesideBucketRow, error) {
+	if len(names) == 0 {
 		return nil, nil
+	}
+	// Explicit placeholders rather than pq.Array, matching ListBinUOPForNodes
+	// directly above: this package takes a bare *sql.DB and does not import the
+	// driver package, and the two halves of one response should not disagree
+	// about how a node list is bound.
+	args := make([]any, len(names))
+	placeholders := make([]string, len(names))
+	for i, name := range names {
+		args[i] = name
+		placeholders[i] = "$" + strconv.Itoa(i+1)
 	}
 	rows, err := s.db.Query(`SELECT b.core_node_name, b.pair_key, b.style_id, b.part_number, b.qty
 		FROM lineside_buckets b
-		WHERE b.station = $1
-		ORDER BY b.core_node_name, b.part_number`, station)
+		WHERE b.core_node_name IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY b.core_node_name, b.part_number`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query bucket rows: %w", err)
 	}

@@ -712,7 +712,6 @@ func (m *Manager) enqueueProductionTick(rp counters.ReportingPoint, snapID, newC
 		protocol.Address{Role: protocol.RoleEdge, Station: station},
 		protocol.Address{Role: protocol.RoleCore},
 		&protocol.CounterSnapshot{
-			Station:          station,
 			ReportingPointID: rp.ID,
 			EdgeSnapshotID:   snapID,
 			ProcessID:        rp.ProcessID,

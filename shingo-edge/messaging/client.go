@@ -28,6 +28,32 @@ type Client struct {
 	stopChan   chan struct{}
 	SigningKey []byte // optional HMAC key; when set, outbound messages are signed
 
+	// PartitionKey is stamped on every outbound message as the Kafka record
+	// key. On the Edge it is the station uid; on Core it is the destination
+	// station where the publish path knows one.
+	//
+	// TWO HONEST CAVEATS, because "add a key" is stated as a fix more often
+	// than it is one:
+	//
+	//  1. Topics are created with NumPartitions=1
+	//     (shingo-core/messaging/client.go ensureTopics), and one partition
+	//     makes every partitioning scheme identical. This buys nothing until
+	//     the partition count is raised, which is a broker-side operation and
+	//     not part of this change.
+	//  2. The writer's balancer used to be kafka.LeastBytes, which NEVER READS
+	//     msg.Key — it routes by accumulated bytes per partition (verified in
+	//     kafka-go v0.4.50 balancer.go: Balance() touches Key only to add
+	//     len(Key) to a counter). So a key under LeastBytes is inert even with
+	//     many partitions. The balancer is kafka.Hash below for that reason;
+	//     under one partition the switch is provably a no-op, which is what
+	//     makes it safe to make now rather than during the change that needs it.
+	//
+	// What it does buy today: the key travels with the record, so a message
+	// dumped off the topic carries its station without being decoded, and the
+	// day partitions are added the per-station ordering and per-station
+	// consumer assignment are already correct.
+	PartitionKey string
+
 	DebugLog DebugLogFunc
 }
 
@@ -50,7 +76,7 @@ func (c *Client) Connect() error {
 
 	c.kafkaW = &kafkago.Writer{
 		Addr:         kafkago.TCP(c.cfg.Kafka.Brokers...),
-		Balancer:     &kafkago.LeastBytes{},
+		Balancer:     &kafkago.Hash{},
 		RequiredAcks: kafkago.RequireOne,
 	}
 	c.DebugLog.Log("connected to brokers %v", c.cfg.Kafka.Brokers)
@@ -74,7 +100,7 @@ func (c *Client) Reconnect() error {
 
 	c.kafkaW = &kafkago.Writer{
 		Addr:         kafkago.TCP(c.cfg.Kafka.Brokers...),
-		Balancer:     &kafkago.LeastBytes{},
+		Balancer:     &kafkago.Hash{},
 		RequiredAcks: kafkago.RequireOne,
 	}
 
@@ -106,6 +132,7 @@ func (c *Client) Publish(topic string, payload []byte) error {
 	defer cancel()
 	return c.kafkaW.WriteMessages(ctx, kafkago.Message{
 		Topic: topic,
+		Key:   []byte(c.PartitionKey),
 		Value: payload,
 	})
 }

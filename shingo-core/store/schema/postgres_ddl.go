@@ -287,31 +287,75 @@ CREATE TABLE IF NOT EXISTS scene_edges (
 );
 CREATE INDEX IF NOT EXISTS idx_scene_edges_area ON scene_edges(area_name);
 
--- bound_hostname / conflict_* are the duplicate-edge detector (v64).
+-- THE IDENTITY TABLE. Three things that were one string until v66:
 --
--- station_id is UNIQUE, and Register's upsert sets hostname = excluded.hostname
--- on conflict, so two machines configured with the same station id do not
--- collide — they take turns owning one row, and the statement that lets them do
--- it also DELETES THE EVIDENCE that there were two. bound_hostname keeps the
--- first claimant so the overwrite becomes visible instead of silent.
+--   station_uid  — what Core correlates all history to. Core MINTS it at
+--                  enrollment and it never changes. Opaque on purpose: the
+--                  moment an identifier is legible it acquires an editor.
+--   display_name — 'SPRINGFIELD / EDGE-2'. Operator-owned, freely mutable,
+--                  and it NEVER crosses the wire as an identifier.
+--   station_id   — the transport routing selector, i.e. Address.Station. Its
+--                  VALUE is the station_uid; the column survives because
+--                  every station-keyed row in this database already carries
+--                  that string and the rewrite is a migration, not a rename.
+--
+-- WHY CORE MINTS IT RATHER THAN THE PI. A first-boot UUID cannot serve the
+-- case the owner actually has — replace the hardware for an existing station
+-- and keep its history — because a self-minted UUID is NOT RE-ISSUABLE:
+-- nobody but the dead SD card ever knew it. A Core-issued token is
+-- re-issuable by definition, because Core is still holding it. Enrollment has
+-- exactly two branches and the second one is the whole design: new station →
+-- mint; replacement hardware → hand the new Pi the EXISTING uid. History does
+-- not move because identity did not move.
+--
+-- AND NOT THE BIGSERIAL id. It is real and it is read (registry.List scans it),
+-- but it is allocated as a side effect of an INSERT ... ON CONFLICT driven by
+-- an Edge-supplied string — a consequence of the name, not independent of it.
+-- Two edges sharing 'plant-a.line-1' shared one id. A serial the buggy
+-- statement happens to allocate is not an identity; it is a symptom of one.
+--
+-- bound_hostname / conflict_* are the duplicate-edge detector (v64).
+-- bound_instance / prev_instance / bound_at are the binding lease (v66), and
+-- they exist for the one case the hostname detector is BLIND to: two Pis
+-- flashed from one SD image share a hostname, which is exactly how additional
+-- edges get stood up here. See registry.Register for why recurrence — an
+-- instance coming back after being displaced — is the signature that a
+-- restarting single Pi can never produce.
 --
 -- The conflict_* three are the alarm's persisted state, not a derived view: a
 -- log line lives in a journal that rotates, and the question "has this ever
 -- happened here" has to be answerable in SQL months later.
+--
+-- line_ids is GONE (v66). It shipped []string{cfg.LineID} regardless of any
+-- station override, so it was always ["line-1"], and the only consumer
+-- composed 'plant-a.line-1' + '.' + 'line-1' into a dashboard scope no order
+-- row could ever match.
 CREATE TABLE IF NOT EXISTS edge_registry (
     id                BIGSERIAL PRIMARY KEY,
+    station_uid       TEXT NOT NULL DEFAULT '',
+    display_name      TEXT NOT NULL DEFAULT '',
     station_id        TEXT NOT NULL UNIQUE,
     hostname          TEXT NOT NULL DEFAULT '',
     version           TEXT NOT NULL DEFAULT '',
-    line_ids          TEXT NOT NULL DEFAULT '[]',
     registered_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_heartbeat    TIMESTAMPTZ,
     status            TEXT NOT NULL DEFAULT 'active',
     bound_hostname    TEXT NOT NULL DEFAULT '',
+    bound_instance    TEXT NOT NULL DEFAULT '',
+    prev_instance     TEXT NOT NULL DEFAULT '',
+    bound_at          TIMESTAMPTZ,
     conflict_hostname TEXT NOT NULL DEFAULT '',
     conflict_count    BIGINT NOT NULL DEFAULT 0,
     conflict_at       TIMESTAMPTZ
 );
+
+-- PARTIAL, because the identity migration deliberately leaves a window in
+-- which a row can exist with no uid yet: a heartbeat from a legacy Edge that
+-- has not been enrolled. A plain UNIQUE would collapse every such row onto one
+-- another under the empty string, which is the exact failure mode — many edges
+-- silently sharing one identity — this whole change exists to end.
+CREATE UNIQUE INDEX IF NOT EXISTS edge_registry_station_uid_key
+    ON edge_registry (station_uid) WHERE station_uid <> '';
 
 CREATE TABLE IF NOT EXISTS demands (
     id           BIGSERIAL PRIMARY KEY,

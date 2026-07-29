@@ -17,10 +17,15 @@ import (
 	"shingocore/uop"
 )
 
+// testStation is the envelope source every apply is attributed to. It is an
+// ARGUMENT now, not a payload field: the station moved off the delta body and
+// onto the envelope, so the applier takes what the transport carried instead of
+// what the sender asserted.
+const testStation = "ALN_001"
+
 func makeBinDelta(binID int64, payloadCode string, delta int, seq int64, reason protocol.BinUOPDeltaReason) *protocol.BinUOPDelta {
 	now := time.Now().UTC()
 	return &protocol.BinUOPDelta{
-		Station:     "ALN_001",
 		BinID:       binID,
 		PayloadCode: payloadCode,
 		Delta:       delta,
@@ -34,7 +39,6 @@ func makeBinDelta(binID int64, payloadCode string, delta int, seq int64, reason 
 func makeBucketDelta(coreNodeName, pairKey string, styleID int64, partNumber string, delta int, seq int64, reason protocol.LinesideBucketDeltaReason) *protocol.LinesideBucketDelta {
 	now := time.Now().UTC()
 	return &protocol.LinesideBucketDelta{
-		Station:      "ALN_001",
 		CoreNodeName: coreNodeName,
 		PairKey:      pairKey,
 		StyleID:      styleID,
@@ -58,8 +62,8 @@ func TestInventoryDelta_BinUOPDelta_AppliesToAuthoritative(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-1", "PART-A", 100)
 
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -3, 1, protocol.ReasonConsumeTick)), "apply consume_tick")
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -2, 2, protocol.ReasonConsumeTick)), "apply consume_tick #2")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-A", -3, 1, protocol.ReasonConsumeTick)), "apply consume_tick")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-A", -2, 2, protocol.ReasonConsumeTick)), "apply consume_tick #2")
 
 	var got int
 	testutil.MustNoErr(t, db.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, bin.ID).Scan(&got), "read bin")
@@ -82,13 +86,13 @@ func TestInventoryDelta_BinUOPDelta_DedupesReplay(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-DUP", "PART-A", 100)
 
 	d := makeBinDelta(bin.ID, "PART-A", -10, 5, protocol.ReasonConsumeTick)
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply first time")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, d), "apply first time")
 	// Replay the exact same envelope.
-	if err := svc.ApplyBinUOPDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+	if err := svc.ApplyBinUOPDelta(testStation, d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Errorf("replay error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
 	// And a re-replay just to be sure the second skip didn't advance state.
-	if err := svc.ApplyBinUOPDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+	if err := svc.ApplyBinUOPDelta(testStation, d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Errorf("third replay error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
 
@@ -119,7 +123,7 @@ func TestInventoryDelta_BinUOPDelta_StaleEpochDroppedAndAudited(t *testing.T) {
 	// A consume tick still carrying the retired epoch 1 (>0) must be dropped.
 	d := makeBinDelta(bin.ID, "PART-A", -7, 1, protocol.ReasonConsumeTick)
 	d.Epoch = 1
-	if err := svc.ApplyBinUOPDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+	if err := svc.ApplyBinUOPDelta(testStation, d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Fatalf("stale-epoch apply error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
 
@@ -158,7 +162,7 @@ func TestInventoryDelta_BinUOPDelta_BootstrapEpochZeroApplies(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-EPOCH0", "PART-A", 100)
 	// makeBinDelta leaves Epoch == 0; the bin defaults to delta_epoch 1.
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -4, 1, protocol.ReasonConsumeTick)), "apply epoch-0 delta")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-A", -4, 1, protocol.ReasonConsumeTick)), "apply epoch-0 delta")
 
 	var got int
 	testutil.MustNoErr(t, db.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, bin.ID).Scan(&got), "read bin")
@@ -181,8 +185,8 @@ func TestInventoryDelta_BinUOPDelta_OutOfOrderRejectsLowerSeq(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-ORD", "PART-A", 100)
 
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -5, 10, protocol.ReasonConsumeTick)), "apply seq=10")
-	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -7, 5, protocol.ReasonConsumeTick)); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-A", -5, 10, protocol.ReasonConsumeTick)), "apply seq=10")
+	if err := svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-A", -7, 5, protocol.ReasonConsumeTick)); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Errorf("seq=5 (older) error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
 
@@ -206,7 +210,7 @@ func TestInventoryDelta_BinUOPDelta_RejectsMismatchedPayload(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-MIS", "PART-A", 100)
 
-	err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-DIFFERENT", -1, 1, protocol.ReasonConsumeTick))
+	err := svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-DIFFERENT", -1, 1, protocol.ReasonConsumeTick))
 	if err == nil {
 		t.Fatal("expected payload-mismatch error, got nil")
 	}
@@ -228,7 +232,7 @@ func TestInventoryDelta_BinUOPDelta_RejectsUnknownBin(t *testing.T) {
 	_ = testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
-	if err := svc.ApplyBinUOPDelta(makeBinDelta(999999999, "PART-A", -1, 1, protocol.ReasonConsumeTick)); err == nil {
+	if err := svc.ApplyBinUOPDelta(testStation, makeBinDelta(999999999, "PART-A", -1, 1, protocol.ReasonConsumeTick)); err == nil {
 		t.Fatal("expected unknown-bin error, got nil")
 	}
 }
@@ -248,7 +252,7 @@ func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T
 	// must reference. SetupStandardData creates STORAGE-A1.
 	nodeName := sd.StorageNode.Name
 
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", 47, 1, protocol.ReasonCaptureFill)), "capture_fill")
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", 47, 1, protocol.ReasonCaptureFill)), "capture_fill")
 
 	var qty int
 	if err := db.QueryRow(`SELECT qty FROM lineside_buckets
@@ -260,7 +264,7 @@ func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T
 		t.Errorf("bucket qty after fill = %d, want 47", qty)
 	}
 
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", -47, 2, protocol.ReasonConsumeDrain)), "consume_drain to zero")
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", -47, 2, protocol.ReasonConsumeDrain)), "consume_drain to zero")
 
 	var rowCount int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM lineside_buckets
@@ -306,12 +310,10 @@ func TestInventoryDelta_LinesideBucketOneNodeOneRowAcrossStations(t *testing.T) 
 	// BY STATION, so both deltas legitimately apply. That is correct, and it is
 	// the other family — see ApplyLinesideBucketDelta's doc comment.
 	first := makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", 30, 1, protocol.ReasonCaptureFill)
-	first.Station = "PLANT.EDGE-1"
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(first), "edge-1 capture_fill")
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta("PLANT.EDGE-1", first), "edge-1 capture_fill")
 
 	second := makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", 12, 1, protocol.ReasonCaptureFill)
-	second.Station = "PLANT.EDGE-2"
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(second), "edge-2 capture_fill")
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta("PLANT.EDGE-2", second), "edge-2 capture_fill")
 
 	var rows, qty int
 	var station string
@@ -341,8 +343,7 @@ func TestInventoryDelta_LinesideBucketOneNodeOneRowAcrossStations(t *testing.T) 
 	// bucket is not the edge whose name is on the row and the DELETE matches
 	// nothing — leaving a qty=0 orphan that never clears.
 	drain := makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", -42, 2, protocol.ReasonConsumeDrain)
-	drain.Station = "PLANT.EDGE-1"
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(drain), "edge-1 drains what edge-2 last touched")
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta("PLANT.EDGE-1", drain), "edge-1 drains what edge-2 last touched")
 
 	_ = db.QueryRow(`SELECT count(*) FROM lineside_buckets
 		WHERE core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND part_number='PART-A'`,
@@ -364,9 +365,9 @@ func TestInventoryDelta_LinesideBucketDelta_RejectsUnderflow(t *testing.T) {
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 	nodeName := sd.LineNode.Name
 
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L2|U2", 200, "PART-B", 5, 1, protocol.ReasonCaptureFill)), "capture_fill")
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, makeBucketDelta(nodeName, "L2|U2", 200, "PART-B", 5, 1, protocol.ReasonCaptureFill)), "capture_fill")
 	// Try to drain 10 from a bucket that holds 5.
-	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L2|U2", 200, "PART-B", -10, 2, protocol.ReasonConsumeDrain)); err == nil {
+	if err := svc.ApplyLinesideBucketDelta(testStation, makeBucketDelta(nodeName, "L2|U2", 200, "PART-B", -10, 2, protocol.ReasonConsumeDrain)); err == nil {
 		t.Fatal("expected CHECK violation on underflow, got nil")
 	}
 
@@ -392,7 +393,7 @@ func TestInventoryDelta_LinesideBucketDelta_RejectsFirstSightNegative(t *testing
 
 	// Negative delta for a part with NO existing bucket — must be rejected, not
 	// clamped to a 0 row.
-	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L3|U3", 300, "PART-C", -7, 1, protocol.ReasonConsumeDrain)); err == nil {
+	if err := svc.ApplyLinesideBucketDelta(testStation, makeBucketDelta(nodeName, "L3|U3", 300, "PART-C", -7, 1, protocol.ReasonConsumeDrain)); err == nil {
 		t.Fatal("expected CHECK violation on a first-sight negative delta, got nil")
 	}
 
@@ -414,8 +415,8 @@ func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {
 	nodeName := sd.StorageNode.Name
 
 	d := makeBucketDelta(nodeName, "L1|U1", 300, "PART-C", 10, 1, protocol.ReasonCaptureFill)
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(d), "first apply")
-	if err := svc.ApplyLinesideBucketDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, d), "first apply")
+	if err := svc.ApplyLinesideBucketDelta(testStation, d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Errorf("replay error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
 
@@ -439,9 +440,9 @@ func TestInventoryDelta_BucketScopeKeysIndependent(t *testing.T) {
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 	nodeName := sd.LineNode.Name
 
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L1|U1", 400, "PART-D", 5, 1, protocol.ReasonCaptureFill)), "part D apply")
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, makeBucketDelta(nodeName, "L1|U1", 400, "PART-D", 5, 1, protocol.ReasonCaptureFill)), "part D apply")
 	// Same SequenceID, different part — this is a separate scope.
-	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L1|U1", 400, "PART-E", 7, 1, protocol.ReasonCaptureFill)); err != nil {
+	if err := svc.ApplyLinesideBucketDelta(testStation, makeBucketDelta(nodeName, "L1|U1", 400, "PART-E", 7, 1, protocol.ReasonCaptureFill)); err != nil {
 		t.Errorf("part E apply (same seq, different scope): %v", err)
 	}
 
@@ -469,7 +470,7 @@ func TestInventoryDelta_ListBinUOPForNodes_ReturnsAuthoritative(t *testing.T) {
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-RECONC", "PART-R", 100)
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-R", -7, 1, protocol.ReasonConsumeTick)), "apply delta")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-R", -7, 1, protocol.ReasonConsumeTick)), "apply delta")
 
 	rows, err := svc.ListBinUOPForNodes([]string{sd.LineNode.Name})
 	if err != nil {
@@ -487,41 +488,76 @@ func TestInventoryDelta_ListBinUOPForNodes_ReturnsAuthoritative(t *testing.T) {
 	}
 }
 
-// TestInventoryDelta_ListBucketsForStation_FiltersByStation pins
-// the per-station scoping: a query for station "A" returns only
-// rows whose station column matches "A". Cross-station leakage
-// would let Edge see (and mis-attribute) other stations' buckets.
-func TestInventoryDelta_ListBucketsForStation_FiltersByStation(t *testing.T) {
+// TestInventoryDelta_ListBucketsForNodes_FiltersByNodeNotByReporter is the
+// sixth station-keyed site, and the assertion is the one the old test could
+// not make.
+//
+// The old test pinned "a query for station A returns only rows whose station
+// column says A" — which was true, and was the bug. The caller is Edge's drift
+// reconciliation asking "what is authoritative at the nodes I OWN"; after v65
+// the station column is the LAST REPORTER. Those two answers coincide only
+// while every edge shares one station string, and the identity change is
+// precisely what ends that.
+//
+// The case below is the one that used to go silently wrong: a bucket at edge
+// A's node whose most recent delta came from edge B. Under the station filter
+// it vanished from A's reconciliation — and an empty result and a clean result
+// are indistinguishable to the caller, so the drift detector would report no
+// drift by failing to look.
+func TestInventoryDelta_ListBucketsForNodes_FiltersByNodeNotByReporter(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
-	apply := func(d *protocol.LinesideBucketDelta) {
-		testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(d), "apply")
-	}
-	// Two stations, two buckets each. Both attribute to nodes the
-	// applier can resolve via GetNodeByName.
-	stationA := makeBucketDelta(sd.StorageNode.Name, "L1|U1", 100, "PART-A", 5, 1, protocol.ReasonCaptureFill)
-	stationA.Station = "STATION-A"
-	apply(stationA)
-	stationB := makeBucketDelta(sd.LineNode.Name, "L1|U1", 100, "PART-B", 7, 1, protocol.ReasonCaptureFill)
-	stationB.Station = "STATION-B"
-	apply(stationB)
+	nodeA, nodeB := sd.StorageNode.Name, sd.LineNode.Name
 
-	rowsA, err := svc.ListBucketsForStation("STATION-A")
+	// A bucket at nodeA, reported by EDGE-1.
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta("PLANT.EDGE-1",
+		makeBucketDelta(nodeA, "L1|U1", 100, "PART-A", 5, 1, protocol.ReasonCaptureFill)), "edge-1 at nodeA")
+	// A bucket at nodeB, reported by EDGE-2.
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta("PLANT.EDGE-2",
+		makeBucketDelta(nodeB, "L1|U1", 100, "PART-B", 7, 1, protocol.ReasonCaptureFill)), "edge-2 at nodeB")
+	// AND THE CASE THAT BREAKS THE OLD FILTER: EDGE-2 touches nodeA's bucket
+	// last, so the row now carries EDGE-2 as its reporter while the parts are
+	// still sitting at a node EDGE-1 owns.
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta("PLANT.EDGE-2",
+		makeBucketDelta(nodeA, "L1|U1", 100, "PART-A", 3, 1, protocol.ReasonCaptureFill)), "edge-2 touches nodeA last")
+
+	rowsA, err := svc.ListBucketsForNodes([]string{nodeA})
 	if err != nil {
-		t.Fatalf("station A: %v", err)
+		t.Fatalf("nodeA: %v", err)
 	}
 	if len(rowsA) != 1 || rowsA[0].PartNumber != "PART-A" {
-		t.Errorf("station A rows = %+v, want one PART-A row", rowsA)
+		t.Fatalf("nodeA rows = %+v, want one PART-A row. A bucket at a node this edge owns must "+
+			"be visible to its reconciliation no matter which edge last reported it — filtering "+
+			"by the reporter is how the drift detector stops seeing drift.", rowsA)
 	}
-	rowsB, err := svc.ListBucketsForStation("STATION-B")
+	if rowsA[0].Qty != 8 {
+		t.Errorf("nodeA qty = %d, want 8 (5 + 3, both observations of one physical bucket)", rowsA[0].Qty)
+	}
+
+	rowsB, err := svc.ListBucketsForNodes([]string{nodeB})
 	if err != nil {
-		t.Fatalf("station B: %v", err)
+		t.Fatalf("nodeB: %v", err)
 	}
 	if len(rowsB) != 1 || rowsB[0].PartNumber != "PART-B" {
-		t.Errorf("station B rows = %+v, want one PART-B row", rowsB)
+		t.Errorf("nodeB rows = %+v, want one PART-B row", rowsB)
+	}
+
+	// Both at once, which is the shape the real caller sends.
+	both, err := svc.ListBucketsForNodes([]string{nodeA, nodeB})
+	if err != nil {
+		t.Fatalf("both nodes: %v", err)
+	}
+	if len(both) != 2 {
+		t.Errorf("both-node query returned %d rows, want 2", len(both))
+	}
+
+	// An empty node set returns nothing rather than everything — the caller
+	// that sends no nodes is asking about no nodes.
+	if rows, err := svc.ListBucketsForNodes(nil); err != nil || len(rows) != 0 {
+		t.Errorf("empty node set: rows=%d err=%v, want 0/nil", len(rows), err)
 	}
 }
 
@@ -543,7 +579,7 @@ func TestApplyBinUOPDelta_CaptureReductionToZeroFiresClearForReuse(t *testing.T)
 
 	// Apply capture_reduction of -25 → drives the bin to zero.
 	d := makeBinDelta(bin.ID, "PART-CC", -25, 1, protocol.ReasonCaptureReduction)
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply capture_reduction")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, d), "apply capture_reduction")
 
 	// uop_remaining must be 0; payload_code must be cleared (manifest
 	// reset by ClearForReuseTx).
@@ -591,7 +627,7 @@ func TestApplyBinUOPDelta_ConsumeTickToZeroDoesNotFireClearForReuse(t *testing.T
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-TICK-NOCLR", "PART-TNC", 5)
 
 	d := makeBinDelta(bin.ID, "PART-TNC", -5, 1, protocol.ReasonConsumeTick)
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply consume_tick")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, d), "apply consume_tick")
 
 	var (
 		gotUOP     int
@@ -637,7 +673,7 @@ func TestApplyBinUOPDelta_CaptureReductionOverpackToNegativeFiresClear(t *testin
 	preEpoch := bin.DeltaEpoch
 
 	d := makeBinDelta(bin.ID, "PART-OP", -309, 1, protocol.ReasonCaptureReduction)
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply capture_reduction overpack")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, d), "apply capture_reduction overpack")
 
 	got, err := db.GetBin(bin.ID)
 	if err != nil {
@@ -692,7 +728,7 @@ func TestApplyBinUOPDelta_CaptureReductionLargerNegativeFiresClear(t *testing.T)
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CAP-NEG-5", "PART-OP5", 100)
 
 	d := makeBinDelta(bin.ID, "PART-OP5", -105, 1, protocol.ReasonCaptureReduction)
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply capture_reduction -105")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, d), "apply capture_reduction -105")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.UOPRemaining != 0 || got.PayloadCode != "" {
@@ -717,7 +753,7 @@ func TestApplyBinUOPDelta_ConsumeTickThenCaptureReductionClears(t *testing.T) {
 
 	// PLC overshoot: drains to -10. Must NOT clear.
 	testutil.MustNoErr(t,
-		svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-OSC", -110, 1, protocol.ReasonConsumeTick)),
+		svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-OSC", -110, 1, protocol.ReasonConsumeTick)),
 		"consume_tick overshoot")
 	mid, _ := db.GetBin(bin.ID)
 	if mid.UOPRemaining != -10 {
@@ -729,7 +765,7 @@ func TestApplyBinUOPDelta_ConsumeTickThenCaptureReductionClears(t *testing.T) {
 
 	// Operator release with one more part captured: -10 + -1 = -11. Must clear.
 	testutil.MustNoErr(t,
-		svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-OSC", -1, 2, protocol.ReasonCaptureReduction)),
+		svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-OSC", -1, 2, protocol.ReasonCaptureReduction)),
 		"capture_reduction post-overshoot")
 	got, _ := db.GetBin(bin.ID)
 	if got.UOPRemaining != 0 {
@@ -753,7 +789,7 @@ func TestApplyBinUOPDelta_CaptureReductionFromOneToZeroBoundary(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-BNDRY", "PART-BND", 1)
 
 	testutil.MustNoErr(t,
-		svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-BND", -1, 1, protocol.ReasonCaptureReduction)),
+		svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-BND", -1, 1, protocol.ReasonCaptureReduction)),
 		"capture_reduction boundary")
 
 	got, _ := db.GetBin(bin.ID)
@@ -775,11 +811,11 @@ func TestApplyBinUOPDelta_CaptureReductionReplayShortCircuits(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-REPLAY", "PART-RP", 50)
 
 	d := makeBinDelta(bin.ID, "PART-RP", -55, 1, protocol.ReasonCaptureReduction)
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "first apply")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, d), "first apply")
 
 	afterFirst, _ := db.GetBin(bin.ID)
 
-	if err := svc.ApplyBinUOPDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+	if err := svc.ApplyBinUOPDelta(testStation, d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Errorf("replay error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
 
@@ -815,7 +851,7 @@ func TestApplyBinUOPDelta_CaptureReductionZeroOnEmptyBinIsIdempotent(t *testing.
 	preEpoch := bin.DeltaEpoch
 
 	d := makeBinDelta(bin.ID, "", 0, 1, protocol.ReasonCaptureReduction)
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply capture_reduction=0 on empty bin")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, d), "apply capture_reduction=0 on empty bin")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.UOPRemaining != 0 || got.PayloadCode != "" {
@@ -844,7 +880,7 @@ func TestApplyBinUOPDelta_FirstDeltaBindsBlankProduceBin(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-BIND-BLANK", "", 0)
 	preEpoch := bin.DeltaEpoch
 
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation,
 		makeBinDelta(bin.ID, "PART-NEW", 3, 1, protocol.ReasonProduceTick)), "apply first produce tick")
 
 	got, _ := db.GetBin(bin.ID)
@@ -884,7 +920,7 @@ func TestApplyBinUOPDelta_FirstDeltaRebindsStaleLabelAtZero(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-BIND-STALE", "PART-OLD", 0)
 
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation,
 		makeBinDelta(bin.ID, "PART-NEW", 2, 1, protocol.ReasonProduceTick)), "apply produce tick over stale label")
 
 	got, _ := db.GetBin(bin.ID)
@@ -917,7 +953,7 @@ func TestApplyBinUOPDelta_ProduceRebindWithInventoryKeepsCounting(t *testing.T) 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-REBIND-INV", "PART-OLD", 480)
 	preEpoch := bin.DeltaEpoch
 
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation,
 		makeBinDelta(bin.ID, "PART-NEW", 3, 1, protocol.ReasonProduceTick)), "apply produce tick with inventory aboard")
 
 	got, _ := db.GetBin(bin.ID)
@@ -944,7 +980,7 @@ func TestApplyBinUOPDelta_ProduceRebindWithInventoryKeepsCounting(t *testing.T) 
 	}
 
 	// A second tick is now a clean match — no second rebind row.
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation,
 		makeBinDelta(bin.ID, "PART-NEW", 2, 2, protocol.ReasonProduceTick)), "apply follow-up tick")
 	var rebindRows int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
@@ -972,10 +1008,10 @@ func TestApplyBinUOPDelta_ConsumeMismatchStillRejectsButLoudly(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CONS-MIS", "PART-OLD", 100)
 
 	d := makeBinDelta(bin.ID, "PART-NEW", -5, 1, protocol.ReasonConsumeTick)
-	if err := svc.ApplyBinUOPDelta(d); err == nil {
+	if err := svc.ApplyBinUOPDelta(testStation, d); err == nil {
 		t.Fatal("expected consume payload-mismatch error, got nil")
 	}
-	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-NEW", -3, 2, protocol.ReasonConsumeTick)); err == nil {
+	if err := svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-NEW", -3, 2, protocol.ReasonConsumeTick)); err == nil {
 		t.Fatal("expected second consume payload-mismatch error, got nil")
 	}
 
@@ -1005,7 +1041,7 @@ func TestApplyBinUOPDelta_ConsumeMismatchStillRejectsButLoudly(t *testing.T) {
 	// rejected attempt rolled back without consuming its dedup seq.
 	_, err := db.Exec(`UPDATE bins SET payload_code='PART-NEW' WHERE id=$1`, bin.ID)
 	testutil.MustNoErr(t, err, "correct label")
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "replay original envelope after label fix")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, d), "replay original envelope after label fix")
 	got2, _ := db.GetBin(bin.ID)
 	if got2.UOPRemaining != 95 {
 		t.Errorf("UOPRemaining after replay = %d, want 95", got2.UOPRemaining)
@@ -1025,7 +1061,7 @@ func TestApplyBinUOPDelta_ConsumeTickNeverBindsBlankBin(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CONS-BLANK", "", 0)
 
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation,
 		makeBinDelta(bin.ID, "PART-A", -1, 1, protocol.ReasonConsumeTick)), "apply consume tick on blank bin")
 
 	got, _ := db.GetBin(bin.ID)
@@ -1055,7 +1091,7 @@ func TestInventoryDelta_C6_AnomalyObservability(t *testing.T) {
 	testutil.MustNoErr(t, err, "advance epoch")
 	sd1 := makeBinDelta(staleBin.ID, "PART-A", -7, 1, protocol.ReasonConsumeTick)
 	sd1.Epoch = 1
-	if err := svc.ApplyBinUOPDelta(sd1); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+	if err := svc.ApplyBinUOPDelta(testStation, sd1); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Fatalf("stale-epoch apply = %v, want ErrInventoryDeltaSkipped", err)
 	}
 	staleGot, _ := db.GetBin(staleBin.ID)
@@ -1065,7 +1101,7 @@ func TestInventoryDelta_C6_AnomalyObservability(t *testing.T) {
 
 	// (2) Payload-mismatch drop: consume delta whose payload differs from the bin.
 	mismatchBin := createTestBin(t, db, sd.StorageNode.ID, "BIN-C6-MISMATCH", "PART-A", 50)
-	if err := svc.ApplyBinUOPDelta(
+	if err := svc.ApplyBinUOPDelta(testStation,
 		makeBinDelta(mismatchBin.ID, "PART-WRONG", -3, 1, protocol.ReasonConsumeTick)); err == nil {
 		t.Fatal("payload-mismatch delta should have been rejected")
 	}

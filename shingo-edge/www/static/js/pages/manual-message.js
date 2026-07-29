@@ -2,7 +2,6 @@ import { api, createSSE, delegateActions, toast } from '/static/js/shingoedge.js
 
 var _pd = document.getElementById('page-data').dataset;
 var _stationID = _pd.stationId;
-var _lineIDs = JSON.parse(_pd.lineIds);
 var _orders = JSON.parse(_pd.orders);
 var _coreNodes = JSON.parse(_pd.coreNodes).map(function(n) {
     if (typeof n === 'string') return n;
@@ -13,8 +12,7 @@ var _coreNodes = JSON.parse(_pd.coreNodes).map(function(n) {
 
 var _fieldDefs = {
     'edge.register': [
-        { id: 'version', label: 'Version', type: 'text', value: 'dev' },
-        { id: 'line_ids', label: 'Line IDs (comma-separated)', type: 'text', value: function(){ return _lineIDs.join(','); } }
+        { id: 'version', label: 'Version', type: 'text', value: 'dev' }
     ],
     'edge.heartbeat': [
         { id: 'uptime', label: 'Uptime (seconds)', type: 'number', value: '0' }
@@ -95,7 +93,7 @@ function buildPayload() {
     var type = document.getElementById('mm-type').value;
     switch (type) {
         case 'edge.register':
-            return { version: getFieldValue('version'), line_ids: (getFieldValue('line_ids')||'').split(',').map(function(s){return s.trim()}).filter(Boolean) };
+            return { version: getFieldValue('version') };
         case 'edge.heartbeat':
             return { uptime: getFieldValue('uptime') };
         case 'production.report':

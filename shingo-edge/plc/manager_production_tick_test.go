@@ -71,6 +71,13 @@ func TestProductionTick_PreservesPerTickAcrossBinSwapGap(t *testing.T) {
 		if data.Subject != protocol.SubjectProductionTick {
 			t.Errorf("envelope subject=%q, want %q", data.Subject, protocol.SubjectProductionTick)
 		}
+		// THE STATION IS ON THE ENVELOPE, and the payload no longer carries a
+		// second copy. Asserting it here rather than on the decoded body is
+		// the point of the identity change: one source, and it is the one the
+		// transport stamped.
+		if env.Src.Station != "STN-TEST" {
+			t.Errorf("outbox id %d: envelope Src.Station=%q, want STN-TEST", m.ID, env.Src.Station)
+		}
 		var snap protocol.CounterSnapshot
 		if err := json.Unmarshal(data.Body, &snap); err != nil {
 			t.Fatalf("decode CounterSnapshot (outbox id %d): %v", m.ID, err)
@@ -99,9 +106,6 @@ func TestProductionTick_PreservesPerTickAcrossBinSwapGap(t *testing.T) {
 		}
 		if s.Delta != 1 {
 			t.Errorf("tick %d: Delta=%d, want 1 (per-tick unit delta, not a lumped sum)", i, s.Delta)
-		}
-		if s.Station != "STN-TEST" {
-			t.Errorf("tick %d: Station=%q, want STN-TEST", i, s.Station)
 		}
 		if s.ProcessID != 7 || s.StyleID != 3 {
 			t.Errorf("tick %d: ProcessID/StyleID=%d/%d, want 7/3 (enriched from rp)", i, s.ProcessID, s.StyleID)

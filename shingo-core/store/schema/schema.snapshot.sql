@@ -387,14 +387,18 @@ CREATE TABLE public.edge_lineside_reports (
 
 CREATE TABLE public.edge_registry (
     id bigint NOT NULL,
+    station_uid text DEFAULT ''::text NOT NULL,
+    display_name text DEFAULT ''::text NOT NULL,
     station_id text NOT NULL,
     hostname text DEFAULT ''::text NOT NULL,
     version text DEFAULT ''::text NOT NULL,
-    line_ids text DEFAULT '[]'::text NOT NULL,
     registered_at timestamp with time zone DEFAULT now() NOT NULL,
     last_heartbeat timestamp with time zone,
     status text DEFAULT 'active'::text NOT NULL,
     bound_hostname text DEFAULT ''::text NOT NULL,
+    bound_instance text DEFAULT ''::text NOT NULL,
+    prev_instance text DEFAULT ''::text NOT NULL,
+    bound_at timestamp with time zone,
     conflict_hostname text DEFAULT ''::text NOT NULL,
     conflict_count bigint DEFAULT 0 NOT NULL,
     conflict_at timestamp with time zone
@@ -1238,6 +1242,8 @@ ALTER TABLE ONLY public.test_commands
     ADD CONSTRAINT test_commands_pkey PRIMARY KEY (id);
 
 CREATE INDEX cell_config_station_idx ON public.cell_config USING btree (station);
+
+CREATE UNIQUE INDEX edge_registry_station_uid_key ON public.edge_registry USING btree (station_uid) WHERE (station_uid <> ''::text);
 
 CREATE INDEX idx_audit_entity ON public.audit_log USING btree (entity_type, entity_id);
 

@@ -14,6 +14,27 @@ import (
 type Config struct {
 	mu sync.RWMutex `yaml:"-"`
 
+	// StationUID is this edge's identity, minted by Core at enrollment. It is
+	// opaque, it never changes, and it is the value that travels as
+	// protocol.Address.Station.
+	//
+	// AN OPERATOR PUTS IT HERE BY HAND, ONCE, AND THAT IS THE DESIGN RATHER
+	// THAN A MISSING FEATURE. Handing the uid over is exactly the step at
+	// which a human distinguishes the two hardware events Core cannot tell
+	// apart on its own: a NEW station (enroll, take the fresh uid) from
+	// REPLACEMENT HARDWARE for an existing one (do not enroll — copy the
+	// existing uid off Core onto the new Pi, and the station's whole history
+	// stays attached to it). A Pi that mints its own id can express the first
+	// and never the second.
+	//
+	// It rides the backup archive (backup/snapshot.go includes the config), so
+	// a restore is the other way a replacement box gets it back.
+	//
+	// Empty means unenrolled. During the migration window that is tolerated and
+	// the legacy namespace.line_id derivation applies; after the enrollment
+	// deploy it is a startup refusal.
+	StationUID string `yaml:"station_uid"`
+
 	Namespace    string        `yaml:"namespace"`
 	LineID       string        `yaml:"line_id"`
 	DatabasePath string        `yaml:"database_path"`
@@ -164,7 +185,33 @@ type MessagingConfig struct {
 // KafkaConfig defines Kafka broker settings.
 type KafkaConfig struct {
 	Brokers []string `yaml:"brokers"`
-	GroupID string   `yaml:"group_id"`
+
+	// GroupID is the consumer group this edge joins. RUNTIME-ONLY — the
+	// `yaml:"-"` is the fix, not an omission.
+	//
+	// IT USED TO PERSIST, AND THAT IS A MEASURED LIVE DEFECT AT BOTH PLANTS.
+	// main.go writes the DERIVED value into this field at boot; the field
+	// carried a yaml tag; and Config.Save() marshals the whole struct. So any
+	// of the nine runtime Save() call sites — saving a PLC setting, a traffic
+	// setting, anything — wrote `group_id: shingo-edge-plant-a.line-1` into
+	// /etc/shingo/shingoedge.yaml. Measured on line 22 of the Edge yaml at
+	// Springfield (mtime Jul 16) and Hopkinsville (mtime May 27).
+	// install-edge.sh never wrote it; a Save did.
+	//
+	// KafkaGroupID() then short-circuited on the non-empty value FOREVER, so
+	// the group stayed pinned to the OLD station id across any rename. The
+	// consequence for this change is exact: renaming a station would have been
+	// COSMETIC ON THE WIRE — the edge would keep consuming under the old group
+	// and keep sharing it with any second edge, which is the "one edge is deaf"
+	// defect the rename was supposed to end.
+	//
+	// A rollout step that deletes the key from both files fixes the two files
+	// that exist. `yaml:"-"` fixes the mechanism: the value cannot be written
+	// back, cannot be read in, and cannot override the derivation. The rollout
+	// step stays anyway, because a stale key in a config file is a lie the next
+	// reader has to disprove, and because a rollback to a pre-v66 binary would
+	// re-arm it.
+	GroupID string `yaml:"-"`
 }
 
 // CounterConfig defines counter anomaly thresholds.
@@ -376,15 +423,29 @@ func (c *Config) Save(path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// stationID returns the station ID without locking (for internal use).
+// stationID returns the station identity without locking (for internal use).
+//
+// PRECEDENCE, AND THE ORDER IS THE MIGRATION. station_uid is Core-minted at
+// enrollment and wins outright. The two legacy sources below it are the
+// compatibility window: an edge that has not been enrolled yet keeps answering
+// with the string it has always answered with, so it registers against the uid
+// v66 backfilled from that same string and the plant does not notice the
+// deploy. Enrollment is what moves it off them, one edge at a time.
+//
+// The legacy branches go away with guard 1 (the enrollment deploy), at which
+// point an empty station_uid is a startup refusal rather than a derivation.
 func (c *Config) stationID() string {
+	if c.StationUID != "" {
+		return c.StationUID
+	}
 	if c.Messaging.StationID != "" {
 		return c.Messaging.StationID
 	}
 	return c.Namespace + "." + c.LineID
 }
 
-// StationID returns the configured station ID, or derives one from namespace.line_id.
+// StationID returns this edge's identity as it appears on the wire —
+// protocol.Address.Station. Its value IS the station uid once enrolled.
 func (c *Config) StationID() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -392,15 +453,37 @@ func (c *Config) StationID() string {
 }
 
 // KafkaGroupID returns the Kafka consumer group ID for this edge.
-// If not explicitly configured, derives a unique group from the station ID
-// so that each edge receives all messages on its subscribed topics.
+//
+// ALWAYS DERIVED. There is no configured override any more, and removing it is
+// guard 4 — the deafness defect closed structurally rather than by a rule
+// somebody has to follow.
+//
+// The defect: topics are created with NumPartitions=1, a consumer group
+// assigns one partition to exactly one member, and this group id was the only
+// thing distinguishing two edges. Two edges with the same station id joined one
+// group on one partition, so ONE OF THEM RECEIVED NO DISPATCH TRAFFIC AT ALL
+// while continuing to heartbeat, register and publish — no error anywhere.
+//
+// Deriving from the station uid means the group cannot collide unless the
+// identity does, and the identity cannot collide because Core mints it. What
+// made the old code unable to make that promise was not the derivation, which
+// was already right; it was the `if GroupID != "" { return GroupID }` ahead of
+// it, which let a persisted copy of a previous derivation outlive the value it
+// was derived from. See KafkaConfig.GroupID for the measurement.
 func (c *Config) KafkaGroupID() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.Messaging.Kafka.GroupID != "" {
-		return c.Messaging.Kafka.GroupID
-	}
 	return "shingo-edge-" + c.stationID()
+}
+
+// StationUIDOrEmpty reports the enrolled identity, "" when this edge has not
+// been enrolled. Distinct from StationID(), which falls back to the legacy
+// derivation — the guard needs to know whether an identity EXISTS, not what
+// string the edge would use in its absence.
+func (c *Config) StationUIDOrEmpty() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.StationUID
 }
 
 // Lock acquires the config mutex for multi-step mutations.
@@ -414,6 +497,32 @@ func (c *Config) RLock() { c.mu.RLock() }
 
 // RUnlock releases the config read lock.
 func (c *Config) RUnlock() { c.mu.RUnlock() }
+
+// NewInstanceID returns a random id identifying ONE RUN of this process.
+//
+// Not persisted, not derived from anything about the box, and deliberately
+// not a UUID from a library — what it has to be is UNGUESSABLE-BY-A-CLONE and
+// FRESH-PER-BOOT, and 8 random bytes are both. It is the only thing that
+// separates two Pis flashed from the same SD image, which share a hostname,
+// share a station_uid and are otherwise byte-identical to Core.
+//
+// GENERATE IT ONCE, IN THE COMPOSITION ROOT. setupKafkaSubscribers runs again
+// on the Kafka-unreachable-at-startup retry path (main.go), so generating it
+// inside the Heartbeater would draw a new value on a retry and Core would read
+// a lease MOVE where nothing moved.
+//
+// A failed rand.Read yields "" rather than a constant. Core reads an empty
+// instance as "cannot judge" and neither alarms nor binds on it — the same
+// treatment an empty hostname gets. A fallback constant would be far worse:
+// every edge that hit the error would share one instance and look like the
+// clone case this exists to detect.
+func NewInstanceID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
 
 // generateSecret returns a random 32-byte hex-encoded string for session signing.
 func generateSecret() string {

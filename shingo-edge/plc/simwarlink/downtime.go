@@ -214,7 +214,6 @@ func (md *MachineDowntime) drawMTTR() time.Duration {
 
 func (md *MachineDowntime) emitDownEvent(station, plcName string, startedAt time.Time, seq int64) {
 	snap := &protocol.DowntimeEvent{
-		Station:     station,
 		PLCName:     plcName,
 		Reason:      "breakdown",
 		IsDown:      true,
@@ -228,7 +227,6 @@ func (md *MachineDowntime) emitDownEvent(station, plcName string, startedAt time
 
 func (md *MachineDowntime) emitUpEvent(station, plcName string, startedAt, endedAt time.Time, durationMS int64, seq int64) {
 	snap := &protocol.DowntimeEvent{
-		Station:     station,
 		PLCName:     plcName,
 		Reason:      "breakdown",
 		IsDown:      false,

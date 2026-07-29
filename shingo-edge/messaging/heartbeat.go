@@ -23,7 +23,7 @@ type Heartbeater struct {
 	sender       *DataSender
 	stationID    string
 	version      string
-	lineIDs      []string
+	instance     string
 	interval     time.Duration
 	startTime    time.Time
 	orderCountFn ActiveOrderCountFunc
@@ -39,13 +39,17 @@ type Heartbeater struct {
 }
 
 // NewHeartbeater creates a heartbeater for the given edge identity.
-func NewHeartbeater(client *Client, stationID, version string, lineIDs []string, ordersTopic string, orderCountFn ActiveOrderCountFunc) *Heartbeater {
+//
+// instance identifies ONE RUN of the edge process and must be generated ONCE
+// by the composition root, not here — this constructor runs again on the
+// Kafka-retry path. See config.NewInstanceID.
+func NewHeartbeater(client *Client, stationID, version, instance string, ordersTopic string, orderCountFn ActiveOrderCountFunc) *Heartbeater {
 	stopCh := make(chan struct{})
 	return &Heartbeater{
 		sender:       NewDataSender(client, ordersTopic, stopCh),
 		stationID:    stationID,
 		version:      version,
-		lineIDs:      lineIDs,
+		instance:     instance,
 		interval:     60 * time.Second,
 		orderCountFn: orderCountFn,
 		stopCh:       stopCh,
@@ -90,8 +94,8 @@ func (h *Heartbeater) sendRegister() {
 		&protocol.EdgeRegister{
 			StationID: h.stationID,
 			Hostname:  hostname,
+			Instance:  h.instance,
 			Version:   h.version,
-			LineIDs:   h.lineIDs,
 			Catalog:   catalog,
 		},
 	)

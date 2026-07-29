@@ -132,6 +132,42 @@ func mustLoadConfig(path string, portOverride int) *config.Config {
 	return cfg
 }
 
+// mustHaveIdentity is GUARD 1: an edge with no Core-issued identity must not
+// come up pretending to be one.
+//
+// THE PRECEDENT IS IN THIS REPO AND IT IS THE RIGHT ONE.
+// store.assertNoStrandedRebuild refuses to start rather than come up silently
+// wrong, on the same reasoning: a process that boots into a state nobody
+// intended is harder to diagnose than a process that will not boot and says
+// why. An unenrolled edge is exactly that state — it registers, it heartbeats,
+// it publishes, and every row it writes is attributed to a station identity it
+// invented from two config defaults.
+//
+// WHAT IT REFUSES IS THE DEFAULT, NOT A MISCONFIGURATION. `plant-a.line-1` was
+// never typed by anyone: it is Namespace + "." + LineID composed from struct
+// defaults, and install-edge.sh writes a placeholder config containing only
+// database_path — so a fresh install COULD NOT come up as anything else. The
+// failure this whole change exists to end was not somebody making a mistake.
+// It was the system having a default answer to a question that has no default.
+//
+// ── DELETE THE TOLERANT HALF IN THE SECOND DEPLOY ───────────────────────────
+// Today this WARNS. It must not refuse before there is an enrolled edge to
+// refuse in favour of: shipping the refusal in the same deploy as the schema
+// would take both plants down between the Core migration and the enrollment
+// step. The enrollment deploy replaces the log.Printf below with log.Fatalf
+// and deletes the Namespace/LineID defaults in config.Defaults() — one commit,
+// and the rollout note names both.
+func mustHaveIdentity(cfg *config.Config, stationID string) {
+	if cfg.StationUIDOrEmpty() != "" {
+		return
+	}
+	log.Printf("shingoedge: WARNING — this edge is NOT ENROLLED. It is running under the legacy "+
+		"derived station id %q, which is a value composed from config defaults rather than an "+
+		"identity Core issued. Enroll it on Core (Dashboard → Edges → Enroll, or "+
+		"POST /api/edges/enroll), then put `station_uid: <uid>` in %s and restart. After the "+
+		"enrollment deploy this is a startup refusal, not a warning.", stationID, "shingoedge.yaml")
+}
+
 func mustOpenDatabase(path string) *store.DB {
 	db, err := store.Open(path)
 	if err != nil {
@@ -171,7 +207,7 @@ func startHTTPServer(addr string, handler http.Handler) *http.Server {
 // handler's MarkStarted() is called after the Kafka subscribe succeeds, which
 // enables the heartbeat writer (deadman). See countgroup/handler.go for the
 // `started` guard rationale.
-func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID string, db *store.DB, cgHandler *countgroup.Handler) {
+func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID, instanceID string, db *store.DB, cgHandler *countgroup.Handler) {
 	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager())
 	edgeHandler.DebugLog = messaging.DebugLogFunc(dbg.Func("edge_handler"))
 	dataDbg := dbg.Func("edge_handler")
@@ -184,7 +220,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	}
 
 	// ── Heartbeater (built early so subject-router closures can capture it) ──
-	hb := messaging.NewHeartbeater(msgClient, stationID, Version, []string{cfg.LineID}, cfg.Messaging.OrdersTopic, func() int {
+	hb := messaging.NewHeartbeater(msgClient, stationID, Version, instanceID, cfg.Messaging.OrdersTopic, func() int {
 		return db.CountActiveOrders()
 	})
 	hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
@@ -533,6 +569,19 @@ func main() {
 		simGuard() // sim_enabled.go (sim build) / sim_disabled.go (!sim build)
 	}
 
+	// ── Identity ────────────────────────────────────────────────────────
+	// Resolved here, once, ahead of everything that consumes it — the Kafka
+	// consumer group, the ingest filter, the envelope source address and the
+	// backup manifest are all this one value, and the previous arrangement
+	// derived it in four places at three points in the startup sequence.
+	//
+	// instanceID identifies this RUN. Drawn once, here, because
+	// setupKafkaSubscribers runs a second time on the Kafka-retry path below
+	// and a fresh value there would read to Core as a lease move.
+	stationID := cfg.StationID()
+	instanceID := config.NewInstanceID()
+	mustHaveIdentity(cfg, stationID)
+
 	// ── Database ────────────────────────────────────────────────────────
 	db := mustOpenDatabase(cfg.DatabasePath)
 	defer db.Close()
@@ -567,10 +616,20 @@ func main() {
 	defer backupSvc.Stop()
 
 	// ── Messaging (Kafka) ───────────────────────────────────────────────
-	if cfg.Messaging.Kafka.GroupID == "" {
-		cfg.Messaging.Kafka.GroupID = cfg.KafkaGroupID()
-	}
+	// UNCONDITIONAL. The old `if GroupID == ""` guard read a field that could
+	// be non-empty only because a previous run of this very line had written a
+	// derived value into the yaml (KafkaConfig.GroupID carried a yaml tag and
+	// Config.Save marshals everything). Both live plants have that persisted
+	// pin on line 22 of their Edge config. The field is runtime-only now, so
+	// this assignment is the only thing that ever sets it.
+	cfg.Messaging.Kafka.GroupID = cfg.KafkaGroupID()
+	log.Printf("shingoedge: kafka consumer group=%s (derived from station identity)", cfg.Messaging.Kafka.GroupID)
 	msgClient := messaging.NewClient(&cfg.Messaging)
+	// Partition key = this edge's identity. Inert today (topics are created
+	// with NumPartitions=1) and inert under the writer's default balancer,
+	// which is why the balancer moved to Hash alongside it — see
+	// messaging.Client.PartitionKey.
+	msgClient.PartitionKey = stationID
 	msgClient.DebugLog = messaging.DebugLogFunc(dbg.Func("kafka"))
 	if cfg.Messaging.SigningKey != "" {
 		msgClient.SigningKey = []byte(cfg.Messaging.SigningKey)
@@ -600,7 +659,6 @@ func main() {
 	defer drainer.Stop()
 
 	// ── Production reporter ────────────────────────────────────────────
-	stationID := cfg.StationID()
 	reporter := messaging.NewProductionReporter(db, stationID)
 	reporter.DebugLog = messaging.DebugLogFunc(dbg.Func("reporter"))
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
@@ -651,7 +709,7 @@ func main() {
 	// operators can see the deaf-but-running state. Log loudly at
 	// startup so operators notice from the boot log too.
 	if msgClient.IsConnected() {
-		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, db, cgHandler)
+		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db, cgHandler)
 	} else {
 		log.Printf("WARNING messaging not connected at boot — Edge will run deaf to inbound (orders, demand, stale) until Kafka is reachable. Outbox drainer is active and will flush when connected.")
 		goSafe("kafka-connect-retry", func() {
@@ -669,7 +727,7 @@ func main() {
 					continue
 				}
 				log.Printf("kafka connect succeeded — wiring subscribers")
-				setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, db, cgHandler)
+				setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db, cgHandler)
 				return
 			}
 		})
