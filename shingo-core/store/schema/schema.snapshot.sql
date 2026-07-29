@@ -399,6 +399,7 @@ CREATE TABLE public.edge_registry (
     bound_instance text DEFAULT ''::text NOT NULL,
     prev_instance text DEFAULT ''::text NOT NULL,
     bound_at timestamp with time zone,
+    claimed_at timestamp with time zone,
     conflict_hostname text DEFAULT ''::text NOT NULL,
     conflict_count bigint DEFAULT 0 NOT NULL,
     conflict_at timestamp with time zone
