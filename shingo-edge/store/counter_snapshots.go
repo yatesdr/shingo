@@ -17,8 +17,10 @@ func (db *DB) ListUnconfirmedAnomalies() ([]counters.Snapshot, error) {
 	return counters.ListUnconfirmedAnomalies(db.DB)
 }
 
-// ConfirmAnomaly marks an anomaly snapshot as operator-confirmed.
-func (db *DB) ConfirmAnomaly(id int64) error {
+// ConfirmAnomaly marks an unconfirmed jump snapshot as operator-confirmed,
+// returning its accounting fields when the row actually moved (nil when it
+// did not — already confirmed, or not a jump).
+func (db *DB) ConfirmAnomaly(id int64) (*counters.ConfirmedJump, error) {
 	return counters.ConfirmAnomaly(db.DB, id)
 }
 

@@ -139,6 +139,17 @@ func (s *CoreDataService) StartHeartbeatProjection() {
 			} else if dropped > 0 {
 				log.Printf("core_handler: dropped %d expired heartbeat partition(s)", dropped)
 			}
+			// The dedup guard rides the same ticker and the same window as
+			// the projection it guards. It grew at exactly the rate of
+			// cell_part_events — same event, same function, identical row
+			// count — while only one of the two was bounded, which at 40
+			// cells is 2.2 MB/day forever. It cannot be partitioned (see
+			// heartbeat.PurgeOldDedup), so it is a DELETE.
+			if purged, err := s.db.PurgeOldProductionTickDedup(heartbeatRetentionDays, now); err != nil {
+				log.Printf("core_handler: purge old production tick dedup: %v", err)
+			} else if purged > 0 {
+				log.Printf("core_handler: purged %d expired production.tick dedup row(s)", purged)
+			}
 		}
 	}()
 }

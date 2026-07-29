@@ -42,6 +42,7 @@ import (
 	"shingoedge/engine"
 	"shingoedge/messaging"
 	"shingoedge/store"
+	"shingoedge/store/counters"
 	"shingoedge/uop"
 	"shingoedge/www"
 )
@@ -690,6 +691,74 @@ func main() {
 			case <-ticker.C:
 				if err := db.CheckpointWAL(); err != nil {
 					log.Printf("WAL checkpoint: %v", err)
+				}
+			}
+		}
+	})
+
+	// ── Retention ticker ───────────────────────────────────────────────
+	// counter_snapshots is the only unbounded table on the Edge with a real
+	// growth driver: roughly one row per part produced, 472 per counter per
+	// calendar day, and no purge until now. The window is
+	// counters.SnapshotRetention (14 days); unconfirmed jumps survive it at
+	// any age because they are the operator's popover.
+	//
+	// A DEDICATED TICKER, NOT A SECOND COUNTER ON THE OUTBOX DRAINER.
+	// PurgeOldOutbox rides Drainer.run() every hundredth cycle, and bolting
+	// this on there is the cheaper edit — but it would put a counters
+	// concern inside the messaging drainer, where the next person changing
+	// the drain interval silently changes the retention cadence too. Six
+	// hours is four passes a day against a 14-day window: the exact cutoff
+	// moment does not matter, only that the backlog is bounded.
+	//
+	// The VACUUM is the other half. auto_vacuum is NONE, so the first
+	// purge's ~147k deleted rows go to the freelist and the file does not
+	// shrink until something rebuilds it; VacuumIfFragmented does that once
+	// and then stops firing on its own (see the constant's comment).
+	//
+	// THE FIRST PASS ON AN EXISTING PLANT IS IRREVERSIBLE AND NEEDS AN EXPORT
+	// FIRST. Everything else in this change deletes only rows Core already
+	// holds — but Core's cell_part_events archive starts 2026-06-08 and
+	// Springfield's counter_snapshots start 2026-04-22, so 34.8% of the rows
+	// on that Pi exist in exactly one place. The first purge after this
+	// deploys removes them. Take a copy before the first tick: the Edge is
+	// stopped during install-edge.sh, so a plain file copy of
+	// /var/lib/shingo-edge/shingoedge.db alongside the install is enough, and
+	// it must happen on the deploy, not afterwards.
+	//
+	// Nothing here enforces that, deliberately — a switch to disable a purge
+	// is a switch someone leaves off. What the schedule does give is room: the
+	// ticker fires on the tick and not at boot, so the first pass is six hours
+	// after the edge comes back up.
+	//
+	// One thing this ticker is NOT accounting for: deploy/db-migration.sh's
+	// per-table count(*) diff. That gate compares a stopped database against
+	// its own copy — Step 1 refuses to run while a shingoedge process is
+	// alive, and install-edge.sh stops the unit before calling it — so this
+	// purge cannot run inside the gate's window and cannot fail it.
+	retentionStop := make(chan struct{})
+	defer close(retentionStop)
+	goSafe("store-retention", func() {
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-retentionStop:
+				return
+			case <-ticker.C:
+				n, err := counters.PurgeOldSnapshots(db.DB, counters.SnapshotRetention)
+				if err != nil {
+					log.Printf("retention: purge counter snapshots: %v", err)
+					continue
+				}
+				if n > 0 {
+					log.Printf("retention: purged %d counter snapshots older than %s", n, counters.SnapshotRetention)
+				}
+				vacuumed, err := db.VacuumIfFragmented(store.VacuumFreeFraction)
+				if err != nil {
+					log.Printf("retention: vacuum: %v", err)
+				} else if vacuumed {
+					log.Printf("retention: vacuumed the database (free pages exceeded %.0f%% of the file)", store.VacuumFreeFraction*100)
 				}
 			}
 		}

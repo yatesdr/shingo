@@ -130,6 +130,52 @@ func partitionName(monthStart time.Time) string {
 
 var partitionRe = regexp.MustCompile(`^cell_part_events_(\d{4})_(\d{2})$`)
 
+// PurgeOldDedup deletes production_tick_dedup rows applied before
+// now-keepDays. Returns the number deleted.
+//
+// THE DEDUP TABLE CANNOT BE PARTITIONED LIKE ITS SIBLING, AND THIS IS THE
+// WHOLE REASON IT GETS A DELETE INSTEAD. cell_part_events and this table
+// are fed by the same event in the same function (HandleProductionTick)
+// and hold the same row count, so "partition it the same way and drop old
+// partitions" is the obvious move — but it is not available. Postgres
+// requires every column of the partition key to appear in any unique
+// constraint on a partitioned table, so PARTITION BY RANGE (applied_at)
+// would force the primary key to become (station, edge_snapshot_id,
+// applied_at). That key does not constrain anything this table exists to
+// constrain: a redelivered tick arriving at a different applied_at would
+// no longer conflict, TryDedup's `ON CONFLICT (station, edge_snapshot_id)`
+// would have no matching unique index to name, and the guard would report
+// every replay as new. The composite PK IS the dedup guarantee; time
+// partitioning trades it away. A DELETE keeps it.
+//
+// The cost of doing it the plain way is small and bounded, and measured
+// rather than assumed. There is no index on applied_at and none is added.
+// Against the restored Springfield database, deleting 70,569 of 151,026
+// rows takes 102.6 ms — a sequential scan of 1,152 buffers, 32.6 ms of it
+// the scan itself. Extrapolated to 40 cells, where a full 90-day table is
+// ~1.9M rows and ~200 MB, that is a second or so once a day, against an
+// index that would have to be maintained on every tick insert on the hot
+// path. The Edge's exact parallel — an index on counter_snapshots
+// .recorded_at — measures 2.2x the size of the table it would serve, which
+// is the argument that survives re-measurement there and the one being
+// borrowed here. Declined for that reason, and revisitable if the daily
+// pass ever shows up in Core's logs.
+//
+// Ninety days is deliberately the same number as heartbeatRetentionDays
+// rather than a tighter one derived from the retry window (24-hour outbox
+// retention × MaxRetries, which would justify about seven days). The two
+// tables answer the same question about the same events; a second, shorter
+// number here would only be something to explain later. At 90 days the
+// table is ~198 MB at 40 cells, which is not a problem Core has.
+func PurgeOldDedup(db *sql.DB, keepDays int, now time.Time) (int64, error) {
+	cutoff := now.UTC().AddDate(0, 0, -keepDays)
+	res, err := db.Exec(`DELETE FROM production_tick_dedup WHERE applied_at < $1`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("purge production_tick_dedup: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // DropOldPartitions drops cell_part_events partitions whose month ends before
 // now-keepDays (plan §12: 90-day retention via DROP TABLE on old partitions —
 // O(1) vs a DELETE scan). Returns the number dropped.

@@ -52,6 +52,22 @@ echo "old DB integrity: $INTEGRITY"
 
 # Count rows across every user table in the given DB. Output is sorted
 # "<table>|<count>" lines, suitable for diff'ing between old and new.
+#
+# THE EXACT DIFF IN STEP 8 IS SAFE AGAINST RETENTION, AND MUST STAY EXACT.
+# The worry is obvious once retention exists anywhere on the Edge: Step 4
+# counts, Step 8 counts again, and anything that deletes rows in between
+# fails a migration on a healthy plant. It cannot happen, because Step 1
+# refuses to run at all while a shingoedge process is alive — and
+# install-edge.sh stops shingo-edge.service (waiting up to 45s, aborting if
+# it will not die) and kills any stray before it calls this script. Every
+# purge on the Edge is a ticker inside that process. Both snapshots
+# therefore read a database nothing is writing to, and Step 8's snapshot
+# reads a `cp` of the very file Step 4 read.
+#
+# So this is a copy-verification gate, not a liveness gate, and loosening
+# it — excluding "high-churn" tables, tolerating small differences — would
+# give up the only check that the copy in Step 6 was complete, in exchange
+# for immunity to a race the process-stopped precondition already excludes.
 snapshot_counts() {
     local db="$1"
     sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;" \

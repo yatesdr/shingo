@@ -75,10 +75,75 @@ func ListUnconfirmedAnomalies(db *sql.DB) ([]Snapshot, error) {
 	return snaps, rows.Err()
 }
 
-// ConfirmAnomaly marks an anomaly snapshot as operator-confirmed.
-func ConfirmAnomaly(db *sql.DB, id int64) error {
-	_, err := db.Exec(`UPDATE counter_snapshots SET operator_confirmed = 1 WHERE id = ?`, id)
-	return err
+// ConfirmedJump carries what a confirmation that actually flipped a row
+// hands back: everything the counter-delta path needs to account for the
+// units the operator just accepted. ProcessID and StyleID are resolved
+// through the reporting point exactly as ListEnabledReportingPoints
+// resolves them for the live poll.
+type ConfirmedJump struct {
+	ReportingPointID int64
+	ProcessID        int64
+	StyleID          int64
+	Delta            int64
+	CountValue       int64
+}
+
+// ConfirmAnomaly marks an unconfirmed jump snapshot as operator-confirmed
+// and returns the row's accounting fields so the caller can release the
+// delta downstream. Returns (nil, nil) when nothing was flipped.
+//
+// The UPDATE is now guarded on `anomaly = 'jump' AND operator_confirmed = 0`
+// — the same predicate ListUnconfirmedAnomalies selects on and
+// DismissAnomaly deletes on. It was a bare `WHERE id = ?`, which would
+// happily "confirm" an ordinary snapshot and reported success when
+// re-confirming a row already at 1. Once confirmation has a downstream
+// effect, that second case is a double-count: the popover button is a
+// plain POST with no client-side debounce (static/js/anomaly-handlers.js,
+// confirmAnomaly), so a double-tap or a retried request is the ordinary
+// case rather than the exotic one. RowsAffected is the idempotency token
+// — only the caller that actually moved the row 0 → 1 gets a
+// *ConfirmedJump back.
+//
+// The read-back deliberately runs outside a transaction. After a winning
+// UPDATE the row holds operator_confirmed = 1, which is exactly the state
+// that excludes it from a concurrent DismissAnomaly's DELETE and from a
+// second ConfirmAnomaly's UPDATE, and nothing else writes these columns.
+// So the row this SELECT reads cannot change or vanish underneath it —
+// and store.Open pins MaxOpenConns(1) besides.
+//
+// The style is read from the reporting point AS IT IS NOW, not as it was
+// when the jump was recorded: counter_snapshots stores no style. A jump
+// confirmed after a changeover is therefore attributed to the new style.
+// That is the same identity the live poll path uses and the only one the
+// schema can answer — a known limitation, not an oversight.
+func ConfirmAnomaly(db *sql.DB, id int64) (*ConfirmedJump, error) {
+	res, err := db.Exec(`UPDATE counter_snapshots SET operator_confirmed = 1
+		WHERE id = ? AND anomaly = 'jump' AND operator_confirmed = 0`, id)
+	if err != nil {
+		return nil, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	var cj ConfirmedJump
+	// COALESCE(s.process_id, 0) mirrors ListEnabledReportingPoints: a
+	// reporting point whose style row is missing yields process_id 0, which
+	// every downstream consumer already treats as unattributable.
+	err = db.QueryRow(`SELECT cs.reporting_point_id, cs.delta, cs.count_value,
+			COALESCE(s.process_id, 0), rp.style_id
+		FROM counter_snapshots cs
+		JOIN reporting_points rp ON rp.id = cs.reporting_point_id
+		LEFT JOIN styles s ON s.id = rp.style_id
+		WHERE cs.id = ?`, id).
+		Scan(&cj.ReportingPointID, &cj.Delta, &cj.CountValue, &cj.ProcessID, &cj.StyleID)
+	if err != nil {
+		return nil, err
+	}
+	return &cj, nil
 }
 
 // DismissAnomaly deletes an unconfirmed anomaly snapshot.

@@ -276,6 +276,12 @@ func (e *Engine) Start() {
 	e.plcMgr = plc.NewManager(e.db, e.cfg, plcEmit, e.warlinkClient)
 	e.orderMgr = orders.NewManager(e.db, orderEmit, e.cfg.StationID())
 
+	// Give the counters service the SAME emitter the PLC poll loop uses, so
+	// an operator confirming a jump releases its delta down the identical
+	// path a normal tick takes. The poll withholds jump deltas pending
+	// confirmation (plc/manager.go); this is the other half of that gate.
+	e.counterService.SetDeltaEmitter(plcEmit)
+
 	// Wire debug logging to subsystems
 	if e.debugLogger != nil {
 		e.plcMgr.DebugLog = plc.DebugLogFunc(e.debugLogger.Func("plc"))

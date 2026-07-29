@@ -124,3 +124,42 @@ func RecordInboundMessage(db *sql.DB, msgID, msgType, stationID string) (bool, e
 	}
 	return n == 1, nil
 }
+
+// InboxRetentionPeriod is how long processed inbound message IDs are kept.
+//
+// Ninety days, matching the heartbeat/downtime windows, and generous by
+// orders of magnitude: the record only has to outlive the redelivery it
+// guards against, which the outbox bounds at 24 hours.
+const InboxRetentionPeriod = 90 * 24 * time.Hour
+
+// PurgeOldInbox deletes processed-message records older than the given
+// duration. Returns the count of deleted rows.
+//
+// THIS IS NOT URGENT AND SHOULD NOT BE READ AS SUCH. Measured on the
+// restored Springfield database: 5,525 rows and 1,160 kB spanning
+// 2026-03-25 to 2026-07-26 — 123 days, about 3.5 MB a year, on a Core
+// database where nothing else is measured in single-digit megabytes. It
+// will never be a size problem, and it sits in the same retention census
+// as a table growing at 805 MB/year only because the two share a shape.
+//
+// It is worth ten lines anyway, for two reasons. Its outbox twin has had
+// PurgeOldOutbox since the beginning, so "inbound records are kept forever"
+// reads as an oversight in the symmetry rather than a decision, and every
+// future census re-raises it at the same cost. And idx_inbox_processed_at
+// already exists while processed_at appears nowhere outside the DDL —
+// verified by grep across the repo at f0b1a6a6 — an index built for a purge
+// that was planned (derek's 3e6d3f3a) and never written. Writing the purge
+// is what makes that index earn its keep; the honest alternative was to
+// drop the index.
+func PurgeOldInbox(db *sql.DB, olderThan time.Duration) (int64, error) {
+	// Bind a time.Time, not a formatted string: processed_at is TIMESTAMPTZ
+	// and a zoneless literal would be compared in the session TimeZone,
+	// shifting the cutoff by the offset on a non-UTC session (same trap
+	// PurgeOldOutbox documents above).
+	cutoff := time.Now().UTC().Add(-olderThan)
+	res, err := db.Exec(`DELETE FROM inbox WHERE processed_at < $1`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

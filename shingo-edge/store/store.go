@@ -123,3 +123,67 @@ func (db *DB) CheckpointWAL() error {
 	_, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	return err
 }
+
+// VacuumFreeFraction is the share of the file that must be free pages
+// before VacuumIfFragmented will rebuild it.
+//
+// This is what makes the post-purge VACUUM a ONE-TIME event without any
+// "have I done this yet" flag to get wrong across restarts. auto_vacuum is
+// NONE — measured 0 on the restored Springfield database, and by
+// construction: it appears nowhere in shingo-edge and Open's DSN sets only
+// busy_timeout and journal_mode, so SQLite's default stands and a DELETE
+// returns pages to the freelist without shrinking the file.
+//
+// The value is set from the measurement, not chosen. Running the real
+// 14-day purge against the restored Springfield database deletes 151,547
+// rows and leaves freelist_count 1,322 of page_count 4,923 — 26.9%, and
+// higher on the live Pi, which carries free space the restore does not.
+// Steady state is the other end of the same measurement: each 6-hour pass
+// deletes what the last six hours inserted, tens of kilobytes against a
+// file in the tens of megabytes, a fraction of a percent. Two orders of
+// magnitude separate the two cases, so anything from about 5% to about 25%
+// fires exactly once and never again; 20% takes the measured 26.9% with
+// margin rather than sitting a point and a half under it.
+//
+// Self-limiting, and it also catches the genuinely-fragmented case that a
+// fixed "once per process" rule would miss.
+const VacuumFreeFraction = 0.20
+
+// VacuumIfFragmented rebuilds the database when free pages exceed
+// VacuumFreeFraction of the file, reclaiming the disk a DELETE only
+// returned to SQLite's freelist. Reports whether it ran.
+//
+// VACUUM is not free and this is a Pi on an SD card. It copies the whole
+// file, so it needs free disk equal to the database size and holds an
+// exclusive lock throughout: 463–570 ms measured on a 19 MB file on
+// workstation NVMe, and at a conservative 20 MB/s sustained SD write a
+// 100 MB file is a floor of ~10 s of I/O. Both numbers are floors, not
+// estimates — no Pi measurement exists. That cost is the reason for the
+// threshold rather than an unconditional post-purge rebuild.
+func (db *DB) VacuumIfFragmented(minFreeFraction float64) (bool, error) {
+	var pageCount, freeCount int64
+	if err := db.QueryRow("PRAGMA page_count").Scan(&pageCount); err != nil {
+		return false, fmt.Errorf("page_count: %w", err)
+	}
+	if err := db.QueryRow("PRAGMA freelist_count").Scan(&freeCount); err != nil {
+		return false, fmt.Errorf("freelist_count: %w", err)
+	}
+	if pageCount <= 0 || float64(freeCount) < minFreeFraction*float64(pageCount) {
+		return false, nil
+	}
+	// VACUUM cannot run inside a transaction. Open pins MaxOpenConns(1), so
+	// no other statement from this process can be mid-flight.
+	if _, err := db.Exec("VACUUM"); err != nil {
+		return false, fmt.Errorf("vacuum: %w", err)
+	}
+	// CHECKPOINT, OR THE REBUILD RECLAIMS NOTHING YET. In WAL mode VACUUM
+	// writes the rebuilt pages into the write-ahead log; the main file keeps
+	// its old size until a checkpoint moves them across. Skipping this would
+	// leave the Pi momentarily holding BOTH the full-size database and a WAL
+	// containing a whole copy of it — the opposite of the intent — until the
+	// hourly checkpoint ticker happened to come round.
+	if err := db.CheckpointWAL(); err != nil {
+		return true, fmt.Errorf("checkpoint after vacuum: %w", err)
+	}
+	return true, nil
+}

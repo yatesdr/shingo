@@ -445,6 +445,32 @@ func main() {
 	drainer.Start()
 	defer drainer.Stop()
 
+	// ── Inbox retention ────────────────────────────────────────────────
+	// The outbox's purge rides Drainer.run() every hundredth cycle; the
+	// inbox had none at all, which is the only reason this loop exists. It
+	// is a symmetry fix, not a capacity fix: 5,525 rows and 1.2 MB after
+	// 123 days is roughly 3.5 MB a year and will never be a problem. Daily
+	// is far more often than the volume needs and costs nothing.
+	inboxStop := make(chan struct{})
+	defer close(inboxStop)
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-inboxStop:
+				return
+			case <-t.C:
+				n, err := db.PurgeOldInbox(store.InboxRetentionPeriod)
+				if err != nil {
+					log.Printf("shingocore: purge old inbox: %v", err)
+				} else if n > 0 {
+					log.Printf("shingocore: purged %d inbox record(s) older than %s", n, store.InboxRetentionPeriod)
+				}
+			}
+		}
+	}()
+
 	// ── Web server ─────────────────────────────────────────────────────
 	handler, stopWeb, err := www.NewRouter(eng, dbg)
 	if err != nil {

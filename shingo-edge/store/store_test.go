@@ -598,8 +598,16 @@ func TestCounterSnapshots_InsertListConfirmDismiss(t *testing.T) {
 		t.Errorf("anomaly field = %v", list[0].Anomaly)
 	}
 
-	// Confirming the anomaly removes it from the unconfirmed list.
-	testutil.MustNoErr(t, db.ConfirmAnomaly(anomalyID), "confirm")
+	// Confirming the anomaly removes it from the unconfirmed list and hands
+	// back the accounting fields the caller releases downstream.
+	cj, err := db.ConfirmAnomaly(anomalyID)
+	testutil.MustNoErr(t, err, "confirm")
+	if cj == nil {
+		t.Fatalf("confirm returned no ConfirmedJump")
+	}
+	if cj.Delta != 100 || cj.CountValue != 200 || cj.ReportingPointID != rpID || cj.StyleID != sid {
+		t.Errorf("confirmed jump = %+v, want delta 100 count 200 rp %d style %d", cj, rpID, sid)
+	}
 	list2, _ := db.ListUnconfirmedAnomalies()
 	if len(list2) != 0 {
 		t.Errorf("after confirm: %d", len(list2))

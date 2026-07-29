@@ -59,3 +59,11 @@ func (db *DB) EnsureHeartbeatPartitionsRange(start, end time.Time) error {
 func (db *DB) DropOldHeartbeatPartitions(keepDays int, now time.Time) (int, error) {
 	return heartbeat.DropOldPartitions(db.DB, keepDays, now)
 }
+
+// PurgeOldProductionTickDedup deletes production_tick_dedup rows older
+// than the retention window. Runs alongside DropOldHeartbeatPartitions on
+// the same daily ticker; see heartbeat.PurgeOldDedup for why this one is a
+// DELETE and not a partition drop.
+func (db *DB) PurgeOldProductionTickDedup(keepDays int, now time.Time) (int64, error) {
+	return heartbeat.PurgeOldDedup(db.DB, keepDays, now)
+}
