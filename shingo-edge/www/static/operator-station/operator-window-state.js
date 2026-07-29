@@ -107,6 +107,15 @@ export function cardModel(entry, code) {
     const loadNow = f.binEmpty && hasPayloadDemand;
     const canClearThisPayload = f.canClearLoaded && f.binPayload === code;
 
+    // waitingOnRobot marks the one card state that is a DOWNTIME signal rather than
+    // an operator cue: a call is queued for this payload and nothing is coming for
+    // it — nothing delivered, nothing in transit, the fleet has not even acknowledged
+    // it, and there is no empty parked to load. LOAD and ACKNOWLEDGED share the queued
+    // COLOUR but neither is downtime (one is actionable right now, the other has the
+    // fleet on it), so the render layer needs this flag to escalate only the real one.
+    // Set in the QUEUED branch below and nowhere else.
+    let waitingOnRobot = false;
+
     // Status tag (precedence-ordered; the order encodes the incident fixes — a consume
     // empty must be caught as SWAP before the produce LOAD fallback, plant 2026-06-02).
     let cls, statusText, statusClass;
@@ -116,7 +125,7 @@ export function cardModel(entry, code) {
     else if (payloadInTransit) { cls = 'os-board-transit'; statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit'; }
     else if (payloadAcknowledged) { cls = 'os-board-queued'; statusText = 'ACKNOWLEDGED'; statusClass = 'os-board-tag-queued'; }
     else if (loadNow) { cls = 'os-board-queued'; statusText = 'LOAD'; statusClass = 'os-board-tag-queued'; }
-    else if (hasPayloadDemand) { cls = 'os-board-queued'; statusText = 'QUEUED'; statusClass = 'os-board-tag-queued'; }
+    else if (hasPayloadDemand) { cls = 'os-board-queued'; statusText = 'QUEUED'; statusClass = 'os-board-tag-queued'; waitingOnRobot = true; }
     else if (f.canLoadEmpty) { cls = 'os-board-queued'; statusText = 'LOAD'; statusClass = 'os-board-tag-queued'; }
     else { cls = 'os-board-nodemand'; statusText = 'NO DEMAND'; statusClass = 'os-board-tag-nodemand'; }
 
@@ -148,6 +157,23 @@ export function cardModel(entry, code) {
         payloadOrders.find(function (o) { return o.status === 'in_transit'; }) ||
         payloadOrders[0];
 
+    // Queue facts for a waiting card. queueReason is Core's own blocking sentence,
+    // mirrored onto the edge order by OrderUpdate (domain.Order.QueueReason) and
+    // already rendered verbatim by the operator modal — the BOARD threw it away, so
+    // an operator had to tap a card to find out why nothing was coming. Read from
+    // whichever order carries one: Core populates it only while status == queued, so
+    // a payload with a queued order and a sourcing one has the reason on the former.
+    const reasoned = payloadOrders.find(function (o) { return !!o.queue_reason; });
+    // waitingSince is the OLDEST order for the payload, not badgeOrder's timestamp:
+    // the question a downtime alert answers is "how long has this cell been waiting",
+    // which is the first unanswered call, not the most recent one.
+    let waitingSince = '';
+    for (let i = 0; i < payloadOrders.length; i++) {
+        const created = payloadOrders[i].created_at;
+        if (!created) continue;
+        if (!waitingSince || Date.parse(created) < Date.parse(waitingSince)) waitingSince = created;
+    }
+
     return {
         cls: cls, statusText: statusText, statusClass: statusClass, detail: detail, action: action, loadNow: loadNow,
         // Queue-position badge facts (rendered by operator-render): only REAL per-payload
@@ -159,6 +185,12 @@ export function cardModel(entry, code) {
         // nothing an operator can act on, while "which supermarket slot is feeding me"
         // does. Empty when no real per-payload order backs the card.
         sourceNode: (badgeOrder && badgeOrder.source_node) || '',
+        // Downtime facts (see waitingOnRobot above). queueReason/waitingSince are
+        // populated whenever the orders carry them, not only on a waiting card —
+        // the flag decides escalation, these two only supply the words for it.
+        waitingOnRobot: waitingOnRobot,
+        queueReason: (reasoned && reasoned.queue_reason) || '',
+        waitingSince: waitingSince,
     };
 }
 

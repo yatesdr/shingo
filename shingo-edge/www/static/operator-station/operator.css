@@ -1158,6 +1158,32 @@ body {
     50%      { box-shadow: 0 0 0 4px rgba(224, 72, 77, 0.70); }
 }
 
+/* Queued with nothing coming → RED (cardModel.waitingOnRobot). Deliberately the SAME
+   red as starvation above, and re-using its pulse: both mean "this card is why the line
+   is about to stop", and inventing a second alarm colour would make the operator learn a
+   palette instead of reading a board. What distinguishes them is the text — a starved
+   card says its lineside UoP, a queued card says QUEUED plus Core's reason.
+
+   border-color needs !important for the same reason os-board-load-now does: the card
+   also carries its state class (.os-board-queued) and that sets the border shorthand. */
+.os-board-card--waiting {
+    background: #2a1518;
+    border-color: #e0484d !important;
+    box-shadow: 0 0 0 2px rgba(224, 72, 77, 0.55);
+    animation: os-starved-pulse 1.6s ease-in-out infinite;
+}
+.os-board-card--waiting .os-board-detail { color: #e0a0a3; }
+
+/* The queued line — how long the call has gone unanswered, plus Core's own queue reason
+   verbatim. Sits under the detail line (which carries margin-top:auto, so this lands at
+   the card's bottom edge). Wraps: a queue reason is a sentence, not a tag. */
+.os-board-downtime {
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.25;
+    color: #ff9a9e;
+}
+
 .os-board-detail {
     font-size: 22px;
     color: #999;

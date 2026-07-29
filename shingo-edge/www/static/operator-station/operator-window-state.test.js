@@ -202,6 +202,41 @@ eq(headerModel(entry('consume', null, [])).text, 'AWAITING FULL', 'consume idle:
     eq(c.sourceNode, 'SMN_006', 'sourceNode follows the delivered order, not the first');
 })();
 
+// ─────────────── waitingOnRobot: the downtime discrimination ───────────────
+//
+// QUEUED, LOAD and ACKNOWLEDGED all render os-board-queued blue. Only ONE of them
+// is downtime, and the board used to treat all three alike. These pin which.
+
+// 21. Demand, no bin, nothing moving → downtime, and Core's queue reason rides along
+//     so the card can say WHY instead of making the operator tap into the modal.
+(function () {
+    const c = card(entry('produce', null, [
+        { status: 'queued', payload_code: 'BRKT', queue_reason: 'no compatible empty bin available' },
+    ]), 'BRKT');
+    eq(c.statusText, 'QUEUED', 'waiting: status');
+    eq(c.waitingOnRobot, true, 'waiting: queued with nothing coming IS downtime');
+    eq(c.queueReason, 'no compatible empty bin available', 'waiting: queue reason surfaces');
+})();
+
+// 22. An empty bin IS parked and demand exists → LOAD. Same blue, but the operator can
+//     act on it right now, so it must NOT escalate. This is the discrimination that
+//     matters: escalating LOAD would light the board orange during normal work.
+(function () {
+    const c = card(entry('produce', 'empty', [{ status: 'queued', payload_code: 'BRKT' }]), 'BRKT');
+    eq(c.statusText, 'LOAD', 'load-now: status');
+    eq(c.waitingOnRobot, false, 'load-now is actionable, not downtime');
+})();
+
+// 23. waitingSince is the OLDEST call, not the first in the array — the alert answers
+//     "how long has this cell been waiting", which is the first unanswered call.
+(function () {
+    const c = card(entry('produce', null, [
+        { status: 'queued', payload_code: 'BRKT', created_at: '2026-07-29T12:30:00Z' },
+        { status: 'queued', payload_code: 'BRKT', created_at: '2026-07-29T12:00:00Z' },
+    ]), 'BRKT');
+    eq(c.waitingSince, '2026-07-29T12:00:00Z', 'waitingSince takes the oldest call');
+})();
+
 // ── result ──
 if (failed > 0) { console.error('\n' + failed + ' failure(s), ' + passed + ' passed'); process.exit(1); }
 console.log('operator-window-state: ' + passed + ' assertions passed');

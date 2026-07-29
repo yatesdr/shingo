@@ -530,6 +530,26 @@ function showPullFromMarketPicker(nodeID) {
         });
 }
 
+// waitedLabel formats how long a queued call has gone unanswered, coarsely — the
+// operator needs "is this minutes or is this an hour", not seconds. Computed at
+// render time from the order's created_at with NO timer: the board already
+// re-renders on its own refresh cycle, and this surface has a history of
+// self-amplifying refresh loops (the station-view refresh ratchet), so nothing
+// here is allowed to schedule its own repaint. Returns '' on a missing or
+// unparseable timestamp, and on a future one (clock skew between edge and Core),
+// so a bad value degrades to the bare word "Waiting" instead of "Waiting -3m".
+function waitedLabel(created) {
+    if (!created) return '';
+    var t = Date.parse(created);
+    if (isNaN(t)) return '';
+    var mins = Math.floor((Date.now() - t) / 60000);
+    if (mins < 0) return '';
+    if (mins < 1) return 'under a minute';
+    if (mins < 60) return mins + 'm';
+    var hrs = Math.floor(mins / 60);
+    return hrs + 'h' + (mins % 60) + 'm';
+}
+
 // buildLoaderCard renders ONE (position × payload) card — the atomic unit of the
 // loader board. Returns the card element, or null when a normal kanban loader's
 // idle card should be hidden. counters.queuePos tracks the per-payload queue badge
@@ -543,8 +563,17 @@ function buildLoaderCard(entry, code, counters, opts) {
 
     // Coverage (ACTIVE = a running style needs this now; PRELOAD = covered only
     // by an inactive style) — drives the badge + the transitional idle override.
-    var isActiveStylePayload = entry.operator_driven &&
-        (entry.active_style_payloads || []).indexOf(code) !== -1;
+    // NOT gated on operator_driven: every consumer below carries its own
+    // operator_driven gate, and the downtime escalation needs the same fact on a
+    // normal board, where the ACTIVE/PRELOAD badge is deliberately not drawn.
+    var activeStylePayloads = entry.active_style_payloads || [];
+    var isActiveStylePayload = activeStylePayloads.indexOf(code) !== -1;
+
+    // Downtime escalation is scoped to active-style payloads — a queued call on a
+    // payload no running style consumes is not costing the line anything. With NO
+    // active-style list at all there is nothing to scope BY, and staying quiet would
+    // hide real downtime behind missing style data, so an unscoped board escalates.
+    var downtimeInScope = isActiveStylePayload || activeStylePayloads.length === 0;
 
     // Transitional board: "NO DEMAND" is meaningless (operator-driven). On an
     // idle card show the coverage meaning instead.
@@ -571,12 +600,24 @@ function buildLoaderCard(entry, code, counters, opts) {
     card.classList.add(cs.cls);
     if (cs.loadNow) card.classList.add('os-board-load-now');
 
-    if (entry.operator_driven) {
-        card.classList.add(isActiveStylePayload ? 'os-board-cov-on-active' : 'os-board-cov-on-preload');
+    // ACTIVE badge on EVERY board. It used to be operator_driven-only, reasoning that a
+    // normal board renders only active-style payloads so the label adds nothing — but
+    // redundant to the code is not redundant to a driver reading a wall of part numbers
+    // from a forklift seat, who otherwise has to KNOW that rule to trust the board. Say
+    // it on the card. PRELOAD stays transitional-only: a normal board has no preload
+    // cards to contrast against, so an unpaired PRELOAD badge would be noise.
+    if (isActiveStylePayload || entry.operator_driven) {
         card.appendChild(el('span', {
             className: 'os-board-cov ' + (isActiveStylePayload ? 'os-board-cov-active' : 'os-board-cov-preload'),
             textContent: isActiveStylePayload ? 'ACTIVE' : 'PRELOAD',
         }));
+    }
+    // The coverage TINT stays operator_driven-only. It exists to make a transitional
+    // board's IDLE cards read as actionable (.os-board-nodemand.os-board-cov-on-*), and
+    // a normal board hides its idle cards instead of tinting them — applying it there
+    // would repaint consume-side NO DEMAND cards blue for no reason.
+    if (entry.operator_driven) {
+        card.classList.add(isActiveStylePayload ? 'os-board-cov-on-active' : 'os-board-cov-on-preload');
     }
 
     card.appendChild(el('div', { className: 'os-board-code', textContent: code }));
@@ -592,6 +633,20 @@ function buildLoaderCard(entry, code, counters, opts) {
             textContent: 'Lineside ' + lsUOP + ' UoP' + (starved ? ' — PRELOAD' : ''),
         }));
         if (starved) card.classList.add('os-board-card--starved');
+    }
+
+    // QUEUED → RED. A queued call under an active style with nothing coming for it is
+    // the line going down, and until now it looked identical to a LOAD cue: both
+    // rendered os-board-queued blue, and the REASON Core had already computed was only
+    // visible by tapping into the modal. Red the card and say it underneath.
+    if (cs.waitingOnRobot && downtimeInScope) {
+        card.classList.add('os-board-card--waiting');
+        var waited = waitedLabel(cs.waitingSince);
+        card.appendChild(el('div', {
+            className: 'os-board-downtime',
+            textContent: 'QUEUED' + (waited ? ' ' + waited : '') +
+                (cs.queueReason ? ' — ' + cs.queueReason : ''),
+        }));
     }
 
     // Corner badge, only for REAL per-payload orders (the agnostic blank-payload
