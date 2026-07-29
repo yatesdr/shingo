@@ -440,7 +440,17 @@ function renderDeltaIntegrity() {
     + '<div class="delta-integrity__why">Direction is the reading: <b>above</b> means '
     + 'consumption never landed and the count is too high; <b>below</b> means credit never '
     + 'landed. Only <b>below</b> can explain a negative ledger beside it — a payload that '
-    + 'reads above while its ledger reads negative has two separate problems, not one.</div>'
+    + 'reads above while its ledger reads negative has two separate problems, not one.'
+    // A DOOR, NOT A VERDICT — the same constraint /material-flags ships under.
+    // The owner's reading, and it is the one the evidence supports: a large
+    // negative means ShinGo has been out of the loop on that part, which is
+    // what manual forklift moves, robots down and sourcing gaps all look like
+    // from in here. They are not separable from this panel and it must not
+    // pretend otherwise. It points at a cycle count; it does not name a cause
+    // and it grades nobody.
+    + ' A large negative is an <b>indicator, not a diagnosis</b>: it says ShinGo has been '
+    + 'out of the loop on that part — manual moves, robots down, sourcing gaps all read the '
+    + 'same from here. It points at a cycle count, not at a cause.</div>'
     + renderDeltaDaily()
     + '<ul class="delta-integrity__list">' + items + '</ul></div>';
 }
