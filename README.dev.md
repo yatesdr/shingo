@@ -72,6 +72,14 @@ Sim behavior lives in the dev configs (baked into the image — rebuild with
 | `make dev-wipe` | *(planned)* truncate operational data + re-seed, keep topology |
 | `make dev-logs` | tail core + edge logs |
 
+**Both databases live in named Docker volumes — `pgdata` for Core's Postgres and `edge-data`
+for Edge's SQLite — so they survive `make dev`, an image rebuild, a container restart and
+`make dev-down` alike.** That is deliberate (a rebuild should not cost you the seeded plant),
+and it is also the usual reason a change appears not to have taken: `make dev` rebuilds the
+binary, not the data, so a migration you just wrote runs against a database that already has
+it, and a `plants/demo.yaml` edit does nothing until you reseed. `make dev-reset` (`down -v`)
+is the only command here that drops either volume.
+
 **Long-run disk:** `cell_part_events` partitions and `production_tick_dedup`
 grow unbounded during a soak — `make dev-reset` periodically.
 

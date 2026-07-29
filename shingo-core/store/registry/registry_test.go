@@ -92,6 +92,22 @@ func TestCoverage_UpdateHeartbeat_IsNewThenNot(t *testing.T) {
 	}
 }
 
+// TestCoverage_MarkStaleEdges takes NO sleep and a ZERO threshold,
+// deliberately.
+//
+// The version this replaces slept 5 ms and passed a 1 ns threshold. Those
+// two numbers were the entire margin protecting a cutoff computed from the
+// HOST clock against a last_heartbeat written by the DATABASE clock — so
+// the test was a race between two clocks, and the 5 ms was how much skew
+// it tolerated. That is I6: a container running a few milliseconds ahead
+// of its host failed it, which reads as a flaky test and is a real defect
+// in MarkStale (see its doc comment).
+//
+// MarkStale now computes the cutoff in Postgres, so this assertion rests
+// on transaction ordering instead: the heartbeats above were written by
+// earlier transactions, so their NOW() is strictly less than the UPDATE's
+// NOW(), for every threshold down to and including zero. There is no
+// margin left to lose, which is why there is no sleep left to tune.
 func TestCoverage_MarkStaleEdges(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -99,9 +115,7 @@ func TestCoverage_MarkStaleEdges(t *testing.T) {
 	registry.UpdateHeartbeat(db.DB, "line-stale-1")
 	registry.Register(db.DB, "line-stale-2", "h2", "v", nil)
 	registry.UpdateHeartbeat(db.DB, "line-stale-2")
-	// KEEP: timestamp separation — stale-marking threshold needs distinct timestamps.
-	time.Sleep(5 * time.Millisecond)
-	stale, err := registry.MarkStale(db.DB, 1*time.Nanosecond)
+	stale, err := registry.MarkStale(db.DB, 0)
 	if err != nil {
 		t.Fatalf("MarkStale: %v", err)
 	}
@@ -121,11 +135,59 @@ func TestCoverage_MarkStaleEdges(t *testing.T) {
 			t.Errorf("edge %s status = %q, want stale", e.StationID, e.Status)
 		}
 	}
-	again, err := registry.MarkStale(db.DB, 1*time.Nanosecond)
+	again, err := registry.MarkStale(db.DB, 0)
 	if err != nil {
 		t.Fatalf("MarkStale second: %v", err)
 	}
 	if len(again) != 0 {
 		t.Errorf("second MarkStale len = %d, want 0", len(again))
+	}
+}
+
+// TestCoverage_MarkStaleEdges_ThresholdIsHonoured pins that the threshold
+// is a bound and not decoration.
+//
+// The zero-threshold test above would still pass if MarkStale ignored its
+// argument entirely, or if pgInterval rendered the wrong unit — a
+// threshold of 15 minutes sent as "900 seconds" reads the same, but sent
+// as "900 microseconds" would mark every edge at every plant on the first
+// tick. This is the test that would catch that, and both timestamps are
+// set BY THE DATABASE so it carries no host clock either.
+func TestCoverage_MarkStaleEdges_ThresholdIsHonoured(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	registry.Register(db.DB, "line-recent", "h", "v", nil)
+	registry.Register(db.DB, "line-old", "h", "v", nil)
+	if _, err := db.DB.Exec(
+		`UPDATE edge_registry SET last_heartbeat = NOW() - interval '10 seconds' WHERE station_id = 'line-recent'`,
+	); err != nil {
+		t.Fatalf("backdate line-recent: %v", err)
+	}
+	if _, err := db.DB.Exec(
+		`UPDATE edge_registry SET last_heartbeat = NOW() - interval '10 minutes' WHERE station_id = 'line-old'`,
+	); err != nil {
+		t.Fatalf("backdate line-old: %v", err)
+	}
+
+	stale, err := registry.MarkStale(db.DB, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("MarkStale: %v", err)
+	}
+	if len(stale) != 1 || stale[0] != "line-old" {
+		t.Fatalf("stale = %+v, want exactly [line-old]", stale)
+	}
+
+	edges, err := registry.List(db.DB)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, e := range edges {
+		want := "active"
+		if e.StationID == "line-old" {
+			want = "stale"
+		}
+		if e.Status != want {
+			t.Errorf("edge %s status = %q, want %q", e.StationID, e.Status, want)
+		}
 	}
 }

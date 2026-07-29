@@ -29,6 +29,7 @@
 # Usage:
 #   bash scripts/gate.sh                  fmt, vet, lint, unit tests
 #   bash scripts/gate.sh scope [BASE]     say whether the docker suites are needed
+#                                         (exit 0 = needed, 1 = not needed)
 #   bash scripts/gate.sh docker           run the docker suites (no -race)
 #   bash scripts/gate.sh full [BASE]      the four, then docker only if scope says so
 #   bash scripts/gate.sh fmt|vet|lint|test  one step
@@ -65,6 +66,21 @@ fi
 
 MODULES="protocol shared shingo-core shingo-edge integration"
 rc=0
+
+# Which modules actually carry docker-tagged tests. COMPUTED, not listed,
+# and computed in ONE place because two copies of this answer is exactly the
+# rot it exists to prevent: `scope` used to derive it while `docker` carried
+# a hardcoded triple, so the first `go:build docker` test to land in
+# `protocol` or `shared` would have had scope say NEEDED and docker silently
+# not run it. Today the two lists agree, which is why nobody noticed.
+docker_modules() {
+  local m
+  for m in $MODULES; do
+    if grep -rlq 'go:build docker' --include='*_test.go' "$ROOT/$m" 2>/dev/null; then
+      printf '%s ' "$m"
+    fi
+  done
+}
 
 step_fmt() {
   # FIRST, and on its own, for two reasons. It is the cheapest check here — a
@@ -179,14 +195,8 @@ step_scope() {
     return 1
   fi
 
-  # Which modules actually carry docker-tagged tests, computed rather than
-  # hardcoded so the list cannot go stale as tags move.
-  local dockermods="" m
-  for m in $MODULES; do
-    if grep -rlq 'go:build docker' --include='*_test.go' "$ROOT/$m" 2>/dev/null; then
-      dockermods="$dockermods $m"
-    fi
-  done
+  local dockermods m
+  dockermods="$(docker_modules)"
 
   local reaching="" f
   while IFS= read -r f; do
@@ -225,9 +235,19 @@ step_scope() {
 }
 
 # No -race: see the header. CI runs the race variant.
+#
+# The module list is docker_modules(), the SAME derivation `scope` uses. A
+# module that starts carrying docker-tagged tests is picked up by both at
+# once, or by neither — never by scope alone, which would report NEEDED and
+# then run nothing.
 step_docker() {
-  local m failed=0
-  for m in shingo-core shingo-edge integration; do
+  local m failed=0 mods
+  mods="$(docker_modules)"
+  if [ -z "$mods" ]; then
+    echo "ok   docker (no module carries a go:build docker test)"
+    return 0
+  fi
+  for m in $mods; do
     echo "  docker: $m"
     ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p 1 ./... >/tmp/gate-docker-$m.log 2>&1 ) \
       || { failed=1; echo "  --- $m ---"; grep -Ev '^ok |no test files' "/tmp/gate-docker-$m.log" | head -30; }
@@ -241,7 +261,12 @@ case "${1:-all}" in
   vet)   step_vet  || rc=1 ;;
   lint)  step_lint || rc=1 ;;
   test)  step_test || rc=1 ;;
-  scope) step_scope "${2:-}"; exit 0 ;;
+  # EXIT CODE IS THE VERDICT: 0 = docker needed, 1 = not needed. It used to
+  # `exit 0` unconditionally, which made the answer readable only by a human
+  # reading the text — so nothing could gate on it. `if bash scripts/gate.sh
+  # scope; then ...` now works, and matches step_scope's own return
+  # convention, which `full` has always branched on.
+  scope) step_scope "${2:-}"; exit $? ;;
   docker) step_docker || rc=1 ;;
   full)
     step_fmt  || rc=1

@@ -660,10 +660,10 @@ by a formatter that has no idea what the data is.
 
 Work it through on the number Phase 6 actually ships. Cycle time (5.10) is a
 difference between two `bin_uop_audit` timestamps on a stream that is
-deliberately lossy in known ways — roughly 1,779 stale-epoch drops and 1,779
-replays a day, which manufacture phantom gaps until the dedup pass removes them —
-stamped by service clocks not synchronised to the millisecond. That number is
-worth about two significant figures. `47.283 s` asserts a millisecond-accurate
+deliberately lossy in known ways — a stale-epoch drop erases the interval it
+lands in, and the drops are episodic rather than steady: zero on most days,
+then a burst past 3,000 in one — stamped by service clocks not synchronised to
+the millisecond. That number is worth about two significant figures. `47.283 s` asserts a millisecond-accurate
 interval from a source that cannot supply one; **"about 47 seconds"** is what was
 actually measured.
 
@@ -674,7 +674,7 @@ person who has to act on it.**
 
 | Kind of number | Precision |
 |---|---|
-| A count | Exact — `1,779`. A count is not an estimate |
+| A count | Exact — **of a stated window**. `1,779` was a true 24-hour count and became an estimate the moment it was quoted as a rate. See below |
 | A derived duration | Whole seconds under ten minutes, whole minutes above |
 | A percentage | Whole percent, unless the denominator runs to thousands |
 | A ratio | One decimal (`3.2×`), **greyed below the minimum `n`** (5.4, 5.9) |
@@ -688,6 +688,36 @@ Two mechanical corollaries:
 - **Where the number is soft and there is room to say so, say so.** *"about
   47 s"* costs six characters. Where there is no room the rounding itself carries
   the message — which is exactly why the rounding has to be right.
+
+**The count that became an estimate.** The rule above has a companion failure
+that is much harder to catch, because the number involved is not wrong.
+
+`1,779` was a true count: stale-epoch drops at Springfield in the 24 hours to
+2026-07-25T05:18Z, read off a `journalctl` fingerprint and later reproduced to
+the digit by querying `bin_uop_audit` over the same window. Nobody rounded it,
+nobody estimated it, and it survived re-measurement in a different tool. It then
+misled every document that carried it — and both reasons are about what failed
+to travel *with* the number, not about the number.
+
+**The window was stripped.** Those 24 hours happened to be the worst burst in
+the dump. The drops are episodic, not steady — zero on most days, then
+thousands — so `~1,779/day` reads as a rate and is a peak. Restated with its
+window it is exact again. Restated as a mean over the same period it would be
+about 188, which is equally true and equally misleading. **Neither number is
+wrong; the missing window is.**
+
+**The same population was counted twice.** It travelled as *"1,779 drops **plus**
+1,779 replays"*, which invented a second population and doubled the first. One
+stale-epoch drop emits both log lines: `uop.applier` logs the drop and returns
+`ErrInventoryDeltaSkipped`, and `messaging.core_data_service` catches that
+shared sentinel and logs "replay — already applied". Two lines, one event.
+**The identical counts were the tell, and they read as corroboration.**
+
+So the worked example stands, upgraded, and it is a better one than it was.
+**A count is exact — and exactness is a property of the count and its window
+together.** Print the window beside the count, or print neither. And when two
+numbers agree to the digit, ask whether they are two measurements or one
+measurement written down twice.
 
 **2 — Tabular figures, always.**
 

@@ -11,6 +11,7 @@ package registry
 import (
 	"database/sql"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"shingocore/domain"
@@ -85,17 +86,46 @@ func List(db *sql.DB) ([]Edge, error) {
 
 // MarkStale sets status='stale' for active edges whose last_heartbeat is
 // older than the threshold. Returns the marked station IDs.
+//
+// THE CUTOFF IS COMPUTED BY POSTGRES. That is what `NOW() - $1::interval`
+// is for, and it is the whole content of this change.
+//
+// UpdateHeartbeat writes `last_heartbeat = NOW()`, so the write side has
+// always been on the database clock. Deriving the cutoff from time.Now()
+// on the caller's host — which is what this did — compared two
+// independent clocks and silently added the difference to the caller's
+// threshold: an edge went stale after `threshold + (db_clock - host_clock)`
+// rather than after `threshold`.
+//
+// That term is neither small nor bounded. Core's Postgres runs on a
+// separate server at both plants, nothing disciplines the two clocks
+// against each other, and the error has a direction on each side:
+//
+//   - database AHEAD of Core's host: edges go stale LATE, by the skew.
+//     Detection is delayed, and the delay is invisible.
+//   - database BEHIND Core's host: edges go stale EARLY. As the skew
+//     approaches the configured threshold the effective threshold reaches
+//     zero, and every edge — including one heartbeating normally — is
+//     marked stale on every 60-second tick, which also reaps that
+//     station's demand_registry rows in CoreHandler.staleEdgeLoop.
+//
+// The same comparison is what made TestCoverage_MarkStaleEdges (I6)
+// flake, where the two clocks are the test container's and the host's and
+// the entire margin was a 5 ms sleep. Verified by injecting a 50 ms offset
+// into the old host-side cutoff: the test failed deterministically with
+// `stale ids len = 0, want 2`. NEITHER the threshold's value NOR
+// t.Parallel() was implicated — any threshold smaller than the skew
+// behaves identically, and injecting a fake clock into Go would have left
+// the skew exactly where it was.
 func MarkStale(db *sql.DB, threshold time.Duration) ([]string, error) {
-	cutoff := time.Now().UTC().Add(-threshold)
-
 	rows, err := db.Query(`
 		UPDATE edge_registry
 		SET status = 'stale'
 		WHERE status = 'active'
 		  AND last_heartbeat IS NOT NULL
-		  AND last_heartbeat < $1
+		  AND last_heartbeat < NOW() - $1::interval
 		RETURNING station_id
-	`, cutoff)
+	`, pgInterval(threshold))
 	if err != nil {
 		return nil, err
 	}
@@ -115,4 +145,20 @@ func MarkStale(db *sql.DB, threshold time.Duration) ([]string, error) {
 		return nil, nil
 	}
 	return staleIDs, nil
+}
+
+// pgInterval renders a Go duration as a Postgres interval literal.
+//
+// Microseconds because that is Postgres' interval resolution. A
+// sub-microsecond threshold therefore renders as `0 microseconds`, which
+// still marks every heartbeat written by an earlier transaction: NOW() is
+// the current transaction's start time, so an earlier transaction's NOW()
+// is strictly less than it. That is a database ordering guarantee rather
+// than a race, which is the difference this whole change is about.
+//
+// A negative duration renders as written rather than being clamped. A
+// caller passing one means something by it, and quietly turning it into
+// zero would hide the mistake instead of showing it.
+func pgInterval(d time.Duration) string {
+	return strconv.FormatInt(d.Microseconds(), 10) + " microseconds"
 }
