@@ -1604,7 +1604,6 @@ body[data-dashboard-kind="node-report"] #dash-main {
 }
 .nr-col-table tbody {
   display: block;
-  overflow-y: auto;
   flex: 1;
   min-height: 0;
   width: 100%;
@@ -1643,6 +1642,9 @@ body[data-dashboard-kind="node-report"] #dash-main {
 }
 .nr-group {
   color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .nr-status {
   white-space: nowrap;
