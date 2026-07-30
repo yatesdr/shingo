@@ -40,6 +40,49 @@ func changeoverBlockerFor(nodeName string, orderID int64, status protocol.Status
 	}
 }
 
+// blockNodeSet is every node the changeover physically touches: each diff node
+// INCLUDING SituationUnchanged, plus the indexed_over press-index seats.
+//
+// A carrier moving toward an unchanged node of this process is still a carrier
+// the changeover will collide with, and the seats are the Hopkinsville blind
+// spot — the removed AbortNodeOrders sweep missed orders 1249/1251 "only because
+// it walks plan.diffs (the task nodes)" while they were delivering to PLN_02 and
+// PLN_05, and the gate that replaced it inherited the same walk.
+//
+// plan.participants, not ListChangeoverParticipants: the changeover row does not
+// exist yet when the gate runs (Create is below, the gate above it), so there is
+// no changeoverID to read by. The in-memory set is built in planChangeover.
+func blockNodeSet(plan *changeoverPlan) []string {
+	out := make([]string, 0, len(plan.participants))
+	for _, p := range plan.participants {
+		if p.CoreNodeName != "" {
+			out = append(out, p.CoreNodeName)
+		}
+	}
+	return out
+}
+
+// cancelNodeSet is the CHANGED diff nodes only — deliberately narrower than
+// blockNodeSet, and they must stay two separately named functions.
+//
+// Widening the BLOCK to a seat is safe: it says "not yet", the operator presses
+// again. Widening the CANCEL to one is the Hopkinsville deadlock — and widening
+// it to a SituationUnchanged node is a second, quieter bug: the incoming style
+// still claims that payload at that node, so the order is still wanted and
+// cancelling it would starve the cell the changeover is meant to keep running.
+//
+// One shared variable here would be one edit away from either.
+func cancelNodeSet(plan *changeoverPlan) []string {
+	out := make([]string, 0, len(plan.diffs))
+	for _, diff := range plan.diffs {
+		if diff.Situation == SituationUnchanged || diff.CoreNodeName == "" {
+			continue
+		}
+		out = append(out, diff.CoreNodeName)
+	}
+	return out
+}
+
 // cancelPreDispatchAtParticipants cancels every PRE-DISPATCH order sitting at a
 // node this changeover touches, and returns the ids it terminated.
 //
@@ -92,51 +135,58 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 		cancelled = append(cancelled, orderID)
 	}
 
+	nodes := cancelNodeSet(plan)
+	if len(nodes) == 0 {
+		return nil, nil
+	}
+	live, err := e.db.ListActiveOrders()
+	if err != nil {
+		return nil, err
+	}
 	reason := "cancelled at changeover start — the line is changing over"
-	for _, diff := range plan.diffs {
-		if diff.Situation == SituationUnchanged {
+	for i := range live {
+		o := live[i]
+		if !protocol.IsPreDispatch(o.Status) {
 			continue
 		}
+		if !e.orderPlacesBinAtAny(o.ID, o.DeliveryNode, nodes) {
+			continue
+		}
+		abort(o.ID, reason)
+		// BOTH LEGS OR NEITHER. A complex consume request is created as a linked
+		// pair; cancelling one leg leaves the survivor parked on
+		// waiting_for_partner for a partner that will never claim a bin, which is
+		// a worse state than the one being cleared. The sibling is aborted even
+		// when its own destination is not in the set.
+		if o.SiblingOrderID != nil {
+			abort(*o.SiblingOrderID, reason+" (sibling of order "+itoa64(o.ID)+")")
+		}
+	}
+
+	// Clear only the runtime pointers whose orders we terminated. A stale pointer
+	// to a cancelled order is the phantom-badge family; clearing slots
+	// unconditionally would drop a live order's pointer alongside the dead one.
+	// Walked separately from the cancel because the destination surface finds
+	// orders that were never in a slot — the pointer is UI state, not truth.
+	for _, diff := range plan.diffs {
 		node := findNodeByCoreName(plan.nodes, diff.CoreNodeName)
 		if node == nil {
 			continue
 		}
-		runtime, err := e.db.GetProcessNodeRuntime(node.ID)
-		if err != nil || runtime == nil {
+		runtime, rerr := e.db.GetProcessNodeRuntime(node.ID)
+		if rerr != nil || runtime == nil {
 			continue
 		}
-		active, staged := runtime.ActiveOrderID, runtime.StagedOrderID
-		for _, slot := range []*int64{active, staged} {
-			if slot == nil {
-				continue
-			}
-			order, err := e.db.GetOrder(*slot)
-			if err != nil || order == nil || !protocol.IsPreDispatch(order.Status) {
-				continue
-			}
-			abort(order.ID, reason)
-			// BOTH LEGS OR NEITHER. A complex consume request is created as a
-			// linked pair; cancelling one leg leaves the survivor parked on
-			// waiting_for_partner for a partner that will never claim a bin,
-			// which is a worse state than the one being cleared. The sibling is
-			// aborted even when it is not in a slot of its own.
-			if order.SiblingOrderID != nil {
-				abort(*order.SiblingOrderID, reason+" (sibling of order "+itoa64(order.ID)+")")
-			}
-		}
-		// Clear only the pointers whose orders we terminated. A stale pointer to
-		// a cancelled order is the phantom-badge family, and clearing both slots
-		// unconditionally would drop a live order's pointer alongside it.
-		newActive, newStaged := active, staged
+		newActive, newStaged := runtime.ActiveOrderID, runtime.StagedOrderID
 		if newActive != nil && seen[*newActive] {
 			newActive = nil
 		}
 		if newStaged != nil && seen[*newStaged] {
 			newStaged = nil
 		}
-		if newActive != active || newStaged != staged {
-			if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, newActive, newStaged); err != nil {
-				e.logFn("changeover: clear runtime slots for node %s after cancel: %v", node.Name, err)
+		if newActive != runtime.ActiveOrderID || newStaged != runtime.StagedOrderID {
+			if uerr := e.db.UpdateProcessNodeRuntimeOrders(node.ID, newActive, newStaged); uerr != nil {
+				e.logFn("changeover: clear runtime slots for node %s after cancel: %v", node.Name, uerr)
 			}
 		}
 	}
@@ -167,29 +217,38 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 // operator is standing at the line to run; the resource-level gates (reservations
 // and swapLegHeld) are the real safety net and they hold regardless.
 func (e *Engine) nodesWithOrdersInFlight(plan *changeoverPlan) []string {
+	nodes := blockNodeSet(plan)
+	if len(nodes) == 0 {
+		return nil
+	}
+	live, err := e.db.ListActiveOrders()
+	if err != nil {
+		// Fail OPEN, as this function always has. A flaky read must not block a
+		// changeover the operator is standing at the line to run; the
+		// resource-level gates (reservations, swapLegHeld) are the real safety
+		// net and they hold regardless.
+		e.logFn("changeover: list active orders for the start gate: %v", err)
+		return nil
+	}
 	var blockers []string
-	for _, diff := range plan.diffs {
-		if diff.Situation == SituationUnchanged {
+	for i := range live {
+		o := live[i]
+		if !protocol.BlocksChangeoverStart(o.Status) {
 			continue
 		}
-		node := findNodeByCoreName(plan.nodes, diff.CoreNodeName)
-		if node == nil {
+		if !e.orderPlacesBinAtAny(o.ID, o.DeliveryNode, nodes) {
 			continue
 		}
-		runtime, err := e.db.GetProcessNodeRuntime(node.ID)
-		if err != nil || runtime == nil {
-			continue
+		// Name the place the way the operator's board does. The destination
+		// surface matches on core node names, but those are wiring identifiers —
+		// resolve back to the process node's display name when we have one, and
+		// fall back to the raw name for a node this process does not own (an
+		// indexed_over seat on another station, say).
+		where := o.DeliveryNode
+		if node := findNodeByCoreName(plan.nodes, o.DeliveryNode); node != nil && node.Name != "" {
+			where = node.Name
 		}
-		for _, orderID := range []*int64{runtime.ActiveOrderID, runtime.StagedOrderID} {
-			if orderID == nil {
-				continue
-			}
-			order, err := e.db.GetOrder(*orderID)
-			if err != nil || order == nil || !protocol.BlocksChangeoverStart(order.Status) {
-				continue
-			}
-			blockers = append(blockers, changeoverBlockerFor(node.Name, order.ID, order.Status))
-		}
+		blockers = append(blockers, changeoverBlockerFor(where, o.ID, o.Status))
 	}
 	return blockers
 }

@@ -1361,10 +1361,21 @@ func TestStartChangeover_RefusesWhileNodeHasOrderInFlight(t *testing.T) {
 		t.Fatalf("in-flight order was terminated (status=%s) — refusing must never cancel it", order.Status)
 	}
 
-	// Clear the runtime pointer (the order landed) → the changeover proceeds.
+	// Clearing the RUNTIME POINTER must NOT unblock it. The pointer is UI state,
+	// not truth — handler_bin_picked_up nulls it while the order is still live,
+	// press-index legs live in the head node's slots, and primes are never
+	// slotted at all. The gate is destination-keyed precisely so a cleared
+	// pointer cannot wave a moving carrier through.
 	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, nil), "clear runtime slots")
+	if _, err := eng.StartProcessChangeover(processID, toStyleID, "test", ""); err == nil {
+		t.Fatal("changeover started after only the runtime pointer was cleared — the carrier is " +
+			"still in transit to this node; the pointer is not the truth")
+	}
+
+	// The order actually landing is what clears the way.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "land the carrier")
 	if _, err := eng.StartProcessChangeover(processID, toStyleID, "test", ""); err != nil {
-		t.Fatalf("changeover must start once the node is clear: %v", err)
+		t.Fatalf("changeover must start once the carrier is terminal: %v", err)
 	}
 }
 
