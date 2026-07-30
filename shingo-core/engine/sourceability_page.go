@@ -37,8 +37,8 @@ type SourcingClaimView struct {
 	OnLine          int
 	OnLineLocations []engineNodeCount
 	HasTTE          bool
-	TTESeconds    float64
-	TTEDisplay    string // human-readable, e.g. "12m 30s"; empty when not at-risk
+	TTESeconds      float64
+	TTEDisplay      string // human-readable, e.g. "12m 30s"; empty when not at-risk
 }
 
 // engineNodeCount mirrors sourceability.NodeCount for the view layer (a free-bin

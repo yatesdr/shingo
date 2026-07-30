@@ -8,9 +8,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/service"
-	"shingo/protocol"
 )
 
 // dashboardTemplates maps a wall-display kind to the chromeless template that
