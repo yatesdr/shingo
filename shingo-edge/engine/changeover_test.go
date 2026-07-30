@@ -1406,13 +1406,23 @@ func TestStartChangeover_PassesNonBlockingStatuses(t *testing.T) {
 					"nothing is moving, so this must not block", status, err)
 			}
 
-			// Commit 2 changes the GATE only. The cancel lands in commit 4, so a
-			// pre-dispatch order must still be alive here — pinning that the two
-			// decisions are separate and land separately.
+			// Not blocking and not cancelled are different properties, and the
+			// split is exactly protocol.IsPreDispatch. A pre-dispatch order holds
+			// no carrier, so the changeover cancels it outright; submitted /
+			// acknowledged / delivered are past that point — nothing is moving,
+			// but something real has happened to them — so they are left alone.
 			order, gerr := db.GetOrder(orderID)
 			testutil.MustNoErr(t, gerr, "reload order")
+			if protocol.IsPreDispatch(status) {
+				if order.Status != orders.StatusCancelled {
+					t.Errorf("%s order = %s, want cancelled at changeover start", status, order.Status)
+				}
+				return
+			}
 			if orders.IsTerminal(order.Status) {
-				t.Errorf("order was terminated (status=%s) — the gate must not cancel; that is commit 4", order.Status)
+				t.Errorf("%s order was terminated (status=%s) — only pre-dispatch orders are "+
+					"cancelled; this one has no carrier but is past the point where the "+
+					"changeover may discard it", status, order.Status)
 			}
 		})
 	}

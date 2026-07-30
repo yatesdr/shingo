@@ -205,11 +205,98 @@ func TestChangeoverStart_LeavesBlockingOrdersAlone(t *testing.T) {
 	}
 }
 
-// The cancel's RETURN CONTRACT — that it hands back the IDs it terminated, so
-// the abandon path can tell the operator what was taken away — is asserted in
-// commit 4 alongside the function itself. It cannot live here: naming an
-// unexported function that does not exist yet turns this file from a failing
-// specification into a package that will not compile, which blocks every other
-// test in shingoedge/engine and makes a bisect worse rather than better.
+// TestChangeoverStart_CancelReportsWhatItCancelled pins the return contract the
+// abandon path depends on. Cancelling at initiation destroys a request the
+// process may still need if the changeover is later abandoned, and it self-heals
+// only where the claim has auto-reorder. The minimum owed to the operator is
+// that the system can say what it took away, which requires the cancel to return
+// the list rather than discard it.
+func TestChangeoverStart_CancelReportsWhatItCancelled(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
+	eng := testEngine(t, db)
+
+	orderID := seedOrderAt(t, db, nodeID, "CO-NODE", "uuid-reported", "PART-OLD", orders.StatusQueued)
+
+	plan, err := eng.planChangeover(processID, toStyleID)
+	testutil.MustNoErr(t, err, "plan changeover")
+	cancelled, cerr := eng.cancelPreDispatchAtParticipants(plan)
+	testutil.MustNoErr(t, cerr, "cancel")
+	if len(cancelled) != 1 || cancelled[0] != orderID {
+		t.Errorf("cancelled = %v, want exactly [%d] — the abandon path needs the ID list "+
+			"to tell the operator what was taken away", cancelled, orderID)
+	}
+}
+
+// TestChangeoverStart_ClearsTheRuntimeSlotItCancelled — a pointer left aiming at
+// a cancelled order is the phantom-badge family: the board reads the slot, finds
+// a terminal order, and renders state for work that no longer exists.
+func TestChangeoverStart_ClearsTheRuntimeSlotItCancelled(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
+	eng := testEngine(t, db)
+
+	_ = seedOrderAt(t, db, nodeID, "CO-NODE", "uuid-slotclear", "PART-OLD", orders.StatusQueued)
+
+	if _, err := eng.StartProcessChangeover(processID, toStyleID, "test", ""); err != nil {
+		t.Fatalf("changeover refused: %v", err)
+	}
+
+	runtime, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "reload runtime")
+	if runtime != nil && runtime.ActiveOrderID != nil {
+		t.Errorf("active slot still points at order %d after it was cancelled", *runtime.ActiveOrderID)
+	}
+}
+
+// TestChangeoverPlan_ParticipantsNeverContainALoaderNode is the invariant that
+// REPLACES a carve-out rather than documenting one.
 //
-// "Red" means the assertions fail. It does not mean the build is broken.
+// Earlier revisions of this design carried a swap-mode clause in the cancel to
+// spare threshold L1s and operator REQUEST EMPTY orders, on the reasoning that
+// manual_swap loader windows could legitimately be participants. That reasoning
+// was wrong: loaders do not change over. domain.Loader carries no style, no
+// active_style_id and no swap mode, and a changeover's node set is built from
+// STYLE CLAIMS — so a loader window cannot enter it.
+//
+// Asserting it here rather than branching on it in the cancel puts the check
+// where the truth lives. If a future change ever does put a loader node in the
+// set, this fails and the carve-out conversation restarts from evidence — rather
+// than a special case sitting in the cancel forever, unexplained and load-bearing.
+func TestChangeoverPlan_ParticipantsNeverContainALoaderNode(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, _, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
+
+	// A manual_swap loader window on the same process, claimed by the ACTIVE
+	// style — the shape the deleted carve-out was written to defend against.
+	loaderNodeID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID:    processID,
+		CoreNodeName: "SMN-LOADER",
+		Code:         "SMN1",
+		Name:         "Loader Window",
+		Sequence:     2,
+		Enabled:      true,
+	})
+	testutil.MustNoErr(t, err, "create loader node")
+	db.EnsureProcessNodeRuntime(loaderNodeID)
+
+	eng := testEngine(t, db)
+	plan, err := eng.planChangeover(processID, toStyleID)
+	testutil.MustNoErr(t, err, "plan changeover")
+
+	for _, p := range plan.participants {
+		if p.CoreNodeName == "SMN-LOADER" {
+			t.Fatalf("a loader window entered plan.participants (role %q) — loaders do not "+
+				"change over, and the cancel relies on that instead of a swap-mode clause. "+
+				"If this is now legitimate, the carve-out discussion reopens", p.Role)
+		}
+	}
+	for _, d := range plan.diffs {
+		if d.CoreNodeName == "SMN-LOADER" {
+			t.Fatal("a loader window entered plan.diffs — same invariant, one level down")
+		}
+	}
+}

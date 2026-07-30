@@ -40,6 +40,109 @@ func changeoverBlockerFor(nodeName string, orderID int64, status protocol.Status
 	}
 }
 
+// cancelPreDispatchAtParticipants cancels every PRE-DISPATCH order sitting at a
+// node this changeover touches, and returns the ids it terminated.
+//
+// An operator starting a changeover is direct communication that the line is
+// going a different direction. A pre-dispatch order has no carrier assigned, so
+// leaving it alive serves nobody: it survives the cutover holding a claim on the
+// outgoing style's payload, and eventually delivers material to a cell that
+// stopped running that style hours ago.
+//
+// WHY THIS IS SAFE WHERE THE SWEEP IT RESEMBLES WAS NOT. An AbortNodeOrders
+// sweep used to run here and was removed (8553178a) because it cancelled BY
+// NODE. On a press-index swap the in-flight legs are frequently carrying the
+// very empty carriers the changeover's own index legs are about to pick up, and
+// cancelling those mid-delivery leaves the index legs waiting for bins that are
+// never coming — a permanent deadlock (HK 2026-07-28: orders 1249/1251 escaped
+// it only by accident). This cancels BY STATUS, scoped to protocol.IsPreDispatch,
+// which provably cannot hold a carrier. Same operation, different predicate,
+// and the predicate is the entire difference.
+//
+// NO LOADER CARVE-OUT, AND THERE MUST NOT BE ONE. Earlier revisions of this
+// design carried a swap-mode clause to spare threshold L1s and operator
+// REQUEST EMPTY orders. It was deleted rather than written: loaders do not
+// change over. domain.Loader carries no style, no active_style_id and no swap
+// mode; plan.diffs is built from style claims, so a loader node cannot enter the
+// set in the first place. The invariant is asserted in
+// TestChangeoverPlan_ParticipantsNeverContainALoaderNode — an assertion about
+// the node set, which is where the truth lives, rather than a special case here
+// that would quietly become load-bearing.
+//
+// Best-effort per order: one failure is logged and the rest proceed. A changeover
+// half-cleared is not worse than one not cleared at all, and refusing to start
+// over a single stuck abort would put the operator back where they were.
+func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64, error) {
+	var cancelled []int64
+	seen := map[int64]bool{}
+
+	abort := func(orderID int64, why string) {
+		if seen[orderID] {
+			return
+		}
+		seen[orderID] = true
+		order, err := e.db.GetOrder(orderID)
+		if err != nil || order == nil || protocol.IsTerminal(order.Status) {
+			return
+		}
+		if err := e.orderMgr.AbortOrderWithReason(orderID, why); err != nil {
+			e.logFn("changeover: cancel %s order %d at start: %v", order.Status, orderID, err)
+			return
+		}
+		cancelled = append(cancelled, orderID)
+	}
+
+	reason := "cancelled at changeover start — the line is changing over"
+	for _, diff := range plan.diffs {
+		if diff.Situation == SituationUnchanged {
+			continue
+		}
+		node := findNodeByCoreName(plan.nodes, diff.CoreNodeName)
+		if node == nil {
+			continue
+		}
+		runtime, err := e.db.GetProcessNodeRuntime(node.ID)
+		if err != nil || runtime == nil {
+			continue
+		}
+		active, staged := runtime.ActiveOrderID, runtime.StagedOrderID
+		for _, slot := range []*int64{active, staged} {
+			if slot == nil {
+				continue
+			}
+			order, err := e.db.GetOrder(*slot)
+			if err != nil || order == nil || !protocol.IsPreDispatch(order.Status) {
+				continue
+			}
+			abort(order.ID, reason)
+			// BOTH LEGS OR NEITHER. A complex consume request is created as a
+			// linked pair; cancelling one leg leaves the survivor parked on
+			// waiting_for_partner for a partner that will never claim a bin,
+			// which is a worse state than the one being cleared. The sibling is
+			// aborted even when it is not in a slot of its own.
+			if order.SiblingOrderID != nil {
+				abort(*order.SiblingOrderID, reason+" (sibling of order "+itoa64(order.ID)+")")
+			}
+		}
+		// Clear only the pointers whose orders we terminated. A stale pointer to
+		// a cancelled order is the phantom-badge family, and clearing both slots
+		// unconditionally would drop a live order's pointer alongside it.
+		newActive, newStaged := active, staged
+		if newActive != nil && seen[*newActive] {
+			newActive = nil
+		}
+		if newStaged != nil && seen[*newStaged] {
+			newStaged = nil
+		}
+		if newActive != active || newStaged != staged {
+			if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, newActive, newStaged); err != nil {
+				e.logFn("changeover: clear runtime slots for node %s after cancel: %v", node.Name, err)
+			}
+		}
+	}
+	return cancelled, nil
+}
+
 // nodesWithOrdersInFlight returns an operator-readable blocker per participating
 // node where LIVE CHOREOGRAPHY is still running. Empty means the changeover is
 // clear to start.
@@ -159,6 +262,23 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// auto-arm no longer starts changeovers, it completes them), and a human can
 	// be told "not yet" and press again. Give-up stays operator-driven, per
 	// docs/reservations.md.
+	// CANCEL FIRST, THEN GATE. Reversed, the gate would refuse on the very orders
+	// the cancel is about to remove and the fix would do nothing. Both read the
+	// plan, so both run after planChangeover.
+	cancelled, cerr := e.cancelPreDispatchAtParticipants(plan)
+	if cerr != nil {
+		return nil, cerr
+	}
+	if len(cancelled) > 0 {
+		// Named at INFO, not swallowed: cancelling at initiation destroys a
+		// request the process may still need if the changeover is later
+		// abandoned, and it self-heals only where the claim has auto-reorder.
+		// This line is what the abandon path's operator-facing sentence is
+		// eventually built from.
+		e.logFn("changeover: process %d → style %d cancelled %d pre-dispatch order(s) at start: %v",
+			processID, toStyleID, len(cancelled), cancelled)
+	}
+
 	if blockers := e.nodesWithOrdersInFlight(plan); len(blockers) > 0 {
 		return nil, fmt.Errorf("cannot start changeover — %s", strings.Join(blockers, "; "))
 	}
