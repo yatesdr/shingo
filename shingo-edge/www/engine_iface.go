@@ -89,6 +89,8 @@ type EngineOrchestration interface {
 
 	// ── Material orchestration ─────────────────────────────────────
 	RequestNodeMaterial(nodeID int64, quantity int64) (*engine.NodeOrderResult, error)
+	RefuseSupply(processNodeID int64, payloadCode, refusedBy string) error
+	UndoSupplyRefusal(processNodeID int64, payloadCode string) error
 	ReleaseNodeEmpty(nodeID int64) (*domain.Order, error)
 	ReleaseNodePartial(nodeID int64, qty int64) (*domain.Order, error)
 	ReleaseNodeWithRemainingUOP(nodeID int64, qty int64, remainingUOP int) (*domain.Order, error)

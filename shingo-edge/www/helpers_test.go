@@ -133,6 +133,8 @@ func (s *stubEngine) CleanupReportingPointTag(int64, string, string, bool)      
 func (s *stubEngine) RequestNodeMaterial(int64, int64) (*engine.NodeOrderResult, error) {
 	return nil, nil
 }
+func (s *stubEngine) RefuseSupply(int64, string, string) error                    { return nil }
+func (s *stubEngine) UndoSupplyRefusal(int64, string) error                       { return nil }
 func (s *stubEngine) ReleaseNodeEmpty(int64) (*storeorders.Order, error)          { return nil, nil }
 func (s *stubEngine) ReleaseNodePartial(int64, int64) (*storeorders.Order, error) { return nil, nil }
 func (s *stubEngine) ReleaseNodeWithRemainingUOP(int64, int64, int) (*storeorders.Order, error) {

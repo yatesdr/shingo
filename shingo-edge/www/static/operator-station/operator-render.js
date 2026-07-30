@@ -606,6 +606,49 @@ function waitedLabel(created) {
 // across cards. The card's STATE (status/detail/action/badge facts) comes from
 // cardModel (operator-window-state.js); this function is presentation only — DOM,
 // the transitional coverage badge, and idle-card hiding.
+// refusalButton builds the card's supplier control — "NO PARTS AVAILABLE", or
+// "UNDO — I CAN SUPPLY" once a refusal stands.
+//
+// BOUND TO (node, payload), never to a bare payload. That is what makes owner
+// decision 2 structural rather than a rule: the control only exists on a card
+// that is already red, and a card is only red because somebody asked. There is
+// no way to aim this at a payload nobody has called for.
+//
+// The confirm is not ceremony. Refusing tells another operator their parts are
+// not coming and may end with them abandoning a run, and it is one tap on a
+// board being read from a forklift seat. UNDO is confirmed too — withdrawing a
+// refusal the cell has already acted on is its own kind of surprise.
+function refusalButton(entry, code, label, action) {
+    var btn = el('button', { className: 'os-board-refusal-btn', textContent: label });
+    btn.addEventListener('click', function (evt) {
+        // The card itself is tappable (load / swap). This control must not also
+        // fire that.
+        evt.stopPropagation();
+        var question = action === 'refuse'
+            ? 'Tell the cell there are no ' + code + ' available?'
+            : 'Withdraw the refusal for ' + code + '?';
+        if (!window.confirm(question)) return;
+        var url = '/api/process-nodes/' + entry.node.id + '/supply-refusal';
+        var body = { payload_code: code };
+        if (action === 'refuse') {
+            postAction(url, body, loadViewRef);
+        } else {
+            // DELETE carries a body here because the card key is (node, payload)
+            // and the payload cannot ride the path without inventing an encoding
+            // for part numbers that contain a slash.
+            fetch(url, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            }).then(function (res) {
+                if (!res.ok) { showToast('Could not withdraw the refusal', 'error'); return; }
+                if (loadViewRef) loadViewRef();
+            }).catch(function () { showToast('Could not withdraw the refusal', 'error'); });
+        }
+    });
+    return btn;
+}
+
 function buildLoaderCard(entry, code, counters, opts) {
     var claim = entry.active_claim;
     var card = el('div', { className: 'os-board-card' });
@@ -689,14 +732,38 @@ function buildLoaderCard(entry, code, counters, opts) {
     // the line going down, and until now it looked identical to a LOAD cue: both
     // rendered os-board-queued blue, and the REASON Core had already computed was only
     // visible by tapping into the modal. Red the card and say it underneath.
+    // A standing refusal for THIS card — (this node, this payload). The key is
+    // the card, so both layouts reach it identically: a shared window's payload
+    // card and a dedicated home's position card look it up the same way.
+    var refusal = (entry.supply_refusals || {})[code] || null;
+
     if (cs.waitingOnRobot && downtimeInScope) {
         card.classList.add('os-board-card--waiting');
+        // REFUSED is the SAME class plus one that only kills the animation, so
+        // the hue is shared by construction rather than by two rules agreeing.
+        if (refusal) card.classList.add('os-board-card--refused');
         var waited = waitedLabel(cs.waitingSince);
         card.appendChild(el('div', {
             className: 'os-board-downtime',
             textContent: 'QUEUED' + (waited ? ' ' + waited : '') +
                 (cs.queueReason ? ' — ' + cs.queueReason : ''),
         }));
+
+        if (refusal) {
+            // Attribution, not a verdict. A PERSON said this — the sentence a
+            // count could never make — so it is signed and timed. Station-level,
+            // because the loader board carries no operator identity; saying "the
+            // loader" rather than inventing a name is the honest granularity.
+            card.appendChild(el('div', {
+                className: 'os-board-downtime',
+                textContent: 'NO PARTS AVAILABLE' +
+                    (refusal.refused_by ? ' — ' + refusal.refused_by : '') +
+                    (refusal.answered ? ' · cell chose to ' + (refusal.ack_choice || 'wait') : ' · awaiting the cell'),
+            }));
+            card.appendChild(refusalButton(entry, code, 'UNDO — I CAN SUPPLY', 'undo'));
+        } else {
+            card.appendChild(refusalButton(entry, code, 'NO PARTS AVAILABLE', 'refuse'));
+        }
     }
 
     // Corner badge, only for REAL per-payload orders (the agnostic blank-payload

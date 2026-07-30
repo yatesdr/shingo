@@ -1199,6 +1199,47 @@ body {
 }
 .os-board-card--waiting .os-board-detail { color: #e0a0a3; }
 
+/* REFUSED — the loader operator has said they cannot fill this call.
+   "Red pulsing → red dormant", in the owner's words.
+
+   THIS RULE SETS EXACTLY ONE PROPERTY, and that is the whole design. The card
+   keeps .os-board-card--waiting, so the hue, the border and the background come
+   from there and CANNOT diverge — not "should not", cannot. A future palette
+   edit moves both states together or neither, so REFUSED can never drift into
+   looking less severe than QUEUED. The line is still down; only the question of
+   whether anyone has dealt with it has changed.
+
+   Why motion rather than a colour: the style guide records the status palette as
+   at capacity — "13 statuses at one calm weight is at capacity. The next status
+   added cannot be given a hue; it will have to be given a weight, or something
+   has to leave." The pulse already means "nobody has dealt with this", so
+   removing it means "answered", on a channel the palette does not use. It is
+   colourblind-safe by construction, and it degrades honestly: miss the
+   difference and both still read "this card is a problem", which is true.
+
+   Amber was considered and rejected — it is the step BELOW red in the warm ramp,
+   so it would say refused is less severe than queued. It is not. */
+.os-board-card--refused { animation: none; }
+
+/* The supplier's control. Sized for a gloved tap from a forklift seat, and
+   deliberately NOT given a colour of its own: it only ever appears on a card
+   that is already red, and a second alarm hue inside that card would compete
+   with the state it sits in. Borrows the picker button's neutral treatment. */
+.os-board-refusal-btn {
+    margin-top: 10px;
+    width: 100%;
+    border: none;
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 16px;
+    font-weight: 800;
+    cursor: pointer;
+    touch-action: manipulation;
+    background: #3a3f4e;
+    color: #fff;
+}
+.os-board-refusal-btn:active { opacity: 0.8; }
+
 /* The queued line — how long the call has gone unanswered, plus Core's own queue reason
    verbatim. Sits under the detail line (which carries margin-top:auto, so this lands at
    the card's bottom edge). Wraps: a queue reason is a sentence, not a tag. */
