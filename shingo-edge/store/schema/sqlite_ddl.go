@@ -595,6 +595,56 @@ CREATE TABLE IF NOT EXISTS demand_origins_open (
     opened_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- supply_refusals_open — a loader operator's standing statement that they
+-- cannot fill a call, and the cell's answer to it.
+--
+-- ONE OPEN ROW PER CARD. The card is the trigger object: the reach-truck
+-- operator is standing at (loader_node, payload_code) and that is the whole
+-- surface they can see, so it is the key. Both board layouts reduce to it —
+-- a shared window renders one card per payload, a dedicated home one card per
+-- position, and buildLoaderCard(entry, code) is literally that pair in both.
+--
+-- OPEN-STATE ONLY, DELETED ON RESOLUTION, following demand_origins_open's
+-- reasoning verbatim: "This table holds only what is open… and a row is DELETED
+-- on close. The history lives on Core… mirroring it here would be a second copy
+-- of the same facts, and the uopCache lesson is that a second copy starts
+-- drifting from what it summarises." The normal end is a LOAD at that window for
+-- that payload; UNDO is the mis-tap path. Both delete the row.
+--
+-- NO EXPIRY COLUMN, deliberately. The owner's rule is no re-alert, no expiry, no
+-- snooze — it stands until the part is supplied. A row that could age out on a
+-- timer would reintroduce exactly the snooze interval that decision removes.
+CREATE TABLE IF NOT EXISTS supply_refusals_open (
+    loader_node   TEXT NOT NULL,
+    payload_code  TEXT NOT NULL,
+
+    -- refused_* is the supplier's half.
+    refused_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    -- refused_by is STATION-level, not person-level: the loader board carries no
+    -- operator identity and calledBy falls back to the station name. Recorded as
+    -- a known limitation rather than dressed up as attribution it cannot make.
+    refused_by    TEXT NOT NULL DEFAULT '',
+
+    -- ack_* is the customer's half, and ack_at IS NULL is a REAL, QUERYABLE
+    -- STATE: told, not answered. Making WAIT the absence of an action would
+    -- collapse "the operator chose to keep waiting" and "nobody has looked at
+    -- the screen" into one row, and the second of those is the original
+    -- complaint this whole project started from.
+    ack_at        TEXT,
+    ack_choice    TEXT NOT NULL DEFAULT '',   -- '' | 'wait' | 'changeover'
+    -- ack_process_id is the process NAME ("SNF2") of the cell that ANSWERED —
+    -- matching the demand grain, which keys on the name and not a row id.
+    --
+    -- Note carefully: this is who answered, NOT who was told. Resolving the
+    -- addressee — which cells a loader is currently supplying — is unbuilt;
+    -- PayloadsForLoader computes the loader→process mapping and then discards it
+    -- into flat string sets. There is deliberately no column for the addressee
+    -- until something can write one.
+    ack_process_id TEXT NOT NULL DEFAULT '',
+
+    PRIMARY KEY (loader_node, payload_code)
+);
+
 CREATE TABLE IF NOT EXISTS changeover_station_tasks (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     process_changeover_id INTEGER NOT NULL REFERENCES process_changeovers(id) ON DELETE CASCADE,
