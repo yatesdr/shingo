@@ -76,6 +76,51 @@ func (e *Engine) UndoSupplyRefusal(processNodeID int64, payloadCode string) erro
 	return nil
 }
 
+// AckSupplyRefusal records the cell operator's answer to a refusal.
+//
+// THE ANSWER IS THE DISMISSAL, and that is what makes a modal defensible here
+// after four review rounds argued against one. The objection was never "don't
+// interrupt" — it was that a modal needs a dismiss policy and every dismiss
+// policy is an arbitrary snooze interval somebody invented. There is no interval
+// to invent when dismissing IS answering: the question stops being asked the
+// moment it is answered, and the answer is durable, so it is never asked twice.
+//
+// WAIT is recorded rather than being the absence of an action. "The operator
+// chose to keep waiting" and "nobody has looked at the screen" are different
+// facts, and the second one is the complaint this whole project started from.
+func (e *Engine) AckSupplyRefusal(processNodeID int64, loaderNode, payloadCode, choice string) error {
+	switch choice {
+	case protocol.SupplyRefusalChoiceWait, protocol.SupplyRefusalChoiceChangeover:
+	default:
+		return fmt.Errorf("unknown answer %q — a refusal is answered with wait or changeover", choice)
+	}
+	node, err := e.db.GetProcessNode(processNodeID)
+	if err != nil || node == nil {
+		return fmt.Errorf("no such process node %d", processNodeID)
+	}
+	// The process NAME, matching the demand grain — the same identity the episode
+	// key carries, so the two join with no translation.
+	processName := e.processName(node.ProcessID)
+	ok, err := e.db.AckSupplyRefusal(loaderNode, payloadCode, choice, processName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// Already answered. Not an error the operator should see as a failure —
+		// it means a second tap, or a second screen, and the first answer stands.
+		e.logFn("supply_refusal: %s/%s already answered; %q from %s ignored",
+			loaderNode, payloadCode, choice, processName)
+		return nil
+	}
+	e.logFn("supply_refusal: %s answered %s/%s with %q", processName, loaderNode, payloadCode, choice)
+	now := time.Now().UTC()
+	e.emitSupplyRefusal(protocol.SupplyRefusalState{
+		Action: protocol.SupplyRefusalAcked, LoaderNode: loaderNode, PayloadCode: payloadCode,
+		AckAt: &now, AckChoice: choice, AckProcessID: processName,
+	})
+	return nil
+}
+
 // emitSupplyRefusal puts one refusal message on the outbox for Core.
 //
 // BEST-EFFORT BY DESIGN, unlike the demand-episode emit it otherwise resembles.

@@ -238,3 +238,53 @@ func TestHandleSupplyRefusalState_AppliesTheBroadcast(t *testing.T) {
 		t.Errorf("close broadcast did not clear the row: %v", err)
 	}
 }
+
+// TestAckSupplyRefusal_RecordsTheAnswerAndIsIdempotent — WAIT is RECORDED, not
+// the absence of an action. "The operator chose to keep waiting" and "nobody has
+// looked at the screen" are different facts, and the second is the complaint this
+// project started from. ack_at IS NULL is the queryable form of the second.
+func TestAckSupplyRefusal_RecordsTheAnswerAndIsIdempotent(t *testing.T) {
+	t.Parallel()
+	f := seedLoaderCard(t, false)
+	f.call(t, "PART-A")
+	testutil.MustNoErr(t, f.eng.RefuseSupply(f.nodeID, "PART-A", "Bin Loader"), "refuse")
+
+	testutil.MustNoErr(t, f.eng.AckSupplyRefusal(f.nodeID, f.core, "PART-A",
+		protocol.SupplyRefusalChoiceWait), "answer wait")
+	got, err := f.db.GetSupplyRefusal(f.core, "PART-A")
+	testutil.MustNoErr(t, err, "get")
+	if !got.Answered() || got.AckChoice != "wait" {
+		t.Fatalf("answer not recorded: answered=%v choice=%q", got.Answered(), got.AckChoice)
+	}
+
+	// A second tap, or a second screen. The first answer stands, and the caller
+	// is not handed an error for something that is not a failure.
+	if err := f.eng.AckSupplyRefusal(f.nodeID, f.core, "PART-A",
+		protocol.SupplyRefusalChoiceChangeover); err != nil {
+		t.Fatalf("second answer errored: %v", err)
+	}
+	final, _ := f.db.GetSupplyRefusal(f.core, "PART-A")
+	if final.AckChoice != "wait" {
+		t.Errorf("second answer overwrote the first: %q", final.AckChoice)
+	}
+}
+
+func TestAckSupplyRefusal_RejectsAnAnswerThatIsNotAnAnswer(t *testing.T) {
+	t.Parallel()
+	f := seedLoaderCard(t, false)
+	f.call(t, "PART-A")
+	testutil.MustNoErr(t, f.eng.RefuseSupply(f.nodeID, "PART-A", "Bin Loader"), "refuse")
+
+	// There are two answers and no third. No dismiss, no "close", no empty
+	// choice — that is what makes the modal defensible without a snooze policy.
+	if err := f.eng.AckSupplyRefusal(f.nodeID, f.core, "PART-A", ""); err == nil {
+		t.Error("accepted an empty answer — a refusal is answered with wait or changeover")
+	}
+	if err := f.eng.AckSupplyRefusal(f.nodeID, f.core, "PART-A", "dismiss"); err == nil {
+		t.Error("accepted a dismissal — there is no dismiss, only an answer")
+	}
+	got, _ := f.db.GetSupplyRefusal(f.core, "PART-A")
+	if got.Answered() {
+		t.Error("a rejected answer still marked the refusal answered")
+	}
+}

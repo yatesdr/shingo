@@ -125,6 +125,38 @@ type StationNodeView struct {
 	// as being at capacity and the next status having to earn a weight rather
 	// than a hue.
 	SupplyRefusals map[string]SupplyRefusal `json:"supply_refusals,omitempty"`
+	// SupplyRefusedForMe is set on a CELL node when a loader operator has said
+	// they cannot fill a part this cell has an outstanding call for.
+	//
+	// THE FILTER IS "A CALL AND THE PART", and it is the same predicate the
+	// supplier's endpoint enforces before accepting the refusal at all — one rule
+	// applied at both ends of the channel rather than two that have to be kept in
+	// step. It deliberately does NOT consult inbound_source: that column may hold
+	// a node GROUP name, and matching on it would go silent exactly where it
+	// cannot resolve.
+	//
+	// It also does not wait for the cell to be nearly empty. Material is called
+	// BEFORE it runs out, so a cell with an outstanding call and forty minutes of
+	// stock is the best possible moment to tell someone their part is not coming —
+	// it is the only point where they still have room to change over on their own
+	// terms. Gating on "lineside is low" would hold the warning until the line
+	// stops, which is the failure this project exists to fix.
+	SupplyRefusedForMe *CellSupplyRefusal `json:"supply_refused_for_me,omitempty"`
+}
+
+// CellSupplyRefusal is a refusal as the CUSTOMER sees it — the same fact as
+// SupplyRefusal plus the window that said it, because the cell's sentence names
+// a place the loader's does not need to.
+type CellSupplyRefusal struct {
+	LoaderNode  string    `json:"loader_node"`
+	PayloadCode string    `json:"payload_code"`
+	RefusedAt   time.Time `json:"refused_at"`
+	RefusedBy   string    `json:"refused_by,omitempty"`
+	// Answered false is what fires the modal. It is a STATE, not a schedule:
+	// there is no interval to invent because the question stops being asked the
+	// moment it is answered, and the answer is durable so it is never asked twice.
+	Answered  bool   `json:"answered"`
+	AckChoice string `json:"ack_choice,omitempty"`
 }
 
 // SupplyRefusal is one card's open refusal as the HMI sees it.

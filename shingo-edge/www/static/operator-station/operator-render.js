@@ -257,6 +257,10 @@ function headerBtn(label, cls, onClick) {
 export function renderGrid() {
     const nodes = claimedNodes();
 
+    // Fires on the poll, from server state alone. Guarded internally against
+    // asking twice, and it asks nothing once answered.
+    maybeShowRefusalModal();
+
     const cardGrid = grid.querySelector('.os-board-cards');
     const savedScrollTop = cardGrid ? cardGrid.scrollTop : 0;
 
@@ -1136,6 +1140,23 @@ function createNodeButton(entry) {
     // Parked-ticks attention badge (P2-C8): draws the operator to tap the tile,
     // where the modal chip shows the full "... Record Count on the bin tab."
     // instruction. Amber, corner-anchored, cleared automatically once a bin binds.
+    // The residue of a refusal, once it has been answered. NOT the alert — the
+    // modal was the alert, and it is gone. This is what answers "why is this cell
+    // stopped" for the operator who walks up ten minutes later, for the incoming
+    // shift, and for the team lead, without ever interrupting again.
+    var refusedForMe = entry.supply_refused_for_me;
+    if (refusedForMe && refusedForMe.answered) {
+        const chip = el('span', {
+            className: 'os-node-alarm',
+            textContent: 'NO ' + refusedForMe.payload_code,
+        });
+        chip.style.cssText = 'position:absolute;bottom:4px;right:4px;font-size:11px;' +
+            'font-weight:700;color:#1a1204;background:#ffd98a;padding:2px 6px;border-radius:4px';
+        chip.title = refusedForMe.loader_node + ' cannot supply ' + refusedForMe.payload_code +
+            (refusedForMe.refused_by ? ' — ' + refusedForMe.refused_by : '');
+        btn.appendChild(chip);
+    }
+
     if (entry.stranded_alarm) {
         const alarm = el('span', { className: 'os-node-alarm', textContent: '⚠ NOT BOUND' });
         alarm.style.cssText = 'position:absolute;bottom:4px;left:4px;font-size:11px;' +
@@ -1388,3 +1409,89 @@ export function renderFooter() {
 // Expose fillColor so the modal module can render the fill bar without
 // re-importing it from operator-util.
 export { fillColor };
+
+
+// ─── The customer's side of a supply refusal ─────────────────────────────
+//
+// A modal, once, on arrival. It fires when the poll first returns a node with an
+// unanswered refusal for a part that node has an outstanding call for.
+//
+// NO TIMERS, and that is the rule from e7e12622 rather than a preference: the
+// modal's visibility is a pure function of server state (refused, and not yet
+// answered), recomputed on the poll the board already runs. There is no
+// setTimeout, no countdown and no local dismissal flag — reload the HMI mid
+// question and the question is still there, which is correct, because it has not
+// been answered.
+//
+// TWO BUTTONS AND NO THIRD. No close, no ✕, no click-outside. Both are real
+// answers to a real question and one of them must be given. That is what makes a
+// modal defensible after four rounds argued against one: the objection was never
+// "don't interrupt", it was that a dismiss policy is an invented snooze interval.
+// There is no interval when dismissing IS answering.
+function maybeShowRefusalModal() {
+    const view = getView();
+    if (!view || !view.nodes) return;
+    if (document.querySelector('.os-refusal-overlay')) return; // already asking
+
+    let node = null;
+    let refusal = null;
+    for (const entry of view.nodes) {
+        const r = entry.supply_refused_for_me;
+        if (r && !r.answered) { node = entry; refusal = r; break; }
+    }
+    if (!refusal) return;
+
+    const overlay = el('div', { className: 'os-co-picker-overlay os-refusal-overlay' });
+    const panel = el('div', { className: 'os-co-picker' });
+
+    // Attribution does the honest work. Not "there are no parts" — nothing in
+    // this system can make that claim, because Shingo's coverage is a subset of
+    // the greater Martinrea system. A PERSON told you, and they are named and
+    // timed.
+    panel.appendChild(el('div', {
+        className: 'os-co-picker-title',
+        textContent: refusal.loader_node + ' CANNOT SUPPLY ' + refusal.payload_code,
+    }));
+    panel.appendChild(el('div', {
+        className: 'os-co-picker-verdict',
+        textContent: (refusal.refused_by || 'Loader operator') +
+            (refusal.refused_at ? ', ' + shortTime(refusal.refused_at) : '') +
+            '. Your request is still queued.',
+    }));
+
+    function answer(choice, then) {
+        postAction('/api/process-nodes/' + node.node.id + '/supply-refusal/ack', {
+            loader_node: refusal.loader_node,
+            payload_code: refusal.payload_code,
+            choice: choice,
+        }, loadViewRef).then(function (ok) {
+            overlay.remove();
+            if (ok && then) then();
+        });
+    }
+
+    const wait = el('button', { className: 'os-co-picker-btn', textContent: 'WAIT' });
+    wait.addEventListener('click', function () { answer('wait'); });
+    panel.appendChild(wait);
+
+    // CHANGE OVER records the decision, then opens the picker — the operator
+    // still has to say which style. The ack is the decision; the picker is the
+    // destination. The cancel of the outstanding order is NOT special-cased here:
+    // StartProcessChangeover cancels pre-dispatch orders as a general property.
+    const co = el('button', { className: 'os-co-picker-btn danger', textContent: 'CHANGE OVER' });
+    co.addEventListener('click', function () { answer('changeover', openChangeoverPicker); });
+    panel.appendChild(co);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+}
+
+// shortTime renders an ISO timestamp as wall-clock for the operator. Computed at
+// render from server state, never held in a timer.
+function shortTime(iso) {
+    try {
+        return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (err) {
+        return '';
+    }
+}

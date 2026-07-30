@@ -298,6 +298,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/process-nodes/{id}/request-empty", h.apiRequestEmptyBin)
 			r.Post("/process-nodes/{id}/supply-refusal", h.apiRefuseSupply)
 			r.Delete("/process-nodes/{id}/supply-refusal", h.apiUndoSupplyRefusal)
+			r.Post("/process-nodes/{id}/supply-refusal/ack", h.apiAckSupplyRefusal)
 			r.Post("/process-nodes/{id}/request-full", h.apiRequestFullBin)
 			r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
 			r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)

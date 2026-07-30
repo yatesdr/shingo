@@ -428,6 +428,11 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	// enrichment here: a failed read renders a board without refusal state
 	// rather than no board.
 	refusals := map[string]map[string]domain.SupplyRefusal{}
+	// byPayload is the CUSTOMER's index of the same rows. A cell does not know
+	// which window supplies it — that resolution is the thing the broadcast
+	// design deliberately avoids needing — so it looks up by part alone and the
+	// sentence names the window that said it.
+	byPayload := map[string]domain.CellSupplyRefusal{}
 	if open, rerr := s.db.ListOpenSupplyRefusals(); rerr == nil {
 		for _, r := range open {
 			if refusals[r.LoaderNode] == nil {
@@ -438,6 +443,17 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 				RefusedBy: r.RefusedBy,
 				Answered:  r.Answered(),
 				AckChoice: r.AckChoice,
+			}
+			// An UNANSWERED refusal wins over an answered one for the same part:
+			// it is the one that still needs a person, and it is what the modal
+			// fires on.
+			if prev, seen := byPayload[r.PayloadCode]; seen && !prev.Answered {
+				continue
+			}
+			byPayload[r.PayloadCode] = domain.CellSupplyRefusal{
+				LoaderNode: r.LoaderNode, PayloadCode: r.PayloadCode,
+				RefusedAt: r.RefusedAt, RefusedBy: r.RefusedBy,
+				Answered: r.Answered(), AckChoice: r.AckChoice,
 			}
 		}
 	}
@@ -517,6 +533,25 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		if s.stranded != nil {
 			nodeView.StrandedAlarm = s.stranded(node.CoreNodeName)
 		}
+		// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding
+		// order for something a loader operator has said they cannot supply.
+		// Attached wherever that is true, which on a loader window is its own
+		// refusal and on a cell is somebody else's — the same test either way,
+		// because "a cell that asked" is what owner decision 3 means and an
+		// outstanding order is what asking looks like.
+		if len(byPayload) > 0 {
+			for i := range nodeView.Orders {
+				o := nodeView.Orders[i]
+				if o.PayloadCode == "" || protocol.IsTerminal(o.Status) {
+					continue
+				}
+				if r, ok := byPayload[o.PayloadCode]; ok {
+					rc := r
+					nodeView.SupplyRefusedForMe = &rc
+					break
+				}
+			}
+		}
 		// Multi-process loader-board unions: for a manual_swap node, resolve
 		// the active-style and all-style payload sets across EVERY active
 		// process sharing this CoreNodeName (PayloadsForLoader walks all
@@ -533,8 +568,8 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 			// kind of thing about empties that a loader states about parts, and
 			// the mechanism carries over unchanged — only the WORDING differs,
 			// and that lives on the render side.
-			if byPayload := refusals[node.CoreNodeName]; len(byPayload) > 0 {
-				nodeView.SupplyRefusals = byPayload
+			if forThisWindow := refusals[node.CoreNodeName]; len(forThisWindow) > 0 {
+				nodeView.SupplyRefusals = forThisWindow
 			}
 			// Operator-driven (board defaults to preload) + dedicated-position layout +
 			// window-group membership all come from the Core aggregate — the SAME resolver
