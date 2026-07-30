@@ -835,6 +835,11 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "edge_registry", "claimed_at")
 			}},
+		{68, "supply_refusals — a person's statement that they cannot supply a call",
+			v68SupplyRefusals,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "supply_refusals")
+			}},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3089,4 +3094,48 @@ func v67EdgeClaim(tx *sql.Tx) error {
 		return fmt.Errorf("v67 backfill claimed_at from registered_at: %w", err)
 	}
 	return nil
+}
+
+// v68SupplyRefusals adds Core's record of supply refusals.
+//
+// WHY CORE HOLDS THIS AT ALL. Every other fact on this table's subject matter is
+// something Core can compute: how many bins exist, what a style needs, whether a
+// pool is dry. This one it cannot. Shingo's coverage is a SUBSET of the greater
+// Martinrea system — material in receiving, on an unscanned rack, in an untracked
+// tote is invisible in both directions — so "there are none" is a statement only
+// a person who walked the floor can make. Core stores it because it is the one
+// inventory fact in the system with a human author, and because it is the only
+// bridge across that gap that could ever close it.
+//
+// Two consumers beyond the round trip, both owner-stated: cross-edge supply, and
+// Core-side operators seeing what happened.
+//
+// NOT open-state-only, unlike the edge's mirror. The edge deletes on resolution
+// because it renders live cards; Core keeps history, which is the same division
+// demand_origins already draws — "the history lives on Core, which is the service
+// that keeps history."
+func v68SupplyRefusals(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS supply_refusals (
+		    id              BIGSERIAL PRIMARY KEY,
+		    loader_node     TEXT NOT NULL,
+		    payload_code    TEXT NOT NULL,
+		    station_id      TEXT NOT NULL DEFAULT '',
+		    refused_at      TIMESTAMPTZ NOT NULL,
+		    refused_by      TEXT NOT NULL DEFAULT '',
+		    ack_at          TIMESTAMPTZ,
+		    ack_choice      TEXT NOT NULL DEFAULT '',
+		    ack_process_id  TEXT NOT NULL DEFAULT '',
+		    closed_at       TIMESTAMPTZ,
+		    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		-- One OPEN refusal per card. Partial, so history accumulates behind it:
+		-- a card refused, resolved and refused again is two rows, which is the
+		-- point of Core keeping history at all.
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_supply_refusals_open
+		    ON supply_refusals (loader_node, payload_code) WHERE closed_at IS NULL;
+		CREATE INDEX IF NOT EXISTS idx_supply_refusals_payload
+		    ON supply_refusals (payload_code, refused_at DESC);
+	`)
+	return err
 }

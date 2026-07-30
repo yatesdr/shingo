@@ -102,6 +102,13 @@ type Inputs struct {
 	// Pool is the count of AVAILABLE bins per payload code (the FindSourceFIFO
 	// predicate — unclaimed, unreserved, manifest-confirmed, healthy).
 	Pool map[string]int
+	// OnLine is the count of bins ALREADY INSIDE a process carrying what it needs
+	// but which dispatch cannot fetch (status='staged'), keyed process → payload.
+	// Disjoint from Pool by construction. A claim draws from here FIRST — a bin
+	// standing at the line is better than one a robot has to go and get, and
+	// spending it leaves the fetchable pool for whoever actually needs a delivery.
+	// See onLinePoolByProcess for why the scope is the process and not the node.
+	OnLine map[string]map[string]int
 	// LineUOP is the uop_remaining of the bin currently at a claim's node,
 	// keyed by node name. Absent = nothing staged at that line.
 	LineUOP map[string]int
@@ -142,12 +149,20 @@ func Compute(in Inputs, cfg Config, now time.Time) []StyleState {
 		// Working copy of the pool, seeded only with the payloads this style
 		// touches so the map stays small at plant scale.
 		avail := make(map[string]int)
+		// Second working copy: what this PROCESS already has standing at its own
+		// nodes. Read of a nil inner map is a zero, so a process with nothing
+		// staged needs no special case.
+		onLine := make(map[string]int)
+		procOnLine := in.OnLine[key.ProcessID]
 		seed := func(p string) {
 			if p == "" {
 				return
 			}
 			if _, ok := avail[p]; !ok {
 				avail[p] = in.Pool[p]
+			}
+			if _, ok := onLine[p]; !ok {
+				onLine[p] = procOnLine[p]
 			}
 		}
 		for _, c := range claims {
@@ -159,7 +174,12 @@ func Compute(in Inputs, cfg Config, now time.Time) []StyleState {
 
 		missing := map[string]struct{}{}
 		for _, c := range claims {
-			if drawOne(avail, c) {
+			// IN-PROCESS STOCK FIRST. A bin already standing inside the process
+			// satisfies the claim without a robot move, and spending it here leaves
+			// the fetchable pool for a claim that genuinely needs a delivery — so
+			// preferring it is both truer and a strictly better allocation. Order
+			// matters only for that; a claim satisfied either way is still GREEN.
+			if drawOne(onLine, c) || drawOne(avail, c) {
 				continue
 			}
 			need := c.PayloadCode

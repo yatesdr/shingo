@@ -93,3 +93,53 @@ func PoolBreakdownByPayload(db *sql.DB) (map[string]PoolBreakdown, error) {
 	}
 	return out, rows.Err()
 }
+
+// OnLineBreakdownByProcess is the page-side twin of onLinePoolByProcess: the same
+// staged-in-this-process bins the verdict now counts, plus the node names it does
+// not need. Returns process → payload → the nodes holding them.
+//
+// The predicate is IDENTICAL to onLinePoolByProcess (read.go) and must stay that
+// way, for the reason PoolBreakdownByPayload states about its own twin: a page
+// that disagrees with the verdict beside it is worse than a page with less on it.
+// Two queries for one fact is the accepted shape here only because the page needs
+// a grouping the computation would pay for and never read.
+//
+// This exists because the drill-in's fallback sentence is "no available bin in
+// Shingo", and once a staged bin at the line can turn a style GREEN, that sentence
+// would sit next to a green verdict claiming the opposite.
+func OnLineBreakdownByProcess(db *sql.DB) (map[string]map[string][]NodeCount, error) {
+	rows, err := db.Query(`
+		SELECT sc.process_id, b.payload_code, n.name, COUNT(DISTINCT b.id)
+		FROM bins b
+		JOIN nodes n ON n.id = b.node_id
+		JOIN style_claims sc ON sc.core_node_name = n.name
+		WHERE b.payload_code <> ''
+		  AND n.enabled = true
+		  AND n.is_synthetic = false
+		  AND b.claimed_by IS NULL
+		  AND b.locked = false
+		  AND b.manifest_confirmed = true
+		  AND b.status = 'staged'
+		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
+		GROUP BY sc.process_id, b.payload_code, n.name
+		ORDER BY sc.process_id, b.payload_code, n.name`)
+	if err != nil {
+		return nil, fmt.Errorf("sourceability: on-line breakdown: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]map[string][]NodeCount)
+	for rows.Next() {
+		var (
+			process, payload, node string
+			count                  int
+		)
+		if err := rows.Scan(&process, &payload, &node, &count); err != nil {
+			return nil, fmt.Errorf("sourceability: scan on-line breakdown: %w", err)
+		}
+		if out[process] == nil {
+			out[process] = make(map[string][]NodeCount)
+		}
+		out[process][payload] = append(out[process][payload], NodeCount{Node: node, Count: count})
+	}
+	return out, rows.Err()
+}

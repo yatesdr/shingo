@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1313,16 +1314,22 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 }
 
 // TestStartChangeover_RefusesWhileNodeHasOrderInFlight pins the replacement for
-// the old AbortNodeOrders sweep. A changeover must NOT start while a
-// participating node still has a non-terminal order attached to its runtime, and
-// the refusal must name the node and the order so the operator knows what to
-// wait for.
+// the old AbortNodeOrders sweep. A changeover must NOT start while LIVE
+// CHOREOGRAPHY is running at a participating node, and the refusal must name the
+// node and the order so the operator knows what to wait for.
 //
 // The sweep this replaced cancelled those orders instead. On a press-index swap
 // they are frequently carrying the empty carriers the changeover's own index
 // legs need to pick up, so cancelling them mid-delivery deadlocks the changeover
 // (HK 2026-07-28: the sweep MISSED orders 1249/1251 and that near-miss is the
 // only reason the swap recovered).
+//
+// The order is driven to in_transit deliberately. This test used to leave it at
+// the CreateOrder default of `pending` and still expect a refusal, because the
+// gate keyed on !IsTerminal — which is eleven statuses, nine of them not a
+// carrier doing anything. The gate now keys on protocol.BlocksChangeoverStart,
+// so the blocking case has to be a genuinely blocking status; the pending case
+// is asserted below as the opposite.
 func TestStartChangeover_RefusesWhileNodeHasOrderInFlight(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -1332,17 +1339,18 @@ func TestStartChangeover_RefusesWhileNodeHasOrderInFlight(t *testing.T) {
 	orderID, err := db.CreateOrder("uuid-inflight-co", orders.TypeRetrieve,
 		&nodeID, false, 1, "CO-NODE", "", "", "", false, "PART-OLD")
 	testutil.MustNoErr(t, err, "create in-flight order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "put the carrier in transit")
 	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil), "attach order to runtime")
 
 	_, err = eng.StartProcessChangeover(processID, toStyleID, "test", "")
 	if err == nil {
-		t.Fatal("changeover started while a participating node had an order in flight — must refuse")
-	}
-	if !strings.Contains(err.Error(), "in flight") {
-		t.Errorf("refusal = %q, want it to say the node has an order in flight", err)
+		t.Fatal("changeover started while a participating node had a carrier in transit — must refuse")
 	}
 	if !strings.Contains(err.Error(), "Changeover Node") {
 		t.Errorf("refusal = %q, want it to NAME the blocking node", err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("order %d", orderID)) {
+		t.Errorf("refusal = %q, want it to name order %d", err, orderID)
 	}
 
 	// The in-flight order must still be alive — the whole point is that we no
@@ -1353,9 +1361,113 @@ func TestStartChangeover_RefusesWhileNodeHasOrderInFlight(t *testing.T) {
 		t.Fatalf("in-flight order was terminated (status=%s) — refusing must never cancel it", order.Status)
 	}
 
-	// Clear the runtime pointer (the order landed) → the changeover proceeds.
+	// Clearing the RUNTIME POINTER must NOT unblock it. The pointer is UI state,
+	// not truth — handler_bin_picked_up nulls it while the order is still live,
+	// press-index legs live in the head node's slots, and primes are never
+	// slotted at all. The gate is destination-keyed precisely so a cleared
+	// pointer cannot wave a moving carrier through.
 	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, nil), "clear runtime slots")
+	if _, err := eng.StartProcessChangeover(processID, toStyleID, "test", ""); err == nil {
+		t.Fatal("changeover started after only the runtime pointer was cleared — the carrier is " +
+			"still in transit to this node; the pointer is not the truth")
+	}
+
+	// The order actually landing is what clears the way.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "land the carrier")
 	if _, err := eng.StartProcessChangeover(processID, toStyleID, "test", ""); err != nil {
-		t.Fatalf("changeover must start once the node is clear: %v", err)
+		t.Fatalf("changeover must start once the carrier is terminal: %v", err)
+	}
+}
+
+// TestStartChangeover_PassesNonBlockingStatuses is the other half of the gate's
+// decision, and it is the half the floor was hitting. None of these is a carrier
+// in motion: pending and queued have no bin assigned, delivered has already
+// landed and is waiting on a clerical confirm, and acknowledged/submitted are
+// Edge-lifecycle words the fleet never emits.
+//
+// acknowledged carries the sharpest consequence and is why this test names each
+// status rather than looping anonymously: NOTHING reaps it — AbandonStuckOrders
+// is scoped to {dispatched, staged}, no Core reconciler or Edge ticker moves it,
+// and this HMI has no operator order cancel. Blocking on it locked the operator
+// out of changeover until somebody restarted Edge.
+func TestStartChangeover_PassesNonBlockingStatuses(t *testing.T) {
+	t.Parallel()
+	for _, status := range []protocol.Status{
+		orders.StatusPending,
+		orders.StatusQueued,
+		orders.StatusSourcing,
+		orders.StatusSubmitted,
+		orders.StatusAcknowledged,
+		orders.StatusDelivered,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
+			eng := testEngine(t, db)
+
+			orderID, err := db.CreateOrder("uuid-pass-"+string(status), orders.TypeRetrieve,
+				&nodeID, false, 1, "CO-NODE", "", "", "", false, "PART-OLD")
+			testutil.MustNoErr(t, err, "create order")
+			testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(status)), "set status")
+			testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil), "attach to runtime")
+
+			if _, err := eng.StartProcessChangeover(processID, toStyleID, "test", ""); err != nil {
+				t.Fatalf("changeover refused with a %s order at the node: %v — "+
+					"nothing is moving, so this must not block", status, err)
+			}
+
+			// Not blocking and not cancelled are different properties, and the
+			// split is exactly protocol.IsPreDispatch. A pre-dispatch order holds
+			// no carrier, so the changeover cancels it outright; submitted /
+			// acknowledged / delivered are past that point — nothing is moving,
+			// but something real has happened to them — so they are left alone.
+			order, gerr := db.GetOrder(orderID)
+			testutil.MustNoErr(t, gerr, "reload order")
+			if protocol.IsPreDispatch(status) {
+				if order.Status != orders.StatusCancelled {
+					t.Errorf("%s order = %s, want cancelled at changeover start", status, order.Status)
+				}
+				return
+			}
+			if orders.IsTerminal(order.Status) {
+				t.Errorf("%s order was terminated (status=%s) — only pre-dispatch orders are "+
+					"cancelled; this one has no carrier but is past the point where the "+
+					"changeover may discard it", status, order.Status)
+			}
+		})
+	}
+}
+
+// TestChangeoverBlockerNeverSaysInFlightAboutAQueuedOrder is the §6 hygiene
+// assertion. The old string was "%s has order %d in flight (%s)", so a queued
+// order rendered as "has order 4471 in flight (queued)" — a sentence
+// contradicting its own parenthesis. Only statuses that genuinely block reach
+// the formatter now, and each names its own remedy.
+func TestChangeoverBlockerNeverSaysInFlightAboutAQueuedOrder(t *testing.T) {
+	t.Parallel()
+	for _, s := range protocol.AllStatuses() {
+		if !protocol.BlocksChangeoverStart(s) {
+			continue
+		}
+		got := changeoverBlockerFor("ALN_007", 4471, s)
+		if !strings.Contains(got, "ALN_007") || !strings.Contains(got, "4471") {
+			t.Errorf("%s: blocker %q must name the node and the order", s, got)
+		}
+		switch s {
+		case protocol.StatusStaged:
+			if !strings.Contains(got, "Release the wait") {
+				t.Errorf("staged blocker %q must name the release remedy", got)
+			}
+		case protocol.StatusFaulted:
+			if !strings.Contains(got, "maintenance") {
+				t.Errorf("faulted blocker %q must say it is not operator-clearable", got)
+			}
+		}
+	}
+	// The exact regression: no blocker can be produced for a queued order at all,
+	// because queued does not block.
+	if protocol.BlocksChangeoverStart(protocol.StatusQueued) {
+		t.Fatal("queued must not block — the 'in flight (queued)' sentence must be unreachable")
 	}
 }

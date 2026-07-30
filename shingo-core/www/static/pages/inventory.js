@@ -383,24 +383,54 @@ function renderDeltaIntegrity() {
   // Worst first: the biggest ledger effect, then the biggest count of drops.
   shown.sort((a, b) => Math.abs(b.uop_lost) - Math.abs(a.uop_lost) || b.drop_rows - a.drop_rows);
 
+  // ONE ROW IS FOUR ALIGNED CELLS, NOT A SENTENCE.
+  //
+  // This used to render each payload as a line of prose — "2199 UoP of count
+  // never landed — reads above reality (2171 dropped deltas: 2170 stale epoch,
+  // 1 payload mismatch)" — repeated seventeen times. Every row restated the
+  // same two clauses around two numbers, so the numbers, which are the only
+  // thing that varies, were the hardest part to find and could not be compared
+  // down the column because nothing lined up.
+  //
+  // The prose moves to the tooltip, where the detail is still one hover away
+  // for the row you care about, and the grid carries what you scan: which
+  // part, how much, how many drops, and whether its ledger is negative too.
+  // Direction moves onto an arrow beside the figure, legended once in the head
+  // rather than spelled out per row.
   const items = shown.map((r) => {
-    let line = '<code>' + escapeHtml(r.payload_code) + '</code>';
+    // Signed toward the ledger: >= 0 reads BELOW reality (credit never
+    // landed), < 0 reads ABOVE (consumption never landed). Only `below` can
+    // explain a negative ledger printed beside it — see the head note.
+    const below = r.uop_lost >= 0;
+    const arrow = below ? '▼' : '▲';
+    const causes = [];
+    if (r.stale_epoch_rows) causes.push(r.stale_epoch_rows + ' stale epoch');
+    if (r.payload_mismatch_rows) causes.push(r.payload_mismatch_rows + ' payload mismatch');
 
+    let uopCell = '';
+    let dropCell = '';
     if (r.drop_rows > 0) {
-      const dir = r.uop_lost >= 0 ? 'below' : 'above';
-      const causes = [];
-      if (r.stale_epoch_rows) causes.push(r.stale_epoch_rows + ' stale epoch');
-      if (r.payload_mismatch_rows) causes.push(r.payload_mismatch_rows + ' payload mismatch');
-      const tip = 'Dropped credits ' + r.credits_dropped + ', dropped consumes ' + r.consumes_dropped
-        + '. Net effect: the count reads ' + Math.abs(r.uop_lost) + ' ' + dir + ' reality.'
-        + ' Across ' + r.bins + ' bin' + (r.bins === 1 ? '' : 's') + '.';
-      line += ' <b title="' + escapeHtml(tip) + '">' + Math.abs(r.uop_lost) + ' UoP</b>'
-        + ' of count never landed — reads ' + dir + ' reality'
-        + ' <span class="text-muted-xs">(' + r.drop_rows + ' dropped delta'
-        + (r.drop_rows === 1 ? '' : 's')
-        + (causes.length ? ': ' + causes.join(', ') : '') + ')</span>';
+      const tip = 'Reads ' + num(Math.abs(r.uop_lost)) + ' UoP '
+        + (below ? 'BELOW' : 'ABOVE') + ' reality. '
+        + 'Dropped credits ' + num(r.credits_dropped)
+        + ', dropped consumes ' + num(r.consumes_dropped)
+        + ', across ' + r.bins + ' bin' + (r.bins === 1 ? '' : 's') + '.'
+        + (causes.length ? ' Cause: ' + causes.join(', ') + '.' : '');
+      uopCell = '<span class="di-uop" title="' + escapeHtml(tip) + '">'
+        + num(Math.abs(r.uop_lost))
+        + ' <span class="di-dir' + (below ? ' di-dir--below' : '') + '">' + arrow + '</span></span>';
+      dropCell = '<span class="di-drops">' + num(r.drop_rows) + '</span>';
     }
 
+    // Flags column. Both entries live here so the numeric columns stay pure
+    // numbers and keep aligning.
+    let flags = '';
+    // The comparison. Printing the ledger total beside the drop total is the
+    // whole design: the two numbers matching IS the finding.
+    if (r.ledger_total < 0) {
+      flags += '<span class="di-ledger" title="This payload\'s ledger total is negative.">'
+        + num(r.ledger_total) + '</span>';
+    }
     if (r.mixed_contents > 0) {
       // Deliberately no UoP figure here. Nothing was lost — the delta was
       // applied — so a number would read as a loss and would be added to the
@@ -408,17 +438,15 @@ function renderDeltaIntegrity() {
       const tip = 'A bin\'s payload was rebound while it still held units under the old label. '
         + 'Counting CONTINUED and the unit total is correct; the bin needs a cycle count of what '
         + 'is physically in it. This is NOT lost count and has no UoP figure.';
-      line += (r.drop_rows > 0 ? ' · ' : ' ')
-        + '<span class="chip chip-warn" title="' + escapeHtml(tip) + '">'
-        + r.mixed_contents + ' mixed contents</span>';
+      flags += '<span class="chip chip-warn" title="' + escapeHtml(tip) + '">'
+        + r.mixed_contents + ' mixed</span>';
     }
 
-    // The comparison. Printing the ledger total beside the drop total is the
-    // whole design: the two numbers matching IS the finding.
-    if (r.ledger_total < 0) {
-      line += ' <span class="di-ledger">ledger reads ' + r.ledger_total + '</span>';
-    }
-    return '<li>' + line + '</li>';
+    return '<div class="di-row">'
+      + '<code class="di-pay">' + escapeHtml(r.payload_code) + '</code>'
+      + uopCell + dropCell
+      + '<span class="di-flags">' + flags + '</span>'
+      + '</div>';
   }).join('');
 
   const totalDrops = shown.reduce((n, r) => n + r.drop_rows, 0);
@@ -428,31 +456,38 @@ function renderDeltaIntegrity() {
     + totalDrops + ' delta' + (totalDrops === 1 ? '' : 's')
     + ' dropped across ' + shown.length + ' payload' + (shown.length === 1 ? '' : 's')
     + '</div>'
-    // WHY THIS NO LONGER CLAIMS A CAUSE. It used to read "a payload reading
-    // negative by about what it dropped has found its cause", which reads a
-    // NEGATIVE ledger off drops that may point either way. Dropped consumes
-    // leave the count reading HIGH; only dropped credits leave it reading low.
-    // Springfield has 12,514 dropped consumes and has never recorded a single
-    // dropped credit, so every row here reads "above reality" while the
-    // ledgers beside them read negative — opposite directions, and the old
-    // sentence invited closing one finding with the other's evidence. Same
-    // failure family as I2, refuted on sign.
-    + '<div class="delta-integrity__why">Direction is the reading: <b>above</b> means '
-    + 'consumption never landed and the count is too high; <b>below</b> means credit never '
-    + 'landed. Only <b>below</b> can explain a negative ledger beside it — a payload that '
-    + 'reads above while its ledger reads negative has two separate problems, not one.'
-    // A DOOR, NOT A VERDICT — the same constraint /material-flags ships under.
-    // The owner's reading, and it is the one the evidence supports: a large
-    // negative means ShinGo has been out of the loop on that part, which is
-    // what manual forklift moves, robots down and sourcing gaps all look like
-    // from in here. They are not separable from this panel and it must not
-    // pretend otherwise. It points at a cycle count; it does not name a cause
-    // and it grades nobody.
-    + ' A large negative is an <b>indicator, not a diagnosis</b>: it says ShinGo has been '
-    + 'out of the loop on that part — manual moves, robots down, sourcing gaps all read the '
-    + 'same from here. It points at a cycle count, not at a cause.</div>'
+    // THE LEGEND CARRIES WHAT THE PROSE USED TO, AND IT IS NOT OPTIONAL.
+    //
+    // Two paragraphs used to sit here. They are gone from the page because they
+    // were re-read on every visit to learn nothing new — but the CLAIM they
+    // guard against is still live, so it moves to the ⓘ rather than being
+    // deleted:
+    //
+    //   Dropped consumes leave the count reading HIGH; only dropped credits
+    //   leave it reading LOW. Springfield has 12,514 dropped consumes and has
+    //   never recorded a single dropped credit, so every row here reads ABOVE
+    //   while the ledgers beside them read negative — OPPOSITE directions. An
+    //   earlier version invited closing one finding with the other's evidence.
+    //
+    // What stays visible is the arrow legend, because the arrows are unreadable
+    // without it, and the one sentence a reader must not miss: ▲ and a negative
+    // ledger are two problems, not one.
+    + '<div class="delta-integrity__legend">'
+    + '<b>▲</b> reads high · <b class="di-dir--below">▼</b> reads low — only <b>▼</b> explains a negative ledger'
+    + ' <span class="di-info" title="'
+    + escapeHtml('Direction is the reading. ABOVE (▲) means consumption never landed, so the count is too high. '
+      + 'BELOW (▼) means credit never landed. Only BELOW can explain a negative ledger printed beside it — a payload '
+      + 'that reads above while its ledger reads negative has two separate problems, not one.\n\n'
+      + 'A large negative is an INDICATOR, NOT A DIAGNOSIS: it says ShinGo has been out of the loop on that part. '
+      + 'Manual moves, robots down and sourcing gaps all read the same from here. It points at a cycle count, not at a cause.')
+    + '">ⓘ</span></div>'
     + renderDeltaDaily()
-    + '<ul class="delta-integrity__list">' + items + '</ul></div>';
+    + '<div class="di-rows">'
+    + '<div class="di-row di-row--head">'
+    + '<span>Part</span><span class="di-uop">UoP</span>'
+    + '<span class="di-drops">Drops</span><span class="di-flags">Ledger</span>'
+    + '</div>'
+    + items + '</div></div>';
 }
 
 // renderDeltaDaily draws the drop trend as one bar per plant-local day.

@@ -400,6 +400,14 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	router.RegisterSubject(subjectRouter, protocol.SubjectSourcingState, func(_ *protocol.Envelope, r *protocol.SourcingStateReport) {
 		eng.HandleSourcingState(*r)
 	})
+	// Supply refusals, broadcast by Core to every edge. Registered here in the
+	// same place the subject joins EdgeInboundSubjects, so the boot coverage
+	// assertion holds. Each edge stores the whole set and filters locally — a
+	// loader card shows its own, a cell shows the ones it has an outstanding
+	// call for.
+	router.RegisterSubject(subjectRouter, protocol.SubjectSupplyRefusalState, func(_ *protocol.Envelope, st *protocol.SupplyRefusalState) {
+		eng.HandleSupplyRefusalState(*st)
+	})
 	// SubjectCountGroupCommand may be skipped above when cgHandler is nil
 	// (countgroup is an optional feature). The boot-time coverage assertion
 	// below is gated on the same condition so a non-countgroup edge doesn't

@@ -420,6 +420,43 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	if err != nil {
 		boardOrders = nil
 	}
+	// Standing supply refusals, ONE READ FOR THE WHOLE BOARD, indexed
+	// loader_node → payload → refusal. The table holds only what is open — one
+	// row per card actually refused right now — so the whole-table read is
+	// cheaper than a query per card, and this is the board's poll path, which is
+	// the one place that difference is felt. Best-effort, like every other
+	// enrichment here: a failed read renders a board without refusal state
+	// rather than no board.
+	refusals := map[string]map[string]domain.SupplyRefusal{}
+	// byPayload is the CUSTOMER's index of the same rows. A cell does not know
+	// which window supplies it — that resolution is the thing the broadcast
+	// design deliberately avoids needing — so it looks up by part alone and the
+	// sentence names the window that said it.
+	byPayload := map[string]domain.CellSupplyRefusal{}
+	if open, rerr := s.db.ListOpenSupplyRefusals(); rerr == nil {
+		for _, r := range open {
+			if refusals[r.LoaderNode] == nil {
+				refusals[r.LoaderNode] = map[string]domain.SupplyRefusal{}
+			}
+			refusals[r.LoaderNode][r.PayloadCode] = domain.SupplyRefusal{
+				RefusedAt: r.RefusedAt,
+				RefusedBy: r.RefusedBy,
+				Answered:  r.Answered(),
+				AckChoice: r.AckChoice,
+			}
+			// An UNANSWERED refusal wins over an answered one for the same part:
+			// it is the one that still needs a person, and it is what the modal
+			// fires on.
+			if prev, seen := byPayload[r.PayloadCode]; seen && !prev.Answered {
+				continue
+			}
+			byPayload[r.PayloadCode] = domain.CellSupplyRefusal{
+				LoaderNode: r.LoaderNode, PayloadCode: r.PayloadCode,
+				RefusedAt: r.RefusedAt, RefusedBy: r.RefusedBy,
+				Answered: r.Answered(), AckChoice: r.AckChoice,
+			}
+		}
+	}
 	activeBuckets, err := lineside.ListActiveForNodes(s.db.DB, nodeIDs)
 	if err != nil {
 		activeBuckets = nil // best-effort, as the per-node call was
@@ -496,6 +533,25 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		if s.stranded != nil {
 			nodeView.StrandedAlarm = s.stranded(node.CoreNodeName)
 		}
+		// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding
+		// order for something a loader operator has said they cannot supply.
+		// Attached wherever that is true, which on a loader window is its own
+		// refusal and on a cell is somebody else's — the same test either way,
+		// because "a cell that asked" is what owner decision 3 means and an
+		// outstanding order is what asking looks like.
+		if len(byPayload) > 0 {
+			for i := range nodeView.Orders {
+				o := nodeView.Orders[i]
+				if o.PayloadCode == "" || protocol.IsTerminal(o.Status) {
+					continue
+				}
+				if r, ok := byPayload[o.PayloadCode]; ok {
+					rc := r
+					nodeView.SupplyRefusedForMe = &rc
+					break
+				}
+			}
+		}
 		// Multi-process loader-board unions: for a manual_swap node, resolve
 		// the active-style and all-style payload sets across EVERY active
 		// process sharing this CoreNodeName (PayloadsForLoader walks all
@@ -506,6 +562,14 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 			if rp, ok := loaderPayloads[node.CoreNodeName][nodeView.ActiveClaim.Role]; ok {
 				nodeView.ActiveStylePayloads = rp.Active
 				nodeView.AllStylePayloads = rp.All
+			}
+			// Standing refusals for this window's cards, from the one snapshot
+			// taken above. Role-agnostic on purpose: an unloader states the same
+			// kind of thing about empties that a loader states about parts, and
+			// the mechanism carries over unchanged — only the WORDING differs,
+			// and that lives on the render side.
+			if forThisWindow := refusals[node.CoreNodeName]; len(forThisWindow) > 0 {
+				nodeView.SupplyRefusals = forThisWindow
 			}
 			// Operator-driven (board defaults to preload) + dedicated-position layout +
 			// window-group membership all come from the Core aggregate — the SAME resolver

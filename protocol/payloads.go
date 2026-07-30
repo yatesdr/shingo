@@ -1378,3 +1378,63 @@ const (
 	ClosedByNotification = "notification"
 	ClosedBySweep        = "sweep"
 )
+
+// ─── Supply refusal ──────────────────────────────────────────────────────
+
+// SupplyRefusalAction discriminates what happened to a refusal. Each action
+// writes a DISJOINT set of fields, which is what lets a row with two authors on
+// two different edges — the loader opens it, the cell answers it — merge without
+// a revision counter or a last-writer-wins race.
+const (
+	// SupplyRefusalOpened — the loader operator said they cannot fill the call.
+	SupplyRefusalOpened = "opened"
+	// SupplyRefusalAcked — the cell answered: wait, or change over.
+	SupplyRefusalAcked = "acked"
+	// SupplyRefusalClosed — the refusal ended. A LOAD at that window (the normal
+	// path, the parts arrived) or UNDO (the mis-tap path). Both delete.
+	SupplyRefusalClosed = "closed"
+)
+
+// SupplyRefusalChoice is the cell operator's answer.
+const (
+	// SupplyRefusalChoiceWait — "I know, and I am holding for this part." The
+	// window stays open, the order stays queued, nothing is cancelled.
+	SupplyRefusalChoiceWait = "wait"
+	// SupplyRefusalChoiceChangeover — the demand is abandoned; the cell is going
+	// a different direction. Routes through StartProcessChangeover, which cancels
+	// the pre-dispatch orders as a general property.
+	SupplyRefusalChoiceChangeover = "changeover"
+)
+
+// SupplyRefusalState is one refusal, keyed on the CARD the loader operator is
+// standing at: (LoaderNode, PayloadCode). Both board layouts reduce to that
+// pair — a shared window renders one card per payload, a dedicated home one card
+// per position — so the key needs no layout branch anywhere it travels.
+//
+// Sent Edge → Core on SubjectSupplyRefusal, and Core → every edge on
+// SubjectSupplyRefusalState. The receiving edge filters locally: show it to a
+// cell that has an outstanding call for that part, which is the same predicate
+// the supplier's endpoint enforces before accepting the refusal.
+type SupplyRefusalState struct {
+	// Action is one of SupplyRefusalOpened / Acked / Closed and decides which of
+	// the fields below are authoritative in this message.
+	Action string `json:"action"`
+
+	LoaderNode  string `json:"loader_node"`
+	PayloadCode string `json:"payload_code"`
+
+	// Opened fields.
+	RefusedAt time.Time `json:"refused_at,omitempty"`
+	// RefusedBy is STATION-level. The loader board carries no operator identity,
+	// so this is the station name and not a person — named honestly rather than
+	// dressed up as attribution it cannot make.
+	RefusedBy string `json:"refused_by,omitempty"`
+
+	// Acked fields.
+	AckAt     *time.Time `json:"ack_at,omitempty"`
+	AckChoice string     `json:"ack_choice,omitempty"`
+	// AckProcessID is the process NAME ("SNF2") of the cell that ANSWERED,
+	// matching the demand grain. Note it is who answered, not who was told —
+	// with a broadcast there is no single addressee to record.
+	AckProcessID string `json:"ack_process_id,omitempty"`
+}

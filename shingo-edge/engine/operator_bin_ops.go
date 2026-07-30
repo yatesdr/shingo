@@ -212,6 +212,21 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		}
 	}
 
+	// CLEAR-ON-LOAD is the NORMAL end of a supply refusal. The parts arrived,
+	// the operator loads them, and the card goes back to normal without anyone
+	// having to remember to undo anything.
+	//
+	// It has to be explicit rather than left to the order going terminal: the
+	// order lags the load, and in that gap the card would still read REFUSED
+	// about material the operator is standing there holding. They just fixed it;
+	// the screen should say so.
+	//
+	// Best-effort and last: a failed delete must not fail the load, and a stale
+	// refusal is visible and undoable, where a lost load is neither.
+	if err := e.db.DeleteSupplyRefusal(node.CoreNodeName, payloadCode); err != nil {
+		log.Printf("bin_ops: clear supply refusal on load at %s: %v", node.CoreNodeName, err)
+	}
+
 	return nil
 }
 

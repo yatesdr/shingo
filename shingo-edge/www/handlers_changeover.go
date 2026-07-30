@@ -24,14 +24,23 @@ type changeoverNodeView struct {
 // annotation, keyed by style name. Status is the gated verdict; Blocked marks a
 // red style shown-but-unselectable; Note is the short operator hint (the missing
 // payloads for red, the running-low payloads for yellow).
+//
+// Code is Core's RAW verdict, carried alongside Status because Status is display
+// text — not_configured renders as "not set up", so a consumer switching on Status
+// would be switching on a label. The operator station's changeover picker colours
+// its buttons off Code; the admin page's <option> labels keep using Status.
+//
+// JSON tags exist for that picker: this type used to be template-only, where Go
+// field names are the contract, so it shipped without them.
 type styleSourcingView struct {
-	Status  string
-	Blocked bool
-	Note    string
+	Status  string `json:"status"`
+	Code    string `json:"code"`
+	Blocked bool   `json:"blocked"`
+	Note    string `json:"note"`
 }
 
 func styleSourcingViewFrom(s protocol.SourcingState) styleSourcingView {
-	v := styleSourcingView{Status: s.Status}
+	v := styleSourcingView{Status: s.Status, Code: s.Status}
 	switch s.Status {
 	case "not_configured":
 		// No claims means no verdict, so the picker cannot offer it. Blocked for

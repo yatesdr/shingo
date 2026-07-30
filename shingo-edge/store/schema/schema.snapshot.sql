@@ -507,3 +507,34 @@ CREATE TABLE styles (
     created_at     TEXT NOT NULL DEFAULT (datetime('now')),
     deleted_at     TEXT
 );
+
+CREATE TABLE supply_refusals_open (
+    loader_node   TEXT NOT NULL,
+    payload_code  TEXT NOT NULL,
+
+    -- refused_* is the supplier's half.
+    refused_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    -- refused_by is STATION-level, not person-level: the loader board carries no
+    -- operator identity and calledBy falls back to the station name. Recorded as
+    -- a known limitation rather than dressed up as attribution it cannot make.
+    refused_by    TEXT NOT NULL DEFAULT '',
+
+    -- ack_* is the customer's half, and ack_at IS NULL is a REAL, QUERYABLE
+    -- STATE: told, not answered. Making WAIT the absence of an action would
+    -- collapse "the operator chose to keep waiting" and "nobody has looked at
+    -- the screen" into one row, and the second of those is the original
+    -- complaint this whole project started from.
+    ack_at        TEXT,
+    ack_choice    TEXT NOT NULL DEFAULT '',   -- '' | 'wait' | 'changeover'
+    -- ack_process_id is the process NAME ("SNF2") of the cell that ANSWERED —
+    -- matching the demand grain, which keys on the name and not a row id.
+    --
+    -- Note carefully: this is who answered, NOT who was told. Resolving the
+    -- addressee — which cells a loader is currently supplying — is unbuilt;
+    -- PayloadsForLoader computes the loader→process mapping and then discards it
+    -- into flat string sets. There is deliberately no column for the addressee
+    -- until something can write one.
+    ack_process_id TEXT NOT NULL DEFAULT '',
+
+    PRIMARY KEY (loader_node, payload_code)
+);

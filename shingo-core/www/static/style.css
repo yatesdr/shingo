@@ -1969,18 +1969,73 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
   background: color-mix(in srgb, var(--viz-amber) 5%, transparent);
 }
 .delta-integrity__head { font-size: 0.85rem; margin-bottom: 0.35rem; }
-.delta-integrity__why {
-  font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.35rem;
+
+/* One line, not two paragraphs. It is the arrow LEGEND first — the glyphs in
+   the rows are unreadable without it — and carries the single claim a reader
+   must not get wrong (▲ beside a negative ledger is two problems, not one).
+   The full explanation is on the ⓘ. */
+.delta-integrity__legend {
+  font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.4rem;
 }
-.delta-integrity__list {
-  margin: 0; padding-left: 1.1rem;
-  font-size: 0.8rem; color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
+.delta-integrity__legend b { color: var(--viz-amber); font-weight: 600; }
+.di-info {
+  cursor: help; opacity: 0.7; margin-left: 0.2rem;
+  border-bottom: 1px dotted currentColor;
 }
-.delta-integrity__list b { color: var(--viz-amber); }
+.di-info:hover { opacity: 1; }
+
+/* ── Delta integrity rows ──────────────────────────────────────────────────
+ * FOUR ALIGNED COLUMNS, NOT SENTENCES. Seventeen rows of prose restating the
+ * same two clauses around two numbers made the numbers — the only part that
+ * varies — the hardest thing to find, and impossible to compare down the
+ * column because nothing lined up. The detail moved to the row tooltip.
+ * tabular-nums is load-bearing: it is what lets the eye run the column. */
+.di-rows { font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.di-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 5.5rem 4.5rem minmax(4rem, auto);
+  gap: 0.5rem; align-items: baseline;
+  padding: 0.15rem 0.25rem; border-radius: 3px;
+}
+.di-row:hover { background: color-mix(in srgb, var(--viz-amber) 8%, transparent); }
+.di-row--head {
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted); border-bottom: 1px solid var(--border);
+  margin-bottom: 0.15rem; padding-bottom: 0.2rem;
+}
+.di-row--head:hover { background: none; }
+.di-pay { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.di-uop { text-align: right; color: var(--viz-amber); font-weight: 600; cursor: help; }
+.di-row--head .di-uop, .di-row--head .di-drops, .di-row--head .di-flags {
+  color: var(--text-muted); font-weight: inherit; cursor: default;
+}
+/* Direction rides the figure as a glyph. Colour is a REINFORCEMENT, never the
+   only carrier — the arrow itself distinguishes the two readings for anyone
+   who cannot separate the hues. */
+.di-dir { font-size: 0.7em; opacity: 0.85; }
+.di-dir--below { color: var(--danger); }
+.di-drops { text-align: right; color: var(--text-muted); }
+.di-flags { display: flex; gap: 0.3rem; align-items: baseline; justify-content: flex-end; }
 /* The ledger total printed beside the drop total — the comparison the panel
    exists for, so it reads as a peer of the number before it, not an aside. */
-.di-ledger { color: var(--danger); font-variant-numeric: tabular-nums; }
+.di-ledger { color: var(--danger); font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* ── The two ledger panels, side by side ───────────────────────────────────
+ * Read as a PAIR: the left names a broken count, the right names the count
+ * that never landed. Stacked full-width, comparing them cost a scroll.
+ *
+ * Flex rather than grid so that when one panel is empty — which is the good
+ * day, and the common case — `:empty` removes it and the survivor takes the
+ * full width instead of sitting in a half-width column beside dead space. */
+.ledger-row {
+  display: flex; flex-wrap: wrap; gap: 0.75rem;
+  align-items: flex-start; margin-bottom: 0.75rem;
+}
+.ledger-row > div:empty { display: none; }
+.ledger-row > div { flex: 1 1 22rem; min-width: 0; }
+/* The row owns the spacing now; the panels keeping their own bottom margin
+   would double it against the flex gap. */
+.ledger-row .ledger-exceptions, .ledger-row .delta-integrity { margin-bottom: 0; }
 
 /* ── Daily drop trend ──────────────────────────────────────────────────────
  * One bar per plant-local day WITH DROPS. Days with none are absent from the

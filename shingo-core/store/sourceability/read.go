@@ -23,6 +23,10 @@ func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 	if err != nil {
 		return Inputs{}, err
 	}
+	onLine, err := onLinePoolByProcess(db)
+	if err != nil {
+		return Inputs{}, err
+	}
 	lineUOP, err := lineUOPByNode(db)
 	if err != nil {
 		return Inputs{}, err
@@ -31,7 +35,7 @@ func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 	if err != nil {
 		return Inputs{}, err
 	}
-	return Inputs{Styles: styles, Claims: claims, Pool: pool, LineUOP: lineUOP, RatePerSec: rate}, nil
+	return Inputs{Styles: styles, Claims: claims, Pool: pool, OnLine: onLine, LineUOP: lineUOP, RatePerSec: rate}, nil
 }
 
 // loadStylesAndClaims reads the whole plant.claims mirror: every configured
@@ -118,6 +122,72 @@ func availablePoolByPayload(db *sql.DB) (map[string]int, error) {
 		pool[payload] = n
 	}
 	return pool, rows.Err()
+}
+
+// onLinePoolByProcess counts bins that are ALREADY INSIDE a process and carrying
+// what it needs, but which dispatch cannot go and fetch — today that means
+// status='staged'. Keyed process → payload → count.
+//
+// WHY THIS EXISTS. availablePoolByPayload answers "could a robot bring one?", and
+// a bin standing at the consuming node answers something better: it is already
+// there. Excluding it lumped "the parts are at the line" together with "the parts
+// do not exist", and the page said "no available bin in Shingo" about a bin
+// sitting at ALN_007 holding 30 parts of the payload the claim named (SPR,
+// 2026-07-29, style 63181-6SA0B.95 — CARRIER-0010 staged there for ~50h).
+//
+// The codebase already treated that bin as present: lineUOPByNode below applies
+// NO status filter, so its UOP feeds the at-risk projection. One bin was counted
+// present for time-to-empty and absent for the verdict. This closes that.
+//
+// SCOPE IS THE PROCESS, not the node (owner's rule, 2026-07-29) — and it matches
+// the demand grain's own axiom that a cell is one process spanning several nodes.
+// The process's node set comes from style_claims.core_node_name, hence the join;
+// COUNT(DISTINCT b.id) because a node appears once per (style, claim) there and
+// the join would otherwise multiply one bin by its claim count.
+//
+// ONLY 'staged' gets the exemption. maintenance, flagged, quality_hold and
+// retired are not usable parts no matter where they sit, so they stay excluded.
+// claimed / locked / reserved stay excluded too: a bin already spoken for is on
+// its way out, not stock in place. manifest_confirmed stays required — an
+// unconfirmed bin's contents are not trusted anywhere else either.
+//
+// Disjoint from Pool by construction: availablePoolByPayload excludes 'staged',
+// this counts only 'staged', so nothing is counted twice.
+func onLinePoolByProcess(db *sql.DB) (map[string]map[string]int, error) {
+	rows, err := db.Query(`
+		SELECT sc.process_id, b.payload_code, COUNT(DISTINCT b.id)
+		FROM bins b
+		JOIN nodes n ON n.id = b.node_id
+		JOIN style_claims sc ON sc.core_node_name = n.name
+		WHERE b.payload_code <> ''
+		  AND n.enabled = true
+		  AND n.is_synthetic = false
+		  AND b.claimed_by IS NULL
+		  AND b.locked = false
+		  AND b.manifest_confirmed = true
+		  AND b.status = 'staged'
+		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
+		GROUP BY sc.process_id, b.payload_code`)
+	if err != nil {
+		return nil, fmt.Errorf("sourceability: on-line pool: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]map[string]int)
+	for rows.Next() {
+		var (
+			process string
+			payload string
+			n       int
+		)
+		if err := rows.Scan(&process, &payload, &n); err != nil {
+			return nil, fmt.Errorf("sourceability: scan on-line pool: %w", err)
+		}
+		if out[process] == nil {
+			out[process] = make(map[string]int)
+		}
+		out[process][payload] = n
+	}
+	return out, rows.Err()
 }
 
 // lineUOPByNode returns the UOP currently present at each node (the numerator of

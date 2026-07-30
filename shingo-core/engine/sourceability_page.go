@@ -29,9 +29,16 @@ type SourcingClaimView struct {
 	// FreeLocations is where the free bins physically are, most-first — the
 	// answer to "Free 4, but 4 where?". Empty when Free is 0.
 	FreeLocations []engineNodeCount
-	HasTTE        bool
-	TTESeconds    float64
-	TTEDisplay    string // human-readable, e.g. "12m 30s"; empty when not at-risk
+	// OnLine counts bins already standing inside THIS process carrying this
+	// payload — staged, so dispatch cannot fetch them, but they are where the
+	// material needs to be. These satisfy the claim (see onLinePoolByProcess) and
+	// are in neither Free nor Held, which is why the drill-in used to report "no
+	// available bin in Shingo" about a bin sitting at the consuming node.
+	OnLine          int
+	OnLineLocations []engineNodeCount
+	HasTTE          bool
+	TTESeconds      float64
+	TTEDisplay      string // human-readable, e.g. "12m 30s"; empty when not at-risk
 }
 
 // engineNodeCount mirrors sourceability.NodeCount for the view layer (a free-bin
@@ -273,6 +280,10 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 	if err != nil {
 		return view, err
 	}
+	onLine, err := sourceability.OnLineBreakdownByProcess(e.db.DB)
+	if err != nil {
+		return view, err
+	}
 	activeStyles, err := sourceability.ActiveStyles(e.db.DB)
 	if err != nil {
 		return view, err
@@ -321,6 +332,12 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 			}
 			for _, nc := range pb.FreeByNode {
 				cv.FreeLocations = append(cv.FreeLocations, engineNodeCount{Node: nc.Node, Count: nc.Count})
+			}
+			// Staged stock inside this process. Scoped to st.ProcessID, matching the
+			// verdict exactly — a staged bin in another process satisfies nothing here.
+			for _, nc := range onLine[st.ProcessID][c.PayloadCode] {
+				cv.OnLine += nc.Count
+				cv.OnLineLocations = append(cv.OnLineLocations, engineNodeCount{Node: nc.Node, Count: nc.Count})
 			}
 			if s, ok := tteByNode[c.CoreNodeName]; ok {
 				cv.HasTTE = true

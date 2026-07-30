@@ -52,6 +52,13 @@ var requiredTables = []string{
 	// leave the purge deleting nothing forever, which is the silent-no-op
 	// failure this manifest exists to make loud.
 	"daily_counts",
+	// supply_refusals_open is asserted for the same reason daily_counts is: the
+	// clear-on-load path DELETES against it. A stale binary whose schema.Apply
+	// never created it would leave every LOAD failing to clear a refusal that
+	// was never stored — the card would look answered-and-stuck with nothing
+	// behind it, which is the silent-no-op failure this manifest exists to make
+	// loud.
+	"supply_refusals_open",
 }
 
 // requiredColumn is one (table, column) pair added by an unconditional

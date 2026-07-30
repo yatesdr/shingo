@@ -216,6 +216,31 @@ body {
 .os-co-picker-btn.cancel { background: #3a3f4e; color: #ccc; }
 .os-co-picker-btn.danger { background: #6b1f1f; color: #fff; }
 
+/* Sourceability on the changeover picker. GREEN = Core can source every payload the
+   style needs; RED = it cannot. Red stays fully enabled — the operator may change over
+   onto it and let the orders queue — so it must NOT be dimmed the way a disabled control
+   is, or the colour reads as "you can't" instead of "you can, but it will wait".
+   Unverdicted styles (not_configured, or a verdict this Edge doesn't know) keep the
+   default button and carry only their note: no colour is the honest rendering of no
+   verdict. */
+.os-co-picker-btn.sourceable { background: var(--os-green-bright); color: #04220f; }
+.os-co-picker-btn.unsourceable { background: var(--os-red); color: #fff; }
+.os-co-picker-btn.at-risk { background: var(--os-amber); color: #1a1400; }
+
+/* Style name over its verdict, inside the button. The name keeps the button's own
+   weight; the verdict line is smaller and slightly translucent so it reads as an
+   annotation rather than competing with what the operator is tapping. Wraps, because
+   the note names payload codes. */
+.os-co-picker-style { font-size: 16px; font-weight: 700; }
+.os-co-picker-verdict {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1.3;
+    margin-top: 3px;
+    opacity: 0.85;
+}
+
 /* ===== Grid ===== */
 
 #os-grid {
@@ -1156,6 +1181,73 @@ body {
 @keyframes os-starved-pulse {
     0%, 100% { box-shadow: 0 0 0 2px rgba(224, 72, 77, 0.30); }
     50%      { box-shadow: 0 0 0 4px rgba(224, 72, 77, 0.70); }
+}
+
+/* Queued with nothing coming → RED (cardModel.waitingOnRobot). Deliberately the SAME
+   red as starvation above, and re-using its pulse: both mean "this card is why the line
+   is about to stop", and inventing a second alarm colour would make the operator learn a
+   palette instead of reading a board. What distinguishes them is the text — a starved
+   card says its lineside UoP, a queued card says QUEUED plus Core's reason.
+
+   border-color needs !important for the same reason os-board-load-now does: the card
+   also carries its state class (.os-board-queued) and that sets the border shorthand. */
+.os-board-card--waiting {
+    background: #2a1518;
+    border-color: #e0484d !important;
+    box-shadow: 0 0 0 2px rgba(224, 72, 77, 0.55);
+    animation: os-starved-pulse 1.6s ease-in-out infinite;
+}
+.os-board-card--waiting .os-board-detail { color: #e0a0a3; }
+
+/* REFUSED — the loader operator has said they cannot fill this call.
+   "Red pulsing → red dormant", in the owner's words.
+
+   THIS RULE SETS EXACTLY ONE PROPERTY, and that is the whole design. The card
+   keeps .os-board-card--waiting, so the hue, the border and the background come
+   from there and CANNOT diverge — not "should not", cannot. A future palette
+   edit moves both states together or neither, so REFUSED can never drift into
+   looking less severe than QUEUED. The line is still down; only the question of
+   whether anyone has dealt with it has changed.
+
+   Why motion rather than a colour: the style guide records the status palette as
+   at capacity — "13 statuses at one calm weight is at capacity. The next status
+   added cannot be given a hue; it will have to be given a weight, or something
+   has to leave." The pulse already means "nobody has dealt with this", so
+   removing it means "answered", on a channel the palette does not use. It is
+   colourblind-safe by construction, and it degrades honestly: miss the
+   difference and both still read "this card is a problem", which is true.
+
+   Amber was considered and rejected — it is the step BELOW red in the warm ramp,
+   so it would say refused is less severe than queued. It is not. */
+.os-board-card--refused { animation: none; }
+
+/* The supplier's control. Sized for a gloved tap from a forklift seat, and
+   deliberately NOT given a colour of its own: it only ever appears on a card
+   that is already red, and a second alarm hue inside that card would compete
+   with the state it sits in. Borrows the picker button's neutral treatment. */
+.os-board-refusal-btn {
+    margin-top: 10px;
+    width: 100%;
+    border: none;
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 16px;
+    font-weight: 800;
+    cursor: pointer;
+    touch-action: manipulation;
+    background: #3a3f4e;
+    color: #fff;
+}
+.os-board-refusal-btn:active { opacity: 0.8; }
+
+/* The queued line — how long the call has gone unanswered, plus Core's own queue reason
+   verbatim. Sits under the detail line (which carries margin-top:auto, so this lands at
+   the card's bottom edge). Wraps: a queue reason is a sentence, not a tag. */
+.os-board-downtime {
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.25;
+    color: #ff9a9e;
 }
 
 .os-board-detail {

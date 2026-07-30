@@ -215,18 +215,50 @@ func (e *Engine) canCompleteChangeover(changeoverID int64) (bool, []domain.Block
 	return true, nil, nil
 }
 
-// orderGatesCutover is conjunct 2′'s per-order classifier: does this order
-// place a bin at any changeover participant? Unreadable or absent steps return
-// true — fail closed, preserving the pre-2′ behaviour for exactly the orders
-// the classifier cannot prove anything about.
+// orderGatesCutover answers one question per order: does this order place a bin
+// at any node the changeover is reconfiguring? An order whose shape cannot be
+// read returns true, i.e. it blocks — the safe answer for exactly the orders
+// nothing can be proven about.
+//
+// WHY BLOCKING-WHEN-THERE-IS-NO-ITINERARY IS SAFE HERE, AND WHAT WOULD BREAK IT.
+//
+// Single-leg orders carry no itinerary, so this returns true for every one of
+// them without ever checking where they actually go. That reads like
+// over-blocking, and at the changeover START gate it was: that gate walks every
+// live order in the plant, so one single-leg order delivering somewhere
+// unrelated blocked every changeover. It was fixed there by checking the
+// itinerary for multi-leg orders and the delivery node for single-leg ones
+// (orderPlacesBinAtAny, swap_leg_role.go).
+//
+// Here the same shortcut changes nothing, because this gate only ever sees the
+// changeover's OWN linked orders, and two things are true of that set:
+//
+//   - every SINGLE-LEG order a changeover creates delivers TO a node being
+//     reconfigured. Both RetrieveOrderSpec sites set DeliveryNode to
+//     toClaim.CoreNodeName (changeover_planner.go), because a single-leg supply
+//     leg exists precisely to stock the node being reconfigured.
+//   - every EVACUATION leg is MULTI-LEG (complexSpecWithPayload, same file).
+//     Those are the legs that legitimately must not block: an outbound bin
+//     heading to the market, whose completion changes nothing at any node being
+//     reconfigured. That is the Hopkinsville case this rule was written for, and
+//     they carry an itinerary, so they get classified properly.
+//
+// So blocking-on-no-itinerary and a real destination check give the SAME answer
+// for every order that can reach here. Adopting the shared helper would change
+// no behaviour.
+//
+// IF SOMEONE ADDS A SINGLE-LEG EVACUATION SPEC, that stops being true: the leg
+// would carry no itinerary, block, and hold up a cutover it has no bearing on,
+// reviving the exact problem this rule removed. At that point switch this to
+// orderPlacesBinAtAny.
 func (e *Engine) orderGatesCutover(orderID int64, participantNames []string) bool {
 	stepsJSON, err := e.db.GetOrderStepsJSON(orderID)
 	if err != nil || stepsJSON == "" {
-		return true // cannot read the leg's shape — gate, as before 2′
+		return true // cannot read the leg's shape — block, per the note above
 	}
 	steps, err := decodeSteps(stepsJSON)
 	if err != nil {
-		return true // undecodable steps fail closed
+		return true // an unreadable itinerary blocks
 	}
 	for _, name := range participantNames {
 		if legPlacesBinAt(steps, name) {

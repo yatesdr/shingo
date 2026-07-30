@@ -247,6 +247,104 @@ func TestEveryStatusClassifiedAsTerminalOrNot(t *testing.T) {
 	}
 }
 
+// ─── Changeover-start classification ─────────────────────────────────────
+
+// TestChangeoverStartActionIsExhaustive is the build-fails-on-a-new-status
+// guard. Every status must be classified cancel / block / pass; the zero value
+// is never a legitimate answer.
+//
+// It walks AllStatuses() rather than declaring its own list on purpose — a
+// second hand-maintained status list is exactly the rot the derived helpers in
+// this file exist to prevent, and AllStatuses() is already pinned against the
+// declared constants by TestEveryStatusClassifiedAsTerminalOrNot.
+func TestChangeoverStartActionIsExhaustive(t *testing.T) {
+	t.Parallel()
+	for _, s := range AllStatuses() {
+		if got := ChangeoverStartActionFor(s); got == ChangeoverStartUnclassified {
+			t.Errorf("status %q has no changeover-start classification — add it to "+
+				"ChangeoverStartActionFor (cancel / block / pass) rather than letting it "+
+				"fall through to the most permissive answer by accident", s)
+		}
+	}
+	// The guard is only worth having if the default arm is reachable. A status
+	// the switch does not name must come back unclassified — otherwise the loop
+	// above passes vacuously and a new status would slip through.
+	if got := ChangeoverStartActionFor(Status("not-a-real-status")); got != ChangeoverStartUnclassified {
+		t.Fatalf("unnamed status classified %s — the default arm is unreachable and "+
+			"the exhaustiveness guard above is decorative", got)
+	}
+}
+
+// TestChangeoverStartActionAgreesWithPredicates pins the explicit switch
+// against the two predicates that own the sets. The switch is exhaustive and
+// the predicates are the authority; this is what stops them drifting apart.
+func TestChangeoverStartActionAgreesWithPredicates(t *testing.T) {
+	t.Parallel()
+	for _, s := range AllStatuses() {
+		action := ChangeoverStartActionFor(s)
+		if got, want := action == ChangeoverStartCancel, IsPreDispatch(s); got != want {
+			t.Errorf("status %q: classified cancel=%v but IsPreDispatch=%v", s, got, want)
+		}
+		if got, want := action == ChangeoverStartBlock, BlocksChangeoverStart(s); got != want {
+			t.Errorf("status %q: classified block=%v but BlocksChangeoverStart=%v", s, got, want)
+		}
+	}
+}
+
+// TestBlocksChangeoverStartMembership pins the set by name. The membership is
+// the decision under review in four rounds, so it is asserted literally rather
+// than derived — if someone edits the predicate, this test is the place the
+// argument is re-read before the edit lands.
+func TestBlocksChangeoverStartMembership(t *testing.T) {
+	t.Parallel()
+	want := map[Status]bool{
+		StatusDispatched: true, StatusInTransit: true, StatusStaged: true,
+		StatusFaulted: true,
+	}
+	for _, s := range AllStatuses() {
+		if got := BlocksChangeoverStart(s); got != want[s] {
+			t.Errorf("BlocksChangeoverStart(%q) = %v, want %v", s, got, want[s])
+		}
+		if got := s.BlocksChangeoverStart(); got != want[s] {
+			t.Errorf("method form %q = %v, want %v", s, got, want[s])
+		}
+	}
+}
+
+// TestChangeoverStartNeverCancelsOrBlocksATerminalOrder guards the property
+// that makes the classification safe to run over a live order set: a terminal
+// order is already done, so it can be neither cancelled nor waited on.
+func TestChangeoverStartNeverCancelsOrBlocksATerminalOrder(t *testing.T) {
+	t.Parallel()
+	for _, s := range AllStatuses() {
+		if !IsTerminal(s) {
+			continue
+		}
+		if a := ChangeoverStartActionFor(s); a != ChangeoverStartPass {
+			t.Errorf("terminal status %q classified %s, want pass", s, a)
+		}
+	}
+}
+
+// TestAcknowledgedAndSubmittedNeverBlock is a named regression, not a
+// duplicate of the membership test. Nothing in either service reaps these two
+// statuses (AbandonStuckOrders is scoped to {dispatched, staged}) and this HMI
+// exposes no operator order cancel, so blocking on them would lock an operator
+// out of changeover until Edge restarted. If a future edit adds them to the
+// block set, this test names the consequence.
+func TestAcknowledgedAndSubmittedNeverBlock(t *testing.T) {
+	t.Parallel()
+	for _, s := range []Status{StatusAcknowledged, StatusSubmitted} {
+		if BlocksChangeoverStart(s) {
+			t.Errorf("%q must not block changeover start: nothing reaps it and the "+
+				"operator has no way to clear it", s)
+		}
+		if a := ChangeoverStartActionFor(s); a != ChangeoverStartPass {
+			t.Errorf("%q classified %s, want pass", s, a)
+		}
+	}
+}
+
 // containsToken reports whether the comma-separated quoted SQL list
 // contains the exact token. Substring-safe: 'failed' must not match
 // 'failed_x' or similar. The projector builds quoted tokens so we

@@ -412,6 +412,122 @@ func IsOperatorVisible(s Status) bool {
 // IsOperatorVisible is the method form.
 func (s Status) IsOperatorVisible() bool { return IsOperatorVisible(s) }
 
+// ─── Changeover-start classification ─────────────────────────────────────
+//
+// A changeover may not start while LIVE CHOREOGRAPHY is still running at a
+// node the changeover touches. "Live choreography" is narrower than
+// !IsTerminal and wider than "in flight", and the difference is the whole
+// point — see BlocksChangeoverStart.
+
+// BlocksChangeoverStart reports whether an order in this status must reach a
+// terminal state before a changeover may start at a node it touches.
+//
+// The set is IsVendorActive (dispatched / in_transit / staged) PLUS faulted.
+//
+// WHY THIS NAME EXISTS RATHER THAN THE EXPRESSION. Hopkinsville, 2026-07-28:
+// orders 1249/1251 held bins bound for the indexed_over seats PLN_02/PLN_05
+// while a changeover armed. Its index legs could not reserve because those
+// carriers were still in transit; they landed minutes later and each leg
+// claimed its bin one second after. The reserve loop did its job. Had the
+// (since-removed) AbortNodeOrders sweep caught those orders, their carriers
+// would have been cancelled mid-delivery and the index legs would have waited
+// for bins that were never coming — a permanent deadlock. The reasoning for
+// each member lives here so it travels with the set:
+//
+//   - dispatched / in_transit / staged: IsVendorActive. The fleet has it. A
+//     staged robot is holding still mid-handshake — not "in flight", but
+//     absolutely live, which is why "in flight" was the wrong phrasing.
+//   - faulted: it failed WHILE HOLDING. The bin's location is unknown, so the
+//     only safe assumption is that recovery happens and it must go terminal.
+//
+// And what is deliberately NOT here:
+//
+//   - pending / sourcing / queued: IsPreDispatch — no carrier has been
+//     assigned, so cancelling them provably cannot strand one. That is the
+//     entire difference between this gate and the sweep that was removed.
+//   - submitted / acknowledged: Edge-lifecycle words, not fleet states. RDS
+//     never emits acknowledged (fleet/seerrds never mentions it) and Core's
+//     vendor ladder starts at dispatched. Nothing is moving. They must also
+//     never block for a second, independent reason: NOTHING REAPS THEM.
+//     AbandonStuckOrders is scoped to {dispatched, staged}, no Core reconciler
+//     or Edge ticker transitions them, and this HMI exposes no operator order
+//     cancel — so blocking here would lock an operator out of changeover until
+//     somebody restarted Edge.
+//   - delivered: the bin physically arrived. The choreography is over and only
+//     the operator's confirm is outstanding. Note it is NOT auto-confirmed to
+//     clear the gate — ConfirmDelivery asserts a count, and asserting a count
+//     against an order the changeover does not own is how ledger errors are
+//     manufactured.
+//   - reshuffling: a compound parent waiting on children that rearrange
+//     storage, not a carrier bound for the line.
+func BlocksChangeoverStart(s Status) bool {
+	return IsVendorActive(s) || s == StatusFaulted
+}
+
+// BlocksChangeoverStart is the method form.
+func (s Status) BlocksChangeoverStart() bool { return BlocksChangeoverStart(s) }
+
+// ChangeoverStartAction is what changeover initiation does about an order in a
+// given status. Exactly one value applies to every status, and the zero value
+// means "nobody has decided" — which is what makes the exhaustiveness test
+// possible (see ChangeoverStartActionFor).
+type ChangeoverStartAction uint8
+
+const (
+	// ChangeoverStartUnclassified is the zero value and is never a legitimate
+	// answer. It exists so that a status added to the enum without a decision
+	// here fails a test instead of silently acquiring whichever behaviour the
+	// fallthrough happened to give it.
+	ChangeoverStartUnclassified ChangeoverStartAction = iota
+	// ChangeoverStartCancel: the order is cancelled at changeover initiation.
+	ChangeoverStartCancel
+	// ChangeoverStartBlock: the changeover refuses to start until it clears.
+	ChangeoverStartBlock
+	// ChangeoverStartPass: neither cancelled nor blocking. Left alone.
+	ChangeoverStartPass
+)
+
+func (a ChangeoverStartAction) String() string {
+	switch a {
+	case ChangeoverStartCancel:
+		return "cancel"
+	case ChangeoverStartBlock:
+		return "block"
+	case ChangeoverStartPass:
+		return "pass"
+	default:
+		return "unclassified"
+	}
+}
+
+// ChangeoverStartActionFor classifies one status for changeover initiation.
+//
+// DELIBERATELY AN EXPLICIT SWITCH OVER EVERY STATUS, not a chain of predicate
+// calls. A predicate chain ending in "everything else passes" cannot tell a
+// considered pass from a status nobody thought about, so a new status would
+// silently join the pass set — the most permissive answer, arrived at by
+// accident. Here a new status falls to default and TestChangeoverStartActionIsExhaustive
+// fails. Same shape as FormatQueueSentence's default arm and AllQueueCodes.
+//
+// The two named predicates are the authority for their own sets;
+// TestChangeoverStartActionAgreesWithPredicates pins this switch against them
+// so the two can never drift.
+func ChangeoverStartActionFor(s Status) ChangeoverStartAction {
+	switch s {
+	case StatusPending, StatusSourcing, StatusQueued:
+		return ChangeoverStartCancel
+	case StatusDispatched, StatusInTransit, StatusStaged, StatusFaulted:
+		return ChangeoverStartBlock
+	case StatusSubmitted, StatusAcknowledged, StatusDelivered, StatusReshuffling:
+		return ChangeoverStartPass
+	case StatusConfirmed, StatusCancelled, StatusFailed, StatusSkipped:
+		// Terminal. There is nothing to cancel and nothing to wait for.
+		return ChangeoverStartPass
+	default:
+		return ChangeoverStartUnclassified
+	}
+}
+
 // ─── SQL projectors ──────────────────────────────────────────────────────
 //
 // Each predicate above has a matching SQL list helper that returns the

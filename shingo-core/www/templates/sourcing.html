@@ -284,6 +284,16 @@
             <td>
               {{if $c.FreeLocations}}
                 {{range $k, $loc := $c.FreeLocations}}{{if $k}} &middot; {{end}}{{$loc.Node}} &times;{{$loc.Count}}{{end}}
+              {{else if $c.OnLineLocations}}
+                {{/* Staged INSIDE this process — the material is already where it
+                     needs to be, so this claim is satisfied even though Free is 0
+                     and dispatch could not fetch it. Saying "no available bin" here
+                     sent people hunting for a bin that was standing at the line
+                     (SPR 2026-07-29: CARRIER-0010 staged at ALN_007 ~50h). Naming
+                     the node is the whole point — if it is staged when it should not
+                     be, that is where to go and clear it. */}}
+                {{range $k, $loc := $c.OnLineLocations}}{{if $k}} &middot; {{end}}{{$loc.Node}} &times;{{$loc.Count}}{{end}}
+                <span class="src-none">&mdash; staged at the line</span>
               {{else if gt $c.Held 0}}<span class="src-none">none free &mdash; all held by other orders</span>
               {{else}}<span class="src-none">no available bin in Shingo</span>{{end}}
               <div class="src-feeds">feeds {{$c.FeedsNode}}</div>

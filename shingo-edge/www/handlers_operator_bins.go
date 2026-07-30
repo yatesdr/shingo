@@ -197,3 +197,78 @@ func (h *Handlers) apiClearNodeOrders(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
 }
+
+// apiRefuseSupply records the loader operator's "I cannot fill this call" for
+// one card, and apiUndoSupplyRefusal takes it back.
+//
+// Both take (process node, payload) — the card — never a bare payload. That is
+// what makes owner decision 2 structural: the control cannot be aimed at
+// something nobody asked for, because the endpoint has no way to name one.
+func (h *Handlers) apiRefuseSupply(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	var req struct {
+		PayloadCode string `json:"payload_code"`
+		RefusedBy   string `json:"refused_by"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.orchestration.RefuseSupply(id, req.PayloadCode, req.RefusedBy); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
+func (h *Handlers) apiUndoSupplyRefusal(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	var req struct {
+		PayloadCode string `json:"payload_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.orchestration.UndoSupplyRefusal(id, req.PayloadCode); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
+// apiAckSupplyRefusal records the cell operator's answer — WAIT or CHANGE OVER.
+//
+// Both are real answers to a real question and one of them must be given; there
+// is no dismiss. CHANGE OVER records here and the HMI then opens the existing
+// changeover picker, because the operator still has to say which style — the ack
+// is the decision, the picker is the destination.
+func (h *Handlers) apiAckSupplyRefusal(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	var req struct {
+		LoaderNode  string `json:"loader_node"`
+		PayloadCode string `json:"payload_code"`
+		Choice      string `json:"choice"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.orchestration.AckSupplyRefusal(id, req.LoaderNode, req.PayloadCode, req.Choice); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}

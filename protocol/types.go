@@ -157,6 +157,22 @@ const (
 	// deliberate pattern look like an oversight costs more than it buys.
 	SubjectDemandOrigin = "demand.origin"
 
+	// SubjectSupplyRefusal — Edge → Core: a loader operator's statement that
+	// they cannot fill a standing call, and the cell's answer to it.
+	//
+	// NOT AN INVENTORY FACT, which is why it is its own subject rather than a
+	// field on one. Shingo's pool count cannot make this statement: Shingo is a
+	// subset of the greater Martinrea system, and a person on a reach truck can
+	// see material — and the absence of it — that no query here will ever know
+	// about. This is the one bridge across that gap, so it travels as a
+	// first-class message from the person who made it.
+	//
+	// Carries SupplyRefusalState. Three actions on one subject rather than three
+	// subjects: the row has two authors on different edges (the loader opens it,
+	// the cell acks it), and disjoint per-action field application is what keeps
+	// them from clobbering each other without a revision counter.
+	SubjectSupplyRefusal = "supply.refusal"
+
 	// SubjectDowntimeEvent — Edge → Core persisted downtime event (G9).
 	// Carries DowntimeEvent. Emitted by the sim's downtime model on
 	// readiness-gate state transitions (running→down and down→running).
@@ -203,6 +219,22 @@ const (
 	// logs-and-ignores it (the SubjectRouter unknown-subject path), so the feed
 	// is a mixed-version no-op both directions.
 	SubjectSourcingState = "sourcing.state"
+
+	// SubjectSupplyRefusalState — Core → Edge, BROADCAST: the current state of
+	// every open supply refusal.
+	//
+	// Broadcast rather than routed, and that is the design rather than a
+	// shortcut. Routing would need Core to answer "which edges host cells short
+	// of this payload", which means either retaining process identity through
+	// PayloadsForLoader or joining on inbound_source — a column that may hold a
+	// node GROUP name. Broadcasting removes the question: every edge receives
+	// every refusal and filters locally to "a cell here has an outstanding call
+	// for that part", which is the same predicate the loader's own endpoint
+	// enforces before accepting the refusal at all.
+	//
+	// The precedent is sourcing.state, which is broadcast for the same reason and
+	// filtered per-process on arrival.
+	SubjectSupplyRefusalState = "supply.refusal_state"
 )
 
 // AllTypes returns every envelope Type constant in this package. Used by
@@ -257,6 +289,7 @@ func CoreInboundSubjects() []string {
 		SubjectPlantClaims,
 		SubjectLinesideLevelReport,
 		SubjectDemandOrigin,
+		SubjectSupplyRefusal,
 	}
 }
 
@@ -289,6 +322,7 @@ func EdgeInboundSubjects() []string {
 		SubjectBinPickedUp,
 		SubjectUOPAdjustment,
 		SubjectSourcingState,
+		SubjectSupplyRefusalState,
 	}
 }
 

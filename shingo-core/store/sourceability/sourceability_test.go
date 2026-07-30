@@ -188,3 +188,71 @@ func TestCompute_HealthyLineNotAtRisk(t *testing.T) {
 		t.Errorf("at-risk = %+v, want none", got.AtRisk)
 	}
 }
+
+// ── in-process staged stock (SPR 2026-07-29) ─────────────────────────────────
+//
+// A bin standing at the consuming node satisfies the claim even though dispatch
+// cannot fetch it. Before this, "the parts are at the line" and "the parts do not
+// exist" both rendered as RED / "no available bin in Shingo" — said about
+// CARRIER-0010 sitting at ALN_007 holding the payload the claim named.
+
+func TestCompute_StagedStockInSameProcessSatisfies(t *testing.T) {
+	k := key("SNF4", "63181-6SA0B.95")
+	in := Inputs{
+		Styles: []plantclaims.ProcessKey{k},
+		Claims: map[plantclaims.ProcessKey][]plantclaims.ClaimRow{
+			k: {claim("ALN_007", "63125-6TA0A.06", 0)},
+		},
+		// Nothing fetchable anywhere — the only bin is staged at the claim's node.
+		Pool:   map[string]int{},
+		OnLine: map[string]map[string]int{"SNF4": {"63125-6TA0A.06": 1}},
+	}
+	got := byKey(Compute(in, Config{}, now))[k]
+	if got.Status != StatusGreen {
+		t.Fatalf("status = %q, want green — the bin is already at the line (%+v)", got.Status, got)
+	}
+}
+
+// THE SCOPING RULE, and the one that fails dangerously: leak it and a staged bin
+// anywhere in the plant turns every process's claim for that payload green.
+func TestCompute_StagedStockInAnotherProcessDoesNotSatisfy(t *testing.T) {
+	k := key("SNF4", "63181-6SA0B.95")
+	in := Inputs{
+		Styles: []plantclaims.ProcessKey{k},
+		Claims: map[plantclaims.ProcessKey][]plantclaims.ClaimRow{
+			k: {claim("ALN_007", "63125-6TA0A.06", 0)},
+		},
+		Pool:   map[string]int{},
+		OnLine: map[string]map[string]int{"SNF2": {"63125-6TA0A.06": 1}},
+	}
+	got := byKey(Compute(in, Config{}, now))[k]
+	if got.Status != StatusRed {
+		t.Fatalf("status = %q, want red — the staged bin belongs to another process", got.Status)
+	}
+	if !reflect.DeepEqual(got.Missing, []string{"63125-6TA0A.06"}) {
+		t.Errorf("missing = %v, want the unsatisfied payload", got.Missing)
+	}
+}
+
+// Both pools count, and neither is double-spent: two claims for one payload with
+// one staged bin and one fetchable bin are both satisfiable — but a third would
+// not be.
+func TestCompute_StagedAndFetchableBothCountOnce(t *testing.T) {
+	k2, k3 := key("SNF4", "two"), key("SNF4", "three")
+	in := Inputs{
+		Styles: []plantclaims.ProcessKey{k2, k3},
+		Claims: map[plantclaims.ProcessKey][]plantclaims.ClaimRow{
+			k2: {claim("ALN_006", "P", 0), claim("ALN_007", "P", 1)},
+			k3: {claim("ALN_006", "P", 0), claim("ALN_007", "P", 1), claim("ALN_008", "P", 2)},
+		},
+		Pool:   map[string]int{"P": 1},
+		OnLine: map[string]map[string]int{"SNF4": {"P": 1}},
+	}
+	got := byKey(Compute(in, Config{}, now))
+	if got[k2].Status != StatusGreen {
+		t.Errorf("two claims / two bins: status = %q, want green", got[k2].Status)
+	}
+	if got[k3].Status != StatusRed {
+		t.Errorf("three claims / two bins: status = %q, want red", got[k3].Status)
+	}
+}
