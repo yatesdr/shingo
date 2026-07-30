@@ -17,21 +17,25 @@ import (
 	"shingoedge/store/processes"
 )
 
-// RefuseSupply records that the operator at this loader window cannot fill the
-// standing call for a payload.
+// RefuseSupply records that the operator at this loader window cannot supply a
+// payload.
 //
-// SCOPED TO THE CARD, and the scoping is what makes owner decision 2 —
-// "must not fail loudly for anything nobody asked about" — structural rather
-// than a rule somebody has to remember. The refusal is keyed
-// (loader_node, payload_code) and is only accepted where a live order for that
-// payload already exists at that window. No order, no refusal: it is not
-// possible to declare a payload unavailable that nobody has asked for.
+// SCOPED TO THE CARD. The refusal is keyed (loader_node, payload_code), which is
+// exactly what the operator is standing in front of, so it cannot be aimed at
+// anything wider than the card under their thumb.
+//
+// IT DOES NOT REQUIRE A LIVE CALL, and that is a reversal. The original design
+// accepted a refusal only where an order for that payload already existed at
+// that window — "a refusal answers a request, and nothing has been requested."
+// Owner correction, and the floor argument beats the symmetry one: the person on
+// the reach truck knows the rack is empty when they look at it, and holding the
+// warning until a cell calls throws away the notice they could have given. A
+// refusal with no call outstanding is not shouted at anybody — the cell side
+// attaches it only to a cell that has a call for that payload, so it reaches the
+// next cell to ask rather than nobody.
 func (e *Engine) RefuseSupply(processNodeID int64, payloadCode, refusedBy string) error {
 	node, err := e.loaderCardNode(processNodeID, payloadCode)
 	if err != nil {
-		return err
-	}
-	if err := e.requireLiveCallFor(node, payloadCode); err != nil {
 		return err
 	}
 	if refusedBy == "" {
@@ -222,31 +226,14 @@ func (e *Engine) loaderCardNode(processNodeID int64, payloadCode string) (*proce
 	return node, nil
 }
 
-// requireLiveCallFor is the "somebody asked" term, server-side.
+// THE "SOMEBODY ASKED" CHECK USED TO LIVE HERE and was deleted, not disabled.
 //
-// The card's red condition is a conjunction of three things — queued for a bin,
-// an active style claims it, none filled — and this checks ONE of them on
-// purpose. It is the one that carries decision 2: the active-style term is
-// effectively always true on a dedicated-home board (LoadablePayloadCodesAt
-// overrides the claim-derived set), so it authorises nothing, and "none filled"
-// is a display state that flickers with every delivery.
+// It required a live order for the payload at the window before a refusal was
+// accepted, so that a refusal could only ever answer a request. The reasoning
+// was sound and the floor disagrees with it: an operator looking at an empty
+// rack knows before any cell calls, and the warning is worth most exactly then.
 //
-// A live order for this payload at this window is the whole of "somebody asked",
-// it is stable, and it is the term the card cannot be red without.
-//
-// Not a reimplementation of cardModel. The full three-term condition lives in
-// the render layer, and duplicating it here would create two definitions of red
-// that drift — with the server's copy winning silently.
-func (e *Engine) requireLiveCallFor(node *processes.Node, payloadCode string) error {
-	live, err := e.db.ListActiveOrdersByProcessNodeOrSource(node.ID, node.CoreNodeName)
-	if err != nil {
-		return fmt.Errorf("check for a live call at %s: %w", node.Name, err)
-	}
-	for _, o := range live {
-		if o.PayloadCode == payloadCode {
-			return nil
-		}
-	}
-	return fmt.Errorf("no outstanding call for %s at %s — a refusal answers a request, "+
-		"and nothing has been requested", payloadCode, node.Name)
-}
+// Recorded because the absence is the decision. Anyone reading RefuseSupply and
+// wondering where the authorization went should find this rather than conclude
+// it was forgotten. What remains is loaderCardNode, which still establishes that
+// the target is a real loader window rendering a real card.

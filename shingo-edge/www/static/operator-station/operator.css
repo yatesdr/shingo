@@ -1225,18 +1225,35 @@ body {
    deliberately NOT given a colour of its own: it only ever appears on a card
    that is already red, and a second alarm hue inside that card would compete
    with the state it sits in. Borrows the picker button's neutral treatment. */
+/* The supplier control sits on EVERY card, so its RESTING state has to be quiet.
+   A board where every card carries a full-weight block reads as a plant on fire,
+   and an operator who sees alarm styling on healthy cards stops reading any of
+   it. Outlined and muted while nothing is wrong; the RED belongs to the card's
+   answer, not to the button's question. */
 .os-board-refusal-btn {
     margin-top: 10px;
     width: 100%;
-    border: none;
+    border: 1px solid #4a4f5e;
     border-radius: 10px;
+    /* Padding stays generous even though the type shrank: this is tapped from a
+       forklift seat, so the touch target must not shrink with the emphasis. */
+    padding: 11px 12px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    touch-action: manipulation;
+    background: transparent;
+    color: #8b909e;
+}
+/* Once a refusal stands the control is withdrawing a live statement another
+   operator may already have acted on, so it earns full weight. */
+.os-board-card--refused .os-board-refusal-btn {
+    border-color: transparent;
+    background: #3a3f4e;
+    color: #fff;
     padding: 14px 16px;
     font-size: 16px;
     font-weight: 800;
-    cursor: pointer;
-    touch-action: manipulation;
-    background: #3a3f4e;
-    color: #fff;
 }
 .os-board-refusal-btn:active { opacity: 0.8; }
 

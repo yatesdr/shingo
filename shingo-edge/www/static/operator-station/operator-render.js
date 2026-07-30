@@ -610,13 +610,17 @@ function waitedLabel(created) {
 // across cards. The card's STATE (status/detail/action/badge facts) comes from
 // cardModel (operator-window-state.js); this function is presentation only — DOM,
 // the transitional coverage badge, and idle-card hiding.
-// refusalButton builds the card's supplier control — "NO PARTS AVAILABLE", or
-// "UNDO — I CAN SUPPLY" once a refusal stands.
+// refusalButton builds the card's supplier control — "REPORT NO PARTS" at rest,
+// or "UNDO — I CAN SUPPLY" once a refusal stands.
 //
-// BOUND TO (node, payload), never to a bare payload. That is what makes owner
-// decision 2 structural rather than a rule: the control only exists on a card
-// that is already red, and a card is only red because somebody asked. There is
-// no way to aim this at a payload nobody has called for.
+// BOUND TO (node, payload), never to a bare payload. The operator is standing at
+// one part on one window and that pair is the whole of what they can see, so the
+// control cannot be aimed at anything wider than the card under their thumb.
+//
+// It is NOT restricted to cards with a live call. That restriction was the
+// original design and was removed on owner correction: the person on the truck
+// can see an empty rack before anybody calls for it, and making them wait for
+// the call discards exactly the warning time that makes this useful.
 //
 // The confirm is not ceremony. Refusing tells another operator their parts are
 // not coming and may end with them abandoning a run, and it is one tap on a
@@ -743,31 +747,49 @@ function buildLoaderCard(entry, code, counters, opts) {
 
     if (cs.waitingOnRobot && downtimeInScope) {
         card.classList.add('os-board-card--waiting');
-        // REFUSED is the SAME class plus one that only kills the animation, so
-        // the hue is shared by construction rather than by two rules agreeing.
-        if (refusal) card.classList.add('os-board-card--refused');
         var waited = waitedLabel(cs.waitingSince);
         card.appendChild(el('div', {
             className: 'os-board-downtime',
             textContent: 'QUEUED' + (waited ? ' ' + waited : '') +
                 (cs.queueReason ? ' — ' + cs.queueReason : ''),
         }));
+    }
 
-        if (refusal) {
-            // Attribution, not a verdict. A PERSON said this — the sentence a
-            // count could never make — so it is signed and timed. Station-level,
-            // because the loader board carries no operator identity; saying "the
-            // loader" rather than inventing a name is the honest granularity.
-            card.appendChild(el('div', {
-                className: 'os-board-downtime',
-                textContent: 'NO PARTS AVAILABLE' +
-                    (refusal.refused_by ? ' — ' + refusal.refused_by : '') +
-                    (refusal.answered ? ' · cell chose to ' + (refusal.ack_choice || 'wait') : ' · awaiting the cell'),
-            }));
-            card.appendChild(refusalButton(entry, code, 'UNDO — I CAN SUPPLY', 'undo'));
-        } else {
-            card.appendChild(refusalButton(entry, code, 'NO PARTS AVAILABLE', 'refuse'));
-        }
+    // THE SUPPLIER CONTROL IS ON EVERY CARD, not only on a queued one.
+    //
+    // It was originally scoped to QUEUED — a standing call with nothing coming —
+    // on the reasoning that a refusal answers a request, so with nothing
+    // requested there is nothing to refuse. Owner correction, and it is right:
+    // the reach-truck operator knows the rack is empty when they look at it, and
+    // that is worth saying BEFORE a cell calls rather than only after. Waiting
+    // for the call throws away the warning time the operator actually has.
+    //
+    // A refusal recorded against a card with no live call is not lost. The cell
+    // side attaches it when that cell raises a call for the payload, so it warns
+    // the next cell that asks instead of the one that already did.
+    if (refusal) {
+        // --waiting supplies the hue and --refused only kills the animation, so
+        // the two states cannot drift apart into a second red. A refused card
+        // reads red whether or not it is also queued.
+        card.classList.add('os-board-card--waiting');
+        card.classList.add('os-board-card--refused');
+        // Attribution, not a verdict. A PERSON said this — the sentence a
+        // count could never make — so it is signed and timed. Station-level,
+        // because the loader board carries no operator identity; saying "the
+        // loader" rather than inventing a name is the honest granularity.
+        card.appendChild(el('div', {
+            className: 'os-board-downtime',
+            textContent: 'NO PARTS AVAILABLE' +
+                (refusal.refused_by ? ' — ' + refusal.refused_by : '') +
+                (refusal.answered ? ' · cell chose to ' + (refusal.ack_choice || 'wait') : ' · awaiting the cell'),
+        }));
+        card.appendChild(refusalButton(entry, code, 'UNDO — I CAN SUPPLY', 'undo'));
+    } else {
+        // The resting label is an ACTION, not a state. Labelling it
+        // "NO PARTS AVAILABLE" put that sentence on every healthy card, so the
+        // board asserted the thing the button merely offers to say. The state
+        // wording appears above, once a refusal actually stands.
+        card.appendChild(refusalButton(entry, code, 'REPORT NO PARTS', 'refuse'));
     }
 
     // Corner badge, only for REAL per-payload orders (the agnostic blank-payload

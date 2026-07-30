@@ -114,23 +114,50 @@ func TestRefuseSupply_WritesOneRowKeyedOnTheCard(t *testing.T) {
 	})
 }
 
-// TestRefuseSupply_RejectsAPayloadNobodyAskedFor is owner decision 2, enforced
-// rather than documented. The control must not fire for anything nobody asked
-// about — and on a dedicated board this is the ONLY term carrying that rule,
-// because LoadablePayloadCodesAt makes the active-style term always true there.
-func TestRefuseSupply_RejectsAPayloadNobodyAskedFor(t *testing.T) {
+// TestRefuseSupply_AcceptsAPayloadWithNoCallYet pins the REVERSAL of the
+// original rule, so it cannot be reintroduced by someone reading the old
+// reasoning and finding it persuasive — it was persuasive, and it was wrong.
+//
+// The refusal used to require a live order for the payload at the window, on
+// the argument that a refusal answers a request. The floor beats that: the
+// operator can see the rack is empty before any cell calls, and that is the
+// moment the warning is worth most. A refusal recorded with no call outstanding
+// reaches the next cell to raise one, because the cell side filters on the
+// cell's own live orders rather than on when the refusal was made.
+func TestRefuseSupply_AcceptsAPayloadWithNoCallYet(t *testing.T) {
 	t.Parallel()
 	eachLayout(t, func(t *testing.T, f *loaderFixture) {
-		// A live call exists — but for a different payload.
+		// A live call exists for one payload; the refusal names a DIFFERENT one
+		// that nobody has asked for. Under the old rule this was rejected.
 		f.call(t, "PART-A")
 
-		if err := f.eng.RefuseSupply(f.nodeID, "PART-B", "Bin Loader"); err == nil {
-			t.Fatal("refused a payload with no outstanding call — a refusal answers a request, " +
-				"and this is the term owner decision 2 rests on")
+		testutil.MustNoErr(t, f.eng.RefuseSupply(f.nodeID, "PART-B", "Bin Loader"),
+			"refuse a payload with no outstanding call")
+
+		got, err := f.db.GetSupplyRefusal(f.core, "PART-B")
+		testutil.MustNoErr(t, err, "get the refusal")
+		if got.PayloadCode != "PART-B" {
+			t.Errorf("stored payload = %q, want PART-B", got.PayloadCode)
+		}
+		if got.Answered() {
+			t.Error("a fresh refusal came back already-answered")
+		}
+	})
+}
+
+// TestRefuseSupply_StillRequiresARealLoaderWindow. Dropping the live-call term
+// removed the "somebody asked" authorization; it must not have removed the
+// other one. The target still has to be a loader window that renders a card —
+// otherwise the refusal could not have come from a person looking at one.
+func TestRefuseSupply_StillRequiresARealLoaderWindow(t *testing.T) {
+	t.Parallel()
+	eachLayout(t, func(t *testing.T, f *loaderFixture) {
+		if err := f.eng.RefuseSupply(f.nodeID, "", "Bin Loader"); err == nil {
+			t.Error("accepted a refusal naming no payload")
 		}
 		open, _ := f.db.ListOpenSupplyRefusals()
 		if len(open) != 0 {
-			t.Errorf("wrote %d rows for a payload nobody asked about", len(open))
+			t.Errorf("wrote %d rows for a refusal that names no payload", len(open))
 		}
 	})
 }
