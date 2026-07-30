@@ -189,3 +189,52 @@ func TestUndoSupplyRefusal_WorksAfterTheCallIsGone(t *testing.T) {
 		}
 	})
 }
+
+// TestHandleSupplyRefusalState_AppliesTheBroadcast covers the receiving half of
+// the round trip: a refusal made on ANOTHER edge arrives here as a broadcast and
+// lands in the same table a local refusal would.
+//
+// The sender gets its own message back too, and that is why every arm has to be
+// idempotent — the first assertion below is that re-applying an open does not
+// disturb what is already there.
+func TestHandleSupplyRefusalState_AppliesTheBroadcast(t *testing.T) {
+	t.Parallel()
+	f := seedLoaderCard(t, false)
+
+	f.eng.HandleSupplyRefusalState(protocol.SupplyRefusalState{
+		Action: protocol.SupplyRefusalOpened, LoaderNode: "SMN_099",
+		PayloadCode: "PART-Z", RefusedBy: "Another Edge",
+	})
+	got, err := f.db.GetSupplyRefusal("SMN_099", "PART-Z")
+	testutil.MustNoErr(t, err, "get after broadcast")
+	if got.RefusedBy != "Another Edge" {
+		t.Errorf("refused_by = %q, want the sender's attribution", got.RefusedBy)
+	}
+
+	// Re-delivery — the sender's own echo, or an at-least-once redelivery.
+	f.eng.HandleSupplyRefusalState(protocol.SupplyRefusalState{
+		Action: protocol.SupplyRefusalOpened, LoaderNode: "SMN_099",
+		PayloadCode: "PART-Z", RefusedBy: "Someone Else",
+	})
+	again, _ := f.db.GetSupplyRefusal("SMN_099", "PART-Z")
+	if again.RefusedBy != "Another Edge" {
+		t.Errorf("a redelivered open overwrote the original: %q", again.RefusedBy)
+	}
+
+	// The ack arrives from whichever edge hosts the cell that answered.
+	f.eng.HandleSupplyRefusalState(protocol.SupplyRefusalState{
+		Action: protocol.SupplyRefusalAcked, LoaderNode: "SMN_099",
+		PayloadCode: "PART-Z", AckChoice: "wait", AckProcessID: "SNF2",
+	})
+	acked, _ := f.db.GetSupplyRefusal("SMN_099", "PART-Z")
+	if !acked.Answered() || acked.AckChoice != "wait" {
+		t.Errorf("ack broadcast not applied: answered=%v choice=%q", acked.Answered(), acked.AckChoice)
+	}
+
+	f.eng.HandleSupplyRefusalState(protocol.SupplyRefusalState{
+		Action: protocol.SupplyRefusalClosed, LoaderNode: "SMN_099", PayloadCode: "PART-Z",
+	})
+	if _, err := f.db.GetSupplyRefusal("SMN_099", "PART-Z"); !errors.Is(err, store.ErrNoOpenRefusal) {
+		t.Errorf("close broadcast did not clear the row: %v", err)
+	}
+}

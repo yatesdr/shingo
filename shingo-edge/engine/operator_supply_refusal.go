@@ -11,6 +11,7 @@ package engine
 
 import (
 	"fmt"
+	"time"
 
 	"shingo/protocol"
 	"shingoedge/store/processes"
@@ -40,6 +41,13 @@ func (e *Engine) RefuseSupply(processNodeID int64, payloadCode, refusedBy string
 		return err
 	}
 	e.logFn("supply_refusal: %s cannot supply %s (by %s)", node.CoreNodeName, payloadCode, refusedBy)
+	// LOCAL FIRST, THEN CORE. The write above already turned the card dormant;
+	// this only tells the rest of the plant. A Core that is down must never stop
+	// an operator recording what they found on the floor.
+	e.emitSupplyRefusal(protocol.SupplyRefusalState{
+		Action: protocol.SupplyRefusalOpened, LoaderNode: node.CoreNodeName,
+		PayloadCode: payloadCode, RefusedAt: time.Now().UTC(), RefusedBy: refusedBy,
+	})
 	return nil
 }
 
@@ -62,7 +70,70 @@ func (e *Engine) UndoSupplyRefusal(processNodeID int64, payloadCode string) erro
 		return err
 	}
 	e.logFn("supply_refusal: %s withdrew the refusal for %s", node.CoreNodeName, payloadCode)
+	e.emitSupplyRefusal(protocol.SupplyRefusalState{
+		Action: protocol.SupplyRefusalClosed, LoaderNode: node.CoreNodeName, PayloadCode: payloadCode,
+	})
 	return nil
+}
+
+// emitSupplyRefusal puts one refusal message on the outbox for Core.
+//
+// BEST-EFFORT BY DESIGN, unlike the demand-episode emit it otherwise resembles.
+// An episode that never reaches Core leaves a gap in the duration record and
+// nothing else can recover it. A refusal that never reaches Core still did its
+// job locally — the card is dormant and the cells on this edge see it on their
+// next poll — and Core's copy is for history, cross-edge supply, and the Core UI.
+// So a failed enqueue is logged and swallowed rather than failing the operator's
+// action, which is the opposite disposition from emitOriginState and deliberately
+// so.
+func (e *Engine) emitSupplyRefusal(msg protocol.SupplyRefusalState) {
+	env, err := protocol.NewDataEnvelope(
+		protocol.SubjectSupplyRefusal,
+		protocol.Address{Role: protocol.RoleEdge, Station: e.cfg.StationID()},
+		protocol.Address{Role: protocol.RoleCore},
+		&msg,
+	)
+	if err != nil {
+		e.logFn("supply_refusal: build envelope %s/%s: %v", msg.LoaderNode, msg.PayloadCode, err)
+		return
+	}
+	data, err := env.Encode()
+	if err != nil {
+		e.logFn("supply_refusal: encode %s/%s: %v", msg.LoaderNode, msg.PayloadCode, err)
+		return
+	}
+	if _, err := e.db.EnqueueOutbox(data, protocol.SubjectSupplyRefusal); err != nil {
+		e.logFn("supply_refusal: enqueue %s/%s: %v", msg.LoaderNode, msg.PayloadCode, err)
+	}
+}
+
+// HandleSupplyRefusalState applies a refusal Core broadcast to every edge.
+//
+// Every edge receives every refusal and filters locally — that is what removes
+// the addressee problem rather than moving it. The sender receives its own
+// message back, which is intended: every apply path here is idempotent, and it
+// means a single-edge line exercises the identical code path a multi-edge one
+// will, instead of leaving the cross-edge path untested until the day it matters.
+func (e *Engine) HandleSupplyRefusalState(st protocol.SupplyRefusalState) {
+	if st.LoaderNode == "" || st.PayloadCode == "" {
+		return
+	}
+	var err error
+	switch st.Action {
+	case protocol.SupplyRefusalOpened:
+		err = e.db.OpenSupplyRefusal(st.LoaderNode, st.PayloadCode, st.RefusedBy)
+	case protocol.SupplyRefusalAcked:
+		_, err = e.db.AckSupplyRefusal(st.LoaderNode, st.PayloadCode, st.AckChoice, st.AckProcessID)
+	case protocol.SupplyRefusalClosed:
+		err = e.db.DeleteSupplyRefusal(st.LoaderNode, st.PayloadCode)
+	default:
+		e.logFn("supply_refusal: unknown action %q for %s/%s — ignored",
+			st.Action, st.LoaderNode, st.PayloadCode)
+		return
+	}
+	if err != nil {
+		e.logFn("supply_refusal: apply %s for %s/%s: %v", st.Action, st.LoaderNode, st.PayloadCode, err)
+	}
 }
 
 // loaderCardNode resolves a process node to the loader window a card lives on,
