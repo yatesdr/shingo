@@ -13,13 +13,47 @@ import (
 	"log"
 	"strings"
 
-	"shingoedge/orders"
+	"shingo/protocol"
 	"shingoedge/store/processes"
 )
 
+// changeoverBlockerFor renders the operator-facing sentence for one blocking
+// order. Each status names its own remedy, because "in flight" is the same
+// sentence for four different situations and only one of them is "wait, it is
+// coming" — an operator told that about a faulted order waits for a robot that
+// is not on its way.
+func changeoverBlockerFor(nodeName string, orderID int64, status protocol.Status) string {
+	switch status {
+	case protocol.StatusStaged:
+		return fmt.Sprintf("%s: order %d is staged — a robot is holding a bin there. "+
+			"Release the wait, then start the changeover", nodeName, orderID)
+	case protocol.StatusFaulted:
+		return fmt.Sprintf("%s: order %d faulted mid-move and still holds its bin. "+
+			"Needs maintenance or a team lead — it is not clearable from this screen",
+			nodeName, orderID)
+	default:
+		// dispatched / in_transit: a carrier really is on its way. This is the
+		// only case where "wait and press again" is the whole answer, and it is
+		// the case the old blanket wording was written for.
+		return fmt.Sprintf("%s: order %d is %s — a carrier is on its way. "+
+			"Wait for it to land, then start the changeover", nodeName, orderID, status)
+	}
+}
+
 // nodesWithOrdersInFlight returns an operator-readable blocker per participating
-// node that still has a non-terminal order attached to its runtime. Empty means
-// the changeover is clear to start.
+// node where LIVE CHOREOGRAPHY is still running. Empty means the changeover is
+// clear to start.
+//
+// The predicate is protocol.BlocksChangeoverStart, NOT !IsTerminal. IsTerminal
+// is derived from validTransitions, so its complement is eleven statuses, and
+// nine of them are not a carrier doing anything: a queued order has no bin
+// assigned, a delivered one has already landed and is waiting on a clerical
+// confirm, and acknowledged/submitted are Edge-lifecycle words the fleet never
+// emits. Blocking on those refused changeovers the operator was standing at the
+// line to run, and in the acknowledged case refused them PERMANENTLY — nothing
+// reaps that status and this HMI exposes no operator order cancel, so the only
+// exit was an Edge restart. See protocol.BlocksChangeoverStart for the set and
+// the Hopkinsville reasoning behind it.
 //
 // Reads the same two runtime pointers the old AbortNodeOrders sweep did
 // (ActiveOrderID, StagedOrderID) — the difference is entirely what we do with
@@ -48,11 +82,10 @@ func (e *Engine) nodesWithOrdersInFlight(plan *changeoverPlan) []string {
 				continue
 			}
 			order, err := e.db.GetOrder(*orderID)
-			if err != nil || order == nil || orders.IsTerminal(order.Status) {
+			if err != nil || order == nil || !protocol.BlocksChangeoverStart(order.Status) {
 				continue
 			}
-			blockers = append(blockers, fmt.Sprintf("%s has order %d in flight (%s)",
-				node.Name, order.ID, order.Status))
+			blockers = append(blockers, changeoverBlockerFor(node.Name, order.ID, order.Status))
 		}
 	}
 	return blockers
