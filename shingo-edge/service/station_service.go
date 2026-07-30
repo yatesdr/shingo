@@ -420,6 +420,27 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	if err != nil {
 		boardOrders = nil
 	}
+	// Standing supply refusals, ONE READ FOR THE WHOLE BOARD, indexed
+	// loader_node → payload → refusal. The table holds only what is open — one
+	// row per card actually refused right now — so the whole-table read is
+	// cheaper than a query per card, and this is the board's poll path, which is
+	// the one place that difference is felt. Best-effort, like every other
+	// enrichment here: a failed read renders a board without refusal state
+	// rather than no board.
+	refusals := map[string]map[string]domain.SupplyRefusal{}
+	if open, rerr := s.db.ListOpenSupplyRefusals(); rerr == nil {
+		for _, r := range open {
+			if refusals[r.LoaderNode] == nil {
+				refusals[r.LoaderNode] = map[string]domain.SupplyRefusal{}
+			}
+			refusals[r.LoaderNode][r.PayloadCode] = domain.SupplyRefusal{
+				RefusedAt: r.RefusedAt,
+				RefusedBy: r.RefusedBy,
+				Answered:  r.Answered(),
+				AckChoice: r.AckChoice,
+			}
+		}
+	}
 	activeBuckets, err := lineside.ListActiveForNodes(s.db.DB, nodeIDs)
 	if err != nil {
 		activeBuckets = nil // best-effort, as the per-node call was
@@ -506,6 +527,14 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 			if rp, ok := loaderPayloads[node.CoreNodeName][nodeView.ActiveClaim.Role]; ok {
 				nodeView.ActiveStylePayloads = rp.Active
 				nodeView.AllStylePayloads = rp.All
+			}
+			// Standing refusals for this window's cards, from the one snapshot
+			// taken above. Role-agnostic on purpose: an unloader states the same
+			// kind of thing about empties that a loader states about parts, and
+			// the mechanism carries over unchanged — only the WORDING differs,
+			// and that lives on the render side.
+			if byPayload := refusals[node.CoreNodeName]; len(byPayload) > 0 {
+				nodeView.SupplyRefusals = byPayload
 			}
 			// Operator-driven (board defaults to preload) + dedicated-position layout +
 			// window-group membership all come from the Core aggregate — the SAME resolver

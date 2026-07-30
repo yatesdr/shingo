@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 // NodeBinState is the bin information fetched from Core via telemetry
 // and folded into a StationNodeView. Reflects the current bin (if any)
 // at the corresponding Core node — what's loaded, how full, whether
@@ -110,6 +112,38 @@ type StationNodeView struct {
 	// board renders these cards red so the operator preloads before the line
 	// runs dry. Populated only for manual_swap loader nodes.
 	StarvedPayloads map[string]bool `json:"starved_payloads,omitempty"`
+	// SupplyRefusals maps a payload code to the loader operator's standing
+	// statement that they cannot fill the call on that card, keyed the same way
+	// the card is: (this node, that payload). Populated for manual_swap loader
+	// nodes on BOTH layouts — a shared window's payload card and a dedicated
+	// home's position card reach the same key.
+	//
+	// The card renders red-DORMANT when a refusal is present: same hue as the
+	// unanswered QUEUED state, pulse removed. The pulse means "nobody has dealt
+	// with this", so dropping it means "answered" — a channel the status palette
+	// does not otherwise use, which matters because the guide records the palette
+	// as being at capacity and the next status having to earn a weight rather
+	// than a hue.
+	SupplyRefusals map[string]SupplyRefusal `json:"supply_refusals,omitempty"`
+}
+
+// SupplyRefusal is one card's open refusal as the HMI sees it.
+//
+// Deliberately not the store row: the board needs what to render, not the
+// storage shape. Answered is precomputed because "refused" and "refused and
+// answered" are different card states and the render layer must not have to
+// infer the second from a nullable timestamp.
+type SupplyRefusal struct {
+	RefusedAt time.Time `json:"refused_at"`
+	// RefusedBy is the station name, not a person — the loader board carries no
+	// operator identity. Rendered as attribution because a human said it, and
+	// station-level is the honest granularity available.
+	RefusedBy string `json:"refused_by,omitempty"`
+	// Answered is false while the cell has been told and has not replied. That
+	// state is the one worth surfacing: it is the original complaint — the
+	// information exists and nobody has acted on it.
+	Answered  bool   `json:"answered"`
+	AckChoice string `json:"ack_choice,omitempty"`
 }
 
 // OperatorStationView is the top-level shape rendered by the operator
