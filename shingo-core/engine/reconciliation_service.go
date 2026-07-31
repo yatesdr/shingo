@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared/clock"
+	"shingocore/dispatch"
 	"shingocore/store/messaging"
 	"shingocore/store/orders"
 	"shingocore/store/reconciliation"
@@ -70,7 +71,7 @@ func (s *ReconciliationService) ListDeadLetterOutbox(limit int) ([]*messaging.Ou
 	return s.db.ListDeadLetterOutbox(limit)
 }
 
-func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfirmTimeout, abandonTimeout time.Duration) {
+func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfirmTimeout, abandonTimeout, abandonOperatorGatedTimeout time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
@@ -105,7 +106,7 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 				}
 			}
 			if abandonTimeout > 0 {
-				if n, err := s.AbandonStuckOrders(abandonTimeout); err != nil {
+				if n, err := s.AbandonStuckOrders(abandonTimeout, abandonOperatorGatedTimeout); err != nil {
 					s.logFn("engine: abandon stuck orders error: %v", err)
 				} else if n > 0 {
 					s.logFn("engine: abandoned %d stuck orders", n)
@@ -338,14 +339,27 @@ func (s *ReconciliationService) ResolveOrphanedReshuffleRestores() (int, error) 
 //
 // Cancelling reuses the standard teardown (fleet cancel, bin unclaim, auto-return, Edge
 // notify) and cascades to the swap sibling. Returns the count abandoned.
-func (s *ReconciliationService) AbandonStuckOrders(timeout time.Duration) (int, error) {
+// operatorGatedTimeout is the separate, longer bound applied to operator-gated
+// staging (dispatch.IsOperatorGatedStaging) — a coordinated swap leg parked at
+// its wait point waiting for a human to press RELEASE. 0 means such a leg is
+// never auto-cancelled. See config.StagingConfig.AbandonStuckOperatorGated.
+func (s *ReconciliationService) AbandonStuckOrders(timeout, operatorGatedTimeout time.Duration) (int, error) {
 	if timeout <= 0 {
 		return 0, nil
 	}
 
 	// Sim-clock cutoff, same rationale as AutoConfirmStuckDeliveredOrders — order
 	// updated_at is clock.Now()-stamped, so a wall-NOW() comparison never fires in sim.
-	cutoff := clock.Now().UTC().Add(-timeout)
+	now := clock.Now().UTC()
+	// Candidates are selected on the SHORTER of the two thresholds so both
+	// classes surface here; each order is then held to its OWN bound in the loop
+	// below. Selecting on `timeout` alone would silently floor a shorter
+	// operator-gated bound at the base one.
+	selectTimeout := timeout
+	if operatorGatedTimeout > 0 && operatorGatedTimeout < selectTimeout {
+		selectTimeout = operatorGatedTimeout
+	}
+	cutoff := now.Add(-selectTimeout)
 	rows, err := s.db.Query(fmt.Sprintf(`
 		SELECT id
 		FROM orders
@@ -389,7 +403,34 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout time.Duration) (int, 
 		if !protocol.IsStuckSweepCandidate(order.Status) {
 			continue
 		}
+		// Which clock applies to THIS order. Operator-gated staging — a
+		// coordinated swap leg parked at its wait point — is waiting on a
+		// HUMAN, not on the system, so it answers to its own longer bound. It
+		// stays BOUNDED rather than exempt, so a genuinely forgotten swap
+		// still cannot park two robots forever. Springfield ALN_003
+		// 2026-07-31: the base 1h cancelled a staged evac and cascaded its
+		// supply, destroying both legs of a live changeover.
+		// See dispatch.IsOperatorGatedStaging.
+		effective := timeout
 		reason := fmt.Sprintf("abandoned: stuck in %s past %s", order.Status, timeout)
+		if dispatch.IsOperatorGatedStaging(order) {
+			if operatorGatedTimeout <= 0 {
+				s.logFn("engine: abandon-stuck holding operator-gated order %d (uuid=%s, staged %s) — auto-cancel disabled for operator-gated staging",
+					order.ID, order.EdgeUUID, now.Sub(order.UpdatedAt).Round(time.Second))
+				continue
+			}
+			effective = operatorGatedTimeout
+			reason = fmt.Sprintf("abandoned: operator-gated staging past %s", operatorGatedTimeout)
+		}
+		// Selected on the shorter cutoff but not yet past its own bound. Logged
+		// rather than silent: a held order is a robot parked holding a bin, and
+		// an exemption nobody can see trades a destructive failure for an
+		// invisible one.
+		if order.UpdatedAt.After(now.Add(-effective)) {
+			s.logFn("engine: abandon-stuck holding order %d (uuid=%s status=%s) — waiting %s of %s",
+				order.ID, order.EdgeUUID, order.Status, now.Sub(order.UpdatedAt).Round(time.Second), effective)
+			continue
+		}
 		if err := s.abandonOrder(order, reason); err != nil {
 			s.logFn("engine: abandon stuck order %d: %v", order.ID, err)
 			continue

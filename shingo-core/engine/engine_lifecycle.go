@@ -149,7 +149,7 @@ func (e *Engine) Start() {
 	e.startDemandReconciler()
 
 	// Start periodic reconciliation logging and auto-confirm
-	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered, e.cfg.Staging.AbandonStuck)
+	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered, e.cfg.Staging.AbandonStuck, e.cfg.Staging.AbandonStuckOperatorGated)
 
 	// Start count-group runner if configured (no-op if no groups enabled).
 	e.countGroupMu.Lock()

@@ -218,7 +218,7 @@ func TestAbandonStuckOrders(t *testing.T) {
 		return nil
 	}
 
-	n, err := svc.AbandonStuckOrders(time.Hour)
+	n, err := svc.AbandonStuckOrders(time.Hour, 4*time.Hour)
 	testutil.MustNoErr(t, err, "AbandonStuckOrders")
 	if n != 2 {
 		t.Errorf("abandoned count = %d, want 2 (only the runtime-stuck staged + dispatched)", n)
@@ -240,6 +240,77 @@ func TestAbandonStuckOrders(t *testing.T) {
 	}
 	if got[moving.ID] {
 		t.Error("aged in_transit order should NOT be abandoned (actively moving robot)")
+	}
+}
+
+// TestAbandonStuckOperatorGatedStaging pins the Springfield ALN_003 2026-07-31
+// regression: a coordinated two-robot swap leg parked at its wait point is
+// waiting on an OPERATOR, and the base 1h sweep cancelled it (and cascaded its
+// sibling) mid-changeover. Such a leg now answers to its own longer bound —
+// still bounded, so a genuinely forgotten swap cannot park two robots forever.
+func TestAbandonStuckOperatorGatedStaging(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	svc := newReconService(t, db)
+
+	mk := func(uuid string, coordinated bool, ageHours int) *orders.Order {
+		o := &orders.Order{
+			EdgeUUID: uuid, StationID: "line-1", OrderType: "complex",
+			Status: "staged", SourceNode: "ALN_003", DeliveryNode: "SMN_005",
+			Coordinated: coordinated,
+		}
+		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
+		if _, err := db.Exec(
+			`UPDATE orders SET updated_at = NOW() - make_interval(hours => $2) WHERE id = $1`,
+			o.ID, ageHours,
+		); err != nil {
+			t.Fatalf("backdate %s: %v", uuid, err)
+		}
+		return o
+	}
+
+	// The incident shape: a coordinated evac staged just over the base 1h.
+	gatedYoung := mk("gated-2h", true, 2)
+	// The same leg left far past even the operator-gated bound — still swept,
+	// so the exemption can't become a permanent robot hostage.
+	gatedOld := mk("gated-5h", true, 5)
+	// A plain staged order is untouched by this change: base timeout applies.
+	plain := mk("plain-2h", false, 2)
+
+	var abandoned []int64
+	svc.abandonOrder = func(o *orders.Order, reason string) error {
+		abandoned = append(abandoned, o.ID)
+		return nil
+	}
+
+	if _, err := svc.AbandonStuckOrders(time.Hour, 4*time.Hour); err != nil {
+		t.Fatalf("AbandonStuckOrders: %v", err)
+	}
+	got := map[int64]bool{}
+	for _, id := range abandoned {
+		got[id] = true
+	}
+	if got[gatedYoung.ID] {
+		t.Error("coordinated staged leg abandoned at 2h — operator-gated staging must hold to its own 4h bound (ALN_003 2026-07-31)")
+	}
+	if !got[gatedOld.ID] {
+		t.Error("coordinated staged leg NOT abandoned at 5h — the operator-gated bound must stay a bound, not an exemption")
+	}
+	if !got[plain.ID] {
+		t.Error("plain staged order NOT abandoned at 2h — the base sweep must be unchanged for non-coordinated orders")
+	}
+
+	// operatorGatedTimeout = 0 means never auto-cancel an operator-gated leg,
+	// matching the AbandonStuck convention where 0 disables.
+	abandoned = nil
+	if _, err := svc.AbandonStuckOrders(time.Hour, 0); err != nil {
+		t.Fatalf("AbandonStuckOrders(gated=0): %v", err)
+	}
+	for _, id := range abandoned {
+		if id == gatedYoung.ID || id == gatedOld.ID {
+			t.Errorf("order %d abandoned with operator-gated timeout disabled (0 must mean never)", id)
+		}
 	}
 }
 
@@ -275,7 +346,7 @@ func TestPreDispatchNotSwept(t *testing.T) {
 		return nil
 	}
 
-	n, err := svc.AbandonStuckOrders(time.Hour)
+	n, err := svc.AbandonStuckOrders(time.Hour, 4*time.Hour)
 	testutil.MustNoErr(t, err, "AbandonStuckOrders")
 
 	got := map[int64]bool{}
@@ -746,7 +817,7 @@ func TestReconciliationService_Loop_StopsOnSignal(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		// 1-second tick — but we close stop immediately so it shouldn't fire.
-		svc.Loop(stop, 1*time.Second, 0, 0)
+		svc.Loop(stop, 1*time.Second, 0, 0, 0)
 		close(done)
 	}()
 	close(stop)

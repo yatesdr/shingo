@@ -273,6 +273,20 @@ type StagingConfig struct {
 	// moving (sourcing/dispatched; the long-weekend drain case). in_transit is
 	// excluded (actively moving). Cascades to the two-robot sibling.
 	AbandonStuck time.Duration `yaml:"abandon_stuck"` // default 1h; 0 = disabled
+	// AbandonStuckOperatorGated is the SEPARATE, longer bound for a staged leg
+	// whose release is a HUMAN action rather than a system step — a coordinated
+	// two-robot swap parked at its wait point (dispatch.IsOperatorGatedStaging).
+	//
+	// AbandonStuck's premise is "a robot parked this long has been forgotten".
+	// That premise is wrong for a pair an operator still has to authorise, and
+	// at Springfield on 2026-07-31 it destroyed both legs of a live changeover
+	// at exactly 1h: the evac staged at 15:00, its supply sibling arrived 15:32
+	// after three transient fleet faults, and the sweep cancelled the evac at
+	// 16:00 and cascaded the supply.
+	//
+	// Still BOUNDED rather than exempt, so a genuinely forgotten swap cannot
+	// park two robots forever. 0 = never auto-cancel an operator-gated leg.
+	AbandonStuckOperatorGated time.Duration `yaml:"abandon_stuck_operator_gated"` // default 4h; 0 = never
 }
 
 type DatabaseConfig struct {
@@ -357,6 +371,9 @@ func Defaults() *Config {
 			SweepInterval:        5 * time.Minute,
 			AutoConfirmDelivered: 5 * time.Minute, // auto-confirm delivered orders after 5 minutes if no receipt from Edge
 			AbandonStuck:         time.Hour,       // cancel orders stuck queued/staged for 1h (ties up robots, clutters the board)
+			// Operator-gated staging gets 4h, not 1h: the wait is a human
+			// decision, and 1h is shorter than a changeover legitimately runs.
+			AbandonStuckOperatorGated: 4 * time.Hour,
 		},
 		Sourceability: SourceabilityConfig{
 			EnableAtRisk: false, // green/red only until the owner validates the rate window on plant data
