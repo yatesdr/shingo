@@ -1,4 +1,4 @@
-import { el, esc, fillColor, postAction, showToast, fetchWithTimeout } from './operator-util.js';
+import { el, esc, fillColor, postAction, showToast, fetchWithTimeout, formatETA } from './operator-util.js';
 import { getView, claimedNodes, isReplenishing } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { cardModel, headerModel, nodeFacts, ROLE_WORDS } from './operator-window-state.js';
@@ -1263,34 +1263,9 @@ function appendETAPills(btn, inboundOrders, binState) {
     btn.appendChild(row);
 }
 
-// Bucket boundaries match the user-approved display rules:
-//   < 45s   → "Arriving"
-//   45–90s  → "ETA: ~1 min"
-//   ≥ 90s   → "ETA: ~N min" rounded to nearest whole minute
-//   overdue by > 60s → "Running late" + amber pill
-// No sub-minute precision past the first bucket — fake precision was the
-// thing Uber's UX research dropped. If the order has no ETA yet (Core
-// hasn't stamped one, e.g. mid-transition or backfill pending) we show
-// nothing rather than a placeholder; the purple background already says
-// "robot inbound", the pill is the time-detail layer.
-function formatETA(etaStr) {
-    if (!etaStr) return { text: '', overdue: false, empty: true };
-    const etaMs = Date.parse(etaStr);
-    if (isNaN(etaMs)) return { text: '', overdue: false, empty: true };
-    const remainingSec = (etaMs - Date.now()) / 1000;
-    const graceSec = 60;
-    if (remainingSec < -graceSec) {
-        return { text: 'Running late', overdue: true };
-    }
-    if (remainingSec < 45) {
-        return { text: 'Arriving', overdue: false };
-    }
-    if (remainingSec < 90) {
-        return { text: 'ETA: ~1 min', overdue: false };
-    }
-    const mins = Math.round(remainingSec / 60);
-    return { text: 'ETA: ~' + mins + ' min', overdue: false };
-}
+// formatETA moved to operator-util.js — the modal's waiting label needs the
+// same phrasing, and importing the tile renderer for one pure formatter was
+// the wrong dependency direction.
 
 // isReleaseReady drives the os-release-ready blue glow. Same screen
 // handles both production and changeover; the gate behind the operator's
@@ -1300,13 +1275,21 @@ function formatETA(etaStr) {
 //   - Phase 2 model. Click fires evac via ReleaseOrderWithLineside; the
 //     supply leg auto-fires on evac pickup-confirm via HandleBinPickedUp's
 //     deferred-supply branch.
-//   - Paired evac+supply: glow when evac is at `staged` (robot at slot
-//     wait point) AND supply is at `in_transit` or `staged` (dispatched,
-//     past Manager.ReleaseOrder's pre-dispatch guard — supply has a
-//     VendorOrderID so the auto-release will fire cleanly when evac
-//     picks up). If supply is still `acknowledged` or earlier, clicking
-//     would fire evac but the supply auto-release would silently no-op
-//     against the pre-dispatch supply order; the glow waits past that.
+//   - Paired evac+supply: glow when evac is at `staged` AND supply is at
+//     `in_transit` or `staged`. This condition is NOT duplication of
+//     ComputeSwapReady even though it looks like it — the two gates front
+//     DIFFERENT machinery, and that is the whole reason they differ:
+//       · This (changeover) path releases the evac and the supply auto-fires
+//         later from HandleBinPickedUp's deferred-supply branch, which calls
+//         releaseIfReleasable and registers NOTHING. A supply Core won't take
+//         yet is dropped, not deferred — so the glow must wait for it.
+//       · swap_ready gates /release-staged → ReleaseStagedOrders, which since
+//         hop A4-ii REMEMBERS the skipped leg and re-fires it on staged. There,
+//         waiting for the supply would remove a capability the system has.
+//     Before "unifying" this with swap_ready, check which path each one feeds:
+//     collapsing them moves a changeover-path condition onto the production
+//     gate, which removes the operator's ability to defer a supply that A4-ii
+//     would have re-fired for them.
 //   - Standalone evac (no paired supply, e.g. drop-situation tasks):
 //     glow when evac is at `staged`. No supply chain to coordinate.
 //

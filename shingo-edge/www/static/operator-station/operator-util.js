@@ -211,3 +211,38 @@ export async function postAction(url, body, loadView) {
         return false;
     }
 }
+
+// formatETA renders an order's ETA as an operator-facing phrase.
+//
+// Bucket boundaries match the user-approved display rules:
+//   < 45s   → "Arriving"
+//   45–90s  → "ETA: ~1 min"
+//   ≥ 90s   → "ETA: ~N min" rounded to nearest whole minute
+//   overdue by > 60s → "Running late" + amber pill
+// No sub-minute precision past the first bucket — fake precision was the
+// thing Uber's UX research dropped. If the order has no ETA yet (Core
+// hasn't stamped one, e.g. mid-transition or backfill pending) we return
+// empty:true and the caller shows nothing rather than a placeholder.
+//
+// Lives here rather than in operator-render.js because both the tile pill
+// and the modal's waiting label need it, and a pure formatter is exactly
+// what this module is for — the alternative was the modal importing the
+// tile renderer for one function.
+export function formatETA(etaStr) {
+    if (!etaStr) return { text: '', overdue: false, empty: true };
+    const etaMs = Date.parse(etaStr);
+    if (isNaN(etaMs)) return { text: '', overdue: false, empty: true };
+    const remainingSec = (etaMs - Date.now()) / 1000;
+    const graceSec = 60;
+    if (remainingSec < -graceSec) {
+        return { text: 'Running late', overdue: true };
+    }
+    if (remainingSec < 45) {
+        return { text: 'Arriving', overdue: false };
+    }
+    if (remainingSec < 90) {
+        return { text: 'ETA: ~1 min', overdue: false };
+    }
+    const mins = Math.round(remainingSec / 60);
+    return { text: 'ETA: ~' + mins + ' min', overdue: false };
+}

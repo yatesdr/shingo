@@ -1,4 +1,4 @@
-import { esc, fillColor, postAction } from './operator-util.js';
+import { esc, fillColor, postAction, formatETA } from './operator-util.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, REFUSE_LABEL, UNDO_LABEL,
 } from './operator-supply-refusal.js';
@@ -17,6 +17,73 @@ const nodeModalContent = document.getElementById('node-modal-content');
 let loadViewRef = null;
 export function setModalLoadView(fn) { loadViewRef = fn; }
 
+// ── Don't rebuild the modal out from under a finger ──────────────────────────
+//
+// renderModal ends in `nodeModalContent.innerHTML = html`, which DESTROYS every
+// button and builds new ones. If that lands between an operator's pointerdown
+// and the click, the element the press started on no longer exists, so the
+// browser never generates a click for it — the tap is silently swallowed and
+// nothing reaches the server.
+//
+// The board refreshes on every changed view, and on a live plant the view
+// changes constantly: Springfield 2026-07-31 measured ~30 view-changing events
+// per minute sustained for a full hour (a consume node's PLC ticks alone
+// guarantee it), i.e. a full modal teardown roughly every 2 seconds the whole
+// time an operator was trying to press RELEASE.
+//
+// So: hold repaints for the duration of a press and apply the last one after.
+// The narrow window is the fix — the alternative (skip repaints whenever the
+// modal is open) leaves the operator looking at stale buttons for as long as
+// they leave it open, which is a worse failure. The real end state is a keyed
+// render that never replaces unchanged elements at all; see SHINGO_TODO "C3".
+//
+// Precedent: operator.js already skips the repaint while the release prompt is
+// up, for the same underlying reason. This covers the modal itself.
+// pressStartedAt is the RELEASE VALVE. pointerup/pointercancel are not
+// guaranteed to arrive — a backgrounded tab, a gesture captured by the browser
+// or a kiosk shell, a pointer that leaves the window — and without a valve a
+// missed one would leave pressInFlight stuck true and freeze the modal forever
+// on stale buttons. That is exactly the failure this mechanism exists to avoid,
+// so it must not be able to cause it. A press outlives its own window: anything
+// older than PRESS_MAX_MS is treated as never having ended.
+const PRESS_MAX_MS = 2000;
+let pressInFlight = false;
+let pressStartedAt = 0;
+let pendingEntry = null;
+
+function pressIsStale() {
+    return pressInFlight && (Date.now() - pressStartedAt) > PRESS_MAX_MS;
+}
+
+nodeModalContent.addEventListener('pointerdown', () => {
+    pressInFlight = true;
+    pressStartedAt = Date.now();
+});
+
+// Second valve: if the page is hidden or loses focus mid-press, the matching
+// pointerup will never be seen here.
+for (const evt of ['visibilitychange', 'blur']) {
+    window.addEventListener(evt, () => { pressInFlight = false; });
+}
+
+// pointerup on window (not the modal) so a press that drags off the button
+// still clears. The deferred repaint runs in a later task via setTimeout: click
+// is dispatched synchronously after pointerup, so repainting inline here would
+// destroy the button before its own click fired — reintroducing the bug at the
+// last possible moment.
+for (const evt of ['pointerup', 'pointercancel']) {
+    window.addEventListener(evt, () => {
+        if (!pressInFlight) return;
+        pressInFlight = false;
+        setTimeout(() => {
+            if (!pendingEntry) return;
+            const entry = pendingEntry;
+            pendingEntry = null;
+            renderModal(entry);
+        }, 0);
+    });
+}
+
 export function openModal(nodeID) {
     const entry = findNodeByID(nodeID);
     if (!entry) return;
@@ -28,9 +95,23 @@ export function openModal(nodeID) {
 export function closeModal() {
     setSelectedNodeID(null);
     nodeModal.classList.remove('active');
+    // Drop any repaint that was waiting on a press: the modal it targeted is
+    // gone, and applying it after a reopen would paint the previous node.
+    pendingEntry = null;
 }
 
 export function renderModal(entry) {
+    // A press is in flight — defer, so the button under the finger survives
+    // long enough to fire its click. See the pressInFlight comment above.
+    // A stale press (no pointerup ever arrived) releases the hold rather than
+    // freezing the modal.
+    if (pressIsStale()) {
+        pressInFlight = false;
+    }
+    if (pressInFlight) {
+        pendingEntry = entry;
+        return;
+    }
     const claim = entry.active_claim;
     const runtime = entry.runtime || {};
     const remaining = runtime.remaining_uop_cached != null ? runtime.remaining_uop_cached : 0;
@@ -398,7 +479,13 @@ export function renderModal(entry) {
                 // swap to coordinate. Fall through to the surviving leg's
                 // staged/delivered/inFlight branch so the operator isn't
                 // permanently stuck on a disabled WAITING button.
-                html += actionBtn('WAITING FOR OTHER ROBOT', 'close', false, '');
+                //
+                // The label carries the REASON (waitingLabel): this arm sits
+                // above the inFlight arm, so without it the operator gets the
+                // one label in this chain that explains nothing. The blocker is
+                // the leg that is not parked — the robot they are waiting on.
+                const blocker = active.find(o => o.status !== 'staged') || null;
+                html += actionBtn(waitingLabel(blocker), 'close', false, '');
             } else if (staged) {
                 // Sequential / single-robot — single staged, single release.
                 html += actionBtn('RELEASE', 'request', true,
@@ -572,6 +659,49 @@ export function renderModal(entry) {
     nodeModalContent.querySelectorAll('[data-action]').forEach(btn => {
         btn.addEventListener('click', handleModalAction);
     });
+}
+
+// waitingLabel explains WHY a two-robot swap is not releasable yet, reading it
+// off the leg that is not yet parked.
+//
+// THE BRANCH THIS SERVES USED TO SAY NOTHING. The two-robot "waiting" arm sits
+// ABOVE the inFlight arm in renderModal's if/else chain, and inFlight is the
+// only place that renders queue_reason / ACKNOWLEDGED / SOURCING / ROBOT IN
+// TRANSIT. So for a two-robot swap — the one case where the operator cannot act
+// and most needs to know why — the chain terminated on a bare "WAITING FOR
+// OTHER ROBOT" and every explanatory label below was unreachable.
+//
+// Springfield ALN_003, 2026-07-31: 32 minutes of bare "WAITING FOR OTHER ROBOT"
+// while the supply leg fought three navigation faults the Edge had already
+// recorded, then the abandon sweep took both legs. Measured again the same day
+// on the next pair: 38 minutes reading "acknowledged" on the board while Core
+// held it queued on `waiting_for_material` with no bin in the pool.
+//
+// queue_reason is preferred over the status word because it is a whole sentence
+// from Core ("Waiting for material: 74577-6SA0A.06") and because it survives
+// the status-write path independently — SetOrderQueueReason bypasses the
+// transition validator, so the reason lands on the Edge row even in the window
+// where the status push itself was refused.
+function waitingLabel(blocker) {
+    const base = 'WAITING FOR OTHER ROBOT';
+    if (!blocker) return base;
+    if (blocker.queue_reason) return base + ' — ' + blocker.queue_reason;
+    switch (blocker.status) {
+        case 'faulted':
+            return base + ' — faulted, recovering';
+        case 'queued':
+            return base + ' — queued';
+        case 'sourcing':
+            return base + ' — sourcing';
+        case 'acknowledged':
+            return base + ' — acknowledged, not yet dispatched';
+        case 'in_transit': {
+            const eta = formatETA(blocker.eta);
+            return eta.empty ? base + ' — in transit' : base + ' — ' + eta.text;
+        }
+        default:
+            return base;
+    }
 }
 
 function actionBtn(label, cls, enabled, action) {

@@ -150,6 +150,15 @@ function renderAll() {
                 renderModal(entry);
             }
         } else {
+            // The selected node is genuinely absent from a SUCCESSFULLY loaded
+            // view — it was deleted, unassigned from this station, or the
+            // process changed under the operator. Closing is right; a modal
+            // acting on a node that no longer exists is worse.
+            //
+            // C5 (2026-07-31) checked the failure path and it is safe: a failed
+            // or timed-out fetch returns from doLoadView BEFORE renderAll, so a
+            // network blip cannot reach this branch and slam the modal shut
+            // mid-interaction. Only a real, parsed view without the node does.
             closeModal();
         }
     }
