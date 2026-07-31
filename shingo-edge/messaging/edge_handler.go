@@ -67,10 +67,18 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	// queued, discard everything else" — so sourcing/dispatched/faulted pushes
 	// now update the Edge row instead of leaving a stale acknowledged rendering
 	// as "IN TRANSIT". staged/delivered/terminal are no-ops here (dedicated
-	// envelopes own them); a push that isn't reachable from the current status
-	// returns an error that is logged and swallowed, matching the old discard
-	// behavior.
+	// envelopes own them).
+	//
+	// A failure here means the board is now showing something Core disagrees
+	// with, so it goes to the DEBUG LOG as well as the process log. It used to
+	// be `log.Printf` only, which lands in journald — not in
+	// /opt/shingo/shingo-debug.log, which is the file anyone debugging an order
+	// actually greps. Springfield 2026-07-31: this fired 10 times in one day
+	// (every one a refused `-> queued` push) and was invisible to the
+	// investigation until journald was read directly.
 	if err := h.orderMgr.HandleCoreStatusPush(p.OrderUUID, protocol.Status(p.Status), p.Detail); err != nil {
+		h.DebugLog.Log("core status push REFUSED uuid=%s status=%s: %v — board now disagrees with Core",
+			p.OrderUUID, p.Status, err)
 		log.Printf("edge_handler: apply core status %s for %s: %v", p.Status, p.OrderUUID, err)
 	}
 

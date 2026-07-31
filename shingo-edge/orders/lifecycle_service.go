@@ -108,15 +108,29 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 // longer rejects — a dropped intermediate can no longer freeze the mirror.
 func (s *LifecycleService) ApplyCoreStatus(order *orders.Order, coreStatus protocol.Status, detail string) error {
 	switch coreStatus {
-	case StatusDispatched, StatusInTransit, StatusFaulted:
+	case StatusDispatched, StatusInTransit, StatusFaulted, StatusQueued, StatusSourcing:
 		if IsTerminal(order.Status) {
 			// A late/stale fleet push after the edge already reached a terminal
 			// state — never resurrect it; Core's terminal envelopes own that edge.
 			return nil
 		}
+		// FORCE, not Transition: this mapping is a MIRROR of Core's status, and
+		// a mirror does not validate its source. Core owns order status; the
+		// Edge reflects it. ApplyCoreStatusSnapshot has always forced these for
+		// exactly this reason ("Core is authoritative at boot") — the live path
+		// disagreeing is the bug.
+		//
+		// Queued/sourcing used to take the validated path, which silently
+		// dropped every BACKWARD move Core makes: `acknowledged -> queued` and
+		// `in_transit -> queued` are not in protocol.validTransitions, so a
+		// swap-hold or a waiting_for_material re-queue never reached the board.
+		// Springfield 2026-07-31: 10 refusals in one day, every one an order the
+		// operator saw as "acknowledged"/"in transit" while Core held it queued
+		// with no bin in the pool — one pair sat that way for 38 minutes. The
+		// refusal surfaced only as a swallowed error in journald, and an edge
+		// restart "fixed" it because the boot path forces what the live path
+		// refused.
 		return s.ForceTransition(order.ID, coreStatus, detail)
-	case StatusQueued, StatusSourcing:
-		return s.Transition(order.ID, coreStatus, detail)
 	default:
 		// staged/delivered/terminal are owned by dedicated envelopes; unknown
 		// statuses are ignored. No status write from this mapping.

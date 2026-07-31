@@ -890,31 +890,72 @@ func TestApplyCoreStatus_StagedDeliveredTerminal_Noop(t *testing.T) {
 	}
 }
 
-// TestApplyCoreStatus_InvalidFromStatus_GracefulNoop pins that when the pushed
-// status is not reachable from Edge's current status in the shared table (e.g.
-// an in_transit order being told "queued"), the mapping must NOT hard-fail —
-// it returns the error and the caller swallows it, matching the old discard
-// behavior. 26 such (from,to) pairs exist by design; no table edges are added.
-func TestApplyCoreStatus_InvalidFromStatus_GracefulNoop(t *testing.T) {
+// TestApplyCoreStatus_BackwardPushMirrorsCore pins that a Core-pushed status
+// the shared table calls unreachable is still MIRRORED onto the Edge row.
+//
+// This REVERSES what this test previously asserted. The old behavior — return
+// the error, leave the row untouched, "matching the old discard behavior" —
+// meant every BACKWARD move Core makes was silently dropped: `in_transit ->
+// queued` and `acknowledged -> queued` are not table edges, so a swap-hold or a
+// waiting_for_material re-queue never reached the board. Springfield 2026-07-31
+// measured 10 refusals in one day; one ALN_003 pair read "acknowledged" on the
+// operator screen for 38 minutes while Core held it queued with no bin in the
+// pool, and the refusal surfaced only as a swallowed journald line.
+//
+// The table itself is UNCHANGED — no edges added. What changed is that the
+// Core->Edge mirror no longer consults it: Core owns order status and the Edge
+// reflects it, which is what ApplyCoreStatusSnapshot has always done on the
+// boot path ("Core is authoritative at boot"). The live path disagreeing with
+// the boot path is why an edge restart appeared to fix this.
+func TestApplyCoreStatus_BackwardPushMirrorsCore(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	oid, _ := db.CreateOrder("uuid-inv", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
-	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
-	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
-	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
+	for _, tc := range []struct {
+		name string
+		from protocol.Status
+	}{
+		{"from_in_transit", StatusInTransit},
+		{"from_acknowledged", StatusAcknowledged},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			oid, _ := db.CreateOrder("uuid-back-"+tc.name, TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+			_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
+			_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
+			if tc.from == StatusInTransit {
+				_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
+			}
+
+			order, _ := db.GetOrder(oid)
+			testutil.MustNoErr(t, mgr.ApplyCoreStatus(order, StatusQueued, "waiting for material"),
+				"ApplyCoreStatus queued from "+string(tc.from))
+
+			got, _ := db.GetOrder(oid)
+			if got.Status != StatusQueued {
+				t.Errorf("Core's queued push must be mirrored from %s: got %q, want queued", tc.from, got.Status)
+			}
+		})
+	}
+}
+
+// TestApplyCoreStatus_TerminalIsNeverResurrected pins the one guard the mirror
+// keeps: Core's terminal envelopes own the terminal edge, so a late non-terminal
+// push must not raise an order from the dead.
+func TestApplyCoreStatus_TerminalIsNeverResurrected(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-term", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	_ = db.UpdateOrderStatus(oid, string(StatusCancelled))
 
 	order, _ := db.GetOrder(oid)
-	// in_transit → queued is NOT in the shared table. The mapping returns an
-	// error but the row is untouched (graceful, not a hard failure).
-	err := mgr.ApplyCoreStatus(order, StatusQueued, "late queue_reason")
-	if err == nil {
-		t.Fatal("expected invalid-transition error from in_transit→queued")
-	}
+	testutil.MustNoErr(t, mgr.ApplyCoreStatus(order, StatusQueued, "late push"), "ApplyCoreStatus")
+
 	got, _ := db.GetOrder(oid)
-	if got.Status != StatusInTransit {
-		t.Errorf("invalid push should leave row untouched: got %q, want in_transit", got.Status)
+	if got.Status != StatusCancelled {
+		t.Errorf("terminal order must not be resurrected: got %q, want cancelled", got.Status)
 	}
 }
 
