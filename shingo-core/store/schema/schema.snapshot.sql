@@ -951,6 +951,29 @@ CREATE TABLE public.style_claims (
     seq integer DEFAULT 0 NOT NULL
 );
 
+CREATE TABLE public.supply_refusals (
+    id bigint NOT NULL,
+    loader_node text NOT NULL,
+    payload_code text NOT NULL,
+    station_id text DEFAULT ''::text NOT NULL,
+    refused_at timestamp with time zone NOT NULL,
+    refused_by text DEFAULT ''::text NOT NULL,
+    ack_at timestamp with time zone,
+    ack_choice text DEFAULT ''::text NOT NULL,
+    ack_process_id text DEFAULT ''::text NOT NULL,
+    closed_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE SEQUENCE public.supply_refusals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.supply_refusals_id_seq OWNED BY public.supply_refusals.id;
+
 CREATE TABLE public.test_commands (
     id bigint NOT NULL,
     command_type text NOT NULL,
@@ -1041,6 +1064,8 @@ ALTER TABLE ONLY public.scene_edges ALTER COLUMN id SET DEFAULT nextval('public.
 ALTER TABLE ONLY public.scene_points ALTER COLUMN id SET DEFAULT nextval('public.scene_points_id_seq'::regclass);
 
 ALTER TABLE ONLY public.sourceability_events ALTER COLUMN id SET DEFAULT nextval('public.sourceability_events_id_seq'::regclass);
+
+ALTER TABLE ONLY public.supply_refusals ALTER COLUMN id SET DEFAULT nextval('public.supply_refusals_id_seq'::regclass);
 
 ALTER TABLE ONLY public.test_commands ALTER COLUMN id SET DEFAULT nextval('public.test_commands_id_seq'::regclass);
 
@@ -1239,6 +1264,9 @@ ALTER TABLE ONLY public.schema_migrations
 ALTER TABLE ONLY public.sourceability_events
     ADD CONSTRAINT sourceability_events_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.supply_refusals
+    ADD CONSTRAINT supply_refusals_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.test_commands
     ADD CONSTRAINT test_commands_pkey PRIMARY KEY (id);
 
@@ -1349,6 +1377,10 @@ CREATE INDEX idx_sourceability_events_payload_time ON public.sourceability_event
 CREATE INDEX idx_style_claims_payload ON public.style_claims USING btree (payload_code);
 
 CREATE INDEX idx_style_claims_process_style ON public.style_claims USING btree (process_id, style_id);
+
+CREATE UNIQUE INDEX idx_supply_refusals_open ON public.supply_refusals USING btree (loader_node, payload_code) WHERE (closed_at IS NULL);
+
+CREATE INDEX idx_supply_refusals_payload ON public.supply_refusals USING btree (payload_code, refused_at DESC);
 
 CREATE INDEX ix_process_styles_active ON public.process_styles USING btree (process_id) WHERE is_active;
 

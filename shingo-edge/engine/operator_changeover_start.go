@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -40,22 +41,49 @@ func changeoverBlockerFor(nodeName string, orderID int64, status protocol.Status
 	}
 }
 
-// blockNodeSet is every node the changeover physically touches: each diff node
-// INCLUDING SituationUnchanged, plus the indexed_over press-index seats.
+// blockNodeSet is every node the changeover physically ACTS ON: the CHANGED diff
+// nodes, plus the indexed_over press-index seats.
 //
-// A carrier moving toward an unchanged node of this process is still a carrier
-// the changeover will collide with, and the seats are the Hopkinsville blind
-// spot — the removed AbortNodeOrders sweep missed orders 1249/1251 "only because
-// it walks plan.diffs (the task nodes)" while they were delivering to PLN_02 and
-// PLN_05, and the gate that replaced it inherited the same walk.
+// The seats are the Hopkinsville blind spot — the removed AbortNodeOrders sweep
+// missed orders 1249/1251 "only because it walks plan.diffs (the task nodes)"
+// while they were delivering to PLN_02 and PLN_05, and the gate that replaced it
+// inherited the same walk. A robot is physically traversing those positions, so
+// they block.
+//
+// SituationUnchanged NODES ARE NOT IN THIS SET, and this is a correction. They
+// were, on the claim that "a carrier moving toward an unchanged node of this
+// process is still a carrier the changeover will collide with." That is not
+// true: at an unchanged node the changeover does nothing — no evacuation, no
+// supply leg, no claim change — so a carrier landing there collides with
+// nothing. The claim went unchallenged while the gate read runtime pointers,
+// which almost never held those orders; keying the gate on destination made it
+// see them and turned every cell's ordinary production traffic into a reason a
+// changeover elsewhere in the process could not start.
+//
+// TestScenario_ReleaseIsChangeoverIndependent is the invariant, and it is a real
+// product requirement rather than a test artefact: an operator changing over
+// node A must not be blocked by a normal order in flight to node B.
+//
+// This makes the set equal to cancelNodeSet plus the seats — but they stay two
+// functions, because the seats are exactly what must never be cancelled.
 //
 // plan.participants, not ListChangeoverParticipants: the changeover row does not
 // exist yet when the gate runs (Create is below, the gate above it), so there is
 // no changeoverID to read by. The in-memory set is built in planChangeover.
 func blockNodeSet(plan *changeoverPlan) []string {
+	changed := make(map[string]bool, len(plan.diffs))
+	for _, d := range plan.diffs {
+		if d.CoreNodeName == "" || d.Situation == SituationUnchanged {
+			continue
+		}
+		changed[d.CoreNodeName] = true
+	}
 	out := make([]string, 0, len(plan.participants))
 	for _, p := range plan.participants {
-		if p.CoreNodeName != "" {
+		if p.CoreNodeName == "" {
+			continue
+		}
+		if p.Role == domain.ParticipantRoleIndexedOver || changed[p.CoreNodeName] {
 			out = append(out, p.CoreNodeName)
 		}
 	}

@@ -57,8 +57,9 @@ func seedOrderTo(t *testing.T, db *store.DB, uuid, deliveryNode string, complex 
 	return id
 }
 
-// TestBlockNodeSet_IncludesIndexedOverSeatsAndUnchangedNodes is the node-set
-// half of the Hopkinsville fix, tested directly.
+// TestBlockNodeSet_IncludesSeatsButNotUnchangedNodes is the node-set half of the
+// Hopkinsville fix, tested directly, and it now also pins the boundary that fix
+// overshot.
 //
 // It is a UNIT test on blockNodeSet rather than an end-to-end changeover,
 // deliberately: a press-index changeover cannot even be planned in this harness
@@ -71,7 +72,7 @@ func seedOrderTo(t *testing.T, db *store.DB, uuid, deliveryNode string, complex 
 // missed orders 1249/1251 "only because it walks plan.diffs (the task nodes)"
 // while they were delivering to PLN_02/PLN_05, and the gate that replaced it
 // inherited the same walk.
-func TestBlockNodeSet_IncludesIndexedOverSeatsAndUnchangedNodes(t *testing.T) {
+func TestBlockNodeSet_IncludesSeatsButNotUnchangedNodes(t *testing.T) {
 	t.Parallel()
 	plan := &changeoverPlan{
 		diffs: []ChangeoverNodeDiff{
@@ -87,11 +88,26 @@ func TestBlockNodeSet_IncludesIndexedOverSeatsAndUnchangedNodes(t *testing.T) {
 	}
 
 	block := blockNodeSet(plan)
-	for _, want := range []string{"PLN_01", "PLN_04", "PLN_02", "PLN_05"} {
+	// The changed node and BOTH seats block: a robot is physically traversing a
+	// seat, which is the Hopkinsville shape the sweep's diff-walk missed.
+	for _, want := range []string{"PLN_01", "PLN_02", "PLN_05"} {
 		if !containsStr(block, want) {
 			t.Errorf("blockNodeSet missing %s — a carrier moving there collides with this "+
 				"changeover; %s is the Hopkinsville shape", want, want)
 		}
+	}
+	// The UNCHANGED node does NOT block, and this assertion is a reversal.
+	// It used to be asserted the other way, on the claim that any carrier bound
+	// for a node of this process collides with the changeover. At an unchanged
+	// node the changeover does nothing at all — no evacuation, no supply leg, no
+	// claim change — so there is nothing to collide with, and blocking there
+	// makes one cell's ordinary production traffic a reason a changeover
+	// elsewhere in the process cannot start.
+	// TestScenario_ReleaseIsChangeoverIndependent is the end-to-end statement of
+	// the same requirement; this is the unit-level guard for it.
+	if containsStr(block, "PLN_04") {
+		t.Error("blockNodeSet contains a SituationUnchanged node — an unrelated order in " +
+			"flight to it must not block a changeover that does not touch it")
 	}
 
 	// The cancel set is deliberately narrower and must stay a separate function.
@@ -118,11 +134,25 @@ func containsStr(hay []string, needle string) bool {
 	return false
 }
 
-// TestChangeoverStart_BlocksCarrierBoundForAnUnchangedParticipant — the second
-// blind spot. The node IS in plan.diffs, but the gate skipped SituationUnchanged,
-// so a carrier moving to a node this changeover touches was invisible. FAILED
-// before commit 5.
-func TestChangeoverStart_BlocksCarrierBoundForAnUnchangedParticipant(t *testing.T) {
+// TestChangeoverStart_CarrierToAnUnchangedNodeDoesNotBlock is a REVERSAL of what
+// this test used to assert, and the reversal is the point.
+//
+// It was written as "the second blind spot": the gate skipped SituationUnchanged
+// diffs, so a carrier moving there was invisible, and that was called a bug. It
+// was not. At an unchanged node the changeover performs no action — the claim is
+// identical either side, nothing is evacuated, nothing is supplied — so a carrier
+// landing there cannot collide with it.
+//
+// Blocking there had a cost the original framing never weighed: it makes every
+// cell's ordinary production traffic a reason a changeover ELSEWHERE in the
+// process cannot start. The integration scenario
+// TestScenario_ReleaseIsChangeoverIndependent states that requirement directly
+// and is what caught this.
+//
+// Kept rather than deleted, inverted, so the argument is on the record where the
+// next person to think "surely a carrier to a participating node should block"
+// will find it.
+func TestChangeoverStart_CarrierToAnUnchangedNodeDoesNotBlock(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, fromStyleID, toStyleID, _, _ := seedChangeoverScenario(t, db)
@@ -145,9 +175,10 @@ func TestChangeoverStart_BlocksCarrierBoundForAnUnchangedParticipant(t *testing.
 
 	_ = seedOrderTo(t, db, "uuid-unchanged-carrier", "SAME-NODE", false, orders.StatusInTransit)
 
-	if _, err := eng.StartProcessChangeover(processID, toStyleID, "test", ""); err == nil {
-		t.Fatal("changeover started while a carrier was in transit to a SituationUnchanged " +
-			"participant — the changeover still touches that node")
+	if _, err := eng.StartProcessChangeover(processID, toStyleID, "test", ""); err != nil {
+		t.Fatalf("changeover refused because a carrier was in transit to a SituationUnchanged "+
+			"node: %v — the changeover does nothing at that node, so unrelated production "+
+			"traffic there must not gate it", err)
 	}
 }
 
