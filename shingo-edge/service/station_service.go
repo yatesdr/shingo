@@ -535,21 +535,30 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		}
 		// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding
 		// order for something a loader operator has said they cannot supply.
-		// Attached wherever that is true, which on a loader window is its own
-		// refusal and on a cell is somebody else's — the same test either way,
-		// because "a cell that asked" is what owner decision 3 means and an
-		// outstanding order is what asking looks like.
+		//
+		// THE SUPPLIER IS NOT A CUSTOMER OF ITSELF. This used to attach the
+		// refusal wherever the payload matched, and the comment here called that
+		// "the same test either way". It is not. A loader window's own orders ARE
+		// the calls it is being asked to fill, so the window that just refused a
+		// part always matched its own refusal — and the operator who had said
+		// "no parts" was immediately asked to choose whether to wait for them or
+		// change over. Reported from Springfield the first time it was pressed.
+		//
+		// Keyed on the core node name because that is what the refusal stores and
+		// what a shared loader is identified by across its process nodes.
 		if len(byPayload) > 0 {
 			for i := range nodeView.Orders {
 				o := nodeView.Orders[i]
 				if o.PayloadCode == "" || protocol.IsTerminal(o.Status) {
 					continue
 				}
-				if r, ok := byPayload[o.PayloadCode]; ok {
-					rc := r
-					nodeView.SupplyRefusedForMe = &rc
-					break
+				r, ok := byPayload[o.PayloadCode]
+				if !ok || r.LoaderNode == node.CoreNodeName {
+					continue
 				}
+				rc := r
+				nodeView.SupplyRefusedForMe = &rc
+				break
 			}
 		}
 		// Multi-process loader-board unions: for a manual_swap node, resolve
