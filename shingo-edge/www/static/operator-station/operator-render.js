@@ -678,7 +678,20 @@ function buildLoaderCard(entry, code, counters, opts) {
     card.appendChild(el('span', { className: 'os-board-tag ' + cs.statusClass, textContent: cs.statusText }));
     card.appendChild(el('div', { className: 'os-board-detail', textContent: cs.detail }));
 
-    if (entry.operator_driven && isActiveStylePayload) {
+    // NOT GATED ON operator_driven, and that gate is why this was invisible.
+    //
+    // The server computes lineside and starvation for EVERY manual-swap produce
+    // loader — a plant-wide walk of every active consume claim — and the client
+    // then rendered it only on transitional boards. A dedicated-home board paid
+    // for the scan and threw the answer away, so an active part below its
+    // configured threshold drew whatever the status precedence gave it, which is
+    // green when a bin happens to be parked at the home. Reported from
+    // Springfield: the cell was starving and the loader card read healthy.
+    //
+    // isActiveStylePayload still gates it, and now means something: the server
+    // no longer overwrites the active set with the position's pinned parts, so
+    // a card only claims ACTIVE when a running style actually consumes it.
+    if (isActiveStylePayload) {
         var lsMap = entry.active_payload_lineside || {};
         var lsUOP = lsMap[code] != null ? lsMap[code] : 0;
         var starved = (entry.starved_payloads || {})[code] === true;

@@ -634,7 +634,12 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 			break
 		}
 	}
-	if lineside := s.activePayloadLineside(wantsLineside); len(lineside) > 0 {
+	// Runs whenever the board HAS a loader tile, not only when the lineside scan
+	// returned rows. An empty result is itself an answer — no active consume
+	// claim wants any of these parts — and the loop below has to see it to strip
+	// the ACTIVE badge off every card. Gating on len>0 left a stopped line
+	// showing a board where everything still claimed to be running.
+	if lineside := s.activePayloadLineside(wantsLineside); wantsLineside {
 		for i := range view.Nodes {
 			nv := &view.Nodes[i]
 			if nv.ActiveClaim == nil ||
@@ -642,16 +647,58 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 				nv.ActiveClaim.Role != protocol.ClaimRoleProduce {
 				continue
 			}
+			// THE LOADER AGGREGATE IS CORE-OWNED AND CARRIES THE THRESHOLD.
+			// Resolved here rather than threading it down from the block above,
+			// which resolves the same aggregate for the payload set — one extra
+			// lookup per loader tile, and it keeps the threshold read next to the
+			// comparison that uses it.
+			var loader *domain.Loader
+			if s.loaders != nil && nv.Node.CoreNodeName != "" {
+				loader, _ = s.loaders.LoaderAt(
+					domain.NodeID(nv.Node.CoreNodeName),
+					domain.LoaderRole(nv.ActiveClaim.Role))
+			}
+
 			m := map[string]int{}
 			starved := map[string]bool{}
+			// ACTIVE MEANS A RUNNING STYLE CONSUMES IT. The keys of `lineside`
+			// are exactly the payloads some ACTIVE consume claim allows, because
+			// activePayloadLineside walks active claims only — so membership here
+			// is the honest active test, and it is rebuilt below.
+			active := make([]string, 0, len(nv.ActiveStylePayloads))
 			for _, p := range nv.ActiveStylePayloads {
-				if v, ok := lineside[p]; ok {
-					m[p] = v
-					if nv.ActiveClaim != nil && linesideStarved(nv.ActiveClaim.UOPCapacity, v) {
+				v, ok := lineside[p]
+				if !ok {
+					continue
+				}
+				active = append(active, p)
+				m[p] = v
+				// The CONFIGURED threshold, not a heuristic. This was
+				// lineside < UOPCapacity/4 — a quarter-bin guess that had no
+				// relationship to the number that actually triggers
+				// replenishment, so the board could go red while the reorder
+				// logic was content, or stay calm while it was not.
+				//
+				// Zero means the loader is not on a UOP-threshold policy at all.
+				// No threshold, no claim about starvation: staying silent is
+				// correct where nobody has said what "low" means.
+				if loader != nil {
+					if t := loader.UOPThresholdFor(domain.PayloadCode(p)); t > 0 && v < t {
 						starved[p] = true
 					}
 				}
 			}
+			// REPLACES THE PINNED SET WITH THE GENUINELY ACTIVE ONE. The block
+			// above overwrites ActiveStylePayloads with LoadablePayloadCodesAt —
+			// the parts this position is CONFIGURED for — which made
+			// isActiveStylePayload always true on a dedicated-home board and every
+			// card read ACTIVE. Measured at Springfield: 7 of 22 positions were
+			// genuinely active and all 22 claimed to be.
+			//
+			// AllStylePayloads deliberately keeps the pinned set: "what can this
+			// position hold" and "what does a running style want now" are
+			// different questions, and collapsing them is what broke the badge.
+			nv.ActiveStylePayloads = active
 			if len(m) > 0 {
 				nv.ActivePayloadLineside = m
 			}
@@ -664,19 +711,18 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	return view, nil
 }
 
-// linesideStarved reports whether a manual_swap loader's lineside stock for a
-// payload has dropped into the operator-preload danger zone. v1 is a simple
-// floor: below a quarter of a full bin (capacityUOP). This is the single
-// danger-tier function — time-to-empty escalation slots in here later
-// (SHINGO_TODO "Starvation alert time-to-empty escalation") without touching
-// the view assembly or the render path. Returns false when capacity is
-// unknown (no floor to compare against).
-func linesideStarved(capacityUOP, linesideUOP int) bool {
-	if capacityUOP <= 0 {
-		return false
-	}
-	return linesideUOP < capacityUOP/4
-}
+// THE QUARTER-BIN HEURISTIC USED TO LIVE HERE and is deleted, not disabled.
+//
+// linesideStarved(capacityUOP, linesideUOP) returned linesideUOP < capacityUOP/4.
+// It was a guess with no relationship to the number that actually triggers
+// replenishment, so the board could go red while the reorder logic was content
+// or stay calm while it was not. The starvation test now reads the Core-owned
+// loader aggregate's configured UOP threshold for the payload — the same number
+// the demand sweep uses — so the board and the replenishment logic can no longer
+// disagree about what "low" means.
+//
+// Time-to-empty escalation (SHINGO_TODO "Starvation alert time-to-empty
+// escalation") slots in beside that comparison, in the view assembly.
 
 // activePayloadLineside sums the current lineside UOP per payload across EVERY
 // active-style CONSUME node on the Edge — not just this station's process — so a
