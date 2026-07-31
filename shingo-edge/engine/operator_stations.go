@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"log"
+	"strconv"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -568,8 +569,22 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// staged orders gracefully so partial states don't block the click.
 	evacOrderID, supplyOrderID, err := store.ResolveSwapPair(e.db, runtime, task)
 	if err != nil {
+		// LOG THE BOUNCE. This returns before any "[orders] release:" line and
+		// the Edge logs no HTTP, so a release that fails here used to leave NO
+		// trace anywhere — the debug log could not distinguish "the operator
+		// never clicked" from "the operator clicked and the resolver refused".
+		// That ambiguity is why the Springfield ALN_003 2026-07-31 incident
+		// could not be closed from order data alone.
+		var stagedPtr, activePtr *int64
+		if runtime != nil {
+			stagedPtr, activePtr = runtime.StagedOrderID, runtime.ActiveOrderID
+		}
+		e.logFn("release-staged REFUSED node=%s: %v (runtime staged=%s active=%s, task=%t) — operator clicked and got nothing",
+			node.Name, err, orderIDStr(stagedPtr), orderIDStr(activePtr), task != nil)
 		return fmt.Errorf("node %s: %w", node.Name, err)
 	}
+	e.logFn("release-staged node=%s resolved evac=%s supply=%s",
+		node.Name, orderIDStr(evacOrderID), orderIDStr(supplyOrderID))
 
 	// Fix D: the deferred produce paperwork fires HERE, before either release
 	// envelope, so Core applies the manifest first (outbox drains by id).
@@ -710,3 +725,14 @@ func (e *Engine) releaseIfReleasable(orderID int64, label string, disp ReleaseDi
 // pick up, so cancelling them mid-delivery deadlocks the changeover it was
 // meant to clear the way for. StartProcessChangeover now refuses and names the
 // blocking order instead — see nodesWithOrdersInFlight.)
+
+// orderIDStr renders a nullable order id for diagnostic logs: the number, or
+// "nil". Exists so the release-staged trace can show WHICH pointers the
+// resolver had — a bounced release is otherwise indistinguishable from a click
+// that never happened (Springfield ALN_003, 2026-07-31).
+func orderIDStr(id *int64) string {
+	if id == nil {
+		return "nil"
+	}
+	return strconv.FormatInt(*id, 10)
+}

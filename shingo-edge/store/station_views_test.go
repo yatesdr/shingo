@@ -131,6 +131,89 @@ func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
 	}
 }
 
+// TestComputeSwapReady_SupplyStatusIrrelevant pins that the parked evac is the
+// SINGLE gate — the supply's status must not affect the button.
+//
+// swap_ready gates /release-staged -> ReleaseStagedOrders, which since hop A4-ii
+// remembers a leg Core will not accept yet (rememberDeferredSiblingRelease) and
+// re-fires it when it reaches staged. The operator's single click therefore
+// already means "go for the pair, defer what cannot go yet". Gating the button
+// on the supply removes the ability to express that and — on the ALN_003
+// 2026-07-31 timeline specifically — would have taken the button away during
+// each of the three supply faults the operator was trying to release through.
+//
+// The look-alike condition in the JS glow (isReleaseReady) is for the CHANGEOVER
+// path, whose deferred supply release registers no re-fire. Different machinery,
+// deliberately different gates.
+func TestComputeSwapReady_SupplyStatusIrrelevant(t *testing.T) {
+	t.Parallel()
+	for _, supplyStatus := range []string{
+		"staged", "in_transit", "acknowledged", "sourcing", "queued", "faulted",
+	} {
+		t.Run(supplyStatus, func(t *testing.T) {
+			db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
+			testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
+			testutil.MustNoErr(t, db.UpdateOrderStatus(aID, supplyStatus), "mark A "+supplyStatus)
+			if !ComputeSwapReady(db, claim, runtime, nil) {
+				t.Errorf("supply=%s: SwapReady=false, want true — the parked evac is the single gate; A4-ii defers the supply", supplyStatus)
+			}
+		})
+	}
+}
+
+// TestComputeSwapReady_PressIndexSurvivesSupplyStatus guards hop A4-iv against
+// anything that returns before the either-leg branch. Any early return keyed on
+// the OTHER leg's status makes a press-index pair whose staged-slot leg is
+// parked read false, silently undoing A4-iv.
+//
+// Downstream that is not cosmetic: the modal's waiting arm matches only
+// swap_mode === 'two_robot', so a press-index node with swap_ready=false falls
+// through to the single-leg per-order RELEASE, which has no pair coordination.
+func TestComputeSwapReady_PressIndexSurvivesSupplyStatus(t *testing.T) {
+	t.Parallel()
+	for _, otherStatus := range []string{"sourcing", "queued", "acknowledged", "faulted", "in_transit"} {
+		t.Run(otherStatus, func(t *testing.T) {
+			db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
+			claim.SwapMode = protocol.SwapModeTwoRobotPressIndex
+			testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
+			testutil.MustNoErr(t, db.UpdateOrderStatus(aID, otherStatus), "mark A "+otherStatus)
+			if !ComputeSwapReady(db, claim, runtime, nil) {
+				t.Errorf("press-index, staged leg parked, other=%s: SwapReady=false, want true (hop A4-iv)", otherStatus)
+			}
+		})
+	}
+}
+
+// TestComputeSwapReady_StaleActiveOrderPointer is the reachable shape the
+// linkage check exists for, and the one an existence-only check misses.
+//
+// Both runtime pointers are populated, so ResolveSwapPair walks no sibling
+// pointer — it hands back exactly what the runtime holds. If ActiveOrderID has
+// gone stale and names an unrelated live order while the evac is correctly
+// linked to a THIRD order, an `evac.SiblingOrderID != nil` test passes and both
+// callers then treat the stale order as the supply half. On the engine side
+// that means ReleaseStagedOrders releasing an order belonging to no swap at
+// this node. The pointer must NAME the resolved supply, not merely exist.
+func TestComputeSwapReady_StaleActiveOrderPointer(t *testing.T) {
+	t.Parallel()
+	db, claim, _, aID, bID := seedSwapReadyFixture(t)
+	// A third, unrelated live order — what a stale ActiveOrderID points at.
+	strayID, err := db.CreateOrder("uuid-stray", "complex", nil, false, 1, "", "", "", "", false, "WIDGET")
+	testutil.MustNoErr(t, err, "create stray order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(strayID, "in_transit"), "stray in_transit")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "in_transit"), "mark A in_transit")
+
+	// Evac (B) stays correctly linked to A; the runtime's ACTIVE slot is stale.
+	stale := &processes.RuntimeState{StagedOrderID: &bID, ActiveOrderID: &strayID}
+	if ComputeSwapReady(db, claim, stale, nil) {
+		t.Error("expected SwapReady=false when ActiveOrderID names an order the evac is not paired with — releasing it would touch an unrelated order")
+	}
+	if _, _, err := ResolveSwapPair(db, stale, nil); err == nil {
+		t.Error("expected ResolveSwapPair to reject a stale ActiveOrderID — the engine release path resolves through here too")
+	}
+}
+
 // TestComputeSwapReady_PressIndex_EitherLegStaged is the hop A4-iv regression:
 // for two_robot_press_index the evac/supply role labels are resolved
 // POSITIONALLY and are inverted (R1 is the evac, R2 the supply/index), and the
@@ -225,8 +308,12 @@ func TestComputeSwapReady_MissingRuntimeOrders(t *testing.T) {
 // being parked on WAITING FOR OTHER ROBOT with no escape.
 func TestComputeSwapReady_TaskFallbackWhenRuntimePointersNil(t *testing.T) {
 	t.Parallel()
-	db, claim, _, _, bID := seedSwapReadyFixture(t)
+	db, claim, _, aID, bID := seedSwapReadyFixture(t)
 	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
+	// The supply leg must also be releasable — see
+	// TestComputeSwapReady_SupplyMustBeReleasable. In the SNF2 incident both
+	// robots were present; only the runtime POINTERS were lost.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "in_transit"), "mark A in_transit")
 	// Runtime with no tracked orders — simulates handler_bin_picked_up or
 	// other clears that nulled both ActiveOrderID and StagedOrderID.
 	empty := &processes.RuntimeState{}
@@ -292,8 +379,12 @@ func TestComputeSwapReady_DropHasNoSibling_ViaTaskPointer(t *testing.T) {
 // Situation check.
 func TestComputeSwapReady_DropHasNoSibling_ViaRuntimePointer(t *testing.T) {
 	t.Parallel()
-	db, claim, runtime, _, bID := seedSwapReadyFixture(t)
+	db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
 	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
+	// See the note in TestComputeSwapReady_PairWithoutSiblingPointer: A must be
+	// live, or the sibling check is not the thing being tested. This is the
+	// "drop task with a stale ActiveOrderID" shape.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "in_transit"), "mark A in_transit")
 	testutil.MustNoErr(t, db.ClearOrderSibling(bID), "clear sibling")
 	dropTask := &processes.NodeTask{Situation: "drop"}
 	if ComputeSwapReady(db, claim, runtime, dropTask) {
@@ -311,8 +402,13 @@ func TestComputeSwapReady_DropHasNoSibling_ViaRuntimePointer(t *testing.T) {
 // stay log-and-continue with a residual risk tracked in SHINGO_TODO.md.
 func TestComputeSwapReady_PairWithoutSiblingPointer(t *testing.T) {
 	t.Parallel()
-	db, claim, runtime, _, bID := seedSwapReadyFixture(t)
+	db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
 	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
+	// A must be in a plausible live status. At its DEFAULT this test can pass
+	// for the wrong reason — some unrelated gate answering instead of the
+	// linkage check. A test whose premise is "linkage is missing" must fail if
+	// only the linkage changes.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "in_transit"), "mark A in_transit")
 	// Simulate a silent LinkOrderSiblings failure: clear the pointer
 	// the fixture set.
 	testutil.MustNoErr(t, db.ClearOrderSibling(bID), "clear sibling")

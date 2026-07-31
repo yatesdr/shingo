@@ -83,6 +83,23 @@ func IsTerminal(status protocol.Status) bool {
 //
 // Faulted is intentionally NOT releasable: Core no-ops a faulted release
 // rather than erroring, so skipping it costs nothing and saves a round trip.
+//
+// WHAT "SKIPPED" COSTS DEPENDS ON THE CALLER, and the two differ. This is the
+// load-bearing distinction; do not reason about one path from the other.
+//
+//   - ReleaseStagedOrders (the /release-staged button) DEFERS. Hop A4-ii records
+//     a skipped leg via rememberDeferredSiblingRelease and re-fires it when it
+//     reaches staged, so the operator's single click means "go for the pair,
+//     defer what Core will not take yet". Nothing is lost, so nothing upstream
+//     of that button needs to gate on this predicate — and gating on it would
+//     remove the operator's ability to express the deferral at all.
+//
+//   - HandleBinPickedUp's deferred-supply branch (the CHANGEOVER release-wait
+//     path) DROPS. It calls releaseIfReleasable and registers no re-fire, so a
+//     supply skipped there is not retried while the evac has already lifted the
+//     line's bin. That is why the operator-station glow (isReleaseReady) waits
+//     for the supply on the changeover path and swap_ready does not on the
+//     production path. The two look alike and are not interchangeable.
 func ReleasableAtCore(status protocol.Status) bool {
 	return status == StatusStaged || status == StatusInTransit
 }

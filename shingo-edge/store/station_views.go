@@ -109,7 +109,10 @@ func LookupLastReleaseError(db *DB, runtime *processes.RuntimeState) string {
 //     appear while only the supply is parked — releasing the supply ahead of an
 //     un-staged evac would race a fresh bin onto the line before the old one is
 //     lifted. Order A's status stays irrelevant; the StagedOrderID leg is the
-//     single gate.
+//     single gate — and must stay that way. See the DO NOT ADD A SUPPLY GATE
+//     note at the gate itself: ReleaseStagedOrders defers and re-fires a leg
+//     Core will not take yet, so gating on the supply only removes the
+//     operator's ability to say "go".
 //   - two_robot_press_index: the evac/supply labels above are POSITIONAL and
 //     INVERTED (R1 is the evac, R2 the supply/index — see ResolveSwapPair's
 //     "KNOWN WRONG" note), and the two legs are FLEET-sequenced on their shared
@@ -127,84 +130,84 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 	if claim == nil || !claim.SwapMode.IsTwoRobot() {
 		return false
 	}
-	evacOrderID := resolveEvacOrderID(db, runtime, task)
-	if evacOrderID == nil {
+	// ONE resolver, shared with the release path. This used to walk its own
+	// ladder (resolveEvacOrderID) whose fallbacks differed from ResolveSwapPair's:
+	// that one fell through to the task pointer on ANY miss, while ResolveSwapPair
+	// reaches its task fallback only when BOTH runtime pointers are nil. With
+	// StagedOrderID nil, ActiveOrderID set, and that order carrying no sibling,
+	// the two disagreed — this function said "render RELEASE" and the click then
+	// bounced on "no sibling — not a coordinated pair". That is the same
+	// render-vs-click divergence the comment on ResolveSwapPair says was fixed on
+	// 2026-05-12; the fix went into one ladder and this one kept its own.
+	//
+	// Answering from ResolveSwapPair makes render-implies-click-resolvable
+	// STRUCTURAL rather than a property two functions have to keep agreeing on.
+	// The explicit sibling check is gone because ResolveSwapPair already errors
+	// on a single-leg pair, which is the same short-circuit.
+	evacOrderID, supplyOrderID, err := ResolveSwapPair(db, runtime, task)
+	if err != nil || evacOrderID == nil {
 		return false
 	}
-	evac, err := db.GetOrder(*evacOrderID)
-	if err != nil || evac == nil {
+	evac, gerr := db.GetOrder(*evacOrderID)
+	if gerr != nil || evac == nil {
 		return false
 	}
-	// Order graph check: a sibling pointer proves this is a coordinated
-	// pair (set at order-creation time by every site that creates one —
-	// changeover_applier.go, operator_stations.go, operator_bin_ops.go,
-	// operator_produce.go, wiring_status_changed.go). Single-leg flows
-	// (drops, manual single, etc.) have no sibling and short-circuit.
-	if evac.SiblingOrderID == nil {
-		return false
-	}
-	// two_robot gate: the positionally-resolved evac must be parked.
+	// two_robot gate: the positionally-resolved evac must be parked. The
+	// supply's status is deliberately NOT consulted.
+	//
+	// DO NOT ADD A SUPPLY GATE HERE. The operator-station glow (isReleaseReady,
+	// operator-render.js) carries one that looks like the missing half of this
+	// predicate. It is not. The two front different machinery:
+	//
+	//   - This gates /release-staged -> ReleaseStagedOrders, which since hop
+	//     A4-ii REMEMBERS a leg Core will not take yet
+	//     (rememberDeferredSiblingRelease) and re-fires it when it reaches staged
+	//     (wiring_status_changed.handleSiblingReleaseRefire). The operator's
+	//     single click already means "go for the pair, defer the rest". Gating on
+	//     the supply deletes that capability and converts "click now, machinery
+	//     defers" into "wait, then click".
+	//   - The glow gates the CHANGEOVER path, whose deferred supply release
+	//     (HandleBinPickedUp) calls releaseIfReleasable and registers NO re-fire.
+	//     There a skipped supply really is dropped, so waiting for it is right.
+	//
+	// The cost is concrete. On the ALN_003 2026-07-31 timeline the supply faulted
+	// three times while the evac sat parked — a supply gate would have taken the
+	// button away during each fault, in the very window the operator was trying
+	// to use it.
 	if evac.Status == "staged" {
 		return true
 	}
 	// press-index: role labels are inverted and the legs are fleet-sequenced,
 	// so accept the pair as release-ready when the SIBLING leg is parked too.
-	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
-		if sib, serr := db.GetOrder(*evac.SiblingOrderID); serr == nil && sib != nil && sib.Status == "staged" {
+	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex && supplyOrderID != nil {
+		if sib, serr := db.GetOrder(*supplyOrderID); serr == nil && sib != nil && sib.Status == "staged" {
 			return true
 		}
 	}
 	return false
 }
 
-// resolveEvacOrderID locates the evac (lineside) order's ID via three
-// fallbacks in order of canonicality:
-//
-//  1. runtime.StagedOrderID — the canonical evac slot.
-//  2. runtime.ActiveOrderID's sibling pointer — when StagedOrderID got
-//     nulled but ActiveOrderID survived. Mirrors ResolveSwapPair's
-//     fallback for the missing supply half.
-//  3. task.OldMaterialReleaseOrderID — when BOTH runtime pointers are
-//     nil. The planner stamps this pointer at order-creation time and
-//     runtime mutations don't clear it, so it survives
-//     handler_bin_picked_up and other clears that strip the runtime
-//     pointers. Plant 2026-05-11 (SNF2 ALN_001): both runtime pointers
-//     were nil at release time despite Core showing the evac at staged.
-//
-// The caller checks SiblingOrderID on the resolved order — if the task
-// pointer happens to identify a single-leg drop, the sibling check
-// returns false naturally. No Situation guard needed here.
-func resolveEvacOrderID(db *DB, runtime *processes.RuntimeState, task *processes.NodeTask) *int64 {
-	if runtime != nil {
-		if runtime.StagedOrderID != nil {
-			return runtime.StagedOrderID
-		}
-		if runtime.ActiveOrderID != nil {
-			supply, err := db.GetOrder(*runtime.ActiveOrderID)
-			if err == nil && supply != nil && supply.SiblingOrderID != nil {
-				return supply.SiblingOrderID
-			}
-		}
-	}
-	if task != nil && task.OldMaterialReleaseOrderID != nil {
-		return task.OldMaterialReleaseOrderID
-	}
-	return nil
-}
-
 // ResolveSwapPair returns the (evac, supply) order IDs for a two-robot
-// swap, walking the same three-fallback ladder as resolveEvacOrderID
+// swap, walking a three-fallback ladder
 // (StagedOrderID → ActiveOrderID's sibling → task.OldMaterialReleaseOrderID)
 // and then resolving the supply half via the durable sibling pointer.
 //
-// This is the canonical resolver used by both the HMI render-side
-// (ComputeSwapReady, indirectly via resolveEvacOrderID) and the
-// engine release path (engine.ReleaseStagedOrders). Pre-2026-05-12 the
-// two sides used different resolvers — the HMI had the task fallback,
-// the engine didn't — so a node with both runtime pointers nil but a
-// good task pointer would render RELEASE in the HMI and then bounce
-// with "no tracked orders to release" when clicked. Plant SNF2 ALN_001
-// hit this repeatedly during the 2026-05-11 swap cycle.
+// THE ONLY swap-pair resolver. Both the HMI render-side (ComputeSwapReady) and
+// the engine release path (engine.ReleaseStagedOrders) call it, so the button
+// can only render when the click's own resolution would succeed.
+//
+// It has taken two attempts to get there, in the same failure mode both times.
+// Pre-2026-05-12 the two sides used different resolvers — the HMI had the task
+// fallback, the engine didn't — so a node with both runtime pointers nil but a
+// good task pointer would render RELEASE and then bounce with "no tracked
+// orders to release" when clicked (plant SNF2 ALN_001, repeatedly, during the
+// 2026-05-11 swap cycle). That fix gave the engine a task fallback but left the
+// HMI's separate ladder in place, and the two still disagreed whenever
+// StagedOrderID was nil, ActiveOrderID was set, and that order had no sibling:
+// the HMI fell through to the task pointer, the engine did not (its fallback is
+// gated on BOTH pointers being nil) and errored on the missing sibling. Since
+// 2026-07-31 ComputeSwapReady answers from here, so there is no second ladder
+// left to drift.
 //
 // Returns an error when no evac can be resolved or when the resolved
 // pair is single-leg (one half has no sibling). Single-leg flows
@@ -281,6 +284,31 @@ func ResolveSwapPair(db *DB, runtime *processes.RuntimeState, task *processes.No
 		}
 		id := *evac.SiblingOrderID
 		supplyID = &id
+	} else {
+		// BOTH pointers were populated, so neither branch above ran and no
+		// sibling pointer has been read. Verify the linkage here, or this
+		// function hands back "a pair" it never checked is one.
+		//
+		// IDENTITY, NOT JUST EXISTENCE. `evac.SiblingOrderID != nil` alone is
+		// not enough: the reachable failure is a STALE ActiveOrderID pointing at
+		// an unrelated live order while the evac is correctly linked to a third.
+		// Existence passes that, and the callers then treat the stale order as
+		// the supply half — ReleaseStagedOrders would release an order that has
+		// nothing to do with this node. Requiring the evac's sibling pointer to
+		// NAME the resolved supply closes it.
+		//
+		// Scope, precisely: this reads the evac's pointer, which is the one both
+		// callers gate on. A pair whose SUPPLY-side back-pointer was cleared
+		// while the evac's remains correct still passes — the linkage the
+		// resolver actually used is intact, and asserting the reverse direction
+		// too would cost a second GetOrder for a state no caller distinguishes.
+		evac, gerr := db.GetOrder(*evacID)
+		if gerr != nil {
+			return nil, nil, fmt.Errorf("get evac order %d: %w", *evacID, gerr)
+		}
+		if evac.SiblingOrderID == nil || *evac.SiblingOrderID != *supplyID {
+			return nil, nil, fmt.Errorf("order %d is not paired with %d — stale or missing sibling linkage (single-leg flow should use per-order release)", *evacID, *supplyID)
+		}
 	}
 	return evacID, supplyID, nil
 }
