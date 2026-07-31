@@ -322,16 +322,16 @@ func (db *DB) runVersionedMigrations() error {
 
 		// v23 (complex-order buried-reshuffle scope, v7) added the
 		// pending_restocks table for the restore-blockers subsystem. That
-		// subsystem is RETIRED — blockers lie now — and v52 drops the table.
+		// subsystem is RETIRED — blockers lie now — and v70 drops the table.
 		//
 		// v23's body still creates the table so the migration history stays
 		// intact, but its verify is now ALWAYS-TRUE on purpose: keying it on
 		// TableExists would make the self-heal RESURRECT the retired table on
-		// every boot after v52 drops it (verify fails → re-run v23 → re-create).
+		// every boot after v70 drops it (verify fails → re-run v23 → re-create).
 		// A retired table's ABSENCE is the correct state, so v23's application is
 		// tracked by schema_migrations alone. The framework must never resurrect a
 		// retired table.
-		{23, "add pending_restocks table for crash-safe restore listeners (retired at v52)",
+		{23, "add pending_restocks table for crash-safe restore listeners (retired at v70)",
 			v23PendingRestocks,
 			func(schema.Querier) bool { return true }},
 
