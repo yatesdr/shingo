@@ -1,5 +1,8 @@
 import { esc, fillColor, postAction } from './operator-util.js';
 import {
+    confirmRefuseSupply, confirmUndoSupplyRefusal, REFUSE_LABEL, UNDO_LABEL,
+} from './operator-supply-refusal.js';
+import {
     getView, getSelectedNodeID, setSelectedNodeID,
     findNodeByID, isReplenishing,
 } from './operator-state.js';
@@ -531,6 +534,39 @@ export function renderModal(entry) {
     html += '<button type="button" class="os-action-btn close" data-action="close">CLOSE</button>';
     html += '</div>';
 
+    // THE SUPPLY REFUSAL, BELOW EVERYTHING ELSE AND BEHIND A RULE.
+    //
+    // Every other control on this modal acts on the material in front of the
+    // operator. This one tells somebody at another node that their parts are not
+    // coming, which is a different kind of act, so it does not share a row with
+    // them. Last and separated, not hidden: reaching it must never require
+    // knowing it is there.
+    //
+    // Only on loader windows, matching what the server will accept — a node that
+    // is not a manual-swap window renders no loader card, so a refusal against it
+    // could not have come from a person looking at one.
+    if (claim && claim.swap_mode === 'manual_swap') {
+        const refusable = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
+            ? claim.allowed_payload_codes
+            : (claim.payload_code ? [claim.payload_code] : []);
+        if (refusable.length > 0) {
+            const standing = entry.supply_refusals || {};
+            html += '<div class="modal-divider"></div>';
+            refusable.forEach(function(code) {
+                const refused = !!standing[code];
+                // The part is named on the button whenever the window carries more
+                // than one, because on a shared window "NO PARTS AVAILABLE" alone
+                // does not say which part and the operator would be guessing.
+                const suffix = refusable.length > 1 ? ' — ' + esc(code) : '';
+                html += '<button type="button" class="os-board-refusal-btn"' +
+                    (refused ? ' data-refused="1"' : '') +
+                    ' data-action="supply-' + (refused ? 'undo' : 'refuse') + ':' + esc(code) + '">' +
+                    (refused ? UNDO_LABEL : REFUSE_LABEL) + suffix +
+                    '</button>';
+            });
+        }
+    }
+
     nodeModalContent.innerHTML = html;
 
     nodeModalContent.querySelectorAll('[data-action]').forEach(btn => {
@@ -571,6 +607,24 @@ const ACTION_HANDLERS = {
         const sid = getSelectedNodeID();
         const entry = sid !== null ? findNodeByID(sid) : null;
         openReleasePrompt(url, entry);
+    },
+
+    // Both refusal verbs close the modal and reload the board on success: the
+    // card behind it is about to change state, and leaving a stale modal over a
+    // card that now says something different is how an operator ends up acting
+    // twice.
+    'supply-refuse': (code) => {
+        const sid = getSelectedNodeID();
+        const entry = sid !== null ? findNodeByID(sid) : null;
+        if (!entry) return;
+        confirmRefuseSupply(entry.node.id, code, () => { closeModal(); if (loadViewRef) loadViewRef(); });
+    },
+
+    'supply-undo': (code) => {
+        const sid = getSelectedNodeID();
+        const entry = sid !== null ? findNodeByID(sid) : null;
+        if (!entry) return;
+        confirmUndoSupplyRefusal(entry.node.id, code, () => { closeModal(); if (loadViewRef) loadViewRef(); });
     },
 
     'stranded-chip': (arg) => {

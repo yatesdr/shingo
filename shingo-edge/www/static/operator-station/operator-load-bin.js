@@ -1,5 +1,10 @@
 import { esc, postAction, showToast, fetchWithTimeout } from './operator-util.js';
 import { openKeypad } from './operator-keypad.js';
+import { findNodeByID } from './operator-state.js';
+import {
+    confirmRefuseSupply, confirmUndoSupplyRefusal, standingRefusalFor,
+    REFUSE_LABEL, UNDO_LABEL,
+} from './operator-supply-refusal.js';
 
 let loadBinState = null;
 let loadViewRef = null;
@@ -29,10 +34,39 @@ export function openLoadBin(nodeID, allowedCodes, defaultCapacity) {
         payloadEl.appendChild(btn);
     });
     setSubmittingUI(false);
+    // Hidden until a part is picked. A refusal names a part, and on a
+    // multi-part window there is nothing to name yet. selectLoadPayload shows
+    // it — including the single-part case below, which selects immediately.
+    const refusalWrap = document.getElementById('load-bin-refusal-wrap');
+    if (refusalWrap) refusalWrap.style.display = 'none';
     document.getElementById('load-bin-modal').classList.add('active');
     if (allowedCodes.length === 1) {
         selectLoadPayload(allowedCodes[0]);
     }
+}
+
+// syncRefusalControl draws the supply-refusal button for the part now selected.
+//
+// It reads the standing refusal from the board data already in memory rather
+// than asking the server: the board is the thing the operator is looking at, so
+// answering from anything else risks the modal disagreeing with the tile behind
+// it. A part with no refusal offers to make one; a part already refused offers
+// only to take it back.
+function syncRefusalControl() {
+    const wrap = document.getElementById('load-bin-refusal-wrap');
+    const btn = document.getElementById('load-bin-refuse');
+    if (!wrap || !btn || !loadBinState) return;
+    const code = loadBinState.payloadCode;
+    if (!code) { wrap.style.display = 'none'; return; }
+    const entry = findNodeByID(loadBinState.nodeID);
+    const refusal = standingRefusalFor(entry, code);
+    btn.textContent = refusal ? UNDO_LABEL : REFUSE_LABEL;
+    btn.dataset.mode = refusal ? 'undo' : 'refuse';
+    // Drives the full-weight styling. Set as a presence attribute, matching the
+    // node modal, so one CSS rule covers both places the control appears.
+    if (refusal) btn.dataset.refused = '1';
+    else delete btn.dataset.refused;
+    wrap.style.display = '';
 }
 
 async function selectLoadPayload(code) {
@@ -41,6 +75,7 @@ async function selectLoadPayload(code) {
     document.querySelectorAll('#load-bin-payload button').forEach(function(btn) {
         btn.className = 'os-action-btn' + (btn.dataset.code === code ? ' request' : '');
     });
+    syncRefusalControl();
     const rows = document.getElementById('load-bin-rows');
     rows.innerHTML = '<div style="color:#999;text-align:center;padding:12px">Loading manifest...</div>';
     // Bound the fetch (fetchWithTimeout): a browser fetch has no default timeout,
@@ -194,6 +229,21 @@ document.getElementById('load-bin-cancel').addEventListener('click', function() 
     closeLoadBin();
 });
 document.getElementById('load-bin-submit').addEventListener('click', submitLoadBin);
+
+// The refusal control closes the modal on success. Reporting no parts and
+// loading a bin are opposite statements about the same card, so leaving the load
+// form open behind a refusal would invite the operator to make both.
+document.getElementById('load-bin-refuse').addEventListener('click', function() {
+    if (!loadBinState || loadBinState.submitting) return;
+    const nodeID = loadBinState.nodeID;
+    const code = loadBinState.payloadCode;
+    const done = function() { closeLoadBin(); if (loadViewRef) loadViewRef(); };
+    if (this.dataset.mode === 'undo') {
+        confirmUndoSupplyRefusal(nodeID, code, done);
+    } else {
+        confirmRefuseSupply(nodeID, code, done);
+    }
+});
 
 // CLEAR BIN handler removed — the button is hidden in the template and
 // its destructive semantics overlap the release prompt's RELEASE EMPTY

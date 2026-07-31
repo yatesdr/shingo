@@ -67,6 +67,16 @@
                 <button type="button" class="os-action-btn close" style="font-size:16px;padding:12px 24px" id="load-bin-cancel">CANCEL</button>
                 <button type="button" class="os-action-btn request" style="font-size:16px;padding:12px 24px" id="load-bin-submit">CONFIRM LOAD</button>
             </div>
+            <!-- Separated from the pair above by a rule, not just spacing. The two
+                 buttons above complete the load in front of the operator; this one
+                 tells somebody else their parts are not coming. Sitting it in the
+                 same row would make a different KIND of action look like a third
+                 option in the same family. Hidden until a part is selected — a
+                 refusal names a part, and there is nothing to name before then. -->
+            <div id="load-bin-refusal-wrap"
+                 style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid #3a3f4e">
+                <button type="button" class="os-board-refusal-btn" id="load-bin-refuse"></button>
+            </div>
         </div>
     </div>
 

@@ -610,53 +610,6 @@ function waitedLabel(created) {
 // across cards. The card's STATE (status/detail/action/badge facts) comes from
 // cardModel (operator-window-state.js); this function is presentation only — DOM,
 // the transitional coverage badge, and idle-card hiding.
-// refusalButton builds the card's supplier control — "REPORT NO PARTS" at rest,
-// or "UNDO — I CAN SUPPLY" once a refusal stands.
-//
-// BOUND TO (node, payload), never to a bare payload. The operator is standing at
-// one part on one window and that pair is the whole of what they can see, so the
-// control cannot be aimed at anything wider than the card under their thumb.
-//
-// It is NOT restricted to cards with a live call. That restriction was the
-// original design and was removed on owner correction: the person on the truck
-// can see an empty rack before anybody calls for it, and making them wait for
-// the call discards exactly the warning time that makes this useful.
-//
-// The confirm is not ceremony. Refusing tells another operator their parts are
-// not coming and may end with them abandoning a run, and it is one tap on a
-// board being read from a forklift seat. UNDO is confirmed too — withdrawing a
-// refusal the cell has already acted on is its own kind of surprise.
-function refusalButton(entry, code, label, action) {
-    var btn = el('button', { className: 'os-board-refusal-btn', textContent: label });
-    btn.addEventListener('click', function (evt) {
-        // The card itself is tappable (load / swap). This control must not also
-        // fire that.
-        evt.stopPropagation();
-        var question = action === 'refuse'
-            ? 'Tell the cell there are no ' + code + ' available?'
-            : 'Withdraw the refusal for ' + code + '?';
-        if (!window.confirm(question)) return;
-        var url = '/api/process-nodes/' + entry.node.id + '/supply-refusal';
-        var body = { payload_code: code };
-        if (action === 'refuse') {
-            postAction(url, body, loadViewRef);
-        } else {
-            // DELETE carries a body here because the card key is (node, payload)
-            // and the payload cannot ride the path without inventing an encoding
-            // for part numbers that contain a slash.
-            fetch(url, {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            }).then(function (res) {
-                if (!res.ok) { showToast('Could not withdraw the refusal', 'error'); return; }
-                if (loadViewRef) loadViewRef();
-            }).catch(function () { showToast('Could not withdraw the refusal', 'error'); });
-        }
-    });
-    return btn;
-}
-
 function buildLoaderCard(entry, code, counters, opts) {
     var claim = entry.active_claim;
     var card = el('div', { className: 'os-board-card' });
@@ -755,22 +708,20 @@ function buildLoaderCard(entry, code, counters, opts) {
         }));
     }
 
-    // THE SUPPLIER CONTROL IS ON EVERY CARD, not only on a queued one.
+    // THE CARD SHOWS THE STATE AND CARRIES NO BUTTON.
     //
-    // It was originally scoped to QUEUED — a standing call with nothing coming —
-    // on the reasoning that a refusal answers a request, so with nothing
-    // requested there is nothing to refuse. Owner correction, and it is right:
-    // the reach-truck operator knows the rack is empty when they look at it, and
-    // that is worth saying BEFORE a cell calls rather than only after. Waiting
-    // for the call throws away the warning time the operator actually has.
+    // Both controls — reporting and withdrawing — live in the modals the card
+    // opens, under the actions already there. Owner direction, and the board
+    // makes the case: a control on every card put a permanent block on every
+    // healthy tile, and the resting label had to assert "NO PARTS AVAILABLE" on
+    // cards where that was not true. The board says what IS; the modal is where
+    // you say something.
     //
-    // A refusal recorded against a card with no live call is not lost. The cell
-    // side attaches it when that cell raises a call for the payload, so it warns
-    // the next cell that asks instead of the one that already did.
+    // What stays here is the answer, once given: red, attributed, and timed.
     if (refusal) {
         // --waiting supplies the hue and --refused only kills the animation, so
-        // the two states cannot drift apart into a second red. A refused card
-        // reads red whether or not it is also queued.
+        // the two cannot drift apart into a second red. A refused card reads red
+        // whether or not it is also queued.
         card.classList.add('os-board-card--waiting');
         card.classList.add('os-board-card--refused');
         // Attribution, not a verdict. A PERSON said this — the sentence a
@@ -783,13 +734,6 @@ function buildLoaderCard(entry, code, counters, opts) {
                 (refusal.refused_by ? ' — ' + refusal.refused_by : '') +
                 (refusal.answered ? ' · cell chose to ' + (refusal.ack_choice || 'wait') : ' · awaiting the cell'),
         }));
-        card.appendChild(refusalButton(entry, code, 'UNDO — I CAN SUPPLY', 'undo'));
-    } else {
-        // The resting label is an ACTION, not a state. Labelling it
-        // "NO PARTS AVAILABLE" put that sentence on every healthy card, so the
-        // board asserted the thing the button merely offers to say. The state
-        // wording appears above, once a refusal actually stands.
-        card.appendChild(refusalButton(entry, code, 'REPORT NO PARTS', 'refuse'));
     }
 
     // Corner badge, only for REAL per-payload orders (the agnostic blank-payload
