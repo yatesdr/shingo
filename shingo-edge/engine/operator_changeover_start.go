@@ -98,9 +98,17 @@ func cancelNodeSet(plan *changeoverPlan) []string {
 // very empty carriers the changeover's own index legs are about to pick up, and
 // cancelling those mid-delivery leaves the index legs waiting for bins that are
 // never coming — a permanent deadlock (HK 2026-07-28: orders 1249/1251 escaped
-// it only by accident). This cancels BY STATUS, scoped to protocol.IsPreDispatch,
-// which provably cannot hold a carrier. Same operation, different predicate,
-// and the predicate is the entire difference.
+// it only by accident). This cancels BY STATUS, scoped to the statuses
+// protocol.ChangeoverStartActionFor calls Cancel, none of which can hold a
+// carrier. Same operation, different rule, and the rule is the entire difference.
+//
+// THE STATUS SET COMES FROM THE SHARED CLASSIFIER, NOT FROM IsPreDispatch. It
+// used to come from IsPreDispatch and that was the SNF2 defect of 30 July: that
+// predicate answers the fulfillment scanner's question ("is this a retryable
+// acquisition state"), which excludes submitted and acknowledged, and an order
+// sitting in either when a changeover started survived it. Two styles were then
+// live against one node. The classifier answers THIS question and the block gate
+// reads the same function, so the two halves cannot disagree about a status.
 //
 // NO LOADER CARVE-OUT, AND THERE MUST NOT BE ONE. Earlier revisions of this
 // design carried a swap-mode clause to spare threshold L1s and operator
@@ -146,7 +154,7 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 	reason := "cancelled at changeover start — the line is changing over"
 	for i := range live {
 		o := live[i]
-		if !protocol.IsPreDispatch(o.Status) {
+		if protocol.ChangeoverStartActionFor(o.Status) != protocol.ChangeoverStartCancel {
 			continue
 		}
 		if !e.orderPlacesBinAtAny(o.ID, o.DeliveryNode, nodes) {

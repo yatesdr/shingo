@@ -442,9 +442,13 @@ func (s Status) IsOperatorVisible() bool { return IsOperatorVisible(s) }
 //
 // And what is deliberately NOT here:
 //
-//   - pending / sourcing / queued: IsPreDispatch — no carrier has been
-//     assigned, so cancelling them provably cannot strand one. That is the
-//     entire difference between this gate and the sweep that was removed.
+// And what is deliberately NOT here — but read the second half of each entry,
+// because "does not block" is only half a decision and getting the other half
+// wrong is what broke SNF2 on 30 July:
+//
+//   - pending / sourcing / queued: no carrier has been assigned, so cancelling
+//     them provably cannot strand one. That is the entire difference between
+//     this gate and the sweep that was removed. THEY ARE CANCELLED.
 //   - submitted / acknowledged: Edge-lifecycle words, not fleet states. RDS
 //     never emits acknowledged (fleet/seerrds never mentions it) and Core's
 //     vendor ladder starts at dispatched. Nothing is moving. They must also
@@ -452,7 +456,10 @@ func (s Status) IsOperatorVisible() bool { return IsOperatorVisible(s) }
 //     AbandonStuckOrders is scoped to {dispatched, staged}, no Core reconciler
 //     or Edge ticker transitions them, and this HMI exposes no operator order
 //     cancel — so blocking here would lock an operator out of changeover until
-//     somebody restarted Edge.
+//     somebody restarted Edge. THEY ARE ALSO CANCELLED, and originally they
+//     were not: the reasoning above stops at "must not block" and was allowed
+//     to imply "therefore leave alone". Two of them outlived a changeover at
+//     SNF2 and the node took deliveries for two styles at once.
 //   - delivered: the bin physically arrived. The choreography is over and only
 //     the operator's confirm is outstanding. Note it is NOT auto-confirmed to
 //     clear the gate — ConfirmDelivery asserts a count, and asserting a count
@@ -460,8 +467,13 @@ func (s Status) IsOperatorVisible() bool { return IsOperatorVisible(s) }
 //     manufactured.
 //   - reshuffling: a compound parent waiting on children that rearrange
 //     storage, not a carrier bound for the line.
+//
+// DEFINED VIA THE CLASSIFIER so this gate and the cancel sweep read one source.
+// It was IsVendorActive(s) || s == StatusFaulted, which is the same set, but two
+// independent spellings of a set drift the moment one is edited — and the SNF2
+// defect was exactly a second spelling (IsPreDispatch) quietly disagreeing.
 func BlocksChangeoverStart(s Status) bool {
-	return IsVendorActive(s) || s == StatusFaulted
+	return ChangeoverStartActionFor(s) == ChangeoverStartBlock
 }
 
 // BlocksChangeoverStart is the method form.
@@ -509,16 +521,43 @@ func (a ChangeoverStartAction) String() string {
 // accident. Here a new status falls to default and TestChangeoverStartActionIsExhaustive
 // fails. Same shape as FormatQueueSentence's default arm and AllQueueCodes.
 //
-// The two named predicates are the authority for their own sets;
-// TestChangeoverStartActionAgreesWithPredicates pins this switch against them
-// so the two can never drift.
+// THIS FUNCTION IS THE AUTHORITY. Both the block gate and the cancel sweep call
+// it. That is a correction: it was written as a cross-check beside two other
+// predicates and nothing in production called it, so its exhaustiveness test
+// proved only that a function nobody ran was total. Springfield SNF2, 30 July,
+// is what that cost — below.
+//
+// SUBMITTED AND ACKNOWLEDGED ARE CANCELLED, NOT PASSED. They were passed, and it
+// was wrong. The lifecycle runs
+//
+//	pending → submitted → acknowledged → sourcing/queued → dispatched → in_transit
+//
+// so those two sit BETWEEN pending and sourcing, all four of which are before a
+// robot holds anything. Passing them punched a two-status hole in the middle of
+// a contiguous pre-fleet region, and an order that happened to be sitting in the
+// hole at the moment a changeover started survived it.
+//
+// SNF2 on 30 July: two complex orders for the outgoing style reached
+// `acknowledged` thirteen seconds before the operator started a changeover. They
+// did not block the start, correctly, because no robot had them. They were also
+// not cancelled, so the changeover created its own orders for the incoming style
+// against the same node and the line had deliveries for two different styles
+// live at once.
+//
+// The hole came from reusing IsPreDispatch for the cancel sweep. That predicate
+// belongs to the fulfillment scanner and means "retryable acquisition state",
+// which is a different question from "is anything holding this yet". The name
+// fit and the membership did not.
 func ChangeoverStartActionFor(s Status) ChangeoverStartAction {
 	switch s {
-	case StatusPending, StatusSourcing, StatusQueued:
+	case StatusPending, StatusSubmitted, StatusAcknowledged, StatusSourcing, StatusQueued:
+		// Pre-fleet, contiguous. Nothing is carrying a bin for any of these, so
+		// cancelling cannot strand a changeover the way the Hopkinsville case
+		// did — that hazard begins at dispatched.
 		return ChangeoverStartCancel
 	case StatusDispatched, StatusInTransit, StatusStaged, StatusFaulted:
 		return ChangeoverStartBlock
-	case StatusSubmitted, StatusAcknowledged, StatusDelivered, StatusReshuffling:
+	case StatusDelivered, StatusReshuffling:
 		return ChangeoverStartPass
 	case StatusConfirmed, StatusCancelled, StatusFailed, StatusSkipped:
 		// Terminal. There is nothing to cancel and nothing to wait for.

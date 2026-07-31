@@ -1418,22 +1418,26 @@ func TestStartChangeover_PassesNonBlockingStatuses(t *testing.T) {
 			}
 
 			// Not blocking and not cancelled are different properties, and the
-			// split is exactly protocol.IsPreDispatch. A pre-dispatch order holds
-			// no carrier, so the changeover cancels it outright; submitted /
-			// acknowledged / delivered are past that point — nothing is moving,
-			// but something real has happened to them — so they are left alone.
+			// split is protocol.ChangeoverStartActionFor — NOT IsPreDispatch,
+			// which is what this test used to assert and what let SNF2 happen.
+			// Everything with no carrier is cancelled, and that now includes
+			// submitted and acknowledged. Only `delivered` survives: the bin is
+			// physically there and all that is outstanding is the operator's
+			// count, which the changeover has no business discarding.
 			order, gerr := db.GetOrder(orderID)
 			testutil.MustNoErr(t, gerr, "reload order")
-			if protocol.IsPreDispatch(status) {
+			if protocol.ChangeoverStartActionFor(status) == protocol.ChangeoverStartCancel {
 				if order.Status != orders.StatusCancelled {
-					t.Errorf("%s order = %s, want cancelled at changeover start", status, order.Status)
+					t.Errorf("%s order = %s, want cancelled at changeover start — leaving it "+
+						"alive lets an outgoing-style order outlive the changeover "+
+						"(SPR SNF2 2026-07-30)", status, order.Status)
 				}
 				return
 			}
 			if orders.IsTerminal(order.Status) {
-				t.Errorf("%s order was terminated (status=%s) — only pre-dispatch orders are "+
-					"cancelled; this one has no carrier but is past the point where the "+
-					"changeover may discard it", status, order.Status)
+				t.Errorf("%s order was terminated (status=%s) — the bin has landed and only "+
+					"the operator's count is outstanding; the changeover must not discard it",
+					status, order.Status)
 			}
 		})
 	}

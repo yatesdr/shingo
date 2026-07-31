@@ -275,18 +275,46 @@ func TestChangeoverStartActionIsExhaustive(t *testing.T) {
 	}
 }
 
-// TestChangeoverStartActionAgreesWithPredicates pins the explicit switch
-// against the two predicates that own the sets. The switch is exhaustive and
-// the predicates are the authority; this is what stops them drifting apart.
-func TestChangeoverStartActionAgreesWithPredicates(t *testing.T) {
+// TestCancelledStatusesCannotBeHoldingABin is the SAFETY property, and it is
+// the one that actually matters. Everything else about this classification is a
+// judgement call; this is the invariant Hopkinsville paid for on 28 July, where
+// cancelling a leg that was carrying the changeover's own empty carriers would
+// have deadlocked it permanently.
+//
+// It is asserted against IsVendorActive, which is derived independently of the
+// classifier, so this is a real cross-check rather than a restatement.
+//
+// THIS REPLACES A TEST THAT PINNED THE CANCEL SET TO IsPreDispatch. That test
+// passed for months and enforced the SNF2 defect: IsPreDispatch belongs to the
+// fulfillment scanner and excludes submitted/acknowledged, so pinning to it made
+// "the classifier agrees with the scanner's predicate" the property under test,
+// which nobody needed, while the property anybody cared about went unasserted. A
+// test can hold two things in agreement and still be holding them both wrong.
+func TestCancelledStatusesCannotBeHoldingABin(t *testing.T) {
 	t.Parallel()
 	for _, s := range AllStatuses() {
-		action := ChangeoverStartActionFor(s)
-		if got, want := action == ChangeoverStartCancel, IsPreDispatch(s); got != want {
-			t.Errorf("status %q: classified cancel=%v but IsPreDispatch=%v", s, got, want)
+		if ChangeoverStartActionFor(s) != ChangeoverStartCancel {
+			continue
 		}
-		if got, want := action == ChangeoverStartBlock, BlocksChangeoverStart(s); got != want {
-			t.Errorf("status %q: classified block=%v but BlocksChangeoverStart=%v", s, got, want)
+		if IsVendorActive(s) || s == StatusFaulted {
+			t.Errorf("status %q is classified cancel but a robot may be holding a bin "+
+				"for it — cancelling it can strand the changeover that needs the bin "+
+				"(HK 2026-07-28)", s)
+		}
+	}
+}
+
+// TestBlockedStatusesAreExactlyTheVendorActiveOnes pins the block arm against
+// the independent predicate. BlocksChangeoverStart now delegates to the
+// classifier, so asserting the two agree would be circular; IsVendorActive does
+// not, which is what makes this worth running.
+func TestBlockedStatusesAreExactlyTheVendorActiveOnes(t *testing.T) {
+	t.Parallel()
+	for _, s := range AllStatuses() {
+		got := ChangeoverStartActionFor(s) == ChangeoverStartBlock
+		want := IsVendorActive(s) || s == StatusFaulted
+		if got != want {
+			t.Errorf("status %q: classified block=%v but vendor-active-or-faulted=%v", s, got, want)
 		}
 	}
 }
@@ -326,21 +354,36 @@ func TestChangeoverStartNeverCancelsOrBlocksATerminalOrder(t *testing.T) {
 	}
 }
 
-// TestAcknowledgedAndSubmittedNeverBlock is a named regression, not a
-// duplicate of the membership test. Nothing in either service reaps these two
-// statuses (AbandonStuckOrders is scoped to {dispatched, staged}) and this HMI
-// exposes no operator order cancel, so blocking on them would lock an operator
-// out of changeover until Edge restarted. If a future edit adds them to the
-// block set, this test names the consequence.
-func TestAcknowledgedAndSubmittedNeverBlock(t *testing.T) {
+// TestAcknowledgedAndSubmittedAreCancelledNotBlockedAndNotIgnored carries BOTH
+// halves of the decision for these two statuses, because carrying only the first
+// half is precisely what went wrong.
+//
+// They must NOT BLOCK: nothing in either service reaps them (AbandonStuckOrders
+// is scoped to {dispatched, staged}) and this HMI exposes no operator order
+// cancel, so blocking would lock an operator out of changeover until Edge
+// restarted.
+//
+// They must BE CANCELLED: Springfield SNF2, 30 July. Two complex orders for the
+// outgoing style reached acknowledged thirteen seconds before an operator
+// started a changeover. They correctly did not block — no robot had them — and
+// they were then left alive, so the changeover raised its own orders for the
+// incoming style against the same node and the line had two styles' deliveries
+// in flight at once.
+//
+// The original test asserted the first half and "want pass" for the second,
+// which reads as a decision and was an omission: the reasoning that established
+// "must not block" was allowed to imply "therefore leave alone". A status that
+// no robot is holding is exactly a status that should be cancelled.
+func TestAcknowledgedAndSubmittedAreCancelledNotBlockedAndNotIgnored(t *testing.T) {
 	t.Parallel()
 	for _, s := range []Status{StatusAcknowledged, StatusSubmitted} {
 		if BlocksChangeoverStart(s) {
 			t.Errorf("%q must not block changeover start: nothing reaps it and the "+
 				"operator has no way to clear it", s)
 		}
-		if a := ChangeoverStartActionFor(s); a != ChangeoverStartPass {
-			t.Errorf("%q classified %s, want pass", s, a)
+		if a := ChangeoverStartActionFor(s); a != ChangeoverStartCancel {
+			t.Errorf("%q classified %s, want cancel — leaving it alive lets an order for "+
+				"the outgoing style outlive the changeover (SPR SNF2 2026-07-30)", s, a)
 		}
 	}
 }
