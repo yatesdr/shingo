@@ -763,25 +763,6 @@ CREATE SEQUENCE public.pending_lane_extensions_id_seq
 
 ALTER SEQUENCE public.pending_lane_extensions_id_seq OWNED BY public.pending_lane_extensions.id;
 
-CREATE TABLE public.pending_restocks (
-    id bigint NOT NULL,
-    complex_parent_id bigint NOT NULL,
-    synthetic_parent_id bigint NOT NULL,
-    target_bin_id bigint NOT NULL,
-    expected_from_node_id bigint NOT NULL,
-    restock_plan_json text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE SEQUENCE public.pending_restocks_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.pending_restocks_id_seq OWNED BY public.pending_restocks.id;
-
 CREATE TABLE public.process_styles (
     process_id text NOT NULL,
     style_id text NOT NULL,
@@ -842,7 +823,9 @@ CREATE TABLE public.reservations (
     expires_at timestamp with time zone,
     resource_kind text DEFAULT 'bin'::text NOT NULL,
     node_id bigint,
+    mode text,
     CONSTRAINT reservations_kind_target_check CHECK ((((resource_kind = 'bin'::text) AND (bin_id IS NOT NULL) AND (node_id IS NULL)) OR ((resource_kind = ANY (ARRAY['slot'::text, 'mouth'::text])) AND (node_id IS NOT NULL) AND (bin_id IS NULL)))),
+    CONSTRAINT reservations_mode_check CHECK (((mode IS NULL) OR (mode = ANY (ARRAY['inbound'::text, 'outbound'::text, 'dig'::text])))),
     CONSTRAINT reservations_resource_kind_check CHECK ((resource_kind = ANY (ARRAY['bin'::text, 'slot'::text, 'mouth'::text]))),
     CONSTRAINT reservations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'confirmed'::text])))
 );
@@ -1051,8 +1034,6 @@ ALTER TABLE ONLY public.payloads ALTER COLUMN id SET DEFAULT nextval('public.pay
 
 ALTER TABLE ONLY public.pending_lane_extensions ALTER COLUMN id SET DEFAULT nextval('public.pending_lane_extensions_id_seq'::regclass);
 
-ALTER TABLE ONLY public.pending_restocks ALTER COLUMN id SET DEFAULT nextval('public.pending_restocks_id_seq'::regclass);
-
 ALTER TABLE ONLY public.production_log ALTER COLUMN id SET DEFAULT nextval('public.production_log_id_seq'::regclass);
 
 ALTER TABLE ONLY public.recovery_actions ALTER COLUMN id SET DEFAULT nextval('public.recovery_actions_id_seq'::regclass);
@@ -1225,12 +1206,6 @@ ALTER TABLE ONLY public.pending_lane_extensions
 ALTER TABLE ONLY public.pending_lane_extensions
     ADD CONSTRAINT pending_lane_extensions_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.pending_restocks
-    ADD CONSTRAINT pending_restocks_complex_parent_id_key UNIQUE (complex_parent_id);
-
-ALTER TABLE ONLY public.pending_restocks
-    ADD CONSTRAINT pending_restocks_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.process_styles
     ADD CONSTRAINT process_styles_pkey PRIMARY KEY (process_id, style_id);
 
@@ -1362,6 +1337,8 @@ CREATE INDEX idx_recovery_actions_created ON public.recovery_actions USING btree
 
 CREATE INDEX idx_reservations_bin ON public.reservations USING btree (bin_id);
 
+CREATE INDEX idx_reservations_kind_node ON public.reservations USING btree (resource_kind, node_id);
+
 CREATE INDEX idx_reservations_order ON public.reservations USING btree (order_id);
 
 CREATE INDEX idx_scene_edges_area ON public.scene_edges USING btree (area_name);
@@ -1385,8 +1362,6 @@ CREATE INDEX idx_supply_refusals_payload ON public.supply_refusals USING btree (
 CREATE INDEX ix_process_styles_active ON public.process_styles USING btree (process_id) WHERE is_active;
 
 CREATE INDEX pending_lane_extensions_target_bin_idx ON public.pending_lane_extensions USING btree (target_bin_id);
-
-CREATE INDEX pending_restocks_target_bin_idx ON public.pending_restocks USING btree (target_bin_id);
 
 CREATE UNIQUE INDEX uq_reservations_bin_active ON public.reservations USING btree (bin_id) WHERE ((resource_kind = 'bin'::text) AND (state = ANY (ARRAY['pending'::text, 'confirmed'::text])));
 
