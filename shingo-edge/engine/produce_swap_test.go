@@ -197,7 +197,9 @@ func TestProduceSwap_FinalizeSendsIngestNoLocalOrder(t *testing.T) {
 		t.Fatalf("list orders: %v", err)
 	}
 	for _, o := range all {
-		if o.OrderType == protocol.OrderTypeIngest {
+		// Literal, not a constant: "ingest" is no longer a declared order type.
+		// The guard still matters — a regression would write this string.
+		if string(o.OrderType) == "ingest" {
 			t.Errorf("swap finalize created local ingest order #%d (phantom should be gone)", o.ID)
 		}
 	}
@@ -265,7 +267,9 @@ func TestProduceSequential_RemovalThenBackfill(t *testing.T) {
 		t.Fatalf("list orders: %v", err)
 	}
 	for _, o := range allOrders {
-		if o.OrderType == protocol.OrderTypeIngest {
+		// Literal, not a constant: "ingest" is no longer a declared order type.
+		// The guard still matters — a regression would write this string.
+		if string(o.OrderType) == "ingest" {
 			t.Errorf("swap finalize created a local ingest order #%d (phantom should be gone)", o.ID)
 		}
 	}

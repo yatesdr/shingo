@@ -54,8 +54,17 @@ func NullableTime(p *time.Time) any {
 	return nil
 }
 
+// QueryRower is satisfied by both *sql.DB and *sql.Tx, so an insert primitive
+// built on it can run standalone or inside a caller's transaction. Same idea as
+// bins.binExecer, narrowed to the single method InsertID needs — deliberately
+// NOT widened to Exec/Query, because a caller that needs those should take the
+// concrete handle and say so.
+type QueryRower interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 // InsertID executes an INSERT ... RETURNING id query and returns the new row ID.
-func InsertID(db *sql.DB, query string, args ...any) (int64, error) {
+func InsertID(db QueryRower, query string, args ...any) (int64, error) {
 	var id int64
 	err := db.QueryRow(query, args...).Scan(&id)
 	return id, err

@@ -165,7 +165,10 @@ func TestRule1_CompoundChildRawClaimIsExempted(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 
-	// A compound child carrying a raw bin claim, the way CreateCompoundChildren writes it.
+	// A compound child carrying a raw bin claim. NOTE: real compound children
+	// never carry a PayloadCode — the one place that builds them sets none. This
+	// fixture sets one only to keep the row self-describing; do not read it as a
+	// model of what CreateCompoundChildren produces.
 	child := &orders.Order{
 		EdgeUUID: "r1exm-child", StationID: "edge.r1", OrderType: OrderTypeMove,
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,

@@ -123,9 +123,6 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		// Provenance stamp: complex intake is coordinated. The dispatch
 		// discriminator (IsCoordinated) reads this column, not StepsJSON.
 		Coordinated: true,
-		QueueReason: queueReason,
-		QueueCode:   string(queueCode),
-		QueueCause:  queueCause,
 		// Durable two-robot swap linkage: persist the supply sibling's UUID
 		// in the CreateOrder INSERT itself, so a two-robot evac's pointer to
 		// its supply is written atomically with the order and can never be
@@ -143,9 +140,13 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		return
 	}
 	if queueReason != "" {
-		// CreateOrder may not persist QueueReason/QueueCode/QueueCause depending
-		// on the store helper's INSERT column list — set them explicitly so the
-		// fields are visible to the scanner's queue-reason check and to the HMI.
+		// Queue detail is written by the transition that queues an order, never
+		// at creation — SetOrderQueueDetail is the one way in, and its other
+		// callers are all transitions (the planner, complex dispatch, the
+		// fulfillment scanner). The order struct has QueueReason/QueueCode/
+		// QueueCause fields, but the writer does not persist them and is not
+		// meant to; assigning them above would look like it worked and do
+		// nothing.
 		if err := d.db.SetOrderQueueDetail(order.ID, queueReason, queueCode, queueCause); err != nil {
 			log.Printf("dispatch: set initial queue_reason for complex order %d: %v", order.ID, err)
 		}

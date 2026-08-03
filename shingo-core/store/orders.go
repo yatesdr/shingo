@@ -11,7 +11,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared/clock"
-	"shingocore/store/internal/helpers"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -37,33 +36,18 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 
 	for _, c := range children {
 		o := c.Order
-		var id int64
-		// created_at/updated_at explicit, same reasoning as orders.Create:
-		// omitting them takes the database's clock while every duration is
-		// measured against clock.Now().
-		//
-		// THIS IS A SECOND, INDEPENDENT INSERT INTO orders — it is not
-		// orders.Create with a transaction. A column added to one and not the
-		// other is silently dropped on this path, which is where the compound
-		// CHILDREN are written, i.e. exactly the rows the demand grain needs to
-		// count. origin_id/origin_class are named here for that reason.
-		err := tx.QueryRow(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, origin_id, origin_class, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17) RETURNING id`,
-			o.EdgeUUID, o.StationID, o.OrderType, o.Status,
-			o.Quantity,
-			o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
-			helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
-			helpers.NullableInt64(o.BinID),
-			helpers.NullableText(o.OriginID), o.OriginClass,
-			clock.Now().UTC()).Scan(&id)
-		if err != nil {
+		// One writer for the orders table. orders.Create runs inside this
+		// transaction because it takes a QueryRower rather than a *sql.DB, so
+		// children carry the same columns as every other order and cannot drift
+		// from them. It also owns the clock.Now() timestamps and the o.ID
+		// write-back that the code below depends on.
+		if err := orders.Create(tx, o); err != nil {
 			return fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}
-		o.ID = id
 
 		// Bin-centric claiming: if the child order has a bin, claim it
 		if o.BinID != nil {
-			_, err = tx.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, o.ID, *o.BinID)
-			if err != nil {
+			if _, err := tx.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, o.ID, *o.BinID); err != nil {
 				return fmt.Errorf("claim bin %d for child %d: %w", *o.BinID, o.ID, err)
 			}
 		}

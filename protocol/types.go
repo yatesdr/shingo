@@ -382,9 +382,12 @@ const (
 // here so both sides agree on the canonical values and so the JSON wire
 // shape (raw string) stays byte-identical to the prior untyped form.
 //
-// Edge has all five values; core dispatch only emits Retrieve/Store/Move/
-// Complex. OrderTypeIngest is edge-legacy — no longer minted (produce ingest
-// is a manifest-only inventory write), kept for historical order rows.
+// Core dispatch emits Retrieve/RetrieveEmpty/Store/Move/Complex.
+//
+// Historical rows may carry values no longer in this list — "ingest" is the one
+// that existed, from a time when a produce ingest created an order rather than
+// writing the manifest directly. Nothing mints or reads it now, so the constant
+// is gone; the strings in old rows are untouched and no code branches on them.
 type OrderType string
 
 const (
@@ -393,7 +396,6 @@ const (
 	OrderTypeStore         OrderType = "store"          // push a payload from a node to storage
 	OrderTypeMove          OrderType = "move"           // generic move; no manifest semantics
 	OrderTypeComplex       OrderType = "complex"        // multi-step order composed of sub-steps
-	OrderTypeIngest        OrderType = "ingest"         // edge-legacy: no longer minted (manifest-only ingest write); kept for historical order rows
 	// OrderTypeReshuffleRestore is a Core-internal housekeeping order
 	// that wraps the post-pickup restock compound for the complex-order
 	// buried-bin reshuffle "restore blockers" toggle. Never created by

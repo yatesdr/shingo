@@ -90,18 +90,49 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		OriginID:     originID,
 		OriginClass:  originClass,
 	}
-	if payloadCode != "" {
-		if _, err := s.db.GetPayloadByCode(payloadCode); err != nil {
-			return nil, "", lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", payloadCode), err)
+	if lerr := s.admitOrder(order); lerr != nil {
+		return nil, "", lerr
+	}
+	// Emitted by the CALLER, not by admitOrder, and deliberately with the RAW
+	// wire values: p.OrderType rather than the promoted orderType, and
+	// p.DeliveryNode rather than the possibly-resolved order.DeliveryNode. Those
+	// are what the sender said, and this event reports receipt of a request. A
+	// Core-originated order has no sender and emits its own event with its own
+	// values, which is why this does not belong inside the shared body.
+	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, payloadCode, p.DeliveryNode)
+	return order, payloadCode, nil
+}
+
+// admitOrder is the wire-free middle of order intake: validate the payload,
+// resolve a synthetic delivery node, insert the row, and mark it pending. It
+// takes a fully-built *orders.Order because that is already the shape every
+// caller has — a parallel spec struct would be a second field list to keep in
+// step with the first, which is the failure mode TestCensus_OrdersTableInsertStatements
+// exists to prevent one layer down.
+//
+// It is extracted so a Core-originated order can be admitted through exactly the
+// same body as a wire-originated one, without synthesizing a fake OrderRequest.
+// Note what stays OUTSIDE: wire normalization, origin classification (its own
+// comment says it is stamped "where the sender's statement is in hand", and a
+// Core-authored order has no sender), and the received event.
+//
+// This is NOT the only way an order comes into existence in Core — see
+// TestCensus_OrderCreationPaths for the seven other writers. Anything that hangs
+// off this function covers what routes through it and nothing else.
+func (s *LifecycleService) admitOrder(order *orders.Order) *lifecycleError {
+	if order.PayloadCode != "" {
+		if _, err := s.db.GetPayloadByCode(order.PayloadCode); err != nil {
+			return lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", order.PayloadCode), err)
 		}
 	}
-	if p.DeliveryNode != "" {
-		destNode, err := s.db.GetNodeByDotName(p.DeliveryNode)
+	if order.DeliveryNode != "" {
+		requested := order.DeliveryNode
+		destNode, err := s.db.GetNodeByDotName(requested)
 		if err != nil {
-			return nil, "", lifecycleErr("invalid_node", fmt.Sprintf("delivery node %q not found", p.DeliveryNode), err)
+			return lifecycleErr("invalid_node", fmt.Sprintf("delivery node %q not found", requested), err)
 		}
 		if destNode.IsSynthetic && s.resolver != nil {
-			result, err := s.resolver.Resolve(destNode, OrderTypeStore, payloadCode, nil)
+			result, err := s.resolver.Resolve(destNode, OrderTypeStore, order.PayloadCode, nil)
 			if err != nil {
 				// A full group (ResolutionCapacity — "no available slot in node
 				// group X") must NOT fail the operator's action. Leave the
@@ -113,23 +144,22 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 				// children, DB error) still hard-fail so a real misconfiguration
 				// surfaces to the operator instead of queueing forever.
 				if class, _ := classifyResolutionError(err); class != ResolutionCapacity {
-					return nil, "", lifecycleErr("resolution_failed", fmt.Sprintf("cannot resolve synthetic node %s: %v", p.DeliveryNode, err), err)
+					return lifecycleErr("resolution_failed", fmt.Sprintf("cannot resolve synthetic node %s: %v", requested, err), err)
 				}
-				s.dbg("intake: synthetic %s full — creating order against group so it queues: %v", p.DeliveryNode, err)
+				s.dbg("intake: synthetic %s full — creating order against group so it queues: %v", requested, err)
 			} else {
-				s.dbg("resolved synthetic %s -> %s", p.DeliveryNode, result.Node.Name)
+				s.dbg("resolved synthetic %s -> %s", requested, result.Node.Name)
 				order.DeliveryNode = result.Node.Name
 			}
 		}
 	}
 	if err := s.db.CreateOrder(order); err != nil {
-		return nil, "", lifecycleErr("internal_error", err.Error(), err)
+		return lifecycleErr("internal_error", err.Error(), err)
 	}
 	if err := s.db.UpdateOrderStatus(order.ID, string(StatusPending), "order received"); err != nil {
 		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
 	}
-	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, payloadCode, p.DeliveryNode)
-	return order, payloadCode, nil
+	return nil
 }
 
 // resolveIngestBin finds the bin an ingest should manifest.

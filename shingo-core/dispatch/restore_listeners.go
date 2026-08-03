@@ -190,13 +190,18 @@ func (d *Dispatcher) scheduleRestoreIfEnabled(
 		log.Printf("dispatch: create synthetic restore parent for complex %d: %v", complexParent.ID, err)
 		return
 	}
-	// CreateOrder writes status='pending' via the existing INSERT —
-	// override to Reshuffling so the scanner's ListQueuedOrders
-	// never picks it up. Goes through MarkReshuffling (the typed
-	// initial-write helper on LifecycleService, mirroring MarkPending)
-	// rather than a direct UpdateOrderStatus call — direct status
-	// writes are forbidden by the lint guard against state-machine
-	// bypass.
+	// This does NOT change the status column. CreateOrder binds the struct's
+	// Status, and the struct above already says Reshuffling, so the row is
+	// written reshuffling and the scanner's ListQueuedOrders never sees it.
+	// (An earlier comment here claimed CreateOrder writes 'pending' and that
+	// this call was the override. It does not, and it is not.)
+	//
+	// The call stays because UpdateOrderStatus also writes the order_history
+	// row. Without it this synthetic parent would be the only order in the
+	// system with no creation entry in its own history — and it is already the
+	// hardest order to trace, which is the whole reason it is being reworked.
+	// Goes through MarkReshuffling rather than a direct UpdateOrderStatus
+	// because direct status writes are forbidden by the state-machine lint guard.
 	if err := d.lifecycle.MarkReshuffling(syn, "synthetic restore parent"); err != nil {
 		log.Printf("dispatch: set synthetic restore parent %d to Reshuffling: %v", syn.ID, err)
 	}
