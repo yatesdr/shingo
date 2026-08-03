@@ -27,7 +27,7 @@ let lastMissions = []; // for CSV export
 // The rows keep the opaque station_id — it is what the filter sends, what the
 // CSV export writes and what the drill-down queries by. Only the rendered text
 // becomes the label, so a rename shows up here on the next refresh without
-// anything stored having changed. A station with no registry row (core-spot,
+// anything stored having changed. A station with no registry row (core-operator,
 // core-direct, core-test, '*') is absent from the map and renders as itself.
 let stationNames = {};
 function stationLabel(id) {

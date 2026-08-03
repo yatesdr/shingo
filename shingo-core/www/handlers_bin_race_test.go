@@ -65,7 +65,7 @@ func TestBinMove_LosingTheBinIsNotAServerError(t *testing.T) {
 		return nil
 	})
 
-	resp, status := submitRetrieveSpecificTo(t, h, bin.Label, sd.LineNode.Name)
+	resp, status := submitRetrieveSpecific(t, h, bin.Label, sd.LineNode.Name)
 
 	if status == http.StatusInternalServerError {
 		t.Fatalf("losing the bin came back as a server error (%q). Nothing is broken — somebody else took the bin.", resp.Error)
@@ -86,7 +86,7 @@ func TestBinMove_LosingTheBinIsNotAServerError(t *testing.T) {
 	}
 
 	// And nothing stranded.
-	rows, err := db.ListOrdersByStation("core-spot", 50)
+	rows, err := db.ListOrdersByStation("core-operator", 50)
 	if err != nil {
 		t.Fatalf("list spot orders: %v", err)
 	}

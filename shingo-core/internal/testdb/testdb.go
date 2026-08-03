@@ -269,6 +269,18 @@ func dropTemplate() error {
 // Skipf, Fatalf, Name, Cleanup) is on the TB interface, and a *testing.T
 // still satisfies it, so existing callers are unaffected.
 func Open(t testing.TB) *store.DB {
+	db, _ := OpenWithConfig(t)
+	return db
+}
+
+// OpenWithConfig is Open plus the config that reaches the same database.
+//
+// It exists for one kind of test: a data migration. Open hands back a database
+// whose migrations have already run, so there is no way to put "before" rows in
+// front of one. With the config, a test can seed the old shape and then call
+// store.Open again — which re-runs the versioned migrations against the same
+// database, verify and self-heal included, rather than a copy of their SQL.
+func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 	t.Helper()
 
 	// Guard against Docker panics from testcontainers
@@ -307,7 +319,7 @@ func Open(t testing.TB) *store.DB {
 	}
 	atomic.AddInt64(&testDBsCreated, 1)
 
-	db, err := store.OpenWithoutMigrate(&config.DatabaseConfig{
+	cfg := &config.DatabaseConfig{
 		Postgres: config.PostgresConfig{
 			Host:     containerHost,
 			Port:     containerPort,
@@ -316,7 +328,8 @@ func Open(t testing.TB) *store.DB {
 			Password: "test",
 			SSLMode:  "disable",
 		},
-	})
+	}
+	db, err := store.OpenWithoutMigrate(cfg)
 	if err != nil {
 		t.Fatalf("open test db %s: %v", dbName, err)
 	}
@@ -342,7 +355,7 @@ func Open(t testing.TB) *store.DB {
 			atomic.AddInt64(&terminateFired, 1)
 		}
 	})
-	return db
+	return db, cfg
 }
 
 // sanitize strips characters that aren't safe for a Postgres database name.

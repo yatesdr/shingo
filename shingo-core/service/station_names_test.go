@@ -157,7 +157,7 @@ func TestStationName_UnknownStationsFallBackToThemselves(t *testing.T) {
 	ns := service.NewNodeService(db)
 	enroll(t, db, "plant-a.line-1", "SPRINGFIELD / LINE 1")
 
-	for _, station := range []string{"core-spot", "core-direct", "core-test", "*", "stn-nope"} {
+	for _, station := range []string{"core-operator", "core-direct", "core-test", "*", "stn-nope"} {
 		if got := ns.StationName(station); got != station {
 			t.Errorf("StationName(%q) = %q, want the identity back — an unenrolled "+
 				"station must degrade to today's behaviour, not to blank", station, got)

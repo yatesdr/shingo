@@ -23,12 +23,12 @@ func TestCreateDirectOrder_CountsOneBin(t *testing.T) {
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-QTY-DIRECT")
 	eng := newTestEngine(t, db, simulator.New())
 
-	res, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: storageNode.ID,
-		ToNodeID:   lineNode.ID,
-		StationID:  "test-station",
-		Priority:   1,
-		Desc:       "quantity fixture",
+	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID,
+		DestNodeID:   lineNode.ID,
+		StationID:    "test-station",
+		Priority:     1,
+		Desc:         "quantity fixture",
 	})
 	if err != nil {
 		t.Fatalf("CreateDirectOrder: %v", err)

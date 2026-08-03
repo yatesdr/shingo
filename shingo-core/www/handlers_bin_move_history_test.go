@@ -35,7 +35,7 @@ func TestBinMove_OperatorDoorRecordsItsOwnCreation(t *testing.T) {
 	}
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-HISTORY")
 
-	resp, status := submitRetrieveSpecificTo(t, h, bin.Label, free.Name)
+	resp, status := submitRetrieveSpecific(t, h, bin.Label, free.Name)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200; err=%q", status, resp.Error)
 	}

@@ -143,7 +143,7 @@ type EngineOrchestration interface {
 	ApplyBatchCorrection(req engine.BatchCorrectionRequest) error
 
 	// ── Orders ─────────────────────────────────────────────────────
-	CreateDirectOrder(req engine.DirectOrderRequest) (*engine.DirectOrderResult, error)
+	CreateBinMove(req engine.BinMoveRequest) (*engine.BinMoveResult, error)
 	TerminateOrder(orderID int64, actor string) error
 
 	// ── Scene sync ─────────────────────────────────────────────────

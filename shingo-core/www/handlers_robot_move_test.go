@@ -58,11 +58,11 @@ func TestRobotMove_MakesNoOrder(t *testing.T) {
 		t.Error("no vendor order id came back — it is the only handle this command has")
 	}
 
-	// The row that must not exist. core-spot is the station the deleted door
-	// stamped, so anything here is the old behaviour coming back.
-	rows, err := db.ListOrdersByStation("core-spot", 50)
+	// The row that must not exist. core-operator is where the manual order
+	// screen's rows land, so anything here is the old behaviour coming back.
+	rows, err := db.ListOrdersByStation("core-operator", 50)
 	if err != nil {
-		t.Fatalf("list spot orders: %v", err)
+		t.Fatalf("list operator orders: %v", err)
 	}
 	if len(rows) != 0 {
 		t.Errorf("%d order row(s) written for a robot move — moving a robot is not an order", len(rows))

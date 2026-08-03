@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -37,12 +38,12 @@ func TestCreateDirectOrder_Success_PersistsAndDispatches(t *testing.T) {
 		captured <- evt.Payload.(OrderDispatchedEvent)
 	}, EventOrderDispatched)
 
-	res, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: storageNode.ID,
-		ToNodeID:   lineNode.ID,
-		StationID:  "test-station",
-		Priority:   3,
-		Desc:       "manual move",
+	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID,
+		DestNodeID:   lineNode.ID,
+		StationID:    "test-station",
+		Priority:     3,
+		Desc:         "manual move",
 	})
 	if err != nil {
 		t.Fatalf("CreateDirectOrder: %v", err)
@@ -95,10 +96,10 @@ func TestCreateDirectOrder_SameSourceAndDest(t *testing.T) {
 	storageNode, _, _ := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
-	res, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: storageNode.ID,
-		ToNodeID:   storageNode.ID,
-		StationID:  "test",
+	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID,
+		DestNodeID:   storageNode.ID,
+		StationID:    "test",
 	})
 	if err == nil {
 		t.Fatal("expected error for same source/dest")
@@ -117,10 +118,10 @@ func TestCreateDirectOrder_MissingSourceNode(t *testing.T) {
 	_, lineNode, _ := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
-	_, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: 99999,
-		ToNodeID:   lineNode.ID,
-		StationID:  "test",
+	_, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: 99999,
+		DestNodeID:   lineNode.ID,
+		StationID:    "test",
 	})
 	if err == nil {
 		t.Fatal("expected error for missing source")
@@ -136,10 +137,10 @@ func TestCreateDirectOrder_MissingDestNode(t *testing.T) {
 	storageNode, _, _ := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
-	_, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: storageNode.ID,
-		ToNodeID:   88888,
-		StationID:  "test",
+	_, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID,
+		DestNodeID:   88888,
+		StationID:    "test",
 	})
 	if err == nil {
 		t.Fatal("expected error for missing dest")
@@ -166,11 +167,11 @@ func TestCreateDirectOrder_FleetDispatchFails(t *testing.T) {
 		failed <- evt.Payload.(OrderFailedEvent)
 	}, EventOrderFailed)
 
-	res, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: storageNode.ID,
-		ToNodeID:   lineNode.ID,
-		StationID:  "test",
-		Desc:       "should fail",
+	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID,
+		DestNodeID:   lineNode.ID,
+		StationID:    "test",
+		Desc:         "should fail",
 	})
 	if err == nil {
 		t.Fatal("expected dispatch failure")
@@ -178,8 +179,18 @@ func TestCreateDirectOrder_FleetDispatchFails(t *testing.T) {
 	if res != nil {
 		t.Errorf("expected nil result, got %+v", res)
 	}
-	if !strings.Contains(err.Error(), "dispatch") {
-		t.Errorf("err = %v, want wrap with 'dispatch'", err)
+	// The message used to be "fleet dispatch failed: ..." and is now a sentence
+	// a person reads, so this asserts the classification rather than a word:
+	// the fleet refusing an order is nobody's input being wrong.
+	var bmErr *BinMoveError
+	if !errors.As(err, &bmErr) {
+		t.Fatalf("err = %v (%T), want a *BinMoveError so the caller can pick a status", err, err)
+	}
+	if bmErr.Kind != BinMoveFault {
+		t.Errorf("kind = %v, want BinMoveFault: the request was fine and the fleet refused it", bmErr.Kind)
+	}
+	if !strings.Contains(err.Error(), "fleet") {
+		t.Errorf("err = %v, want it to say the fleet refused", err)
 	}
 
 	// Dispatcher emits EventOrderFailed on its FailOrderAtomic path —
@@ -218,11 +229,11 @@ func TestTerminateOrder_CancelsActiveOrder(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	// Direct order to give us something dispatched.
-	res, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: storageNode.ID,
-		ToNodeID:   lineNode.ID,
-		StationID:  "term-test",
-		Desc:       "to be cancelled",
+	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID,
+		DestNodeID:   lineNode.ID,
+		StationID:    "term-test",
+		Desc:         "to be cancelled",
 	})
 	if err != nil {
 		t.Fatalf("seed CreateDirectOrder: %v", err)

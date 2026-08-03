@@ -48,6 +48,13 @@ type LifecycleService struct {
 	// which is the default until a plant turns it on in YAML; every method on
 	// it is nil-safe.
 	futility *FutilityDetector
+
+	// serves answers whether Core can carry out a kind of order, so intake can
+	// refuse one it cannot before writing anything down. It is the planner's
+	// own registry, reached through a closure because the planner is built
+	// after this service. nil means every type is admitted, which is what a
+	// LifecycleService constructed on its own in a test gets.
+	serves func(protocol.OrderType) bool
 }
 
 func newLifecycleService(db *store.DB, backend fleet.Backend, emitter Emitter, resolver NodeResolver, binManifest *service.BinManifestService, debug func(string, ...any)) *LifecycleService {
@@ -69,6 +76,29 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	orderType := p.OrderType
 	if p.RetrieveEmpty && p.OrderType == OrderTypeRetrieve {
 		orderType = OrderTypeRetrieveEmpty
+	}
+	// Refuse a kind of order Core cannot carry out, here, before anything
+	// exists.
+	//
+	// The type used to be taken verbatim all the way into the INSERT. Nothing
+	// looked at it until the planner went to pick a handler, found none, and
+	// failed the order — by which point the row was written, its history had
+	// two entries, and order.received had been announced for an order that was
+	// never going to move. Springfield has one of these from June: a `store`
+	// order, a word that was never a kind of order at all, sitting in the table
+	// as a failure that looks like something was attempted.
+	//
+	// Asked of the planner rather than a list kept here. A list would be a copy
+	// of the planner's map maintained by hand, and the first thing to disagree
+	// with it would be a planner registered at runtime — which is a supported
+	// thing to do, so a hardcoded list would quietly break it.
+	//
+	// AFTER the retrieve_empty promotion above, deliberately: an older Edge
+	// sends retrieve plus a flag, and it is the promoted value that has to be
+	// servable, because the promoted value is what gets planned.
+	if s.serves != nil && !s.serves(orderType) {
+		return nil, "", lifecycleErr(string(protocol.TermUnknownType),
+			fmt.Sprintf("unknown order type: %s", orderType), nil)
 	}
 	// A move carries one bin, always: one robot, one bin, one bin_id on the row.
 	// The Edge will send a larger count — its own screens let an operator type
@@ -135,38 +165,12 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 // TestCensus_OrderCreationPaths for the seven other writers. Anything that hangs
 // off this function covers what routes through it and nothing else.
 func (s *LifecycleService) admitOrder(order *orders.Order) *lifecycleError {
-	if order.PayloadCode != "" {
-		if _, err := s.db.GetPayloadByCode(order.PayloadCode); err != nil {
-			return lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", order.PayloadCode), err)
-		}
+	destNode, lerr := s.checkOrderRefs(order)
+	if lerr != nil {
+		return lerr
 	}
-	if order.DeliveryNode != "" {
-		requested := order.DeliveryNode
-		destNode, err := s.db.GetNodeByDotName(requested)
-		if err != nil {
-			return lifecycleErr("invalid_node", fmt.Sprintf("delivery node %q not found", requested), err)
-		}
-		if destNode.IsSynthetic && s.resolver != nil {
-			result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, nil)
-			if err != nil {
-				// A full group (ResolutionCapacity — "no available slot in node
-				// group X") must NOT fail the operator's action. Leave the
-				// synthetic destination on the order and create it: planMove
-				// resolves a concrete child at dispatch time, and
-				// CheckDropoffCapacity parks it in `queued` until a slot frees —
-				// the same queue-don't-fail contract every other dropoff path
-				// already honors. Structural/transient failures (no enabled
-				// children, DB error) still hard-fail so a real misconfiguration
-				// surfaces to the operator instead of queueing forever.
-				if class, _ := classifyResolutionError(err); class != ResolutionCapacity {
-					return lifecycleErr("resolution_failed", fmt.Sprintf("cannot resolve synthetic node %s: %v", requested, err), err)
-				}
-				s.dbg("intake: synthetic %s full — creating order against group so it queues: %v", requested, err)
-			} else {
-				s.dbg("resolved synthetic %s -> %s", requested, result.Node.Name)
-				order.DeliveryNode = result.Node.Name
-			}
-		}
+	if lerr := s.resolveSyntheticDestination(order, destNode); lerr != nil {
+		return lerr
 	}
 	if err := s.db.CreateOrder(order); err != nil {
 		return lifecycleErr("internal_error", err.Error(), err)
@@ -174,6 +178,72 @@ func (s *LifecycleService) admitOrder(order *orders.Order) *lifecycleError {
 	if err := s.db.UpdateOrderStatus(order.ID, string(StatusPending), "order received"); err != nil {
 		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
 	}
+	return nil
+}
+
+// checkOrderRefs answers whether the things an order names actually exist.
+//
+// It reads and reports; it writes nothing and changes nothing on the order.
+// That is what makes it safe for any door to call, which is the point of it
+// being separate from the resolution step below.
+//
+// It hands back the delivery node it looked up, so a caller that goes on to
+// resolve a synthetic destination does not pay for the same query twice. A
+// blank delivery node is not an error — a complex order's last dropoff is
+// legitimately deferred sometimes — so a nil node with no error means "nothing
+// was named, so there was nothing to check".
+func (s *LifecycleService) checkOrderRefs(order *orders.Order) (*nodes.Node, *lifecycleError) {
+	if order.PayloadCode != "" {
+		if _, err := s.db.GetPayloadByCode(order.PayloadCode); err != nil {
+			return nil, lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", order.PayloadCode), err)
+		}
+	}
+	if order.DeliveryNode == "" {
+		return nil, nil
+	}
+	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
+	if err != nil {
+		return nil, lifecycleErr("invalid_node", fmt.Sprintf("delivery node %q not found", order.DeliveryNode), err)
+	}
+	return destNode, nil
+}
+
+// resolveSyntheticDestination points a delivery node that names a GROUP at one
+// of its children, by rewriting the order's delivery node.
+//
+// WIRE INTAKE ONLY, and the last line is why. It ASSIGNS to
+// order.DeliveryNode. A complex order has already chosen the concrete nodes its
+// robot will visit and stored them in its steps, and its final dropoff is
+// rewritten from this same field at dispatch — so running this on a complex
+// order would re-aim a robot mid-route, quietly, in a way that reads as a
+// routing bug rather than a validation one.
+//
+// That is the whole reason this is not part of checkOrderRefs. The two look
+// like one job at intake and are not: one asks whether a thing exists, the
+// other changes where an order is going.
+func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, destNode *nodes.Node) *lifecycleError {
+	if destNode == nil || !destNode.IsSynthetic || s.resolver == nil {
+		return nil
+	}
+	requested := order.DeliveryNode
+	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, nil)
+	if err != nil {
+		// A full group (ResolutionCapacity — "no available slot in node group
+		// X") must NOT fail the operator's action. Leave the synthetic
+		// destination on the order and create it: planMove resolves a concrete
+		// child at dispatch time, and CheckDropoffCapacity parks it in `queued`
+		// until a slot frees — the same queue-don't-fail contract every other
+		// dropoff path already honors. Structural/transient failures (no
+		// enabled children, DB error) still hard-fail so a real misconfiguration
+		// surfaces to the operator instead of queueing forever.
+		if class, _ := classifyResolutionError(err); class != ResolutionCapacity {
+			return lifecycleErr("resolution_failed", fmt.Sprintf("cannot resolve synthetic node %s: %v", requested, err), err)
+		}
+		s.dbg("intake: synthetic %s full — creating order against group so it queues: %v", requested, err)
+		return nil
+	}
+	s.dbg("resolved synthetic %s -> %s", requested, result.Node.Name)
+	order.DeliveryNode = result.Node.Name
 	return nil
 }
 

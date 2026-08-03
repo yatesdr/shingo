@@ -285,8 +285,18 @@ func TestApiFleetProxy_DefaultsMethodAndPath(t *testing.T) {
 	}
 }
 
-// TestApiFleetProxy_UpstreamUnreachable pins the network-error envelope: the
-// handler still returns 200 (the error is in the body) with status_code:0.
+// TestApiFleetProxy_UpstreamUnreachable pins the line this handler has to hold:
+// never reaching the vendor is a proxy failure, not a result.
+//
+// Relaying a vendor's own 404 or 400 at 200 is deliberate and is what an
+// explorer is for — that case is covered by the tests above and must stay. This
+// is the other one: no answer came back at all, so there is nothing to relay.
+// It used to report 200 with the error inside the body, which is the same
+// mistake the order doors made.
+//
+// The ENVELOPE is unchanged, and that is load-bearing: the page renders url,
+// method and elapsed_ms from it, so a bare error string would leave it showing
+// "undefinedms" beside a blank request line.
 func TestApiFleetProxy_UpstreamUnreachable(t *testing.T) {
 	t.Parallel()
 	// 127.0.0.1:1 is reliably refused on Linux test runners.
@@ -294,9 +304,13 @@ func TestApiFleetProxy_UpstreamUnreachable(t *testing.T) {
 
 	rec := postJSON(t, h.apiFleetProxy, "/api/fleet/proxy",
 		map[string]any{"method": "GET", "path": "/x"})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200 (error in body); body=%s",
-			rec.Code, rec.Body.String())
+	if rec.Code == http.StatusOK {
+		t.Fatalf("unreachable vendor answered 200 — the proxy never got a response, so there is nothing to report as a success; body=%s",
+			rec.Body.String())
+	}
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status: got %d, want %d (Core is the gateway; the failure is upstream of it); body=%s",
+			rec.Code, http.StatusBadGateway, rec.Body.String())
 	}
 	var resp map[string]any
 	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
@@ -305,6 +319,13 @@ func TestApiFleetProxy_UpstreamUnreachable(t *testing.T) {
 	}
 	if _, hasErr := resp["error"]; !hasErr {
 		t.Errorf("expected error field in body; got %+v", resp)
+	}
+	// The page renders these three. Dropping them for a bare error string is
+	// the one way this change could break the screen.
+	for _, field := range []string{"url", "method", "elapsed_ms"} {
+		if _, ok := resp[field]; !ok {
+			t.Errorf("envelope lost %q — the explorer renders it, and without it the page shows a blank request line and \"undefinedms\"; got %+v", field, resp)
+		}
 	}
 }
 

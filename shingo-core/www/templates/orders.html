@@ -154,7 +154,7 @@
       <div id="manual-order-tab-staged" class="manual-order-tab-content">
         <div class="form-group">
           <label><strong>Source Node</strong></label>
-          <select class="form-input" id="mo-staged-source"><option value="">Loading...</option></select>
+          <select class="form-input" id="mo-staged-source" data-action-change="stagedSourceChanged"><option value="">Loading...</option></select>
         </div>
         <div class="form-group">
           <label><strong>Staging Node</strong></label>
@@ -164,9 +164,20 @@
           <label><strong>Delivery Node</strong></label>
           <select class="form-input" id="mo-staged-delivery"><option value="">Loading...</option></select>
         </div>
-        <div class="form-group">
-          <label><strong>Payload</strong> <span class="text-muted">(optional)</span></label>
-          <select class="form-input" id="mo-staged-payload"><option value="">— none —</option></select>
+        {{/* No payload picker. The source node names the place, the place holds
+             the bin, and the bin knows what it is — asking again is the same
+             question twice, and the two answers used to be allowed to disagree.
+             The read-out shows what the server will use. A GROUP source is the
+             one case where the payload is a real choice (it selects which of
+             the group's bins to take), so there the picker appears, listing
+             only what is actually parked in that group. */}}
+        <div class="form-group" id="mo-staged-payload-derived">
+          <label><strong>Payload</strong></label>
+          <div class="form-hint" id="mo-staged-payload-readout">Select a source node.</div>
+        </div>
+        <div class="form-group hide" id="mo-staged-payload-group">
+          <label><strong>Payload</strong> <span class="text-muted">(which bin to take from the group)</span></label>
+          <select class="form-input" id="mo-staged-payload"><option value="">— any —</option></select>
         </div>
       </div>
 

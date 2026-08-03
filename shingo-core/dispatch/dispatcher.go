@@ -56,6 +56,10 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 		laneHolds:        newLaneHoldRegistry(),
 	}
 	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
+	// A closure rather than the planner itself, because the planner is built a
+	// few lines below this one. It is only ever called while handling a
+	// request, long after both exist.
+	d.lifecycle.serves = func(t protocol.OrderType) bool { return d.planner.Handles(t) }
 	d.replies = newReplySender(db, dispatchTopic, stationID, d.dbg)
 	// ONE finder, shared by intake planning, the scanner replay (via the
 	// planner), the dispatcher's own step resolution, and the allocator. The

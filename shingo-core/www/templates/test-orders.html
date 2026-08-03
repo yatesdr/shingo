@@ -27,14 +27,14 @@
           <label class="to-label">Source Node</label>
           <select id="k-source-node" class="to-input">
             <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div id="k-delivery-wrap">
           <label class="to-label">Delivery Node</label>
           <select id="k-delivery-node" class="to-input">
             <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div id="k-pt-wrap">
@@ -74,7 +74,7 @@
           <label class="to-label">Lineside Location</label>
           <select id="kc-location" class="to-input">
             <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div>
@@ -88,28 +88,28 @@
           <label class="to-label">Inbound Source</label>
           <select id="kc-full-source" class="to-input">
             <option value="">Core Decides</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div id="kc-staging1-wrap" class="hide">
           <label class="to-label">Inbound Staging</label>
           <select id="kc-staging1" class="to-input">
             <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div id="kc-staging2-wrap" class="hide">
           <label class="to-label">Outbound Staging</label>
           <select id="kc-staging2" class="to-input">
             <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div>
           <label class="to-label">Outbound Destination</label>
           <select id="kc-outgoing" class="to-input">
             <option value="">Core Decides</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div>
@@ -140,14 +140,14 @@
           <label class="to-label">From Node</label>
           <select id="d-from-node" class="to-input">
             <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.ID}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div>
           <label class="to-label">To Node</label>
           <select id="d-to-node" class="to-input">
             <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.ID}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div>
@@ -176,7 +176,7 @@
           <label class="to-label">Lineside Location</label>
           <select id="cx-location" class="to-input">
             <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div>
@@ -190,28 +190,28 @@
           <label class="to-label">Inbound Source</label>
           <select id="cx-full-source" class="to-input">
             <option value="">Core Decides</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div id="cx-staging1-wrap" class="hide">
           <label class="to-label">Inbound Staging</label>
           <select id="cx-staging1" class="to-input">
             <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div id="cx-staging2-wrap" class="hide">
           <label class="to-label">Outbound Staging</label>
           <select id="cx-staging2" class="to-input">
             <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div>
           <label class="to-label">Outbound Destination</label>
           <select id="cx-outgoing" class="to-input">
             <option value="">Core Decides</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
           </select>
         </div>
         <div>

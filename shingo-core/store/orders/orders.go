@@ -620,10 +620,22 @@ func CountActiveByDeliveryNode(db *sql.DB, nodeName string) (int, error) {
 	return count, err
 }
 
-// ListDispatchedVendorOrderIDs returns vendor order IDs for orders currently
-// dispatched, in transit, or staged.
-func ListDispatchedVendorOrderIDs(db *sql.DB) ([]string, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT vendor_order_id FROM orders WHERE vendor_order_id != '' AND status IN (%s)`, protocol.VendorActiveStatusSQLList()))
+// ListTrackedVendorOrderIDs returns the vendor order IDs Core must keep watching
+// — the orders the fleet still holds.
+//
+// This is what re-registers orders with the poller after a restart, which makes
+// the status list load-bearing rather than descriptive: an order missing from it
+// is an order nothing polls, and for the states that end on a timer, nothing
+// polling means the timer never fires.
+//
+// It selected the vendor-ACTIVE set, which excludes faulted. A faulted order is
+// one the fleet failed while holding a bin; it ends when its grace period expires
+// and the poller gives up on it. After a restart it was not tracked, so the grace
+// period never ran, and since faulted is deliberately outside both stuck
+// predicates nothing else looked at it either — while it went on blocking
+// changeovers at its node.
+func ListTrackedVendorOrderIDs(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT vendor_order_id FROM orders WHERE vendor_order_id != '' AND status IN (%s)`, protocol.VendorTrackedStatusSQLList()))
 	if err != nil {
 		return nil, err
 	}

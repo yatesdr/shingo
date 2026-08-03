@@ -53,7 +53,7 @@ import (
 //
 // Not every column called "station" is an edge station. mission_events
 // .robot_station holds SEER fleet-station names — 148 distinct values at
-// Springfield — and Core's own synthetic order sources (core-spot, core-direct,
+// Springfield — and Core's own synthetic order sources (core-operator, core-direct,
 // core-test) and the '*' broadcast address have no registry row and never will.
 // The fallback covers the second group correctly, by design: they render as
 // themselves. The first group must not be passed to this resolver at all, since
@@ -125,7 +125,7 @@ func (s *NodeService) stationNameMap() map[string]string {
 // StationName resolves one station identity to the operator's label.
 //
 // Falls back to the identity itself for anything with no enrolled row —
-// core-spot, '*', an edge that has not been enrolled yet. Callers render the
+// core-operator, '*', an edge that has not been enrolled yet. Callers render the
 // result directly; there is no "unknown station" sentinel to special-case,
 // because degrading to the value the screen shows today is the correct
 // behaviour and a sentinel would be a second thing to handle everywhere.

@@ -147,8 +147,23 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		{"complex intake", "dispatch/complex_intake.go", "an Edge station sends a multi-leg order; the buried branch is this same door"},
 		{"compound children", "dispatch/compound.go", "a reshuffle plan, written as child rows in one transaction"},
 		{"restore synthetic", "dispatch/restore_listeners.go", "Core itself, to parent the put-back compound"},
-		{"operator spot orders", "www/handlers_orders.go", "a team member on the orders page: deliver a bin, retrieve a named bin, move a robot"},
-		{"test harness direct move", "engine/orders.go", "an engineer on the /test-orders page; gated like the rest, per the owner's ruling"},
+		// One door, two screens. It was two doors — the operator's orders page
+		// and the engineers' /test-orders page — which had drifted twelve ways
+		// between them, and each difference was a bug waiting its turn. They
+		// are one function now; the screens differ only in whether a person
+		// names the bin or names the node to take one off.
+		//
+		// The three questions this list exists to ask, answered:
+		//  1. Projects to the Edge? No. It writes the row itself rather than
+		//     routing through admitOrder, so it is outside the projection scope
+		//     — the same answer both doors gave separately.
+		//  2. Needs the dropoff-capacity gate? Yes, and it consults it, before
+		//     the row and before any claim so a refusal leaves the bin alone.
+		//  3. What origin_class? no_demand, stamped at creation. Somebody
+		//     moving a bin from A to B is not a place asking for material, so
+		//     there is no episode; blank would land it in the bucket that means
+		//     "we lost a demand link".
+		{"bin move", "engine/bin_move.go", "a person moving one bin from where it is to somewhere else — the operator names the bin, the engineer names the node"},
 	}
 
 	// Each named door has to still be there. A door whose site stops writing

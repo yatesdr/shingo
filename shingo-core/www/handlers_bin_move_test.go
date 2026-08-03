@@ -12,10 +12,15 @@ import (
 	"shingocore/store/nodes"
 )
 
-// submitRetrieveSpecificTo POSTs a bin-move through the operator door and
-// returns the decoded envelope. Separate from the existing helper so these
-// tests can name their own destination.
-func submitRetrieveSpecificTo(t *testing.T, h *Handlers, binLabel, deliveryNode string) (*retrieveSpecificResponse, int) {
+// submitRetrieveSpecific POSTs a bin-move through the operator door and returns
+// the decoded envelope.
+//
+// There were two of these. The second was added with a note saying it was
+// separate "so these tests can name their own destination" — which the first
+// already took as a parameter. They were otherwise the same call, and having
+// two is how the two doors' tests drifted into asserting slightly different
+// things about the same behaviour.
+func submitRetrieveSpecific(t *testing.T, h *Handlers, binLabel, deliveryNode string) (*retrieveSpecificResponse, int) {
 	t.Helper()
 	rec := postJSON(t, h.apiManualOrderSubmit, "/api/orders/spot",
 		map[string]any{
@@ -50,7 +55,7 @@ func TestBinMove_OperatorDoorRefusesAnOccupiedDestination(t *testing.T) {
 	// The lineside destination is already occupied.
 	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BIN-MOVE-BLOCKING")
 
-	resp, status := submitRetrieveSpecificTo(t, h, bin.Label, sd.LineNode.Name)
+	resp, status := submitRetrieveSpecific(t, h, bin.Label, sd.LineNode.Name)
 
 	if status == http.StatusOK {
 		t.Fatalf("move to an occupied lineside node returned 200 — two bins now contend for one spot. body=%+v", resp)
@@ -105,6 +110,42 @@ func TestBinMove_TestPageDoorRefusesAnOccupiedDestination(t *testing.T) {
 	}
 }
 
+// TestBinMove_BothDoorsCallAMistypedNodeABadRequest pins that the two doors
+// agree about what kind of failure naming a node that does not exist is.
+//
+// They did not. The operator's door answered 400; the engineer's returned a
+// plain error, and its wrapper turns everything it does not recognise into a
+// 500 — so the same mistake, made on the other screen, reported that the server
+// was broken. Both node ids on that door come straight from the request, so
+// both are the caller's to get right.
+func TestBinMove_BothDoorsCallAMistypedNodeABadRequest(t *testing.T) {
+	t.Parallel()
+	sim := simulator.New()
+	h, db := testHandlersWithSim(t, sim)
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-BADNODE-SRC")
+
+	// The engineer's door, by node id.
+	rec := postJSON(t, h.apiDirectOrderSubmit, "/api/test-orders/direct",
+		map[string]any{
+			"from_node_id": sd.StorageNode.ID,
+			"to_node_id":   int64(9999999),
+			"priority":     1,
+		})
+	if rec.Code == http.StatusInternalServerError {
+		t.Errorf("a node id that does not exist came back as a server error; nothing is broken, the id is wrong. body=%s", rec.Body.String())
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("engineer door: status = %d, want %d; body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+
+	// The operator's door, by node name — the same answer.
+	resp, status := submitRetrieveSpecific(t, h, bin.Label, "NO-SUCH-NODE")
+	if status != http.StatusBadRequest {
+		t.Errorf("operator door: status = %d, want %d; err=%q", status, http.StatusBadRequest, resp.Error)
+	}
+}
+
 // TestBinMove_OperatorDoorAllowsAFreeDestination is the other half: the gate
 // must not block the ordinary move.
 func TestBinMove_OperatorDoorAllowsAFreeDestination(t *testing.T) {
@@ -119,7 +160,7 @@ func TestBinMove_OperatorDoorAllowsAFreeDestination(t *testing.T) {
 	}
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-MOVE-OK")
 
-	resp, status := submitRetrieveSpecificTo(t, h, bin.Label, free.Name)
+	resp, status := submitRetrieveSpecific(t, h, bin.Label, free.Name)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200 for an empty destination; err=%q", status, resp.Error)
 	}

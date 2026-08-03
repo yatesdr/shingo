@@ -309,11 +309,11 @@ func TestCancelStuckOrder_Success(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	// Put an order into dispatched status via CreateDirectOrder, then stall it.
-	res, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: storageNode.ID,
-		ToNodeID:   lineNode.ID,
-		StationID:  "stuck-test",
-		Desc:       "stuck-test-order",
+	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID,
+		DestNodeID:   lineNode.ID,
+		StationID:    "stuck-test",
+		Desc:         "stuck-test-order",
 	})
 	if err != nil {
 		t.Fatalf("seed CreateDirectOrder: %v", err)
@@ -384,11 +384,11 @@ func TestRecoverFaultedOrder_Success(t *testing.T) {
 	createTestBinAtNode(t, db, "PART-FT", storageNode.ID, "BIN-FT-1")
 	eng := newTestEngine(t, db, simulator.New())
 
-	res, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: storageNode.ID,
-		ToNodeID:   lineNode.ID,
-		StationID:  "faulted-test",
-		Desc:       "faulted-test-order",
+	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID,
+		DestNodeID:   lineNode.ID,
+		StationID:    "faulted-test",
+		Desc:         "faulted-test-order",
 	})
 	if err != nil {
 		t.Fatalf("seed order: %v", err)
@@ -431,11 +431,11 @@ func TestRecoverFaultedOrder_RejectsNonFaulted(t *testing.T) {
 	createTestBinAtNode(t, db, "PART-FT2", storageNode.ID, "BIN-FT-2")
 	eng := newTestEngine(t, db, simulator.New())
 
-	res, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: storageNode.ID,
-		ToNodeID:   lineNode.ID,
-		StationID:  "faulted-reject",
-		Desc:       "faulted-reject-order",
+	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID,
+		DestNodeID:   lineNode.ID,
+		StationID:    "faulted-reject",
+		Desc:         "faulted-reject-order",
 	})
 	if err != nil {
 		t.Fatalf("seed order: %v", err)
@@ -459,11 +459,11 @@ func TestReissueTerminate_Success(t *testing.T) {
 	createTestBinAtNode(t, db, "PART-RT", storageNode.ID, "BIN-RT-1")
 	eng := newTestEngine(t, db, simulator.New())
 
-	res, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: storageNode.ID,
-		ToNodeID:   lineNode.ID,
-		StationID:  "reissue-test",
-		Desc:       "reissue-test-order",
+	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID,
+		DestNodeID:   lineNode.ID,
+		StationID:    "reissue-test",
+		Desc:         "reissue-test-order",
 	})
 	if err != nil {
 		t.Fatalf("seed order: %v", err)
@@ -499,11 +499,11 @@ func TestReissueTerminate_RejectsNonFailed(t *testing.T) {
 	createTestBinAtNode(t, db, "PART-RT2", storageNode.ID, "BIN-RT-2")
 	eng := newTestEngine(t, db, simulator.New())
 
-	res, err := eng.CreateDirectOrder(DirectOrderRequest{
-		FromNodeID: storageNode.ID,
-		ToNodeID:   lineNode.ID,
-		StationID:  "reissue-reject",
-		Desc:       "reissue-reject-order",
+	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID,
+		DestNodeID:   lineNode.ID,
+		StationID:    "reissue-reject",
+		Desc:         "reissue-reject-order",
 	})
 	if err != nil {
 		t.Fatalf("seed order: %v", err)

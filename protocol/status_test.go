@@ -163,11 +163,43 @@ var predicateProjectorPairs = []struct {
 	{"NonTerminal", func(s Status) bool { return !IsTerminal(s) }, NonTerminalStatusSQLList},
 	{"IsFailureTerminal", IsFailureTerminal, FailureTerminalStatusSQLList},
 	{"IsVendorActive", IsVendorActive, VendorActiveStatusSQLList},
+	{"IsVendorTracked", IsVendorTracked, VendorTrackedStatusSQLList},
 	{"IsPreDispatch", IsPreDispatch, PreDispatchStatusSQLList},
 	{"IsAcquiring", IsAcquiring, AcquiringStatusSQLList},
 	{"IsRuntimeStuckCandidate", IsRuntimeStuckCandidate, RuntimeStuckCandidateStatusSQLList},
 	{"IsStuckSweepCandidate", IsStuckSweepCandidate, StuckSweepStatusSQLList},
 	{"IsOperatorVisible", IsOperatorVisible, OperatorVisibleStatusSQLList},
+}
+
+// TestBlockingStatusesAreTracked is the invariant that was missing, and its
+// absence was a live hole.
+//
+// A status that blocks a changeover is asserting that something physical is
+// outstanding at a node and the order must reach a terminal state before work
+// there can resume. The only thing that moves such an order along is the fleet
+// poller, and the poller only watches orders it was told to track — which, after
+// a restart, is whatever the boot query selects.
+//
+// So if a status can block a changeover and is not tracked, it is a block that
+// nothing can clear. That was exactly true of `faulted`: the boot query selected
+// IsVendorActive, faulted is not in it, and a faulted order surviving a restart
+// was never polled again. Its grace period never expired, no sweep covered it
+// (deliberately, on both counts), no anomaly was raised (also deliberately), and
+// it went on blocking changeovers at its node until a person found it.
+//
+// Every one of those exclusions was defensible alone. Nothing connected them.
+func TestBlockingStatusesAreTracked(t *testing.T) {
+	t.Parallel()
+	for _, s := range AllStatuses() {
+		if !BlocksChangeoverStart(s) {
+			continue
+		}
+		if !IsVendorTracked(s) {
+			t.Errorf("status %q blocks a changeover but is not vendor-tracked.\n"+
+				"Nothing polls it, so nothing can move it to a terminal state, so the block it creates never clears.\n"+
+				"Either track it, or it must not block.", s)
+		}
+	}
 }
 
 // TestStatusSQLProjectorsAgreeWithPredicates is the drift detector. For

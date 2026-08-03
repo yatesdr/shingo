@@ -6,7 +6,6 @@
 package www
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -27,29 +26,20 @@ func (h *Handlers) apiDirectOrderSubmit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	result, err := h.orchestration.CreateDirectOrder(engine.DirectOrderRequest{
-		FromNodeID: req.FromNodeID,
-		ToNodeID:   req.ToNodeID,
-		StationID:  "core-direct",
-		Priority:   req.Priority,
-		Desc:       "direct test order from shingo core",
+	// The engineers' half of the one bin-move door: name a node, take whatever
+	// is free there. The refusal statuses are no longer decided here — the
+	// engine classifies each one and this maps the kind to a number, so both
+	// screens answer the same way to the same refusal.
+	result, err := h.orchestration.CreateBinMove(engine.BinMoveRequest{
+		Selection:    engine.BinSelectionAuto,
+		SourceNodeID: req.FromNodeID,
+		DestNodeID:   req.ToNodeID,
+		StationID:    "core-direct",
+		Priority:     req.Priority,
+		Desc:         "direct test order from shingo core",
 	})
 	if err != nil {
-		// A full destination is a conflict with the plant's current state, not a
-		// server fault: the engineer can clear the spot or pick another one.
-		// Everything else on this path is still a 500.
-		if errors.Is(err, engine.ErrDestinationOccupied) {
-			h.jsonError(w, err.Error(), http.StatusConflict)
-			return
-		}
-		// Somebody else took the bin between choosing it and reserving it. Same
-		// class as above — a conflict with what the plant is doing right now,
-		// which the engineer resolves by trying again.
-		if errors.Is(err, engine.ErrBinTaken) {
-			h.jsonError(w, "that bin was taken a moment ago — try again", http.StatusConflict)
-			return
-		}
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		h.jsonError(w, err.Error(), binMoveStatus(err))
 		return
 	}
 
@@ -58,6 +48,7 @@ func (h *Handlers) apiDirectOrderSubmit(w http.ResponseWriter, r *http.Request) 
 		"vendor_order_id": result.VendorOrderID,
 		"from":            result.FromNode,
 		"to":              result.ToNode,
+		"bin":             result.BinLabel,
 	})
 }
 

@@ -193,10 +193,10 @@ func (db *DB) CountActiveOrders() (int, error) {
 	return orders.CountActive(db.DB)
 }
 
-// ListDispatchedVendorOrderIDs returns vendor order IDs for all non-terminal
-// orders.
-func (db *DB) ListDispatchedVendorOrderIDs() ([]string, error) {
-	return orders.ListDispatchedVendorOrderIDs(db.DB)
+// ListTrackedVendorOrderIDs returns the vendor order IDs Core must keep watching.
+// (The old comment here said "all non-terminal orders", which it never was.)
+func (db *DB) ListTrackedVendorOrderIDs() ([]string, error) {
+	return orders.ListTrackedVendorOrderIDs(db.DB)
 }
 
 // ListActiveOrdersBySourceRef returns orders in pre-dispatch states (pending,

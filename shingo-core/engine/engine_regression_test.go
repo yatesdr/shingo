@@ -158,8 +158,8 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 
 	// Create an order with empty EdgeUUID (simulates auto-return order)
 	autoReturn := &orders.Order{
-		EdgeUUID:     "",
-		StationID:    "line-1",
+		EdgeUUID:  "",
+		StationID: "line-1",
 		// Incidental to this test, which is about cancelling an order with a
 		// blank EdgeUUID. Literal because "store" is no longer an order type.
 		OrderType:    protocol.OrderType("store"),

@@ -638,7 +638,18 @@ func TestCountByDeliveryNode(t *testing.T) {
 
 // -------- ListDispatchedVendorOrderIDs ------------------------------------
 
-func TestListDispatchedVendorOrderIDs(t *testing.T) {
+// TestListTrackedVendorOrderIDs pins what Core keeps watching across a restart.
+//
+// The faulted case is the reason this test's name changed. This query is what
+// re-registers orders with the fleet poller at boot, and it selected the
+// vendor-ACTIVE set, which excludes faulted. A faulted order is one the fleet
+// failed while it was holding a bin; it ends when its grace period expires, and
+// that period only runs while the poller is watching. So a faulted order that
+// lived through a restart was never polled again, never expired, and — because
+// faulted is deliberately outside both the stuck sweep and the stale-order
+// anomaly — nothing else noticed either, while it went on blocking changeovers
+// at its node.
+func TestListTrackedVendorOrderIDs(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
@@ -659,18 +670,20 @@ func TestListDispatchedVendorOrderIDs(t *testing.T) {
 	mk("d1", "dispatched", "rds-1")
 	mk("d2", "in_transit", "rds-2")
 	mk("d3", "staged", "rds-3")
+	// The fleet still has this one and its grace period has to keep running.
+	mk("d4", "faulted", "rds-4")
 	mk("done", "confirmed", "rds-done")  // excluded: terminal
-	mk("pending", "pending", "rds-pend") // excluded: wrong status
+	mk("pending", "pending", "rds-pend") // excluded: not handed to the fleet
 	mk("no-vendor", "dispatched", "")    // excluded: empty vendor_order_id
 
-	ids, err := orders.ListDispatchedVendorOrderIDs(db)
+	ids, err := orders.ListTrackedVendorOrderIDs(db)
 	if err != nil {
-		t.Fatalf("ListDispatchedVendorOrderIDs: %v", err)
+		t.Fatalf("ListTrackedVendorOrderIDs: %v", err)
 	}
-	if len(ids) != 3 {
-		t.Fatalf("len = %d, want 3; got %v", len(ids), ids)
+	if len(ids) != 4 {
+		t.Fatalf("len = %d, want 4; got %v.\nA faulted order missing here is one the poller never watches again after a restart, so its grace period never expires and the block it holds never clears.", len(ids), ids)
 	}
-	want := map[string]bool{"rds-1": false, "rds-2": false, "rds-3": false}
+	want := map[string]bool{"rds-1": false, "rds-2": false, "rds-3": false, "rds-4": false}
 	for _, id := range ids {
 		if _, ok := want[id]; !ok {
 			t.Errorf("unexpected vendor id %q", id)

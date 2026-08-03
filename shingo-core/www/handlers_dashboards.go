@@ -287,7 +287,7 @@ func (h *Handlers) apiStations(w http.ResponseWriter, r *http.Request) {
 	// stored column, which is the failure the whole display-name split exists
 	// to prevent (store/registry/registry.go:345-350).
 	//
-	// Unenrolled stations resolve to themselves, so core-spot / core-direct /
+	// Unenrolled stations resolve to themselves, so core-operator / core-direct /
 	// core-test render as they always have.
 	type stationOption struct {
 		ID    string `json:"id"`

@@ -4,12 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
-
 	"shingo/protocol"
 	"shingocore/dispatch"
-	"shingocore/store/orders"
-	"shingocore/store/reservations"
 )
 
 // ErrDestinationOccupied is returned when a move is refused because something
@@ -34,155 +30,14 @@ var ErrDestinationOccupied = errors.New("destination occupied")
 // inside it. Now it is a value.
 var ErrBinTaken = errors.New("bin taken by another order")
 
-// DirectOrderRequest holds the parameters for creating a direct fleet order.
-type DirectOrderRequest struct {
-	FromNodeID int64
-	ToNodeID   int64
-	StationID  string
-	Priority   int
-	Desc       string
-}
-
-// DirectOrderResult holds the result of a successfully created direct order.
-type DirectOrderResult struct {
-	OrderID       int64
-	VendorOrderID string
-	FromNode      string
-	ToNode        string
-}
-
-// CreateDirectOrder creates a transport order in the DB and dispatches it to the fleet.
-func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, error) {
-	if req.FromNodeID == req.ToNodeID {
-		return nil, fmt.Errorf("source and destination must be different")
-	}
-
-	sourceNode, err := e.db.GetNode(req.FromNodeID)
-	if err != nil {
-		return nil, fmt.Errorf("source node not found")
-	}
-	destNode, err := e.db.GetNode(req.ToNodeID)
-	if err != nil {
-		return nil, fmt.Errorf("destination node not found")
-	}
-
-	// The same occupancy gate the operator's bin-move takes. This door is only
-	// reachable from the /test-orders page, which is an argument for exempting
-	// it and the owner ruled against: the page is used occasionally and its
-	// orders move real bins with real robots. An exemption here would also be
-	// the kind that outlives the reason for it.
-	//
-	// Before the order row and before the reservation, so a refusal leaves the
-	// source bin untouched.
-	if preview := e.dispatcher.PreviewDropoffCapacity(destNode.Name); preview.Blocked {
-		return nil, fmt.Errorf("%w: %s", ErrDestinationOccupied, preview.Reason)
-	}
-
-	// Pick an unclaimed bin at the source node so the order carries a
-	// concrete BinID. Without it, applyBinArrivalForOrder silently skips on
-	// completion and bins.node_id never reflects the move (CARRIER-0005
-	// stuck-at-source bug).
-	srcBins, err := e.db.ListBinsByNode(req.FromNodeID)
-	if err != nil {
-		return nil, fmt.Errorf("list bins at source: %w", err)
-	}
-	var srcBinID int64
-	for _, b := range srcBins {
-		// Reservation-aware (1b): skip bins another order has reserved but not yet
-		// claimed, so the ReserveForDispatch soft-acquire below doesn't lose the
-		// race. The hard claim lands later, at ConfirmForDispatch.
-		if b.ClaimedBy == nil && !b.HasPendingReservation {
-			srcBinID = b.ID
-			break
-		}
-	}
-	if srcBinID == 0 {
-		return nil, fmt.Errorf("no unclaimed bin at source node %s", sourceNode.Name)
-	}
-
-	// A bare identifier, like the Edge mints. It used to be the station name
-	// plus eight characters of a uuid, which put the station in two places at
-	// once -- the identifier and the column -- and meant renaming a station
-	// silently changed the shape of this door's identifiers. Which door made an
-	// order lives in the station column and nowhere else.
-	//
-	// Full length, not the first eight characters. Eight hex characters is about
-	// four billion values, which sounds like plenty until you notice nothing
-	// anywhere handles a collision.
-	edgeUUID := uuid.New().String()
-
-	order := &orders.Order{
-		EdgeUUID:  edgeUUID,
-		StationID: req.StationID,
-		OrderType: protocol.OrderTypeMove,
-		Status:    protocol.StatusPending,
-		// One robot, one bin. The field was omitted here, and because the
-		// INSERT names the column the table's DEFAULT 1 never applied — so
-		// every direct move ever made through this door stored 0 and the order
-		// screen printed "qty 0".
-		Quantity:     1,
-		SourceNode:   sourceNode.Name,
-		DeliveryNode: destNode.Name,
-		Priority:     req.Priority,
-		PayloadDesc:  req.Desc,
-		BinID:        &srcBinID,
-		// NO_DEMAND, stamped here where it is known. A direct order is an
-		// engineer moving a bin from A to B; no place asked for material, so
-		// there is no episode and its absence is not a finding. Left blank it
-		// would land orphan and put an admin action in the one bucket that is
-		// supposed to mean "we lost a demand link."
-		OriginClass: protocol.OriginClassNoDemand,
-	}
-	if err := e.db.CreateOrder(order); err != nil {
-		return nil, fmt.Errorf("create order: %w", err)
-	}
-	// Rule 1: soft-acquire the bin (a pending reservation), then hard-claim it at
-	// dispatch. Another order can take the bin in the gap between the scan above
-	// and this call — that is a race with a person, not a fault, and it gets a
-	// sentinel the caller can act on.
-	//
-	// The order row already exists at this point, so it has to be failed here or
-	// it sits pending forever with nothing to dispatch, fail or clean it up.
-	if err := e.binManifest.ReserveForDispatch(srcBinID, order.ID); err != nil {
-		if ferr := e.db.FailOrderAtomic(order.ID, "bin taken by another order before reservation"); ferr != nil {
-			e.logFn("engine: fail direct order %d after losing the bin: %v", order.ID, ferr)
-		}
-		if errors.Is(err, reservations.ErrReservationConflict) {
-			return nil, fmt.Errorf("%w: bin %d", ErrBinTaken, srcBinID)
-		}
-		return nil, fmt.Errorf("reserve bin %d: %w", srcBinID, err)
-	}
-	if err := e.dispatcher.Lifecycle().MarkPending(order, req.Desc); err != nil {
-		e.logFn("engine: mark direct order %d pending: %v", order.ID, err)
-	}
-
-	// Confirm-at-dispatch: hard-claim the destination slot (if a storage dropoff)
-	// and the bin in one step, immediately before the fleet call.
-	if err := e.dispatcher.ConfirmForDispatch(order, srcBinID, sourceNode, destNode); err != nil {
-		if rerr := e.db.ReleaseReservation(order.ID, srcBinID); rerr != nil {
-			e.logFn("engine: release reservation for bin %d after confirm failure: %v", srcBinID, rerr)
-		}
-		return nil, fmt.Errorf("confirm bin %d at dispatch: %w", srcBinID, err)
-	}
-
-	vendorOrderID, err := e.dispatcher.DispatchDirect(order, sourceNode, destNode)
-	if err != nil {
-		// Coupled rollback: clear the hard claim AND release the reservation, so a
-		// failed dispatch can't orphan a confirmed reservation. (DispatchDirect
-		// already Fail'd the order, which released it — this is the idempotent belt.)
-		if uerr := e.db.ReleaseClaimForBin(srcBinID, order.ID); uerr != nil {
-			e.logFn("engine: release claim for bin %d after dispatch failure: %v", srcBinID, uerr)
-		}
-		return nil, fmt.Errorf("fleet dispatch failed: %w", err)
-	}
-
-	return &DirectOrderResult{
-		OrderID:       order.ID,
-		VendorOrderID: vendorOrderID,
-		FromNode:      sourceNode.Name,
-		ToNode:        destNode.Name,
-	}, nil
-}
+// ErrNodeNotFound is returned when the request names a node that does not
+// exist.
+//
+// A sentinel for the same reason as the two above: without one, the caller
+// turns every unrecognised error into a 500, so an engineer who mistypes a node
+// is told the server is broken. The operator's door has always answered 400 for
+// exactly this — the two doors disagreed about what kind of failure a typo is.
+var ErrNodeNotFound = errors.New("node not found")
 
 // TerminateOrder cancels an order, unclaims any payloads, and emits a cancellation event.
 func (e *Engine) TerminateOrder(orderID int64, actor string) error {

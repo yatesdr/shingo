@@ -147,6 +147,22 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		OriginClass:      originClass,
 	}
 
+	// Do the things this order names exist? The wire door has always asked; this
+	// one never did, so an order naming a payload Core does not have got a row,
+	// an announcement, and an ACK telling the Edge it was accepted — and then
+	// waited for material that cannot arrive.
+	//
+	// The checks only. Not the synthetic-destination resolution that sits beside
+	// them at the other door: that rewrites where the order is going, and this
+	// order's steps have already chosen the concrete nodes its robot will visit.
+	//
+	// Before the insert, so a refusal leaves nothing behind, and well before the
+	// ack — the ack is the part that made this worse than a slow failure.
+	if _, lerr := d.lifecycle.checkOrderRefs(order); lerr != nil {
+		d.sendError(env, p.OrderUUID, lerr.Code, lerr.Detail)
+		return
+	}
+
 	if err := d.db.CreateOrder(order); err != nil {
 		log.Printf("dispatch: create complex order: %v", err)
 		d.sendError(env, p.OrderUUID, "internal_error", err.Error())

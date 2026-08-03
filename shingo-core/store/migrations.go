@@ -861,6 +861,11 @@ func (db *DB) runVersionedMigrations() error {
 		{71, "orders.edge_uuid unique (partial) — match the index the plants already run",
 			v71OrdersUUIDUnique,
 			func(q schema.Querier) bool { return uuidIndexIsUnique(q) }},
+		// A DATA migration, not a shape one: no ALTER, so no matching edit in
+		// the DDL constants. It moves the value, not the column.
+		{72, "core-spot becomes core-operator, in every table that stores it",
+			v72StationCoreOperator,
+			func(q schema.Querier) bool { return noCoreSpotLeft(q) }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3183,6 +3188,85 @@ func v71OrdersUUIDUnique(tx *sql.Tx) error {
 		return fmt.Errorf("create unique idx_orders_uuid: %w", err)
 	}
 	return nil
+}
+
+// v72StationCoreOperator renames the operator screen's station id everywhere a
+// database stores it.
+//
+// The screen is the operator's, not a "spot" anything — "spot order" was never
+// a word anyone at a plant used. The rename is cheap on the code side, because
+// nothing reads the literal: the class each order belongs to is stamped at the
+// create site, so no downstream branch depends on the spelling.
+//
+// It is NOT cheap on the data side, which is why this migration exists rather
+// than a forward-only change of the two write sites. Every one of these tables
+// is grouped or filtered by the exact string:
+//
+//   - orders.station_id — the orphan-by-site summary GROUPs BY it, so a
+//     forward-only rename splits one station into two rows forever, and every
+//     count, and the oldest-live timestamp with them.
+//   - mission_telemetry.station_id — copied from the order's station, so it
+//     splits exactly the same way.
+//   - dashboards.stations_json — a saved board naming the old string matches
+//     nothing once new orders carry the new one. The board does not break; it
+//     goes BLANK, which is this system's signature failure and the reason the
+//     whole campaign exists.
+//   - cell_config.station — cross-filtered against the dashboard scope above,
+//     so the two have to move together or a heartbeat board empties.
+//
+// The station picker needs no migration: it is SELECT DISTINCT over
+// orders.station_id, so it offers the new name the moment the first statement
+// below commits.
+//
+// Idempotent by construction: every statement is conditional on finding the OLD
+// value, so a re-run matches nothing. That matters more than usual here — a
+// failing verify re-runs the migration on every boot, and a data migration that
+// is not safe to repeat would compound each time.
+//
+// stations_json is TEXT holding a JSON array of bare strings, so the rename is
+// a replace of the QUOTED token. The quotes are what make it exact: they pin
+// the match to a whole element, and no other station id contains this one.
+//
+// Historical edge_uuid strings keep the old spelling. They are identifiers that
+// were minted, not fields that describe anything, and rewriting them would be
+// inventing a past.
+func v72StationCoreOperator(tx *sql.Tx) error {
+	for _, s := range []struct{ what, stmt string }{
+		{"orders.station_id",
+			`UPDATE orders SET station_id = 'core-operator' WHERE station_id = 'core-spot'`},
+		{"mission_telemetry.station_id",
+			`UPDATE mission_telemetry SET station_id = 'core-operator' WHERE station_id = 'core-spot'`},
+		{"cell_config.station",
+			`UPDATE cell_config SET station = 'core-operator' WHERE station = 'core-spot'`},
+		{"dashboards.stations_json",
+			`UPDATE dashboards SET stations_json = replace(stations_json, '"core-spot"', '"core-operator"')
+			  WHERE stations_json LIKE '%"core-spot"%'`},
+	} {
+		if _, err := tx.Exec(s.stmt); err != nil {
+			return fmt.Errorf("v72 rename %s: %w", s.what, err)
+		}
+	}
+	return nil
+}
+
+// noCoreSpotLeft reports whether the old station id is gone from every table
+// that stores one.
+//
+// EXISTS rather than counts, and one round trip rather than four: this runs on
+// every Core startup for every applied migration, and the answer is the same
+// either way.
+func noCoreSpotLeft(q schema.Querier) bool {
+	var clean bool
+	if err := q.QueryRow(`
+		SELECT NOT (
+		       EXISTS (SELECT 1 FROM orders            WHERE station_id = 'core-spot')
+		    OR EXISTS (SELECT 1 FROM mission_telemetry WHERE station_id = 'core-spot')
+		    OR EXISTS (SELECT 1 FROM cell_config       WHERE station    = 'core-spot')
+		    OR EXISTS (SELECT 1 FROM dashboards        WHERE stations_json LIKE '%"core-spot"%')
+		)`).Scan(&clean); err != nil {
+		return false
+	}
+	return clean
 }
 
 // uuidIndexIsUnique reports whether idx_orders_uuid is already the unique form.

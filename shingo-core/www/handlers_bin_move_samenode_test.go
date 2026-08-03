@@ -31,7 +31,7 @@ func TestBinMove_RefusesMovingABinToWhereItAlreadyIs(t *testing.T) {
 
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-SAMENODE")
 
-	resp, status := submitRetrieveSpecificTo(t, h, bin.Label, sd.StorageNode.Name)
+	resp, status := submitRetrieveSpecific(t, h, bin.Label, sd.StorageNode.Name)
 
 	if status == http.StatusOK {
 		t.Fatalf("moving a bin to its own node returned 200 — a robot would be dispatched to carry a bin nowhere. body=%+v", resp)
@@ -71,7 +71,7 @@ func TestBinMove_RefusesSameNodeEvenInsideALane(t *testing.T) {
 	}
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, lane.ID, "BIN-SAMENODE-LANE")
 
-	resp, status := submitRetrieveSpecificTo(t, h, bin.Label, lane.Name)
+	resp, status := submitRetrieveSpecific(t, h, bin.Label, lane.Name)
 
 	if status == http.StatusOK {
 		t.Fatalf("same-node move inside a lane returned 200 — the occupancy gate defers on lanes, so nothing stopped this. body=%+v", resp)

@@ -410,6 +410,13 @@ onSSE('order-update', debounce(function(data) {
 // --- Manual order modal ---
 var _moNodesLoaded = false;
 var _moActiveTab = 'transport';
+// Kept from the two fetches below so the staged tab can answer "what is at the
+// node you just picked?" without a round trip per keystroke. Advisory only —
+// the server reads the bin itself at submit (payloadAtSource in
+// handlers_orders.go), so a stale cache shows a stale sentence, never a wrong
+// order.
+var _moNodes = [];
+var _moBins = [];
 
 function openManualOrderModal() {
   showModal('manual-order-modal');
@@ -494,6 +501,7 @@ function buildNodeOptionsHTML(nodes) {
 function loadManualOrderDropdowns() {
   apiGet('/api/nodes')
     .then(function(nodes) {
+      _moNodes = nodes || [];
       var html = buildNodeOptionsHTML(nodes);
       // Transport tab
       document.getElementById('mo-source').innerHTML = html;
@@ -504,9 +512,13 @@ function loadManualOrderDropdowns() {
       document.getElementById('mo-staged-delivery').innerHTML = html;
       // Move-robot tab
       document.getElementById('mo-moverobot-dest').innerHTML = html;
+      stagedSourceChanged();
     })
     .catch(function(e) { console.error('loadManualOrderDropdowns nodes', e); });
 
+  // The transport tab's retrieve / retrieve_empty payload is the REQUEST — "bring
+  // me a bin of X" — so it is a genuine choice and keeps the full catalog. The
+  // staged tab's is not, and no longer has a list to fish through.
   apiGet('/api/payloads/templates')
     .then(function(bps) {
       var html = '<option value="">— none —</option>';
@@ -514,16 +526,77 @@ function loadManualOrderDropdowns() {
         html += '<option value="' + escapeHtml(bps[i].code) + '">' + escapeHtml(bps[i].code) + ' — ' + escapeHtml(bps[i].description) + '</option>';
       }
       document.getElementById('mo-payload').innerHTML = html;
-      document.getElementById('mo-staged-payload').innerHTML = html;
     })
     .catch(function(e) { console.error('loadManualOrderDropdowns payloads', e); });
 
   loadManualOrderBinDropdown();
 }
 
+// stagedSourceChanged answers "what will this order actually be carrying?" from
+// the source the operator just named, so the form does not ask them.
+//
+// Two shapes, because they are two different questions:
+//   - a concrete node holds a bin, and the bin knows what it is. Read it out;
+//     post nothing. The server reads the same bin at submit and is the one that
+//     decides, so a stale cache here cannot produce a wrong order.
+//   - a group holds several, and the payload is how you say WHICH one. That is
+//     a real choice, so it keeps a picker — listing only what is parked in that
+//     group, not the whole catalog.
+function stagedSourceChanged() {
+  var name = document.getElementById('mo-staged-source').value;
+  var derived = document.getElementById('mo-staged-payload-derived');
+  var groupWrap = document.getElementById('mo-staged-payload-group');
+  var readout = document.getElementById('mo-staged-payload-readout');
+  var sel = document.getElementById('mo-staged-payload');
+
+  function showReadout(text) {
+    derived.classList.remove('hide');
+    groupWrap.classList.add('hide');
+    readout.textContent = text;
+  }
+
+  if (!name) { showReadout('Select a source node.'); return; }
+
+  var node = _moNodes.find(function(n) { return n.name === name; });
+  if (!node) { showReadout('Read from the bin at the source when the order is submitted.'); return; }
+
+  if (node.is_synthetic) {
+    // Every node under this container, however deep (group → lane → slot).
+    var under = {}, added = true;
+    under[node.id] = true;
+    while (added) {
+      added = false;
+      _moNodes.forEach(function(n) {
+        if (!under[n.id] && n.parent_id && under[n.parent_id]) { under[n.id] = true; added = true; }
+      });
+    }
+    var codes = [];
+    _moBins.forEach(function(b) {
+      var at = _moNodes.find(function(n) { return n.name === b.node_name; });
+      if (at && under[at.id] && b.payload_code && codes.indexOf(b.payload_code) === -1) codes.push(b.payload_code);
+    });
+    if (!codes.length) { showReadout('Nothing is parked in ' + name + ' right now.'); return; }
+    derived.classList.add('hide');
+    groupWrap.classList.remove('hide');
+    var html = '<option value="">— any —</option>';
+    codes.sort().forEach(function(c) { html += '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>'; });
+    sel.innerHTML = html;
+    return;
+  }
+
+  var here = _moBins.filter(function(b) { return b.node_name === name; });
+  if (!here.length) { showReadout('No bin at ' + name + '.'); return; }
+  if (here.length > 1) { showReadout(here.length + ' bins at ' + name + ' — which one is picked is decided at dispatch.'); return; }
+  showReadout(here[0].payload_code
+    ? here[0].label + ' — ' + here[0].payload_code
+    : here[0].label + ' — empty');
+}
+
 function loadManualOrderBinDropdown() {
   apiGet('/api/bins/available')
     .then(function(bins) {
+      _moBins = bins || [];
+      stagedSourceChanged();
       if (!bins || !bins.length) {
         document.getElementById('mo-bin').innerHTML = '<option value="">No available bins</option>';
         return;
@@ -631,7 +704,13 @@ function submitManualOrder() {
     body.source_node = document.getElementById('mo-staged-source').value;
     body.staging_node = document.getElementById('mo-staged-staging').value;
     body.delivery_node = document.getElementById('mo-staged-delivery').value;
-    body.payload_code = document.getElementById('mo-staged-payload').value;
+    // Only sent when the source is a group, where it names WHICH bin to take.
+    // For a concrete source the server reads the bin itself, so the page
+    // deliberately sends nothing rather than a second opinion.
+    var groupPick = document.getElementById('mo-staged-payload-group');
+    if (groupPick && !groupPick.classList.contains('hide')) {
+      body.payload_code = document.getElementById('mo-staged-payload').value;
+    }
     if (!body.source_node) { status.textContent = 'Source node is required'; status.style.color = 'var(--danger)'; return; }
     if (!body.staging_node) { status.textContent = 'Staging node is required'; status.style.color = 'var(--danger)'; return; }
     if (!body.delivery_node) { status.textContent = 'Delivery node is required'; status.style.color = 'var(--danger)'; return; }
@@ -731,6 +810,7 @@ delegateActions(document.body, {
     renderOrderModal,
     cancelOrderFromRow,
     setOrderPriority,
+    stagedSourceChanged,
     submitManualOrder,
     switchManualOrderTab,
     terminateOrder,

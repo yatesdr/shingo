@@ -209,24 +209,8 @@ type retrieveSpecificResponse struct {
 	Error       string `json:"error"`
 }
 
-// submitRetrieveSpecific POSTs a retrieve_specific spot order through the
-// public apiManualOrderSubmit handler and returns the decoded envelope.
-func submitRetrieveSpecific(t *testing.T, h *Handlers, binLabel, deliveryNode string) (*retrieveSpecificResponse, int) {
-	t.Helper()
-	rec := postJSON(t, h.apiManualOrderSubmit, "/api/spot/submit",
-		map[string]any{
-			"order_type":    "retrieve_specific",
-			"bin_label":     binLabel,
-			"delivery_node": deliveryNode,
-			"description":   "spot-retrieve-specific char-test",
-			"priority":      1,
-		})
-	var resp retrieveSpecificResponse
-	if rec.Body.Len() > 0 {
-		_ = json.NewDecoder(rec.Body).Decode(&resp)
-	}
-	return &resp, rec.Code
-}
+// submitRetrieveSpecific lives in handlers_bin_move_test.go. There were two
+// copies of it in this package.
 
 // TestSubmitSpotRetrieveSpecific_HappyPath pins the baseline: bin gets claimed
 // by the new order, order advances to "dispatched" with a vendor_order_id.
@@ -291,7 +275,7 @@ func TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim(t *testing.T) 
 
 	// The row still has to be found, and no longer through the response — the
 	// rollback assertions below are the actual subject of this test.
-	rows, err := db.ListOrdersByStation("core-spot", 50)
+	rows, err := db.ListOrdersByStation("core-operator", 50)
 	if err != nil {
 		t.Fatalf("list spot orders: %v", err)
 	}

@@ -337,6 +337,36 @@ func IsVendorActive(s Status) bool {
 // IsVendorActive is the method form.
 func (s Status) IsVendorActive() bool { return IsVendorActive(s) }
 
+// IsVendorTracked reports whether the fleet still holds this order and Core must
+// keep watching it. IsVendorActive plus faulted.
+//
+// The difference from IsVendorActive is the whole point, and it is a bug this
+// predicate exists to close. IsVendorActive asks "is the robot touching this
+// right now", and a faulted order is not — it failed and stopped. But Core is
+// still waiting on it: the grace period that ends a fault only runs while the
+// poller is watching, and the poller only watches what it was told to track.
+//
+// On a restart, orders are re-registered with the tracker from the database, and
+// that query used IsVendorActive. So a faulted order came back from a restart
+// untracked, was never polled, and its grace period never expired — nothing
+// could move it, and nothing anywhere noticed:
+//
+//   - IsRuntimeStuckCandidate excludes faulted deliberately (it is a grace-period
+//     state and its own timer is supposed to end it), so no anomaly was raised.
+//   - IsStuckSweepCandidate excludes it, so no sweep touched it.
+//   - BlocksChangeoverStart INCLUDES it — see the reasoning there — so it went on
+//     blocking changeovers at its node, permanently.
+//
+// That last one is the invariant that was missing and is now a test:
+// EVERY STATUS THAT BLOCKS A CHANGEOVER MUST BE TRACKED. A blocking status that
+// nothing polls is a block nothing can clear, and the block outlives the shift.
+func IsVendorTracked(s Status) bool {
+	return IsVendorActive(s) || s == StatusFaulted
+}
+
+// IsVendorTracked is the method form.
+func (s Status) IsVendorTracked() bool { return IsVendorTracked(s) }
+
 // IsPreDispatch reports whether the order is still in Core's planning
 // space and has not yet been sent to the fleet vendor. Used by
 // source-reference guards that need to know "would re-parenting this
@@ -587,6 +617,7 @@ var (
 	nonTerminalStatusSQLList           = buildStatusSQLList(func(s Status) bool { return !IsTerminal(s) })
 	failureTerminalStatusSQLList       = buildStatusSQLList(IsFailureTerminal)
 	vendorActiveStatusSQLList          = buildStatusSQLList(IsVendorActive)
+	vendorTrackedStatusSQLList         = buildStatusSQLList(IsVendorTracked)
 	preDispatchStatusSQLList           = buildStatusSQLList(IsPreDispatch)
 	acquiringStatusSQLList             = buildStatusSQLList(IsAcquiring)
 	runtimeStuckCandidateStatusSQLList = buildStatusSQLList(IsRuntimeStuckCandidate)
@@ -628,6 +659,10 @@ func FailureTerminalStatusSQLList() string { return failureTerminalStatusSQLList
 // VendorActiveStatusSQLList returns 'dispatched','in_transit','staged'.
 // Use for vendor-side polling filters and floor-execution capacity gates.
 func VendorActiveStatusSQLList() string { return vendorActiveStatusSQLList }
+
+// VendorTrackedStatusSQLList returns 'dispatched','faulted','in_transit','staged'
+// — the orders the fleet still holds, which the poller must keep watching.
+func VendorTrackedStatusSQLList() string { return vendorTrackedStatusSQLList }
 
 // PreDispatchStatusSQLList returns 'pending','queued','sourcing'.
 // Use for source-reference guards (re-parent, delete, rename a node

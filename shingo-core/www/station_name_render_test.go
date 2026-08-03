@@ -134,7 +134,7 @@ func TestStationRename_HistoricalOrderRendersNewName_StoredRowUntouched(t *testi
 // TestStationName_FallsBackToTheRawIdentity covers the values that have no
 // registry row and never will.
 //
-// Measured in production at both plants: core-spot, core-direct and core-test
+// Measured in production at both plants: core-operator, core-direct and core-test
 // are Core's own synthetic order sources, and '*' is the broadcast address on
 // 884 outbox rows at Springfield. None of them is an enrolled edge. Rendering
 // them blank would erase information from a screen; erroring would take the
@@ -144,7 +144,7 @@ func TestStationName_FallsBackToTheRawIdentity(t *testing.T) {
 
 	namer := &fakeNamer{byUID: map[string]string{"plant-a.line-1": "SPRINGFIELD / LINE 1"}}
 
-	for _, station := range []string{"core-spot", "core-direct", "core-test", "*", "stn-never-enrolled"} {
+	for _, station := range []string{"core-operator", "core-direct", "core-test", "*", "stn-never-enrolled"} {
 		t.Run(station, func(t *testing.T) {
 			order := &domain.Order{ID: 1, EdgeUUID: "e-1", StationID: station}
 			out := renderPageWithNamer(t, "orders.html", namer,

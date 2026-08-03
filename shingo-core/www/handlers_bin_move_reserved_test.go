@@ -52,7 +52,7 @@ func TestBinMove_RefusesABinAnotherOrderHasReserved(t *testing.T) {
 		t.Fatal("fixture did not leave a pending reservation; nothing to test")
 	}
 
-	resp, status := submitRetrieveSpecificTo(t, h, bin.Label, sd.LineNode.Name)
+	resp, status := submitRetrieveSpecific(t, h, bin.Label, sd.LineNode.Name)
 
 	if status == http.StatusInternalServerError {
 		t.Fatalf("reserved bin produced a 500 (%q) — that is the reservation failing after the order row was already written, which is the bug: the row is orphaned in pending", resp.Error)
@@ -65,11 +65,11 @@ func TestBinMove_RefusesABinAnotherOrderHasReserved(t *testing.T) {
 	}
 
 	// No order row left behind.
-	rows, err := db.ListOrdersByStation("core-spot", 50)
+	rows, err := db.ListOrdersByStation("core-operator", 50)
 	if err != nil {
-		t.Fatalf("list core-spot orders: %v", err)
+		t.Fatalf("list core-operator orders: %v", err)
 	}
 	if len(rows) != 0 {
-		t.Errorf("%d core-spot order row(s) written despite the rejection — they sit in pending forever", len(rows))
+		t.Errorf("%d core-operator order row(s) written despite the rejection — they sit in pending forever", len(rows))
 	}
 }

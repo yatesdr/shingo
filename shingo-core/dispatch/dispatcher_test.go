@@ -375,6 +375,20 @@ func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
 	}
 }
 
+// TestHandleOrderRequest_UnknownType pins that a kind of order Core cannot
+// carry out is refused at the door, leaving nothing behind.
+//
+// It used to be admitted. The type was taken verbatim into the INSERT, and
+// nothing looked at it until the planner went to pick a handler, found none and
+// failed the order. By then the row existed, its history had two entries, and
+// order.received had been announced for an order that was never going to move.
+// Springfield still has one: a `store` order from June, a word that was never a
+// kind of order at all, sitting in the table as a failure that reads like
+// something was attempted.
+//
+// The shape of the assertions is deliberately the same as the unknown-payload
+// test below it — that refusal has always happened before the row, and this one
+// now matches it.
 func TestHandleOrderRequest_UnknownType(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -390,11 +404,47 @@ func TestHandleOrderRequest_UnknownType(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 	})
 
-	if len(emitter.failed) != 1 {
-		t.Fatalf("failed events = %d, want 1", len(emitter.failed))
+	if _, err := db.GetOrderByUUID("uuid-5"); err == nil {
+		t.Error("an order Core has no way to carry out was written to the table anyway")
 	}
-	if emitter.failed[0].errorCode != "unknown_type" {
-		t.Errorf("error code = %q, want %q", emitter.failed[0].errorCode, "unknown_type")
+	if len(emitter.received) != 0 {
+		t.Errorf("received events = %d, want 0 — nothing was received that could be acted on", len(emitter.received))
+	}
+	// Nothing to fail, because nothing was created. lifecycle.Fail needs a
+	// persisted row, so a failed event here would mean the row is back.
+	if len(emitter.failed) != 0 {
+		t.Errorf("failed events = %d, want 0 — an order refused at the door has nothing to fail", len(emitter.failed))
+	}
+}
+
+// TestHandleOrderRequest_StoreIsNotAKindOfOrder is the same refusal, named
+// after the one that actually happened.
+//
+// "store" was never a kind of order. It was the argument the bin resolver takes
+// to mean "I am putting a bin INTO this group" — a direction, not an order —
+// and it has its own type now. No Edge in this tree mints one, but Springfield
+// has a failed `store` row from June and 23 cancelled ones from April, so
+// something did, and every one of them got a row and an announcement before
+// anybody checked whether Core could carry it out.
+func TestHandleOrderRequest_StoreIsNotAKindOfOrder(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, _ := setupTestData(t, db)
+
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
+
+	d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
+		OrderUUID:    "uuid-store",
+		OrderType:    "store",
+		PayloadCode:  "PART-A",
+		DeliveryNode: lineNode.Name,
+	})
+
+	if _, err := db.GetOrderByUUID("uuid-store"); err == nil {
+		t.Error("a store order was written to the table; that is the row Springfield is still carrying")
+	}
+	if len(emitter.received) != 0 {
+		t.Errorf("received events = %d, want 0", len(emitter.received))
 	}
 }
 

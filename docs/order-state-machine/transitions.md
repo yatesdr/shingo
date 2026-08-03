@@ -1,245 +1,109 @@
-# Order State Machine — Transitions Reference
+# Order state machine — bypasses and the lint guard
 
-**Source of truth:** `protocol/types.go` `validTransitions` map.
+**This document does not contain the state machine.** It used to, and that is why
+it was wrong.
 
-This document is the human-readable rendering. The Go source is canonical;
-if the two diverge, the source wins.
+Where the machine actually lives:
 
-## Statuses
+| What | Where |
+|---|---|
+| the statuses | `protocol/status.go` — the const block, and `AllStatuses()` |
+| the transitions | `protocol/types.go` — `validTransitions` |
+| terminality | derived: a status is terminal iff it has no outgoing edges |
+| the status set predicates | `protocol/status.go` — `IsTerminal`, `IsVendorActive`, `IsVendorTracked`, `IsAcquiring`, `IsPreDispatch`, `IsStuckSweepCandidate`, `IsRuntimeStuckCandidate`, `IsOperatorVisible`, `BlocksChangeoverStart` |
+| the side effects per edge | `shingo-core/dispatch/lifecycle.go` — `actionMap` |
+| the typed writer methods | `shingo-core/dispatch/lifecycle.go` |
+| a readable diagram | [`docs/order-lifecycle.md`](../order-lifecycle.md) |
 
-| Status | Terminal? | Description |
-|--------|-----------|-------------|
-| `pending` | no | Order received, not yet routed |
-| `sourcing` | no | Locating a source bin or destination |
-| `submitted` | no | Submitted to fleet (queued for fleet acknowledgement) |
-| `queued` | no | Awaiting inventory or fleet capacity |
-| `acknowledged` | no | Fleet has acknowledged the order |
-| `dispatched` | no | Fleet order created, robot assignment pending |
-| `in_transit` | no | Robot moving with the bin |
-| `staged` | no | Robot dwelling at a staging node (complex orders) |
-| `delivered` | no | Bin delivered to destination, awaiting confirmation |
-| `reshuffling` | no | Compound parent — children executing reshuffle plan |
-| `confirmed` | **yes** | Receipt confirmed by edge |
-| `failed` | **yes** | Order failed (vendor error, structural error, etc.) |
-| `cancelled` | **yes** | Order cancelled (operator, fleet, or system) |
+## Why this document lost its tables
 
-Terminal status = no key in `validTransitions`. `IsTerminal(s)` derives
-from this property — adding a new non-terminal status only requires
-adding a row to `validTransitions` with at least one outgoing edge.
+It carried hand-copied renderings of the status list, the transition table, the
+action map and the lifecycle API. All four drifted, and the drift was not small:
+two whole statuses missing, thirteen transitions, seven action-map rows, seven
+methods, and one terminal status. It also stated that a compound parent has
+"terminal-only exits" when `reshuffling → queued` is a live, action-bearing
+resume edge with its own method.
 
-## Allowed transitions
+That mattered more than an ordinary stale doc, because the `forbidigo` failure
+message points developers here (`.golangci.yml`). Someone arriving to add a
+carveout was reading a machine two feature-cycles behind the one they were
+editing.
 
-| From | Allowed To | Notes |
-|------|------------|-------|
-| `pending` | `sourcing`, `submitted`, `queued`, `reshuffling`, `cancelled`, `failed` | `pending → queued` is a fast-path used by `fulfillment/scanner.go` when the bin is already known. `pending → reshuffling` is the compound parent entry. |
-| `sourcing` | `queued`, `submitted`, `cancelled`, `failed` | |
-| `submitted` | `acknowledged`, `queued`, `cancelled`, `failed` | |
-| `queued` | `acknowledged`, `dispatched`, `in_transit`, `sourcing`, `cancelled`, `failed` | `queued → dispatched` is the immediate write after `fleet.CreateOrder` returns; `acknowledged` is reported asynchronously by the vendor. `queued → sourcing` supports the scanner's re-resolve path. |
-| `acknowledged` | `dispatched`, `in_transit`, `sourcing`, `cancelled`, `failed` | `acknowledged → sourcing` supports `PrepareRedirect` (re-resolve to a new delivery node). |
-| `dispatched` | `in_transit`, `delivered`, `sourcing`, `cancelled`, `failed` | `dispatched → sourcing` mirrors acknowledged for redirect. |
-| `in_transit` | `delivered`, `staged`, `cancelled`, `failed` | |
-| `staged` | `in_transit`, `delivered`, `cancelled`, `failed` | `staged → in_transit` is the multi-robot release path (complex orders). |
-| `delivered` | `confirmed`, `cancelled`, `failed` | |
-| `reshuffling` | `confirmed`, `cancelled`, `failed` | Compound parent terminal-only exits. The parent never enters in-flight states; children carry the bin claims. |
-| `confirmed` | (none) | Terminal |
-| `failed` | (none) | Terminal |
-| `cancelled` | (none) | Terminal |
+A table copied out of code has a half-life. The fix is not to re-copy it — it is
+to stop. What remains below is the part that is only here.
 
-## Action map
+## Reservations run alongside, not inside
 
-For transitions with side effects, the action map (in
-`shingo-core/dispatch/lifecycle.go`) registers actions that fire after
-the status update is persisted.
-
-Engine-side reactions (sending edge envelopes, creating return orders,
-running completion logic) live in `engine/wiring*.go` as EventBus
-subscribers. Actions in the lifecycle package emit the events those
-subscribers consume.
-
-| (From, To) | Actions | Engine reaction |
-|------------|---------|-----------------|
-| `(in_transit, delivered)` | `emitCompleted` | `handleOrderCompleted` applies bin arrival, sends edge update |
-| `(staged, delivered)` | `emitCompleted` | (same) |
-| `(dispatched, delivered)` | `emitCompleted` | (same) |
-| `(delivered, confirmed)` | `emitCompleted` | (idempotent — completion already ran) |
-| `(reshuffling, confirmed)` | `emitCompleted` | Compound parent unlock + cleanup |
-| `(*, cancelled)` | `emitCancelled` | `engine/wiring.go` cancel subscriber sends cancel notification + maybe-creates return order |
-| `(*, failed)` | `emitFailed` | `engine/wiring.go` fail subscriber sends error notification + maybe-creates return order |
-
-`(*, cancelled)` and `(*, failed)` apply for every non-terminal `from`
-status. The action map enumerates each pair explicitly so the table is
-greppable.
-
-## Public lifecycle API
-
-`shingo-core/dispatch/lifecycle.go` exposes the typed-method facade:
-
-| Method | Transition | Caller(s) |
-|--------|------------|-----------|
-| `CancelOrder(ord, stationID, reason)` | `* → cancelled` | Edge cancel, operator UI, dispatcher, engine |
-| `ConfirmReceipt(ord, stationID, receiptType, finalCount)` | `delivered → confirmed` | Edge receipt processing |
-| `Release(ord, actor)` | `staged → in_transit` | `Dispatcher.HandleOrderRelease` |
-| `MarkInTransit(ord, robotID, actor)` | `* → in_transit` (via vendor mapping) | `engine/wiring_vendor_status.go` |
-| `MarkStaged(ord, actor)` | `in_transit → staged` | `engine/wiring_vendor_status.go` |
-| `MarkDelivered(ord, actor)` | `* → delivered` | `engine/wiring_vendor_status.go` |
-| `Queue(ord, actor, reason)` | `pending|sourcing → queued` | `dispatch/dispatcher.go`, `fulfillment/scanner.go` |
-| `MoveToSourcing(ord, actor, reason)` | `* → sourcing` | `dispatch/planning_service.go`, `lifecycle_service.go`'s `PrepareRedirect`, `compound.go`, `fulfillment/scanner.go` |
-| `Dispatch(ord, vendorOrderID, actor)` | `queued → dispatched` | `dispatch/dispatcher.go`, `complex.go` |
-| `Fail(ord, stationID, errorCode, detail)` | `* → failed` | Many paths (fleet error, dispatcher error, etc.) |
-| `BeginReshuffle(ord, reason)` | `pending → reshuffling` | `Dispatcher.CreateCompoundOrder` |
-| `MarkPending(ord, reason)` | (initial write) | Order intake — `Create*Order` methods only. Bypasses `transition()` validation since there's no source status. |
-
-## Reservation lifecycle (alongside order status)
-
-While an order moves through the status machine above, its **reservations**
-(the soft holds on its source bins and destination slots) run a parallel,
-simpler lifecycle of their own. The two are coupled but not identical — see
-[reservations.md](../reservations.md) for the full mechanism.
+An order's **reservations** — the soft holds on its source bins and destination
+slots — have their own small lifecycle. Coupled to the order's status, not part
+of it. Full mechanism in [reservations.md](../reservations.md).
 
 | Reservation state | When |
-|-------------------|------|
-| `pending` | written at plan time (`Acquire`/`AcquireSlot`) — the order holds the resource but hasn't shipped |
-| `confirmed` | flipped at dispatch (`Confirm`/`ConfirmSlot`), in the same transaction that writes the hard claim |
-| *(deleted)* | released the moment the order no longer needs the resource — at delivery, terminal, or a re-resolution that moved the source |
+|---|---|
+| `pending` | written at plan time (`Acquire` / `AcquireSlot`) — the order holds the resource but has not shipped |
+| `confirmed` | flipped at dispatch (`Confirm` / `ConfirmSlot`), in the same transaction that writes the hard claim |
+| *(deleted)* | released when the order no longer needs the resource — at delivery, at terminal, or on a re-resolution that moved the source |
 
-Reservation states are **not** order statuses and don't go through
-`transition()`. Key couplings:
+Reservation states are **not** order statuses and do not go through
+`transition()`. Note the name collision: `reservations.State` has its own
+`pending` and `confirmed`, and `domain.BinStatus` has its own `staged`. Most SQL
+matching `'pending'` under `store/` is the reservation enum, not the order one.
 
-- A `sourcing` or `queued` order holds its sources as `pending` reservations
-  and retries each scanner tick by **reconciling** them (keep held, release
-  moved, acquire newly needed) — it does not re-shop from scratch. The
-  `queued ↔ sourcing` edges in the order table above are what make this retry
-  possible.
-- `ReleaseByOrder` fires from the terminal chokepoint (`TerminalizeOrder`), so
-  no reservation outlives its owning order.
-- `ReapOrphaned` is the owner-liveness backstop: a hold is reclaimed only when
-  its order is terminal or gone — **never on age**. Pre-dispatch orders
-  (`queued`, `sourcing`) are therefore exempt from the stuck-order sweep.
+The couplings worth knowing:
 
-## Bypass paths
+- A `sourcing` or `queued` order holds its sources as `pending` reservations and
+  **reconciles** them each scanner tick — keep held, release moved, acquire newly
+  needed — rather than re-shopping from scratch. The `queued ↔ sourcing` edges
+  are what make that retry possible.
+- `ReleaseByOrder` fires from the terminal chokepoint, so no reservation outlives
+  its owning order.
+- `ReapOrphaned` is the owner-liveness backstop: a hold is reclaimed when its
+  order is terminal or gone, **never on age**. A waiting order may legitimately
+  hold for hours, which is why `queued` and `sourcing` are exempt from the
+  stuck-order sweep.
 
-The following code paths legitimately do NOT route through
-`lifecycle.transition()`. Each is enforced by a `forbidigo` carveout
-in `.golangci.yml`. Adding a new bypass requires a PR-reviewed
-carveout entry alongside an inline comment explaining the reason.
+## What bypasses `transition()`
 
-### Core (shingo-core)
+Four things write an order's status without going through the state machine.
+Described by what they are rather than by line number, because line numbers were
+the other half of why this document rotted.
 
-1. **Driver implementation.** `shingo-core/dispatch/lifecycle.go` —
-   `transition()` is the state machine; it must call the underlying
-   `db.UpdateOrderStatus` / `FailOrderAtomic` / `CancelOrderAtomic`
-   methods to do its job.
+1. **The driver itself** — `dispatch/lifecycle.go`. `transition()` has to call the
+   underlying store methods to do its job.
+2. **`MarkPending`** — the initial write at intake. There is no source status to
+   validate against. Its real product is the `order_history` row, since the INSERT
+   has already set the column.
+3. **`MarkReshuffling`** — the same shape, for the synthetic restore parent.
+4. **The INSERT** — `orders.Create` binds the struct's `Status` field directly.
 
-2. **Initial-write Pending in the order-intake methods.**
-   `shingo-core/dispatch/lifecycle_service.go`'s `CreateInboundOrder`,
-   `CreateStorageWaybillOrder`, and `CreateIngestStoreOrder` write
-   `StatusPending` immediately after `db.CreateOrder`. No source
-   status exists; the lifecycle has nothing to validate. Sites:
-   `dispatch/lifecycle_service.go:98,117,174`.
+**Number four is the one to know about.** Movement is governed; *entry* is not.
+There is no CHECK constraint on `orders.status` in either schema, `Scan`
+deliberately does not validate on read, and the lint guard matches selector
+expressions like `db.UpdateOrderStatus` — it cannot see `Status:` in a struct
+literal. Three statuses are used at creation today. That is convention, not
+enforcement.
 
-   Other order-intake call sites (`dispatch/complex.go`,
-   `engine/orders.go`'s `CreateDirectOrder`) now use
-   `lifecycle.MarkPending(ord, reason)` instead — `MarkPending` is
-   itself a bypass internal to `lifecycle.go` (no source status to
-   validate), but it keeps the intake call sites greppable as
-   lifecycle calls and removes them from the carveout list.
+Related: the three writes that bypass `transition()` are also the three with no
+compare-and-swap. `UpdateStatus` writes by id alone. There is a recorded incident
+— a stale scanner snapshot wrote `queued → sourcing` over a cancel and
+resurrected a cancelled order — which is why the other paths CAS.
 
-3. **Child compound failure intake.**
-   `shingo-core/dispatch/compound.go:116,124,132` call
-   `FailOrderAtomic` directly on a child order during the
-   `AdvanceCompoundOrder` loop. These are intake-time validations
-   (missing source/dest node) where the child has no prior state
-   worth validating against — the failure is the intended initial
-   behaviour.
+The authoritative carveout list is `.golangci.yml`, in the `exclusions.rules`
+block. Read it there; it is maintained, and a copy here would not be.
 
-4. **Recovery / reconciliation.**
-   `shingo-core/engine/reconciliation_service.go:120` advances stuck
-   orders from `delivered → confirmed` after a crash. It bypasses
-   lifecycle because the lifecycle's `ConfirmReceipt` is idempotent
-   on `CompletedAt` and the recovery scenario specifically handles
-   the case where the previous run failed mid-way.
+## `forbidigo` configuration gotchas
 
-5. **Service-layer passthrough wrappers.**
-   `shingo-core/service/order_service.go:43,169` are direct
-   passthroughs around `db.UpdateOrderStatus` and
-   `db.FailOrderAtomic`. Slated for removal — callers should go
-   direct to lifecycle. Carveout removable once the file is deleted.
+Two implementation details worth keeping, because both fail *silently*:
 
-6. **Store implementation.** `shingo-core/store/orders.go` is where
-   the methods themselves live.
+- **The field is `pattern:`, not `p:`.** `golangci-lint v2.x`'s
+  `ForbidigoPattern` struct uses `yaml:"p"` for output and
+  `mapstructure:"pattern"` for input. Config parsing goes through mapstructure, so
+  a `p:` key is ignored and the rule defaults to matching everything.
+- **Patterns match the Go selector expression, not source text.** forbidigo matches
+  the AST identifier (`db.UpdateOrderStatus`), not the call site including the open
+  paren. A regex ending in `\(` never matches.
 
-### Edge (shingo-edge)
-
-7. **Edge-side lifecycle driver.**
-   `shingo-edge/orders/lifecycle_service.go` — edge's equivalent of
-   the core driver. `TransitionOrder` validates against
-   `protocol.IsValidTransition` and writes through to the edge
-   store. Same role as `shingo-core/dispatch/lifecycle.go`. A
-   parallel typed-method migration on the edge side is a follow-up
-   RFC; for now this file is the single bypass.
-
-8. **Edge store implementation.** `shingo-edge/store/orders.go` is
-   where edge's `UpdateOrderStatus` lives.
-
-### Test files
-
-`*_test.go` files build fixtures by direct DB writes. Permanent
-carveout, no per-file entry needed.
-
-### `forbidigo` configuration notes
-
-The rule lives in `.golangci.yml`. Two implementation gotchas worth
-recording for future config edits:
-
-- **Field name is `pattern:`, not `p:`.** `golangci-lint v2.x`'s
-  `ForbidigoPattern` struct has `yaml:"p"` for output and
-  `mapstructure:"pattern"` for input. Config parsing uses
-  mapstructure, so a `p:` key is silently ignored — the rule
-  defaults to "match everything." Always use `pattern:`.
-- **Patterns match the Go selector expression, not source text.**
-  forbidigo matches against the AST identifier (e.g.
-  `db.UpdateOrderStatus`), not the raw call site including the open
-  paren. A regex ending in `\(` will never match its intended
-  target. Drop the trailing `\(`.
-
-The current rule uses text-based matching (no `analyze-types: true`)
-which is sufficient because only `*store.DB` defines these methods
-in either module — false-positive risk is bounded.
-
-### Enforced via `forbidigo`
-
-The `.golangci.yml` `forbidigo` rule prohibits direct calls to
-`db.UpdateOrderStatus`, `db.FailOrderAtomic`, and
-`db.CancelOrderAtomic` outside the carveout files listed above plus
-the driver itself (`dispatch/lifecycle.go`) and the store
-implementation (`store/orders.go`). Test files are permanently
-exempted.
-
-### Edge-side follow-up
-
-`shingo-edge/orders/lifecycle_service.go`'s `TransitionOrder` is the
-edge-side state-machine entry point. Edge already validates via
-`protocol.IsValidTransition` (see `shingo-edge/orders/types.go:42`),
-but a parallel `forbidigo` rule for edge — preventing direct
-`db.UpdateOrderStatus` calls outside `TransitionOrder` and the
-edge-side intake methods — is a follow-up RFC. It would land when
-edge gets typed lifecycle methods (currently it has just the one
-generic `TransitionOrder`).
-
-## Test pattern
-
-`protocol/protocol_test.go` covers the table-level invariants:
-
-- `TestIsTerminal` — the three terminal statuses are reported terminal
-- `TestIsTerminalDerivedFromTable` — every key is non-terminal
-- `TestEveryKeyHasOutgoingEdge` — no empty edge slices
-- `TestReshufflingTransitions` — compound parent edges
-- `TestAllStatusesCovered` — `AllStatuses()` matches the table
-- `TestValidForwardTransitions` / `TestInvalidBackwardTransitions` — spot-checks
-- `TestTerminalStatesCannotTransition` — terminal states reject all targets
-- `TestUnknownStatusNotValidTransition` — unknown statuses reject
-
-Future work: an exhaustive (status × status) matrix test in
-`shingo-core/dispatch/lifecycle_test.go` that calls every typed method
-from every source status and asserts either success or
-`IllegalTransition`. Not added in this branch.
+Text-based matching (no `analyze-types: true`) is sufficient only because
+`*store.DB` is the sole definer of these methods in either module. It is blind to
+raw SQL and to any receiver not named `db` — see the invariant sweep in
+`dispatch/rule1_invariant_test.go`, which exists because of that blindness.

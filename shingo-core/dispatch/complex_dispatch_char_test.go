@@ -86,6 +86,45 @@ func TestChar_HandleComplexOrderRequest_UnresolvableNode_RejectsAtIntake(t *test
 	}
 }
 
+// TestComplexIntake_RefusesAPayloadCoreDoesNotHave closes the hole where Core
+// accepted, and acknowledged, an order it could never serve.
+//
+// The wire door has always checked that an order's payload exists. Complex
+// intake never did — it copied the code onto the row and carried on. So an
+// order naming a payload Core does not have got a row, got an announcement,
+// and got an ACK back to the Edge saying it was accepted. Then it sat queued
+// waiting for material that cannot arrive, until something much later gave up
+// on it.
+//
+// The acknowledgment is the part that makes this worse than a slow failure:
+// the Edge was told yes.
+func TestComplexIntake_RefusesAPayloadCoreDoesNotHave(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, _ := setupTestData(t, db)
+	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID:   "complex-unknown-payload",
+		PayloadCode: "PART-THAT-DOES-NOT-EXIST",
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionDropoff, Node: lineNode.Name},
+			{Action: protocol.ActionWait},
+			{Action: protocol.ActionPickup, Node: lineNode.Name},
+		},
+	})
+
+	if _, err := db.GetOrderByUUID("complex-unknown-payload"); err == nil {
+		t.Error("an order naming a payload Core does not have was written to the table; it will wait for material that cannot arrive")
+	}
+	if len(emitter.received) != 0 {
+		t.Errorf("received events = %d, want 0", len(emitter.received))
+	}
+	if len(emitter.queued) != 0 {
+		t.Errorf("queued events = %d, want 0 — queueing it means waiting for something that does not exist", len(emitter.queued))
+	}
+}
+
 // ── DispatchPreparedComplex: guard / fail / queue-reason branches ─────────────
 
 // TestChar_DispatchPreparedComplex_NonAcquiringStatus_NoOp pins the entry guard

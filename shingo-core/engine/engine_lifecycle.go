@@ -280,7 +280,7 @@ func (e *Engine) loadActiveOrders() {
 	if e.tracker == nil {
 		return
 	}
-	ids, err := e.db.ListDispatchedVendorOrderIDs()
+	ids, err := e.db.ListTrackedVendorOrderIDs()
 	if err != nil {
 		e.logFn("engine: load active orders: %v", err)
 		return

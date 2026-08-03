@@ -267,11 +267,25 @@ type StagingConfig struct {
 	TTL                  time.Duration `yaml:"ttl"`                    // default 0 (permanent)
 	SweepInterval        time.Duration `yaml:"sweep_interval"`         // default 5m
 	AutoConfirmDelivered time.Duration `yaml:"auto_confirm_delivered"` // 0 = disabled
-	// AbandonStuck cancels orders stuck non-terminal past this age — a held
-	// swap removal leg whose supply never arrives (queued), a robot parked at
-	// a staging node (staged), or a leg handed to the fleet that never started
-	// moving (sourcing/dispatched; the long-weekend drain case). in_transit is
-	// excluded (actively moving). Cascades to the two-robot sibling.
+	// AbandonStuck cancels orders stuck past this age. It covers exactly TWO
+	// statuses — dispatched and staged — the ones where the fleet has the order
+	// and nothing is moving: a leg handed over that never started (the
+	// long-weekend drain case), or a robot parked at a staging node.
+	// protocol.IsStuckSweepCandidate is the authority; this comment is not.
+	//
+	// It does NOT cover queued or sourcing, and that is deliberate: demand is
+	// operator-driven and does not evaporate, so a waiting order holds
+	// indefinitely rather than being cancelled on a timer. in_transit is
+	// excluded too — a robot that is actually moving is not stuck.
+	//
+	// This comment used to list queued and sourcing as covered, describing the
+	// wider set the sweep had before it was narrowed. Worth knowing what that
+	// cost a reader: queued is not swept AND is the one non-terminal status
+	// outside protocol.IsRuntimeStuckCandidate, so a wedged queued order raises
+	// no anomaly either. It is the least observable state in the system, and
+	// this comment said it was covered.
+	//
+	// Cascades to the two-robot sibling.
 	AbandonStuck time.Duration `yaml:"abandon_stuck"` // default 1h; 0 = disabled
 	// AbandonStuckOperatorGated is the SEPARATE, longer bound for a staged leg
 	// whose release is a HUMAN action rather than a system step — a coordinated

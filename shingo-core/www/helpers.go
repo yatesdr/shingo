@@ -2,6 +2,7 @@ package www
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -13,8 +14,65 @@ import (
 	"shingo/protocol"
 	"shingo/shared"
 	"shingocore/dispatch"
+	"shingocore/engine"
 	"shingocore/fleet"
+	"shingocore/store/nodes"
 )
+
+// binMoveStatus turns a refused bin move into the status it deserves.
+//
+// The engine decides which of the three kinds a refusal is, because that is a
+// judgement about the plant — a full destination is a conflict, a mistyped node
+// is a bad request — and the sentence a person reads is built in the same
+// place. This is the whole of what the HTTP layer adds: a number.
+//
+// Anything that is not a BinMoveError is a fault by definition; it came from
+// somewhere that did not classify itself.
+func binMoveStatus(err error) int {
+	var bm *engine.BinMoveError
+	if errors.As(err, &bm) {
+		switch bm.Kind {
+		case engine.BinMoveBadRequest:
+			return http.StatusBadRequest
+		case engine.BinMoveConflict:
+			return http.StatusConflict
+		}
+	}
+	return http.StatusInternalServerError
+}
+
+// resolveDropoff loads the node something is being sent to, answering the
+// request itself and returning nil if the name is not one.
+//
+// Naming a node that does not exist is the caller getting their input wrong,
+// so it is a 400. The engineer's door returns a plain error for the same
+// failure and its wrapper turns everything unrecognised into a 500 — a typo
+// there reports that the server is broken.
+func (h *Handlers) resolveDropoff(w http.ResponseWriter, nodeName string) *nodes.Node {
+	destNode, err := h.engine.NodeService().GetByName(nodeName)
+	if err != nil {
+		h.jsonError(w, "destination node not found: "+nodeName, http.StatusBadRequest)
+		return nil
+	}
+	return destNode
+}
+
+// rejectIfOccupied answers the request and reports true when the destination
+// already holds a bin.
+//
+// Separate from resolveDropoff on purpose, even though two of the three callers
+// run them back to back. The bin-move door has to get its same-node refusal in
+// between: the occupancy gate would otherwise catch most same-node moves
+// incidentally and tell the operator to go clear a node whose only occupant is
+// the bin they are moving. Folding both into one call would quietly put the
+// generic answer back in front of the specific one.
+func (h *Handlers) rejectIfOccupied(w http.ResponseWriter, destNode *nodes.Node) bool {
+	if preview := h.engine.Dispatcher().PreviewDropoffCapacity(destNode.Name); preview.Blocked {
+		h.jsonError(w, preview.Reason, http.StatusConflict)
+		return true
+	}
+	return false
+}
 
 // iconSpriteHTML is the vendored Lucide sprite (shared/icons.svg), read once at
 // init and injected into layout.html via {{iconSprite}} so page markup can
@@ -110,7 +168,7 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 		// USE THIS FOR AN EDGE STATION AND NOTHING ELSE. A SEER fleet station
 		// (mission_events.robot_station, mission-detail.html's "Station"
 		// column) is a different namespace that must never be looked up here.
-		// Core's own order sources — core-spot, core-direct, core-test — and
+		// Core's own order sources — core-operator, core-direct, core-test — and
 		// the '*' broadcast address have no registry row and fall through to
 		// themselves, which is correct and is why there is no error case.
 		"stationName": func(station string) string {

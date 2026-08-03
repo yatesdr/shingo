@@ -113,9 +113,8 @@ func (h *Handlers) apiRobotMoveTo(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "destination node is required", http.StatusBadRequest)
 		return
 	}
-	destNode, err := h.engine.NodeService().GetByName(req.DeliveryNode)
-	if err != nil {
-		h.jsonError(w, "destination node not found: "+req.DeliveryNode, http.StatusBadRequest)
+	destNode := h.resolveDropoff(w, req.DeliveryNode)
+	if destNode == nil {
 		return
 	}
 
@@ -124,8 +123,7 @@ func (h *Handlers) apiRobotMoveTo(w http.ResponseWriter, r *http.Request) {
 	// stops, and the operator finds out by watching. Nothing downstream would
 	// catch it either — the block carries no binTask, so the position gate
 	// waves it through. This is the only place left to refuse.
-	if preview := h.engine.Dispatcher().PreviewDropoffCapacity(destNode.Name); preview.Blocked {
-		h.jsonError(w, preview.Reason, http.StatusConflict)
+	if h.rejectIfOccupied(w, destNode) {
 		return
 	}
 

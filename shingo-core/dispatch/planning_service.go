@@ -194,6 +194,19 @@ func (s *PlanningService) Register(orderType protocol.OrderType, handler Plannin
 	s.handlers[orderType] = handler
 }
 
+// Handles reports whether a planner is registered for an order type — that is,
+// whether Core can actually carry out an order of this kind.
+//
+// It exists so intake can refuse a type before writing a row, using the same
+// map Plan consults rather than a second list of valid types written down
+// somewhere else. A hand-maintained allow-list would be a copy of this, kept
+// equal by nobody, and the first thing to disagree with it would be a planner
+// registered at runtime.
+func (s *PlanningService) Handles(t protocol.OrderType) bool {
+	_, ok := s.handlers[t]
+	return ok
+}
+
 func (s *PlanningService) Plan(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
 	handler, ok := s.handlers[order.OrderType]
 	if !ok {
