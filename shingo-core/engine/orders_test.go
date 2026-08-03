@@ -18,15 +18,15 @@ import (
 
 // orders_test.go — coverage for orders.go.
 //
-// Covers CreateDirectOrder (success + same-source/dest, missing nodes,
+// Covers CreateBinMove (success + same-source/dest, missing nodes,
 // fleet failure), TerminateOrder (success + terminal-status guard +
 // missing-order error), and failOrderAndEmit (asserted via the indirect
-// behavior contract: fleet failure inside CreateDirectOrder leaves
+// behavior contract: fleet failure inside CreateBinMove leaves
 // the order in failed/dispatch error state and emits an EventOrderFailed).
 
-// ── CreateDirectOrder happy path ────────────────────────────────────
+// ── CreateBinMove happy path ────────────────────────────────────
 
-func TestCreateDirectOrder_Success_PersistsAndDispatches(t *testing.T) {
+func TestCreateBinMove_Success_PersistsAndDispatches(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
@@ -46,7 +46,7 @@ func TestCreateDirectOrder_Success_PersistsAndDispatches(t *testing.T) {
 		Desc:         "manual move",
 	})
 	if err != nil {
-		t.Fatalf("CreateDirectOrder: %v", err)
+		t.Fatalf("CreateBinMove: %v", err)
 	}
 	if res == nil || res.OrderID == 0 {
 		t.Fatalf("result missing OrderID: %+v", res)
@@ -88,9 +88,9 @@ func TestCreateDirectOrder_Success_PersistsAndDispatches(t *testing.T) {
 	}
 }
 
-// ── CreateDirectOrder error paths ───────────────────────────────────
+// ── CreateBinMove error paths ───────────────────────────────────
 
-func TestCreateDirectOrder_SameSourceAndDest(t *testing.T) {
+func TestCreateBinMove_SameSourceAndDest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, _, _ := setupTestData(t, db)
@@ -112,7 +112,7 @@ func TestCreateDirectOrder_SameSourceAndDest(t *testing.T) {
 	}
 }
 
-func TestCreateDirectOrder_MissingSourceNode(t *testing.T) {
+func TestCreateBinMove_MissingSourceNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
@@ -131,7 +131,7 @@ func TestCreateDirectOrder_MissingSourceNode(t *testing.T) {
 	}
 }
 
-func TestCreateDirectOrder_MissingDestNode(t *testing.T) {
+func TestCreateBinMove_MissingDestNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, _, _ := setupTestData(t, db)
@@ -150,11 +150,11 @@ func TestCreateDirectOrder_MissingDestNode(t *testing.T) {
 	}
 }
 
-// TestCreateDirectOrder_FleetDispatchFails covers the fleet-error
+// TestCreateBinMove_FleetDispatchFails covers the fleet-error
 // branch and (transitively) failOrderAndEmit — the simulator's
 // WithCreateFailure makes DispatchDirect call FailOrderAtomic and emit
 // EventOrderFailed before returning the wrapped error.
-func TestCreateDirectOrder_FleetDispatchFails(t *testing.T) {
+func TestCreateBinMove_FleetDispatchFails(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
@@ -236,7 +236,7 @@ func TestTerminateOrder_CancelsActiveOrder(t *testing.T) {
 		Desc:         "to be cancelled",
 	})
 	if err != nil {
-		t.Fatalf("seed CreateDirectOrder: %v", err)
+		t.Fatalf("seed CreateBinMove: %v", err)
 	}
 
 	cancelled := make(chan OrderCancelledEvent, 2)

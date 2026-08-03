@@ -308,7 +308,7 @@ func TestCancelStuckOrder_Success(t *testing.T) {
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-STUCK")
 	eng := newTestEngine(t, db, simulator.New())
 
-	// Put an order into dispatched status via CreateDirectOrder, then stall it.
+	// Put an order into dispatched status via CreateBinMove, then stall it.
 	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
 		SourceNodeID: storageNode.ID,
 		DestNodeID:   lineNode.ID,
@@ -316,7 +316,7 @@ func TestCancelStuckOrder_Success(t *testing.T) {
 		Desc:         "stuck-test-order",
 	})
 	if err != nil {
-		t.Fatalf("seed CreateDirectOrder: %v", err)
+		t.Fatalf("seed CreateBinMove: %v", err)
 	}
 
 	testutil.MustNoErr(t, eng.CancelStuckOrder(res.OrderID, "recovery-op"), "CancelStuckOrder")

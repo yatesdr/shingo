@@ -102,7 +102,7 @@ demand_registry
   payload_code  TEXT     -- allowed payload
 ```
 
-`ClaimSync` (the Edge→Core push of `style_node_claims`) is **retired**: Core owns loader config via the `bin_loaders` aggregate and derives `demand_registry` from it, syncing loader config down to the Edge through the node-list sync. `Engine.SendClaimSync` is a no-op, kept only so its call sites don't change.
+`ClaimSync` (the Edge→Core push of `style_node_claims`) is **retired**: Core owns loader config via the `bin_loaders` aggregate and derives `demand_registry` from it, syncing loader config down to the Edge through the node-list sync. `Engine.SendClaimSync` is deleted. The Core side is NOT retired: `HandleClaimSync` still exists and `SubjectClaimSync` is still routed, because Edge continues to publish a plant-claims snapshot.
 
 ### Event Flow
 
@@ -112,15 +112,15 @@ demand_registry
    - **Bin arrived at storage** (supply increased): send `DemandSignal` with role "consume" to matching unloader stations.
 3. Storage slot detection: `isStorageSlot` checks if the node's parent has `NodeTypeCode == "LANE"`.
 4. `sendDemandSignals` looks up the demand registry by payload code and role, sends a `DemandSignal` envelope to each matching Edge station.
-5. Edge's demand-signal handler routes by role to the reservation seam — produce → `MaybeCreateLoaderEmptyIn` (L1 empty-in), consume → `MaybeCreateUnloaderFullIn` (U1 full-in) — which resolves the loader from the Core aggregate and creates orders for payloads in deficit, deduped by the never-2N seam.
+5. On the consume side, `MaybeCreateUnloaderFullIn` routes a U1 full-in through the reservation seam. There is no produce counterpart: the legacy produce DemandSignal handler is retired, and a produce loader is stocked by the threshold signal (`HandleLoopBelowThreshold`) or the operator push.
 
 ### Deduplication
 
-The reservation seam (`reserveLoaderBins`, below) counts in-flight orders across the loader's delivery set before firing, so a payload that already has a non-terminal order in flight creates nothing. Core's `UNIQUE(edge_uuid)` constraint catches any remaining duplicates from at-least-once delivery.
+The reservation seam (`withLoaderBudget`, below) counts in-flight orders across the loader's delivery set before firing, so a payload that already has a non-terminal order in flight creates nothing. Core's `UNIQUE(edge_uuid)` constraint catches any remaining duplicates from at-least-once delivery.
 
 ### Startup Sweep
 
-On Edge startup, after registration ack, the auto-push sweeps `SweepPushLoaders` / `SweepPushUnloaders` offer every auto loader/unloader's payloads to the reservation seam, picking up demand that arrived while offline. (`SendClaimSync` is retired to a no-op — see Demand Registry above.)
+On Edge startup, after registration ack, the auto-push sweeps `SweepPushLoaders` / `SweepPushUnloaders` offer every auto loader/unloader's payloads to the reservation seam, picking up demand that arrived while offline. (`SendClaimSync` is deleted — see Demand Registry above.)
 
 ---
 
@@ -145,11 +145,11 @@ HMI only shows payloads with active demand as actionable. Server-side enforcemen
 
 ### Edge SQLite Transaction Safety
 
-`tryAutoRequest` wraps check+create in a `BEGIN IMMEDIATE` transaction. Serializes concurrent access at the SQLite level, preventing duplicate orders when two order completions fire simultaneously.
+The seam runs in NO transaction, deliberately: its correctness is the per-loader mutex plus count monotonicity, not database isolation. Wrapping it in one would manufacture the Core/Edge divergence it exists to prevent, because the create it guards enqueues to Core and emits synchronously mid-write. The reasoning is written at the seam itself.
 
 ### Reservation Seam (the never-2N guarantee)
 
-Every loader empty-in (an L1 `retrieve_empty`) and every unloader full-in (a U1 retrieve of a full bin) is created through **one** chokepoint, `engine.reserveLoaderBins`. It owns the count→fire decision so a demand signal (Kafka), an operator request (HTTP), and the push sweep can never both pass the in-flight count and both fire. The invariant: **one demand of N → exactly N bins in flight across the loader's delivery cluster, never 2N** — in either direction (a `retrieveEmpty` parameter selects which direction's in-flight orders the budget counts).
+Every loader empty-in (an L1 `retrieve_empty`) and every unloader full-in (a U1 retrieve of a full bin) is created through **one** chokepoint, `engine.withLoaderBudget`. It owns the count→fire decision so a demand signal (Kafka), an operator request (HTTP), and the push sweep can never both pass the in-flight count and both fire. The invariant: **one demand of N → exactly N bins in flight across the loader's delivery cluster, never 2N** — in either direction (a `retrieveEmpty` parameter selects which direction's in-flight orders the budget counts).
 
 How it works:
 
@@ -157,14 +157,14 @@ How it works:
   - *Why no tx (monotonicity):* the only operation that *raises* a loader's in-flight empty count is the create the seam guards; every other mutation (completion, cancellation, failure) only *lowers* it. Serialising the up-writers therefore makes the count monotone-safe without isolation.
   - *Why no tx (unsoundness):* `CreateRetrieveOrder` is not transaction-pure — it enqueues to Core and fires a synchronous `EmitOrderCreated` mid-write. A surrounding tx could roll back the DB rows while those side effects already happened, manufacturing the Core/Edge divergence it was meant to prevent.
 - **One set query.** In-flight is counted across the loader's whole delivery-node set in a single `ListActiveOrdersByDeliveryNodeSet` (one snapshot), giving both the per-payload dedup and the loader-capacity cap.
-- **The Loader owns the reservation shape.** `reserveLoaderBins` takes a `*domain.Loader`; the delivery-node set and the budget come from `loader.ReservationTarget(member, payload, multiWindow)`, which encodes the per-layout semantics so the seam stays layout-agnostic: a dedicated position maps to its one independent slot (budget 1); a shared loader funnels to its anchor (budget 1) **unless** multi-window is enabled, in which case it spreads to its windows (budget = `SlotCount`). The seam keys its mutex on `loader.ID()`.
-- **Multi-window delivery (flag-gated).** With config `loaders_multi_window` on, a shared loader's bins spread **one per free window** — the seam computes the windows with none in flight and assigns each new order to a distinct one (round-robin), so a demand of N at an N-window loader fires exactly N, one per window, never two at the same window. Default OFF: a shared loader funnels to its anchor. The never-2N budget is per-loader (keyed on `loader.ID()`), so it is not fragmented by spreading.
+- **The Loader owns the reservation shape.** `withLoaderBudget` takes a `*domain.Loader`; the delivery-node set and the budget come from `loader.ReservationTarget(member, payload, multiWindow)`, which encodes the per-layout semantics so the seam stays layout-agnostic: a dedicated position maps to its one independent slot (budget 1); a shared loader funnels to its anchor (budget 1) **unless** multi-window is enabled, in which case it spreads to its windows (budget = `SlotCount`). The seam keys its mutex on `loader.ID()`.
+- **Multi-window delivery (flag-gated).** With config `loaders_multi_window` on, a shared loader's bins spread **one per free window** — the seam computes the windows with none in flight and assigns each new order to a distinct one (round-robin), so a demand of N at an N-window loader fires exactly N, one per window, never two at the same window. DEFAULT ON (an unset flag means enabled); set `loaders_multi_window: false` to funnel to the first window with budget 1 instead. The never-2N budget is per-loader (keyed on `loader.ID()`), so it is not fragmented by spreading.
 - **One physical check the seam does NOT subsume.** The seam counts in-flight *orders*, not parked *bins*. The loader side relies purely on the order count because its `want` is demand-netted by the threshold monitor; the unloader's full-in is event-driven (`want=1`), so it keeps a physical "is a full already parked at the window?" check (`unloaderHasUsableFullPresent`) ahead of the seam.
 - **Fails closed.** A count read error fires nothing; the next signal retries.
 
-**Re-entrancy rule (MUST be honoured by every event-bus subscriber):** `reserveLoaderBins` calls its `fire` closure *while the loader's mutex is held*, and `CreateRetrieveOrder` dispatches `EmitOrderCreated` **synchronously** on the in-process bus (`eventbus.Emit` runs subscribers inline). **No `EventOrderCreated` (or any order-event) subscriber may synchronously call back into the reservation seam for the same loader** — `sync.Mutex` is non-reentrant and it would self-deadlock. A subscriber acting on a *different* loader is fine. If a subscriber ever needs to re-enter the same loader, split reserve-from-fire (end the lock after the DB insert; enqueue/emit after release). Guarded by `TestReserveLoaderEmpties_EmitDuringReservation_NoDeadlock`.
+**Re-entrancy rule (MUST be honoured by every event-bus subscriber):** `withLoaderBudget` calls its `fire` closure *while the loader's mutex is held*, and `CreateRetrieveOrder` dispatches `EmitOrderCreated` **synchronously** on the in-process bus (`eventbus.Emit` runs subscribers inline). **No `EventOrderCreated` (or any order-event) subscriber may synchronously call back into the reservation seam for the same loader** — `sync.Mutex` is non-reentrant and it would self-deadlock. A subscriber acting on a *different* loader is fine. If a subscriber ever needs to re-enter the same loader, split reserve-from-fire (end the lock after the DB insert; enqueue/emit after release). Guarded by `TestWithLoaderBudget_EmitDuringReservation_NoDeadlock`.
 
-Callers routed through the seam — **loader side:** `tryCreateL1` (threshold + side-cycle), `RequestEmptyBin` (operator, manual_swap), and `maybeStageLoaderEmpty`/`MaybePushLoader` (via `tryCreateL1`). **Unloader side:** `createUnloaderFullInViaSeam`, reached from the consume `DemandSignal` / line-evac (`MaybeCreateUnloaderFullIn`) and the auto-push sweep (`MaybePushUnloader`/`SweepPushUnloaders`).
+Callers routed through the seam — **loader side:** `fireThresholdL1` (the threshold signal), `RequestEmptyBin` and `RequestFullBin` (operator, manual_swap), `maybeStageLoaderEmpty`/`MaybePushLoader` (the operator push), and `CreateRetrieveForAPI` (the HTTP order API). **Unloader side:** `createUnloaderFullInViaSeam`, reached from the consume `DemandSignal` / line-evac (`MaybeCreateUnloaderFullIn`) and the auto-push sweep (`MaybePushUnloader`/`SweepPushUnloaders`).
 
 ---
 
@@ -192,7 +192,7 @@ One implementation, `aggregateLoaderStore` — it projects the Core-owned cache 
 
 Callers branch with `errors.Is(err, ErrLoaderNotFound)`. This closes the prior bug where `resolveCoreLoaderForPayload` returned `nil` for both a miss and a DB error and the caller fell open into payload-first-match on a transient flicker.
 
-**Consumed by both the loader and unloader paths.** `findLoaderForDemand` (DemandSignal) and `HandleLoopBelowThreshold` (C-push) resolve a `*domain.Loader` through the store and pass it to the seam; `refillLoaderForPayload` reads `loader.MinStockFor(payload)`. The unloader full-in resolves the same way — `MaybeCreateUnloaderFullIn` / `MaybePushUnloader` resolve a consume `*domain.Loader` through the store and route through the seam. The `manualSwapNode {node, claim}` shim is no longer the **unit of resolution**; it survives only as the projection the loader push/board enumerate (`manualSwapNodesFromCore`, built from the same aggregate), with `loaderFromManualSwapClaim` turning a resolved node into a single-window `Loader` for those paths.
+**Consumed by both the loader and unloader paths.** `HandleLoopBelowThreshold` (the threshold signal) resolves a `*domain.Loader` through the store and passes it to the seam. There is no second resolver: the legacy DemandSignal path and its bin-count minimum-stock read are both retired. The unloader full-in resolves the same way — `MaybeCreateUnloaderFullIn` / `MaybePushUnloader` resolve a consume `*domain.Loader` through the store and route through the seam. The `manualSwapNode {node, claim}` shim is no longer the unit of resolution; every path now resolves a `*domain.Loader` from the aggregate.
 
 ---
 
@@ -220,8 +220,10 @@ This replaced the Edge→Core `ClaimSync` push below.
 
 `claim.sync` (the Edge→Core push of `style_node_claims` with a per-node `mode`/payload
 set) authored loader config before the Core-owned refactor. It is **retired**:
-`Engine.SendClaimSync` is a no-op kept only so its call sites don't change, and the
-per-style edge loader checkboxes / `style_node_claims.mode` authoring path are gone.
+`Engine.SendClaimSync` is deleted, and the per-style edge loader checkboxes /
+`style_node_claims.mode` authoring path are gone. The Core half is still live —
+`HandleClaimSync` and `SubjectClaimSync` remain, because Edge still publishes a
+plant-claims snapshot; what retired is Edge AUTHORING loader config.
 Core now owns the `bin_loaders` aggregate and derives `demand_registry` from it (see
 Demand Registry), syncing config down on the node list.
 
@@ -273,20 +275,20 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 |------|------|
 | `store/core_loaders.go`, `engine/loader_store.go` | `core_loaders` cache + `aggregateLoaderStore` — an immutable in-memory snapshot of the Core loader config, swapped atomically on each node-list sync. |
 | `engine/core_loaders.go` | `SetCoreLoaders` / `Refresh` — ingest `NodeListResponse.Loaders` into the cache. |
-| `engine/operator_demand_loader.go`, `operator_demand_unloader.go` | `DemandSignal` handling; the `reserveLoaderBins` never-2N seam; `multiWindowEnabled` (default ON). |
+| `engine/operator_demand_loader.go`, `operator_demand_unloader.go` | `DemandSignal` handling; the `withLoaderBudget` never-2N seam; `multiWindowEnabled` (default ON). |
 | `domain/loader.go` | The `Loader` type, layouts (`shared_window` / `dedicated_positions`), `SlotCount`, `ReservationTarget`. |
 | `service/station_service.go` | `BuildView` resolves a node's parent loader + windows from the aggregate for the operator HMI. |
 | `messaging/edge_handler.go` | `onDemandSignal` callback; node-list handler feeds `SetCoreLoaders`. |
 | `config/config.go` | `LoadersMultiWindow` (`loaders_multi_window`, default ON). |
 | `www/static/operator-station/*` | Demand-queue payload board + per-window state. |
-| `engine/*` (retired) | `SendClaimSync` is a no-op; no `processes.js` loader-mode selector; `transitional_loaders` → `operator_driven_loaders` flag. |
+| `engine/*` (retired) | `SendClaimSync` deleted; no `processes.js` loader-mode selector; `transitional_loaders` → `operator_driven_loaders` flag. |
 
 ### Protocol
 
 | File | Role |
 |------|------|
 | `protocol/payloads.go` | `LoaderInfo` (carried on `NodeListResponse.Loaders`), `DemandSignal`. `ClaimSync`/`ClaimSyncEntry` remain defined but unused (retired). |
-| `protocol/types.go` | `SubjectDemandSignal`. `SubjectClaimSync` retired. |
+| `protocol/types.go` | `SubjectDemandSignal`, `SubjectClaimSync` (Core side live), `SubjectLoopBelowThreshold`. |
 
 ---
 
@@ -314,9 +316,9 @@ When the operator loads DEF into the bin at SMN_001, the system sets the manifes
 
 **Core restart:** Fulfillment scanner runs on startup, picks up all queued orders from before shutdown.
 
-**Edge restart:** `SendClaimSync` runs after registration ack. `tryAutoRequest` runs for all bin_loader nodes to catch missed demand.
+**Edge restart:** the auto-push sweeps run after registration ack, offering every auto loader/unloader's payloads to the seam to catch demand that arrived while offline.
 
-**Concurrent tryAutoRequest:** BEGIN IMMEDIATE serializes at SQLite level. Core UNIQUE(edge_uuid) catches any remaining duplicates.
+**Concurrent pushes:** the seam's per-loader mutex serializes count-and-fire. Core's UNIQUE(edge_uuid) catches any remaining duplicates.
 
 **No bins ever available:** Order stays queued indefinitely. Operator sees QUEUED status, can cancel.
 
@@ -341,7 +343,7 @@ non-operator-driven on a DB error, but the Core replenishment field is authorita
 
 **What it changes.** For an operator-driven loader the market-accounting automatic L1
 paths are suppressed — the UOP-threshold C-push (`HandleLoopBelowThreshold`)
-short-circuits in the single `tryCreateL1` chokepoint. Empties instead flow via
+short-circuits in the reservation seam. Empties instead flow via
 `MaybePushLoader`, the loader-side mirror of `MaybePushUnloader`: when a window is free
 it opportunistically stages one empty. The staged empty is **payload-agnostic** — a
 generic carrier with no payload tag, since an opportunistic stage has no

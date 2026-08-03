@@ -2,6 +2,7 @@ package www
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -43,7 +44,6 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Batch mode: create multiple empty-bin orders (max 5)
 	count := req.Count
 	if count < 1 {
 		count = 1
@@ -57,45 +57,61 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "payload_code and delivery_node required for batch")
 			return
 		}
-		h.createRetrieveBatch(w, req.PayloadCode, req.DeliveryNode, req.SourceNode, count)
-		return
 	}
 
-	order, err := h.engine.OrderManager().CreateRetrieveOrder(
-		processNodeID, req.RetrieveEmpty,
-		req.Quantity, req.DeliveryNode, req.SourceNode, req.StagingNode, req.LoadType, req.PayloadCode,
-		h.engine.AppConfig().Web.AutoConfirm, false,
-	)
+	// One call for one and for many. The batch used to be a separate function
+	// that looped CreateRetrieveOrder directly, which is how it ended up as the
+	// only creation path with no budget behind it — ask for five empties at a
+	// window with room for one and you got five. Both arms now go through the
+	// engine, which routes to the reservation seam when a loader owns the
+	// destination and leaves everything else exactly as it was.
+	made, err := h.orchestration.CreateRetrieveForAPI(engine.APIRetrieveRequest{
+		ProcessNodeID: processNodeID,
+		RetrieveEmpty: req.RetrieveEmpty,
+		Quantity:      req.Quantity,
+		DeliveryNode:  req.DeliveryNode,
+		SourceNode:    req.SourceNode,
+		StagingNode:   req.StagingNode,
+		LoadType:      req.LoadType,
+		PayloadCode:   req.PayloadCode,
+		AutoConfirm:   h.engine.AppConfig().Web.AutoConfirm,
+		Count:         count,
+	})
 	if err != nil {
+		if errors.Is(err, engine.ErrLoaderBudgetExhausted) {
+			// The plant is in a state that refuses the request, not a bad
+			// request. Same answer the operator's own buttons give.
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, order)
-}
 
-func (h *Handlers) createRetrieveBatch(w http.ResponseWriter, payloadCode, deliveryNode, sourceNode string, count int) {
-	type result struct {
-		OrderID int64  `json:"order_id,omitempty"`
-		UUID    string `json:"uuid,omitempty"`
-		Error   string `json:"error,omitempty"`
+	// Nothing created and no error is not a shape the engine should produce —
+	// it returns ErrLoaderBudgetExhausted for that — but the handler must not
+	// take the caller down if it ever does. An empty slice indexed at [0] is a
+	// panic, and a panic here is a 500 with a stack trace where a sentence
+	// belongs.
+	if len(made) == 0 {
+		writeError(w, http.StatusInternalServerError, "order creation returned no orders and no error")
+		return
 	}
-	var results []result
-	created := 0
-	for i := 0; i < count; i++ {
-		order, err := h.engine.OrderManager().CreateRetrieveOrder(
-			nil, true, 1, deliveryNode, sourceNode, "", "standard", payloadCode,
-			h.engine.AppConfig().Web.AutoConfirm, false,
-		)
-		if err != nil {
-			results = append(results, result{Error: err.Error()})
-			continue
-		}
-		results = append(results, result{OrderID: order.ID, UUID: order.UUID})
-		created++
+
+	// A single request keeps its original single-object response; only the batch
+	// gets the envelope, and it now reports what was CREATED rather than what
+	// was asked for.
+	if count == 1 {
+		writeJSON(w, made[0])
+		return
+	}
+	results := make([]map[string]any, 0, len(made))
+	for _, o := range made {
+		results = append(results, map[string]any{"order_id": o.ID, "uuid": o.UUID})
 	}
 	writeJSON(w, map[string]any{
 		"requested": count,
-		"created":   created,
+		"created":   len(made),
 		"orders":    results,
 	})
 }

@@ -302,11 +302,17 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 }
 
 // LinkSiblingsByEdgeUUID records a two-robot swap pairing (supply ↔ evac)
-// on Core, setting each order's sibling_order_uuid to the other. Keyed on
-// edge_uuid because the link arrives (TypeOrderSiblingLink) carrying the
-// two edge UUIDs — independent of Core's own ids and of which leg's
-// ComplexOrderRequest landed first. One statement sets both directions;
-// idempotent. Returns the number of order rows updated (0, 1, or 2).
+// on Core, setting each order's sibling_order_uuid to the other.
+//
+// Keyed on edge_uuid because the pairing is expressed in the two legs' own
+// UUIDs — independent of Core's ids and of which leg's ComplexOrderRequest
+// landed first. The link rides the SECOND leg's ComplexOrderRequest, in its
+// SiblingOrderUUID field; there is no separate message for it. (This comment
+// used to name a "TypeOrderSiblingLink" wire type, which has never existed in
+// protocol/types.go — the feature is real, the message was not.)
+//
+// One statement sets both directions; idempotent. Returns the number of order
+// rows updated (0, 1, or 2).
 func LinkSiblingsByEdgeUUID(db *sql.DB, uuidA, uuidB string) (int64, error) {
 	res, err := db.Exec(`UPDATE orders SET
 		sibling_order_uuid = CASE edge_uuid WHEN $1 THEN $2 WHEN $2 THEN $1 END,

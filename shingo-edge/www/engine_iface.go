@@ -107,6 +107,10 @@ type EngineOrchestration interface {
 	PushEmptyOut(nodeID int64) error
 	RequestEmptyBin(nodeID int64, payloadCode string) (*domain.Order, error)
 	RequestFullBin(nodeID int64, payloadCode string) (*domain.Order, error)
+	// CreateRetrieveForAPI is the HTTP order API's creation path. It routes
+	// through the reservation seam when a loader owns the destination, so the
+	// one door that never counted in-flight now does.
+	CreateRetrieveForAPI(req engine.APIRetrieveRequest) ([]*domain.Order, error)
 
 	// ── Changeover orchestration ───────────────────────────────────
 	PreviewChangeoverPlan(processID, toStyleID int64) (changeover.Plan, error)

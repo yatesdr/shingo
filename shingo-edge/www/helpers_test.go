@@ -171,6 +171,31 @@ func (s *stubEngine) PullFromMarket(int64, string) error                        
 func (s *stubEngine) PushEmptyOut(int64) error                                          { return nil }
 func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)         { return nil, nil }
 func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)          { return nil, nil }
+// CreateRetrieveForAPI mirrors the engine's NO-LOADER path, which is what the
+// stub genuinely models: it has an order manager and no loader aggregate, so
+// every destination is one no loader owns. The seam-routed half is exercised
+// against the real engine in the engine package, where a loader exists to route
+// to. Returning (nil, nil) here would make every handler test assert against a
+// door that creates nothing.
+func (s *stubEngine) CreateRetrieveForAPI(req engine.APIRetrieveRequest) ([]*storeorders.Order, error) {
+	count := req.Count
+	if count < 1 {
+		count = 1
+	}
+	made := make([]*storeorders.Order, 0, count)
+	for i := 0; i < count; i++ {
+		o, err := s.orderMgr.CreateRetrieveOrder(
+			req.ProcessNodeID, req.RetrieveEmpty, req.Quantity,
+			req.DeliveryNode, req.SourceNode, req.StagingNode, req.LoadType,
+			req.PayloadCode, req.AutoConfirm, false,
+		)
+		if err != nil {
+			return made, err
+		}
+		made = append(made, o)
+	}
+	return made, nil
+}
 func (s *stubEngine) PreviewChangeoverPlan(int64, int64) (changeover.Plan, error) {
 	return changeover.Plan{}, nil
 }

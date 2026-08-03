@@ -592,7 +592,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// has finished. claim.AutoConfirm is true on these claims (mandatory for
 	// the robot-drop signal), but that flag means "robot confirms it dropped
 	// the bin", not "operator confirmed they loaded parts". Override both
-	// flags for manual_swap to match MaybeCreateLoaderEmptyIn / MaybeCreateUnloaderFullIn.
+	// flags for manual_swap to match the automatic side-cycle paths (MaybeCreateUnloaderFullIn and the loader push).
 	skipAutoConfirm := false
 	if claim.SwapMode == protocol.SwapModeManualSwap {
 		autoConfirm = false

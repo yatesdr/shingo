@@ -222,16 +222,10 @@ type NodeClaim struct {
 	// below" (≤) — wiring_counter_delta fires RequestNodeMaterial when
 	// remaining UOP drops to ≤ ReorderPoint.
 	//
-	// Produce-role manual_swap claim (bin loader): bin-count
-	// minimum-stock floor, "fire when fewer than" (<) — operator types
-	// the desired minimum number of bins of the loader's payload, and
-	// MaybeCreateLoaderEmptyIn fires the L1 retrieve_empty whenever
-	// the system count drops below that. Zero falls back to a magic-
-	// number floor of 2: strict "queue when fewer than 2 bins in the
-	// system." The future kanban calculator (see
-	// shingo-kanban-calculator-design.md) writes its calculated value
-	// into this same column rather than a parallel "loader threshold"
-	// field.
+	// Produce-role manual_swap claim (bin loader): NOT READ. Loader
+	// replenishment is Core-owned — operator push or UOP threshold — and
+	// no bin-count floor survives. Setting this on a loader claim does
+	// nothing.
 	ReorderPoint int `json:"reorder_point"`
 	// ReorderPointSource (UOP-threshold replenishment) records how
 	// ReorderPoint was set. 'legacy' = default, never edited (the

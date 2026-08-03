@@ -29,7 +29,7 @@ import (
 // DeliveryNode=home makes this order in-flight to the home, so a later restock's
 // own gate sees it and yields; and if a restock got there first, this read sees it
 // and yields to buffer. A lost race requeues (scanner replay), the same contract
-// every dropoff has. Do NOT route through the Edge reserveLoaderBins seam (wrong
+// every dropoff has. Do NOT route through the Edge withLoaderBudget seam (wrong
 // store, re-introduces divergence) and do NOT add ClaimSlot here.
 //
 // The home occupancy check is split by order shape:

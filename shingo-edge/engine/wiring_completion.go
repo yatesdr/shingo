@@ -507,7 +507,7 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 	}
 	// tryAutoRequest call removed in side-cycle refactor (commit 4f9212b
 	// + this one). Loader empties are now driven by line REQUESTs through
-	// MaybeCreateLoaderEmptyIn, not by post-completion kanban auto-requests.
+	// the loader replenishment path, not by post-completion kanban auto-requests.
 	//
 	// Push-driven unloader: U2 just landed (empty returned to supermarket),
 	// the unloader window is confirmed free. Fire the next U1 if the claim
@@ -552,7 +552,7 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 		// Pre-side-cycle, this called e.tryAutoRequest to re-evaluate
 		// kanban demand and queue a new empty-in. Removed: the
 		// side-cycle drives empty-in creation from line REQUESTs via
-		// MaybeCreateLoaderEmptyIn, not from completion-time sweeps.
+		// the loader replenishment path, not from completion-time sweeps.
 	}
 
 	// Keep-staged: immediately pre-populate inbound staging for next swap

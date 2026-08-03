@@ -183,11 +183,12 @@ See `[[order-builder-dispatch]]` for how `MoveToSourcing` is positioned at the
 start of the reserve attempt and how the `AcquiringStatusSQLList = {queued,
 sourcing}` set widens which orders the scanner retries.
 
-**Synchronous manual orders** (`engine.CreateDirectOrder`,
-`www.submitSpotRetrieveSpecific`): the operator picks a specific bin, so these
-soft-acquire it and confirm at dispatch in the same call. The soft window is
-microscopic, but the discipline is uniform — no hard claim before the dispatch
-step on any path.
+**Synchronous manual orders** (`engine.CreateBinMove`, reached from the operator's
+manual-order screen via `www.submitSpotRetrieveSpecific` and from the
+`/test-orders` direct tab): a specific bin is named — by the operator, or by the
+door itself when it picks a free one — so these soft-acquire it and confirm at
+dispatch in the same call. The soft window is microscopic, but the discipline is
+uniform — no hard claim before the dispatch step on any path.
 
 ## The store API
 

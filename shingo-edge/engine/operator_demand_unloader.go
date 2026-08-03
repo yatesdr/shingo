@@ -60,7 +60,7 @@ func occupancyUnverifiable(outcome string) bool {
 }
 
 // MaybeCreateUnloaderFullIn (U1 of the side-cycle model) is the consumer-side
-// counterpart to MaybeCreateLoaderEmptyIn: it pulls a full FG bin to the unloader
+// counterpart to the loader side's L1: it pulls a full FG bin to the unloader
 // for the operator to process. Resolves the unloader as a consume *domain.Loader
 // and routes through the shared reservation seam (never-2N).
 //

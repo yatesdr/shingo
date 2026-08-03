@@ -38,12 +38,13 @@
 // DB read. There is no ongoing reconcile sweep — every evaluation already
 // reads the truth.
 //
-// Dedup with the legacy DemandSignal path:
-//   - Core never sends LoopBelowThresholdSignal for (loader, payload)
-//     pairs with threshold = 0 (opt-out — bin-count owned by Edge).
-//   - Edge's HandleDemandSignal explicitly skips opted-in pairs.
-//   - If both signals race, Edge's countLoaderInFlightEmptyIn guard is
-//     the dedup contract — second caller sees inflight≥1 and returns.
+// There is no longer a second path to dedup against. The legacy bin-count
+// DemandSignal route is retired: Core still emits produce DemandSignals, but
+// Edge routes them to no handler, so the two-signals-race case this used to
+// describe cannot happen. Core still sends no LoopBelowThresholdSignal for a
+// pair with threshold = 0 — that pair is simply not monitored, and its loader
+// is stocked by the operator push instead. Edge's own dedup, for the one path
+// that remains, is the reservation seam (withLoaderBudget).
 //
 // Out of scope: iterate-all-claims for inactive styles (R3),
 // queued-retrieve safety net at Edge.

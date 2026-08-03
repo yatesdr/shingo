@@ -69,9 +69,13 @@ const (
 	//   Core observes combined inventory (bins + buckets) per payload,
 	//   compares against the configured threshold from demand_registry,
 	//   and emits LoopBelowThresholdSignal on threshold crossing. Edge
-	//   fires L1 retrieve_empty on receipt after countLoaderInFlightEmptyIn
-	//   dedup. The legacy DemandSignal path skips opted-in (loader,
-	//   payload) pairs.
+	//   fires L1 retrieve_empty on receipt, deduped by the reservation
+	//   seam (withLoaderBudget), which counts in-flight per loader.
+	//
+	//   There is no second automatic path any more. The legacy bin-count
+	//   DemandSignal route is retired: Core still emits produce
+	//   DemandSignals, but Edge routes them to no handler, so there are no
+	//   "opted-in pairs" for anything to skip.
 	SubjectLoopBelowThreshold = "demand.loop_below_threshold" // Core -> Edge
 
 	// Count-group light alerts (advanced-zone occupancy → PLC-driven warning light)

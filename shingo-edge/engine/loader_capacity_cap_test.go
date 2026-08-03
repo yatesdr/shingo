@@ -187,7 +187,7 @@ func multiPayloadLoaderInfo(coreNode, role, repl string, payloads []string, _ in
 
 // NOTE: the produce bin-count cap tests (SweepBoundedByWindowSlots /
 // FallbackRefillsOnlySignaledPayload) were REMOVED with the bin-count floor: the
-// legacy produce DemandSignal sweep (MaybeCreateLoaderEmptyIn / refillLoaderForPayload)
+// legacy produce DemandSignal sweep (retired: MaybeCreateLoaderEmptyIn / refillLoaderForPayload)
 // is retired. The never-2N cap they exercised is now enforced by the reservation seam
 // for every produce path — see loader_reservation_seam_test.go.
 

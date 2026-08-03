@@ -177,10 +177,17 @@ type UOPStateResponse struct {
 	Buckets []LinesideBucketRow `json:"buckets"`
 }
 
-// FetchUOPState returns the authoritative bin + bucket snapshot from
-// Core. Returns nil (no error) when Core is unavailable, matching
-// FetchNodeBins's graceful-degradation contract — a missed
-// reconciliation pass is not worth surfacing.
+// FetchUOPState returns the authoritative bin + bucket snapshot from Core, and
+// nil (no error) when Core is unavailable — a missed reconciliation pass is not
+// worth surfacing, because the next one reads the same truth.
+//
+// This used to say it was "matching FetchNodeBins's graceful-degradation
+// contract". FetchNodeBins no longer has one: it returns (bins, reachable, err)
+// precisely because collapsing every failure into "nothing here" is what let a
+// failed occupancy read pass as an empty loader window (the 2026-07-31
+// Springfield over-ordering incident). Do not copy this function's shape into a
+// caller that ACTS on absence; it is safe here only because the reconciler's
+// answer to a missing snapshot is to wait for the next one.
 func (c *CoreClient) FetchUOPState(station string, nodeNames []string) (*UOPStateResponse, error) {
 	if c.baseURL == "" {
 		return nil, nil
@@ -461,9 +468,8 @@ func (c *CoreClient) PreflightInventory(station string, payloads []string) (*ser
 //
 // This intentionally answers a different question than PreflightInventory:
 // total physical bins in circulation regardless of location or pickability,
-// not just bins-available-to-source-right-now. Used by kanban demand math
-// (refillLoaderForPayload) where a bin staged at the consumer line still
-// counts as inventory.
+// not just bins-available-to-source-right-now. Used by inventory math where a bin staged at the
+// consumer line still counts as in circulation.
 //
 // Returns ([]PayloadSystemCount, true) on success, (nil, false) when Core
 // is unreachable or returns an error. Callers fail OPEN at the use site

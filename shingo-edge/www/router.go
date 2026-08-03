@@ -324,11 +324,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/processes/{id}/changeover/release-wait", h.apiReleaseChangeoverWait)
 			r.Post("/processes/{id}/changeover/sequential-cutover/{nodeID}", h.apiSequentialChangeoverCutover)
 
-			// Orders (create, lifecycle, manual)
-			r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
-			r.Post("/orders/move", h.apiCreateMoveOrder)
-			r.Post("/orders/complex", h.apiCreateComplexOrder)
-			r.Post("/orders/ingest", h.apiCreateIngestOrder)
+			// Orders — LIFECYCLE ONLY here. These act on an order that already
+			// exists and are driven by the operator station, which is a shop-floor
+			// monitor with no login, so they stay public. Order CREATION moved
+			// behind admin auth (see the admin group below).
 			r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
 			r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
 			r.Post("/orders/{orderID}/cancel", h.apiCancelOrder)
@@ -348,6 +347,33 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// ── Admin API (auth required) ───────────────────────
 			r.Group(func(r chi.Router) {
 				r.Use(h.adminMiddleware)
+
+				// ORDER CREATION. These make new work for robots out of
+				// nothing but a POST body, and they sat in the public group
+				// — no auth, reachable by anything that can see the Edge.
+				//
+				// Nobody has been able to say who calls them in production
+				// (the open plant question), which is the reason to bound
+				// them rather than a reason to wait: an unknown caller is
+				// exactly what should not have an unauthenticated door onto
+				// order creation.
+				//
+				// Admin auth rather than a localhost bind because it is the
+				// smaller change that keeps the one caller we CAN see: the
+				// /manual-order page is already admin-gated, so its fetches
+				// carry the same session and keep working. A localhost bind
+				// would need server-level config and still would not tell an
+				// operator apart from a script.
+				//
+				// The per-order lifecycle routes stay public, deliberately —
+				// release / submit / cancel / count are the operator
+				// station's, and that is a shop-floor monitor with no login.
+				// Acting on an order that already exists is a different
+				// authority from minting one.
+				r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
+				r.Post("/orders/move", h.apiCreateMoveOrder)
+				r.Post("/orders/complex", h.apiCreateComplexOrder)
+				r.Post("/orders/ingest", h.apiCreateIngestOrder)
 
 				// PLCs / WarLink
 				r.Get("/plcs", h.apiListPLCs)

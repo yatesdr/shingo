@@ -18,10 +18,16 @@ import (
 // handlers_api_orders.go. Routes unrelated to this file are deliberately
 // omitted. Tests use this router exclusively.
 //
-// Every order endpoint is registered under /api, matching the production
-// route layout. All endpoints are public (shop floor); none live under the
-// admin router group in production, so there is no 303/401 auth gating to
-// test here.
+// Every order endpoint is registered under /api. This harness deliberately
+// registers them WITHOUT the auth group: these are handler tests, and auth is
+// route wiring. Threading a session through forty of them would test the
+// session store forty times and the handlers no better.
+//
+// The auth split itself is pinned separately and on purpose, by
+// TestApiOrders_CreationRequiresAuth_LifecycleDoesNot below, which builds the
+// production route shape. This file used to say "all endpoints are public, so
+// there is no auth gating to test here" — that was true when written, and it
+// was the gap.
 // ═══════════════════════════════════════════════════════════════════════
 
 func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
@@ -48,6 +54,68 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 	})
 
 	return h, r
+}
+
+// TestApiOrders_CreationRequiresAuth_LifecycleDoesNot pins the auth split, on
+// a router built the way production builds it.
+//
+// The four creation routes sat in the public group, so anything that could
+// reach the Edge could make robots move by POSTing a body. Nobody has been
+// able to say who calls them in production, which is the reason to bound them
+// rather than a reason to wait.
+//
+// The other half matters just as much: the operator station is a shop-floor
+// monitor with no login, so gating release/submit/cancel would take the floor's
+// own buttons away. Minting new work and acting on work that already exists are
+// different authorities. Both directions are asserted so a later "tidy the
+// routes" pass cannot move one without noticing the other.
+func TestApiOrders_CreationRequiresAuth_LifecycleDoesNot(t *testing.T) {
+	h, r := newTestHandlers(t)
+	r.Route("/api", func(r chi.Router) {
+		r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
+		r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
+		r.Post("/orders/{orderID}/cancel", h.apiCancelOrder)
+		r.Post("/orders/{orderID}/count", h.apiSetOrderCount)
+		r.Group(func(r chi.Router) {
+			r.Use(h.adminMiddleware)
+			r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
+			r.Post("/orders/move", h.apiCreateMoveOrder)
+			r.Post("/orders/complex", h.apiCreateComplexOrder)
+			r.Post("/orders/ingest", h.apiCreateIngestOrder)
+		})
+	})
+
+	for _, path := range []string{
+		"/api/orders/retrieve",
+		"/api/orders/move",
+		"/api/orders/complex",
+		"/api/orders/ingest",
+	} {
+		resp := doRequest(t, r, "POST", path, map[string]any{}, nil)
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Errorf("unauthenticated POST %s: status = %d, want 303 — order creation must be behind the admin gate", path, resp.StatusCode)
+		}
+	}
+
+	admin := authCookie(t, h)
+	for _, path := range []string{"/api/orders/retrieve", "/api/orders/move"} {
+		resp := doRequest(t, r, "POST", path, map[string]any{}, admin)
+		if resp.StatusCode == http.StatusSeeOther {
+			t.Errorf("authenticated POST %s was still redirected — the gate must let the /manual-order page through", path)
+		}
+	}
+
+	for _, path := range []string{
+		"/api/orders/1/release",
+		"/api/orders/1/submit",
+		"/api/orders/1/cancel",
+		"/api/orders/1/count",
+	} {
+		resp := doRequest(t, r, "POST", path, map[string]any{}, nil)
+		if resp.StatusCode == http.StatusSeeOther {
+			t.Errorf("unauthenticated POST %s was redirected to login — the operator station has no session, and gating this takes the shop floor's buttons away", path)
+		}
+	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════

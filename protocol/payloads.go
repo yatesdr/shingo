@@ -1017,21 +1017,24 @@ type LinesideBucketDelta struct {
 
 // LoopBelowThresholdSignal is sent by Core to Edge when total in-loop
 // UOP for a (loader, payload) pair drops below the configured threshold.
-// Edge responds by firing an L1 retrieve_empty order via
-// refillLoaderForPayload after the countLoaderInFlightEmptyIn dedup
-// guard.
+// Edge responds by firing an L1 retrieve_empty through HandleLoopBelowThreshold,
+// deduped by the reservation seam (withLoaderBudget), which counts what is
+// already in flight for that loader.
 //
 // CoreNodeName is the loader-member node the binding is about — a real node
 // (the position for dedicated, the first window for shared_window). The loader's
 // IDENTITY is LoaderKey; the Edge resolves the loader by that token and uses
 // CoreNodeName/MemberNodeName only as the delivery address.
 //
-// Reason carries either "below_threshold" (normal crossing) or
-// "warm_up_startup_sweep" (Core startup observed an existing
-// under-threshold state and is firing up to the per-binding warm-up
-// cap). The signal is the only path that fires L1 for opted-in pairs;
-// the legacy DemandSignal path in HandleDemandSignal explicitly skips
-// these pairs to avoid redundant evaluation.
+// Reason is logged and nothing branches on it. Core sends four:
+// "below_threshold" (the ordinary crossing), "warm_up_startup_sweep" (boot
+// observed an existing under-threshold state and fires up to the per-binding
+// warm-up cap), "lineside_report" (the shadow monitor re-evaluating on an Edge
+// lineside report) and "manual_swap_recheck".
+//
+// This is the ONLY automatic path that fires an L1. The legacy bin-count
+// DemandSignal route is retired — Core still emits produce DemandSignals but
+// Edge routes them to no handler — so there is no second path to skip pairs for.
 type LoopBelowThresholdSignal struct {
 	PayloadCode  string `json:"payload_code"`
 	CurrentUOP   int    `json:"current_uop"`

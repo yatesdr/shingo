@@ -1,10 +1,12 @@
 # UOP-Threshold Replenishment
 
-This document covers the opt-in continuous-review reorder-point system for loader L1 and cell autoreorder, layered on top of the legacy bin-count + manual-REQUEST workflow described in [bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md).
+This document covers the continuous-review reorder-point system for loader L1 and cell autoreorder.
 
-The model is *C-push*: Core observes combined in-loop UOP (bins + lineside buckets), compares against engineer-configured thresholds, and signals Edge when replenishment is needed. Edge fires L1 in response. Both thresholds default to `0`, which means "do nothing" — plants that don't configure are bit-for-bit identical to the legacy path.
+The model is *C-push*: Core observes combined in-loop UOP (bins + lineside buckets), compares against engineer-configured thresholds, and signals Edge when replenishment is needed. Edge fires L1 in response. A threshold of `0` means Core does not monitor that pair — the loader is stocked by the operator push instead.
 
-See [material-flow.md](material-flow.md) for `Bin`, `Payload`, `UOP`, and bucket terminology. See [bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md) for the loader/unloader workflow this layers onto.
+**There is one automatic path.** This document used to describe two, with a dedup contract between them, and that is the single most important thing to know is no longer true. The legacy bin-count `DemandSignal` route is retired: Core still emits produce DemandSignals, but Edge routes them to no handler. There is no bin-count fallback, no `ReorderPoint` floor of 2 for loaders, and nothing that needs to "skip opted-in pairs".
+
+See [material-flow.md](material-flow.md) for `Bin`, `Payload`, `UOP`, and bucket terminology; [bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md) for the loader/unloader workflow this sits in; and [sweeps-and-monitors.md](sweeps-and-monitors.md) for the full list of what re-evaluates a threshold and when.
 
 ---
 
@@ -18,8 +20,8 @@ When **total in-loop UOP for a payload** drops below this value, Core signals Ed
 
 - *In-loop UOP* = `SUM(bin.uop_remaining)` + `SUM(bucket.qty)` for that payload, across every bin in the kanban lifecycle (`available`, `staged`, in-transit) and every lineside bucket carrying captured parts of that payload. Excludes `flagged`, `maintenance`, `quality_hold`, `retired` bins.
 - *Lives at*: `loader_payload_thresholds` table on Edge, keyed by `(core_node_name, payload_code)`. `core_node_name` is the canonical cross-system identifier — multi-cell plants sharing a Core loader share one threshold row.
-- *Synced to*: Core's `demand_registry.replenish_uop_threshold` column, via ClaimSync's `PayloadThresholds` map. Zero values are omitted from the wire (opt-in default).
-- *Default*: `0` — Core doesn't monitor this loader/payload pair. Edge's legacy bin-count fallback (`refillLoaderForPayload`) owns the L1 decision.
+- *Owned by*: Core. The loader aggregate (`bin_loaders` and its payload rows) is the source of truth, and `demand_registry.replenish_uop_threshold` is derived from it. Edge receives loader configuration on the node-list sync, not by pushing it up.
+- *Default*: `0` — Core doesn't monitor this loader/payload pair, and nothing fires an L1 for it automatically. That loader is stocked by the operator push (`MaybePushLoader` / the startup sweep).
 
 ### Cell autoreorder (line-bin UOP)
 
@@ -38,19 +40,19 @@ The two thresholds work together: cell autoreorder pulls a fresh bin from the lo
 ```
 Edge                                      Core
 ─────────────────────────────────────────────────────────────────────
-ClaimSync (extended)                  →   demand_registry +
-  PayloadThresholds map                   replenish_uop_threshold
-                                          per (station, node, payload)
+                                      ←   loader aggregate (bin_loaders)
+  node-list sync carries the loader's       is the source of truth for
+  windows, payloads and thresholds          thresholds; demand_registry
+                                            is derived from it
 
-LinesideBucketDelta (extended)        →   lineside_buckets
+LinesideBucketDelta                   →   lineside_buckets
   PayloadCode populated by                  UPSERT applies qty delta
   capture.go at emit time                   and latches payload_code
                                             (empty incoming keeps
                                             previously-latched value)
 
-BinUpdatedEvent OR
-LinesideBucketApplied                 →   threshold_monitor subscribes
-                                            to both event types.
+BinUpdatedEvent, BinUOPDelta, or      →   threshold_monitor subscribes
+LinesideBucketApplied                       to all three.
                                             evaluatePayload(code):
                                               entries = lookup bindings
                                               uop    = SystemUOPForPayload
@@ -60,19 +62,22 @@ LinesideBucketApplied                 →   threshold_monitor subscribes
 
 LoopBelowThresholdSignal              ←   SubjectLoopBelowThreshold,
   HandleLoopBelowThreshold:                 carries:
-    loader = FindLoaderForPayload             - core_node_name
-    refillLoaderForPayload(loader, p)         - payload_code
-      countLoaderInFlightEmptyIn               - current_uop / threshold
-      → fires L1 if 0                          - reason
+    resolve loader by LoaderKey               - core_node_name
+    desiredBins = ceil(gap/capacity)          - payload_code
+    withLoaderBudget(...)                     - current_uop / threshold
+      counts in-flight per loader             - reason
+      → fires the remainder
 ```
 
 The signal subject is `demand.loop_below_threshold`. Edge's `EdgeHandler.HandleData` decodes and routes to `HandleLoopBelowThreshold`.
+
+Three separate Core subscriptions funnel into one evaluation, so a single bin move commonly trips more than one; the 15-second debounce is what absorbs that. See [sweeps-and-monitors.md](sweeps-and-monitors.md).
 
 ### Debounce policy
 
 15 seconds per `(station, core_node_name, payload)` tuple. The state is in-memory on Core — lost on restart. That's intentional: the startup sweep handles the restart case by re-evaluating every monitored binding with debounce bypassed.
 
-`OnRegistryChanges` resets the debounce timer (and warm-up counter) for any binding whose threshold value changed during a SyncRegistry round, so an engineer-applied threshold engages on the next inventory event rather than waiting out a debounce window from a previous firing.
+`OnThresholdChanges` resets the debounce timer (and warm-up counter) for any binding whose threshold value changed during a registry sync, so an engineer-applied threshold engages on the next inventory event rather than waiting out a debounce window from a previous firing.
 
 ### Startup sweep
 
@@ -82,16 +87,30 @@ The strict deploy ordering is: `uop_backfill` from a reconnecting Edge must comp
 
 ---
 
-## Dedup contract
+## The reservation seam
 
-**Two signal paths can fire L1**, and the dedup contract between them is load-bearing. Future code changes must preserve it.
+One automatic path fires an L1 — the threshold signal — but it is not the only
+thing that puts a bin on a loader window. The operator's Request Empty and
+Request Full buttons, the push sweeps, the unloader's U1, and the HTTP order API
+all target the same windows, and every one of them goes through
+`withLoaderBudget` (`shingo-edge/engine/operator_demand_loader.go`).
 
-1. **Legacy**: `DemandSignal` fires on every bin move. Edge's `HandleDemandSignal` → `MaybeCreateLoaderEmptyIn`. For opted-in pairs (threshold > 0), this path is **explicitly skipped** via the `hasOptInLoaderThreshold` guard. For non-opted-in pairs it's the legacy bin-count fallback (`refillLoaderForPayload` with `ReorderPoint` floor of 2).
-2. **C-push**: `LoopBelowThresholdSignal` fires when Core detects threshold crossing. Edge's `HandleLoopBelowThreshold` → `refillLoaderForPayload`.
+The seam takes a per-loader mutex and, in one snapshot, counts in-flight
+`retrieve_empty` orders across the loader's delivery-node set — applying both the
+per-payload dedup (fire only `want − in-flight-for-payload`) and the loader-total
+capacity cap (in-flight across the cluster ≤ budget, where budget = the
+delivery-set cardinality, one bin per window or position). A multi-window loader's
+budget is the sum of its windows, not a hardcoded `1`. Because the mutex is held
+across count and create, two racing callers cannot both read `inflight = 0` and
+both fire — the second waits, recounts, and sees the first.
 
-Both paths converge through `tryCreateL1`, which routes the count→fire through the **reservation seam** `reserveLoaderBins` (see `bin-loader-unloader-architecture.md` → *Reservation Seam*). The seam takes a per-loader mutex and, in one snapshot, counts in-flight `retrieve_empty` orders across the loader's delivery-node set — applying both the per-payload dedup (fire only `want − in-flight-for-payload`) and the **loader-total capacity cap** (in-flight across the cluster ≤ budget, where budget = the delivery-set cardinality, one bin per window/position). This replaces the former per-node `manualSwapWindowSlots` constant: a multi-window loader's budget is the sum of its windows, not a hardcoded `1`. Because the seam holds the loader mutex across count and create, two racing signals (or a signal racing the operator's `RequestEmptyBin`) can no longer both read `inflight = 0` and both fire — the second waits, recounts, and sees the first.
+It also refuses to fire when it cannot verify occupancy. An unreadable occupancy
+check is not an empty window, and treating it as one is what produced the
+2026-07-31 Springfield over-ordering incident.
 
-**Do not remove or weaken the seam during refactors, and do not wrap it in a DB transaction** (its correctness is the mutex + count monotonicity, not isolation). It is the single dedup point across the threshold, side-cycle, and operator paths.
+**Do not remove or weaken the seam during refactors, and do not wrap it in a DB
+transaction** — its correctness is the mutex plus count monotonicity, not
+isolation. It is the single dedup point across every path that stocks a loader.
 
 ---
 
@@ -193,8 +212,8 @@ The **Recalculate all** button at the process level enumerates every `(loader, p
 
 | `replenish_uop_threshold` | Behavior |
 |---|---|
-| `0` or no row | Core never monitors. Edge's `MaybeCreateLoaderEmptyIn` runs the legacy bin-count fallback. Cell autoreorder is silent-inert. Identical to pre-v6 behavior. |
-| `> 0` | Core monitors. Edge's `hasOptInLoaderThreshold` guard skips the legacy bin-count for that pair. C-push owns L1 firing. |
+| `0` or no row | Core never monitors. Nothing fires an L1 for that pair automatically; the loader is stocked by the operator push. Cell autoreorder is silent-inert. |
+| `> 0` | Core monitors and signals on crossing. C-push owns L1 firing for that pair. |
 
 A row with `threshold = 0` and `source = 'manual'` is semantically equivalent to no row at all from the runtime's perspective — it exists so the UI can show "engineer considered this and opted out" in the source audit. `DeleteLoaderThreshold` and "save threshold = 0" are both supported entry points to the opted-out state.
 
@@ -222,7 +241,7 @@ The formula in the design brief is `max(2, ceil(threshold / C))` — the per-bin
 
 ### Debounce reset on threshold change
 
-`OnRegistryChanges` is called from `CoreDataService.handleClaimSync` after `SyncDemandRegistry` returns its change list. For every binding whose threshold value moved, the monitor `delete`s the debounce + warm-up state — so a freshly-applied threshold (engineer just clicked Apply) takes effect on the next inventory event rather than being suppressed by a residual debounce window from a previous firing under the old value.
+`OnThresholdChanges` is called from `CoreDataService.HandleClaimSync` after `SyncDemandRegistry` returns its change list. For every binding whose threshold value moved, the monitor `delete`s the debounce + warm-up state — so a freshly-applied threshold (engineer just clicked Apply) takes effect on the next inventory event rather than being suppressed by a residual debounce window from a previous firing under the old value.
 
 ### Cell autoreorder evaluation
 
@@ -246,7 +265,7 @@ There is no payload-code backfill for pre-existing `lineside_buckets` rows. Spri
 
 ### Edge
 
-- `engine/operator_demand.go` — `MaybeCreateLoaderEmptyIn`, `HandleLoopBelowThreshold`, `refillLoaderForPayload`, `countLoaderInFlightEmptyIn`, `hasOptInLoaderThreshold`.
+- `engine/operator_demand_loader.go` — `HandleLoopBelowThreshold`, `withLoaderBudget` (the reservation seam), the push sweeps.
 - `engine/wiring_counter_delta.go` — cell autoreorder evaluation.
 - `engine/replenishment_admin.go` — admin-page engine wrappers (`UpsertLoaderThreshold`, `CalculateThresholdForLoader`, `ApplyCalculatedThreshold`, `OverrideCalculatedThreshold`, `ListLoaderClaimsForRecalculate`).
 - `service/threshold_calculator.go` — pure formula (`CalculateThresholds`) + date-range driver (`ThresholdCalculatorService.Calculate`).

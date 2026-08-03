@@ -343,7 +343,7 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	// After the side-cycle refactor (commit 4f9212b + tryAutoRequest
 	// removal), handleManualSwapCompletion clears ActiveOrderID without
 	// queueing a follow-up kanban request. New empties are driven by
-	// line REQUESTs through MaybeCreateLoaderEmptyIn, not by
+	// line REQUESTs through the loader replenishment path, not by
 	// completion-time auto-requests at the loader.
 	if runtime.ActiveOrderID != nil {
 		t.Errorf("ActiveOrderID = %d after manual_swap move completion; expected nil (no more kanban auto-request)", *runtime.ActiveOrderID)

@@ -358,10 +358,12 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "nodes", "claimed_by") }},
 
 		// v26 adds orders.sibling_order_uuid — the Core mirror of Edge's
-		// orders.sibling_order_id. Edge sends TypeOrderSiblingLink after a
-		// two-robot swap pair is created so Core can model the pair (the two
-		// legs arrive as independent ComplexOrderRequests). Stored as the
-		// edge UUID, not a resolved id FK, so arrival order doesn't matter.
+		// orders.sibling_order_id. The two legs of a two-robot swap arrive as
+		// independent ComplexOrderRequests, and the second one carries the
+		// first's UUID in SiblingOrderUUID; that field is the whole pairing
+		// mechanism. (This used to say Edge sends a "TypeOrderSiblingLink"
+		// message — no such wire type has ever existed.) Stored as the edge
+		// UUID, not a resolved id FK, so arrival order doesn't matter.
 		{26, "add sibling_order_uuid column to orders",
 			v26OrderSiblingUUID,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "sibling_order_uuid") }},

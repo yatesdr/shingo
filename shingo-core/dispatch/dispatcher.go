@@ -186,7 +186,27 @@ func (d *Dispatcher) PlanBuriedReshuffle(order *orders.Order, buried *BuriedErro
 // match it with errors.Is and construct it.
 var ErrReshuffleWait = errors.New("reshuffle not plannable yet")
 
+// queueOrder is the wire adapter: queue the order, then tell the Edge station
+// that asked for it what happened. Everything except that last sentence is in
+// queueOrderInternal.
 func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, payloadCode string) {
+	d.queueOrderInternal(order, env.Src.Station, payloadCode)
+	d.replies.SendUpdate(env, order.EdgeUUID, string(StatusQueued), "awaiting inventory")
+}
+
+// queueOrderInternal is the queue tail with no wire envelope in it: mark the
+// order queued, write its payload code, and emit the queued event — which
+// synchronously runs the fulfillment scanner (wiring.go), so an immediately
+// sourceable order is claimed and dispatched before this returns.
+//
+// Split out from queueOrder because an order Core originates itself has no
+// envelope. There is no request to correlate to and nobody waiting on a reply;
+// the station is a routing label the emitter needs, not the sender's return
+// address. Sending an update against a synthesized envelope would be Core
+// answering a question nobody asked, addressed to a correlation ID no Edge is
+// tracking — so the reply stays in the adapter above and the queue tail stays
+// callable without one.
+func (d *Dispatcher) queueOrderInternal(order *orders.Order, stationID, payloadCode string) {
 	if err := d.lifecycle.Queue(order, "dispatcher", "awaiting inventory"); err != nil {
 		d.dbg("queue order %d: %v", order.ID, err)
 	}
@@ -196,8 +216,7 @@ func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, pay
 		}
 	}
 	d.dbg("queued: order=%d uuid=%s payload=%s delivery=%s", order.ID, order.EdgeUUID, payloadCode, order.DeliveryNode)
-	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, env.Src.Station, payloadCode)
-	d.replies.SendUpdate(env, order.EdgeUUID, string(StatusQueued), "awaiting inventory")
+	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
 }
 
 func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope, sourceNode, destNode *nodes.Node) {
@@ -416,8 +435,9 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 // from the fulfillment scanner after a bin claim resolves.
 //
 // Callers reach this function with the order in one of three states:
-//   - pending  — direct creation paths (engine.CreateDirectOrder,
-//     www/spot handlers) jump straight from intake to dispatch.
+//   - pending  — direct creation paths (engine.CreateBinMove, reached from the
+//     operator's manual-order screen and the /test-orders direct tab) jump
+//     straight from intake to dispatch.
 //     We bridge through queued to satisfy the state machine.
 //   - sourcing — fulfillment.Scanner moves the order to sourcing once a bin
 //     is found; sourcing → dispatched is a valid edge.

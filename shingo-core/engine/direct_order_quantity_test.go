@@ -9,14 +9,14 @@ import (
 	"shingocore/internal/testdb"
 )
 
-// TestCreateDirectOrder_CountsOneBin pins that the engineer's bin-move records a
+// TestCreateBinMove_CountsOneBin pins that the engineer's bin-move records a
 // count of one rather than nothing.
 //
 // The order literal on this door omitted the field entirely, so the row stored
 // Go's zero value. The table declares DEFAULT 1, but the INSERT names the column
 // explicitly, so the default never got a chance — and the order screen showed
 // "qty 0" on every direct move ever made through this door.
-func TestCreateDirectOrder_CountsOneBin(t *testing.T) {
+func TestCreateBinMove_CountsOneBin(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
@@ -31,7 +31,7 @@ func TestCreateDirectOrder_CountsOneBin(t *testing.T) {
 		Desc:         "quantity fixture",
 	})
 	if err != nil {
-		t.Fatalf("CreateDirectOrder: %v", err)
+		t.Fatalf("CreateBinMove: %v", err)
 	}
 
 	got, err := db.GetOrder(res.OrderID)
