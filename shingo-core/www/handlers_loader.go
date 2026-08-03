@@ -35,6 +35,12 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		OutboundDest  string `json:"outbound_dest"`
 		InboundSource string `json:"inbound_source"`
 		BufferDest    string `json:"buffer_dest"`
+		// FunnelWindows is the form's FIRST question — "Single window" versus
+		// "Multi window". The client has always sent it on create; this struct
+		// had no field for it, so it decoded into nothing and every loader was
+		// created spread. Absent still means spread, which is what every loader
+		// at every plant is today and what an older client sends.
+		FunnelWindows bool `json:"funnel_windows"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -44,7 +50,7 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := h.engine.LoaderService().Create(req.Name, req.Role, req.Layout,
-		req.Replenishment, req.OutboundDest, req.InboundSource, req.BufferDest)
+		req.Replenishment, req.OutboundDest, req.InboundSource, req.BufferDest, req.FunnelWindows)
 	if err != nil {
 		h.jsonError(w, "create loader: "+err.Error(), loaderWriteStatus(err))
 		return

@@ -95,7 +95,13 @@ func (s *LoaderService) WindowBinTypes(loaderID int64) (map[int64][]string, erro
 // defaults to shared_window; empty replenishment defaults role-aware
 // (produce→threshold, consume→operator). The loader's identity is the surrogate
 // id returned here; member nodes are dragged in afterward. Returns the new id.
-func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, inboundSource, bufferDest string) (int64, error) {
+//
+// funnelWindows is accepted here because the KIND of loader is a property of
+// the loader, not of its members — the same way layout is, which create has
+// always taken. The form asks it first, as the question that decides which
+// other questions appear, so a create that dropped it contradicted the screen
+// that sent it.
+func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, inboundSource, bufferDest string, funnelWindows bool) (int64, error) {
 	if layout == "" {
 		layout = loaders.LayoutSharedWindow
 	}
@@ -116,6 +122,7 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 		Name: name, Role: role, Layout: layout,
 		Replenishment: replenishment, OutboundDest: outboundDest,
 		InboundSource: inboundSource, BufferDest: bufferDest,
+		FunnelWindows: funnelWindows,
 	})
 	if err != nil {
 		return 0, err
@@ -130,11 +137,13 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 // (inbound/outbound/buffer) are passed through verbatim — a dedicated_positions
 // loader sends them empty (each position is its own in/out).
 //
-// funnelWindows is editable here but NOT settable at Create, and that asymmetry
-// is deliberate: a loader is created before its windows are dragged in, so at
-// creation there is nothing to funnel or spread and the question has no
-// meaningful answer. It starts false (spread) and the operator changes it once
-// the loader has members.
+// funnelWindows is settable at Create as well as here. It used to be editable
+// only on this path, on the reasoning that a loader is created before its
+// windows are dragged in, so at creation there was nothing to funnel. That held
+// while the control was a checkbox on a form about members. It stopped holding
+// when the kind became the form's first question — the operator now answers it
+// before anything else, and a create that ignored the answer silently produced
+// a spread loader and then re-rendered the form showing it.
 func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDest, inboundSource, bufferDest string, funnelWindows bool) error {
 	cur, err := s.db.GetLoader(id)
 	if err != nil {
