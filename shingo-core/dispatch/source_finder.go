@@ -147,6 +147,75 @@ func NewSourceFinder(db FinderDB, resolver NodeResolver, dbg func(string, ...any
 	return &SourceFinder{db: db, resolver: resolver, dbg: dbg}
 }
 
+// isFullCarrier reports whether a carrier is FULL: at or above its payload's
+// per-bin capacity.
+//
+// At-or-above, not equal. Overpacking is explicitly legal here — a nominally
+// 1000-unit carrier that takes 1005 because the operator ran one more cycle
+// before noticing — and an overpacked carrier is not less full than a nominal
+// one. Written as equality, this rule would reject the fullest carriers on the
+// floor.
+//
+// A capacity of zero means the catalog has no answer for this payload, and
+// nothing can be known to be full against an unknown capacity. Refusing is the
+// established answer to that in this system rather than guessing: the sizing
+// arithmetic refuses a zero per-bin capacity by name for the same reason.
+//
+// This is the same shape as binsource.isFullOf, which ranks the produce-side
+// loader pool. The two are deliberately NOT shared: that one treats an unknown
+// capacity as full (its caller has already excluded zero-count carriers, so the
+// case cannot arise there), and unifying them would quietly loosen a different
+// gate. If they are ever merged, merge them on purpose.
+func isFullCarrier(b *bins.Bin) bool {
+	return b != nil && b.UOPCapacity > 0 && b.UOPRemaining >= b.UOPCapacity
+}
+
+// requiresFullCarrier reports whether this need is feeding a DRAIN WINDOW — a
+// member node of a consume loader — and must therefore be given a full carrier.
+//
+// Derived from the destination rather than carried on the order, so no caller
+// can forget it. That is the same reasoning that put the generation
+// announcement inside the epoch bump: a rule every caller must remember is a
+// rule that gets forgotten, and this one is forgotten silently.
+//
+// Deliberately narrow, and each exclusion removes a real counterexample:
+//
+//   - ROLE, not merely "is a loader window". The produce side's own pool picker
+//     takes partials FIRST on purpose — a kept partial returned to a loader
+//     should be consumed before a fresh full — so applying this to a produce
+//     window would invert a written contract.
+//   - FULL intent only. A retrieve_empty to the same window wants an empty
+//     carrier, which is never full by definition.
+//
+// A complex order's DeliveryNode is its LAST step's node rather than any one
+// pickup's destination, so a rule read off it would tag every pickup in the
+// order. It cannot happen here and needs no guard of its own: every complex
+// full-intent need either carries no DeliveryNode at all, or is node-local —
+// and node-local makes the plant-wide tier unreachable by type. Both exclusions
+// already existed. A third was written and removed as dead weight.
+//
+// Everywhere that is not a drain window keeps taking partials. A cell asking
+// for material can work a half carrier down, and refusing it because no full
+// exists would stop a line that had parts available to it.
+func (f *SourceFinder) requiresFullCarrier(need SourceNeed) bool {
+	if need.Intent != IntentFull || need.DeliveryNode == "" {
+		return false
+	}
+	dest, err := f.db.GetNodeByDotName(need.DeliveryNode)
+	if err != nil || dest == nil {
+		return false
+	}
+	home, err := f.db.GetLoaderHomeByPositionNode(dest.ID)
+	if err != nil || home == nil {
+		return false // not a loader member node at all — an ordinary destination
+	}
+	l, err := f.db.GetLoader(home.LoaderID)
+	if err != nil || l == nil {
+		return false
+	}
+	return l.Role == loaders.RoleConsume
+}
+
 func (f *SourceFinder) debug(format string, args ...any) {
 	if f.dbg != nil {
 		f.dbg(format, args...)
@@ -400,6 +469,34 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			QueueCode:   protocol.QueueWaitingForMaterial,
 			QueueCause:  cause,
 			QueueParams: params,
+		}
+	}
+
+	// A DRAIN WINDOW TAKES FULL CARRIERS ONLY.
+	//
+	// Here rather than in a tier, because every tier funnels through this point
+	// and the rule is about the DESTINATION, not about where the carrier was
+	// found. An unloader configured with an inbound source resolves through the
+	// group tier; one with none falls to the plant-wide scan; both arrive here.
+	//
+	// Waiting rather than refusing: the order queues for material the same way
+	// an empty plant does, which is a visible state carrying a reason.
+	//
+	// KNOWN LIMIT, and it errs the safe way: this declines a partial the tiers
+	// already chose, so a full sitting BEHIND a partial in a lane is not dug
+	// for — the pull waits instead of reshuffling. Teaching the group resolver
+	// to prefer fulls would need the fullness rule inside it and inside the
+	// buried-bin lookups behind it, or it would dig to expose a carrier this
+	// check then declines. Worth doing if a plant ever stacks partials in front
+	// of fulls; not worth the surgery before that.
+	if bin != nil && f.requiresFullCarrier(need) && !isFullCarrier(bin) {
+		f.debug("finder: %s is a drain window and bin %d is a partial (%d of %d) — waiting for a full",
+			need.DeliveryNode, bin.ID, bin.UOPRemaining, bin.UOPCapacity)
+		return SourceResult{
+			Outcome:     OutcomeWait,
+			QueueCode:   protocol.QueueWaitingForMaterial,
+			QueueCause:  "finder-no-full-carrier",
+			QueueParams: QueueParams{Payload: payloadCode, Destination: need.DeliveryNode},
 		}
 	}
 
