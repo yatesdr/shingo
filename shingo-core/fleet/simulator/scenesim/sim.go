@@ -100,15 +100,16 @@ func (c cell) key() string {
 
 // Robot is a token on the scene.
 type Robot struct {
-	ID      string
-	pos     cell
-	entry   string // the plain node a lane was entered from (exit target)
-	order   *Order
-	block   int
-	path    []cell // cells still to traverse toward the current block
-	hop     int    // ticks remaining on the current cell-step
-	idle    bool
-	waiting bool // parked on a Wait block until ReleaseWait
+	ID       string
+	pos      cell
+	entry    string // the plain node a lane was entered from (exit target)
+	order    *Order
+	block    int
+	path     []cell // cells still to traverse toward the current block
+	hop      int    // ticks remaining on the current cell-step
+	idle     bool
+	waiting  bool // parked on a Wait block until ReleaseWait
+	carrying bool // holding a bin between a pickup and its dropoff (outbound state)
 
 	approach int // coarse travel distance: extra aisle hops before the first lane entry (experiment)
 
@@ -210,6 +211,16 @@ func (s *Sim) PlaceBin(slot string) { s.bins[slot] = true }
 // PLACEMENT signal — the physical event Core observes as a dropoff block reaching
 // FINISHED, and therefore the moment a store stops blocking the lane behind it.
 func (s *Sim) HasBin(slot string) bool { return s.bins[slot] }
+
+// Carrying reports whether a robot is holding a bin between its pickup and
+// dropoff — the harness's outbound state. A retrieve robot is carrying from the
+// tick it picks up at the lane slot until it sets the bin down at its destination.
+func (s *Sim) Carrying(robotID string) bool {
+	if r := s.robots[robotID]; r != nil {
+		return r.carrying
+	}
+	return false
+}
 
 // OrderActive reports whether an order is still being executed by some robot —
 // the harness's COMPLETION signal, and the counterpart to HasBin. The gap between
@@ -388,6 +399,13 @@ func (s *Sim) Tick() []Violation {
 					if s.scene.slotLane[b.Location] != "" {
 						s.bins[b.Location] = true // a bin now sits in this slot (persists, walls deeper)
 					}
+					r.carrying = false // a held bin (from a prior pickup) is now set down
+				}
+				if b.Action == ActionPickup {
+					if s.scene.slotLane[b.Location] != "" {
+						delete(s.bins, b.Location) // the bin leaves the slot, carried off by the robot
+					}
+					r.carrying = true // the robot is now holding a bin (set down at the next dropoff)
 				}
 				b.done = true
 				r.block++
@@ -419,7 +437,13 @@ func (s *Sim) Tick() []Violation {
 				// reachability reports it). But a robot that has FINISHED its in-lane
 				// work transits the aisle out past parked bins, so co-occupying
 				// same-kind robots (leader deep, follower shallow) can both leave.
-				if r.order != nil && r.block < len(r.order.Blocks) {
+				//
+				// The ONE bin a robot may always step onto is its own current pickup
+				// target: that bin is the destination, not an obstacle, and the robot
+				// must reach it to pick it up. (A retrieve's first block is the lane
+				// slot it pulls from; without this exemption a buried bin could never
+				// be picked at all.)
+				if r.order != nil && r.block < len(r.order.Blocks) && !s.pickingTarget(r, slot) {
 					continue
 				}
 			}
@@ -459,6 +483,34 @@ func (r *Robot) exitTarget() string {
 		return r.entry
 	}
 	return "" // unknown — will be caught as an invalid path
+}
+
+// headingToGate reports whether dst is the plain wait/gate point the robot is
+// PRE-POSITIONING toward — the leg a gated retrieve drives before its lane opens.
+//
+// Only the FIRST block qualifies: a retrieve's create is [wait@gate] and nothing
+// else, so its gate drive is its first real movement. A store's create is
+// [pickup@source, wait@gate, …] — its gate is a mid-order waypoint after the pickup,
+// and shifting that store's approach onto the gate leg would re-time every gate-
+// controller scenario. Restricting to block 0 keeps stores on their original lane-
+// entry approach semantics and reserves the gate-drive overlap for retrieves.
+func (s *Sim) headingToGate(r *Robot, dst cell) bool {
+	if dst.inLane() || r.order == nil || r.block != 0 || len(r.order.Blocks) == 0 {
+		return false
+	}
+	b := r.order.Blocks[0]
+	return b.Action == ActionWait && b.Location == dst.Node
+}
+
+// pickingTarget reports whether the robot's current block is a pickup AT slot —
+// the one bin it is allowed to step onto despite the wall, because the bin is its
+// destination, not an obstacle. A dig's unbury pickups use the same path.
+func (s *Sim) pickingTarget(r *Robot, slot string) bool {
+	if r.order == nil || r.block >= len(r.order.Blocks) {
+		return false
+	}
+	b := r.order.Blocks[r.block]
+	return b.Action == ActionPickup && b.Location == slot
 }
 
 // cellSlot returns the slot name for a lane cell, or "".
@@ -606,10 +658,17 @@ func (s *Sim) ensurePath(r *Robot, dst cell) {
 		return
 	}
 	r.path = s.planPath(r.pos, dst)
-	// Coarse travel distance: before a robot first enters a lane from outside, burn
-	// `approach` aisle hops (self-steps on its current node), so a later-but-closer
-	// robot can still reach the mouth first. One-shot — consumed on this approach.
-	if r.approach > 0 && dst.inLane() && !r.pos.inLane() {
+	// Coarse travel distance: burn `approach` aisle hops (self-steps on the robot's
+	// current node) before it reaches its work, so a later-but-closer robot can still
+	// win the race to the mouth. One-shot — consumed the first time the robot burns it.
+	//
+	// Two destination kinds trigger it:
+	//   - a fresh LANE entry (an inbound store's first real leg is the drive to the
+	//     mouth) — the original case; and
+	//   - a drive to the order's GATE/wait point (an outbound retrieve's pre-positioning
+	//     leg is plain→gate). Without this, a gated retrieve's approach lands AFTER the
+	//     dig it was meant to overlap, and pre-positioning buys nothing.
+	if r.approach > 0 && !r.pos.inLane() && (dst.inLane() || s.headingToGate(r, dst)) {
 		lead := make([]cell, r.approach)
 		for i := range lead {
 			lead[i] = r.pos
