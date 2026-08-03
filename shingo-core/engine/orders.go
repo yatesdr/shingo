@@ -100,7 +100,16 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 		return nil, fmt.Errorf("no unclaimed bin at source node %s", sourceNode.Name)
 	}
 
-	edgeUUID := req.StationID + "-" + uuid.New().String()[:8]
+	// A bare identifier, like the Edge mints. It used to be the station name
+	// plus eight characters of a uuid, which put the station in two places at
+	// once -- the identifier and the column -- and meant renaming a station
+	// silently changed the shape of this door's identifiers. Which door made an
+	// order lives in the station column and nowhere else.
+	//
+	// Full length, not the first eight characters. Eight hex characters is about
+	// four billion values, which sounds like plenty until you notice nothing
+	// anywhere handles a collision.
+	edgeUUID := uuid.New().String()
 
 	order := &orders.Order{
 		EdgeUUID:  edgeUUID,

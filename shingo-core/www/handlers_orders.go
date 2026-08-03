@@ -254,7 +254,7 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 		req.Quantity = 1
 	}
 
-	orderUUID := fmt.Sprintf("spot-%s", uuid.New().String()[:8])
+	orderUUID := uuid.New().String()
 	src := protocol.Address{Role: protocol.RoleCore, Station: "core-spot"}
 	dst := protocol.Address{Role: protocol.RoleCore}
 
@@ -275,14 +275,8 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 		h.submitSpotComplexOrder(w, req.SourceNode, req.StagingNode, req.DeliveryNode,
 			req.PayloadCode, req.Description, req.Priority, orderUUID, src, dst)
 		return
-	case "send_to":
-		h.submitSpotSendTo(w, req.DeliveryNode, req.Description, req.Priority, orderUUID)
-		return
 	case "retrieve_specific":
 		h.submitSpotRetrieveSpecific(w, req.BinLabel, req.DeliveryNode, req.Description, req.Priority, orderUUID)
-		return
-	case "swap":
-		h.submitSpotDeliverBin(w, req.DeliveryNode, req.PayloadCode, req.Description, req.Priority)
 		return
 	}
 
@@ -300,6 +294,7 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 	if req.Quantity > 1 && (orderType == protocol.OrderTypeRetrieve || orderType == protocol.OrderTypeRetrieveEmpty) {
 		var firstOrderID int64
 		var firstStatus string
+		created := 0
 		for i := 1; i <= req.Quantity; i++ {
 			batchUUID := fmt.Sprintf("%s-%d", orderUUID, i)
 			orderReq := &protocol.OrderRequest{
@@ -319,17 +314,28 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			h.engine.Dispatcher().HandleOrderRequest(env, orderReq)
-			if i == 1 {
-				if o, err := h.engine.OrderService().GetOrderByUUID(batchUUID); err == nil {
-					firstOrderID = o.ID
-					firstStatus = string(o.Status)
-				}
+			// Read every one back, not just the first. `count` used to echo
+			// the number ASKED for, so a batch where every envelope failed
+			// still answered 200 with "20 orders created" — and an operator
+			// who asked for twenty and got none was told they got twenty.
+			o, err := h.engine.OrderService().GetOrderByUUID(batchUUID)
+			if err != nil || protocol.IsTerminal(o.Status) {
+				continue
 			}
+			created++
+			if firstOrderID == 0 {
+				firstOrderID = o.ID
+				firstStatus = string(o.Status)
+			}
+		}
+		if created == 0 {
+			h.jsonError(w, fmt.Sprintf("order creation failed: none of the %d orders could be created", req.Quantity), http.StatusInternalServerError)
+			return
 		}
 		h.jsonOK(w, map[string]any{
 			"order_id": firstOrderID,
 			"status":   firstStatus,
-			"count":    req.Quantity,
+			"count":    created,
 		})
 		return
 	}
@@ -353,75 +359,6 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 	}
 
 	h.engine.Dispatcher().HandleOrderRequest(env, orderReq)
-	h.readBackManualOrder(w, orderUUID)
-}
-
-func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc string, priority int, orderUUID string) {
-	if destination == "" {
-		h.jsonError(w, "destination node is required", http.StatusBadRequest)
-		return
-	}
-
-	destNode, err := h.engine.NodeService().GetByName(destination)
-	if err != nil {
-		h.jsonError(w, "destination node not found: "+destination, http.StatusBadRequest)
-		return
-	}
-
-	// A send-to moves the robot to a location and parks it there. If something
-	// is already at that location, the robot arrives and stops — so refuse
-	// before dispatching rather than let the operator find out by watching.
-	//
-	// Before the insert, deliberately. The order row is written below and the
-	// fleet is called after it, so a rejection past that point would leave a
-	// pending row nothing dispatches, fails, or cleans up. Checking first also
-	// keeps the capacity read honest: it excludes no order id, and there is no
-	// order yet for it to need to exclude.
-	if preview := h.engine.Dispatcher().PreviewDropoffCapacity(destNode.Name); preview.Blocked {
-		h.jsonError(w, preview.Reason, http.StatusConflict)
-		return
-	}
-
-	order := &domain.Order{
-		EdgeUUID:     orderUUID,
-		StationID:    "core-spot",
-		OrderType:    protocol.OrderType("send_to"),
-		Status:       protocol.StatusPending,
-		Quantity:     1,
-		DeliveryNode: destNode.Name,
-		Priority:     priority,
-		PayloadDesc:  desc,
-		OriginClass:  protocol.OriginClassNoDemand,
-	}
-	orders := h.engine.OrderService()
-	if err := orders.Create(order); err != nil {
-		h.jsonError(w, "failed to create order: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	vendorOrderID := fmt.Sprintf("sg-%d-%s", order.ID, uuid.New().String()[:8])
-	req := fleet.CreateOrderRequest{
-		OrderID:    vendorOrderID,
-		ExternalID: orderUUID,
-		Blocks: []fleet.OrderBlock{
-			{BlockID: "B1", Location: destNode.Name},
-		},
-		Priority: priority,
-		Complete: false, // a spot send_to dwells (staged) at the destination until released
-	}
-
-	if _, err := h.engine.Fleet().CreateOrder(req); err != nil {
-		// Terminal write must release the order's holds atomically — a raw
-		// UpdateStatus("failed") is refused by the store guard and would leak.
-		if ferr := orders.FailAtomic(order.ID, "fleet error: "+err.Error()); ferr != nil {
-			log.Printf("www: fail manual send_to order %d: %v", order.ID, ferr)
-		}
-		h.readBackManualOrder(w, orderUUID)
-		return
-	}
-
-	orders.UpdateVendor(order.ID, vendorOrderID, "CREATED", "")
-	orders.UpdateStatus(order.ID, "dispatched", fmt.Sprintf("send-to %s via %s (incomplete)", destNode.Name, vendorOrderID))
 	h.readBackManualOrder(w, orderUUID)
 }
 
@@ -468,17 +405,36 @@ func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
 	h.readBackManualOrder(w, orderUUID)
 }
 
+// readBackManualOrder answers a submission that is on its way.
+//
+// It used to answer both outcomes. Success and failure came back through here
+// alike, so a rejected order was reported as 200 with {"status":"failed"} and
+// the screen printed "Order #14 created (failed)" — created, in the same
+// sentence as the word for what actually happened. Anything reading the HTTP
+// status alone, which is most things, saw a success.
+//
+// The rule now is that a 2xx means an order exists and is on its way. A
+// terminal row is an error response, not a success carrying bad news.
 func (h *Handlers) readBackManualOrder(w http.ResponseWriter, orderUUID string) {
 	order, err := h.engine.OrderService().GetOrderByUUID(orderUUID)
 	if err != nil {
-		h.jsonError(w, "order submitted but could not read back: "+err.Error(), http.StatusInternalServerError)
+		h.jsonError(w, "order creation failed: it was submitted but could not be read back ("+err.Error()+")", http.StatusInternalServerError)
+		return
+	}
+	// Intake can reject synchronously: the planner refuses and fails the row
+	// before this line runs. The order exists, but nothing is carrying it.
+	if protocol.IsTerminal(order.Status) {
+		detail := order.ErrorDetail
+		if detail == "" {
+			detail = "the order was " + string(order.Status) + " as soon as it was submitted"
+		}
+		h.jsonError(w, "order creation failed: "+detail, http.StatusInternalServerError)
 		return
 	}
 
 	h.jsonOK(w, map[string]any{
-		"order_id":     order.ID,
-		"status":       order.Status,
-		"error_detail": order.ErrorDetail,
+		"order_id": order.ID,
+		"status":   order.Status,
 	})
 }
 
@@ -637,67 +593,14 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		if rerr := orders.ReleaseClaimForBin(bin.ID, order.ID); rerr != nil {
 			log.Printf("www: release claim for bin %d after dispatch failure: %v", bin.ID, rerr)
 		}
-		h.readBackManualOrder(w, orderUUID)
+		// The claim is rolled back and the order is failed, so nothing is
+		// coming. Saying so beats handing back a 200 whose body has to be read
+		// to find out the bin is not moving.
+		h.jsonError(w, "order creation failed: the fleet did not accept it ("+err.Error()+")", http.StatusInternalServerError)
 		return
 	}
 
 	h.readBackManualOrder(w, orderUUID)
-}
-
-// submitSpotDeliverBin sends one fresh bin of a payload to a node.
-//
-// It was called submitSpotSwap, and it has not swapped anything since the evac
-// half went with the plain-store family. The tab still says "Swap", which is a
-// separate decision about the operator surface; the function no longer claims
-// to do something it does not.
-func (h *Handlers) submitSpotDeliverBin(w http.ResponseWriter, targetNode, payloadCode, desc string, priority int) {
-	if targetNode == "" {
-		h.jsonError(w, "target node is required", http.StatusBadRequest)
-		return
-	}
-	if payloadCode == "" {
-		h.jsonError(w, "payload is required", http.StatusBadRequest)
-		return
-	}
-
-	if _, err := h.engine.NodeService().GetByName(targetNode); err != nil {
-		h.jsonError(w, "target node not found: "+targetNode, http.StatusBadRequest)
-		return
-	}
-
-	// One retrieve, no evac. A full evac-and-deliver swap is available through the
-	// coordinated (complex) order path.
-	retrieveUUID := fmt.Sprintf("manual-swap-r-%s", uuid.New().String()[:8])
-
-	src := protocol.Address{Role: protocol.RoleCore, Station: "core-spot"}
-	dst := protocol.Address{Role: protocol.RoleCore}
-
-	// Retrieve order: deliver to target node with payload
-	retrieveReq := &protocol.OrderRequest{
-		OrderUUID:    retrieveUUID,
-		OrderType:    protocol.OrderTypeRetrieve,
-		PayloadCode:  payloadCode,
-		Quantity:     1,
-		DeliveryNode: targetNode,
-		Priority:     priority,
-		PayloadDesc:  desc,
-		OriginClass:  protocol.OriginClassNoDemand,
-	}
-	retrieveEnv, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, retrieveReq)
-	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.engine.Dispatcher().HandleOrderRequest(retrieveEnv, retrieveReq)
-
-	// Read back the retrieve order
-	svc := h.engine.OrderService()
-	resp := map[string]any{}
-	if o, err := svc.GetOrderByUUID(retrieveUUID); err == nil {
-		resp["retrieve_order_id"] = o.ID
-		resp["retrieve_status"] = o.Status
-	}
-	h.jsonOK(w, resp)
 }
 
 func (h *Handlers) apiListAvailableBins(w http.ResponseWriter, r *http.Request) {

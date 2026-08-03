@@ -10,6 +10,7 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
+	"sync/atomic"
 )
 
 func newOrderSvc(db *store.DB, fail bool) (*OrderService, *testdb.MockBackend) {
@@ -22,10 +23,15 @@ func newOrderSvc(db *store.DB, fail bool) (*OrderService, *testdb.MockBackend) {
 	return NewOrderService(db, m), m
 }
 
+// makeOrderSeq keeps each fixture order's uuid distinct. Two orders in one test
+// used to share the test's name as their identity, which the partial unique
+// index on edge_uuid now refuses — correctly, since they are two orders.
+var makeOrderSeq atomic.Int64
+
 func makeOrder(t *testing.T, db *store.DB, nodeName string) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID:     fmt.Sprintf("svc-order-%s", t.Name()),
+		EdgeUUID:     fmt.Sprintf("svc-order-%s-%d", t.Name(), makeOrderSeq.Add(1)),
 		StationID:    "test-station",
 		OrderType:    "move",
 		Status:       "pending",

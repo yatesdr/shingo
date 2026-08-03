@@ -29,7 +29,12 @@ func insertOrder(t *testing.T, db *store.DB, station, status, vendorID, originCl
 		INSERT INTO orders (edge_uuid, station_id, status, vendor_order_id,
 		                    origin_id, origin_class, created_at, orphan_aged_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		"uuid-"+status+"-"+created.Format("150405.000000000"), station, status,
+		// The vendor id is in the key because it is the one argument that always
+		// differs between two orders in the same fixture. Without it, two orders
+		// sharing a status and a timestamp got the same edge_uuid — which the
+		// partial unique index on that column now refuses, correctly: these are two
+		// different orders and were never meant to share an identity.
+		"uuid-"+status+"-"+vendorID+"-"+created.Format("150405.000000000"), station, status,
 		vendorID, originID, originClass, created, agedAt); err != nil {
 		t.Fatalf("insert order: %v", err)
 	}

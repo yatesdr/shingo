@@ -33,6 +33,7 @@ var deliberatelyNotWritten = map[string]string{
 	"queue_code":      "same; read back at lifecycle.go:291 to build the history reason",
 	"queue_cause":     "same",
 	"remaining_uop":   "operator-declared release correction, carried to the bin claim",
+	"orphan_aged_at":  "stamped by the orphan sweep long after creation; an order is never born aged",
 }
 
 // TestWriter_CoversEveryOrdersColumn pins that every column on the orders table

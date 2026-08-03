@@ -124,9 +124,24 @@ CREATE TABLE IF NOT EXISTS orders (
     -- opportunistic stage and every admin action, with the actual lost
     -- origins buried in there. Only 'orphan' is a finding.
     origin_id       UUID,
-    origin_class    TEXT NOT NULL DEFAULT ''
+    origin_class    TEXT NOT NULL DEFAULT '',
+    -- When an order was judged an orphan. A timestamp rather than a fourth
+    -- origin_class, so aging records WHEN a judgement was made without
+    -- overwriting WHAT the judgement was. Added by migration 61 and present at
+    -- both plants; it was missing from this constant, so a fresh install
+    -- carried the column only after migrations ran.
+    orphan_aged_at  TIMESTAMPTZ
 );
-CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid);
+-- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
+-- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every
+-- lookup -- including the ownership check behind cancel and release -- onto the
+-- newer row. Empty is excluded because a blank means "no Edge asked for this",
+-- and several rows can honestly be blank at once (Springfield has 23).
+--
+-- This matched neither plant until migration 71. The plants ran the unique form
+-- from a hand-applied index; this constant declared the plain one, so a fresh
+-- install built a database the plants did not match.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid) WHERE edge_uuid <> '';
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_vendor ON orders(vendor_order_id);
 CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node);

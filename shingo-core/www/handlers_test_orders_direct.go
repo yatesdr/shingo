@@ -143,7 +143,7 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 			{Action: "pickup", Node: req.Location},
 			dropoffStep(req.OutboundDestination),
 		}
-		uid := h.dispatchComplex(src, dst, req.PayloadCode, steps, req.Priority)
+		uid := h.dispatchComplex(src, dst, req.PayloadCode, steps, req.Priority, "", "")
 		results = append(results, map[string]any{"role": string(protocol.SwapModeSequential), "order_uuid": uid})
 
 	case protocol.SwapModeTwoRobot:
@@ -151,7 +151,10 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 			h.jsonError(w, "inbound_staging is required for two robot", http.StatusBadRequest)
 			return
 		}
-		// Resupply
+		// The supply leg first, then the removal leg carrying the supply's
+		// uuid — the order the Edge uses, and the only order that works: the
+		// pointer rides the second leg because it is the only one that can
+		// know the other's uuid.
 		resupplySteps := []protocol.ComplexOrderStep{
 			pickupStepDirect(req.InboundSource),
 			{Action: "dropoff", Node: req.InboundStaging},
@@ -159,7 +162,7 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 			{Action: "pickup", Node: req.InboundStaging},
 			{Action: "dropoff", Node: req.Location},
 		}
-		uid1 := h.dispatchComplex(src, dst, req.PayloadCode, resupplySteps, req.Priority)
+		uid1 := h.dispatchComplex(src, dst, req.PayloadCode, resupplySteps, req.Priority, req.Location, "")
 		results = append(results, map[string]any{"role": "resupply", "order_uuid": uid1})
 
 		// Removal
@@ -169,7 +172,7 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 			{Action: "pickup", Node: req.Location},
 			dropoffStep(req.OutboundDestination),
 		}
-		uid2 := h.dispatchComplex(src, dst, req.PayloadCode, removalSteps, req.Priority)
+		uid2 := h.dispatchComplex(src, dst, req.PayloadCode, removalSteps, req.Priority, req.Location, uid1)
 		results = append(results, map[string]any{"role": "removal", "order_uuid": uid2})
 
 	case protocol.SwapModeSingleRobot:
@@ -189,7 +192,7 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 			{Action: "pickup", Node: req.OutboundStaging},
 			dropoffStep(req.OutboundDestination),
 		}
-		uid := h.dispatchComplex(src, dst, req.PayloadCode, steps, req.Priority)
+		uid := h.dispatchComplex(src, dst, req.PayloadCode, steps, req.Priority, "", "")
 		results = append(results, map[string]any{"role": string(protocol.SwapModeSingleRobot), "order_uuid": uid})
 
 	default:
@@ -201,16 +204,22 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 }
 
 // dispatchComplex builds a ComplexOrderRequest and calls the dispatcher directly.
-func (h *Handlers) dispatchComplex(src, dst protocol.Address, payloadCode string, steps []protocol.ComplexOrderStep, priority int) string {
-	orderUUID := "test-" + uuid.New().String()[:8]
+//
+// processNode and siblingUUID are what make a pair of legs a swap. Both were
+// omitted here, so this page produced two unrelated orders that happened to be
+// about the same node — see the two-robot branch above for what that costs.
+func (h *Handlers) dispatchComplex(src, dst protocol.Address, payloadCode string, steps []protocol.ComplexOrderStep, priority int, processNode, siblingUUID string) string {
+	orderUUID := uuid.New().String()
 
 	complexReq := &protocol.ComplexOrderRequest{
-		OrderUUID:   orderUUID,
-		PayloadCode: payloadCode,
-		PayloadDesc: "test complex order",
-		Quantity:    1,
-		Priority:    priority,
-		Steps:       steps,
+		OrderUUID:        orderUUID,
+		PayloadCode:      payloadCode,
+		PayloadDesc:      "test complex order",
+		Quantity:         1,
+		Priority:         priority,
+		ProcessNode:      processNode,
+		SiblingOrderUUID: siblingUUID,
+		Steps:            steps,
 	}
 
 	env, _ := protocol.NewEnvelope(protocol.TypeComplexOrderRequest, src, dst, complexReq)

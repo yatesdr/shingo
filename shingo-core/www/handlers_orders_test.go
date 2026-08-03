@@ -274,17 +274,31 @@ func TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim(t *testing.T) 
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-RS-FAIL")
 
 	resp, status := submitRetrieveSpecific(t, h, bin.Label, sd.LineNode.Name)
-	// readBackManualOrder returns 200 with {status:"failed"} after the handler's
-	// rollback path — the dispatch failure is reflected in the body, not the
-	// HTTP status.
-	if status != http.StatusOK {
-		t.Fatalf("status: got %d, want 200 (body reflects failure); err=%q", status, resp.Error)
+	// A dispatch failure is a failure. This used to answer 200 with
+	// {status:"failed"} and an order id, on the reasoning that the body
+	// reflected the outcome — but a 2xx now means an order exists and is on
+	// its way, and after this rollback nothing is.
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want %d — the bin is not moving, so this is not a success; err=%q",
+			status, http.StatusInternalServerError, resp.Error)
 	}
-	if resp.OrderID == 0 {
-		t.Fatalf("order_id missing in response: %+v", resp)
+	if resp.Error == "" {
+		t.Error("rejection carried no message")
+	}
+	if resp.OrderID != 0 {
+		t.Errorf("order_id = %d in a rejection body; a refused submission has no order to point at", resp.OrderID)
 	}
 
-	got, err := db.GetOrder(resp.OrderID)
+	// The row still has to be found, and no longer through the response — the
+	// rollback assertions below are the actual subject of this test.
+	rows, err := db.ListOrdersByStation("core-spot", 50)
+	if err != nil {
+		t.Fatalf("list spot orders: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d spot order rows, want 1", len(rows))
+	}
+	got, err := db.GetOrder(rows[0].ID)
 	if err != nil {
 		t.Fatalf("reload order: %v", err)
 	}

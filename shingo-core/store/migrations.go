@@ -840,6 +840,27 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool {
 				return schema.TableExists(q, "supply_refusals")
 			}},
+		// THE INDEX SPRINGFIELD ALREADY HAS, WRITTEN DOWN.
+		//
+		// A `\d orders` at Springfield (2026-08-02) returns a UNIQUE index on
+		// edge_uuid, partial on `edge_uuid <> ''`. Nothing in this repository
+		// creates it: postgres_ddl.go and the schema snapshot both declare a
+		// PLAIN index, and no migration touches it. So it was applied by hand,
+		// and a fresh install gets a database the plant's schema does not match —
+		// the exact drift the DDL constants exist to prevent.
+		//
+		// PARTIAL, and that is not a stylistic choice. Springfield holds 23 rows
+		// with an empty edge_uuid (all of them cancelled store orders from April,
+		// from the door that wrote a row before the planner rejected it). A plain
+		// unique index would fail outright on those rows. The plant has already
+		// proved which form works.
+		//
+		// Numbered 71 deliberately: the lane campaign on refactor-phase1 runs up
+		// to 70, so this cannot collide with it whichever lands first. See the
+		// numbering warning above v51.
+		{71, "orders.edge_uuid unique (partial) — match the index the plants already run",
+			v71OrdersUUIDUnique,
+			func(q schema.Querier) bool { return uuidIndexIsUnique(q) }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3138,4 +3159,40 @@ func v68SupplyRefusals(tx *sql.Tx) error {
 		    ON supply_refusals (payload_code, refused_at DESC);
 	`)
 	return err
+}
+
+// v71OrdersUUIDUnique replaces the plain edge_uuid index with the partial unique
+// one the plants already run.
+//
+// Two orders sharing an edge_uuid is not a shape this system has a story for:
+// GetByUUID resolves the ambiguity with `ORDER BY id DESC LIMIT 1`, so a
+// duplicate silently makes every lookup pick the newer row — including the
+// ownership check behind cancel and release, which would then act on an order
+// nobody named.
+//
+// Empty is excluded rather than cleaned up. A blank edge_uuid means "no Edge
+// asked for this"; several rows can honestly be blank at once, and rewriting
+// history to satisfy an index would be inventing identifiers for orders that
+// never had one.
+func v71OrdersUUIDUnique(tx *sql.Tx) error {
+	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_orders_uuid`); err != nil {
+		return fmt.Errorf("drop plain idx_orders_uuid: %w", err)
+	}
+	if _, err := tx.Exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid) WHERE edge_uuid <> ''`); err != nil {
+		return fmt.Errorf("create unique idx_orders_uuid: %w", err)
+	}
+	return nil
+}
+
+// uuidIndexIsUnique reports whether idx_orders_uuid is already the unique form.
+// Plain ColumnExists/IndexExists cannot answer this — the index exists either
+// way, and what changed is its definition — so the check reads the definition.
+func uuidIndexIsUnique(q schema.Querier) bool {
+	var def string
+	if err := q.QueryRow(
+		`SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_orders_uuid'`).Scan(&def); err != nil {
+		return false
+	}
+	return strings.Contains(def, "UNIQUE")
 }

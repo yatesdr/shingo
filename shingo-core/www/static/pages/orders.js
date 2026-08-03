@@ -502,10 +502,8 @@ function loadManualOrderDropdowns() {
       document.getElementById('mo-staged-source').innerHTML = html;
       document.getElementById('mo-staged-staging').innerHTML = html;
       document.getElementById('mo-staged-delivery').innerHTML = html;
-      // Swap tab
-      document.getElementById('mo-swap-node').innerHTML = html;
-      // Send-to tab
-      document.getElementById('mo-sendto-dest').innerHTML = html;
+      // Move-robot tab
+      document.getElementById('mo-moverobot-dest').innerHTML = html;
     })
     .catch(function(e) { console.error('loadManualOrderDropdowns nodes', e); });
 
@@ -517,7 +515,6 @@ function loadManualOrderDropdowns() {
       }
       document.getElementById('mo-payload').innerHTML = html;
       document.getElementById('mo-staged-payload').innerHTML = html;
-      document.getElementById('mo-swap-payload').innerHTML = html;
     })
     .catch(function(e) { console.error('loadManualOrderDropdowns payloads', e); });
 
@@ -638,16 +635,28 @@ function submitManualOrder() {
     if (!body.source_node) { status.textContent = 'Source node is required'; status.style.color = 'var(--danger)'; return; }
     if (!body.staging_node) { status.textContent = 'Staging node is required'; status.style.color = 'var(--danger)'; return; }
     if (!body.delivery_node) { status.textContent = 'Delivery node is required'; status.style.color = 'var(--danger)'; return; }
-  } else if (tab === 'swap') {
-    body.order_type = 'swap';
-    body.delivery_node = document.getElementById('mo-swap-node').value;
-    body.payload_code = document.getElementById('mo-swap-payload').value;
-    if (!body.delivery_node) { status.textContent = 'Target node is required'; status.style.color = 'var(--danger)'; return; }
-    if (!body.payload_code) { status.textContent = 'Payload is required'; status.style.color = 'var(--danger)'; return; }
-  } else if (tab === 'send_to') {
-    body.order_type = 'send_to';
-    body.delivery_node = document.getElementById('mo-sendto-dest').value;
-    if (!body.delivery_node) { status.textContent = 'Destination node is required'; status.style.color = 'var(--danger)'; return; }
+  } else if (tab === 'move_robot') {
+    // Not an order. This tab talks to the fleet directly, so it posts
+    // somewhere else, gets a different answer back, and has no order number to
+    // show or table row to reload for.
+    var dest = document.getElementById('mo-moverobot-dest').value;
+    if (!dest) { status.textContent = 'Destination node is required'; status.style.color = 'var(--danger)'; return; }
+    status.textContent = 'Submitting...';
+    status.style.color = 'var(--text-muted)';
+    btn.disabled = true;
+    apiPost('/api/robots/move', { delivery_node: dest, priority: body.priority })
+      .then(function(data) {
+        status.textContent = 'Robot sent to ' + data.destination;
+        status.style.color = 'var(--success)';
+        btn.disabled = false;
+      })
+      .catch(function(e) {
+        console.error('moveRobot', e);
+        status.textContent = (typeof e === 'string' && e) ? e : 'Network error';
+        status.style.color = 'var(--danger)';
+        btn.disabled = false;
+      });
+    return;
   }
 
   status.textContent = 'Submitting...';
@@ -656,18 +665,18 @@ function submitManualOrder() {
 
   apiPost('/api/orders/spot', body)
     .then(function(data) {
+      // Getting here means an order exists and is on its way. Anything else
+      // arrives as a rejection and lands in .catch below, so there is no
+      // failure to check for here any more -- this used to read
+      // data.status === 'failed' out of a 200 and print "created (failed)".
       var msg;
       if (data.count && data.count > 1) {
         msg = data.count + ' orders created (first: #' + data.order_id + ')';
-      } else if (data.store_order_id) {
-        msg = 'Store #' + data.store_order_id + ' (' + data.store_status + ') + Retrieve #' + data.retrieve_order_id + ' (' + data.retrieve_status + ')';
       } else {
         msg = 'Order #' + data.order_id + ' created (' + data.status + ')';
-        if (data.error_detail) msg += ' — ' + data.error_detail;
       }
       status.textContent = msg;
-      var failed = data.status === 'failed' || data.store_status === 'failed' || data.retrieve_status === 'failed';
-      status.style.color = failed ? 'var(--danger)' : 'var(--success)';
+      status.style.color = 'var(--success)';
       setTimeout(function() { location.reload(); }, 1200);
     })
     .catch(function(e) {

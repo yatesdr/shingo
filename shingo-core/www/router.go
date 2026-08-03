@@ -462,6 +462,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/robots/availability", h.apiRobotSetAvailability)
 				r.Post("/robots/retry", h.apiRobotRetryFailed)
 				r.Post("/robots/force-complete", h.apiRobotForceComplete)
+				r.Post("/robots/move", h.apiRobotMoveTo)
 
 				// Orders
 				r.Post("/orders/terminate", h.apiTerminateOrder)

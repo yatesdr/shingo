@@ -1348,7 +1348,7 @@ CREATE INDEX idx_orders_origin_id ON public.orders USING btree (origin_id) WHERE
 
 CREATE INDEX idx_orders_status ON public.orders USING btree (status);
 
-CREATE INDEX idx_orders_uuid ON public.orders USING btree (edge_uuid);
+CREATE UNIQUE INDEX idx_orders_uuid ON public.orders USING btree (edge_uuid) WHERE (edge_uuid <> ''::text);
 
 CREATE INDEX idx_orders_vendor ON public.orders USING btree (vendor_order_id);
 

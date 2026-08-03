@@ -50,7 +50,7 @@ func (h *Handlers) apiTestOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := h.engine.AppConfig()
-	orderUUID := "test-" + uuid.New().String()[:8]
+	orderUUID := uuid.New().String()
 
 	src := protocol.Address{Role: protocol.RoleEdge, Station: "core-test"}
 	dst := protocol.Address{Role: protocol.RoleCore, Station: cfg.Messaging.StationID}
@@ -191,16 +191,22 @@ func (h *Handlers) apiTestOrderReceipt(w http.ResponseWriter, r *http.Request) {
 }
 
 // publishComplex builds a ComplexOrderRequest and publishes it over Kafka.
-func (h *Handlers) publishComplex(src, dst protocol.Address, payloadCode string, steps []protocol.ComplexOrderStep, priority int) (string, error) {
-	orderUUID := "test-" + uuid.New().String()[:8]
+// publishComplex is the Kafka twin of dispatchComplex and had the same two
+// omissions. Arrival order is not guaranteed on this route, which is exactly
+// why the forward pointer is written in the INSERT and the back-link is keyed
+// on the uuid rather than a resolved id.
+func (h *Handlers) publishComplex(src, dst protocol.Address, payloadCode string, steps []protocol.ComplexOrderStep, priority int, processNode, siblingUUID string) (string, error) {
+	orderUUID := uuid.New().String()
 
 	complexReq := &protocol.ComplexOrderRequest{
-		OrderUUID:   orderUUID,
-		PayloadCode: payloadCode,
-		PayloadDesc: "test complex order via kafka",
-		Quantity:    1,
-		Priority:    priority,
-		Steps:       steps,
+		OrderUUID:        orderUUID,
+		PayloadCode:      payloadCode,
+		PayloadDesc:      "test complex order via kafka",
+		Quantity:         1,
+		Priority:         priority,
+		ProcessNode:      processNode,
+		SiblingOrderUUID: siblingUUID,
+		Steps:            steps,
 	}
 
 	env, err := protocol.NewEnvelope(protocol.TypeComplexOrderRequest, src, dst, complexReq)
@@ -260,7 +266,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 			{Action: "pickup", Node: req.Location},
 			dropoffStep(req.OutboundDestination),
 		}
-		uid, err := h.publishComplex(src, dst, req.PayloadCode, steps, req.Priority)
+		uid, err := h.publishComplex(src, dst, req.PayloadCode, steps, req.Priority, "", "")
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -279,7 +285,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 			{Action: "pickup", Node: req.InboundStaging},
 			{Action: "dropoff", Node: req.Location},
 		}
-		uid1, err := h.publishComplex(src, dst, req.PayloadCode, resupplySteps, req.Priority)
+		uid1, err := h.publishComplex(src, dst, req.PayloadCode, resupplySteps, req.Priority, req.Location, "")
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -292,7 +298,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 			{Action: "pickup", Node: req.Location},
 			dropoffStep(req.OutboundDestination),
 		}
-		uid2, err := h.publishComplex(src, dst, req.PayloadCode, removalSteps, req.Priority)
+		uid2, err := h.publishComplex(src, dst, req.PayloadCode, removalSteps, req.Priority, req.Location, uid1)
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -316,7 +322,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 			{Action: "pickup", Node: req.OutboundStaging},
 			dropoffStep(req.OutboundDestination),
 		}
-		uid, err := h.publishComplex(src, dst, req.PayloadCode, steps, req.Priority)
+		uid, err := h.publishComplex(src, dst, req.PayloadCode, steps, req.Priority, "", "")
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
