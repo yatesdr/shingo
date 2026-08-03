@@ -129,6 +129,10 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 				PayloadCode:  h.PayloadCode,
 				Kind:         positionKind,
 				UOPThreshold: h.UOPThreshold,
+				// The operator's arrangement, carried down. It was persisted
+				// here and read by the admin screen, and stopped at this
+				// function — everything below re-sorted by name.
+				Ordinal: h.SortOrder,
 			})
 		}
 

@@ -1,324 +1,599 @@
 {
-  "targets": [
-    {
-      "name": "shared/spread/three-windows",
-      "why": "The ordinary multi-window loader: every window is a target and the budget is the window count, so one demand of N puts exactly N carriers out and never 2N.",
-      "loader": {
-        "layout": "shared_window",
-        "homes": [{"node": "W-A"}, {"node": "W-B"}, {"node": "W-C"}],
-        "payload_set": [{"code": "P1", "uop_threshold": 100}]
-      },
-      "payload": "P1",
-      "want_nodes": ["W-A", "W-B", "W-C"],
-      "want_budget": 3
-    },
-    {
-      "name": "shared/spread/sorted-by-node-name-not-sort-order",
-      "why": "Windows come back in NODE NAME order, not the operator's drag order. Core stores sort_order and sends it down, but the Edge's cache read re-sorts by name, so sort_order never reaches the delivery decision. Reproduced deliberately: this decides which window the funnel case picks and which window fills first, so the two sides diverging here would land a carrier somewhere nobody expected. Fixing it is a change to both sides and to this vector.",
-      "loader": {
-        "layout": "shared_window",
-        "homes": [
-          {"node": "W-Z", "sort_order": 1},
-          {"node": "W-M", "sort_order": 2},
-          {"node": "W-A", "sort_order": 3}
-        ],
-        "payload_set": [{"code": "P1"}]
-      },
-      "payload": "P1",
-      "want_nodes": ["W-A", "W-M", "W-Z"],
-      "want_budget": 3
-    },
-    {
-      "name": "shared/spread/W10-sorts-before-W2",
-      "why": "The trap that follows from name ordering. Plants name windows W1, W2, W3 and ASCII order happens to match intent — until a loader reaches ten windows, where W10 sorts before W2 and the funnel target silently moves. Pinned as a named case so the hazard is visible in the file rather than lurking in the general rule.",
-      "loader": {
-        "layout": "shared_window",
-        "homes": [
-          {"node": "W1", "sort_order": 1},
-          {"node": "W2", "sort_order": 2},
-          {"node": "W10", "sort_order": 10}
-        ],
-        "payload_set": [{"code": "P1"}]
-      },
-      "payload": "P1",
-      "want_nodes": ["W1", "W10", "W2"],
-      "want_budget": 3
-    },
-    {
-      "name": "shared/funnel/first-window-only",
-      "why": "A loader configured to take one window at a time delivers to its first window on a budget of 1 — a real node, never the loader's own identity token, which is not a node.",
-      "loader": {
-        "layout": "shared_window",
-        "funnel_windows": true,
-        "homes": [{"node": "W-A"}, {"node": "W-B"}, {"node": "W-C"}],
-        "payload_set": [{"code": "P1"}]
-      },
-      "payload": "P1",
-      "want_nodes": ["W-A"],
-      "want_budget": 1
-    },
-    {
-      "name": "shared/funnel/first-is-by-name",
-      "why": "Which window the funnel picks follows the same name ordering. Paired with the sort_order case above so the two facts cannot be fixed apart.",
-      "loader": {
-        "layout": "shared_window",
-        "funnel_windows": true,
-        "homes": [
-          {"node": "W-Z", "sort_order": 1},
-          {"node": "W-A", "sort_order": 2}
-        ],
-        "payload_set": [{"code": "P1"}]
-      },
-      "payload": "P1",
-      "want_nodes": ["W-A"],
-      "want_budget": 1
-    },
-    {
-      "name": "shared/single-window/spread-degrades-to-one",
-      "why": "A one-window shared loader answers the same whether it spreads or funnels, so turning the setting on only changes loaders that actually have several windows.",
-      "loader": {
-        "layout": "shared_window",
-        "homes": [{"node": "W-ONLY"}],
-        "payload_set": [{"code": "P1"}]
-      },
-      "payload": "P1",
-      "want_nodes": ["W-ONLY"],
-      "want_budget": 1
-    },
-    {
-      "name": "shared/payload-not-in-set",
-      "why": "A payload the loader does not carry has no target here. Nil and budget zero is a normal 'not this loader' answer, not a failure — the caller must not treat it as one.",
-      "loader": {
-        "layout": "shared_window",
-        "homes": [{"node": "W-A"}, {"node": "W-B"}],
-        "payload_set": [{"code": "P1"}, {"code": "P2"}]
-      },
-      "payload": "P9",
-      "want_nodes": [],
-      "want_budget": 0
-    },
-    {
-      "name": "shared/blank-payload-is-agnostic",
-      "why": "A blank payload is the payload-agnostic transitional case and still resolves. It is NOT the same as an unknown payload, which resolves to nothing.",
-      "loader": {
-        "layout": "shared_window",
-        "homes": [{"node": "W-A"}, {"node": "W-B"}],
-        "payload_set": [{"code": "P1"}]
-      },
-      "payload": "",
-      "want_nodes": ["W-A", "W-B"],
-      "want_budget": 2
-    },
-    {
-      "name": "shared/member-named-is-ignored",
-      "why": "Naming a member window changes nothing for a shared loader: the windows share one budget and the free-window assignment picks the slot. Only dedicated layouts honour the member.",
-      "loader": {
-        "layout": "shared_window",
-        "homes": [{"node": "W-A"}, {"node": "W-B"}, {"node": "W-C"}],
-        "payload_set": [{"code": "P1"}]
-      },
-      "member": "W-C",
-      "payload": "P1",
-      "want_nodes": ["W-A", "W-B", "W-C"],
-      "want_budget": 3
-    },
-    {
-      "name": "shared/buffer-slot-counts-as-a-window",
-      "why": "home_kind separates a payload-pinned home from a kept-partial buffer, but nothing filters buffers out of a shared loader's windows on either side — so a buffer slot is a delivery target and a unit of budget. Pinned as-is because both sides agree today; the filter, if wanted, belongs where both would inherit it.",
-      "loader": {
-        "layout": "shared_window",
-        "homes": [{"node": "W-A"}, {"node": "W-BUF", "kind": "buffer"}],
-        "payload_set": [{"code": "P1"}]
-      },
-      "payload": "P1",
-      "want_nodes": ["W-A", "W-BUF"],
-      "want_budget": 2
-    },
-    {
-      "name": "shared/no-windows-configured",
-      "why": "A shared loader created in the admin screen with no members dragged in yet has nowhere to deliver and must fail closed rather than resolve to its own identity.",
-      "loader": {
-        "layout": "shared_window",
-        "homes": [],
-        "payload_set": [{"code": "P1"}]
-      },
-      "payload": "P1",
-      "want_nodes": [],
-      "want_budget": 0,
-      "core_only": "the Edge constructor refuses to build a shared loader with zero windows, so this shape cannot exist there to be asked"
-    },
-    {
-      "name": "dedicated/first-match-no-member",
-      "why": "With no member named, the payload picks its position by first match. Budget 1: dedicated positions are independent one-bin slots and never share a budget.",
-      "loader": {
-        "layout": "dedicated_positions",
-        "homes": [
-          {"node": "D-1", "payload": "P1"},
-          {"node": "D-2", "payload": "P2"}
-        ]
-      },
-      "payload": "P2",
-      "want_nodes": ["D-2"],
-      "want_budget": 1
-    },
-    {
-      "name": "dedicated/member-wins-over-first-match",
-      "why": "The same payload loaded at two positions: the carrier goes to the position the signal named, not to whichever sorts first. Without this, a low reading at one position restocks the other.",
-      "loader": {
-        "layout": "dedicated_positions",
-        "homes": [
-          {"node": "D-1", "payload": "P1"},
-          {"node": "D-2", "payload": "P1"}
-        ]
-      },
-      "member": "D-2",
-      "payload": "P1",
-      "want_nodes": ["D-2"],
-      "want_budget": 1
-    },
-    {
-      "name": "dedicated/member-not-serving-payload-falls-back",
-      "why": "A member that names a position which does not carry the payload is not honoured — it falls back to first match rather than delivering the wrong part to the named node.",
-      "loader": {
-        "layout": "dedicated_positions",
-        "homes": [
-          {"node": "D-1", "payload": "P1"},
-          {"node": "D-2", "payload": "P2"}
-        ]
-      },
-      "member": "D-2",
-      "payload": "P1",
-      "want_nodes": ["D-1"],
-      "want_budget": 1
-    },
-    {
-      "name": "dedicated/member-with-blank-payload",
-      "why": "A payload-agnostic ask that names a member goes to that member whatever it carries. This is the transitional shape, and it must not fall through to first match.",
-      "loader": {
-        "layout": "dedicated_positions",
-        "homes": [
-          {"node": "D-1", "payload": "P1"},
-          {"node": "D-2", "payload": "P2"}
-        ]
-      },
-      "member": "D-2",
-      "payload": "",
-      "want_nodes": ["D-2"],
-      "want_budget": 1
-    },
-    {
-      "name": "dedicated/unassigned-position-matches-blank-payload",
-      "why": "A position dragged in but not yet assigned a payload carries the empty string, so a payload-agnostic first-match lands on it. Pinned because it is surprising: the shape exists between an operator dropping a tile and choosing its part.",
-      "loader": {
-        "layout": "dedicated_positions",
-        "homes": [
-          {"node": "D-NEW", "payload": ""},
-          {"node": "D-1", "payload": "P1"}
-        ]
-      },
-      "payload": "",
-      "want_nodes": ["D-NEW"],
-      "want_budget": 1
-    },
-    {
-      "name": "dedicated/payload-not-served",
-      "why": "No position carries the payload, so there is no target. Same normal 'not this loader' answer as the shared case.",
-      "loader": {
-        "layout": "dedicated_positions",
-        "homes": [{"node": "D-1", "payload": "P1"}]
-      },
-      "payload": "P9",
-      "want_nodes": [],
-      "want_budget": 0
-    },
-    {
-      "name": "dedicated/funnel-setting-is-inert",
-      "why": "The window setting means nothing to a dedicated loader — its positions never shared a budget — so the answer is identical with it on. A future change that lets it leak into dedicated routing fails here.",
-      "loader": {
-        "layout": "dedicated_positions",
-        "funnel_windows": true,
-        "homes": [
-          {"node": "D-1", "payload": "P1"},
-          {"node": "D-2", "payload": "P2"}
-        ]
-      },
-      "payload": "P2",
-      "want_nodes": ["D-2"],
-      "want_budget": 1
-    }
-  ],
-  "sizing": [
-    {
-      "name": "exact-multiple",
-      "why": "A gap that divides evenly into carrier capacity asks for exactly that many.",
-      "threshold": 100, "current_uop": 40, "per_bin_capacity": 30,
-      "want_bins": 2, "want_outcome": "ok"
-    },
-    {
-      "name": "rounds-up",
-      "why": "A partial carrier's worth of shortfall still needs a whole carrier. Rounding down would leave the loop permanently short of its threshold.",
-      "threshold": 100, "current_uop": 0, "per_bin_capacity": 30,
-      "want_bins": 4, "want_outcome": "ok"
-    },
-    {
-      "name": "one-unit-short",
-      "why": "The smallest real gap still asks for one carrier — the boundary rounding-down would get wrong.",
-      "threshold": 100, "current_uop": 99, "per_bin_capacity": 30,
-      "want_bins": 1, "want_outcome": "ok"
-    },
-    {
-      "name": "at-threshold",
-      "why": "Exactly at threshold is not below it. Nothing is wanted, and that is a normal answer rather than a failure.",
-      "threshold": 100, "current_uop": 100, "per_bin_capacity": 30,
-      "want_bins": 0, "want_outcome": "at_threshold"
-    },
-    {
-      "name": "above-threshold",
-      "why": "Above threshold likewise asks for nothing.",
-      "threshold": 100, "current_uop": 150, "per_bin_capacity": 30,
-      "want_bins": 0, "want_outcome": "at_threshold"
-    },
-    {
-      "name": "negative-current-sizes-from-zero",
-      "why": "Springfield reported -443. Sized from that reading the gap was 455 and the answer 26 carriers — every number computed from a count already known to be broken. The gap is sized from 0 instead. Ordering still CONTINUES: a negative total means material left the books, which is when the loop needs stock. A broken count does not get to size the order and does not get to cancel it.",
-      "threshold": 100, "current_uop": -443, "per_bin_capacity": 30,
-      "want_bins": 4, "want_outcome": "ok"
-    },
-    {
-      "name": "negative-current-small",
-      "why": "The clamp is to zero, not an offset: a small negative reading gives the same answer as an empty loop.",
-      "threshold": 60, "current_uop": -1, "per_bin_capacity": 30,
-      "want_bins": 2, "want_outcome": "ok"
-    },
-    {
-      "name": "no-per-bin-capacity",
-      "why": "A payload with no catalog capacity makes 'how many carriers' unanswerable. It is a configuration error, and the answer is to create nothing and say so — never to fall back to counting bins, which is the fixed floor that made loaders over-order.",
-      "threshold": 100, "current_uop": 0, "per_bin_capacity": 0,
-      "want_bins": 0, "want_outcome": "no_per_bin_capacity"
-    },
-    {
-      "name": "negative-per-bin-capacity",
-      "why": "Same answer for a negative capacity. The guard is <= 0, not == 0, so a garbage catalog row cannot produce a negative or wildly large carrier count.",
-      "threshold": 100, "current_uop": 0, "per_bin_capacity": -5,
-      "want_bins": 0, "want_outcome": "no_per_bin_capacity"
-    },
-    {
-      "name": "capacity-one",
-      "why": "One unit per carrier means one carrier per unit of gap. The degenerate case, pinned because it is where an off-by-one in the rounding shows up largest.",
-      "threshold": 5, "current_uop": 0, "per_bin_capacity": 1,
-      "want_bins": 5, "want_outcome": "ok"
-    },
-    {
-      "name": "huge-gap-single-carrier-capacity",
-      "why": "Sizing does not bound itself. It returns what the loop needs; what actually gets created is bounded later by free windows and what is already inbound. A caller that treats this number as the count to create is the over-ordering failure again.",
-      "threshold": 1000, "current_uop": 0, "per_bin_capacity": 1,
-      "want_bins": 1000, "want_outcome": "ok"
-    },
-    {
-      "name": "zero-threshold",
-      "why": "A loader with no threshold configured is never below it.",
-      "threshold": 0, "current_uop": 0, "per_bin_capacity": 30,
-      "want_bins": 0, "want_outcome": "at_threshold"
-    }
-  ]
+ "targets": [
+  {
+   "name": "shared/spread/three-windows",
+   "why": "The ordinary multi-window loader: every window is a target and the budget is the window count, so one demand of N puts exactly N carriers out and never 2N.",
+   "loader": {
+    "layout": "shared_window",
+    "homes": [
+     {
+      "node": "W-A"
+     },
+     {
+      "node": "W-B"
+     },
+     {
+      "node": "W-C"
+     }
+    ],
+    "payload_set": [
+     {
+      "code": "P1",
+      "uop_threshold": 100
+     }
+    ]
+   },
+   "payload": "P1",
+   "want_nodes": [
+    "W-A",
+    "W-B",
+    "W-C"
+   ],
+   "want_budget": 3
+  },
+  {
+   "name": "shared/spread/the-operator-arrangement-decides",
+   "why": "Windows come back in the order the OPERATOR dragged them, not in name order. The admin screen offers a reorder handle, Core persists the arrangement and syncs it down, and it used to be discarded on arrival — no ordinal on the wire, no ordinal column in the Edge cache, and a cache read that re-sorted by name. The intent was accepted, stored, transmitted and ignored. Since the funnel case takes the first window and spreading fills in order, this decides which window a carrier physically goes to.",
+   "loader": {
+    "layout": "shared_window",
+    "homes": [
+     {
+      "node": "W-Z",
+      "sort_order": 1
+     },
+     {
+      "node": "W-M",
+      "sort_order": 2
+     },
+     {
+      "node": "W-A",
+      "sort_order": 3
+     }
+    ],
+    "payload_set": [
+     {
+      "code": "P1"
+     }
+    ]
+   },
+   "payload": "P1",
+   "want_nodes": [
+    "W-Z",
+    "W-M",
+    "W-A"
+   ],
+   "want_budget": 3
+  },
+  {
+   "name": "shared/spread/ten-windows-do-not-reorder-themselves",
+   "why": "The trap the fallback exists to avoid. Plants name windows W1, W2, W3 and plain text order matches intent exactly — until a loader reaches ten, where plain text puts W10 before W2 and the funnel target silently moves. Here the operator's arrangement already answers it; the companion case below is the same names with nothing arranged, which is what the number-aware fallback has to get right on its own.",
+   "loader": {
+    "layout": "shared_window",
+    "homes": [
+     {
+      "node": "W1",
+      "sort_order": 1
+     },
+     {
+      "node": "W2",
+      "sort_order": 2
+     },
+     {
+      "node": "W10",
+      "sort_order": 10
+     }
+    ],
+    "payload_set": [
+     {
+      "code": "P1"
+     }
+    ]
+   },
+   "payload": "P1",
+   "want_nodes": [
+    "W1",
+    "W2",
+    "W10"
+   ],
+   "want_budget": 3
+  },
+  {
+   "name": "shared/spread/no-arrangement-falls-back-to-natural-name-order",
+   "why": "Nothing dragged, so every ordinal is zero — which is also exactly what a Core that predates the ordinal field sends. Every comparison ties and the order comes from the names, number-aware: W2 before W10. This is the mixed-version case and the never-touched-loader case at once, and it is the one that has to keep working unchanged at plants that have never used the reorder handle.",
+   "loader": {
+    "layout": "shared_window",
+    "homes": [
+     {
+      "node": "W10"
+     },
+     {
+      "node": "W2"
+     },
+     {
+      "node": "W1"
+     }
+    ],
+    "payload_set": [
+     {
+      "code": "P1"
+     }
+    ]
+   },
+   "payload": "P1",
+   "want_nodes": [
+    "W1",
+    "W2",
+    "W10"
+   ],
+   "want_budget": 3
+  },
+  {
+   "name": "shared/funnel/first-window-only",
+   "why": "A loader configured to take one window at a time delivers to its first window on a budget of 1 — a real node, never the loader's own identity token, which is not a node.",
+   "loader": {
+    "layout": "shared_window",
+    "funnel_windows": true,
+    "homes": [
+     {
+      "node": "W-A"
+     },
+     {
+      "node": "W-B"
+     },
+     {
+      "node": "W-C"
+     }
+    ],
+    "payload_set": [
+     {
+      "code": "P1"
+     }
+    ]
+   },
+   "payload": "P1",
+   "want_nodes": [
+    "W-A"
+   ],
+   "want_budget": 1
+  },
+  {
+   "name": "shared/funnel/first-is-the-one-the-operator-put-first",
+   "why": "Which window the funnel picks follows the same order. Paired with the spread case so the two facts cannot be fixed apart: the funnel target is just the head of the list the spread case pins.",
+   "loader": {
+    "layout": "shared_window",
+    "funnel_windows": true,
+    "homes": [
+     {
+      "node": "W-Z",
+      "sort_order": 1
+     },
+     {
+      "node": "W-A",
+      "sort_order": 2
+     }
+    ],
+    "payload_set": [
+     {
+      "code": "P1"
+     }
+    ]
+   },
+   "payload": "P1",
+   "want_nodes": [
+    "W-Z"
+   ],
+   "want_budget": 1
+  },
+  {
+   "name": "shared/single-window/spread-degrades-to-one",
+   "why": "A one-window shared loader answers the same whether it spreads or funnels, so turning the setting on only changes loaders that actually have several windows.",
+   "loader": {
+    "layout": "shared_window",
+    "homes": [
+     {
+      "node": "W-ONLY"
+     }
+    ],
+    "payload_set": [
+     {
+      "code": "P1"
+     }
+    ]
+   },
+   "payload": "P1",
+   "want_nodes": [
+    "W-ONLY"
+   ],
+   "want_budget": 1
+  },
+  {
+   "name": "shared/payload-not-in-set",
+   "why": "A payload the loader does not carry has no target here. Nil and budget zero is a normal 'not this loader' answer, not a failure — the caller must not treat it as one.",
+   "loader": {
+    "layout": "shared_window",
+    "homes": [
+     {
+      "node": "W-A"
+     },
+     {
+      "node": "W-B"
+     }
+    ],
+    "payload_set": [
+     {
+      "code": "P1"
+     },
+     {
+      "code": "P2"
+     }
+    ]
+   },
+   "payload": "P9",
+   "want_nodes": [],
+   "want_budget": 0
+  },
+  {
+   "name": "shared/blank-payload-is-agnostic",
+   "why": "A blank payload is the payload-agnostic transitional case and still resolves. It is NOT the same as an unknown payload, which resolves to nothing.",
+   "loader": {
+    "layout": "shared_window",
+    "homes": [
+     {
+      "node": "W-A"
+     },
+     {
+      "node": "W-B"
+     }
+    ],
+    "payload_set": [
+     {
+      "code": "P1"
+     }
+    ]
+   },
+   "payload": "",
+   "want_nodes": [
+    "W-A",
+    "W-B"
+   ],
+   "want_budget": 2
+  },
+  {
+   "name": "shared/member-named-is-ignored",
+   "why": "Naming a member window changes nothing for a shared loader: the windows share one budget and the free-window assignment picks the slot. Only dedicated layouts honour the member.",
+   "loader": {
+    "layout": "shared_window",
+    "homes": [
+     {
+      "node": "W-A"
+     },
+     {
+      "node": "W-B"
+     },
+     {
+      "node": "W-C"
+     }
+    ],
+    "payload_set": [
+     {
+      "code": "P1"
+     }
+    ]
+   },
+   "member": "W-C",
+   "payload": "P1",
+   "want_nodes": [
+    "W-A",
+    "W-B",
+    "W-C"
+   ],
+   "want_budget": 3
+  },
+  {
+   "name": "shared/buffer-slot-counts-as-a-window",
+   "why": "home_kind separates a payload-pinned home from a kept-partial buffer, but nothing filters buffers out of a shared loader's windows on either side — so a buffer slot is a delivery target and a unit of budget. Pinned as-is because both sides agree today; the filter, if wanted, belongs where both would inherit it.",
+   "loader": {
+    "layout": "shared_window",
+    "homes": [
+     {
+      "node": "W-A"
+     },
+     {
+      "node": "W-BUF",
+      "kind": "buffer"
+     }
+    ],
+    "payload_set": [
+     {
+      "code": "P1"
+     }
+    ]
+   },
+   "payload": "P1",
+   "want_nodes": [
+    "W-A",
+    "W-BUF"
+   ],
+   "want_budget": 2
+  },
+  {
+   "name": "shared/no-windows-configured",
+   "why": "A shared loader created in the admin screen with no members dragged in yet has nowhere to deliver and must fail closed rather than resolve to its own identity.",
+   "loader": {
+    "layout": "shared_window",
+    "homes": [],
+    "payload_set": [
+     {
+      "code": "P1"
+     }
+    ]
+   },
+   "payload": "P1",
+   "want_nodes": [],
+   "want_budget": 0,
+   "core_only": "the Edge constructor refuses to build a shared loader with zero windows, so this shape cannot exist there to be asked"
+  },
+  {
+   "name": "dedicated/first-match-no-member",
+   "why": "With no member named, the payload picks its position by first match. Budget 1: dedicated positions are independent one-bin slots and never share a budget.",
+   "loader": {
+    "layout": "dedicated_positions",
+    "homes": [
+     {
+      "node": "D-1",
+      "payload": "P1"
+     },
+     {
+      "node": "D-2",
+      "payload": "P2"
+     }
+    ]
+   },
+   "payload": "P2",
+   "want_nodes": [
+    "D-2"
+   ],
+   "want_budget": 1
+  },
+  {
+   "name": "dedicated/member-wins-over-first-match",
+   "why": "The same payload loaded at two positions: the carrier goes to the position the signal named, not to whichever sorts first. Without this, a low reading at one position restocks the other.",
+   "loader": {
+    "layout": "dedicated_positions",
+    "homes": [
+     {
+      "node": "D-1",
+      "payload": "P1"
+     },
+     {
+      "node": "D-2",
+      "payload": "P1"
+     }
+    ]
+   },
+   "member": "D-2",
+   "payload": "P1",
+   "want_nodes": [
+    "D-2"
+   ],
+   "want_budget": 1
+  },
+  {
+   "name": "dedicated/member-not-serving-payload-falls-back",
+   "why": "A member that names a position which does not carry the payload is not honoured — it falls back to first match rather than delivering the wrong part to the named node.",
+   "loader": {
+    "layout": "dedicated_positions",
+    "homes": [
+     {
+      "node": "D-1",
+      "payload": "P1"
+     },
+     {
+      "node": "D-2",
+      "payload": "P2"
+     }
+    ]
+   },
+   "member": "D-2",
+   "payload": "P1",
+   "want_nodes": [
+    "D-1"
+   ],
+   "want_budget": 1
+  },
+  {
+   "name": "dedicated/member-with-blank-payload",
+   "why": "A payload-agnostic ask that names a member goes to that member whatever it carries. This is the transitional shape, and it must not fall through to first match.",
+   "loader": {
+    "layout": "dedicated_positions",
+    "homes": [
+     {
+      "node": "D-1",
+      "payload": "P1"
+     },
+     {
+      "node": "D-2",
+      "payload": "P2"
+     }
+    ]
+   },
+   "member": "D-2",
+   "payload": "",
+   "want_nodes": [
+    "D-2"
+   ],
+   "want_budget": 1
+  },
+  {
+   "name": "dedicated/unassigned-position-matches-blank-payload",
+   "why": "A position dragged in but not yet assigned a payload carries the empty string, so a payload-agnostic first-match lands on it. Pinned because it is surprising: the shape exists between an operator dropping a tile and choosing its part.",
+   "loader": {
+    "layout": "dedicated_positions",
+    "homes": [
+     {
+      "node": "D-NEW",
+      "payload": ""
+     },
+     {
+      "node": "D-1",
+      "payload": "P1"
+     }
+    ]
+   },
+   "payload": "",
+   "want_nodes": [
+    "D-NEW"
+   ],
+   "want_budget": 1
+  },
+  {
+   "name": "dedicated/payload-not-served",
+   "why": "No position carries the payload, so there is no target. Same normal 'not this loader' answer as the shared case.",
+   "loader": {
+    "layout": "dedicated_positions",
+    "homes": [
+     {
+      "node": "D-1",
+      "payload": "P1"
+     }
+    ]
+   },
+   "payload": "P9",
+   "want_nodes": [],
+   "want_budget": 0
+  },
+  {
+   "name": "dedicated/funnel-setting-is-inert",
+   "why": "The window setting means nothing to a dedicated loader — its positions never shared a budget — so the answer is identical with it on. A future change that lets it leak into dedicated routing fails here.",
+   "loader": {
+    "layout": "dedicated_positions",
+    "funnel_windows": true,
+    "homes": [
+     {
+      "node": "D-1",
+      "payload": "P1"
+     },
+     {
+      "node": "D-2",
+      "payload": "P2"
+     }
+    ]
+   },
+   "payload": "P2",
+   "want_nodes": [
+    "D-2"
+   ],
+   "want_budget": 1
+  }
+ ],
+ "sizing": [
+  {
+   "name": "exact-multiple",
+   "why": "A gap that divides evenly into carrier capacity asks for exactly that many.",
+   "threshold": 100,
+   "current_uop": 40,
+   "per_bin_capacity": 30,
+   "want_bins": 2,
+   "want_outcome": "ok"
+  },
+  {
+   "name": "rounds-up",
+   "why": "A partial carrier's worth of shortfall still needs a whole carrier. Rounding down would leave the loop permanently short of its threshold.",
+   "threshold": 100,
+   "current_uop": 0,
+   "per_bin_capacity": 30,
+   "want_bins": 4,
+   "want_outcome": "ok"
+  },
+  {
+   "name": "one-unit-short",
+   "why": "The smallest real gap still asks for one carrier — the boundary rounding-down would get wrong.",
+   "threshold": 100,
+   "current_uop": 99,
+   "per_bin_capacity": 30,
+   "want_bins": 1,
+   "want_outcome": "ok"
+  },
+  {
+   "name": "at-threshold",
+   "why": "Exactly at threshold is not below it. Nothing is wanted, and that is a normal answer rather than a failure.",
+   "threshold": 100,
+   "current_uop": 100,
+   "per_bin_capacity": 30,
+   "want_bins": 0,
+   "want_outcome": "at_threshold"
+  },
+  {
+   "name": "above-threshold",
+   "why": "Above threshold likewise asks for nothing.",
+   "threshold": 100,
+   "current_uop": 150,
+   "per_bin_capacity": 30,
+   "want_bins": 0,
+   "want_outcome": "at_threshold"
+  },
+  {
+   "name": "negative-current-sizes-from-zero",
+   "why": "Springfield reported -443. Sized from that reading the gap was 455 and the answer 26 carriers — every number computed from a count already known to be broken. The gap is sized from 0 instead. Ordering still CONTINUES: a negative total means material left the books, which is when the loop needs stock. A broken count does not get to size the order and does not get to cancel it.",
+   "threshold": 100,
+   "current_uop": -443,
+   "per_bin_capacity": 30,
+   "want_bins": 4,
+   "want_outcome": "ok"
+  },
+  {
+   "name": "negative-current-small",
+   "why": "The clamp is to zero, not an offset: a small negative reading gives the same answer as an empty loop.",
+   "threshold": 60,
+   "current_uop": -1,
+   "per_bin_capacity": 30,
+   "want_bins": 2,
+   "want_outcome": "ok"
+  },
+  {
+   "name": "no-per-bin-capacity",
+   "why": "A payload with no catalog capacity makes 'how many carriers' unanswerable. It is a configuration error, and the answer is to create nothing and say so — never to fall back to counting bins, which is the fixed floor that made loaders over-order.",
+   "threshold": 100,
+   "current_uop": 0,
+   "per_bin_capacity": 0,
+   "want_bins": 0,
+   "want_outcome": "no_per_bin_capacity"
+  },
+  {
+   "name": "negative-per-bin-capacity",
+   "why": "Same answer for a negative capacity. The guard is <= 0, not == 0, so a garbage catalog row cannot produce a negative or wildly large carrier count.",
+   "threshold": 100,
+   "current_uop": 0,
+   "per_bin_capacity": -5,
+   "want_bins": 0,
+   "want_outcome": "no_per_bin_capacity"
+  },
+  {
+   "name": "capacity-one",
+   "why": "One unit per carrier means one carrier per unit of gap. The degenerate case, pinned because it is where an off-by-one in the rounding shows up largest.",
+   "threshold": 5,
+   "current_uop": 0,
+   "per_bin_capacity": 1,
+   "want_bins": 5,
+   "want_outcome": "ok"
+  },
+  {
+   "name": "huge-gap-single-carrier-capacity",
+   "why": "Sizing does not bound itself. It returns what the loop needs; what actually gets created is bounded later by free windows and what is already inbound. A caller that treats this number as the count to create is the over-ordering failure again.",
+   "threshold": 1000,
+   "current_uop": 0,
+   "per_bin_capacity": 1,
+   "want_bins": 1000,
+   "want_outcome": "ok"
+  },
+  {
+   "name": "zero-threshold",
+   "why": "A loader with no threshold configured is never below it.",
+   "threshold": 0,
+   "current_uop": 0,
+   "per_bin_capacity": 30,
+   "want_bins": 0,
+   "want_outcome": "at_threshold"
+  }
+ ]
 }

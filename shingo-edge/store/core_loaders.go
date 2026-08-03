@@ -10,8 +10,10 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 
 	"shingo/protocol"
+	"shingo/shared/windoworder"
 )
 
 // CoreLoader is the cached read shape for one Core-owned loader, assembled with
@@ -46,6 +48,10 @@ type CoreLoaderPosition struct {
 	PayloadCode  string
 	Kind         string
 	UOPThreshold int
+	// Ordinal is where the operator dragged this window, synced from Core.
+	// Zero on every row means nothing was arranged (or the Core that sent it
+	// predates the field), which falls through to a number-aware name sort.
+	Ordinal int
 }
 
 // CoreLoaderPayload is one entry in a shared_window allowed set.
@@ -81,8 +87,8 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 		for _, p := range l.Positions {
 			// min_stock column left dormant (bin-count floor retired) — defaults to 0.
 			if _, err := tx.Exec(
-				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, kind, uop_threshold) VALUES (?,?,?,?,?)`,
-				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.Kind, p.UOPThreshold,
+				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, kind, uop_threshold, ordinal) VALUES (?,?,?,?,?,?)`,
+				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.Kind, p.UOPThreshold, p.Ordinal,
 			); err != nil {
 				return fmt.Errorf("insert position %s: %w", p.CoreNodeName, err)
 			}
@@ -150,14 +156,30 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 	return out, rows.Err()
 }
 
+// attachCoreLoaderChildren loads a cached loader's positions and payloads.
+//
+// THE POSITION ORDER IS THE DELIVERY DECISION, not presentation. The funnel
+// case delivers to "the first window" and spreading fills free windows in
+// order, so the sequence this returns decides which window a carrier physically
+// goes to — and it has to match the order Core computes for the same loader, or
+// the two sides send carriers to different places.
+//
+// It is sorted in Go rather than in the query because the rule is
+// shared/windoworder, which both sides import: the operator's arrangement
+// first, then a number-aware name sort (so W2 comes before W10). SQL can order
+// by the ordinal but cannot do the number-aware half, and having the tiebreak
+// in one place matters more than doing the whole thing in one statement.
+//
+// This read used to be `ORDER BY position_node` — plain name order, with the
+// operator's arrangement discarded because there was no column to put it in.
 func (db *DB) attachCoreLoaderChildren(l *CoreLoader) error {
-	prows, err := db.Query(`SELECT position_node, payload_code, kind, uop_threshold FROM core_loader_positions WHERE loader_key=? ORDER BY position_node`, l.LoaderKey)
+	prows, err := db.Query(`SELECT position_node, payload_code, kind, uop_threshold, ordinal FROM core_loader_positions WHERE loader_key=?`, l.LoaderKey)
 	if err != nil {
 		return fmt.Errorf("list positions %s: %w", l.LoaderKey, err)
 	}
 	for prows.Next() {
 		var p CoreLoaderPosition
-		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.Kind, &p.UOPThreshold); err != nil {
+		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.Kind, &p.UOPThreshold, &p.Ordinal); err != nil {
 			prows.Close()
 			return err
 		}
@@ -167,6 +189,12 @@ func (db *DB) attachCoreLoaderChildren(l *CoreLoader) error {
 	if err := prows.Err(); err != nil {
 		return err
 	}
+	sort.SliceStable(l.Positions, func(i, j int) bool {
+		return windoworder.Less(
+			windoworder.Window{Ordinal: l.Positions[i].Ordinal, Name: l.Positions[i].PositionNode},
+			windoworder.Window{Ordinal: l.Positions[j].Ordinal, Name: l.Positions[j].PositionNode},
+		)
+	})
 
 	yrows, err := db.Query(`SELECT payload_code, uop_threshold FROM core_loader_payloads WHERE loader_key=? ORDER BY payload_code`, l.LoaderKey)
 	if err != nil {

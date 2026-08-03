@@ -596,6 +596,21 @@ type LoaderPosition struct {
 	PayloadCode  string `json:"payload_code"`
 	Kind         string `json:"kind,omitempty"`
 	UOPThreshold int    `json:"uop_threshold"`
+	// Ordinal is where the operator put this window. An admin screen lets them
+	// drag a loader's windows into the order they want filled; Core persists
+	// that and this is how it reaches the plant.
+	//
+	// It used to go no further than Core. There was no field here and no column
+	// in the Edge's cache, so the arrangement was accepted, stored, synced
+	// downward, and discarded on arrival — the Edge re-sorted by name. Since
+	// the funnel case delivers to "the first window" and spreading fills free
+	// windows in order, that decided which window a carrier physically went to.
+	//
+	// Additive and unsentinelled: a Core that predates the field sends nothing,
+	// every position decodes 0, every comparison ties, and the reader falls
+	// through to its name ordering — which is exactly what it did before. See
+	// shingo/shared/windoworder for the rule both sides share.
+	Ordinal int `json:"ordinal,omitempty"`
 }
 
 // LoaderPositionKind values for LoaderPosition.Kind. A window belongs to a

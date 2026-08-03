@@ -1,9 +1,11 @@
 package domain_test
 
 import (
+	"sort"
 	"testing"
 
 	"shingo/shared/loadervectors"
+	"shingo/shared/windoworder"
 	"shingoedge/domain"
 )
 
@@ -54,24 +56,31 @@ func TestReservationTarget_GoldenVectors(t *testing.T) {
 
 // buildLoader constructs the Edge aggregate for a vector.
 //
-// Windows are handed to the constructor IN NAME ORDER, because that is the order
-// the running Edge builds them in: the cache read sorts by position_node, and no
-// ordinal survives the trip from Core. Handing them over in the vector's written
-// order instead would make this test assert something the plant does not do.
+// Windows are handed to the constructor IN THE ORDER THE CACHE READ RETURNS
+// THEM, because that is the order the running Edge builds them in: the operator's
+// arrangement first, then a number-aware name sort, per shared/windoworder.
+// domain.Loader carries no ordinal of its own — the ordering is applied once at
+// the cache read and the slice order is the answer from there on — so this
+// helper has to apply the same rule or the test asserts something the plant
+// does not do.
+//
+// It used to sort by plain name and say so, because that was the plant's
+// behaviour: the ordinal did not survive the trip from Core, so the Edge sorted
+// by name and the operator's arrangement was thrown away.
 func buildLoader(t *testing.T, c loadervectors.TargetCase) *domain.Loader {
 	t.Helper()
 	id := domain.LoaderID("loader:vector")
 
 	switch c.Loader.Layout {
 	case string(domain.LayoutSharedWindow):
-		names := make([]string, 0, len(c.Loader.Homes))
+		ordered := make([]windoworder.Window, 0, len(c.Loader.Homes))
 		for _, h := range c.Loader.Homes {
-			names = append(names, h.Node)
+			ordered = append(ordered, windoworder.Window{Ordinal: h.SortOrder, Name: h.Node})
 		}
-		sortStrings(names)
-		windows := make([]domain.Window, len(names))
-		for i, n := range names {
-			windows[i] = domain.Window{Node: domain.NodeID(n)}
+		sort.SliceStable(ordered, func(i, j int) bool { return windoworder.Less(ordered[i], ordered[j]) })
+		windows := make([]domain.Window, len(ordered))
+		for i, w := range ordered {
+			windows[i] = domain.Window{Node: domain.NodeID(w.Name)}
 		}
 		set := make([]domain.PayloadCode, 0, len(c.Loader.PayloadSet))
 		for _, p := range c.Loader.PayloadSet {
@@ -101,12 +110,4 @@ func buildLoader(t *testing.T, c loadervectors.TargetCase) *domain.Loader {
 	}
 	t.Fatalf("vector %q has unknown layout %q", c.Name, c.Loader.Layout)
 	return nil
-}
-
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }

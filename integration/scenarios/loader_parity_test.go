@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/shared/loadervectors"
+	"shingo/shared/windoworder"
 	"shingocore/dispatch"
 	coreloaders "shingocore/store/loaders"
 	"shingoedge/domain"
@@ -202,14 +203,21 @@ func coreDedicatedTargets(names, pinned []string, member, ask string) ([]string,
 
 // edgeSharedTargets builds the Edge aggregate and asks it the same question.
 //
-// Windows go in in NAME order, because that is the order the running Edge builds
-// them in: its cache read sorts by node name and no ordinal survives the trip
-// down from Core. Feeding them in written order would compare Core against an
-// Edge that does not exist.
+// Windows go in IN THE ORDER THE CACHE READ RETURNS THEM, because that is the
+// order the running Edge builds them in: the operator's arrangement first, then
+// a number-aware name sort, per shared/windoworder. domain.Loader carries no
+// ordinal — the ordering is applied once at the cache read and the slice order
+// is the answer from there on — so feeding them in any other order would compare
+// Core against an Edge that does not exist.
+//
+// The sweep does not vary the arrangement (every ordinal is zero, the
+// never-dragged loader), so what this exercises is the name fallback — which is
+// the half that has to agree across a mixed-version fleet, and the half where
+// W10 before W2 used to bite.
 func edgeSharedTargets(t *testing.T, names, payloadSet []string, funnel bool, member, ask string) ([]string, int) {
 	t.Helper()
 	sorted := append([]string(nil), names...)
-	sort.Strings(sorted)
+	sort.SliceStable(sorted, func(i, j int) bool { return windoworder.LessName(sorted[i], sorted[j]) })
 	windows := make([]domain.Window, len(sorted))
 	for i, n := range sorted {
 		windows[i] = domain.Window{Node: domain.NodeID(n)}

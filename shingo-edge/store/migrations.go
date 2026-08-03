@@ -296,6 +296,15 @@ func (db *DB) migrate() error {
 	// next node-list sync regardless.
 	db.Exec("ALTER TABLE core_loaders ADD COLUMN funnel_windows INTEGER NOT NULL DEFAULT 0")
 
+	// Where the operator dragged this window. Core has always stored the
+	// arrangement and sent it down; there was nowhere here to put it, so the
+	// cache read re-sorted by name and the arrangement was discarded on arrival.
+	// Idempotent — duplicate ADD COLUMN fails silently. DEFAULT 0 means every row
+	// ties, which falls through to the name ordering that was there before, so a
+	// cache written by an older Core behaves exactly as it did. Repopulated
+	// full-state on the next node-list sync regardless.
+	db.Exec("ALTER TABLE core_loader_positions ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0")
+
 	// 6. Data fixups
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")
 

@@ -447,6 +447,7 @@ CREATE TABLE IF NOT EXISTS core_loader_positions (
     kind           TEXT    NOT NULL DEFAULT '',  -- 'window' | 'dedicated' (synced from Core; Layout is authoritative if empty)
     min_stock      INTEGER NOT NULL DEFAULT 0,
     uop_threshold  INTEGER NOT NULL DEFAULT 0,
+    ordinal        INTEGER NOT NULL DEFAULT 0,   -- where the operator dragged this window; 0 everywhere = nothing arranged, fall back to a number-aware name sort
     PRIMARY KEY (loader_key, position_node)
 );
 CREATE TABLE IF NOT EXISTS core_loader_payloads (

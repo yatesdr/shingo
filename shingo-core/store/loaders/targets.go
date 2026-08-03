@@ -1,6 +1,10 @@
 package loaders
 
-import "sort"
+import (
+	"sort"
+
+	"shingo/shared/windoworder"
+)
 
 // targets.go — which nodes an inbound carrier for a loader may be delivered to,
 // and how many may be inbound at once.
@@ -116,29 +120,38 @@ func DeliveryTargets(in DeliveryTargetsInput) (targets []Target, budget int) {
 
 // sharedWindows lists a shared loader's windows in the order the Edge sees them.
 //
-// TWO DELIBERATE ODDITIES, both reproduced from the Edge because parity beats
-// tidiness here, and both worth fixing on both sides one day:
+// THE OPERATOR'S ARRANGEMENT DECIDES, then a number-aware name sort. The rule
+// is shared/windoworder, imported by both sides, because the order IS the
+// delivery decision: the funnel case delivers to "the first window" and
+// spreading fills free windows in order, so if Core and the Edge order these
+// differently a carrier goes somewhere nobody expected.
 //
-// SORTED BY NODE NAME, NOT BY sort_order. Core stores an operator-defined window
-// order and sends it down in that order, but the ordering is destroyed on
-// arrival rather than merely ignored: protocol.LoaderPosition carries no ordinal
-// field, core_loader_positions has no ordinal column, and the Edge's cache read
-// re-sorts by position_node — the name. Since the funnel case delivers to "the
-// first window" and the spreading case fills free windows in order, this decides
-// WHICH window a carrier goes to. Sorting by sort_order here would make Core and
-// the Edge pick different windows.
+// This used to sort by name alone. Core stored the operator's window order,
+// sent it down, and the Edge threw it away on arrival — no ordinal on the wire,
+// no ordinal column in the cache, and a cache read that re-sorted by name. The
+// arrangement was accepted, persisted, transmitted and ignored. Both halves of
+// that are now carried, and the name sort is the fallback rather than the rule.
 //
-// The trap that follows from it: ASCII order only matches intent while window
-// names stay uniform. W10 sorts before W2. See the vector of the same name.
+// The fallback is number-aware for a reason worth keeping: plain text order
+// matches intent only while window names stay uniform. A plant names its
+// windows W1, W2, W3 and everything looks right until the loader reaches ten,
+// where plain text puts W10 before W2 and the funnel target moves without
+// anybody touching it.
 //
-// BUFFER SLOTS COUNT AS WINDOWS. home_kind exists to separate a payload-pinned
-// home from a kept-partial buffer, but nothing filters buffers out of a shared
-// loader's windows on either side: BuildLoaderInfos emits every home as a
-// position and the Edge turns every position into a window. So a buffer slot on
-// a shared loader is a delivery target and a unit of budget. The filter, if one
-// is wanted, belongs in BuildLoaderInfos where both sides would inherit it.
+// STILL ODD, deliberately, and reproduced from the Edge because parity beats
+// tidiness: BUFFER SLOTS COUNT AS WINDOWS. home_kind exists to separate a
+// payload-pinned home from a kept-partial buffer, but nothing filters buffers
+// out of a shared loader's windows on either side: BuildLoaderInfos emits every
+// home as a position and the Edge turns every position into a window. So a
+// buffer slot on a shared loader is a delivery target and a unit of budget. The
+// filter, if one is wanted, belongs in BuildLoaderInfos where both sides would
+// inherit it.
 func sharedWindows(in DeliveryTargetsInput) []Target {
-	out := make([]Target, 0, len(in.Homes))
+	type ordered struct {
+		Target
+		windoworder.Window
+	}
+	tmp := make([]ordered, 0, len(in.Homes))
 	for _, h := range in.Homes {
 		name, ok := in.NodeNames[h.PositionNodeID]
 		if !ok {
@@ -147,9 +160,16 @@ func sharedWindows(in DeliveryTargetsInput) []Target {
 		// No PayloadCode: a shared window pins nothing; the loader's payload set
 		// governs. Carrying the home's payload here would let a stray value on a
 		// window row look like a pinned position.
-		out = append(out, Target{NodeName: name})
+		tmp = append(tmp, ordered{
+			Target: Target{NodeName: name},
+			Window: windoworder.Window{Ordinal: h.SortOrder, Name: name},
+		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].NodeName < out[j].NodeName })
+	sort.SliceStable(tmp, func(i, j int) bool { return windoworder.Less(tmp[i].Window, tmp[j].Window) })
+	out := make([]Target, len(tmp))
+	for i, t := range tmp {
+		out[i] = t.Target
+	}
 	return out
 }
 
