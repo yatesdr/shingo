@@ -31,8 +31,11 @@ type NodeBinInfo struct {
 	// lifecycle boundary (SetForProduction, ClearForReuseTx). Edge
 	// stores it alongside the bin and stamps every outgoing
 	// BinUOPDelta with the value cached here. On startup / cache miss
-	// the field deserializes to 0; the next bin-state refresh from
-	// Core repopulates it before Edge emits its first delta.
+	// the field deserializes to 0, which Core treats as the bootstrap
+	// sentinel and always applies. This used to say "the next bin-state
+	// refresh from Core repopulates it" — there was no such refresh, and
+	// what actually repopulates it is Core's reply to the first discarded
+	// count (protocol.BinEpochRefresh).
 	DeltaEpoch        int64   `json:"delta_epoch"`
 	Manifest          *string `json:"manifest,omitempty"`
 	ManifestConfirmed bool    `json:"manifest_confirmed"`

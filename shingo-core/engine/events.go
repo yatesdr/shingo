@@ -19,12 +19,6 @@ const (
 	EventOrderCancelled
 	EventOrderQueued
 	EventBinUpdated
-	// EventLinesideBucketApplied — emitted after CoreDataService
-	// successfully applies a LinesideBucketDelta. The UOP-threshold
-	// monitor subscribes to this so bucket drains (which change loop
-	// UOP without moving a bin) re-evaluate threshold crossings the
-	// same way bin moves do.
-	EventLinesideBucketApplied
 	EventNodeUpdated
 	EventCorrectionApplied
 	EventFleetConnected
@@ -161,23 +155,6 @@ type CellTickEvent struct {
 	ProcessID  int64
 	StyleID    int64
 	RecordedAt time.Time
-}
-
-// LinesideBucketAppliedEvent is the engine event the UOP-threshold
-// monitor consumes when a bucket delta lands. PayloadCode may be
-// empty for orphan / pre-upgrade-backfill rows; the monitor short-
-// circuits on empty.
-//
-// Round-3 Obs 8: CoreNodeName replaced NodeID — the wire envelope now
-// carries the cross-system identifier, and downstream consumers
-// inherit the same shape.
-type LinesideBucketAppliedEvent struct {
-	eventbus.PayloadBase
-	Station      string
-	CoreNodeName string
-	PayloadCode  string
-	Delta        int
-	Reason       protocol.LinesideBucketDeltaReason
 }
 
 // SourcingUpdatedEvent carries how many (process, style) verdicts moved. The

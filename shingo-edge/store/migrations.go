@@ -305,6 +305,14 @@ func (db *DB) migrate() error {
 	// full-state on the next node-list sync regardless.
 	db.Exec("ALTER TABLE core_loader_positions ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0")
 
+	// The Edge-only operator-driven loader set. Superseded by the Core-owned
+	// bin_loaders.replenishment field, which is what the supply decision and the
+	// board both read. The table's last reader went with that move; what survived
+	// was a toggle on the claim editor that wrote a row nobody read — the
+	// front end had already stopped sending the field. DROP IF EXISTS so this is
+	// idempotent and so an edge that never had the table is unaffected.
+	db.Exec("DROP TABLE IF EXISTS operator_driven_loaders")
+
 	// 6. Data fixups
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")
 

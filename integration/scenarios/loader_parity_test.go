@@ -113,48 +113,21 @@ func TestLoaderParity_SweepDeliveryTargets(t *testing.T) {
 	t.Logf("swept %d loader shapes", checked)
 }
 
-// TestLoaderParity_SweepSizing does the same for the sizing arithmetic, over a
-// range that deliberately includes broken readings and broken catalog values —
-// the inputs a plant actually produces when something is wrong.
-func TestLoaderParity_SweepSizing(t *testing.T) {
-	t.Parallel()
-	var checked int
-	for threshold := -10; threshold <= 500; threshold += 13 {
-		for current := -600; current <= 600; current += 29 {
-			for capacity := -3; capacity <= 120; capacity += 7 {
-				checked++
-				coreBins, coreOutcome, _ := coreSizing(threshold, current, capacity)
-				edgeBins, edgeOutcome := edgeSizing(threshold, current, capacity)
-				if coreBins != edgeBins || string(coreOutcome) != edgeOutcome {
-					t.Fatalf("DIVERGENCE (sizing): threshold=%d current=%d capacity=%d\n"+
-						"  core: %d/%s\n  edge: %d/%s\n"+
-						"  Decide which is right, fix that side, and add the case to shared/loadervectors/vectors.json.",
-						threshold, current, capacity, coreBins, coreOutcome, edgeBins, edgeOutcome)
-				}
-			}
-		}
-	}
-	if checked < 5000 {
-		t.Errorf("swept only %d sizing inputs; the space collapsed", checked)
-	}
-	t.Logf("swept %d sizing inputs", checked)
-}
-
-// TestLoaderParity_VectorsAreASubsetOfTheSweep checks that the checked-in
-// vectors describe behaviour this sweep also produces. It is the link between
-// the temporary generator and the permanent gate: a vector the sweep cannot
-// reproduce is a vector that has drifted from the system.
-func TestLoaderParity_VectorsAreASubsetOfTheSweep(t *testing.T) {
+// TestSizingVectorsStillDescribeCore checks the checked-in sizing vectors
+// against the one implementation that is left.
+//
+// This used to compare Core against the Edge. The Edge's sizing arithmetic went
+// with the cutover, and so did the sweep that compared them — a green test
+// asserting Core matches a photocopy of code that no longer exists is worse
+// than no test, because it reads as coverage. What survives is the vectors
+// themselves, which go on pinning Core to the answers the plant actually ran.
+func TestSizingVectorsStillDescribeCore(t *testing.T) {
 	t.Parallel()
 	v := loadervectors.MustLoad()
 	for _, c := range v.Sizing {
 		coreBins, coreOutcome, _ := coreSizing(c.Threshold, c.CurrentUOP, c.PerBinCapacity)
-		edgeBins, edgeOutcome := edgeSizing(c.Threshold, c.CurrentUOP, c.PerBinCapacity)
 		if coreBins != c.WantBins || string(coreOutcome) != c.WantOutcome {
 			t.Errorf("vector %q: core gives %d/%s, vector says %d/%s", c.Name, coreBins, coreOutcome, c.WantBins, c.WantOutcome)
-		}
-		if edgeBins != c.WantBins || edgeOutcome != c.WantOutcome {
-			t.Errorf("vector %q: edge gives %d/%s, vector says %d/%s", c.Name, edgeBins, edgeOutcome, c.WantBins, c.WantOutcome)
 		}
 	}
 }
@@ -248,28 +221,6 @@ func edgeDedicatedTargets(t *testing.T, names, pinned []string, member, ask stri
 	}
 	nodes, budget := l.ReservationTarget(domain.NodeID(member), domain.PayloadCode(ask), true)
 	return nodeIDNames(nodes), budget
-}
-
-// edgeSizing transcribes HandleLoopBelowThreshold's inline sizing, with the
-// per-bin-capacity guard from its caller pulled in. Kept trivial on purpose: a
-// cleverer transcription would be asserting that a rewrite matches a rewrite.
-//
-//	shingo-edge/engine/operator_demand_loader.go:126     capacity guard (caller)
-//	shingo-edge/engine/operator_demand_loader.go:149-154 negative clamp
-//	shingo-edge/engine/operator_demand_loader.go:159-165 gap, skip, round up
-func edgeSizing(threshold, currentUOP, perBinCapacity int) (int, string) {
-	if perBinCapacity <= 0 {
-		return 0, "no_per_bin_capacity"
-	}
-	current := currentUOP
-	if current < 0 {
-		current = 0
-	}
-	gap := threshold - current
-	if gap <= 0 {
-		return 0, "at_threshold"
-	}
-	return (gap + perBinCapacity - 1) / perBinCapacity, "ok"
 }
 
 // ── plumbing ─────────────────────────────────────────────────────────────────

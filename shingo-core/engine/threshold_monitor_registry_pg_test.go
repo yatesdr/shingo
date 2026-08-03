@@ -4,7 +4,7 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,7 +14,6 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/demands"
-	"shingocore/store/messaging"
 )
 
 // TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold
@@ -53,8 +52,8 @@ func TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold(
 	// below distinguishes the new signal from anything the test engine
 	// emitted at startup. The 3s startup-sweep gate keeps the sweep
 	// out of this test's window, but we belt-and-brace anyway.
-	preMsgs, _ := db.ListPendingOutbox(50)
-	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+	fires := captureThresholdFires(t, eng)
+	preCount := fires.count(stationID)
 
 	// Drive OnThresholdChanges directly with a synthetic change list — the
 	// same shape handleClaimSync would produce after a real SyncRegistry
@@ -72,11 +71,10 @@ func TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold(
 	// SendDataToEdge), so a single re-read should suffice. Allow a
 	// small retry window for the rare CI scheduling jitter.
 	deadline := time.Now().Add(2 * time.Second)
-	var hit *protocol.LoopBelowThresholdSignal
+	var hit *firedBinding
 	for time.Now().Before(deadline) {
-		msgs, _ := db.ListPendingOutbox(50)
-		if countLoopBelowThresholdSignals(msgs, stationID) > preCount {
-			hit = findLoopBelowThresholdSignal(t, msgs, stationID)
+		if fires.count(stationID) > preCount {
+			hit = fires.find(stationID)
 			if hit != nil {
 				break
 			}
@@ -84,9 +82,8 @@ func TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold(
 		time.Sleep(50 * time.Millisecond)
 	}
 	if hit == nil {
-		msgs, _ := db.ListPendingOutbox(50)
 		t.Fatalf("expected immediate LoopBelowThresholdSignal to %s after OnThresholdChanges, outbox=%v",
-			stationID, outboxSummary(msgs))
+			stationID, fires.fired)
 	}
 	if hit.PayloadCode != payload {
 		t.Errorf("signal PayloadCode = %q, want %q", hit.PayloadCode, payload)
@@ -146,16 +143,15 @@ func TestThresholdMonitor_ReadsAuthoritativeSum_NotAStaleCache(t *testing.T) {
 	}}
 	m.mu.Unlock()
 
-	preMsgs, _ := db.ListPendingOutbox(50)
-	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+	fires := captureThresholdFires(t, eng)
+	preCount := fires.count(stationID)
 
 	m.OnBinUOPDelta(payload, -1)
 	time.Sleep(300 * time.Millisecond)
 
-	msgs, _ := db.ListPendingOutbox(50)
-	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+	if got := fires.count(stationID); got != preCount {
 		t.Errorf("stocked payload (DB total 200 >= threshold 50) produced %d new signal(s); want 0 — the monitor must read DB truth, not a stale below-threshold cache (outbox=%v)",
-			got-preCount, outboxSummary(msgs))
+			got-preCount, fires.fired)
 	}
 }
 
@@ -194,17 +190,16 @@ func TestThresholdMonitor_ReadsAuthoritativeSum_FiresWhenDBBelow(t *testing.T) {
 	}}
 	m.mu.Unlock()
 
-	preMsgs, _ := db.ListPendingOutbox(50)
-	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+	fires := captureThresholdFires(t, eng)
+	preCount := fires.count(stationID)
 
 	m.OnBinUOPDelta(payload, -1)
 
 	deadline := time.Now().Add(2 * time.Second)
-	var hit *protocol.LoopBelowThresholdSignal
+	var hit *firedBinding
 	for time.Now().Before(deadline) {
-		msgs, _ := db.ListPendingOutbox(50)
-		if countLoopBelowThresholdSignals(msgs, stationID) > preCount {
-			hit = findLoopBelowThresholdSignal(t, msgs, stationID)
+		if fires.count(stationID) > preCount {
+			hit = fires.find(stationID)
 			if hit != nil {
 				break
 			}
@@ -212,8 +207,7 @@ func TestThresholdMonitor_ReadsAuthoritativeSum_FiresWhenDBBelow(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if hit == nil {
-		msgs, _ := db.ListPendingOutbox(50)
-		t.Fatalf("expected a signal — DB truth (10) is below threshold (50); outbox=%v", outboxSummary(msgs))
+		t.Fatalf("expected a signal — DB truth (10) is below threshold (50); outbox=%v", fires.fired)
 	}
 	if hit.CurrentUOP != 10 {
 		t.Errorf("signal CurrentUOP = %d, want 10 (the authoritative DB read)", hit.CurrentUOP)
@@ -256,8 +250,8 @@ func TestThresholdMonitor_SwapContradiction_ChipsWhenStocked(t *testing.T) {
 	}}
 	m.mu.Unlock()
 
-	preMsgs, _ := db.ListPendingOutbox(50)
-	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+	fires := captureThresholdFires(t, eng)
+	preCount := fires.count(stationID)
 
 	m.NoteSwapRequestContradiction(payload)
 	time.Sleep(200 * time.Millisecond)
@@ -274,8 +268,7 @@ func TestThresholdMonitor_SwapContradiction_ChipsWhenStocked(t *testing.T) {
 	}
 
 	// And NO order was created — the re-read reads stocked.
-	msgs, _ := db.ListPendingOutbox(50)
-	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+	if got := fires.count(stationID); got != preCount {
 		t.Errorf("contradiction re-evaluation created %d signal(s); want 0 (C9 must never create an order)", got-preCount)
 	}
 }
@@ -390,18 +383,17 @@ func TestThresholdMonitor_R1Live_FiresOffEdgeAdjustedTotal(t *testing.T) {
 	}}
 	m.mu.Unlock()
 
-	preMsgs, _ := db.ListPendingOutbox(50)
-	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+	fires := captureThresholdFires(t, eng)
+	preCount := fires.count(stationID)
 
 	// The report-arrival trigger. Edge-adjusted total is 10 (< 100), so it fires.
 	m.OnLinesideReports([]string{payload})
 
 	deadline := time.Now().Add(2 * time.Second)
-	var hit *protocol.LoopBelowThresholdSignal
+	var hit *firedBinding
 	for time.Now().Before(deadline) {
-		msgs, _ := db.ListPendingOutbox(50)
-		if countLoopBelowThresholdSignals(msgs, stationID) > preCount {
-			hit = findLoopBelowThresholdSignal(t, msgs, stationID)
+		if fires.count(stationID) > preCount {
+			hit = fires.find(stationID)
 			if hit != nil {
 				break
 			}
@@ -409,8 +401,7 @@ func TestThresholdMonitor_R1Live_FiresOffEdgeAdjustedTotal(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if hit == nil {
-		msgs, _ := db.ListPendingOutbox(50)
-		t.Fatalf("expected R1-live fire — edge-adjusted total (10) is below threshold (100) though the ledger (150) would hold; outbox=%v", outboxSummary(msgs))
+		t.Fatalf("expected R1-live fire — edge-adjusted total (10) is below threshold (100) though the ledger (150) would hold; outbox=%v", fires.fired)
 	}
 	if hit.CurrentUOP != 10 {
 		t.Errorf("signal CurrentUOP = %d, want 10 (the edge-adjusted total, not the ledger's 150)", hit.CurrentUOP)
@@ -493,16 +484,15 @@ func TestThresholdMonitor_R1Live_StaleReportFallsBackToLedger(t *testing.T) {
 		t.Errorf("totals = edge %d / ledger %d, want both 150 (stale report ignored)", edgeTotal, ledgerTotal)
 	}
 
-	preMsgs, _ := db.ListPendingOutbox(50)
-	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+	fires := captureThresholdFires(t, eng)
+	preCount := fires.count(stationID)
 
 	m.OnLinesideReports([]string{payload})
 	time.Sleep(200 * time.Millisecond)
 
-	msgs, _ := db.ListPendingOutbox(50)
-	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+	if got := fires.count(stationID); got != preCount {
 		t.Errorf("stale report fired %d signal(s); want 0 — a stale report must fall back to the ledger (150 >= 100 holds) (outbox=%v)",
-			got-preCount, outboxSummary(msgs))
+			got-preCount, fires.fired)
 	}
 }
 
@@ -562,27 +552,25 @@ func TestThresholdMonitor_LedgerMode_RevertsToPreR1(t *testing.T) {
 	}}
 	m.mu.Unlock()
 
-	preMsgs, _ := db.ListPendingOutbox(50)
-	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+	fires := captureThresholdFires(t, eng)
+	preCount := fires.count(stationID)
 
 	// Report arrival in ledger mode: audit-only, decides off the ledger (150 >= 100).
 	m.OnLinesideReports([]string{payload})
 	time.Sleep(200 * time.Millisecond)
 
-	msgs, _ := db.ListPendingOutbox(50)
-	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+	if got := fires.count(stationID); got != preCount {
 		t.Errorf("ledger mode fired %d signal(s); want 0 — the revert knob must decide off the ledger and change nothing (outbox=%v)",
-			got-preCount, outboxSummary(msgs))
+			got-preCount, fires.fired)
 	}
 
 	// And the hot path also decides off the ledger in this mode: a delta re-reads
 	// the ledger (150 >= 100), so still nothing fires despite the drained report.
 	m.OnBinUOPDelta(payload, -1)
 	time.Sleep(200 * time.Millisecond)
-	msgs, _ = db.ListPendingOutbox(50)
-	if got := countLoopBelowThresholdSignals(msgs, stationID); got != preCount {
+	if got := fires.count(stationID); got != preCount {
 		t.Errorf("ledger-mode hot path fired %d signal(s); want 0 (delta decides off the ledger, 150 >= 100) (outbox=%v)",
-			got-preCount, outboxSummary(msgs))
+			got-preCount, fires.fired)
 	}
 }
 
@@ -635,8 +623,8 @@ func TestThresholdMonitor_NegativeTotal_StillEmitsSignal(t *testing.T) {
 	}}
 	m.mu.Unlock()
 
-	preMsgs, _ := db.ListPendingOutbox(50)
-	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+	fires := captureThresholdFires(t, eng)
+	preCount := fires.count(stationID)
 
 	// Drive the hot path the way a real delta would: the monitor re-reads the
 	// authoritative sum (-443), which is below threshold and must be acted on.
@@ -644,10 +632,9 @@ func TestThresholdMonitor_NegativeTotal_StillEmitsSignal(t *testing.T) {
 
 	time.Sleep(300 * time.Millisecond)
 
-	msgs, _ := db.ListPendingOutbox(50)
-	if got := countLoopBelowThresholdSignals(msgs, stationID); got <= preCount {
+	if got := fires.count(stationID); got <= preCount {
 		t.Errorf("negative in-loop total produced no LoopBelowThresholdSignal; want at least one — a wrong count must not starve the line (outbox=%v)",
-			outboxSummary(msgs))
+			fires.fired)
 	}
 }
 
@@ -683,19 +670,18 @@ func TestThresholdMonitor_Resync_EngagesAndFiresSeededBinding(t *testing.T) {
 		t.Fatalf("seed registry: %v", err)
 	}
 
-	preMsgs, _ := db.ListPendingOutbox(50)
-	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+	fires := captureThresholdFires(t, eng)
+	preCount := fires.count(stationID)
 
 	// The Edge (re)connects → Resync. No diff is available, so only Resync can
 	// engage the binding and fire it.
 	eng.thresholdMonitor.Resync(stationID)
 
 	deadline := time.Now().Add(2 * time.Second)
-	var hit *protocol.LoopBelowThresholdSignal
+	var hit *firedBinding
 	for time.Now().Before(deadline) {
-		msgs, _ := db.ListPendingOutbox(50)
-		if countLoopBelowThresholdSignals(msgs, stationID) > preCount {
-			hit = findLoopBelowThresholdSignal(t, msgs, stationID)
+		if fires.count(stationID) > preCount {
+			hit = fires.find(stationID)
 			if hit != nil {
 				break
 			}
@@ -703,63 +689,104 @@ func TestThresholdMonitor_Resync_EngagesAndFiresSeededBinding(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if hit == nil {
-		msgs, _ := db.ListPendingOutbox(50)
-		t.Fatalf("expected Resync to fire LoopBelowThresholdSignal to %s, outbox=%v", stationID, outboxSummary(msgs))
+		t.Fatalf("expected Resync to fire LoopBelowThresholdSignal to %s, outbox=%v", stationID, fires.fired)
 	}
 	if hit.PayloadCode != payload || hit.CoreNodeName != loader || hit.Threshold != 50 {
 		t.Errorf("signal = payload=%q node=%q threshold=%d, want %s/%s/50", hit.PayloadCode, hit.CoreNodeName, hit.Threshold, payload, loader)
 	}
 
 	// Station scoping: Resync of a DIFFERENT station must not fire this binding.
-	base := countLoopBelowThresholdSignals(mustOutbox(t, db), stationID)
+	base := fires.count(stationID)
 	eng.thresholdMonitor.Resync("some-other-station")
 	time.Sleep(200 * time.Millisecond)
-	if got := countLoopBelowThresholdSignals(mustOutbox(t, db), stationID); got != base {
+	if got := fires.count(stationID); got != base {
 		t.Errorf("Resync(other-station) fired %s's binding (%d → %d)", stationID, base, got)
 	}
 }
 
-func mustOutbox(t *testing.T, db *store.DB) []*messaging.OutboxMessage {
-	t.Helper()
-	msgs, err := db.ListPendingOutbox(50)
-	if err != nil {
-		t.Fatalf("list outbox: %v", err)
-	}
-	return msgs
+// ── what "it fired" means now ────────────────────────────────────────────────
+//
+// THIS SUITE CHANGED WHAT IT WATCHES, NOT WHAT IT ASSERTS. Every test here asks
+// the same question it always did — did the monitor decide to replenish this
+// binding, and with what reading — and every one still asks it. What moved is
+// where the answer is observed.
+//
+// It used to scan the outbox for a LoopBelowThresholdSignal envelope, because
+// the decision was a message to the Edge and the Edge then worked out how many
+// carriers were needed and where they went. That split is what the cutover
+// ended: Core makes the whole decision and creates the orders itself, so there
+// is no signal to scan for. Reading the outbox for orders instead would be the
+// obvious substitute and it is the wrong one — it would make every test in this
+// file depend on a full loader configuration, a payload capacity, and free
+// windows, none of which any of them is about, and a fixture gap would then
+// read as "the monitor did not fire" when the monitor fired perfectly.
+//
+// So the tests watch the fire decision directly, through the hook the monitor
+// already carries for exactly this. The reading, the threshold, the binding and
+// the reason are all on the decision; what happens downstream of it belongs to
+// ReplenishLoader's own tests.
+
+// firedBinding is one decision the monitor made.
+type firedBinding struct {
+	StationID    string
+	CoreNodeName string
+	PayloadCode  string
+	Threshold    int
+	CurrentUOP   int
+	Reason       string
 }
 
-// findLoopBelowThresholdSignal scans outbox rows for a LoopBelowThresholdSignal
-// envelope addressed to the given station and decodes it. Mirrors
-// findDemandSignal's pattern in wiring_kanban_test.go.
-func findLoopBelowThresholdSignal(t *testing.T, msgs []*messaging.OutboxMessage, stationID string) *protocol.LoopBelowThresholdSignal {
-	t.Helper()
-	wantType := "data." + protocol.SubjectLoopBelowThreshold
-	for _, m := range msgs {
-		if m.MsgType != wantType || m.StationID != stationID {
-			continue
-		}
-		var env protocol.Envelope
-		testutil.MustNoErr(t, json.Unmarshal(m.Payload, &env), "decode envelope")
-		var data protocol.Data
-		testutil.MustNoErr(t, json.Unmarshal(env.Payload, &data), "decode data wrapper")
-		var sig protocol.LoopBelowThresholdSignal
-		testutil.MustNoErr(t, json.Unmarshal(data.Body, &sig), "decode LoopBelowThresholdSignal body")
-		return &sig
-	}
-	return nil
+// fireLog records the monitor's decisions. Concurrency-safe: the startup sweep
+// runs on its own goroutine.
+type fireLog struct {
+	mu    sync.Mutex
+	fired []firedBinding
 }
 
-// countLoopBelowThresholdSignals counts outbox rows that are
-// LoopBelowThresholdSignal envelopes addressed to the given station.
-func countLoopBelowThresholdSignals(msgs []*messaging.OutboxMessage, stationID string) int {
-	wantType := "data." + protocol.SubjectLoopBelowThreshold
+// captureThresholdFires installs the recorder on a started engine's monitor.
+// Call after eng.Start(), before the action under test.
+func captureThresholdFires(t *testing.T, eng *Engine) *fireLog {
+	t.Helper()
+	m := eng.ThresholdMonitor()
+	if m == nil {
+		t.Fatal("engine has no threshold monitor")
+	}
+	fl := &fireLog{}
+	m.fireHook = func(b thresholdEntry, total int, reason string) {
+		fl.mu.Lock()
+		defer fl.mu.Unlock()
+		fl.fired = append(fl.fired, firedBinding{
+			StationID: b.stationID, CoreNodeName: b.coreNodeName, PayloadCode: b.payloadCode,
+			Threshold: b.threshold, CurrentUOP: total, Reason: reason,
+		})
+	}
+	return fl
+}
+
+// count returns how many decisions have been made for a station.
+func (f *fireLog) count(stationID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	n := 0
-	for _, m := range msgs {
-		if m.MsgType == wantType && m.StationID == stationID {
+	for _, b := range f.fired {
+		if b.StationID == stationID {
 			n++
 		}
 	}
 	return n
+}
+
+// find returns the most recent decision for a station, or nil.
+func (f *fireLog) find(stationID string) *firedBinding {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.fired) - 1; i >= 0; i-- {
+		if f.fired[i].StationID == stationID {
+			b := f.fired[i]
+			return &b
+		}
+	}
+	return nil
 }
 
 // TestThresholdMonitor_StartupSweep_NegativeTotal_StillEmitsSignal pins the
@@ -798,16 +825,15 @@ func TestThresholdMonitor_StartupSweep_NegativeTotal_StillEmitsSignal(t *testing
 	// in-loop total negative — the Springfield 74577-6SA0A.06 shape.
 	seedBinWithUOP(t, db, payload, -443)
 
-	preMsgs, _ := db.ListPendingOutbox(50)
-	preCount := countLoopBelowThresholdSignals(preMsgs, stationID)
+	fires := captureThresholdFires(t, eng)
+	preCount := fires.count(stationID)
 
 	// Drive the sweep directly rather than waiting out Run()'s 3s grace.
 	eng.thresholdMonitor.startupSweep(context.Background())
 
-	msgs, _ := db.ListPendingOutbox(50)
-	if got := countLoopBelowThresholdSignals(msgs, stationID); got <= preCount {
+	if got := fires.count(stationID); got <= preCount {
 		t.Errorf("startup sweep emitted no signal on a negative in-loop total; want at least one — a restart is what an operator does BECAUSE the counts look wrong, and it must not leave the line unserved (outbox=%v)",
-			outboxSummary(msgs))
+			fires.fired)
 	}
 }
 

@@ -239,12 +239,19 @@ func TestClearBin_NoEmptyOut_WhenWindowEmpty(t *testing.T) {
 }
 
 // TestLoadablePayloads_NotGatedByActiveStyle pins that the server gate is the
-// loader-wide union of every configured payload — active OR inactive style — and
-// is identical for normal and transitional loaders. The active-vs-all split is a
-// board display concern, not a load-validation one: a loader responds to what is
-// called for, not to the running style. This is what fixed the plant error
-// (payload "…" not in allowed list for node) — loading a payload that belongs to
-// a style other than the one currently running is no longer rejected.
+// loader-wide union of every configured payload — active OR inactive style. The
+// active-vs-all split is a board display concern, not a load-validation one: a
+// loader responds to what is called for, not to the running style. This is what
+// fixed the plant error (payload "…" not in allowed list for node) — loading a
+// payload that belongs to a style other than the one currently running is no
+// longer rejected.
+//
+// It also used to assert the gate was unchanged by the Edge-only operator-driven
+// flag. That flag is gone: the supply mode moved onto the Core-owned loader row
+// and the table it lived in had no readers left. The orthogonality it was
+// pinning still holds and still matters — HOW a loader is supplied must not
+// narrow WHAT it may be asked to load — but the loader aggregate is where that
+// belongs now, and it is pinned there rather than here.
 func TestLoadablePayloads_NotGatedByActiveStyle(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -277,13 +284,6 @@ func TestLoadablePayloads_NotGatedByActiveStyle(t *testing.T) {
 		t.Errorf("normal loader: loadablePayloads = %v, want [PART-A PART-B] (not gated by active style)", got)
 	}
 
-	// Operator-driven flag does not change the server gate — same union.
-	if err := db.SetOperatorDrivenLoader("LOADER", true, "test"); err != nil {
-		t.Fatalf("set operator-driven: %v", err)
-	}
-	if got := eng.loadablePayloads(node, claim); !slices.Equal(got, []string{"PART-A", "PART-B"}) {
-		t.Errorf("operator-driven loader: loadablePayloads = %v, want [PART-A PART-B] (same loader-wide union)", got)
-	}
 }
 
 // seedLegacySimpleClaim seeds a process/node/style/claim carrying the retired

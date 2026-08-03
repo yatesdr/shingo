@@ -189,33 +189,6 @@ func TestThresholdMonitor_OnBinUOPDelta_NoBindings(t *testing.T) {
 	tm.OnBinUOPDelta("UNMONITORED", -10) // no bindings, should not panic
 }
 
-// TestThresholdMonitor_OnBucketApplied_EmitsEvent pins the one side effect
-// OnBucketApplied still owns unconditionally: emitting EventLinesideBucketApplied
-// for other subscribers. (The threshold re-evaluation now reads the DB, which
-// the nil-inventory unit engine returns 0 for; an UNMONITORED payload is used
-// so no fire path is exercised.) The old assertion on an incremental uopCache
-// value is gone with the tally.
-func TestThresholdMonitor_OnBucketApplied_EmitsEvent(t *testing.T) {
-	t.Parallel()
-	tm := newTestMonitor()
-	tm.eng = &Engine{Events: NewEventBus()}
-
-	var got *LinesideBucketAppliedEvent
-	tm.eng.Events.SubscribeTypes(func(ev Event) {
-		e := ev.Payload.(LinesideBucketAppliedEvent)
-		got = &e
-	}, EventLinesideBucketApplied)
-
-	tm.OnBucketApplied("s1", "LOADER", "UNMONITORED-WIDGET", -10, "capture")
-
-	if got == nil {
-		t.Fatal("OnBucketApplied did not emit EventLinesideBucketApplied")
-	}
-	if got.PayloadCode != "UNMONITORED-WIDGET" || got.Delta != -10 || got.CoreNodeName != "LOADER" {
-		t.Errorf("emitted event = %+v, want payload=UNMONITORED-WIDGET delta=-10 node=LOADER", *got)
-	}
-}
-
 func TestThresholdMonitor_OnBucketApplied_SkipsEmptyPayload(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()

@@ -228,8 +228,11 @@ func (s *BinManifestService) ClearForReuse(binID int64, binTypeID *int64) (int64
 // The epoch bump is on this path (not on SetForProduction) so a bin
 // that's released_empty then sits idle still has a clean dedup space
 // for whatever delta arrives next — the SetForProduction would bump
-// a second time, but the (load-side) Edge cache learns the post-clear
-// epoch on the bin-state refresh that follows the clear.
+// a second time, but the station is told the post-clear generation by the
+// announcement the bump itself sends, in this same transaction.
+//
+// This used to say the station learned it "on the bin-state refresh that
+// follows the clear". There was no bin-state refresh. Nothing polled.
 //
 // binTypeID is optional (nil = preserve existing bin_type_id). When
 // non-nil, bin_type_id is updated atomically with the manifest clear.

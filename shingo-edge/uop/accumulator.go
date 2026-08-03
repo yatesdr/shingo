@@ -223,8 +223,10 @@ func (r *accumulator) stop() {
 // SequenceID per (bin, reason).
 // recordBin accumulates a signed delta against a specific bin. epoch is
 // the bin's current load-lifecycle epoch — caller threads it through
-// from the bin-state cache (populated by Core's LoadBin response and
-// the periodic bin-state refresh). A fresh entry stores the epoch on
+// from the bin-state cache (populated by Core's LoadBin response, by the
+// announcement Core sends whenever a generation changes, and by Core's reply
+// when a count is discarded for carrying an old one). A fresh entry stores the
+// epoch on
 // first touch; subsequent calls overwrite epoch when the caller
 // presents a higher value (a lifecycle bump between two ticks rolls
 // the entry's epoch forward so the next flush stamps the new value).

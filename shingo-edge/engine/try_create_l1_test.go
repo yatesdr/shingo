@@ -39,11 +39,11 @@ func TestTryCreateL1_BoundedByNodeWindowCapAndReturnsCreated(t *testing.T) {
 	loader := resolveLoader(t, eng, "PART-Z")
 
 	// Want 1, window empty -> 1 created.
-	if created, err := eng.fireThresholdL1(loader, "PART-Z", 1, "", orders.Origin{}); err != nil || created != 1 {
+	if created, err := eng.stageOperatorEmpty(loader, "PART-Z", 1, "", orders.Origin{}); err != nil || created != 1 {
 		t.Fatalf("seed fire: created=%d err=%v, want 1, nil", created, err)
 	}
 	// Want 3, but the one-window loader already holds its empty -> node cap fires 0.
-	if created, err := eng.fireThresholdL1(loader, "PART-Z", 3, "", orders.Origin{}); err != nil || created != 0 {
+	if created, err := eng.stageOperatorEmpty(loader, "PART-Z", 3, "", orders.Origin{}); err != nil || created != 0 {
 		t.Errorf("node cap: created=%d err=%v, want 0, nil (window already holds 1)", created, err)
 	}
 
@@ -62,11 +62,22 @@ func TestTryCreateL1_BoundedByNodeWindowCapAndReturnsCreated(t *testing.T) {
 	}
 }
 
-// TestTryCreateL1_OperatorDrivenSuppressesThresholdSource pins the allowlist gate:
-// on an operator-driven loader the automatic threshold source (L1LoopThreshold)
-// fires nothing; switching to threshold replenishment restores it. (L1LoaderPush,
-// the operator-driven supply path, must NOT be suppressed — covered in the push tests.)
-func TestTryCreateL1_OperatorDrivenSuppressesThresholdSource(t *testing.T) {
+// TestOperatorPushIsNotSuppressedAtAnOperatorDrivenLoader.
+//
+// THIS TEST CHANGED SIDES. It used to pin the opposite: that the automatic
+// threshold source fired nothing at an operator-driven loader. That source no
+// longer exists on the Edge — Core decides a loader's automatic replenishment
+// now — and the guarantee moved with it, to ReplenishLoader, which refuses an
+// operator-driven loader by name ("a person stages it, so no carriers are
+// ordered automatically"). Deleting this test would have lost the other half of
+// the pair, which is what is asserted here instead.
+//
+// The half that stays on the Edge: the OPERATOR'S OWN PUSH must fire at an
+// operator-driven loader. That is the entire point of an operator-driven
+// loader — a person stages it, and this is the path they stage it through.
+// Suppressing it here would leave such a loader with no supply at all from
+// either side, which is a stopped line rather than a cautious one.
+func TestOperatorPushIsNotSuppressedAtAnOperatorDrivenLoader(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -74,25 +85,32 @@ func TestTryCreateL1_OperatorDrivenSuppressesThresholdSource(t *testing.T) {
 
 	// Operator-driven in the aggregate: replenishment=operator.
 	seedCoreLoader(t, eng, sharedLoaderInfo("TR-LOADER", "produce", "operator", "PART-T", 0, 0))
-	// Resolve AFTER seeding: fireThresholdL1 reads loader.IsOperatorDriven() (the projected
-	// aggregate snapshot), so the loader must be (re)resolved to observe it.
-	// Representative of production, where each demand signal re-resolves the loader.
+	// Resolve AFTER seeding: the create path reads the projected aggregate
+	// snapshot, so the loader must be (re)resolved to observe it.
 	loader := resolveLoader(t, eng, "PART-T")
-	if created, err := eng.fireThresholdL1(loader, "PART-T", 2, "", orders.Origin{}); err != nil || created != 0 {
-		t.Errorf("L1LoopThreshold on operator-driven: created=%d err=%v, want 0, nil", created, err)
+	// Asks for two, bounded to one by the single-window node cap.
+	if created, err := eng.stageOperatorEmpty(loader, "PART-T", 2, "", orders.Origin{}); err != nil || created != 1 {
+		t.Errorf("operator push at an operator-driven loader: created=%d err=%v, want 1, nil — "+
+			"this is the path a person stages the loader through; suppressing it leaves the "+
+			"loader with no supply from either side", created, err)
 	}
 	ords, _ := db.ListActiveOrdersByProcessNode(nodeID)
+	var n int
 	for _, o := range ords {
 		if o.RetrieveEmpty && o.PayloadCode == "PART-T" {
-			t.Fatalf("operator-driven loader must not auto-create threshold L1s; found order %d", o.ID)
+			n++
 		}
 	}
+	if n != 1 {
+		t.Fatalf("in-flight empties = %d, want 1", n)
+	}
 
-	// Switch to threshold replenishment: the threshold source fires again.
+	// And at a threshold loader it still fires — the push is not gated on
+	// replenishment mode in either direction.
 	seedCoreLoader(t, eng, sharedLoaderInfo("TR-LOADER", "produce", "threshold", "PART-T", 0, 0))
-	loader = resolveLoader(t, eng, "PART-T") // re-resolve so the snapshot reflects the change
-	// Bounded by the one-window node cap to a single empty.
-	if created, err := eng.fireThresholdL1(loader, "PART-T", 2, "", orders.Origin{}); err != nil || created != 1 {
-		t.Errorf("after switching to threshold: created=%d err=%v, want 1, nil", created, err)
+	loader = resolveLoader(t, eng, "PART-T")
+	if created, err := eng.stageOperatorEmpty(loader, "PART-T", 2, "", orders.Origin{}); err != nil || created != 0 {
+		t.Errorf("second push while one is already in flight: created=%d err=%v, want 0, nil "+
+			"(the window is taken)", created, err)
 	}
 }

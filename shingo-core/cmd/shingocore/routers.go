@@ -53,7 +53,6 @@ func buildSubjectRouter(svc *messaging.CoreDataService) (*router.SubjectRouter, 
 	router.RegisterSubject(r, protocol.SubjectProductionReport, svc.HandleProductionReport)
 	router.RegisterSubject(r, protocol.SubjectTagVerifyRequest, svc.HandleTagVerifyRequest)
 	router.RegisterSubjectBare(r, protocol.SubjectCatalogPayloadsRequest, svc.HandleCatalogPayloadsRequest)
-	router.RegisterSubject(r, protocol.SubjectNodeStateRequest, svc.HandleNodeStateRequest)
 	router.RegisterSubject(r, protocol.SubjectOrderStatusRequest, svc.HandleOrderStatusRequest)
 	router.RegisterSubject(r, protocol.SubjectClaimSync, svc.HandleClaimSync)
 	router.RegisterSubject(r, protocol.SubjectCountGroupAck, svc.HandleCountGroupAck)

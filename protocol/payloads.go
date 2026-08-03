@@ -678,27 +678,6 @@ type TagVerifyResponse struct {
 	Detail    string `json:"detail,omitempty"`
 }
 
-// --- Node State ---
-
-// NodeStateRequest is sent by edge to query the occupancy state of specific nodes.
-type NodeStateRequest struct {
-	Nodes []string `json:"nodes"` // node names to query
-}
-
-// NodeStateEntry describes the occupancy state of a single node.
-type NodeStateEntry struct {
-	Name        string `json:"name"`
-	Occupied    bool   `json:"occupied"`               // has at least one bin
-	BinCount    int    `json:"bin_count"`              // number of bins at node
-	Claimed     bool   `json:"claimed"`                // any bin claimed by an active order
-	PayloadCode string `json:"payload_code,omitempty"` // payload of first bin (if occupied)
-}
-
-// NodeStateResponse carries the occupancy state for requested nodes.
-type NodeStateResponse struct {
-	Nodes []NodeStateEntry `json:"nodes"`
-}
-
 // --- Payload Catalog ---
 
 // CatalogPayloadsRequest is sent by edge to request the payload catalog.
@@ -1090,58 +1069,6 @@ type LinesideBucketDelta struct {
 	SequenceID   int64                     `json:"sequence_id"`
 	WindowStart  time.Time                 `json:"window_start"`
 	WindowEnd    time.Time                 `json:"window_end"`
-}
-
-// LoopBelowThresholdSignal is sent by Core to Edge when total in-loop
-// UOP for a (loader, payload) pair drops below the configured threshold.
-// Edge responds by firing an L1 retrieve_empty through HandleLoopBelowThreshold,
-// deduped by the reservation seam (withLoaderBudget), which counts what is
-// already in flight for that loader.
-//
-// CoreNodeName is the loader-member node the binding is about — a real node
-// (the position for dedicated, the first window for shared_window). The loader's
-// IDENTITY is LoaderKey; the Edge resolves the loader by that token and uses
-// CoreNodeName/MemberNodeName only as the delivery address.
-//
-// Reason is logged and nothing branches on it. Core sends four:
-// "below_threshold" (the ordinary crossing), "warm_up_startup_sweep" (boot
-// observed an existing under-threshold state and fires up to the per-binding
-// warm-up cap), "lineside_report" (the shadow monitor re-evaluating on an Edge
-// lineside report) and "manual_swap_recheck".
-//
-// This is the ONLY automatic path that fires an L1. The legacy bin-count
-// DemandSignal route is retired — Core still emits produce DemandSignals but
-// Edge routes them to no handler — so there is no second path to skip pairs for.
-type LoopBelowThresholdSignal struct {
-	PayloadCode  string `json:"payload_code"`
-	CurrentUOP   int    `json:"current_uop"`
-	Threshold    int    `json:"threshold"`
-	CoreNodeName string `json:"core_node_name"`
-	// MemberNodeName names the specific loader member (a dedicated position, or a
-	// shared window) the binding is about — distinct from the loader IDENTITY. The
-	// Edge routes the empty to THIS node instead of first-match, fixing the
-	// same-payload-on-two-positions bug (O2). Additive (omitempty); for a
-	// shared_window loader it is empty/the anchor and the seam funnels to a free
-	// window regardless. Today CoreNodeName still doubles as identity+member; step 4
-	// splits them (CoreNodeName → identity, MemberNodeName → the address).
-	MemberNodeName string `json:"member_node_name,omitempty"`
-	// LoaderKey is the loader's opaque identity token ("loader:<id>"). Additive;
-	// populated at the step-4 identity cutover (when demand_registry carries
-	// loader_id) and becomes the Edge cache key the signal resolves against. Empty
-	// before then — the Edge resolves via CoreNodeName until the cutover.
-	LoaderKey string `json:"loader_key,omitempty"`
-	Reason    string `json:"reason"`
-	// OriginID is the demand episode this signal belongs to, so the orders the
-	// Edge creates in response can be stamped as its children.
-	//
-	// SEAM 1, Core -> Edge, and the leg the first draft of the design omitted
-	// entirely. Additive omitempty with a receiver-side fallback, the same
-	// pattern MemberNodeName and LoaderKey above already use twice: an old Edge
-	// ignores it and its orders land unattributed, a new Edge against an old
-	// Core sees "" and behaves exactly as it does today. There is no version
-	// gate in this system to negotiate with — protocol.Version is stamped and
-	// never read.
-	OriginID string `json:"origin_id,omitempty"`
 }
 
 // UOPAdjustment carries an absolute UOP value set by an admin via Core's

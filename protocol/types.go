@@ -53,9 +53,6 @@ const (
 	SubjectCatalogPayloadsRequest  = "catalog.payloads_request"
 	SubjectCatalogPayloadsResponse = "catalog.payloads_response"
 
-	SubjectNodeStateRequest  = "node.state_request"
-	SubjectNodeStateResponse = "node.state_response"
-
 	SubjectOrderStatusRequest  = "order.status_request"
 	SubjectOrderStatusResponse = "order.status_response"
 
@@ -76,7 +73,6 @@ const (
 	//   DemandSignal route is retired: Core still emits produce
 	//   DemandSignals, but Edge routes them to no handler, so there are no
 	//   "opted-in pairs" for anything to skip.
-	SubjectLoopBelowThreshold = "demand.loop_below_threshold" // Core -> Edge
 
 	// Count-group light alerts (advanced-zone occupancy → PLC-driven warning light)
 	SubjectCountGroupCommand = "countgroup.command" // Core -> Edge: requested light state for a zone
@@ -243,7 +239,7 @@ const (
 	// outbound half of the plant.claims feed: Edge reports its claims up, Core
 	// computes sourceability and pushes the answer back down so HMI screens know
 	// before an operator presses CHANGE. A new SUBJECT on the existing
-	// shingo.dispatch topic (NOT a new topic — the SubjectLoopBelowThreshold
+	// shingo.dispatch topic (NOT a new topic — the SubjectSourcingState
 	// precedent). Core publishes on status change plus a periodic full snapshot;
 	// Edge persists to SQLite so a reload needs no Core round-trip. Value schema
 	// is ADDITIVE-only; an older Edge that does not register this subject
@@ -329,7 +325,6 @@ func CoreInboundSubjects() []string {
 		SubjectProductionReport,
 		SubjectTagVerifyRequest,
 		SubjectCatalogPayloadsRequest,
-		SubjectNodeStateRequest,
 		SubjectOrderStatusRequest,
 		SubjectClaimSync,
 		SubjectCountGroupAck,
@@ -368,7 +363,6 @@ func EdgeInboundSubjects() []string {
 		SubjectEdgeStale,
 		SubjectNodeStructureChanged,
 		SubjectDemandSignal,
-		SubjectLoopBelowThreshold,
 		SubjectCountGroupCommand,
 		SubjectBinPickedUp,
 		SubjectUOPAdjustment,

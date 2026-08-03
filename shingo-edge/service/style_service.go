@@ -106,14 +106,6 @@ func (s *StyleService) ListClaims(styleID int64) ([]processes.NodeClaim, error) 
 	return claims, nil
 }
 
-// SetOperatorDrivenLoader marks (on) or clears the loader-wide operator-driven
-// flag for a bin loader, keyed by core_node_name. updatedBy is recorded on
-// the audit column. The caller is responsible for restricting this to a
-// produce manual_swap claim — the set itself is loader-wide and untyped.
-func (s *StyleService) SetOperatorDrivenLoader(coreNodeName string, on bool, updatedBy string) error {
-	return s.db.SetOperatorDrivenLoader(coreNodeName, on, updatedBy)
-}
-
 func (s *StyleService) SetHomeLocationLoader(coreNodeName string, on bool, updatedBy string) error {
 	return s.db.SetHomeLocationLoader(coreNodeName, on, updatedBy)
 }

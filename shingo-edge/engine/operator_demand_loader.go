@@ -5,7 +5,6 @@ import (
 	"log"
 	"sync"
 
-	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/orders"
 )
@@ -23,221 +22,31 @@ import (
 // anti-spam guard also encodes (operator_bin_ops.go).
 const manualSwapWindowSlots = 1
 
-// The legacy bin-count produce DemandSignal trigger (MaybeCreateLoaderEmptyIn +
-// findLoaderForDemand + refillLoaderForPayload) is RETIRED. A produce loader is now
-// either operator-driven (window-free opportunistic staging — MaybePushLoader) or
-// threshold-driven (UOP kanban autoreorder — HandleLoopBelowThreshold); there is no
-// bin-count floor. Core still emits produce DemandSignals on bin movements, but the
-// Edge no longer routes them to a handler (see cmd/shingoedge/main.go) — supply comes
-// from the threshold monitor and the operator push, both via the withLoaderBudget seam.
-
-// HandleLoopBelowThreshold is the Core→Edge LoopBelowThresholdSignal
-// receiver. Operates in UOP space — the native unit of the threshold
-// configuration — rather than in bin counts:
+// A produce loader's automatic replenishment is now decided entirely on Core.
+// The Edge used to receive a below-threshold signal and work out how many
+// carriers were needed and where they went; that half is gone, and Core creates
+// the orders itself. What is left here is the OPERATOR side: the opportunistic
+// window-free push (MaybePushLoader), the operator's own requests, and the
+// unloader path — all still through the withLoaderBudget seam.
 //
-//	projectedUOP := sig.CurrentUOP + inFlight * payload.UOPCapacity
-//	needed       := ceil((threshold - projectedUOP) / capacity)
-//
-// projectedUOP is the asymptote of the current trajectory: each
-// in-flight L1 will, once filled and returned via L2, contribute one
-// bin's capacity of UOP. If that's already at or above threshold, the
-// loop is on track and we skip. Otherwise we fire just enough L1s to
-// close the gap, rounding up to whole bins.
-//
-// There is no second path any more. This used to say it was "distinct from the
-// legacy DemandSignal path, which keeps the magic-2 bin floor", and called the
-// seam "the dedup contract between the two paths" — while the block twenty lines
-// above it in this same file already recorded that path as retired. Two comments
-// in one file disagreeing about how many ways a loader gets stocked is worse
-// than either being wrong alone. One way: the threshold signal and the operator
-// push, both through withLoaderBudget.
-//
-// Capacity comes from payload_catalog.uop_capacity (synced from Core),
-// not from claim.UOPCapacity — supermarket-side loaders carry
-// UOPCapacity=0 since they don't consume parts themselves, while the
-// payload's per-bin capacity is a property of the part. Missing or
-// zero capacity is treated as a configuration error and skipped with
-// a loud log; falling back to bin-count math would re-introduce the
-// magic-floor over-fire this path exists to avoid.
-//
-// Reason is logged for diagnostics and does not change what happens here — every
-// value behaves identically. Core sends four: "below_threshold" (the ordinary
-// crossing), "warm_up_startup_sweep" (the boot sweep), "lineside_report" (the
-// shadow monitor re-evaluating on an Edge lineside report), and
-// "manual_swap_recheck". The list is worth keeping accurate even though nothing
-// branches on it, because it is what tells a reader what actually reaches this
-// function — it named only the first two for two of those four's lifetimes.
-// Per-binding warm-up cap is enforced at Core; Edge just responds to each signal.
-func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal) {
-	if sig == nil || sig.PayloadCode == "" {
-		return
-	}
-	// Resolve the loader by the authoritative CoreNodeName the signal carries
-	// (v6+), NOT by payload alone: when the same payload is loaded at two
-	// loaders (multi-cell plants — the SNF2/SNF3 case this work centres on),
-	// Core signals one binding, but a payload-only first-match can pick the
-	// other and fire the L1 at the wrong window. FindLoaderClaimAt still walks
-	// every style (Round-3 Obs 9: an INACTIVE-style loader must still receive
-	// threshold-driven L1s). Fall back to payload-only resolution only for a
-	// pre-v6 Core that didn't stamp CoreNodeName, logging the degraded path.
-	// Resolve through the LoaderStore (the flag dual). LoaderAt covers every
-	// style (the aggregate is styleless; the legacy walk is all-styles) so an
-	// INACTIVE-style loader still receives threshold L1s (Round-3 Obs 9). On a
-	// store error or a loader that doesn't serve the payload, drop the signal —
-	// never reroute. Fall back to payload-first-match only for a pre-v6 Core that
-	// didn't stamp CoreNodeName.
-	pay := domain.PayloadCode(sig.PayloadCode)
-	var loader *domain.Loader
-	// Resolve by the loader IDENTITY token first (step-4 cutover): a synthetic loader
-	// with no anchor node resolves here where LoaderAt(CoreNodeName) cannot. Fall back
-	// to the binding node (pre-cutover / legacy Core), then payload-first-match (pre-v6
-	// Core that stamped no node at all).
-	if sig.LoaderKey != "" {
-		if l, err := e.loaders().LoaderByKey(domain.LoaderID(sig.LoaderKey), domain.RoleProduce); err == nil && l != nil && l.ServesPayload(pay) {
-			loader = l
-		}
-	}
-	if loader == nil && sig.CoreNodeName != "" {
-		if l, err := e.loaders().LoaderAt(domain.NodeID(sig.CoreNodeName), domain.RoleProduce); err == nil && l != nil && l.ServesPayload(pay) {
-			loader = l
-		}
-	}
-	if loader == nil && sig.LoaderKey == "" && sig.CoreNodeName == "" {
-		e.logFn("loop_threshold: signal for payload=%s has no loader_key/core_node_name — payload-first-match fallback (pre-v6 Core?)", sig.PayloadCode)
-		if l, err := e.loaders().LoaderForPayload(pay, domain.RoleProduce, false); err == nil {
-			loader = l
-		}
-	}
-	if loader == nil {
-		// Startup race: if the loader cache hasn't synced yet, this miss is almost
-		// certainly the signal beating the node-list sync — park it for replay rather
-		// than drop it (closes the gap where a fresh-restart reorder was lost until
-		// the next delta). After the cache has warmed once, a miss is genuine.
-		if e.parkThresholdSignalIfCold(sig) {
-			return
-		}
-		e.debugFn("loop_threshold: no loader for core_node=%s payload=%s — dropping signal", sig.CoreNodeName, sig.PayloadCode)
-		return
-	}
-	e.debugFn("loop_threshold: signal received loader=%s payload=%s current=%d threshold=%d reason=%s",
-		loader.ID(), sig.PayloadCode, sig.CurrentUOP, sig.Threshold, sig.Reason)
-
-	entry, err := e.catalogService.GetByCode(sig.PayloadCode)
-	if err != nil || entry == nil || entry.UOPCapacity <= 0 {
-		e.logFn("loop_threshold: loader=%s payload=%s no per-bin capacity in catalog — skipping (err=%v)",
-			loader.ID(), sig.PayloadCode, err)
-		return
-	}
-	capacity := entry.UOPCapacity
-
-	// A NEGATIVE CurrentUOP is a broken ledger, not demand for the whole
-	// threshold. Springfield's -443 made this gap 455 and desiredBins 26 —
-	// every number downstream computed from a reading already known to be
-	// garbage. Size the gap from 0 instead.
-	//
-	// ORDERING STILL CONTINUES. The suppression reversal stands: a negative
-	// total means material moved off the books, which is exactly when the loop
-	// needs replenishing. A broken count does not get to SIZE the order; it
-	// does not get to cancel it either.
-	//
-	// The bound on what actually gets created is the withLoaderBudget window
-	// budget (one bin per delivery node, minus in-flight), which caps toFire
-	// regardless of what desiredBins says. That clamp was load-bearing here by
-	// accident; this makes the sizing defensible on its own and
-	// TestHandleLoopBelowThreshold_NegativeCurrentUOP names the budget as the
-	// backstop so a change to either one does not silently remove both.
-	current := sig.CurrentUOP
-	if current < 0 {
-		e.logFn("loop_threshold: loader=%s payload=%s currentUOP=%d is negative — sizing the gap from 0 (ledger is off the books; ordering continues)",
-			loader.ID(), sig.PayloadCode, current)
-		current = 0
-	}
-
-	// Desired total in-flight bins to reach threshold from the CURRENT loop
-	// UOP. fireThresholdL1 subtracts what is already in flight and fires the
-	// remainder — the in-flight dedup contract lives there now, not here.
-	gap := sig.Threshold - current
-	if gap <= 0 {
-		e.debugFn("loop_threshold: loader=%s payload=%s currentUOP=%d >= threshold=%d — skipping",
-			loader.ID(), sig.PayloadCode, sig.CurrentUOP, sig.Threshold)
-		return
-	}
-	desiredBins := (gap + capacity - 1) / capacity
-	e.debugFn("loop_threshold: loader=%s payload=%s gap=%d capacity=%d desired_bins=%d",
-		loader.ID(), sig.PayloadCode, gap, capacity, desiredBins)
-
-	// Route the empty to the member the signal names (the same-payload-two-positions
-	// fix). Pre-step-4 the member rides MemberNodeName; fall back to CoreNodeName,
-	// which still doubles as the member until the identity cutover splits them.
-	member := domain.NodeID(sig.MemberNodeName)
-	if member == "" {
-		member = domain.NodeID(sig.CoreNodeName)
-	}
-	created, err := e.fireThresholdL1(loader, pay, desiredBins, member, thresholdOrigin(sig))
-	if err != nil {
-		e.logFn("loop_threshold: loader=%s payload=%s — L1 creation failed after %d created: %v",
-			loader.ID(), sig.PayloadCode, created, err)
-		return
-	}
-	if created > 0 {
-		e.logFn("loop_threshold: loader=%s payload=%s firing %d L1 (currentUOP=%d threshold=%d capacity=%d)",
-			loader.ID(), sig.PayloadCode, created, sig.CurrentUOP, sig.Threshold, capacity)
-	}
-}
-
-// parkThresholdSignalIfCold parks a LoopBelowThresholdSignal that could not resolve
-// a loader because the loader cache has not synced yet — the fresh-restart race
-// where the signal beats the node-list sync. Returns true if parked (caller returns
-// without dropping). Once the cache has warmed once, returns false so a genuine miss
-// is still dropped (and self-heals via the next delta) rather than parked forever.
-func (e *Engine) parkThresholdSignalIfCold(sig *protocol.LoopBelowThresholdSignal) bool {
-	if e.loaderCacheWarmed.Load() {
-		return false
-	}
-	e.pendingThreshMu.Lock()
-	defer e.pendingThreshMu.Unlock()
-	if e.loaderCacheWarmed.Load() { // a sync may have warmed it between the check and the lock
-		return false
-	}
-	e.pendingThreshold = append(e.pendingThreshold, sig)
-	e.logFn("loop_threshold: parked signal core_node=%s payload=%s — loader cache not synced yet (will replay on sync)",
-		sig.CoreNodeName, sig.PayloadCode)
-	return true
-}
-
-// warmLoaderCacheAndReplay marks the loader cache warmed on its first sync and
-// replays every threshold signal parked before then. Idempotent: the replay runs
-// exactly once, on the first SetCoreLoaders. Replayed signals re-enter
-// HandleLoopBelowThreshold, which now resolves them against the freshly-synced cache.
-func (e *Engine) warmLoaderCacheAndReplay() {
-	e.pendingThreshMu.Lock()
-	if e.loaderCacheWarmed.Load() {
-		e.pendingThreshMu.Unlock()
-		return
-	}
-	e.loaderCacheWarmed.Store(true)
-	parked := e.pendingThreshold
-	e.pendingThreshold = nil
-	e.pendingThreshMu.Unlock()
-
-	for _, sig := range parked {
-		e.logFn("loop_threshold: replaying parked signal core_node=%s payload=%s after loader-cache sync",
-			sig.CoreNodeName, sig.PayloadCode)
-		e.HandleLoopBelowThreshold(sig)
-	}
-}
+// Two earlier retirements, kept as gravestones because their names still appear
+// in incident records: the bin-count produce DemandSignal trigger
+// (MaybeCreateLoaderEmptyIn + findLoaderForDemand + refillLoaderForPayload), and
+// the threshold receiver that replaced it (HandleLoopBelowThreshold + its
+// park/replay machinery). Core still emits produce DemandSignals on bin
+// movements; the Edge routes them to no handler.
 
 // L1Source identifies which path is creating a loader empty-in (L1)
-// retrieve_empty order. The legacy bin-count source (L1SideCycle) is retired —
-// a loader is supplied by the UOP-threshold C-push (L1LoopThreshold) or the
-// operator-driven opportunistic push (L1LoaderPush). It also carries the
-// operator-driven-suppression policy, so adding a source forces a decision
-// about its class rather than defaulting silently.
+// retrieve_empty order. Two sources are retired: the legacy bin-count one
+// (L1SideCycle) and the UOP-threshold C-push (L1LoopThreshold), whose decision
+// moved to Core. One source is left on the Edge — the operator-driven
+// opportunistic push. It also carries the operator-driven-suppression policy,
+// so adding a source forces a decision about its class rather than defaulting
+// silently.
 type L1Source string
 
 const (
-	L1LoopThreshold L1Source = "loop_threshold" // UOP-threshold C-push
-	L1LoaderPush    L1Source = "loader_push"    // operator-driven opportunistic empty staging
+	L1LoaderPush L1Source = "loader_push" // operator-driven opportunistic empty staging
 )
 
 // logTag is the stable, greppable prefix this source uses in log lines.
@@ -245,11 +54,11 @@ func (s L1Source) logTag() string { return string(s) }
 
 // suppressedByOperatorDriven reports whether an operator-driven loader silences
 // this source. Allowlist semantics: only the automatic market-accounting source
-// (L1LoopThreshold) opts in — an operator-driven loader is fed by the operator,
+// opts in — an operator-driven loader is fed by the operator,
 // not the threshold monitor. L1LoaderPush (the operator-driven supply path itself)
 // falls through to false, so it is NOT suppressed.
 func (s L1Source) suppressedByOperatorDriven() bool {
-	return s == L1LoopThreshold
+	return false
 }
 
 // loaderBudgetLock returns the per-loader reservation mutex, creating it on first
@@ -268,13 +77,17 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 // between the count and the create.
 //
 // SCOPE — this is the never-2N guarantee only for the writers that route
-// through here: fireThresholdL1 (Core's UOP-threshold signal), stageOperatorEmpty
-// (the opportunistic push, via maybeStageLoaderEmpty/MaybePushLoader),
-// RequestEmptyBin's manual_swap branch and RequestFullBin (operator), and
-// createUnloaderFullInViaSeam (automatic U1). It is NOT a universal chokepoint.
-// Per the 2026-07-31 census these create loader-window retrieves WITHOUT passing
-// through here: RequestEmptyBin's simple mode and the HTTP order API
-// (www/handlers_api_orders.go). The changeover paths (changeover_applier.go,
+// through here: stageOperatorEmpty (the opportunistic push, via
+// maybeStageLoaderEmpty/MaybePushLoader), RequestEmptyBin's manual_swap branch
+// and RequestFullBin (operator), createUnloaderFullInViaSeam (automatic U1),
+// and CreateRetrieveForAPI (the HTTP order API — added by Deploy 1b; the
+// sentence below that still names it as a bypass is corrected with it).
+// Core's own threshold replenishment no longer passes through here at all: it
+// does not run here any more. It is NOT a universal chokepoint.
+// Per the 2026-07-31 census this creates loader-window retrieves WITHOUT passing
+// through here: RequestEmptyBin's simple mode. The HTTP order API used to be
+// named here too and no longer belongs — Deploy 1b routed it through the seam
+// (api_retrieve.go). The changeover paths (changeover_applier.go,
 // operator_node_changeover.go) also create retrieves outside this seam; whether
 // either can target a loader window was NOT established and is an open question,
 // not a cleared one.
@@ -296,7 +109,8 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 // CreateRetrieveOrder is not transaction-pure — it enqueues to Core and fires a
 // synchronous EmitOrderCreated mid-write — so a surrounding tx could only
 // manufacture the Core/Edge divergence it was meant to prevent. See
-// FINAL-ADJUDICATION Q1 (monotonicity + unsoundness arguments).
+// FINAL-ADJUDICATION Q1 (monotonicity + unsoundness arguments) —
+// shingo-library/archive/bin-loader-multiwindow-reviews-2026-06-12/FINAL-ADJUDICATION.md.
 //
 // Fails CLOSED: a count read error fires nothing; the next signal retries.
 //
@@ -497,15 +311,6 @@ func loaderEmptySource(l *domain.Loader) string {
 	return l.InboundSource()
 }
 
-// fireThresholdL1 creates loader empties in response to Core's UOP-threshold
-// signal. THIS PATH IS MIGRATING: when loader ordering becomes Core-native the
-// threshold decision moves to Core and this function goes with it. It is named
-// separately from the operator push for exactly that reason — so the caller that
-// leaves and the caller that stays are distinguishable without re-deriving it.
-func (e *Engine) fireThresholdL1(loader *domain.Loader, payload domain.PayloadCode, count int, member domain.NodeID, origin orders.Origin) (int, error) {
-	return e.createLoaderEmpties(loader, payload, L1LoopThreshold, count, member, origin)
-}
-
 // stageOperatorEmpty creates loader empties opportunistically when a window
 // frees up on an operator-driven loader. THIS PATH STAYS on the Edge: it is
 // driven by what the operator physically did, which Core does not observe.
@@ -676,18 +481,4 @@ func (e *Engine) SweepPushLoaders() {
 	if swept > 0 {
 		log.Printf("loader-push: startup sweep covered %d operator-staged loader(s)", swept)
 	}
-}
-
-// thresholdOrigin attributes an L1 to the Core threshold episode that asked for
-// it, via the origin_id riding on the signal (seam 1).
-//
-// An EMPTY origin id — an older Core that predates the seam, or a signal that
-// carried none — leaves the class unstated rather than guessing. Core decides
-// what an unattributed order is; inventing "no_demand" here would be a lie,
-// since something did ask.
-func thresholdOrigin(sig *protocol.LoopBelowThresholdSignal) orders.Origin {
-	if sig == nil || sig.OriginID == "" {
-		return orders.Origin{}
-	}
-	return orders.Attached(sig.OriginID)
 }

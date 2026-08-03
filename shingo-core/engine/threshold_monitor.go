@@ -58,8 +58,8 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared/clock"
+	"shingocore/dispatch"
 	"shingocore/store/demands"
-	"shingocore/store/loaders"
 )
 
 // thresholdDebounceWindow is the per-(loader, payload) suppression
@@ -525,18 +525,18 @@ func (m *ThresholdMonitor) OnBinUOPDelta(payloadCode string, delta int) {
 }
 
 // OnBucketApplied is invoked by the messaging layer after a successful
-// LinesideBucketDelta apply. Emits the engine event for other subscribers, then
-// re-reads the authoritative sum and checks thresholds. The event emit is
-// unconditional (other subscribers rely on it); the threshold re-evaluation
-// short-circuits for unmonitored/empty payloads.
+// LinesideBucketDelta apply: it re-reads the authoritative sum and checks
+// thresholds, short-circuiting for unmonitored or empty payloads.
+//
+// It used to also emit an engine event, unconditionally, with a comment saying
+// other subscribers relied on it. There were none — not one production
+// subscriber anywhere, and no catch-all subscriber on Core either — so the only
+// thing that ever received it was a test asserting it was sent. Deleted with
+// the event type. The station and node arguments survive in the signature
+// because the caller has them and a future subscriber would need them; they are
+// unused here and marked so.
 func (m *ThresholdMonitor) OnBucketApplied(station, coreNodeName, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
-	m.eng.Events.Emit(Event{Type: EventLinesideBucketApplied, Payload: LinesideBucketAppliedEvent{
-		Station:      station,
-		CoreNodeName: coreNodeName,
-		PayloadCode:  payloadCode,
-		Delta:        delta,
-		Reason:       reason,
-	}})
+	_, _, _, _ = station, coreNodeName, delta, reason
 	m.evaluatePayload(payloadCode, "below_threshold")
 }
 
@@ -729,47 +729,88 @@ func (m *ThresholdMonitor) allow(key string) bool {
 	return true
 }
 
-// fireSignalCached builds and ships a LoopBelowThresholdSignal from a
-// cached threshold entry. Used by checkBindings in steady state and
-// by the startup sweep (which constructs a thresholdEntry inline).
+// fireSignalCached decides a loader's replenishment from a cached threshold
+// entry. Used by checkBindings in steady state and by the startup sweep (which
+// constructs a thresholdEntry inline).
+//
+// THIS IS THE CUTOVER. It used to build a LoopBelowThresholdSignal and send it
+// to the Edge, which then worked out how many carriers were needed and where
+// they should go. That split is what this whole program exists to end: the two
+// halves counted different things, and only one of them could see the plant.
+// On 2026-07-31 a loader at Springfield ordered far more carriers than it had
+// places to put them, because the half that sized the ask could not see that
+// the windows were full.
+//
+// Core now decides the whole thing. It sizes the ask from the same reading, it
+// resolves which windows may take a carrier, and it creates one order per free
+// window — so the bound is the window list, and a reading that asks for a
+// hundred carriers at a three-window loader creates three.
+//
+// This is the ONE construction-and-send site, and every path reaches it through
+// checkBindings → allow() → here, so it is post-debounce and the per-bin
+// capacity read added below is per-fire rather than per-tick.
 func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason string) {
 	if m.fireHook != nil {
 		m.fireHook(b, total, reason)
 		return
 	}
-	signal := &protocol.LoopBelowThresholdSignal{
-		PayloadCode:  b.payloadCode,
-		CurrentUOP:   total,
-		Threshold:    b.threshold,
-		CoreNodeName: b.coreNodeName,
-		// MemberNodeName is the binding's loader member (a dedicated position, or the
-		// shared anchor). Today it equals CoreNodeName; the Edge routes the empty to
-		// THIS node (the same-payload-two-positions fix). Step 4 splits identity from
-		// address — CoreNodeName becomes the loader_key and this stays the address —
-		// and populates LoaderKey here (free once demand_registry carries loader_id).
-		MemberNodeName: b.coreNodeName,
-		Reason:         reason,
-	}
-	// The loader IDENTITY token (step-4 cutover). The Edge resolves the loader by this
-	// instead of CoreNodeName, so a synthetic loader (no anchor node) resolves cleanly.
-	// 0 for legacy ClaimSync bindings → empty key → Edge falls back to CoreNodeName.
-	if b.loaderID > 0 {
-		signal.LoaderKey = loaders.Key(b.loaderID)
-	}
-	// SEAM 1: the demand travels with the signal, so the orders Edge mints in
-	// response come back as CHILDREN of it. Without this the round trip loses
-	// the link at its first hop and every threshold-driven order arrives on
-	// Core as an orphan — the whole grain, defeated by the leg that carries the
-	// request. Additive and omitempty: an older Edge ignores it and its orders
-	// land with a NULL origin, which is the documented skew and harmless.
-	signal.OriginID = m.currentThresholdOrigin(bindingKey(b.stationID, b.coreNodeName, b.payloadCode))
-	if err := m.eng.SendDataToEdge(protocol.SubjectLoopBelowThreshold, b.stationID, signal); err != nil {
-		m.eng.logFn("threshold_monitor: send LoopBelowThresholdSignal to %s loader=%s payload=%s: %v",
-			b.stationID, b.coreNodeName, b.payloadCode, err)
+	if m.eng == nil || m.eng.dispatcher == nil {
+		// The dispatcher is built in Start(); the monitor's startup sweep can in
+		// principle beat it. Same nil-guard the wiring uses.
 		return
 	}
-	m.eng.logFn("threshold_monitor: signaled station=%s loader=%s payload=%s current=%d threshold=%d reason=%s",
-		b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold, reason)
+	// Per-bin capacity is the one datum the binding does not already carry. Zero
+	// means the catalog has no answer for this part, and ReplenishLoader refuses
+	// rather than guessing — a guessed carrier count is how a loader ends up with
+	// more carriers than places.
+	var perBin int
+	if pl, err := m.eng.db.GetPayloadByCode(b.payloadCode); err == nil && pl != nil {
+		perBin = pl.UOPCapacity
+	}
+
+	originID := m.currentThresholdOrigin(bindingKey(b.stationID, b.coreNodeName, b.payloadCode))
+
+	cfg, ok, err := m.eng.dispatcher.LoadReplenishConfig(b.loaderID)
+	if err != nil {
+		m.eng.logFn("threshold_monitor: load loader %d config for %s/%s: %v",
+			b.loaderID, b.coreNodeName, b.payloadCode, err)
+		return
+	}
+	if !ok {
+		// Legacy binding with no loader id, or a loader that has been archived.
+		// Nothing to decide against; refusing is the safe answer and it is not an
+		// error worth a line every debounce window.
+		m.eng.dbg("threshold_monitor: no loader config for binding %s/%s (loader=%d) — not replenishing",
+			b.coreNodeName, b.payloadCode, b.loaderID)
+		return
+	}
+
+	res, err := m.eng.dispatcher.ReplenishLoader(dispatch.ReplenishRequest{
+		StationID:      b.stationID,
+		LoaderID:       b.loaderID,
+		PayloadCode:    b.payloadCode,
+		MemberNode:     b.coreNodeName,
+		Threshold:      b.threshold,
+		CurrentUOP:     total,
+		PerBinCapacity: perBin,
+		// The demand episode the orders belong to. On the old wire path this
+		// travelled with the signal and came back on the Edge's orders; now the
+		// order is created here, so it is simply stamped.
+		OriginID:    originID,
+		OriginClass: string(protocol.OriginClassAttached),
+	}, cfg)
+	if err != nil {
+		m.eng.logFn("threshold_monitor: replenish loader=%d station=%s payload=%s: %v",
+			b.loaderID, b.stationID, b.payloadCode, err)
+		return
+	}
+	if res.Skipped != "" {
+		m.eng.logFn("threshold_monitor: loader_replenish station=%s loader=%d payload=%s current=%d threshold=%d reason=%s skipped=%s",
+			b.stationID, b.loaderID, b.payloadCode, total, b.threshold, reason, res.Skipped)
+		return
+	}
+	m.eng.logFn("threshold_monitor: loader_replenish station=%s loader=%d payload=%s current=%d threshold=%d reason=%s created=%d want=%d held=%v",
+		b.stationID, b.loaderID, b.payloadCode, total, b.threshold, reason, len(res.Created), res.Want, res.HeldBy)
 }
 
 // OnThresholdChanges resets per-binding debounce + warm-up state for

@@ -275,7 +275,7 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 |------|------|
 | `store/core_loaders.go`, `engine/loader_store.go` | `core_loaders` cache + `aggregateLoaderStore` — an immutable in-memory snapshot of the Core loader config, swapped atomically on each node-list sync. |
 | `engine/core_loaders.go` | `SetCoreLoaders` / `Refresh` — ingest `NodeListResponse.Loaders` into the cache. |
-| `engine/operator_demand_loader.go`, `operator_demand_unloader.go` | `DemandSignal` handling; the `withLoaderBudget` never-2N seam; `multiWindowEnabled` (default ON). |
+| `engine/operator_demand_loader.go`, `operator_demand_unloader.go` | `DemandSignal` handling; the `withLoaderBudget` never-2N seam; `funnel_windows` on the loader row (default OFF — i.e. spread). |
 | `domain/loader.go` | The `Loader` type, layouts (`shared_window` / `dedicated_positions`), `SlotCount`, `ReservationTarget`. |
 | `service/station_service.go` | `BuildView` resolves a node's parent loader + windows from the aggregate for the operator HMI. |
 | `messaging/edge_handler.go` | `onDemandSignal` callback; node-list handler feeds `SetCoreLoaders`. |

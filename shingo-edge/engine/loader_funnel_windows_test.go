@@ -56,11 +56,11 @@ func TestFunnelWindows_TwoLoadersOnePlantDisagree(t *testing.T) {
 
 	// Ask each for three. The spreader has room for three; the funnel has room
 	// for one, whatever it is asked for.
-	created, err := eng.fireThresholdL1(spread, "P1", 3, "", orders.Origin{})
+	created, err := eng.stageOperatorEmpty(spread, "P1", 3, "", orders.Origin{})
 	if err != nil || created != 3 {
 		t.Fatalf("spreading loader, demand of 3: created=%d err=%v, want 3", created, err)
 	}
-	created, err = eng.fireThresholdL1(funnel, "P1", 3, "", orders.Origin{})
+	created, err = eng.stageOperatorEmpty(funnel, "P1", 3, "", orders.Origin{})
 	if err != nil || created != 1 {
 		t.Fatalf("funnelling loader, demand of 3: created=%d err=%v, want 1", created, err)
 	}
@@ -89,7 +89,7 @@ func TestFunnelWindows_TwoLoadersOnePlantDisagree(t *testing.T) {
 	}
 
 	// And the funnelling loader stays at one until its window clears.
-	created, err = eng.fireThresholdL1(funnel, "P1", 3, "", orders.Origin{})
+	created, err = eng.stageOperatorEmpty(funnel, "P1", 3, "", orders.Origin{})
 	if err != nil || created != 0 {
 		t.Errorf("funnelling loader, second demand: created=%d err=%v, want 0", created, err)
 	}

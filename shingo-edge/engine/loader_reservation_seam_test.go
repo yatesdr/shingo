@@ -64,7 +64,7 @@ func TestRace_LoaderBudget_ConcurrentSignalsAndOperator(t *testing.T) {
 			defer wg.Done()
 			if g%2 == 0 {
 				// automatic/threshold path: wants 2, seam caps to the budget (1)
-				_, _ = eng.fireThresholdL1(dl, "P1", 2, "", orders.Origin{})
+				_, _ = eng.stageOperatorEmpty(dl, "P1", 2, "", orders.Origin{})
 			} else {
 				// operator path: a single empty request through the same seam
 				_, _ = eng.RequestEmptyBin(nodeID, "P1")
@@ -264,7 +264,7 @@ func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
 		case 0, 1: // a demand for a random payload
 			payload := payloads[rng.Intn(len(payloads))]
 			_, before := windowCounts(t, db, windows)
-			if _, err := eng.fireThresholdL1(loader, domain.PayloadCode(payload), rng.Intn(len(windows)+1), "", orders.Origin{}); err != nil {
+			if _, err := eng.stageOperatorEmpty(loader, domain.PayloadCode(payload), rng.Intn(len(windows)+1), "", orders.Origin{}); err != nil {
 				t.Fatalf("step %d: fireThresholdL1: %v", step, err)
 			}
 			_, after := windowCounts(t, db, windows)

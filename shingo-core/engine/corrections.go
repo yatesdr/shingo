@@ -72,8 +72,9 @@ func (e *Engine) ApplyCorrection(req ApplyCorrectionRequest) (int64, error) {
 	}
 
 	// Save updated manifest. Epoch return discarded — corrections are a
-	// Core-internal operation; Edge picks up the new epoch on its next
-	// bin-state refresh.
+	// Core-internal operation with no Edge response to carry it. The station
+	// is told anyway: the bump announces itself. This used to say the Edge
+	// picked it up "on its next bin-state refresh", which never existed.
 	manifestJSON, _ := json.Marshal(manifest)
 	if _, err := e.binManifest.SetForProduction(req.BinID, string(manifestJSON), bin.PayloadCode, bin.UOPRemaining); err != nil {
 		return 0, fmt.Errorf("update bin manifest: %w", err)

@@ -143,7 +143,8 @@ type Engine struct {
 	// sweep) can't both read the same in-flight count and both fire empties —
 	// the never-2N invariant. map[loaderID]*sync.Mutex, keyed from day one (no
 	// global lock). NO transaction: see withLoaderBudget and
-	// FINAL-ADJUDICATION Q1 (monotonicity + non-tx-pure CreateRetrieveOrder).
+	// FINAL-ADJUDICATION Q1 (monotonicity + non-tx-pure CreateRetrieveOrder) —
+	// shingo-library/archive/bin-loader-multiwindow-reviews-2026-06-12/FINAL-ADJUDICATION.md.
 	loaderResv sync.Map
 
 	// loaderStore is the consumer-defined resolver for loaders, backed by the
@@ -151,14 +152,13 @@ type Engine struct {
 	// node-list sync.
 	loaderStore LoaderStore
 
-	// loaderCacheWarmed + pendingThreshold close the startup race where a Core
-	// LoopBelowThresholdSignal arrives before the first node-list sync populates the
-	// loader cache: the signal can't resolve a loader and would be dropped. Until the
-	// cache has synced once, such a signal is PARKED here and replayed the instant
-	// SetCoreLoaders warms the cache, so no startup reorder is lost (hold-and-replay).
-	loaderCacheWarmed atomic.Bool
-	pendingThreshMu   sync.Mutex
-	pendingThreshold  []*protocol.LoopBelowThresholdSignal
+	// The park-and-replay machinery that used to live here closed a startup race:
+	// a below-threshold signal arriving before the first node-list sync could not
+	// resolve a loader, so it was held and replayed once the cache warmed. It is
+	// gone with the signal — Core decides replenishment now and reads its own
+	// tables, which are never cold in the way the Edge's cache was. That burst
+	// shape appeared in the 2026-07-31 over-ordering incident; deleting it is the
+	// durable fix, not a tidy-up.
 
 	kafkaConnFn func() bool
 

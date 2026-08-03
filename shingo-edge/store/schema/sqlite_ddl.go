@@ -458,25 +458,6 @@ CREATE TABLE IF NOT EXISTS core_loader_payloads (
     PRIMARY KEY (loader_key, payload_code)
 );
 
--- Transitional bin loaders (operator-driven, manual payload selection):
---   Membership set keyed by core_node_name alone — the only granularity
---   that is 1:1 with the physical loader. A loader shared across
---   processes/styles has multiple style_node_claims and process_nodes rows
---   but one core node, so a per-claim or per-process flag has no defined
---   reduction; this set sidesteps that. A loader in this set is wholly
---   operator-driven: the market-accounting L1 paths (UOP-threshold C-push
---   and legacy bin-count) are suppressed for it, while empties are staged
---   opportunistically (MaybePushLoader) and the operator selects the
---   payload at the board. Edge-only — never plumbed through ClaimSync;
---   Core's threshold monitor already idles for these loaders (their
---   thresholds are 0). Delete the row once supermarket space exists and
---   thresholds are calibrated.
-CREATE TABLE IF NOT EXISTS operator_driven_loaders (
-    core_node_name TEXT NOT NULL,
-    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_by     TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (core_node_name)
-);
 
 -- home_location_loaders — membership set marking a bin loader's layout as
 -- "home location" (each payload its own dedicated node) vs the default single

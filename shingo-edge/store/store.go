@@ -39,7 +39,8 @@ type DB struct {
 // (monotone-safe) and CreateRetrieveOrder is not tx-pure (it enqueues to Core
 // and emits synchronously mid-write). A surrounding tx would only add a
 // busy_timeout stall on this single connection and a rollback path that can't
-// undo the Core enqueue. See FINAL-ADJUDICATION Q1.
+// undo the Core enqueue. See FINAL-ADJUDICATION Q1 —
+// shingo-library/archive/bin-loader-multiwindow-reviews-2026-06-12/FINAL-ADJUDICATION.md.
 func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
 	tx, err := db.Begin()
 	if err != nil {

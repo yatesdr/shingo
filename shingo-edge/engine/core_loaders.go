@@ -22,7 +22,4 @@ func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) {
 			e.logFn("core_loaders: loader-store snapshot refresh failed — keeping last-known-good: %v", err)
 		}
 	}
-	// The cache is now populated: warm the gate and replay any threshold signals that
-	// arrived before this first sync (startup race — hold-and-replay). Idempotent.
-	e.warmLoaderCacheAndReplay()
 }

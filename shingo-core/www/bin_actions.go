@@ -164,8 +164,9 @@ func (h *Handlers) binLoadPayload(b *domain.Bin, params json.RawMessage) error {
 	}
 	// Epoch return discarded — admin "Load Payload" lands directly on
 	// Core via the bin detail modal, with no Edge response carrying the
-	// new value. Edge picks the post-bump epoch up on its next
-	// bin-state refresh.
+	// new value. The station is told anyway: the bump announces itself.
+	// This used to say the Edge picked it up "on its next bin-state
+	// refresh", which never existed.
 	if _, err := h.engine.BinService().LoadPayload(b.ID, p.PayloadCode, p.UOPOverride); err != nil {
 		return err
 	}

@@ -73,8 +73,14 @@ type StationNodeView struct {
 	// two cells (SNF2 + SNF3) see both cells' payloads instead of one.
 	ActiveStylePayloads []string `json:"active_style_payloads,omitempty"`
 	AllStylePayloads    []string `json:"all_style_payloads,omitempty"`
-	// OperatorDriven is true when this loader's core node is in the
-	// operator_driven_loaders set — operator-driven, board defaults to preload.
+	// OperatorDriven is true when the loader's replenishment mode is operator —
+	// a person stages it, and the board defaults to preload. Read from the Core-
+	// owned loader aggregate (Loader.IsOperatorDriven).
+	//
+	// It used to come from an Edge-only operator_driven_loaders table. That
+	// table outlived its readers: the supply decision moved onto the loader row
+	// and stopped consulting it, leaving a toggle on the claim editor that wrote
+	// a row nobody read. Deleted.
 	OperatorDriven bool `json:"operator_driven,omitempty"`
 	// HomeLocationLoader is true when this loader's core node is in the
 	// home_location_loaders set — the dedicated-position LAYOUT. The board then

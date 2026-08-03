@@ -223,13 +223,6 @@ CREATE TABLE node_lineside_bucket (
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE operator_driven_loaders (
-    core_node_name TEXT NOT NULL,
-    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_by     TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (core_node_name)
-);
-
 CREATE TABLE operator_stations (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id         INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,

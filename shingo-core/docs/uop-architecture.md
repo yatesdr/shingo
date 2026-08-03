@@ -314,4 +314,4 @@ Reconciler-related config (`reconcile_interval`, `tolerance.*`) was removed in c
 | GET | `/api/audit/station/:station` | Per-station drift report |
 | POST | `/api/admin/uop/backfill?station=X[&force=true]` | Manual bucket backfill trigger |
 
-`/api/reconciliation/uop` and `/api/telemetry/uop-state` were removed alongside the reconciler.
+`/api/reconciliation/uop` was removed alongside the reconciler.

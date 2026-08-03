@@ -159,7 +159,7 @@ StatusQueued -> StatusFailed        (Core gave up)
 
 ### 4. Auto-request Interaction
 
-When `tryAutoRequestEmpty` fires and Core queues:
+When an empty request fires and Core queues (the trigger named here, `tryAutoRequestEmpty`, is retired — the surviving one is the operator push):
 - Edge sees order transition to `queued`
 - Order stays on node runtime (`ActiveOrderID`)
 - No retry loop -- order is alive, Core fulfills when possible

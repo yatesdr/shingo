@@ -291,7 +291,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		// Sync manual_swap claims to Core's demand registry. Pre-side-cycle
 		// this also called StartupSweepManualSwap to seed empty-in orders
 		// at every loader — unnecessary now that empty-ins are driven by
-		// the UOP-threshold C-push (SubjectLoopBelowThreshold) or by
+		// Core deciding the replenishment itself and pushing down a whole order, or by
 		// operator staging.
 		// Auto-push unloaders: catch any window that became free (or
 		// supply that arrived) while Edge was offline. No-op for kanban-
@@ -352,8 +352,8 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	})
 	// Kanban demand signals from Core's wiring_kanban driver. PRODUCE-role signals
 	// are NO LONGER handled: the legacy bin-count produce trigger is retired — a
-	// produce loader is supplied by the UOP-threshold C-push (SubjectLoopBelowThreshold,
-	// below) or operator staging, never a bin-count floor. CONSUME-role signals fire
+	// produce loader's automatic replenishment is decided on Core and arrives as
+	// a whole order, never a bin-count floor. CONSUME-role signals fire
 	// the unloader U1 to pull a freshly-arrived full (MaybeCreateUnloaderFullIn); the
 	// withLoaderBudget seam dedups against the operator-release trigger by in-flight
 	// count. Core still emits produce DemandSignals on bin movements; the Edge drops
@@ -364,18 +364,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		if s.Role == protocol.ClaimRoleConsume {
 			eng.MaybeCreateUnloaderFullIn(s.PayloadCode)
 		}
-	})
-	// UOP-threshold replenishment: Core observes combined in-loop UOP
-	// (bins + buckets) per payload and signals here when a monitored
-	// (loader, payload) drops below threshold. Edge responds in
-	// HandleLoopBelowThreshold, which sizes the ask from the signalled
-	// current/threshold and fires L1 through the withLoaderBudget seam.
-	// The seam's own in-flight count under the loader mutex is the dedup —
-	// there is no separate dedup step on this path.
-	router.RegisterSubject(subjectRouter, protocol.SubjectLoopBelowThreshold, func(_ *protocol.Envelope, s *protocol.LoopBelowThresholdSignal) {
-		log.Printf("edge_handler: loop below threshold: core_node=%s payload=%s current=%d threshold=%d reason=%s",
-			s.CoreNodeName, s.PayloadCode, s.CurrentUOP, s.Threshold, s.Reason)
-		eng.HandleLoopBelowThreshold(s)
 	})
 	if cgHandler != nil {
 		router.RegisterSubject(subjectRouter, protocol.SubjectCountGroupCommand, func(_ *protocol.Envelope, cmd *protocol.CountGroupCommand) {

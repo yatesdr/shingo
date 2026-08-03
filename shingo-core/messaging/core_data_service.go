@@ -625,58 +625,6 @@ func (s *CoreDataService) HandleCatalogPayloadsRequest(env *protocol.Envelope) {
 	log.Printf("core_handler: sent payload catalog (%d payloads) to %s", len(infos), env.Src.Station)
 }
 
-func (s *CoreDataService) HandleNodeStateRequest(env *protocol.Envelope, req *protocol.NodeStateRequest) {
-	log.Printf("core_handler: node state request from %s: %d nodes", env.Src.Station, len(req.Nodes))
-	entries := make([]protocol.NodeStateEntry, 0, len(req.Nodes))
-	for _, name := range req.Nodes {
-		entry := protocol.NodeStateEntry{Name: name}
-		node, err := s.db.GetNodeByName(name)
-		if err != nil {
-			// KNOWN GAP, and the reason it is still open changed once somebody
-			// looked. A failed read is answered here as an unoccupied node,
-			// exactly as the HTTP node-bins endpoint did before it was made to
-			// return 500 (www/handlers_telemetry.go). This reply rides Kafka, so
-			// there is no status code to carry "I could not tell".
-			//
-			// THIS WHOLE EXCHANGE HAS NO CLIENT. Nothing anywhere sends a
-			// NodeStateRequest and nothing anywhere reads a NodeStateResponse:
-			// the subject constants appear only in their own definition, Core
-			// registers this handler, and no Edge code references either type.
-			// It has been that way since the types were introduced (2026-03-22).
-			//
-			// So the fix that was planned for it — a field on NodeStateEntry
-			// plus an Edge reader that honours it — would be building a consumer
-			// for a protocol nobody speaks, in order to correctly report a
-			// distinction in a message nobody receives. The real question is
-			// whether this exchange should exist at all, which is a deletion
-			// decision and belongs with the truth sweep, not with a bug fix.
-			// Left honest and logged until then.
-			log.Printf("core_handler: node state for %q: node lookup failed (%v) — replying occupied=false, which may be wrong", name, err)
-			entries = append(entries, entry)
-			continue
-		}
-		bins, err := s.db.ListBinsByNode(node.ID)
-		if err != nil {
-			log.Printf("core_handler: node state for %q: bin listing failed (%v) — replying occupied=false, which may be wrong", name, err)
-			entries = append(entries, entry)
-			continue
-		}
-		entry.BinCount = len(bins)
-		entry.Occupied = len(bins) > 0
-		for _, b := range bins {
-			if entry.PayloadCode == "" {
-				entry.PayloadCode = b.PayloadCode
-			}
-			if b.ClaimedBy != nil {
-				entry.Claimed = true
-			}
-		}
-		entries = append(entries, entry)
-	}
-	s.resp.replyData(env, protocol.SubjectNodeStateResponse, &protocol.NodeStateResponse{Nodes: entries})
-	log.Printf("core_handler: sent node state (%d entries) to %s", len(entries), env.Src.Station)
-}
-
 // HandleOrderStatusRequest answers an Edge's reconcile.
 //
 // TWO HALVES, and the second is the one that matters for Core-authored orders.

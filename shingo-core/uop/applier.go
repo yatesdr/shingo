@@ -370,8 +370,12 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	//     dispatch predicate).
 	//
 	// Deliberately NO delta_epoch bump in either case: there is no retired
-	// count stream to fence off, and a bump opens a stale-epoch drop window
-	// until Edge's next bin-state refresh (observed live 2026-07-16 14:02Z).
+	// count stream to fence off, and a bump would retire a generation that is
+	// still running — the station's next count would arrive stamped with it and
+	// be discarded (observed live 2026-07-16 14:02Z). The drop window that
+	// followed such a bump is now answered rather than merely opened
+	// (repairEpoch), but the reason not to bump here is unchanged and is the
+	// stronger one: nothing about this path starts the carrier a new life.
 	// Non-produce reasons keep the hard reject below — a consume drain
 	// against a wrong-labeled bin is the ALN_001 corruption case.
 	if d.Reason == protocol.ReasonProduceTick && d.PayloadCode != "" &&

@@ -79,16 +79,23 @@ earn-the-abstraction test applied before anything is removed.
 8. **`manual_swap_recheck` vs `handleBinUpdated`** — an operator swap is evaluated
    twice inside one debounce window.
 
-## Dies with the Edge threshold path
+## Died with the Edge threshold path — DONE
 
-These exist only to service the below-threshold signal arriving at Edge. When
-Core originates directly, they have no remaining caller:
+Deleted when Core took over the decision. They existed only to service the
+below-threshold signal arriving at Edge:
 
 `HandleLoopBelowThreshold` · `parkThresholdSignalIfCold` and its
 `pendingThreshold` / `loaderCacheWarmed` state · `warmLoaderCacheAndReplay` and
 its call site in `core_loaders.go` · the threshold origin-id seam ·
-`MisconfiguredThreshold` (the whole concept is "Core would signal you but
-cannot").
+`fireThresholdL1` and the `L1LoopThreshold` source · the wire subject and its
+registration · the Edge's copy of the sizing arithmetic (both transcriptions)
+and the parity sweep that compared it against Core's.
+
+**`MisconfiguredThreshold` was on this list and should not have been.** It is
+called from `SweepPushLoaders`, which the section below correctly marks as
+surviving — so this document contradicted itself. It also shares its predicate
+with the check that gates the entire operator push: the second half of that gate
+*is* this function. It survives.
 
 **Survives the deletion — do not remove alongside:** the push sweeps
 (`SweepPushLoaders` / `SweepPushUnloaders` / `MaybePush*`) are the operator-staging
