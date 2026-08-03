@@ -99,7 +99,7 @@ func (r *laneHoldRegistry) ConsumeByBin(binID int64) *laneHoldEntry {
 
 // extendLaneLockForComplexParent is called by AdvanceCompoundOrder's
 // terminal block in expose mode. The lane lock is ALREADY held by
-// the complex parent (handleComplexBuriedAtIntake / planBuriedReshuffle
+// the complex parent (planBuriedReshuffleAtIntake / planBuriedReshuffle
 // take the lock keyed by the complex parent's order ID before
 // CreateCompoundOrder runs, and the compound parent IS the complex
 // parent — they share an order row). The default code path here
@@ -139,7 +139,7 @@ func (d *Dispatcher) extendLaneLockForComplexParent(complexParent *orders.Order,
 		return
 	}
 	// Note: the pending_lane_extensions row was written at compound-
-	// creation time (handleComplexBuriedAtIntake /
+	// creation time (planBuriedReshuffleAtIntake /
 	// handleComplexBuriedOnReplay), not here. This function only
 	// arms the in-memory listener.
 	d.dbg("complex: lane lock extended through pickup for complex parent %d (lane %d, target bin %d, expected from-node %d)",

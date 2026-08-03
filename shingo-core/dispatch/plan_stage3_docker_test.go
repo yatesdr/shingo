@@ -108,7 +108,10 @@ func TestStage3_MoveVsStore_ExactlyOneWins(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	mv := mkPlainOrder(t, db, "s3-mvst-move", OrderTypeMove, bp.Code, dest.Name)
-	st := mkPlainOrder(t, db, "s3-mvst-store", OrderTypeStore, bp.Code, dest.Name)
+	// The second order's type is incidental — the point is that
+	// ReserveStorageDropoff is driven by the DESTINATION being a STOR node, not
+	// by the order type, so two differently-typed orders race the same slot.
+	st := mkPlainOrder(t, db, "s3-mvst-store", protocol.OrderType("store"), bp.Code, dest.Name)
 
 	e1 := d.ReserveStorageDropoff(mv)
 	e2 := d.ReserveStorageDropoff(st)

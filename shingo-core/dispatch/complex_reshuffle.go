@@ -210,7 +210,7 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 		return
 	}
 	// Same expose-mode-only persistence as the intake path. See the
-	// comment in handleComplexBuriedAtIntake.
+	// comment in planBuriedReshuffleAtIntake.
 	if len(targetNodeNames) == 0 {
 		if _, err := d.db.InsertPendingLaneExtension(&store.PendingLaneExtension{
 			ComplexParentID:    order.ID,

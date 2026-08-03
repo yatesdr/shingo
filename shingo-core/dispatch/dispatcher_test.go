@@ -847,9 +847,6 @@ func TestOrderTypeConstants(t *testing.T) {
 	if OrderTypeMove != "move" {
 		t.Errorf("OrderTypeMove = %q", OrderTypeMove)
 	}
-	if OrderTypeStore != "store" {
-		t.Errorf("OrderTypeStore = %q", OrderTypeStore)
-	}
 }
 
 // --- Regression: HandleOrderReceipt returns on ConfirmReceipt error ---

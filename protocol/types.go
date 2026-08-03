@@ -382,27 +382,36 @@ const (
 // here so both sides agree on the canonical values and so the JSON wire
 // shape (raw string) stays byte-identical to the prior untyped form.
 //
-// Core dispatch emits Retrieve/RetrieveEmpty/Store/Move/Complex.
+// Core dispatch emits Retrieve/RetrieveEmpty/Move/Complex.
 //
-// Historical rows may carry values no longer in this list — "ingest" is the one
-// that existed, from a time when a produce ingest created an order rather than
-// writing the manifest directly. Nothing mints or reads it now, so the constant
-// is gone; the strings in old rows are untouched and no code branches on them.
+// Historical rows may carry values no longer in this list. Two existed:
+// "ingest", from when a produce ingest created an order rather than writing the
+// manifest directly; and "store", which was never a kind of order at all — it
+// was the argument the bin resolver takes to mean "I am putting a bin INTO this
+// group", and it now has its own type over in binresolver.ResolveMode. Nothing
+// mints or reads either one, so the constants are gone; the strings in old rows
+// are untouched and no code branches on them.
 type OrderType string
 
 const (
 	OrderTypeRetrieve      OrderType = "retrieve"       // pull a loaded bin matching a payload to a destination
 	OrderTypeRetrieveEmpty OrderType = "retrieve_empty" // pull an empty bin compatible with a payload to a destination
-	OrderTypeStore         OrderType = "store"          // push a payload from a node to storage
 	OrderTypeMove          OrderType = "move"           // generic move; no manifest semantics
 	OrderTypeComplex       OrderType = "complex"        // multi-step order composed of sub-steps
 	// OrderTypeReshuffleRestore is a Core-internal housekeeping order
 	// that wraps the post-pickup restock compound for the complex-order
 	// buried-bin reshuffle "restore blockers" toggle. Never created by
-	// edge; not dispatched to edge; filtered out of the admin orders
-	// list. The synthetic-parent type exists so the restock compound
-	// has a parent row to satisfy AdvanceCompoundOrder, since the
-	// compound machinery keys off ParentOrderID != nil.
+	// edge; not dispatched to edge.
+	//
+	// It IS shown in the admin orders list. This comment used to say it was
+	// filtered out, and that stopped being true when the exclusion was removed:
+	// these synthetics can strand at reshuffling, and the sweeps that resolve
+	// them are much easier to trust when their subjects are visible. See the
+	// note above SelectCols in store/orders.
+	//
+	// The synthetic-parent type exists so the restock compound has a parent row
+	// to satisfy AdvanceCompoundOrder, since the compound machinery keys off
+	// ParentOrderID != nil.
 	OrderTypeReshuffleRestore OrderType = "reshuffle_restore"
 )
 

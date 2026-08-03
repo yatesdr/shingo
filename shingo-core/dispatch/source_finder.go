@@ -25,6 +25,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/binsource"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -232,7 +233,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// fell through to plant-wide FIFO on a capacity/buried error).
 	if intent == IntentFull && srcNode != nil && srcNode.IsSynthetic &&
 		srcNode.NodeTypeCode == protocol.NodeClassNGRP && f.resolver != nil {
-		result, err := f.resolver.Resolve(srcNode, OrderTypeRetrieve, payloadCode, nil)
+		result, err := f.resolver.Resolve(srcNode, binresolver.ResolveModeRetrieve, payloadCode, nil)
 		if err != nil {
 			switch class, payload := classifyResolutionError(err); class {
 			case ResolutionBuried:

@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/dispatch/binresolver"
 	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
 	"shingocore/store/orders"
@@ -177,11 +178,14 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 					return "", "", fmt.Errorf("no empty carrier in group %s", step.Node)
 				}
 			}
-			orderType := OrderTypeRetrieve
+			// Per STEP, not per order: one complex order's steps go both ways,
+			// which is why the resolver takes a direction rather than the
+			// order's type.
+			mode := binresolver.ResolveModeRetrieve
 			if step.Action == protocol.ActionDropoff {
-				orderType = OrderTypeStore
+				mode = binresolver.ResolveModeStore
 			}
-			result, err := d.resolver.Resolve(node, orderType, payloadCode, nil)
+			result, err := d.resolver.Resolve(node, mode, payloadCode, nil)
 			if err != nil {
 				return "", "", fmt.Errorf("cannot resolve group %s: %w", step.Node, err)
 			}

@@ -38,8 +38,10 @@ func SourceIntentForType(t protocol.OrderType) string {
 
 // classifyInboundOrigin is the intake half of the demand grain: it turns what an
 // Edge said about an order's origin into the (origin_id, origin_class) pair Core
-// stores. Called at the THREE intake sites — CreateInboundOrder,
-// HandleComplexOrderRequest and handleComplexBuriedAtIntake — and nowhere else.
+// stores. Called at the TWO intake sites — CreateInboundOrder and
+// HandleComplexOrderRequest — and nowhere else. (There used to be a third: the
+// buried branch built its own parent. It now falls through to the same create,
+// so there are two intake sites, not three.)
 // Derivative orders do not come through here; they inherit the parent's pair
 // verbatim, because re-classifying a child would let a parent's judgement be
 // overturned one level down.

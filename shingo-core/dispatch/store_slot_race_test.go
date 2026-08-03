@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -13,11 +14,15 @@ import (
 	"shingocore/store/orders"
 )
 
-// mkStoreOrder creates a queued store order pointed at destName.
+// mkStoreOrder creates a queued order pointed at destName, carrying the literal
+// type "store". The type is incidental: the slot race under test is driven by
+// the destination being a STOR node. It stays a literal rather than becoming a
+// constant because "store" is no longer a kind of order — it was the bin
+// resolver's direction argument, and it now has its own type.
 func mkStoreOrder(t *testing.T, db *store.DB, uuid, payload, destName string) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "ST", OrderType: OrderTypeStore,
+		EdgeUUID: uuid, StationID: "ST", OrderType: protocol.OrderType("store"),
 		Status: StatusQueued, Quantity: 1, PayloadCode: payload, DeliveryNode: destName,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create store order")

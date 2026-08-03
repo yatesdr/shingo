@@ -27,7 +27,7 @@ func TestSourceNeed_NodeLocalEmptyNeverCoOccursToday(t *testing.T) {
 
 	for _, ot := range []protocol.OrderType{
 		OrderTypeRetrieve, OrderTypeRetrieveEmpty, OrderTypeMove,
-		OrderTypeStore, OrderTypeComplex,
+		OrderTypeComplex,
 	} {
 		intent := SourceIntentForType(ot)
 		isLocal := intent == SourceIntentLocal

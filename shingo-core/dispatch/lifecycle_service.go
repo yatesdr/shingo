@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/dispatch/binresolver"
 	"shingocore/fleet"
 	"shingocore/service"
 	"shingocore/store"
@@ -69,6 +70,20 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	if p.RetrieveEmpty && p.OrderType == OrderTypeRetrieve {
 		orderType = OrderTypeRetrieveEmpty
 	}
+	// A move carries one bin, always: one robot, one bin, one bin_id on the row.
+	// The Edge will send a larger count — its own screens let an operator type
+	// one — and we copied it verbatim, so a move could be stored, displayed and
+	// confirmed as "4" while moving a single bin. Nothing in Core branches on
+	// the number; the one thing it does is get printed on the order screen, so
+	// the whole effect of the old value was to tell a person something untrue.
+	//
+	// Floored for moves ONLY. On a retrieve the count is the Edge's to declare —
+	// the batch path reads it to decide how many separate orders to create, and
+	// the Edge declares it back on confirm.
+	quantity := p.Quantity
+	if orderType == OrderTypeMove {
+		quantity = 1
+	}
 	// Intake site 1 of 3 for the demand grain. Stamped from the envelope here,
 	// where the sender's statement is in hand; never inferred later from a NULL.
 	originID, originClass := classifyInboundOrigin(p.OriginID, p.OriginClass, stationID, p.OrderUUID)
@@ -77,7 +92,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		StationID:       stationID,
 		OrderType:       orderType,
 		Status:          StatusPending,
-		Quantity:        p.Quantity,
+		Quantity:        quantity,
 		SourceNode:      p.SourceNode,
 		DeliveryNode:    p.DeliveryNode,
 		Priority:        p.Priority,
@@ -132,7 +147,7 @@ func (s *LifecycleService) admitOrder(order *orders.Order) *lifecycleError {
 			return lifecycleErr("invalid_node", fmt.Sprintf("delivery node %q not found", requested), err)
 		}
 		if destNode.IsSynthetic && s.resolver != nil {
-			result, err := s.resolver.Resolve(destNode, OrderTypeStore, order.PayloadCode, nil)
+			result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, nil)
 			if err != nil {
 				// A full group (ResolutionCapacity — "no available slot in node
 				// group X") must NOT fail the operator's action. Leave the

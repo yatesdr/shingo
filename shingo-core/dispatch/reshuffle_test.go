@@ -1725,7 +1725,7 @@ func TestLaneLock_HeldThroughComplexParentPickup_ExposeMode(t *testing.T) {
 	}
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	// Mirror handleComplexBuriedAtIntake's lock acquisition + persist.
+	// Mirror planBuriedReshuffleAtIntake's lock acquisition + persist.
 	if !d.laneLock.TryLock(lane.ID, complexParent.ID) {
 		t.Fatal("seed TryLock failed")
 	}

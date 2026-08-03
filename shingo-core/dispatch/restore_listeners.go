@@ -126,7 +126,7 @@ func (r *restoreRegistry) ConsumeByComplexParent(complexParentID int64) *restore
 // (no lifecycle transition because the helper writes the initial row
 // directly) and registers a listener.
 //
-// Called by handleComplexBuriedAtIntake / handleComplexBuriedOnReplay
+// Called by planBuriedReshuffleAtIntake / handleComplexBuriedOnReplay
 // after CreateCompoundOrder schedules the unbury (or unbury+retrieve)
 // compound for the complex parent.
 //

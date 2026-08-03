@@ -653,7 +653,7 @@ func TestApiOrders_CancelOrder_AlreadyTerminal(t *testing.T) {
 func TestApiOrders_SetOrderCount_Success(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	orderID := seedOrder(t, orders.TypeStore, orders.StatusPending)
+	orderID := seedOrder(t, protocol.OrderType("store"), orders.StatusPending)
 
 	body := map[string]int64{"final_count": 99}
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/count", body, nil)
@@ -681,7 +681,7 @@ func TestApiOrders_SetOrderCount_InvalidID(t *testing.T) {
 func TestApiOrders_SetOrderCount_InvalidJSON(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	orderID := seedOrder(t, orders.TypeStore, orders.StatusPending)
+	orderID := seedOrder(t, protocol.OrderType("store"), orders.StatusPending)
 
 	body := map[string]any{"final_count": "not-a-number"}
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/count", body, nil)

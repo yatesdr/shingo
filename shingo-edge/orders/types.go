@@ -7,7 +7,6 @@ import "shingo/protocol"
 // distinction from raw strings.
 const (
 	TypeRetrieve = protocol.OrderTypeRetrieve
-	TypeStore    = protocol.OrderTypeStore
 	TypeMove     = protocol.OrderTypeMove
 	TypeComplex  = protocol.OrderTypeComplex
 )

@@ -12,6 +12,28 @@ import (
 	"shingocore/store/reservations"
 )
 
+// ErrDestinationOccupied is returned when a move is refused because something
+// is already at the destination.
+//
+// It is a sentinel rather than a plain error because the caller has to tell it
+// apart: this is a conflict with the plant's current state, which the operator
+// can resolve by clearing the spot or picking another one, and it deserves a
+// 409 rather than the 500 every other failure on this path gets. Wrapped so the
+// rendered sentence travels with it.
+var ErrDestinationOccupied = errors.New("destination occupied")
+
+// ErrBinTaken is returned when another order acquired the bin in the moment
+// between choosing it and reserving it.
+//
+// A sentinel for the same reason as the one above: the caller has to tell it
+// apart from a real fault. This one used to be tagged in the error TEXT — the
+// words "transient reservation conflict, retry" were spliced into the message —
+// which the comment beside it described as tagging it "so the caller can retry
+// rather than surface a hard 500". Nothing could read a phrase in a string, so
+// the caller never did, and it surfaced as a hard 500 with an instruction buried
+// inside it. Now it is a value.
+var ErrBinTaken = errors.New("bin taken by another order")
+
 // DirectOrderRequest holds the parameters for creating a direct fleet order.
 type DirectOrderRequest struct {
 	FromNodeID int64
@@ -44,6 +66,18 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 		return nil, fmt.Errorf("destination node not found")
 	}
 
+	// The same occupancy gate the operator's bin-move takes. This door is only
+	// reachable from the /test-orders page, which is an argument for exempting
+	// it and the owner ruled against: the page is used occasionally and its
+	// orders move real bins with real robots. An exemption here would also be
+	// the kind that outlives the reason for it.
+	//
+	// Before the order row and before the reservation, so a refusal leaves the
+	// source bin untouched.
+	if preview := e.dispatcher.PreviewDropoffCapacity(destNode.Name); preview.Blocked {
+		return nil, fmt.Errorf("%w: %s", ErrDestinationOccupied, preview.Reason)
+	}
+
 	// Pick an unclaimed bin at the source node so the order carries a
 	// concrete BinID. Without it, applyBinArrivalForOrder silently skips on
 	// completion and bins.node_id never reflects the move (CARRIER-0005
@@ -69,10 +103,15 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 	edgeUUID := req.StationID + "-" + uuid.New().String()[:8]
 
 	order := &orders.Order{
-		EdgeUUID:     edgeUUID,
-		StationID:    req.StationID,
-		OrderType:    protocol.OrderTypeMove,
-		Status:       protocol.StatusPending,
+		EdgeUUID:  edgeUUID,
+		StationID: req.StationID,
+		OrderType: protocol.OrderTypeMove,
+		Status:    protocol.StatusPending,
+		// One robot, one bin. The field was omitted here, and because the
+		// INSERT names the column the table's DEFAULT 1 never applied — so
+		// every direct move ever made through this door stored 0 and the order
+		// screen printed "qty 0".
+		Quantity:     1,
 		SourceNode:   sourceNode.Name,
 		DeliveryNode: destNode.Name,
 		Priority:     req.Priority,
@@ -89,12 +128,18 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 		return nil, fmt.Errorf("create order: %w", err)
 	}
 	// Rule 1: soft-acquire the bin (a pending reservation), then hard-claim it at
-	// dispatch. A reservation conflict is a transient race (another order reserved
-	// the bin between the read above and this Acquire), not a permanent failure;
-	// tag it so the caller can retry rather than surface a hard 500.
+	// dispatch. Another order can take the bin in the gap between the scan above
+	// and this call — that is a race with a person, not a fault, and it gets a
+	// sentinel the caller can act on.
+	//
+	// The order row already exists at this point, so it has to be failed here or
+	// it sits pending forever with nothing to dispatch, fail or clean it up.
 	if err := e.binManifest.ReserveForDispatch(srcBinID, order.ID); err != nil {
+		if ferr := e.db.FailOrderAtomic(order.ID, "bin taken by another order before reservation"); ferr != nil {
+			e.logFn("engine: fail direct order %d after losing the bin: %v", order.ID, ferr)
+		}
 		if errors.Is(err, reservations.ErrReservationConflict) {
-			return nil, fmt.Errorf("reserve bin %d: transient reservation conflict, retry: %w", srcBinID, err)
+			return nil, fmt.Errorf("%w: bin %d", ErrBinTaken, srcBinID)
 		}
 		return nil, fmt.Errorf("reserve bin %d: %w", srcBinID, err)
 	}

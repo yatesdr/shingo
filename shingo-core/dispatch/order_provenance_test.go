@@ -37,11 +37,13 @@ func TestStage3_IsCoordinated(t *testing.T) {
 	}
 }
 
-// TestStage4_SourceIntentForType pins the label→data mapping used at intake. The
-// store OrderType constant survives (resolver-direction token) and still falls to
-// the default → "" (full), NOT "local": mapping it to SourceIntentLocal would have
-// exempted it from the scanner's payload guard. The mapping is unchanged; this
-// test guards the default branch against a stray store→local regression.
+// TestStage4_SourceIntentForType pins the label→data mapping used at intake.
+//
+// The "store" case is gone with the constant: it was never a kind of order, only
+// the direction argument the bin resolver takes, and it now has its own type.
+// What it used to guard here — that an unlisted type falls to the default rather
+// than to "local" — is covered by the unknown-type case below, which is the same
+// guard without implying that "store" is an order anyone can place.
 func TestStage4_SourceIntentForType(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -51,7 +53,10 @@ func TestStage4_SourceIntentForType(t *testing.T) {
 		{OrderTypeRetrieve, SourceIntentFull},       // full payload-matched bin
 		{OrderTypeRetrieveEmpty, SourceIntentEmpty}, // generic empty carrier
 		{OrderTypeMove, SourceIntentLocal},          // bin AT a concrete node
-		{OrderTypeStore, SourceIntentFull},          // self-sources — no finder intent (must NOT be local)
+		// An unrecognised type must fall to full, NOT local: local exempts an
+		// order from the scanner's payload guard, so a stray mapping there is
+		// the expensive direction to be wrong in.
+		{protocol.OrderType("something-nobody-has-added-yet"), SourceIntentFull},
 		{OrderTypeComplex, SourceIntentFull},        // coordinated — sourced per-leg, not here
 	}
 	for _, c := range cases {

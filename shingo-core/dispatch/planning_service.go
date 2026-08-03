@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/dispatch/binresolver"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -42,24 +43,38 @@ type planningError struct {
 // serialize verbatim into the orders.queue_reason / skip-reason DB columns, so
 // the values are part of a persisted, compared contract: renaming a constant is
 // safe, changing the string it holds is not.
+//
+// Every one of these except codeLoaderSource is the SAME STRING as a
+// protocol.TermCode, and used to be spelled out a second time here — two
+// vocabularies for one contract, kept equal by nobody. They are bound to the
+// protocol constants now, so the compiler holds them together and the warning
+// above has something enforcing it.
+//
+// This is also where a terminal code on an order row comes from: the planner
+// returns one of these, failOrder hands it to lifecycle.Fail, and it lands in
+// the row's code column. protocol.TermSameNode looked like a declared value
+// with no producer precisely because the producer spelled the string out again
+// instead of naming it.
 const (
-	codeUnknownType   = "unknown_type"
-	codeStructural    = "structural"
-	codeLoaderSource  = "loader_source"
-	codeNode          = "node_error"
-	codeClaimFailed   = "claim_failed"
-	codeLaneLocked    = "lane_locked"
-	codeReshuffle     = "reshuffle_error"
-	codeMissingSource = "missing_source"
-	codeInvalidNode   = "invalid_node"
-	codeSameNode      = "same_node"
-	codeNoPayload     = "no_payload"
-	codeNoBin         = "no_bin"
-	codeNoStorage     = "no_storage"
-	codeNoSourceBin   = "no_source_bin"
+	codeUnknownType   = string(protocol.TermUnknownType)
+	codeStructural    = string(protocol.TermStructural)
+	codeNode          = string(protocol.TermNodeError)
+	codeClaimFailed   = string(protocol.TermClaimFailed)
+	codeLaneLocked    = string(protocol.TermLaneLocked)
+	codeReshuffle     = string(protocol.TermReshuffleError)
+	codeMissingSource = string(protocol.TermMissingSource)
+	codeInvalidNode   = string(protocol.TermInvalidNode)
+	codeSameNode      = string(protocol.TermSameNode)
+	codeNoPayload     = string(protocol.TermNoPayload)
+	codeNoBin         = string(protocol.TermNoBin)
+	codeNoStorage     = string(protocol.TermNoStorage)
+	codeNoSourceBin   = string(protocol.TermNoSourceBin)
 	// codeNoShuffleSlot is TRANSIENT: the reshuffle has nowhere to park blockers
 	// right now. See ErrNoShuffleSlot + the D79 reshuffle-disposition rider.
-	codeNoShuffleSlot = "no_shuffle_slot"
+	codeNoShuffleSlot = string(protocol.TermNoShuffleSlot)
+	// codeLoaderSource is the one with no protocol twin: it never reaches a
+	// terminal row, it only classifies a loader-sourcing planning failure.
+	codeLoaderSource = "loader_source"
 )
 
 func (e *planningError) Error() string {
@@ -355,7 +370,7 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 		// NGRPs), so the concrete resolution must land on the order here. On a
 		// still-full group this is a TOCTOU race — re-queue and let the scanner retry.
 		if destNode.IsSynthetic && destNode.NodeTypeCode == protocol.NodeClassNGRP && s.resolver != nil {
-			result, rErr := s.resolver.Resolve(destNode, OrderTypeStore, payloadCode, nil)
+			result, rErr := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, payloadCode, nil)
 			if rErr != nil {
 				s.dbg("move: dest group %s unresolved (%v), queuing order %d", order.DeliveryNode, rErr, order.ID)
 				return &PlanningResult{Queued: true}, nil

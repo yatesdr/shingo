@@ -14,9 +14,31 @@ type ResolveResult struct {
 	Bin  *bins.Bin // set when resolver identified a specific bin
 }
 
+// ResolveMode says which direction material moves relative to the synthetic
+// node being resolved, which is the only thing this package needs to know in
+// order to pick a child.
+//
+// It used to be a protocol.OrderType, and reading the parameter that way was
+// misleading in both directions. No caller has ever passed an order's actual
+// type — all four pass a literal — and no order row has ever carried "store";
+// the value existed to mean "I am putting a bin INTO this group", which is a
+// direction, not a kind of order. Meanwhile a reader seeing an OrderType here
+// would reasonably expect order.OrderType to be a legal argument, and it is
+// not: a complex order resolves each STEP, and one order's steps go both ways.
+type ResolveMode string
+
+const (
+	// ResolveModeRetrieve: take a bin OUT of this node. Picks the child holding
+	// the best matching bin.
+	ResolveModeRetrieve ResolveMode = "retrieve"
+	// ResolveModeStore: put a bin INTO this node. Picks the child with room,
+	// consolidating with like payload where it can.
+	ResolveModeStore ResolveMode = "store"
+)
+
 // NodeResolver resolves a synthetic node to a physical child node.
 type NodeResolver interface {
-	Resolve(syntheticNode *nodes.Node, orderType protocol.OrderType, payloadCode string, binTypeID *int64) (*ResolveResult, error)
+	Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64) (*ResolveResult, error)
 }
 
 // DefaultResolver resolves synthetic nodes using the database.
@@ -40,8 +62,9 @@ func (r *DefaultResolver) dbg(format string, args ...any) {
 	}
 }
 
-// Resolve selects the best physical child of a synthetic node for the given order type.
-func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, orderType protocol.OrderType, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+// Resolve selects the best physical child of a synthetic node for the given
+// direction of travel.
+func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(syntheticNode.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", syntheticNode.Name, err)
@@ -53,32 +76,34 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, orderType protocol.
 	// Delegate to group resolver for NGRP nodes
 	if syntheticNode.NodeTypeCode == protocol.NodeClassNGRP {
 		gr := &GroupResolver{DB: r.DB, LaneLock: r.LaneLock, DebugLog: r.DebugLog}
-		switch orderType {
-		// OrderTypeRetrieveEmpty currently flows through FindEmptyCompatibleBin in
-		// the planner and doesn't reach the resolver, but accept it here as
-		// insurance — if a future path does land here, it should resolve the same
-		// way as a regular retrieve.
-		case protocol.OrderTypeRetrieve, protocol.OrderTypeRetrieveEmpty:
+		switch mode {
+		case ResolveModeRetrieve:
 			return gr.ResolveRetrieve(syntheticNode, payloadCode)
-		case protocol.OrderTypeStore:
+		case ResolveModeStore:
 			return gr.ResolveStore(syntheticNode, payloadCode, binTypeID)
 		}
 	}
 
-	switch orderType {
-	case protocol.OrderTypeRetrieve, protocol.OrderTypeRetrieveEmpty:
+	switch mode {
+	case ResolveModeRetrieve:
 		node, err := r.resolveRetrieve(children, payloadCode)
 		if err != nil {
 			return nil, err
 		}
 		return &ResolveResult{Node: node}, nil
-	case protocol.OrderTypeStore:
+	case ResolveModeStore:
 		node, err := r.resolveStore(children, payloadCode)
 		if err != nil {
 			return nil, err
 		}
 		return &ResolveResult{Node: node}, nil
 	default:
+		// Unreachable by construction now that the parameter is a two-value
+		// mode rather than the open OrderType set. Kept because deleting it
+		// would be a behavior change on a path nothing exercises, and this
+		// commit is a retype. An empty-carrier retrieve used to land here as
+		// insurance; it now maps to ResolveModeRetrieve at the call site, which
+		// is where the decision belongs.
 		for _, c := range children {
 			if c.Enabled {
 				return &ResolveResult{Node: c}, nil

@@ -6,6 +6,7 @@
 package www
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -34,6 +35,20 @@ func (h *Handlers) apiDirectOrderSubmit(w http.ResponseWriter, r *http.Request) 
 		Desc:       "direct test order from shingo core",
 	})
 	if err != nil {
+		// A full destination is a conflict with the plant's current state, not a
+		// server fault: the engineer can clear the spot or pick another one.
+		// Everything else on this path is still a 500.
+		if errors.Is(err, engine.ErrDestinationOccupied) {
+			h.jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		// Somebody else took the bin between choosing it and reserving it. Same
+		// class as above — a conflict with what the plant is doing right now,
+		// which the engineer resolves by trying again.
+		if errors.Is(err, engine.ErrBinTaken) {
+			h.jsonError(w, "that bin was taken a moment ago — try again", http.StatusConflict)
+			return
+		}
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

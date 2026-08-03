@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/dispatch/binresolver"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
@@ -153,7 +154,7 @@ type fakeResolver struct {
 	err    error
 }
 
-func (r *fakeResolver) Resolve(_ *nodes.Node, _ protocol.OrderType, _ string, _ *int64) (*ResolveResult, error) {
+func (r *fakeResolver) Resolve(_ *nodes.Node, _ binresolver.ResolveMode, _ string, _ *int64) (*ResolveResult, error) {
 	return r.result, r.err
 }
 

@@ -8,9 +8,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"errors"
 	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/fleet"
+	"shingocore/store/reservations"
 )
 
 func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
@@ -280,7 +282,7 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 		h.submitSpotRetrieveSpecific(w, req.BinLabel, req.DeliveryNode, req.Description, req.Priority, orderUUID)
 		return
 	case "swap":
-		h.submitSpotSwap(w, req.DeliveryNode, req.PayloadCode, req.Description, req.Priority)
+		h.submitSpotDeliverBin(w, req.DeliveryNode, req.PayloadCode, req.Description, req.Priority)
 		return
 	}
 
@@ -363,6 +365,20 @@ func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc str
 	destNode, err := h.engine.NodeService().GetByName(destination)
 	if err != nil {
 		h.jsonError(w, "destination node not found: "+destination, http.StatusBadRequest)
+		return
+	}
+
+	// A send-to moves the robot to a location and parks it there. If something
+	// is already at that location, the robot arrives and stops — so refuse
+	// before dispatching rather than let the operator find out by watching.
+	//
+	// Before the insert, deliberately. The order row is written below and the
+	// fleet is called after it, so a rejection past that point would leave a
+	// pending row nothing dispatches, fails, or cleans up. Checking first also
+	// keeps the capacity read honest: it excludes no order id, and there is no
+	// order yet for it to need to exclude.
+	if preview := h.engine.Dispatcher().PreviewDropoffCapacity(destNode.Name); preview.Blocked {
+		h.jsonError(w, preview.Reason, http.StatusConflict)
 		return
 	}
 
@@ -485,6 +501,19 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		h.jsonError(w, "bin is already claimed by order #"+strconv.FormatInt(*bin.ClaimedBy, 10), http.StatusConflict)
 		return
 	}
+	// A bin is held in two stages: a soft reservation taken at planning, then a
+	// hard claim taken immediately before dispatch. For the whole window between
+	// them an in-flight order's bin still has claimed_by NULL, so reading only
+	// the claim showed a bin somebody already has as free. The request then got
+	// as far as the reservation below, failed there, and left its order row
+	// behind in pending with nothing to dispatch, fail or clean it up.
+	//
+	// The engineer's door has always checked both and skips such a bin while
+	// scanning. Same question, so the same answer: somebody else has it.
+	if bin.HasPendingReservation {
+		h.jsonError(w, "bin "+bin.Label+" is already spoken for by another order — pick another bin or wait for that one to finish", http.StatusConflict)
+		return
+	}
 	if bin.NodeID == nil {
 		h.jsonError(w, "bin has no assigned node", http.StatusBadRequest)
 		return
@@ -498,6 +527,43 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 	destNode, err := h.engine.NodeService().GetByName(deliveryNode)
 	if err != nil {
 		h.jsonError(w, "delivery node not found: "+deliveryNode, http.StatusBadRequest)
+		return
+	}
+
+	// Asking to move a bin to where it already is. The engineer's door has always
+	// refused this, five other places in the system refuse it, and the wire
+	// protocol reserves a terminal code for it — this door was the exception.
+	//
+	// It runs BEFORE the occupancy gate on purpose. The gate does catch most of
+	// these incidentally, because the bin is at the destination and so the
+	// destination reads as occupied — but it then tells the operator the spot is
+	// taken, which sends them to go clear a node whose only occupant is the bin
+	// they were trying to move. The specific answer has to win over the generic
+	// one.
+	//
+	// And the gate does not catch all of them: it defers on lane nodes, so a bin
+	// sitting in a lane went straight to the fleet with nothing stopping it.
+	//
+	// Scoped to this door only. It must never move into the shared writer or the
+	// dispatch tail: a complex order's first and last step are legitimately the
+	// same node — a robot lifts a bin off a position, takes it away, and brings a
+	// different one back — so a check placed there would break changeovers.
+	if sourceNode.ID == destNode.ID {
+		h.jsonError(w, "bin "+bin.Label+" is already at "+destNode.Name, http.StatusBadRequest)
+		return
+	}
+
+	// Only STORAGE destinations were gated, via the slot reservation further
+	// down. A lineside one was not, so a bin could be sent to a line node that
+	// already held one and the two would contend for the same physical spot.
+	// This is the check the wire path and the scanner already consult; the
+	// difference was that this door did not ask.
+	//
+	// Before the insert and before any claim, so a refusal leaves the source bin
+	// exactly as it was. Rejecting later would strand a pending order and leave
+	// a reservation the next move would be told to wait behind.
+	if preview := h.engine.Dispatcher().PreviewDropoffCapacity(destNode.Name); preview.Blocked {
+		h.jsonError(w, preview.Reason, http.StatusConflict)
 		return
 	}
 
@@ -520,10 +586,39 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		return
 	}
 
+	// The status column already says pending — the INSERT set it. This is for
+	// the HISTORY row, which is written by transitions rather than by the
+	// insert, so an order created directly at pending has no entry saying it
+	// ever started and its timeline begins at whatever happened next.
+	//
+	// The engineer's bin-move door has always made this call for the same
+	// reason. Skipping it here meant the one order class a person creates by
+	// hand was the class whose record did not say when it was created — on the
+	// surface an operator would go to when asking what happened. Logged rather
+	// than returned, as on the other door: the order is real and dispatchable
+	// either way, and failing the request over a missing audit line would be
+	// the worse trade.
+	if err := h.engine.Dispatcher().Lifecycle().MarkPending(order, desc); err != nil {
+		log.Printf("www: mark spot bin-move %d pending: %v", order.ID, err)
+	}
+
 	// Rule 1: soft-acquire the bin (a pending reservation), then hard-claim it at
 	// dispatch via ConfirmForDispatch (which also claims a storage dropoff slot).
 	// Rollback below releases the reservation if dispatch fails.
 	if err := h.engine.BinManifest().ReserveForDispatch(bin.ID, order.ID); err != nil {
+		// The order row exists by now, so a failure here has to fail it too or it
+		// sits pending forever with nothing to dispatch, fail or clean it up.
+		if ferr := orders.FailAtomic(order.ID, "bin taken by another order before reservation"); ferr != nil {
+			log.Printf("www: fail spot bin-move %d after losing the bin: %v", order.ID, ferr)
+		}
+		// Somebody else got the bin in the moment between the check above and
+		// this call. That is a race with another person, not a fault, and the
+		// operator can act on it — so it reads like the claimed-bin answer they
+		// already get, rather than as a server error.
+		if errors.Is(err, reservations.ErrReservationConflict) {
+			h.jsonError(w, "bin "+bin.Label+" was taken a moment ago — try again", http.StatusConflict)
+			return
+		}
 		h.jsonError(w, "failed to reserve bin: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -549,7 +644,13 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 	h.readBackManualOrder(w, orderUUID)
 }
 
-func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode, desc string, priority int) {
+// submitSpotDeliverBin sends one fresh bin of a payload to a node.
+//
+// It was called submitSpotSwap, and it has not swapped anything since the evac
+// half went with the plain-store family. The tab still says "Swap", which is a
+// separate decision about the operator surface; the function no longer claims
+// to do something it does not.
+func (h *Handlers) submitSpotDeliverBin(w http.ResponseWriter, targetNode, payloadCode, desc string, priority int) {
 	if targetNode == "" {
 		h.jsonError(w, "target node is required", http.StatusBadRequest)
 		return
@@ -564,9 +665,8 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 		return
 	}
 
-	// The evac (store) half of the manual spot-swap was removed with the plain-store
-	// family; this affordance now just delivers a fresh bin to the target node. A
-	// full evac+deliver swap is available through the coordinated (complex) order path.
+	// One retrieve, no evac. A full evac-and-deliver swap is available through the
+	// coordinated (complex) order path.
 	retrieveUUID := fmt.Sprintf("manual-swap-r-%s", uuid.New().String()[:8])
 
 	src := protocol.Address{Role: protocol.RoleCore, Station: "core-spot"}
