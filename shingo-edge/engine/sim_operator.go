@@ -435,7 +435,12 @@ func (op *simOperator) clearNegativeBins() {
 	cleared := 0
 	for i := range bins {
 		if bins[i].UOPRemaining < 0 {
-			if err := op.e.coreClient.ClearBin(bins[i].NodeName, ""); err == nil {
+			// Core hands back the new generation stamp, and the operator paths at
+			// the LINE write it to their runtime row so the station keeps counting
+			// under the current one. There is no runtime row here: this sweeps
+			// supermarket slots, not a claim's window. So the stamp is dropped on
+			// purpose rather than by omission.
+			if _, err := op.e.coreClient.ClearBin(bins[i].NodeName, ""); err == nil {
 				cleared++
 			}
 		}

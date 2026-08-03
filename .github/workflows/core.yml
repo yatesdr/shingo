@@ -61,6 +61,13 @@ jobs:
         working-directory: shingo-core
         run: go build ./...
 
+      # See the matching step in edge.yml: sim-tagged code is compiled nowhere
+      # in CI, so a signature change that misses a sim call site goes green here
+      # and fails on the box that builds the dev stack.
+      - name: Build (sim)
+        working-directory: shingo-core
+        run: go build -tags sim ./...
+
       - name: Prepare build dir
         working-directory: shingo-core
         run: mkdir -p build

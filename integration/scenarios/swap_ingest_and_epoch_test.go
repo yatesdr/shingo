@@ -190,8 +190,26 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 	coreDB := coreharness.OpenDB(t)
 	sd := coreharness.SetupStandardData(t, coreDB)
 
-	manifest := service.NewBinManifestService(coreDB)
-	inv := uop.NewInventoryDeltaService(coreDB, manifest)
+	// Wired, because this scenario is the epoch ladder end to end. Every bump
+	// tells the station its new generation in the transaction that did the bump,
+	// and a discarded count is answered on a subject of its own. Both write
+	// outbox rows, which is what makes them assertable from here — an unwired
+	// announcer would run the whole lifecycle and quietly skip both.
+	announce := service.EpochAnnounce{Topic: "shingo.dispatch", CoreStation: "core.test"}
+	manifest := service.NewBinManifestService(coreDB, announce)
+	inv := uop.NewInventoryDeltaService(coreDB, manifest, announce)
+
+	// Outbox rows carry msg_type "data.<subject>", so counting by subject is how
+	// this scenario reads what Core owes the Edge.
+	announced := func(subject string) int {
+		t.Helper()
+		var n int
+		if err := coreDB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type=$1`,
+			"data."+subject).Scan(&n); err != nil {
+			t.Fatalf("count outbox %s: %v", subject, err)
+		}
+		return n
+	}
 
 	bin := &corebins.Bin{
 		BinTypeID: sd.BinType.ID,
@@ -257,14 +275,24 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 	}
 	coreharness.ClaimBinForTest(t, coreDB, bin.ID, releaseOrder.ID)
 	zero := 0
+	adjustmentsBeforeRelease := announced(protocol.SubjectUOPAdjustment)
 	if err := manifest.SyncOrClearForReleased(bin.ID, releaseOrder.ID, &zero, protocol.DispositionReleaseEmpty, "operator"); err != nil {
 		t.Fatalf("release empty: %v", err)
 	}
 	if got := uopOf(); got != 0 {
 		t.Fatalf("after release uop = %d, want 0", got)
 	}
+	// PREVENTION. The station has to be told the generation moved, and told by
+	// the same transaction that moved it — otherwise it keeps counting under the
+	// old one and Core discards everything it says, which is the stall this
+	// scenario's late delta reproduces.
+	if got := announced(protocol.SubjectUOPAdjustment); got <= adjustmentsBeforeRelease {
+		t.Errorf("adjustments announced after release = %d, want more than the %d before it — "+
+			"the bump did not tell the station its new generation", got, adjustmentsBeforeRelease)
+	}
 
 	// ── Late delta carrying the pre-release (load) epoch: dropped. ──
+	adjustmentsBeforeStale := announced(protocol.SubjectUOPAdjustment)
 	if err := consume(loadEpoch, -5, 2); err != uop.ErrInventoryDeltaSkipped {
 		t.Fatalf("stale-epoch consume err = %v, want ErrInventoryDeltaSkipped", err)
 	}
@@ -277,6 +305,20 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 	}
 	if dropped != 1 {
 		t.Errorf("stale_epoch_dropped rows = %d, want exactly 1", dropped)
+	}
+	// REPAIR. A discarded count is answered with the generation that is current,
+	// once, and the debounce is what makes it once rather than once per tick.
+	if got := announced(protocol.SubjectBinEpochRefresh); got != 1 {
+		t.Errorf("epoch refreshes = %d, want exactly 1 — a dropped count is answered "+
+			"once, not once per tick", got)
+	}
+	// AND IT RIDES ITS OWN SUBJECT. UOPAdjustment carries NewRemaining as a bare
+	// int, so an epoch-only adjustment serialises 0 and would tell the station
+	// its count is zero — the repair would do more damage than the stall. The
+	// dropped count must move no adjustment at all.
+	if got := announced(protocol.SubjectUOPAdjustment); got != adjustmentsBeforeStale {
+		t.Errorf("adjustments after the stale delta = %d, want %d unchanged — the repair "+
+			"rode UOPAdjustment, which would zero the station's count", got, adjustmentsBeforeStale)
 	}
 
 	// ── Reload and consume on the new epoch: applies again. ──

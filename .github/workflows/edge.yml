@@ -50,6 +50,17 @@ jobs:
         working-directory: shingo-edge
         run: go build ./...
 
+      # The sim files are only ever compiled when someone builds the dev stack
+      # on the sim box, so a signature change made in the plain configuration
+      # goes green here and fails there — days later, to whoever tried to boot
+      # it. That has now happened three times: the gofmt drift in June, and two
+      # call sites on this branch that a plain build could not see. `go build`
+      # is a compile-only check and costs seconds, which is all it takes to
+      # close the class.
+      - name: Build (sim)
+        working-directory: shingo-edge
+        run: go build -tags sim ./...
+
       - name: Prepare build dir
         working-directory: shingo-edge
         run: mkdir -p build
