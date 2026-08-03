@@ -1266,6 +1266,26 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 }
 .loader-box-name { font-weight: 700; color: #0a8f6a; }
 .loader-box-meta { color: var(--text-muted); font-size: 0.78rem; }
+/* A threshold loader with payloads nobody set a threshold for. Amber for a
+   partial gap (the loader works, those parts are ordered by nobody), red when
+   NOTHING is set (nothing orders for the loader at all). It is a link because
+   the fix is on another page and an operator should not have to go looking. */
+.loader-threshold-gap {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  border: 1px solid var(--warn-border, #a97c2f);
+  color: var(--warn-text, #a97c2f);
+  background: var(--warn-bg, rgba(169, 124, 47, 0.12));
+  text-decoration: none;
+  white-space: nowrap;
+}
+.loader-threshold-gap:hover { text-decoration: underline; }
+.loader-threshold-gap-none {
+  border-color: var(--danger-border, #b3453f);
+  color: var(--danger-text, #b3453f);
+  background: var(--danger-bg, rgba(179, 69, 63, 0.12));
+}
 .loader-box-edit, .loader-box-del {
   font-size: 0.72rem;
   padding: 0.15rem 0.5rem;

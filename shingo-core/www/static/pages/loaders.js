@@ -356,6 +356,41 @@ function loaderGroupsHtml(l) {
   return html;
 }
 
+// thresholdGapHtml surfaces payloads a THRESHOLD loader serves that carry no UOP
+// threshold — the ones nothing will ever order for.
+//
+// PARTIAL COVERAGE IS THE CASE THAT HIDES. A loader with thresholds on three of
+// its five payloads passes every check that asks whether a threshold exists —
+// one does — while the other two are ordered by nobody, silently. Saying "3 of 5
+// set" is not enough either; the operator needs the count that is WRONG and
+// somewhere to go and fix it.
+//
+// Nothing here for an operator-replenishment loader: a threshold is meaningless
+// there, and flagging it would put a permanent complaint on every correctly
+// configured loader.
+function thresholdGapHtml(item) {
+  const l = item.loader;
+  if (l.replenishment !== 'threshold') return '';
+  const missing = (item.payloads || []).filter(function (p) { return !(p.uop_threshold > 0); });
+  const homeMissing = (item.homes || []).filter(function (h) {
+    return h.payload_code && !(h.uop_threshold > 0);
+  });
+  const n = missing.length + homeMissing.length;
+  if (n === 0) return '';
+  const total = (item.payloads || []).length + (item.homes || []).filter(function (h) { return h.payload_code; }).length;
+  // No threshold ANYWHERE is the louder case: nothing orders for this loader at
+  // all, rather than for some of its parts.
+  const none = n === total;
+  const names = missing.map(function (p) { return p.payload_code; })
+    .concat(homeMissing.map(function (h) { return h.payload_code; }));
+  const label = none
+    ? 'no threshold set — nothing will order for this loader'
+    : n + ' of ' + total + ' payloads need a threshold';
+  return '<a class="loader-threshold-gap' + (none ? ' loader-threshold-gap-none' : '') + '"'
+    + ' href="/inventory" title="' + escapeHtml(names.join(', ')) + ' — set a UoP threshold on the Inventory page">'
+    + escapeHtml(label) + '</a>';
+}
+
 function boxHtml(item) {
   const l = item.loader;
   const dedicated = l.layout === 'dedicated_positions';
@@ -392,6 +427,7 @@ function boxHtml(item) {
     + '<div class="loader-box-header">'
     + '<span class="loader-box-name">' + escapeHtml(l.name || '(unnamed)') + '</span>'
     + '<span class="loader-box-meta">' + meta + '</span>'
+    + thresholdGapHtml(item)
     + (isAuth ? '<button class="loader-box-edit" title="Edit loader">Edit</button>' : '')
     + (isAuth ? '<button class="loader-box-del" title="Delete loader">Delete</button>' : '')
     + '</div>'

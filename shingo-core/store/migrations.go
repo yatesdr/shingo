@@ -880,6 +880,14 @@ func (db *DB) runVersionedMigrations() error {
 		{74, "add funnel_windows to bin_loaders (per-loader window spreading)",
 			v74LoaderFunnelWindows,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "funnel_windows") }},
+		// v75: what carriers a loader wants, and which of them each window can
+		// physically take. Two tables because they answer two different
+		// questions — see v75LoaderCarrierMix. Both start EMPTY, and empty means
+		// exactly today's behaviour: no declared mix, every window takes
+		// anything.
+		{75, "add the loader carrier mix (per-loader quota, per-window capability)",
+			v75LoaderCarrierMix,
+			func(q schema.Querier) bool { return schema.TableExists(q, "bin_loader_quotas") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3345,6 +3353,76 @@ func v74LoaderFunnelWindows(tx *sql.Tx) error {
 	if _, err := tx.Exec(
 		`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS funnel_windows BOOLEAN NOT NULL DEFAULT FALSE`); err != nil {
 		return fmt.Errorf("v74 funnel_windows: %w", err)
+	}
+	return nil
+}
+
+// v75LoaderCarrierMix gives a loader a declared carrier mix.
+//
+// Until now a loader said nothing about carrier types at all. What it would
+// accept fell out of the payload it was loading — payload_bin_types maps a part
+// to its allowed types, and a part with no rules matches anything. That works
+// while a loader runs one carrier type and silently does the wrong thing when it
+// does not: the opportunistic empty is staged payload-BLANK on purpose, so the
+// operator can pick the part at load time, and a blank payload makes the type
+// rule match everything. A five-window loader meant to hold three of one type
+// and two of another had nowhere to say so.
+//
+// TWO TABLES, BECAUSE THERE ARE TWO QUESTIONS AND THEY HAVE DIFFERENT ANSWERS.
+//
+// bin_loader_quotas is INTENT, and it belongs to the loader: "I want three
+// 45x48, one 32x32 and one tote on hand." It is a preference, NOT a cap — the
+// never-2N budget (carriers in flight plus resident must not exceed the window
+// count) is untouched and stays the only limit on how many carriers exist. The
+// quota decides WHICH type to fetch next inside that limit. That distinction is
+// the reason this is safe to add: as a cap it would move the counting into the
+// seam that the 2026-07-31 over-ordering incident was about; as a preference the
+// seam counts exactly as it does today.
+//
+// A quota total may be LESS than the window count, and that is a legitimate
+// thing to say — "four carriers at a five-window loader" — which had no
+// expression before. A total greater than the window count is capped by the
+// windows and never over-fetches.
+//
+// bin_loader_home_bin_types is PHYSICAL, and it belongs to the window: "this
+// slot fits a 45x48 or a tote." A SET, not one type, because a slot can take
+// more than one. Empty means the slot takes anything, which is what every slot
+// does today.
+//
+// The two compose at fetch time: what is the loader short of, filtered by what
+// this window can physically take. If the quota wants a type the free window
+// cannot hold, the next shortfall that window CAN hold is used instead.
+//
+// Both tables start empty and empty is today's behaviour, so applying this
+// changes nothing at any plant until somebody configures a loader.
+//
+// bin_type_id carries a real foreign key, unlike bin_uop_audit's deliberately
+// unreferenced loader_id: a bin type is catalog data an operator picks from a
+// list, not an event stamp that has to outlive an archive.
+func v75LoaderCarrierMix(tx *sql.Tx) error {
+	if _, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS bin_loader_quotas (
+			loader_id   BIGINT  NOT NULL REFERENCES bin_loaders(id) ON DELETE CASCADE,
+			bin_type_id BIGINT  NOT NULL REFERENCES bin_types(id)   ON DELETE CASCADE,
+			want        INTEGER NOT NULL DEFAULT 0 CHECK (want >= 0),
+			PRIMARY KEY (loader_id, bin_type_id)
+		)`); err != nil {
+		return fmt.Errorf("v75 bin_loader_quotas: %w", err)
+	}
+	// KEYED ON THE POSITION NODE ALONE, no loader_id. bin_loader_homes carries
+	// UNIQUE(position_node_id) — one loader per member node — so the node
+	// identifies the window by itself and carrying the loader too would be a
+	// second copy of a fact that can disagree. It also would not work: a
+	// composite foreign key needs a matching unique constraint on the referenced
+	// table, and the pair does not have one. The first draft had both and the
+	// migration was refused, which is the constraint doing its job.
+	if _, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS bin_loader_home_bin_types (
+			position_node_id BIGINT NOT NULL REFERENCES bin_loader_homes(position_node_id) ON DELETE CASCADE,
+			bin_type_id      BIGINT NOT NULL REFERENCES bin_types(id) ON DELETE CASCADE,
+			PRIMARY KEY (position_node_id, bin_type_id)
+		)`); err != nil {
+		return fmt.Errorf("v75 bin_loader_home_bin_types: %w", err)
 	}
 	return nil
 }

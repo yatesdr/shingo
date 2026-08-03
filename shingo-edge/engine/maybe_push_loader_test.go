@@ -91,16 +91,23 @@ func TestSweepPushLoaders_OnlyOperatorStagedLoaders(t *testing.T) {
 	}
 }
 
-// TestMaybePushLoader_ThresholdWithoutThresholdFallsBackToStaging pins the
-// fallback: a loader set to replenishment=threshold but with NO threshold
-// configured would be silently starved (Core never signals it), so it falls back
-// to operator staging — exactly one empty staged.
-func TestMaybePushLoader_ThresholdWithoutThresholdFallsBackToStaging(t *testing.T) {
+// TestMaybePushLoader_ThresholdLoaderIsNotFedByThePush pins the ruling side of
+// the same decision (owner, 2026-08-02): threshold is switched on, not fallen
+// into.
+//
+// A loader switched to threshold with no threshold configured used to be fed by
+// the operator push instead — silently, in a mode no screen reported. Now the
+// push leaves it alone: it belongs to the threshold path, which has nothing to
+// fire on until somebody sets a threshold.
+//
+// That IS a loader nobody feeds, deliberately, and it is why SweepPushLoaders
+// warns about this configuration OUTSIDE the staging gate rather than inside it.
+func TestMaybePushLoader_ThresholdLoaderIsNotFedByThePush(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "FB-PROC", "FB-LOADER", "PART-F")
-	// threshold mode, but uop_threshold=0 → misconfigured → fall back to staging.
+	// Threshold switched on, no threshold value configured.
 	seedCoreLoader(t, eng, sharedLoaderInfo("FB-LOADER", "produce", "threshold", "PART-F", 0, 0))
 
 	eng.MaybePushLoader(nodeID)
@@ -112,7 +119,8 @@ func TestMaybePushLoader_ThresholdWithoutThresholdFallsBackToStaging(t *testing.
 			n++
 		}
 	}
-	if n != 1 {
-		t.Errorf("threshold-with-no-threshold must fall back to staging 1 empty, got %d", n)
+	if n != 0 {
+		t.Errorf("push staged %d empties at a threshold loader, want 0 — the push must not "+
+			"quietly take over a loader whose switch says the threshold path owns it", n)
 	}
 }

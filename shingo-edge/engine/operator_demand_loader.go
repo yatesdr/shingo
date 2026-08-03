@@ -406,9 +406,9 @@ func (e *Engine) MaybePushLoader(_ int64) {
 		return
 	}
 	for _, l := range loaders {
-		// UsesOperatorStaging is true for operator-driven loaders AND for a
-		// threshold loader with no threshold configured (the fallback — it would
-		// otherwise be silently starved). SweepPushLoaders logs that misconfig.
+		// Operator-driven loaders only. A threshold loader is Core's to feed, even
+		// if it has no threshold configured — in which case it is fed by nothing,
+		// and SweepPushLoaders is where that gets said out loud.
 		if !l.UsesOperatorStaging() {
 			continue
 		}
@@ -465,15 +465,26 @@ func (e *Engine) SweepPushLoaders() {
 	}
 	swept := 0
 	for _, l := range loaders {
+		// CHECKED BEFORE THE GATE, NOT INSIDE IT. A threshold loader with no
+		// threshold is not operator-staged any more, so it is skipped below — and
+		// if this warning sat after the skip, the one configuration that feeds a
+		// loader from nothing would be the one nothing reports.
+		// Two severities, and the second is the one that hides. NO threshold at
+		// all means nothing feeds the loader — loud. SOME payloads without one
+		// means the loader works and those parts are ordered by nobody, which
+		// passes every check that only asks whether a threshold exists.
+		if missing := l.PayloadsMissingThreshold(); len(missing) > 0 {
+			if l.MisconfiguredThreshold() {
+				log.Printf("WARN loader-push: loader=%s is switched to threshold replenishment but has NO threshold configured — "+
+					"nothing will order carriers for it. Either set a UOP threshold, or switch it to operator so the window-free push feeds it.", l.ID())
+			} else {
+				log.Printf("WARN loader-push: loader=%s is on threshold replenishment and %d of its payloads have no threshold (%v) — "+
+					"those parts are ordered by nobody. Set a UOP threshold for each on the inventory page.",
+					l.ID(), len(missing), missing)
+			}
+		}
 		if !l.UsesOperatorStaging() {
 			continue
-		}
-		if l.MisconfiguredThreshold() {
-			// Visible error: the loader is set to threshold replenishment but no UOP
-			// threshold is configured, so Core never signals it — it falls back to
-			// operator staging here. Fix the threshold in the loader config. (The
-			// loaders-admin UI surfaces the same misconfig flag.)
-			log.Printf("WARN loader-push: loader=%s replenishment=threshold but NO threshold configured — falling back to operator staging (set a UOP threshold in the loader config)", l.ID())
 		}
 		e.maybeStageLoaderEmpty(l)
 		swept++

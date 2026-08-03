@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"sort"
 
 	"shingo/protocol"
 )
@@ -341,21 +342,68 @@ func (l *Loader) hasConfiguredThreshold() bool {
 	return false
 }
 
-// UsesOperatorStaging reports whether this loader is supplied by operator-driven
-// opportunistic staging (the window-free push) rather than the automatic threshold
-// path. True when replenishment is operator, OR when it is threshold but NO
-// threshold is actually configured — the fallback: a threshold loader with no
-// threshold value would otherwise be silently starved (Core never signals it), so
-// it falls back to operator staging. Callers log that misconfiguration; the config
-// UI surfaces it. A consume loader is always operator, so this is true for it.
-func (l *Loader) UsesOperatorStaging() bool {
-	return l.replenishment == ReplenishmentOperator ||
-		(l.replenishment == ReplenishmentThreshold && !l.hasConfiguredThreshold())
+// PayloadsMissingThreshold lists the payloads this loader serves that carry NO
+// UOP threshold, when the loader is switched to threshold replenishment. Empty
+// for an operator loader (a threshold is meaningless there) and empty when every
+// payload has one.
+//
+// PARTIAL COVERAGE IS THE COMMON CASE AND IT LOOKS FINE. A loader serving five
+// parts with thresholds on three of them passes every check that asks "is a
+// threshold configured" — one is — while the other two are ordered by nobody.
+// Nothing fires for them and nothing says so. That is the same silence as the
+// mode fallback this replaced, one level down: not a loader in the wrong mode,
+// but two parts inside a right one that no path covers.
+//
+// Sorted so the answer is stable for a screen and for a log line.
+func (l *Loader) PayloadsMissingThreshold() []PayloadCode {
+	if l.replenishment != ReplenishmentThreshold {
+		return nil
+	}
+	var out []PayloadCode
+	for _, p := range l.payloadSet {
+		if l.uopThreshold[p] <= 0 {
+			out = append(out, p)
+		}
+	}
+	for _, pos := range l.positions {
+		if pos.Payload != "" && pos.UOPThreshold <= 0 {
+			out = append(out, pos.Payload)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
 
-// MisconfiguredThreshold reports the fallback case for a loud log / UI flag: the
-// loader is in threshold mode but has no threshold configured, so it is falling
-// back to operator staging.
+// UsesOperatorStaging reports whether this loader is supplied by operator-driven
+// opportunistic staging — the window-free push — rather than by the automatic
+// threshold path. A consume loader is always operator, so this is true for it.
+//
+// THE SWITCH MEANS WHAT IT SAYS. This used to be true ALSO for a threshold
+// loader with no threshold configured: such a loader would be signalled by
+// nobody, so it quietly fell back to operator staging instead. The intent was
+// to keep it from starving, and the effect was worse — the loader ran in a mode
+// no screen reported. Every surface said "threshold" while the carriers arriving
+// at it came from the operator push, and the only trace was one warning line at
+// startup.
+//
+// So: threshold on means the threshold path runs, for whatever thresholds are
+// configured. Configure none and nothing fires — which is a plainly visible
+// "you have not set this up yet", not a different mode wearing this one's name.
+// Threshold off means the push. Two modes, each doing what it is called.
+func (l *Loader) UsesOperatorStaging() bool {
+	return l.replenishment == ReplenishmentOperator
+}
+
+// MisconfiguredThreshold reports a loader switched to threshold replenishment
+// with no threshold configured — so the threshold path has nothing to fire on
+// and the loader is fed by nothing at all.
+//
+// This used to describe a fallback ("it is falling back to operator staging").
+// There is no fallback now, which makes this warning the ONLY thing standing
+// between that configuration and a loader nobody feeds. It must stay loud and
+// it must be reachable — see SweepPushLoaders, where it is deliberately checked
+// outside the operator-staging gate, because a misconfigured loader is skipped
+// by that gate and would otherwise be warned about by nobody.
 func (l *Loader) MisconfiguredThreshold() bool {
 	return l.replenishment == ReplenishmentThreshold && !l.hasConfiguredThreshold()
 }

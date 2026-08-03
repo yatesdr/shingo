@@ -34,6 +34,11 @@ CREATE SEQUENCE public.audit_log_id_seq
 
 ALTER SEQUENCE public.audit_log_id_seq OWNED BY public.audit_log.id;
 
+CREATE TABLE public.bin_loader_home_bin_types (
+    position_node_id bigint NOT NULL,
+    bin_type_id bigint NOT NULL
+);
+
 CREATE TABLE public.bin_loader_homes (
     loader_id bigint NOT NULL,
     position_node_id bigint NOT NULL,
@@ -50,6 +55,13 @@ CREATE TABLE public.bin_loader_payloads (
     payload_code text NOT NULL,
     min_stock integer DEFAULT 0 NOT NULL,
     uop_threshold integer DEFAULT 0 NOT NULL
+);
+
+CREATE TABLE public.bin_loader_quotas (
+    loader_id bigint NOT NULL,
+    bin_type_id bigint NOT NULL,
+    want integer DEFAULT 0 NOT NULL,
+    CONSTRAINT bin_loader_quotas_want_check CHECK ((want >= 0))
 );
 
 CREATE TABLE public.bin_loaders (
@@ -1079,11 +1091,17 @@ ALTER TABLE ONLY public.admin_users
 ALTER TABLE ONLY public.audit_log
     ADD CONSTRAINT audit_log_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.bin_loader_home_bin_types
+    ADD CONSTRAINT bin_loader_home_bin_types_pkey PRIMARY KEY (position_node_id, bin_type_id);
+
 ALTER TABLE ONLY public.bin_loader_homes
     ADD CONSTRAINT bin_loader_homes_position_node_id_key UNIQUE (position_node_id);
 
 ALTER TABLE ONLY public.bin_loader_payloads
     ADD CONSTRAINT bin_loader_payloads_pkey PRIMARY KEY (loader_id, payload_code);
+
+ALTER TABLE ONLY public.bin_loader_quotas
+    ADD CONSTRAINT bin_loader_quotas_pkey PRIMARY KEY (loader_id, bin_type_id);
 
 ALTER TABLE ONLY public.bin_loaders
     ADD CONSTRAINT bin_loaders_pkey PRIMARY KEY (id);
@@ -1393,6 +1411,12 @@ CREATE UNIQUE INDEX uq_reservations_bin_active ON public.reservations USING btre
 
 CREATE UNIQUE INDEX uq_reservations_slot_active ON public.reservations USING btree (node_id) WHERE ((resource_kind = 'slot'::text) AND (state = ANY (ARRAY['pending'::text, 'confirmed'::text])));
 
+ALTER TABLE ONLY public.bin_loader_home_bin_types
+    ADD CONSTRAINT bin_loader_home_bin_types_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.bin_loader_home_bin_types
+    ADD CONSTRAINT bin_loader_home_bin_types_position_node_id_fkey FOREIGN KEY (position_node_id) REFERENCES public.bin_loader_homes(position_node_id) ON DELETE CASCADE;
+
 ALTER TABLE ONLY public.bin_loader_homes
     ADD CONSTRAINT bin_loader_homes_loader_id_fkey FOREIGN KEY (loader_id) REFERENCES public.bin_loaders(id) ON DELETE CASCADE;
 
@@ -1401,6 +1425,12 @@ ALTER TABLE ONLY public.bin_loader_homes
 
 ALTER TABLE ONLY public.bin_loader_payloads
     ADD CONSTRAINT bin_loader_payloads_loader_id_fkey FOREIGN KEY (loader_id) REFERENCES public.bin_loaders(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.bin_loader_quotas
+    ADD CONSTRAINT bin_loader_quotas_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.bin_loader_quotas
+    ADD CONSTRAINT bin_loader_quotas_loader_id_fkey FOREIGN KEY (loader_id) REFERENCES public.bin_loaders(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.bins
     ADD CONSTRAINT bins_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id);
