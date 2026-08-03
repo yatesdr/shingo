@@ -337,43 +337,65 @@
       <h2 id="loader-modal-title">Create Loader</h2>
       <button class="modal-close" data-action="closeLoaderModal">&times;</button>
     </div>
-    <div class="form-group" style="border-left:3px solid var(--accent);padding-left:10px">
+    <div class="loader-form">
       <input type="hidden" id="loader-edit-id">
-      <label class="text-sm" style="font-weight:600;display:block">Name</label>
-      <div class="flex gap-1" style="flex-wrap:wrap">
-        <input type="text" id="loader-name" placeholder="Name (e.g. COMP-LOADER)" style="flex:1">
+
+      <div class="form-group">
+        <label for="loader-name">Name</label>
+        <input type="text" id="loader-name" class="form-input" placeholder="e.g. COMP-LOADER">
       </div>
-      <label class="text-sm" style="font-weight:600;display:block;margin-top:10px">Role &amp; layout</label>
-      <div class="flex gap-1" style="flex-wrap:wrap">
-        <select id="loader-role"><option value="produce">produce (loader)</option><option value="consume">consume (unloader)</option></select>
-        <select id="loader-layout"><option value="dedicated_positions">dedicated_positions (drag nodes in, payload per spot)</option><option value="shared_window">shared_window (one window, many payloads)</option></select>
+
+      <div class="form-group">
+        <label for="loader-role">What is it?</label>
+        <div class="loader-form-pair">
+          <select id="loader-role" class="form-input">
+            <option value="produce">Loader — feeds a line (empties in, fulls out)</option>
+            <option value="consume">Unloader — drains (fulls in, empties out)</option>
+          </select>
+          <select id="loader-kind" class="form-input" aria-label="Loader style">
+            <option value="multi_window">Multi window — one carrier per window</option>
+            <option value="single_window">Single window — one carrier at a time</option>
+            <option value="dedicated">Dedicated homes — a spot per part</option>
+          </select>
+        </div>
       </div>
-      <label class="text-sm" style="font-weight:600;display:block;margin-top:10px">Replenishment</label>
-      <select id="loader-replenishment" style="width:100%"></select>
-      <div id="loader-replenishment-hint" class="text-muted text-sm" style="margin-top:3px"></div>
-      <div id="loader-flow-section">
-        <label class="text-sm" style="font-weight:600;display:block;margin-top:10px">Material flow <span id="loader-flow-scope" class="text-muted" style="font-weight:400">(shared_window)</span></label>
-        <div class="flex gap-1" style="flex-wrap:wrap">
-          <input type="text" id="loader-inbound" list="loader-nodes-dl" placeholder="Inbound source (blank = fed directly)" style="flex:1">
-          <input type="text" id="loader-outbound" list="loader-nodes-dl" placeholder="Outbound dest (bins out)" style="flex:1">
+
+      <div class="form-group" id="loader-supply-row">
+        <label for="loader-replenishment">How is it supplied?</label>
+        <select id="loader-replenishment" class="form-input"></select>
+        <div id="loader-replenishment-hint" class="form-hint"></div>
+      </div>
+
+      <div class="form-group">
+        <label for="loader-inbound">Where carriers come from and go</label>
+        <div class="loader-form-pair">
+          <input type="text" id="loader-inbound" class="form-input" list="loader-nodes-dl" placeholder="Pull carriers from…">
+          <input type="text" id="loader-outbound" class="form-input" list="loader-nodes-dl" placeholder="Send carriers to…" aria-label="Send carriers to">
         </div>
-        <div id="loader-outbound-note" class="text-muted text-sm" style="margin-top:3px;display:none">Outbound is disabled for dedicated positions — the spots are their own outbound.</div>
-        <div class="flex gap-1 mt-1" style="align-items:center;flex-wrap:wrap">
-          <button type="button" class="btn btn-sm" data-action="clearLoaderInbound">Inbound: None (fed directly)</button>
-          <span class="text-muted text-sm">press / forklift / reach-truck fed — no auto-pull</span>
-        </div>
-        <div class="text-muted text-sm" style="margin-top:3px">Set <strong>Inbound</strong> only if an AMR should auto-restock this loader — it is where empties are retrieved FROM, and a blank value means Shingo queues no carrier pulls at all. Leave it blank (or click <em>None</em>) for a press/forklift-fed loader or a drain unloader.</div>
-        <label class="text-sm" style="font-weight:600;display:block;margin-top:10px">Overflow buffer <span class="text-muted" style="font-weight:400">(node group — staged empties; optional)</span></label>
-        <input type="text" id="loader-buffer" list="loader-nodes-dl" placeholder="Buffer node group (optional)" style="width:100%">
-        <div class="text-muted text-sm" style="margin-top:3px">A NODE GROUP the Edge rotates empties out of for a shared-window loader. When set it is used <em>instead of</em> Inbound, with no fallback if it runs dry — so leave it blank unless that is what you want.</div>
-        <div id="loader-buffer-note-dedicated" class="text-muted text-sm" style="margin-top:3px;display:none">Disabled for dedicated positions. Not to be confused with the <strong>Buffer</strong> zone on the grid — those are member spots holding kept partials, set by dragging tiles, and are a different thing entirely.</div>
-        <label class="text-sm" style="font-weight:600;display:block;margin-top:10px">Window delivery</label>
-        <label class="text-sm" style="display:flex;align-items:center;gap:6px">
-          <input type="checkbox" id="loader-funnel-windows">
-          One window at a time
+        <label class="form-check" for="loader-fed-by-hand">
+          <input type="checkbox" id="loader-fed-by-hand">
+          Fed by hand — a person or press loads it, no robot pulls
         </label>
-        <div class="text-muted text-sm" style="margin-top:3px">Off (the default) fills every window at once — one carrier per window. Tick this to keep a single carrier at the first window instead, and only send the next one after it clears. Ticking it does not change how much material is ordered, only how many windows it may sit at.</div>
       </div>
+
+      <div class="form-group" id="loader-staging-row">
+        <label for="loader-buffer">Staging group <span class="form-label-aside">(optional)</span></label>
+        <input type="text" id="loader-buffer" class="form-input" list="loader-nodes-dl" placeholder="Node group to stage empties in">
+        <div class="form-hint">Empties are staged here and rotated into a spot when that spot runs low. Used <em>instead of</em> the source above, with no fallback if it runs dry.</div>
+      </div>
+
+      <div class="form-group" id="loader-mix-row">
+        <label>Carriers wanted on hand <span class="form-label-aside">(optional)</span></label>
+        <div id="loader-mix-editor"></div>
+        <div class="form-hint">Leave empty to take whatever carrier is available. Declare a mix and it is honoured — a window waits rather than taking the wrong type.</div>
+      </div>
+
+      <div class="form-group" id="loader-windows-row">
+        <label>What each window can take <span class="form-label-aside">(optional)</span></label>
+        <div id="loader-windows-editor"></div>
+        <div class="form-hint">A window with nothing set takes any carrier. Set types on a window that physically only fits some.</div>
+      </div>
+
       <datalist id="loader-nodes-dl"></datalist>
       <datalist id="loader-payloads-dl"></datalist>
       <div class="flex-end gap-1 mt-1">
@@ -381,11 +403,8 @@
       </div>
       <span id="loader-result" class="text-sm"></span>
     </div>
-    <div class="text-sm text-muted mt-2" style="line-height:1.5">
-      A <strong>dedicated_positions</strong> loader appears as a box on the grid — <strong>drag node tiles into it</strong>
-      to assign positions (each spot is its own in/out), <strong>⠿</strong> to reorder, <strong>×</strong> to remove,
-      then pick a payload per spot. A <strong>shared_window</strong> loader holds a payload set. <strong>Edit</strong> on a
-      box changes its name/flow. UoP thresholds live on the <strong>Inventory</strong> page.
+    <div class="form-hint mt-2">
+      Drag node tiles onto the box to add windows or spots · <strong>⠿</strong> reorder (this decides which window fills first) · <strong>×</strong> remove.
     </div>
   </div>
 </div>

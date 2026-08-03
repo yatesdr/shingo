@@ -77,6 +77,17 @@ func (s *LoaderService) Homes(loaderID int64) ([]loaders.Home, error) {
 	return s.db.ListLoaderHomes(loaderID)
 }
 
+// Quotas is how many carriers of each type the loader wants on hand.
+func (s *LoaderService) Quotas(loaderID int64) ([]loaders.Quota, error) {
+	return s.db.ListLoaderQuotas(loaderID)
+}
+
+// WindowBinTypes is what each window can physically take, keyed by position
+// node id. A window absent from the map takes anything.
+func (s *LoaderService) WindowBinTypes(loaderID int64) (map[int64][]string, error) {
+	return s.db.ListLoaderHomeBinTypes(loaderID)
+}
+
 // ── Writes (re-derive after each) ─────────────────────────────────────
 
 // Create persists a new loader and re-derives. Takes primitives (not a store
@@ -173,6 +184,47 @@ func (s *LoaderService) SetPayload(loaderID int64, payloadCode string, uopThresh
 	if err := s.db.UpsertLoaderPayload(loaders.Payload{
 		LoaderID: loaderID, PayloadCode: payloadCode, UOPThreshold: uopThreshold,
 	}); err != nil {
+		return err
+	}
+	s.rederive()
+	return nil
+}
+
+// SetQuota declares how many carriers of one bin type a loader wants on hand.
+// want=0 is meaningful ("none of this type"); RemoveQuota drops the line.
+//
+// The mix is INTENT and belongs to the loader. It is a preference, not a cap:
+// never-2N still bounds how many carriers exist, and this only decides which
+// type is fetched next inside that bound.
+func (s *LoaderService) SetQuota(loaderID, binTypeID int64, want int) error {
+	if err := s.db.UpsertLoaderQuota(loaders.Quota{
+		LoaderID: loaderID, BinTypeID: binTypeID, Want: want,
+	}); err != nil {
+		return err
+	}
+	s.rederive()
+	return nil
+}
+
+// RemoveQuota drops one line of a loader's declared mix. Dropping every line
+// returns the loader to first-come-first-served, which is where it started.
+func (s *LoaderService) RemoveQuota(loaderID, binTypeID int64) error {
+	if err := s.db.RemoveLoaderQuota(loaderID, binTypeID); err != nil {
+		return err
+	}
+	s.rederive()
+	return nil
+}
+
+// SetWindowBinTypes replaces what ONE window can physically take. An empty list
+// means it takes anything, which is what every window does until somebody says
+// otherwise.
+//
+// Physical, so it belongs to the window rather than the loader — a slot either
+// fits a carrier or it does not. When the floor is rebuilt somebody edits this;
+// Shingo does not model why.
+func (s *LoaderService) SetWindowBinTypes(loaderID, positionNodeID int64, binTypeIDs []int64) error {
+	if err := s.db.SetLoaderHomeBinTypes(loaderID, positionNodeID, binTypeIDs); err != nil {
 		return err
 	}
 	s.rederive()

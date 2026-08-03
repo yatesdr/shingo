@@ -223,6 +223,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			// Loaders are part of the node layout (shop-floor read access) — the
 			// box render reads this; all loader WRITES stay auth-gated below.
 			r.Get("/loader/list", h.apiListLoaders)
+			r.Get("/bin-types", h.apiListBinTypes)
 			r.Get("/fleet/robot-groups", h.apiRobotGroups)
 			r.Get("/map/points", h.apiScenePoints)
 			r.Get("/map/edges", h.apiSceneEdges)
@@ -447,6 +448,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/loader/remove-home", h.apiRemoveLoaderHome)
 				r.Post("/loader/reorder-homes", h.apiReorderLoaderHomes)
 				r.Post("/loader/remove-payload", h.apiRemoveLoaderPayload)
+				r.Post("/loader/set-quota", h.apiSetLoaderQuota)
+				r.Post("/loader/remove-quota", h.apiRemoveLoaderQuota)
+				r.Post("/loader/set-window-bin-types", h.apiSetWindowBinTypes)
 				r.Post("/loader/delete", h.apiDeleteLoader)
 				r.Post("/loader/calculate", h.apiCalculateThreshold)
 				// NOTE: GET /loader/list is registered in the PUBLIC block above

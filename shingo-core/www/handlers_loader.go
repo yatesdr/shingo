@@ -101,6 +101,88 @@ func (h *Handlers) apiSetLoaderPayload(w http.ResponseWriter, r *http.Request) {
 	h.jsonSuccess(w)
 }
 
+// apiListBinTypes returns the carrier-type catalog, for the pickers that let an
+// operator declare a loader's mix and a window's capability. Read-only.
+func (h *Handlers) apiListBinTypes(w http.ResponseWriter, r *http.Request) {
+	types, err := h.engine.BinService().ListBinTypes()
+	if err != nil {
+		h.jsonError(w, "list bin types: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	out := make([]map[string]any, 0, len(types))
+	for _, t := range types {
+		out = append(out, map[string]any{"id": t.ID, "code": t.Code, "description": t.Description})
+	}
+	h.jsonOK(w, map[string]any{"bin_types": out})
+}
+
+// apiSetLoaderQuota declares how many carriers of one bin type a loader wants.
+func (h *Handlers) apiSetLoaderQuota(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LoaderID  int64 `json:"loader_id"`
+		BinTypeID int64 `json:"bin_type_id"`
+		Want      int   `json:"want"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.LoaderID == 0 || req.BinTypeID == 0 {
+		h.jsonError(w, "loader_id and bin_type_id are required", http.StatusBadRequest)
+		return
+	}
+	if req.Want < 0 {
+		h.jsonError(w, "want must be 0 or more", http.StatusBadRequest)
+		return
+	}
+	if err := h.engine.LoaderService().SetQuota(req.LoaderID, req.BinTypeID, req.Want); err != nil {
+		h.jsonError(w, "set quota: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
+// apiRemoveLoaderQuota drops one line of a loader's declared carrier mix.
+func (h *Handlers) apiRemoveLoaderQuota(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LoaderID  int64 `json:"loader_id"`
+		BinTypeID int64 `json:"bin_type_id"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.LoaderID == 0 || req.BinTypeID == 0 {
+		h.jsonError(w, "loader_id and bin_type_id are required", http.StatusBadRequest)
+		return
+	}
+	if err := h.engine.LoaderService().RemoveQuota(req.LoaderID, req.BinTypeID); err != nil {
+		h.jsonError(w, "remove quota: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
+// apiSetWindowBinTypes replaces what one window can physically take. An empty
+// list means it takes anything.
+func (h *Handlers) apiSetWindowBinTypes(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LoaderID       int64   `json:"loader_id"`
+		PositionNodeID int64   `json:"position_node_id"`
+		BinTypeIDs     []int64 `json:"bin_type_ids"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.LoaderID == 0 || req.PositionNodeID == 0 {
+		h.jsonError(w, "loader_id and position_node_id are required", http.StatusBadRequest)
+		return
+	}
+	if err := h.engine.LoaderService().SetWindowBinTypes(req.LoaderID, req.PositionNodeID, req.BinTypeIDs); err != nil {
+		h.jsonError(w, "set window bin types: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
 // apiSetLoaderHome assigns/updates a dedicated position (one payload per node) + threshold.
 func (h *Handlers) apiSetLoaderHome(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -220,7 +302,21 @@ func (h *Handlers) apiListLoaders(w http.ResponseWriter, _ *http.Request) {
 	for _, l := range ls {
 		payloads, _ := svc.Payloads(l.ID)
 		homes, _ := svc.Homes(l.ID)
-		out = append(out, map[string]any{"loader": l, "payloads": payloads, "homes": homes})
+		// The carrier mix and the per-window capability are configuration like
+		// everything else here, and the screen that edits them reads this list.
+		// They were writable before they were readable: the mix editor asked for
+		// a `quota` field the response had never carried, so a saved mix came
+		// back empty and looked like it had not saved.
+		//
+		// Both encode as null when empty rather than as [] / {}; the caller
+		// treats null and empty the same, and naming the store type here to
+		// build an empty one would import the store into a handler.
+		quota, _ := svc.Quotas(l.ID)
+		windowBinTypes, _ := svc.WindowBinTypes(l.ID)
+		out = append(out, map[string]any{
+			"loader": l, "payloads": payloads, "homes": homes,
+			"quota": quota, "window_bin_types": windowBinTypes,
+		})
 	}
 	h.jsonOK(w, map[string]any{"loaders": out})
 }

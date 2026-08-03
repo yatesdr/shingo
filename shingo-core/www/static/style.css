@@ -98,11 +98,28 @@ tr:hover { background: #f8f9fa; }
 /* Forms */
 .form-group { margin-bottom: 0.75rem; }
 label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.25rem; }
-input[type="text"], input[type="password"], input[type="number"], input[type="date"], select, textarea {
+input[type="text"], input[type="password"], input[type="number"], input[type="date"], select, textarea,
+.form-input {
   width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 0.3rem; font-size: 0.9rem;
   background: var(--surface); color: var(--text);
 }
 textarea { resize: vertical; min-height: 60px; }
+/* A field's explanation, and the quiet half of a label. Both were inline styles
+   repeated at every field before they were named. */
+.form-hint { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem; line-height: 1.45; }
+.form-label-aside { font-weight: 400; color: var(--text-muted); }
+/* A checkbox reads left-to-right with its text, so it opts out of the block
+   label rule above rather than fighting it with an inline style. */
+.form-check {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-weight: 400; font-size: 0.85rem; margin-top: 0.4rem; margin-bottom: 0;
+}
+.form-check input[type="checkbox"] { width: auto; margin: 0; }
+/* The visibility utility the form-state convention is written against: a form
+   renders from its state and toggles this class, instead of event handlers
+   reaching for element.style.display. !important because it lands on elements
+   that also carry a display-setting layout class (.flex, .form-group). */
+.is-hidden { display: none !important; }
 
 /* Buttons */
 .btn { display: inline-block; padding: 0.4rem 1rem; border: none; border-radius: 0.3rem; font-size: 0.9rem; cursor: pointer; text-align: center; }
@@ -1426,6 +1443,34 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .loader-chip-x:hover { color: var(--danger); }
 .loader-chip-add input { width: 100px; font-size: 0.72rem; }
 .loader-hint { margin-top: 0.4rem; font-size: 0.7rem; color: var(--text-muted); opacity: 0.85; }
+
+/* ── The loader modal's form ─────────────────────────────────────────────
+   The form renders only the fields that apply to the chosen loader style, so
+   what is left has to hold its shape as sections come and go. Two things do
+   that: the accent rule down the left edge (which used to be an inline style
+   on a .form-group doing double duty as a container), and .loader-form-pair
+   for the two places that ask for two related values side by side. */
+.loader-form { border-left: 3px solid var(--accent); padding-left: 0.65rem; }
+.loader-form-pair { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.loader-form-pair > * { flex: 1 1 12rem; }
+
+/* The carrier mix: how many of each carrier type this loader wants on hand. */
+.loader-mix-line { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.3rem; }
+.loader-mix-line .loader-mix-want { width: 4.5rem; flex: none; }
+.loader-mix-add { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; }
+.loader-mix-add select { flex: 1 1 8rem; }
+
+/* Per-window capability: what one window can physically take. One row per
+   window, in the operator's arranged order — the same order that decides
+   which window fills first, so the two readings agree on this screen. */
+.loader-window-cap { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.35rem; }
+.loader-window-cap-name {
+  font-family: var(--mono, monospace); font-size: 0.75rem; font-weight: 700;
+  min-width: 6rem; flex: none;
+}
+.loader-window-cap-any { font-size: 0.72rem; color: var(--text-muted); font-style: italic; }
+.loader-window-cap select { flex: none; width: auto; font-size: 0.72rem; padding: 0.1rem 0.3rem; }
+.loader-window-cap-empty { font-size: 0.8rem; color: var(--text-muted); }
 /* A grid tile that's also a dedicated loader position — ringed teal to link the
    two representations (the node stays on the grid; the box holds a member chip). */
 .node-tile.loader-linked { outline: 2px solid #0a8f6a; outline-offset: 1px; }
