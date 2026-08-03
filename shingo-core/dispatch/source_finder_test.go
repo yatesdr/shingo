@@ -29,6 +29,11 @@ type fakeFinderDB struct {
 	loaders   map[int64]*loaders.Loader
 	homeByPos map[int64]*loaders.Home
 
+	// Declared carrier mix: quota per loader, capability per window.
+	quotas       map[int64][]loaders.Quota
+	homeBinTypes map[int64]map[int64][]string
+	typedEmpty   map[string]*bins.Bin
+
 	fifoBin     *bins.Bin
 	globalEmpty *bins.Bin
 	groupEmpty  *bins.Bin
@@ -41,11 +46,14 @@ type fakeFinderDB struct {
 
 func newFakeFinderDB() *fakeFinderDB {
 	return &fakeFinderDB{
-		nodesByID:   map[int64]*nodes.Node{},
-		nodesByName: map[string]*nodes.Node{},
-		binsByNode:  map[int64][]*bins.Bin{},
-		loaders:     map[int64]*loaders.Loader{},
-		homeByPos:   map[int64]*loaders.Home{},
+		nodesByID:    map[int64]*nodes.Node{},
+		nodesByName:  map[string]*nodes.Node{},
+		binsByNode:   map[int64][]*bins.Bin{},
+		loaders:      map[int64]*loaders.Loader{},
+		homeByPos:    map[int64]*loaders.Home{},
+		quotas:       map[int64][]loaders.Quota{},
+		homeBinTypes: map[int64]map[int64][]string{},
+		typedEmpty:   map[string]*bins.Bin{},
 	}
 }
 
@@ -93,6 +101,28 @@ func (f *fakeFinderDB) ListBinsByNodes(ids []int64) ([]*bins.Bin, error) {
 		out = append(out, f.binsByNode[id]...)
 	}
 	return out, nil
+}
+
+func (f *fakeFinderDB) ListLoaderQuotas(loaderID int64) ([]loaders.Quota, error) {
+	return f.quotas[loaderID], nil
+}
+
+func (f *fakeFinderDB) ListLoaderHomeBinTypes(loaderID int64) (map[int64][]string, error) {
+	return f.homeBinTypes[loaderID], nil
+}
+
+func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64) (*bins.Bin, error) {
+	if b, ok := f.typedEmpty[binTypeCode]; ok {
+		return b, nil
+	}
+	return nil, errors.New("no empty of type " + binTypeCode)
+}
+
+func (f *fakeFinderDB) FindEmptyBinOfTypeInGroup(binTypeCode string, _, _ int64) (*bins.Bin, error) {
+	if b, ok := f.typedEmpty[binTypeCode]; ok {
+		return b, nil
+	}
+	return nil, errors.New("no empty of type " + binTypeCode + " in group")
 }
 
 func (f *fakeFinderDB) FindSourceBinFIFO(_ string, _ int64) (*bins.Bin, error) {

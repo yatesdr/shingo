@@ -35,6 +35,9 @@ type CoreLoader struct {
 	FunnelWindows bool
 	Positions     []CoreLoaderPosition
 	Payloads      []CoreLoaderPayload
+	// Quota is the declared carrier mix. Empty means none declared, which is
+	// today's behaviour: the loader takes whatever compatible carrier it finds.
+	Quota []CoreLoaderQuota
 }
 
 // CoreLoaderPosition is one home of a cached loader (position node NAME). For a
@@ -52,6 +55,15 @@ type CoreLoaderPosition struct {
 	// Zero on every row means nothing was arranged (or the Core that sent it
 	// predates the field), which falls through to a number-aware name sort.
 	Ordinal int
+	// BinTypes is what this window can PHYSICALLY take, synced from Core.
+	// EMPTY MEANS ANYTHING — the state every window is in until configured.
+	BinTypes []string
+}
+
+// CoreLoaderQuota is one line of a loader's declared carrier mix.
+type CoreLoaderQuota struct {
+	BinTypeCode string
+	Want        int
 }
 
 // CoreLoaderPayload is one entry in a shared_window allowed set.
@@ -70,7 +82,7 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 	}
 	defer tx.Rollback()
 
-	for _, t := range []string{"core_loader_positions", "core_loader_payloads", "core_loaders"} {
+	for _, t := range []string{"core_loader_window_bin_types", "core_loader_quotas", "core_loader_positions", "core_loader_payloads", "core_loaders"} {
 		if _, err := tx.Exec("DELETE FROM " + t); err != nil {
 			return fmt.Errorf("clear %s: %w", t, err)
 		}
@@ -91,6 +103,22 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.Kind, p.UOPThreshold, p.Ordinal,
 			); err != nil {
 				return fmt.Errorf("insert position %s: %w", p.CoreNodeName, err)
+			}
+			for _, bt := range p.BinTypes {
+				if _, err := tx.Exec(
+					`INSERT INTO core_loader_window_bin_types (loader_key, position_node, bin_type_code) VALUES (?,?,?)`,
+					l.LoaderKey, p.CoreNodeName, bt,
+				); err != nil {
+					return fmt.Errorf("insert window bin type %s/%s: %w", p.CoreNodeName, bt, err)
+				}
+			}
+		}
+		for _, q := range l.Quota {
+			if _, err := tx.Exec(
+				`INSERT INTO core_loader_quotas (loader_key, bin_type_code, want) VALUES (?,?,?)`,
+				l.LoaderKey, q.BinTypeCode, q.Want,
+			); err != nil {
+				return fmt.Errorf("insert quota %s/%s: %w", l.LoaderKey, q.BinTypeCode, err)
 			}
 		}
 		for _, p := range l.Payloads {
@@ -195,6 +223,44 @@ func (db *DB) attachCoreLoaderChildren(l *CoreLoader) error {
 			windoworder.Window{Ordinal: l.Positions[j].Ordinal, Name: l.Positions[j].PositionNode},
 		)
 	})
+
+	btrows, err := db.Query(`SELECT position_node, bin_type_code FROM core_loader_window_bin_types WHERE loader_key=? ORDER BY position_node, bin_type_code`, l.LoaderKey)
+	if err != nil {
+		return fmt.Errorf("list window bin types %s: %w", l.LoaderKey, err)
+	}
+	caps := map[string][]string{}
+	for btrows.Next() {
+		var node, code string
+		if err := btrows.Scan(&node, &code); err != nil {
+			btrows.Close()
+			return err
+		}
+		caps[node] = append(caps[node], code)
+	}
+	btrows.Close()
+	if err := btrows.Err(); err != nil {
+		return err
+	}
+	for i := range l.Positions {
+		l.Positions[i].BinTypes = caps[l.Positions[i].PositionNode]
+	}
+
+	qrows, err := db.Query(`SELECT bin_type_code, want FROM core_loader_quotas WHERE loader_key=? ORDER BY bin_type_code`, l.LoaderKey)
+	if err != nil {
+		return fmt.Errorf("list quotas %s: %w", l.LoaderKey, err)
+	}
+	for qrows.Next() {
+		var q CoreLoaderQuota
+		if err := qrows.Scan(&q.BinTypeCode, &q.Want); err != nil {
+			qrows.Close()
+			return err
+		}
+		l.Quota = append(l.Quota, q)
+	}
+	qrows.Close()
+	if err := qrows.Err(); err != nil {
+		return err
+	}
 
 	yrows, err := db.Query(`SELECT payload_code, uop_threshold FROM core_loader_payloads WHERE loader_key=? ORDER BY payload_code`, l.LoaderKey)
 	if err != nil {

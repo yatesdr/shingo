@@ -581,6 +581,9 @@ type LoaderInfo struct {
 	FunnelWindows bool                `json:"funnel_windows,omitempty"`
 	Positions     []LoaderPosition    `json:"positions,omitempty"`
 	Payloads      []LoaderPayloadInfo `json:"payloads,omitempty"`
+	// Quota is the declared carrier mix — how many of each bin type this loader
+	// wants on hand. Empty means none declared, which is today's behaviour.
+	Quota []LoaderQuota `json:"quota,omitempty"`
 }
 
 // LoaderPosition is one home of a loader. For a dedicated_positions loader it is
@@ -611,6 +614,26 @@ type LoaderPosition struct {
 	// through to its name ordering — which is exactly what it did before. See
 	// shingo/shared/windoworder for the rule both sides share.
 	Ordinal int `json:"ordinal,omitempty"`
+	// BinTypes is what this window can PHYSICALLY take, as bin-type codes.
+	// EMPTY MEANS ANYTHING, which is what every window does today and keeps
+	// doing until somebody says otherwise — so an older Core that sends nothing
+	// reads as "no constraint", the same shape as the ordinal above.
+	//
+	// A set, not one type: a slot that fits a 45x48 may also fit a tote of the
+	// same footprint. Per window rather than per loader because it is a fact
+	// about the floor, not about intent — intent is the loader's quota.
+	BinTypes []string `json:"bin_types,omitempty"`
+}
+
+// LoaderQuota is one line of a loader's declared carrier mix: how many carriers
+// of a bin type it wants on hand.
+//
+// A PREFERENCE, NOT A CAP. The never-2N budget still bounds how many carriers
+// exist at a loader; this only decides which type to fetch next inside that
+// bound. An absent quota means no declared mix, which is today's behaviour.
+type LoaderQuota struct {
+	BinTypeCode string `json:"bin_type_code"`
+	Want        int    `json:"want"`
 }
 
 // LoaderPositionKind values for LoaderPosition.Kind. A window belongs to a

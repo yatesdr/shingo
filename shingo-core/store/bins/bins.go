@@ -519,6 +519,83 @@ func claimBin(db binExecer, binID, orderID int64) error {
 // 2026-05-14) saw retrieve_empty pull empties from whichever supermarket had
 // the lowest bins.id — typically the empty-tote return area, not the
 // configured Inbound supermarket.
+// FindEmptyOfTypeInGroup returns an empty carrier of ONE bin type from within a
+// node group. The typed twin of FindEmptyCompatibleInGroup, for a loader that
+// has declared a carrier mix.
+//
+// THE TYPE IS IN THE QUERY, not applied to the result, and that is the whole
+// point. Asking the group for any empty and then rejecting the wrong type would
+// let one carrier of the wrong type mask every right-typed one behind it — the
+// group returns its best candidate, not a list.
+//
+// No payload-compatibility clause: this is an empty carrier and the type IS the
+// requirement. The payload rules exist to stop a part going into a carrier that
+// cannot hold it; here a person has said which carrier they want.
+func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, excludeNodeID int64) (*Bin, error) {
+	if binTypeCode == "" {
+		return nil, sql.ErrNoRows
+	}
+	row := db.QueryRow(fmt.Sprintf(`
+		WITH RECURSIVE descendants(id) AS (
+			SELECT id FROM nodes WHERE parent_id = $2
+			UNION ALL
+			SELECT n2.id FROM nodes n2 JOIN descendants d ON n2.parent_id = d.id
+		)
+		%s
+		WHERE b.status = 'available'
+		  AND b.claimed_by IS NULL
+		  AND b.locked = false
+		  AND b.node_id IS NOT NULL
+		  AND n.enabled = true
+		  AND n.is_synthetic = false
+		  AND COALESCE(b.payload_code, '') = ''
+		  AND bt.code = $1
+		  AND b.node_id IN (SELECT id FROM descendants)
+		  AND ($3 = 0 OR b.node_id != $3)
+		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s`,
+		BinJoinQuery, AccessibleEmptyOrder), binTypeCode, groupNodeID, excludeNodeID)
+	return ScanBin(row)
+}
+
+// FindEmptyOfType returns an empty carrier of ONE bin type from anywhere,
+// preferring the destination's zone. The typed twin of FindEmptyCompatible.
+func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID int64) (*Bin, error) {
+	if binTypeCode == "" {
+		return nil, sql.ErrNoRows
+	}
+	if preferZone != "" {
+		row := db.QueryRow(fmt.Sprintf(`%s
+			WHERE b.status = 'available'
+			  AND b.claimed_by IS NULL
+			  AND b.locked = false
+			  AND b.node_id IS NOT NULL
+			  AND n.enabled = true
+			  AND n.is_synthetic = false
+			  AND n.zone = $2
+			  AND COALESCE(b.payload_code, '') = ''
+			  AND bt.code = $1
+			  AND ($3 = 0 OR b.node_id != $3)
+			  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s`,
+			BinJoinQuery, AccessibleEmptyOrder), binTypeCode, preferZone, excludeNodeID)
+		if b, err := ScanBin(row); err == nil && b != nil {
+			return b, nil
+		}
+	}
+	row := db.QueryRow(fmt.Sprintf(`%s
+		WHERE b.status = 'available'
+		  AND b.claimed_by IS NULL
+		  AND b.locked = false
+		  AND b.node_id IS NOT NULL
+		  AND n.enabled = true
+		  AND n.is_synthetic = false
+		  AND COALESCE(b.payload_code, '') = ''
+		  AND bt.code = $1
+		  AND ($2 = 0 OR b.node_id != $2)
+		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s`,
+		BinJoinQuery, AccessibleEmptyOrder), binTypeCode, excludeNodeID)
+	return ScanBin(row)
+}
+
 func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, excludeNodeID int64) (*Bin, error) {
 	row := db.QueryRow(fmt.Sprintf(`
 		WITH RECURSIVE descendants(id) AS (

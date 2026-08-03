@@ -42,6 +42,31 @@ func (db *DB) UpsertLoaderPayload(p loaders.Payload) error { return loaders.Upse
 func (db *DB) RemoveLoaderPayload(loaderID int64, payloadCode string) error {
 	return loaders.RemovePayload(db.DB, loaderID, payloadCode)
 }
+
+// ListLoaderQuotas returns a loader's declared carrier mix.
+func (db *DB) ListLoaderQuotas(loaderID int64) ([]loaders.Quota, error) {
+	return loaders.ListQuotas(db.DB, loaderID)
+}
+
+// UpsertLoaderQuota sets how many carriers of one bin type a loader wants.
+func (db *DB) UpsertLoaderQuota(q loaders.Quota) error { return loaders.UpsertQuota(db.DB, q) }
+
+// RemoveLoaderQuota drops one line of a loader's carrier mix.
+func (db *DB) RemoveLoaderQuota(loaderID, binTypeID int64) error {
+	return loaders.RemoveQuota(db.DB, loaderID, binTypeID)
+}
+
+// ListLoaderHomeBinTypes returns each window's capability set, keyed by position
+// node id. A window absent from the map takes anything.
+func (db *DB) ListLoaderHomeBinTypes(loaderID int64) (map[int64][]string, error) {
+	return loaders.ListHomeBinTypes(db.DB, loaderID)
+}
+
+// SetLoaderHomeBinTypes replaces what one window can physically take.
+func (db *DB) SetLoaderHomeBinTypes(loaderID, positionNodeID int64, binTypeIDs []int64) error {
+	return loaders.SetHomeBinTypes(db.DB, loaderID, positionNodeID, binTypeIDs)
+}
+
 func (db *DB) ListLoaderPayloads(loaderID int64) ([]loaders.Payload, error) {
 	return loaders.ListPayloads(db.DB, loaderID)
 }

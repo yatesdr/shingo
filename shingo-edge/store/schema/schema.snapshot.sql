@@ -104,6 +104,20 @@ CREATE TABLE core_loader_positions (
     PRIMARY KEY (loader_key, position_node)
 );
 
+CREATE TABLE core_loader_quotas (
+    loader_key    TEXT    NOT NULL,
+    bin_type_code TEXT    NOT NULL,
+    want          INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (loader_key, bin_type_code)
+);
+
+CREATE TABLE core_loader_window_bin_types (
+    loader_key     TEXT NOT NULL,
+    position_node  TEXT NOT NULL,
+    bin_type_code  TEXT NOT NULL,
+    PRIMARY KEY (loader_key, position_node, bin_type_code)
+);
+
 CREATE TABLE core_loaders (
     loader_key     TEXT    NOT NULL,   -- the loader IDENTITY token ("loader:<id>")
     role           TEXT    NOT NULL,

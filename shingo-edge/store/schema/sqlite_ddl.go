@@ -450,6 +450,23 @@ CREATE TABLE IF NOT EXISTS core_loader_positions (
     ordinal        INTEGER NOT NULL DEFAULT 0,   -- where the operator dragged this window; 0 everywhere = nothing arranged, fall back to a number-aware name sort
     PRIMARY KEY (loader_key, position_node)
 );
+-- What each window can PHYSICALLY take, synced from Core. A window with no rows
+-- here takes anything, which is what every window does until somebody says
+-- otherwise.
+CREATE TABLE IF NOT EXISTS core_loader_window_bin_types (
+    loader_key     TEXT NOT NULL,
+    position_node  TEXT NOT NULL,
+    bin_type_code  TEXT NOT NULL,
+    PRIMARY KEY (loader_key, position_node, bin_type_code)
+);
+-- The loader's declared carrier mix: how many of each type it wants on hand.
+-- A PREFERENCE, not a cap — never-2N still bounds how many carriers exist.
+CREATE TABLE IF NOT EXISTS core_loader_quotas (
+    loader_key    TEXT    NOT NULL,
+    bin_type_code TEXT    NOT NULL,
+    want          INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (loader_key, bin_type_code)
+);
 CREATE TABLE IF NOT EXISTS core_loader_payloads (
     loader_key     TEXT    NOT NULL,   -- the owning loader's identity token
     payload_code   TEXT    NOT NULL,

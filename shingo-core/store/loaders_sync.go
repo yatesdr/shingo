@@ -119,6 +119,11 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 		if err != nil {
 			return nil, err
 		}
+		// What each window can physically take. Absent = takes anything.
+		capabilities, err := db.ListLoaderHomeBinTypes(l.ID)
+		if err != nil {
+			return nil, err
+		}
 		for _, h := range homes {
 			node, err := db.GetNode(h.PositionNodeID)
 			if err != nil || node == nil {
@@ -132,7 +137,8 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 				// The operator's arrangement, carried down. It was persisted
 				// here and read by the admin screen, and stopped at this
 				// function — everything below re-sorted by name.
-				Ordinal: h.SortOrder,
+				Ordinal:  h.SortOrder,
+				BinTypes: capabilities[h.PositionNodeID],
 			})
 		}
 
@@ -144,6 +150,17 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			info.Payloads = append(info.Payloads, protocol.LoaderPayloadInfo{
 				PayloadCode:  p.PayloadCode,
 				UOPThreshold: p.UOPThreshold,
+			})
+		}
+
+		quotas, err := db.ListLoaderQuotas(l.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, q := range quotas {
+			info.Quota = append(info.Quota, protocol.LoaderQuota{
+				BinTypeCode: q.BinTypeCode,
+				Want:        q.Want,
 			})
 		}
 

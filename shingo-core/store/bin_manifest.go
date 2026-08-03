@@ -30,6 +30,18 @@ func (db *DB) GetBinManifest(binID int64) (*bins.Manifest, error) {
 // FindSourceBinFIFO finds the best unclaimed bin at an enabled storage node
 // matching the given payload code, using FIFO ordering. excludeNodeID > 0
 // skips bins at that node (pass destination to avoid same-node retrieve).
+// FindEmptyBinOfType returns an empty carrier of one bin type, preferring the
+// destination's zone. See bins.FindEmptyOfType.
+func (db *DB) FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID int64) (*bins.Bin, error) {
+	return bins.FindEmptyOfType(db.DB, binTypeCode, preferZone, excludeNodeID)
+}
+
+// FindEmptyBinOfTypeInGroup returns an empty carrier of one bin type from within
+// a node group. See bins.FindEmptyOfTypeInGroup.
+func (db *DB) FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error) {
+	return bins.FindEmptyOfTypeInGroup(db.DB, binTypeCode, groupNodeID, excludeNodeID)
+}
+
 func (db *DB) FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error) {
 	return bins.FindSourceFIFO(db.DB, payloadCode, excludeNodeID)
 }

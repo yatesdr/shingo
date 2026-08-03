@@ -313,6 +313,17 @@ func (db *DB) migrate() error {
 	// idempotent and so an edge that never had the table is unaffected.
 	db.Exec("DROP TABLE IF EXISTS operator_driven_loaders")
 
+	// The loader carrier mix, synced from Core: what each window can physically
+	// take, and how many of each type the loader wants on hand. Created here as
+	// well as in the DDL so an existing edge picks them up without a rebuild.
+	// Both start empty and empty is current behaviour.
+	db.Exec(`CREATE TABLE IF NOT EXISTS core_loader_window_bin_types (
+		loader_key TEXT NOT NULL, position_node TEXT NOT NULL, bin_type_code TEXT NOT NULL,
+		PRIMARY KEY (loader_key, position_node, bin_type_code))`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS core_loader_quotas (
+		loader_key TEXT NOT NULL, bin_type_code TEXT NOT NULL, want INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (loader_key, bin_type_code))`)
+
 	// 6. Data fixups
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")
 

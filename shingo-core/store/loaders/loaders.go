@@ -387,6 +387,128 @@ func ListPayloads(db *sql.DB, loaderID int64) ([]Payload, error) {
 	return out, rows.Err()
 }
 
+// Quota is one line of a loader's declared carrier mix: how many carriers of a
+// bin type it wants on hand.
+//
+// INTENT, and a PREFERENCE rather than a cap. never-2N still bounds how many
+// carriers exist at a loader — in flight plus resident must not exceed the
+// window count — and the quota only decides WHICH type to fetch next inside
+// that bound. Made a cap, this would move the counting into the seam the
+// 2026-07-31 over-ordering incident was about; as a preference the seam counts
+// exactly as it does today.
+//
+// A total below the window count is legitimate and had no expression before:
+// "four carriers at a five-window loader" is a thing an operator can now say. A
+// total above it is bounded by the windows and never over-fetches.
+type Quota struct {
+	LoaderID    int64  `json:"loader_id"`
+	BinTypeID   int64  `json:"bin_type_id"`
+	BinTypeCode string `json:"bin_type_code"`
+	Want        int    `json:"want"`
+}
+
+// UpsertQuota sets how many carriers of one bin type a loader wants, and bumps
+// config_gen so the plant re-syncs. want=0 is a legitimate value meaning "none
+// of this type"; RemoveQuota is how a line is dropped entirely.
+func UpsertQuota(db *sql.DB, q Quota) error {
+	_, err := db.Exec(`
+		INSERT INTO bin_loader_quotas (loader_id, bin_type_id, want)
+		VALUES ($1,$2,$3)
+		ON CONFLICT (loader_id, bin_type_id) DO UPDATE SET want=EXCLUDED.want`,
+		q.LoaderID, q.BinTypeID, q.Want)
+	if err != nil {
+		return fmt.Errorf("upsert quota bin_type=%d/loader=%d: %w", q.BinTypeID, q.LoaderID, err)
+	}
+	return bumpGen(db, q.LoaderID)
+}
+
+// RemoveQuota drops one line of the mix and bumps config_gen.
+func RemoveQuota(db *sql.DB, loaderID, binTypeID int64) error {
+	if _, err := db.Exec(`DELETE FROM bin_loader_quotas WHERE loader_id=$1 AND bin_type_id=$2`, loaderID, binTypeID); err != nil {
+		return fmt.Errorf("remove quota bin_type=%d/loader=%d: %w", binTypeID, loaderID, err)
+	}
+	return bumpGen(db, loaderID)
+}
+
+// ListQuotas returns a loader's declared carrier mix with the bin-type CODES
+// joined on, because the code is what travels on the wire and what a person
+// reads — the id is a local key.
+func ListQuotas(db *sql.DB, loaderID int64) ([]Quota, error) {
+	rows, err := db.Query(`SELECT q.loader_id, q.bin_type_id, bt.code, q.want
+		FROM bin_loader_quotas q JOIN bin_types bt ON bt.id = q.bin_type_id
+		WHERE q.loader_id=$1 ORDER BY bt.code`, loaderID)
+	if err != nil {
+		return nil, fmt.Errorf("list quotas loader=%d: %w", loaderID, err)
+	}
+	defer rows.Close()
+	var out []Quota
+	for rows.Next() {
+		var q Quota
+		if err := rows.Scan(&q.LoaderID, &q.BinTypeID, &q.BinTypeCode, &q.Want); err != nil {
+			return nil, fmt.Errorf("scan quota: %w", err)
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
+// SetHomeBinTypes replaces what a window can PHYSICALLY take with the given set
+// of bin-type ids. An EMPTY set means the window takes anything, which is what
+// every window does today and what every window keeps doing until somebody says
+// otherwise.
+//
+// Physical, and therefore per window rather than per loader: a slot either fits
+// a carrier or it does not, and that is a fact about the floor. When the floor
+// is rebuilt somebody edits this; Shingo does not model why.
+//
+// Keyed on the position node alone — bin_loader_homes is UNIQUE on it, one
+// loader per member node, so the node identifies the window by itself.
+func SetHomeBinTypes(db *sql.DB, loaderID, positionNodeID int64, binTypeIDs []int64) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin set home bin types: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM bin_loader_home_bin_types WHERE position_node_id=$1`, positionNodeID); err != nil {
+		return fmt.Errorf("clear home bin types node=%d: %w", positionNodeID, err)
+	}
+	for _, id := range binTypeIDs {
+		if _, err := tx.Exec(`INSERT INTO bin_loader_home_bin_types (position_node_id, bin_type_id) VALUES ($1,$2)`,
+			positionNodeID, id); err != nil {
+			return fmt.Errorf("add home bin type %d node=%d: %w", id, positionNodeID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit set home bin types node=%d: %w", positionNodeID, err)
+	}
+	return bumpGen(db, loaderID)
+}
+
+// ListHomeBinTypes returns each window's capability set as bin-type CODES,
+// keyed by position node id. A window absent from the map takes anything.
+func ListHomeBinTypes(db *sql.DB, loaderID int64) (map[int64][]string, error) {
+	rows, err := db.Query(`SELECT t.position_node_id, bt.code
+		FROM bin_loader_home_bin_types t
+		JOIN bin_types bt ON bt.id = t.bin_type_id
+		JOIN bin_loader_homes h ON h.position_node_id = t.position_node_id
+		WHERE h.loader_id=$1
+		ORDER BY t.position_node_id, bt.code`, loaderID)
+	if err != nil {
+		return nil, fmt.Errorf("list home bin types loader=%d: %w", loaderID, err)
+	}
+	defer rows.Close()
+	out := map[int64][]string{}
+	for rows.Next() {
+		var nodeID int64
+		var code string
+		if err := rows.Scan(&nodeID, &code); err != nil {
+			return nil, fmt.Errorf("scan home bin type: %w", err)
+		}
+		out[nodeID] = append(out[nodeID], code)
+	}
+	return out, rows.Err()
+}
+
 // GetConfig assembles a loader with its homes and payloads, or (nil, nil) if the
 // loader is absent.
 func GetConfig(db *sql.DB, id int64) (*Config, error) {
