@@ -42,7 +42,10 @@ type Dispatcher struct {
 }
 
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {
-	binManifest := service.NewBinManifestService(db)
+	binManifest := service.NewBinManifestService(db, service.EpochAnnounce{
+		Topic:       dispatchTopic,
+		CoreStation: stationID,
+	})
 	d := &Dispatcher{
 		db:               db,
 		backend:          backend,

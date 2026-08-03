@@ -13,6 +13,7 @@ import (
 	"shingocore/domain"
 	"shingocore/store/audit"
 	"shingocore/store/bins"
+	"shingocore/store/messaging"
 	"shingocore/store/reservations"
 )
 
@@ -24,11 +25,17 @@ import (
 // (see bin_manifest_store.go) rather than *store.DB. *store.DB
 // satisfies it structurally; engine wiring is unchanged.
 type BinManifestService struct {
-	db BinManifestStore
+	db       BinManifestStore
+	announce messaging.EpochAnnounce
 }
 
-func NewBinManifestService(db BinManifestStore) *BinManifestService {
-	return &BinManifestService{db: db}
+// EpochAnnounce is re-exported here so call sites that only import service can
+// name it. The type lives in store/messaging because the delta applier needs
+// the same addressing and must not import this package.
+type EpochAnnounce = messaging.EpochAnnounce
+
+func NewBinManifestService(db BinManifestStore, announce EpochAnnounce) *BinManifestService {
+	return &BinManifestService{db: db, announce: announce}
 }
 
 // readBinUOPInTx returns the bin's current uop_remaining inside a tx,
@@ -59,19 +66,85 @@ func binTypeCodeInTx(tx *sql.Tx, id int64) string {
 	return code
 }
 
-// bumpEpoch increments a bin's delta_epoch inside the caller's tx and returns
-// the new value. Every count-reset/clear path calls this so "a reset starts a
-// fresh delta stream" is structural — a new reset path can't silently forget
-// it. That omission is the failure this guards against: a reset that didn't
-// bump left late cross-epoch ticks looking same-epoch, so the applier's
-// stale-epoch guard couldn't tell them apart from live ticks and dropped (or
-// misapplied) them.
-func bumpEpoch(tx *sql.Tx, binID int64) (int64, error) {
-	var epoch int64
+// bumpEpochRaw increments a bin's delta_epoch inside the caller's tx and
+// returns the new generation, the bin's count as it stands after the caller's
+// own UPDATE, and the node the bin is at (empty when it is at none).
+//
+// Not to be called directly — bumpEpoch is the entry point, and the census
+// test in store/audit holds that. Bumping without announcing is the defect
+// this whole change exists to remove, and the two must not be separable.
+//
+// The count and the node come back from the SAME statement as the bump so the
+// announcement cannot carry a mismatched pair. Every reset path writes an
+// absolute uop_remaining in the UPDATE immediately before this one, inside the
+// same transaction, so the value read here is the one that reset just wrote.
+func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, nodeName string, err error) {
 	if err := tx.QueryRow(
-		`UPDATE bins SET delta_epoch=delta_epoch+1 WHERE id=$1 RETURNING delta_epoch`,
-		binID).Scan(&epoch); err != nil {
-		return 0, fmt.Errorf("bump delta_epoch bin %d: %w", binID, err)
+		`UPDATE bins SET delta_epoch=delta_epoch+1 WHERE id=$1
+		 RETURNING delta_epoch, uop_remaining,
+		           COALESCE((SELECT n.name FROM nodes n WHERE n.id = bins.node_id), '')`,
+		binID).Scan(&epoch, &remaining, &nodeName); err != nil {
+		return 0, 0, "", fmt.Errorf("bump delta_epoch bin %d: %w", binID, err)
+	}
+	return epoch, remaining, nodeName, nil
+}
+
+// bumpEpoch ends a bin's current life, starts the next one, and tells the
+// station holding it — in one transaction, as one act.
+//
+// Every count-reset/clear path calls this, so "a reset starts a fresh delta
+// stream" is structural: a new reset path cannot silently forget it. That
+// omission is the failure this guards against — a reset that did not bump left
+// late cross-epoch ticks looking same-epoch, so the applier's stale-epoch guard
+// could not tell them from live ticks.
+//
+// The announcement is here for the same reason the bump is. Five reset paths
+// bump; before this, ONE of them told the Edge, and the Edge went on reporting
+// counts under a generation that had ended while Core discarded every one —
+// half of all production counts at Hopkinsville, continuously. A shared body
+// plus a census test already existed for the bump and were not enough, because
+// what was missing was never a chokepoint: it was the wire. Putting the wire
+// inside the chokepoint is what makes the two impossible to separate.
+//
+// It is an outbox ROW, not a send, and that distinction is the design. The row
+// commits with the bump or rolls back with it; the drainer delivers it after
+// the commit by construction. An after-commit send would leave a window where
+// the reset lands and the process dies before the notification — an unbounded
+// silent stall with nothing recording it, which is this system's signature
+// failure and precisely what we are here to fix.
+//
+// The message carries the count as well as the generation, and that is
+// correct: a reset is a DECLARATION. Somebody or some lifecycle event decided
+// this carrier now holds this many, and a declaration always carries its
+// number. (The repair message in the other direction carries no count, because
+// nobody declared anything there — see protocol.BinEpochRefresh.)
+func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64) (int64, error) {
+	epoch, remaining, nodeName, err := bumpEpochRaw(tx, binID)
+	if err != nil {
+		return 0, err
+	}
+	if nodeName == "" {
+		// The carrier is not at a node, so there is no station modelling it and
+		// nothing to tell. It learns the generation when it is next delivered.
+		return epoch, nil
+	}
+	if !s.announce.Wired() {
+		// Unwired. Logged rather than swallowed: this is the state the plant was
+		// in for months and nothing said so.
+		log.Printf("bin_manifest: bin %d bumped to epoch %d at node %s with no announce topic wired — "+
+			"the station will keep reporting under the old generation and Core will discard it",
+			binID, epoch, nodeName)
+		return epoch, nil
+	}
+	if err := s.announce.Send(tx, protocol.SubjectUOPAdjustment, &protocol.UOPAdjustment{
+		BinID:        binID,
+		CoreNodeName: nodeName,
+		NewRemaining: remaining,
+		Epoch:        epoch,
+		Actor:        "core",
+		AdjustedAt:   time.Now().UTC(),
+	}); err != nil {
+		return 0, fmt.Errorf("announce epoch %d for bin %d: %w", epoch, binID, err)
 	}
 	return epoch, nil
 }
@@ -181,7 +254,7 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 		WHERE id=$1`, binID, binTypeID); err != nil {
 		return 0, fmt.Errorf("clear manifest bin %d: %w", binID, err)
 	}
-	newEpoch, err := bumpEpoch(tx, binID)
+	newEpoch, err := s.bumpEpoch(tx, binID)
 	if err != nil {
 		return 0, err
 	}
@@ -312,7 +385,7 @@ func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifes
 		payloadCode, manifestJSON, uop, binID); err != nil {
 		return 0, fmt.Errorf("set manifest bin %d: %w", binID, err)
 	}
-	newEpoch, err := bumpEpoch(tx, binID)
+	newEpoch, err := s.bumpEpoch(tx, binID)
 	if err != nil {
 		return 0, err
 	}
@@ -459,7 +532,7 @@ func (s *BinManifestService) clearAndClaimTx(tx *sql.Tx, binID, orderID int64) e
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
 	}
-	if _, err := bumpEpoch(tx, binID); err != nil {
+	if _, err := s.bumpEpoch(tx, binID); err != nil {
 		return err
 	}
 	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
@@ -773,7 +846,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		if n == 0 {
 			return notFoundErr
 		}
-		if _, err := bumpEpoch(tx, binID); err != nil {
+		if _, err := s.bumpEpoch(tx, binID); err != nil {
 			return err
 		}
 		op := audit.OpReleasedEmpty
@@ -842,7 +915,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	if n == 0 {
 		return notFoundErr
 	}
-	if _, err := bumpEpoch(tx, binID); err != nil {
+	if _, err := s.bumpEpoch(tx, binID); err != nil {
 		return err
 	}
 	op := audit.OpReleasedPartial

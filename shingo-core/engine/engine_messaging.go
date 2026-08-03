@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+
+	"shingocore/store/messaging"
 )
 
 // ── Outbound messaging ──────────────────────────────────────────────
@@ -22,17 +24,10 @@ func (e *Engine) SendToEdge(msgType string, stationID string, payload any) error
 // SendDataToEdge builds a data-channel envelope and enqueues it via outbox.
 // Used by HTTP handlers to push data notifications (e.g., node structure changes).
 func (e *Engine) SendDataToEdge(subject string, stationID string, payload any) error {
-	coreAddr := protocol.Address{Role: protocol.RoleCore, Station: e.cfg.Messaging.StationID}
-	edgeAddr := protocol.Address{Role: protocol.RoleEdge, Station: stationID}
-	env, err := protocol.NewDataEnvelope(subject, coreAddr, edgeAddr, payload)
+	data, msgType, err := messaging.BuildDataEnvelope(subject, e.cfg.Messaging.StationID, stationID, payload)
 	if err != nil {
-		return fmt.Errorf("build data %s: %w", subject, err)
+		return err
 	}
-	data, err := env.Encode()
-	if err != nil {
-		return fmt.Errorf("encode data %s: %w", subject, err)
-	}
-	msgType := "data." + subject
 	if err := e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, msgType, stationID); err != nil {
 		e.logFn("engine: outbox enqueue data %s to %s failed: %v", subject, stationID, err)
 		return fmt.Errorf("enqueue data %s: %w", subject, err)

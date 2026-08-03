@@ -399,6 +399,17 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			adj.CoreNodeName, adj.BinID, adj.NewRemaining, adj.Actor)
 		eng.HandleUOPAdjustment(*adj)
 	})
+	// The version-stamp repair from Core: a count this node reported was
+	// discarded for carrying a generation that had ended, so Core is telling it
+	// the current one. Epoch only — no count rides this message; see
+	// protocol.BinEpochRefresh for why that is not negotiable. Registered here
+	// in the same place the subject joins EdgeInboundSubjects, so the boot
+	// coverage assertion holds.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinEpochRefresh, func(_ *protocol.Envelope, r *protocol.BinEpochRefresh) {
+		log.Printf("edge_handler: bin_epoch_refresh: node=%s bin=%d epoch=%d",
+			r.CoreNodeName, r.BinID, r.Epoch)
+		eng.HandleBinEpochRefresh(*r)
+	})
 	// Sourceability feed from Core: the verdict per (process, style) — what each
 	// process can change over to. Edge persists it to SQLite so the changeover
 	// picker reads it with no Core round-trip. Registered here in the same place

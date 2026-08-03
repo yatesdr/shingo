@@ -58,6 +58,13 @@ type runtimeWriter interface {
 	// count carry-forward all share this shape.
 	SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error
 
+	// SetProcessNodeRuntimeClaimCountAndEpoch writes claim + count and
+	// advances the stamp for the carrier it names, without touching
+	// either bin pointer. Used by SetClaimCountAndEpoch — the clear
+	// routes, where Core starts the carrier's next life and hands back
+	// the new stamp, but the carrier itself has not moved.
+	SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activeClaimID *int64, remainingUOP int, binID, deltaEpoch int64) error
+
 	// SetProcessNodeRuntimeForDeliveredBin atomically writes
 	// active_claim_id, active_bin_id, active_bin_epoch, and
 	// remaining_uop_cached when a bin physically arrives at the slot.

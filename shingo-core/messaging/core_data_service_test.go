@@ -10,6 +10,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/service"
 	"shingocore/store/nodes"
 )
 
@@ -72,7 +73,7 @@ func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
 
 	// Create the data service and request node list
 	resp := &captureResponder{}
-	svc := NewCoreDataService(db, resp)
+	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
 
 	env := &protocol.Envelope{
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: stationID},
@@ -140,7 +141,7 @@ func TestNodeListResponse_GlobalPath_IncludesNodeGroups(t *testing.T) {
 	// No station assignment — triggers global path fallback
 
 	resp := &captureResponder{}
-	svc := NewCoreDataService(db, resp)
+	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
 
 	env := &protocol.Envelope{
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: "edge.unknown"},

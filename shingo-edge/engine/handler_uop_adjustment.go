@@ -79,6 +79,28 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		return
 	}
 
+	if rt.ActiveBinID == nil && !adj.Released && rt.PendingUOPDelta != 0 {
+		// The slot is in a swap gap and holding ticks for the carrier that has not
+		// arrived yet. Do not bind anything here.
+		//
+		// The bind below exists to reconnect a carrier that was delivered and never
+		// bound, and it was built for a person at Core deliberately correcting a
+		// count. Core now announces every generation change too, and the most
+		// frequent one is produce finalize — a press finishing a carrier, firing on
+		// every cycle. That announcement can arrive after the finished carrier has
+		// been picked up and before the next arrives, naming the carrier that has
+		// left. Binding it would hand the held pile to a carrier that is already
+		// gone: the next tick replays the pile onto whatever is bound, and those
+		// parts belong to the carrier still on its way.
+		//
+		// A held pile is proof the slot is mid-swap. Waiting costs nothing — the
+		// arriving carrier brings its own count and generation on delivery.
+		log.Printf("uop_adjustment: bin %d at node %s arrived while %d ticks are held for the "+
+			"next carrier — not binding a departed carrier over them",
+			adj.BinID, adj.CoreNodeName, rt.PendingUOPDelta)
+		return
+	}
+
 	if rt.ActiveBinID == nil && !adj.Released {
 		// The node has no bin bound but Core is correcting THIS bin's count for
 		// THIS node — i.e. the carrier is staged here and Edge never bound it (the
@@ -156,15 +178,18 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 	// resets the count — so there is no question of an old life's ticks being
 	// misapplied to a new one. Adopting one half and not the other was the bug.
 	//
-	// A zero epoch means an older Core that does not send one; keep what we have
-	// rather than resetting the stamp to nothing.
-	if adj.Epoch > 0 {
-		if err := e.db.SetProcessNodeRuntimeWithBinAndEpoch(node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining); err != nil {
-			log.Printf("uop_adjustment: write remaining_uop=%d epoch=%d for node %s: %v", adj.NewRemaining, adj.Epoch, adj.CoreNodeName, err)
-			return
-		}
-	} else if err := e.db.UpdateProcessNodeUOP(node.ID, adj.NewRemaining); err != nil {
-		log.Printf("uop_adjustment: write remaining_uop=%d for node %s: %v", adj.NewRemaining, adj.CoreNodeName, err)
+	// The stamp itself cannot go backwards: the store writes active_bin_epoch
+	// under a monotonicity rule, so a message that arrives out of order lands
+	// its count and leaves the newer stamp alone.
+	//
+	// An older Core that does not send an epoch sends zero, and zero must not
+	// blank the stamp. That used to be a branch here; it is now just an instance
+	// of the store's rule that the stamp only ever moves forward for a given bin
+	// (see epochAssign in store/processes). Zero is simply not greater. The count
+	// lands either way — it is written unconditionally, the guard is on the epoch
+	// column alone.
+	if err := e.db.SetProcessNodeRuntimeWithBinAndEpoch(node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining); err != nil {
+		log.Printf("uop_adjustment: write remaining_uop=%d epoch=%d for node %s: %v", adj.NewRemaining, adj.Epoch, adj.CoreNodeName, err)
 		return
 	}
 

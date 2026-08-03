@@ -58,7 +58,7 @@ func TestInventoryDelta_BinUOPDelta_AppliesToAuthoritative(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-1", "PART-A", 100)
 
@@ -81,7 +81,7 @@ func TestInventoryDelta_BinUOPDelta_DedupesReplay(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-DUP", "PART-A", 100)
 
@@ -113,7 +113,7 @@ func TestInventoryDelta_BinUOPDelta_StaleEpochDroppedAndAudited(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-STALE-EPOCH", "PART-A", 100)
 	// Advance the bin to epoch 2 (a load/clear/release bumped it on Core).
@@ -158,7 +158,7 @@ func TestInventoryDelta_BinUOPDelta_BootstrapEpochZeroApplies(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-EPOCH0", "PART-A", 100)
 	// makeBinDelta leaves Epoch == 0; the bin defaults to delta_epoch 1.
@@ -181,7 +181,7 @@ func TestInventoryDelta_BinUOPDelta_OutOfOrderRejectsLowerSeq(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-ORD", "PART-A", 100)
 
@@ -206,7 +206,7 @@ func TestInventoryDelta_BinUOPDelta_RejectsMismatchedPayload(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-MIS", "PART-A", 100)
 
@@ -230,7 +230,7 @@ func TestInventoryDelta_BinUOPDelta_RejectsUnknownBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	if err := svc.ApplyBinUOPDelta(testStation, makeBinDelta(999999999, "PART-A", -1, 1, protocol.ReasonConsumeTick)); err == nil {
 		t.Fatal("expected unknown-bin error, got nil")
@@ -245,7 +245,7 @@ func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	// Round-3 Obs 8: applier validates core_node_name resolves to a
 	// Core node row, so the fixture's storage node is what the delta
@@ -301,7 +301,7 @@ func TestInventoryDelta_LinesideBucketOneNodeOneRowAcrossStations(t *testing.T) 
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 	nodeName := sd.StorageNode.Name
 
 	// The SAME physical bucket — same node, pair, style, part — reported by two
@@ -362,7 +362,7 @@ func TestInventoryDelta_LinesideBucketDelta_RejectsUnderflow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 	nodeName := sd.LineNode.Name
 
 	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, makeBucketDelta(nodeName, "L2|U2", 200, "PART-B", 5, 1, protocol.ReasonCaptureFill)), "capture_fill")
@@ -388,7 +388,7 @@ func TestInventoryDelta_LinesideBucketDelta_RejectsFirstSightNegative(t *testing
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 	nodeName := sd.LineNode.Name
 
 	// Negative delta for a part with NO existing bucket — must be rejected, not
@@ -411,7 +411,7 @@ func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 	nodeName := sd.StorageNode.Name
 
 	d := makeBucketDelta(nodeName, "L1|U1", 300, "PART-C", 10, 1, protocol.ReasonCaptureFill)
@@ -437,7 +437,7 @@ func TestInventoryDelta_BucketScopeKeysIndependent(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 	nodeName := sd.LineNode.Name
 
 	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, makeBucketDelta(nodeName, "L1|U1", 400, "PART-D", 5, 1, protocol.ReasonCaptureFill)), "part D apply")
@@ -467,7 +467,7 @@ func TestInventoryDelta_ListBinUOPForNodes_ReturnsAuthoritative(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-RECONC", "PART-R", 100)
 	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-R", -7, 1, protocol.ReasonConsumeTick)), "apply delta")
@@ -508,7 +508,7 @@ func TestInventoryDelta_ListBucketsForNodes_FiltersByNodeNotByReporter(t *testin
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	nodeA, nodeB := sd.StorageNode.Name, sd.LineNode.Name
 
@@ -573,7 +573,7 @@ func TestApplyBinUOPDelta_CaptureReductionToZeroFiresClearForReuse(t *testing.T)
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CAP-CLEAR", "PART-CC", 25)
 
@@ -622,7 +622,7 @@ func TestApplyBinUOPDelta_ConsumeTickToZeroDoesNotFireClearForReuse(t *testing.T
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-TICK-NOCLR", "PART-TNC", 5)
 
@@ -667,7 +667,7 @@ func TestApplyBinUOPDelta_CaptureReductionOverpackToNegativeFiresClear(t *testin
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CAP-NEG-1", "PART-OP", 308)
 	preEpoch := bin.DeltaEpoch
@@ -723,7 +723,7 @@ func TestApplyBinUOPDelta_CaptureReductionLargerNegativeFiresClear(t *testing.T)
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CAP-NEG-5", "PART-OP5", 100)
 
@@ -747,7 +747,7 @@ func TestApplyBinUOPDelta_ConsumeTickThenCaptureReductionClears(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-OS-CAP", "PART-OSC", 100)
 
@@ -784,7 +784,7 @@ func TestApplyBinUOPDelta_CaptureReductionFromOneToZeroBoundary(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-BNDRY", "PART-BND", 1)
 
@@ -806,7 +806,7 @@ func TestApplyBinUOPDelta_CaptureReductionReplayShortCircuits(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-REPLAY", "PART-RP", 50)
 
@@ -845,7 +845,7 @@ func TestApplyBinUOPDelta_CaptureReductionZeroOnEmptyBinIsIdempotent(t *testing.
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-IDEMP", "", 0)
 	preEpoch := bin.DeltaEpoch
@@ -875,7 +875,7 @@ func TestApplyBinUOPDelta_FirstDeltaBindsBlankProduceBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-BIND-BLANK", "", 0)
 	preEpoch := bin.DeltaEpoch
@@ -916,7 +916,7 @@ func TestApplyBinUOPDelta_FirstDeltaRebindsStaleLabelAtZero(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-BIND-STALE", "PART-OLD", 0)
 
@@ -948,7 +948,7 @@ func TestApplyBinUOPDelta_ProduceRebindWithInventoryKeepsCounting(t *testing.T) 
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-REBIND-INV", "PART-OLD", 480)
 	preEpoch := bin.DeltaEpoch
@@ -1003,7 +1003,7 @@ func TestApplyBinUOPDelta_ConsumeMismatchStillRejectsButLoudly(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CONS-MIS", "PART-OLD", 100)
 
@@ -1057,7 +1057,7 @@ func TestApplyBinUOPDelta_ConsumeTickNeverBindsBlankBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CONS-BLANK", "", 0)
 
@@ -1083,7 +1083,7 @@ func TestInventoryDelta_C6_AnomalyObservability(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
 
 	// (1) Stale-epoch drop: bin at epoch 2, a delta carrying retired epoch 1.
 	staleBin := createTestBin(t, db, sd.StorageNode.ID, "BIN-C6-STALE", "PART-A", 100)

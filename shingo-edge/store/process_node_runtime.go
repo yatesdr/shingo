@@ -24,6 +24,14 @@ func (db *DB) SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, r
 	return processes.SetRuntime(db.DB, processNodeID, activeClaimID, remainingUOP)
 }
 
+// SetProcessNodeRuntimeClaimCountAndEpoch writes the claim and the count
+// and advances the stamp for the carrier the write names, leaving the bin
+// pointer alone. Used by the clear routes, where Core starts the carrier's
+// next life and returns the new stamp but the carrier stays put.
+func (db *DB) SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activeClaimID *int64, remainingUOP int, binID, deltaEpoch int64) error {
+	return processes.SetRuntimeClaimCountAndEpoch(db.DB, processNodeID, activeClaimID, remainingUOP, binID, deltaEpoch)
+}
+
 // SetProcessNodeRuntimeWithBin updates active_claim_id, active_bin_id,
 // and remaining_uop_cached atomically. Used by completion handlers so
 // the bin pointer turns over at the same instant as the runtime reset.

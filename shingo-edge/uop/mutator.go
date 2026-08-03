@@ -196,6 +196,26 @@ func (m *Mutator) SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) 
 	return m.rw.SetProcessNodeRuntime(nodeID, activeClaimID, uop)
 }
 
+// SetClaimCountAndEpoch is SetClaimAndCount plus the carrier's new
+// generation stamp: the clear shape. Clearing a carrier for reuse starts a
+// new life for it on Core — Core bumps the stamp and returns it in the same
+// reply — but the carrier does not move, so the bin pointer is untouched
+// and only the count and the stamp change.
+//
+// binID is the carrier Core's reply named. The stamp lands only if that is
+// the carrier bound at this slot: Core resolves which carrier to clear from
+// its own view of the node, and a reply naming one the Edge is not holding
+// is about a carrier that is not here.
+//
+// Callers: the three routes that clear a carrier through Core —
+// operator_bin_ops.go (the operator's CLEAR on a manual-swap window),
+// operator_home_consolidation.go (zeroing a loader home before the
+// consolidation move), and wiring_delivered.go (the market-pullback
+// auto-clear on delivery).
+func (m *Mutator) SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop int, binID, deltaEpoch int64) error {
+	return m.rw.SetProcessNodeRuntimeClaimCountAndEpoch(nodeID, activeClaimID, uop, binID, deltaEpoch)
+}
+
 // OnDelivered atomically writes claim + active_bin_id + active_bin_epoch
 // + count when a bin physically arrives at the slot. Today's caller
 // is wiring_delivered.go:82 (delivery completion handler). Binds

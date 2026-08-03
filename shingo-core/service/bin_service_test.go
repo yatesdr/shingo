@@ -18,7 +18,7 @@ import (
 
 // newBinSvc returns a BinService wired with a fresh manifest service.
 func newBinSvc(db *store.DB) *BinService {
-	return NewBinService(db, NewBinManifestService(db))
+	return NewBinService(db, NewBinManifestService(db, EpochAnnounce{}))
 }
 
 // ensureDefaultBinType returns (and lazily creates) the DEFAULT bin type used
@@ -36,7 +36,7 @@ func ensureDefaultBinType(t *testing.T, db *store.DB) *bins.BinType {
 func TestBinService_Manifest_ReturnsComposedService(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	manifest := NewBinManifestService(db)
+	manifest := NewBinManifestService(db, EpochAnnounce{})
 	svc := NewBinService(db, manifest)
 
 	if svc.Manifest() != manifest {

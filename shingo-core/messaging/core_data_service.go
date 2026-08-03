@@ -96,11 +96,11 @@ func (s *CoreDataService) SetCellTickEmitter(fn func(station string, processID, 
 // (cmd/shingoedge/main.go). Keeping the dispatch table at the
 // composition root rather than buried in this constructor means a
 // reader can see every Subject Core handles by grepping cmd/shingocore.
-func NewCoreDataService(db *store.DB, resp coreDataResponder) *CoreDataService {
+func NewCoreDataService(db *store.DB, resp coreDataResponder, announce service.EpochAnnounce) *CoreDataService {
 	return &CoreDataService{
 		db:             db,
 		tagVerify:      service.NewTagVerifyService(db),
-		inventoryDelta: service.NewInventoryDeltaService(db, service.NewBinManifestService(db)),
+		inventoryDelta: service.NewInventoryDeltaService(db, service.NewBinManifestService(db, announce), announce),
 		resp:           resp,
 		tickCh:         make(chan heartbeat.PartEvent, 4096),
 		downtimeCh:     make(chan downtime.DowntimeEvent, 1024),

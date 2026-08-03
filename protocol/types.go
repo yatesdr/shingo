@@ -211,6 +211,33 @@ const (
 	SubjectBinPickedUp   = "transit.bin_picked_up"
 	SubjectUOPAdjustment = "inventory.uop_adjustment" // Core -> Edge
 
+	// SubjectBinEpochRefresh — Core → Edge: "the carrier you are holding has
+	// started a new generation; adopt the stamp." Nothing else. It carries no
+	// count, because nobody declared one — Core noticed that a count arrived
+	// stamped with a generation that had ended, which tells it the Edge is
+	// behind but tells it nothing about how many parts are in the carrier. The
+	// stamp goes down, the count comes back up in the reports that now land.
+	//
+	// A NEW SUBJECT on the existing dispatch topic, not a new topic — the
+	// SubjectSourcingState precedent.
+	//
+	// It is deliberately NOT a UOP adjustment, and the reason is worth keeping
+	// here because "reuse the message that already exists" is the obvious
+	// simplification and it is wrong. UOPAdjustment.NewRemaining is a plain int
+	// with no absent value, so an epoch-only adjustment serialises zero, and the
+	// Edge handler writes the count it is given. Sent that way, the repair would
+	// zero the Edge's own count — the authoritative one, the one the operator's
+	// screen renders — at every carrier it repaired, on the first discarded
+	// count after every reset. "Adopt this generation, do not touch the count"
+	// is not expressible in the adjustment's shape.
+	//
+	// Choosing a distinct subject over a flag on the adjustment is also what
+	// makes the mixed-version story safe: plants run weeks behind, and an Edge
+	// that does not know this subject drops the message through the
+	// SubjectRouter's unknown-subject path and behaves exactly as it does today.
+	// An Edge that did not know a flag would write the zero.
+	SubjectBinEpochRefresh = "inventory.bin_epoch_refresh" // Core -> Edge
+
 	// SubjectSourcingState — Core → Edge: the plant-wide sourceability verdict
 	// per (process, style) — what each process can change over to right now. The
 	// outbound half of the plant.claims feed: Edge reports its claims up, Core
@@ -345,6 +372,7 @@ func EdgeInboundSubjects() []string {
 		SubjectCountGroupCommand,
 		SubjectBinPickedUp,
 		SubjectUOPAdjustment,
+		SubjectBinEpochRefresh,
 		SubjectSourcingState,
 		SubjectSupplyRefusalState,
 		SubjectOrderProjected,

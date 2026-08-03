@@ -49,12 +49,14 @@ type fakeDeltaSink struct {
 	clearActiveCalls         []int64
 	clearActiveAndResetCalls []fakeClearActiveAndResetCall
 	setClaimAndCountCalls    []fakeSetClaimAndCountCall
-	onDeliveredCalls         []fakeOnDeliveredCall
-	manualLoadCalls          []fakeManualLoadCall
-	onBinPickedUpCalls       []*int64
-	adjustBucketCalls        []fakeAdjustBucketCall
-	backfillCalls            int
-	captureToLinesideCalls   []uop.CaptureEvent
+	//nolint:unused // asserted by the clear-route epoch tests
+	setClaimCountAndEpochCalls []fakeSetClaimCountAndEpochCall
+	onDeliveredCalls           []fakeOnDeliveredCall
+	manualLoadCalls            []fakeManualLoadCall
+	onBinPickedUpCalls         []*int64
+	adjustBucketCalls          []fakeAdjustBucketCall
+	backfillCalls              int
+	captureToLinesideCalls     []uop.CaptureEvent
 
 	// db (optional) — when set, BindActiveBin / ClearActiveBin also
 	// perform the underlying runtime-row write via *store.DB so tests
@@ -76,6 +78,7 @@ type writeActiveBinIDer interface {
 	SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error
 	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
 	SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error
+	SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activeClaimID *int64, remainingUOP int, binID, deltaEpoch int64) error
 	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error
 	SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) error
 }
@@ -189,6 +192,26 @@ func (s *fakeDeltaSink) SetClaimAndCount(nodeID int64, activeClaimID *int64, uop
 	s.mu.Unlock()
 	if db != nil {
 		return db.SetProcessNodeRuntime(nodeID, activeClaimID, uop)
+	}
+	return nil
+}
+
+type fakeSetClaimCountAndEpochCall struct {
+	NodeID  int64
+	ClaimID *int64
+	UOP     int
+	BinID   int64
+	Epoch   int64
+}
+
+func (s *fakeDeltaSink) SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop int, binID, deltaEpoch int64) error {
+	s.mu.Lock()
+	s.setClaimCountAndEpochCalls = append(s.setClaimCountAndEpochCalls,
+		fakeSetClaimCountAndEpochCall{nodeID, activeClaimID, uop, binID, deltaEpoch})
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.SetProcessNodeRuntimeClaimCountAndEpoch(nodeID, activeClaimID, uop, binID, deltaEpoch)
 	}
 	return nil
 }

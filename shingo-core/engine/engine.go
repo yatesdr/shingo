@@ -169,7 +169,11 @@ func New(c Config) *Engine {
 		return e.dispatcher.ResolveOrphanedRestoreSynthetic(syntheticParentID, edgeUUID)
 	}
 	e.recovery = newRecoveryService(e)
-	e.binManifest = service.NewBinManifestService(e.db)
+	epochAnnounce := service.EpochAnnounce{
+		Topic:       e.cfg.Messaging.DispatchTopic,
+		CoreStation: e.cfg.Messaging.StationID,
+	}
+	e.binManifest = service.NewBinManifestService(e.db, epochAnnounce)
 	e.binService = service.NewBinService(e.db, e.binManifest)
 	e.orderService = service.NewOrderService(e.db, e.fleet)
 	e.nodeService = service.NewNodeService(e.db)
@@ -185,7 +189,7 @@ func New(c Config) *Engine {
 	e.adminService = service.NewAdminService(e.db)
 	e.healthService = service.NewHealthService(e.db)
 	e.tagVerifyService = service.NewTagVerifyService(e.db)
-	e.inventoryDeltaService = service.NewInventoryDeltaService(e.db, e.binManifest)
+	e.inventoryDeltaService = service.NewInventoryDeltaService(e.db, e.binManifest, epochAnnounce)
 	e.dashboardService = service.NewDashboardService(e.db)
 	e.footprintService = service.NewFootprintService(e.db)
 	e.partsService = service.NewPartsService(e.db)

@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/internal/testdb"
+	"shingocore/service"
 	"shingocore/store/plantclaims"
 	"shingocore/store/sourceability"
 )
@@ -22,7 +23,7 @@ import (
 func TestHandlePlantClaims_MirrorRebuildAfterWipe(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	svc := NewCoreDataService(db, &captureResponder{})
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 
 	publish := func(reports ...*protocol.PlantClaimsReport) {
 		for _, r := range reports {
@@ -94,7 +95,7 @@ func TestHandlePlantClaims_MirrorRebuildAfterWipe(t *testing.T) {
 func TestHandlePlantClaims_PerProcessReplaceIsAuthoritative(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	svc := NewCoreDataService(db, &captureResponder{})
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 
 	// Process with two styles.
 	svc.HandlePlantClaims(nil, plantClaimsReport("SNF2", 1, []styleSpec{
@@ -124,7 +125,7 @@ func TestHandlePlantClaims_PerProcessReplaceIsAuthoritative(t *testing.T) {
 func TestHandlePlantClaims_StaleSnapshotIgnored(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	svc := NewCoreDataService(db, &captureResponder{})
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 
 	svc.HandlePlantClaims(nil, plantClaimsReport("SNF2", 5, []styleSpec{
 		{name: "A", claims: []claimSpec{{node: "N1", payload: "NEW", allowed: []string{"NEW"}}}},
@@ -152,7 +153,7 @@ func TestHandlePlantClaims_StaleSnapshotIgnored(t *testing.T) {
 func TestHandlePlantClaims_EmptyProcessClearsMirror(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	svc := NewCoreDataService(db, &captureResponder{})
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 
 	svc.HandlePlantClaims(nil, plantClaimsReport("SNF2", 1, []styleSpec{
 		{name: "A", claims: []claimSpec{{node: "N1", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
@@ -196,7 +197,7 @@ func TestPlantClaimsMirror_MigrationIdempotent(t *testing.T) {
 	db := testdb.Open(t)
 
 	// Seed one process.
-	svc := NewCoreDataService(db, &captureResponder{})
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 	svc.HandlePlantClaims(nil, plantClaimsReport("SNF2", 1, []styleSpec{
 		{name: "A", claims: []claimSpec{{node: "N1", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
 	}))
@@ -332,7 +333,7 @@ func reseedMirrorTables(db *sql.DB) error {
 func TestHandlePlantClaims_MirrorsTheRunningStyle(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	svc := NewCoreDataService(db, &captureResponder{})
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 
 	svc.HandlePlantClaims(nil, plantClaimsReport("SNF2", 1, []styleSpec{
 		{name: "74595-6SA0A.95", claims: []claimSpec{{node: "STOR-01", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
@@ -359,7 +360,7 @@ func TestHandlePlantClaims_MirrorsTheRunningStyle(t *testing.T) {
 func TestHandlePlantClaims_NoActiveStyleIsNotGuessed(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	svc := NewCoreDataService(db, &captureResponder{})
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 
 	svc.HandlePlantClaims(nil, plantClaimsReport("P47", 1, []styleSpec{
 		{name: "81220-6SA0A.95", claims: []claimSpec{{node: "STOR-01", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
@@ -382,7 +383,7 @@ func TestHandlePlantClaims_NoActiveStyleIsNotGuessed(t *testing.T) {
 func TestHandlePlantClaims_ActiveStyleFollowsAChangeover(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	svc := NewCoreDataService(db, &captureResponder{})
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 
 	before := []styleSpec{
 		{name: "A", active: true, claims: []claimSpec{{node: "N1", payload: "BIN-A", allowed: []string{"BIN-A"}}}},

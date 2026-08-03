@@ -183,12 +183,14 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	}
 	e.marketPullbacksMu.Unlock()
 	if isPullback {
-		if err := e.coreClient.ClearBin(node.CoreNodeName, ""); err != nil {
+		cleared, err := e.coreClient.ClearBin(node.CoreNodeName, "")
+		if err != nil {
 			log.Printf("market_pullback: auto-clear bin at %s: %v", node.CoreNodeName, err)
 		} else {
 			log.Printf("market_pullback: auto-cleared bin at %s on delivery", node.CoreNodeName)
 			if e.inventoryDelta != nil {
-				_ = e.inventoryDelta.SetClaimAndCount(node.ID, &claimID, 0)
+				// The stamp too: the auto-clear started this carrier's next life.
+				_ = e.inventoryDelta.SetClaimCountAndEpoch(node.ID, &claimID, 0, cleared.BinID, cleared.DeltaEpoch)
 			}
 		}
 	}

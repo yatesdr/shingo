@@ -143,17 +143,33 @@ func (c *CoreClient) FetchNodeChildren(nodeName string, includeSynthetic bool) (
 	return result, nil
 }
 
-// BinUOPRow mirrors service.BinUOPRow on Core. The reconciler's
-// self-heal path reads it to align local runtime cache with Core's
-// authoritative bin count.
+// BinUOPRow mirrors service.BinUOPRow on Core.
+//
+// NOTHING READS ANY OF THESE FIELDS. The one caller of FetchUOPState reads
+// the bucket half of the response and never touches the bins array. The
+// header used to say "the reconciler's self-heal path reads it to align
+// local runtime cache with Core's authoritative bin count" — there is no
+// such reconciler; it was deleted, and the sentence outlived it.
+//
+// Kept rather than deleted, deliberately: the fields cost nothing, Core
+// genuinely computes and ships them, and this is the fallback shape if the
+// push-and-repair loop turns out to need a pull-side backstop at a plant.
+// Deleting is the only irreversible move available here. If it goes, it goes
+// as its own change, on the strength of its own no-consumer check, and not as
+// a side effect of tidying something else. (That check has now been made once,
+// 2026-08-02, and came back zero — recorded so the next person does not have
+// to redo it, not as licence to delete without redoing it.)
 type BinUOPRow struct {
 	BinID        int64  `json:"bin_id"`
 	NodeName     string `json:"node_name"`
 	PayloadCode  string `json:"payload_code"`
 	UOPRemaining int    `json:"uop_remaining"`
-	// DeltaEpoch mirrors Core's bins.delta_epoch — populated on
-	// startup-time reconciliation so Edge can repair a lost bin-state
-	// cache against the current load's epoch instead of starting at 0.
+	// DeltaEpoch mirrors Core's bins.delta_epoch. The comment here used to
+	// describe it as "populated on startup-time reconciliation so Edge can
+	// repair a lost bin-state cache" — describing a repair subsystem that has
+	// never existed. The real repair is push-shaped: Core announces every
+	// generation change and answers every discarded count (see
+	// protocol.BinEpochRefresh).
 	DeltaEpoch int64 `json:"delta_epoch"`
 }
 
@@ -518,12 +534,87 @@ type PayloadSystemCount struct {
 	BinCount    int
 }
 
+// BinClearResponse is Core's reply to a bin clear.
+//
+// DeltaEpoch is the carrier's new generation stamp. Clearing a carrier for
+// reuse ends its old life and starts a new one, and Core has always sent the
+// new stamp straight back in this reply — the Edge decoded the status and
+// threw the rest away, so it kept reporting counts under the stamp of a life
+// that had ended and Core discarded every one of them.
+//
+// BinID names which carrier Core actually cleared. Core resolves that from
+// its own view of the node, so it is not automatically the carrier the Edge
+// believes is there; the stamp is only adopted when the two agree.
+type BinClearResponse struct {
+	Status     string `json:"status"`
+	Detail     string `json:"detail,omitempty"`
+	BinID      int64  `json:"bin_id,omitempty"`
+	BinLabel   string `json:"bin_label,omitempty"`
+	DeltaEpoch int64  `json:"delta_epoch,omitempty"`
+}
+
+// BinCountResponse is Core's reply to a count declared from the line.
+type BinCountResponse struct {
+	Status       string `json:"status"`
+	Detail       string `json:"detail,omitempty"`
+	BinID        int64  `json:"bin_id,omitempty"`
+	BinLabel     string `json:"bin_label,omitempty"`
+	Expected     int    `json:"expected"`
+	UOPRemaining int    `json:"uop_remaining"`
+	Discrepancy  bool   `json:"discrepancy"`
+	Warning      string `json:"warning,omitempty"`
+	DeltaEpoch   int64  `json:"delta_epoch,omitempty"`
+}
+
+// RecordBinCount declares a count an operator made at the line to Core.
+//
+// This is the direction that did not exist. Counts travel with declarations,
+// and Core had two doors for declaring one downward while the Edge had none for
+// declaring one upward except as a rider on an order release. An operator who
+// noticed a carrier's count was wrong outside a release had nowhere to say so —
+// so the number that is authoritative, the one standing next to the carrier,
+// could not reach Core's ledger.
+//
+// Like the other writes here it returns a hard error rather than degrading:
+// a declaration that silently did not arrive is worse than one that failed
+// loudly, because the operator would believe they had corrected it.
+func (c *CoreClient) RecordBinCount(nodeName string, actualUOP int, actor string) (*BinCountResponse, error) {
+	if c.baseURL == "" {
+		return nil, fmt.Errorf("core API not configured")
+	}
+	body, err := json.Marshal(map[string]any{
+		"node_name":  nodeName,
+		"actual_uop": actualUOP,
+		"actor":      actor,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal bin-count request: %w", err)
+	}
+	resp, err := c.http.Post(c.baseURL+"/api/telemetry/bin-count", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("bin-count request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	var result BinCountResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode bin-count response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK || result.Status == "error" {
+		detail := result.Detail
+		if detail == "" {
+			detail = fmt.Sprintf("core returned %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("%s", detail)
+	}
+	return &result, nil
+}
+
 // ClearBin clears the manifest on the bin at a node via Core's HTTP API.
 // binTypeCode is optional: when non-empty Core re-stamps the carrier's
 // bin_type_id atomically with the manifest clear (dunnage float).
-func (c *CoreClient) ClearBin(nodeName, binTypeCode string) error {
+func (c *CoreClient) ClearBin(nodeName, binTypeCode string) (*BinClearResponse, error) {
 	if c.baseURL == "" {
-		return fmt.Errorf("core API not configured")
+		return nil, fmt.Errorf("core API not configured")
 	}
 	reqBody := map[string]string{"node_name": nodeName}
 	if binTypeCode != "" {
@@ -532,22 +623,19 @@ func (c *CoreClient) ClearBin(nodeName, binTypeCode string) error {
 	body, _ := json.Marshal(reqBody)
 	resp, err := c.http.Post(c.baseURL+"/api/telemetry/bin-clear", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("bin-clear request failed: %w", err)
+		return nil, fmt.Errorf("bin-clear request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	var result struct {
-		Status string `json:"status"`
-		Detail string `json:"detail"`
-	}
+	var result BinClearResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode bin-clear response: %w", err)
+		return nil, fmt.Errorf("decode bin-clear response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK || result.Status == "error" {
 		detail := result.Detail
 		if detail == "" {
 			detail = fmt.Sprintf("core returned %d", resp.StatusCode)
 		}
-		return fmt.Errorf("%s", detail)
+		return nil, fmt.Errorf("%s", detail)
 	}
-	return nil
+	return &result, nil
 }

@@ -33,10 +33,11 @@ var ErrInventoryDeltaSkipped = uop.ErrInventoryDeltaSkipped
 // NewInventoryDeltaService wraps uop.NewInventoryDeltaService.
 // binManifest may be nil; *BinManifestService satisfies
 // uop.ManifestClearer via its ClearForReuseTx method.
-func NewInventoryDeltaService(db *store.DB, binManifest *BinManifestService) *InventoryDeltaService {
+// announce is where the reply to a discarded count goes; see repairEpoch.
+func NewInventoryDeltaService(db *store.DB, binManifest *BinManifestService, announce EpochAnnounce) *InventoryDeltaService {
 	var clearer uop.ManifestClearer
 	if binManifest != nil {
 		clearer = binManifest
 	}
-	return uop.NewInventoryDeltaService(db, clearer)
+	return uop.NewInventoryDeltaService(db, clearer, announce)
 }

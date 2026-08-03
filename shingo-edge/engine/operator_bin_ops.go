@@ -317,7 +317,8 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 			e.createUnloaderEmptyOut(node, claim, clearedPayload)
 		}
 	}
-	if err := e.coreClient.ClearBin(node.CoreNodeName, binTypeCode); err != nil {
+	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, binTypeCode)
+	if err != nil {
 		return fmt.Errorf("clear bin: %w", err)
 	}
 	// claim.ID is 0 for a synthesized Core-loader claim — pass nil, not a 0 FK.
@@ -326,7 +327,10 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 		claimIDPtr = &claim.ID
 	}
 	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.SetClaimAndCount(nodeID, claimIDPtr, 0); err != nil {
+		// Take the new generation stamp with the zeroed count. The clear ended
+		// this carrier's life on Core and started the next one; keeping the old
+		// stamp means every count reported for it from here on is discarded.
+		if err := e.inventoryDelta.SetClaimCountAndEpoch(nodeID, claimIDPtr, 0, cleared.BinID, cleared.DeltaEpoch); err != nil {
 			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 		}
 	}

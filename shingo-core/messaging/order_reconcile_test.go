@@ -9,6 +9,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/internal/testdb"
+	"shingocore/service"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -64,7 +65,7 @@ func TestOrderReconcile_OffersOrdersTheEdgeDidNotAskAbout(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(unknown), "create the order the edge lost")
 
 	cap := &capturingResponder{}
-	svc := NewCoreDataService(db, cap)
+	svc := NewCoreDataService(db, cap, service.EpochAnnounce{})
 	env, req := edgeAsking("edge.rc", "rc-known")
 	svc.HandleOrderStatusRequest(env, req)
 
@@ -112,7 +113,7 @@ func TestOrderReconcile_NeverOffersAnotherStationsOrders(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(theirs), "create another station's order")
 
 	cap := &capturingResponder{}
-	svc := NewCoreDataService(db, cap)
+	svc := NewCoreDataService(db, cap, service.EpochAnnounce{})
 	env, req := edgeAsking("edge.mine")
 	svc.HandleOrderStatusRequest(env, req)
 
@@ -142,7 +143,7 @@ func TestOrderReconcile_AnEdgeWithNoOrdersStillGetsHealed(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 
 	cap := &capturingResponder{}
-	svc := NewCoreDataService(db, cap)
+	svc := NewCoreDataService(db, cap, service.EpochAnnounce{})
 	env, req := edgeAsking("edge.wiped") // asks about nothing at all
 	svc.HandleOrderStatusRequest(env, req)
 
@@ -167,7 +168,7 @@ func TestOrderReconcile_TerminalOrdersAreNotOffered(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(done), "create finished order")
 
 	cap := &capturingResponder{}
-	svc := NewCoreDataService(db, cap)
+	svc := NewCoreDataService(db, cap, service.EpochAnnounce{})
 	env, req := edgeAsking("edge.rc4")
 	svc.HandleOrderStatusRequest(env, req)
 

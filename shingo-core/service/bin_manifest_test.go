@@ -70,7 +70,7 @@ func TestBinManifestService_ClearForReuse(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CLR-1", "PART-A", 100)
 
@@ -110,7 +110,7 @@ func TestBinManifestService_ClearForReuse_MakesVisibleToFindEmpty(t *testing.T) 
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	// Link payload to bin type for FindEmptyCompatibleBin
 	db.SetPayloadBinTypes(sd.Payload.ID, []int64{sd.BinType.ID})
@@ -148,7 +148,7 @@ func TestBinManifestService_ClearForReuse_SetsBinTypeID(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	// Create a distinct bin type to stamp; CreateBinType fills bt.ID on success.
 	dunnage := &bins.BinType{Code: "45x48-KD-T1", Description: "Knockdown dunnage"}
@@ -203,7 +203,7 @@ func TestBinManifestService_ClearForReuse_NilLeavesTypeUnchanged(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DUNNAGE-2", "PART-B", 50)
 	wantTypeID := bin.BinTypeID
@@ -228,7 +228,7 @@ func TestBinManifestService_ClearAndClaim_Atomic(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-AC-1", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -257,7 +257,7 @@ func TestBinManifestService_ClearAndClaim_FailsIfAlreadyClaimed(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-AC-2", "PART-A", 100)
 	order1 := createTestOrder(t, db, sd.LineNode.ID)
@@ -285,7 +285,7 @@ func TestBinManifestService_SyncUOPAndClaim(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SC-1", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -321,7 +321,7 @@ func TestBinManifestService_ClaimForDispatch_NilIsPlainClaim(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CD-1", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -349,7 +349,7 @@ func TestBinManifestService_ClaimForDispatch_ZeroClearsManifest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CD-2", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -386,7 +386,7 @@ func TestBinManifestService_ClaimForDispatch_NegativeClearsManifest(t *testing.T
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CD-NEG", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -411,7 +411,7 @@ func TestBinManifestService_ClaimForDispatch_PositiveSyncsUOP(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CD-3", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -440,7 +440,7 @@ func TestBinManifestService_SetForProduction(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	// Create an empty bin (no manifest)
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SFP-1", "", 0)
@@ -479,7 +479,7 @@ func TestBinManifestService_Confirm(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CNF-1", "PART-A", 100)
 
@@ -507,7 +507,7 @@ func TestBinManifestService_RecordProducedBin_AtomicCountAndConfirm(t *testing.T
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-RPB-1", "", 0)
 
@@ -542,7 +542,7 @@ func TestBinManifestService_RecordProducedBin_RollsBackOnError(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	const ghostBin int64 = 999999
 	if err := svc.RecordProducedBin(ghostBin, `{"items":[]}`, "WIDGET-X", 200, ""); err == nil {
@@ -560,7 +560,7 @@ func TestBinManifestService_Unconfirm(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	// createTestBin confirms by default; Unconfirm should flip it back.
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-UNC-1", "PART-A", 100)
@@ -580,7 +580,7 @@ func TestBinManifestService_ClearAndClaim_FailsIfLocked(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-LCK-1", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -615,7 +615,7 @@ func TestBinManifestService_ClaimForDispatch_ConcurrentRace(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-RACE-N", "PART-A", 100)
 	originalPayloadCode := bin.PayloadCode
@@ -738,7 +738,7 @@ func TestBinManifestService_SyncOrClearForReleased_NilIsNoOp(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-NIL", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -762,7 +762,7 @@ func TestBinManifestService_SyncOrClearForReleased_ZeroClearsManifest(t *testing
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-ZERO", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -798,7 +798,7 @@ func TestBinManifestService_SyncOrClearForReleased_ZeroBumpsEpoch(t *testing.T) 
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-EPOCH0", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -825,7 +825,7 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveBumpsEpoch(t *testing
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-EPOCHP", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -848,7 +848,7 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-POS", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -897,7 +897,7 @@ func TestBinManifestService_SyncOrClearForReleased_PreservesLoadedAt(t *testing.
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-LA", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -933,7 +933,7 @@ func TestBinManifestService_SyncOrClearForReleased_WrongOrderRejected(t *testing
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-WRONG", "PART-A", 100)
 	realOwner := createTestOrder(t, db, sd.LineNode.ID)
@@ -963,7 +963,7 @@ func TestBinManifestService_SyncOrClearForReleased_LockedRejected(t *testing.T) 
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-LOCK", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -992,7 +992,7 @@ func TestBinManifestService_SyncOrClearForReleased_ActorOnAuditRow(t *testing.T)
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	// Named actor (e.g. the operator's station name from called_by)
 	binNamed := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-ACTOR-N", "PART-A", 100)
@@ -1040,7 +1040,7 @@ func TestBinManifestService_SyncOrClearForReleased_IdempotentRetry(t *testing.T)
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-IDEMP", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -1070,7 +1070,7 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-TMPL-1", "INITIAL", 0)
 
@@ -1137,7 +1137,7 @@ func TestRegression_ReleaseUnderpack_BinClearsToZero(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-UNDERPACK-1", "PART-UP", 1190)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -1179,7 +1179,7 @@ func TestRegression_ReleaseUnderpack_AuditRecordsMissingDelta(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	const expectedAtClick = 12
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-UNDERPACK-AUDIT", "PART-UPA", expectedAtClick)
@@ -1243,7 +1243,7 @@ func TestRegression_ReleaseUnderpack_ManifestClears(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-UNDERPACK-MANIFEST", "PART-UPM", 47)
 	order := createTestOrder(t, db, sd.LineNode.ID)

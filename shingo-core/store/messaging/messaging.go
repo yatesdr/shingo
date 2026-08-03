@@ -29,9 +29,11 @@ type OutboxMessage struct {
 	SentAt    *time.Time `json:"sent_at,omitempty"`
 }
 
-// EnqueueOutbox writes a new outbox row.
-func EnqueueOutbox(db *sql.DB, topic string, payload []byte, eventType, stationID string) error {
-	_, err := db.Exec(`INSERT INTO outbox (topic, payload, msg_type, station_id) VALUES ($1, $2, $3, $4)`,
+// EnqueueOutbox writes a new outbox row on ex — the pool for an ordinary
+// send, or a transaction when the message must live or die with the work that
+// caused it (see EnqueueDataToEdge).
+func EnqueueOutbox(ex Execer, topic string, payload []byte, eventType, stationID string) error {
+	_, err := ex.Exec(`INSERT INTO outbox (topic, payload, msg_type, station_id) VALUES ($1, $2, $3, $4)`,
 		topic, payload, eventType, stationID)
 	return err
 }

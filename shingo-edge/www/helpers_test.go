@@ -164,6 +164,7 @@ func (s *stubEngine) RequestProduceSwap(int64) (*engine.NodeOrderResult, error) 
 }
 func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem) error { return nil }
 func (s *stubEngine) ClearBin(int64, string) error                                      { return nil }
+func (s *stubEngine) RecordBinCount(int64, int, string) error                           { return nil }
 func (s *stubEngine) ClearLoaderHome(int64) error                                       { return nil }
 func (s *stubEngine) EnrichHomeBufferPartials([]domain.StationNodeView)                 {}
 func (s *stubEngine) FetchMarketBins(int64) ([]engine.MarketBinInfo, error)             { return nil, nil }

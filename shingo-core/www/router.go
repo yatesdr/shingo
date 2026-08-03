@@ -322,6 +322,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/telemetry/node/{name}/children", h.apiTelemetryNodeChildren)
 			r.Post("/telemetry/bin-load", h.apiBinLoad)
 			r.Post("/telemetry/bin-clear", h.apiBinClear)
+			r.Post("/telemetry/bin-count", h.apiBinCount)
 			r.Get("/telemetry/e-maint", h.apiEMaintRobotTelemetry)
 			r.Get("/telemetry/e-maint/download", h.apiEMaintRobotTelemetryDownload)
 

@@ -35,7 +35,7 @@ func TestRecordCount_ClearsTheAnomalyFlag(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinService(db, NewBinManifestService(db))
+	svc := NewBinService(db, NewBinManifestService(db, EpochAnnounce{}))
 	bin := countableBin(t, db, sd)
 	testutil.MustNoErr(t, svc.MarkAnomaly(bin.ID), "flag the bin")
 
@@ -75,7 +75,7 @@ func TestRecordCount_DoesNotBumpTheEpoch(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinService(db, NewBinManifestService(db))
+	svc := NewBinService(db, NewBinManifestService(db, EpochAnnounce{}))
 	bin := countableBin(t, db, sd)
 	var before int64
 	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT delta_epoch FROM bins WHERE id=$1`, bin.ID).Scan(&before),

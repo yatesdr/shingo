@@ -38,8 +38,10 @@ func TestEpochBumpOpsCoversEveryBumpSite(t *testing.T) {
 	}
 
 	// Call sites, not the declaration: every caller passes the transaction first,
-	// and `func bumpEpoch(tx *sql.Tx` would otherwise match too.
-	sites := regexp.MustCompile(`(?m)^\s*(?:if\s+)?(?:_|\w+)?(?:,\s*\w+)?\s*(?::?=\s*)?bumpEpoch\(tx,`).
+	// and `func (s *BinManifestService) bumpEpoch(tx *sql.Tx` would otherwise
+	// match too. The `s.` prefix is required, which is also what makes the
+	// second check below meaningful.
+	sites := regexp.MustCompile(`(?m)^\s*(?:if\s+)?(?:_|\w+)?(?:,\s*\w+)?\s*(?::?=\s*)?s\.bumpEpoch\(tx,`).
 		FindAllIndex(src, -1)
 
 	// FIVE SITES, NINE OPS — the two are not the same number and that is fine.
@@ -51,13 +53,49 @@ func TestEpochBumpOpsCoversEveryBumpSite(t *testing.T) {
 	// has never heard of.
 	const wantSites = 5
 	if len(sites) != wantSites {
-		t.Errorf("service/bin_manifest.go has %d bumpEpoch(tx, …) call sites; this test is "+
+		t.Errorf("service/bin_manifest.go has %d s.bumpEpoch(tx, …) call sites; this test is "+
 			"pinned at %d.\n\nIf a site was ADDED, find which audit op its function writes "+
 			"and make sure that op is in EpochBumpOps — a boundary op missing from that set "+
 			"makes CarrierBindings join two bindings into one and report an age that is too "+
 			"long, which manufactures a stale-binding candidate. Then update this number.\n\n"+
 			"If a site was REMOVED, check whether its op still belongs in the set at all.",
 			len(sites), wantSites)
+	}
+}
+
+// TestEveryBumpGoesThroughTheAnnouncingWrapper is the other half, and it is
+// about the wire rather than the op set.
+//
+// s.bumpEpoch does two things that must never come apart: it ends the carrier's
+// generation and it tells the station holding it. bumpEpochRaw is the bump on
+// its own. Calling the raw one from a reset path would reproduce the defect this
+// whole change removes — a reset that happens and is never announced, after
+// which the station reports counts under a generation that has ended and Core
+// discards every one, silently, for as long as nobody looks. At Hopkinsville
+// that was half of all production counts.
+//
+// So exactly one caller: the wrapper.
+func TestEveryBumpGoesThroughTheAnnouncingWrapper(t *testing.T) {
+	path := filepath.Join("..", "..", "service", "bin_manifest.go")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	// Call sites of the raw bump, excluding its own declaration.
+	raw := regexp.MustCompile(`(?m)^\s*(?:if\s+)?(?:_|\w+)?(?:,\s*[\w, ]+)?\s*(?::?=\s*)?bumpEpochRaw\(tx,`).
+		FindAllIndex(src, -1)
+
+	if len(raw) != 1 {
+		t.Errorf("bumpEpochRaw has %d call sites, want exactly 1 (the announcing wrapper).\n\n"+
+			"A reset path calling the raw bump directly bumps the generation and tells "+
+			"nobody. The station goes on reporting counts stamped with the generation "+
+			"that just ended, Core discards them as stale, and nothing anywhere says so. "+
+			"That is the Hopkinsville count loss — 49%% of production counts, ongoing, "+
+			"invisible until somebody queried the audit table.\n\n"+
+			"If you need the bump without the announcement, say why at the call site and "+
+			"change this test deliberately. Do not change it to make a build pass.",
+			len(raw))
 	}
 }
 

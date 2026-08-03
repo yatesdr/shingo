@@ -8,6 +8,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"shingocore/store"
 	"shingocore/store/audit"
+	"shingocore/store/messaging"
 )
 
 // Core-side delta apply service. Receives BinUOPDelta and
@@ -91,14 +93,108 @@ type InventoryDeltaService struct {
 
 	db          *store.DB
 	binManifest ManifestClearer
+
+	// announce addresses the reply sent when a count is discarded for
+	// carrying a generation that has ended — see repairEpoch.
+	announce messaging.EpochAnnounce
+
+	// repairedMu/repaired is the debounce: bin id → the generation the last
+	// reply for that carrier carried. Process-lifetime and deliberately not
+	// persisted — a Core restart may re-send one reply per carrier, which is
+	// cheap, and the alternative is a table whose only job is to suppress a
+	// message that costs nothing to repeat.
+	//
+	// One reply per generation. The reply is fire-and-forget and the station
+	// may be an older build that does not know the message at all, in which
+	// case the discarded counts keep arriving — 3,200 in a day at one plant —
+	// and a reply per discarded count would be a flood aimed at something that
+	// is not listening. If the station never adopts, the next reset makes a new
+	// generation and the reply goes out again.
+	//
+	// NOT keyed off bins.anomaly_at. That column is a latch: it is set on the
+	// first drop and stays set, so using it as the gate would suppress the
+	// repair forever after the first one.
+	repairedMu sync.Mutex
+	repaired   map[int64]int64
 }
 
 // NewInventoryDeltaService constructs the delta apply service.
 // binManifest can be nil for tests that don't exercise the
 // capture-reduction-to-zero trigger; production callers MUST pass a
 // real service so the dual-write retirement is complete.
-func NewInventoryDeltaService(db *store.DB, binManifest ManifestClearer) *InventoryDeltaService {
-	return &InventoryDeltaService{db: db, binManifest: binManifest}
+//
+// announce is where the reply to a discarded count goes. An unwired one
+// (zero value) disables the repair and logs when it would have fired.
+func NewInventoryDeltaService(db *store.DB, binManifest ManifestClearer, announce messaging.EpochAnnounce) *InventoryDeltaService {
+	return &InventoryDeltaService{
+		db:          db,
+		binManifest: binManifest,
+		announce:    announce,
+		repaired:    make(map[int64]int64),
+	}
+}
+
+// repairEpoch replies to a discarded count with the generation that is
+// current, on the caller's transaction. Reports whether a reply was queued.
+//
+// THE REPLY CARRIES THE GENERATION AND NOTHING ELSE. Nobody declared a count
+// here. Core noticed a count arrive stamped with a generation that had ended,
+// which proves the station is behind and says nothing whatever about how many
+// parts are in the carrier — Core's own number is behind by exactly the counts
+// it has been discarding. The station is the authority on what is happening at
+// the slot; Core is the authority on what the carrier is. So the stamp goes
+// down, and the truth comes back up in the counts that now land.
+//
+// That is also why this cannot ride the ordinary adjustment message: its count
+// field has no absent value, so an adjustment sent to carry only a generation
+// says "zero", and the station would write it. See protocol.BinEpochRefresh.
+func (s *InventoryDeltaService) repairEpoch(tx *sql.Tx, binID, currentEpoch int64) (bool, error) {
+	if !s.announce.Wired() {
+		log.Printf("stale-epoch drop bin=%d: no announce topic wired, cannot tell the station "+
+			"it is behind — every count it reports for this carrier will keep being discarded", binID)
+		return false, nil
+	}
+	if s.alreadyRepaired(binID, currentEpoch) {
+		return false, nil
+	}
+	var nodeName string
+	if err := tx.QueryRow(
+		`SELECT COALESCE((SELECT n.name FROM nodes n WHERE n.id = b.node_id), '')
+		 FROM bins b WHERE b.id=$1`, binID).Scan(&nodeName); err != nil {
+		return false, fmt.Errorf("resolve node for epoch repair bin=%d: %w", binID, err)
+	}
+	if nodeName == "" {
+		// The carrier is at no node, so no station is modelling it and there is
+		// nobody the reply could be for.
+		return false, nil
+	}
+	if err := s.announce.Send(tx, protocol.SubjectBinEpochRefresh, &protocol.BinEpochRefresh{
+		BinID:        binID,
+		CoreNodeName: nodeName,
+		Epoch:        currentEpoch,
+	}); err != nil {
+		return false, fmt.Errorf("send epoch refresh bin=%d epoch=%d: %w", binID, currentEpoch, err)
+	}
+	return true, nil
+}
+
+// alreadyRepaired reports whether a reply for this carrier's current
+// generation has already gone out — see the repaired map's comment.
+func (s *InventoryDeltaService) alreadyRepaired(binID, epoch int64) bool {
+	s.repairedMu.Lock()
+	defer s.repairedMu.Unlock()
+	return s.repaired[binID] == epoch
+}
+
+// markRepaired records a queued reply. Called after the commit, so a
+// transaction that rolls back does not suppress the next attempt.
+func (s *InventoryDeltaService) markRepaired(binID, epoch int64) {
+	s.repairedMu.Lock()
+	defer s.repairedMu.Unlock()
+	if s.repaired == nil {
+		s.repaired = make(map[int64]int64)
+	}
+	s.repaired[binID] = epoch
 }
 
 // ApplyBinUOPDelta applies a BinUOPDelta against bins.uop_remaining.
@@ -135,8 +231,18 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	// the old epoch and counted against a bin that has since been loaded,
 	// cleared, or released. Drop it (applying would corrupt the post-reset
 	// count) and record the dropped quantity as a discrepancy observation so
-	// it is reportable instead of vanishing silently. Edge re-seeds the new
-	// epoch on its next bin-state refresh.
+	// it is reportable instead of vanishing silently. The station is then told
+	// which generation is current, so its next count lands (repairEpoch).
+	//
+	// That sentence used to read "Edge re-seeds the new epoch on its next
+	// bin-state refresh." There was no bin-state refresh. Nothing on the Edge
+	// polled for a generation; the five things that wrote it were all bind
+	// points driven by order traffic, and at a plant whose orders are all
+	// terminal none of them ever fired. So this branch was a dead end that
+	// described itself as self-healing, and that sentence — repeated in the log
+	// line an engineer reads while diagnosing — is why the condition was
+	// written off as expected noise for a week while half a plant's production
+	// counts went into the discrepancy table.
 	//
 	// The >0 clause is load-bearing: epoch 0 is the bootstrap/unknown
 	// sentinel (Edge restart, fresh runtime, the ADD-COLUMN backfill) and
@@ -186,12 +292,26 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 			if _, err := tx.Exec(`UPDATE bins SET anomaly_at=COALESCE(anomaly_at, NOW()) WHERE id=$1`, d.BinID); err != nil {
 				return fmt.Errorf("flag anomaly on stale-epoch drop bin=%d: %w", d.BinID, err)
 			}
+			// ANSWER THE DROP. This is the one point in the system that holds
+			// all four facts at once: which carrier, which generation is
+			// current, which station is behind, and proof that it is behind.
+			// Reply with the current generation and the station's next count
+			// lands. The reply rides the SAME transaction as the audit row, so
+			// a discarded count is never recorded without the answer that ends
+			// the stall going with it.
+			repaired, err := s.repairEpoch(tx, d.BinID, currentEpoch)
+			if err != nil {
+				return err
+			}
 			if err := tx.Commit(); err != nil {
 				return fmt.Errorf("commit stale-epoch drop bin=%d: %w", d.BinID, err)
 			}
+			if repaired {
+				s.markRepaired(d.BinID, currentEpoch)
+			}
 			atomic.AddInt64(&s.droppedStaleEpoch, 1)
-			log.Printf("BinUOPDelta stale epoch DROPPED bin=%d wire_epoch=%d bin_epoch=%d seq=%d delta=%d — routed to discrepancy audit (Edge cache behind Core; next bin-state refresh repairs)",
-				d.BinID, d.Epoch, currentEpoch, d.SequenceID, d.Delta)
+			log.Printf("BinUOPDelta stale epoch DROPPED bin=%d wire_epoch=%d bin_epoch=%d seq=%d delta=%d — routed to discrepancy audit; epoch refresh sent=%t",
+				d.BinID, d.Epoch, currentEpoch, d.SequenceID, d.Delta, repaired)
 			return ErrInventoryDeltaSkipped
 		case d.Epoch > currentEpoch:
 			// Edge ahead of Core is a real anomaly — Core controls epoch via
@@ -357,14 +477,19 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	// go through ClearForReuse directly. Idempotent because dedup at
 	// the top of the function already guarded against replays.
 	if d.Reason == protocol.ReasonCaptureReduction && valueBefore+d.Delta <= 0 && s.binManifest != nil {
-		// Epoch bump is a side effect — discard the new value here. The
-		// next BinUOPDelta against this bin from Edge will carry epoch=N
-		// from its cache (still showing pre-clear epoch) and Core's
-		// applier will warn + drop until Edge's bin-state refresh picks
-		// up the new epoch. That's the expected loss surface for a
-		// capture-reduction-driven clear; alternative would be to
-		// proactively push the new epoch back to Edge as a side channel,
-		// which the current architecture doesn't have a transport for.
+		// The new generation is returned and discarded here because the
+		// clear announces it itself, from inside the bump, in this same
+		// transaction (service.BinManifestService.bumpEpoch).
+		//
+		// This comment used to say the opposite: that the next count would
+		// be dropped until "Edge's bin-state refresh" picked up the new
+		// generation, that this was "the expected loss surface", and that
+		// pushing the generation back "the current architecture doesn't
+		// have a transport for". None of the three was true. There was no
+		// bin-state refresh; the loss was not expected by anyone who had
+		// measured it — half of one plant's production counts; and there
+		// were two transports, one of which the enclosing function is
+		// already holding open.
 		if _, err := s.binManifest.ClearForReuseTx(tx, d.BinID, nil,
 			audit.OpReleasedCaptureEmpty,
 			"service/inventory_delta_service.go:ApplyBinUOPDelta"); err != nil {

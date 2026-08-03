@@ -58,7 +58,7 @@ func TestBinUOPAudit_SyncOrClearForReleased_LogsBeforeAndAfter(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-AUDIT-PARTIAL", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -100,7 +100,7 @@ func TestBinUOPAudit_ClearForReuse_LogsZeroAfter(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-AUDIT-CLEAR", "PART-A", 88)
 
@@ -135,7 +135,7 @@ func TestBinUOPAudit_Atomicity_NoRowOnFailedUpdate(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-AUDIT-LOCKED", "PART-A", 100)
 	otherOrder := createTestOrder(t, db, sd.LineNode.ID)
@@ -209,7 +209,7 @@ func TestRegression_OverrideAuditReleasePartial(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-OVR-PARTIAL", "PART-A", 60)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -271,7 +271,7 @@ func TestRegression_OverrideAuditPullParts(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-OVR-PULL", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -329,7 +329,7 @@ func TestRegression_NoOverrideNoAudit(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-NO-OVR", "PART-A", 75)
 	order := createTestOrder(t, db, sd.LineNode.ID)

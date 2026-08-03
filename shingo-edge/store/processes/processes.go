@@ -472,6 +472,24 @@ func SetRuntime(db *sql.DB, processNodeID int64, activeClaimID *int64, remaining
 	return err
 }
 
+// SetRuntimeClaimCountAndEpoch writes active_claim_id and
+// remaining_uop_cached and advances the stamp for the carrier the write
+// names, leaving the bin pointer alone. Used by the clear routes: Core
+// starts a new life for the carrier when it clears it and returns the new
+// stamp in the same reply, but the carrier itself does not move, so the
+// pointer must not be rewritten. binID is the carrier Core named; the
+// epoch lands only if that carrier is the one bound here — see
+// epochAssignForBoundBin.
+func SetRuntimeClaimCountAndEpoch(db *sql.DB, processNodeID int64, activeClaimID *int64, remainingUOPCached int, binID, deltaEpoch int64) error {
+	args := []any{activeClaimID, remainingUOPCached}
+	args = append(args, epochArgs(binID, deltaEpoch)...)
+	args = append(args, processNodeID)
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		active_claim_id=?, remaining_uop_cached=?, `+epochAssignForBoundBin+`, updated_at=datetime('now')
+		WHERE process_node_id=?`, args...)
+	return err
+}
+
 // SetRuntimeWithBin updates active_claim_id, active_bin_id, and
 // remaining_uop_cached in one atomic write. Used by every delivery-
 // completion handler so the bin pointer turns over at the same instant
@@ -486,16 +504,74 @@ func SetRuntimeWithBin(db *sql.DB, processNodeID int64, activeClaimID, activeBin
 	return err
 }
 
+// epochAssignOnBind is the monotonicity rule for active_bin_epoch on
+// statements that also write active_bin_id — the write is binding a
+// carrier to the slot and carrying that carrier's stamp with it.
+//
+// active_bin_epoch is a copy of Core's bins.delta_epoch — a generation
+// stamp the Edge puts on every count it reports, and that Core uses to
+// discard counts belonging to a bin's previous life. Five separate paths
+// write it, and last-write-wins is only safe while messages arrive in the
+// order Core sent them. They do not: the outbox drainer publishes in id
+// order but retries a failed message in place, so one failure reorders
+// everything behind it. A message that lost the race then stamps an old
+// generation over a new one and every count reported afterwards is thrown
+// away at Core, silently.
+//
+// So: for the SAME bin the stamp only ever moves forward. When the bin at
+// the slot changes, any stamp binds — each bin carries its own generation
+// counter, so an arriving bin's 4 is not "older" than the departing bin's
+// 9, it is unrelated. Refusing it would make the new carrier report under
+// a stamp that was never its own.
+//
+// The rule guards the epoch COLUMN, not the statement: a write carrying an
+// older stamp still lands its count and its bin pointer. Those are separate
+// facts and the count is the one the operator's tile renders.
+//
+// Column references on the right-hand side of an UPDATE read the row as it
+// was before the write, so `active_bin_id` here is the bin that was bound.
+// Takes three bind parameters, in epochArgs order.
+const epochAssignOnBind = `active_bin_epoch=CASE
+			WHEN active_bin_id IS ? AND active_bin_epoch > ? THEN active_bin_epoch
+			ELSE ? END`
+
+// epochAssignForBoundBin is the same rule for statements that do NOT move
+// the bin pointer. Here the stamp arrives naming a carrier, so it lands only
+// if that carrier is the one already bound at the slot — and then only
+// forward. The default is to keep what is there.
+//
+// The difference from epochAssignOnBind is deliberate and is the whole
+// distinction between the two shapes. A binding write says "this carrier is
+// here now, at this generation", so a stamp for a different carrier is the
+// point of the write. A stamp-only write says "the carrier you are holding
+// has moved on a generation", and if the slot is holding something else then
+// the message is about a carrier that is not here — writing it would put one
+// carrier's generation on another's counts.
+//
+// Takes the same three bind parameters, in the same epochArgs order.
+const epochAssignForBoundBin = `active_bin_epoch=CASE
+			WHEN active_bin_id IS ? AND active_bin_epoch < ? THEN ?
+			ELSE active_bin_epoch END`
+
+// epochArgs supplies either rule's three bind parameters: the bin the write
+// is for, then the incoming stamp twice (once to compare, once to store).
+func epochArgs(activeBinID any, deltaEpoch int64) []any {
+	return []any{activeBinID, deltaEpoch, deltaEpoch}
+}
+
 // SetRuntimeWithBinAndEpoch updates active_claim_id, active_bin_id,
 // active_bin_epoch, and remaining_uop_cached atomically. Same as
 // SetRuntimeWithBin but also writes the epoch — used by ManualLoad
 // (operator imprint) where the epoch comes from Core's LoadBin response
-// rather than the OrderDelivered envelope.
+// rather than the OrderDelivered envelope. The epoch is subject to
+// epochAssignOnBind; the other three columns are written unconditionally.
 func SetRuntimeWithBinAndEpoch(db *sql.DB, processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOPCached int) error {
+	args := []any{activeClaimID, activeBinID}
+	args = append(args, epochArgs(activeBinID, deltaEpoch)...)
+	args = append(args, remainingUOPCached, processNodeID)
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_claim_id=?, active_bin_id=?, active_bin_epoch=?, remaining_uop_cached=?, updated_at=datetime('now')
-		WHERE process_node_id=?`,
-		activeClaimID, activeBinID, deltaEpoch, remainingUOPCached, processNodeID)
+		active_claim_id=?, active_bin_id=?, `+epochAssignOnBind+`, remaining_uop_cached=?, updated_at=datetime('now')
+		WHERE process_node_id=?`, args...)
 	return err
 }
 
@@ -504,15 +580,16 @@ func SetRuntimeWithBinAndEpoch(db *sql.DB, processNodeID int64, activeClaimID, a
 // become the delivered bin's id, active_bin_epoch becomes the bin's
 // load-lifecycle epoch, and remaining_uop_cached becomes the bin's
 // authoritative uop_remaining (carried on the OrderDelivered envelope).
-// binID must not be nil — this is the delivered-bin handler's atomic
-// write; callers gate on order.DeliveryNode == ctx.node.CoreNodeName
-// before invoking.
+// binID is not a pointer — this is the delivered-bin handler's atomic
+// write and a delivery always names a carrier; callers gate on
+// order.DeliveryNode == ctx.node.CoreNodeName before invoking.
+//
+// The body was a byte-identical copy of SetRuntimeWithBinAndEpoch's,
+// differing only in that non-pointer parameter. Kept as its own name
+// because the two call sites mean different things — a delivery versus
+// an operator's imprint — and the name is the only place that shows.
 func SetRuntimeForDeliveredBin(db *sql.DB, processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOPCached int) error {
-	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_claim_id=?, active_bin_id=?, active_bin_epoch=?, remaining_uop_cached=?, updated_at=datetime('now')
-		WHERE process_node_id=?`,
-		activeClaimID, binID, deltaEpoch, remainingUOPCached, processNodeID)
-	return err
+	return SetRuntimeWithBinAndEpoch(db, processNodeID, activeClaimID, &binID, deltaEpoch, remainingUOPCached)
 }
 
 // SetActiveBinID writes only the active_bin_id pointer on a runtime
@@ -532,12 +609,14 @@ func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 // together without touching claim or count. Used by BindActiveBin
 // (L1 retrieve confirm at a loader) where Core's LoadBin response
 // provides the epoch but the count was already set by the delivery
-// handler.
+// handler. The epoch is subject to epochAssignOnBind.
 func SetActiveBinIDAndEpoch(db *sql.DB, processNodeID int64, activeBinID *int64, deltaEpoch int64) error {
+	args := []any{activeBinID}
+	args = append(args, epochArgs(activeBinID, deltaEpoch)...)
+	args = append(args, processNodeID)
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_bin_id=?, active_bin_epoch=?, updated_at=datetime('now')
-		WHERE process_node_id=?`,
-		activeBinID, deltaEpoch, processNodeID)
+		active_bin_id=?, `+epochAssignOnBind+`, updated_at=datetime('now')
+		WHERE process_node_id=?`, args...)
 	return err
 }
 

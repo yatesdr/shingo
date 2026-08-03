@@ -291,6 +291,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/process-nodes/{id}/finalize", h.apiRequestProduceSwap)
 			r.Post("/process-nodes/{id}/load-bin", h.apiLoadBin)
 			r.Post("/process-nodes/{id}/clear-bin", h.apiClearBin)
+			r.Post("/process-nodes/{id}/record-count", h.apiRecordCount)
 			r.Post("/process-nodes/{id}/clear-loader-home", h.apiClearLoaderHome)
 			r.Get("/process-nodes/{id}/market-bins", h.apiGetMarketBins)
 			r.Post("/process-nodes/{id}/pull-from-market", h.apiPullFromMarket)

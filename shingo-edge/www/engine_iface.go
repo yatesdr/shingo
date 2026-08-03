@@ -100,6 +100,7 @@ type EngineOrchestration interface {
 	RequestProduceSwap(nodeID int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
 	ClearBin(nodeID int64, binTypeCode string) error
+	RecordBinCount(nodeID int64, actualUOP int, actor string) error
 	ClearLoaderHome(nodeID int64) error
 	EnrichHomeBufferPartials(nodes []domain.StationNodeView)
 	FetchMarketBins(nodeID int64) ([]engine.MarketBinInfo, error)

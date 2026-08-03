@@ -115,17 +115,20 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 
 	// Zero the home bin's UOP via Core (declare it empty; robot will move the
 	// carrier out via Order A).
-	if err := e.coreClient.ClearBin(node.CoreNodeName, ""); err != nil {
+	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, "")
+	if err != nil {
 		return fmt.Errorf("clear loader home: zero bin UOP: %w", err)
 	}
 	// Mirror the zero into the Edge delta accumulator so the station view reflects
-	// the cleared count immediately (same as Engine.ClearBin for produce nodes).
+	// the cleared count immediately (same as Engine.ClearBin for produce nodes),
+	// and take the new generation stamp with it — the clear started the carrier's
+	// next life on Core.
 	if e.inventoryDelta != nil {
 		var claimIDPtr *int64
 		if claim.ID != 0 {
 			claimIDPtr = &claim.ID
 		}
-		if err := e.inventoryDelta.SetClaimAndCount(nodeID, claimIDPtr, 0); err != nil {
+		if err := e.inventoryDelta.SetClaimCountAndEpoch(nodeID, claimIDPtr, 0, cleared.BinID, cleared.DeltaEpoch); err != nil {
 			log.Printf("home_consolidation: set delta for node %d: %v", nodeID, err)
 		}
 	}

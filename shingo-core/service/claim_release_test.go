@@ -23,7 +23,7 @@ func TestReleaseClaim_ClearsClaimAndReservation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	reAcquirable := func(t *testing.T, binID int64) {
 		t.Helper()

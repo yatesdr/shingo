@@ -146,6 +146,36 @@ func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
 }
 
+// apiRecordCount is the operator declaring the count on the carrier in front of
+// them. The number goes to Core, which records it and broadcasts the
+// correction; the local cache is written from Core's reply so the two sides
+// hold the same number. A refusal from Core surfaces here rather than being
+// swallowed — an operator who corrected a count has to know it landed.
+func (h *Handlers) apiRecordCount(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	var body struct {
+		ActualUOP int    `json:"actual_uop"`
+		Actor     string `json:"actor"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	actor := body.Actor
+	if actor == "" {
+		actor = "operator"
+	}
+	if err := h.orchestration.RecordBinCount(id, body.ActualUOP, actor); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
 func (h *Handlers) apiPushEmptyOut(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

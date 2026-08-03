@@ -1172,6 +1172,25 @@ type UOPAdjustment struct {
 	Epoch int64 `json:"epoch,omitempty"`
 }
 
+// BinEpochRefresh is the body of a SubjectBinEpochRefresh message: the
+// carrier at CoreNodeName has started a new generation, and Epoch is it.
+//
+// Three fields, and the shortness is the contract. There is no count here
+// because nobody declared one — Core sends this when it discards a count for
+// carrying a generation that has ended, which proves the Edge is behind and
+// says nothing at all about how many parts are in the carrier. The Edge's own
+// number stays the Edge's. It writes the stamp, reports its next count under
+// it, and that count is what corrects Core's ledger.
+//
+// The Edge ignores a refresh naming a carrier it is not holding: Core sends to
+// the station it believes has the carrier, and if that slot holds something
+// else the message is about a carrier that is not there.
+type BinEpochRefresh struct {
+	BinID        int64  `json:"bin_id"`
+	CoreNodeName string `json:"core_node_name"`
+	Epoch        int64  `json:"epoch"`
+}
+
 // PlantClaimsReport is the body of a SubjectPlantClaims data message
 // (Edge → Core). It carries the FULL claim set for one process: every style
 // the process can run and, per style, the (node, payload) assignments the

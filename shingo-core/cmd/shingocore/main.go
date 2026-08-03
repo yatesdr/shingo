@@ -42,6 +42,7 @@ import (
 	"shingocore/messaging"
 	"shingocore/messaging/middleware"
 	"shingocore/rds"
+	"shingocore/service"
 	"shingocore/store"
 	"shingocore/www"
 )
@@ -374,7 +375,10 @@ func main() {
 	// see the header there. CoreDataService is constructed at this composition
 	// root rather than buried inside NewCoreHandler so the wiring is grep-able
 	// from one place.
-	coreDataService := messaging.NewCoreDataService(db, coreHandler)
+	coreDataService := messaging.NewCoreDataService(db, coreHandler, service.EpochAnnounce{
+		Topic:       cfg.Messaging.DispatchTopic,
+		CoreStation: cfg.Messaging.StationID,
+	})
 	// Wire the UOP-threshold monitor so claim-sync threshold changes
 	// reset debounce timers and bucket-applied events drive
 	// re-evaluation. Engine.Start() has already constructed the monitor

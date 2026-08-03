@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -337,6 +338,102 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		"payload_code":  req.PayloadCode,
 		"uop_remaining": uop,
 		"delta_epoch":   newEpoch,
+	})
+}
+
+// apiBinCount records a count an operator made at the LINE, against the bin at
+// a node. POST /api/telemetry/bin-count
+//
+// This is the missing half of a channel that ran one way. A count only ever
+// travels with a DECLARATION — somebody or some lifecycle event deciding a
+// number — and Core had two doors for declaring one downward (clear/load, and
+// the cycle count on the bins page) while the Edge had none for declaring one
+// upward except as a rider on an order release. An operator at the line who
+// noticed a carrier's count was wrong outside a release had nowhere to say so,
+// and the number that IS authoritative — the one at the line, next to the
+// carrier — could not reach Core's ledger.
+//
+// It is the same act as the cycle count on the bins page and it goes through
+// the same service, so it lands the same audit rows, clears the same
+// go-count-this flag, and broadcasts the same correction back down. The only
+// difference is who is standing where when they say it.
+//
+// Not an epoch bump. A count correction fixes a number INSIDE a carrier's
+// current life; it does not start a new one. Bumping here would retire a
+// generation that is still running and make the station's next report look
+// stale — the exact failure this whole surface exists to remove.
+func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NodeName  string `json:"node_name"`
+		BinID     int64  `json:"bin_id,omitempty"`
+		ActualUOP int    `json:"actual_uop"`
+		Actor     string `json:"actor,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.NodeName == "" {
+		h.jsonError(w, "node_name is required", http.StatusBadRequest)
+		return
+	}
+	nodes := h.engine.NodeService()
+	node, err := nodes.GetByDotName(req.NodeName)
+	if err != nil {
+		h.jsonError(w, fmt.Sprintf("node %q not found", req.NodeName), http.StatusNotFound)
+		return
+	}
+	binList, err := nodes.ListBinsByNode(node.ID)
+	if err != nil || len(binList) == 0 {
+		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
+		return
+	}
+	// Same resolution rule as bin-clear: one carrier is unambiguous, more than
+	// one and the caller has to name which, rather than an arbitrary first.
+	bin := binList[0]
+	switch {
+	case req.BinID != 0:
+		bin = nil
+		for _, b := range binList {
+			if b.ID == req.BinID {
+				bin = b
+				break
+			}
+		}
+		if bin == nil {
+			h.jsonError(w, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName), http.StatusConflict)
+			return
+		}
+	case len(binList) > 1:
+		h.jsonError(w, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(binList)), http.StatusConflict)
+		return
+	}
+
+	actor := req.Actor
+	if actor == "" {
+		actor = "edge-operator"
+	}
+	res, err := h.engine.BinService().RecordCount(bin, req.ActualUOP, actor)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	h.engine.AuditService().Append("bin", bin.ID, "counted",
+		strconv.Itoa(res.Expected), strconv.Itoa(res.Actual), actor)
+	log.Printf("telemetry: bin-count bin=%d at node=%s expected=%d actual=%d actor=%s",
+		bin.ID, req.NodeName, res.Expected, res.Actual, actor)
+	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
+		"node_id": node.ID, "action": "counted", "bin_id": bin.ID,
+	}))
+	h.jsonOK(w, map[string]any{
+		"status":        "ok",
+		"bin_id":        bin.ID,
+		"bin_label":     bin.Label,
+		"expected":      res.Expected,
+		"uop_remaining": res.Actual,
+		"discrepancy":   res.Discrepancy,
+		"warning":       res.Warning,
+		"delta_epoch":   bin.DeltaEpoch,
 	})
 }
 

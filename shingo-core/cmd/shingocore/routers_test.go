@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/router"
 	"shingocore/messaging"
+	"shingocore/service"
 )
 
 // These two tests ARE the boot assertions, moved to where they can fail
@@ -24,7 +25,7 @@ import (
 
 func testSubjectRouter(t *testing.T) *router.SubjectRouter {
 	t.Helper()
-	r, err := buildSubjectRouter(messaging.NewCoreDataService(nil, nil))
+	r, err := buildSubjectRouter(messaging.NewCoreDataService(nil, nil, service.EpochAnnounce{}))
 	if err != nil {
 		t.Fatalf("buildSubjectRouter: %v", err)
 	}
