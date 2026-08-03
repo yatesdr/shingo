@@ -141,7 +141,7 @@ func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64) (int64, error) {
 		CoreNodeName: nodeName,
 		NewRemaining: remaining,
 		Epoch:        epoch,
-		Actor:        "core",
+		Actor:        protocol.ActorCoreLifecycle,
 		AdjustedAt:   time.Now().UTC(),
 	}); err != nil {
 		return 0, fmt.Errorf("announce epoch %d for bin %d: %w", epoch, binID, err)

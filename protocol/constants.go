@@ -46,3 +46,38 @@ const (
 // AuditActorUI is the audit-trail actor recorded for web-UI-initiated actions
 // (the "ui" source in AuditService.Append / audit rows).
 const AuditActorUI = "ui"
+
+// ActorCoreLifecycle is the actor on a UOPAdjustment that Core generated
+// itself, from a carrier's lifecycle, rather than from a person declaring a
+// number. Today that is exactly one producer: the generation announcement in
+// BinManifestService.bumpEpoch, which fires on load, clear, release and
+// produce-finalize.
+//
+// It is a wire value on an existing field — nothing new travels because of it.
+// It exists so the Edge can tell the two apart, which it could not before.
+const ActorCoreLifecycle = "core"
+
+// IsLifecycleActor reports whether a UOPAdjustment came from Core's own
+// bookkeeping rather than from a person.
+//
+// THE DISTINCTION IS LOAD-BEARING AND IT IS ABOUT AN EMPTY SLOT. Both kinds of
+// message carry a bin id and a count, and the Edge binds an unbound slot from
+// one of them so that a carrier delivered-but-never-bound can be reconnected —
+// a repair built for a person acting deliberately. Produce finalize is a
+// machine firing once per press cycle, and its announcement routinely arrives
+// AFTER a robot has taken the finished carrier away. Binding there attaches a
+// carrier that has physically left, and the next ticks are charged to it.
+//
+// UNATTRIBUTED COUNTS AS LIFECYCLE, deliberately. A caller that forgets to set
+// an actor gets the safe answer — the slot is left alone and the arriving
+// carrier binds itself on delivery, which costs nothing. The opposite default
+// would silently reinstate the misattribution the moment somebody added a
+// producer, with no compile error and no failing test. Every human door
+// resolves through www.resolveActor, which substitutes AuditActorUI rather
+// than returning empty, so no real operator declaration lands here blank.
+//
+// Any other non-empty actor is a person: the cycle-count door carries a
+// free-form username, so humans cannot be enumerated, only machines can.
+func IsLifecycleActor(actor string) bool {
+	return actor == "" || actor == ActorCoreLifecycle
+}

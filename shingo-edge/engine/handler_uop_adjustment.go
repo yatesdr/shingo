@@ -79,24 +79,48 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		return
 	}
 
-	if rt.ActiveBinID == nil && !adj.Released && rt.PendingUOPDelta != 0 {
-		// The slot is in a swap gap and holding ticks for the carrier that has not
-		// arrived yet. Do not bind anything here.
+	if rt.ActiveBinID == nil && !adj.Released && protocol.IsLifecycleActor(adj.Actor) {
+		// AN EMPTY SLOT IS NOT AN INVITATION. Core generated this from a carrier's
+		// own lifecycle — load, clear, release, or a press finishing one — and the
+		// bind below is not for that. It is a repair built for a person
+		// deliberately correcting a count on a carrier the Edge never bound.
 		//
-		// The bind below exists to reconnect a carrier that was delivered and never
-		// bound, and it was built for a person at Core deliberately correcting a
-		// count. Core now announces every generation change too, and the most
-		// frequent one is produce finalize — a press finishing a carrier, firing on
-		// every cycle. That announcement can arrive after the finished carrier has
-		// been picked up and before the next arrives, naming the carrier that has
-		// left. Binding it would hand the held pile to a carrier that is already
-		// gone: the next tick replays the pile onto whatever is bound, and those
-		// parts belong to the carrier still on its way.
+		// Produce finalize is the frequent case and the dangerous one. It fires
+		// once per press cycle, and its announcement is enqueued when the press
+		// finishes and delivered after the outbox and Kafka have carried it — by
+		// which time a robot has very often already lifted the carrier it names.
+		// Binding here attaches a carrier that is driving away, and every part the
+		// press makes afterwards is charged to it until the next one lands.
+		//
+		// THE PREVIOUS GUARD WAS A PROXY AND IT HAD A HOLE. It refused only when
+		// ticks were being held, on the reasoning that a held pile proves a swap
+		// gap. It does — but the pile is empty for the whole interval between the
+		// robot lifting the carrier and the press completing its next part, and
+		// that interval is exactly where these announcements land. The held-ticks
+		// check survives below because it still answers a different question.
+		//
+		// Waiting costs nothing. The arriving carrier brings its own identity,
+		// count and generation with it on delivery.
+		log.Printf("uop_adjustment: bin %d at node %s is a Core lifecycle announcement (actor=%q) "+
+			"and the slot is empty — not binding a carrier that has left",
+			adj.BinID, adj.CoreNodeName, adj.Actor)
+		return
+	}
+
+	if rt.ActiveBinID == nil && !adj.Released && rt.PendingUOPDelta != 0 {
+		// A PERSON's correction, arriving while the slot is mid-swap and holding
+		// ticks for the carrier that has not arrived yet. Still do not bind.
+		//
+		// The machine case is already gone above, so what reaches here is somebody
+		// declaring a number for a carrier the Edge is not holding, at a moment
+		// when the next tick will replay the held pile onto whatever is bound.
+		// Those parts belong to the carrier still on its way, not to the one being
+		// corrected.
 		//
 		// A held pile is proof the slot is mid-swap. Waiting costs nothing — the
 		// arriving carrier brings its own count and generation on delivery.
 		log.Printf("uop_adjustment: bin %d at node %s arrived while %d ticks are held for the "+
-			"next carrier — not binding a departed carrier over them",
+			"next carrier — not binding over them",
 			adj.BinID, adj.CoreNodeName, rt.PendingUOPDelta)
 		return
 	}
