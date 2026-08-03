@@ -26,14 +26,16 @@ set -euo pipefail
 
 LEGACY_CONFIG_ARG=""
 ASSUME_YES=no
+FORCE_REINSTALL=no
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --legacy-config)   LEGACY_CONFIG_ARG="$2"; shift 2 ;;
         --legacy-config=*) LEGACY_CONFIG_ARG="${1#*=}"; shift ;;
         --yes|-y)          ASSUME_YES=yes; shift ;;
+        --reinstall)       FORCE_REINSTALL=yes; shift ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--legacy-config /path/to/shingoedge.yaml] [--yes]"
+            echo "Usage: $0 [--legacy-config /path/to/shingoedge.yaml] [--reinstall] [--yes]"
             exit 1
             ;;
     esac
@@ -272,7 +274,54 @@ fi
 LEGACY_IS_FHS=no
 [ -n "$LEGACY_CONFIG" ] && [ "$LEGACY_CONFIG" = "/etc/shingo/shingoedge.yaml" ] && LEGACY_IS_FHS=yes
 
-if { [ "$FHS_DB_EXISTS" = "yes" ] || [ "$UNIT_EXISTS" = "yes" ] || [ "$FHS_CONFIG_EXISTS" = "yes" ]; } \
+# THE DESTINATION IS NEVER OVERWRITTEN. On 2026-07-29 this installer replaced
+# Springfield's live 37.7 MB Edge database with a stale 5.9 MB copy from
+# 2026-05-20 and reported "Migration verified" while doing it. The mechanism was
+# here: discovery keys on the YAML, and a legacy yaml left on disk routed to
+# MIGRATION even though FHS_DB_EXISTS was yes — computed just above, then never
+# consulted by the branch. Springfield only survived because someone had renamed
+# the db file; the config was what the installer found.
+#
+# A populated /var/lib/shingo-edge/shingoedge.db means this box already lives on
+# the FHS layout, and nothing found by scanning the filesystem outranks it.
+# Refuse rather than guess: guessing has one safe answer and one that destroys
+# production data, and the installer cannot tell which config the running
+# process actually loaded.
+if [ "$FHS_DB_EXISTS" = "yes" ] && [ -n "$LEGACY_CONFIG" ] && [ "$LEGACY_IS_FHS" = "no" ] \
+   && [ "$FORCE_REINSTALL" = "no" ]; then
+    fhs_db_size=$(du -h /var/lib/shingo-edge/shingoedge.db 2>/dev/null | cut -f1)
+    legacy_db_size="(none on disk)"
+    [ -n "$LEGACY_DB" ] && legacy_db_size=$(du -h "$LEGACY_DB" 2>/dev/null | cut -f1)
+    cat >&2 <<EOF
+
+ERROR: this box already has an Edge database on the FHS layout, and a legacy
+config was also found. Refusing to migrate over the live database.
+
+  live (FHS):     /var/lib/shingo-edge/shingoedge.db   $fhs_db_size
+  legacy config:  $LEGACY_CONFIG
+  legacy DB:      ${LEGACY_DB:-(not on disk)}   $legacy_db_size
+
+Migrating here would copy the legacy DB OVER the live one. That happened at
+Springfield on 2026-07-29 and cost a 37.7 MB production database.
+
+Decide which is real, then:
+
+  # The FHS database is live and the legacy files are debris (usual case):
+  sudo bash $0 --reinstall${ASSUME_YES:+ --yes}
+
+  # ...or move the debris out of the way first, which is preferable because it
+  # stops the next run asking:
+  sudo mv $LEGACY_CONFIG ${LEGACY_CONFIG}.retired
+
+  # The legacy DB is genuinely the live one and FHS is a stale stub:
+  #   back BOTH up off-box first, then remove the FHS db and re-run.
+EOF
+    exit 1
+fi
+
+if [ "$FORCE_REINSTALL" = "yes" ]; then
+    MODE=REINSTALL
+elif { [ "$FHS_DB_EXISTS" = "yes" ] || [ "$UNIT_EXISTS" = "yes" ] || [ "$FHS_CONFIG_EXISTS" = "yes" ]; } \
    && { [ -z "$LEGACY_CONFIG" ] || [ "$LEGACY_IS_FHS" = "yes" ]; }; then
     MODE=REINSTALL
 elif [ -n "$LEGACY_CONFIG" ] && [ "$LEGACY_IS_FHS" = "no" ]; then
