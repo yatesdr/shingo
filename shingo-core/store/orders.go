@@ -480,6 +480,20 @@ func (db *DB) CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode string, ex
 	return orders.CountInFlightByDeliveryNodeExcluding(db.DB, deliveryNode, excludeID)
 }
 
+// CountLiveOrdersByOrigin counts a demand episode's own non-terminal orders —
+// unlike the two counts above, `queued` is included. The sizing half of the
+// replenishment bound. See orders.CountLiveByOrigin.
+func (db *DB) CountLiveOrdersByOrigin(originID string) (int, error) {
+	return orders.CountLiveByOrigin(db.DB, originID)
+}
+
+// CountLiveOrdersByDeliveryNode counts every non-terminal order pointed at a
+// node, `queued` included and regardless of origin — "is this window spoken
+// for". See orders.CountLiveByDeliveryNode.
+func (db *DB) CountLiveOrdersByDeliveryNode(deliveryNode string) (int, error) {
+	return orders.CountLiveByDeliveryNode(db.DB, deliveryNode)
+}
+
 func (db *DB) UpdateOrderRobotID(id int64, robotID string) error {
 	return orders.UpdateRobotID(db.DB, id, robotID)
 }

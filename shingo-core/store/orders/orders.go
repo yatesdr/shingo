@@ -744,6 +744,58 @@ func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, exclu
 	return count, err
 }
 
+// LiveCountsByOriginPerDeliveryNode returns one demand episode's OWN
+// non-terminal orders, counted per delivery node. The map is empty when the
+// episode has nothing outstanding.
+//
+// IT DELIBERATELY COUNTS `queued`, which is the whole point and the one way it
+// differs from the two counts above. Those answer "is something on its way
+// here", and for that question a queued order is correctly invisible: it holds
+// no destination, and the fulfillment scanner depends on it holding none
+// (ListAcquiring and the `status != 'queued'` in the two in-flight counts are
+// the same rule stated twice).
+//
+// This answers a different question — "what has this demand already asked for"
+// — and there the answer must include an order that asked and has not yet been
+// able to source. Springfield 2026-08-03: a loader window whose empty market was
+// dry accumulated 241 identical queued retrieve_empty orders, about one a minute
+// for three and a half hours, because the only guard against re-asking was an
+// in-flight count that could not see the orders it had already created. Each one
+// was, to that count, the first.
+//
+// A BARE TOTAL, not a per-window breakdown, because this answers the SIZING
+// question only — how much of what this demand needs is already coming. Which
+// windows are free is a different question with a different answer set, and it
+// is not this episode's to answer: a window can be spoken for by an order this
+// episode has never heard of (CountLiveByDeliveryNode below).
+//
+// The scan is over idx_orders_origin_id, a partial index on origin_id IS NOT
+// NULL, so this reads only rows that carry an episode.
+func CountLiveByOrigin(db *sql.DB, originID string) (int, error) {
+	var count int
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE origin_id = $1 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()), originID).Scan(&count)
+	return count, err
+}
+
+// CountLiveByDeliveryNode counts ALL non-terminal orders pointed at a delivery
+// node, from any origin and in any status — `queued` included.
+//
+// It is the "is this window spoken for" question, and it is deliberately blind
+// to who is asking. Two payloads at one shared-window loader are two separate
+// demand episodes, and neither can see the other's orders; an episode-scoped
+// check would let both put a carrier on the same window, which is the one thing
+// "one order per window" is supposed to mean.
+//
+// Distinct from CountInFlightByDeliveryNode, which excludes `queued` because it
+// answers "is something on its way" for the fulfillment scanner — a question
+// where an unsourced order correctly counts for nothing. Here an unsourced order
+// counts for everything: it is a claim on the window that has not been given up.
+func CountLiveByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
+	var count int
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()), deliveryNode).Scan(&count)
+	return count, err
+}
+
 // UpdateRobotID rewrites just the robot_id field.
 func UpdateRobotID(db *sql.DB, id int64, robotID string) error {
 	_, err := db.Exec(`UPDATE orders SET robot_id=$1, updated_at=$3 WHERE id=$2`, robotID, id, clock.Now().UTC())

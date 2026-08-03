@@ -43,8 +43,18 @@
 // Edge routes them to no handler, so the two-signals-race case this used to
 // describe cannot happen. Core still sends no LoopBelowThresholdSignal for a
 // pair with threshold = 0 — that pair is simply not monitored, and its loader
-// is stocked by the operator push instead. Edge's own dedup, for the one path
-// that remains, is the reservation seam (withLoaderBudget).
+// is stocked by the operator push instead.
+//
+// WHAT DEDUPS THE ORDERS IS THE EPISODE, and it is worth saying here because
+// this comment used to name the Edge's reservation seam (withLoaderBudget),
+// which was deleted with the Edge's half of replenishment. For a while the
+// answer to "what stops this firing twice for the same demand" was a function
+// that no longer existed, and the real answer was "nothing" — Springfield
+// 2026-08-03, 241 duplicate orders at one window. The debounce below is a rate
+// limit, not a dedup: it decides how often it is worth ASKING, never whether the
+// ask is already outstanding. That question is answered in
+// dispatch.ReplenishLoader, which subtracts the episode's own live orders from
+// the ask before creating any.
 //
 // Out of scope: iterate-all-claims for inactive styles (R3),
 // queued-retrieve safety net at Edge.

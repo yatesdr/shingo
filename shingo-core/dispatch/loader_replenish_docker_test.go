@@ -460,3 +460,164 @@ func TestReplenishLoader_DedicatedGoesToTheNamedPosition(t *testing.T) {
 		t.Errorf("delivered to %s, want the named position %s", got, windows[1])
 	}
 }
+
+// TestReplenishLoader_DoesNotReAskForWhatThisDemandAlreadyOrdered is
+// Springfield 2026-08-03, reduced to two calls.
+//
+// The empty market is dry, so the order the first call creates cannot source and
+// sits in `queued`. The second call is the same demand asking the same question
+// about the same window — and it must not create a second carrier. It did, about
+// once a minute for three and a half hours, because the only guard was a
+// capacity check whose in-flight count is `status != 'queued'` and therefore
+// could not see the order it had just made.
+//
+// Nothing here needs the market to actually be dry: an order that has not been
+// dispatched yet is in exactly the same state as one that cannot be, and it is
+// the STATUS the old guard was blind to, not the reason for it.
+func TestReplenishLoader_DoesNotReAskForWhatThisDemandAlreadyOrdered(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, nil)
+	req, cfg, windows := replenishFixture(t, db, "RDA", 1)
+	req.OriginID = "6f1d3a9c-0b52-4c8e-9a71-2d5f8e0c4b31"
+	req.OriginClass = string(protocol.OriginClassAttached)
+	req.Threshold = 10 // one carrier covers it
+	req.CurrentUOP = 0
+
+	first, err := d.ReplenishLoader(req, cfg)
+	if err != nil {
+		t.Fatalf("first ReplenishLoader: %v", err)
+	}
+	if len(first.Created) != 1 {
+		t.Fatalf("first call created %d, want 1", len(first.Created))
+	}
+
+	second, err := d.ReplenishLoader(req, cfg)
+	if err != nil {
+		t.Fatalf("second ReplenishLoader: %v", err)
+	}
+	if len(second.Created) != 0 {
+		t.Fatalf("second call created %d carriers for a demand that already has one outstanding — this is the duplicate-order bug", len(second.Created))
+	}
+	if second.Outstanding != 1 {
+		t.Errorf("Outstanding = %d, want 1 — the run must report what it counted, or a quiet run is indistinguishable from a broken one", second.Outstanding)
+	}
+	if second.Skipped == "" && second.HeldBy[windows[0]] == "" {
+		t.Errorf("second call explained nothing: Skipped=%q HeldBy=%v", second.Skipped, second.HeldBy)
+	}
+}
+
+// TestReplenishLoader_SubtractsOutstandingFromTheAsk is the case a per-window
+// check alone does NOT cover, and the reason the fix is a subtraction rather
+// than a filter.
+//
+// Three windows, a loop that needs one carrier. The first call creates one at
+// the first window. If the guard were only "skip windows this episode has
+// already asked for", the second call would find windows two and three free and
+// create there — one episode, three carriers, for an ask of one. The ask itself
+// has to shrink by what is already coming.
+func TestReplenishLoader_SubtractsOutstandingFromTheAsk(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, nil)
+	req, cfg, _ := replenishFixture(t, db, "RSO", 3)
+	req.OriginID = "b2c7e415-8d63-4f0a-91be-7c3a6d90e528"
+	req.OriginClass = string(protocol.OriginClassAttached)
+	req.Threshold = 10 // 10 units, 10 per carrier -> exactly 1
+	req.CurrentUOP = 0
+
+	first, err := d.ReplenishLoader(req, cfg)
+	if err != nil {
+		t.Fatalf("first ReplenishLoader: %v", err)
+	}
+	if len(first.Created) != 1 {
+		t.Fatalf("first call created %d, want 1 — the loop needs one carrier", len(first.Created))
+	}
+
+	second, err := d.ReplenishLoader(req, cfg)
+	if err != nil {
+		t.Fatalf("second ReplenishLoader: %v", err)
+	}
+	if len(second.Created) != 0 {
+		t.Fatalf("second call created %d at the loader's other windows; the ask must shrink by what is already coming, not just avoid the window it went to", len(second.Created))
+	}
+}
+
+// TestReplenishLoader_UnattributedRequestIsNotBounded pins the deliberate
+// exception. Without an origin there is no way to tell this request's
+// outstanding orders from any other request's, so no bound is applied — the
+// alternative is suppressing a legitimate ask on someone else's evidence.
+//
+// It is a real shape: a legacy binding, or any caller that has not opened an
+// episode, still reaches here.
+func TestReplenishLoader_UnattributedRequestIsNotBounded(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, nil)
+	req, cfg, _ := replenishFixture(t, db, "RUB", 2)
+	req.Threshold = 10
+	req.CurrentUOP = 0
+	// No OriginID, deliberately.
+
+	first, err := d.ReplenishLoader(req, cfg)
+	if err != nil {
+		t.Fatalf("first ReplenishLoader: %v", err)
+	}
+	if len(first.Created) != 1 {
+		t.Fatalf("first call created %d, want 1", len(first.Created))
+	}
+	if first.Outstanding != 0 {
+		t.Errorf("Outstanding = %d for an unattributed request, want 0 — nothing was counted", first.Outstanding)
+	}
+
+	// The window it used is now occupied by an in-flight order of its own, so the
+	// SECOND window is the one still free. The point is that the episode bound did
+	// not fire: the request is still sized by the reading alone.
+	second, err := d.ReplenishLoader(req, cfg)
+	if err != nil {
+		t.Fatalf("second ReplenishLoader: %v", err)
+	}
+	if second.Skipped != "" {
+		t.Errorf("Skipped = %q; an unattributed request must not be bounded by an episode it does not have", second.Skipped)
+	}
+}
+
+// TestReplenishLoader_WindowSpokenForByAnotherDemand pins that the per-window
+// question is asked of the WINDOW, not of the asker.
+//
+// Two payloads at one shared-window loader are two separate demand episodes, and
+// neither can see the other's orders. An episode-scoped check would let both put
+// a carrier on the same window — which is the one thing "one order per window"
+// exists to prevent — and the capacity check cannot catch it either, because the
+// first order is still `queued` and invisible to an in-flight count.
+func TestReplenishLoader_WindowSpokenForByAnotherDemand(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, nil)
+	req, cfg, windows := replenishFixture(t, db, "RWS", 1)
+	req.Threshold = 10
+	req.CurrentUOP = 0
+	req.OriginID = "3a8f5c21-6e94-4d17-b0c5-9f2e7a41d6b8"
+	req.OriginClass = string(protocol.OriginClassAttached)
+
+	if first, err := d.ReplenishLoader(req, cfg); err != nil {
+		t.Fatalf("first ReplenishLoader: %v", err)
+	} else if len(first.Created) != 1 {
+		t.Fatalf("first call created %d, want 1", len(first.Created))
+	}
+
+	// A DIFFERENT demand — different episode, same loader, same window.
+	other := req
+	other.OriginID = "c47b90e2-1f58-4a63-8d0e-5b6c2a97f314"
+
+	second, err := d.ReplenishLoader(other, cfg)
+	if err != nil {
+		t.Fatalf("second ReplenishLoader: %v", err)
+	}
+	if len(second.Created) != 0 {
+		t.Fatalf("a second demand put %d more carriers on a window that already has one coming", len(second.Created))
+	}
+	if second.HeldBy[windows[0]] == "" {
+		t.Errorf("HeldBy = %v, want an entry naming %s", second.HeldBy, windows[0])
+	}
+}

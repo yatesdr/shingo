@@ -65,6 +65,12 @@ type ReplenishResult struct {
 	// Want is how many carriers the loop needed, before any bounding. It is the
 	// sizing answer, not a plan.
 	Want int
+	// Outstanding is how many carriers this demand episode had already ordered
+	// and not yet had delivered (or cancelled) when the decision was made. It is
+	// subtracted from Want. Reported because "created nothing" and "created
+	// nothing because it already asked for four" are different runs, and only one
+	// of them is worth a second look.
+	Outstanding int
 	// Created is the orders actually made, one per window.
 	Created []*orders.Order
 	// HeldBy names each window that could not take a carrier, and why. A window
@@ -158,6 +164,20 @@ func (d *Dispatcher) LoadReplenishConfig(loaderID int64) (LoaderReplenishConfig,
 	}, true, nil
 }
 
+// episodeOutstanding counts the live orders a demand episode has already
+// created — the carriers it is still waiting on.
+//
+// A blank origin returns zero with no read at all, and that is not merely an
+// optimisation. orders.origin_id is a UUID column that rejects "", so the query
+// would ERROR rather than match nothing, and the fail-closed caller would then
+// refuse to replenish every unattributed loader in the plant.
+func (d *Dispatcher) episodeOutstanding(originID string) (int, error) {
+	if originID == "" {
+		return 0, nil
+	}
+	return d.db.CountLiveOrdersByOrigin(originID)
+}
+
 // ReplenishLoader decides and creates a loader's replenishment orders.
 //
 // The order of the decision is deliberate and each step exists because skipping
@@ -165,15 +185,33 @@ func (d *Dispatcher) LoadReplenishConfig(loaderID int64) (LoaderReplenishConfig,
 //
 //  1. SIZE the ask from the reading. What the loop needs, rounded up to whole
 //     carriers, with a broken (negative) reading sized from zero.
-//  2. RESOLVE the windows. Which nodes may take a carrier and how many may be
+//  2. SUBTRACT WHAT THIS DEMAND ALREADY ASKED FOR. The episode's own live orders
+//     are carriers already coming; asking again for the same ones is how a dry
+//     market turned into 241 duplicate orders (see below).
+//  3. RESOLVE the windows. Which nodes may take a carrier and how many may be
 //     inbound at once — the never-2N budget.
-//  3. BOUND the ask by the windows. want = min(sizing, free windows). The sizing
+//  4. BOUND the ask by the windows. want = min(sizing, free windows). The sizing
 //     answer alone is what over-ordered: it says what the loop needs with no idea
 //     how many places there are to put it.
-//  4. CHECK EACH WINDOW at decision time, and skip the blocked ones by name.
+//  5. CHECK EACH WINDOW at decision time, and skip the blocked ones by name.
 //
 // One order per window, never two at the same window: a window holds one
 // physical carrier.
+//
+// STEP 2 IS THE CONTRACT THE EDGE USED TO HOLD, and losing it in the cutover is
+// the whole of Springfield 2026-08-03. The Edge's seam sized against
+// `CurrentUOP + inFlight*capacity` — it projected the orders it had already
+// created into the total and asked for the remainder. Core replaced that with a
+// per-window capacity check, which reads `status != 'queued'` and therefore
+// cannot see an order that has been created but has not yet been able to source.
+// A loader whose empty market was dry accumulated 241 identical queued
+// retrieve_empty orders at one window, roughly one a minute, because to that
+// check every one of them was the first.
+//
+// Carriers, not UOP, but the same arithmetic: BinsToReachThreshold already
+// converts the reading into whole carriers, and an outstanding order IS one
+// carrier. Subtracting them there is the same projection stated in the unit the
+// decision is actually made in.
 //
 // It returns an error only when something genuinely went wrong — a failed write,
 // a loader that could not be admitted. "Nothing to do" comes back as a result
@@ -224,6 +262,36 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 		return res, nil
 	}
 	res.Want = want
+
+	// What this demand already has coming, subtracted from what it is about to
+	// ask for.
+	//
+	// An unattributed request (no episode) gets no such bound, and that is stated
+	// rather than defaulted: without an origin there is no way to tell this
+	// request's outstanding orders from anyone else's, and guessing would mean
+	// suppressing a legitimate ask on someone else's evidence.
+	outstanding, err := d.episodeOutstanding(req.OriginID)
+	if err != nil {
+		// Fail CLOSED — the same posture as the capacity gate one step down, and
+		// for the same reason. If the outstanding orders cannot be read, creating
+		// more is exactly the failure this read exists to prevent.
+		res.Skipped = "could not read what this demand already ordered; not adding to it"
+		d.dbg("loader_replenish loader=%d payload=%s: read outstanding for origin %s: %v",
+			req.LoaderID, req.PayloadCode, req.OriginID, err)
+		return res, nil
+	}
+	res.Outstanding = outstanding
+	if remaining := want - outstanding; remaining < want {
+		if remaining <= 0 {
+			res.Skipped = fmt.Sprintf("this demand already has %d carrier(s) outstanding for a need of %d; nothing more to order until they land or die",
+				outstanding, want)
+			d.dbg("loader_replenish loader=%d payload=%s: want=%d already-outstanding=%d — nothing to add",
+				req.LoaderID, req.PayloadCode, want, outstanding)
+			return res, nil
+		}
+		want = remaining
+	}
+
 	if NegativeCurrentUOP(req.CurrentUOP) {
 		// Logged, not suppressed. A negative total means material moved off the
 		// books, which is exactly when the loop needs stock — but the number that
@@ -269,6 +337,25 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 		// between deciding and retrying.
 		if blocked, block := CheckDropoffCapacity(d.db, t.NodeName, 0); blocked {
 			res.HeldBy[t.NodeName] = block.Cause
+			continue
+		}
+		// An order is already pointed here and has not given the window up. The
+		// check above cannot see it while it sits `queued` — that blindness is
+		// exactly what produced the duplicates — and it is asked from ANY origin
+		// on purpose: two payloads at one shared-window loader are two separate
+		// episodes that cannot see each other, so an episode-scoped question here
+		// would let both put a carrier on the same window. "One order per window"
+		// has to mean one order, not one per asker.
+		live, lerr := d.db.CountLiveOrdersByDeliveryNode(t.NodeName)
+		if lerr != nil {
+			// Fail closed, same as every other unreadable occupancy question.
+			res.HeldBy[t.NodeName] = "window-check-failed"
+			d.dbg("loader_replenish loader=%d payload=%s window=%s: count live orders: %v",
+				req.LoaderID, req.PayloadCode, t.NodeName, lerr)
+			continue
+		}
+		if live > 0 {
+			res.HeldBy[t.NodeName] = "window-order-open"
 			continue
 		}
 		order, err := d.admitReplenishOrder(req, cfg, t)
