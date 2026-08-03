@@ -14,9 +14,9 @@ import (
 	"shingo/protocol"
 	"shingo/shared"
 	"shingocore/dispatch"
+	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/fleet"
-	"shingocore/store/nodes"
 )
 
 // binMoveStatus turns a refused bin move into the status it deserves.
@@ -48,7 +48,7 @@ func binMoveStatus(err error) int {
 // so it is a 400. The engineer's door returns a plain error for the same
 // failure and its wrapper turns everything unrecognised into a 500 — a typo
 // there reports that the server is broken.
-func (h *Handlers) resolveDropoff(w http.ResponseWriter, nodeName string) *nodes.Node {
+func (h *Handlers) resolveDropoff(w http.ResponseWriter, nodeName string) *domain.Node {
 	destNode, err := h.engine.NodeService().GetByName(nodeName)
 	if err != nil {
 		h.jsonError(w, "destination node not found: "+nodeName, http.StatusBadRequest)
@@ -66,7 +66,7 @@ func (h *Handlers) resolveDropoff(w http.ResponseWriter, nodeName string) *nodes
 // incidentally and tell the operator to go clear a node whose only occupant is
 // the bin they are moving. Folding both into one call would quietly put the
 // generic answer back in front of the specific one.
-func (h *Handlers) rejectIfOccupied(w http.ResponseWriter, destNode *nodes.Node) bool {
+func (h *Handlers) rejectIfOccupied(w http.ResponseWriter, destNode *domain.Node) bool {
 	if preview := h.engine.Dispatcher().PreviewDropoffCapacity(destNode.Name); preview.Blocked {
 		h.jsonError(w, preview.Reason, http.StatusConflict)
 		return true

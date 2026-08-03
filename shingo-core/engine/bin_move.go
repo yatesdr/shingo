@@ -234,9 +234,14 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 	if err := e.binManifest.ReserveForDispatch(bin.ID, order.ID); err != nil {
 		// The order row exists by now, so a failure here has to fail it too or
 		// it sits pending forever with nothing to dispatch, fail or clean it up.
-		if ferr := e.db.FailOrderAtomic(order.ID, "bin taken by another order before reservation"); ferr != nil {
-			e.logFn("engine: fail bin move %d after losing the bin: %v", order.ID, ferr)
-		}
+		//
+		// Through the lifecycle rather than a bare FailOrderAtomic: the direct
+		// call transitions the row and stops there, leaving an order that failed
+		// with no audit line and no notification, which is the state the
+		// state-machine guard exists to prevent. failOrderAndEmit routes through
+		// Lifecycle().Fail and fires EventOrderFailed, so this lands in the audit
+		// trail and reaches the station like every other failure.
+		e.failOrderAndEmit(order.ID, "bin_taken", "bin taken by another order before reservation")
 		if errors.Is(err, reservations.ErrReservationConflict) {
 			return nil, refuse(BinMoveConflict, ErrBinTaken,
 				"bin %s was taken a moment ago — try again", bin.Label)

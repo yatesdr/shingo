@@ -18,8 +18,8 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/fleet"
-	"shingocore/store/nodes"
 )
 
 // --- Test Orders Page ---
@@ -52,9 +52,9 @@ type nodePickerOption struct {
 // knowing about — the shapes are deliberately the same so they read alike.
 // This one nests to any depth (group → lane → slot); the JS one stops at one
 // level.
-func buildNodePickerOptions(all []*nodes.Node) []nodePickerOption {
-	live := make([]*nodes.Node, 0, len(all))
-	byID := make(map[int64]*nodes.Node, len(all))
+func buildNodePickerOptions(all []*domain.Node) []nodePickerOption {
+	live := make([]*domain.Node, 0, len(all))
+	byID := make(map[int64]*domain.Node, len(all))
 	for _, n := range all {
 		if !n.Enabled {
 			continue
@@ -63,7 +63,7 @@ func buildNodePickerOptions(all []*nodes.Node) []nodePickerOption {
 		byID[n.ID] = n
 	}
 
-	typeLabel := func(n *nodes.Node) string {
+	typeLabel := func(n *domain.Node) string {
 		switch strings.ToUpper(n.NodeTypeCode) {
 		case protocol.NodeClassNGRP:
 			return "group"
@@ -75,8 +75,8 @@ func buildNodePickerOptions(all []*nodes.Node) []nodePickerOption {
 		}
 		return ""
 	}
-	children := make(map[int64][]*nodes.Node, len(live))
-	var roots []*nodes.Node
+	children := make(map[int64][]*domain.Node, len(live))
+	var roots []*domain.Node
 	for _, n := range live {
 		// A node whose parent is disabled (or gone) is displayed as a root
 		// rather than dropped — it is still a real, selectable place.
@@ -88,7 +88,7 @@ func buildNodePickerOptions(all []*nodes.Node) []nodePickerOption {
 		}
 		roots = append(roots, n)
 	}
-	byName := func(ns []*nodes.Node) {
+	byName := func(ns []*domain.Node) {
 		sort.Slice(ns, func(i, j int) bool { return ns[i].Name < ns[j].Name })
 	}
 	byName(roots)
@@ -100,8 +100,8 @@ func buildNodePickerOptions(all []*nodes.Node) []nodePickerOption {
 	// Searching DESCENDANTS, not just direct children: a group's children are
 	// lanes, which have no zone either, so a one-level look always misses and
 	// every group lands under "Other" — away from the slots it contains.
-	var zoneOf func(n *nodes.Node) string
-	zoneOf = func(n *nodes.Node) string {
+	var zoneOf func(n *domain.Node) string
+	zoneOf = func(n *domain.Node) string {
 		if n.Zone != "" {
 			return n.Zone
 		}
@@ -113,7 +113,7 @@ func buildNodePickerOptions(all []*nodes.Node) []nodePickerOption {
 		return "Other"
 	}
 
-	byZone := make(map[string][]*nodes.Node)
+	byZone := make(map[string][]*domain.Node)
 	for _, n := range roots {
 		z := zoneOf(n)
 		byZone[z] = append(byZone[z], n)
@@ -125,8 +125,8 @@ func buildNodePickerOptions(all []*nodes.Node) []nodePickerOption {
 	sort.Strings(zoneNames)
 
 	var out []nodePickerOption
-	var walk func(n *nodes.Node, depth int)
-	walk = func(n *nodes.Node, depth int) {
+	var walk func(n *domain.Node, depth int)
+	walk = func(n *domain.Node, depth int) {
 		label := strings.Repeat("  ", depth)
 		if depth > 0 {
 			label += "↳ "
