@@ -190,6 +190,61 @@ func TestDig_ReleasesLaneOnCompletion(t *testing.T) {
 	t.Logf("dig released the lane on completion; follow-on store settled in %d ticks", ticks)
 }
 
+// TestDig_HoldIsArmAgnostic confirms the dig hold excludes a store under BOTH gate
+// arms, not only the priority-only arm the other dig tests default to (newGatedSim
+// sets priorityOnly=true). The production pilot gates with deepest-first admission
+// (priorityOnly=false) — the arm where the deepest-first hold is ACTIVE — so the dig
+// hold must keep the store out there too. Same property, other arm.
+func TestDig_HoldIsArmAgnostic(t *testing.T) {
+	for _, arm := range []struct {
+		name         string
+		priorityOnly bool
+	}{
+		{"priority-only", true},
+		{"deepest-first", false},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			sc := wideLaneScene(t, 3)
+			sim := New(sc, Options{Watchdog: 200, HopTicks: 3})
+			sim.SetMouthGate(true)
+			sim.SetPriorityOnly(arm.priorityOnly)
+			sim.PlaceBin("S0")
+			sim.PlaceBin("S1")
+			if err := sim.AddRobot("DIGGER", "AISLE"); err != nil {
+				t.Fatalf("AddRobot DIGGER: %v", err)
+			}
+			if err := sim.AddRobot("STORE", "AISLE"); err != nil {
+				t.Fatalf("AddRobot STORE: %v", err)
+			}
+			if err := sim.Submit("DIGGER", digReq("dig-1", "S0", "S1", "LINE"), true); err != nil {
+				t.Fatalf("Submit dig: %v", err)
+			}
+			if err := sim.Submit("STORE", storeReq("store-1", "LINE", "S0"), false); err != nil {
+				t.Fatalf("Submit store: %v", err)
+			}
+			storeEnteredDuringDig := false
+			for tick := 0; tick < 400; tick++ {
+				for _, v := range sim.Tick() {
+					t.Errorf("%s arm fired a checker at tick %d: %s: %s", arm.name, sim.TickCount(), v.Checker, v.Detail)
+				}
+				if sr := sim.robots["STORE"]; sr != nil && sr.pos.inLane() && sim.OrderActive("dig-1") {
+					storeEnteredDuringDig = true
+				}
+				if sim.AllIdle() {
+					break
+				}
+			}
+			if storeEnteredDuringDig {
+				t.Errorf("%s arm: the store entered the lane while the dig was still active", arm.name)
+			}
+			if sim.HasBin("S1") {
+				t.Errorf("%s arm: the buried target was not extracted", arm.name)
+			}
+			t.Logf("%s arm: dig held, store kept out, target extracted", arm.name)
+		})
+	}
+}
+
 // TestDig_Soak_HoldIsRobust is the seeded soak: across randomized lane depth,
 // blocker counts, and a concurrent store trying to enter DURING the dig, every
 // seed must settle with zero violations, the target extracted, and the store never
