@@ -12,15 +12,20 @@ import (
 
 // loader_replenish.go — Core originating a loader's replenishment itself.
 //
-// Today the Edge decides this: Core notices a loop is below threshold, sends a
-// signal, and the Edge works out how many carriers and which windows and creates
-// the orders. That split is why the loader over-ordered — the two halves count
-// different things, and only one of them can see the plant.
+// THIS IS THE LIVE ORIGINATION PATH. Core notices a loop is below threshold and
+// works out how many carriers and which windows and creates the orders, all on
+// this side. The Edge's half was deleted, not left dormant — the receiver, the
+// sizing arithmetic and the park-and-replay machinery are gone.
 //
-// NOTHING CALLS ReplenishLoader IN PRODUCTION YET, deliberately. It ships built
-// and tested but unreached, so the cutover that switches origination over is a
-// change to one call site rather than a change to this file. It is the third of
-// the loader triad, alongside loader_source.go and loader_place.go.
+// The split they replaced is why the loader over-ordered on 2026-07-31: Core
+// decided a loop was low, the Edge decided how much that meant, and the two
+// halves counted different things while only one of them could see the plant.
+//
+// The caller is engine/threshold_monitor.go, in fireSignalCached. It is the one
+// call site, which is what the build-it-unreached-then-switch-one-line approach
+// bought — but the switch has been thrown, so read this file as production.
+// It is the third of the loader triad, alongside loader_source.go and
+// loader_place.go.
 
 // ReplenishRequest names a loop that has fallen below its threshold.
 type ReplenishRequest struct {
