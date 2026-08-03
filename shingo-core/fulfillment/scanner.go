@@ -467,6 +467,16 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.logFn("fulfillment: update source_node for order %d: %v", order.ID, err)
 	}
 
+	// Lane mouth gate (P4): take the order's lane holds before committing to the
+	// fleet, holding the soft slot+bin reservations on a conflict (Rule 1). No-op
+	// unless a mouth-enforced lane group is on the order's path.
+	if !s.admitDepthOrder(order, destNode) {
+		return false
+	}
+	if !s.admitLanes(order, sourceNode, destNode) {
+		return false
+	}
+
 	// Confirm-at-dispatch: hard-claim BOTH the slot (if a storage dropoff) AND the
 	// bin, in one step, immediately before the fleet call. Slots-before-bins (the
 	// complex order). On failure the order keeps its soft holds and parks in
@@ -491,6 +501,10 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.logFn("fulfillment: fleet dispatch failed for order %d, re-queuing: %v", order.ID, err)
 		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
 			s.logFn("fulfillment: release claim for order %d on fleet-fail rollback: %v", order.ID, rerr)
+		}
+		// The robot never committed — drop any lane mouth hold so it doesn't linger.
+		if lerr := s.dispatcher.ReleaseLanesForOrder(order.ID); lerr != nil {
+			s.logFn("fulfillment: release lanes for order %d on fleet-fail rollback: %v", order.ID, lerr)
 		}
 		// Fleet rejected the dispatch — a transient robot-system issue. Park under
 		// fleet_unavailable so the row carries that code.
@@ -553,6 +567,14 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		}
 		s.logTransition(order.ID, "held-bin → sourcing", err)
 	}
+	// Lane mouth gate (P4): same as the fresh path — take the order's lane holds
+	// before the fleet commit, parking on a conflict and keeping the held bin.
+	if !s.admitDepthOrder(order, destNode) {
+		return false
+	}
+	if !s.admitLanes(order, sourceNode, destNode) {
+		return false
+	}
 	// Confirm-at-dispatch: the held bin is still SOFT (pending reservation from the
 	// prior tick). Hard-claim the slot (if a storage dropoff) AND the bin here, one
 	// step, before the fleet call — same Rule-1 step as the fresh path. On failure
@@ -572,6 +594,9 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
 			s.logFn("fulfillment: release claim for held-bin order %d on fleet-fail rollback: %v", order.ID, rerr)
 		}
+		if lerr := s.dispatcher.ReleaseLanesForOrder(order.ID); lerr != nil {
+			s.logFn("fulfillment: release lanes for held-bin order %d on fleet-fail rollback: %v", order.ID, lerr)
+		}
 		// Same fleet_unavailable code as the plain-path fleet failure; both are
 		// transient robot-system issues. The hard claim is released so the order
 		// re-soft-acquires next tick.
@@ -584,6 +609,62 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	s.logFn("fulfillment: held-bin order %d fulfilled — bin %d (%s -> %s) vendor=%s",
 		order.ID, *order.BinID, sourceNode.Name, destNode.Name, vendorOrderID)
 	s.notifyEdgeDispatched(order, sourceNode, vendorOrderID)
+	return true
+}
+
+// admitLanes takes the order's lane mouth holds before dispatch (P4). Returns
+// true to proceed; false when the order was parked in sourcing (lane contended,
+// or a transient error) so the caller returns false too. A no-op that returns
+// true when no mouth-enforced lane group is on the order's path — byte-identical
+// when the gate is off.
+func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.Node) bool {
+	admitted, cause, lane, err := s.dispatcher.AcquireLanesForOrder(order.ID, sourceNode, destNode)
+	if err != nil {
+		s.logFn("fulfillment: lane acquire for order %d errored: %v (retrying)", order.ID, err)
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "lane-acquire-error",
+			dispatch.QueueParams{Payload: order.PayloadCode})
+		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane acquire error, retrying"); qerr != nil {
+			s.logFn("fulfillment: order %d → sourcing after lane acquire error: %v", order.ID, qerr)
+		}
+		return false
+	}
+	if !admitted {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
+			dispatch.QueueParams{Destination: lane})
+		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane contended"); qerr != nil {
+			s.logFn("fulfillment: order %d → sourcing after lane conflict: %v", order.ID, qerr)
+		}
+		return false
+	}
+	return true
+}
+
+// admitDepthOrder holds a store at dispatch until it is safe to enter its lane
+// deepest-first (the tiered-entry arm). Returns true to proceed; false when the
+// order was parked in sourcing (a deeper cross-origin store, or an active
+// cross-origin group, holds the lane) so the caller returns false too. Runs BEFORE
+// the mouth acquire so a deferred order never parks holding a lane. A no-op that
+// returns true when no mouth-enforced lane group is on the path — byte-identical
+// when the gate is off.
+func (s *Scanner) admitDepthOrder(order *orders.Order, destNode *nodes.Node) bool {
+	park, cause, err := s.dispatcher.AdmitLaneEntry(order, destNode)
+	if err != nil {
+		s.logFn("fulfillment: lane-entry check for order %d errored: %v (retrying)", order.ID, err)
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "lane-entry-error",
+			dispatch.QueueParams{Payload: order.PayloadCode})
+		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane-entry check error, retrying"); qerr != nil {
+			s.logFn("fulfillment: order %d → sourcing after lane-entry error: %v", order.ID, qerr)
+		}
+		return false
+	}
+	if park {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
+			dispatch.QueueParams{Destination: destNode.Name})
+		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane entry deferred (depth order)"); qerr != nil {
+			s.logFn("fulfillment: order %d → sourcing after lane-entry defer: %v", order.ID, qerr)
+		}
+		return false
+	}
 	return true
 }
 

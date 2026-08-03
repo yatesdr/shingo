@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/google/uuid"
 
@@ -30,10 +31,16 @@ type Dispatcher struct {
 	allocator     *Allocator
 	// finder is the shared source-finding seam (see source_finder.go). Owned
 	// here so every sourcing consumer resolves through the SAME instance.
-	finder           *SourceFinder
-	restoreListeners *restoreRegistry
-	laneHolds        *laneHoldRegistry
-	DebugLog         func(string, ...any)
+	finder    *SourceFinder
+	laneHolds *laneHoldRegistry
+	DebugLog  func(string, ...any)
+
+	// laneGates serializes lane-gate release passes per lane; gateAppendFails
+	// debounces the operator-facing queue code for repeated append failures. Both
+	// are in-process and crash-volatile by design — see lane_gate_release.go.
+	laneGates       *laneGateSerializer
+	gateFailMu      sync.Mutex
+	gateAppendFails map[int64]int
 
 	// postFindHook is a test-only seam fired by the fulfillment scanner between
 	// Find and Claim (the single claim point after the claim-move to the scanner).
@@ -47,16 +54,18 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 		CoreStation: stationID,
 	})
 	d := &Dispatcher{
-		db:               db,
-		backend:          backend,
-		emitter:          emitter,
-		resolver:         resolver,
-		laneLock:         NewLaneLock(),
-		stationID:        stationID,
-		dispatchTopic:    dispatchTopic,
-		binManifest:      binManifest,
-		restoreListeners: newRestoreRegistry(),
-		laneHolds:        newLaneHoldRegistry(),
+		db:            db,
+		backend:       backend,
+		emitter:       emitter,
+		resolver:      resolver,
+		laneLock:      NewLaneLockWithDB(db.DB),
+		stationID:     stationID,
+		dispatchTopic: dispatchTopic,
+		binManifest:   binManifest,
+		laneHolds:     newLaneHoldRegistry(),
+
+		laneGates:       newLaneGateSerializer(),
+		gateAppendFails: make(map[int64]int),
 	}
 	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
 	// A closure rather than the planner itself, because the planner is built a
@@ -347,7 +356,23 @@ func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
 // the only difference is the Complete flag. blockId/goodsId differ from the old
 // dedicated transport primitive, but SEER acts only on location + binTask
 // (blockId/goodsId are cosmetic) — both preserved here.
+//
+// It is also the single fleet-create seam for every plain order, which is why the
+// gate_choreography valve branches HERE rather than in the scanner: routing on the
+// destination at the one create site is what makes "every lane-bound order ships
+// unsealed" structurally true, instead of true-for-the-callers-we-remembered. Both
+// callers (Kafka/envelope and UI/scanner) inherit it.
 func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
+	// gate_choreography: a lane-bound store ships unsealed to the lane's wait
+	// point and has its dropoff tail appended when the lane is safe — immediately
+	// when it already is. No-op (and no extra query beyond the lane lookup) for
+	// every other destination, so an unconfigured plant never leaves this line.
+	if target, gated, err := d.resolveLaneGateTarget(destNode); err != nil {
+		return "", err
+	} else if gated {
+		return d.dispatchGated(order, target, sourceNode, destNode)
+	}
+
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 
 	payloadCode := d.payloadForDispatch(order)
@@ -356,11 +381,18 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// F4c: expand the load leg into the payload's configured binTask sequence
 	// (nil for an unconfigured payload → byte-identical single JackLoad block).
 	blocks := stepsToBlocks(vendorOrderID, plan, 0, d.loadSequenceForPayload(payloadCode))
+	// Deeper-first lane sequencing (gated): a store into a mouth-enforced lane gets
+	// an RDS priority from its target slot depth, so co-admitted stores enter the
+	// single-file lane back-to-front. Off / non-lane → order.Priority (byte-identical).
+	priority := order.Priority
+	if p, ok := d.laneDispatchPriority(destNode); ok {
+		priority = p
+	}
 	req := fleet.CreateOrderRequest{
 		OrderID:    vendorOrderID,
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
-		Priority:   order.Priority,
+		Priority:   priority,
 		RobotGroup: d.robotGroupForPayload(payloadCode),
 		Complete:   true, // no-wait: the fleet completes the order once its 2 blocks finish
 	}
@@ -372,7 +404,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// whose payload never made it onto the order. Distinguishable only if both
 	// are recorded.
 	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s to=%s priority=%d payload=%q robot_group=%q",
-		order.ID, vendorOrderID, sourceNode.Name, destNode.Name, order.Priority,
+		order.ID, vendorOrderID, sourceNode.Name, destNode.Name, priority,
 		payloadCode, req.RobotGroup)
 
 	// Last look before the irreversible step. `order` is a snapshot that may be

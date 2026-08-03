@@ -39,12 +39,6 @@ type ReconciliationService struct {
 	// `reshuffling` when a child→parent terminal event was missed (crash) or
 	// never fired (the cancelled-child vector has no child→parent event arm).
 	advanceCompound func(parentID int64) error
-	// resolveRestoreSynthetic resolves a stranded reshuffle_restore synthetic
-	// parent with zero children. Late-bound to dispatch.Dispatcher.
-	// ResolveOrphanedRestoreSynthetic in engine.New. Complementary to
-	// advanceCompound — this handles the zero-children case (listener never
-	// fired) while advanceCompound handles the all-children-terminal case.
-	resolveRestoreSynthetic func(syntheticParentID int64, edgeUUID string) error
 }
 
 func newReconciliationService(db ReconciliationStore, logFn LogFunc) *ReconciliationService {
@@ -116,11 +110,6 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 				s.logFn("engine: advance stuck reshuffle parents error: %v", err)
 			} else if n > 0 {
 				s.logFn("engine: re-drove %d stuck reshuffle parents", n)
-			}
-			if n, err := s.ResolveOrphanedReshuffleRestores(); err != nil {
-				s.logFn("engine: resolve orphaned reshuffle restores error: %v", err)
-			} else if n > 0 {
-				s.logFn("engine: resolved %d orphaned reshuffle restore parents", n)
 			}
 			if n, err := s.db.ReapOrphanedReservations(); err != nil {
 				s.logFn("engine: reap orphaned reservations error: %v", err)
@@ -263,64 +252,6 @@ func (s *ReconciliationService) AdvanceStuckReshuffleParents() (int, error) {
 	return advanced, nil
 }
 
-// ResolveOrphanedReshuffleRestores finds synthetic reshuffle_restore orders
-// stranded at `reshuffling` with ZERO children — the listener was never
-// consumed so dispatchRestoreCompound never ran. Complementary case to
-// AdvanceStuckReshuffleParents (which catches parents whose children ALL
-// EXIST and are terminal).
-//
-// Defense-in-depth: the primary fix resolves stranded synthetics at boot
-// (RecoverPendingRestocks) and on live terminal events
-// (HandleComplexParentTerminal). This catches the gap between "delete
-// pending_restocks row" and "resolve synthetic parent" a crash could expose.
-func (s *ReconciliationService) ResolveOrphanedReshuffleRestores() (int, error) {
-	if s.resolveRestoreSynthetic == nil {
-		return 0, nil
-	}
-
-	rows, err := s.db.Query(`
-		SELECT id, edge_uuid
-		FROM orders
-		WHERE order_type = 'reshuffle_restore'
-		  AND status = 'reshuffling'
-		  AND NOT EXISTS (SELECT 1 FROM orders c WHERE c.parent_order_id = orders.id)
-		ORDER BY id
-		LIMIT 100`)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-
-	var syntheticIDs []int64
-	var edgeUUIDs []string
-	for rows.Next() {
-		var id int64
-		var uuid string
-		if err := rows.Scan(&id, &uuid); err != nil {
-			return 0, err
-		}
-		syntheticIDs = append(syntheticIDs, id)
-		edgeUUIDs = append(edgeUUIDs, uuid)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-
-	resolved := 0
-	for i, id := range syntheticIDs {
-		err := s.resolveRestoreSynthetic(id, edgeUUIDs[i])
-		if err != nil {
-			s.logFn("engine: orphan restore %d (%s): %v (skipping this pass)", id, edgeUUIDs[i], err)
-			continue
-		}
-		s.logFn("engine: resolved orphaned reshuffle restore %d (%s)", id, edgeUUIDs[i])
-		s.db.RecordRecoveryAction("resolve_orphan_restore", "order", id,
-			"resolved stranded reshuffle_restore parent with zero children", "system")
-		resolved++
-	}
-	return resolved, nil
-}
-
 // AbandonStuckOrders cancels RUNTIME-stuck orders that have sat without progress past the
 // timeout: a robot parked at a staging node (staged), or a leg handed to the fleet that
 // never started moving (dispatched). The latter is the long-weekend drain — orders
@@ -401,6 +332,32 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout, operatorGatedTimeout
 		// re-queue back to a pre-dispatch waiting state) — skip if it is no
 		// longer a runtime-stuck candidate.
 		if !protocol.IsStuckSweepCandidate(order.Status) {
+			continue
+		}
+		// A lane-gate-staged order is a robot physically parked at a lane wait
+		// point, holding a bin and an unsealed waybill, waiting for Core to
+		// append its tail. Its updated_at never moves while it dwells, so the
+		// cutoff fires reliably — and abandoning it cancels a committed robot
+		// mid-order and strands the bin it is carrying. That is not "stuck"; it
+		// is Core owing it a decision.
+		//
+		// This is distinct from the operator-gated swap leg handled below:
+		// IsGateStaged is the NON-coordinated lane-mouth wait (Core owes the
+		// decision), whereas IsOperatorGatedStaging is a coordinated two-robot
+		// swap leg (a human owes the decision) and gets a longer bound, not an
+		// exemption. Mutually exclusive by construction — IsGateStaged returns
+		// false for any Coordinated order.
+		//
+		// Skipping here rather than in the SQL keeps the exemption next to the
+		// re-check above, where a reader looking at what the sweep cancels will
+		// see it. It is the sweep's own stated principle (give-up is an operator
+		// decision, demand never evaporates) applied to a case it predates.
+		//
+		// TODO(increment 7): a dwelling order must not be merely exempt — it needs
+		// its own watchdog: a staged-too-long queue code and an operator surface,
+		// so the wait is visible and owned rather than silent. Exemption alone
+		// trades a destructive failure for an invisible one.
+		if dispatch.IsGateStaged(order) {
 			continue
 		}
 		// Which clock applies to THIS order. Operator-gated staging — a

@@ -19,18 +19,12 @@ const (
 	// PropReshuffleTargetNodes is a JSON array of direct-child node
 	// names. Empty / unset → expose mode. Non-empty → target-node mode.
 	PropReshuffleTargetNodes = "reshuffle_target_nodes"
-
-	// PropReshuffleRestoreBlockers is "on" or "off". When "on", after
-	// the parent picks up the target bin, blockers are moved back to
-	// their original lane slots via a synthetic-parent restock
-	// compound.
-	PropReshuffleRestoreBlockers = "reshuffle_restore_blockers"
 )
 
 // ReshuffleStep describes a single move in a reshuffle plan.
 type ReshuffleStep struct {
 	Sequence int
-	StepType protocol.StepType // "unbury", "retrieve", "restock"
+	StepType protocol.StepType // "unbury", "retrieve"
 	BinID    int64
 	FromNode *nodes.Node
 	ToNode   *nodes.Node
@@ -52,33 +46,6 @@ type reshuffleBlocker struct {
 	bin   *bins.Bin
 	slot  *nodes.Node
 	depth int
-}
-
-// restockDestinations packs blockers back into the lane deepest-first (no bubbles)
-// by slot rotation, instead of returning each to its original slot. Post-unbury +
-// retrieve the lane's empty slots are exactly the blockers' original slots (depths
-// 1..N-1) plus the target's slot (depth N). Assigning each blocker the next-deeper
-// slot fills depths 2..N and leaves depth 1 (the mouth) empty — physically realistic
-// (a robot places into the reachable mouth; it can't skip past an empty slot) and
-// bubble-free. FIFO is unaffected: FindSourceFIFO keys on loaded_at age, not slot
-// depth, so moving a bin to a different slot doesn't change its pick order.
-//
-// blockers are shallowest-first (findBuriedBlockers via ListLaneSlots depth ASC).
-// Returns one destination node per blocker, indexed to match the blockers slice.
-func restockDestinations(blockers []reshuffleBlocker, targetSlot *nodes.Node) []*nodes.Node {
-	n := len(blockers)
-	if n == 0 {
-		return nil
-	}
-	dests := make([]*nodes.Node, n)
-	// The deepest blocker (index n-1, depth N-1) restocks to the target's slot (depth N).
-	dests[n-1] = targetSlot
-	// Each shallower blocker restocks one deeper than itself — i.e. to the slot of
-	// the next-deeper blocker. After this, depths 2..N are filled, depth 1 is empty.
-	for i := 0; i < n-1; i++ {
-		dests[i] = blockers[i+1].slot
-	}
-	return dests
 }
 
 // findBuriedBlockers returns every occupied lane slot shallower than
@@ -106,7 +73,9 @@ func findBuriedBlockers(db *store.DB, lane *nodes.Node, targetDepth int) ([]resh
 }
 
 // PlanReshuffle creates a plan to unbury a target bin in a lane.
-// Steps: move blockers front-to-back to shuffle slots, retrieve target, restock blockers deepest-first.
+// Steps: move blockers front-to-back to shuffle slots, then retrieve the target.
+// Blockers are NOT restocked — they lie where the unbury parked them (deepest-
+// first parking keeps the lane bubble-free), and are ordinary findable inventory.
 //
 // Used by simple-retrieve reshuffles where the unburied bin is
 // delivered to the parent retrieve's lineside DeliveryNode. Complex-
@@ -160,54 +129,25 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 		BinID:    target.ID,
 		FromNode: targetSlot,
 	})
-	seq++
 
-	// Step 3: Restock blockers back to the lane deepest-first (slot rotation — no
-	// bubbles). restockDestinations packs each blocker one slot deeper than itself so
-	// the lane ends with depths 2..N filled and the mouth (depth 1) empty.
-	restockDests := restockDestinations(blockers, targetSlot)
-	for i := len(blockers) - 1; i >= 0; i-- {
-		plan.Steps = append(plan.Steps, ReshuffleStep{
-			Sequence: seq,
-			StepType: protocol.StepRestock,
-			BinID:    blockers[i].bin.ID,
-			FromNode: shuffleSlots[i],
-			ToNode:   restockDests[i],
-		})
-		seq++
-	}
-
+	// No restock step: blockers stay in the shuffle slots the unbury moved them
+	// to. "Blockers lie" — deepest-first parking keeps the lane packed and
+	// bubble-free, and a parked blocker is ordinary findable inventory.
 	return plan, nil
 }
 
-// ╔═══════════════════════════════════════════════════════════════════════════╗
-// ║  !! KNOWN ISSUE -- READ BEFORE REFACTORING THE RESHUFFLE PATH !!           ║
-// ║                                                                           ║
-// ║  This complex-order path moves blockers OUT to shuffle slots and, by      ║
-// ║  DEFAULT, NEVER restocks them: reshuffle_restore_blockers defaults OFF,   ║
-// ║  so (per ReshuffleRestoreBlockersEnabled) "blockers stay in shuffle slots ║
-// ║  and lane geometry shifts." Over a running loop that leaves permanent     ║
-// ║  AIR BUBBLES / drifted lane geometry — supermarkets that never re-compact.║
-// ║                                                                           ║
-// ║  The simple-retrieve path (PlanReshuffle) does NOT have this problem: it  ║
-// ║  restocks blockers deepest-first via restockDestinations (bubble-free).   ║
-// ║  The ASYMMETRY is the bug. When you refactor this: make the complex path  ║
-// ║  recompact deepest-first too (reuse restockDestinations), or make         ║
-// ║  restore-blockers the default — so BOTH paths keep lanes packed.          ║
-// ║  Surfaced empirically on the dev sim (air bubbles in every supermarket).  ║
-// ║  See GitHub-root shingo-sim-approach-2026-07-11.md.                       ║
-// ╚═══════════════════════════════════════════════════════════════════════════╝
-//
 // PlanReshuffleUnburyOnly creates a plan that only moves blockers out
 // of the way, leaving the target bin in its original lane slot.
 // Complex-order reshuffles use this variant in "expose mode" — the
 // complex parent resumes after the compound completes and runs its
 // original first pickup against the now-accessible slot.
 //
-// No retrieve step (the parent handles that), no restock step (the
-// optional restore-blockers behavior is governed by a separate per-
-// group toggle and emits its own synthetic-parent compound after the
-// parent picks up).
+// No retrieve step (the parent handles that) and no restock step: blockers lie
+// where the unbury parked them. The old restore-blockers subsystem — which moved
+// blockers back after pickup and left permanent air bubbles when off (the former
+// KNOWN ISSUE here) — is gone; deepest-first shuffle-slot parking (findShuffleSlots)
+// keeps the lane packed without it, so a parked blocker is ordinary findable
+// inventory where it sits.
 func PlanReshuffleUnburyOnly(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane *nodes.Node, groupID int64) (*ReshufflePlan, error) {
 	if targetSlot.ParentID == nil {
 		return nil, fmt.Errorf("target slot has no parent lane")
@@ -335,23 +275,6 @@ func ReshuffleTargetNodes(db *store.DB, laneID, groupID int64) []string {
 		}
 	}
 	return out
-}
-
-// ReshuffleRestoreBlockersEnabled reports whether the restore-blockers
-// toggle is on. Per-LANE override with group fallback: an explicit "on"
-// or "off" on the lane wins; if the lane is unset (inherit) the group's
-// value applies. Default off — blockers stay in shuffle slots and lane
-// geometry shifts. Pass laneID=0 to read the group value directly.
-func ReshuffleRestoreBlockersEnabled(db *store.DB, laneID, groupID int64) bool {
-	if laneID != 0 {
-		switch db.GetNodeProperty(laneID, PropReshuffleRestoreBlockers) {
-		case "on":
-			return true
-		case "off":
-			return false
-		}
-	}
-	return db.GetNodeProperty(groupID, PropReshuffleRestoreBlockers) == "on"
 }
 
 // findShuffleSlots locates empty accessible slots for temporary shuffle storage.

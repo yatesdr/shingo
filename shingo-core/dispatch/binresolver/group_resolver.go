@@ -350,6 +350,12 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
 
+	// Resolve-around (§13.3), off by default: only when the group enables it does
+	// the ranker consult each lane's mouth. Read once — a no-op group read when
+	// unset, and no per-lane mouth query happens at all when off, so the off path
+	// is byte-identical.
+	resolveAround := r.DB.GetNodeProperty(group.ID, PropResolveAround) == "on"
+
 	var candidates []storageCandidate
 
 	for _, child := range children {
@@ -411,7 +417,19 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 				}
 			}
 
-			candidates = append(candidates, storageCandidate{node: slot, hasMatch: hasMatch, count: count, depth: nodeDepth(child)})
+			// Resolve-around consults the lane's mouth only when the arm is on.
+			// A read error is non-fatal — treat the lane as compatible (the arm is
+			// opportunistic, never load-bearing; the mouth gate still arbitrates).
+			laneCompatible := false
+			if resolveAround {
+				ok, cErr := r.DB.LaneAcceptsInbound(child.ID)
+				if cErr != nil {
+					r.dbg("LKND: LaneAcceptsInbound lane=%s: %v", child.Name, cErr)
+				}
+				laneCompatible = cErr != nil || ok
+			}
+
+			candidates = append(candidates, storageCandidate{node: slot, hasMatch: hasMatch, count: count, depth: nodeDepth(child), laneCompatible: laneCompatible})
 		} else if !child.IsSynthetic {
 			if child.ClaimedBy != nil {
 				continue // slot already claimed by another order's dispatch

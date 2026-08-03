@@ -208,18 +208,30 @@ func (d *Dispatcher) HandleComplexParentTerminalForLaneLock(complexParentID int6
 		complexParentID, entry.laneID)
 }
 
+// RestoreLaneHolds rebuilds the in-memory lane-lock map from the durable dig
+// mouth rows at Core boot, making the rows the restart authority. Run once,
+// before RecoverPendingLaneExtensions and before any dispatch. A crash can no
+// longer drop a lane hold, and the old per-order re-acquire — with its lost-race
+// window — is gone.
+func (d *Dispatcher) RestoreLaneHolds() error {
+	if d.laneLock == nil {
+		return nil
+	}
+	return d.laneLock.RebuildFromRows()
+}
+
 // RecoverPendingLaneExtensions runs at Core boot. Scans the
 // pending_lane_extensions table; for each row whose complex parent
-// is still in a non-terminal status, re-registers an in-memory
-// listener AND re-acquires the lane lock for that parent. Rows whose
-// parent is already terminal are deleted — those listeners would
-// never fire.
+// is still in a non-terminal status, re-registers the in-memory
+// release listener (so the lane frees when the parent finally picks
+// up). Rows whose parent is already terminal are deleted — those
+// listeners would never fire.
 //
-// Lane-lock re-acquisition is the difference from the restore-blockers
-// recovery: the in-memory LaneLock is volatile so a Core restart drops
-// it. The persisted lane extension is the only durable record that
-// the lane was held by THIS complex parent at restart, so we restore
-// that invariant before any other reshuffle path can race on the lane.
+// It no longer re-acquires the lane lock: the hold itself is a durable
+// dig mouth row now, restored in bulk by RestoreLaneHolds at boot
+// (before this runs), so there is no per-order re-acquire and no
+// lost-race window. This function only restores the LISTENER, whose
+// parameters (target bin, expected from-node) live in the extension row.
 func (d *Dispatcher) RecoverPendingLaneExtensions() error {
 	if d.db == nil || d.laneHolds == nil || d.laneLock == nil {
 		return nil
@@ -252,21 +264,15 @@ func (d *Dispatcher) RecoverPendingLaneExtensions() error {
 			expectedFromNode: row.ExpectedFromNodeID,
 		}
 		if !d.laneHolds.Register(entry) {
-			// Already registered in this process. Don't try to re-
-			// acquire the lock.
+			// Already registered in this process. Nothing more to do —
+			// the hold itself was restored by RestoreLaneHolds.
 			continue
 		}
-		// Re-acquire the lane lock. If another reshuffle has already
-		// claimed it after the restart, we lose — the listener fires
-		// but Unlock will be a no-op. That's an extremely narrow window
-		// (no other code can know about this complex parent's claim
-		// pre-recovery), and the worst outcome is one stale listener
-		// entry that gets dropped on its own bin-transit fire.
-		if !d.laneLock.TryLock(row.LaneID, row.ComplexParentID) {
-			log.Printf("dispatch: recover pending_lane_extension for complex %d: lane %d already locked; in-memory listener re-registered but lock not re-acquired",
-				row.ComplexParentID, row.LaneID)
-		}
-		log.Printf("dispatch: recovered pending_lane_extension for complex %d (lane %d, target bin %d)",
+		// The lane hold was restored from the dig mouth rows by
+		// RestoreLaneHolds (run before this). Here we only re-arm the
+		// release listener, so there is no per-order re-acquire and no
+		// lost-race window.
+		log.Printf("dispatch: recovered pending_lane_extension listener for complex %d (lane %d, target bin %d)",
 			row.ComplexParentID, row.LaneID, row.TargetBinID)
 	}
 	return nil

@@ -284,6 +284,11 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 		return
 	}
 	location := strings.TrimSpace(ev.Location)
+	// Lane mouth gate (§4): release the order's inbound hold on the drop lane as
+	// soon as the dropoff completes — BEFORE the delivery-node early-return below,
+	// or a simple store's final drop (drop == delivery) would never early-release
+	// its lane. A no-op when the gate is off or the drop is not into a lane.
+	e.dispatcher.ReleaseInboundLaneForOrder(ev.OrderID, location)
 	if location == "" || location == strings.TrimSpace(order.DeliveryNode) {
 		return // final delivery is recorded at whole-order FINISHED
 	}

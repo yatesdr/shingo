@@ -188,7 +188,22 @@ func mustOpenDatabase(cfg *config.Config) *store.DB {
 		log.Fatalf("open database: %v", err)
 	}
 	log.Printf("shingocore: database open (postgres)")
+	auditLaneGeometry(db)
 	return db
+}
+
+// auditLaneGeometry logs any single-file lane geometry the mouth-gate's one-hop
+// parent walk cannot see (§8) — a scene-config diagnostic, never fatal. A clean
+// scene logs nothing.
+func auditLaneGeometry(db *store.DB) {
+	warnings, err := db.AuditLaneGeometry()
+	if err != nil {
+		log.Printf("shingocore: lane-geometry audit failed: %v", err)
+		return
+	}
+	for _, w := range warnings {
+		log.Printf("shingocore: lane-geometry audit: %s", w)
+	}
 }
 
 func startHTTPServer(addr string, handler http.Handler) *http.Server {

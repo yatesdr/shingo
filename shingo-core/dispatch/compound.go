@@ -108,18 +108,27 @@ func (d *Dispatcher) CreateCompoundChildrenOnly(parentOrder *orders.Order, plan 
 			// plant-wide FIFO selection and hand it a different bin than the one
 			// it was planned to move.
 			SourceIntent: SourceIntentForType(OrderTypeMove),
-			// Derivative site 1 of 2. An order created in service of another
-			// order inherits its origin AND ITS CLASS — a shuffle move exists
-			// only because the parent needed a buried bin, so it is part of the
-			// cost of the parent's demand and belongs in that episode's count.
+			// The derivative site — now the only one (the restore-blockers parent
+			// that was the second is retired by this merge). An order created in
+			// service of another order inherits its origin AND ITS CLASS: a dig
+			// move exists only because the parent needed a buried bin, so it is
+			// part of the cost of the parent's demand and belongs in that
+			// episode's count.
 			//
-			// STAMPED FORWARD, NOT WALKED. parent_order_id is set four lines
-			// up, which makes a read-time walk look available here, and it is
-			// the wrong instrument: it is one level deep and the synthetic
-			// restore parent (restore_listeners.go) sets none at all, so the
-			// walk dead-ends at exactly the boundary the inheritance rule
-			// exists to cross. Copying the class too is what stops a
-			// no_demand parent's shuffles arriving as three fresh orphans.
+			// STAMPED FORWARD, NOT WALKED. parent_order_id is set four lines up,
+			// which makes a read-time walk look available here, and it is still
+			// the wrong instrument: it is one level deep, so it cannot reach an
+			// episode from a grandchild, and it would re-derive at read time a
+			// value this order was handed at creation. Copying the class too is
+			// what stops a no_demand parent's digs arriving as fresh orphans.
+			//
+			// There WAS a second derivative site — the synthetic restore parent,
+			// which set no parent_order_id at all and so dead-ended the walk
+			// outright. It went with the reshuffle restore subsystem
+			// (cb74bfdc); the rule it motivated is unchanged, but the sharpest
+			// argument for it no longer has a live example. Do not weaken this
+			// to a walk on the grounds that the remaining sites all set a
+			// parent: one level is still not enough.
 			OriginID:    parentOrder.OriginID,
 			OriginClass: parentOrder.OriginClass,
 		}

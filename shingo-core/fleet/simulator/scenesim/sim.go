@@ -110,6 +110,8 @@ type Robot struct {
 	idle    bool
 	waiting bool // parked on a Wait block until ReleaseWait
 
+	approach int // coarse travel distance: extra aisle hops before the first lane entry (experiment)
+
 	blockedBy string // set each tick to the robot blocking our next step ("" = free/moving)
 }
 
@@ -125,13 +127,16 @@ type Options struct {
 // Sim is the scene-physics simulator: robots executing orders over a Scene under
 // single-file lane occupancy, advanced one Tick at a time.
 type Sim struct {
-	scene  *Scene
-	opts   Options
-	flags  Flags
-	robots map[string]*Robot
-	order  []string          // robot ids, stable order for deterministic ticking
-	occ    map[string]string // cell key → robot id (lane cells only)
-	bins   map[string]bool   // slot name → a dropped bin sits there (persists; walls deeper slots)
+	scene        *Scene
+	opts         Options
+	flags        Flags
+	mouthGate    bool // when true, lane entry is gated by mode + deepest-first discipline (§2)
+	capacity1    bool // with mouthGate: one robot per lane (the baseline the soak compares against)
+	priorityOnly bool // with mouthGate: model production-as-landed — mode gate only, NO deepest-first hold
+	robots       map[string]*Robot
+	order        []string          // robot ids, stable order for deterministic ticking
+	occ          map[string]string // cell key → robot id (lane cells only)
+	bins         map[string]bool   // slot name → a dropped bin sits there (persists; walls deeper slots)
 
 	tick         int
 	lastProgress int // tick of the last observed state change (deadlock watchdog)
@@ -155,6 +160,41 @@ func New(scene *Scene, opts Options) *Sim {
 	}
 }
 
+// SetMouthGate turns the lane mouth gate on (the arm under test). Off (the
+// default) the sim reproduces today's ungated physics — the S1 wounds. On, the
+// sim models the real mode-share mouth: same-kind robots co-occupy a single-file
+// lane (no pass-through), mixed kind and dig are excluded, entrants stack
+// deepest-first, and a departing robot waits until co-occupants have parked so it
+// never crosses one on the way out. That turns the head-on deadlock and the
+// entry-order air bubble green while exercising same-kind sharing. (See
+// admitToLane + laneClearToExit.)
+func (s *Sim) SetMouthGate(on bool) { s.mouthGate = on }
+
+// SetLaneCapacity1 restricts a mouth-gated lane to ONE robot at a time — the
+// conservative baseline, disabling same-kind co-occupancy. Used by the soak to
+// measure what mode-share concurrency buys over capacity-1.
+func (s *Sim) SetLaneCapacity1(on bool) { s.capacity1 = on }
+
+// SetPriorityOnly models the CURRENT production arms as landed: the mode-based
+// mouth gate (same-kind co-occupy, mixed/dig excluded) and single-file physics,
+// but WITHOUT the deepest-first admission hold. In production the deepest-first
+// ordering is only the RDS priority HINT — which influences the START/assignment
+// order of orders (modeled here by submit order), NOT the arrival of an already-
+// moving robot — not a hard mouth hold. That hold is exactly what tiered entry
+// would add; leaving it OFF is how the wall experiment tests whether priority
+// alone prevents the wall. Requires the mouth gate on; no effect otherwise.
+func (s *Sim) SetPriorityOnly(on bool) { s.priorityOnly = on }
+
+// SetRobotApproach sets a robot's coarse travel distance — extra aisle hops it
+// burns before it first reaches a lane mouth (0 = adjacent). This lets the
+// experiment vary robot start positions so a later-spawned but CLOSER robot can
+// still win the race to the mouth (the crux of the wall). Harness knob only.
+func (s *Sim) SetRobotApproach(robotID string, hops int) {
+	if r := s.robots[robotID]; r != nil {
+		r.approach = hops
+	}
+}
+
 // SetFlags overrides the vendor-unknown flag defaults (for the soak matrix).
 func (s *Sim) SetFlags(f Flags) { s.flags = f }
 
@@ -164,6 +204,26 @@ func (s *Sim) Flags() Flags { return s.flags }
 // PlaceBin marks a slot as already holding a bin at scene setup (pre-seeded
 // inventory), so reachability/packing start from a real lane state.
 func (s *Sim) PlaceBin(slot string) { s.bins[slot] = true }
+
+// HasBin reports whether a bin currently sits in a slot. A store's bin appears
+// here the tick its dropoff block completes, which makes this the harness's
+// PLACEMENT signal — the physical event Core observes as a dropoff block reaching
+// FINISHED, and therefore the moment a store stops blocking the lane behind it.
+func (s *Sim) HasBin(slot string) bool { return s.bins[slot] }
+
+// OrderActive reports whether an order is still being executed by some robot —
+// the harness's COMPLETION signal, and the counterpart to HasBin. The gap between
+// the two is the whole point of the A′ predicate: a store's bin is down (HasBin)
+// well before its robot has backed out of the lane and gone idle (OrderActive), and
+// releasing on the former rather than the latter is what placement-release means.
+func (s *Sim) OrderActive(orderID string) bool {
+	for _, id := range s.order {
+		if r := s.robots[id]; r.order != nil && r.order.ID == orderID && !r.idle {
+			return true
+		}
+	}
+	return false
+}
 
 // ReleaseWait completes the Wait block a robot is parked on, letting it proceed.
 // Mirrors the lifecycle sim's ReleaseOrder-appends-and-continues machinery.
@@ -178,6 +238,57 @@ func (s *Sim) ReleaseWait(orderID string) bool {
 		}
 	}
 	return false
+}
+
+// AppendBlocks adds blocks to a robot's in-flight order — the harness's /addBlocks,
+// and the half of the lane-gate valve that Submit alone could not express.
+//
+// Submit takes the whole block list up front, so before this a DEFERRED TAIL was
+// unmodellable and a gated order could only be faked as a pre-known plan behind a
+// flag. That tests a mock of the design rather than the design: the real waybill
+// genuinely does not contain its dropoff block until Core appends one.
+//
+// If the robot is already parked on the wait, appending satisfies it and the robot
+// resumes — the same effect ReleaseWait has, because in production they are the
+// same event (the append IS the release). If the robot has not reached the wait
+// yet, the tail is simply there when it arrives and it never dwells at all: that
+// is the open valve, and it is why an early append makes the gate invisible.
+func (s *Sim) AppendBlocks(orderID string, blocks []fleet.OrderBlock) error {
+	for _, id := range s.order {
+		r := s.robots[id]
+		if r.order == nil || r.order.ID != orderID {
+			continue
+		}
+		for _, b := range blocks {
+			if s.scene.Node(b.Location) == nil {
+				return fmt.Errorf("scenesim: appended block location %q not in scene", b.Location)
+			}
+			r.order.Blocks = append(r.order.Blocks, Block{Location: b.Location, Action: actionFor(b.BinTask)})
+		}
+		if r.waiting && r.block+1 < len(r.order.Blocks) {
+			r.waiting = false
+			r.block++ // the wait is satisfied by the work that just arrived
+		}
+		r.idle = false
+		s.lastProgress = s.tick
+		return nil
+	}
+	return fmt.Errorf("scenesim: no robot is running order %q", orderID)
+}
+
+// WaitingOrders returns the ids of orders whose robot is currently parked on a
+// Wait block, sorted. The observable the lane-gate scenarios assert on: an OPEN
+// valve must never produce one (the robot rolls through), a CONTENDED valve must
+// produce exactly the dwelling order.
+func (s *Sim) WaitingOrders() []string {
+	var out []string
+	for _, id := range s.order {
+		if r := s.robots[id]; r.waiting && r.order != nil {
+			out = append(out, r.order.ID)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // AddRobot places a robot at a plain start node.
@@ -238,6 +349,9 @@ func (s *Sim) Tick() []Violation {
 		// Finished all blocks? Exit the lane if inside, then go idle.
 		if r.block >= len(r.order.Blocks) {
 			if r.pos.inLane() {
+				if !s.laneClearToExit(r) {
+					continue // hold: another robot in this lane is still entering
+				}
 				s.ensurePath(r, plainCell(r.exitTarget()))
 			} else {
 				r.idle = true
@@ -254,8 +368,20 @@ func (s *Sim) Tick() []Violation {
 			// Arrived at the current block's location.
 			if r.block < len(r.order.Blocks) {
 				b := &r.order.Blocks[r.block]
-				if b.Action == ActionWait {
-					r.waiting = true // hold here until ReleaseWait; do NOT advance
+				if b.Action == ActionWait && r.block+1 >= len(r.order.Blocks) {
+					// Nothing follows the wait, so the order is still UNSEALED and
+					// there is no work to go to: hold here until the tail arrives
+					// (AppendBlocks) or ReleaseWait fires.
+					//
+					// The test is structural — "is there a block after this one" —
+					// not a flag. A wait with work already behind it is satisfied on
+					// arrival and the robot rolls straight through, which is exactly
+					// the open lane gate: Core appended the tail before the robot got
+					// here, so the wait costs nothing. A wait that is last is the
+					// contended gate, or the operator-release dwell the swap fixtures
+					// model (their Wait is always the final block, so they park
+					// exactly as before).
+					r.waiting = true
 					continue
 				}
 				if b.Action == ActionDropoff {
@@ -275,12 +401,27 @@ func (s *Sim) Tick() []Violation {
 		// this is what makes a walled-off deep slot physical.
 		next := r.path[0]
 		if next.inLane() {
+			// Mouth gate: a FRESH entry into a lane (from a plain node onto the
+			// mouth) is gated by mode + deepest-first discipline. Held robots wait
+			// outside the lane; they do not set blockedBy (they are not trapped by
+			// a specific robot, so they don't form a deadlock cycle) — the holder
+			// they wait on is making progress, which the watchdog sees.
+			if !r.pos.inLane() && !s.admitToLane(r, next) {
+				continue
+			}
 			if holder, occupied := s.occ[next.key()]; occupied && holder != id {
 				r.blockedBy = holder // trapped behind another robot
 				continue
 			}
 			if slot := s.cellSlot(next); slot != "" && s.bins[slot] {
-				continue // walled by a bin; reachability reports the unreachable slot
+				// A bin walls a robot still heading to its target — it cannot reach or
+				// place behind a bin in a single-file lane (the air bubble;
+				// reachability reports it). But a robot that has FINISHED its in-lane
+				// work transits the aisle out past parked bins, so co-occupying
+				// same-kind robots (leader deep, follower shallow) can both leave.
+				if r.order != nil && r.block < len(r.order.Blocks) {
+					continue
+				}
 			}
 		}
 		if r.hop <= 0 {
@@ -332,6 +473,122 @@ func (s *Sim) cellSlot(c cell) string {
 	return lane.Slots[c.Index]
 }
 
+// admitToLane decides whether robot r may enter lane next.Lane now (called only
+// on a fresh entry from a plain node). Returns true when the gate is off.
+//
+// With the gate on it models the REAL mode-share mouth (§1–§2): same-KIND robots
+// legally co-occupy a single-file lane (press left+right, store-behind-store),
+// mixed kind and dig are excluded, and there is NO pass-through — an entrant must
+// stack SHALLOWER than every occupant's current cell (it can never pass one), so
+// the leader parks deepest and followers line up toward the mouth. Among same-mode
+// waiters the DEEPEST target enters first, so bins pack back-to-front (no
+// entry-order air bubble). Exit crossing is prevented separately (laneClearToExit).
+func (s *Sim) admitToLane(r *Robot, next cell) bool {
+	if !s.mouthGate {
+		return true
+	}
+	lane := next.Lane
+	myMode, ok := s.orderLaneMode(r, lane)
+	if !ok {
+		return true // r doesn't actually work this lane — nothing to gate
+	}
+	myDepth := s.currentTargetDepth(r, lane)
+
+	// Capacity-1 baseline (comparison mode): one robot works the lane at a time,
+	// so it must be clear of every other robot before entry.
+	if s.capacity1 {
+		for _, id := range s.order {
+			o := s.robots[id]
+			if o.ID != r.ID && o.pos.inLane() && o.pos.Lane == lane {
+				return false
+			}
+		}
+	}
+
+	// Against robots already inside the lane: same-kind shares, mixed/dig waits,
+	// and no entrant may pass or reach an occupant.
+	for _, id := range s.order {
+		o := s.robots[id]
+		if o.ID == r.ID || !o.pos.inLane() || o.pos.Lane != lane {
+			continue
+		}
+		om, _ := s.orderLaneMode(o, lane)
+		if myMode == "dig" || om == "dig" || om != myMode {
+			return false // mixed mode / dig — wait
+		}
+		if myDepth >= o.pos.Index {
+			return false // would pass or reach an occupant — wait for it to advance
+		}
+	}
+
+	// Deepest-first among same-mode waiters still outside: a robot whose order is
+	// bound DEEPER into this lane enters first, so the stack builds leader-deepest
+	// (no entry-order air bubble). This looks at the order's eventual in-lane target
+	// (currentTargetDepth scans forward), not just its current block — else a fast
+	// shallow store could reach the mouth and drop before a slower deep store, still
+	// picking, has even declared its lane target.
+	//
+	// SKIPPED under priorityOnly: production has no such hold — the deepest-first
+	// ordering there is only the RDS priority start-hint (modeled via submit order),
+	// which cannot hold an already-moving shallower robot. This is the arm the wall
+	// experiment leaves out to test whether priority alone suffices.
+	if !s.priorityOnly {
+		for _, id := range s.order {
+			o := s.robots[id]
+			if o.ID == r.ID || o.idle || o.order == nil || o.pos.inLane() {
+				continue
+			}
+			om, ok := s.orderLaneMode(o, lane)
+			if !ok || om != myMode || myMode == "dig" {
+				continue // o doesn't work this lane in my mode
+			}
+			if s.currentTargetDepth(o, lane) > myDepth {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// laneClearToExit reports whether robot r (done with its in-lane work, sitting in
+// a lane) may start moving out. A departing robot moves toward the mouth; if
+// another robot is still ENTERING (moving deeper toward its park slot) they would
+// cross in the single-file aisle. So an exit waits until every other occupant has
+// reached its target (all parked). Then exits proceed shallowest-first — the
+// single-file occupancy handles that ordering. A no-op when the gate is off.
+func (s *Sim) laneClearToExit(r *Robot) bool {
+	if !s.mouthGate {
+		return true
+	}
+	lane := r.pos.Lane
+	for _, id := range s.order {
+		o := s.robots[id]
+		if o.ID == r.ID || !o.pos.inLane() || o.pos.Lane != lane {
+			continue
+		}
+		if td := s.currentTargetDepth(o, lane); td > o.pos.Index {
+			return false // o is still moving deeper — hold so we don't cross it
+		}
+	}
+	return true
+}
+
+// currentTargetDepth is the depth of r's current block if it targets lane, else
+// the first pending in-lane block's depth, else -1.
+func (s *Sim) currentTargetDepth(r *Robot, lane string) int {
+	if r.order == nil {
+		return -1
+	}
+	for i := r.block; i < len(r.order.Blocks); i++ {
+		loc := r.order.Blocks[i].Location
+		if s.scene.slotLane[loc] == lane {
+			d, _ := s.scene.SlotDepth(loc)
+			return d
+		}
+	}
+	return -1
+}
+
 // targetCell resolves a block location to a cell (a lane slot or a plain node).
 func (s *Sim) targetCell(location string) cell {
 	if lane := s.scene.slotLane[location]; lane != "" {
@@ -349,6 +606,17 @@ func (s *Sim) ensurePath(r *Robot, dst cell) {
 		return
 	}
 	r.path = s.planPath(r.pos, dst)
+	// Coarse travel distance: before a robot first enters a lane from outside, burn
+	// `approach` aisle hops (self-steps on its current node), so a later-but-closer
+	// robot can still reach the mouth first. One-shot — consumed on this approach.
+	if r.approach > 0 && dst.inLane() && !r.pos.inLane() {
+		lead := make([]cell, r.approach)
+		for i := range lead {
+			lead[i] = r.pos
+		}
+		r.path = append(lead, r.path...)
+		r.approach = 0
+	}
 	r.hop = 0
 }
 
@@ -403,6 +671,19 @@ func (s *Sim) AllIdle() bool {
 		}
 	}
 	return true
+}
+
+// BusyCount returns how many robots still have unfinished work. At the end of a
+// store-only run this is the number of robots left STUCK — walled behind a bin
+// they can never pass in the single-file lane — so it counts walled stores.
+func (s *Sim) BusyCount() int {
+	n := 0
+	for _, r := range s.robots {
+		if !r.idle {
+			n++
+		}
+	}
+	return n
 }
 
 // RunUntilIdle ticks until all robots are idle or maxTicks is reached. Returns

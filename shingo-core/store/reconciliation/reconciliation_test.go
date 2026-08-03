@@ -143,8 +143,8 @@ func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 		return o.ID
 	}
 
-	youngQueued := mk("q-young", "queued", 3600)     // 1h — under the 2h queued bound
-	oldQueued := mk("q-old", "queued", 10800)        // 3h — over it
+	youngQueued := mk("q-young", "queued", 3600)       // 1h — under the 2h queued bound
+	oldQueued := mk("q-old", "queued", 10800)          // 3h — over it
 	staleDispatched := mk("d-old", "dispatched", 3600) // 1h — 30m bound still applies
 
 	anomalies, err := reconciliation.ListAnomalies(db.DB)

@@ -48,7 +48,16 @@ func (s *Sim) checkReachability() []Violation {
 		if r.pos.inLane() && r.pos.Lane == lane && r.pos.Index >= depth {
 			continue
 		}
-		for i := range depth {
+		// Only slots AHEAD of the robot can wall it. A bin BEHIND a robot already
+		// in the lane (shallower than its current cell) was passed and cannot block
+		// it — checking from the mouth would falsely flag a deep robot whose shallow
+		// neighbor dropped behind it. A robot not yet in the lane must clear from
+		// the mouth (start 0).
+		start := 0
+		if r.pos.inLane() && r.pos.Lane == lane {
+			start = r.pos.Index + 1
+		}
+		for i := start; i < depth; i++ {
 			slot := s.scene.lanes[lane].Slots[i]
 			if s.bins[slot] {
 				v = append(v, Violation{
@@ -160,20 +169,16 @@ func (s *Sim) anyWaiting() bool {
 	return false
 }
 
-// committedTo returns robots physically in the lane or on a path heading into it.
+// committedTo returns robots PHYSICALLY inside the lane. A robot merely heading
+// toward the lane (path planned) but held at the boundary by the mouth gate has
+// NOT committed — it can still be turned away — so it must not count toward mode
+// purity, or the gate holding a different-mode robot out would read as a mixed-
+// mode violation. Once a robot steps onto a lane cell it is committed.
 func (s *Sim) committedTo(lane string) []*Robot {
 	var out []*Robot
 	for _, id := range s.order {
 		r := s.robots[id]
-		in := r.pos.inLane() && r.pos.Lane == lane
-		heading := false
-		for _, c := range r.path {
-			if c.inLane() && c.Lane == lane {
-				heading = true
-				break
-			}
-		}
-		if in || heading {
+		if r.pos.inLane() && r.pos.Lane == lane {
 			out = append(out, r)
 		}
 	}

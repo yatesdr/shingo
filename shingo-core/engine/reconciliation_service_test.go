@@ -365,6 +365,72 @@ func TestPreDispatchNotSwept(t *testing.T) {
 	}
 }
 
+// TestGateStagedNotSwept: a robot parked at a lane wait point holding an unsealed
+// waybill must NOT be auto-cancelled by the stuck sweep.
+//
+// The landmine this guards is specific and destructive: the sweep's scope includes
+// `staged`, its default TTL is an hour, and a dwelling order's updated_at never
+// moves — so the cutoff fires reliably, and abandoning runs the full teardown
+// (fleet cancel, bin unclaim, edge notify) on a robot that is physically holding a
+// bin mid-order. A gate-staged order is not stuck; Core simply owes it a decision.
+//
+// The control is the second order: identical status, identical age, but no gated
+// plan — it must still be swept, so this proves the exemption is narrow rather
+// than having quietly disabled the sweep.
+func TestGateStagedNotSwept(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	svc := newReconService(t, db)
+
+	mk := func(uuid string, apply func(*orders.Order)) *orders.Order {
+		o := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: "store", Status: "staged", SourceNode: "ALN_003", DeliveryNode: "SMN_001"}
+		if apply != nil {
+			apply(o)
+		}
+		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
+		return o
+	}
+	// Dwelling at a lane gate: carries the gated plan, wait_index still 0, and a
+	// vendor order (a robot really is committed).
+	gateStaged := mk("gate-staged", func(o *orders.Order) {
+		o.StepsJSON = `[{"action":"pickup","node":"ALN_003"},{"action":"wait","node":"LANE-WAIT"},{"action":"dropoff","node":"SMN_001"}]`
+	})
+	testutil.MustNoErr(t, db.UpdateOrderVendor(gateStaged.ID, "sg-gate-staged", "WAITING", ""), "vendor")
+	// Control: same status, same age, no gated plan — genuinely runtime-stuck.
+	plainStaged := mk("plain-staged", nil)
+	testutil.MustNoErr(t, db.UpdateOrderVendor(plainStaged.ID, "sg-plain-staged", "WAITING", ""), "vendor")
+
+	for _, id := range []int64{gateStaged.ID, plainStaged.ID} {
+		if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '10 hours' WHERE id = $1`, id); err != nil {
+			t.Fatalf("backdate %d: %v", id, err)
+		}
+	}
+
+	var abandoned []int64
+	svc.abandonOrder = func(o *orders.Order, reason string) error {
+		abandoned = append(abandoned, o.ID)
+		return nil
+	}
+
+	n, err := svc.AbandonStuckOrders(time.Hour, 4*time.Hour)
+	testutil.MustNoErr(t, err, "AbandonStuckOrders")
+
+	got := map[int64]bool{}
+	for _, id := range abandoned {
+		got[id] = true
+	}
+	if got[gateStaged.ID] {
+		t.Error("a gate-staged order was abandoned — that cancels a committed robot mid-order and strands the bin it is carrying")
+	}
+	if !got[plainStaged.ID] {
+		t.Error("the control staged order was NOT swept — the exemption must be narrow, not a disabled sweep")
+	}
+	if n != 1 {
+		t.Errorf("abandoned count = %d, want 1 (the control only)", n)
+	}
+}
+
 // ── Summary — critical by dead letter ───────────────────────────────
 
 func TestReconciliationService_Summary_DeadLetterCritical(t *testing.T) {
