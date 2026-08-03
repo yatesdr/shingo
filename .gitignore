@@ -3,9 +3,21 @@
 *.dll
 *.so
 *.dylib
-# Built binaries at the module roots (not the cmd/ source dirs)
+# Built binaries at the module roots (not the cmd/ source dirs).
+#
+# Every cmd/ package is listed, not just the two servers. A 19 MB Linux ELF of
+# cmd/seeddev rode into the repo inside an unrelated dispatch fix on 2026-07-22
+# and sat there tracked, because this list named only the binaries anyone
+# happened to have built at the time. These are all reproducible with a single
+# go build (and the Makefile targets go run them, so none is needed on disk).
 /shingo-edge/shingoedge
 /shingo-core/shingocore
+/shingo-core/seeddev
+/shingo-core/simcalc
+/shingo-core/schemasnapshot
+/shingo-core/defaultssnapshot
+/shingo-edge/schemasnapshot
+/shingo-edge/defaultssnapshot
 build/
 
 # Database files
