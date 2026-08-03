@@ -1,6 +1,8 @@
 package scenesim
 
 import (
+	"fmt"
+	"math/rand"
 	"testing"
 
 	"shingocore/fleet"
@@ -186,4 +188,110 @@ func TestDig_ReleasesLaneOnCompletion(t *testing.T) {
 		t.Error("the store never placed into S0 — the dig's hold may not have released")
 	}
 	t.Logf("dig released the lane on completion; follow-on store settled in %d ticks", ticks)
+}
+
+// TestDig_Soak_HoldIsRobust is the seeded soak: across randomized lane depth,
+// blocker counts, and a concurrent store trying to enter DURING the dig, every
+// seed must settle with zero violations, the target extracted, and the store never
+// having shared the lane with the active dig. A dig hold that only works on one
+// hand-built geometry would fail here; this is the standing property the dig
+// mechanics must hold across the geometry space the plants actually present.
+//
+// The store targets a slot the dig will FREE (so it has a reason to race in), at a
+// random tick during the dig. The dig targets the deepest slot, behind 1..depth-1
+// blockers. Geometry is bounded so the dig always has a reachable target.
+func TestDig_Soak_HoldIsRobust(t *testing.T) {
+	const seeds = 200
+	var failures []int
+	for seed := range seeds {
+		rng := rand.New(rand.NewSource(int64(seed)))
+		depth := 3 + rng.Intn(3) // 3..5 slots
+		sc := wideLaneScene(t, depth)
+		sim := New(sc, Options{Watchdog: 200, HopTicks: 3})
+		sim.SetMouthGate(true)
+		sim.SetPriorityOnly(true)
+
+		// Target is the deepest slot; 1..depth-1 blockers fill the slots in front.
+		targetIdx := depth - 1
+		nBlockers := 1 + rng.Intn(targetIdx) // at least 1, up to all in front
+		blockerIdxs := rng.Perm(targetIdx)[:nBlockers]
+		for _, i := range blockerIdxs {
+			sim.PlaceBin(slotName(i))
+		}
+		sim.PlaceBin(slotName(targetIdx))
+
+		if err := sim.AddRobot("DIGGER", "AISLE"); err != nil {
+			t.Fatalf("seed %d AddRobot DIGGER: %v", seed, err)
+		}
+		// Dig: unbury each blocker (shallowest first) then retrieve the target.
+		sortedBlockers := append([]int(nil), blockerIdxs...)
+		// shallowest-first unbury (production's front-to-back order)
+		for i := 0; i < len(sortedBlockers); i++ {
+			for j := i + 1; j < len(sortedBlockers); j++ {
+				if sortedBlockers[j] < sortedBlockers[i] {
+					sortedBlockers[i], sortedBlockers[j] = sortedBlockers[j], sortedBlockers[i]
+				}
+			}
+		}
+		var blocks []fleet.OrderBlock
+		bid := 0
+		for _, bi := range sortedBlockers {
+			blocks = append(blocks,
+				fleet.OrderBlock{BlockID: digBlockID(&bid), Location: slotName(bi), BinTask: "JackLoad"},
+				fleet.OrderBlock{BlockID: digBlockID(&bid), Location: "LINE", BinTask: "JackUnload"})
+		}
+		blocks = append(blocks,
+			fleet.OrderBlock{BlockID: digBlockID(&bid), Location: slotName(targetIdx), BinTask: "JackLoad"},
+			fleet.OrderBlock{BlockID: digBlockID(&bid), Location: "LINE", BinTask: "JackUnload"})
+		if err := sim.Submit("DIGGER", fleet.CreateOrderRequest{OrderID: digOrderID(seed), Blocks: blocks, Complete: true}, true); err != nil {
+			t.Fatalf("seed %d Submit dig: %v", seed, err)
+		}
+
+		// A store races for the SHALLOWEST blocker slot — the first one the dig frees,
+		// so once the dig hold releases the slot is genuinely reachable (a store bound
+		// for a deeper still-buried slot would be walled by a blocker the dig hasn't
+		// lifted yet, and the reachability checker would rightly fire — that is a bad
+		// bind, not a dig-mechanics failure). Submitted at a random tick during the dig.
+		storeSlotIdx := sortedBlockers[0]
+		storeSubmitted := false
+		storeEnterDuringDig := false
+		var vios []Violation
+		for tick := 0; tick < 800; tick++ {
+			if !storeSubmitted && tick == 1+rng.Intn(6) {
+				if err := sim.AddRobot("STORE", "AISLE"); err == nil {
+					_ = sim.Submit("STORE", storeReq("store-"+digOrderID(seed), "LINE", slotName(storeSlotIdx)), false)
+				}
+				storeSubmitted = true
+			}
+			vios = append(vios, sim.Tick()...)
+			digActive := sim.OrderActive(digOrderID(seed))
+			if sr := sim.robots["STORE"]; sr != nil && sr.pos.inLane() && digActive {
+				storeEnterDuringDig = true
+			}
+			if sim.AllIdle() {
+				break
+			}
+		}
+		settled := sim.AllIdle()
+		targetGone := !sim.HasBin(slotName(targetIdx))
+		if !settled || len(vios) > 0 || !targetGone || storeEnterDuringDig {
+			failures = append(failures, seed)
+			if len(failures) <= 3 {
+				t.Logf("seed %d FAILED: settled=%v vios=%d targetGone=%v storeEnterDuringDig=%v (depth=%d blockers=%v)",
+					seed, settled, len(vios), targetGone, storeEnterDuringDig, depth, sortedBlockers)
+			}
+		}
+	}
+	if len(failures) > 0 {
+		t.Fatalf("%d/%d dig seeds failed; first: %v", len(failures), seeds, firstN(failures, 10))
+	}
+	t.Logf("dig soak clean: %d seeds, depth 3..5, 1..%d blockers, concurrent store — hold held, target always extracted",
+		seeds, 4)
+}
+
+func slotName(depthIdx int) string { return fmt.Sprintf("S%d", depthIdx) }
+func digOrderID(seed int) string   { return fmt.Sprintf("dig-soak-%d", seed) }
+func digBlockID(bid *int) string {
+	*bid++
+	return fmt.Sprintf("dig-b%d", *bid)
 }
