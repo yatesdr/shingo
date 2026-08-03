@@ -11,8 +11,15 @@ import (
 // unloaderHasUsableFullPresent is the consumer-side counterpart to the
 // removed loaderHasUsableEmptyPresent: skips the U1 full-in retrieve when
 // Core reports a full bin of the target payload already physically at the
-// unloader. Fails OPEN — if Core is unreachable or returns no data, falls
-// through to the in-flight order check and assumes the floor is empty.
+// unloader.
+//
+// It fails OPEN, and that is a defect rather than a design choice.
+// FetchNodeBins returns (nil, nil) on transport error, non-200, and decode
+// failure alike, so at the read below "Core could not answer" is
+// indistinguishable from "no bin is present" and the U1 fires either way.
+// This is the same fault that produced the 2026-07-31 loader over-ordering
+// incident, one file over. Until FetchNodeBins carries a three-state result,
+// a false return here is not evidence that the unloader floor is empty.
 func (e *Engine) unloaderHasUsableFullPresent(coreNodeName, payloadCode string) bool {
 	if !e.coreClient.Available() || coreNodeName == "" || payloadCode == "" {
 		return false
@@ -95,9 +102,8 @@ func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode 
 			// supermarket (blank → Core global FIFO). autoConfirm MUST be false — the
 			// operator processes the bin before U2 fires (same rule as L1).
 			//
-			// NO_DEMAND, and this is O7's "one more look" answered against the
-			// code rather than the trace. Three things say loader-family, not
-			// cell-family, and none of them is close:
+			// NO_DEMAND, decided against the code rather than the trace. Three
+			// things say loader-family, not cell-family, and none is close:
 			//
 			//   - It is EVENT-driven, not level-driven. Its callers are "a full
 			//     arrived at FG storage" and a lineside release — it reacts to

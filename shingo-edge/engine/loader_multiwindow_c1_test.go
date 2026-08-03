@@ -6,7 +6,7 @@ import (
 	"shingoedge/store"
 )
 
-// TestProjectCoreLoader_BranchesOnLayout pins the C1 live-bug fix at its surviving
+// TestProjectCoreLoader_BranchesOnLayout pins the layout-inference fix at its surviving
 // home: projectCoreLoader (the single cache→*domain.Loader projection point) branches
 // on the loader's LAYOUT, not on "does it have positions." The regression case is a
 // shared_window loader that HAS window homes — the old len(Positions)>0 heuristic took

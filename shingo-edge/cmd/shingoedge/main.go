@@ -291,7 +291,8 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		// Sync manual_swap claims to Core's demand registry. Pre-side-cycle
 		// this also called StartupSweepManualSwap to seed empty-in orders
 		// at every loader — unnecessary now that empty-ins are driven by
-		// line REQUESTs through MaybeCreateLoaderEmptyIn.
+		// the UOP-threshold C-push (SubjectLoopBelowThreshold) or by
+		// operator staging.
 		// Auto-push unloaders: catch any window that became free (or
 		// supply that arrived) while Edge was offline. No-op for kanban-
 		// driven consume manual_swap claims (AutoPush=false). Mirrors
@@ -362,10 +363,11 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	})
 	// UOP-threshold replenishment: Core observes combined in-loop UOP
 	// (bins + buckets) per payload and signals here when a monitored
-	// (loader, payload) drops below threshold. Edge responds by firing
-	// L1 via refillLoaderForPayload (same path as DemandSignal, but
-	// scoped to the signaled payload). countLoaderInFlightEmptyIn is
-	// the dedup contract with the DemandSignal path.
+	// (loader, payload) drops below threshold. Edge responds in
+	// HandleLoopBelowThreshold, which sizes the ask from the signalled
+	// current/threshold and fires L1 through the reserveLoaderBins seam.
+	// The seam's own in-flight count under the loader mutex is the dedup —
+	// there is no separate dedup step on this path.
 	router.RegisterSubject(subjectRouter, protocol.SubjectLoopBelowThreshold, func(_ *protocol.Envelope, s *protocol.LoopBelowThresholdSignal) {
 		log.Printf("edge_handler: loop below threshold: core_node=%s payload=%s current=%d threshold=%d reason=%s",
 			s.CoreNodeName, s.PayloadCode, s.CurrentUOP, s.Threshold, s.Reason)
@@ -524,7 +526,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 
 	eng.SetNodeSyncFunc(hb.RequestNodeSync)
 	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
-	log.Printf("kanban: demand-signal handler wired — produce->MaybeCreateLoaderEmptyIn, consume->MaybeCreateUnloaderFullIn")
+	log.Printf("kanban: demand-signal handler wired — consume->MaybeCreateUnloaderFullIn (produce-role signals are received and dropped by design; produce supply is the UOP-threshold C-push or operator staging)")
 	log.Printf("kanban: loop-below-threshold handler wired — C-push signals route to HandleLoopBelowThreshold")
 
 	if err := eng.StartupReconcile(); err != nil {

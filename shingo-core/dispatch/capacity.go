@@ -89,11 +89,16 @@ type CapacityBlock struct {
 //     gating is handled inside the lane-aware planners (depth/buried
 //     reshuffle); _TRANSIT is never a real dropoff.
 //
-// Lookup failure → not blocked, but logged via the returned error so
-// callers can surface diagnostics. We choose "not blocked" rather than
-// blocking on a lookup failure to preserve forward progress: a typoed
-// node name should fail at the actual dispatch with a clearer error,
-// not silently queue forever.
+// Lookup failure → not blocked. The stated reason is forward progress: a
+// typoed node name should fail at the actual dispatch with a clearer error
+// rather than silently queue forever.
+//
+// Be aware this arm is SILENT. There is no error return in the signature and
+// nothing is logged here, so "the node lookup failed" is indistinguishable at
+// the call site from "the node has room" — the two conditions that most need
+// telling apart. The arm also folds err != nil together with node == nil,
+// which are different facts. Splitting them, and giving the error case its own
+// capacity-check-failed cause, is tracked as a separate change.
 func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int64) (blocked bool, block CapacityBlock) {
 	if deliveryNode == "" {
 		return false, CapacityBlock{}

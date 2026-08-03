@@ -15,7 +15,7 @@ import (
 //
 // The LOADER empty path no longer reads this constant: reserveLoaderEmpties
 // derives the budget from the delivery-node SET cardinality (one bin per node),
-// so a multi-window loader's budget grows to N when delivery spreads (C4+)
+// so a multi-window loader's budget grows to N when delivery spreads
 // without a magic number, and the per-payload dedup + capacity cap are unified in
 // the seam. The constant remains for the UNLOADER full-in cap
 // (operator_demand_unloader.go), which has not yet moved to a reservation seam,
@@ -74,7 +74,7 @@ func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal
 	// every style (Round-3 Obs 9: an INACTIVE-style loader must still receive
 	// threshold-driven L1s). Fall back to payload-only resolution only for a
 	// pre-v6 Core that didn't stamp CoreNodeName, logging the degraded path.
-	// C3: resolve through the LoaderStore (the flag dual). LoaderAt covers every
+	// Resolve through the LoaderStore (the flag dual). LoaderAt covers every
 	// style (the aggregate is styleless; the legacy walk is all-styles) so an
 	// INACTIVE-style loader still receives threshold L1s (Round-3 Obs 9). On a
 	// store error or a loader that doesn't serve the payload, drop the signal —
@@ -247,22 +247,30 @@ func (s L1Source) suppressedByOperatorDriven() bool {
 }
 
 // loaderResvLock returns the per-loader reservation mutex, creating it on first
-// use. Keyed by loader id (the resolved core node in C1) so two loaders never
+// use. Keyed by loader id so two loaders never
 // block each other — a slow burst on loader X can't stall loader Y.
 func (e *Engine) loaderResvLock(loaderID string) *sync.Mutex {
 	m, _ := e.loaderResv.LoadOrStore(loaderID, &sync.Mutex{})
 	return m.(*sync.Mutex)
 }
 
-// reserveLoaderEmpties is THE chokepoint that makes count→fire atomic for a
-// loader. Under the loader's mutex it counts non-terminal retrieve_empty orders
-// across the delivery-node set in ONE snapshot, applies the per-payload dedup and
-// the loader-capacity cap, and fires the remainder via the caller's `fire`
-// closure — all without releasing the lock, so a concurrent demand signal or
-// operator request cannot interleave between the count and the create. This is
-// the never-2N guarantee, and EVERY empty-firing writer routes through here
-// (tryCreateL1 for the threshold/side-cycle paths; RequestEmptyBin for the
-// operator path; maybeStageLoaderEmpty/MaybePushLoader via tryCreateL1).
+// reserveLoaderBins makes count→fire atomic for a loader. Under the loader's
+// mutex it counts non-terminal retrieve orders across the delivery-node set in
+// ONE snapshot, applies the per-payload dedup and the loader-capacity cap, and
+// fires the remainder via the caller's `fire` closure — all without releasing
+// the lock, so a concurrent demand signal or operator request cannot interleave
+// between the count and the create.
+//
+// SCOPE — this is the never-2N guarantee only for the writers that route
+// through here: tryCreateL1 (threshold and side-cycle paths), RequestEmptyBin's
+// manual_swap branch (operator), and maybeStageLoaderEmpty/MaybePushLoader via
+// tryCreateL1. It is NOT a universal chokepoint. Per the 2026-07-31 census,
+// these create loader-window retrieves WITHOUT passing through here:
+// RequestFullBin, RequestEmptyBin's simple mode, and the HTTP order API
+// (www/handlers_api_orders.go). An earlier version of this comment claimed
+// EVERY empty-firing writer routed through here; it did not, and the claim was
+// load-bearing in two review rounds before the census refuted it. Re-run the
+// census before relying on this for a system-wide invariant.
 //
 // want is the desired TOTAL in-flight for this payload; toFire = want minus what
 // is already in flight for the payload, capped to the loader's free capacity
@@ -300,7 +308,7 @@ func (e *Engine) reserveLoaderBins(loader *domain.Loader, payload domain.Payload
 	// The Loader owns the reservation shape: which nodes the count spans and the
 	// budget. multiWindowEnabled gates whether a shared loader spreads across its
 	// windows (budget = SlotCount) or funnels to its anchor (budget 1); member
-	// routes a dedicated reservation to the position the signal named (O2 fix) —
+	// routes a dedicated reservation to the position the signal named —
 	// see domain.Loader.ReservationTarget.
 	nodes, budget := loader.ReservationTarget(member, payload, e.multiWindowEnabled())
 	if len(nodes) == 0 || budget <= 0 {
@@ -436,7 +444,7 @@ func loaderEmptySource(l *domain.Loader) string {
 }
 
 // tryCreateL1 is the threshold/side-cycle entry to the reservation seam. It takes
-// the resolved *domain.Loader (C3: the Loader is the unit of resolution, not the
+// the resolved *domain.Loader (the Loader is the unit of resolution, not the
 // old manualSwapNode shim). The operator-driven gate is applied here; the count→fire
 // atomicity, the per-payload dedup, the capacity cap, and the decision record all
 // live in reserveLoaderBins. count is the desired total in-flight for the payload.

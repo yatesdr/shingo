@@ -2,9 +2,9 @@ package domain
 
 import "testing"
 
-// TestNewLoader_RejectsInvalidStates is the C0 gate. It pins that the two
-// constructors reject every representable invalid state, so an invalid Loader
-// never reaches the C1 reservation seam. The strongest invariant — a shared
+// TestNewLoader_RejectsInvalidStates is the constructor gate. It pins that the
+// two constructors reject every representable invalid state, so an invalid
+// Loader never reaches the reservation seam. The strongest invariant — a shared
 // layout with per-position payloads — is enforced by the type signatures (the
 // shared constructor takes a payload SET, not positions) and so cannot even be
 // written; the cases below cover the runtime-checked remainder.
@@ -109,8 +109,61 @@ func TestNewDedicatedPositionsLoader_Valid(t *testing.T) {
 	}
 }
 
+// TestUsesOperatorStaging_ThresholdFallback pins the silent fallback arm: a loader
+// configured for THRESHOLD replenishment but carrying no threshold value is not
+// treated as misconfigured-and-stopped, it is quietly re-routed to operator
+// staging. The behavior is defensible — Core never signals a loader with no
+// threshold, so without the fallback the loader would starve — but it means
+// "replenishment: threshold" in config does not imply the threshold path is what
+// runs, and nothing about the loader's own state says so at a glance.
+//
+// This is pinned because the Core-native migration moves the threshold path out
+// of the Edge. Whether this fallback survives, and whether it stays silent or
+// becomes a validation error, is a decision that needs the current behavior
+// nailed down first. MisconfiguredThreshold is the flag callers log on.
+func TestUsesOperatorStaging_ThresholdFallback(t *testing.T) {
+	t.Parallel()
+	windows := []Window{{Node: "W1"}}
+	payloads := []PayloadCode{"P1"}
+
+	configured, err := NewSharedWindowLoader("CFG", "n", RoleProduce, ReplenishmentThreshold,
+		windows, payloads, WithUOPThreshold(map[PayloadCode]int{"P1": 100}))
+	if err != nil {
+		t.Fatalf("build configured: %v", err)
+	}
+	if configured.UsesOperatorStaging() {
+		t.Error("threshold loader WITH a threshold: UsesOperatorStaging = true, want false — the automatic path owns it")
+	}
+	if configured.MisconfiguredThreshold() {
+		t.Error("threshold loader WITH a threshold: MisconfiguredThreshold = true, want false")
+	}
+
+	// The fallback arm: threshold mode, no threshold value.
+	bare, err := NewSharedWindowLoader("BARE", "n", RoleProduce, ReplenishmentThreshold, windows, payloads)
+	if err != nil {
+		t.Fatalf("build bare: %v", err)
+	}
+	if !bare.UsesOperatorStaging() {
+		t.Error("threshold loader with NO threshold: UsesOperatorStaging = false, want true — this is the silent fallback to operator staging")
+	}
+	if !bare.MisconfiguredThreshold() {
+		t.Error("threshold loader with NO threshold: MisconfiguredThreshold = false, want true — callers rely on this to log the misconfiguration")
+	}
+
+	operator, err := NewSharedWindowLoader("OPS", "n", RoleProduce, ReplenishmentOperator, windows, payloads)
+	if err != nil {
+		t.Fatalf("build operator: %v", err)
+	}
+	if !operator.UsesOperatorStaging() {
+		t.Error("operator loader: UsesOperatorStaging = false, want true")
+	}
+	if operator.MisconfiguredThreshold() {
+		t.Error("operator loader: MisconfiguredThreshold = true, want false — operator mode is a choice, not a misconfiguration")
+	}
+}
+
 // TestReservationTarget pins the per-layout reservation semantics across all three
-// loader TYPES + the same-payload-two-positions member-aware routing (O2):
+// loader TYPES + the same-payload-two-positions member-aware routing:
 //   - MULTI-WINDOW shared: funnels to the anchor (flag off) / spreads across windows
 //     (flag on, budget = slot count); member is ignored (windows share one budget).
 //   - SINGLE-WINDOW shared: its one window, budget 1.
@@ -126,7 +179,7 @@ func TestReservationTarget(t *testing.T) {
 		t.Fatalf("build shared: %v", err)
 	}
 	if nodes, budget := shared.ReservationTarget("", "P1", false); len(nodes) != 1 || nodes[0] != "WELD-1-W1" || budget != 1 {
-		t.Errorf("multi flag off = (%v, %d), want ([WELD-1-W1], 1) — funnel to the first WINDOW, not the identity (step-6b leak removal)", nodes, budget)
+		t.Errorf("multi flag off = (%v, %d), want ([WELD-1-W1], 1) — funnel to the first WINDOW, not the loader identity", nodes, budget)
 	}
 	if nodes, budget := shared.ReservationTarget("", "P1", true); len(nodes) != 2 || budget != 2 {
 		t.Errorf("multi flag on = (%v, %d), want (2 windows, 2) — spread across windows", nodes, budget)
@@ -152,7 +205,7 @@ func TestReservationTarget(t *testing.T) {
 		t.Errorf("single-window flag on = (%v, %d), want ([LDR-1], 1)", nodes, budget)
 	}
 
-	// DEDICATED with TWO same-payload positions — the O2 fixture.
+	// DEDICATED with TWO same-payload positions.
 	ded, err := NewDedicatedPositionsLoader("DECK", "n", RoleProduce, ReplenishmentThreshold,
 		[]Position{{Node: "POS-1", Payload: "PA"}, {Node: "POS-2", Payload: "PA"}, {Node: "POS-3", Payload: "PB"}})
 	if err != nil {

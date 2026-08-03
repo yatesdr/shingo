@@ -27,16 +27,25 @@ func seedWindowNodes(t *testing.T, db *store.DB, proc string, windows []string) 
 	}
 }
 
-func mustMultiWindowLoader(t *testing.T, id string, windows []string, payload string) *domain.Loader {
+// mustMultiWindowLoader builds a shared loader over the given windows. Variadic
+// in payload so the occupancy-live property test can exercise the per-payload
+// dedup against the shared window budget; single-payload calls are unchanged.
+func mustMultiWindowLoader(t *testing.T, id string, windows []string, payloads ...string) *domain.Loader {
 	t.Helper()
 	ws := make([]domain.Window, len(windows))
 	for i, w := range windows {
 		ws[i] = domain.Window{Node: domain.NodeID(w)}
 	}
+	ps := make([]domain.PayloadCode, len(payloads))
+	thresholds := make(map[domain.PayloadCode]int, len(payloads))
+	for i, p := range payloads {
+		ps[i] = domain.PayloadCode(p)
+		thresholds[domain.PayloadCode(p)] = 100
+	}
 	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), id, domain.RoleProduce, domain.ReplenishmentThreshold,
-		ws, []domain.PayloadCode{domain.PayloadCode(payload)},
+		ws, ps,
 		domain.WithInboundSource("EMPTY-SUPER"),
-		domain.WithUOPThreshold(map[domain.PayloadCode]int{domain.PayloadCode(payload): 100}))
+		domain.WithUOPThreshold(thresholds))
 	if err != nil {
 		t.Fatalf("build multi-window loader: %v", err)
 	}
@@ -59,7 +68,7 @@ func windowCounts(t *testing.T, db *store.DB, windows []string) (total int, per 
 	return total, per
 }
 
-// TestMultiWindow_DemandOfN_ExactlyNAcrossWindows is the C4 acceptance: with the
+// TestMultiWindow_DemandOfN_ExactlyNAcrossWindows is the multi-window acceptance: with the
 // multi-window flag on, a shared loader's N windows share one budget of N, and
 // one demand of N fires EXACTLY N empties — spread one per window, never 2N and
 // never two at the same window. A second demand at a full loader fires nothing.

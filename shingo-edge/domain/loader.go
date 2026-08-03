@@ -12,12 +12,11 @@ import (
 // foundation of the multi-window refactor; see
 // bin-loader-multiwindow-reviews-2026-06-12/FINAL-ADJUDICATION.md, checkpoint C0).
 //
-// This is checkpoint C0: a thin, additive value type with constructor-enforced
-// invariants and typed identifiers. It has NO runtime consumer yet — nothing in
-// the engine constructs or reads a Loader at C0, so landing it changes no
-// behavior. C1 builds the reservation seam on the cluster it describes; C2 puts
-// it behind a LoaderStore interface; C3 makes the resolver return *Loader and
-// retires the manualSwapNode (node, claim) shim as the unit of resolution.
+// A value type with constructor-enforced invariants and typed identifiers. It
+// began as an additive shape with no runtime consumer; that is long past. The
+// reservation seam counts against the cluster it describes, the resolver returns
+// *Loader through a LoaderStore, and the older (node, claim) shim it replaced is
+// gone. Anything describing this type as inert is out of date.
 //
 // Why it exists: today "what loader is this node part of, and what is its
 // budget" is re-derived in five places (the resolver, the in-flight counter, the
@@ -32,7 +31,7 @@ import (
 // Newtypes over string so the compiler rejects the A1 bug class — an empty count
 // keyed by the wrong node string (process_node vs core_node; see
 // [[shingo_manual_swap_core_node_scoping]]). Adopted on NEW surfaces only (this
-// type, the C1 reservation seam, the C1 set query). Legacy string call sites
+// type, the reservation seam, the delivery-set query). Legacy string call sites
 // convert at the boundary; this is deliberately NOT a repo-wide rename.
 
 type (
@@ -61,7 +60,7 @@ func (p PayloadCode) String() string { return string(p) }
 
 // LoaderLayout is the structural shape of a loader. It is the single authoritative
 // layout discriminator in code — never inferred from "does it have positions" or
-// "is the payload empty" (the live bug C1 fixes in loaderMemberNodes). Values
+// "is the payload empty" (the live bug this replaced in loaderMemberNodes). Values
 // mirror the Core aggregate's loaders.Layout* constants and the wire.
 type LoaderLayout string
 
@@ -142,7 +141,7 @@ type Position struct {
 //   - SlotCount is DERIVED, never passed, so a slot count below the member count
 //     cannot be expressed.
 //
-// The reservation seam (C1) and the resolver (C3) hang off this type. Immutable
+// The reservation seam and the resolver hang off this type. Immutable
 // after construction (no setters); slice accessors return copies so callers
 // cannot mutate the aggregate's state.
 type Loader struct {
@@ -352,7 +351,7 @@ func (l *Loader) MisconfiguredThreshold() bool {
 // this is the shared empty-in budget (one demand of N → exactly N empties across
 // all windows, never 2N). For a dedicated loader it is the position count; each
 // position is independently one-bin, so the per-reservation budget there is 1
-// (the C1 seam scopes a dedicated reservation to a single position node).
+// (the seam scopes a dedicated reservation to a single position node).
 func (l *Loader) SlotCount() int { return l.slotCount }
 
 func (l *Loader) IsShared() bool    { return l.layout == LayoutSharedWindow }
@@ -448,7 +447,7 @@ func (l *Loader) SynthClaim(coreNode NodeID) *NodeClaim {
 // Contains reports whether node is one of this loader's member nodes (a window or a
 // position) — used to resolve a loader from any of the physical nodes that belong to
 // it. The loader IDENTITY (l.id) is NOT compared: after the step-4 cutover it is the
-// loader_key token, not a node name, so a loader is never a node (step-6b leak removal).
+// loader_key token, not a node name, so a loader is never a node.
 // Every loader has >=1 materialised member, so the identity is never needed here.
 func (l *Loader) Contains(node NodeID) bool {
 	for _, w := range l.windows {
@@ -487,13 +486,13 @@ func (l *Loader) ServesPayload(p PayloadCode) bool {
 //     with a budget of 1 — behaviour-identical to the pre-multi-window resolver
 //     (FINAL-ADJUDICATION flip-trigger #3: don't fragment the budget before
 //     delivery spreads / the board renders the windows).
-//   - shared_window, multiWindow=true (C4): spread across the loader's windows —
+//   - shared_window, multiWindow=true: spread across the loader's windows —
 //     budget = SlotCount, delivered round-robin to free windows. A loader with a
 //     single window (no homes configured) still resolves to one node / budget 1,
 //     so flipping the flag only changes loaders actually configured multi-window.
 //   - dedicated_positions: the payload maps to ONE independent one-bin position;
 //     budget 1, delivered there. When member names a position serving the payload,
-//     deliver to THAT position (the same-payload-two-positions fix O2) instead of
+//     deliver to THAT position (the same-payload-two-positions fix) instead of
 //     first-match; member "" (legacy DemandSignal, operator request) falls back to
 //     first-match, preserving prior behaviour. Positions never share a budget.
 //
@@ -518,8 +517,8 @@ func (l *Loader) ReservationTarget(member NodeID, payload PayloadCode, multiWind
 			return out, l.slotCount
 		}
 		// multiWindow off: funnel to the loader's first WINDOW (a real node), budget 1 —
-		// never the identity l.id, which is the loader_key token, not a node (step-6b leak
-		// removal). Members are materialised so a window always exists; guard anyway.
+		// never the identity l.id, which is the loader_key token, not a node.
+		// Members are materialised so a window always exists; guard anyway.
 		if len(l.windows) == 0 {
 			return nil, 0
 		}
@@ -544,7 +543,7 @@ func (l *Loader) ReservationTarget(member NodeID, payload PayloadCode, multiWind
 }
 
 // DeliveryNodes is the set of nodes an empty for this loader may be delivered to
-// — every window for shared_window, every position for dedicated. The C1
+// — every window for shared_window, every position for dedicated. The
 // reservation seam counts in-flight empties across this set (for shared, the
 // whole set shares one budget; for dedicated, each position is queried alone).
 func (l *Loader) DeliveryNodes() []NodeID {

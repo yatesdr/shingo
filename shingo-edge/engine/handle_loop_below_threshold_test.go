@@ -566,6 +566,14 @@ func sprintf(format string, args ...any) string { return fmt.Sprintf(format, arg
 //	   what is in flight — is what bounds the fire no matter what desiredBins
 //	   says. That clamp was load-bearing for the -443 case entirely by
 //	   accident, with no test tying it to this. Part B is that test.
+//
+// RE-POINT REQUIRED when loader ordering moves to Core. Part B names the seam's
+// window budget as the backstop that bounds a garbage desiredBins, and that
+// backstop is scheduled for deletion along with the rest of the Edge threshold
+// path. When the sizing logic is ported, Part B must be re-pointed at the Core
+// sizing function and at an EXPLICIT bound there — not at whatever happens to
+// clamp it next. The whole point of this test is that relying on an accidental
+// clamp is how the -443 case stayed harmless without anyone deciding it should.
 func TestHandleLoopBelowThreshold_NegativeCurrentUOP(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
