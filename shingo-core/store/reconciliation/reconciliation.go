@@ -208,12 +208,21 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	// Splitting it in SQL rather than running two queries keeps the ORDER BY over
 	// the whole result, so the oldest anomaly is still first regardless of which
 	// bound produced it.
+	//
+	// THE ::int CASTS ARE LOAD-BEARING. The driver sends these parameters
+	// untyped, so without them Postgres infers the CASE result as `text` and the
+	// whole query dies at RUNTIME on `operator does not exist: text * interval`
+	// — a live 500 on the health endpoint, from a query that builds and vets
+	// clean. It also survives a psql `PREPARE stuckq(int, int, text)` check,
+	// because declaring the types is exactly what the driver does not do.
+	// TestListAnomalies_QueuedGetsTheLongerBound exercises this through the
+	// driver, which is the only check that would have caught it.
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT id, status, updated_at
 		FROM orders
 		WHERE status IN (%s)
 		  AND updated_at < NOW() - (
-		        CASE WHEN status = $3 THEN $2 ELSE $1 END * INTERVAL '1 second')
+		        CASE WHEN status = $3 THEN $2::int ELSE $1::int END * INTERVAL '1 second')
 		ORDER BY updated_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()),
 		int(stuckOrderAge.Seconds()), int(queuedOrderAge.Seconds()), string(protocol.StatusQueued))
 	if err != nil {

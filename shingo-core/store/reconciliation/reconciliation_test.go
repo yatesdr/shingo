@@ -106,3 +106,66 @@ func TestCoverage_GetReconciliationSummary(t *testing.T) {
 		t.Fatalf("expected critical status, got %q", summary.Status)
 	}
 }
+
+// TestListAnomalies_QueuedGetsTheLongerBound exercises the stuck-order query
+// THROUGH THE DRIVER, against real Postgres.
+//
+// That is the entire point of it, and it exists because its absence shipped a
+// live 500. The query splits its staleness bound with
+// `CASE WHEN status = $3 THEN $2::int ELSE $1::int END * INTERVAL '1 second'`.
+// The driver sends those parameters untyped, so without the ::int casts
+// Postgres infers the CASE result as `text` and the query fails at RUNTIME with
+// "operator does not exist: text * interval" — while building clean, vetting
+// clean, and passing a hand-run `PREPARE stuckq(int, int, text)` in psql, since
+// declaring the types is precisely what the driver does not do.
+//
+// So this test is not really about the thresholds. It is about the query being
+// executed at all, by the thing that executes it in production.
+func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	node := &nodes.Node{Name: "STUCK-LINE", Enabled: true}
+	if err := nodes.Create(db.DB, node); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	mk := func(uuid, status string, ageSeconds int) int64 {
+		o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "retrieve_empty",
+			Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+		if err := orders.Create(db.DB, o); err != nil {
+			t.Fatalf("create %s: %v", uuid, err)
+		}
+		if _, err := db.DB.Exec(`UPDATE orders SET status=$1, updated_at = NOW() - ($2 * INTERVAL '1 second') WHERE id=$3`,
+			status, ageSeconds, o.ID); err != nil {
+			t.Fatalf("backdate %s: %v", uuid, err)
+		}
+		return o.ID
+	}
+
+	youngQueued := mk("q-young", "queued", 3600)     // 1h — under the 2h queued bound
+	oldQueued := mk("q-old", "queued", 10800)        // 3h — over it
+	staleDispatched := mk("d-old", "dispatched", 3600) // 1h — 30m bound still applies
+
+	anomalies, err := reconciliation.ListAnomalies(db.DB)
+	if err != nil {
+		// The cast regression lands exactly here.
+		t.Fatalf("ListAnomalies through the driver: %v", err)
+	}
+	flagged := map[int64]bool{}
+	for _, a := range anomalies {
+		if a.Issue == "active_order_stuck" && a.OrderID != nil {
+			flagged[*a.OrderID] = true
+		}
+	}
+
+	if flagged[youngQueued] {
+		t.Error("a queued order waiting 1h was flagged; waiting is what queued is FOR, and a board that fires on ordinary material churn gets ignored")
+	}
+	if !flagged[oldQueued] {
+		t.Error("a queued order wedged for 3h raised nothing — no sweep covers queued, so this anomaly is the only thing that reports it")
+	}
+	if !flagged[staleDispatched] {
+		t.Error("a dispatched order stale for 1h was not flagged; the longer bound must apply to queued ONLY, not widen to every status")
+	}
+}
