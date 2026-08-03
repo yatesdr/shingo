@@ -111,8 +111,14 @@ func (e *Engine) openCellEpisode(
 	if err := e.db.OpenDemandOrigin(row); err != nil {
 		return "", false, err
 	}
-	e.logFn("demand_episode: OPENED origin=%s key=%s trigger=%s expected_orders=%d opened_total=%d discretionary=%v",
-		row.OriginID, key, trigger, expected, openedTotal, discretionary)
+	// kind FIRST, and read off the row rather than written into the format. The
+	// two OPENED lines disagreed: this one carried no kind at all and the
+	// changeover one had the word typed into its format string, so anything
+	// grouping episodes by kind saw changeovers and nothing else. A cell episode
+	// — an ordinary part call — was invisible to every log-shaped reading of
+	// this, which is why the plant only ever saw threshold and changeover.
+	e.logFn("demand_episode: OPENED kind=%s origin=%s key=%s trigger=%s expected_orders=%d opened_total=%d discretionary=%v",
+		row.Kind, row.OriginID, key, trigger, expected, openedTotal, discretionary)
 	// Ignored deliberately — see emitOriginState. A lost OPEN self-heals: the
 	// row is durable and the close carries the whole episode.
 	_ = e.emitOriginState(row, nil, "", "")
@@ -467,8 +473,11 @@ func (e *Engine) openChangeoverEpisode(co *processes.Changeover, expectedOrders 
 		// episode itself is already durable, so this logs and does not fail.
 		e.logFn("demand_episode: stamp changeover back-pointer co=%d: %v", co.ID, err)
 	}
-	e.logFn("demand_episode: OPENED origin=%s key=%s kind=changeover process=%d expected_orders=%d",
-		row.OriginID, key, co.ProcessID, expected)
+	// kind off the row, not the word "changeover" typed into the format. Both
+	// OPENED lines now read the same field, so grouping by kind is answering a
+	// question about the data instead of about which branch wrote the line.
+	e.logFn("demand_episode: OPENED kind=%s origin=%s key=%s process=%d expected_orders=%d",
+		row.Kind, row.OriginID, key, co.ProcessID, expected)
 	// Ignored deliberately — see emitOriginState.
 	_ = e.emitOriginState(row, nil, "", "")
 	return row.OriginID

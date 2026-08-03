@@ -12,6 +12,50 @@ import (
 	"shingoedge/store/processes"
 )
 
+// operatorRequestOrigin opens — or joins — the cell demand episode for an
+// operator asking for material at a node, and returns the origin to stamp on
+// the order that request creates.
+//
+// THIS PATH HAD NO EPISODE AT ALL. The button an operator presses at a node to
+// ask for parts is the plainest demand the plant has, and it created its order
+// without opening anything, so every one of those orders reached Core with no
+// origin and was classified — correctly, given what it carried — as an orphan.
+// The effect was that ordinary cell demand did not appear on the episode
+// surface: not mislabelled, absent. The only episodes anyone ever saw were
+// changeovers, which are long-lived, and thresholds.
+//
+// openCellEpisode was built for this. Its own doc names "an operator push" as
+// the common case for JOINING, and EpisodeTriggerOperator is described as "the
+// HMI button" — the machinery was written and never wired to the door it
+// describes.
+//
+// Attribution never blocks transport. An episode that cannot be opened logs and
+// returns an empty origin, and the order is created unattributed exactly as it
+// is today — the same posture operator_stations and operator_produce take, for
+// the reason stated there: a wrong class here is indistinguishable from a real
+// answer, so say nothing and let Core classify.
+func (e *Engine) operatorRequestOrigin(node *processes.Node, claim *processes.NodeClaim, direction string, remaining int) ordermgr.Origin {
+	// Discretionary means the operator asked while still above the reorder
+	// point — a pull they chose rather than one the level forced. Same
+	// predicate as the produce and station paths so the flag means one thing.
+	discretionary := claim != nil && claim.ReorderPoint > 0 && remaining > claim.ReorderPoint
+
+	originID, _, err := e.openCellEpisode(
+		node.ProcessID, claim, direction,
+		protocol.EpisodeTriggerOperator,
+		1, // one press, one order
+		remaining,
+		discretionary,
+	)
+	if err != nil {
+		e.logFn("demand_episode: open %s episode for operator request node=%s: %v", direction, node.Name, err)
+	}
+	if originID == "" {
+		return ordermgr.Origin{}
+	}
+	return ordermgr.Attached(originID)
+}
+
 // loadablePayloads returns the payload codes an operator may load or request at
 // this manual_swap loader node. Post-cutover the loader's payload set is
 // Core-owned, so this resolves it from the aggregate — the SAME resolver the
@@ -488,6 +532,10 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
 	}
 
+	// The operator asking for an empty IS the demand. Open (or join) the cell
+	// episode before creating anything so the order can name what caused it.
+	reqOrigin := e.operatorRequestOrigin(node, claim, protocol.EpisodeDirectionSupply, runtime.RemainingUOPCached)
+
 	// Payload handling splits by mode:
 	//
 	//   - manual_swap (bin loader): an empty is a generic carrier, so the
@@ -547,9 +595,9 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		n, rerr := e.withLoaderBudget(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), true, func(deliveryNodes []string) (int, error) {
 			made := 0
 			for _, deliveryNode := range deliveryNodes {
-				order, cerr := e.orderMgr.CreateRetrieveOrder(
+				order, cerr := e.orderMgr.CreateRetrieveOrderWithOrigin(
 					&nodeID, true, 1, deliveryNode, dl.InboundSource(), "",
-					"standard", payloadCode, false, true,
+					"standard", payloadCode, false, true, reqOrigin,
 				)
 				if cerr != nil {
 					return made, cerr
@@ -657,9 +705,9 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// payload-matching empty bin from anywhere — including the empty-tote
 	// return area (Hopkinsville, 2026-05-14, Mission #51 pulled SMN_07
 	// instead of from Supermarket Area).
-	order, err := e.orderMgr.CreateRetrieveOrder(
+	order, err := e.orderMgr.CreateRetrieveOrderWithOrigin(
 		&nodeID, true, 1, node.CoreNodeName, claim.InboundSource, "",
-		"standard", payloadCode, autoConfirm, skipAutoConfirm,
+		"standard", payloadCode, autoConfirm, skipAutoConfirm, reqOrigin,
 	)
 	if err != nil {
 		return nil, err
@@ -675,7 +723,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 // payload are available. Routed through the reservation seam, so it shares the
 // unloader's never-2N budget with the automatic U1 path.
 func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order, error) {
-	node, _, claim, err := e.loadActiveNode(nodeID)
+	node, runtime, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -691,6 +739,10 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	if ok, reason := e.CanAcceptOrders(nodeID); !ok {
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
 	}
+
+	// Same for a full-carrier request on the consume side: the press asking to
+	// be fed is cell demand, and it had no episode either.
+	reqOrigin := e.operatorRequestOrigin(node, claim, protocol.EpisodeDirectionSupply, runtime.RemainingUOPCached)
 
 	// Validate payload code against the loader's Core-owned payload set — same
 	// aggregate-first resolution as the produce side (see loadablePayloads), so a
@@ -735,9 +787,9 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	n, rerr := e.withLoaderBudget(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), false, func(deliveryNodes []string) (int, error) {
 		made := 0
 		for _, deliveryNode := range deliveryNodes {
-			order, cerr := e.orderMgr.CreateRetrieveOrder(
+			order, cerr := e.orderMgr.CreateRetrieveOrderWithOrigin(
 				&nodeID, false, 1, deliveryNode, claim.InboundSource, "",
-				"standard", payloadCode, autoConfirm, true,
+				"standard", payloadCode, autoConfirm, true, reqOrigin,
 			)
 			if cerr != nil {
 				return made, cerr

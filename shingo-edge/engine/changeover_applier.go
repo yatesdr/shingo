@@ -5,6 +5,7 @@ import (
 
 	"shingoedge/domain"
 	"shingoedge/engine/changeover"
+	ordermgr "shingoedge/orders"
 	"shingoedge/store/processes"
 )
 
@@ -35,9 +36,28 @@ func (e *Engine) applyChangeoverPlan(co *processes.Changeover, plan changeover.P
 func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover.NodeAction) {
 	nodeID := action.NodeID
 
+	// THE CHANGEOVER ALREADY HAS AN EPISODE AND ITS ORDERS DID NOT CARRY IT.
+	// openChangeoverEpisode mints an origin and stamps it back onto the
+	// changeover row, but the legs this applier creates were built through the
+	// unattributed constructors — so every changeover swap reached Core with no
+	// origin and landed as an orphan, and the episode it belonged to sat open
+	// with no children. That also fed reconcileChildlessEpisodes, which closes
+	// childless episodes as unattributed: a live changeover was eligible for it.
+	//
+	// Read once per action rather than per leg, so both legs of a swap take the
+	// SAME origin — one demand served by two rows, which is what
+	// CreateComplexOrderSiblingWithOrigin documents.
+	origin := ordermgr.Origin{}
+	if originID, oerr := e.db.GetChangeoverOriginID(nodeTask.ProcessChangeoverID); oerr != nil {
+		e.logFn("changeover: read episode for changeover %d: %v — orders will be unattributed",
+			nodeTask.ProcessChangeoverID, oerr)
+	} else if originID != "" {
+		origin = ordermgr.Attached(originID)
+	}
+
 	var supplyID, evacID *int64
 	if action.SupplyOrder != nil {
-		id, err := e.createPlannedOrder(nodeID, action.SupplyOrder, "")
+		id, err := e.createPlannedOrder(nodeID, action.SupplyOrder, "", origin)
 		if err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): create supply order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
@@ -71,7 +91,7 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 		supplyUUID = so.UUID
 	}
 	if action.EvacOrder != nil {
-		id, err := e.createPlannedOrder(nodeID, action.EvacOrder, supplyUUID)
+		id, err := e.createPlannedOrder(nodeID, action.EvacOrder, supplyUUID, origin)
 		if err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): create evac order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
@@ -128,26 +148,26 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	logChangeoverAction(action, supplyID, evacID)
 }
 
-func (e *Engine) createPlannedOrder(nodeID int64, spec *changeover.OrderSpec, siblingUUID string) (int64, error) {
+func (e *Engine) createPlannedOrder(nodeID int64, spec *changeover.OrderSpec, siblingUUID string, origin ordermgr.Origin) (int64, error) {
 	switch {
 	case spec.Complex != nil:
-		return e.createComplexFromSpec(nodeID, spec.Complex, siblingUUID)
+		return e.createComplexFromSpec(nodeID, spec.Complex, siblingUUID, origin)
 	case spec.Retrieve != nil:
-		return e.createRetrieveFromSpec(nodeID, spec.Retrieve)
+		return e.createRetrieveFromSpec(nodeID, spec.Retrieve, origin)
 	}
 	return 0, nil
 }
 
-func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderSpec, siblingUUID string) (int64, error) {
-	o, err := e.orderMgr.CreateComplexOrderSibling(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps, c.AutoConfirm, c.PayloadCode, siblingUUID)
+func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderSpec, siblingUUID string, origin ordermgr.Origin) (int64, error) {
+	o, err := e.orderMgr.CreateComplexOrderSiblingWithOrigin(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps, c.AutoConfirm, c.PayloadCode, siblingUUID, origin)
 	if err != nil {
 		return 0, err
 	}
 	return o.ID, nil
 }
 
-func (e *Engine) createRetrieveFromSpec(nodeID int64, r *changeover.RetrieveOrderSpec) (int64, error) {
-	o, err := e.orderMgr.CreateRetrieveOrder(&nodeID, r.RetrieveEmpty, 1, r.DeliveryNode, r.SourceNode, r.StagingNode, r.LoadType, r.PayloadCode, r.AutoConfirm, false)
+func (e *Engine) createRetrieveFromSpec(nodeID int64, r *changeover.RetrieveOrderSpec, origin ordermgr.Origin) (int64, error) {
+	o, err := e.orderMgr.CreateRetrieveOrderWithOrigin(&nodeID, r.RetrieveEmpty, 1, r.DeliveryNode, r.SourceNode, r.StagingNode, r.LoadType, r.PayloadCode, r.AutoConfirm, false, origin)
 	if err != nil {
 		return 0, err
 	}
