@@ -35,7 +35,7 @@ func inFlightEmpties(t *testing.T, db *store.DB, nodes []string) int {
 }
 
 // TestRace_LoaderBudget_ConcurrentSignalsAndOperator is the seam's concurrency
-// gate. A demand signal (Kafka path → tryCreateL1) and an operator REQUEST (HTTP
+// gate. A demand signal (Kafka path → fireThresholdL1) and an operator REQUEST (HTTP
 // path → RequestEmptyBin) hammer ONE loader from many goroutines. The seam must
 // serialise count→fire per loader so the loader's in-flight empties never exceed
 // its budget (1 here — a single delivery node). Run under -race: the
@@ -46,7 +46,7 @@ func TestRace_LoaderBudget_ConcurrentSignalsAndOperator(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	nodeID := seedCapManualSwap(t, db, "RACE", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 2, false)
-	// Seed the Core-loader cache so BOTH the automatic path (tryCreateL1) and the
+	// Seed the Core-loader cache so BOTH the automatic path (fireThresholdL1) and the
 	// operator path (RequestEmptyBin) resolve the SAME aggregate loader — and lock
 	// the same loader_key mutex. (Without this both paths no-op/error and the race
 	// would be vacuous.)
@@ -64,7 +64,7 @@ func TestRace_LoaderBudget_ConcurrentSignalsAndOperator(t *testing.T) {
 			defer wg.Done()
 			if g%2 == 0 {
 				// automatic/threshold path: wants 2, seam caps to the budget (1)
-				_, _ = eng.tryCreateL1(dl, "P1", L1LoopThreshold, 2, "", orders.Origin{})
+				_, _ = eng.fireThresholdL1(dl, "P1", 2, "", orders.Origin{})
 			} else {
 				// operator path: a single empty request through the same seam
 				_, _ = eng.RequestEmptyBin(nodeID, "P1")
@@ -96,7 +96,7 @@ func mustSharedLoader(t *testing.T, id string, payloads ...string) *domain.Loade
 	return l
 }
 
-// TestReserveLoaderEmpties_PropNeverExceedsBudget drives a deterministic
+// TestWithLoaderBudget_PropNeverExceedsBudget drives a deterministic
 // randomized sequence of reservations (two payloads, with occasional
 // completions) to exercise the seam's per-payload dedup and its loader-capacity
 // cap together. The invariant — in-flight at the loader <= budget — must hold
@@ -107,7 +107,7 @@ func mustSharedLoader(t *testing.T, id string, payloads ...string) *domain.Loade
 //
 //   - No coreClient is installed, so Available() is false and the seam's
 //     resident-bin gate never runs. Occupancy is covered by
-//     TestReserveLoaderBins_PropOccupancyLive.
+//     TestWithLoaderBudget_PropOccupancyLive.
 //   - Budget above 1 is covered by TestMultiWindow_DemandOfN_ExactlyNAcrossWindows
 //     and the occupancy-live property, both multi-window.
 //
@@ -115,7 +115,7 @@ func mustSharedLoader(t *testing.T, id string, payloads ...string) *domain.Loade
 // when ReservationTarget widens to the window cluster." That shipped —
 // ReservationTarget spreads across windows whenever multi-window delivery is on,
 // which is the default.)
-func TestReserveLoaderEmpties_PropNeverExceedsBudget(t *testing.T) {
+func TestWithLoaderBudget_PropNeverExceedsBudget(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -128,7 +128,7 @@ func TestReserveLoaderEmpties_PropNeverExceedsBudget(t *testing.T) {
 	rng := rand.New(rand.NewSource(20260612))
 
 	reserve := func(payload domain.PayloadCode, want int) {
-		_, err := eng.reserveLoaderBins(loader, payload, want, "", true, func(deliveryNodes []string) (int, error) {
+		_, err := eng.withLoaderBudget(loader, payload, want, "", true, func(deliveryNodes []string) (int, error) {
 			made := 0
 			for _, deliveryNode := range deliveryNodes {
 				if _, cerr := eng.orderMgr.CreateRetrieveOrder(&nodeID, true, 1, deliveryNode, "EMPTY-SUPER", "", "standard", string(payload), false, true); cerr != nil {
@@ -213,7 +213,7 @@ func (s *occupancyStub) isOccupied(node string) bool {
 	return s.occupied[node]
 }
 
-// TestReserveLoaderBins_PropOccupancyLive is the never-2N property run with the
+// TestWithLoaderBudget_PropOccupancyLive is the never-2N property run with the
 // resident-bin gate LIVE, across a multi-window loader at budget > 1.
 //
 // The existing PropNeverExceedsBudget covers neither: it installs no coreClient,
@@ -230,11 +230,11 @@ func (s *occupancyStub) isOccupied(node string) bool {
 //	    property can take: a bin arriving at a window that already has an empty
 //	    inbound is legitimate and must not fail the run.
 //
-// Demands go through tryCreateL1, the production caller, rather than a
+// Demands go through fireThresholdL1, the production caller, rather than a
 // hand-rolled fire closure — same idiom as the multi-window tests. Occupancy
 // flips between steps, so the run exercises bins arriving and leaving underneath
 // in-flight orders rather than a fixed world.
-func TestReserveLoaderBins_PropOccupancyLive(t *testing.T) {
+func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -253,7 +253,7 @@ func TestReserveLoaderBins_PropOccupancyLive(t *testing.T) {
 	// run would silently degrade into a duplicate of the existing property test.
 	if _, budget := loader.ReservationTarget("", "P1", eng.multiWindowEnabled()); budget != len(windows) {
 		t.Fatalf("fixture: ReservationTarget budget = %d, want %d (multi-window spread); "+
-			"budget=1 is already covered by TestReserveLoaderEmpties_PropNeverExceedsBudget", budget, len(windows))
+			"budget=1 is already covered by TestWithLoaderBudget_PropNeverExceedsBudget", budget, len(windows))
 	}
 
 	payloads := []string{"P1", "P2"}
@@ -264,8 +264,8 @@ func TestReserveLoaderBins_PropOccupancyLive(t *testing.T) {
 		case 0, 1: // a demand for a random payload
 			payload := payloads[rng.Intn(len(payloads))]
 			_, before := windowCounts(t, db, windows)
-			if _, err := eng.tryCreateL1(loader, domain.PayloadCode(payload), L1LoopThreshold, rng.Intn(len(windows)+1), "", orders.Origin{}); err != nil {
-				t.Fatalf("step %d: tryCreateL1: %v", step, err)
+			if _, err := eng.fireThresholdL1(loader, domain.PayloadCode(payload), rng.Intn(len(windows)+1), "", orders.Origin{}); err != nil {
+				t.Fatalf("step %d: fireThresholdL1: %v", step, err)
 			}
 			_, after := windowCounts(t, db, windows)
 			for _, w := range windows { // property B
@@ -424,14 +424,14 @@ func TestCreateUnloaderFullIn_PayloadSpecificGuard(t *testing.T) {
 	}
 }
 
-// TestReserveLoaderEmpties_EmitDuringReservation_NoDeadlock pins the re-entrancy
+// TestWithLoaderBudget_EmitDuringReservation_NoDeadlock pins the re-entrancy
 // rule. `fire` runs while the loader's mutex is held and CreateRetrieveOrder
 // fires EmitOrderCreated synchronously on the in-process bus; a subscriber that
 // re-enters the seam for a DIFFERENT loader (a distinct lock) must proceed, and
 // the whole reservation must complete — never self-deadlock. (Same-loader
 // re-entry is the forbidden case the rule documents; it cannot be unit-tested
 // without hanging, which is the point of the rule.)
-func TestReserveLoaderEmpties_EmitDuringReservation_NoDeadlock(t *testing.T) {
+func TestWithLoaderBudget_EmitDuringReservation_NoDeadlock(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -445,7 +445,7 @@ func TestReserveLoaderEmpties_EmitDuringReservation_NoDeadlock(t *testing.T) {
 		// emit — a separate lock, so it must not deadlock. (eventbus.Emit
 		// dispatches subscribers inline on the emitting goroutine, so this runs
 		// while DLK-A's lock is still held.)
-		_, _ = eng.reserveLoaderBins(mustSharedLoader(t, "DLK-B", "P1"), "P1", 1, "", true, func([]string) (int, error) {
+		_, _ = eng.withLoaderBudget(mustSharedLoader(t, "DLK-B", "P1"), "P1", 1, "", true, func([]string) (int, error) {
 			reentered = true
 			return 0, nil // no fire — we exercise the lock, not order creation
 		})
@@ -453,7 +453,7 @@ func TestReserveLoaderEmpties_EmitDuringReservation_NoDeadlock(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		_, _ = eng.reserveLoaderBins(mustSharedLoader(t, "DLK-A", "P1"), "P1", 1, "", true, func(deliveryNodes []string) (int, error) {
+		_, _ = eng.withLoaderBudget(mustSharedLoader(t, "DLK-A", "P1"), "P1", 1, "", true, func(deliveryNodes []string) (int, error) {
 			// In production CreateRetrieveOrder fires EmitOrderCreated synchronously
 			// here, under the lock. The test order-emitter is a no-op, so emit it
 			// directly to exercise a synchronous subscriber callback in the locked
@@ -516,13 +516,13 @@ func fireOneEmptyPerWindow(eng *Engine, nodeID int64) func([]string) (int, error
 	}
 }
 
-// TestReserveLoaderBins_SuppressesWhenWindowHasResidentEmpty is the Springfield
+// TestWithLoaderBudget_SuppressesWhenWindowHasResidentEmpty is the Springfield
 // SMN_014 regression (2026-07-23). A 0-UOP empty already stands on the loader's
 // only window, so system UOP reads 0 < threshold and Core keeps signalling — but
 // another empty is useless: the loader operator just needs to LOAD the one that's
 // there. With ZERO inbound orders the order-count dedup can't suppress it; the seam
 // must count the resident bin as occupying the window and fire nothing.
-func TestReserveLoaderBins_SuppressesWhenWindowHasResidentEmpty(t *testing.T) {
+func TestWithLoaderBudget_SuppressesWhenWindowHasResidentEmpty(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -530,9 +530,9 @@ func TestReserveLoaderBins_SuppressesWhenWindowHasResidentEmpty(t *testing.T) {
 	loader := mustSharedLoader(t, "LOADER-1", "P1")
 	eng.coreClient = NewCoreClient(nodeBinsStub(t, "LOADER-1").URL)
 
-	created, err := eng.reserveLoaderBins(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
+	created, err := eng.withLoaderBudget(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
 	if err != nil {
-		t.Fatalf("reserveLoaderBins: %v", err)
+		t.Fatalf("withLoaderBudget: %v", err)
 	}
 	if created != 0 {
 		t.Fatalf("resident empty present but seam fired %d empties; want 0 (operator must load the resident carrier)", created)
@@ -542,9 +542,9 @@ func TestReserveLoaderBins_SuppressesWhenWindowHasResidentEmpty(t *testing.T) {
 	}
 }
 
-// TestReserveLoaderBins_FiresWhenWindowEmpty is the negative control: an
+// TestWithLoaderBudget_FiresWhenWindowEmpty is the negative control: an
 // unoccupied window still gets its empty, so the resident gate can't over-suppress.
-func TestReserveLoaderBins_FiresWhenWindowEmpty(t *testing.T) {
+func TestWithLoaderBudget_FiresWhenWindowEmpty(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -552,16 +552,16 @@ func TestReserveLoaderBins_FiresWhenWindowEmpty(t *testing.T) {
 	loader := mustSharedLoader(t, "LOADER-1", "P1")
 	eng.coreClient = NewCoreClient(nodeBinsStub(t, "OTHER-NODE").URL) // LOADER-1 reported empty
 
-	created, err := eng.reserveLoaderBins(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
+	created, err := eng.withLoaderBudget(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
 	if err != nil {
-		t.Fatalf("reserveLoaderBins: %v", err)
+		t.Fatalf("withLoaderBudget: %v", err)
 	}
 	if created != 1 {
 		t.Fatalf("empty window but seam fired %d empties; want 1", created)
 	}
 }
 
-// TestReserveLoaderBins_FiresWhenCoreNotConfigured covers the arm where no Core
+// TestWithLoaderBudget_FiresWhenCoreNotConfigured covers the arm where no Core
 // base URL is set at all: Available() is false, the seam skips the occupancy gate
 // and falls back to the order-only count. This is the one arm where firing is
 // defensible — an unconfigured Core is a deployment state, not a failed read, so
@@ -571,8 +571,8 @@ func TestReserveLoaderBins_FiresWhenWindowEmpty(t *testing.T) {
 // Renamed from _FiresWhenCoreUnreachable, which claimed coverage of an
 // unreachable Core that it never exercised: a nil base URL never reaches the
 // network. The genuinely unreachable arms are pinned by
-// TestReserveLoaderBins_FiresWhenOccupancyReadFails below.
-func TestReserveLoaderBins_FiresWhenCoreNotConfigured(t *testing.T) {
+// TestWithLoaderBudget_FiresWhenOccupancyReadFails below.
+func TestWithLoaderBudget_FiresWhenCoreNotConfigured(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -580,9 +580,9 @@ func TestReserveLoaderBins_FiresWhenCoreNotConfigured(t *testing.T) {
 	loader := mustSharedLoader(t, "LOADER-1", "P1")
 	eng.coreClient = NewCoreClient("") // Core telemetry unavailable
 
-	created, err := eng.reserveLoaderBins(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
+	created, err := eng.withLoaderBudget(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
 	if err != nil {
-		t.Fatalf("reserveLoaderBins: %v", err)
+		t.Fatalf("withLoaderBudget: %v", err)
 	}
 	if created != 1 {
 		t.Fatalf("Core not configured: gate must skip and fire from the order-only count; fired %d, want 1", created)
@@ -635,7 +635,7 @@ func deadCoreURL(t *testing.T) string {
 	return u
 }
 
-// TestReserveLoaderBins_FiresWhenOccupancyReadFails pins TODAY'S behavior on the
+// TestWithLoaderBudget_FiresWhenOccupancyReadFails pins TODAY'S behavior on the
 // three arms that produced the 2026-07-31 Springfield over-ordering incident:
 // Core is configured, the seam asks whether the window is occupied, and the read
 // fails. FetchNodeBins returns (nil, nil) on all three, so the seam cannot
@@ -651,7 +651,7 @@ func deadCoreURL(t *testing.T) string {
 // window-empty have had coverage since SMN_014, and the not-configured arm is
 // covered above. No test covered a CONFIGURED Core whose read fails, which is
 // the incident's own shape.
-func TestReserveLoaderBins_FiresWhenOccupancyReadFails(t *testing.T) {
+func TestWithLoaderBudget_FiresWhenOccupancyReadFails(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -713,9 +713,9 @@ func TestReserveLoaderBins_FiresWhenOccupancyReadFails(t *testing.T) {
 			client, verifyAsked := tc.setup(t)
 			eng.coreClient = client
 
-			created, err := eng.reserveLoaderBins(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
+			created, err := eng.withLoaderBudget(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
 			if err != nil {
-				t.Fatalf("reserveLoaderBins: %v", err)
+				t.Fatalf("withLoaderBudget: %v", err)
 			}
 			verifyAsked(t)
 			if created != 1 {

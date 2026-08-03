@@ -174,7 +174,7 @@ func TestHandleLoopBelowThreshold_FiresForInactiveStyleLoader(t *testing.T) {
 //
 // Post-PR-0 the per-node capacity cap bounds the ACTUAL fire to the
 // window's physical slot count (1 here): the math still computes 3
-// (asserted via the desired_bins log) but tryCreateL1 dispatches one,
+// (asserted via the desired_bins log) but fireThresholdL1 dispatches one,
 // and the remaining bins follow on subsequent signals as the window
 // frees. See bin-loader-refactor-reviews/impl-questions.md Q1.
 func TestHandleLoopBelowThreshold_CeilsToWholeBins(t *testing.T) {
@@ -315,7 +315,7 @@ func TestHandleLoopBelowThreshold_SkipsWhenProjectedUOPCoversThreshold(t *testin
 	// Seed one in-flight retrieve_empty at the loader for BIG-PART. With
 	// capacity 500 and threshold 400, one in-flight bin already covers the
 	// threshold (desiredBins = ceil(400/500) = 1, inFlight = 1), so
-	// tryCreateL1's in-flight dedup must fire nothing.
+	// fireThresholdL1's in-flight dedup must fire nothing.
 	om := orders.NewManager(db, noOpOrderEmitter{}, "test-station")
 	if _, err := om.CreateRetrieveOrder(
 		&nodeID, true, 1, "SKIP-LOADER", "EMPTY-SUPER", "",
@@ -361,7 +361,7 @@ func TestHandleLoopBelowThreshold_SkipsWhenProjectedUOPCoversThreshold(t *testin
 		// to_fire=0 — it counted the in-flight empty that already covers the
 		// threshold and fired nothing (replaces the old per-payload "skipping"
 		// debug line).
-		if strings.Contains(line, "loader_reserve") && strings.Contains(line, "to_fire=0") {
+		if strings.Contains(line, "loader_budget") && strings.Contains(line, "to_fire=0") {
 			skipped = true
 		}
 		if strings.Contains(line, "firing") && strings.Contains(line, "L1") {
@@ -562,7 +562,7 @@ func sprintf(format string, args ...any) string { return fmt.Sprintf(format, arg
 //
 //	A. A negative reading is sized from 0. Ordering STILL happens — the
 //	   decision to order stands, only the quantity is refused.
-//	B. reserveLoaderBins' window budget — one bin per delivery node, minus
+//	B. The withLoaderBudget window budget — one bin per delivery node, minus
 //	   what is in flight — is what bounds the fire no matter what desiredBins
 //	   says. That clamp was load-bearing for the -443 case entirely by
 //	   accident, with no test tying it to this. Part B is that test.
@@ -649,7 +649,7 @@ func TestHandleLoopBelowThreshold_NegativeCurrentUOP(t *testing.T) {
 	}
 
 	// B. The backstop. Nothing about part A's clamp bounds a LEGITIMATE
-	// oversized request — reserveLoaderBins does, and it is the only thing
+	// oversized request — withLoaderBudget does, and it is the only thing
 	// that does. Threshold 900 against an 18-UOP bin asks for 50; the loader
 	// has one window, so one is what gets created.
 	eng2 := testEngine(t, db)
@@ -688,7 +688,7 @@ func TestHandleLoopBelowThreshold_NegativeCurrentUOP(t *testing.T) {
 		}
 	}
 	if n != 1 {
-		t.Fatalf("reserveLoaderBins' budget must bound the fire to the window count, got %d orders for a want of 50", n)
+		t.Fatalf("the withLoaderBudget budget must bound the fire to the window count, got %d orders for a want of 50", n)
 	}
 }
 

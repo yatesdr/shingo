@@ -16,7 +16,7 @@ import (
 // ~20 payloads. A single kanban demand signal swept every payload at minStock=2
 // → ~40 retrieve_empty orders aimed at a one-bin window, all parked
 // "destination occupied" and cancelled. The fix is two-fold and both parts are
-// pinned here: (1) the per-node capacity cap in tryCreateL1 bounds total
+// pinned here: (1) the per-node capacity cap in withLoaderBudget bounds total
 // in-flight empties at a core node to its physical window slots
 // (manualSwapWindowSlots); (2) fallback-no-sweep stops an unrelated signal,
 // resolved by payload-first-match, from fanning across the resolved loader's

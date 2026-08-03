@@ -66,7 +66,7 @@ func TestTryCreateL1_NoInboundSkips(t *testing.T) {
 	seedCoreLoader(t, eng, blankInboundLoaderInfo("DL-NODE", "produce", "PART-DL"))
 
 	loader := resolveLoader(t, eng, "PART-DL") // produce-role resolve
-	if created, err := eng.tryCreateL1(loader, "PART-DL", L1LoopThreshold, 1, "", orders.Origin{}); err != nil || created != 0 {
+	if created, err := eng.fireThresholdL1(loader, "PART-DL", 1, "", orders.Origin{}); err != nil || created != 0 {
 		t.Errorf("blank-inbound loader: created=%d err=%v, want 0, nil", created, err)
 	}
 	ords, _ := db.ListActiveOrdersByProcessNode(nodeID)

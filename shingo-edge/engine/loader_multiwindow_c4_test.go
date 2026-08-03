@@ -83,7 +83,7 @@ func TestMultiWindow_DemandOfN_ExactlyNAcrossWindows(t *testing.T) {
 	seedWindowNodes(t, db, "MW-PROC", windows)
 	loader := mustMultiWindowLoader(t, "MW-LDR", windows, "P1")
 
-	created, err := eng.tryCreateL1(loader, "P1", L1LoopThreshold, 3, "", orders.Origin{})
+	created, err := eng.fireThresholdL1(loader, "P1", 3, "", orders.Origin{})
 	if err != nil || created != 3 {
 		t.Fatalf("one demand of 3: created=%d err=%v, want 3", created, err)
 	}
@@ -98,7 +98,7 @@ func TestMultiWindow_DemandOfN_ExactlyNAcrossWindows(t *testing.T) {
 	}
 
 	// Loader full → a second demand fires nothing.
-	created, err = eng.tryCreateL1(loader, "P1", L1LoopThreshold, 3, "", orders.Origin{})
+	created, err = eng.fireThresholdL1(loader, "P1", 3, "", orders.Origin{})
 	if err != nil || created != 0 {
 		t.Errorf("full loader: created=%d err=%v, want 0", created, err)
 	}
@@ -124,7 +124,7 @@ func TestRace_MultiWindow_NeverExceedsWindowCount(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 24 {
 		wg.Go(func() {
-			_, _ = eng.tryCreateL1(loader, "P1", L1LoopThreshold, len(windows), "", orders.Origin{})
+			_, _ = eng.fireThresholdL1(loader, "P1", len(windows), "", orders.Origin{})
 		})
 	}
 	wg.Wait()

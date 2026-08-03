@@ -351,7 +351,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// produce loader is supplied by the UOP-threshold C-push (SubjectLoopBelowThreshold,
 	// below) or operator staging, never a bin-count floor. CONSUME-role signals fire
 	// the unloader U1 to pull a freshly-arrived full (MaybeCreateUnloaderFullIn); the
-	// reserveLoaderBins seam dedups against the operator-release trigger by in-flight
+	// withLoaderBudget seam dedups against the operator-release trigger by in-flight
 	// count. Core still emits produce DemandSignals on bin movements; the Edge drops
 	// them here harmlessly.
 	router.RegisterSubject(subjectRouter, protocol.SubjectDemandSignal, func(_ *protocol.Envelope, s *protocol.DemandSignal) {
@@ -365,7 +365,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// (bins + buckets) per payload and signals here when a monitored
 	// (loader, payload) drops below threshold. Edge responds in
 	// HandleLoopBelowThreshold, which sizes the ask from the signalled
-	// current/threshold and fires L1 through the reserveLoaderBins seam.
+	// current/threshold and fires L1 through the withLoaderBudget seam.
 	// The seam's own in-flight count under the loader mutex is the dedup —
 	// there is no separate dedup step on this path.
 	router.RegisterSubject(subjectRouter, protocol.SubjectLoopBelowThreshold, func(_ *protocol.Envelope, s *protocol.LoopBelowThresholdSignal) {

@@ -142,7 +142,7 @@ type Engine struct {
 	// writers (a Kafka demand signal vs an HTTP RequestEmptyBin, or the push
 	// sweep) can't both read the same in-flight count and both fire empties —
 	// the never-2N invariant. map[loaderID]*sync.Mutex, keyed from day one (no
-	// global lock). NO transaction: see reserveLoaderEmpties and
+	// global lock). NO transaction: see withLoaderBudget and
 	// FINAL-ADJUDICATION Q1 (monotonicity + non-tx-pure CreateRetrieveOrder).
 	loaderResv sync.Map
 

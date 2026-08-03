@@ -540,7 +540,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		// log): consistent with the shared multi-window model, where an empty may go to
 		// any free window. The InboundSource is the aggregate's (== the old claim's).
 		var created *orders.Order
-		n, rerr := e.reserveLoaderBins(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), true, func(deliveryNodes []string) (int, error) {
+		n, rerr := e.withLoaderBudget(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), true, func(deliveryNodes []string) (int, error) {
 			made := 0
 			for _, deliveryNode := range deliveryNodes {
 				order, cerr := e.orderMgr.CreateRetrieveOrder(
@@ -668,8 +668,8 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 
 // RequestFullBin requests a full bin of the given payload to be delivered to a
 // manual_swap consume node. Core queues the order if no full bins of that
-// payload are available. Unlike RequestEmptyBin, this does NOT check node occupancy
-// — the unloader expects full bins to arrive.
+// payload are available. Routed through the reservation seam, so it shares the
+// unloader's never-2N budget with the automatic U1 path.
 func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order, error) {
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -698,24 +698,59 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 
-	// Create retrieve order for a full bin — Core queues if none available.
-	// Same override as RequestEmptyBin: manual_swap unloader requires operator
-	// confirmation (U1 must not auto-confirm, or U2 fires before processing).
+	// Route through the reservation seam, mirroring the produce-side manual_swap
+	// branch of RequestEmptyBin. Before this, RequestFullBin created its order
+	// directly — no budget, no in-flight count, no occupancy — so an unloader
+	// could be sent a second full while the first was still inbound, and the
+	// never-2N invariant did not cover the path at all. The seam counts fulls
+	// (retrieveEmpty=false) across the unloader's delivery set under the loader's
+	// mutex, so this button and the automatic U1 now contend on one lock instead
+	// of racing.
 	//
-	// Source group is claim.InboundSource (the FG supermarket the unloader
-	// pulls full bins from). Without this, Core's planRetrieve falls back to
-	// global FIFO and can pull from the wrong supermarket. Same root cause
-	// as the empty-side bug above.
-	autoConfirm := false
-	order, err := e.orderMgr.CreateRetrieveOrder(
-		&nodeID, false, 1, node.CoreNodeName, claim.InboundSource, "",
-		"standard", payloadCode, autoConfirm, true,
-	)
-	if err != nil {
-		return nil, err
+	// member = the operator's node. A dedicated unloader routes the full to that
+	// position; a shared unloader ignores member and the seam assigns a FREE
+	// window — same rule as the produce side, and it means a full is no longer
+	// sent to a window that already holds one.
+	//
+	// Source stays claim.InboundSource (the FG supermarket the unloader pulls
+	// from; without it Core's planRetrieve falls back to global FIFO and can pull
+	// from the wrong supermarket). The aggregate's InboundSource is believed
+	// equal — the produce branch uses it — but switching would be a second
+	// behavior change in a deploy that is meant to carry one.
+	dl, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleConsume)
+	if lerr != nil {
+		return nil, fmt.Errorf("node %s: resolve unloader: %w", node.Name, lerr)
 	}
-	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
-		log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
+	if dl == nil {
+		return nil, fmt.Errorf("node %s: not a configured unloader", node.Name)
 	}
-	return order, nil
+	// manual_swap unloader requires operator confirmation: U1 must not
+	// auto-confirm, or U2 fires before the operator has processed the bin.
+	const autoConfirm = false
+	var created *orders.Order
+	n, rerr := e.withLoaderBudget(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), false, func(deliveryNodes []string) (int, error) {
+		made := 0
+		for _, deliveryNode := range deliveryNodes {
+			order, cerr := e.orderMgr.CreateRetrieveOrder(
+				&nodeID, false, 1, deliveryNode, claim.InboundSource, "",
+				"standard", payloadCode, autoConfirm, true,
+			)
+			if cerr != nil {
+				return made, cerr
+			}
+			created = order
+			if uerr := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); uerr != nil {
+				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, uerr)
+			}
+			made++
+		}
+		return made, nil
+	})
+	if rerr != nil {
+		return nil, fmt.Errorf("node %s: request full: %w", node.Name, rerr)
+	}
+	if n == 0 || created == nil {
+		return nil, fmt.Errorf("node %s: a full bin is already inbound", node.Name)
+	}
+	return created, nil
 }

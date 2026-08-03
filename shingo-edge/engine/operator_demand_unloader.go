@@ -54,7 +54,7 @@ func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 }
 
 // createUnloaderFullInViaSeam is the consume-side path that routes the U1 full-in
-// through the SHARED reservation seam (reserveLoaderBins, retrieveEmpty=false).
+// through the SHARED reservation seam (withLoaderBudget, retrieveEmpty=false).
 // The unloader is resolved as a *domain.Loader (role=consume), so the never-2N
 // budget, in-flight count, and free-window assignment are the EXACT code the
 // loader's L1 uses — one seam, no loader/unloader drift.
@@ -90,7 +90,7 @@ func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode 
 			return
 		}
 	}
-	created, err := e.reserveLoaderBins(loader, pc, 1, "", false, func(deliveryNodes []string) (int, error) {
+	created, err := e.withLoaderBudget(loader, pc, 1, "", false, func(deliveryNodes []string) (int, error) {
 		made := 0
 		for _, deliveryNode := range deliveryNodes {
 			node, nerr := e.db.GetProcessNodeByCoreNodeName(deliveryNode)

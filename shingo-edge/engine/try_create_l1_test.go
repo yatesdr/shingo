@@ -18,13 +18,13 @@ func resolveLoader(t *testing.T, eng *Engine, payload string) *domain.Loader {
 	return l
 }
 
-// These tests pin tryCreateL1's contract by asserting the returned created
+// These tests pin fireThresholdL1's contract by asserting the returned created
 // count and the orders DB — not log strings (the review flagged the existing
 // log-scraping tests as brittle). They cover the in-flight clamp and the
 // transitional allowlist gate.
 
 // TestTryCreateL1_BoundedByNodeWindowCapAndReturnsCreated pins the post-PR-0
-// chokepoint contract: tryCreateL1 fires (desired - inFlight) for the payload
+// chokepoint contract: fireThresholdL1 fires (desired - inFlight) for the payload
 // BUT never lets total in-flight empties at the core node exceed the window's
 // physical slot count (manualSwapWindowSlots). At a one-window loader that means
 // at most one empty inbound at a time — a desired > 1 is serialized over the
@@ -39,11 +39,11 @@ func TestTryCreateL1_BoundedByNodeWindowCapAndReturnsCreated(t *testing.T) {
 	loader := resolveLoader(t, eng, "PART-Z")
 
 	// Want 1, window empty -> 1 created.
-	if created, err := eng.tryCreateL1(loader, "PART-Z", L1LoopThreshold, 1, "", orders.Origin{}); err != nil || created != 1 {
+	if created, err := eng.fireThresholdL1(loader, "PART-Z", 1, "", orders.Origin{}); err != nil || created != 1 {
 		t.Fatalf("seed fire: created=%d err=%v, want 1, nil", created, err)
 	}
 	// Want 3, but the one-window loader already holds its empty -> node cap fires 0.
-	if created, err := eng.tryCreateL1(loader, "PART-Z", L1LoopThreshold, 3, "", orders.Origin{}); err != nil || created != 0 {
+	if created, err := eng.fireThresholdL1(loader, "PART-Z", 3, "", orders.Origin{}); err != nil || created != 0 {
 		t.Errorf("node cap: created=%d err=%v, want 0, nil (window already holds 1)", created, err)
 	}
 
@@ -74,11 +74,11 @@ func TestTryCreateL1_OperatorDrivenSuppressesThresholdSource(t *testing.T) {
 
 	// Operator-driven in the aggregate: replenishment=operator.
 	seedCoreLoader(t, eng, sharedLoaderInfo("TR-LOADER", "produce", "operator", "PART-T", 0, 0))
-	// Resolve AFTER seeding: tryCreateL1 reads loader.IsOperatorDriven() (the projected
+	// Resolve AFTER seeding: fireThresholdL1 reads loader.IsOperatorDriven() (the projected
 	// aggregate snapshot), so the loader must be (re)resolved to observe it.
 	// Representative of production, where each demand signal re-resolves the loader.
 	loader := resolveLoader(t, eng, "PART-T")
-	if created, err := eng.tryCreateL1(loader, "PART-T", L1LoopThreshold, 2, "", orders.Origin{}); err != nil || created != 0 {
+	if created, err := eng.fireThresholdL1(loader, "PART-T", 2, "", orders.Origin{}); err != nil || created != 0 {
 		t.Errorf("L1LoopThreshold on operator-driven: created=%d err=%v, want 0, nil", created, err)
 	}
 	ords, _ := db.ListActiveOrdersByProcessNode(nodeID)
@@ -92,7 +92,7 @@ func TestTryCreateL1_OperatorDrivenSuppressesThresholdSource(t *testing.T) {
 	seedCoreLoader(t, eng, sharedLoaderInfo("TR-LOADER", "produce", "threshold", "PART-T", 0, 0))
 	loader = resolveLoader(t, eng, "PART-T") // re-resolve so the snapshot reflects the change
 	// Bounded by the one-window node cap to a single empty.
-	if created, err := eng.tryCreateL1(loader, "PART-T", L1LoopThreshold, 2, "", orders.Origin{}); err != nil || created != 1 {
+	if created, err := eng.fireThresholdL1(loader, "PART-T", 2, "", orders.Origin{}); err != nil || created != 1 {
 		t.Errorf("after switching to threshold: created=%d err=%v, want 1, nil", created, err)
 	}
 }

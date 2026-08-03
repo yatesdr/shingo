@@ -13,9 +13,9 @@ import (
 // the deletion depends on. See TIER1-BRIEF.md.
 
 // Gate 1 (BUG-1, never-2N mutex hole): the operator path (RequestEmptyBin) and the
-// automatic path (tryCreateL1 via the demand resolver) must lock the SAME per-loader
+// automatic path (fireThresholdL1 via the demand resolver) must lock the SAME per-loader
 // mutex for one physical loader, or the seam doesn't mutually exclude them. The seam
-// keys loaderResvLock on string(loader.ID()); pre-fix the operator path built its loader
+// keys loaderBudgetLock on string(loader.ID()); pre-fix the operator path built its loader
 // from the claim (ID = node NAME) while the demand path used the aggregate (ID = token),
 // so the two fired through different mutexes. This counts the distinct reservation-lock
 // keys used for one loader after driving BOTH paths — must be exactly 1. Deterministic
@@ -33,13 +33,13 @@ func TestTier1_BUG1_OperatorAndDemandShareLockKey(t *testing.T) {
 	if _, err := eng.RequestEmptyBin(nodeID, "PART-X"); err != nil {
 		t.Fatalf("RequestEmptyBin: %v", err)
 	}
-	// Automatic path: the aggregate resolver + tryCreateL1 reserve through the same seam.
+	// Automatic path: the aggregate resolver + fireThresholdL1 reserve through the same seam.
 	dl, err := eng.loaders().LoaderAt("PLK_X1", domain.RoleProduce)
 	if err != nil || dl == nil {
 		t.Fatalf("LoaderAt(PLK_X1) = %v, %v", dl, err)
 	}
-	if _, err := eng.tryCreateL1(dl, "PART-X", L1LoopThreshold, 1, "", orders.Origin{}); err != nil {
-		t.Fatalf("tryCreateL1: %v", err)
+	if _, err := eng.fireThresholdL1(dl, "PART-X", 1, "", orders.Origin{}); err != nil {
+		t.Fatalf("fireThresholdL1: %v", err)
 	}
 
 	var keys []string

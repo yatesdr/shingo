@@ -13,7 +13,7 @@ import (
 // manualSwapWindowSlots is how many bins a single manual_swap core node can
 // physically stage at its window — one (one physical slot per window/position).
 //
-// The LOADER empty path no longer reads this constant: reserveLoaderEmpties
+// The LOADER empty path no longer reads this constant: withLoaderBudget
 // derives the budget from the delivery-node SET cardinality (one bin per node),
 // so a multi-window loader's budget grows to N when delivery spreads
 // without a magic number, and the per-payload dedup + capacity cap are unified in
@@ -29,7 +29,7 @@ const manualSwapWindowSlots = 1
 // threshold-driven (UOP kanban autoreorder — HandleLoopBelowThreshold); there is no
 // bin-count floor. Core still emits produce DemandSignals on bin movements, but the
 // Edge no longer routes them to a handler (see cmd/shingoedge/main.go) — supply comes
-// from the threshold monitor and the operator push, both via the reserveLoaderBins seam.
+// from the threshold monitor and the operator push, both via the withLoaderBudget seam.
 
 // HandleLoopBelowThreshold is the Core→Edge LoopBelowThresholdSignal
 // receiver. Operates in UOP space — the native unit of the threshold
@@ -48,7 +48,7 @@ const manualSwapWindowSlots = 1
 // Distinct from the legacy DemandSignal path (MaybeCreateLoaderEmptyIn
 // → refillLoaderForPayload), which keeps the magic-2 bin floor for
 // loaders that haven't opted into UOP-threshold replenishment. The
-// reserveLoaderEmpties seam is the dedup contract between the
+// withLoaderBudget seam is the dedup contract between the
 // two paths.
 //
 // Capacity comes from payload_catalog.uop_capacity (synced from Core),
@@ -134,7 +134,7 @@ func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal
 	// needs replenishing. A broken count does not get to SIZE the order; it
 	// does not get to cancel it either.
 	//
-	// The bound on what actually gets created is reserveLoaderBins' window
+	// The bound on what actually gets created is the withLoaderBudget window
 	// budget (one bin per delivery node, minus in-flight), which caps toFire
 	// regardless of what desiredBins says. That clamp was load-bearing here by
 	// accident; this makes the sizing defensible on its own and
@@ -148,7 +148,7 @@ func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal
 	}
 
 	// Desired total in-flight bins to reach threshold from the CURRENT loop
-	// UOP. tryCreateL1 subtracts what is already in flight and fires the
+	// UOP. fireThresholdL1 subtracts what is already in flight and fires the
 	// remainder — the in-flight dedup contract lives there now, not here.
 	gap := sig.Threshold - current
 	if gap <= 0 {
@@ -167,7 +167,7 @@ func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal
 	if member == "" {
 		member = domain.NodeID(sig.CoreNodeName)
 	}
-	created, err := e.tryCreateL1(loader, pay, L1LoopThreshold, desiredBins, member, thresholdOrigin(sig))
+	created, err := e.fireThresholdL1(loader, pay, desiredBins, member, thresholdOrigin(sig))
 	if err != nil {
 		e.logFn("loop_threshold: loader=%s payload=%s — L1 creation failed after %d created: %v",
 			loader.ID(), sig.PayloadCode, created, err)
@@ -246,15 +246,15 @@ func (s L1Source) suppressedByOperatorDriven() bool {
 	return s == L1LoopThreshold
 }
 
-// loaderResvLock returns the per-loader reservation mutex, creating it on first
+// loaderBudgetLock returns the per-loader reservation mutex, creating it on first
 // use. Keyed by loader id so two loaders never
 // block each other — a slow burst on loader X can't stall loader Y.
-func (e *Engine) loaderResvLock(loaderID string) *sync.Mutex {
+func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 	m, _ := e.loaderResv.LoadOrStore(loaderID, &sync.Mutex{})
 	return m.(*sync.Mutex)
 }
 
-// reserveLoaderBins makes count→fire atomic for a loader. Under the loader's
+// withLoaderBudget makes count→fire atomic for a loader. Under the loader's
 // mutex it counts non-terminal retrieve orders across the delivery-node set in
 // ONE snapshot, applies the per-payload dedup and the loader-capacity cap, and
 // fires the remainder via the caller's `fire` closure — all without releasing
@@ -262,15 +262,22 @@ func (e *Engine) loaderResvLock(loaderID string) *sync.Mutex {
 // between the count and the create.
 //
 // SCOPE — this is the never-2N guarantee only for the writers that route
-// through here: tryCreateL1 (threshold and side-cycle paths), RequestEmptyBin's
-// manual_swap branch (operator), and maybeStageLoaderEmpty/MaybePushLoader via
-// tryCreateL1. It is NOT a universal chokepoint. Per the 2026-07-31 census,
-// these create loader-window retrieves WITHOUT passing through here:
-// RequestFullBin, RequestEmptyBin's simple mode, and the HTTP order API
-// (www/handlers_api_orders.go). An earlier version of this comment claimed
-// EVERY empty-firing writer routed through here; it did not, and the claim was
-// load-bearing in two review rounds before the census refuted it. Re-run the
-// census before relying on this for a system-wide invariant.
+// through here: fireThresholdL1 (Core's UOP-threshold signal), stageOperatorEmpty
+// (the opportunistic push, via maybeStageLoaderEmpty/MaybePushLoader),
+// RequestEmptyBin's manual_swap branch and RequestFullBin (operator), and
+// createUnloaderFullInViaSeam (automatic U1). It is NOT a universal chokepoint.
+// Per the 2026-07-31 census these create loader-window retrieves WITHOUT passing
+// through here: RequestEmptyBin's simple mode and the HTTP order API
+// (www/handlers_api_orders.go). The changeover paths (changeover_applier.go,
+// operator_node_changeover.go) also create retrieves outside this seam; whether
+// either can target a loader window was NOT established and is an open question,
+// not a cleared one.
+//
+// An earlier version of this comment claimed EVERY empty-firing writer routed
+// through here. It did not, and the claim was load-bearing in two review rounds
+// before a census refuted it. TestCensus_RetrieveOrderCreatorSites now fails when
+// the creator count changes, so this list has a tripwire instead of only good
+// intentions. Re-run the census before relying on this for a system invariant.
 //
 // want is the desired TOTAL in-flight for this payload; toFire = want minus what
 // is already in flight for the payload, capped to the loader's free capacity
@@ -293,15 +300,22 @@ func (e *Engine) loaderResvLock(loaderID string) *sync.Mutex {
 // order-event subscriber may call back into the reservation seam for the SAME
 // loader — sync.Mutex is non-reentrant and would self-deadlock. If a subscriber
 // ever needs to re-enter, split reserve-from-fire (end the lock after the DB
-// insert; enqueue/emit after release). TestReserveLoaderEmpties_EmitDuringReservation
+// insert; enqueue/emit after release). TestWithLoaderBudget_EmitDuringReservation
 // guards that the live subscribers do not re-enter.
-// reserveLoaderBins is the single never-2N chokepoint for BOTH directions: a loader's
-// empty-in (retrieveEmpty=true) and an unloader's full-in (retrieveEmpty=false). It was
-// reserveLoaderEmpties (empty-only); the body is role-agnostic except the in-flight
-// filter, so the consume side now shares it instead of re-implementing the count/cap
-// (the loader/unloader drift). retrieveEmpty selects which in-flight orders the budget
-// counts; the caller's fire closure creates the matching order type.
-func (e *Engine) reserveLoaderBins(loader *domain.Loader, payload domain.PayloadCode, want int, member domain.NodeID, retrieveEmpty bool, fire func(deliveryNodes []string) (int, error)) (int, error) {
+// It serves BOTH directions: a loader's empty-in (retrieveEmpty=true) and an
+// unloader's full-in (retrieveEmpty=false). It began as an empty-only function;
+// the body turned out to be role-agnostic apart from the in-flight filter, so the
+// consume side shares it rather than re-implementing the count and cap — the
+// loader/unloader drift this codebase keeps re-growing. retrieveEmpty selects
+// which in-flight orders the budget counts; the caller's fire closure creates the
+// matching order type.
+//
+// NAMING: it was called reserveLoaderEmpties, then reserveLoaderBins. Neither
+// reserved anything. Nothing is held here — the budget is recomputed from the
+// order table on every call, and a "reservation" that survives no longer than the
+// mutex is not one. The current name says what it does: run the caller's fire
+// closure with the loader's budget enforced around it.
+func (e *Engine) withLoaderBudget(loader *domain.Loader, payload domain.PayloadCode, want int, member domain.NodeID, retrieveEmpty bool, fire func(deliveryNodes []string) (int, error)) (int, error) {
 	if loader == nil || want <= 0 {
 		return 0, nil
 	}
@@ -318,7 +332,7 @@ func (e *Engine) reserveLoaderBins(loader *domain.Loader, payload domain.Payload
 	loaderID := string(loader.ID())
 	pay := string(payload)
 
-	mu := e.loaderResvLock(loaderID)
+	mu := e.loaderBudgetLock(loaderID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -374,7 +388,7 @@ func (e *Engine) reserveLoaderBins(loader *domain.Loader, payload domain.Payload
 		toFire = headroom
 	}
 	if toFire <= 0 {
-		e.logFn("loader_reserve loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d budget=%d to_fire=0 created=0",
+		e.logFn("loader_budget loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d budget=%d to_fire=0 created=0",
 			loaderID, pay, want, inFlightPayload, inFlightTotal, resident, budget)
 		return 0, nil
 	}
@@ -393,7 +407,7 @@ func (e *Engine) reserveLoaderBins(loader *domain.Loader, payload domain.Payload
 	created, ferr := fire(targets)
 	// Structured decision record — one machine-parseable line per reservation so an
 	// over-ordering incident is reconstructable from logs alone (the SLN_002 bar).
-	e.logFn("loader_reserve loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d budget=%d to_fire=%d targets=%v created=%d err=%v",
+	e.logFn("loader_budget loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d budget=%d to_fire=%d targets=%v created=%d err=%v",
 		loaderID, pay, want, inFlightPayload, inFlightTotal, resident, budget, toFire, targets, created, ferr)
 	return created, ferr
 }
@@ -443,16 +457,32 @@ func loaderEmptySource(l *domain.Loader) string {
 	return l.InboundSource()
 }
 
-// tryCreateL1 is the threshold/side-cycle entry to the reservation seam. It takes
-// the resolved *domain.Loader (the Loader is the unit of resolution, not the
-// old manualSwapNode shim). The operator-driven gate is applied here; the count→fire
-// atomicity, the per-payload dedup, the capacity cap, and the decision record all
-// live in reserveLoaderBins. count is the desired total in-flight for the payload.
-// origin attributes the L1s this call creates. It comes from the CALLER, not
-// from a lookup here: tryCreateL1 is shared between the threshold path (which
-// serves a Core demand episode) and the opportunistic push (which serves
-// nothing at all), and only the caller knows which of those it is.
-func (e *Engine) tryCreateL1(loader *domain.Loader, payload domain.PayloadCode, source L1Source, count int, member domain.NodeID, origin orders.Origin) (int, error) {
+// fireThresholdL1 creates loader empties in response to Core's UOP-threshold
+// signal. THIS PATH IS MIGRATING: when loader ordering becomes Core-native the
+// threshold decision moves to Core and this function goes with it. It is named
+// separately from the operator push for exactly that reason — so the caller that
+// leaves and the caller that stays are distinguishable without re-deriving it.
+func (e *Engine) fireThresholdL1(loader *domain.Loader, payload domain.PayloadCode, count int, member domain.NodeID, origin orders.Origin) (int, error) {
+	return e.createLoaderEmpties(loader, payload, L1LoopThreshold, count, member, origin)
+}
+
+// stageOperatorEmpty creates loader empties opportunistically when a window
+// frees up on an operator-driven loader. THIS PATH STAYS on the Edge: it is
+// driven by what the operator physically did, which Core does not observe.
+func (e *Engine) stageOperatorEmpty(loader *domain.Loader, payload domain.PayloadCode, count int, member domain.NodeID, origin orders.Origin) (int, error) {
+	return e.createLoaderEmpties(loader, payload, L1LoaderPush, count, member, origin)
+}
+
+// createLoaderEmpties is the shared body behind both entry points. It takes the
+// resolved *domain.Loader (the Loader is the unit of resolution). The
+// operator-driven gate is applied here; the count→fire atomicity, the per-payload
+// dedup, the capacity cap, and the decision record all live in withLoaderBudget.
+// count is the desired total in-flight for the payload.
+//
+// origin attributes the L1s this call creates and comes from the CALLER, not a
+// lookup here: the threshold path serves a Core demand episode and the
+// opportunistic push serves nothing at all, and only the caller knows which.
+func (e *Engine) createLoaderEmpties(loader *domain.Loader, payload domain.PayloadCode, source L1Source, count int, member domain.NodeID, origin orders.Origin) (int, error) {
 	if loader == nil {
 		return 0, nil
 	}
@@ -473,7 +503,7 @@ func (e *Engine) tryCreateL1(loader *domain.Loader, payload domain.PayloadCode, 
 			source.logTag(), coreNode, payload)
 		return 0, nil
 	}
-	created, err := e.reserveLoaderBins(loader, payload, count, member, true, func(deliveryNodes []string) (int, error) {
+	created, err := e.withLoaderBudget(loader, payload, count, member, true, func(deliveryNodes []string) (int, error) {
 		made := 0
 		for i, deliveryNode := range deliveryNodes {
 			node, nerr := e.db.GetProcessNodeByCoreNodeName(deliveryNode)
@@ -547,7 +577,8 @@ func (e *Engine) MaybePushLoader(_ int64) {
 // there is no payload-specific demand behind an opportunistic stage, so naming
 // one just fabricates a binding the operator routinely overrides at LoadBin.
 // One-at-a-time keeps it opportunistic; L1LoaderPush is exempt from the
-// operator-driven suppression in tryCreateL1 (it IS the operator-driven supply path).
+// operator-driven suppression in createLoaderEmpties (it IS the operator-driven
+// supply path).
 //
 // Single-carrier assumption — see RequestEmptyBin: a blank order sources any
 // compatible empty, which is correct only when the loader uses one carrier type.
@@ -566,8 +597,8 @@ func (e *Engine) maybeStageLoaderEmpty(loader *domain.Loader) {
 	// loader that already has an empty in flight resolves to to_fire=0 and fires
 	// nothing. The empty is staged payload-AGNOSTIC (blank code) — the operator
 	// picks the payload at LoadBin; L1LoaderPush is exempt from the operator-driven
-	// suppression in tryCreateL1 (it IS the operator-driven supply path).
-	if _, err := e.tryCreateL1(loader, "", L1LoaderPush, 1, "", orders.NoDemand()); err != nil { // opportunistic push: payload-agnostic, no member
+	// suppression in createLoaderEmpties (it IS the operator-driven supply path).
+	if _, err := e.stageOperatorEmpty(loader, "", 1, "", orders.NoDemand()); err != nil { // opportunistic push: payload-agnostic, no member
 		e.logFn("loader-push: stage empty at loader=%s failed: %v", loader.ID(), err)
 	}
 }
