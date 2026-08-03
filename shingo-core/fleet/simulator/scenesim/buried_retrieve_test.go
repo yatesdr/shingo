@@ -106,10 +106,12 @@ func retrieveTail(id, slot, dest string) []fleet.OrderBlock {
 	}
 }
 
-// digReq is a one-leg dig: lift the shallow blocker out of the lane and carry it
-// away. Submitted with dig=true so it holds the lane in dig mode, which is what
-// the mode-purity checker enforces exclusion against.
-func digReq(id, slot, dest string) fleet.CreateOrderRequest {
+// unburyReq is an unbury-only dig: lift the shallow blocker out of the lane and
+// carry it away (production's PlanReshuffleUnburyOnly shape). It does NOT retrieve
+// the buried target — a separate retriever robot does that once the lane opens.
+// Submitted with dig=true so it holds the lane mode-exclusive (ModeDig), which is
+// what the mode-purity checker + the dig hold enforce exclusion against.
+func unburyReq(id, slot, dest string) fleet.CreateOrderRequest {
 	return storeReq(id, slot, dest)
 }
 
@@ -142,7 +144,7 @@ func TestBuriedRetrieve_PrePositionsDuringDig(t *testing.T) {
 	// with a 2-tick dwell before the lane opens.
 	sim.SetRobotApproach("RETRIEVER", 1)
 
-	if err := sim.Submit("DIGGER", digReq("dig-1", "S0", "LINE"), true); err != nil {
+	if err := sim.Submit("DIGGER", unburyReq("dig-1", "S0", "LINE"), true); err != nil {
 		t.Fatalf("Submit dig: %v", err)
 	}
 	// The increment: the retrieve goes out NOW, unsealed, rather than waiting in
@@ -257,7 +259,7 @@ func runBuriedRetrieve(t *testing.T, approach int, gated bool) int {
 	}
 	sim.SetRobotApproach("RETRIEVER", approach)
 
-	if err := sim.Submit("DIGGER", digReq("dig-1", "S0", "LINE"), true); err != nil {
+	if err := sim.Submit("DIGGER", unburyReq("dig-1", "S0", "LINE"), true); err != nil {
 		t.Fatalf("Submit dig: %v", err)
 	}
 	if gated {

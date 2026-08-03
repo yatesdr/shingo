@@ -502,6 +502,25 @@ func (s *Sim) headingToGate(r *Robot, dst cell) bool {
 	return b.Action == ActionWait && b.Location == dst.Node
 }
 
+// laneHasActiveDig reports whether some OTHER robot is running a dig order that
+// works lane — the dig's mode-exclusive hold, spanning its out-and-back legs. A
+// dig is "active" while its order has work left, whether or not its robot is
+// physically inside the lane at this instant (it leaves to park a blocker, then
+// returns for the target). See admitToLane's dig-hold block for why this must
+// outlive the in-lane occupancy the occupant scan keys on.
+func (s *Sim) laneHasActiveDig(lane, exceptRobotID string) bool {
+	for _, id := range s.order {
+		o := s.robots[id]
+		if o.ID == exceptRobotID || o.order == nil || o.idle {
+			continue
+		}
+		if mode, ok := s.orderLaneMode(o, lane); ok && mode == "dig" {
+			return true
+		}
+	}
+	return false
+}
+
 // pickingTarget reports whether the robot's current block is a pickup AT slot —
 // the one bin it is allowed to step onto despite the wall, because the bin is its
 // destination, not an obstacle. A dig's unbury pickups use the same path.
@@ -555,6 +574,20 @@ func (s *Sim) admitToLane(r *Robot, next cell) bool {
 				return false
 			}
 		}
+	}
+
+	// Dig hold (the sim's ModeDig mouth row). A dig works a lane across MULTIPLE
+	// legs — it leaves to relocate a blocker to a shuffle slot, then returns for
+	// the buried target. Production holds the lane exclusive for the whole compound
+	// via a durable 'dig' mouth reservation (ModeDig is always-exclusive: it admits
+	// no other holder and no other holder admits it). The occupant scan below only
+	// sees robots currently IN the lane, so during a dig's out-and-back leg the lane
+	// would read empty and a store would slip in — then the dig returns and the two
+	// collide. So an active dig claims its lane for the lifetime of the order, not
+	// just the ticks its robot is physically inside. (The dig itself is admitted by
+	// the same-origin/mode logic below; only OTHERS are kept out here.)
+	if myMode != "dig" && s.laneHasActiveDig(lane, r.ID) {
+		return false
 	}
 
 	// Against robots already inside the lane: same-kind shares, mixed/dig waits,
