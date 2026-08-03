@@ -539,8 +539,13 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 
 	eng.SetNodeSyncFunc(hb.RequestNodeSync)
 	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
-	log.Printf("kanban: demand-signal handler wired — consume->MaybeCreateUnloaderFullIn (produce-role signals are received and dropped by design; produce supply is the UOP-threshold C-push or operator staging)")
-	log.Printf("kanban: loop-below-threshold handler wired — C-push signals route to HandleLoopBelowThreshold")
+	log.Printf("kanban: demand-signal handler wired — consume->MaybeCreateUnloaderFullIn (produce-role signals are received and dropped by design; produce supply is Core-decided threshold replenishment or operator staging)")
+	// Says what this build does NOT do, on purpose. Threshold replenishment moved
+	// to Core; this Edge has no receiver for it and creates no loader empties from
+	// one. The window where somebody reads this line is the Edge-first half of a
+	// deploy, diagnosing a loader that is not being fed — and the answer they need
+	// is "look at Core", which the line this replaced actively argued against.
+	log.Printf("kanban: threshold replenishment is Core-owned — this Edge consumes no below-threshold signal and originates no loader empties from one (operator push and changeover paths unaffected)")
 
 	if err := eng.StartupReconcile(); err != nil {
 		log.Printf("initial startup reconcile: %v", err)
