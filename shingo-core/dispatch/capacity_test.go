@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -20,6 +21,7 @@ type fakeCapacityDB struct {
 
 	// NGRP support: walk children + per-child counts.
 	children       []*nodes.Node
+	childrenErr    error
 	binsByChild    map[int64]int
 	inFlightByName map[string]int
 }
@@ -40,7 +42,7 @@ func (f *fakeCapacityDB) CountInFlightOrdersByDeliveryNodeExcluding(name string,
 	return f.inFlight, f.inFlightErr
 }
 func (f *fakeCapacityDB) ListChildNodes(int64) ([]*nodes.Node, error) {
-	return f.children, nil
+	return f.children, f.childrenErr
 }
 
 // TestCheckDropoffCapacity is the table-driven gate test for Phase 4 of
@@ -64,9 +66,28 @@ func TestCheckDropoffCapacity(t *testing.T) {
 			wantBlocked:  false,
 		},
 		{
-			name:         "lookup error treated as not-blocked (forward progress)",
+			// A node that is not in the table is not a capacity problem. Let
+			// dispatch produce the real error rather than queueing forever on a
+			// reason that can never clear.
+			name:         "node not found is not blocked (forward progress)",
 			deliveryNode: "TYPO-NODE",
-			db:           &fakeCapacityDB{getNodeErr: errors.New("not found")},
+			db:           &fakeCapacityDB{getNodeErr: sql.ErrNoRows},
+			wantBlocked:  false,
+		},
+		{
+			// Same read, different fact. This used to be folded in with the row
+			// above, so a database blip on the node lookup passed the gate while
+			// the identical blip on either read below failed it closed.
+			name:         "node lookup read error fails closed (blocked)",
+			deliveryNode: "CONC-NODE",
+			db:           &fakeCapacityDB{getNodeErr: errors.New("db blip")},
+			wantBlocked:  true,
+			wantCause:    "capacity-check-failed",
+		},
+		{
+			name:         "nil node with no error is not blocked",
+			deliveryNode: "GONE-NODE",
+			db:           &fakeCapacityDB{},
 			wantBlocked:  false,
 		},
 		{
@@ -82,6 +103,72 @@ func TestCheckDropoffCapacity(t *testing.T) {
 			db:           &fakeCapacityDB{node: &nodes.Node{ID: 7, Name: "CONC-NODE"}, inFlightErr: errors.New("db blip")},
 			wantBlocked:  true,
 			wantCause:    "capacity-check-failed",
+		},
+		// ── the three NGRP arms ──────────────────────────────────────────
+		// All three used to fail open, and the two per-child ones failed open in
+		// the worst direction: `err == nil && count > 0` means a read error skips
+		// the continue and the child is counted FREE — "there is room", on no
+		// evidence. The outer gate's reads have failed closed since they were
+		// written; these are the same reads one level down.
+		{
+			name:         "NGRP child list unreadable fails closed (blocked)",
+			deliveryNode: "SMG_01",
+			db: &fakeCapacityDB{
+				node:        &nodes.Node{ID: 5, Name: "SMG_01", IsSynthetic: true, NodeTypeCode: "NGRP"},
+				childrenErr: errors.New("db blip"),
+			},
+			wantBlocked: true,
+			wantCause:   "capacity-check-failed",
+		},
+		{
+			// Not "ngrp-full": nothing was learned about these slots, and telling
+			// an operator a group is full sends them to go clear one that may be
+			// empty.
+			name:         "NGRP per-child bin read error fails closed, and says so",
+			deliveryNode: "SMG_01",
+			db: &fakeCapacityDB{
+				node: &nodes.Node{ID: 5, Name: "SMG_01", IsSynthetic: true, NodeTypeCode: "NGRP"},
+				children: []*nodes.Node{
+					{ID: 51, Name: "SMG_01_S1", Enabled: true},
+					{ID: 52, Name: "SMG_01_S2", Enabled: true},
+				},
+				binCountErr: errors.New("db blip"),
+			},
+			wantBlocked: true,
+			wantCause:   "capacity-check-failed",
+		},
+		{
+			name:         "NGRP per-child in-flight read error fails closed, and says so",
+			deliveryNode: "SMG_01",
+			db: &fakeCapacityDB{
+				node: &nodes.Node{ID: 5, Name: "SMG_01", IsSynthetic: true, NodeTypeCode: "NGRP"},
+				children: []*nodes.Node{
+					{ID: 51, Name: "SMG_01_S1", Enabled: true},
+					{ID: 52, Name: "SMG_01_S2", Enabled: true},
+				},
+				binsByChild: map[int64]int{51: 0, 52: 0}, // both empty, so the bin read succeeds
+				inFlightErr: errors.New("db blip"),
+			},
+			wantBlocked: true,
+			wantCause:   "capacity-check-failed",
+		},
+		{
+			// The other half of the rule: one readable free child still passes,
+			// even though its sibling could not be read. A free slot that was
+			// actually SEEN is evidence, and one is enough.
+			name:         "NGRP with one readable free child passes despite an unreadable sibling",
+			deliveryNode: "SMG_01",
+			db: &fakeCapacityDB{
+				node: &nodes.Node{ID: 5, Name: "SMG_01", IsSynthetic: true, NodeTypeCode: "NGRP"},
+				children: []*nodes.Node{
+					{ID: 51, Name: "SMG_01_S1", Enabled: true},
+					{ID: 52, Name: "SMG_01_S2", Enabled: true},
+				},
+				binsByChild:    map[int64]int{52: 0},  // S2 readable and empty
+				inFlightByName: map[string]int{"SMG_01_S2": 0},
+				binCountErr:    errors.New("db blip"), // S1 unreadable
+			},
+			wantBlocked: false,
 		},
 		{
 			name:         "synthetic LANE defers to lane planner (not gated here)",

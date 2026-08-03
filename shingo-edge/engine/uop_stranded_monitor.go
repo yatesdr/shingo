@@ -91,11 +91,57 @@ func strictlyIncreasing(xs []int) bool {
 
 // formatStrandedDetail builds the exact operator sentence the tile renders
 // verbatim (P2-C8). carrier "" degrades to a generic subject rather than a blank.
-func formatStrandedDetail(carrier string, hours int, coreNodeName string) string {
+//
+// Two sentences, chosen by how long the node has been waiting.
+//
+// Under ctaAfter this is a swap in progress. A carrier is at the line, the line
+// is running, and the counts are being held until the bind lands — which is what
+// is supposed to happen, so the chip says what is happening and nothing else.
+// Calling that an alarm taught operators that the chip means nothing.
+//
+// Over ctaAfter the wait is longer than a swap takes, and the chip adds the fix.
+// The threshold is config (Config.UOPAccumulatingCTAAfter) because the longest
+// legitimate gap is a property of the plant.
+//
+// The duration renders in minutes below an hour. It used to be whole hours only,
+// so every alarm inside the first hour read "staged 0h" — a number that told the
+// operator nothing and made the chip look broken.
+func formatStrandedDetail(carrier string, unbound, ctaAfter time.Duration, coreNodeName string) string {
 	if carrier == "" {
 		carrier = "A carrier"
 	}
-	return fmt.Sprintf("%s staged %dh at %s, not bound — Record Count on the bin tab.", carrier, hours, coreNodeName)
+	if unbound < ctaAfter {
+		return fmt.Sprintf("Binding in progress — UOP accumulating. %s at %s, %s.",
+			carrier, coreNodeName, humanizeUnbound(unbound))
+	}
+	return fmt.Sprintf("Binding in progress — UOP accumulating. %s at %s, %s and not bound — Record Count on the bin tab.",
+		carrier, coreNodeName, humanizeUnbound(unbound))
+}
+
+// humanizeUnbound renders how long a node has been waiting to bind, in the
+// largest unit that still says something. Minutes below an hour; the "0h"
+// problem is the whole reason this exists.
+func humanizeUnbound(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		m := int(d.Minutes())
+		if m == 1 {
+			return "1 min"
+		}
+		return fmt.Sprintf("%d min", m)
+	default:
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		if m == 0 {
+			if h == 1 {
+				return "1 hr"
+			}
+			return fmt.Sprintf("%d hr", h)
+		}
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
 }
 
 // strandedMonitor is the live loop. states is keyed by process_node id and is
@@ -168,8 +214,9 @@ func (sm *strandedMonitor) evaluate(node *processes.Node, now time.Time) {
 		// per-scan detail refreshes so a lit tile doesn't hammer Core.
 		st.carrier = sm.resolveCarrier(node.CoreNodeName)
 	}
-	hours := int(now.Sub(st.since).Hours())
-	detail := formatStrandedDetail(st.carrier, hours, node.CoreNodeName)
+	unbound := now.Sub(st.since)
+	ctaAfter := e.cfg.UOPAccumulatingCTADelay()
+	detail := formatStrandedDetail(st.carrier, unbound, ctaAfter, node.CoreNodeName)
 	e.strandedAlarms.Store(node.CoreNodeName, detail)
 
 	if fire {
@@ -178,7 +225,9 @@ func (sm *strandedMonitor) evaluate(node *processes.Node, now time.Time) {
 		e.Events.Emit(Event{Type: EventUOPStranded, Payload: UOPStrandedEvent{
 			CoreNodeName: node.CoreNodeName,
 			Carrier:      st.carrier,
-			StagedHours:  hours,
+			StagedHours:  int(unbound.Hours()),
+			UnboundFor:   unbound,
+			NeedsAction:  unbound >= ctaAfter,
 			PendingDelta: int(runtime.PendingUOPDelta),
 			Detail:       detail,
 		}})

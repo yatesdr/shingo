@@ -31,13 +31,24 @@ line_id: line1
 
 bin_types: [STANDARD]
 
+# robot_group is a CAPABILITY constraint, not a label: it names the SEER
+# robot-dispatch group allowed to carry the part, and an empty value means the
+# vendor's default — any robot. The finished panels and assemblies are the heavy
+# parts here, so they are restricted to the heavy group; the small hardware is
+# left unrestricted, which is also what keeps a mixed plant honest — a run where
+# every part is restricted proves nothing about the ones that should not be.
+#
+# This exists so the sim can show group selection at all. Until the spec carried
+# the field, every simulated order dispatched to the vendor default, which meant
+# the one thing that goes wrong when an order carries the wrong payload was the
+# one thing a sim run could not surface.
 payloads:
-  - {code: PANEL-A, uop_capacity: 30, bin_type: STANDARD}
-  - {code: PANEL-B, uop_capacity: 30, bin_type: STANDARD}
+  - {code: PANEL-A, uop_capacity: 30, bin_type: STANDARD, robot_group: HEAVY-1500}
+  - {code: PANEL-B, uop_capacity: 30, bin_type: STANDARD, robot_group: HEAVY-1500}
   - {code: BRKT,     uop_capacity: 40, bin_type: STANDARD}
   - {code: CLIP,     uop_capacity: 40, bin_type: STANDARD}
   - {code: STUD,     uop_capacity: 40, bin_type: STANDARD}
-  - {code: ASSY,     uop_capacity: 20, bin_type: STANDARD}
+  - {code: ASSY,     uop_capacity: 20, bin_type: STANDARD, robot_group: HEAVY-1500}
 
 # Storage — a few SHARED, UNIFORM depth-3 FIFO supermarkets ("cubes"). Every lane in a
 # market is the same depth; there are no special shallow "buffer" lanes. Shuffle room for

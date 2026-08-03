@@ -537,9 +537,25 @@ func ensureBinType(db *store.DB, code string) (int64, error) {
 
 func ensurePayload(db *store.DB, pl plantspec.Payload) (int64, error) {
 	if p, err := db.GetPayloadByCode(pl.Code); err == nil && p != nil {
+		// Re-seed onto an existing plant: bring the robot group up to what the
+		// spec now says. Without this, a plant seeded before the spec carried
+		// robot groups keeps dispatching every part to the vendor default, and
+		// the reason would be invisible — the yaml says one thing and the
+		// database another.
+		if p.RobotGroup != pl.RobotGroup {
+			p.RobotGroup = pl.RobotGroup
+			if err := db.UpdatePayload(p); err != nil {
+				return 0, fmt.Errorf("update robot group on payload %s: %w", pl.Code, err)
+			}
+		}
 		return p.ID, nil
 	}
-	p := &payloads.Payload{Code: pl.Code, UOPCapacity: int(pl.UOPCapacity), Description: pl.Code + " (dev)"}
+	p := &payloads.Payload{
+		Code:        pl.Code,
+		UOPCapacity: int(pl.UOPCapacity),
+		Description: pl.Code + " (dev)",
+		RobotGroup:  pl.RobotGroup,
+	}
 	if err := db.CreatePayload(p); err != nil {
 		return 0, fmt.Errorf("create payload %s: %w", pl.Code, err)
 	}

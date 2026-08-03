@@ -86,6 +86,10 @@ func RenderDefaults() string {
 	// Exactly the kind of inversion a raw "<unset>" in the field dump hides.
 	b.WriteString(fmt.Sprintf("loaders_multi_window.resolved = %v\n",
 		cfg.LoadersMultiWindow == nil || *cfg.LoadersMultiWindow))
+	// Same reason: the raw field reads "0s", which looks like "no delay — always
+	// ask" and means the opposite.
+	b.WriteString(fmt.Sprintf("uop_accumulating_cta_after.resolved = %v\n",
+		cfg.UOPAccumulatingCTADelay()))
 	return b.String()
 }
 

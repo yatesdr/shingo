@@ -78,7 +78,7 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
 		}
 		return occ
 	}
-	bins, _ := e.coreClient.FetchNodeBins(names)
+	bins, _, _ := e.coreClient.FetchNodeBins(names)
 	for _, b := range bins {
 		occ[b.NodeName] = b.Occupied
 	}

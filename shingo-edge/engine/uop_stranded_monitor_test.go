@@ -146,13 +146,25 @@ func TestStrandedMonitor_Evaluate_FiresNamedAlarm(t *testing.T) {
 	if detail == "" {
 		t.Fatal("StrandedAlarmDetail empty, want the tile sentence")
 	}
-	// Exact operator text (carrier unresolved in test → generic subject).
-	wantTail := "at " + node.CoreNodeName + ", not bound — Record Count on the bin tab."
-	if !strings.HasSuffix(detail, wantTail) {
-		t.Errorf("detail = %q, want it to end with %q", detail, wantTail)
+	// A few minutes in, this is a swap in progress. It says what is happening
+	// and asks for nothing.
+	if !strings.HasPrefix(detail, "Binding in progress — UOP accumulating.") {
+		t.Errorf("detail = %q, want it to open by naming what is happening", detail)
 	}
-	if !strings.Contains(detail, "staged") {
-		t.Errorf("detail = %q, want the 'staged Nh' phrasing", detail)
+	if strings.Contains(detail, "Record Count") {
+		t.Errorf("detail = %q — a few minutes into a swap is the NORMAL case; "+
+			"asking the operator to intervene here is what taught them the notice means nothing", detail)
+	}
+	// The elapsed time has to be a number that says something. Whole hours meant
+	// every notice inside the first hour read "staged 0h".
+	if strings.Contains(detail, "0h") {
+		t.Errorf("detail = %q renders the wait as 0h; below an hour it must render minutes", detail)
+	}
+	if !strings.Contains(detail, "min") {
+		t.Errorf("detail = %q, want the wait in minutes", detail)
+	}
+	if got := got[0]; got.NeedsAction {
+		t.Error("event says needs_action for a swap that has been running four minutes")
 	}
 
 	// Binding clears the alarm.
@@ -161,5 +173,49 @@ func TestStrandedMonitor_Evaluate_FiresNamedAlarm(t *testing.T) {
 	sm.evaluate(node, base.Add(time.Duration(strandedWindow+3)*time.Minute))
 	if d := eng.StrandedAlarmDetail(node.CoreNodeName); d != "" {
 		t.Errorf("after bind, alarm detail = %q, want cleared", d)
+	}
+}
+
+// TestStrandedDetail_AsksOnlyOnceTheWaitIsLong pins the two sentences and the
+// line between them.
+//
+// The chip used to open with "Record Count on the bin tab" from the first
+// second, which put an alarm face on the ordinary case — a carrier at the line
+// during a swap, counts held until the bind lands, exactly what is supposed to
+// happen. An alarm that is usually nothing is ignored when it is something. The
+// call to action now waits until the gap is longer than a swap takes.
+func TestStrandedDetail_AsksOnlyOnceTheWaitIsLong(t *testing.T) {
+	t.Parallel()
+	const ctaAfter = 30 * time.Minute
+	for _, tc := range []struct {
+		name    string
+		unbound time.Duration
+		wantCTA bool
+		wantIn  string
+	}{
+		{"seconds in", 20 * time.Second, false, "just now"},
+		{"one minute", time.Minute, false, "1 min"},
+		{"mid swap", 12 * time.Minute, false, "12 min"},
+		{"one minute short", 29 * time.Minute, false, "29 min"},
+		{"at the limit", 30 * time.Minute, true, "30 min"},
+		{"well past", 95 * time.Minute, true, "1h 35m"},
+		{"exactly two hours", 2 * time.Hour, true, "2 hr"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := formatStrandedDetail("BIN-7", tc.unbound, ctaAfter, "LINE1-IN")
+			if asks := strings.Contains(got, "Record Count"); asks != tc.wantCTA {
+				t.Errorf("after %s: asks for action = %v, want %v\n  %s", tc.unbound, asks, tc.wantCTA, got)
+			}
+			if !strings.Contains(got, tc.wantIn) {
+				t.Errorf("after %s: want the wait rendered as %q\n  %s", tc.unbound, tc.wantIn, got)
+			}
+			if strings.Contains(got, "0h") {
+				t.Errorf("after %s: rendered as 0h, which tells the operator nothing\n  %s", tc.unbound, got)
+			}
+			if !strings.HasPrefix(got, "Binding in progress — UOP accumulating.") {
+				t.Errorf("after %s: want the sentence to open by naming what is happening\n  %s", tc.unbound, got)
+			}
+		})
 	}
 }

@@ -62,7 +62,7 @@ func (e *Engine) FetchMarketBins(nodeID int64) ([]MarketBinInfo, error) {
 		childNames[i] = c.Name
 	}
 
-	bins, err := e.coreClient.FetchNodeBins(childNames)
+	bins, _, err := e.coreClient.FetchNodeBins(childNames)
 	if err != nil {
 		return nil, fmt.Errorf("fetch market bins: %w", err)
 	}
@@ -125,7 +125,7 @@ func (e *Engine) PullFromMarket(nodeID int64, sourceCoreName string) error {
 	}
 
 	// Check the source actually has a bin to pull.
-	bins, err := e.coreClient.FetchNodeBins([]string{sourceCoreName})
+	bins, _, err := e.coreClient.FetchNodeBins([]string{sourceCoreName})
 	if err != nil || len(bins) == 0 || !bins[0].Occupied {
 		return fmt.Errorf("no bin at market slot %s", sourceCoreName)
 	}

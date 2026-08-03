@@ -199,17 +199,27 @@ export function renderModal(entry) {
             '</div>';
     }
 
-    // Parked-ticks chip (P2-C8): consume ticks are piling up on this node while
-    // no bin is bound — the SNF3 stranding. The sentence carries the operator's
-    // front-door fix verbatim ("... Record Count on the bin tab."). Amber, not
-    // red — it's an unbound-carrier warning, not a hard failure. Clears
+    // UOP-accumulating chip (P2-C8): counts are piling up on this node while no
+    // bin is bound. Under the configured wait that is a swap in progress and the
+    // chip is informational; past it the sentence adds the fix ("... Record
+    // Count on the bin tab.") and the chip goes amber. Rendered verbatim from
+    // the server, so the sentence is the single source of the wording — the
+    // presence of the call to action is what the styling keys on. Clears
     // automatically once a bin binds (Record Count / the next delivery).
+    //
+    // CAVEAT WORTH KNOWING: this notice needs the count to keep RISING. A
+    // stranded carrier on a stopped line goes flat and the chip disappears on
+    // its own. "Chip gone" therefore does not mean "resolved" — which is part of
+    // why the wording no longer implies anything is still being watched.
     if (entry.stranded_alarm) {
+        const asking = entry.stranded_alarm.indexOf('Record Count') !== -1;
         html += '<div class="os-stranded-chip" style="' +
             'margin:8px 0;padding:10px 14px;border-radius:6px;' +
-            'background:#3a2f14;color:#ffd98a;border:1px solid #6a5322;' +
+            (asking
+                ? 'background:#3a2f14;color:#ffd98a;border:1px solid #6a5322;'
+                : 'background:#1f2a36;color:#dbe7f5;border:1px solid #35485e;') +
             'font-size:13px;line-height:1.4">' +
-            '<strong>Parked ticks:</strong> ' + esc(entry.stranded_alarm) +
+            esc(entry.stranded_alarm) +
             '</div>';
     }
 

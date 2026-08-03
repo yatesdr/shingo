@@ -866,6 +866,9 @@ func (db *DB) runVersionedMigrations() error {
 		{72, "core-spot becomes core-operator, in every table that stores it",
 			v72StationCoreOperator,
 			func(q schema.Querier) bool { return noCoreSpotLeft(q) }},
+		{73, "orders.edge_uuid unique — exempt the restore parent's derived name",
+			v73OrdersUUIDUniqueExemptRestore,
+			func(q schema.Querier) bool { return uuidIndexExemptsRestore(q) }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3267,6 +3270,59 @@ func noCoreSpotLeft(q schema.Querier) bool {
 		return false
 	}
 	return clean
+}
+
+// v73OrdersUUIDUniqueExemptRestore narrows the unique index to skip the one
+// remaining derived edge_uuid.
+//
+// v71 made the column unique on the sound grounds that two orders sharing an
+// edge_uuid is a shape with no story: GetByUUID resolves the ambiguity with
+// ORDER BY id DESC, so the ownership check behind cancel and release acts on an
+// order nobody named. What v71 could not see is that two edge_uuid values in
+// this system are not identities at all — they are structural names built from
+// other rows, and neither is unique. Compound children were one; they now mint a
+// real UUID (dispatch/compound.go) and need no exemption.
+//
+// The other is the synthetic restore parent: "restore-<complexParentID>-<binID>"
+// (dispatch/restore_listeners.go). It cannot be minted, because it is not
+// decoration there — it is the ONLY durable link back to the complex parent.
+// That parent sets no parent_order_id, and the in-memory map holding the link
+// does not survive a restart, so the string is parsed back (fmt.Sscanf,
+// "restore-%d-") to rebuild it. Minting a UUID would delete the link.
+//
+// EXPIRY CONDITION, and it is a real one rather than a hope: the `refactor-phase1`
+// branch deletes the entire put-back subsystem — restore_listeners.go, the
+// pending_restocks table, and this format with them — replacing the crash
+// recovery with durable lane-hold reservation rows. When that lands, drop this
+// exemption and restore the plain `edge_uuid <> ''` predicate. Until then a
+// re-restore of the same parent and bin legitimately repeats the name, so the
+// index must not refuse it.
+//
+// Deliberately a LIKE on one literal prefix rather than a general escape hatch:
+// the narrower it is, the louder it is about being temporary.
+func v73OrdersUUIDUniqueExemptRestore(tx *sql.Tx) error {
+	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_orders_uuid`); err != nil {
+		return fmt.Errorf("drop idx_orders_uuid: %w", err)
+	}
+	if _, err := tx.Exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid)
+		     WHERE edge_uuid <> '' AND edge_uuid NOT LIKE 'restore-%'`); err != nil {
+		return fmt.Errorf("create restore-exempt idx_orders_uuid: %w", err)
+	}
+	return nil
+}
+
+// uuidIndexExemptsRestore reports whether idx_orders_uuid already carries the
+// restore exemption. Like uuidIndexIsUnique, this reads the definition rather
+// than the index's existence — the index exists either way and what changed is
+// its predicate.
+func uuidIndexExemptsRestore(q schema.Querier) bool {
+	var def string
+	if err := q.QueryRow(
+		`SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_orders_uuid'`).Scan(&def); err != nil {
+		return false
+	}
+	return strings.Contains(def, "UNIQUE") && strings.Contains(def, "restore-")
 }
 
 // uuidIndexIsUnique reports whether idx_orders_uuid is already the unique form.

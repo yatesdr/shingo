@@ -66,7 +66,38 @@ type Config struct {
 	// so this never fragments the never-2N budget.
 	LoadersMultiWindow *bool `yaml:"loaders_multi_window"`
 
+	// UOPAccumulatingCTAAfter is how long a node may sit unbound with counts
+	// accumulating before the operator chip starts telling the operator to do
+	// something about it.
+	//
+	// Below this, an unbound node with a rising count is a NORMAL swap in
+	// progress and the chip says only that. Above it, the wait is longer than a
+	// swap should take and the chip adds the fix ("Record Count on the bin tab").
+	//
+	// Config, not a constant, because the longest legitimate gap is a property of
+	// the plant, not of the software. One observed data point at Springfield is
+	// 15 minutes; the default sits above it with room, so the call to action means
+	// something when it appears.
+	//
+	// Zero or unset uses DefaultUOPAccumulatingCTAAfter. Negative means always
+	// show the call to action.
+	UOPAccumulatingCTAAfter time.Duration `yaml:"uop_accumulating_cta_after"`
+
 	Demand DemandConfig `yaml:"demand"`
+}
+
+// DefaultUOPAccumulatingCTAAfter is the fallback for
+// Config.UOPAccumulatingCTAAfter — see that field for why it is configurable.
+const DefaultUOPAccumulatingCTAAfter = 30 * time.Minute
+
+// UOPAccumulatingCTADelay resolves the configured value, applying the default
+// for the unset case. Callers use this rather than the field so the "0 means
+// default" rule lives in one place.
+func (c *Config) UOPAccumulatingCTADelay() time.Duration {
+	if c == nil || c.UOPAccumulatingCTAAfter == 0 {
+		return DefaultUOPAccumulatingCTAAfter
+	}
+	return c.UOPAccumulatingCTAAfter
 }
 
 // DemandConfig tunes demand-episode detection.

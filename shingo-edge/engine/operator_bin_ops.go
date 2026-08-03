@@ -91,7 +91,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	// outbound). The card stays clickable in stale views — server has to
 	// refuse rather than rely on the UI gate.
 	if e.coreClient.Available() {
-		bins, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+		bins, _, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
 		if len(bins) == 0 || !bins[0].Occupied {
 			return fmt.Errorf("no bin at node %s — request an empty bin first", node.Name)
 		}
@@ -300,7 +300,7 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	var clearedPayload string
 	var hadBin bool
 	if claim.Role == protocol.ClaimRoleConsume {
-		if bins, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName}); len(bins) > 0 && bins[0].Occupied {
+		if bins, _, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName}); len(bins) > 0 && bins[0].Occupied {
 			clearedPayload = bins[0].PayloadCode
 			hadBin = true
 		}
@@ -365,7 +365,7 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	if claim.Role != protocol.ClaimRoleConsume {
 		return fmt.Errorf("node %s is not a consume node", node.Name)
 	}
-	bins, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+	bins, _, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
 	if len(bins) == 0 || !bins[0].Occupied {
 		return fmt.Errorf("node %s has no bin to push", node.Name)
 	}

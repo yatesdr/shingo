@@ -34,7 +34,13 @@ type simulatedOrder struct {
 	state         string // vendor state: CREATED, RUNNING, WAITING, FINISHED, FAILED, STOPPED
 	priority      int
 	complete      bool // false for staged orders until ReleaseOrder
-	blocks        []simulatedBlock
+	// robotGroup is the SEER robot-dispatch group the order asked for — which
+	// robots are eligible to take it. The simulator does not act on it (it has
+	// one notional robot), but it is recorded because it is a CAPABILITY: the
+	// wrong group is a 600 kg robot sent for a 1500 kg load. Recorded so that
+	// can be asserted rather than assumed. Read via RobotGroupFor.
+	robotGroup string
+	blocks     []simulatedBlock
 	// terminalAt is when the order first entered a terminal state
 	// (FINISHED/STOPPED/FAILED); zero until then. The driver's eviction
 	// sweep (T2.3) deletes terminal orders older than a retention window.
@@ -156,6 +162,7 @@ func (s *SimulatorBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.Tran
 		state:         "CREATED",
 		priority:      req.Priority,
 		complete:      req.Complete,
+		robotGroup:    req.RobotGroup,
 	}
 	for _, b := range req.Blocks {
 		order.blocks = append(order.blocks, simulatedBlock{
@@ -238,6 +245,21 @@ func (s *SimulatorBackend) Ping() error {
 
 // Name returns "Simulator".
 func (s *SimulatorBackend) Name() string { return "Simulator" }
+
+// RobotGroupFor returns the robot-dispatch group an order was created with, and
+// whether the order is known. Test-facing: the simulator has one notional robot
+// and does not act on the group, so this exists to make the group ASSERTABLE —
+// it is a capability constraint (which robots may take the job), and the whole
+// point of getting it right is invisible without a way to read it back.
+func (s *SimulatorBackend) RobotGroupFor(vendorOrderID string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o, ok := s.orders[vendorOrderID]
+	if !ok {
+		return "", false
+	}
+	return o.robotGroup, true
+}
 
 // MapState translates vendor states to dispatch status strings.
 // This replicates the same mapping as the SEER RDS adapter's MapState.

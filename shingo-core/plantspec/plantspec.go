@@ -48,6 +48,16 @@ type Payload struct {
 	Code        string `yaml:"code"`
 	UOPCapacity int64  `yaml:"uop_capacity"`
 	BinType     string `yaml:"bin_type"`
+	// RobotGroup names the SEER robot-dispatch group allowed to carry this part
+	// (→ payloads.robot_group → rds.SetOrderRequest.Group). Empty = the vendor's
+	// default assignment, i.e. any robot.
+	//
+	// It is a CAPABILITY, not a label: a heavy part restricted to a 1500 kg group
+	// must not be handed to a 600 kg robot. The spec could not express it until
+	// now, which meant no simulated plant could exercise group selection at all —
+	// so the one thing that goes wrong when an order carries the wrong payload was
+	// the one thing the sim could not show.
+	RobotGroup string `yaml:"robot_group,omitempty"`
 }
 
 // Zone is an NGRP storage zone holding lanes. RetrieveAlgorithm (e.g. FIFO) and

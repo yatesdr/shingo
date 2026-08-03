@@ -456,7 +456,7 @@ func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
 	// o.payload_code === code).
 	loadedPayloadCode := ""
 	if e.coreClient != nil && e.coreClient.Available() {
-		if bins, _ := e.coreClient.FetchNodeBins([]string{ctx.node.CoreNodeName}); len(bins) > 0 {
+		if bins, _, _ := e.coreClient.FetchNodeBins([]string{ctx.node.CoreNodeName}); len(bins) > 0 {
 			loadedPayloadCode = bins[0].PayloadCode
 		}
 	}

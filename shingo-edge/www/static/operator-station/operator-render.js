@@ -1136,10 +1136,22 @@ function createNodeButton(entry) {
         btn.appendChild(chip);
     }
 
+    // UOP-accumulating chip. The sentence carries its own severity: while a swap
+    // is in progress it reads as a statement of what is happening, and only once
+    // the wait passes the configured limit does it ask for anything ("Record
+    // Count"). The chip follows — grey-blue and factual until then, amber after.
+    // It used to be amber "⚠ NOT BOUND" from the first second, which is an alarm
+    // face on the normal case, and an alarm that is usually nothing gets ignored
+    // when it is something.
     if (entry.stranded_alarm) {
-        const alarm = el('span', { className: 'os-node-alarm', textContent: '⚠ NOT BOUND' });
+        const asking = entry.stranded_alarm.indexOf('Record Count') !== -1;
+        const alarm = el('span', {
+            className: 'os-node-alarm',
+            textContent: asking ? '⚠ NOT BOUND' : 'UOP ACCUM',
+        });
         alarm.style.cssText = 'position:absolute;bottom:4px;left:4px;font-size:11px;' +
-            'font-weight:700;color:#1a1204;background:#ffd98a;padding:2px 6px;border-radius:4px';
+            'font-weight:700;padding:2px 6px;border-radius:4px;' +
+            (asking ? 'color:#1a1204;background:#ffd98a' : 'color:#dbe7f5;background:#2b3a4d');
         alarm.title = entry.stranded_alarm;
         btn.appendChild(alarm);
     }

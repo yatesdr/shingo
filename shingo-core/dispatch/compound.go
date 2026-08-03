@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/google/uuid"
+
 	"shingo/protocol"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -65,7 +67,26 @@ func (d *Dispatcher) CreateCompoundChildrenOnly(parentOrder *orders.Order, plan 
 		}
 
 		child := &orders.Order{
-			EdgeUUID:      fmt.Sprintf("%s-step-%d", parentOrder.EdgeUUID, step.Sequence),
+			// A minted identity, like every other order. It used to be BUILT from
+			// the parent's — "<parent-uuid>-step-<sequence>" — which is a
+			// structural name, not an identity, and re-planning a parent's steps
+			// produced the same string again. That is a duplicate in the column
+			// migration v71 makes unique, and the two facts cannot both hold: a
+			// plant that has run reshuffling cannot apply the index, and a plant
+			// that applied it stops reshuffling at the next re-plan.
+			//
+			// Nothing is lost, because nothing read the name. Children are found
+			// by parent_order_id and ordered by sequence (ListChildOrders /
+			// GetNextChildOrder); both facts are columns on this struct, four
+			// lines down. The only Sscanf against an edge_uuid anywhere is the
+			// restore parent's, which is a different format and keeps its
+			// exemption. Verified by grep before this changed: one construction
+			// site (here) and zero readers.
+			//
+			// The fleet still gets it as ExternalID, where it is an opaque
+			// correlation token — a real UUID suits that better than a name that
+			// looks parseable.
+			EdgeUUID:      uuid.New().String(),
 			StationID:     parentOrder.StationID,
 			OrderType:     OrderTypeMove,
 			Status:        StatusPending,

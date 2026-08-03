@@ -141,7 +141,18 @@ CREATE TABLE IF NOT EXISTS orders (
 -- This matched neither plant until migration 71. The plants ran the unique form
 -- from a hand-applied index; this constant declared the plain one, so a fresh
 -- install built a database the plants did not match.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid) WHERE edge_uuid <> '';
+--
+-- The restore- exemption (migration 73) is TEMPORARY and has a stated expiry.
+-- "restore-<parentID>-<binID>" is the synthetic restore parent's edge_uuid, and
+-- it is not decoration: that parent sets no parent_order_id, so the string is
+-- parsed back to rebuild the link to its complex parent. It cannot be minted
+-- without deleting the link, and a re-restore of the same parent and bin
+-- legitimately repeats it. When refactor-phase1 deletes the put-back subsystem
+-- the format goes with it -- drop the exemption then and restore the plain
+-- predicate. (Compound children USED to need an exemption too; they now mint a
+-- real UUID instead, which is why only one prefix is listed here.)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid)
+    WHERE edge_uuid <> '' AND edge_uuid NOT LIKE 'restore-%';
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_vendor ON orders(vendor_order_id);
 CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node);

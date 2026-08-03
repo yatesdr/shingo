@@ -1,6 +1,7 @@
 package fulfillment
 
 import (
+	"database/sql"
 	"errors"
 
 	"shingo/protocol"
@@ -123,13 +124,20 @@ func (f *fakeStore) ListChildNodes(parentID int64) ([]*nodes.Node, error) {
 	return f.childrenByParent[parentID], nil
 }
 
+// GetNodeByDotName mirrors the real store, including HOW it says "no such node":
+// sql.ErrNoRows, because the real one bottoms out in row.Scan. That is not a
+// detail — the capacity gate now tells a missing node (pass through, let dispatch
+// produce the real error) from a failed read (fail closed), and it tells them
+// apart with errors.Is(err, sql.ErrNoRows). A fake returning a generic error here
+// makes every not-found look like a database failure, which is a green suite
+// disagreeing with production about a decision that routes real orders.
 func (f *fakeStore) GetNodeByDotName(name string) (*nodes.Node, error) {
 	if f.getNodeByDotNameFn != nil {
 		return f.getNodeByDotNameFn(name)
 	}
 	n, ok := f.nodesByDot[name]
 	if !ok {
-		return nil, errors.New("node not found")
+		return nil, sql.ErrNoRows
 	}
 	return n, nil
 }

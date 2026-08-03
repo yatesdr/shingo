@@ -55,6 +55,7 @@ sim.seed = 0
 sim.speed = 0
 station_uid = 
 timezone = 
+uop_accumulating_cta_after = 0s
 warlink.enabled = true
 warlink.host = localhost
 warlink.mode = sse
@@ -75,3 +76,4 @@ demand.hysteresis_margin(reorder_point=300) = 30
 demand.default_hysteresis_percent = 10
 demand.min_hysteresis_uop = 1
 loaders_multi_window.resolved = true
+uop_accumulating_cta_after.resolved = 30m0s

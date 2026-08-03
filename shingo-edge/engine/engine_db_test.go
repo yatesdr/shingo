@@ -21,6 +21,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -441,8 +442,12 @@ func TestCoreClient_NoBaseURL_GracefulDegrade(t *testing.T) {
 	if ch, err := c.FetchNodeChildren("NGRP", false); ch != nil || err != nil {
 		t.Errorf("FetchNodeChildren with no base-url = (%v,%v), want (nil,nil)", ch, err)
 	}
-	if bins, err := c.FetchNodeBins([]string{"N1"}); bins != nil || err != nil {
-		t.Errorf("FetchNodeBins with no base-url = (%v,%v), want (nil,nil)", bins, err)
+	// FetchNodeBins is the exception, deliberately: it says whether anyone
+	// answered. With no Core to ask, the answer is "we do not know", which is a
+	// different fact from "there is no bin there" and the whole point of the
+	// three-state contract.
+	if bins, reachable, err := c.FetchNodeBins([]string{"N1"}); bins != nil || reachable || !errors.Is(err, ErrCoreNotConfigured) {
+		t.Errorf("FetchNodeBins with no base-url = (%v,%v,%v), want (nil,false,ErrCoreNotConfigured)", bins, reachable, err)
 	}
 
 	// Writes should return errors when Core isn't configured.
@@ -678,40 +683,79 @@ func TestCoreClient_FetchNodeBins(t *testing.T) {
 	defer srv.Close()
 
 	c := NewCoreClient(srv.URL)
-	bins, err := c.FetchNodeBins([]string{"N1", "N2"})
+	bins, reachable, err := c.FetchNodeBins([]string{"N1", "N2"})
 	if err != nil {
 		t.Fatalf("FetchNodeBins: %v", err)
+	}
+	if !reachable {
+		t.Error("reachable = false on a successful read")
 	}
 	if len(bins) != 2 || bins[0].BinLabel != "B1" {
 		t.Errorf("bins = %+v", bins)
 	}
 
-	// Empty slice short-circuits.
-	if bins, err := c.FetchNodeBins(nil); bins != nil || err != nil {
-		t.Errorf("empty nodes list should short-circuit, got (%v,%v)", bins, err)
+	// Asking about nothing is a complete answer, not a failed read.
+	if bins, reachable, err := c.FetchNodeBins(nil); bins != nil || !reachable || err != nil {
+		t.Errorf("empty nodes list should short-circuit as answered, got (%v,%v,%v)", bins, reachable, err)
 	}
 }
 
+// TestCoreClient_FetchNodeBins_ErrorPaths pins that each way of not getting an
+// answer says so, and says which. These three arms used to be indistinguishable
+// from "no bin is there" — the collapse behind the 2026-07-31 over-ordering
+// incident.
 func TestCoreClient_FetchNodeBins_ErrorPaths(t *testing.T) {
 	t.Parallel()
-	// 500 → graceful (nil,nil).
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	if bins, err := c.FetchNodeBins([]string{"N1"}); bins != nil || err != nil {
-		t.Errorf("500 should graceful-degrade, got (%v,%v)", bins, err)
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		want    error
+		outcome string
+	}{
+		{
+			name:    "non_200",
+			handler: func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "boom", http.StatusInternalServerError) },
+			want:    ErrCoreHTTPStatus,
+			outcome: "http_error",
+		},
+		{
+			name:    "undecodable_body",
+			handler: func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("not-json")) },
+			want:    ErrCoreUndecodable,
+			outcome: "decode_err",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+			bins, reachable, err := NewCoreClient(srv.URL).FetchNodeBins([]string{"N1"})
+			if bins != nil {
+				t.Errorf("bins = %+v, want nil", bins)
+			}
+			if reachable {
+				t.Error("reachable = true; the read did not produce an answer, and a caller told otherwise will act on an absence it never verified")
+			}
+			if !errors.Is(err, tc.want) {
+				t.Errorf("err = %v, want one matching %v", err, tc.want)
+			}
+			if got := OccupancyOutcome(reachable, err); got != tc.outcome {
+				t.Errorf("OccupancyOutcome = %q, want %q — the decision log names this", got, tc.outcome)
+			}
+		})
 	}
 
-	// Bad JSON → graceful (nil,nil).
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("not-json"))
-	}))
-	defer srv2.Close()
-	c2 := NewCoreClient(srv2.URL)
-	if bins, err := c2.FetchNodeBins([]string{"N1"}); bins != nil || err != nil {
-		t.Errorf("bad-json should graceful-degrade, got (%v,%v)", bins, err)
+	// Transport failure: the server is gone before the request is made.
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+	bins, reachable, err := NewCoreClient(deadURL).FetchNodeBins([]string{"N1"})
+	if bins != nil || reachable || !errors.Is(err, ErrCoreUnreachable) {
+		t.Errorf("transport error = (%v,%v,%v), want (nil,false,ErrCoreUnreachable)", bins, reachable, err)
+	}
+	if got := OccupancyOutcome(reachable, err); got != "unreachable" {
+		t.Errorf("OccupancyOutcome = %q, want %q", got, "unreachable")
 	}
 }
 

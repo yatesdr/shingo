@@ -80,7 +80,7 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 	}
 
 	allNodes := append([]string{node.CoreNodeName}, bufferNodes...)
-	bins, err := e.coreClient.FetchNodeBins(allNodes)
+	bins, _, err := e.coreClient.FetchNodeBins(allNodes)
 	if err != nil {
 		return fmt.Errorf("clear loader home: fetch bin states: %w", err)
 	}
@@ -238,7 +238,7 @@ func (e *Engine) EnrichHomeBufferPartials(nodes []domain.StationNodeView) {
 		return
 	}
 
-	bins, err := e.coreClient.FetchNodeBins(allBuffers)
+	bins, _, err := e.coreClient.FetchNodeBins(allBuffers)
 	if err != nil {
 		return
 	}

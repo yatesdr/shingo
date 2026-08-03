@@ -197,11 +197,20 @@ function handleOrderFailed(data) {
 
 function handleUopStranded(data) {
     scheduleRefresh();
-    // One sticky toast per alarm window (Core emits once per window). The detail
-    // is the full front-door instruction, rendered verbatim.
+    // One toast per window (the engine emits once per window). The detail is the
+    // operator sentence, rendered verbatim.
+    //
+    // Severity follows needs_action rather than being fixed at error. Under the
+    // configured wait this is a swap in progress — a normal, temporary state —
+    // and a sticky red toast for it is how operators learned the notice means
+    // nothing. Past the wait it is a real ask and keeps the sticky error.
     const msg = data && (data.detail || data.Detail);
-    if (msg) {
+    if (!msg) return;
+    const needsAction = !!(data && (data.needs_action || data.NeedsAction));
+    if (needsAction) {
         showToast(msg, 'error', { sticky: true });
+    } else {
+        showToast(msg, 'info');
     }
 }
 

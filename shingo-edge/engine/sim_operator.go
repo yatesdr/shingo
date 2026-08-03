@@ -428,7 +428,7 @@ func (op *simOperator) clearNegativeBins() {
 	if len(op.marketSlots) == 0 {
 		return
 	}
-	bins, err := op.e.coreClient.FetchNodeBins(op.marketSlots)
+	bins, _, err := op.e.coreClient.FetchNodeBins(op.marketSlots)
 	if err != nil || len(bins) == 0 {
 		return
 	}

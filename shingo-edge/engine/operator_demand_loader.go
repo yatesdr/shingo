@@ -33,8 +33,7 @@ const manualSwapWindowSlots = 1
 
 // HandleLoopBelowThreshold is the Core→Edge LoopBelowThresholdSignal
 // receiver. Operates in UOP space — the native unit of the threshold
-// configuration — instead of going through refillLoaderForPayload's
-// bin-count math:
+// configuration — rather than in bin counts:
 //
 //	projectedUOP := sig.CurrentUOP + inFlight * payload.UOPCapacity
 //	needed       := ceil((threshold - projectedUOP) / capacity)
@@ -45,11 +44,13 @@ const manualSwapWindowSlots = 1
 // loop is on track and we skip. Otherwise we fire just enough L1s to
 // close the gap, rounding up to whole bins.
 //
-// Distinct from the legacy DemandSignal path (MaybeCreateLoaderEmptyIn
-// → refillLoaderForPayload), which keeps the magic-2 bin floor for
-// loaders that haven't opted into UOP-threshold replenishment. The
-// withLoaderBudget seam is the dedup contract between the
-// two paths.
+// There is no second path any more. This used to say it was "distinct from the
+// legacy DemandSignal path, which keeps the magic-2 bin floor", and called the
+// seam "the dedup contract between the two paths" — while the block twenty lines
+// above it in this same file already recorded that path as retired. Two comments
+// in one file disagreeing about how many ways a loader gets stocked is worse
+// than either being wrong alone. One way: the threshold signal and the operator
+// push, both through withLoaderBudget.
 //
 // Capacity comes from payload_catalog.uop_capacity (synced from Core),
 // not from claim.UOPCapacity — supermarket-side loaders carry
@@ -59,9 +60,14 @@ const manualSwapWindowSlots = 1
 // a loud log; falling back to bin-count math would re-introduce the
 // magic-floor over-fire this path exists to avoid.
 //
-// Reason carries either "below_threshold" or "warm_up_startup_sweep" —
-// logged for diagnostics but behaves identically. Per-binding warm-up
-// cap is enforced at Core; Edge just responds to each signal.
+// Reason is logged for diagnostics and does not change what happens here — every
+// value behaves identically. Core sends four: "below_threshold" (the ordinary
+// crossing), "warm_up_startup_sweep" (the boot sweep), "lineside_report" (the
+// shadow monitor re-evaluating on an Edge lineside report), and
+// "manual_swap_recheck". The list is worth keeping accurate even though nothing
+// branches on it, because it is what tells a reader what actually reaches this
+// function — it named only the first two for two of those four's lifetimes.
+// Per-binding warm-up cap is enforced at Core; Edge just responds to each signal.
 func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal) {
 	if sig == nil || sig.PayloadCode == "" {
 		return
@@ -366,20 +372,40 @@ func (e *Engine) withLoaderBudget(loader *domain.Loader, payload domain.PayloadC
 	// order that just delivered its bin isn't double-counted.
 	//
 	// Occupancy is Core-authoritative (FetchNodeBins), which marks a window Occupied
-	// for ANY resident bin, including a 0-UOP empty. On Core-unreachable it returns nil
-	// and we fall back to the order-only count — no worse than before, and Core's
-	// dropoff guard still parks a redundant empty. Kept inside the loader mutex so the
-	// occupancy read is part of the same atomic count→fire snapshot as the orders.
+	// for ANY resident bin, including a 0-UOP empty. Kept inside the loader mutex so
+	// the occupancy read is part of the same atomic count→fire snapshot as the orders.
+	//
+	// `occupancy` records what the read actually did. It is the field that was
+	// missing on 2026-07-31: the log said resident=0, which reads as "the windows
+	// are empty" and in fact meant "nobody answered".
+	//
+	// AND IF NOBODY ANSWERED, NOTHING FIRES. This seam's whole job is to not put a
+	// second carrier on a window that already has one, and it cannot do that job
+	// without knowing what is on the windows. Firing anyway was never a decision —
+	// it was the old read being unable to say it had failed. Core re-signals within
+	// about a minute, so the cost of waiting is one cycle; the cost of guessing is a
+	// robot delivering an empty to an occupied window, which is what happened.
+	//
+	// A loader with no Core configured is the exception and keeps firing: there is
+	// nothing to be out of touch WITH, the deployment simply has no Core telemetry,
+	// and refusing there would take the seam permanently offline rather than pause
+	// it. That arm has its own characterization test.
 	resident := 0
+	occupancy := "not_configured"
 	if e.coreClient.Available() {
-		if residentBins, _ := e.coreClient.FetchNodeBins(deliveryNodes); residentBins != nil {
-			for i := range residentBins {
-				nb := residentBins[i]
-				if nb.Occupied && perNode[nb.NodeName] == 0 {
-					inFlightTotal++
-					perNode[nb.NodeName] = 1
-					resident++
-				}
+		residentBins, reachable, rerr := e.coreClient.FetchNodeBins(deliveryNodes)
+		occupancy = OccupancyOutcome(reachable, rerr)
+		if !reachable {
+			e.logFn("loader_budget loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=0 occupancy=%s budget=%d to_fire=0 created=0 err=%v",
+				loaderID, pay, want, inFlightPayload, inFlightTotal, occupancy, budget, rerr)
+			return 0, nil
+		}
+		for i := range residentBins {
+			nb := residentBins[i]
+			if nb.Occupied && perNode[nb.NodeName] == 0 {
+				inFlightTotal++
+				perNode[nb.NodeName] = 1
+				resident++
 			}
 		}
 	}
@@ -388,8 +414,8 @@ func (e *Engine) withLoaderBudget(loader *domain.Loader, payload domain.PayloadC
 		toFire = headroom
 	}
 	if toFire <= 0 {
-		e.logFn("loader_budget loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d budget=%d to_fire=0 created=0",
-			loaderID, pay, want, inFlightPayload, inFlightTotal, resident, budget)
+		e.logFn("loader_budget loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d occupancy=%s budget=%d to_fire=0 created=0",
+			loaderID, pay, want, inFlightPayload, inFlightTotal, resident, occupancy, budget)
 		return 0, nil
 	}
 	// Assign each new empty to a FREE window (none in flight) — one physical bin
@@ -407,8 +433,8 @@ func (e *Engine) withLoaderBudget(loader *domain.Loader, payload domain.PayloadC
 	created, ferr := fire(targets)
 	// Structured decision record — one machine-parseable line per reservation so an
 	// over-ordering incident is reconstructable from logs alone (the SLN_002 bar).
-	e.logFn("loader_budget loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d budget=%d to_fire=%d targets=%v created=%d err=%v",
-		loaderID, pay, want, inFlightPayload, inFlightTotal, resident, budget, toFire, targets, created, ferr)
+	e.logFn("loader_budget loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d occupancy=%s budget=%d to_fire=%d targets=%v created=%d err=%v",
+		loaderID, pay, want, inFlightPayload, inFlightTotal, resident, occupancy, budget, toFire, targets, created, ferr)
 	return created, ferr
 }
 

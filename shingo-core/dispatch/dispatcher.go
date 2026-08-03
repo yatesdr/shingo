@@ -211,6 +211,67 @@ func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope
 	_ = vendorOrderID
 }
 
+// payloadForDispatch answers what the robot is actually being asked to carry.
+//
+// Two fleet-facing decisions are made from it, both immediately below: the robot
+// GROUP — which robots are eligible to take the job — and the advanced load
+// sequence. A move order carried no payload at all. Nothing wrote one: the
+// operator is not asked, and the planner resolves the source bin without writing
+// its payload back. So every move in the plant has been dispatched against the
+// vendor's default robot group.
+//
+// That is a capability question, not a label. A payload that needs a 1500 kg
+// robot could be handed to a 600 kg one, and nothing in the system would say so.
+//
+// When the order does not name a payload, the BIN does. By the time this runs
+// the order names its bin — the fulfillment scanner writes bin_id at claim time
+// immediately before dispatching, and the bin-move door stamps it at creation —
+// so this reads the carrier that is actually about to be picked up. That is why
+// this sits here and not in the planner: the planner's resolved bin is advisory
+// (its own doc says so; the scanner's re-find is authoritative), and the
+// bin-move door never goes through the planner at all. This is the one place
+// every simple-transport door passes through, on the way to the only two reads
+// that care.
+//
+// AN EMPTY-INTENT ORDER IS DELIBERATELY EXCLUDED. An empty carrier is generic on
+// purpose — Edge ships a blank code so the bin is not pre-tagged and the real
+// payload binds at load time (lookupPayloadMeta in shingo-edge documents the same
+// rule from the other side). Stamping a leftover code off a carrier that is
+// supposed to be empty would re-tag it, and the tag would then pick the robot.
+//
+// The value is written back to the order, best-effort, so the row says what
+// moved — the orders table is where "how much of payload X moves" gets answered.
+// A failed write still dispatches with the right group; the reverse would be the
+// bad trade.
+func (d *Dispatcher) payloadForDispatch(order *orders.Order) string {
+	if order.PayloadCode != "" || order.SourceIntent == SourceIntentEmpty {
+		return order.PayloadCode
+	}
+	// Read the bin id fresh. The scanner writes it moments before calling here,
+	// and after the snapshot the caller is holding — so the copy in hand is
+	// routinely nil when the database already knows the answer.
+	binID := order.BinID
+	if fresh, err := d.db.GetOrder(order.ID); err == nil && fresh != nil && fresh.BinID != nil {
+		binID = fresh.BinID
+	}
+	if binID == nil {
+		return order.PayloadCode
+	}
+	bin, err := d.db.GetBin(*binID)
+	if err != nil || bin == nil || bin.PayloadCode == "" {
+		return order.PayloadCode
+	}
+	if uerr := d.db.UpdateOrderPayloadCode(order.ID, bin.PayloadCode); uerr != nil {
+		d.dbg("dispatch: recording payload %q on order %d failed: %v (dispatching with it anyway)",
+			bin.PayloadCode, order.ID, uerr)
+	} else {
+		order.PayloadCode = bin.PayloadCode
+	}
+	d.dbg("dispatch: order %d carries %s (read from bin %s) — robot group and load sequence follow it",
+		order.ID, bin.PayloadCode, bin.Label)
+	return bin.PayloadCode
+}
+
 // robotGroupForPayload resolves the SEER robot-dispatch group configured on the
 // order's payload template (→ rds.SetOrderRequest.Group). An empty code, an
 // unknown payload, or a lookup error degrades to "" (the vendor's default robot
@@ -267,21 +328,30 @@ func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
 func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 
+	payloadCode := d.payloadForDispatch(order)
+
 	plan := buildTransportPlan(sourceNode.Name, destNode.Name, order.SourceIntent == SourceIntentEmpty)
 	// F4c: expand the load leg into the payload's configured binTask sequence
 	// (nil for an unconfigured payload → byte-identical single JackLoad block).
-	blocks := stepsToBlocks(vendorOrderID, plan, 0, d.loadSequenceForPayload(order.PayloadCode))
+	blocks := stepsToBlocks(vendorOrderID, plan, 0, d.loadSequenceForPayload(payloadCode))
 	req := fleet.CreateOrderRequest{
 		OrderID:    vendorOrderID,
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
 		Priority:   order.Priority,
-		RobotGroup: d.robotGroupForPayload(order.PayloadCode),
+		RobotGroup: d.robotGroupForPayload(payloadCode),
 		Complete:   true, // no-wait: the fleet completes the order once its 2 blocks finish
 	}
 
-	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s to=%s priority=%d",
-		order.ID, vendorOrderID, sourceNode.Name, destNode.Name, order.Priority)
+	// payload= and robot_group= are on this line because together they are the
+	// capability decision: which part the job carries, and therefore which robots
+	// may take it. A blank group is the vendor default — any robot — which is the
+	// right answer for an unrestricted part and the wrong one for a heavy part
+	// whose payload never made it onto the order. Distinguishable only if both
+	// are recorded.
+	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s to=%s priority=%d payload=%q robot_group=%q",
+		order.ID, vendorOrderID, sourceNode.Name, destNode.Name, order.Priority,
+		payloadCode, req.RobotGroup)
 
 	// Last look before the irreversible step. `order` is a snapshot that may be
 	// many DB calls old by now, and CreateOrder physically commits a robot — one

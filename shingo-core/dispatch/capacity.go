@@ -28,6 +28,9 @@
 package dispatch
 
 import (
+	"database/sql"
+	"errors"
+
 	"shingo/protocol"
 	"shingocore/store/nodes"
 )
@@ -89,26 +92,29 @@ type CapacityBlock struct {
 //     gating is handled inside the lane-aware planners (depth/buried
 //     reshuffle); _TRANSIT is never a real dropoff.
 //
-// Lookup failure → not blocked. The stated reason is forward progress: a
-// typoed node name should fail at the actual dispatch with a clearer error
-// rather than silently queue forever.
+// Node not found → not blocked, on purpose. A typoed node name should fail at
+// the actual dispatch with a clearer error than "waiting for a slot at a place
+// that does not exist", which would queue forever on a reason that can never
+// clear.
 //
-// Be aware this arm is SILENT. There is no error return in the signature and
-// nothing is logged here, so "the node lookup failed" is indistinguishable at
-// the call site from "the node has room" — the two conditions that most need
-// telling apart. The arm also folds err != nil together with node == nil,
-// which are different facts. Splitting them, and giving the error case its own
-// capacity-check-failed cause, is tracked as a separate change.
+// Node lookup ERRORED → blocked, capacity-check-failed. That is a different
+// fact and it used to be folded in with the one above, so a database blip on
+// this read passed the gate while the identical blip on either of the two reads
+// below fails it closed. The three reads now agree: if occupancy cannot be read,
+// do not risk the drop.
 func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int64) (blocked bool, block CapacityBlock) {
 	if deliveryNode == "" {
 		return false, CapacityBlock{}
 	}
-	node, err := db.GetNodeByDotName(deliveryNode)
-	if err != nil || node == nil {
-		// Treat lookup failure as "not blocked" — see doc above.
-		return false, CapacityBlock{}
-	}
 	params := QueueParams{Destination: deliveryNode}
+	node, err := db.GetNodeByDotName(deliveryNode)
+	switch {
+	case errors.Is(err, sql.ErrNoRows), err == nil && node == nil:
+		// No such node — let dispatch produce the real error.
+		return false, CapacityBlock{}
+	case err != nil:
+		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
+	}
 	if node.IsSynthetic {
 		if node.NodeTypeCode == protocol.NodeClassNGRP {
 			return checkNGRPCapacity(db, node, deliveryNode, excludeOrderID)
@@ -163,25 +169,51 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 //
 // excludeOrderID propagates to the per-child in-flight count so an
 // order checking its own NGRP destination doesn't self-collide.
+//
+// A CHILD THAT CANNOT BE READ IS NOT A FREE CHILD. All three reads in here used
+// to fail open, and the two per-child ones failed open in the worst direction:
+// `err == nil && count > 0` means a read error skips the `continue`, and the
+// child falls through to be counted FREE — the answer that says "there is room",
+// on no evidence. The outer gate's two reads have failed closed since they were
+// written; these are the same reads one level down.
+//
+// "Cannot see" and "full" are kept apart. A group whose children could not be
+// read reports capacity-check-failed, not ngrp-full: both queue the order, but
+// only one of them sends an operator to go clear a group that may be empty.
 func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, excludeOrderID int64) (blocked bool, block CapacityBlock) {
+	params := QueueParams{Destination: ngrpName}
 	children, err := db.ListChildNodes(ngrp.ID)
-	if err != nil || len(children) == 0 {
-		// Empty or unreadable NGRP — treat as not blocked. The
-		// resolver will return a clearer failure if it really has no
-		// candidate.
+	if err != nil {
+		// The child list itself is unreadable, so nothing below can be judged.
+		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
+	}
+	if len(children) == 0 {
+		// A genuinely empty group — pass through so the resolver's own failure
+		// surfaces rather than being masked as a queue. Unchanged.
 		return false, CapacityBlock{}
 	}
 	enabledCount := 0
 	freeCount := 0
+	unreadable := 0
 	for _, child := range children {
 		if !child.Enabled || child.IsSynthetic {
 			continue
 		}
 		enabledCount++
-		if c, err := db.CountBinsByNode(child.ID); err == nil && c > 0 {
+		c, cErr := db.CountBinsByNode(child.ID)
+		if cErr != nil {
+			unreadable++
+			continue // not counted free: we did not learn that it is
+		}
+		if c > 0 {
 			continue
 		}
-		if inflight, err := db.CountInFlightOrdersByDeliveryNodeExcluding(child.Name, excludeOrderID); err == nil && inflight > 0 {
+		inflight, iErr := db.CountInFlightOrdersByDeliveryNodeExcluding(child.Name, excludeOrderID)
+		if iErr != nil {
+			unreadable++
+			continue
+		}
+		if inflight > 0 {
 			continue
 		}
 		freeCount++
@@ -192,8 +224,13 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 		// rather than masking it as a queue.
 		return false, CapacityBlock{}
 	}
-	if freeCount == 0 {
-		return true, CapacityBlock{Cause: "ngrp-full", Params: QueueParams{Destination: ngrpName}}
+	if freeCount > 0 {
+		return false, CapacityBlock{}
 	}
-	return false, CapacityBlock{}
+	if unreadable > 0 {
+		// No free child was FOUND, but at least one could not be looked at, so
+		// "full" is not something this run is entitled to say.
+		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
+	}
+	return true, CapacityBlock{Cause: "ngrp-full", Params: params}
 }

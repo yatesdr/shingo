@@ -1,7 +1,9 @@
 package www
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -18,6 +20,22 @@ import (
 // apiTelemetryNodeBins returns bin state for requested core nodes.
 // GET /api/telemetry/node-bins?nodes=NODE-A,NODE-B
 // Returns a JSON array of {node_name, bin_label, payload_code, uop_remaining, occupied}.
+//
+// A FAILED READ IS NOT AN EMPTY NODE. This used to fold "the query errored"
+// together with "there are no bins here" and answer 200 with occupied=false for
+// both. That row is the sentence Edge's reservation seam reads to decide whether
+// a loader window is free, so a database hiccup here manufactured a free window
+// and an empty got ordered onto an occupied one — the 2026-07-31 Springfield
+// over-ordering incident, from the other end of the wire.
+//
+// Edge's own read was fixed to distinguish "no answer" from "no bin", but that
+// only covers the ways Edge can tell: transport failure, a non-200, an
+// undecodable body. It cannot see through a 200 that says occupied=false. So the
+// error arms answer 500, which Edge classifies as unreachable and holds on.
+//
+// The whole request fails rather than the one node, deliberately: a caller
+// asking about five windows and getting four honest rows plus one invented one
+// has no way to know which is which.
 func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) {
 	nodesParam := r.URL.Query().Get("nodes")
 	if nodesParam == "" {
@@ -54,12 +72,23 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		}
 		entry := nodeBinInfo{NodeName: name}
 		node, err := nodes.GetByDotName(name)
-		if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// Core does not know this node, which is itself an answer: there is
+			// no bin at a place that does not exist. Edge's BinAtLineside
+			// documents reading it that way.
 			result = append(result, entry)
 			continue
+		case err != nil:
+			h.jsonError(w, fmt.Sprintf("node-bins: reading node %q failed: %v", name, err), http.StatusInternalServerError)
+			return
 		}
 		bins, err := nodes.ListBinsByNode(node.ID)
-		if err != nil || len(bins) == 0 {
+		if err != nil {
+			h.jsonError(w, fmt.Sprintf("node-bins: reading bins at %q failed: %v", name, err), http.StatusInternalServerError)
+			return
+		}
+		if len(bins) == 0 {
 			result = append(result, entry)
 			continue
 		}

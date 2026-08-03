@@ -41,8 +41,13 @@ func (db *DB) ClearNodeParent(nodeID int64) error { return nodes.ClearParent(db.
 // runs the seatbelted, owner-idempotent ClaimSlotTx (claimed_by IS NULL OR =order,
 // NOT EXISTS bins, EXISTS a pending slot reservation) then ConfirmSlot — both writes
 // commit together or neither, so a transient failure between them can never leave the
-// slot claimed with its reservation stuck pending. No production callers until commit
-// 4 wires it into confirmComplexPlan.
+// slot claimed with its reservation stuck pending.
+//
+// This is the sanctioned slot-claim path and forbidigo enforces it (.golangci.yml).
+// Live callers: the complex allocator (dispatch/allocator.go) and the storage
+// dropoff (dispatch/store_slot.go). The note here used to say there were no
+// production callers "until commit 4 wires it into confirmComplexPlan" — commit
+// 4 shipped, and it wired somewhere else.
 func (db *DB) ConfirmSlotClaim(nodeID, orderID int64) error {
 	tx, err := db.Begin()
 	if err != nil {

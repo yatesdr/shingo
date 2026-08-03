@@ -424,6 +424,109 @@ func TestCreateUnloaderFullIn_PayloadSpecificGuard(t *testing.T) {
 	}
 }
 
+// TestCreateUnloaderFullIn_HoldsWhenOccupancyReadFails pins that the consume
+// side inherits the fail-closed rule rather than needing its own copy of it.
+//
+// The U1 runs its own parked-full guard and then goes through withLoaderBudget,
+// which makes the same occupancy read. Only the second one refuses. A refusal in
+// the guard as well would be unreachable in practice — both reads hit the same
+// endpoint through the same client, so whatever fails one fails the other — and
+// this test is what says so: the U1 holds with the guard NOT refusing.
+//
+// It is also the guard against the shortcut. If someone later routes a U1 around
+// withLoaderBudget for speed, this goes red, and the missing refusal has to be
+// put back where the shortcut is.
+//
+// The not-configured arm is deliberately excluded and covered separately: an
+// Edge with no Core telemetry has nobody to be out of touch with, permanently,
+// and refusing there would take the path offline rather than pause it.
+func TestCreateUnloaderFullIn_HoldsWhenOccupancyReadFails(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T) *CoreClient
+		why   string
+	}{
+		{
+			name:  "transport_error",
+			setup: func(t *testing.T) *CoreClient { return NewCoreClient(deadCoreURL(t)) },
+			why:   "Core process gone",
+		},
+		{
+			name: "non_200",
+			setup: func(t *testing.T) *CoreClient {
+				var hits atomic.Int64
+				return NewCoreClient(nodeBinsBrokenStub(t, "status", &hits).URL)
+			},
+			why: "Core up but erroring",
+		},
+		{
+			name: "undecodable_body",
+			setup: func(t *testing.T) *CoreClient {
+				var hits atomic.Int64
+				return NewCoreClient(nodeBinsBrokenStub(t, "garbage", &hits).URL)
+			},
+			why: "200 with a truncated body",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			eng := testEngine(t, db)
+			mw := true
+			eng.cfg.LoadersMultiWindow = &mw
+			windows := []string{"ULD-RF-W1", "ULD-RF-W2"}
+			seedWindowNodes(t, db, "ULD-RF-PROC", windows)
+			eng.coreClient = tc.setup(t)
+
+			ws := make([]domain.Window, len(windows))
+			for i, w := range windows {
+				ws[i] = domain.Window{Node: domain.NodeID(w)}
+			}
+			unloader, err := domain.NewSharedWindowLoader("ULD-RF", "ULD-RF", domain.RoleConsume, domain.ReplenishmentOperator,
+				ws, []domain.PayloadCode{"PART-A"}, domain.WithInboundSource("FG-SUPER"))
+			if err != nil {
+				t.Fatalf("build unloader: %v", err)
+			}
+
+			eng.createUnloaderFullInViaSeam(unloader, "PART-A")
+
+			if got := inFlightFulls(t, db, windows); got != 0 {
+				t.Fatalf("occupancy read failed (%s): U1 created %d fulls, want 0 — "+
+					"nothing had checked whether a full was already parked on those windows",
+					tc.why, got)
+			}
+		})
+	}
+}
+
+// TestCreateUnloaderFullIn_FiresWhenCoreNotConfigured is the exception the rule
+// above needs: with no Core configured there is nothing to be out of touch
+// with, and holding would mean holding forever.
+func TestCreateUnloaderFullIn_FiresWhenCoreNotConfigured(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	mw := true
+	eng.cfg.LoadersMultiWindow = &mw
+	windows := []string{"ULD-NC-W1"}
+	seedWindowNodes(t, db, "ULD-NC-PROC", windows)
+	eng.coreClient = NewCoreClient("")
+
+	unloader, err := domain.NewSharedWindowLoader("ULD-NC", "ULD-NC", domain.RoleConsume, domain.ReplenishmentOperator,
+		[]domain.Window{{Node: domain.NodeID("ULD-NC-W1")}}, []domain.PayloadCode{"PART-A"},
+		domain.WithInboundSource("FG-SUPER"))
+	if err != nil {
+		t.Fatalf("build unloader: %v", err)
+	}
+
+	eng.createUnloaderFullInViaSeam(unloader, "PART-A")
+
+	if got := inFlightFulls(t, db, windows); got != 1 {
+		t.Fatalf("no Core configured: U1 created %d fulls, want 1 — an Edge with no Core telemetry must keep running, not stall", got)
+	}
+}
+
 // TestWithLoaderBudget_EmitDuringReservation_NoDeadlock pins the re-entrancy
 // rule. `fire` runs while the loader's mutex is held and CreateRetrieveOrder
 // fires EmitOrderCreated synchronously on the in-process bus; a subscriber that
@@ -635,23 +738,25 @@ func deadCoreURL(t *testing.T) string {
 	return u
 }
 
-// TestWithLoaderBudget_FiresWhenOccupancyReadFails pins TODAY'S behavior on the
-// three arms that produced the 2026-07-31 Springfield over-ordering incident:
-// Core is configured, the seam asks whether the window is occupied, and the read
-// fails. FetchNodeBins returns (nil, nil) on all three, so the seam cannot
-// distinguish "Core could not answer" from "no bin is resident" and fires an
-// empty into a window that already holds one.
+// TestWithLoaderBudget_HoldsWhenOccupancyReadFails covers the three arms that
+// produced the 2026-07-31 Springfield over-ordering incident: Core is
+// configured, the seam asks whether the window is occupied, and the read fails.
 //
-// These assertions are DELIBERATELY the buggy behavior. They exist so that the
-// fail-closed change is observed flipping them rather than merely asserted to.
-// When the three-state contract lands, each want becomes 0 and this test becomes
-// the regression guard for the fix.
+// It shipped asserting the opposite — that the seam fired anyway — written that
+// way on purpose so the fail-closed change would be seen flipping it rather than
+// merely claimed. It has now flipped, and this is the regression guard.
 //
-// What was and was not covered before this test: resident-occupied and
-// window-empty have had coverage since SMN_014, and the not-configured arm is
-// covered above. No test covered a CONFIGURED Core whose read fails, which is
-// the incident's own shape.
-func TestWithLoaderBudget_FiresWhenOccupancyReadFails(t *testing.T) {
+// The seam's whole job is to not put a second carrier on a window that already
+// holds one, and it cannot do that job without knowing what is on the windows.
+// Firing regardless was never a decision; it was FetchNodeBins being unable to
+// report that it had failed. Core re-signals within about a minute, so holding
+// costs one cycle.
+//
+// What was and was not covered before: resident-occupied and window-empty have
+// had coverage since SMN_014, and the not-configured arm is covered above — it
+// still fires, deliberately, since a deployment with no Core telemetry has
+// nobody to be out of touch with.
+func TestWithLoaderBudget_HoldsWhenOccupancyReadFails(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -718,10 +823,10 @@ func TestWithLoaderBudget_FiresWhenOccupancyReadFails(t *testing.T) {
 				t.Fatalf("withLoaderBudget: %v", err)
 			}
 			verifyAsked(t)
-			if created != 1 {
-				t.Fatalf("occupancy read failed (%s): seam created %d empties, want 1.\n"+
-					"This test pins the CURRENT fail-open, not desired behavior. If it now reports 0, "+
-					"the fail-closed fix has landed: change want to 0 and rewrite the doc comment.",
+			if created != 0 {
+				t.Fatalf("occupancy read failed (%s): seam created %d empties, want 0.\n"+
+					"The seam fired without knowing what is on the windows — this is the "+
+					"2026-07-31 over-ordering incident's exact shape.",
 					tc.why, created)
 			}
 		})

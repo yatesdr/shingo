@@ -13,23 +13,50 @@ import (
 // Core reports a full bin of the target payload already physically at the
 // unloader.
 //
-// It fails OPEN, and that is a defect rather than a design choice.
-// FetchNodeBins returns (nil, nil) on transport error, non-200, and decode
-// failure alike, so at the read below "Core could not answer" is
-// indistinguishable from "no bin is present" and the U1 fires either way.
-// This is the same fault that produced the 2026-07-31 loader over-ordering
-// incident, one file over. Until FetchNodeBins carries a three-state result,
-// a false return here is not evidence that the unloader floor is empty.
-func (e *Engine) unloaderHasUsableFullPresent(coreNodeName, payloadCode string) bool {
-	if !e.coreClient.Available() || coreNodeName == "" || payloadCode == "" {
-		return false
+// It answers with the read's outcome alongside the finding, because the
+// question has three answers and the second and third used to be the same one:
+//
+//   - (true,  "ok")            — Core says a matching full is standing there.
+//   - (false, "ok")            — Core says it is not.
+//   - (false, <a failure>)     — nobody answered, so neither of the above is known.
+//
+// FetchNodeBins used to collapse transport error, non-200 and decode failure
+// into "no rows", so a failed read looked like an empty floor and the U1 fired
+// anyway. That is the same fault that produced the 2026-07-31 loader
+// over-ordering incident, one file over.
+//
+// "not_configured" is deliberately a distinct outcome rather than a failure:
+// an Edge with no Core telemetry has nobody to ask, permanently, and a caller
+// that refused on it would be off forever rather than waiting a cycle.
+func (e *Engine) unloaderHasUsableFullPresent(coreNodeName, payloadCode string) (present bool, outcome string) {
+	if !e.coreClient.Available() {
+		return false, "not_configured"
 	}
-	bins, _ := e.coreClient.FetchNodeBins([]string{coreNodeName})
+	if coreNodeName == "" || payloadCode == "" {
+		return false, "not_asked"
+	}
+	bins, reachable, err := e.coreClient.FetchNodeBins([]string{coreNodeName})
+	outcome = OccupancyOutcome(reachable, err)
+	if !reachable {
+		return false, outcome
+	}
 	if len(bins) == 0 {
-		return false
+		return false, outcome
 	}
 	b := bins[0]
-	return b.Occupied && b.PayloadCode == payloadCode
+	return b.Occupied && b.PayloadCode == payloadCode, outcome
+}
+
+// occupancyUnverifiable reports whether an occupancy outcome means the read was
+// attempted and failed — as opposed to answering, or to there being nobody to
+// ask. Only the first is a reason to hold off: it is a transient the next event
+// will clear, where "not_configured" is a standing deployment fact.
+func occupancyUnverifiable(outcome string) bool {
+	switch outcome {
+	case "unreachable", "http_error", "decode_err", "unverifiable":
+		return true
+	}
+	return false
 }
 
 // MaybeCreateUnloaderFullIn (U1 of the side-cycle model) is the consumer-side
@@ -84,10 +111,24 @@ func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode 
 	// Physical parked-full guard — the order-counting seam can't see a full bin
 	// parked without an in-flight order. Symmetric to the legacy usable-present check.
 	for _, n := range nodes {
-		if e.unloaderHasUsableFullPresent(string(n), payloadCode) {
+		present, outcome := e.unloaderHasUsableFullPresent(string(n), payloadCode)
+		if present {
 			e.debugFn("side-cycle: unloader %s window %s already holds a full (%s) — skipping U1",
 				lid, n, payloadCode)
 			return
+		}
+		// An unverifiable read is reported and NOT acted on here, deliberately.
+		// withLoaderBudget below makes the same read and now refuses on it, so a
+		// second refusal at this level could never be the one that decided —
+		// both reads go to the same endpoint through the same client, and the
+		// conditions that fail one fail the other. Pinned by
+		// TestCreateUnloaderFullIn_HoldsWhenOccupancyReadFails, which proves the
+		// U1 holds without this line. The log stays because a trace should say
+		// the guard could not see, rather than implying it looked and found
+		// nothing.
+		if occupancyUnverifiable(outcome) {
+			e.debugFn("side-cycle: unloader %s window %s occupancy=%s — the guard could not see; the seam's own read decides",
+				lid, n, outcome)
 		}
 	}
 	created, err := e.withLoaderBudget(loader, pc, 1, "", false, func(deliveryNodes []string) (int, error) {

@@ -24,7 +24,7 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStati
 	if len(nodeNames) == 0 {
 		return
 	}
-	bins, err := coreAPI.FetchNodeBins(nodeNames)
+	bins, _, err := coreAPI.FetchNodeBins(nodeNames)
 	if err != nil || len(bins) == 0 {
 		return
 	}

@@ -631,11 +631,32 @@ func (s *CoreDataService) HandleNodeStateRequest(env *protocol.Envelope, req *pr
 		entry := protocol.NodeStateEntry{Name: name}
 		node, err := s.db.GetNodeByName(name)
 		if err != nil {
+			// KNOWN GAP, and the reason it is still open changed once somebody
+			// looked. A failed read is answered here as an unoccupied node,
+			// exactly as the HTTP node-bins endpoint did before it was made to
+			// return 500 (www/handlers_telemetry.go). This reply rides Kafka, so
+			// there is no status code to carry "I could not tell".
+			//
+			// THIS WHOLE EXCHANGE HAS NO CLIENT. Nothing anywhere sends a
+			// NodeStateRequest and nothing anywhere reads a NodeStateResponse:
+			// the subject constants appear only in their own definition, Core
+			// registers this handler, and no Edge code references either type.
+			// It has been that way since the types were introduced (2026-03-22).
+			//
+			// So the fix that was planned for it — a field on NodeStateEntry
+			// plus an Edge reader that honours it — would be building a consumer
+			// for a protocol nobody speaks, in order to correctly report a
+			// distinction in a message nobody receives. The real question is
+			// whether this exchange should exist at all, which is a deletion
+			// decision and belongs with the truth sweep, not with a bug fix.
+			// Left honest and logged until then.
+			log.Printf("core_handler: node state for %q: node lookup failed (%v) — replying occupied=false, which may be wrong", name, err)
 			entries = append(entries, entry)
 			continue
 		}
 		bins, err := s.db.ListBinsByNode(node.ID)
 		if err != nil {
+			log.Printf("core_handler: node state for %q: bin listing failed (%v) — replying occupied=false, which may be wrong", name, err)
 			entries = append(entries, entry)
 			continue
 		}
