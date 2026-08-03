@@ -44,8 +44,8 @@ func TestBinMove_StampsCreationBeforeTakingTheBin(t *testing.T) {
 	}
 
 	if stamp > reserve {
-		t.Errorf("MarkPending now runs AFTER ReserveForDispatch.\n"+
-			"That was one of the two doors' orderings and it was not the one chosen: an order that loses the bin race is then failed without ever having been recorded as created, so its history reads as a failure with no beginning.\n"+
+		t.Errorf("MarkPending now runs AFTER ReserveForDispatch.\n" +
+			"That was one of the two doors' orderings and it was not the one chosen: an order that loses the bin race is then failed without ever having been recorded as created, so its history reads as a failure with no beginning.\n" +
 			"If the order is being changed on purpose, change this test and say why in the commit.")
 	}
 }

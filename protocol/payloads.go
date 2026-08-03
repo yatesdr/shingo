@@ -565,14 +565,14 @@ type LoaderInfo struct {
 	// loader has no node id of its own (a multi-window loader spans many nodes); its
 	// delivery targets are the explicit member nodes in Positions. domain.LoaderID
 	// stays a string newtype so a future UUID swap is invisible.
-	LoaderKey     string              `json:"loader_key"`
-	Role          string              `json:"role"`
-	Layout        string              `json:"layout"`
-	Replenishment string              `json:"replenishment"`
-	OutboundDest  string              `json:"outbound_dest,omitempty"`
-	InboundSource string              `json:"inbound_source,omitempty"`
-	BufferDest    string              `json:"buffer_dest,omitempty"`
-	ConfigGen     int64               `json:"config_gen"`
+	LoaderKey     string `json:"loader_key"`
+	Role          string `json:"role"`
+	Layout        string `json:"layout"`
+	Replenishment string `json:"replenishment"`
+	OutboundDest  string `json:"outbound_dest,omitempty"`
+	InboundSource string `json:"inbound_source,omitempty"`
+	BufferDest    string `json:"buffer_dest,omitempty"`
+	ConfigGen     int64  `json:"config_gen"`
 	// FunnelWindows restricts a shared_window loader to ONE window at a time:
 	// empties funnel to its first window on a budget of 1 instead of spreading one
 	// bin per window. Stated as the restriction so the zero value — which is also

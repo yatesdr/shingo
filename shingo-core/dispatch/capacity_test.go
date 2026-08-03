@@ -164,7 +164,7 @@ func TestCheckDropoffCapacity(t *testing.T) {
 					{ID: 51, Name: "SMG_01_S1", Enabled: true},
 					{ID: 52, Name: "SMG_01_S2", Enabled: true},
 				},
-				binsByChild:    map[int64]int{52: 0},  // S2 readable and empty
+				binsByChild:    map[int64]int{52: 0}, // S2 readable and empty
 				inFlightByName: map[string]int{"SMG_01_S2": 0},
 				binCountErr:    errors.New("db blip"), // S1 unreadable
 			},

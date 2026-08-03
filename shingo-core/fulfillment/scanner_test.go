@@ -484,8 +484,8 @@ func TestStoreReplayDispatchesOwnClaimedBin(t *testing.T) {
 	f := newFakeStore()
 	binID := int64(77)
 	order := &orders.Order{
-		ID:           4,
-		Status:       protocol.StatusQueued,
+		ID:     4,
+		Status: protocol.StatusQueued,
 		// The type is incidental: the branch under test keys on BinID != nil,
 		// not on the order type. Kept as the literal because "store" is no
 		// longer a kind of order — it was the resolver direction, and it now

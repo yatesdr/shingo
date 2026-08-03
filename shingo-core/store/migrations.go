@@ -3305,9 +3305,12 @@ func noCoreSpotLeft(q schema.Querier) bool {
 // branch deletes the entire put-back subsystem — restore_listeners.go, the
 // pending_restocks table, and this format with them — replacing the crash
 // recovery with durable lane-hold reservation rows. When that lands, drop this
-// exemption and restore the plain `edge_uuid <> ''` predicate. Until then a
-// re-restore of the same parent and bin legitimately repeats the name, so the
-// index must not refuse it.
+// exemption and restore the plain not-blank predicate:
+//
+//	WHERE edge_uuid <> ''
+//
+// Until then a re-restore of the same parent and bin legitimately repeats the
+// name, so the index must not refuse it.
 //
 // Deliberately a LIKE on one literal prefix rather than a general escape hatch:
 // the narrower it is, the louder it is about being temporary.

@@ -57,7 +57,7 @@ func TestStage4_SourceIntentForType(t *testing.T) {
 		// order from the scanner's payload guard, so a stray mapping there is
 		// the expensive direction to be wrong in.
 		{protocol.OrderType("something-nobody-has-added-yet"), SourceIntentFull},
-		{OrderTypeComplex, SourceIntentFull},        // coordinated — sourced per-leg, not here
+		{OrderTypeComplex, SourceIntentFull}, // coordinated — sourced per-leg, not here
 	}
 	for _, c := range cases {
 		if got := SourceIntentForType(c.typ); got != c.want {

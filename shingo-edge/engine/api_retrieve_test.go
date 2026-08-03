@@ -21,8 +21,8 @@ func apiLoaderFixture(t *testing.T, eng *Engine, id string, windows []string, pa
 		Name: id, LoaderKey: "loader:" + id, Role: "produce",
 		Layout: "shared_window", Replenishment: "operator",
 		InboundSource: "EMPTY-SUPER", ConfigGen: 1,
-		Positions:     positions,
-		Payloads:      []protocol.LoaderPayloadInfo{{PayloadCode: payload}},
+		Positions: positions,
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: payload}},
 	}})
 }
 

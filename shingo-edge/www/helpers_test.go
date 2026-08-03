@@ -171,6 +171,7 @@ func (s *stubEngine) PullFromMarket(int64, string) error                        
 func (s *stubEngine) PushEmptyOut(int64) error                                          { return nil }
 func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)         { return nil, nil }
 func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)          { return nil, nil }
+
 // CreateRetrieveForAPI mirrors the engine's NO-LOADER path, which is what the
 // stub genuinely models: it has an order manager and no loader aggregate, so
 // every destination is one no loader owns. The seam-routed half is exercised

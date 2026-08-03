@@ -60,4 +60,3 @@ func TestCompoundChild_CarriesTheBinsPayloadCode(t *testing.T) {
 	}
 	_ = blocker
 }
-
