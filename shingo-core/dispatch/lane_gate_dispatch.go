@@ -103,6 +103,35 @@ func (d *Dispatcher) resolveLaneGateTarget(destNode *nodes.Node) (laneGateTarget
 	return laneGateTarget{lane: lane, gatePoint: gatePoint}, true, nil
 }
 
+// resolveLaneGateSource is the retrieve-direction mirror of resolveLaneGateTarget:
+// it reports whether sourceNode is a slot in a gate_choreography lane group, and if
+// so returns that lane plus its wait point.
+//
+// A retrieve's SOURCE is the lane (it pulls a bin OUT); a store's DESTINATION is the
+// lane (it drops a bin IN). The store valve keys on destination; the retrieve valve
+// keys on source. Same lane, same gate point, same enforcement-mode check — the only
+// difference is which end of the order the lane is on. ok=false for every other
+// source, so an unconfigured plant never reaches the retrieve valve at all.
+func (d *Dispatcher) resolveLaneGateSource(sourceNode *nodes.Node) (laneGateTarget, bool, error) {
+	if sourceNode == nil {
+		return laneGateTarget{}, false, nil
+	}
+	lane, err := d.db.LaneForNode(sourceNode.ID)
+	if err != nil || lane == nil || lane.ParentID == nil {
+		return laneGateTarget{}, false, err
+	}
+	if d.laneEnforcementMode(*lane.ParentID) != LaneEnforceGateChoreography {
+		return laneGateTarget{}, false, nil
+	}
+	gatePoint := d.db.GetNodeProperty(lane.ID, PropLaneGatePoint)
+	if gatePoint == "" {
+		return laneGateTarget{}, false, fmt.Errorf(
+			"lane %q is configured %s but has no %s property — a gated lane needs a wait point for its robots",
+			lane.Name, LaneEnforceGateChoreography, PropLaneGatePoint)
+	}
+	return laneGateTarget{lane: lane, gatePoint: gatePoint}, true, nil
+}
+
 // buildGatedTransportPlan is buildTransportPlan with the lane's wait point spliced
 // in before the dropoff: [pickup@source, wait@gatePoint, dropoff@delivery].
 //
@@ -114,6 +143,32 @@ func buildGatedTransportPlan(sourceNode, gatePoint, deliveryNode string, emptyPi
 	return []resolvedStep{
 		{Action: protocol.ActionPickup, Node: sourceNode, Empty: emptyPickup},
 		{Action: protocol.ActionWait, Node: gatePoint},
+		{Action: protocol.ActionDropoff, Node: deliveryNode},
+	}
+}
+
+// buildGatedRetrievePlan is the retrieve-direction gated plan: a robot dwells at
+// the lane's wait point FIRST, then — once the lane is safe — enters to pick the
+// bin out of its lane slot and carry it to the line.
+//
+//	[wait@gatePoint, pickup@laneSlot, dropoff@delivery]   Complete:false at create
+//
+// The wait precedes the pickup because a retrieve has NO legal work to do before
+// the lane opens — its first real action IS the pickup from the lane slot. (A
+// store's pickup is at its line source, so it does real work before dwelling; a
+// retrieve's pickup is the lane, so it must wait first.) This is the shape
+// buried_retrieve_test.go's gatedRetrieveReq models, and what pre-positioning means:
+// the robot drives to the gate during a dig so its approach overlaps the dig, then
+// dwells until Core releases it.
+//
+// splitAtWait yields [wait] as the unsealed create (the wait-with-node is a real
+// block, so the robot is told to drive to the gate and park there), and splitSegment
+// at wait_index 0 yields [pickup, dropoff] as the tail with blockOffset 1 — so the
+// appended block ids continue the create's single wait block instead of colliding.
+func buildGatedRetrievePlan(gatePoint, laneSlot, deliveryNode string, emptyPickup bool) []resolvedStep {
+	return []resolvedStep{
+		{Action: protocol.ActionWait, Node: gatePoint},
+		{Action: protocol.ActionPickup, Node: laneSlot, Empty: emptyPickup},
 		{Action: protocol.ActionDropoff, Node: deliveryNode},
 	}
 }
@@ -224,6 +279,99 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, s
 	}
 	if err := d.appendGateTail(order, "lane gate open"); err != nil {
 		log.Printf("lane gate: order %d created but tail append failed (%v) — left staged, robot holds at %s",
+			order.ID, err, target.gatePoint)
+	}
+	return vendorOrderID, nil
+}
+
+// dispatchGatedRetrieve is the retrieve-direction valve: create the unsealed
+// [wait@gate] waybill, then append the [pickup@laneSlot, dropoff@delivery] tail
+// immediately if the lane is safe, else leave it staged for the evaluator.
+//
+// Structurally parallel to dispatchGated (the store valve): same persist-before-create
+// discipline, same non-fatal-append contract, same open-valve/contended split. Two
+// differences, both forced by direction:
+//
+//  1. The plan's wait comes FIRST (buildGatedRetrievePlan), so the create is a single
+//     wait block — the robot drives to the gate and parks with no other work to do,
+//     because a retrieve's first real action IS the lane pickup and there is nothing
+//     legal to do before the lane opens.
+//  2. The release classifier keys on the SOURCE lane, not the dest. A retrieve is
+//     blocked when a dig holds the lane (the mouth gate excludes it) or when the bin
+//     it wants is buried behind a shallower one. laneGateRetrieveCause is the
+//     retrieve-direction read of those conditions.
+//
+// sourceNode is the lane slot the bin sits in today; destNode is the line. The
+// pickup slot may move while the order dwells (a dig can relocate the bin), so the
+// tail's pickup is re-bound at release time (rebindGatedPickup), never trusted from
+// the create.
+func (d *Dispatcher) dispatchGatedRetrieve(order *orders.Order, target laneGateTarget, sourceNode, destNode *nodes.Node) (string, error) {
+	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
+
+	plan := buildGatedRetrievePlan(target.gatePoint, sourceNode.Name, destNode.Name,
+		order.SourceIntent == SourceIntentEmpty)
+	stepsJSON, err := json.Marshal(plan)
+	if err != nil {
+		return "", fmt.Errorf("marshal gated retrieve plan for order %d: %w", order.ID, err)
+	}
+	// Persist the plan BEFORE the fleet create — same crash-window reasoning as the
+	// store valve: the tail is reconstructed from steps_json at append time, so a
+	// crash between create and append must leave a row the evaluator can finish.
+	if err := d.db.UpdateOrderStepsJSON(order.ID, string(stepsJSON)); err != nil {
+		return "", fmt.Errorf("persist gated retrieve plan for order %d: %w", order.ID, err)
+	}
+	order.StepsJSON = string(stepsJSON)
+
+	preWait, hasWait := splitAtWait(plan)
+	if !hasWait {
+		return "", fmt.Errorf("gated retrieve plan for order %d has no wait step", order.ID)
+	}
+	blocks := stepsToBlocks(vendorOrderID, preWait, 0, nil) // appended legs are never load-sequence expanded
+
+	priority := order.Priority
+	if p, ok := d.laneDispatchPriority(sourceNode); ok {
+		priority = p
+	}
+	req := fleet.CreateOrderRequest{
+		OrderID:    vendorOrderID,
+		ExternalID: order.EdgeUUID,
+		Blocks:     blocks,
+		Priority:   priority,
+		RobotGroup: d.robotGroupForPayload(order.PayloadCode),
+		Complete:   false, // unsealed: the [pickup, dropoff] tail is appended when the lane is safe
+	}
+	d.dbg("lane gate: order=%d vendor=%s creating unsealed retrieve wait@%s (pick %s -> %s) priority=%d",
+		order.ID, vendorOrderID, target.gatePoint, sourceNode.Name, destNode.Name, priority)
+
+	if _, err := d.backend.CreateOrder(req); err != nil {
+		d.dbg("lane gate: fleet create unsealed retrieve failed: %v", err)
+		return "", err
+	}
+
+	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
+		d.dbg("update order %d vendor: %v", order.ID, err)
+	}
+	order.VendorOrderID = vendorOrderID
+	if err := d.lifecycle.Dispatch(order, vendorOrderID, "dispatcher"); err != nil {
+		d.dbg("order %d → dispatched: %v", order.ID, err)
+	}
+	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
+
+	// The valve. If the lane is safe now (no dig, bin reachable), append the tail back
+	// to back with the create so the robot never dwells. Else leave it staged for the
+	// evaluator to release on dig completion.
+	park, cause, err := d.laneGateRetrieveCause(target.lane, order, sourceNode)
+	if err != nil {
+		log.Printf("lane gate: retrieve order %d classifier errored (%v) — leaving staged for the evaluator", order.ID, err)
+		return vendorOrderID, nil
+	}
+	if park {
+		log.Printf("lane gate: retrieve order %d staged at %s for lane %s (%s) — awaiting release",
+			order.ID, target.gatePoint, target.lane.Name, cause)
+		return vendorOrderID, nil
+	}
+	if err := d.appendGateTail(order, "lane gate open (retrieve)"); err != nil {
+		log.Printf("lane gate: retrieve order %d created but tail append failed (%v) — left staged, robot holds at %s",
 			order.ID, err, target.gatePoint)
 	}
 	return vendorOrderID, nil

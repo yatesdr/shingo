@@ -264,6 +264,13 @@ func (db *DB) ActiveLaneStores(slotNames []string) ([]*orders.Order, error) {
 	return orders.ActiveByDeliveryNodes(db.DB, slotNames)
 }
 
+// ActiveLaneRetrieves returns non-terminal orders whose SOURCE node is one of the
+// lane's slots — the staged-retrieve set the gate evaluator releases (mirrors
+// ActiveLaneStores, which matches the delivery node for stores).
+func (db *DB) ActiveLaneRetrieves(slotNames []string) ([]*orders.Order, error) {
+	return orders.ActiveBySourceNodes(db.DB, slotNames)
+}
+
 // CountActiveOrders returns the number of non-terminal orders (dashboard
 // "in flight" KPI).
 func (db *DB) CountActiveOrders() (int, error) {
