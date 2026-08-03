@@ -24,10 +24,32 @@
 // W10 before W2 and the funnel target moves without anybody touching it. So a
 // run of digits inside a name compares as a number.
 //
-// Ordering is TOTAL and STABLE: ordinal, then number-aware name, then plain
-// text as the last tiebreak. Two windows can never compare equal unless their
-// names are identical, so neither side can return a different arrangement from
-// the other for the same input.
+// Ordering is a STRICT WEAK ORDERING: ordinal, then number-aware name. No
+// window sorts before itself and no two sort before each other, which is what
+// sort.SliceStable requires and what both sides rely on.
+//
+// IT IS NOT A TOTAL ORDER, and this comment used to claim it was. Two windows
+// whose names differ ONLY by leading zeros — W2 and W02, SMN_3 and SMN_03 —
+// compare equal in both directions, because the digit runs compare as numbers
+// and the numbers are the same. The doc promised a "plain text tiebreak" after
+// the number-aware pass to break exactly that case. There is no such tiebreak
+// in LessName; the function ends at the length comparison.
+//
+// WHAT THE EQUALITY COSTS. Equal elements keep their INPUT order under a stable
+// sort, and the two sides do not build the same input: Core reads its windows
+// ORDER BY sort_order, position_node_id — tie-broken on node id — and the Edge
+// reads its cache with no ORDER BY at all. So for a loader carrying such a pair,
+// the two sides can disagree about which window is first, which is the exact
+// divergence this package exists to prevent.
+//
+// It is deferred, not unknown. Adding the tiebreak is a one-line change, but it
+// MOVES DELIVERY at any plant holding such a pair, and it changes the rule both
+// modules import — so it is not a change to make in the same week as the
+// cutover that makes Core the authority on where a carrier goes. The plant-side
+// check is cheaper and reversible: a loader with two windows differing only by
+// zero-padding should be renamed, which makes the case unreachable there rather
+// than merely deferred. TestLeadingZeroNamesCompareEqual pins the gap so it
+// cannot quietly stop being known.
 package windoworder
 
 import "strings"
@@ -52,9 +74,13 @@ func Less(a, b Window) bool {
 //
 // Names are compared as an alternating sequence of text runs and digit runs.
 // Text runs compare as text; digit runs compare as numbers, so W2 sorts before
-// W10 and SMN_003 sorts before SMN_004 and before SMN_010. Leading zeros do not
-// change a number's value, so SMN_03 and SMN_3 compare equal on that run and
-// fall through to the plain-text tiebreak, which keeps the order total.
+// W10 and SMN_003 sorts before SMN_004 and before SMN_010.
+//
+// Leading zeros do not change a number's value, so SMN_03 and SMN_3 compare
+// equal on that run — and then the loop runs out of input and the function
+// returns false in both directions. THERE IS NO PLAIN-TEXT TIEBREAK; this
+// comment used to say there was one. See the package doc for what the equality
+// costs and why fixing it is deferred rather than unknown.
 func LessName(a, b string) bool {
 	i, j := 0, 0
 	for i < len(a) && j < len(b) {

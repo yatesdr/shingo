@@ -48,24 +48,61 @@ func TestZeroPaddedPlantNamesSortNaturally(t *testing.T) {
 		"leading zeros must not change a number's value")
 }
 
-func TestOrderIsTotal(t *testing.T) {
-	// Neither side may return a different arrangement from the other for the
-	// same input, so no two distinct windows may compare equal in both
-	// directions. SMN_03 and SMN_3 are the interesting pair: the same number,
-	// different names.
+// TestOrderIsAStrictWeakOrdering asserts what the comparator actually
+// guarantees, which is what sort.SliceStable needs: nothing sorts before
+// itself, and no two things sort before each other.
+//
+// It was called TestOrderIsTotal and it asserted the same `ab && ba` check.
+// That check cannot detect the failure it was named for. A comparator breaks
+// totality by returning false BOTH ways — the two are equal without being
+// identical — and `ab && ba` is false in exactly that case, so the test passed.
+// It listed SMN_03/SMN_3 as "the interesting pair" and was green on it.
+func TestOrderIsAStrictWeakOrdering(t *testing.T) {
 	pairs := [][2]Window{
 		{{Name: "SMN_03"}, {Name: "SMN_3"}},
 		{{Ordinal: 1, Name: "A"}, {Ordinal: 1, Name: "A"}},
 		{{Name: "W1"}, {Name: "W1X"}},
+		{{Name: "W2"}, {Name: "W10"}},
+		{{Name: ""}, {Name: "W1"}},
 	}
 	for _, p := range pairs {
 		ab, ba := Less(p[0], p[1]), Less(p[1], p[0])
 		if ab && ba {
-			t.Errorf("%q and %q each sort before the other — the order is not total and the "+
-				"two sides can disagree", p[0].Name, p[1].Name)
+			t.Errorf("%q and %q each sort before the other — sort.SliceStable's contract is "+
+				"broken and the arrangement is undefined", p[0].Name, p[1].Name)
 		}
 		if p[0] == p[1] && (ab || ba) {
 			t.Errorf("%q sorts before itself", p[0].Name)
+		}
+	}
+}
+
+// TestLeadingZeroNamesCompareEqual pins the gap the package doc describes, so
+// that it stays a known deferral rather than becoming a surprise.
+//
+// These names are DISTINCT and compare EQUAL. Under a stable sort equal
+// elements keep their input order, and Core and the Edge do not build the same
+// input — Core reads ORDER BY sort_order, position_node_id, the Edge reads its
+// cache unordered. So a loader carrying one of these pairs can have the two
+// sides disagree about which window is first.
+//
+// IF YOU ARE HERE BECAUSE THIS TEST FAILED: you probably added the plain-text
+// tiebreak, which is the right fix. It is also a behaviour change to the rule
+// both modules import — delivery moves at any plant holding such a pair — so
+// re-run the loader parity harness and check the plant configuration before
+// shipping it, then update this test to assert the new ordering.
+func TestLeadingZeroNamesCompareEqual(t *testing.T) {
+	pairs := [][2]string{
+		{"SMN_03", "SMN_3"},
+		{"W02", "W2"},
+		{"W007", "W7"},
+	}
+	for _, p := range pairs {
+		ab, ba := LessName(p[0], p[1]), LessName(p[1], p[0])
+		if ab || ba {
+			t.Errorf("LessName(%q,%q)=%v and LessName(%q,%q)=%v — these used to compare equal; "+
+				"if that was fixed deliberately, see this test's doc comment before trusting it",
+				p[0], p[1], ab, p[1], p[0], ba)
 		}
 	}
 }
