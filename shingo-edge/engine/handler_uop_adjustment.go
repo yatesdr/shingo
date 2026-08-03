@@ -140,7 +140,30 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		return
 	}
 
-	if err := e.db.UpdateProcessNodeUOP(node.ID, adj.NewRemaining); err != nil {
+	// TAKE THE EPOCH WITH THE COUNT. Core sends both in this message and the Edge
+	// used to keep only the count, which is incoherent: it accepted "this bin now
+	// holds N" and ignored "...and it has started a new life".
+	//
+	// That was the whole of the count-loss at Hopkinsville. Clearing a bin for
+	// reuse on Core's admin screen lands here — neither Bound nor Released, a new
+	// count and a new epoch — 153 times in 30 days. The Edge kept its old epoch,
+	// so every delta it sent afterwards carried a stale stamp and Core discarded
+	// it: 19,245 counts dropped against 19,962 applied, and on 2026-07-30, 3,200
+	// dropped with none landing.
+	//
+	// Safe precisely because it rides the count. The guard above has already
+	// established that THIS bin is the one bound here, and the same message
+	// resets the count — so there is no question of an old life's ticks being
+	// misapplied to a new one. Adopting one half and not the other was the bug.
+	//
+	// A zero epoch means an older Core that does not send one; keep what we have
+	// rather than resetting the stamp to nothing.
+	if adj.Epoch > 0 {
+		if err := e.db.SetProcessNodeRuntimeWithBinAndEpoch(node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining); err != nil {
+			log.Printf("uop_adjustment: write remaining_uop=%d epoch=%d for node %s: %v", adj.NewRemaining, adj.Epoch, adj.CoreNodeName, err)
+			return
+		}
+	} else if err := e.db.UpdateProcessNodeUOP(node.ID, adj.NewRemaining); err != nil {
 		log.Printf("uop_adjustment: write remaining_uop=%d for node %s: %v", adj.NewRemaining, adj.CoreNodeName, err)
 		return
 	}
