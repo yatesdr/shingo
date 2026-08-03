@@ -59,19 +59,32 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		queueReason string
 		queueCode   protocol.QueueCode
 		queueCause  string
+		// buried non-nil selects the reshuffle tail below. The parent row
+		// itself is the same row either way, which is why this is a flag and
+		// not a second creation site.
+		buried *BuriedError
 	)
 	if err != nil {
 		class, payload := classifyResolutionError(err)
 		switch class {
 		case ResolutionBuried:
-			// Route to the reshuffle path: create the parent at
-			// Queued, pivot to Reshuffling, plan + dispatch an
-			// unbury (or unbury+retrieve) compound. When the
-			// compound completes the parent resumes back to Queued
-			// and the fulfillment scanner runs the original first
-			// pickup against the now-accessible slot.
-			d.handleComplexBuriedAtIntake(env, p, payloadCode, payload.(*BuriedError))
-			return
+			// The source bin is behind another bin. The parent is still an
+			// ordinary complex parent — created Queued from this envelope,
+			// same as every other one — so it takes the same path down to
+			// the persist as the capacity case beside it. What differs is
+			// what happens AFTER: instead of handing off to the scanner,
+			// the tail plans and dispatches an unbury (or unbury+retrieve)
+			// compound and pivots the parent to Reshuffling. When that
+			// compound completes the parent resumes back to Queued and the
+			// fulfillment scanner runs the original first pickup against
+			// the now-accessible slot.
+			//
+			// Preserve the original NGRP-bearing step shape so the resume
+			// path (parent -> Queued -> scanner -> reResolveComplexSteps)
+			// has the input it needs to re-resolve — the same reason the
+			// capacity case below does it.
+			buried = payload.(*BuriedError)
+			resolvedSteps = stepsAsResolved(p.Steps)
 		case ResolutionCapacity:
 			// Capacity-shaped — preserve the original step shape (NGRP
 			// names intact) so the replay path has the input it needs
@@ -162,7 +175,15 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// synchronous scanner. The supply row already exists (supply is created
 	// first). Best-effort on the BACK-link only: a failure here leaves the
 	// durable forward link intact and is healed on-read next tick.
-	if p.SiblingOrderUUID != "" {
+	//
+	// The buried path is excluded because it always has been: when it built its
+	// own parent it never made this call, and folding the two creation sites is
+	// not the place to start. Whether that exclusion was ever a decision is a
+	// separate question — the forward link is written either way and the
+	// back-link is healed on read, so the gap is bounded — but it is a real
+	// difference between the two paths and it is now visible in one place
+	// instead of hidden by them being two functions.
+	if p.SiblingOrderUUID != "" && buried == nil {
 		if _, err := d.db.LinkOrderSiblingsByEdgeUUID(order.EdgeUUID, p.SiblingOrderUUID); err != nil {
 			log.Printf("dispatch: link complex order %d sibling %s: %v", order.ID, p.SiblingOrderUUID, err)
 		}
@@ -173,6 +194,17 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// row exists when the dispatched-event fires (if scanner dispatches
 	// synchronously, the edge needs to have already recorded the order ID).
 	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode)
+
+	// A buried parent does not go to the scanner: it has nothing the scanner
+	// could act on until the blocking bin has been moved. The reshuffle tail
+	// takes it from here and either dispatches the unbury compound or leaves
+	// the parent queued for a later replay.
+	if buried != nil {
+		d.dbg("complex: order %s buried at intake — bin %d in lane %d (slot %s)",
+			p.OrderUUID, buried.Bin.ID, buried.LaneID, buried.Slot.Name)
+		d.planBuriedReshuffleAtIntake(order, payloadCode, stationID, buried)
+		return
+	}
 
 	// EventOrderQueued is the scanner trigger — wired in engine/wiring.go.
 	// Scanner.RunOnce is invoked synchronously on this goroutine via the

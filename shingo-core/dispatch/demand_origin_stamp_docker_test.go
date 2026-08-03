@@ -146,16 +146,20 @@ func TestOriginIntake_ComplexOrderStampsFromTheEnvelope(t *testing.T) {
 	}
 }
 
-// TestOriginIntake_BuriedComplexParentStampsFromTheEnvelope covers intake site
-// 3 of 3 — the one most likely to be missed, because handleComplexBuriedAtIntake
-// LOOKS derivative: it is reached from the resolver's buried branch and its
-// first act is to schedule a reshuffle. It is not. The order it builds is the
-// complex parent itself and its origin comes off the same envelope as the main
-// path's.
+// TestOriginPropagation_ReshuffleChildrenInheritFromTheBuriedParent is the
+// derivative half of the buried path: the unbury moves exist only because this
+// demand needed a bin that was behind another one, so they are part of what the
+// demand cost and belong in its child count.
 //
-// Miss it and every complex order that happens to arrive on a buried bin becomes
-// an orphan — a bucket that fills in proportion to how full the lanes are.
-func TestOriginIntake_BuriedComplexParentStampsFromTheEnvelope(t *testing.T) {
+// The front-door half — that a complex order arriving on a buried bin still
+// gets its origin stamped at all — moved to
+// TestComplex_BuriedSourceTriggersReshuffle, which drives a real burial through
+// HandleComplexOrderRequest. It belongs there now: the buried arm stopped
+// building its own parent, so "the buried parent is stamped" is a claim about
+// whether the arm REACHES the shared create, and only the front door shows that.
+// What is left here is what happens below the parent, so the parent is seeded
+// directly — the same row complex intake writes.
+func TestOriginPropagation_ReshuffleChildrenInheritFromTheBuriedParent(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
@@ -164,15 +168,20 @@ func TestOriginIntake_BuriedComplexParentStampsFromTheEnvelope(t *testing.T) {
 	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-BURIED-TGT")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	d.handleComplexBuriedAtIntake(testEnvelope(),
-		&protocol.ComplexOrderRequest{
-			OrderUUID:   "uuid-buried-origin",
-			OriginID:    testOriginID,
-			OriginClass: protocol.OriginClassAttached,
-		},
-		bp.Code,
-		&BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID},
-	)
+	parent := &orders.Order{
+		EdgeUUID:    "uuid-buried-origin",
+		StationID:   "line-1",
+		OrderType:   OrderTypeComplex,
+		Status:      StatusQueued,
+		Quantity:    1,
+		PayloadCode: bp.Code,
+		Coordinated: true,
+		OriginID:    testOriginID,
+		OriginClass: protocol.OriginClassAttached,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(parent), "seed buried complex parent")
+	d.planBuriedReshuffleAtIntake(parent, bp.Code, "line-1",
+		&BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID})
 
 	parent, err := db.GetOrderByUUID("uuid-buried-origin")
 	testutil.MustNoErr(t, err, "read back buried complex parent")

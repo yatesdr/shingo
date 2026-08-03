@@ -127,8 +127,7 @@ func TestCensus_OrdersTableInsertStatements(t *testing.T) {
 func TestCensus_OrderCreationPaths(t *testing.T) {
 	t.Parallel()
 	want := []string{
-		"dispatch/complex_intake.go",    // complex / multi-leg intake
-		"dispatch/complex_reshuffle.go", // reshuffle leg
+		"dispatch/complex_intake.go",    // complex / multi-leg intake, buried branch included
 		"dispatch/lifecycle_service.go", // CreateInboundOrder — the Edge wire intake
 		"dispatch/restore_listeners.go", // synthetic order raised during restore
 		"engine/orders.go",              // CreateDirectOrder — admin moves a bin A->B

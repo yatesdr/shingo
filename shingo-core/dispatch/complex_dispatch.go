@@ -516,7 +516,14 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 // gate), leaving the in-memory fields matching the persisted values.
 func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode, cause string, params QueueParams) {
 	reason := FormatQueueSentence(code, params)
-	if order.QueueReason == reason && order.QueueCode == string(code) {
+	// The cause is part of what this writes, so it is part of what makes a
+	// second call redundant. Comparing only reason and code meant a call that
+	// changed nothing but the cause was skipped — which matters where a general
+	// reason is set first and a more specific call follows with the same
+	// sentence: the buried path sets "storage is being rearranged" on arrival
+	// and then narrows the cause to lane-locked or lock-race. Without the cause
+	// in this comparison, the narrower tag never lands.
+	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == cause {
 		return
 	}
 	if err := d.db.SetOrderQueueDetail(order.ID, reason, code, cause); err != nil {

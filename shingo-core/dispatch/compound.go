@@ -47,6 +47,23 @@ func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *Reshuf
 func (d *Dispatcher) CreateCompoundChildrenOnly(parentOrder *orders.Order, plan *ReshufflePlan) error {
 	var children []store.CompoundChild
 	for _, step := range plan.Steps {
+		// The payload the child is moving, read off the bin it names. The column
+		// was blank on every child ever written, which made "how much does
+		// payload X move in reshuffling" unanswerable from the orders table, and
+		// gave every reshuffle move the default load sequence — the dispatcher
+		// picks the robot's bin-task sequence from PayloadCode.
+		//
+		// A missing bin is not fatal here. The child still names the bin id and
+		// the claim below still runs; only the payload label is lost, and
+		// failing the whole compound over a label would trade a reporting gap
+		// for a stopped reshuffle.
+		var payloadCode string
+		if bin, err := d.db.GetBin(step.BinID); err != nil {
+			log.Printf("dispatch: compound child for bin %d: cannot read payload code: %v", step.BinID, err)
+		} else if bin != nil {
+			payloadCode = bin.PayloadCode
+		}
+
 		child := &orders.Order{
 			EdgeUUID:      fmt.Sprintf("%s-step-%d", parentOrder.EdgeUUID, step.Sequence),
 			StationID:     parentOrder.StationID,
@@ -55,7 +72,21 @@ func (d *Dispatcher) CreateCompoundChildrenOnly(parentOrder *orders.Order, plan 
 			ParentOrderID: &parentOrder.ID,
 			Sequence:      step.Sequence,
 			PayloadDesc:   fmt.Sprintf("reshuffle %s: bin %d", step.StepType, step.BinID),
+			PayloadCode:   payloadCode,
 			BinID:         &step.BinID,
+			// How this child sources its bin: locally, by name. Children were
+			// written with "", which is the DEFAULT-FULL value rather than an
+			// unset one — it reads as "find any full bin of this payload,
+			// plant-wide", the opposite of what a reshuffle child does. It names
+			// its exact bin four lines up; there is nothing to find.
+			//
+			// Harmless until now only because children never reach the finder:
+			// the scanner skips any order with a parent. That skip is intended
+			// behavior, and TestCompoundChild_StaysOutOfTheSourceFinder pins it,
+			// so a later change here cannot quietly route reshuffle work into
+			// plant-wide FIFO selection and hand it a different bin than the one
+			// it was planned to move.
+			SourceIntent: SourceIntentForType(OrderTypeMove),
 			// Derivative site 1 of 2. An order created in service of another
 			// order inherits its origin AND ITS CLASS — a shuffle move exists
 			// only because the parent needed a buried bin, so it is part of the

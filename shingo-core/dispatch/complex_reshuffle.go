@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 
@@ -11,10 +10,10 @@ import (
 	"shingocore/store/orders"
 )
 
-// handleComplexBuriedAtIntake creates the complex parent at Queued,
-// acks edge, then plans and dispatches a buried-bin reshuffle
-// compound. Branches on the source group's reshuffle_target_nodes
-// property:
+// planBuriedReshuffleAtIntake plans and dispatches a buried-bin reshuffle
+// compound for a complex parent that HandleComplexOrderRequest has already
+// created, acked and announced. Branches on the source group's
+// reshuffle_target_nodes property:
 //
 //   - empty → expose mode (PlanReshuffleUnburyOnly). Parent resumes
 //     and re-runs its original first pickup against the now-
@@ -30,64 +29,16 @@ import (
 // Lane contention: if the buried lane is already locked or TryLock
 // races, leave the parent Queued with queue_reason — same disposition
 // as planning_service.planBuriedReshuffle.
-func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *protocol.ComplexOrderRequest, payloadCode string, buried *BuriedError) {
-	stationID := env.Src.Station
-	d.dbg("complex: order %s buried at intake — bin %d in lane %d (slot %s)",
-		p.OrderUUID, buried.Bin.ID, buried.LaneID, buried.Slot.Name)
-
-	// Preserve the original NGRP-bearing step shape so the resume path
-	// (parent → Queued → scanner → reResolveComplexSteps) has the input
-	// it needs to re-resolve once the compound completes.
-	resolvedSteps := stepsAsResolved(p.Steps)
-	stepsJSON, err := json.Marshal(resolvedSteps)
-	if err != nil {
-		d.sendError(env, p.OrderUUID, "internal_error", "failed to marshal steps")
-		return
-	}
-	sourceNode, deliveryNode := extractEndpoints(resolvedSteps)
-
-	// INTAKE SITE 3 OF 3, AND IT IS INTAKE — NOT A DERIVATIVE.
-	//
-	// This function is reached from HandleComplexOrderRequest's ResolutionBuried
-	// branch, which RETURNS rather than falling through, so the order built here
-	// is the complex parent itself and its origin comes off the same envelope
-	// (p.OriginID) as the main path's. The reshuffle compound created below IS
-	// derivative and inherits from this row via CreateCompoundOrder.
-	//
-	// Miss this site and every complex order that happens to arrive on a buried
-	// bin becomes an orphan — a bucket that fills in proportion to how full the
-	// lanes are, i.e. worst exactly when the surface matters most.
-	originID, originClass := classifyInboundOrigin(p.OriginID, p.OriginClass, stationID, p.OrderUUID)
-
-	order := &orders.Order{
-		EdgeUUID:     p.OrderUUID,
-		StationID:    stationID,
-		OrderType:    OrderTypeComplex,
-		Status:       StatusQueued,
-		Quantity:     p.Quantity,
-		Priority:     p.Priority,
-		PayloadCode:  payloadCode,
-		PayloadDesc:  p.PayloadDesc,
-		SourceNode:   sourceNode,
-		DeliveryNode: deliveryNode,
-		ProcessNode:  p.ProcessNode,
-		StepsJSON:    string(stepsJSON),
-		// Provenance stamp: complex intake (buried path) is coordinated.
-		Coordinated: true,
-		// Persist the swap sibling on the buried path too (durable forward
-		// link) — same contract as the main intake path above.
-		SiblingOrderUUID: p.SiblingOrderUUID,
-		OriginID:         originID,
-		OriginClass:      originClass,
-	}
-	if err := d.db.CreateOrder(order); err != nil {
-		log.Printf("dispatch: create complex parent for buried reshuffle: %v", err)
-		d.sendError(env, p.OrderUUID, "internal_error", err.Error())
-		return
-	}
-	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeComplex, payloadCode, deliveryNode)
-	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode)
-
+//
+// This used to create the parent itself, building the same 18-field struct as
+// complex intake from the same envelope. That made a complex order arriving on
+// a buried bin the one complex order whose row was written somewhere else, and
+// the two structs had to be kept in step by hand. They are now one struct in
+// one place: burial changes what happens after the parent exists, not what the
+// parent is. The near-twin handleComplexBuriedOnReplay below stays as it is —
+// it is entered from the scanner with an order that already exists, so it never
+// had a creation half to fold.
+func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCode, stationID string, buried *BuriedError) {
 	// Resolve the lane's parent group so the planner has the group ID
 	// for shuffle-slot search and the target_nodes property read.
 	lane, err := d.db.GetNode(buried.LaneID)
@@ -97,6 +48,21 @@ func (d *Dispatcher) handleComplexBuriedAtIntake(env *protocol.Envelope, p *prot
 		return
 	}
 	groupID := *lane.ParentID
+
+	// The parent is queued because its bin is buried, so say so now, before any
+	// of the dispositions below. It used to be recorded only when one of the
+	// three contention arms fired — so the ORDINARY burial, the one where the
+	// lane is free and the reshuffle dispatches, was the case that recorded
+	// nothing. That blank does not stay on the row: historyReason copies
+	// QueueCode into the history entry for any transition into queued, and the
+	// parent's first such transition is the reshuffle completing and resuming
+	// it. By then the row can be corrected and the history cannot.
+	//
+	// The arms below refine the cause. They keep the same sentence and code —
+	// storage is being rearranged either way, which is what the operator needs
+	// to know — and differ in the engineer-only tag for where the wait arose.
+	d.setQueueReason(order, protocol.QueueStorageRearranging, "intake-buried",
+		QueueParams{Lane: lane.Name, Payload: payloadCode})
 
 	// Lane-contention: leave the parent Queued for scanner replay.
 	if d.laneLock.IsLocked(buried.LaneID) {

@@ -999,6 +999,8 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 			{Action: "pickup", Node: grp.Name},
 			{Action: "dropoff", Node: dropNode.Name},
 		},
+		OriginID:    "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+		OriginClass: protocol.OriginClassAttached,
 	})
 
 	o := testdb.RequireOrder(t, db, "complex-buried-1")
@@ -1011,12 +1013,32 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 	if o.Status != StatusReshuffling {
 		t.Errorf("parent status = %q, want %q (compound reshuffle should have started)", o.Status, StatusReshuffling)
 	}
-	// Field-notes Note 8 regression: the buried-intake path
-	// (handleComplexBuriedAtIntake) also constructs a complex order
-	// struct literal — it must persist PayloadCode same as the main
-	// path.
+	// Field-notes Note 8 regression: the buried-intake path used to construct
+	// its own complex order struct literal, and had to persist PayloadCode the
+	// same as the main path. It no longer builds its own — complex intake makes
+	// the row for both — so this now guards that the buried arm still REACHES
+	// the shared create rather than that a second literal was kept in step.
 	if o.PayloadCode != bp.Code {
-		t.Errorf("payload_code = %q, want %q (Note 8 regression: buried-intake complex order PayloadCode must persist)", o.PayloadCode, bp.Code)
+		t.Errorf("payload_code = %q, want %q (buried parent must carry the request's payload)", o.PayloadCode, bp.Code)
+	}
+	// Same guard, on the demand grain. A complex order that happens to arrive on
+	// a buried bin must not lose its origin — that bucket would fill in
+	// proportion to how full the lanes are, i.e. worst exactly when the demand
+	// surface matters most. This is the front-door half of the claim; the
+	// derivative half (children inherit) is in demand_origin_stamp_docker_test.
+	if o.OriginID != "6ba7b810-9dad-11d1-80b4-00c04fd430c8" || o.OriginClass != protocol.OriginClassAttached {
+		t.Errorf("buried parent origin = (%q, %q), want (%q, %q)",
+			o.OriginID, o.OriginClass, "6ba7b810-9dad-11d1-80b4-00c04fd430c8", protocol.OriginClassAttached)
+	}
+	// A parent parked because its bin is buried has to say so. The reshuffle
+	// dispatched here, so none of the contention arms fired — this is the
+	// ordinary burial, which is exactly the case that used to record nothing.
+	if o.QueueCode != string(protocol.QueueStorageRearranging) {
+		t.Errorf("queue_code = %q, want %q — the blank does not stay on the row, it is copied into order history on the resume",
+			o.QueueCode, protocol.QueueStorageRearranging)
+	}
+	if o.QueueReason == "" {
+		t.Error("queue_reason is blank — this is the sentence the operator reads on the board")
 	}
 
 	// Compound children should exist.

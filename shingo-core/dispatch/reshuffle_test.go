@@ -1887,9 +1887,15 @@ func TestLaneLock_ExposeMode_ReleasedOnParentFail(t *testing.T) {
 // ────────────────────────────────────────────────────────────────────────
 
 // TestLaneLockExtension_TargetBinPersistedAtScheduling exercises the
-// production write path: handleComplexBuriedAtIntake should persist
+// production write path: planBuriedReshuffleAtIntake should persist
 // the lane-extension row with the buried bin's ID and slot, so the
 // at-terminal lookup doesn't have to re-derive from lane state.
+//
+// The parent is seeded directly rather than driven through the front door.
+// Everything asserted here happens after the parent exists, and complex intake
+// is now the one place that creates it — so building it here is the same row
+// the handler would have written, and the test stays about the lane-extension
+// row rather than about intake.
 func TestLaneLockExtension_TargetBinPersistedAtScheduling(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -1899,13 +1905,21 @@ func TestLaneLockExtension_TargetBinPersistedAtScheduling(t *testing.T) {
 	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-LLP-TGT")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	env := testEnvelope()
 	buried := &BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID}
-	d.handleComplexBuriedAtIntake(env,
-		&protocol.ComplexOrderRequest{OrderUUID: "uuid-llp-schedule"},
-		bp.Code,
-		buried,
-	)
+
+	order := &orders.Order{
+		EdgeUUID:    "uuid-llp-schedule",
+		StationID:   "test-station",
+		OrderType:   OrderTypeComplex,
+		Status:      StatusQueued,
+		Quantity:    1,
+		PayloadCode: bp.Code,
+		Coordinated: true,
+	}
+	if err := db.CreateOrder(order); err != nil {
+		t.Fatalf("seed complex parent: %v", err)
+	}
+	d.planBuriedReshuffleAtIntake(order, bp.Code, "test-station", buried)
 
 	order, err := db.GetOrderByUUID("uuid-llp-schedule")
 	if err != nil {
