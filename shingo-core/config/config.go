@@ -280,10 +280,16 @@ type StagingConfig struct {
 	//
 	// This comment used to list queued and sourcing as covered, describing the
 	// wider set the sweep had before it was narrowed. Worth knowing what that
-	// cost a reader: queued is not swept AND is the one non-terminal status
-	// outside protocol.IsRuntimeStuckCandidate, so a wedged queued order raises
-	// no anomaly either. It is the least observable state in the system, and
-	// this comment said it was covered.
+	// cost a reader: queued was not swept AND was outside
+	// protocol.IsRuntimeStuckCandidate, so a wedged queued order raised no
+	// anomaly either. It was the least observable state in the system, and this
+	// comment said it was covered.
+	//
+	// Half of that is now fixed: queued joined IsRuntimeStuckCandidate on
+	// 2026-08-03, so a wedged one raises a `degraded` anomaly after 30 minutes.
+	// It is still deliberately NOT swept, for the reason two paragraphs up —
+	// flagging it for a person and cancelling it on a timer are different
+	// answers, and only the first one is right for demand that has not gone away.
 	//
 	// Cascades to the two-robot sibling.
 	AbandonStuck time.Duration `yaml:"abandon_stuck"` // default 1h; 0 = disabled

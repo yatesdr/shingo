@@ -398,10 +398,34 @@ func (s Status) IsAcquiring() bool { return IsAcquiring(s) }
 // confirmation, no machine deadline), and Reshuffling (compound parent
 // waiting on children — has its own watchdog). Used by reconciliation's
 // stuck-order detector.
+//
+// QUEUED IS IN THIS SET AND NOT IN IsStuckSweepCandidate, and the split is the
+// whole point.
+//
+// Being flagged here means "a person should look at this". Being in the sweep
+// set means "cancel it on a timer". A queued order waiting on material must get
+// the first and must not get the second: demand does not evaporate, so
+// cancelling it would delete the ask while the need is still real — and, since
+// c3abe1dc, would also hand the window straight back to a replenishment that
+// would recreate it. The config comment on AbandonStuck states the same rule
+// from the sweep's side.
+//
+// It was in NEITHER set until 2026-08-03, which made `queued` the least
+// observable state in the system — no sweep, no anomaly, nothing. Springfield
+// accumulated 290 duplicate orders at one window over three and a half hours
+// and raised nothing, and the pile was found by a person reading the board.
+// `sourcing` was already here; `queued` is its other half in IsAcquiring, and
+// its absence was an omission rather than a decision — the exclusion list above
+// never named it.
+//
+// This matters MORE now that duplicates are bounded, not less. A demand that
+// cannot be filled used to announce itself by piling up; now it is one quiet
+// row holding a window indefinitely, and this predicate is the only thing that
+// says so.
 func IsRuntimeStuckCandidate(s Status) bool {
 	switch s {
-	case StatusPending, StatusSourcing, StatusSubmitted, StatusAcknowledged,
-		StatusDispatched, StatusInTransit, StatusStaged:
+	case StatusPending, StatusQueued, StatusSourcing, StatusSubmitted,
+		StatusAcknowledged, StatusDispatched, StatusInTransit, StatusStaged:
 		return true
 	}
 	return false

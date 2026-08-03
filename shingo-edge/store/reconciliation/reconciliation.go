@@ -62,11 +62,20 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	// Edge mirrors Core's full status vocabulary: sourcing/dispatched/faulted
 	// are stored on the Edge row, so the IN list matches what edge data actually
 	// carries. Safe to splice the shared predicate.
+	// Two thresholds, picked per row by status, mirroring Core's split
+	// (shingo-core/store/reconciliation: stuckOrderAge vs queuedOrderAge). A
+	// queued order is WAITING by definition — flagging it on the same half-hour
+	// bound as a dispatched leg that has stopped moving turns the anomaly board
+	// into noise, and a board people ignore is worse than the silence that
+	// preceded it. `sourcing` deliberately keeps the short bound; it is meant to
+	// be transient, so resting there IS the anomaly.
 	rows, err := db.Query(fmt.Sprintf(`SELECT id, uuid, status, updated_at
 		FROM orders
 		WHERE status IN (%s)
-		  AND updated_at < datetime('now', ?)
-		ORDER BY updated_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()), "-30 minutes")
+		  AND updated_at < datetime('now',
+		        CASE WHEN status = ? THEN ? ELSE ? END)
+		ORDER BY updated_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()),
+		string(protocol.StatusQueued), "-2 hours", "-30 minutes")
 	if err != nil {
 		return nil, err
 	}

@@ -1743,3 +1743,60 @@ func TestGetProcessNodeByCoreNodeName(t *testing.T) {
 		t.Fatal("expected error for unknown core_node_name, got nil")
 	}
 }
+
+// TestReconciliationAnomalies_QueuedGetsTheLongerBound pins the two-threshold
+// split: a queued order is given two hours before it counts as stuck, every
+// other runtime-stuck status keeps thirty minutes.
+//
+// Both halves matter and they fail in opposite directions. Give queued the short
+// bound and every loop waiting on material lights up the board within half an
+// hour, which trains people to ignore it. Give EVERY status the long bound and a
+// dispatched leg that stopped moving goes unreported for two hours.
+//
+// Springfield 2026-08-03 is why queued is on the board at all: it was in neither
+// the sweep set nor the anomaly set, so 290 duplicate orders accumulated at one
+// window over three and a half hours and the system reported nothing.
+func TestReconciliationAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+
+	mk := func(uuid, status string, age time.Duration) int64 {
+		id, err := db.CreateOrder(uuid, "retrieve", nil, false, 1, "", "", "", "", false, "CODE")
+		if err != nil {
+			t.Fatalf("create %s: %v", uuid, err)
+		}
+		if err := db.UpdateOrderStatus(id, status); err != nil {
+			t.Fatalf("status %s: %v", uuid, err)
+		}
+		old := time.Now().UTC().Add(-age).Format("2006-01-02 15:04:05")
+		if _, err := db.Exec(`UPDATE orders SET updated_at=? WHERE id=?`, old, id); err != nil {
+			t.Fatalf("backdate %s: %v", uuid, err)
+		}
+		return id
+	}
+
+	youngQueued := mk("q-young", "queued", 1*time.Hour)  // under 2h — must stay quiet
+	oldQueued := mk("q-old", "queued", 3*time.Hour)      // over 2h  — must be flagged
+	submitted := mk("s-old", "submitted", 1*time.Hour)   // 30m bound still applies
+
+	anomalies, err := db.ListReconciliationAnomalies()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	flagged := map[int64]bool{}
+	for _, a := range anomalies {
+		if a.Issue == "active_order_stuck" && a.OrderID != nil {
+			flagged[*a.OrderID] = true
+		}
+	}
+
+	if flagged[youngQueued] {
+		t.Error("a queued order waiting 1h was flagged; waiting is what queued is FOR, and a board that fires on ordinary material churn gets ignored")
+	}
+	if !flagged[oldQueued] {
+		t.Error("a queued order wedged for 3h raised nothing — this is the SPR hole: no sweep covers queued, so this anomaly is the only thing that reports it")
+	}
+	if !flagged[submitted] {
+		t.Error("a non-queued order stale for 1h was not flagged; the longer bound must apply to queued ONLY, not widen to every status")
+	}
+}

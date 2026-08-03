@@ -25,6 +25,24 @@ import (
 const criticalOutboxAge = 5 * time.Minute
 const stuckOrderAge = 30 * time.Minute
 
+// queuedOrderAge is the SEPARATE, longer staleness bound for an order that is
+// still acquiring (queued or sourcing). Waiting is what these statuses are FOR,
+// so they need a different threshold from the ones where the fleet already has
+// the order and nothing is moving.
+//
+// 30 minutes is the right question to ask of a `dispatched` leg — a robot that
+// has not moved in half an hour has been forgotten. It is the wrong question to
+// ask of an order waiting on material: a loop can legitimately sit unfillable
+// across a shift change or a supplier gap, and flagging every one of those at
+// 30 minutes trains people to ignore the anomaly board, which costs more than
+// the silence did.
+//
+// Two hours is the operator judgement (2026-08-03): long enough that ordinary
+// material churn clears on its own, short enough to catch a wedge inside one
+// shift. Measured against the live Springfield board the day it was set, this
+// separates a genuinely stuck window (4h41m) from routine contention (48m).
+const queuedOrderAge = 2 * time.Hour
+
 // CompletionAnomalyWindow is how far back a completion anomaly still counts
 // AS A VERDICT.
 //
@@ -179,12 +197,25 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 		})
 	}
 
+	// Two thresholds, picked per row by status — see queuedOrderAge.
+	//
+	// QUEUED ONLY, not both acquiring statuses. `sourcing` is meant to be
+	// transient (MoveToSourcing sits at the start of the reserve attempt, so few
+	// orders rest there), which makes half an hour in `sourcing` a real signal
+	// worth keeping. Widening the longer bound to cover it would silence an alarm
+	// that currently works, to fix a problem it does not have.
+	//
+	// Splitting it in SQL rather than running two queries keeps the ORDER BY over
+	// the whole result, so the oldest anomaly is still first regardless of which
+	// bound produced it.
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT id, status, updated_at
 		FROM orders
 		WHERE status IN (%s)
-		  AND updated_at < NOW() - ($1 * INTERVAL '1 second')
-		ORDER BY updated_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()), int(stuckOrderAge.Seconds()))
+		  AND updated_at < NOW() - (
+		        CASE WHEN status = $3 THEN $2 ELSE $1 END * INTERVAL '1 second')
+		ORDER BY updated_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()),
+		int(stuckOrderAge.Seconds()), int(queuedOrderAge.Seconds()), string(protocol.StatusQueued))
 	if err != nil {
 		return nil, err
 	}

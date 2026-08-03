@@ -435,3 +435,44 @@ func containsToken(list, token string) bool {
 	}
 	return false
 }
+
+// TestAcquiringStatusesRaiseAnAnomalyButAreNeverSwept pins the split that makes
+// a waiting order visible without making it disposable.
+//
+// The two predicates answer different questions. IsRuntimeStuckCandidate means
+// "a person should look at this". IsStuckSweepCandidate means "cancel it on a
+// timer". Both acquiring statuses must get the first and neither may get the
+// second: demand does not evaporate, so cancelling a queued order deletes the
+// ask while the need is still real.
+//
+// The regression this guards is a tidy-up. The two sets look like near
+// duplicates and a future reader may reasonably try to unify them — at which
+// point either queued starts being cancelled on a timer, or it goes back to
+// raising nothing. Springfield 2026-08-03 is what the second one costs: queued
+// was in NEITHER set, 290 duplicate orders accumulated at one window over three
+// and a half hours, and the system reported nothing at all.
+func TestAcquiringStatusesRaiseAnAnomalyButAreNeverSwept(t *testing.T) {
+	t.Parallel()
+	for _, s := range AllStatuses() {
+		if !IsAcquiring(s) {
+			continue
+		}
+		if !IsRuntimeStuckCandidate(s) {
+			t.Errorf("%s is acquiring but raises no stuck anomaly — a wedged order in this status is invisible, which is exactly how the SPR duplicate pile went unreported for 3.5h", s)
+		}
+		if IsStuckSweepCandidate(s) {
+			t.Errorf("%s is acquiring and would be CANCELLED by the stuck sweep; an order waiting on material must be flagged for a person, not abandoned on a timer", s)
+		}
+	}
+	// Negative half: the sweep set is not empty, so the assertion above is
+	// meaningful rather than passing because nothing is ever swept.
+	swept := 0
+	for _, s := range AllStatuses() {
+		if IsStuckSweepCandidate(s) {
+			swept++
+		}
+	}
+	if swept == 0 {
+		t.Fatal("no status is sweep-eligible; the never-swept assertion above proves nothing")
+	}
+}
