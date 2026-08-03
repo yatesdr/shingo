@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared/clock"
+	"shingocore/dispatch"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/demands"
@@ -676,9 +677,24 @@ func (s *CoreDataService) HandleNodeStateRequest(env *protocol.Envelope, req *pr
 	log.Printf("core_handler: sent node state (%d entries) to %s", len(entries), env.Src.Station)
 }
 
+// HandleOrderStatusRequest answers an Edge's reconcile.
+//
+// TWO HALVES, and the second is the one that matters for Core-authored orders.
+// The first is the original: a snapshot per UUID the Edge named, so it can
+// correct any status it has stale. The second is new — every non-terminal order
+// Core holds for that station which the Edge did NOT name — so an order the Edge
+// has no row for gets one.
+//
+// That half is load-bearing rather than a backstop. The Core → Edge outbox drops
+// a message permanently once it exhausts its retries, so an order projection
+// that never lands is an ordinary event, and this is the only thing that repairs
+// it. An Edge running against an older Core simply gets the first half, which is
+// where it is today.
 func (s *CoreDataService) HandleOrderStatusRequest(env *protocol.Envelope, req *protocol.OrderStatusRequest) {
 	resp := &protocol.OrderStatusResponse{Orders: make([]protocol.OrderStatusSnapshot, 0, len(req.OrderUUIDs))}
+	asked := make(map[string]bool, len(req.OrderUUIDs))
 	for _, orderUUID := range req.OrderUUIDs {
+		asked[orderUUID] = true
 		snap := protocol.OrderStatusSnapshot{OrderUUID: orderUUID}
 		order, err := s.db.GetOrderByUUID(orderUUID)
 		if err == nil && order != nil {
@@ -694,7 +710,41 @@ func (s *CoreDataService) HandleOrderStatusRequest(env *protocol.Envelope, req *
 		}
 		resp.Orders = append(resp.Orders, snap)
 	}
+	resp.Unlisted = s.unlistedFor(env.Src.Station, asked)
 	s.resp.replyData(env, protocol.SubjectOrderStatusResponse, resp)
+}
+
+// unlistedFor collects this station's active orders that the Edge did not name.
+//
+// Scoped to the ASKING station, from the envelope rather than from anything in
+// the request body: an Edge may only be healed with its own orders, and the
+// envelope is the one statement of who is asking that the sender cannot restate
+// incorrectly.
+//
+// A read failure returns nothing rather than failing the whole reply. The
+// snapshots the Edge asked for are worth delivering on their own, and the heal
+// retries on the next reconcile — dropping both halves because the second could
+// not be built would turn a partial answer into no answer.
+func (s *CoreDataService) unlistedFor(stationID string, asked map[string]bool) []protocol.OrderProjection {
+	if stationID == "" {
+		return nil
+	}
+	active, err := s.db.ListActiveOrdersByStation(stationID)
+	if err != nil {
+		log.Printf("core_handler: order reconcile for %s: listing active orders: %v — replying with snapshots only", stationID, err)
+		return nil
+	}
+	var out []protocol.OrderProjection
+	for _, o := range active {
+		if o == nil || o.EdgeUUID == "" || asked[o.EdgeUUID] {
+			continue
+		}
+		out = append(out, dispatch.ProjectionFor(o))
+	}
+	if len(out) > 0 {
+		log.Printf("core_handler: order reconcile for %s: %d order(s) it has no row for — sending them down", stationID, len(out))
+	}
+	return out
 }
 
 func (s *CoreDataService) HandleClaimSync(env *protocol.Envelope, sync *protocol.ClaimSync) {

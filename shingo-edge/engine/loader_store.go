@@ -89,6 +89,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 		return domain.NewSharedWindowLoader(id, l.Name, role, repl, windows, payloadSet,
 			domain.WithInboundSource(l.InboundSource),
 			domain.WithUOPThreshold(uopThreshold),
+			domain.WithFunnelWindows(l.FunnelWindows),
 			domain.WithOutboundDest(l.OutboundDest), domain.WithBufferDest(l.BufferDest))
 
 	case string(domain.LayoutDedicatedPositions):

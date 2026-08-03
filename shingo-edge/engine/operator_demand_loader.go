@@ -326,11 +326,11 @@ func (e *Engine) withLoaderBudget(loader *domain.Loader, payload domain.PayloadC
 		return 0, nil
 	}
 	// The Loader owns the reservation shape: which nodes the count spans and the
-	// budget. multiWindowEnabled gates whether a shared loader spreads across its
-	// windows (budget = SlotCount) or funnels to its anchor (budget 1); member
+	// budget. multiWindowFor gates whether THIS shared loader spreads across its
+	// windows (budget = SlotCount) or takes one at a time (budget 1); member
 	// routes a dedicated reservation to the position the signal named —
 	// see domain.Loader.ReservationTarget.
-	nodes, budget := loader.ReservationTarget(member, payload, e.multiWindowEnabled())
+	nodes, budget := loader.ReservationTarget(member, payload, e.multiWindowFor(loader))
 	if len(nodes) == 0 || budget <= 0 {
 		return 0, nil // loader doesn't serve this payload — no target
 	}
@@ -438,12 +438,26 @@ func (e *Engine) withLoaderBudget(loader *domain.Loader, payload domain.PayloadC
 	return created, ferr
 }
 
-// multiWindowEnabled reports whether shared-window multi-window delivery is on
-// (config LoadersMultiWindow). DEFAULT ON (nil cfg/flag = enabled): a shared
-// loader spreads empties across its windows; set `loaders_multi_window: false`
-// to funnel to the anchor with budget 1 instead.
-func (e *Engine) multiWindowEnabled() bool {
-	return e.cfg == nil || e.cfg.LoadersMultiWindow == nil || *e.cfg.LoadersMultiWindow
+// multiWindowFor reports whether THIS loader spreads its empties across its
+// windows (one bin per window, budget = window count) or takes one window at a
+// time (budget 1, all to the first window).
+//
+// Core owns the answer, on the loader's own row. It used to be one plant-wide
+// Edge config key, which could only answer for every loader at once; a plant
+// that needed the funnel for one loader imposed it on all of them.
+//
+// THE CONFIG KEY IS DEPRECATED AND SURVIVES ONLY AS A PLANT-WIDE OFF SWITCH.
+// An explicit `loaders_multi_window: false` still funnels every loader,
+// because deleting the key outright would silently switch such a plant to
+// spreading — a live behaviour change nobody asked for, delivered by a
+// deployment that only changed a default. It cannot turn spreading ON against a
+// loader that is configured to funnel: the loader is the authority, and the key
+// is a brake, never an accelerator. Deploy 9 removes it once no config sets it.
+func (e *Engine) multiWindowFor(l *domain.Loader) bool {
+	if e.cfg != nil && e.cfg.LoadersMultiWindow != nil && !*e.cfg.LoadersMultiWindow {
+		return false
+	}
+	return l == nil || !l.FunnelWindows()
 }
 
 // nodeIDStrings projects typed NodeIDs to the plain strings the order-query layer

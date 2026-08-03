@@ -29,6 +29,7 @@ type mockEmitter struct {
 	queued           []emitQueued
 	faulted          []emitFaulted
 	faultedRecovered []emitFaultedRecovered
+	projected        []emitProjected
 }
 
 type emitReceived struct {
@@ -65,6 +66,10 @@ type emitFaultedRecovered struct {
 	orderID int64
 	robotID string
 }
+type emitProjected struct {
+	stationID  string
+	projection protocol.OrderProjection
+}
 
 func (m *mockEmitter) EmitOrderReceived(orderID int64, _, _ string, _ protocol.OrderType, payloadCode, _ string) {
 	m.received = append(m.received, emitReceived{orderID, payloadCode})
@@ -92,6 +97,9 @@ func (m *mockEmitter) EmitOrderFaulted(orderID int64, _, _, reason string) {
 }
 func (m *mockEmitter) EmitOrderFaultedRecovered(orderID int64, _, _, robotID string) {
 	m.faultedRecovered = append(m.faultedRecovered, emitFaultedRecovered{orderID, robotID})
+}
+func (m *mockEmitter) ProjectOrder(stationID string, p protocol.OrderProjection) {
+	m.projected = append(m.projected, emitProjected{stationID, p})
 }
 
 // --- Test helpers (thin wrappers delegating to internal/testdb) ---

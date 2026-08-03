@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/demands"
 	"shingocore/store/loaders"
 )
@@ -68,6 +69,70 @@ func TestBuildDemandRegistryFromAggregate(t *testing.T) {
 	}
 }
 
+// TestBuildDemandRegistry_ConsumeThresholdDerivesNoThreshold covers the loader
+// row that the service's refusal cannot reach: one written before the refusal
+// existed, or by a direct database edit.
+//
+// The threshold monitor's queries are role-blind — it fires on any registry row
+// with replenish_uop_threshold > 0 — and the Edge drops every signal that comes
+// back, because its threshold path resolves produce loaders only. Deriving a
+// zero threshold stops the pointless round trip at the source.
+//
+// The entry itself must survive. It carries the manual_swap binding as well as
+// the threshold, so skipping the loader outright would trade an inert threshold
+// for a broken swap.
+func TestBuildDemandRegistry_ConsumeThresholdDerivesNoThreshold(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	var ntID, winID int64
+	if err := db.DB.QueryRow(
+		`INSERT INTO node_types (code,name) VALUES ('NT-CT','t') ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name RETURNING id`,
+	).Scan(&ntID); err != nil {
+		t.Fatalf("seed node_type: %v", err)
+	}
+	if err := db.DB.QueryRow(
+		`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ('CT-WIN-1',false,$1,true) RETURNING id`, ntID,
+	).Scan(&winID); err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+
+	// Straight to the store, bypassing the service — that is the shape this
+	// backstop is for.
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "CT-L", Role: loaders.RoleConsume,
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentThreshold,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	if err := db.UpsertLoaderHome(loaders.Home{LoaderID: id, PositionNodeID: winID, PayloadCode: ""}); err != nil {
+		t.Fatalf("seed window home: %v", err)
+	}
+	if err := db.UpsertLoaderPayload(loaders.Payload{LoaderID: id, PayloadCode: "PART-C", UOPThreshold: 250}); err != nil {
+		t.Fatalf("upsert PART-C: %v", err)
+	}
+
+	entries, err := db.BuildDemandRegistryFromAggregate("stn-ct")
+	if err != nil {
+		t.Fatalf("BuildDemandRegistryFromAggregate: %v", err)
+	}
+	var found bool
+	for _, e := range entries {
+		if e.LoaderID != id {
+			continue
+		}
+		found = true
+		if e.ReplenishUOPThreshold != 0 {
+			t.Errorf("consume+threshold loader derived threshold %d, want 0 — the monitor would fire signals the Edge drops",
+				e.ReplenishUOPThreshold)
+		}
+	}
+	if !found {
+		t.Error("consume+threshold loader dropped from the registry entirely; it must still carry its manual_swap binding")
+	}
+}
+
 // TestBuildLoaderInfos pins the loader → protocol projection used by the
 // downward sync, in particular the identity bridge: a home's position_node_id
 // is resolved to the node NAME Edge keys on.
@@ -125,4 +190,104 @@ func TestBuildLoaderInfos(t *testing.T) {
 	if p.Kind != protocol.LoaderPositionKindDedicated {
 		t.Errorf("position kind = %q, want %q (derived from layout)", p.Kind, protocol.LoaderPositionKindDedicated)
 	}
+}
+
+// TestLoaderFunnelWindows_RoundTrip follows the window-delivery setting the whole
+// way: written on the aggregate, read back off it, and projected onto the wire
+// shape the Edge syncs from. A setting that survives the write but not the
+// projection is invisible to the only component that acts on it.
+//
+// It also pins the default. A loader created without mentioning the setting must
+// come back FALSE — spread — because that is what every loader did when this was
+// a plant-wide config key nobody had set. A default that flipped here would
+// change how live loaders are fed on the deploy that introduced the column.
+func TestLoaderFunnelWindows_RoundTrip(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	var ntID, winID int64
+	if err := db.DB.QueryRow(
+		`INSERT INTO node_types (code,name) VALUES ('NT-FW','t') ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name RETURNING id`,
+	).Scan(&ntID); err != nil {
+		t.Fatalf("seed node_type: %v", err)
+	}
+	if err := db.DB.QueryRow(
+		`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ('FW-WIN-1',false,$1,true) RETURNING id`, ntID,
+	).Scan(&winID); err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "FW-L", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentThreshold,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	if err := db.UpsertLoaderHome(loaders.Home{LoaderID: id, PositionNodeID: winID, PayloadCode: ""}); err != nil {
+		t.Fatalf("seed window home: %v", err)
+	}
+
+	got, err := db.GetLoader(id)
+	if err != nil || got == nil {
+		t.Fatalf("GetLoader: %v", err)
+	}
+	if got.FunnelWindows {
+		t.Fatal("a loader created without mentioning the setting funnels; it must spread — that is what every loader did before the column existed")
+	}
+	if projected := findLoaderInfo(t, db, id); projected.FunnelWindows {
+		t.Error("wire projection says funnel for a loader that spreads")
+	}
+
+	// Turn it on and follow it back out.
+	got.FunnelWindows = true
+	if err := db.UpdateLoader(*got); err != nil {
+		t.Fatalf("UpdateLoader: %v", err)
+	}
+	back, err := db.GetLoader(id)
+	if err != nil || back == nil {
+		t.Fatalf("GetLoader after update: %v", err)
+	}
+	if !back.FunnelWindows {
+		t.Error("setting did not survive the write")
+	}
+	if projected := findLoaderInfo(t, db, id); !projected.FunnelWindows {
+		t.Error("setting survives the write but is dropped by BuildLoaderInfos — the Edge would never see it")
+	}
+
+	// ListLoaders is the enumeration the sync actually walks; a column read
+	// correctly by GetLoader and dropped by the list read would sync as false.
+	all, err := db.ListLoaders()
+	if err != nil {
+		t.Fatalf("ListLoaders: %v", err)
+	}
+	var seen bool
+	for _, l := range all {
+		if l.ID == id {
+			seen = true
+			if !l.FunnelWindows {
+				t.Error("ListLoaders drops the setting")
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("loader missing from ListLoaders")
+	}
+}
+
+// findLoaderInfo projects every loader and returns the one with this id's key.
+func findLoaderInfo(t *testing.T, db *store.DB, id int64) protocol.LoaderInfo {
+	t.Helper()
+	infos, err := db.BuildLoaderInfos()
+	if err != nil {
+		t.Fatalf("BuildLoaderInfos: %v", err)
+	}
+	want := loaders.Key(id)
+	for _, li := range infos {
+		if li.LoaderKey == want {
+			return li
+		}
+	}
+	t.Fatalf("loader %s not in BuildLoaderInfos output", want)
+	return protocol.LoaderInfo{}
 }

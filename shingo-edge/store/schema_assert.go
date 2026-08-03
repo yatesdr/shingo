@@ -70,6 +70,7 @@ var requiredColumns = []requiredColumn{
 	{"orders", "sibling_order_id"},
 	{"orders", "queue_reason"},
 	{"orders", "queue_code"},
+	{"orders", "authored_by"},
 	{"style_node_claims", "mode"},
 	{"style_node_claims", "lineside_soft_threshold"},
 	{"style_node_claims", "second_paired_core_node"},

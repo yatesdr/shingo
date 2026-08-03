@@ -319,6 +319,10 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectOrderStatusResponse, func(_ *protocol.Envelope, resp *protocol.OrderStatusResponse) {
 		eng.HandleOrderStatusSnapshots(resp.Orders)
+		// The healing half: orders Core holds for this station that we did not
+		// ask about, because we have no row for them. A dropped projection is
+		// repaired here and nowhere else.
+		eng.HandleUnlistedOrders(resp.Unlisted)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectTagVerifyResponse, func(_ *protocol.Envelope, resp *protocol.TagVerifyResponse) {
 		if resp.Match {
@@ -409,6 +413,16 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// call for.
 	router.RegisterSubject(subjectRouter, protocol.SubjectSupplyRefusalState, func(_ *protocol.Envelope, st *protocol.SupplyRefusalState) {
 		eng.HandleSupplyRefusalState(*st)
+	})
+	// A whole order row pushed down by Core, for an order this Edge did not
+	// create. Without it a Core-authored order is invisible here: nothing on the
+	// board, and the delivery handler falls back to binding the bin alone.
+	// Registered here in the same place the subject joins EdgeInboundSubjects, so
+	// the boot coverage assertion holds.
+	router.RegisterSubject(subjectRouter, protocol.SubjectOrderProjected, func(_ *protocol.Envelope, p *protocol.OrderProjection) {
+		if _, err := eng.ApplyOrderProjection(*p); err != nil {
+			log.Printf("edge_handler: order projection %s: %v", p.OrderUUID, err)
+		}
 	})
 	// SubjectCountGroupCommand may be skipped above when cgHandler is nil
 	// (countgroup is an optional feature). The boot-time coverage assertion

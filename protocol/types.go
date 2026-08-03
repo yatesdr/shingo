@@ -224,6 +224,26 @@ const (
 	// is a mixed-version no-op both directions.
 	SubjectSourcingState = "sourcing.state"
 
+	// SubjectOrderProjected — Core → Edge: a whole order row, so an order the
+	// Edge did not create still appears on its board.
+	//
+	// Core is becoming an author of orders rather than only a fulfiller of Edge
+	// requests, and an order with no Edge row is one the operator cannot see, the
+	// delivery handler cannot bind, and the board cannot explain. The projection
+	// closes that.
+	//
+	// A new SUBJECT on the existing shingo.dispatch topic, following the
+	// SubjectSourcingState precedent. Value schema is ADDITIVE-only; an older
+	// Edge that does not register it logs-and-ignores the message, which leaves
+	// that plant exactly where it is today rather than breaking it.
+	//
+	// The push is NOT the only delivery path and must not be treated as one. The
+	// Core → Edge outbox drops a message permanently once it exhausts its
+	// retries, so a projection that never arrives is a normal event; the order
+	// status reconcile carries the same shape back (OrderStatusResponse.Unlisted)
+	// and is what repairs it.
+	SubjectOrderProjected = "order.projected"
+
 	// SubjectSupplyRefusalState — Core → Edge, BROADCAST: the current state of
 	// every open supply refusal.
 	//
@@ -327,6 +347,7 @@ func EdgeInboundSubjects() []string {
 		SubjectUOPAdjustment,
 		SubjectSourcingState,
 		SubjectSupplyRefusalState,
+		SubjectOrderProjected,
 	}
 }
 

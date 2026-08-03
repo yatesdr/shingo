@@ -75,5 +75,5 @@ demand.hysteresis_margin(reorder_point=100) = 10
 demand.hysteresis_margin(reorder_point=300) = 30
 demand.default_hysteresis_percent = 10
 demand.min_hysteresis_uop = 1
-loaders_multi_window.resolved = true
+loaders_multi_window.forces_funnel = false
 uop_accumulating_cta_after.resolved = 30m0s

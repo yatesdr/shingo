@@ -3,11 +3,12 @@ package store
 // Loader → protocol projection for the downward config sync (loader refactor
 // cutover). Lives in the outer store/ package because it crosses two
 // aggregates: loaders (config) and nodes (position_node_id → name resolution,
-// since Edge keys on node names). DORMANT until Core authors loaders + the
-// node-list builder includes the result.
+// since Edge keys on node names). Live: Core authors loaders and the node-list
+// builder carries BuildLoaderInfos' output down to the Edge.
 
 import (
 	"fmt"
+	"log"
 
 	"shingo/protocol"
 	"shingocore/store/demands"
@@ -100,6 +101,7 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			InboundSource: l.InboundSource,
 			BufferDest:    l.BufferDest,
 			ConfigGen:     l.ConfigGen,
+			FunnelWindows: l.FunnelWindows,
 		}
 
 		// A home's kind is fully determined by the parent loader's layout: a
@@ -165,6 +167,26 @@ func (db *DB) BuildDemandRegistryFromAggregate(stationID string) ([]demands.Regi
 	for _, l := range ls {
 		role := protocol.ClaimRole(l.Role)
 
+		// A consume loader drains; nothing on either side acts on a threshold it
+		// carries. The service refuses the combination at the door now, so this is
+		// for the row that predates that refusal or arrived by a direct database
+		// edit: derive the entry, but with NO threshold, so the monitor does not
+		// fire signals the Edge is guaranteed to drop.
+		//
+		// Zeroed rather than skipped. The registry entry does more than carry a
+		// threshold — dropping the loader from it entirely would take away the
+		// manual_swap binding too, trading an inert threshold for a broken swap.
+		consumeThreshold := l.Role == loaders.RoleConsume && l.Replenishment == loaders.ReplenishmentThreshold
+		if consumeThreshold {
+			log.Printf("demand registry: loader %q (%s) is consume+threshold, which nothing acts on — deriving its entries with no threshold; fix the loader's replenishment mode", l.Name, loaders.Key(l.ID))
+		}
+		thresholdFor := func(v int) int {
+			if consumeThreshold {
+				return 0
+			}
+			return v
+		}
+
 		homes, err := db.ListLoaderHomes(l.ID)
 		if err != nil {
 			return nil, err
@@ -196,7 +218,7 @@ func (db *DB) BuildDemandRegistryFromAggregate(stationID string) ([]demands.Regi
 				Role:                  role,
 				PayloadCode:           h.PayloadCode,
 				OutboundDest:          l.OutboundDest,
-				ReplenishUOPThreshold: h.UOPThreshold,
+				ReplenishUOPThreshold: thresholdFor(h.UOPThreshold),
 			})
 		}
 
@@ -229,7 +251,7 @@ func (db *DB) BuildDemandRegistryFromAggregate(stationID string) ([]demands.Regi
 					Role:                  role,
 					PayloadCode:           p.PayloadCode,
 					OutboundDest:          l.OutboundDest,
-					ReplenishUOPThreshold: p.UOPThreshold,
+					ReplenishUOPThreshold: thresholdFor(p.UOPThreshold),
 				})
 			}
 		}

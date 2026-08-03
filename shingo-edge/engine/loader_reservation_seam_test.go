@@ -251,7 +251,7 @@ func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
 	// Fixture guard: this test earns its keep only at budget > 1. If the loader
 	// shape or the multi-window default changes so it funnels to one anchor, the
 	// run would silently degrade into a duplicate of the existing property test.
-	if _, budget := loader.ReservationTarget("", "P1", eng.multiWindowEnabled()); budget != len(windows) {
+	if _, budget := loader.ReservationTarget("", "P1", eng.multiWindowFor(loader)); budget != len(windows) {
 		t.Fatalf("fixture: ReservationTarget budget = %d, want %d (multi-window spread); "+
 			"budget=1 is already covered by TestWithLoaderBudget_PropNeverExceedsBudget", budget, len(windows))
 	}

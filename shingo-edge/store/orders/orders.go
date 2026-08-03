@@ -35,7 +35,7 @@ type (
 const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
-	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.sibling_order_id, o.queue_reason, o.queue_code, o.created_at, o.updated_at,
+	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
 
 const joinClause = `FROM orders o
@@ -108,7 +108,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &o.QueueCode, &createdAt, &updatedAt,
+			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 			return nil, err
 		}
@@ -138,7 +138,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &o.QueueCode, &createdAt, &updatedAt,
+		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 		return err
 	}
@@ -187,6 +187,77 @@ func Create(db *sql.DB, uuid string, orderType protocol.OrderType, processNodeID
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// ProjectionRow is one Core-authored order as it lands in the Edge table. It is
+// the projection payload with process_node_id already resolved, because that is
+// an Edge-local id Core has never had.
+type ProjectionRow struct {
+	UUID          string
+	OrderType     protocol.OrderType
+	Status        string
+	ProcessNodeID *int64
+	RetrieveEmpty bool
+	Quantity      int64
+	SourceNode    string
+	DeliveryNode  string
+	PayloadCode   string
+	QueueReason   string
+	QueueCode     string
+}
+
+// UpsertProjection writes a Core-authored order row, creating it or updating it
+// in place. Returns whether the row was newly created.
+//
+// IDEMPOTENT BY UUID, which is the property the whole projection depends on.
+// Core re-sends a projection freely — once when it authors the order, and again
+// for anything the reconcile finds the Edge is missing — so a second arrival
+// must be a no-op rather than a conflict or a duplicate row.
+//
+// IT WRITES NO OUTBOX ROW, and gets that for free rather than by suppressing
+// anything: on this Edge, nothing about writing or transitioning an order row
+// enqueues to Core. Enqueueing is bound to specific operator actions — create,
+// release, cancel, redirect, confirm — each of which calls the sender
+// explicitly. Bypassing those paths is what makes a projection silent. The
+// provenance test asserts it rather than trusting it.
+//
+// authored_by is stamped 'core' unconditionally: a row that arrives by
+// projection was authored by Core by definition, and an update must re-assert it
+// so a row cannot be laundered into looking locally created.
+//
+// NOT UPDATED on conflict: created_at (the row's own history), bin_id,
+// staged_expire_at, waybill and count fields. Those are Edge-side working state
+// written as the order progresses through the plant, and Core's view of the
+// order does not contain them. Overwriting them with zero values on every
+// re-projection would erase what the Edge learned by doing the work.
+func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
+	var existed int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE uuid=?`, r.UUID).Scan(&existed); err != nil {
+		return false, fmt.Errorf("check existing order %s: %w", r.UUID, err)
+	}
+	_, err = db.Exec(`
+		INSERT INTO orders (uuid, order_type, status, process_node_id, retrieve_empty, quantity,
+			source_node, delivery_node, payload_code, queue_reason, queue_code, authored_by)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,'core')
+		ON CONFLICT(uuid) DO UPDATE SET
+			order_type=excluded.order_type,
+			status=excluded.status,
+			process_node_id=COALESCE(excluded.process_node_id, orders.process_node_id),
+			retrieve_empty=excluded.retrieve_empty,
+			quantity=excluded.quantity,
+			source_node=excluded.source_node,
+			delivery_node=excluded.delivery_node,
+			payload_code=excluded.payload_code,
+			queue_reason=excluded.queue_reason,
+			queue_code=excluded.queue_code,
+			authored_by='core',
+			updated_at=datetime('now')`,
+		r.UUID, r.OrderType, r.Status, r.ProcessNodeID, r.RetrieveEmpty, r.Quantity,
+		r.SourceNode, r.DeliveryNode, r.PayloadCode, r.QueueReason, r.QueueCode)
+	if err != nil {
+		return false, fmt.Errorf("upsert projected order %s: %w", r.UUID, err)
+	}
+	return existed == 0, nil
 }
 
 // UpdateProcessNode rebinds an order to a different process_node.

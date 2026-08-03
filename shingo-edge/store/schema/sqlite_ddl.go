@@ -138,6 +138,12 @@ CREATE TABLE IF NOT EXISTS orders (
     sibling_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     queue_reason    TEXT NOT NULL DEFAULT '',
     queue_code      TEXT NOT NULL DEFAULT '',
+    -- authored_by: who decided this order should exist. 'edge' (the default, and
+    -- what every existing row is) means this Edge created it and sent it up;
+    -- 'core' means Core created it and pushed the row down. Nothing branches on
+    -- it: it labels the board and it is what a projected-row test asserts
+    -- against. Deliberately cheap to stop rendering.
+    authored_by     TEXT NOT NULL DEFAULT 'edge',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -430,6 +436,7 @@ CREATE TABLE IF NOT EXISTS core_loaders (
     inbound_source TEXT    NOT NULL DEFAULT '',
     buffer_dest    TEXT    NOT NULL DEFAULT '',
     config_gen     INTEGER NOT NULL DEFAULT 0,
+    funnel_windows INTEGER NOT NULL DEFAULT 0,  -- 1 = one window at a time; 0 = spread across windows (the default everywhere)
     synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (loader_key)
 );

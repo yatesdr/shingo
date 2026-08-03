@@ -104,7 +104,7 @@ func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode 
 		return
 	}
 	pc := domain.PayloadCode(payloadCode)
-	nodes, budget := loader.ReservationTarget("", pc, e.multiWindowEnabled())
+	nodes, budget := loader.ReservationTarget("", pc, e.multiWindowFor(loader))
 	if len(nodes) == 0 || budget <= 0 {
 		return // this unloader doesn't serve the payload
 	}

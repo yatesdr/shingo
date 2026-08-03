@@ -288,6 +288,14 @@ func (db *DB) migrate() error {
 	// projectCoreLoader falls back to core_node_name.
 	db.Exec("ALTER TABLE core_loaders ADD COLUMN loader_key TEXT NOT NULL DEFAULT ''")
 
+	// Whether a shared-window loader takes one window at a time moved from a
+	// plant-wide config key onto the loader itself (Core v74). Idempotent —
+	// duplicate ADD COLUMN fails silently. DEFAULT 0 means spread, which is what
+	// the config key resolved to when unset, so a cache row written before this
+	// column existed reads as today's behaviour. Repopulated full-state on the
+	// next node-list sync regardless.
+	db.Exec("ALTER TABLE core_loaders ADD COLUMN funnel_windows INTEGER NOT NULL DEFAULT 0")
+
 	// 6. Data fixups
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")
 
@@ -593,6 +601,13 @@ func (db *DB) migrate() error {
 	if err := db.rebuildStyleNodeClaims(); err != nil {
 		return err
 	}
+
+	// v34 (2026-08-02, order projection): who decided an order should exist.
+	// Core is becoming an author of orders rather than only a fulfiller of Edge
+	// requests, and a projected row otherwise looks locally created. DEFAULT
+	// 'edge' is correct for every row that already exists — every one of them was
+	// created here.
+	db.Exec("ALTER TABLE orders ADD COLUMN authored_by TEXT NOT NULL DEFAULT 'edge'")
 
 	return nil
 }

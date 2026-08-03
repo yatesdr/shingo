@@ -13,3 +13,7 @@ func (e *Engine) RequestOrderStatusSync() error {
 func (e *Engine) HandleOrderStatusSnapshots(items []protocol.OrderStatusSnapshot) {
 	e.coreSync.HandleOrderStatusSnapshots(items)
 }
+
+func (e *Engine) HandleUnlistedOrders(items []protocol.OrderProjection) {
+	e.coreSync.HandleUnlistedOrders(items)
+}

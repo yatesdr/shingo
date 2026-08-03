@@ -573,6 +573,12 @@ type LoaderInfo struct {
 	InboundSource string              `json:"inbound_source,omitempty"`
 	BufferDest    string              `json:"buffer_dest,omitempty"`
 	ConfigGen     int64               `json:"config_gen"`
+	// FunnelWindows restricts a shared_window loader to ONE window at a time:
+	// empties funnel to its first window on a budget of 1 instead of spreading one
+	// bin per window. Stated as the restriction so the zero value — which is also
+	// what a Core predating this field sends — means "spread", the behaviour every
+	// loader has today. Ignored for dedicated_positions loaders.
+	FunnelWindows bool                `json:"funnel_windows,omitempty"`
 	Positions     []LoaderPosition    `json:"positions,omitempty"`
 	Payloads      []LoaderPayloadInfo `json:"payloads,omitempty"`
 }
@@ -708,6 +714,52 @@ type OrderStatusRequest struct {
 	OrderUUIDs []string `json:"order_uuids"`
 }
 
+// OrderProjection is the Core → Edge push of a whole order row
+// (SubjectOrderProjected).
+//
+// It exists because Core is about to author orders itself. An order the Edge
+// never asked for has no row on the Edge, so it is invisible on the operator
+// board, and the delivery handler has to paper over the miss with a bind-only
+// fallback. The projection gives the Edge the row.
+//
+// IDEMPOTENT BY UUID. Core re-sends the same projection freely — on creation,
+// and again for anything the reconcile finds the Edge is missing — so the
+// applier must upsert, never insert. A duplicate must be a no-op, not a
+// conflict and not a second row.
+//
+// NO process_node_id. That is an Edge-local foreign key to the Edge's own
+// process_nodes table, and Core has never had it. The Edge resolves it from
+// DeliveryNode, and a legitimately unresolvable one (a Core node with no Edge
+// process node) leaves it null — which is a supported shape, not an error.
+//
+// Additive-only: an older Edge that does not register the subject logs and
+// drops the whole message, so the feed is a no-op in both mixed-version
+// directions.
+type OrderProjection struct {
+	OrderUUID    string    `json:"order_uuid"`
+	OrderType    OrderType `json:"order_type"`
+	Status       string    `json:"status"`
+	StationID    string    `json:"station_id"`
+	Quantity     int64     `json:"quantity,omitempty"`
+	SourceNode   string    `json:"source_node,omitempty"`
+	DeliveryNode string    `json:"delivery_node,omitempty"`
+	PayloadCode  string    `json:"payload_code,omitempty"`
+	PayloadDesc  string    `json:"payload_desc,omitempty"`
+	// RetrieveEmpty distinguishes a pull of an empty carrier from a pull of a
+	// full one. Carried explicitly rather than derived from OrderType, because
+	// the Edge column is separate and the two have drifted before.
+	RetrieveEmpty bool `json:"retrieve_empty,omitempty"`
+	// OriginID / OriginClass are the demand-episode attribution, passed through
+	// so a projected row answers "why does this exist" the same way a locally
+	// created one does.
+	OriginID    string `json:"origin_id,omitempty"`
+	OriginClass string `json:"origin_class,omitempty"`
+	// QueueReason / QueueCode mirror OrderStatusSnapshot's, so a projection that
+	// arrives for a queued order explains the wait without a second round trip.
+	QueueReason string `json:"queue_reason,omitempty"`
+	QueueCode   string `json:"queue_code,omitempty"`
+}
+
 // OrderStatusSnapshot is the current Core-side view of an order.
 type OrderStatusSnapshot struct {
 	OrderUUID     string `json:"order_uuid"`
@@ -732,6 +784,16 @@ type OrderStatusSnapshot struct {
 // OrderStatusResponse carries the authoritative Core-side state for requested orders.
 type OrderStatusResponse struct {
 	Orders []OrderStatusSnapshot `json:"orders"`
+	// Unlisted carries orders for the asking station that the Edge did NOT name
+	// — Core-authored ones it has no row for. This is the healing half of the
+	// reconcile, and it is why the reconcile is load-bearing rather than a
+	// backstop: the Core → Edge outbox drops a message permanently once it is
+	// past its retry limit, so a lost projection is a normal event and the only
+	// thing that repairs it is the Edge finding out here.
+	//
+	// Additive: an older Edge decodes the snapshots and ignores this field, which
+	// leaves it exactly where it is today.
+	Unlisted []OrderProjection `json:"unlisted,omitempty"`
 }
 
 // NodeStructureChanged is sent Core→Edge when a node group's structure changes

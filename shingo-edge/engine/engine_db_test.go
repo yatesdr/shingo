@@ -902,15 +902,28 @@ func TestCoreSyncService_RequestOrderStatusSync_NoSendFn(t *testing.T) {
 	}
 }
 
+// TestCoreSyncService_RequestOrderStatusSync_NoActiveOrders: an Edge with
+// nothing to ask about STILL asks.
+//
+// This used to assert the opposite, on the reasonable-looking grounds that there
+// was nothing to reconcile. That became exactly backwards once Core started
+// authoring orders: an Edge with no orders is the one most likely to be missing
+// one. A fresh install, a wiped database, or a plant that dropped every
+// projection would ask nothing, Core would never get the chance to answer with
+// the orders it holds for that station, and the hole would never close.
 func TestCoreSyncService_RequestOrderStatusSync_NoActiveOrders(t *testing.T) {
 	t.Parallel()
 	eng := newCoverageEngine(t)
-	sent := 0
-	eng.SetSendFunc(func(*protocol.Envelope) error { sent++; return nil })
-	// No orders in DB → returns nil without sending.
+	var captured *protocol.Envelope
+	eng.SetSendFunc(func(env *protocol.Envelope) error { captured = env; return nil })
 	testutil.MustNoErr(t, eng.coreSync.RequestOrderStatusSync(), "unexpected err")
-	if sent != 0 {
-		t.Errorf("sendFn called %d times, want 0 when no active orders", sent)
+	if captured == nil {
+		t.Fatal("sent nothing with an empty order list; Core can only heal an Edge that asks")
+	}
+	var data protocol.Data
+	testutil.MustNoErr(t, captured.DecodePayload(&data), "decode payload")
+	if data.Subject != protocol.SubjectOrderStatusRequest {
+		t.Errorf("subject = %q, want %q", data.Subject, protocol.SubjectOrderStatusRequest)
 	}
 }
 

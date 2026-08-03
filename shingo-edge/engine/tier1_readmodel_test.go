@@ -130,7 +130,7 @@ func TestTier1_DedicatedLoaderKeepsLayoutViaAggregate(t *testing.T) {
 		t.Errorf("layout = %v, want dedicated_positions (the shim flattened to shared_window)", l.Layout())
 	}
 	// O2 member routing: a reservation naming D2 routes to D2, not first-match D1.
-	nodes, budget := l.ReservationTarget("D2", "STUD", eng.multiWindowEnabled())
+	nodes, budget := l.ReservationTarget("D2", "STUD", eng.multiWindowFor(l))
 	if len(nodes) != 1 || nodes[0] != "D2" || budget != 1 {
 		t.Errorf("ReservationTarget(member=D2) = %v/%d, want [D2]/1", nodes, budget)
 	}

@@ -8,6 +8,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 
 	"shingocore/store"
@@ -20,6 +21,35 @@ import (
 // engine (which would be a cycle).
 type ThresholdNotifier interface {
 	OnThresholdChanges(changes []demands.RegistryChange)
+}
+
+// ErrConsumeThreshold refuses a consume loader set to threshold replenishment.
+//
+// The combination is storable — the CHECK constraint on replenishment is
+// role-blind — and it produces a loader that does nothing at all. Core derives
+// its thresholds into demand_registry and fires LoopBelowThresholdSignal at it;
+// the Edge drops every one of those, because all three loader-resolution tiers
+// on the threshold path ask for the produce role. Meanwhile the drain that IS a
+// consume loader's job is skipped for exactly this replenishment value. So the
+// unloader neither drains nor replenishes, and the existing misconfiguration
+// warning stays silent, because that one only catches threshold mode with no
+// threshold VALUE — and this loader has values.
+//
+// Nothing about that is visible from the outside. The loader appears configured,
+// the boot log says nothing, and the operator finds out when bins stop moving.
+// Refusing it at the door is the whole fix: a consume threshold mode may exist
+// one day (the drain is a kanban problem too), and when it does, this error is
+// what a reader will grep to find every place that has to change.
+var ErrConsumeThreshold = errors.New("an unloader cannot be threshold-driven: consume loaders drain, and nothing acts on a consume threshold")
+
+// checkReplenishment rejects the one role/replenishment pair that is storable
+// but inert. Shared by Create and Update so a loader cannot be edited into a
+// shape it could not have been created in.
+func checkReplenishment(role, replenishment string) error {
+	if role == loaders.RoleConsume && replenishment == loaders.ReplenishmentThreshold {
+		return ErrConsumeThreshold
+	}
+	return nil
 }
 
 // LoaderService wraps the bin_loaders store CRUD with the demand re-derive.
@@ -68,6 +98,9 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 			replenishment = loaders.ReplenishmentThreshold
 		}
 	}
+	if err := checkReplenishment(role, replenishment); err != nil {
+		return 0, err
+	}
 	id, err := s.db.CreateLoader(loaders.Loader{
 		Name: name, Role: role, Layout: layout,
 		Replenishment: replenishment, OutboundDest: outboundDest,
@@ -85,7 +118,13 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 // the current value when blank. The shared_window flow endpoints
 // (inbound/outbound/buffer) are passed through verbatim — a dedicated_positions
 // loader sends them empty (each position is its own in/out).
-func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDest, inboundSource, bufferDest string) error {
+//
+// funnelWindows is editable here but NOT settable at Create, and that asymmetry
+// is deliberate: a loader is created before its windows are dragged in, so at
+// creation there is nothing to funnel or spread and the question has no
+// meaningful answer. It starts false (spread) and the operator changes it once
+// the loader has members.
+func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDest, inboundSource, bufferDest string, funnelWindows bool) error {
 	cur, err := s.db.GetLoader(id)
 	if err != nil {
 		return err
@@ -99,12 +138,18 @@ func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDe
 	if replenishment == "" {
 		replenishment = cur.Replenishment
 	}
+	// cur.Role, not a parameter: role is the identity and Update never changes it,
+	// so this checks the pair that will actually be stored.
+	if err := checkReplenishment(cur.Role, replenishment); err != nil {
+		return err
+	}
 	cur.Name = name
 	cur.Layout = layout
 	cur.Replenishment = replenishment
 	cur.OutboundDest = outboundDest
 	cur.InboundSource = inboundSource
 	cur.BufferDest = bufferDest
+	cur.FunnelWindows = funnelWindows
 	if err := s.db.UpdateLoader(*cur); err != nil {
 		return err
 	}

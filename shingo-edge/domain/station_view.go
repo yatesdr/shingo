@@ -96,9 +96,16 @@ type StationNodeView struct {
 	// C4b, the view-path cutover). Populated only for manual_swap nodes.
 	WindowGroupAnchor string `json:"window_group_anchor,omitempty"`
 	// WindowNodes is the sibling window set of this node's shared loader — every
-	// window's core_node_name in loader order — populated alongside WindowGroupAnchor.
-	// One physical bin per window; the windows share the loader's single empty-in
+	// window's core_node_name — populated alongside WindowGroupAnchor. One
+	// physical bin per window; the windows share the loader's single empty-in
 	// budget (one demand of N → N empties across the set, never 2N).
+	//
+	// NOT "in loader order", which is what this used to say. Core's operator-defined
+	// window order does not survive the trip: it has no field on the wire and no
+	// column in the Edge cache, so the order here is whatever the cache read
+	// produced, which is by node NAME. Nothing renders this field today (no
+	// consumer in any page or template), so the wrong claim misled readers rather
+	// than the board.
 	WindowNodes []string `json:"window_nodes,omitempty"`
 	// ActivePayloadLineside maps an active-style payload code to the current
 	// lineside UOP for it — the bin at the consuming node plus parts pulled to

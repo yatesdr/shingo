@@ -871,6 +871,15 @@ func (db *DB) runVersionedMigrations() error {
 		{73, "orders.edge_uuid unique — exempt the restore parent's derived name",
 			v73OrdersUUIDUniqueExemptRestore,
 			func(q schema.Querier) bool { return uuidIndexExemptsRestore(q) }},
+		// v74: whether a shared-window loader spreads its inbound empties across
+		// its windows, or funnels them to the first one, becomes a property of the
+		// loader instead of a plant-wide Edge config key. DEFAULT FALSE = spread,
+		// which is what the Edge flag already resolved to when unset — so every
+		// existing loader keeps behaving exactly as it does today. Inert for
+		// dedicated loaders: their positions never shared a budget to begin with.
+		{74, "add funnel_windows to bin_loaders (per-loader window spreading)",
+			v74LoaderFunnelWindows,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "funnel_windows") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3310,6 +3319,29 @@ func v73OrdersUUIDUniqueExemptRestore(tx *sql.Tx) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid)
 		     WHERE edge_uuid <> '' AND edge_uuid NOT LIKE 'restore-%'`); err != nil {
 		return fmt.Errorf("create restore-exempt idx_orders_uuid: %w", err)
+	}
+	return nil
+}
+
+// v74LoaderFunnelWindows moves the multi-window setting onto the loader.
+//
+// It lived on the Edge as one plant-wide config key, which could only ever
+// answer the question for every loader at once. Two shared-window loaders in the
+// same plant have no reason to agree: spreading empties across windows is a
+// property of how a particular loader is fed, not of the site.
+//
+// The column states the RESTRICTION (funnel to one window) rather than the
+// capability, so its DEFAULT FALSE means "spread" — which is what the unset Edge
+// key already resolved to. Applying this therefore changes nothing anywhere, and
+// the same false-is-the-default-and-the-default-is-safe property holds for the
+// Go zero value, the wire, and the Edge cache.
+//
+// Nullable was rejected: a NULL here would mean "ask the config", which is the
+// two-sources-of-truth shape this migration exists to end.
+func v74LoaderFunnelWindows(tx *sql.Tx) error {
+	if _, err := tx.Exec(
+		`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS funnel_windows BOOLEAN NOT NULL DEFAULT FALSE`); err != nil {
+		return fmt.Errorf("v74 funnel_windows: %w", err)
 	}
 	return nil
 }

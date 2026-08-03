@@ -55,15 +55,20 @@ type Config struct {
 	CountGroups CountGroupsConfig `yaml:"count_groups"`
 	Sim         SimConfig         `yaml:"sim"`
 
-	// LoadersMultiWindow (C4) activates shared-window multi-window delivery: a
-	// shared loader's empty-in budget becomes its window count and empties spread
-	// across its windows (round-robin to free windows), instead of funneling to
-	// the anchor with budget 1. DEFAULT ON (nil = enabled): the gating
-	// prerequisites — the per-window operator board (A2) and the loader_key demand
-	// re-key (B9) — have shipped, so a >1-window shared loader is fully operable
-	// out of the box without a per-plant config edit. Set `loaders_multi_window:
-	// false` to opt back into anchor-funnel. The reservation seam keys per-loader,
-	// so this never fragments the never-2N budget.
+	// LoadersMultiWindow — DEPRECATED. The setting moved onto the loader itself:
+	// Core's bin_loaders.funnel_windows, synced down and read by
+	// engine.multiWindowFor. A plant-wide key could only answer for every loader
+	// at once, so a plant needing the funnel for one loader imposed it on all.
+	//
+	// What survives here is an OFF switch and nothing more. An explicit
+	// `loaders_multi_window: false` still funnels every loader in the plant, so a
+	// site that set it does not silently start spreading the day this ships. It
+	// cannot force spreading ON against a loader configured to funnel — the
+	// loader is the authority; this is a brake.
+	//
+	// Leave it unset. Nil, and `true`, both mean "let each loader decide", which
+	// is what the old default did anyway. Deploy 9 deletes the key once no
+	// deployed config sets it.
 	LoadersMultiWindow *bool `yaml:"loaders_multi_window"`
 
 	// UOPAccumulatingCTAAfter is how long a node may sit unbound with counts

@@ -55,9 +55,18 @@ type Order struct {
 	// future branching (e.g. special fleet-unavailable handling) without a schema
 	// change; display keeps rendering the sentence today. Empty on non-queued
 	// orders. Cause never leaves Core.
-	QueueCode string    `json:"queue_code"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	QueueCode string `json:"queue_code"`
+	// AuthoredBy says who decided this order should exist: "edge" (this Edge
+	// created it and sent it up) or "core" (Core created it and pushed the row
+	// down as a projection). Every row that predates the column is "edge", which
+	// is true — they were all created here.
+	//
+	// NOTHING BRANCHES ON IT, deliberately. It labels the board and it is what
+	// the projection tests assert against. Keeping it inert means turning the
+	// label off is a rendering change, not a behaviour change.
+	AuthoredBy string    `json:"authored_by"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 	// Joined fields
 	ProcessName     string `json:"process_name"`
 	ProcessNodeName string `json:"process_node_name"`

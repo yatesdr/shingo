@@ -22,7 +22,7 @@ import (
 
 func (e *Engine) Start() {
 	// Create emitter adapters
-	de := &dispatchEmitter{bus: e.Events}
+	de := &dispatchEmitter{bus: e.Events, engine: e}
 	pe := &pollerEmitter{bus: e.Events}
 
 	// Create dispatcher with synthetic node resolver

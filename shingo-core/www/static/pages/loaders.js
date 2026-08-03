@@ -38,6 +38,8 @@ function result(msg, isErr) {
 }
 
 function setVal(id, v) { const e = document.getElementById(id); if (e) e.value = v; }
+function checked(id) { const e = document.getElementById(id); return !!(e && e.checked); }
+function setChecked(id, c) { const e = document.getElementById(id); if (e) e.checked = !!c; }
 function setText(id, t) { const e = document.getElementById(id); if (e) e.textContent = t; }
 function setDisabled(id, d) { const e = document.getElementById(id); if (e) e.disabled = d; }
 
@@ -70,13 +72,25 @@ function setLayoutFlowVisibility() {
   if (outNote) outNote.style.display = dedicated ? '' : 'none';
   const bufNote = document.getElementById('loader-buffer-note-dedicated');
   if (bufNote) bufNote.style.display = dedicated ? '' : 'none';
+  // Window delivery is a shared-window question. A dedicated loader's spots are
+  // independent one-bin slots that never shared a budget, so there is nothing to
+  // funnel or spread — disabling it says so rather than offering a control that
+  // silently does nothing.
+  setDisabled('loader-funnel-windows', dedicated);
 }
 
 // setReplenishmentOptions populates the replenishment <select> with role-aware
 // options: a produce loader picks operator-driven vs auto/UoP-threshold; a consume
-// loader (unloader) only drains today (consume-threshold is wired but dormant, so
-// it shows greyed). `preferred` pre-selects a value (edit); otherwise the prior /
-// operator default holds. Writes loaders.Replenishment (operator | threshold).
+// loader (unloader) only drains. `preferred` pre-selects a value (edit); otherwise
+// the prior / operator default holds. Writes loaders.Replenishment (operator |
+// threshold).
+//
+// The consume list used to carry a disabled "Threshold (coming soon)" option.
+// That was the ONLY thing standing between the plant and a loader that neither
+// drains nor replenishes, and it was a greyed <option> in a browser — any direct
+// POST walked straight past it. The service refuses the combination now
+// (service.ErrConsumeThreshold, 400), so the option is gone rather than
+// decorative: an unloader has one mode, and the screen says so.
 function setReplenishmentOptions(preferred) {
   const sel = document.getElementById('loader-replenishment');
   if (!sel) return;
@@ -84,9 +98,8 @@ function setReplenishmentOptions(preferred) {
   const want = preferred || sel.value || 'operator';
   let opts, hint;
   if (role === 'consume') {
-    opts = [['operator', 'Drain — window-queue empties out as bins fill', false],
-            ['threshold', 'Threshold (coming soon)', true]];
-    hint = 'Unloaders drain today; a consume threshold mode is wired but dormant.';
+    opts = [['operator', 'Drain — window-queue empties out as bins fill', false]];
+    hint = 'An unloader drains: bins leave as they fill. It has no threshold mode.';
   } else {
     opts = [['operator', 'Operator-driven — operator stages from the board (no auto-fire)', false],
             ['threshold', 'Auto — UoP threshold (Core auto-fires an empty when UoP drops)', false]];
@@ -111,6 +124,7 @@ function replenishLabel(l) {
 function openLoaderModal() {
   setVal('loader-edit-id', '');
   ['loader-name', 'loader-inbound', 'loader-outbound', 'loader-buffer'].forEach(function (id) { setVal(id, ''); });
+  setChecked('loader-funnel-windows', false);
   setDisabled('loader-role', false); setDisabled('loader-layout', false);
   setText('loader-modal-title', 'Create Loader');
   setText('loader-submit-btn', 'Create Loader');
@@ -136,6 +150,7 @@ function editLoader(lid) {
   setVal('loader-inbound', l.inbound_source || '');
   setVal('loader-outbound', l.outbound_dest || '');
   setVal('loader-buffer', l.buffer_dest || '');
+  setChecked('loader-funnel-windows', l.funnel_windows);
   // Role stays locked (delete+recreate — it's the loader's kind). Layout is always
   // editable now; submitLoader pops a confirm and drops the loader's members first if
   // you change it on one that already has windows/positions/payloads (they can't carry
@@ -182,7 +197,7 @@ async function submitLoader() {
     const pls = eitem ? (eitem.payloads || []) : [];
     const doUpdate = function () {
       result('Saving…');
-      apiPost('/api/loader/update', Object.assign({ id: Number(editId), name: name, layout: newLayout, replenishment: val('loader-replenishment') }, flow)).then(function (d) {
+      apiPost('/api/loader/update', Object.assign({ id: Number(editId), name: name, layout: newLayout, replenishment: val('loader-replenishment'), funnel_windows: checked('loader-funnel-windows') }, flow)).then(function (d) {
         if (d && d.error) { result(d.error, true); return; }
         result('Saved', false);
         refresh();

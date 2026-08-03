@@ -181,6 +181,12 @@ func (db *DB) ListOrdersByStation(stationID string, limit int) ([]*orders.Order,
 	return orders.ListByStation(db.DB, stationID, limit)
 }
 
+// ListActiveOrdersByStation returns the non-terminal orders for one station —
+// the set the order reconcile compares an Edge's own list against.
+func (db *DB) ListActiveOrdersByStation(stationID string) ([]*orders.Order, error) {
+	return orders.ListActiveByStation(db.DB, stationID)
+}
+
 // CountActiveOrdersByDeliveryNode counts non-terminal orders targeting a
 // specific delivery node.
 func (db *DB) CountActiveOrdersByDeliveryNode(nodeName string) (int, error) {

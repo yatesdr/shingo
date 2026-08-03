@@ -1,6 +1,22 @@
 package www
 
-import "net/http"
+import (
+	"errors"
+	"net/http"
+
+	"shingocore/service"
+)
+
+// loaderWriteStatus maps a loader write failure to its HTTP status. A refused
+// CONFIGURATION is the caller's mistake and gets 400 with the reason; anything
+// else is ours and stays 500. Without this a rejected config reads as "the
+// server broke", which is the opposite of what the rejection is for.
+func loaderWriteStatus(err error) int {
+	if errors.Is(err, service.ErrConsumeThreshold) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
 
 // Loader-config write API (loader refactor: Core authors the bin_loaders
 // aggregate). Mirrors handlers_nodegroup.go — parse → LoaderService call →
@@ -30,7 +46,7 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 	id, err := h.engine.LoaderService().Create(req.Name, req.Role, req.Layout,
 		req.Replenishment, req.OutboundDest, req.InboundSource, req.BufferDest)
 	if err != nil {
-		h.jsonError(w, "create loader: "+err.Error(), http.StatusInternalServerError)
+		h.jsonError(w, "create loader: "+err.Error(), loaderWriteStatus(err))
 		return
 	}
 	h.jsonOK(w, map[string]any{"id": id, "name": req.Name})
@@ -47,6 +63,7 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		OutboundDest  string `json:"outbound_dest"`
 		InboundSource string `json:"inbound_source"`
 		BufferDest    string `json:"buffer_dest"`
+		FunnelWindows bool   `json:"funnel_windows"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -56,8 +73,8 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.engine.LoaderService().Update(req.ID, req.Name, req.Layout, req.Replenishment,
-		req.OutboundDest, req.InboundSource, req.BufferDest); err != nil {
-		h.jsonError(w, "update loader: "+err.Error(), http.StatusInternalServerError)
+		req.OutboundDest, req.InboundSource, req.BufferDest, req.FunnelWindows); err != nil {
+		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
 		return
 	}
 	h.jsonSuccess(w)

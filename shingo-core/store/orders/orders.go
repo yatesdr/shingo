@@ -483,6 +483,23 @@ func ListActive(db *sql.DB) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
+// ListActiveByStation returns the non-terminal orders for one station.
+//
+// It backs the healing half of the order reconcile: Core answers an Edge's
+// status request with these, minus the ones the Edge already named, so an order
+// Core authored and the Edge never heard about gets a row. Same non-terminal
+// predicate as ListActive, so the two cannot disagree about what "active" means.
+func ListActiveByStation(db *sql.DB, stationID string) ([]*Order, error) {
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT %s FROM orders WHERE station_id = $1 AND status NOT IN (%s) ORDER BY id DESC`,
+		SelectCols, protocol.TerminalStatusSQLList()), stationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanOrders(rows)
+}
+
 // CountActive returns the number of orders in non-terminal statuses, using
 // the same WHERE clause as ListActive so the count matches the list exactly.
 // Backs the dashboard "in flight" KPI (plan §3.A / §15.A).

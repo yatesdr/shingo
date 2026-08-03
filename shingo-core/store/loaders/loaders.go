@@ -65,6 +65,26 @@ type Loader struct {
 	BufferDest    string     `json:"buffer_dest"`
 	ConfigGen     int64      `json:"config_gen"`
 	ArchivedAt    *time.Time `json:"archived_at,omitempty"` // soft-delete marker; nil = active (step 7)
+
+	// FunnelWindows restricts a shared-window loader to ONE window at a time:
+	// inbound empties all go to its first window on a budget of 1, instead of
+	// spreading one bin per window across a budget of the window count.
+	//
+	// This replaces the plant-wide Edge config key `loaders_multi_window`, which
+	// could only answer for every loader at once, so a plant needing the funnel
+	// for one loader imposed it on all of them. How a loader is fed is a fact
+	// about that loader, not about the site.
+	//
+	// STATED AS THE RESTRICTION rather than as "multi_window", so that FALSE --
+	// the Go zero value, the column default, the value an older Core omits from
+	// the wire, and the value a bare struct literal carries -- all mean "spread",
+	// which is what every loader does today. The inverted name costs one negation
+	// at the read site and saves a special case at each of the five places a
+	// default could otherwise be silently wrong.
+	//
+	// IGNORED by dedicated_positions loaders: their positions are independent
+	// one-bin slots that never shared a budget, so there is nothing to funnel.
+	FunnelWindows bool `json:"funnel_windows"`
 }
 
 // Home is one dedicated position: exactly one payload. The global
@@ -109,7 +129,7 @@ type Config struct {
 	Payloads []Payload `json:"payloads"`
 }
 
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, buffer_dest, config_gen, archived_at`
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, buffer_dest, config_gen, archived_at, funnel_windows`
 
 type scanner interface{ Scan(...any) error }
 
@@ -117,7 +137,7 @@ func scanLoader(s scanner) (Loader, error) {
 	var l Loader
 	var archivedAt sql.NullTime
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
-		&l.OutboundDest, &l.InboundSource, &l.BufferDest, &l.ConfigGen, &archivedAt)
+		&l.OutboundDest, &l.InboundSource, &l.BufferDest, &l.ConfigGen, &archivedAt, &l.FunnelWindows)
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
 	}
@@ -130,9 +150,9 @@ func scanLoader(s scanner) (Loader, error) {
 func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	var id int64
 	err := db.QueryRow(`
-		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source, buffer_dest)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.BufferDest,
+		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source, buffer_dest, funnel_windows)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.BufferDest, l.FunnelWindows,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
@@ -194,10 +214,10 @@ func ListLoaders(db *sql.DB) ([]Loader, error) {
 func UpdateLoader(db *sql.DB, l Loader) error {
 	res, err := db.Exec(`
 		UPDATE bin_loaders SET name=$1, layout=$2, replenishment=$3,
-			outbound_dest=$4, inbound_source=$5, buffer_dest=$6,
+			outbound_dest=$4, inbound_source=$5, buffer_dest=$6, funnel_windows=$7,
 			config_gen=config_gen+1, updated_at=NOW()
-		WHERE id=$7`,
-		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.BufferDest, l.ID)
+		WHERE id=$8`,
+		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.BufferDest, l.FunnelWindows, l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}
@@ -383,6 +403,37 @@ func GetConfig(db *sql.DB, id int64) (*Config, error) {
 		return nil, err
 	}
 	return &Config{Loader: *l, Homes: homes, Payloads: payloads}, nil
+}
+
+// MemberNodeNames maps a loader's member position node ids to their node names,
+// in one query.
+//
+// The alternative — walking a loader's homes and resolving each id separately —
+// is what the downward config sync does, and it costs a query per window. That
+// is tolerable on a sync that runs when config changes and unreasonable on a
+// decision that runs every time a loop drops below its threshold.
+//
+// A home whose node has vanished is simply absent from the map, matching the
+// sync's disposition: skip the member rather than fail the whole answer.
+func MemberNodeNames(db *sql.DB, loaderID int64) (map[int64]string, error) {
+	rows, err := db.Query(`
+		SELECT h.position_node_id, n.name
+		FROM bin_loader_homes h JOIN nodes n ON n.id = h.position_node_id
+		WHERE h.loader_id = $1`, loaderID)
+	if err != nil {
+		return nil, fmt.Errorf("member node names loader=%d: %w", loaderID, err)
+	}
+	defer rows.Close()
+	out := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, fmt.Errorf("scan member node name: %w", err)
+		}
+		out[id] = name
+	}
+	return out, rows.Err()
 }
 
 func bumpGen(db *sql.DB, loaderID int64) error {

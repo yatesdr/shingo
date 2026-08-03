@@ -367,6 +367,12 @@
         <input type="text" id="loader-buffer" list="loader-nodes-dl" placeholder="Buffer node group (optional)" style="width:100%">
         <div class="text-muted text-sm" style="margin-top:3px">A NODE GROUP the Edge rotates empties out of for a shared-window loader. When set it is used <em>instead of</em> Inbound, with no fallback if it runs dry — so leave it blank unless that is what you want.</div>
         <div id="loader-buffer-note-dedicated" class="text-muted text-sm" style="margin-top:3px;display:none">Disabled for dedicated positions. Not to be confused with the <strong>Buffer</strong> zone on the grid — those are member spots holding kept partials, set by dragging tiles, and are a different thing entirely.</div>
+        <label class="text-sm" style="font-weight:600;display:block;margin-top:10px">Window delivery</label>
+        <label class="text-sm" style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="loader-funnel-windows">
+          One window at a time
+        </label>
+        <div class="text-muted text-sm" style="margin-top:3px">Off (the default) fills every window at once — one carrier per window. Tick this to keep a single carrier at the first window instead, and only send the next one after it clears. Ticking it does not change how much material is ordered, only how many windows it may sit at.</div>
       </div>
       <datalist id="loader-nodes-dl"></datalist>
       <datalist id="loader-payloads-dl"></datalist>

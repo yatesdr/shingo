@@ -4,7 +4,8 @@ package store
 // This preserves the *store.DB method surface so callers use store.Loader etc.
 // and db.CreateLoader(...) without importing the sub-package.
 //
-// DORMANT until the LoaderStore read-cutover — additive, no runtime consumer.
+// The read-cutover has happened: BuildLoaderInfos (the downward config sync) and
+// BuildDemandRegistryFromAggregate (the threshold registry) both go through here.
 
 import "shingocore/store/loaders"
 
@@ -45,3 +46,8 @@ func (db *DB) ListLoaderPayloads(loaderID int64) ([]loaders.Payload, error) {
 	return loaders.ListPayloads(db.DB, loaderID)
 }
 func (db *DB) GetLoaderConfig(id int64) (*loaders.Config, error) { return loaders.GetConfig(db.DB, id) }
+
+// LoaderMemberNodeNames maps a loader's member position node ids to node names.
+func (db *DB) LoaderMemberNodeNames(loaderID int64) (map[int64]string, error) {
+	return loaders.MemberNodeNames(db.DB, loaderID)
+}

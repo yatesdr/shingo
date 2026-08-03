@@ -671,8 +671,29 @@ func RecoverToNode(db *sql.DB, binID, toNodeID int64) error {
 // count + bin_uop_audit insert in one transaction. Item 19: cycle
 // counts now write a bin_uop_audit row (OpCycleCount) — see
 // BinService.RecordCount.
+// A SUCCESSFUL COUNT CLEARS anomaly_at, and that is the point of the flag.
+//
+// anomaly_at means "this carrier has had counts refused — cycle count it". It
+// used to survive the count. So doing exactly what the flag asked for did not
+// clear it, the mark accumulated permanently, and every carrier ended up
+// flagged forever: at Hopkinsville on 2026-08-02, all ten bins carried it, seven
+// of them counted AFTER being flagged and still flagged, the oldest since May.
+// A signal that is set on everything and never cleared says nothing, so the
+// "which carrier do I go count" answer the inventory page exists to give had
+// quietly become "all of them".
+//
+// Cleared HERE, in the same statement as the count, rather than in the service
+// layer: the two cannot then disagree, and every caller of RecordCount gets it
+// without having to remember.
+//
+// Deliberately NOT a delta_epoch bump. A count corrects the number in the
+// carrier; it does not end the carrier's load lifecycle, and bumping here would
+// open a stale-epoch drop window against an Edge that has no way to learn the
+// new value (see the epoch-resync gap: the "next bin-state refresh" the drop
+// path names does not exist).
 func RecordCount(db RecordCountExecer, binID int64, actualUOP int, actor string) error {
-	_, err := db.Exec(`UPDATE bins SET uop_remaining=$1, last_counted_at=$4, last_counted_by=$2, updated_at=$4 WHERE id=$3`,
+	_, err := db.Exec(`UPDATE bins SET uop_remaining=$1, last_counted_at=$4, last_counted_by=$2,
+		anomaly_at=NULL, updated_at=$4 WHERE id=$3`,
 		actualUOP, actor, binID, clock.Now().UTC())
 	return err
 }

@@ -161,6 +161,7 @@ type Loader struct {
 	outboundDest  string              // the market filled (L2) / emptied (U2) bins go to on completion
 	bufferDest    string              // the buffer node group (step 7): stages empties / parks orphaned partials
 	uopThreshold  map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in); dedicated carries it on Position
+	funnelWindows bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
 }
 
 // LoaderOption sets optional runtime config on a constructed Loader. Variadic, so
@@ -196,6 +197,18 @@ func WithUOPThreshold(m map[PayloadCode]int) LoaderOption {
 		l.uopThreshold = make(map[PayloadCode]int, len(m))
 		maps.Copy(l.uopThreshold, m)
 	}
+}
+
+// WithFunnelWindows restricts a shared_window loader to ONE window at a time:
+// empties funnel to its first window on a budget of 1 rather than spreading one
+// bin per window (CoreLoader.FunnelWindows, owned by Core's bin_loaders row).
+//
+// Not passing the option leaves it false, which is SPREAD — the behaviour every
+// loader has. The whole field is stated as the restriction for exactly that
+// reason: a loader built without knowing about this setting behaves the way
+// loaders behaved before the setting existed.
+func WithFunnelWindows(funnel bool) LoaderOption {
+	return func(l *Loader) { l.funnelWindows = funnel }
 }
 
 // NewSharedWindowLoader builds a shared_window loader: N windows presenting one
@@ -356,6 +369,13 @@ func (l *Loader) SlotCount() int { return l.slotCount }
 
 func (l *Loader) IsShared() bool    { return l.layout == LayoutSharedWindow }
 func (l *Loader) IsDedicated() bool { return l.layout == LayoutDedicatedPositions }
+
+// FunnelWindows reports whether this loader takes its empties ONE window at a
+// time (budget 1, all to the first window) rather than spreading one bin per
+// window. Core owns the setting; see WithFunnelWindows for why it reads as the
+// restriction. Meaningless for a dedicated loader, whose positions never shared
+// a budget.
+func (l *Loader) FunnelWindows() bool { return l.funnelWindows }
 
 // IsOperatorDriven reports whether the loader's replenishment is operator-driven
 // (replenishment = operator) — the operator stages/clears at the board rather than

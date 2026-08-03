@@ -145,7 +145,34 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	// Core-originated order has no sender and emits its own event with its own
 	// values, which is why this does not belong inside the shared body.
 	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, payloadCode, p.DeliveryNode)
+	// The Edge that sent this request already has a row for it — it created the
+	// row before sending. Projecting it back would be Core telling a station
+	// about its own order.
+	//
+	// It is projected anyway, deliberately, and this is the option the plan
+	// called worth taking: it gives the projection path real production traffic
+	// before it becomes load-bearing, on orders that are low-volume and already
+	// visible, where a bug shows up as a redundant update rather than as a
+	// missing order. The applier is an idempotent upsert by UUID, so the second
+	// arrival is a no-op — and if it is NOT a no-op, that is precisely the defect
+	// worth finding here rather than after the cutover.
+	s.projectOrder(order)
 	return order, payloadCode, nil
+}
+
+// projectOrder pushes an order's row down to the station that owns it.
+//
+// SCOPE IS DEFINED BY admitOrder, on purpose. Every order admitted through that
+// body projects, and nothing else does — compound children and complex orders
+// stay out, because a child is a step of a parent the Edge already knows about
+// and complex orders were excluded by name. Tying the scope to a function rather
+// than to a list means a new door that wants projection gets it by routing
+// through admission, which is where it belongs anyway.
+func (s *LifecycleService) projectOrder(order *orders.Order) {
+	if order == nil || order.StationID == "" {
+		return
+	}
+	s.emitter.ProjectOrder(order.StationID, ProjectionFor(order))
 }
 
 // admitOrder is the wire-free middle of order intake: validate the payload,

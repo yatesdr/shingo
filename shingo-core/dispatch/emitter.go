@@ -13,4 +13,12 @@ type Emitter interface {
 	EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)
 	EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)
 	EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID, robotID string)
+
+	// ProjectOrder pushes a whole order row down to the station that owns it, so
+	// an order Core authored appears on that Edge's board. Unlike the Emit
+	// methods above, which publish to Core's in-process event bus, this one goes
+	// on the wire — hence the different verb. It is best-effort by design: the
+	// outbox drops a message permanently once it is past its retries, and the
+	// order status reconcile is what repairs a projection that never lands.
+	ProjectOrder(stationID string, projection protocol.OrderProjection)
 }

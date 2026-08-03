@@ -65,6 +65,7 @@ CREATE TABLE public.bin_loaders (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     archived_at timestamp with time zone,
+    funnel_windows boolean DEFAULT false NOT NULL,
     CONSTRAINT bin_loaders_layout_check CHECK ((layout = ANY (ARRAY['shared_window'::text, 'dedicated_positions'::text]))),
     CONSTRAINT bin_loaders_replenishment_check CHECK ((replenishment = ANY (ARRAY['operator'::text, 'threshold'::text]))),
     CONSTRAINT bin_loaders_role_check CHECK ((role = ANY (ARRAY['produce'::text, 'consume'::text])))
