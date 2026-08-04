@@ -31,6 +31,14 @@ func (db *DB) IsSlotAccessible(slotNodeID int64) (bool, error) {
 	return nodes.IsSlotAccessible(db.DB, slotNodeID)
 }
 
+// BlockersInFrontOf returns the occupied slots shallower than slotNodeID in its
+// lane, shallowest first — the set IsSlotAccessible reports the emptiness of.
+// See nodes.BlockersInFrontOf for the single definition of "in front of" and
+// for why an error here must be read as blocked, not as reachable.
+func (db *DB) BlockersInFrontOf(slotNodeID int64) ([]*nodes.Node, error) {
+	return nodes.BlockersInFrontOf(db.DB, slotNodeID)
+}
+
 // LaneForNode returns the LANE node that directly parents nodeID, or nil if
 // nodeID is not a direct child slot of a lane (the mouth-gate lane resolution).
 func (db *DB) LaneForNode(nodeID int64) (*nodes.Node, error) {
