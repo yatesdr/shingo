@@ -61,7 +61,7 @@ hardware seams.
             ┌─────────────────────── Docker (docker-compose.dev.yml) ───────────────────────┐
             │                                                                               │
   fake PLC ─┼─▶ shingo-edge ──counter deltas / production.tick──▶ Kafka ──▶ shingo-core ────┼─▶ dashboards
- (simwarlink)│   (SQLite)        ◀── orders / claim sync ──                  (Postgres)      │   (HTTP/SSE)
+ (simwarlink)│   (SQLite)        ◀── orders / node-list sync ──              (Postgres)      │   (HTTP/SSE)
             │      ▲                                                            │            │
  sim operator│     │ LOAD/CLEAR on delivery                    fleet simulator ─┘            │
  (manual_swap)     │                                          (clock-driven robot moves)     │

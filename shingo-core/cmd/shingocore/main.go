@@ -403,7 +403,7 @@ func main() {
 		Topic:       cfg.Messaging.DispatchTopic,
 		CoreStation: cfg.Messaging.StationID,
 	})
-	// Wire the UOP-threshold monitor so claim-sync threshold changes
+	// Wire the UOP-threshold monitor so loader-config threshold changes
 	// reset debounce timers and bucket-applied events drive
 	// re-evaluation. Engine.Start() has already constructed the monitor
 	// and kicked its startup-sweep goroutine.

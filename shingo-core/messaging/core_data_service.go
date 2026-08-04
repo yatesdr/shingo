@@ -426,8 +426,8 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	// Derive demand_registry for this station from the Core-owned loader aggregate
 	// on (re)connect, so a plant configured entirely through the UI gets live
 	// demand routing without an out-of-band seeddev/migrateloaders run. Idempotent
-	// — SyncDemandRegistry diffs against the current rows. (The Edge sends no
-	// ClaimSync; it is retired.)
+	// — SyncDemandRegistry diffs against the current rows. (The Edge pushes no
+	// claim config over the wire; the aggregate is the sole source.)
 	if entries, derr := s.db.BuildDemandRegistryFromAggregate(p.StationID); derr != nil {
 		log.Printf("core_handler: build demand_registry for %s: %v", p.StationID, derr)
 	} else if _, serr := s.db.SyncDemandRegistry(p.StationID, entries); serr != nil {
@@ -693,59 +693,6 @@ func (s *CoreDataService) unlistedFor(stationID string, asked map[string]bool) [
 		log.Printf("core_handler: order reconcile for %s: %d order(s) it has no row for — sending them down", stationID, len(out))
 	}
 	return out
-}
-
-func (s *CoreDataService) HandleClaimSync(env *protocol.Envelope, sync *protocol.ClaimSync) {
-	stationID := sync.StationID
-	if stationID == "" {
-		stationID = env.Src.Station
-	}
-	log.Printf("core_handler: claim sync from %s: %d claims", stationID, len(sync.Claims))
-
-	// Convert protocol entries to store entries, warning when a consume
-	// claim targets a node that isn't LANE-parented — HandleKanbanDemand
-	// will never fire a consume signal for such nodes (see isStorageSlot
-	// in wiring_kanban.go), so the registry row is inert and usually
-	// means an Edge-UI validation gap. Warn-don't-reject keeps this a
-	// belt-and-suspenders check alongside the Edge-side 400.
-	var entries []demands.RegistryEntry
-	for _, c := range sync.Claims {
-		if c.Role == protocol.ClaimRoleConsume {
-			if node, err := s.db.GetNodeByDotName(c.CoreNodeName); err == nil && node != nil && node.ParentID != nil {
-				if parent, err := s.db.GetNode(*node.ParentID); err == nil && parent != nil && parent.NodeTypeCode != protocol.NodeClassLANE {
-					log.Printf("core_handler: consume claim from %s targets %s (parent node_type=%s, not LANE) — demand signals will be suppressed by wiring_kanban", stationID, c.CoreNodeName, parent.NodeTypeCode)
-				}
-			}
-		}
-		for _, pc := range c.AllowedPayloadCodes {
-			// UOP-threshold replenishment: pull per-payload threshold
-			// from the ClaimSync map. Omitted/zero means "Core does
-			// not monitor this pair" (legacy bin-count at Edge).
-			thr := c.PayloadThresholds[pc]
-			entries = append(entries, demands.RegistryEntry{
-				StationID:             stationID,
-				CoreNodeName:          c.CoreNodeName,
-				Role:                  c.Role,
-				PayloadCode:           pc,
-				OutboundDest:          c.OutboundDestination,
-				ReplenishUOPThreshold: thr,
-			})
-		}
-	}
-
-	changes, err := s.db.SyncDemandRegistry(stationID, entries)
-	if err != nil {
-		log.Printf("core_handler: sync demand registry for %s: %v", stationID, err)
-		return
-	}
-	log.Printf("core_handler: demand registry updated for %s: %d entries (%d threshold changes)", stationID, len(entries), len(changes))
-
-	// Reset threshold-monitor debounce for any (loader, payload) whose
-	// threshold value moved, so the new value engages immediately
-	// instead of waiting out the debounce window.
-	if s.thresholdMonitor != nil && len(changes) > 0 {
-		s.thresholdMonitor.OnThresholdChanges(changes)
-	}
 }
 
 // HandlePlantClaims mirrors a plant-claims report (Edge → Core) for one

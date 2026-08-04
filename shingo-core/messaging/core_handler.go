@@ -210,8 +210,8 @@ func (h *CoreHandler) staleEdgeLoop() {
 				// Reap demand_registry rows for the stale station so
 				// bin-move events stop trying to route demand signals
 				// to an edge that isn't listening. The station's
-				// entries repopulate via ClaimSync when the edge
-				// re-registers, same path as cold boot.
+				// entries repopulate from the loader aggregate when
+				// the edge re-registers, same path as cold boot.
 				if _, err := h.db.SyncDemandRegistry(sid, nil); err != nil {
 					log.Printf("core_handler: reap demand registry for %s: %v", sid, err)
 				}

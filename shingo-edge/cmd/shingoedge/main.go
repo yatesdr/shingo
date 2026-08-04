@@ -944,7 +944,7 @@ func main() {
 	// process can source. Start publishes one full snapshot immediately
 	// (boot), then periodic snapshots every few minutes (late-joiner
 	// rebuild). The spec-change hook re-publishes on every style/claim
-	// edit via the coalesced claim-sync signal.
+	// edit via the coalesced spec-change signal.
 	plantClaims := messaging.NewPlantClaimsPublisher(db, stationID)
 	plantClaims.DebugLog = messaging.DebugLogFunc(dbg.Func("plant_claims"))
 	h.SetPlantSpecChangeHook(func() {
