@@ -476,25 +476,30 @@ export function renderModal(entry) {
                 // store/station_views.go ComputeSwapReady).
                 html += actionBtn('RELEASE', 'request', true,
                     'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged');
-            } else if (claim && claim.swap_mode === 'two_robot' && active.length >= 2) {
+            } else if (claim && claim.swap_mode === 'two_robot' && swapPair(active).length >= 2) {
                 // Two-robot swap in progress with BOTH legs still alive but
                 // swap_ready is false — Robot B hasn't reached its wait point.
                 // Show explicit waiting state instead of the per-order RELEASE
                 // branch (would release one leg, bypass disposition prompt) or
                 // idle REQUEST SWAP/REQUEST (don't apply mid-swap).
                 //
-                // The active.length>=2 guard is the recovery surface: if one
-                // leg is cancelled/failed (active drops to <=1 because the
-                // filter on line ~225 strips terminal statuses), there's no
-                // swap to coordinate. Fall through to the surviving leg's
-                // staged/delivered/inFlight branch so the operator isn't
-                // permanently stuck on a disabled WAITING button.
+                // COUNT THE PAIR, NOT THE ROOM. This guard is the recovery
+                // surface: when one leg dies the count drops to <=1, this arm
+                // steps aside, and the survivor's own staged/delivered/inFlight
+                // branch offers a working button. Counting every active order at
+                // the node instead of the pair's own legs let ANY unrelated
+                // order pad the count and hold the disabled button up — and a
+                // finished order can linger in that list indefinitely, because
+                // `delivered` is not terminal and a Core-side confirm used to
+                // never reach the Edge. Springfield ALN_001 carried such a row
+                // for 2½ hours. The escape hatch was hostage to a ghost.
                 //
                 // The label carries the REASON (waitingLabel): this arm sits
                 // above the inFlight arm, so without it the operator gets the
                 // one label in this chain that explains nothing. The blocker is
                 // the leg that is not parked — the robot they are waiting on.
-                const blocker = active.find(o => o.status !== 'staged') || null;
+                const pair = swapPair(active);
+                const blocker = pair.find(o => o.status !== 'staged') || null;
                 html += actionBtn(waitingLabel(blocker), 'close', false, '');
             } else if (staged) {
                 // Sequential / single-robot — single staged, single release.
@@ -669,6 +674,40 @@ export function renderModal(entry) {
     nodeModalContent.querySelectorAll('[data-action]').forEach(btn => {
         btn.addEventListener('click', handleModalAction);
     });
+}
+
+// swapPair narrows a node's active orders to the two legs that are actually a
+// coordinated pair, following the durable sibling pointer both legs carry
+// (LinkOrderSiblings, stamped at creation by every site that creates a pair).
+//
+// THE NODE'S ACTIVE LIST IS NOT THE PAIR. It is "every non-terminal order whose
+// process_node_id is this node", which includes leftovers: `delivered` is not a
+// terminal status, so an order Core finished but Edge never heard about stays in
+// it forever. Springfield ALN_001, 2026-08-03 — order 3980 sat there from 18:49
+// to 22:39. Two consumers read that list positionally and both got the wrong
+// answer from it: the blocker label (`find` first non-staged, over a list sorted
+// by created_at, so the OLDEST leftover won and the operator was shown a stale
+// "Waiting for material: 76683-6TA0A.06" naming the style they were changing
+// away from) and the >=2 count that decides whether the disabled WAITING button
+// appears at all.
+//
+// Resolution order matters. Anchor on the staged leg first: during a swap that
+// is the parked robot, the one fact the operator can see with their own eyes.
+// Fall back to any leg carrying a sibling pointer, so a pair with neither leg
+// parked still resolves.
+//
+// Returns [] when no pair can be resolved — a missing sibling pointer is a real
+// state (changeover_applier's LinkOrderSiblings is log-and-continue). Empty
+// fails the >=2 guard, so the chain falls through to the per-order branches and
+// the operator keeps a working button. That is the safe direction: the failure
+// mode of guessing is a disabled button with a false explanation, which is
+// exactly what this replaces.
+function swapPair(active) {
+    const anchor = active.find(o => o.status === 'staged' && o.sibling_order_id)
+        || active.find(o => o.sibling_order_id);
+    if (!anchor) return [];
+    const sibling = active.find(o => o.id === anchor.sibling_order_id);
+    return sibling ? [anchor, sibling] : [];
 }
 
 // waitingLabel explains WHY a two-robot swap is not releasable yet, reading it
