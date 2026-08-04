@@ -7,6 +7,7 @@ import (
 	"shingocore/dispatch/eta"
 	"shingocore/fleet"
 	"shingocore/messaging"
+	"shingocore/notify"
 	"shingocore/service"
 	"shingocore/store"
 )
@@ -60,6 +61,7 @@ func (e *Engine) PartsService() *service.PartsService         { return e.partsSe
 func (e *Engine) HeartbeatService() *service.HeartbeatService { return e.heartbeatService }
 func (e *Engine) EventBus() *EventBus                         { return e.Events }
 func (e *Engine) EtaCache() *eta.Cache                        { return e.etaCache }
+func (e *Engine) Notifier() *notify.Notifier                  { return e.notifier }
 
 // SetCountGroupRunner registers a configured Runner built by the
 // composition root. The caller passes the Runner directly — transitions

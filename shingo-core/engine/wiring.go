@@ -34,7 +34,19 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/eventbus"
 	"shingocore/dispatch"
+	"shingocore/notify"
 )
+
+func lookupRobotID(e *Engine, orderID int64) string {
+	if orderID == 0 {
+		return ""
+	}
+	order, err := e.db.GetOrder(orderID)
+	if err != nil || order == nil {
+		return ""
+	}
+	return order.RobotID
+}
 
 // â"€â"€ Outbound messaging â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
@@ -515,4 +527,34 @@ func (e *Engine) wireEventHandlers() {
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, GraceExpiredEvent]) {
 		e.handleGraceExpired(evt.Payload)
 	}, EventGraceExpired)
+
+	// ── Notifications (email alerts) ──────────────────────────────
+	if e.notifier.Enabled() {
+		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFaultedEvent]) {
+			ev := evt.Payload
+			robotID := lookupRobotID(e, ev.OrderID)
+			_ = e.notifier.Send(
+				notify.FaultSubject(),
+				notify.FaultAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.Reason, robotID),
+			)
+		}, EventOrderFaulted)
+
+		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
+			ev := evt.Payload
+			robotID := lookupRobotID(e, ev.OrderID)
+			_ = e.notifier.Send(
+				notify.FailSubject(),
+				notify.FailAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.ErrorCode, ev.Detail, robotID),
+			)
+		}, EventOrderFailed)
+
+		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, GraceExpiredEvent]) {
+			ev := evt.Payload
+			robotID := lookupRobotID(e, ev.OrderID)
+			_ = e.notifier.Send(
+				notify.GraceExpiredSubject(),
+				notify.GraceExpiredAlert(ev.OrderID, ev.VendorOrderID, robotID),
+			)
+		}, EventGraceExpired)
+	}
 }

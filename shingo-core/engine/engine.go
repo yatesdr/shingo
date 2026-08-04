@@ -32,6 +32,7 @@ import (
 	"shingocore/fleet"
 	"shingocore/fulfillment"
 	"shingocore/messaging"
+	"shingocore/notify"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -91,6 +92,7 @@ type Engine struct {
 	thresholdMonitor      *ThresholdMonitor
 	sourceabilityMonitor  *SourceabilityMonitor
 	etaCache              *eta.Cache
+	notifier              *notify.Notifier
 	stopChan              chan struct{}
 	stopOnce              sync.Once
 	sceneSyncing          atomic.Bool
@@ -196,6 +198,7 @@ func New(c Config) *Engine {
 	e.heartbeatService = service.NewHeartbeatService(e.db)
 	e.thresholdMonitor = NewThresholdMonitor(e)
 	e.sourceabilityMonitor = NewSourceabilityMonitor(e)
+	e.notifier = notify.New(&c.AppConfig.Notifications)
 	// Loader CRUD re-derives demand_registry + nudges the monitor on each edit.
 	e.loaderService = service.NewLoaderService(e.db, e.thresholdMonitor)
 	e.calculatorService = service.NewThresholdCalculatorService(e.db)

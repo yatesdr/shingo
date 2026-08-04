@@ -1,11 +1,14 @@
 package www
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"time"
+
+	"shingocore/notify"
 )
 
 func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +88,30 @@ func (h *Handlers) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 	case "fire_alarm":
 		cfg.FireAlarm.Enabled = r.FormValue("fa_enabled") == "on"
 		cfg.FireAlarm.AutoResumeDefault = r.FormValue("fa_auto_resume") == "on"
+	case "notifications":
+		cfg.Notifications.Enabled = r.FormValue("notif_enabled") == "on"
+		cfg.Notifications.SMTPHost = r.FormValue("notif_smtp_host")
+		if p, err := strconv.Atoi(r.FormValue("notif_smtp_port")); err == nil && p > 0 {
+			cfg.Notifications.SMTPPort = p
+		}
+		cfg.Notifications.SMTPTLS = r.FormValue("notif_smtp_tls") == "on"
+		cfg.Notifications.SMTPUser = r.FormValue("notif_smtp_user")
+		if v := r.FormValue("notif_smtp_password"); v != "" {
+			cfg.Notifications.SMTPPassword = v
+		}
+		cfg.Notifications.FromAddress = r.FormValue("notif_from_address")
+		if v, err := strconv.Atoi(r.FormValue("notif_throttle_minutes")); err == nil && v > 0 {
+			cfg.Notifications.ThrottleMinutes = v
+		}
+		var recipients []string
+		for i := 0; ; i++ {
+			addr := r.FormValue(fmt.Sprintf("notif_recipient_%d", i))
+			if addr == "" {
+				break
+			}
+			recipients = append(recipients, addr)
+		}
+		cfg.Notifications.Recipients = recipients
 	default:
 		cfg.Unlock()
 		http.Error(w, "unknown section", http.StatusBadRequest)
@@ -106,8 +133,47 @@ func (h *Handlers) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		h.orchestration.ReconfigureFleet()
 	case "services", "messaging":
 		h.orchestration.ReconfigureMessaging()
+	case "notifications":
+		h.orchestration.ReconfigureNotifications()
 	}
 
 	log.Printf("config: %s section saved", section)
 	http.Redirect(w, r, "/config?saved="+section, http.StatusSeeOther)
+}
+
+func (h *Handlers) handleConfigTestEmail(w http.ResponseWriter, r *http.Request) {
+	cfg := h.engine.AppConfig()
+	n := cfg.Notifications
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if n.SMTPHost == "" || n.FromAddress == "" || len(n.Recipients) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "SMTP host, from address, and at least one recipient are required"})
+		return
+	}
+
+	subject := "Shingo Test Email"
+	body := "This is a test email from ShinGo Core.\n\n" +
+		"SMTP connectivity verified successfully.\n" +
+		"If you received this, notifications are configured correctly.\n" +
+		"Time: " + time.Now().Format(time.RFC1123) + "\n"
+
+	addr := fmt.Sprintf("%s:%d", n.SMTPHost, n.SMTPPort)
+	var sendErr error
+	if n.SMTPTLS {
+		sendErr = notify.TLSSend(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, subject, body)
+	} else {
+		sendErr = notify.PlainSend(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, subject, body)
+	}
+
+	if sendErr != nil {
+		log.Printf("config: test email failed: %v", sendErr)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": sendErr.Error()})
+		return
+	}
+
+	log.Printf("config: test email sent to %d recipient(s)", len(n.Recipients))
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": fmt.Sprintf("Test email sent to %d recipient(s)", len(n.Recipients))})
 }
