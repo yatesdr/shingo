@@ -241,7 +241,7 @@ The formula in the design brief is `max(2, ceil(threshold / C))` — the per-bin
 
 ### Debounce reset on threshold change
 
-`OnThresholdChanges` is called from `CoreDataService.HandleClaimSync` after `SyncDemandRegistry` returns its change list. For every binding whose threshold value moved, the monitor `delete`s the debounce + warm-up state — so a freshly-applied threshold (engineer just clicked Apply) takes effect on the next inventory event rather than being suppressed by a residual debounce window from a previous firing under the old value.
+`OnThresholdChanges` is called from the loader config-edit path (`service/loader_service.go`, `rederive()` — after `SyncDemandRegistry` returns its change list). Edge (re)connect is a separate trigger and calls `Resync` instead: `HandleEdgeRegister` discards the sync's change list and re-engages the station's bindings wholesale. For every binding whose threshold value moved, the monitor `delete`s the debounce + warm-up state — so a freshly-applied threshold (engineer just clicked Apply) takes effect on the next inventory event rather than being suppressed by a residual debounce window from a previous firing under the old value.
 
 ### Cell autoreorder evaluation
 
@@ -281,7 +281,7 @@ There is no payload-code backfill for pre-existing `lineside_buckets` rows. Spri
 
 ### Protocol
 
-- `protocol/payloads.go` — `ClaimSyncEntry.PayloadThresholds`, `LinesideBucketDelta.PayloadCode`, `LoopBelowThresholdSignal`.
+- `protocol/payloads.go` — `LinesideBucketDelta.PayloadCode`, `LoopBelowThresholdSignal`. (Threshold values now ride `LoaderInfo` on the node-list sync, not a ClaimSync payload.)
 
 ---
 

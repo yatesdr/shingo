@@ -823,31 +823,6 @@ type NodeStructureChanged struct {
 	Action      string `json:"action"` // "reparented" or "group_deleted"
 }
 
-// ClaimSyncEntry represents a single manual_swap claim's config for the demand registry.
-//
-// PayloadThresholds (UOP-threshold replenishment) carries per-payload
-// replenish_uop_threshold values for loader produce-role claims.
-// Map key is payload_code, value is the threshold UOP count. Entries
-// with value 0 are omitted from the wire (legacy bin-count behavior
-// preserved). Non-produce claims send an empty/nil map. Core uses this
-// to populate demand_registry.replenish_uop_threshold so the threshold
-// monitor can compare combined in-loop UOP against the configured
-// trigger.
-type ClaimSyncEntry struct {
-	CoreNodeName        string         `json:"core_node_name"`
-	Role                ClaimRole      `json:"role"`
-	AllowedPayloadCodes []string       `json:"allowed_payload_codes"` // payloads this node accepts
-	OutboundDestination string         `json:"outbound_destination"`
-	PayloadThresholds   map[string]int `json:"payload_thresholds,omitempty"` // payload_code → threshold; omit 0
-}
-
-// ClaimSync is sent by Edge to Core on startup and claim changes.
-// Core uses this to build its demand registry for kanban wiring.
-type ClaimSync struct {
-	StationID string           `json:"station_id"`
-	Claims    []ClaimSyncEntry `json:"claims"`
-}
-
 // DemandSignal is sent by Core to Edge when a kanban event fires.
 // Edge creates an order for the specified payload at the specified node.
 type DemandSignal struct {

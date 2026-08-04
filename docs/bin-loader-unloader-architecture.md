@@ -102,7 +102,7 @@ demand_registry
   payload_code  TEXT     -- allowed payload
 ```
 
-`ClaimSync` (the Edge→Core push of `style_node_claims`) is **retired**: Core owns loader config via the `bin_loaders` aggregate and derives `demand_registry` from it, syncing loader config down to the Edge through the node-list sync. `Engine.SendClaimSync` is deleted. The Core side is NOT retired: `HandleClaimSync` still exists and `SubjectClaimSync` is still routed, because Edge continues to publish a plant-claims snapshot.
+`ClaimSync` (the Edge→Core push of `style_node_claims`) is **deleted**: Core owns loader config via the `bin_loaders` aggregate and derives `demand_registry` from it, syncing loader config down to the Edge through the node-list sync. Both halves are gone — `Engine.SendClaimSync` on the Edge and `HandleClaimSync` / `SubjectClaimSync` on the Core. (The plant-claims snapshot is a separate subject, `plant.claims`; it never flowed through `ClaimSync` and is unaffected.)
 
 ### Event Flow
 
@@ -216,16 +216,20 @@ slice alongside the topology (`BuildLoaderInfos`), and the Edge swaps it into it
 `core_loaders` cache / `aggregateLoaderStore` snapshot atomically with the node list.
 This replaced the Edge→Core `ClaimSync` push below.
 
-### ClaimSync — RETIRED
+### ClaimSync — DELETED
 
 `claim.sync` (the Edge→Core push of `style_node_claims` with a per-node `mode`/payload
-set) authored loader config before the Core-owned refactor. It is **retired**:
-`Engine.SendClaimSync` is deleted, and the per-style edge loader checkboxes /
-`style_node_claims.mode` authoring path are gone. The Core half is still live —
-`HandleClaimSync` and `SubjectClaimSync` remain, because Edge still publishes a
-plant-claims snapshot; what retired is Edge AUTHORING loader config.
+set) authored loader config before the Core-owned refactor. It is **deleted**:
+`Engine.SendClaimSync` on the Edge, `HandleClaimSync` and `SubjectClaimSync` on the
+Core, and the `ClaimSync`/`ClaimSyncEntry` payload types are all gone, along with the
+per-style edge loader checkboxes / `style_node_claims.mode` authoring path.
 Core now owns the `bin_loaders` aggregate and derives `demand_registry` from it (see
 Demand Registry), syncing config down on the node list.
+
+(The plant-claims snapshot — `SubjectPlantClaims` → `HandlePlantClaims` — is a separate
+subject and was never part of `ClaimSync`. An earlier version of this section kept the
+Core handler alive on the grounds that "Edge still publishes a plant-claims snapshot";
+that conflated the two subjects, and the handler was unreachable the whole time.)
 
 ### DemandSignal (Core to Edge)
 
@@ -263,7 +267,7 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 | `store/loaders_sync.go` | `BuildLoaderInfos` (loader config for the node-list sync), `BuildDemandRegistryFromAggregate`, `DemandRegistryStations`. |
 | `store/demand_registry.go`, `store/demands/demands.go` | `demand_registry` table + `SyncDemandRegistry` (diff/upsert). |
 | `engine/wiring_*.go` | `handleKanbanDemand` on `BinUpdatedEvent`; `isStorageSlot` (parent LANE check); `sendDemandSignals` (demand_registry lookup → `DemandSignal` to the Edge). |
-| `messaging/core_data_service.go` | Node-list response carries `Loaders` (`BuildLoaderInfos`); **seeds `demand_registry` from the aggregate on edge (re)connect**, then `thresholdMonitor.Resync`. (No `HandleClaimSync` — retired.) |
+| `messaging/core_data_service.go` | Node-list response carries `Loaders` (`BuildLoaderInfos`); **seeds `demand_registry` from the aggregate on edge (re)connect**, then `thresholdMonitor.Resync`. (`HandleClaimSync` deleted.) |
 | `store/migrations.go` | `bin_loaders` aggregate schema (v34–v40); `UNIQUE` on `orders.edge_uuid`. |
 | `cmd/migrateloaders` | One-time per-plant migration: derive the aggregate from the legacy edge `style_node_claims` + seed `demand_registry`. |
 | `www/handlers_loader.go`, `www/static/pages/loaders.js` | Core loader admin UI (create, layout, windows/positions, payload checklist + batch save, replenishment). |
@@ -287,8 +291,8 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 
 | File | Role |
 |------|------|
-| `protocol/payloads.go` | `LoaderInfo` (carried on `NodeListResponse.Loaders`), `DemandSignal`. `ClaimSync`/`ClaimSyncEntry` remain defined but unused (retired). |
-| `protocol/types.go` | `SubjectDemandSignal`, `SubjectClaimSync` (Core side live), `SubjectLoopBelowThreshold`. |
+| `protocol/payloads.go` | `LoaderInfo` (carried on `NodeListResponse.Loaders`), `DemandSignal`. (`ClaimSync`/`ClaimSyncEntry` deleted — see ClaimSync above.) |
+| `protocol/types.go` | `SubjectDemandSignal`, `SubjectLoopBelowThreshold`. (`SubjectClaimSync` deleted.) |
 
 ---
 

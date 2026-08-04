@@ -48,7 +48,7 @@ type ProductionLogEntry struct {
 }
 
 // RegistryEntry maps a payload code to a manual_swap node that accepts
-// it. Synced from Edge claim config via the ClaimSync protocol message.
+// it. Derived by Core from the bin_loaders aggregate (BuildDemandRegistryFromAggregate).
 //
 // ReplenishUOPThreshold (UOP-threshold replenishment) carries the
 // per-(loader, payload) trigger Core uses to decide when to send
@@ -262,7 +262,7 @@ func SyncRegistry(db *sql.DB, stationID string, entries []RegistryEntry) ([]Regi
 	var changes []RegistryChange
 	seen := make(map[string]bool, len(entries))
 	for _, e := range entries {
-		// Wire boundary: Edge feeds CoreNodeName via ClaimSync. Trim
+		// Wire boundary: CoreNodeName comes from the loader aggregate. Trim
 		// defensively and warn if the upstream sent whitespace —
 		// forensic signal that an Edge admin or sync path leaked
 		// non-canonical data.
