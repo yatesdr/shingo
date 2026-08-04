@@ -64,3 +64,13 @@ func (e *Engine) ReconfigureMessaging() {
 	}
 	e.checkConnectionStatus()
 }
+
+// ReconfigureNotifications reloads the notifier with current config.
+func (e *Engine) ReconfigureNotifications() {
+	if e.notifier == nil {
+		e.logFn("engine: notifications reconfigure skipped (no notifier)")
+		return
+	}
+	e.notifier.Reconfigure(&e.cfg.Notifications)
+	e.logFn("engine: notifications reconfigured")
+}

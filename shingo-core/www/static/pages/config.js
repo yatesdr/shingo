@@ -1,6 +1,7 @@
 import { delegateActions } from '/static/app.js';
 
 var kafkaBrokerIdx = parseInt(document.getElementById('page-data').dataset.brokerCount) || 0;
+var notifRecipientIdx = parseInt(document.getElementById('page-data').dataset.recipientCount) || 0;
 
 function addKafkaBroker() {
   var row = document.createElement('div');
@@ -16,6 +17,41 @@ function removeKafkaBroker(btn) {
   btn.parentElement.remove();
 }
 
+function addNotifRecipient() {
+  var row = document.createElement('div');
+  row.className = 'flex gap-1 mb-1 notif-recipient-row';
+  row.innerHTML = '<input type="email" name="notif_recipient_' + notifRecipientIdx + '" placeholder="user@company.com" style="flex:2">' +
+    '<button type="button" class="btn btn-danger btn-sm" data-action="removeNotifRecipient">-</button>';
+  document.getElementById('notif-recipient-rows').appendChild(row);
+  notifRecipientIdx++;
+}
+
+function removeNotifRecipient(btn) {
+  btn.parentElement.remove();
+}
+
+async function testNotifEmail() {
+  var el = document.getElementById('notif-test-result');
+  var btn = document.getElementById('btn-test-email');
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  el.style.display = 'none';
+  try {
+    var res = await fetch('/config/test-email', { method: 'POST' });
+    var data = await res.json();
+    el.style.display = 'block';
+    el.className = data.ok ? 'alert alert-ok mb-1' : 'alert alert-err mb-1';
+    el.textContent = data.ok ? data.message : 'Error: ' + data.message;
+  } catch (err) {
+    el.style.display = 'block';
+    el.className = 'alert alert-err mb-1';
+    el.textContent = 'Error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send Test Email';
+  }
+}
+
 
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions
@@ -26,5 +62,8 @@ function removeKafkaBroker(btn) {
 // single-source.
 delegateActions(document.body, {
     addKafkaBroker,
-    removeKafkaBroker
+    removeKafkaBroker,
+    addNotifRecipient,
+    removeNotifRecipient,
+    testNotifEmail
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

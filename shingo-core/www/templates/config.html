@@ -168,8 +168,78 @@
       <button type="submit" class="btn btn-primary btn-sm">Save</button>
     </form>
   </div>
+  <!-- Notifications -->
+  <div class="card mb-2">
+    <h3>Notifications</h3>
+    <form method="POST" action="/config/save">
+      <input type="hidden" name="section" value="notifications">
+      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.75rem;">
+        Send email alerts when an order faults, fails, or a robot is blocked during an order. Requires an SMTP server.
+      </p>
+      <div class="grid grid-2" style="margin-bottom:0.5rem;">
+        <div class="form-group">
+          <label style="display:inline;cursor:pointer;">
+            <input type="checkbox" name="notif_enabled" {{if .Config.Notifications.Enabled}}checked{{end}}>
+            Enabled
+          </label>
+        </div>
+        <div class="form-group">
+          <label>Throttle (minutes)</label>
+          <input type="number" name="notif_throttle_minutes" value="{{.Config.Notifications.ThrottleMinutes}}" placeholder="15">
+          <div class="field-help">Minimum interval between alerts to the same recipient.</div>
+        </div>
+      </div>
+      <h4 class="mb-1" style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.75rem;">SMTP</h4>
+      <div class="grid grid-3">
+        <div class="form-group">
+          <label>Host</label>
+          <input type="text" name="notif_smtp_host" value="{{.Config.Notifications.SMTPHost}}" placeholder="smtp.company.com">
+        </div>
+        <div class="form-group">
+          <label>Port</label>
+          <input type="number" name="notif_smtp_port" value="{{.Config.Notifications.SMTPPort}}" placeholder="587">
+        </div>
+        <div class="form-group">
+          <label style="display:inline;cursor:pointer;margin-top:1.25rem;">
+            <input type="checkbox" name="notif_smtp_tls" {{if .Config.Notifications.SMTPTLS}}checked{{end}}>
+            TLS
+          </label>
+        </div>
+      </div>
+      <div class="grid grid-3">
+        <div class="form-group">
+          <label>User</label>
+          <input type="text" name="notif_smtp_user" value="{{.Config.Notifications.SMTPUser}}" placeholder="">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" name="notif_smtp_password" value="{{.Config.Notifications.SMTPPassword}}" placeholder="">
+        </div>
+        <div class="form-group">
+          <label>From Address</label>
+          <input type="text" name="notif_from_address" value="{{.Config.Notifications.FromAddress}}" placeholder="shingo@company.com">
+        </div>
+      </div>
+      <h4 class="mb-1" style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.75rem;">Recipients</h4>
+      <label class="text-sm">Email Addresses</label>
+      <div id="notif-recipient-rows">
+        {{range $i, $r := .Config.Notifications.Recipients}}
+        <div class="flex gap-1 mb-1 notif-recipient-row">
+          <input type="email" name="notif_recipient_{{$i}}" value="{{$r}}" placeholder="user@company.com" style="flex:2">
+          <button type="button" class="btn btn-danger btn-sm" data-action="removeNotifRecipient">-</button>
+        </div>
+        {{end}}
+      </div>
+      <button type="button" class="btn btn-sm mb-1" data-action="addNotifRecipient">+ Add Recipient</button>
+      <div class="flex gap-1 mb-1">
+        <button type="submit" class="btn btn-primary btn-sm">Save</button>
+        <button type="button" class="btn btn-sm" id="btn-test-email" data-action="testNotifEmail">Send Test Email</button>
+      </div>
+      <div id="notif-test-result" style="display:none;margin-top:0.5rem;" class="mb-1"></div>
+    </form>
+  </div>
 </div>
 
-<div id="page-data" data-broker-count="{{len .Config.Messaging.Kafka.Brokers}}"></div>
+<div id="page-data" data-broker-count="{{len .Config.Messaging.Kafka.Brokers}}" data-recipient-count="{{len .Config.Notifications.Recipients}}"></div>
 <script type="module" src="/static/pages/config.js?v={{cacheBust}}"></script>
 {{end}}

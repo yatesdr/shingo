@@ -19,6 +19,7 @@ type Config struct {
 	Staging       StagingConfig       `yaml:"staging"`
 	CountGroups   CountGroupsConfig   `yaml:"count_groups"`
 	FireAlarm     FireAlarmConfig     `yaml:"fire_alarm"`
+	Notifications NotificationsConfig `yaml:"notifications"`
 	Sim           SimConfig           `yaml:"sim"`
 	Sourceability SourceabilityConfig `yaml:"sourceability"`
 	Replenishment ReplenishmentConfig `yaml:"replenishment"`
@@ -211,6 +212,18 @@ type CountGroupConfig struct {
 type FireAlarmConfig struct {
 	Enabled           bool `yaml:"enabled"`             // feature gate; false = hidden from UI
 	AutoResumeDefault bool `yaml:"auto_resume_default"` // default checkbox state for auto-resume on clear
+}
+
+type NotificationsConfig struct {
+	Enabled         bool          `yaml:"enabled"`
+	SMTPHost        string        `yaml:"smtp_host"`
+	SMTPPort        int           `yaml:"smtp_port"`
+	SMTPTLS         bool          `yaml:"smtp_tls"`
+	SMTPUser        string        `yaml:"smtp_user"`
+	SMTPPassword    string        `yaml:"smtp_password"`
+	FromAddress     string        `yaml:"from_address"`
+	Recipients      []string      `yaml:"recipients"`
+	ThrottleMinutes int           `yaml:"throttle_minutes"`
 }
 
 // SimConfig configures the local-dev fleet simulator (core side). Sim code is
@@ -445,6 +458,13 @@ func Defaults() *Config {
 			FailSafeTimeout:    5 * time.Second,
 			NeverOccupiedWarn:  5 * time.Minute,
 			NeverOccupiedError: 30 * time.Minute,
+		},
+		Notifications: NotificationsConfig{
+			Enabled:         false,
+			SMTPHost:        "localhost",
+			SMTPPort:        587,
+			SMTPTLS:         true,
+			ThrottleMinutes: 15,
 		},
 		Sim: SimConfig{
 			// Enabled false by default; Seed 0 = derive+log. Sane sim timings so a

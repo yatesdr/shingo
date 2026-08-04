@@ -159,6 +159,7 @@ type EngineOrchestration interface {
 	ReconfigureFleet()
 	ReconfigureMessaging()
 	ReconfigureCountGroups()
+	ReconfigureNotifications()
 }
 
 // Compile-time assertions: *engine.Engine must satisfy both interfaces.

@@ -513,6 +513,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/diagnostics", h.handleDiagnostics)
 			r.Get("/config", h.handleConfig)
 			r.Post("/config/save", h.handleConfigSave)
+			r.Post("/config/test-email", h.handleConfigTestEmail)
 			r.Get("/fleet-explorer", h.handleFleetExplorer)
 			r.Get("/admin/cells", h.handleCellsAdmin)
 			// Stations — enrolled edges and the display-name rename. Auth-gated
