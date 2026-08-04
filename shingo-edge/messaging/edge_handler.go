@@ -82,10 +82,42 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 		log.Printf("edge_handler: apply core status %s for %s: %v", p.Status, p.OrderUUID, err)
 	}
 
-	if p.QueueReason != "" {
-		if err := h.orderMgr.SetOrderQueueReason(p.OrderUUID, p.QueueReason, p.QueueCode); err != nil {
-			log.Printf("edge_handler: set queue_reason for %s: %v", p.OrderUUID, err)
+	// A HOLD REASON OUTLIVES ITS HOLD, AND THE BOARD QUOTES IT.
+	//
+	// This used to be `if p.QueueReason != ""` — set-only. queue_reason could be
+	// written and never unwritten, because Core pushes a reason when it queues an
+	// order and clears its OWN copy on dispatch without ever pushing the clear.
+	// Springfield 2026-08-03: Core's queue_reason for order 4017 was empty while
+	// the Edge's still read "Waiting for material: 76683-6TA0A.06", and the
+	// operator-station modal displayed that sentence during the NEXT changeover,
+	// 2½ hours later, naming the style the line had already moved off.
+	//
+	// The fix does not need Core to send anything, and that is the point: an
+	// empty QueueReason on the wire is indistinguishable from an absent one
+	// (Go's zero value, `omitempty`), so "trust the pushed value" would let any
+	// unrelated status update wipe a LIVE reason — the same bug pointed the
+	// other way. Derive it instead. A reason explains why an order is waiting,
+	// so it is meaningful exactly while the order is waiting, and IsAcquiring
+	// (queued|sourcing) is that set — the same predicate Core gates the push on
+	// (engine/wiring.go, queue-reason push). Symmetric by construction: Core
+	// only sends one while acquiring, Edge only keeps one while acquiring.
+	//
+	// Once cleared, waitingLabel falls through from the stale sentence to the
+	// live status word ("in transit", an ETA) — which is worse-looking and
+	// correct, rather than better-looking and false. Deliberately NOT replaced
+	// with a cheerier standing reason ("queue cleared", "released"): that is a
+	// sentence stored on the order that outlives the moment it described, which
+	// is the defect being fixed, only harder to spot. A wedged order reading
+	// "Released" is the same lie in a nicer font. The moment belongs in
+	// order_history, which is already timestamped and already recorded.
+	if protocol.IsAcquiring(protocol.Status(p.Status)) {
+		if p.QueueReason != "" {
+			if err := h.orderMgr.SetOrderQueueReason(p.OrderUUID, p.QueueReason, p.QueueCode); err != nil {
+				log.Printf("edge_handler: set queue_reason for %s: %v", p.OrderUUID, err)
+			}
 		}
+	} else if err := h.orderMgr.SetOrderQueueReason(p.OrderUUID, "", ""); err != nil {
+		log.Printf("edge_handler: clear queue_reason for %s: %v", p.OrderUUID, err)
 	}
 }
 

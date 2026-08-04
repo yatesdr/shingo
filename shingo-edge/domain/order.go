@@ -47,8 +47,15 @@ type Order struct {
 	SiblingOrderID *int64 `json:"sibling_order_id,omitempty"`
 	// QueueReason holds Core's last blocking signal for this order
 	// (mirrored from Core's orders.queue_reason via OrderUpdate push).
-	// Non-empty only while status == "queued". HMI renders it as
-	// "IN QUEUE: <reason>" so operators can see WHY a robot isn't coming.
+	// HMI renders it as "IN QUEUE: <reason>" so operators can see WHY a
+	// robot isn't coming.
+	//
+	// Non-empty only while the status is acquiring (queued|sourcing) —
+	// enforced on arrival in messaging/edge_handler.HandleOrderUpdate, which
+	// clears it on any non-acquiring push. This comment claimed that
+	// invariant from the start; nothing held it up until 2026-08-03, and the
+	// field was in practice write-once. Springfield ALN_001 displayed a
+	// 2½-hour-old reason during a later changeover.
 	QueueReason string `json:"queue_reason"`
 	// QueueCode is the structured category behind QueueReason (mirrored from
 	// Core's orders.queue_code). One of protocol.QueueCode. Edge persists it for
