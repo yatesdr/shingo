@@ -164,6 +164,53 @@ func (e *Engine) wireEventHandlers() {
 		ev := evt.Payload
 		e.logFn("engine: order %d completed", ev.OrderID)
 		e.db.AppendAudit("order", ev.OrderID, "completed", "", "", "system")
+
+		// Notify ShinGo Edge, for the same reason the cancellation handler
+		// below does — and this arm's absence is why Edge rows strand at
+		// `delivered` forever.
+		//
+		// THERE IS NO OTHER PATH. EmitOrderCompleted reaches Core's own event
+		// bus and stops there; nothing in protocol/ or shingo-edge/messaging
+		// carries an order completion. Two comments in this repo assert
+		// otherwise (engine.go's confirmDelivered closure and
+		// recovery_service.ForceConfirmDelivered both say the emit chain
+		// "notifies Edge"), which is why the gap survived three separate
+		// investigations — the code documents a message it never sends.
+		//
+		// Placed on the completion EVENT rather than on the reconciliation
+		// sweep that exposed it, because Core confirms behind Edge's back from
+		// three sites: the 5-minute stuck-delivered sweep (engine.go), the
+		// compound-child auto-confirm (wiring_vendor_status.go, receipt
+		// `auto_confirm_internal`), and the operator's force-confirm button
+		// (recovery_service.go). Every one funnels through here. Wiring the
+		// sweep alone would have fixed a third of it.
+		//
+		// Springfield 2026-08-03: 115 of 331 swap legs in 14 days were
+		// confirmed by the sweep, each leaving Edge and Core disagreeing until
+		// the next edge restart. One of them (order 4017) still read
+		// `delivered` two and a half hours later, kept a finished order in
+		// ALN_001's active list, and handed the operator-station modal a stale
+		// `queue_reason` to display during the NEXT changeover.
+		//
+		// Reuses TypeOrderUpdate rather than minting a completion message:
+		// Edge's ApplyCoreStatus is already the total Core→Edge status mapping
+		// and already runs on this envelope. The echo — Edge confirms, tells
+		// Core, Core completes and tells Edge it confirmed — costs one message
+		// and no writes: that arm returns early when the Edge row is already
+		// terminal, which after an Edge-side confirm it always is.
+		if ev.StationID != "" && ev.EdgeUUID != "" {
+			if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID,
+				&protocol.OrderUpdate{
+					OrderUUID: ev.EdgeUUID,
+					Status:    string(protocol.StatusConfirmed),
+					Detail:    "confirmed at Core",
+				}); err != nil {
+				e.logFn("engine: completion notification to edge: %v", err)
+			} else {
+				e.dbg("completion notification sent to edge: station=%s uuid=%s", ev.StationID, ev.EdgeUUID)
+			}
+		}
+
 		e.handleOrderCompleted(ev)
 	}, EventOrderCompleted)
 

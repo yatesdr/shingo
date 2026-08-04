@@ -851,11 +851,24 @@ func TestApplyCoreStatus_Queued_TransitionsRow(t *testing.T) {
 	}
 }
 
-// TestApplyCoreStatus_StagedDeliveredTerminal_Noop pins that staged/delivered/
-// terminal statuses are NO-OPs in this mapping — dedicated envelopes
-// (order.staged, order.delivered, etc.) own them, and the mapping must NOT
-// double-handle. A staged push via the generic update path leaves the row alone
-// (the dedicated OrderStaged envelope does the real write).
+// TestApplyCoreStatus_StagedDeliveredTerminal_Noop pins that statuses OWNED BY A
+// DEDICATED ENVELOPE are NO-OPs in this mapping — order.staged, order.delivered,
+// order.error, order.cancelled and order.skipped each carry fields this generic
+// update does not have (bin snapshots, expiry, reason), and the mapping must NOT
+// double-handle them. A staged push via the generic update path leaves the row
+// alone; the dedicated OrderStaged envelope does the real write.
+//
+// `confirmed` USED TO BE IN THIS LIST AND DOES NOT BELONG. The invariant is
+// "there is a dedicated envelope for this", and confirmation is the one terminal
+// state with none — the fleet never reports it, because it is paperwork rather
+// than movement, so nothing ever needed to carry it until Core started deciding
+// it alone (the stuck-delivered sweep, the compound-child auto-confirm, the
+// force-confirm button). Listing it here generalised from five statuses that do
+// have an envelope to a sixth that never did, and pinned the silence: Core
+// completed 115 of 331 Springfield swap legs over 14 days and the Edge rows sat
+// at `delivered` until the next restart. Adoption is now asserted in
+// core_confirm_adoption_test.go. Do not re-add it here without adding the
+// envelope this list is about.
 func TestApplyCoreStatus_StagedDeliveredTerminal_Noop(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)
@@ -867,7 +880,6 @@ func TestApplyCoreStatus_StagedDeliveredTerminal_Noop(t *testing.T) {
 	}{
 		{"staged", StatusStaged},
 		{"delivered", StatusDelivered},
-		{"confirmed", StatusConfirmed},
 		{"failed", StatusFailed},
 		{"cancelled", StatusCancelled},
 		{"skipped", StatusSkipped},

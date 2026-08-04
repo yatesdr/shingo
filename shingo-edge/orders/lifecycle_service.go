@@ -131,9 +131,35 @@ func (s *LifecycleService) ApplyCoreStatus(order *orders.Order, coreStatus proto
 		// restart "fixed" it because the boot path forces what the live path
 		// refused.
 		return s.ForceTransition(order.ID, coreStatus, detail)
+	case StatusConfirmed:
+		// Core-side completion. Confirmation is the ONE terminal fact the fleet
+		// never reports — it is paperwork, not movement — so unlike
+		// failed/cancelled it cannot ride the fleet arm above, and unlike
+		// staged/delivered it has no dedicated envelope. Before this arm, a
+		// completion Core decided on its own reached the Edge through nothing at
+		// all, and the row sat at `delivered` until the next restart.
+		//
+		// Normally the EDGE confirms and tells Core — Core is the follower and
+		// this arm never fires. It fires when Core confirms unilaterally: the
+		// 5-minute stuck-delivered sweep, the compound-child auto-confirm, or an
+		// operator's force-confirm button.
+		//
+		// Status write ONLY — deliberately not routed through the Edge's own
+		// confirm command (Manager.ConfirmOrder), which files a receipt back to
+		// Core. Core just told us; answering would be a receipt for a receipt.
+		// The local terminal bookkeeping we DO want still runs, because
+		// applyTransition fires EmitOrderCompleted on any terminal status, and
+		// the Edge's completion handler is local-only (wiring_completion.go
+		// sends nothing to Core). That handler is what releases the node's
+		// runtime slots — so adopting Core's confirm also clears the stale
+		// pointers a stranded `delivered` row used to pin at the node.
+		if IsTerminal(order.Status) {
+			return nil
+		}
+		return s.ForceTransition(order.ID, coreStatus, detail)
 	default:
-		// staged/delivered/terminal are owned by dedicated envelopes; unknown
-		// statuses are ignored. No status write from this mapping.
+		// staged/delivered/other terminals are owned by dedicated envelopes;
+		// unknown statuses are ignored. No status write from this mapping.
 		return nil
 	}
 }
