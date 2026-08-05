@@ -91,7 +91,9 @@ const PayloadBinTypeAdvisoryClause = `
 //
 // Before 2026-06-13 these queries ordered by bin id alone (lane-blind FIFO), so
 // the planner routinely picked a buried empty and then reactively reshuffled the
-// bins on top of it (planning_service.go IsSlotAccessible → planBuriedReshuffle).
+// bins on top of it — the post-find buried check in source_finder.go's tier 6,
+// which routes to planBuriedReshuffleAtIntake. (This cited planning_service.go
+// until 2026-08-04; the check moved onto the finder and the citation did not.)
 // Ordering accessibility first means an accessible empty is always preferred and
 // a reshuffle happens only when EVERY compatible empty is buried — the lane mouth
 // is emptied before anything gets dug out. The reshuffle path stays as the
