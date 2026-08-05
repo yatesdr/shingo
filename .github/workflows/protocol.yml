@@ -32,7 +32,8 @@ jobs:
           # the job stays green having restored nothing. It caches both
           # GOMODCACHE and GOCACHE, so every job was re-downloading every
           # module and recompiling from scratch. See core.yml for the full note.
-          cache-dependency-path: "**/go.sum"
+          cache-dependency-path: |
+            protocol/go.sum
 
       - name: Build
         working-directory: protocol

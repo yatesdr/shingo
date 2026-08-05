@@ -77,24 +77,32 @@ jobs:
           # scratch, on a 2-core runner. For scale: shingo-core's docker-tagged
           # compile alone is 43s on a 20-core dev host.
           #
-          # The glob matches the four module go.sum files (shared has a go.mod
-          # but no external deps, so no go.sum, and nothing to key on).
+          # CONFIRMED ON A RUNNER: before this line existed the repo had never
+          # held a single setup-go-* cache entry — every entry in the registry
+          # was golangci-lint's own, which is why nothing ever looked wrong.
           #
-          # CONFIRMED ON A RUNNER: before this line the repo had never held a
-          # single setup-go-* cache entry — every entry in the cache registry
-          # was golangci-lint's own, which is why nothing looked wrong. The
-          # first run carrying it saved one.
-          #
-          # KNOWN LIMITATION, deliberately left: this glob hashes the whole
-          # repo, so every workflow computes the SAME key. The first job to
-          # finish saves and the rest skip with "already exists", which means
+          # THE PATH IS THIS MODULE'S, NOT "**/go.sum", and that is the second
+          # half of the fix. The key is a hash of the files named here, so a
+          # repo-wide glob gives every workflow an IDENTICAL key: the first job
+          # to finish saves, every other job skips with "already exists", and
           # the stored GOCACHE belongs to whichever small job won the race.
-          # GOMODCACHE is genuinely shared and still worth having; per-module
-          # build artifacts are not cached until the keys are split. Splitting
-          # them wants a module-specific path here and in edge.yml — and NOT in
-          # shared.yml, which has no go.sum to hash and would throw exactly the
-          # way the unset default did.
-          cache-dependency-path: "**/go.sum"
+          # MEASURED: with the shared key, Core's Build step went 42s cold to
+          # 36s "warm" — it restored the module downloads and then recompiled
+          # everything, because the cached build artifacts were somebody else's.
+          #
+          # Naming shingo-core + protocol makes this key distinct from edge's
+          # and integration's, so each module saves and restores its own build
+          # cache. Listing protocol too keeps the key honest: go.work builds
+          # core against it, so its dependencies are part of what got compiled.
+          #
+          # A wrong key is a MISS, never a bad build — Go's cache is
+          # content-addressed and re-verifies everything it reuses. shared/ is
+          # deliberately not named: it has a go.mod but no go.sum, so hashing
+          # it would resolve nothing and throw exactly the way the unset
+          # default did.
+          cache-dependency-path: |
+            shingo-core/go.sum
+            protocol/go.sum
 
       - name: Build
         working-directory: shingo-core
@@ -107,11 +115,7 @@ jobs:
         working-directory: shingo-core
         run: go build -tags sim ./...
 
-      - name: Prepare build dir
-        working-directory: shingo-core
-        run: mkdir -p build
-
-      # THE UNTAGGED SUITE IS NOT RUN HERE, BECAUSE THE DOCKER STEPS BELOW
+      # THE UNTAGGED SUITE IS NOT RUN HERE, BECAUSE THE DOCKER JOBS BELOW
       # ALREADY RUN IT. `-tags=docker` ADDS files and removes none, and nothing
       # in this tree carries a `!docker` constraint, so `go test -tags=docker
       # ./...` executes every test `go test ./...` would, plus the docker ones.
@@ -134,7 +138,49 @@ jobs:
         working-directory: shingo-core
         run: go test -run NONE -count=1 ./...
 
-      # ONE POSTGRES FOR BOTH DOCKER STEPS, rather than one per Go package.
+  # THE TWO DOCKER SUITES ARE SEPARATE JOBS, AND THAT IS PURE WALL CLOCK.
+  #
+  # They used to be two steps in the job above, so they ran back to back:
+  # MEASURED on this runner, 137s then 334s inside a 568s job. Nothing in the
+  # race run depends on the plain run — same suite, different flag — so the
+  # sum was being paid for no reason. As jobs they overlap, and the workflow
+  # ends when the longest one does instead of when their total does.
+  #
+  # NO `needs:` ON EITHER, deliberately. Gating them behind `build` would
+  # serialise the very thing this split exists to overlap, for a compile check
+  # that `go test` repeats anyway. The cost is that a genuine compile error is
+  # reported by three jobs at once, which is noise on a run that has already
+  # failed.
+  #
+  # Each job gets its own checkout, toolchain and Postgres, so the per-job
+  # entry cost (~50-75s) is now paid three times rather than once. That is the
+  # trade: ~150s of wall clock for ~150s of extra runner time, on a public
+  # repo where standard-runner minutes are free.
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: TestSchemaConvergesAcrossVintages reads pinned
+          # revisions out of git. See the note in the build job.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          # Same key as the build job — same module, same dependencies, so
+          # they share a cache rather than fighting over one. See the build
+          # job for why this line has to be here at all.
+          cache-dependency-path: |
+            shingo-core/go.sum
+            protocol/go.sum
+
+      - name: Prepare build dir
+        working-directory: shingo-core
+        run: mkdir -p build
+
+      # ONE POSTGRES FOR THE WHOLE JOB, rather than one per Go package.
       #
       # Every Go package is its own test process, so testcontainers' "one
       # container per process" is one container per PACKAGE, and 31 of this
@@ -145,9 +191,8 @@ jobs:
       # stack into its own template. MEASURED on a 20-core dev host that is
       # ~5.4s per package (~3s boot, ~2.4s migrations) against ~0.2s of real
       # query work in a small package; a cold 2-core runner is worse, not
-      # better. Both docker steps below paid it, so it was charged twice per
-      # run. shingo-core/internal/testdb takes $SHINGO_TEST_PG instead when it
-      # is set, and builds the template once under a Postgres advisory lock
+      # better. shingo-core/internal/testdb takes $SHINGO_TEST_PG instead when
+      # it is set, and builds the template once under a Postgres advisory lock
       # that the other 30 packages wait on.
       #
       # A `services:` block cannot do this: it can pass container options but
@@ -155,8 +200,8 @@ jobs:
       # point -- this database is thrown away with the runner, so the settings
       # that exist to survive a crash are pure cost.
       #
-      # The template name is scoped to the run so the two steps below share one
-      # build, and no run can inherit another's.
+      # The name is scoped to run AND job: each job now has its own container,
+      # so there is nothing to share, and a per-job name keeps that obvious.
       - name: Start shared Postgres
         run: |
           set -euo pipefail
@@ -175,7 +220,7 @@ jobs:
           docker exec "$id" pg_isready -U test
           port=$(docker port "$id" 5432/tcp | head -1 | sed 's/.*://')
           echo "SHINGO_TEST_PG=127.0.0.1:$port" >> "$GITHUB_ENV"
-          echo "SHINGO_TEST_PG_TEMPLATE=template_ci_${{ github.run_id }}" >> "$GITHUB_ENV"
+          echo "SHINGO_TEST_PG_TEMPLATE=template_ci_${{ github.run_id }}_docker" >> "$GITHUB_ENV"
 
       - name: Test (Docker integration)
         working-directory: shingo-core
@@ -189,24 +234,55 @@ jobs:
         # a 20-core dev host the best setting measured nproc/4, which on this
         # runner is 1. Raising it here would oversubscribe, which measured
         # strictly worse (-p 8 made every package 4-6x slower individually).
-        #
-        # TODO(stage-2a.2): tighten -timeout to ~2x the observed
-        # runtime once the workflow has run a few times. Standard
-        # warm-runner integration tests should land well under 5m;
-        # 10m exists today only because we lack measured data.
         run: go test -tags=docker -timeout=10m -count=1 -p 1 -coverprofile=build/coverage-docker ./...
 
       - name: Coverage report (Docker)
         working-directory: shingo-core
         run: go tool cover -func=build/coverage-docker
 
+  docker-race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: |
+            shingo-core/go.sum
+            protocol/go.sum
+
+      - name: Start shared Postgres
+        run: |
+          set -euo pipefail
+          id=$(docker run -d \
+            -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=postgres \
+            -e PGDATA=/var/lib/postgresql/data/pgdata \
+            --tmpfs /var/lib/postgresql/data:rw,size=2g \
+            -p 127.0.0.1::5432 \
+            postgres:16-alpine \
+            -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+            -c max_connections=500 -c shared_buffers=256MB)
+          for _ in $(seq 1 60); do
+            docker exec "$id" pg_isready -U test -q && break
+            sleep 1
+          done
+          docker exec "$id" pg_isready -U test
+          port=$(docker port "$id" 5432/tcp | head -1 | sed 's/.*://')
+          echo "SHINGO_TEST_PG=127.0.0.1:$port" >> "$GITHUB_ENV"
+          echo "SHINGO_TEST_PG_TEMPLATE=template_ci_${{ github.run_id }}_race" >> "$GITHUB_ENV"
+
       - name: Test (Docker integration, race)
         working-directory: shingo-core
         # Promoted to gating in Phase 2 (2026-05-22).
-        # -p 1 for the same reason as the step above.
+        # -p 1 for the same reason as the plain docker job.
         #
-        # Reuses the server AND the template the previous step built — the
-        # template name is keyed on the run, and testdb only builds one if it
-        # is not already there — so the migration stack runs once per job
-        # rather than once per package per step.
+        # THE LONG POLE OF THIS WORKFLOW: 334s of a 568s run, against 137s for
+        # the same suite without the flag. That is the race detector's usual
+        # 5-20x on memory access, and it is the price of the guarantee that a
+        # data race cannot reach main — worth it for software that drives AMRs
+        # around a plant. The way to make it cheaper is to shard it across
+        # parallel jobs, not to run it less often.
         run: go test -tags=docker -race -timeout=25m -count=1 -p 1 ./...

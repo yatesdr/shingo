@@ -54,7 +54,9 @@ jobs:
           # the job stays green having restored nothing. It caches both
           # GOMODCACHE and GOCACHE, so every job was re-downloading every
           # module and recompiling from scratch. See core.yml for the full note.
-          cache-dependency-path: "**/go.sum"
+          cache-dependency-path: |
+            shingo-edge/go.sum
+            protocol/go.sum
 
       - name: Build
         working-directory: shingo-edge
@@ -95,24 +97,68 @@ jobs:
         working-directory: shingo-edge
         run: go test -run NONE -count=1 ./...
 
+  # THE TWO DOCKER SUITES ARE SEPARATE JOBS, AND THAT IS PURE WALL CLOCK.
+  #
+  # They used to be two steps in the job above, running back to back: MEASURED
+  # on this runner, 30s then 294s inside a 403s job. Nothing in the race run
+  # depends on the plain one — same suite, different flag — so the sum was
+  # being paid for nothing. As jobs they overlap and the workflow ends with the
+  # longest, not the total. Edge is the starker case of the two: its race run
+  # is nearly 10x its plain run.
+  #
+  # No `needs:`, deliberately — see the note in core.yml.
+  #
+  # Edge's tests are SQLite-backed, so unlike core these jobs need no Postgres.
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          # This module's own key, not a repo-wide glob — see core.yml for why
+          # a shared key means only one job's build cache ever gets stored.
+          cache-dependency-path: |
+            shingo-edge/go.sum
+            protocol/go.sum
+
+      - name: Prepare build dir
+        working-directory: shingo-edge
+        run: mkdir -p build
+
       - name: Test (Docker integration)
         working-directory: shingo-edge
-        # testcontainers manages its own Postgres container; the
-        # ubuntu-latest runner provides Docker. -count=1 prevents
-        # stale-cache false positives on integration tests;
-        # -timeout=10m accommodates cold-runner container startup.
-        # TODO(stage-2a.2): tighten -timeout to ~2x the observed
-        # runtime once the workflow has run a few times. Standard
-        # warm-runner integration tests should land well under 5m;
-        # 10m exists today only because we lack measured data.
+        # -count=1 prevents stale-cache false positives on integration tests;
+        # -timeout=10m accommodates a cold runner.
         run: go test -tags=docker -timeout=10m -count=1 -coverprofile=build/coverage-docker ./...
 
       - name: Coverage report (Docker)
         working-directory: shingo-edge
         run: go tool cover -func=build/coverage-docker
 
+  docker-race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: |
+            shingo-edge/go.sum
+            protocol/go.sum
+
       - name: Test (Docker integration, race)
         working-directory: shingo-edge
-        # Promoted to gating in Phase 2 (2026-05-22) — see unit race
-        # step above.
+        # Promoted to gating in Phase 2 (2026-05-22).
+        #
+        # THE LONG POLE OF THIS WORKFLOW: 294s against 30s for the same suite
+        # without the flag. Sharding it across parallel jobs is the way to make
+        # it cheaper; running it less often is not.
         run: go test -tags=docker -race -timeout=25m -count=1 ./...
