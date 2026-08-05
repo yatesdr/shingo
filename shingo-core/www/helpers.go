@@ -257,6 +257,35 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 		"f1": func(f float64) string {
 			return fmt.Sprintf("%.1f", f)
 		},
+		// f2 prints a localization confidence exactly as the vendor publishes
+		// it. Two decimals and no rescaling to a percentage: the figure comes
+		// from an upstream system and an operator comparing this tile against
+		// RoboShop should see the same number, not a derived one.
+		"f2": func(f float64) string {
+			return fmt.Sprintf("%.2f", f)
+		},
+		// confidenceBand maps a localization confidence onto the health-chip
+		// vocabulary. The cuts are the VENDOR'S OWN operator thresholds
+		// (rds-user-manual.pdf: >0.8 green, >0.3 yellow, else red), so this
+		// HMI and the fleet manager agree rather than offering a second
+		// opinion about the same number.
+		//
+		// Reuses .chip-ok/.chip-near/.chip-below rather than styling a new
+		// pill: their inks are the measured --chip-ink-* values (4.60–4.63:1
+		// worst case) and a hand-rolled colour would not be. Per the chip
+		// ruling in docs/ui-style-guide.md, the pill is only exempt from the
+		// 3:1 boundary floor because it PRINTS ITS VALUE — the number inside
+		// is the meaning, and this must never become an icon-only chip.
+		"confidenceBand": func(f float64) string {
+			switch {
+			case f >= 0.80:
+				return "chip-ok"
+			case f >= 0.30:
+				return "chip-near"
+			default:
+				return "chip-below"
+			}
+		},
 		"splitBroker": func(broker string) [2]string {
 			parts := strings.SplitN(broker, ":", 2)
 			if len(parts) == 2 {

@@ -48,6 +48,16 @@
       <div class="robot-battery" title="Battery: {{pct .BatteryLevel}}%">
         <div class="robot-battery-fill" style="width:{{pct .BatteryLevel}}%"></div>
       </div>
+      {{/* Localization confidence. A disconnected robot shows an em-dash, not
+           0.00 and not its last-known value: zero is a measurement and absence
+           is not, and the two must not look alike. */}}
+      {{if .Connected}}
+      <span class="chip {{confidenceBand .Confidence}} tnum robot-confidence"
+            title="Localization confidence (SEER): {{f2 .Confidence}}">{{f2 .Confidence}}</span>
+      {{else}}
+      <span class="robot-confidence robot-confidence-none"
+            title="No localization reading — robot is disconnected. Not a confidence of zero.">&mdash;</span>
+      {{end}}
     </div>
     {{end}}
   </div>

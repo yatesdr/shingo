@@ -475,6 +475,26 @@ textarea { resize: vertical; min-height: 60px; }
   border-radius: 3px;
   transition: width 0.3s;
 }
+/* Localization confidence, under the battery meter.
+ *
+ * The value reuses .chip-ok/.chip-near/.chip-below rather than taking a new
+ * pill: those carry the measured --chip-ink-* values and a fresh colour here
+ * would be an untested one. Only spacing is set locally.
+ *
+ * The ABSENT state is deliberately not a chip. A bare em-dash in a pill is an
+ * icon-only chip, and the chip ruling's exemption from the 3:1 boundary floor
+ * is conditional on the pill printing its meaning — so absence gets plain
+ * muted type instead, which also keeps "no reading" visually distinct from
+ * every real band rather than looking like a fourth one.
+ *
+ * No transition: a value that is merely sitting still has nothing to animate,
+ * and motion here would read as a change that did not happen. */
+.robot-confidence { margin-top: 0.35rem; }
+.robot-confidence-none {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
 
 /* Robot state colors */
 .robot-ready { background: #d1e7dd; border-color: #198754; color: #0f5132; }
