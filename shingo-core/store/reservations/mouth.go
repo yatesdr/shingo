@@ -195,6 +195,41 @@ func ReleaseLane(db Execer, owner, laneID int64) error {
 	return nil
 }
 
+// ReleaseLaneHandoff is ReleaseLane for the PER-BLOCK early handoff (§4) — it
+// deletes owner's mouth row on laneID unless that row is a dig claim.
+//
+// The handoff and a dig claim have different lifetimes, and conflating them cost
+// the dig its row on every reshuffle. A plain order's hold is per-visit: an
+// outbound hold exists so nothing else enters while the bin is coming out, and
+// once the bin has cleared the lane the hold has done its job. A dig's hold
+// spans the WHOLE reshuffle — several legs, several pickups and dropoffs — and
+// the first of those pickups is not the end of anything.
+//
+// It was one call. Because laneOwnerFor routes a child's block progress to the
+// compound PARENT (deliberately — children never own rows), the first unbury
+// leg's pickup arrived here owned by the parent, matched the parent's dig row,
+// and deleted it. Every later leg then ran with no durable claim on the lane.
+// Nothing caught it: memory was still the grant authority, the resolver skips
+// dig-locked lanes from memory, and CheckDivergence had no production caller.
+//
+// The mode predicate is in the SQL rather than a read-then-delete in Go, so
+// there is no window between deciding and deleting.
+//
+// LaneLock.Unlock keeps using ReleaseLane, which has no mode predicate: ending
+// the dig IS its job, and that is the one caller allowed to drop the claim.
+func ReleaseLaneHandoff(db Execer, owner, laneID int64) error {
+	_, err := db.Exec(
+		`DELETE FROM reservations
+		 WHERE order_id=$1 AND resource_kind='mouth' AND node_id=$2
+		   AND COALESCE(mode, '') <> $3`,
+		owner, laneID, string(ModeDig),
+	)
+	if err != nil {
+		return fmt.Errorf("reservations release-lane-handoff: %w", err)
+	}
+	return nil
+}
+
 // ReleaseLanesByOwner deletes all of owner's mouth rows (any mode, any lane) —
 // the row dual of LaneLock.UnlockByOwner's cleanup path. Idempotent.
 func ReleaseLanesByOwner(db Execer, owner int64) error {

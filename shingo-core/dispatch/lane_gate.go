@@ -203,6 +203,18 @@ func (d *Dispatcher) acquireOrderLanes(orderID int64, holds []laneHold) (admitte
 // node, if any — the early per-block handoff (§4): an outbound hold drops when
 // the bin leaves the lane, an inbound hold drops when the bin lands. Owner-scoped
 // and a no-op when no row exists, so it is byte-identical when the gate is off.
+//
+// A DIG CLAIM IS EXEMPT. This is a per-VISIT release and a dig's hold is
+// per-RESHUFFLE: it has to outlive several legs, and the first leg's pickup is
+// not the end of anything. Because laneOwnerFor routes a child's block progress
+// to the compound parent, this used to arrive owned by the parent, match the
+// parent's dig row, and delete it at leg one — leaving every later leg of the
+// reshuffle with no durable claim on the lane at all.
+//
+// The exemption lives in ReleaseLaneHandoff's SQL rather than here, so there is
+// no window between reading the mode and deleting the row. Everything else about
+// the handoff is unchanged, which is the point: it is right for plain orders and
+// was wrong only for digs.
 func (d *Dispatcher) releaseOrderLaneFor(orderID int64, node *nodes.Node) error {
 	if node == nil {
 		return nil
@@ -214,7 +226,7 @@ func (d *Dispatcher) releaseOrderLaneFor(orderID int64, node *nodes.Node) error 
 	if lane == nil {
 		return nil
 	}
-	return reservations.ReleaseLane(d.db.DB, orderID, lane.ID)
+	return reservations.ReleaseLaneHandoff(d.db.DB, orderID, lane.ID)
 }
 
 // causeForLaneHolds classifies a lane conflict for the operator-facing queue
