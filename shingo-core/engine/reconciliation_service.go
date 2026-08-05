@@ -39,6 +39,15 @@ type ReconciliationService struct {
 	// `reshuffling` when a child→parent terminal event was missed (crash) or
 	// never fired (the cancelled-child vector has no child→parent event arm).
 	advanceCompound func(parentID int64) error
+	// checkLaneLockDivergence compares the lane lock's in-memory holds against
+	// its durable dig rows and returns the mismatch count, logging each one.
+	// Late-bound to dispatch.LaneLock.CheckDivergence in engine.New.
+	//
+	// The check has existed since the dual-write landed and was never called
+	// outside a unit test, so the mirror has been running unwatched: a dig row
+	// deleted out from under a live hold (or leaked after one ended) produced no
+	// signal at all. Nil-safe — a service built without the binding skips it.
+	checkLaneLockDivergence func() int
 }
 
 func newReconciliationService(db ReconciliationStore, logFn LogFunc) *ReconciliationService {
@@ -116,8 +125,35 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 			} else if n > 0 {
 				s.logFn("engine: reaped %d orphaned reservations from terminal/gone orders", n)
 			}
+			// Runs AFTER the reservation reap, deliberately: the reap can legitimately
+			// remove rows belonging to terminal orders, and checking first would
+			// report those as divergences on the tick that cleaned them up.
+			s.CheckLaneLockDivergence()
 		}
 	}
+}
+
+// CheckLaneLockDivergence runs the lane lock's mirror tripwire and logs a warning
+// when the in-memory holds and the durable dig rows disagree. Returns the mismatch
+// count (0 == in sync, or no binding).
+//
+// It is a diagnostic and nothing else: it never repairs, because a repair would
+// have to guess which side is right, and which side is right is exactly what the
+// count is meant to tell us. CheckDivergence itself logs one line per diverging
+// lane naming the lane and both owners; this adds the count so a reader can see
+// at a glance whether it is one stuck lane or the mirror falling apart.
+//
+// Exported and called from Loop rather than inlined there, so the wiring has a
+// seam a test can reach — Loop is a blocking ticker with no other way in.
+func (s *ReconciliationService) CheckLaneLockDivergence() int {
+	if s.checkLaneLockDivergence == nil {
+		return 0
+	}
+	n := s.checkLaneLockDivergence()
+	if n > 0 {
+		s.logFn("engine: WARN lane-lock mirror diverged on %d lane(s) — see the preceding lanelock: divergence lines for which lanes and owners", n)
+	}
+	return n
 }
 
 // AutoConfirmStuckDeliveredOrders confirms delivered orders that have been

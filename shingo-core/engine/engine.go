@@ -162,6 +162,14 @@ func New(c Config) *Engine {
 	e.reconciliation.advanceCompound = func(parentID int64) error {
 		return e.dispatcher.AdvanceCompoundOrder(parentID)
 	}
+	// checkLaneLockDivergence arms the standing tripwire on the lane lock's
+	// dual-write. LaneLock.CheckDivergence has existed since the mirror landed
+	// and had no production caller — its only two call sites were in a unit test
+	// — so a lane held in memory with no durable row, or the reverse, went
+	// unreported in the field. Same late-binding rationale as advanceCompound.
+	e.reconciliation.checkLaneLockDivergence = func() int {
+		return e.dispatcher.LaneLock().CheckDivergence()
+	}
 	e.recovery = newRecoveryService(e)
 	epochAnnounce := service.EpochAnnounce{
 		Topic:       e.cfg.Messaging.DispatchTopic,
