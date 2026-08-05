@@ -106,6 +106,11 @@ step_fmt() {
   echo "ok   gofmt"
 }
 
+# NOT parallelised across modules, unlike step_test, and that is a measured
+# decision rather than an oversight: 8s serial against 7s concurrent. Vet's
+# wall time is one module (shingo-core) compiling, and the other four are
+# rounding error — so the concurrency buys a second and costs five per-module
+# log files and an interleaving problem to solve. Not worth it.
 step_vet() {
   local m failed=0
   for m in $MODULES; do
@@ -163,10 +168,35 @@ step_lint() {
   return $failed
 }
 
+# ONE RUN, NOT TWO. This used to run each module to /dev/null and then, if it
+# failed, run the whole module AGAIN to have something to print — so a red gate
+# cost double a green one, on the run you are least willing to wait through.
+# The log is written the first time and the excerpt comes out of it.
+# Per-worktree under $ROOT/.gate for the same reason step_docker's logs are:
+# see the note there about /tmp being machine-global on Git Bash.
+#
+# STILL SERIAL, AND THAT IS THE SECOND THING TRIED HERE. Running the five
+# modules at once works and is faster — 45s serial against ~26s, since
+# shingo-edge alone is 26.2s and the other four total ~19s — but it also puts
+# five modules' worth of tests on the CPU at once, and shingocore/rds's
+# TestPollerStopHaltsPolling asserts on a 30ms wall-clock drain window after
+# Stop(). Starve that window and the test reports "polls continued after Stop".
+# MEASURED: 10/10 green in isolation, 4/4 green running this step alone, and a
+# failure inside `gate.sh full` where lint's teardown overlaps the start of the
+# tests. A gate that fails ~1 run in 6 for a reason outside the diff is not a
+# gate, and 11s of a ~190s run does not buy that back. The test is genuinely
+# load-fragile and would bite on a slow or busy machine without any help from
+# here — worth hardening on its own terms, and then this can be revisited.
 step_test() {
-  local m failed=0
+  local m failed=0 logdir
+  logdir="$ROOT/.gate"
+  mkdir -p "$logdir" || { echo "FAIL tests — cannot create $logdir"; return 1; }
   for m in $MODULES; do
-    ( cd "$ROOT/$m" && go test -count=1 ./... >/dev/null ) || { echo "  $m:"; ( cd "$ROOT/$m" && go test -count=1 ./... 2>&1 | grep -Ev '^ok |no test files' | head -30 ); failed=1; }
+    ( cd "$ROOT/$m" && go test -count=1 ./... >"$logdir/test-$m.log" 2>&1 ) || {
+      echo "  $m:"
+      grep -Ev '^ok |no test files' "$logdir/test-$m.log" | head -30
+      failed=1
+    }
   done
   [ "$failed" -eq 0 ] && echo "ok   tests" || echo "FAIL tests"
   return $failed
