@@ -213,3 +213,95 @@ func TestGateChoreo_RetrieveContendedHoldsThenEvaluatorReleases(t *testing.T) {
 			final.WaitIndex, IsGateStaged(final))
 	}
 }
+
+// TestGateChoreo_RetrieveOwnDigLegIsNotParked is defect 1: a reshuffle leg parked
+// at the gate by its OWN parent's dig lock, which only that leg can clear.
+//
+// The chain the fixture reproduces, all production shapes:
+//
+//   - the dig lock's owner is the buried retrieve itself — complex_reshuffle.go
+//     and planning_service.go both call TryLock(laneID, order.ID) and then make
+//     that same order the compound parent. So the parent IS the dig owner.
+//   - a leg's SOURCE is a lane slot, and legs are not Coordinated, so
+//     dispatchToFleetCore routes them through resolveLaneGateSource →
+//     dispatchGatedRetrieve like any other lane-sourced order. Legs never meet
+//     the scanner's AcquireLanesForOrder, so the gate is the only gate they meet.
+//   - laneGateRetrieveCause then parked on "a dig holds this lane" without asking
+//     WHOSE. The parent's lock releases when the reshuffle completes, and the
+//     reshuffle completes by running this leg. Deadlock.
+//
+// ONE LEG, DELIBERATELY. Hold B (compound.go's laneOccupiedForChild) refuses to
+// dispatch a leg while a sibling is inside the lane, so a two-leg fixture that
+// asserted "the second leg never runs" would pass identically whether the gate is
+// wrong or not — it would be proving Hold B works. With a single leg there is no
+// sibling, Hold B is satisfied, the leg reaches the fleet, and the only thing that
+// can hold it at the gate is its own parent's dig.
+//
+// The leg delivers to a LINE, which is target-node reshuffle mode
+// (PlanReshuffleToTarget): the blocker leaves the lane. That keeps the case about
+// the SOURCE gate — an expose-mode leg dropping into a shuffle slot in the same
+// lane would take resolveLaneGateTarget's store branch instead, and laneEntryCause
+// never consults the dig lock at all.
+//
+// MUTATION (verified): make laneOwnerFor return the order's own id instead of its
+// parent's (drop the ParentOrderID hop). The exemption then fails to match, the leg
+// parks, and this test's own "append calls = 0" assertion fires. That mutation is
+// the point: the test depends on the PARENT hop, not merely on some exemption
+// existing.
+func TestGateChoreo_RetrieveOwnDigLegIsNotParked(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	laneID, _, s1 := gateRetrieveLane(t, db, "GCDIG", "GCDIG-WAIT")
+	line := lineNode(t, db, "GCDIG-LINE")
+
+	// The reshuffle parent takes the dig, exactly as the two production planners do.
+	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.Status = protocol.StatusReshuffling
+	})
+	if !d.laneLock.TryLock(laneID, parent.ID) {
+		t.Fatal("TryLock on a free lane must succeed")
+	}
+
+	leg := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.OrderType = OrderTypeMove
+		o.SourceNode = s1.Name
+		o.DeliveryNode = line.Name
+		o.ParentOrderID = &parent.ID
+		o.Sequence = 1
+		o.Status = "sourcing"
+	})
+
+	if _, err := d.DispatchDirect(leg, s1, line); err != nil {
+		t.Fatalf("DispatchDirect: %v", err)
+	}
+
+	// THE ASSERTION. The leg's tail went out: it entered the lane its own parent is
+	// digging, because that dig is what the leg exists to perform.
+	appends := backend.ReleaseCalls()
+	if len(appends) != 1 {
+		reloaded, _ := db.GetOrder(leg.ID)
+		t.Fatalf("append calls = %d, want 1 — the leg is parked at the gate by its own parent's dig "+
+			"(leg %d, parent/dig owner %d, gate-staged=%v). Only this leg can end that dig, so nothing "+
+			"clears the lock and the reshuffle never completes",
+			len(appends), leg.ID, parent.ID, IsGateStaged(reloaded))
+	}
+	a := appends[0]
+	if len(a.Blocks) != 2 || a.Blocks[0].Location != s1.Name || a.Blocks[1].Location != line.Name {
+		t.Errorf("append blocks = %v, want [pickup@%s, dropoff@%s]", a.Blocks, s1.Name, line.Name)
+	}
+	if final, _ := db.GetOrder(leg.ID); IsGateStaged(final) || final.WaitIndex != 1 {
+		t.Errorf("the leg should be sealed (wait_index=1, not staged); got wait_index=%d staged=%v",
+			final.WaitIndex, IsGateStaged(final))
+	}
+
+	// The dig row is untouched: the exemption lets the leg THROUGH, it does not end
+	// the dig. Only the reshuffle's own completion does that (LaneLock.Unlock).
+	if owner := d.laneLock.LockedBy(laneID); owner != parent.ID {
+		t.Errorf("dig owner after the leg passed = %d, want the parent %d still holding — "+
+			"an exemption that released the dig would be a second writer for the lane hold",
+			owner, parent.ID)
+	}
+}

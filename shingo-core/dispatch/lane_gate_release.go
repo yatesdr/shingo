@@ -315,8 +315,9 @@ func (d *Dispatcher) gateStagedRetrievesInLane(lane *nodes.Node) ([]gateCandidat
 // outbound mirror of laneEntryCause. A retrieve dwelling at the gate is parked
 // (held) when EITHER:
 //
-//   - a dig holds the lane (ModeDig is always-exclusive: nothing enters while a
-//     dig works, and "everything respects the dig" is the whole point of gating).
+//   - a dig belonging to SOMEONE ELSE holds the lane (ModeDig is always-
+//     exclusive: nothing enters while a dig works, and "everything respects the
+//     dig" is the whole point of gating). Its own legs are exempt — see below.
 //   - the bin the retrieve wants is BURIED — a shallower slot in the lane still
 //     holds a bin, so the target is physically unreachable until that bin leaves.
 //
@@ -337,8 +338,16 @@ func (d *Dispatcher) gateStagedRetrievesInLane(lane *nodes.Node) ([]gateCandidat
 // bound. It is re-read at release (rebindGatedPickup), because a dig can move the
 // bin while this order dwells.
 func (d *Dispatcher) laneGateRetrieveCause(lane *nodes.Node, order *orders.Order, sourceNode *nodes.Node) (park bool, cause string, err error) {
-	if d.laneLock.IsLocked(lane.ID) {
-		return true, "lane-dig-active", nil // a dig holds the lane — everything respects the dig
+	digOwner, err := d.laneLock.DigOwner(lane.ID)
+	if err != nil {
+		// Unreadable dig row: the caller logs and leaves the order parked, which is
+		// the same fail-closed disposition the burial read below takes. DigOwner
+		// rather than IsLocked precisely so this arm exists — IsLocked would have
+		// answered "held" and hidden the failure as a routine wait.
+		return false, "", err
+	}
+	if digOwner != 0 && !d.isOwnDigLeg(order, digOwner) {
+		return true, "lane-dig-active", nil // someone else's dig holds the lane
 	}
 	blockers, err := findBuriedBlockers(d.db, sourceNode.ID)
 	if err != nil {
@@ -348,6 +357,41 @@ func (d *Dispatcher) laneGateRetrieveCause(lane *nodes.Node, order *orders.Order
 		return true, "lane-target-buried", nil // a shallower bin still sits in front of the wanted slot
 	}
 	return false, "", nil // lane safe: no dig, bin reachable — release
+}
+
+// isOwnDigLeg reports whether `order` is a LEG of the dig holding the lane.
+//
+// A reshuffle leg's source is a lane slot, so it stages at the gate like any
+// other lane-sourced order; without this the classifier parked it behind its own
+// parent's dig, and that dig only ends when the leg it is parking runs. The lock
+// is not a reason to keep out the work it exists to perform.
+//
+// PARENT IDENTITY, and it is not an approximation of something better. Both
+// planners take the dig as the buried retrieve's own order id and then make that
+// order the compound parent (complex_reshuffle.go planBuriedReshuffleAtIntake /
+// handleComplexBuriedOnReplay, planning_service.go planBuriedReshuffle), so
+// "owner of the dig" and "parent of the leg" are the same number by construction.
+// A lane carries exactly one dig claim because reservations.admitMouth refuses a
+// second one outright, so there is no group of digs for parent identity to be a
+// coarse stand-in for.
+//
+// ── The two lines that make this wrong if they move ───────────────────────
+//
+//  1. reservations.AcquireLanes' dig rule. If it ever admits two claims on one
+//     lane, "the dig" stops being singular, the parent stops identifying it, and
+//     this exemption has to become claim-scoped. Nothing else changes the answer.
+//  2. The narrowing to CHILDREN (owner != order.ID) is load-bearing, not a
+//     shortcut past laneOwnerFor's plain-order case. The dig owner is a real
+//     order with a real source slot; if it were ever itself gate-staged — which is
+//     what "a buried retrieve pre-positions at the gate" (dispatcher.go) would
+//     mean applied to the digger rather than a bystander — laneOwnerFor would
+//     return its own id, match, and release it into the lane its own dig is still
+//     working. Today it cannot: the planners divert it to Reshuffling before it
+//     ever reaches the fleet, so it carries no vendor order and IsGateStaged is
+//     false. Give the digger a pre-position and this line is the one to revisit.
+func (d *Dispatcher) isOwnDigLeg(order *orders.Order, digOwner int64) bool {
+	owner := d.laneOwnerFor(order.ID)
+	return owner != order.ID && owner == digOwner
 }
 
 // releaseGatedOrder binds the dropoff against the lane as it stands, appends the

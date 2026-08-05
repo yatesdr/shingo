@@ -91,7 +91,20 @@ func (l *LaneLock) UnlockByOwner(orderID int64) {
 	}
 }
 
-// IsLocked reports whether a dig holds this lane. One row read.
+// DigOwner returns the order ID holding the dig on this lane, 0 if unheld, and
+// the read error UNANSWERED. One row read, and the only one: IsLocked and
+// LockedBy are dispositions over this, not second spellings of the query.
+//
+// It exists because the two dispositions below disagree, on purpose, and a
+// caller that can PROPAGATE the failure wants neither of them. The lane-gate
+// retrieve classifier is that caller: its own error return already means "leave
+// the order parked", so handing it a fabricated answer would replace a correct
+// disposition with a guess.
+func (l *LaneLock) DigOwner(laneID int64) (int64, error) {
+	return reservations.DigHoldOwner(l.db, laneID)
+}
+
+// IsLocked reports whether a dig holds this lane.
 //
 // FAILS CLOSED: an unreadable lane reports LOCKED. Every caller uses this to
 // decide whether to keep out, and "I could not tell" must not read as "go
@@ -99,7 +112,7 @@ func (l *LaneLock) UnlockByOwner(orderID int64) {
 // lanes out of their candidate query instead, so this is only ever asked about
 // one lane the caller already has in hand.
 func (l *LaneLock) IsLocked(laneID int64) bool {
-	owner, err := reservations.DigHoldOwner(l.db, laneID)
+	owner, err := l.DigOwner(laneID)
 	if err != nil {
 		log.Printf("lanelock: dig-hold read failed for lane %d: %v (treated as held)", laneID, err)
 		return true
@@ -107,14 +120,14 @@ func (l *LaneLock) IsLocked(laneID int64) bool {
 	return owner != 0
 }
 
-// LockedBy returns the order ID holding the dig, or 0 if unheld. One row read.
+// LockedBy returns the order ID holding the dig, or 0 if unheld.
 //
 // Unlike IsLocked this returns 0 on a read error, because its callers compare
 // the result against a specific order id and a fabricated non-zero owner would
 // be a wrong ANSWER rather than a cautious one. A 0 fails those comparisons,
 // which is the cautious outcome there.
 func (l *LaneLock) LockedBy(laneID int64) int64 {
-	owner, err := reservations.DigHoldOwner(l.db, laneID)
+	owner, err := l.DigOwner(laneID)
 	if err != nil {
 		log.Printf("lanelock: dig-hold read failed for lane %d: %v (reporting unheld)", laneID, err)
 		return 0
