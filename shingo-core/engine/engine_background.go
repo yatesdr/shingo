@@ -53,6 +53,13 @@ func (e *Engine) robotRefreshLoop() {
 			}
 			e.robotsMu.Unlock()
 
+			// Localization-confidence sampling taps THIS poll rather than
+			// adding one. It also has to run before the unchanged-hash
+			// short-circuit below: the readings worth keeping while a robot
+			// sits still — degrading in place, stuck on a job, or lost —
+			// are exactly the ones that leave the fleet hash untouched.
+			e.sampleRobotConfidence(robots, time.Now())
+
 			data, _ := json.Marshal(robots)
 			hash := sha256.Sum256(data)
 			if hash == prevHash {

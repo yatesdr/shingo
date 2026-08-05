@@ -114,6 +114,13 @@ type Engine struct {
 	// this field directly — so no lock is needed here. robotsCache reads
 	// during the capture still take robotsMu in the usual way.
 	preDisconnectAvailability map[string]bool
+
+	// confidence carries the localization-confidence write rule's memory of
+	// the last sample STORED per robot. Single-writer: created and used only
+	// by sampleRobotConfidence, which runs from robotRefreshLoop's goroutine.
+	// Deliberately not persisted — losing it on restart is correct, and costs
+	// one extra row per robot to re-establish.
+	confidence *robotConfidenceSampler
 }
 
 func New(c Config) *Engine {

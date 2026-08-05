@@ -473,6 +473,44 @@ func ListFiltered(db *sql.DB, f Filter) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
+// ActiveIDsByRobot maps each robot currently carrying an in-flight order to
+// that order's id. Robots with no live order are absent from the map.
+//
+// It backs the order_id column on robot_confidence_samples — attributing a
+// localization reading to the mission the robot was on when it was taken.
+// That correlation is cheap to record now and impossible to reconstruct once
+// the orders have aged out.
+//
+// Positive-form IN rather than NOT IN, deliberately: the non-terminal set is
+// small and selective against a long order history, so this uses
+// idx_orders_status where the negation would push the planner toward a
+// sequential scan over every order the plant has ever run.
+//
+// DISTINCT ON takes the most recently updated live order when a robot somehow
+// has more than one. That is a real state during a handoff, and picking the
+// newest matches what the robot is actually doing.
+func ActiveIDsByRobot(db *sql.DB) (map[string]int64, error) {
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT DISTINCT ON (robot_id) robot_id, id
+		 FROM orders
+		 WHERE robot_id <> '' AND status IN (%s)
+		 ORDER BY robot_id, updated_at DESC, id DESC`, protocol.NonTerminalStatusSQLList()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var robot string
+		var id int64
+		if err := rows.Scan(&robot, &id); err != nil {
+			return nil, err
+		}
+		out[robot] = id
+	}
+	return out, rows.Err()
+}
+
 // ListActive returns all orders in non-terminal statuses.
 func ListActive(db *sql.DB) ([]*Order, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN (%s) ORDER BY id DESC`, SelectCols, protocol.TerminalStatusSQLList()))

@@ -497,3 +497,7 @@ func (db *DB) CountLiveOrdersByDeliveryNode(deliveryNode string) (int, error) {
 func (db *DB) UpdateOrderRobotID(id int64, robotID string) error {
 	return orders.UpdateRobotID(db.DB, id, robotID)
 }
+
+func (db *DB) ActiveOrderIDsByRobot() (map[string]int64, error) {
+	return orders.ActiveIDsByRobot(db.DB)
+}
