@@ -295,6 +295,86 @@ step_scope() {
 # gates inside one worktree at the same moment would still share it, and are
 # not worth designing for: they would already be fighting over the same
 # testcontainers and the same Docker daemon, and the log is the least of it.
+# ── The shared Postgres ──────────────────────────────────────────────
+#
+# ONE SERVER FOR THE WHOLE DOCKER STEP, not one container per Go package.
+#
+# Every Go package is its own test process, and shingo-core/internal/testdb
+# used to start a Postgres container per process — so per PACKAGE, and
+# shingo-core has 31 packages carrying docker-tagged tests. MEASURED on the
+# Windows dev host, mid-run:
+#
+#   container boot (create -> "ready to accept connections")   ~3.0s
+#   migration stack replayed into the template                 ~2.4s
+#   actual query work in a small package (store/admin)         ~0.2s
+#
+# store/admin's four tests each reported 5.49s against a 5.667s package total:
+# they run concurrently and all of them were sitting on the container. Summed
+# over 31 packages that is ~167s of a ~274s suite — 61% of the docker run spent
+# booting Postgres and rebuilding the same schema — and `-p 1` makes every
+# second of it additive.
+#
+# It compounded, too. testdb's reaper only collects a container five minutes
+# past its creator's deadline (reaper.go, reapSlack), which is longer than the
+# whole suite, so containers accumulate: 19 were alive at once, and packages
+# late in the alphabet paid for the pile-up. shingocore/uop measured 36.5s
+# inside the suite against ~4.5s run on its own.
+#
+# So: start one server here, hand its address to every package through
+# $SHINGO_TEST_PG, and let the first process that needs a template build it
+# under an advisory lock while the rest wait and reuse it. Per-package setup
+# becomes one CREATE DATABASE ... TEMPLATE, which is a file copy.
+#
+# THE TEMPLATE NAME IS SCOPED TO THIS RUN ($$). testdb defaults the name to the
+# migration version, which is enough to stop a new migration reusing an old
+# template — but a baseline-DDL edit that adds no migration would not change
+# that name, and this container is thrown away at the end of the run anyway.
+# Naming it per run means the full gate is never the thing that discovers a
+# stale-template bug.
+#
+# TUNED FOR DATA NOBODY KEEPS. fsync/synchronous_commit/full_page_writes exist
+# to survive a crash; this database does not survive the script. PGDATA on
+# tmpfs for the same reason — via a SUBDIRECTORY of the mount, because the
+# entrypoint creates that subdirectory with the 0700 postgres-owned permissions
+# initdb insists on, while the mount point itself lands world-writable and
+# initdb refuses it. max_connections is raised because every package's pool
+# lands on this one server now.
+sharedPG=""
+
+start_shared_pg() {
+  local id port deadline
+  id="$(docker run -d \
+      -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=postgres \
+      -e PGDATA=/var/lib/postgresql/data/pgdata \
+      --tmpfs /var/lib/postgresql/data:rw,size=4g \
+      -p 127.0.0.1::5432 \
+      postgres:16-alpine \
+      -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+      -c max_connections=500 -c shared_buffers=256MB 2>&1)" || return 1
+  case "$id" in *[!0-9a-f]*|"") return 1 ;; esac
+  sharedPG="$id"
+  trap stop_shared_pg EXIT INT TERM
+
+  deadline=$(( $(date +%s) + 60 ))
+  until docker exec "$id" pg_isready -U test -q 2>/dev/null; do
+    [ "$(date +%s)" -gt "$deadline" ] && return 1
+    sleep 0.5
+  done
+
+  port="$(docker port "$id" 5432/tcp 2>/dev/null | head -1 | sed 's/.*://')"
+  [ -z "$port" ] && return 1
+
+  export SHINGO_TEST_PG="127.0.0.1:$port"
+  export SHINGO_TEST_PG_TEMPLATE="template_gate_$$"
+  return 0
+}
+
+stop_shared_pg() {
+  [ -z "$sharedPG" ] && return 0
+  docker rm -f "$sharedPG" >/dev/null 2>&1
+  sharedPG=""
+}
+
 step_docker() {
   local m failed=0 mods logdir
   mods="$(docker_modules)"
@@ -304,11 +384,30 @@ step_docker() {
   fi
   logdir="$ROOT/.gate"
   mkdir -p "$logdir" || { echo "FAIL docker — cannot create $logdir"; return 1; }
+
+  # A shared server is a SPEEDUP, NOT A GATE. If it cannot be had — no image
+  # pulled yet, a daemon that just came up, a host with the port range locked
+  # down — say so once and let every package fall back to making its own
+  # container, which is what they did before this existed. The one thing not to
+  # do is fail the gate: the verdict this script returns is about the code.
+  if start_shared_pg; then
+    echo "  docker: shared postgres at $SHINGO_TEST_PG (template $SHINGO_TEST_PG_TEMPLATE)"
+  else
+    stop_shared_pg
+    unset SHINGO_TEST_PG SHINGO_TEST_PG_TEMPLATE
+    echo "  docker: WARNING — could not start a shared postgres;" >&2
+    echo "          each package will start its own (adds roughly 5s per package)." >&2
+  fi
+
   for m in $mods; do
     echo "  docker: $m"
     ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p 1 ./... >"$logdir/docker-$m.log" 2>&1 ) \
       || { failed=1; echo "  --- $m ($logdir/docker-$m.log) ---"; grep -Ev '^ok |no test files' "$logdir/docker-$m.log" | head -30; }
   done
+  # Explicit teardown as well as the trap: the trap covers the interrupted run,
+  # this covers the normal one, and it takes the server down before the verdict
+  # is printed rather than after the script has already returned.
+  stop_shared_pg
   [ "$failed" -eq 0 ] && echo "ok   docker" || echo "FAIL docker"
   return $failed
 }

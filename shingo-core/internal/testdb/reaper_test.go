@@ -4,6 +4,7 @@ package testdb
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -167,6 +168,15 @@ func TestReapOrphans_IgnoresContainersItDoesNotOwn(t *testing.T) {
 // reaping nothing and every other test here still passes, because they plant
 // their own labels.
 func TestSharedContainer_CarriesReapLabels(t *testing.T) {
+	// Nothing to read the labels off when the server was handed to us: on the
+	// $SHINGO_TEST_PG path this process creates no container, and an empty
+	// ContainerID() is the correct answer rather than the failure this test
+	// looks for. Skip rather than relax the assertion — the assertion is the
+	// whole point of the test on the path where a container does exist, and
+	// scripts/gate.sh runs both paths across a full gate.
+	if addr := os.Getenv(envSharedPG); addr != "" {
+		t.Skipf("using the shared server at %s; this process creates no container to label", addr)
+	}
 	_ = Open(t) // forces containerOnce
 	id := ContainerID()
 	if id == "" {
