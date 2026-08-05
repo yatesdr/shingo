@@ -136,6 +136,22 @@ func (p *Poller) run() {
 		case <-p.stopChan:
 			return
 		case <-ticker.C:
+			// STOP WINS OVER A TICK THAT ARRIVED AT THE SAME MOMENT. A select
+			// with two ready cases picks uniformly at random, so the outer
+			// select alone gives a stopped poller a coin-flip chance of
+			// polling once more on every tick — and it keeps flipping for as
+			// long as ticks keep arriving, so "one last poll" is the expected
+			// case rather than the bound. TestPollerStopHaltsPolling caught
+			// this at roughly one run in six, reporting two and three polls
+			// after Stop, not one.
+			//
+			// Re-checking here makes Stop authoritative: once it returns, the
+			// only poll that can still be running is one already in progress.
+			select {
+			case <-p.stopChan:
+				return
+			default:
+			}
 			p.poll()
 		}
 	}
