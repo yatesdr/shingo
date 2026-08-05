@@ -183,3 +183,89 @@ func equalOrderUUIDs(a, b []orders.Order) bool {
 	}
 	return reflect.DeepEqual(ua, ub)
 }
+
+// TestListActiveByNodeKeys_LaneHeldDerivation pins the signal the operator
+// board's RELEASE button now branches on.
+//
+// LaneHeld is derived, never stored: an order is lane-held exactly when it is
+// `staged` and carries no Edge-authored step plan. The derivation is exact rather
+// than a heuristic, and the two halves are worth stating separately because each
+// is doing work:
+//
+//   - a STATION wait exists only inside a plan this Edge wrote, so a plan-less
+//     order has no wait of its own to be parked on;
+//   - a plan-less order's fleet waybill is [pickup, dropoff] with no Wait block,
+//     so the fleet never reports WAITING for it and it never reaches `staged` by
+//     any other route.
+//
+// The one thing that puts a plan-less order at `staged` is Core parking it at a
+// lane's gate point — which is precisely the wait no station can satisfy.
+//
+// MUTATION (verified): drop the `status = 'staged'` half of the CASE expression
+// in selectCols. The in_transit assertion fires — a plan-less order that is
+// merely driving would read as lane-held and lose a button it should never have
+// been offered in the first place, which is the quiet failure this pins.
+func TestListActiveByNodeKeys_LaneHeldDerivation(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	pid, err := db.CreateProcess("P", "", "", "", "", false)
+	if err != nil {
+		t.Fatalf("CreateProcess: %v", err)
+	}
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: pid, CoreNodeName: "ALN_009", Code: "aln-009", Name: "aln-009", Sequence: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateProcessNode: %v", err)
+	}
+
+	mk := func(uuid, status, steps string) {
+		id, cErr := db.CreateOrder(uuid, protocol.OrderTypeRetrieve, &nodeID, false, 1,
+			"DEST", "", "ALN_009", "", false, "PAY-1")
+		if cErr != nil {
+			t.Fatalf("CreateOrder(%s): %v", uuid, cErr)
+		}
+		if steps != "" {
+			if _, uErr := db.DB.Exec(`UPDATE orders SET steps_json=? WHERE id=?`, steps, id); uErr != nil {
+				t.Fatalf("set steps for %s: %v", uuid, uErr)
+			}
+		}
+		if uErr := db.UpdateOrderStatus(id, status); uErr != nil {
+			t.Fatalf("UpdateOrderStatus(%s): %v", uuid, uErr)
+		}
+	}
+
+	// The case the button suppression exists for: Core parked it at a lane gate.
+	mk("lh-gate", "staged", "")
+	// A station's own wait — Edge authored the plan, so the station can satisfy it.
+	mk("lh-station", "staged", `[{"action":"pickup"},{"action":"wait"}]`)
+	// Plan-less but merely driving. Must NOT read as lane-held: it is not parked,
+	// and nothing should be suppressed for it.
+	mk("lh-transit", "in_transit", "")
+
+	got, err := orders.ListActiveByNodeKeys(db.DB, []orders.NodeKey{{ProcessNodeID: nodeID, CoreNodeName: "ALN_009"}})
+	if err != nil {
+		t.Fatalf("ListActiveByNodeKeys: %v", err)
+	}
+	byUUID := map[string]orders.Order{}
+	for _, o := range got[nodeID] {
+		byUUID[o.UUID] = o
+	}
+	if len(byUUID) != 3 {
+		t.Fatalf("board returned %d orders, want 3 — the fixture is not reaching the query", len(byUUID))
+	}
+
+	if !byUUID["lh-gate"].LaneHeld {
+		t.Error("a staged order with no Edge-authored plan must read as lane-held: it is parked on " +
+			"Core's lane gate, and no station can satisfy that wait")
+	}
+	if byUUID["lh-station"].LaneHeld {
+		t.Error("a staged order WITH an Edge-authored plan must not read as lane-held — that wait is " +
+			"the station's own and RELEASE is the thing that satisfies it")
+	}
+	if byUUID["lh-transit"].LaneHeld {
+		t.Error("an in_transit order must not read as lane-held; it is driving, not parked, and " +
+			"suppressing a control for it would hide the wrong thing")
+	}
+}

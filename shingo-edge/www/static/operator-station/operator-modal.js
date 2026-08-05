@@ -465,7 +465,7 @@ export function renderModal(entry) {
         } else {
             const orders = entry.orders || [];
             const active = orders.filter(o => isActive(o.status));
-            const staged = active.find(o => o.status === 'staged');
+            const staged = active.find(isStationReleasable);
             const delivered = active.find(o => o.status === 'delivered');
             const inFlight = active.find(o => !staged && !delivered);
 
@@ -731,6 +731,22 @@ function swapPair(active) {
 // the status-write path independently — SetOrderQueueReason bypasses the
 // transition validator, so the reason lands on the Edge row even in the window
 // where the status push itself was refused.
+// isStationReleasable reports whether a staged order's wait belongs to THIS
+// station, and is therefore something the RELEASE button can satisfy.
+//
+// A LANE-HELD order is staged on a wait CORE owns: the robot is parked at a
+// lane's gate point and the precondition is a lane being safe to enter, which
+// nobody at a station can observe or bring about. Core refuses such a release
+// outright, so a button here would be one whose only correct outcome is an error.
+//
+// The order still renders — it drops through to the waiting arm, which shows its
+// status and, when Core has given one, its reason. The CONTROL goes; the
+// information stays. Suppressing the status instead would leave the tile claiming
+// a parked robot is still driving.
+function isStationReleasable(o) {
+    return o.status === 'staged' && !o.lane_held;
+}
+
 function waitingLabel(blocker) {
     const base = 'WAITING FOR OTHER ROBOT';
     if (!blocker) return base;

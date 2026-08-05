@@ -36,7 +36,8 @@ const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.r
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.created_at, o.updated_at,
-	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
+	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, ''),
+	CASE WHEN o.status = 'staged' AND COALESCE(o.steps_json, '') = '' THEN 1 ELSE 0 END`
 
 const joinClause = `FROM orders o
 	LEFT JOIN process_nodes n ON n.id = o.process_node_id
@@ -105,13 +106,15 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		var stagedExpireAt sql.NullString
 		var binID, siblingID sql.NullInt64
 		var createdAt, updatedAt string
+		var laneHeld int
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &createdAt, &updatedAt,
-			&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
+			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 			return nil, err
 		}
+		o.LaneHeld = laneHeld == 1
 		if stagedExpireAt.Valid {
 			t := helpers.ScanTime(stagedExpireAt.String)
 			o.StagedExpireAt = &t
@@ -135,13 +138,15 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	var stagedExpireAt sql.NullString
 	var binID, siblingID sql.NullInt64
 	var createdAt, updatedAt string
+	var laneHeld int
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &createdAt, &updatedAt,
-		&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
+		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 		return err
 	}
+	o.LaneHeld = laneHeld == 1
 	if stagedExpireAt.Valid {
 		t := helpers.ScanTime(stagedExpireAt.String)
 		o.StagedExpireAt = &t
