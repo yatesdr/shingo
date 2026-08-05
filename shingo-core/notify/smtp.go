@@ -9,20 +9,9 @@ import (
 )
 
 func PlainSend(addr, user, password, from string, to []string, subject, body string) error {
-	msg := formatMessage(from, to, subject, body)
-	var auth smtp.Auth
-	if user != "" {
-		auth = smtp.PlainAuth("", user, password, hostOnly(addr))
-	}
-	return smtp.SendMail(addr, auth, from, to, []byte(msg))
-}
-
-func TLSSend(addr, user, password, from string, to []string, subject, body string) error {
-	tlsCfg := &tls.Config{ServerName: hostOnly(addr)}
-
-	conn, err := tls.Dial("tcp", addr, tlsCfg)
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("tls dial %s: %w", addr, err)
+		return fmt.Errorf("dial %s: %w", addr, err)
 	}
 	defer conn.Close()
 
@@ -37,6 +26,8 @@ func TLSSend(addr, user, password, from string, to []string, subject, body strin
 			return fmt.Errorf("smtp auth: %w", err)
 		}
 	}
+
+	msg := formatMessage(from, to, subject, body)
 	if err = client.Mail(from); err != nil {
 		return fmt.Errorf("smtp mail from: %w", err)
 	}
@@ -49,7 +40,51 @@ func TLSSend(addr, user, password, from string, to []string, subject, body strin
 	if err != nil {
 		return fmt.Errorf("smtp data: %w", err)
 	}
+	if _, err = fmt.Fprint(w, msg); err != nil {
+		return fmt.Errorf("smtp write: %w", err)
+	}
+	if err = w.Close(); err != nil {
+		return fmt.Errorf("smtp close: %w", err)
+	}
+	return client.Quit()
+}
+
+func TLSSend(addr, user, password, from string, to []string, subject, body string) error {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("dial %s: %w", addr, err)
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, hostOnly(addr))
+	if err != nil {
+		return fmt.Errorf("smtp client: %w", err)
+	}
+	defer client.Close()
+
+	server := &tls.Config{ServerName: hostOnly(addr)}
+	if err = client.StartTLS(server); err != nil {
+		return fmt.Errorf("starttls: %w", err)
+	}
+
+	if user != "" {
+		if err = client.Auth(smtp.PlainAuth("", user, password, hostOnly(addr))); err != nil {
+			return fmt.Errorf("smtp auth: %w", err)
+		}
+	}
 	msg := formatMessage(from, to, subject, body)
+	if err = client.Mail(from); err != nil {
+		return fmt.Errorf("smtp mail from: %w", err)
+	}
+	for _, r := range to {
+		if err = client.Rcpt(r); err != nil {
+			return fmt.Errorf("smtp rcpt %s: %w", r, err)
+		}
+	}
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("smtp data: %w", err)
+	}
 	if _, err = fmt.Fprint(w, msg); err != nil {
 		return fmt.Errorf("smtp write: %w", err)
 	}

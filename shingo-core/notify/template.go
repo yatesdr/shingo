@@ -24,8 +24,8 @@ func FaultAlert(orderID int64, edgeUUID, stationID, reason, robotID string) stri
 	b.WriteString(fmt.Sprintf("Time:         %s\n", time.Now().Format(time.RFC1123)))
 	b.WriteString("\n")
 	b.WriteString("The order has entered a faulted grace period.\n")
-	b.WriteString("If the fleet does not recover within the configured grace window,\n")
-	b.WriteString("the order will automatically fail.\n")
+	b.WriteString("If the fleet does not recover within the configured grace window, the order will automatically fail.\n")
+	b.WriteString("\n\n\n")
 	return b.String()
 }
 
@@ -52,6 +52,7 @@ func FailAlert(orderID int64, edgeUUID, stationID, errorCode, detail, robotID st
 	b.WriteString(fmt.Sprintf("Time:         %s\n", time.Now().Format(time.RFC1123)))
 	b.WriteString("\n")
 	b.WriteString("An order has reached a terminal failed state.\n")
+	b.WriteString("\n\n\n")
 	return b.String()
 }
 

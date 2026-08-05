@@ -96,9 +96,7 @@ func (h *Handlers) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg.Notifications.SMTPTLS = r.FormValue("notif_smtp_tls") == "on"
 		cfg.Notifications.SMTPUser = r.FormValue("notif_smtp_user")
-		if v := r.FormValue("notif_smtp_password"); v != "" {
-			cfg.Notifications.SMTPPassword = v
-		}
+		cfg.Notifications.SMTPPassword = r.FormValue("notif_smtp_password")
 		cfg.Notifications.FromAddress = r.FormValue("notif_from_address")
 		if v, err := strconv.Atoi(r.FormValue("notif_throttle_minutes")); err == nil && v > 0 {
 			cfg.Notifications.ThrottleMinutes = v
@@ -176,4 +174,56 @@ func (h *Handlers) handleConfigTestEmail(w http.ResponseWriter, r *http.Request)
 
 	log.Printf("config: test email sent to %d recipient(s)", len(n.Recipients))
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": fmt.Sprintf("Test email sent to %d recipient(s)", len(n.Recipients))})
+}
+
+func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request) {
+	alertType := r.URL.Query().Get("type")
+	if alertType != "fault" && alertType != "fail" {
+		http.Error(w, "type must be fault or fail", http.StatusBadRequest)
+		return
+	}
+
+	cfg := h.engine.AppConfig()
+	n := cfg.Notifications
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if !n.Enabled {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "Notifications are not enabled"})
+		return
+	}
+	if n.SMTPHost == "" || n.FromAddress == "" || len(n.Recipients) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "SMTP host, from address, and at least one recipient are required"})
+		return
+	}
+
+	var subject, body string
+	switch alertType {
+	case "fault":
+		subject = notify.FaultSubject()
+		body = notify.FaultAlert(99999, "test-edge-uuid", "STATION-01", "Simulated fault for testing", "ROBOT-42")
+	case "fail":
+		subject = notify.FailSubject()
+		body = notify.FailAlert(99999, "test-edge-uuid", "STATION-01", "SIM_FAULT", "Simulated order failure for testing", "ROBOT-42")
+	}
+
+	addr := fmt.Sprintf("%s:%d", n.SMTPHost, n.SMTPPort)
+	var sendErr error
+	if n.SMTPTLS {
+		sendErr = notify.TLSSend(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, subject, body)
+	} else {
+		sendErr = notify.PlainSend(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, subject, body)
+	}
+
+	if sendErr != nil {
+		log.Printf("config: test %s alert failed: %v", alertType, sendErr)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": sendErr.Error()})
+		return
+	}
+
+	log.Printf("config: test %s alert sent to %d recipient(s)", alertType, len(n.Recipients))
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": fmt.Sprintf("Test %s alert sent to %d recipient(s)", alertType, len(n.Recipients))})
 }
