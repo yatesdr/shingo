@@ -51,6 +51,14 @@ func (db *DB) AuditLaneGeometry() ([]string, error) {
 	return nodes.AuditLaneGeometry(db.DB)
 }
 
+// AuditLaneDepths returns startup warnings about lane children that hold a bin
+// but have no depth — inventory the reachability predicate ignores by design.
+// See nodes.AuditLaneDepths for why the ruling needs an audit rather than a
+// guard.
+func (db *DB) AuditLaneDepths() ([]string, error) {
+	return nodes.AuditLaneDepths(db.DB)
+}
+
 // NodeStyleOrigins returns the (process, style) pairs that claim a node in the
 // plant-claims mirror (style_claims), as canonical "process|style" strings. Empty
 // when the node has no style claim — loaders/unloaders are structurally excluded

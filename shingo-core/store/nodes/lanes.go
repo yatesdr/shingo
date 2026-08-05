@@ -335,6 +335,59 @@ func AuditLaneGeometry(db *sql.DB) ([]string, error) {
 	return warnings, nested.Err()
 }
 
+// AuditLaneDepths returns startup warnings about lane children that HOLD A BIN
+// but have no depth. Nothing in the runtime path forbids one: plantspec rejects
+// Depth <= 0 for a spec'd slot (plantspec.validate), but ListLaneSlots filters
+// nothing and a scene can be edited outside the spec.
+//
+// This exists because of the ruling in laneBlockerPredicate. A depth-less
+// sibling is IGNORED — it is not a depth-ordered slot, so it cannot be in front
+// of anything — which was the majority reading and is now the only one. That
+// ruling is almost certainly right, and it is also unfalsifiable from inside the
+// code: if the geometry never occurs, the ruling costs nothing and this audit
+// never fires; if it does occur, a bin is sitting in a lane and NOTHING in the
+// system will ever treat it as being in the way. The two spellings used to
+// disagree about that case silently. Turning the silence into a boot warning is
+// the cheap half of the fix.
+//
+// It filters neither is_synthetic nor enabled, deliberately: the reachability
+// predicate filters neither, and this audit's whole job is to have exactly the
+// same reach as the thing it is auditing.
+//
+// A diagnostic only — it changes nothing, and an empty result means no lane is
+// holding inventory the reachability reader cannot see. Callers log each line at
+// boot.
+func AuditLaneDepths(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT n.name, ln.name, COUNT(b.id)
+		FROM nodes n
+		JOIN nodes ln ON ln.id = n.parent_id
+		JOIN node_types lnt ON lnt.id = ln.node_type_id
+		JOIN bins b ON b.node_id = n.id
+		WHERE lnt.code = $1
+		  AND n.depth IS NULL
+		GROUP BY n.name, ln.name
+		ORDER BY n.name`, protocol.NodeClassLANE)
+	if err != nil {
+		return nil, fmt.Errorf("audit lane depths: %w", err)
+	}
+	defer rows.Close()
+
+	var warnings []string
+	for rows.Next() {
+		var name, laneName string
+		var count int
+		if err := rows.Scan(&name, &laneName, &count); err != nil {
+			return nil, err
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"node %q in lane %q holds %d bin(s) but has NO depth — reachability ignores depth-less siblings, "+
+				"so nothing in that lane will ever treat those bins as being in the way",
+			name, laneName, count))
+	}
+	return warnings, rows.Err()
+}
+
 func classOrUntyped(code string) string {
 	if code == "" {
 		return "untyped"

@@ -193,16 +193,25 @@ func mustOpenDatabase(cfg *config.Config) *store.DB {
 }
 
 // auditLaneGeometry logs any single-file lane geometry the mouth-gate's one-hop
-// parent walk cannot see (§8) — a scene-config diagnostic, never fatal. A clean
-// scene logs nothing.
+// parent walk cannot see (§8), and any lane child holding a bin with no depth —
+// inventory the reachability predicate ignores by design. Scene-config
+// diagnostics, never fatal. A clean scene logs nothing.
 func auditLaneGeometry(db *store.DB) {
 	warnings, err := db.AuditLaneGeometry()
 	if err != nil {
 		log.Printf("shingocore: lane-geometry audit failed: %v", err)
-		return
 	}
 	for _, w := range warnings {
 		log.Printf("shingocore: lane-geometry audit: %s", w)
+	}
+
+	depthWarnings, err := db.AuditLaneDepths()
+	if err != nil {
+		log.Printf("shingocore: lane-depth audit failed: %v", err)
+		return
+	}
+	for _, w := range depthWarnings {
+		log.Printf("shingocore: lane-depth audit: %s", w)
 	}
 }
 
