@@ -935,6 +935,15 @@ func (db *DB) runVersionedMigrations() error {
 		{75, "add the loader carrier mix (per-loader quota, per-window capability)",
 			v75LoaderCarrierMix,
 			func(q schema.Querier) bool { return schema.TableExists(q, "bin_loader_quotas") }},
+		// v76: the second lane hold. A dig's CLAIM on a lane (mode='dig') and a
+		// robot's presence INSIDE it are different facts with different
+		// lifetimes, and until now there was only one row to carry both. See
+		// v76LaneOccupancyKind.
+		{76, "allow resource_kind='occupancy' — the in-lane hold, separate from the claim",
+			v76LaneOccupancyKind,
+			func(q schema.Querier) bool {
+				return schema.CheckConstraintAllows(q, "reservations", "reservations_resource_kind_check", "occupancy")
+			}},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3535,4 +3544,54 @@ func uuidIndexIsUnique(q schema.Querier) bool {
 		return false
 	}
 	return strings.Contains(def, "UNIQUE")
+}
+
+// v76LaneOccupancyKind adds 'occupancy' to the reservations resource_kind
+// vocabulary: the second of the two lane holds.
+//
+// A reshuffle's CLAIM on a lane and a robot's PRESENCE in it are different
+// facts. The claim (a mouth row, mode='dig') is owned by the compound parent
+// and spans the whole dig — several legs, several pickups and dropoffs.
+// Presence is owned by ONE child, starts when Core dispatches it into the lane,
+// and ends when that child places its bin and leaves. Conflating them is what
+// forced reshuffles to run one robot at a time: the only way to guarantee a
+// single robot inside was to let a single child exist.
+//
+// A separate resource_kind rather than another mode on the mouth row, because
+// the two obey different admission rules. Mouth modes arbitrate WHO MAY CLAIM a
+// lane and dig excludes everyone — a child taking a mouth row on its own
+// parent's dig-held lane would collide with the parent. Occupancy answers a
+// different question ("is anyone inside right now") and must be able to coexist
+// with the claim that authorised it.
+//
+// node_id points at the LANE, matching mouth rows, so the existing
+// (resource_kind, node_id) index serves it. It is deliberately not keyed on a
+// lane column in some other table: the unit a robot occupies is whatever the
+// structure says it is, and under a block shape that may be an aisle or a
+// column rather than a lane. Widening that later is a change of which node id
+// goes in the row, not a change of schema.
+//
+// Adding a value to a CHECK constraint is not idempotent the way ADD COLUMN IF
+// NOT EXISTS is, so both constraints are dropped and recreated. Existing rows
+// are unaffected: every current row is bin/slot/mouth and satisfies the wider
+// constraint too.
+func v76LaneOccupancyKind(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE reservations DROP CONSTRAINT IF EXISTS reservations_resource_kind_check`); err != nil {
+		return fmt.Errorf("drop resource_kind check: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE reservations ADD CONSTRAINT reservations_resource_kind_check
+		CHECK (resource_kind = ANY (ARRAY['bin', 'slot', 'mouth', 'occupancy']))`); err != nil {
+		return fmt.Errorf("add resource_kind check: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE reservations DROP CONSTRAINT IF EXISTS reservations_kind_target_check`); err != nil {
+		return fmt.Errorf("drop kind_target check: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE reservations ADD CONSTRAINT reservations_kind_target_check
+		CHECK (
+			(resource_kind = 'bin' AND bin_id IS NOT NULL AND node_id IS NULL)
+			OR (resource_kind = ANY (ARRAY['slot', 'mouth', 'occupancy']) AND node_id IS NOT NULL AND bin_id IS NULL)
+		)`); err != nil {
+		return fmt.Errorf("add kind_target check: %w", err)
+	}
+	return nil
 }

@@ -373,6 +373,11 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	}
 	log.Printf("dispatch: advancing compound order %d, step %d (seq %d)", parentOrderID, next.ID, next.Sequence)
 
+	// Hold B: this child is now inside the lane(s) it was sent into. Recorded
+	// before the fleet call, so the fact exists from the instant Core commits to
+	// it rather than from whenever the fleet answers.
+	d.TakeLaneOccupancy(next.ID, sourceNode, destNode)
+
 	// Build a synthetic envelope for the child dispatch
 	env := d.syntheticEnvelope(next.StationID)
 	d.dispatchToFleet(next, env, sourceNode, destNode)

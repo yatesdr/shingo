@@ -229,6 +229,77 @@ func (d *Dispatcher) releaseOrderLaneFor(orderID int64, node *nodes.Node) error 
 	return reservations.ReleaseLaneHandoff(d.db.DB, orderID, lane.ID)
 }
 
+// TakeLaneOccupancy records that an order is INSIDE the lanes it was just
+// dispatched into — Hold B, the second of the two lane holds.
+//
+// Called at dispatch rather than on any robot signal, and that is the design
+// rather than a shortcut. Core cannot observe a robot entering a lane: every
+// available signal is lagging, the earliest being a block completing AT a slot,
+// which is already inside. It does not need to. Nothing enters a lane that Core
+// did not send there, so Core's own dispatch decision IS the entry moment, and
+// it is knowable exactly when it becomes true.
+//
+// Both endpoints are considered: a dig leg picks OUT of one lane and may place
+// INTO another, and the robot is inside each while it is there. A node that is
+// not a lane slot contributes nothing.
+//
+// Advisory today. It records; it does not arbitrate. While the compound
+// scheduler still dispatches one child at a time, at-most-one-inside is already
+// guaranteed by that, and this exists so the fact is durable and observable
+// before anything is permitted to rely on it.
+func (d *Dispatcher) TakeLaneOccupancy(orderID int64, nodes ...*nodes.Node) {
+	for _, laneID := range d.lanesFor(nodes...) {
+		if err := reservations.AcquireOccupancy(d.db.DB, orderID, laneID); err != nil {
+			log.Printf("lanegate: take occupancy for order %d on lane %d: %v", orderID, laneID, err)
+		}
+	}
+}
+
+// ReleaseLaneOccupancy records that an order is out of every lane it occupied.
+//
+// Fired on DROPOFF completion, not on pickup. After a pickup the robot is
+// holding the bin and still physically in the lane; it is out once it has placed
+// at the destination. Releasing at pickup would declare the lane free with a
+// robot still standing in it, which is the whole failure this hold exists to
+// prevent.
+//
+// It releases ALL of the order's occupancy rather than the drop node's lane,
+// because a dig leg's two endpoints are usually different lanes: it is the
+// SOURCE lane the robot has finally left by placing elsewhere. "This leg has
+// placed its bin and is out" is a statement about the leg, not about one node.
+//
+// Terminalization needs no separate arm: TerminalizeOrder's ReleaseByOrder is
+// order-keyed and kind-agnostic, so a child that fails or is cancelled drops its
+// occupancy in the same transaction that ends it.
+func (d *Dispatcher) ReleaseLaneOccupancy(orderID int64) {
+	if err := reservations.ReleaseAllOccupancy(d.db.DB, orderID); err != nil {
+		log.Printf("lanegate: release occupancy for order %d: %v", orderID, err)
+	}
+}
+
+// lanesFor maps nodes to the distinct lanes that contain them, skipping nodes
+// that are not lane slots.
+func (d *Dispatcher) lanesFor(ns ...*nodes.Node) []int64 {
+	seen := make(map[int64]bool, len(ns))
+	var out []int64
+	for _, n := range ns {
+		if n == nil {
+			continue
+		}
+		lane, err := d.db.LaneForNode(n.ID)
+		if err != nil {
+			log.Printf("lanegate: resolve lane for node %d: %v", n.ID, err)
+			continue
+		}
+		if lane == nil || seen[lane.ID] {
+			continue
+		}
+		seen[lane.ID] = true
+		out = append(out, lane.ID)
+	}
+	return out
+}
+
 // causeForLaneHolds classifies a lane conflict for the operator-facing queue
 // reason (§6): lane-held-dig if any of the order's target lanes is held by a dig,
 // otherwise lane-held-traffic (a different-mode collision). Engineer-only detail;

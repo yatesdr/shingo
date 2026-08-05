@@ -271,6 +271,103 @@ func ListDigHolds(q Queryer) ([]DigHold, error) {
 	return out, rows.Err()
 }
 
+// ── Hold B: who is INSIDE the lane ────────────────────────────────────────
+//
+// A reshuffle's CLAIM on a lane and a robot's PRESENCE in it are different facts
+// with different lifetimes, and they used to share one row.
+//
+// The claim is a mouth row, mode='dig', owned by the compound PARENT, and it
+// spans the whole reshuffle — many legs, many pickups and dropoffs. Presence is
+// owned by ONE CHILD: it starts when Core dispatches that child into the lane
+// and ends when the child places its bin and leaves. Because there was only one
+// row for both, the only way to guarantee a single robot inside a lane was to
+// let a single child exist at a time — which is what capped a reshuffle at one
+// robot no matter how much work it had.
+//
+// PRESENCE IS DERIVED FROM CORE'S OWN DISPATCH DECISION, not observed. Core
+// cannot see a robot enter a lane: RobotStatus has no dispatch consumer, and
+// every available signal is lagging — the earliest is a block completing AT a
+// slot, which is already inside. It does not need to see it. Nothing enters a
+// lane that Core did not send there, so "dispatched into L" is the entry moment
+// and it is knowable at the instant it becomes true. This is the RDS axiom
+// applied: Core owns prevention, not observation.
+//
+// The row is keyed on the node the occupancy is OF, which is the lane today.
+// Under a block shape that unit may be an aisle or a column instead; that is a
+// change of which node id goes in the row, not a change of anything here.
+
+// AcquireOccupancy records that orderID is inside nodeID. Idempotent: an order
+// already inside is not recorded twice.
+//
+// It does NOT arbitrate — taking occupancy always succeeds. Admission is the
+// caller's decision and, while the compound scheduler still dispatches one child
+// at a time, is already guaranteed elsewhere. This exists so the fact is
+// durable and observable BEFORE anything is allowed to depend on it.
+func AcquireOccupancy(db Execer, owner, nodeID int64) error {
+	_, err := db.Exec(
+		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by)
+		 SELECT $1, 'occupancy', $2, 'confirmed', $3
+		 WHERE NOT EXISTS (
+		   SELECT 1 FROM reservations
+		   WHERE order_id=$1 AND resource_kind='occupancy' AND node_id=$2
+		     AND state IN ('pending','confirmed')
+		 )`,
+		owner, nodeID, "lane-occupancy",
+	)
+	if err != nil {
+		return fmt.Errorf("reservations acquire-occupancy: %w", err)
+	}
+	return nil
+}
+
+// ReleaseOccupancy records that orderID has left nodeID. Owner-scoped and
+// idempotent, so a release that arrives twice — or for an order that never
+// entered — is a no-op.
+func ReleaseOccupancy(db Execer, owner, nodeID int64) error {
+	_, err := db.Exec(
+		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind='occupancy' AND node_id=$2`,
+		owner, nodeID,
+	)
+	if err != nil {
+		return fmt.Errorf("reservations release-occupancy: %w", err)
+	}
+	return nil
+}
+
+// ReleaseAllOccupancy drops every occupancy row an order holds — the
+// terminalization path. A child that fails, is cancelled, or is skipped is not
+// inside any lane, however it got there.
+func ReleaseAllOccupancy(db Execer, owner int64) error {
+	_, err := db.Exec(
+		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind='occupancy'`, owner)
+	if err != nil {
+		return fmt.Errorf("reservations release-all-occupancy: %w", err)
+	}
+	return nil
+}
+
+// OccupantsOf returns the orders currently inside nodeID, ascending. The read
+// behind "is anyone in this lane" and behind the at-most-one-inside assertion.
+func OccupantsOf(q Queryer, nodeID int64) ([]int64, error) {
+	rows, err := q.Query(
+		`SELECT order_id FROM reservations
+		 WHERE resource_kind='occupancy' AND node_id=$1 AND state IN ('pending','confirmed')
+		 ORDER BY order_id`, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("reservations occupants-of: %w", err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("reservations occupants-of scan: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // DigHoldOwner returns the order holding a dig on laneID, or 0 if none — the
 // single-lane read behind LaneLock.IsLocked / LockedBy.
 //

@@ -837,9 +837,9 @@ CREATE TABLE public.reservations (
     resource_kind text DEFAULT 'bin'::text NOT NULL,
     node_id bigint,
     mode text,
-    CONSTRAINT reservations_kind_target_check CHECK ((((resource_kind = 'bin'::text) AND (bin_id IS NOT NULL) AND (node_id IS NULL)) OR ((resource_kind = ANY (ARRAY['slot'::text, 'mouth'::text])) AND (node_id IS NOT NULL) AND (bin_id IS NULL)))),
+    CONSTRAINT reservations_kind_target_check CHECK ((((resource_kind = 'bin'::text) AND (bin_id IS NOT NULL) AND (node_id IS NULL)) OR ((resource_kind = ANY (ARRAY['slot'::text, 'mouth'::text, 'occupancy'::text])) AND (node_id IS NOT NULL) AND (bin_id IS NULL)))),
     CONSTRAINT reservations_mode_check CHECK (((mode IS NULL) OR (mode = ANY (ARRAY['inbound'::text, 'outbound'::text, 'dig'::text])))),
-    CONSTRAINT reservations_resource_kind_check CHECK ((resource_kind = ANY (ARRAY['bin'::text, 'slot'::text, 'mouth'::text]))),
+    CONSTRAINT reservations_resource_kind_check CHECK ((resource_kind = ANY (ARRAY['bin'::text, 'slot'::text, 'mouth'::text, 'occupancy'::text]))),
     CONSTRAINT reservations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'confirmed'::text])))
 );
 

@@ -289,6 +289,10 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	// or a simple store's final drop (drop == delivery) would never early-release
 	// its lane. A no-op when the gate is off or the drop is not into a lane.
 	e.dispatcher.ReleaseInboundLaneForOrder(ev.OrderID, location)
+	// Hold B: the leg has PLACED its bin, so it is out of the lane it was
+	// working. Released here and not at pickup — after a pickup the robot is
+	// still in the lane holding the bin.
+	e.dispatcher.ReleaseLaneOccupancy(ev.OrderID)
 	if location == "" || location == strings.TrimSpace(order.DeliveryNode) {
 		return // final delivery is recorded at whole-order FINISHED
 	}

@@ -21,15 +21,16 @@ import (
 // have caught a missed renumber loudly: latestMigrationVersion is read off the
 // LAST list element, so a drop left at 52 would report the head as 52 while
 // later migrations sat above it. After the catch-up merge, main's loader/index
-// migrations (v71–v75) sit above v70, so the head is 75 rather than 70.
+// migrations (v71–v75) sit above v70, and v76 (the lane-occupancy resource_kind)
+// above those, so the head is 76 rather than 70.
 func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 75 {
-		t.Errorf("head migration = %d, want 75", got)
+	if got := store.LatestMigrationVersion(); got != 76 {
+		t.Errorf("head migration = %d, want 76", got)
 	}
 }
 
