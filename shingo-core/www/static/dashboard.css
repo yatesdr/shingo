@@ -81,6 +81,7 @@ html, body {
 
 /* ── Body / table ─────────────────────────────────────────────────── */
 #dash-main { flex: 1; padding: 0.5rem 1rem 1rem; overflow: auto; }
+body[data-dashboard-kind="node-report"] #dash-main { overflow: hidden; }
 
 .board-table {
   width: 100%;

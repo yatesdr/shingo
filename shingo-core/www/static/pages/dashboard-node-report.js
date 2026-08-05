@@ -3,42 +3,9 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 (function () {
   var body = document.body;
   var dashboardId = body.getAttribute('data-dashboard-id');
-  var CHUNK = 0;
-
-  function calcChunk() {
-    var main = document.getElementById('dash-main');
-    if (!main) return 10;
-    var avail = main.clientHeight;
-    var transit = document.getElementById('nr-transit');
-    if (transit && transit.style.display !== 'none') {
-      avail -= transit.offsetHeight + parseFloat(getComputedStyle(transit).marginBottom);
-    }
-    var stats = document.getElementById('nr-stats');
-    if (stats) {
-      avail -= stats.offsetHeight + parseFloat(getComputedStyle(stats).marginBottom);
-    }
-    avail -= parseFloat(getComputedStyle(main).paddingTop) + parseFloat(getComputedStyle(main).paddingBottom);
-    var tmp = document.createElement('table');
-    tmp.className = 'nr-col-table';
-    tmp.innerHTML = '<tbody><tr><td>&nbsp;</td></tr></tbody>';
-    tmp.style.visibility = 'hidden';
-    tmp.style.position = 'absolute';
-    document.body.appendChild(tmp);
-    var rowH = tmp.querySelector('tbody tr').offsetHeight;
-    var head = tmp.parentElement;
-    var th = document.createElement('table');
-    th.className = 'nr-col-table';
-    th.innerHTML = '<thead><tr><th>&nbsp;</th></tr></thead>';
-    th.style.visibility = 'hidden';
-    th.style.position = 'absolute';
-    document.body.appendChild(th);
-    var headH = th.querySelector('thead').offsetHeight;
-    document.body.removeChild(tmp);
-    document.body.removeChild(th);
-    if (rowH <= 0 || headH <= 0) return 10;
-    var count = Math.floor((avail - headH) / rowH);
-    return count > 0 ? count : 1;
-  }
+  var demoParam = new URLSearchParams(window.location.search).get('demo');
+  var demoQ = demoParam ? '&demo=' + encodeURIComponent(demoParam) : '';
+  var MAX_ROWS = 8;
 
   function tickClock() {
     var el = document.getElementById('dash-clock');
@@ -71,6 +38,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
       ? '<span class="nr-dot nr-dot-filled"></span> FILLED'
       : '<span class="nr-dot nr-dot-empty nr-dot-pulse"></span> EMPTY';
     var uopText = r.uop_remaining ? r.uop_remaining + ' UoP' : '\u2014';
+    var activeClass = r.is_active_style ? ' nr-row-active' : '';
 
     if (isShared) {
       var payloadHTML = esc(r.payload_code);
@@ -106,21 +74,27 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     }
     if (empty) empty.style.display = 'none';
 
-    if (CHUNK <= 0) CHUNK = calcChunk();
+    var numCols = Math.ceil(rows.length / MAX_ROWS);
+    if (numCols < 1) numCols = 1;
+    var fontSize = Math.max(0.65, Math.min(1.15, 1.15 - (numCols - 1) * 0.12));
     var filled = 0;
     var thead = headerHTML(layout);
     var html = '';
-    for (var start = 0; start < rows.length; start += CHUNK) {
-      var chunk = rows.slice(start, start + CHUNK);
-      html += '<table class="nr-col-table"' +
-        (start > 0 ? ' style="border-left:3px solid rgba(255,255,255,0.15)"' : '') + '>' +
+    for (var start = 0; start < rows.length; start += MAX_ROWS) {
+      var chunk = rows.slice(start, start + MAX_ROWS);
+      var borderStyle = start > 0 ? 'border-left:3px solid rgba(255,255,255,0.15);' : '';
+      html += '<table class="nr-col-table" style="font-size:' + fontSize + 'rem;' + borderStyle + '">' +
         '<thead><tr>' + thead + '</tr></thead><tbody>';
       for (var i = 0; i < chunk.length; i++) {
         var r = chunk[i];
         if (r.occupied) filled++;
-        html += '<tr class="' + (r.occupied ? 'nr-row-filled' : 'nr-row-empty') + '">' +
+        html += '<tr class="' + (r.occupied ? 'nr-row-filled' : 'nr-row-empty') + (r.is_active_style ? ' nr-row-active' : '') + '">' +
           rowHTML(r, layout) + '</tr>';
       }
+        var colSpan = layout === 'shared_window' ? 4 : 5;
+        for (var pad = chunk.length; pad < MAX_ROWS; pad++) {
+          html += '<tr class="nr-row-empty"><td colspan="' + colSpan + '">&nbsp;</td></tr>';
+        }
       html += '</tbody></table>';
     }
     container.innerHTML = html;
@@ -156,19 +130,27 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     var parts = [];
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
-      var arrow = '\u2192 ' + esc(r.payload_code);
-      if (r.dest_node) {
-        arrow += ' \u2192 ' + esc(r.dest_node);
+      if (r.is_empty) {
+        var src = r.source_node ? esc(r.source_node) + ' \u2192 ' : '';
+        parts.push('\u25c6 EMPTY ' + src + 'returning');
+      } else if (r.is_partial) {
+        var src2 = r.source_node ? esc(r.source_node) + ' \u2192 ' : '';
+        parts.push('\u25c6 PARTIAL (' + r.uop_remaining + ' UoP) ' + src2 + 'returning');
       } else {
-        arrow += ' in transit';
+        var arrow = '\u2192 ' + esc(r.payload_code);
+        if (r.dest_node) {
+          arrow += ' \u2192 ' + esc(r.dest_node);
+        } else {
+          arrow += ' in transit';
+        }
+        parts.push(arrow);
       }
-      parts.push(arrow);
     }
     el.innerHTML = parts.join('  \u2502  ');
   }
 
   function load() {
-    fetch('/api/dashboards/' + encodeURIComponent(dashboardId) + '/node-report?t=' + Date.now())
+    fetch('/api/dashboards/' + encodeURIComponent(dashboardId) + '/node-report?t=' + Date.now() + demoQ)
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();

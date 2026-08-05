@@ -1673,6 +1673,12 @@ body[data-dashboard-kind="node-report"] #dash-main {
   min-height: 0;
   width: 100%;
 }
+.nr-col-table tbody tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+  height: calc(100% / 8);
+}
 .nr-col-table thead th {
   text-align: left;
   padding: 0.6rem 1rem;
@@ -1700,6 +1706,13 @@ body[data-dashboard-kind="node-report"] #dash-main {
 }
 .nr-row-empty { }
 .nr-row-filled { }
+.nr-row-active {
+  animation: nr-active-pulse 2s ease-in-out infinite;
+}
+@keyframes nr-active-pulse {
+  0%, 100% { background: rgba(45, 212, 191, 0.08); }
+  50% { background: rgba(45, 212, 191, 0.22); }
+}
 .nr-node {
   font-weight: 600;
   font-size: 1.2rem;
