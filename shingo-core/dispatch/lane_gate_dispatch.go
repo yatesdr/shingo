@@ -9,8 +9,6 @@ import (
 	"shingocore/fleet"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
-
-	"github.com/google/uuid"
 )
 
 // The gate_choreography valve — the UNIFORM gated shape.
@@ -211,7 +209,7 @@ func IsGateStaged(order *orders.Order) bool {
 // uniqueness), so the retry belongs in the evaluator, which re-derives the segment
 // from durable state.
 func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, sourceNode, destNode *nodes.Node) (string, error) {
-	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
+	vendorOrderID := mintVendorOrderID(order.ID)
 
 	plan := buildGatedTransportPlan(sourceNode.Name, target.gatePoint, destNode.Name,
 		order.SourceIntent == SourceIntentEmpty)
@@ -321,7 +319,7 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, s
 // tail's pickup is re-bound at release time (rebindGatedPickup), never trusted from
 // the create.
 func (d *Dispatcher) dispatchGatedRetrieve(order *orders.Order, target laneGateTarget, sourceNode, destNode *nodes.Node) (string, error) {
-	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
+	vendorOrderID := mintVendorOrderID(order.ID)
 
 	plan := buildGatedRetrievePlan(target.gatePoint, sourceNode.Name, destNode.Name,
 		order.SourceIntent == SourceIntentEmpty)

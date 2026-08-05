@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/google/uuid"
-
 	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/store"
@@ -346,7 +344,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 // create), each of which terminal-fails the order via failOrderInternal.
 func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps []resolvedStep) error {
 	preWait, hasWait := splitAtWait(resolvedSteps)
-	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
+	vendorOrderID := mintVendorOrderID(order.ID)
 	// Complex orders are not load-sequence expanded (nil): the F4c advanced load
 	// sequence is scoped to the simple transport path the child-cart delivery
 	// uses. Complex is "every other order kind" — byte-identical to before.

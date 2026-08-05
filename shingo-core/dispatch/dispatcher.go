@@ -6,8 +6,6 @@ import (
 	"log"
 	"sync"
 
-	"github.com/google/uuid"
-
 	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/service"
@@ -394,7 +392,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		}
 	}
 
-	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
+	vendorOrderID := mintVendorOrderID(order.ID)
 
 	payloadCode := d.payloadForDispatch(order)
 
