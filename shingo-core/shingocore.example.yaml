@@ -54,3 +54,28 @@ count_groups:
 fire_alarm:
   enabled: false                        # Set true once RDS fire-alarm endpoints are available.
   auto_resume_default: true             # Default checkbox state for "auto-resume on clear".
+
+# Localization-confidence collection. Core already polls /robotsStatus every
+# 2 s; this keeps the confidence figure that poll has been discarding. No
+# extra load on RDS — it taps the existing poll.
+#
+# Nothing else retains this figure anywhere (no history column in the RDS
+# database, no history endpoint in its API), so there is nothing to backfill
+# and every uncollected day is gone. Retention is the one setting here you can
+# change your mind about later: partitions are daily, so raising or lowering
+# it costs a config edit and nothing is recomputed.
+robot_confidence:
+  enabled: true                         # false skips the write path entirely (kill switch).
+  raw_retention_days: 14                # Shortest window that can answer "is this new?". Set 7 at a
+                                        # plant whose moving fraction hasn't been measured yet.
+  low_confidence_threshold: 0.50        # Double-write cut for the forensic trail, and write-rule clause 3.
+  low_confidence_retention_days: 90     # Tiny row count; this is what an incident review reads.
+  dead_band_metres: 0.25                # Clause 1: distance since the last STORED sample.
+  dead_band_confidence: 0.02            # Clause 2: catches a robot degrading while creeping.
+  low_interval: 10s                     # Clause 3 rate limit (confidence below threshold).
+  stuck_interval: 30s                   # Clause 4 rate limit (on a job and not moving).
+  failed_interval: 10s                  # Clause 5 rate limit (reloc_status = FAILED).
+  snap_tolerance_metres: 2.0            # Roll-up only. Generous because scene_edges keeps endpoints
+                                        # only, so curves snap against their chord (up to 1.30 m off).
+  baseline_days: 14                     # Trailing window for the per-segment fleet median. Must not be
+                                        # same-day, or a plant-wide degradation moves the baseline with it.

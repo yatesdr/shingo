@@ -27,6 +27,8 @@ type Config struct {
 	Dispatch      DispatchConfig      `yaml:"dispatch"`
 	Demand        DemandConfig        `yaml:"demand"`
 
+	RobotConfidence RobotConfidenceConfig `yaml:"robot_confidence"`
+
 	// Display holds the Phase 6 surfaces' numeric constants. Read it through
 	// DisplayConstants(), not directly — see provenance.go, which also carries
 	// the record of where each of these numbers came from and which of them a
@@ -215,15 +217,15 @@ type FireAlarmConfig struct {
 }
 
 type NotificationsConfig struct {
-	Enabled         bool          `yaml:"enabled"`
-	SMTPHost        string        `yaml:"smtp_host"`
-	SMTPPort        int           `yaml:"smtp_port"`
-	SMTPTLS         bool          `yaml:"smtp_tls"`
-	SMTPUser        string        `yaml:"smtp_user"`
-	SMTPPassword    string        `yaml:"smtp_password"`
-	FromAddress     string        `yaml:"from_address"`
-	Recipients      []string      `yaml:"recipients"`
-	ThrottleMinutes int           `yaml:"throttle_minutes"`
+	Enabled         bool     `yaml:"enabled"`
+	SMTPHost        string   `yaml:"smtp_host"`
+	SMTPPort        int      `yaml:"smtp_port"`
+	SMTPTLS         bool     `yaml:"smtp_tls"`
+	SMTPUser        string   `yaml:"smtp_user"`
+	SMTPPassword    string   `yaml:"smtp_password"`
+	FromAddress     string   `yaml:"from_address"`
+	Recipients      []string `yaml:"recipients"`
+	ThrottleMinutes int      `yaml:"throttle_minutes"`
 }
 
 // SimConfig configures the local-dev fleet simulator (core side). Sim code is
@@ -376,6 +378,69 @@ type KafkaConfig struct {
 	GroupID string   `yaml:"group_id"`
 }
 
+// RobotConfidenceConfig tunes the localization-confidence collector, which
+// samples SEER's rbk_report.confidence off Core's existing 2-second robot
+// poll. It adds no load on RDS — it taps a poll that already runs.
+//
+// Nothing anywhere retains a history of this figure: there is no %confid%
+// column in the RDS MariaDB and no history endpoint in the RDS HTTP API. So
+// there is nothing to backfill, and every day not collected is lost. The
+// shape of the data is fixed by migration v77; these are the knobs that
+// decide how much of it is kept.
+//
+// ONE OF THESE IS REVERSIBLE AND THE REST OF THE DESIGN IS NOT. Retention is
+// a dial: daily partitions make changing it a config edit plus the next run
+// of the drop loop, with nothing rewritten and nothing recomputed. Start at
+// the default, measure a day of real traffic, then set it. If volume ever
+// forces a cut, CUT DAYS — never sample. Down-sampling the healthy readings
+// looks tempting and would cut volume by more than half, but it silently
+// breaks p05 and the location baseline: fewer days gives correct numbers over
+// a shorter period, while sampling gives wrong numbers over a longer one.
+type RobotConfidenceConfig struct {
+	// Enabled false skips the write path ENTIRELY rather than writing and
+	// discarding — the kill switch if a plant sees any load surprise.
+	Enabled bool `yaml:"enabled"`
+
+	// RawRetentionDays is how long full-resolution samples are kept. Two
+	// weeks is the shortest window that can answer "is this new?" from raw
+	// data; seven days gives one week and nothing to compare it against.
+	RawRetentionDays int `yaml:"raw_retention_days"`
+
+	// LowConfidenceThreshold is both the double-write cut for the forensic
+	// trail and clause 3 of the write rule.
+	LowConfidenceThreshold float64 `yaml:"low_confidence_threshold"`
+
+	// LowConfidenceRetentionDays keeps the low trail far longer than raw:
+	// the row count is tiny and it is what an incident review reads.
+	LowConfidenceRetentionDays int `yaml:"low_confidence_retention_days"`
+
+	// DeadBandMetres and DeadBandConfidence are clauses 1 and 2 of the write
+	// rule — how far a robot must move, or how much the number must change,
+	// since the last STORED sample.
+	DeadBandMetres     float64 `yaml:"dead_band_metres"`
+	DeadBandConfidence float64 `yaml:"dead_band_confidence"`
+
+	// The three rate limits on the clauses that fire while a robot is
+	// stationary. Without them a robot sitting in a bad state would store a
+	// row every poll.
+	LowInterval    time.Duration `yaml:"low_interval"`    // clause 3
+	StuckInterval  time.Duration `yaml:"stuck_interval"`  // clause 4
+	FailedInterval time.Duration `yaml:"failed_interval"` // clause 5
+
+	// SnapToleranceMetres is how far a sample may sit from a path segment and
+	// still be attributed to it by the nightly roll-up. Generous by
+	// necessity: scene_edges stores only segment endpoints, so a curved path
+	// is snapped against its chord, which at Springfield diverges from the
+	// driven lane by up to 1.30 m. Read-time only — changing it re-bins
+	// future roll-ups and never touches a stored sample.
+	SnapToleranceMetres float64 `yaml:"snap_tolerance_metres"`
+
+	// BaselineDays is the trailing window the per-segment fleet median is
+	// computed over. It must not be same-day: against a same-day baseline a
+	// plant-wide degradation moves the median with it and the event vanishes.
+	BaselineDays int `yaml:"baseline_days"`
+}
+
 func Defaults() *Config {
 	return &Config{
 		Database: DatabaseConfig{
@@ -471,6 +536,24 @@ func Defaults() *Config {
 			// dev YAML can flip enabled:true without specifying every knob.
 			TransitTime: 5 * time.Second,
 			JitterPct:   0.2,
+		},
+		// ON by default. The collector taps a poll Core already makes, so it
+		// adds no vendor load, and the data it gathers cannot be recovered
+		// later — shipping it opt-out would mean the plants that never edit a
+		// YAML are exactly the ones with no history when someone finally asks
+		// why a robot keeps stranding in one aisle.
+		RobotConfidence: RobotConfidenceConfig{
+			Enabled:                    true,
+			RawRetentionDays:           14,
+			LowConfidenceThreshold:     0.50,
+			LowConfidenceRetentionDays: 90,
+			DeadBandMetres:             0.25,
+			DeadBandConfidence:         0.02,
+			LowInterval:                10 * time.Second,
+			StuckInterval:              30 * time.Second,
+			FailedInterval:             10 * time.Second,
+			SnapToleranceMetres:        2.0,
+			BaselineDays:               14,
 		},
 		// Values and the reasoning behind each of them live in provenance.go,
 		// together, so that neither can be edited without the other in view.
