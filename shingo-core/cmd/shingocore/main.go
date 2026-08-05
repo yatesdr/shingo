@@ -44,6 +44,7 @@ import (
 	"shingocore/rds"
 	"shingocore/service"
 	"shingocore/store"
+	"shingocore/store/robotconfidence"
 	"shingocore/www"
 )
 
@@ -474,6 +475,73 @@ func main() {
 			}
 		}
 	}()
+
+	// ── Robot localization confidence ──────────────────────────────────
+	// Collection itself rides the engine's existing 2-second robot poll (see
+	// engine_robot_confidence.go). What lives here is the housekeeping the
+	// write path depends on: today's partitions must exist before anything
+	// tries to insert into them, and the aggregates have to be computed while
+	// the raw rows they read are still present.
+	if cfg.RobotConfidence.Enabled {
+		if err := db.EnsureRobotConfidencePartitions(time.Now().UTC()); err != nil {
+			// Not fatal. A missing partition costs the confidence samples for
+			// the day and nothing else; taking the whole of Core down over a
+			// telemetry side-table would be wildly out of proportion.
+			log.Printf("shingocore: robot confidence: ensure partitions: %v", err)
+		}
+		rcStop := make(chan struct{})
+		defer close(rcStop)
+		go func() {
+			t := time.NewTicker(24 * time.Hour)
+			defer t.Stop()
+			for {
+				select {
+				case <-rcStop:
+					return
+				case <-t.C:
+					now := time.Now().UTC()
+					if err := db.EnsureRobotConfidencePartitions(now); err != nil {
+						log.Printf("shingocore: robot confidence: ensure partitions: %v", err)
+					}
+
+					// ROLL UP BEFORE DROPPING, and note that the order is
+					// explicit rather than merely lucky. The aggregates are
+					// permanent and the raw rows behind them are not: once a
+					// partition is gone its day can never be recomputed, so a
+					// drop that ran first would silently publish a hole. With
+					// a 14-day window there is a fortnight of slack, which is
+					// exactly the kind of margin that hides an ordering bug
+					// until someone shortens retention.
+					yesterday := now.AddDate(0, 0, -1)
+					res, err := db.RollUpRobotConfidence(yesterday, robotconfidence.RollUpConfig{
+						SnapTolerance: cfg.RobotConfidence.SnapToleranceMetres,
+						BaselineDays:  cfg.RobotConfidence.BaselineDays,
+						Coverage:      robotconfidence.DefaultCoverage,
+					})
+					if err != nil {
+						log.Printf("shingocore: robot confidence: roll-up: %v", err)
+					} else {
+						log.Printf("shingocore: robot confidence roll-up %s", res)
+					}
+
+					if n, err := db.DropOldRobotConfidencePartitions(
+						cfg.RobotConfidence.RawRetentionDays, now); err != nil {
+						log.Printf("shingocore: robot confidence: drop raw partitions: %v", err)
+					} else if n > 0 {
+						log.Printf("shingocore: dropped %d robot confidence partition(s) older than %d days",
+							n, cfg.RobotConfidence.RawRetentionDays)
+					}
+					if n, err := db.DropOldRobotConfidenceLowPartitions(
+						cfg.RobotConfidence.LowConfidenceRetentionDays, now); err != nil {
+						log.Printf("shingocore: robot confidence: drop low partitions: %v", err)
+					} else if n > 0 {
+						log.Printf("shingocore: dropped %d low-confidence partition(s) older than %d days",
+							n, cfg.RobotConfidence.LowConfidenceRetentionDays)
+					}
+				}
+			}
+		}()
+	}
 
 	// ── Web server ─────────────────────────────────────────────────────
 	handler, stopWeb, err := www.NewRouter(eng, dbg)
