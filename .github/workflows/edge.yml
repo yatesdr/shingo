@@ -14,12 +14,24 @@ on:
       # exactly this gap that let a restructuring of the jobs below sit
       # unverified, because nothing in the diff matched any other path.
       - ".github/workflows/edge.yml"
+      # The shared workflow and actions these jobs call. Without them a
+      # change to sharded-suite.yml or shared-postgres — the code that
+      # actually runs the tests — triggers nothing, which is the same
+      # gap as a workflow not triggering on its own edits, one level out.
+      - ".github/workflows/sharded-suite.yml"
+      - ".github/actions/**"
   pull_request:
     paths:
       - "shingo-edge/**"
       - "protocol/**"
       - "shared/**"
       - ".github/workflows/edge.yml"
+      # The shared workflow and actions these jobs call. Without them a
+      # change to sharded-suite.yml or shared-postgres — the code that
+      # actually runs the tests — triggers nothing, which is the same
+      # gap as a workflow not triggering on its own edits, one level out.
+      - ".github/workflows/sharded-suite.yml"
+      - ".github/actions/**"
   workflow_call:
 
 # See core.yml for rationale - same idempotent burst-coalescing.

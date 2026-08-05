@@ -15,12 +15,24 @@ on:
       # breaks Core's build lands with Core CI never running.
       - "shared/**"
       - ".github/workflows/core.yml"
+      # The shared workflow and actions these jobs call. Without them a
+      # change to sharded-suite.yml or shared-postgres — the code that
+      # actually runs the tests — triggers nothing, which is the same
+      # gap as a workflow not triggering on its own edits, one level out.
+      - ".github/workflows/sharded-suite.yml"
+      - ".github/actions/**"
   pull_request:
     paths:
       - "shingo-core/**"
       - "protocol/**"
       - "shared/**"
       - ".github/workflows/core.yml"
+      # The shared workflow and actions these jobs call. Without them a
+      # change to sharded-suite.yml or shared-postgres — the code that
+      # actually runs the tests — triggers nothing, which is the same
+      # gap as a workflow not triggering on its own edits, one level out.
+      - ".github/workflows/sharded-suite.yml"
+      - ".github/actions/**"
   workflow_call:
 
 # Coalesce overlapping runs on the same branch / PR so a quick burst
