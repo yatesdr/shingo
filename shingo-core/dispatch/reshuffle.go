@@ -343,6 +343,21 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 		if !c.Enabled || c.NodeTypeCode != protocol.NodeClassLANE {
 			continue
 		}
+		// NEVER park a blocker back into the lane it is being dug out of. laneID
+		// was a parameter of this function that Pass 2 never compared against
+		// anything — it was read once, at the top, for the reshuffle_target_nodes
+		// override — so the loop happily offered the dug lane's own free slots. On
+		// a lane holding [empty, blocker, target] that means moving the blocker
+		// from depth 2 to depth 1, leaving it in front of the target the dig
+		// exists to uncover.
+		//
+		// Survivable today only because the dig holds the lane exclusively, so
+		// nothing else competes for those slots. It stops being survivable the
+		// moment lane concurrency is relaxed, which is why it lands before that
+		// rather than with it.
+		if c.ID == laneID {
+			continue
+		}
 		if excluded[c.Name] {
 			continue
 		}
