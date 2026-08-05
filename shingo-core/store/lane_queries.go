@@ -117,16 +117,9 @@ func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND b.status = 'available'
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
-		  AND NOT EXISTS (
-			SELECT 1 FROM nodes sib
-			JOIN bins sb ON sb.node_id = sib.id
-			WHERE sib.parent_id = $1
-			  AND sib.depth IS NOT NULL
-			  AND n.depth IS NOT NULL
-			  AND sib.depth < n.depth
-		  )
+		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC
-		LIMIT 1`, bins.BinJoinQuery)
+		LIMIT 1`, bins.BinJoinQuery, nodes.ReachableSQL("n"))
 	row := db.QueryRow(query, laneID, payloadCode)
 	bin, err := bins.ScanBin(row)
 	if err != nil {
@@ -167,16 +160,9 @@ func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND b.manifest_confirmed = true
 		  AND b.status = 'available'
 		  AND ($2 = '' OR b.payload_code = $2)
-		  AND EXISTS (
-			SELECT 1 FROM nodes sib
-			JOIN bins sb ON sb.node_id = sib.id
-			WHERE sib.parent_id = $1
-			  AND sib.depth IS NOT NULL
-			  AND n.depth IS NOT NULL
-			  AND sib.depth < n.depth
-		  )
+		  AND %s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
-		LIMIT 1`, bins.BinJoinQuery), laneID, payloadCode)
+		LIMIT 1`, bins.BinJoinQuery, nodes.BuriedSQL("n")), laneID, payloadCode)
 	bin, err := bins.ScanBin(row)
 	if err != nil {
 		return nil, nil, fmt.Errorf("no buried bin in lane %d", laneID)
@@ -199,16 +185,9 @@ func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes
 		  AND b.manifest_confirmed = true
 		  AND b.status = 'available'
 		  AND ($2 = '' OR b.payload_code = $2)
-		  AND EXISTS (
-			SELECT 1 FROM nodes sib
-			JOIN bins sb ON sb.node_id = sib.id
-			WHERE sib.parent_id = $1
-			  AND sib.depth IS NOT NULL
-			  AND n.depth IS NOT NULL
-			  AND sib.depth < n.depth
-		  )
+		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC
-		LIMIT 1`, bins.BinJoinQuery), laneID, payloadCode)
+		LIMIT 1`, bins.BinJoinQuery, nodes.BuriedSQL("n")), laneID, payloadCode)
 	bin, err := bins.ScanBin(row)
 	if err != nil {
 		return nil, nil, fmt.Errorf("no buried bin in lane %d", laneID)

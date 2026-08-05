@@ -225,21 +225,18 @@ func FindStoreSlotInLaneExcluding(db *sql.DB, laneID, excludeOrderID int64) (*No
 			  AND o.status NOT IN (%s)
 			  AND o.id <> $2
 		  )
-		  AND NOT EXISTS (
-			-- Accessibility guard (mirrors IsSlotAccessible): a slot is only a
-			-- valid pick if no OCCUPIED slot sits shallower in the same lane. The
-			-- deepest-empty slot can otherwise be stranded behind a shallow bubble
-			-- (an occupied slot with empties behind it), and a robot entering at
-			-- the mouth could never reach it.
-			SELECT 1 FROM nodes sib
-			JOIN bins bb ON bb.node_id = sib.id
-			WHERE sib.parent_id = n.parent_id
-			  AND sib.depth IS NOT NULL
-			  AND n.depth IS NOT NULL
-			  AND sib.depth < n.depth
-		  )
+		  -- Accessibility guard: a slot is only a valid pick if no OCCUPIED slot
+		  -- sits shallower in the same lane. The deepest-empty slot can otherwise
+		  -- be stranded behind a shallow bubble (an occupied slot with empties
+		  -- behind it), and a robot entering at the mouth could never reach it.
+		  --
+		  -- NOT owner-aware, unlike the three guards above it, and that asymmetry
+		  -- is correct: occupancy is occupancy regardless of whose order put the
+		  -- bin there. excludeOrderID exempts an order from its OWN holds; it can
+		  -- never exempt it from a physical bin.
+		  AND %s
 		ORDER BY COALESCE(n.depth, 0) DESC
-		LIMIT 1`, SelectCols, FromClause, protocol.TerminalStatusSQLList()), laneID, excludeOrderID)
+		LIMIT 1`, SelectCols, FromClause, protocol.TerminalStatusSQLList(), ReachableSQL("n")), laneID, excludeOrderID)
 	n, err := ScanNode(row)
 	if err != nil {
 		return nil, fmt.Errorf("no empty slot in lane %d", laneID)
