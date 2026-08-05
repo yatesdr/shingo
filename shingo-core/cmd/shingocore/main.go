@@ -492,52 +492,75 @@ func main() {
 		rcStop := make(chan struct{})
 		defer close(rcStop)
 		go func() {
-			t := time.NewTicker(24 * time.Hour)
+			// NOT A 24-HOUR TICKER, AND THIS IS THE WHOLE POINT. The first
+			// version of this loop was one, matching the inbox-retention loop
+			// beside it. It would never have fired: Springfield's Core
+			// restarted fifteen times in seven days — a mean process life of
+			// about eleven hours — and a 24-hour ticker on an 11-hour process
+			// never reaches its first tick. The aggregates would have stayed
+			// empty forever while the raw rows they derive from expired at 14
+			// days, on a collector that otherwise looked perfectly healthy.
+			//
+			// So the schedule is driven by the DATABASE's state, not by this
+			// process's uptime: "is there a completed day with samples and no
+			// aggregates" is a question a restart cannot reset. The hourly
+			// tick just decides how soon after UTC midnight the answer gets
+			// acted on; the boot pass below covers everything missed while
+			// Core was down or between ticks.
+			const rcInterval = time.Hour
+			t := time.NewTicker(rcInterval)
 			defer t.Stop()
+
+			pass := func() {
+				now := time.Now().UTC()
+				if err := db.EnsureRobotConfidencePartitions(now); err != nil {
+					log.Printf("shingocore: robot confidence: ensure partitions: %v", err)
+				}
+
+				// ROLL UP BEFORE DROPPING, and note that the order is
+				// explicit rather than merely lucky. The aggregates are
+				// permanent and the raw rows behind them are not: once a
+				// partition is gone its day can never be recomputed, so a
+				// drop that ran first would silently publish a hole.
+				results, err := db.CatchUpRobotConfidence(now,
+					cfg.RobotConfidence.RawRetentionDays, robotconfidence.RollUpConfig{
+						SnapTolerance: cfg.RobotConfidence.SnapToleranceMetres,
+						BaselineDays:  cfg.RobotConfidence.BaselineDays,
+						Coverage:      robotconfidence.DefaultCoverage,
+					})
+				if err != nil {
+					log.Printf("shingocore: robot confidence: roll-up: %v", err)
+				}
+				for _, res := range results {
+					log.Printf("shingocore: robot confidence roll-up %s", res)
+				}
+
+				if n, err := db.DropOldRobotConfidencePartitions(
+					cfg.RobotConfidence.RawRetentionDays, now); err != nil {
+					log.Printf("shingocore: robot confidence: drop raw partitions: %v", err)
+				} else if n > 0 {
+					log.Printf("shingocore: dropped %d robot confidence partition(s) older than %d days",
+						n, cfg.RobotConfidence.RawRetentionDays)
+				}
+				if n, err := db.DropOldRobotConfidenceLowPartitions(
+					cfg.RobotConfidence.LowConfidenceRetentionDays, now); err != nil {
+					log.Printf("shingocore: robot confidence: drop low partitions: %v", err)
+				} else if n > 0 {
+					log.Printf("shingocore: dropped %d low-confidence partition(s) older than %d days",
+						n, cfg.RobotConfidence.LowConfidenceRetentionDays)
+				}
+			}
+
+			// The boot pass is what actually makes this restart-proof. It is
+			// also cheap when there is nothing to do: PendingDays answers with
+			// two indexed existence checks per day of retention and stops.
+			pass()
 			for {
 				select {
 				case <-rcStop:
 					return
 				case <-t.C:
-					now := time.Now().UTC()
-					if err := db.EnsureRobotConfidencePartitions(now); err != nil {
-						log.Printf("shingocore: robot confidence: ensure partitions: %v", err)
-					}
-
-					// ROLL UP BEFORE DROPPING, and note that the order is
-					// explicit rather than merely lucky. The aggregates are
-					// permanent and the raw rows behind them are not: once a
-					// partition is gone its day can never be recomputed, so a
-					// drop that ran first would silently publish a hole. With
-					// a 14-day window there is a fortnight of slack, which is
-					// exactly the kind of margin that hides an ordering bug
-					// until someone shortens retention.
-					yesterday := now.AddDate(0, 0, -1)
-					res, err := db.RollUpRobotConfidence(yesterday, robotconfidence.RollUpConfig{
-						SnapTolerance: cfg.RobotConfidence.SnapToleranceMetres,
-						BaselineDays:  cfg.RobotConfidence.BaselineDays,
-						Coverage:      robotconfidence.DefaultCoverage,
-					})
-					if err != nil {
-						log.Printf("shingocore: robot confidence: roll-up: %v", err)
-					} else {
-						log.Printf("shingocore: robot confidence roll-up %s", res)
-					}
-
-					if n, err := db.DropOldRobotConfidencePartitions(
-						cfg.RobotConfidence.RawRetentionDays, now); err != nil {
-						log.Printf("shingocore: robot confidence: drop raw partitions: %v", err)
-					} else if n > 0 {
-						log.Printf("shingocore: dropped %d robot confidence partition(s) older than %d days",
-							n, cfg.RobotConfidence.RawRetentionDays)
-					}
-					if n, err := db.DropOldRobotConfidenceLowPartitions(
-						cfg.RobotConfidence.LowConfidenceRetentionDays, now); err != nil {
-						log.Printf("shingocore: robot confidence: drop low partitions: %v", err)
-					} else if n > 0 {
-						log.Printf("shingocore: dropped %d low-confidence partition(s) older than %d days",
-							n, cfg.RobotConfidence.LowConfidenceRetentionDays)
-					}
+					pass()
 				}
 			}
 		}()

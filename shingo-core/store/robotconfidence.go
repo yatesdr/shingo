@@ -33,3 +33,11 @@ func (db *DB) DropOldRobotConfidenceLowPartitions(keepDays int, now time.Time) (
 func (db *DB) RollUpRobotConfidence(day time.Time, cfg robotconfidence.RollUpConfig) (robotconfidence.RollUpResult, error) {
 	return robotconfidence.RollUp(db.DB, day, cfg)
 }
+
+// CatchUpRobotConfidence rolls up every completed day inside the retention
+// window that has samples but no aggregates yet. This is the scheduler, not a
+// repair tool: Core restarts far too often for an elapsed-time ticker to be
+// what decides whether the roll-up runs. See store/robotconfidence/catchup.go.
+func (db *DB) CatchUpRobotConfidence(now time.Time, retentionDays int, cfg robotconfidence.RollUpConfig) ([]robotconfidence.RollUpResult, error) {
+	return robotconfidence.CatchUp(db.DB, now, retentionDays, cfg)
+}
