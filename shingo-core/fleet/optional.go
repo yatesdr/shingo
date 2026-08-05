@@ -110,21 +110,27 @@ type FireAlarmController interface {
 
 // RobotStatus is a vendor-neutral representation of a robot's state.
 type RobotStatus struct {
-	VehicleID      string
-	Connected      bool
-	Available      bool
-	Busy           bool
-	Emergency      bool
-	Blocked        bool
-	IsError        bool
-	BatteryLevel   float64
-	Charging       bool
-	CurrentMap     string
-	Model          string
-	IP             string
-	X              float64
-	Y              float64
-	Angle          float64
+	VehicleID    string
+	Connected    bool
+	Available    bool
+	Busy         bool
+	Emergency    bool
+	Blocked      bool
+	IsError      bool
+	BatteryLevel float64
+	Charging     bool
+	CurrentMap   string
+	Model        string
+	IP           string
+	X            float64
+	Y            float64
+	Angle        float64
+	// Confidence is the vendor's localization confidence, 0.0–1.0.
+	// RelocStatus is the localization state machine (0=FAILED, 1=SUCCESS,
+	// 2=RELOCING, 3=COMPLETED); Confidence is only meaningful outside
+	// RELOCING. See rds.RbkReport for the full enum.
+	Confidence     float64
+	RelocStatus    int
 	NetworkDelay   int
 	CurrentStation string
 	LastStation    string

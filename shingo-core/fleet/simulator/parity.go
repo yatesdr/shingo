@@ -53,13 +53,26 @@ func (s *SimulatorBackend) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 			loc = o.blocks[0].location
 		}
 		robots = append(robots, fleet.RobotStatus{
-			VehicleID:      fmt.Sprintf("SIM-ROBOT-%d", n),
-			Connected:      true,
-			Available:      false,
-			Busy:           true,
-			BatteryLevel:   100,
-			Model:          "SimBot",
-			CurrentMap:     "sim",
+			VehicleID:    fmt.Sprintf("SIM-ROBOT-%d", n),
+			Connected:    true,
+			Available:    false,
+			Busy:         true,
+			BatteryLevel: 100,
+			Model:        "SimBot",
+			CurrentMap:   "sim",
+			// Localization is chosen, not defaulted. The zero value of
+			// RelocStatus is 0 = FAILED, which would make every simulated
+			// robot read as a localization failure and hand the confidence
+			// collector a fleet that is permanently lost. SUCCESS + a
+			// healthy 0.95 is the honest sim equivalent.
+			//
+			// The simulator has no position model, so these rows all land at
+			// (0,0). That is fine for exercising the write path — clause 4
+			// (on-task and stationary) is what fires in sim — but sim rows
+			// carry no spatial signal and no segment statistic should be
+			// read from them.
+			Confidence:     0.95,
+			RelocStatus:    1,
 			CurrentStation: loc,
 		})
 	}

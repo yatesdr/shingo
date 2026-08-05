@@ -33,16 +33,38 @@ type RobotBasicInfo struct {
 }
 
 type RbkReport struct {
-	X                   float64     `json:"x"`
-	Y                   float64     `json:"y"`
-	Angle               float64     `json:"angle"`
-	BatteryLevel        float64     `json:"battery_level"`
-	Charging            bool        `json:"charging"`
-	CurrentStation      string      `json:"current_station"`
-	LastStation         string      `json:"last_station"`
-	TaskStatus          int         `json:"task_status"`
-	Blocked             bool        `json:"blocked"`
-	Emergency           bool        `json:"emergency"`
+	X     float64 `json:"x"`
+	Y     float64 `json:"y"`
+	Angle float64 `json:"angle"`
+	// Vx/Vy/W are the chassis velocity triple (m/s, m/s, rad/s), verified on
+	// the wire at Hopkinsville 2026-08-05. A parked robot reports small
+	// non-zero noise (~1e-4), so these are a corroborating motion signal, not
+	// a threshold: position delta between polls is the primary test.
+	Vx float64 `json:"vx"`
+	Vy float64 `json:"vy"`
+	W  float64 `json:"w"`
+	// Confidence is the robot's own localization confidence, 0.0–1.0. The
+	// vendor's operator UI bands it >0.8 green, >0.3 yellow, else red
+	// (rds-user-manual.pdf); the HMI tile reuses those exact cuts.
+	Confidence     float64 `json:"confidence"`
+	BatteryLevel   float64 `json:"battery_level"`
+	Charging       bool    `json:"charging"`
+	CurrentStation string  `json:"current_station"`
+	LastStation    string  `json:"last_station"`
+	TaskStatus     int     `json:"task_status"`
+	Blocked        bool    `json:"blocked"`
+	Emergency      bool    `json:"emergency"`
+	// RelocStatus is the localization state machine, documented twice in
+	// "Robokit API Protocol" (API 1021 and the rbk_report field table):
+	//
+	//	0 = FAILED    localization failed — the robot knows it is lost
+	//	1 = SUCCESS   localization correct, operator-confirmed
+	//	2 = RELOCING  actively relocating; the pose estimate is in flight
+	//	3 = COMPLETED relocation finished but not yet operator-confirmed
+	//
+	// Only 2 makes Confidence meaningless. 0 and 3 are settled states that
+	// mean different things and are both worth recording — see
+	// store/robotconfidence for how they are kept but held out of statistics.
 	RelocStatus         int         `json:"reloc_status"`
 	Containers          []Container `json:"containers"`
 	AvailableContainers int         `json:"available_containers"`
