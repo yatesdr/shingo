@@ -110,9 +110,51 @@ const (
 // migrated anything — it is 0.
 func templateName() string {
 	if n := os.Getenv(envSharedTemplate); n != "" {
-		return n
+		return sanitizeIdent(n, templateDBName)
 	}
 	return templateDBName
+}
+
+// sanitizeIdent forces s into something safe to splice into `CREATE DATABASE
+// %s`, falling back to fallback if nothing usable survives.
+//
+// THIS IS NOT PARANOIA, IT IS A BUG THAT SHIPPED. The name arrives from
+// $SHINGO_TEST_PG_TEMPLATE and every use of it is string interpolation into
+// SQL, unquoted. A CI change built the value out of a cache-key prefix that
+// contained hyphens, and Postgres answered `syntax error at or near "-"` for
+// every one of twelve shards — a failure that looks like the test suite
+// breaking and is actually a database name.
+//
+// Sanitising rather than rejecting, because the caller is CI infrastructure
+// and a slightly-renamed template is harmless: the name only has to be a
+// stable, unique handle. What is not harmless is a name that cannot be created
+// at all. Leading digits are prefixed too, since an identifier may not start
+// with one.
+func sanitizeIdent(s, fallback string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + 32) // Postgres folds unquoted identifiers to lower
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := b.String()
+	if out == "" {
+		return fallback
+	}
+	if out[0] >= '0' && out[0] <= '9' {
+		out = "t_" + out
+	}
+	// Postgres truncates identifiers at 63 bytes; truncating here keeps the
+	// name we ask for identical to the one we later look up in pg_database.
+	if len(out) > 63 {
+		out = out[:63]
+	}
+	return out
 }
 
 // containerState holds the shared Postgres container started once per test process.

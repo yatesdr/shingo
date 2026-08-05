@@ -121,7 +121,14 @@ jobs:
       - if: ${{ inputs.needs-postgres }}
         uses: ./.github/actions/shared-postgres
         with:
-          template: template_ci_${{ github.run_id }}_${{ inputs.cache-prefix }}${{ matrix.shard.id }}
+          # DIGITS AND UNDERSCORES ONLY. This is spliced into `CREATE
+          # DATABASE %s` unquoted, and it was previously built from
+          # cache-prefix — which contains hyphens, so Postgres answered
+          # `syntax error at or near "-"` on all twelve shards at once.
+          # testdb now sanitises what it is given as well; this is the
+          # other half. Each job has its own container, so run id plus
+          # shard index is already unique.
+          template: template_ci_${{ github.run_id }}_${{ matrix.shard.id }}
 
       - name: Test — shard ${{ matrix.shard.id }}
         working-directory: ${{ inputs.module }}
