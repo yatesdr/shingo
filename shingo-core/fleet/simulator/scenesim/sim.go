@@ -79,6 +79,57 @@ type Order struct {
 	ID     string
 	Blocks []Block
 	Dig    bool
+
+	// DigGroup names the reshuffle this order is a LEG of. Several robots can
+	// carry legs of one dig, and a sibling leg is not a foreign dig.
+	//
+	// A dig submitted without a group becomes a group of ONE named after its
+	// order — which is both what every pre-existing dig test means and the
+	// harness's spelling of retrieve = dig(N=1). Nothing about those tests
+	// changes.
+	DigGroup string
+}
+
+// digGroup is a reshuffle's CLAIM on the lanes it works — the sim's spelling of
+// the durable dig mouth row, and the reason this is not a one-line change.
+//
+// The claim used to be DERIVED: a dig held its lane while its order was active.
+// With one order that is sound, because there is no gap. With several legs there
+// is a gap between leg 1 completing and leg 2 being submitted, and a derived
+// claim EVAPORATES in that gap and lets a store in — which is bit-for-bit the
+// production bug fixed by exempting dig rows from the per-block early release. A
+// harness that derives the claim from active legs reproduces that bug and is
+// then structurally unable to catch a regression of it.
+//
+// So the claim has its own lifetime, owned by the group:
+//
+//	held(lane, G) == G claims lane AND (G is unsealed OR G has an active leg)
+//
+// ONE writer, one predicate, two inputs. A group of one is born SEALED, so its
+// claim is exactly "has an active leg" — today's behaviour, unchanged. A
+// multi-leg group stays claimed across the inter-leg gap until it is both sealed
+// and finished.
+//
+// SEALEDNESS IS NOT req.Complete, though brief 2 §2 recommended it. Submit never
+// read that field, so it carries no meaning today — and carryStoreWait
+// (s1_test.go:35) omits it entirely while mode_share_test.go and s2_test.go
+// submit it AS A DIG. Keying the close on it would silently give those two
+// digs a claim that never closes. Sealedness is stated explicitly instead, by
+// the constructor that knows: Submit seals a group of one at birth,
+// SubmitDigLeg leaves a group open, SealDigGroup closes it.
+type digGroup struct {
+	sealed bool
+	lanes  map[string]bool
+	// seq orders claims so a lane has at most ONE holder. Two groups wanting the
+	// same lane both record a claim; the lower seq HOLDS it and the other WAITS.
+	//
+	// Without this the two claims are symmetric and each group sees the other's,
+	// so neither may enter and the lane deadlocks — which is exactly what the
+	// two-different-digs case surfaced. Production never had the problem because
+	// its claim is ACQUIRED, not recorded: AcquireLanes refuses a second dig
+	// outright and the planner queues it. seq is the sim's spelling of
+	// first-acquirer-wins.
+	seq int
 }
 
 // cell is a robot position: a plain node, or a lane slot (Lane + Index).
@@ -135,9 +186,11 @@ type Sim struct {
 	capacity1    bool // with mouthGate: one robot per lane (the baseline the soak compares against)
 	priorityOnly bool // with mouthGate: model production-as-landed — mode gate only, NO deepest-first hold
 	robots       map[string]*Robot
-	order        []string          // robot ids, stable order for deterministic ticking
-	occ          map[string]string // cell key → robot id (lane cells only)
-	bins         map[string]bool   // slot name → a dropped bin sits there (persists; walls deeper slots)
+	order        []string             // robot ids, stable order for deterministic ticking
+	occ          map[string]string    // cell key → robot id (lane cells only)
+	bins         map[string]bool      // slot name → a dropped bin sits there (persists; walls deeper slots)
+	digClaims    map[string]*digGroup // dig group name → its lane claim
+	digClaimSeq  int                  // monotonic, orders competing claims
 
 	tick         int
 	lastProgress int // tick of the last observed state change (deadlock watchdog)
@@ -152,12 +205,13 @@ func New(scene *Scene, opts Options) *Sim {
 		opts.Watchdog = 50
 	}
 	return &Sim{
-		scene:  scene,
-		opts:   opts,
-		flags:  ConservativeFlags(),
-		robots: map[string]*Robot{},
-		occ:    map[string]string{},
-		bins:   map[string]bool{},
+		scene:     scene,
+		opts:      opts,
+		flags:     ConservativeFlags(),
+		robots:    map[string]*Robot{},
+		occ:       map[string]string{},
+		bins:      map[string]bool{},
+		digClaims: map[string]*digGroup{},
 	}
 }
 
@@ -328,11 +382,22 @@ func (s *Sim) Submit(robotID string, req fleet.CreateOrderRequest, dig bool) err
 		return fmt.Errorf("scenesim: robot %q is busy", robotID)
 	}
 	ord := &Order{ID: req.OrderID, Dig: dig}
+	if dig {
+		// A dig submitted through Submit is a group of ONE, named after its order
+		// and sealed at birth. Its claim is therefore exactly "has an active leg",
+		// which is what the derived claim has always meant — so every dig test
+		// that predates groups keeps its behaviour with no edit. Multi-leg groups
+		// come in through SubmitDigLeg.
+		ord.DigGroup = req.OrderID
+	}
 	for _, b := range req.Blocks {
 		if s.scene.Node(b.Location) == nil {
 			return fmt.Errorf("scenesim: order %s block location %q not in scene", req.OrderID, b.Location)
 		}
 		ord.Blocks = append(ord.Blocks, Block{Location: b.Location, Action: actionFor(b.BinTask)})
+	}
+	if dig {
+		s.claimLanesFor(ord, true)
 	}
 	r.order = ord
 	r.block = 0
@@ -502,23 +567,121 @@ func (s *Sim) headingToGate(r *Robot, dst cell) bool {
 	return b.Action == ActionWait && b.Location == dst.Node
 }
 
-// laneHasActiveDig reports whether some OTHER robot is running a dig order that
-// works lane — the dig's mode-exclusive hold, spanning its out-and-back legs. A
-// dig is "active" while its order has work left, whether or not its robot is
-// physically inside the lane at this instant (it leaves to park a blocker, then
-// returns for the target). See admitToLane's dig-hold block for why this must
-// outlive the in-lane occupancy the occupant scan keys on.
-func (s *Sim) laneHasActiveDig(lane, exceptRobotID string) bool {
+// claimLanesFor records the lanes an order's blocks touch as claimed by its dig
+// group, creating the group if new. sealed says whether the group is complete at
+// this moment: true for a group of one (Submit), false for a group still taking
+// legs (SubmitDigLeg).
+func (s *Sim) claimLanesFor(ord *Order, sealed bool) {
+	if ord.DigGroup == "" {
+		return
+	}
+	g := s.digClaims[ord.DigGroup]
+	if g == nil {
+		s.digClaimSeq++
+		g = &digGroup{lanes: map[string]bool{}, seq: s.digClaimSeq}
+		s.digClaims[ord.DigGroup] = g
+	}
+	g.sealed = g.sealed || sealed
+	for _, b := range ord.Blocks {
+		if lane := s.scene.LaneForNode(b.Location); lane != "" {
+			g.lanes[lane] = true
+		}
+	}
+}
+
+// SubmitDigLeg assigns ONE LEG of a multi-robot dig. The group is created on the
+// first leg and stays OPEN — claiming its lanes across the gaps between legs —
+// until SealDigGroup closes it.
+//
+// This is the entry point that makes several robots able to work one reshuffle.
+// Submit remains the group-of-one door and is unchanged in effect.
+func (s *Sim) SubmitDigLeg(robotID string, req fleet.CreateOrderRequest, group string) error {
+	if group == "" {
+		return fmt.Errorf("scenesim: SubmitDigLeg needs a group name")
+	}
+	if err := s.Submit(robotID, req, true); err != nil {
+		return err
+	}
+	ord := s.robots[robotID].order
+	// Submit sealed it as a group of one under its own name; re-home it into the
+	// real group, which is open until sealed.
+	delete(s.digClaims, ord.ID)
+	ord.DigGroup = group
+	if g := s.digClaims[group]; g != nil {
+		g.sealed = false
+	}
+	s.claimLanesFor(ord, false)
+	return nil
+}
+
+// SealDigGroup declares that a dig group will take no further legs. Its claim
+// then ends when its last active leg finishes — not before, and not on any other
+// signal. Sealing a group that does not exist is a no-op.
+//
+// This is the ONLY closer. There is deliberately no second path that also
+// releases a claim (an explicit close mixed with an auto-close on
+// last-leg-completion would be two writers for one fact, which is the mistake
+// this whole line of work has twice paid to undo).
+func (s *Sim) SealDigGroup(group string) {
+	if g := s.digClaims[group]; g != nil {
+		g.sealed = true
+	}
+}
+
+// digGroupHasActiveLeg reports whether any robot is currently running a leg of
+// the group.
+func (s *Sim) digGroupHasActiveLeg(group string) bool {
 	for _, id := range s.order {
 		o := s.robots[id]
-		if o.ID == exceptRobotID || o.order == nil || o.idle {
-			continue
-		}
-		if mode, ok := s.orderLaneMode(o, lane); ok && mode == "dig" {
+		if o.order != nil && !o.idle && o.order.DigGroup == group {
 			return true
 		}
 	}
 	return false
+}
+
+// laneClaimedByOtherDigGroup reports whether a dig group OTHER than myGroup holds
+// lane — the dig's mode-exclusive hold, spanning its legs AND the gaps between
+// them.
+//
+// It replaces laneHasActiveDig, and the difference is the point. The old form
+// keyed on the ROBOT and derived the claim from "some order is active", so it
+// could not tell a sibling leg of my own dig from a foreign one, and it dropped
+// the claim the instant a leg finished. This keys on the GROUP and reads the
+// group's own claim, which outlives any single leg.
+//
+// A group of one behaves exactly as before: born sealed, so its claim is live
+// precisely while its one leg is.
+func (s *Sim) laneClaimedByOtherDigGroup(lane, myGroup string) bool {
+	holder := s.digClaimHolder(lane)
+	return holder != "" && holder != myGroup
+}
+
+// digClaimHolder returns the ONE dig group holding lane, or "" if none.
+//
+// At most one, by claim order: several groups may want a lane, and the earliest
+// live claim holds it while the rest wait at the mouth. Symmetric claims would
+// deadlock the lane — each group seeing the other's and neither entering — which
+// is what the two-different-digs case found. Production is a first-acquirer-wins
+// row (AcquireLanes refuses the second dig and the planner queues it); this is
+// the same rule.
+//
+// A claim is live while its group is unsealed OR has a leg running, so it spans
+// the gaps between legs and ends when a sealed group finishes.
+func (s *Sim) digClaimHolder(lane string) string {
+	holder, best := "", 0
+	for name, g := range s.digClaims {
+		if !g.lanes[lane] {
+			continue
+		}
+		if g.sealed && !s.digGroupHasActiveLeg(name) {
+			continue // finished: claim released
+		}
+		if holder == "" || g.seq < best {
+			holder, best = name, g.seq
+		}
+	}
+	return holder
 }
 
 // pickingTarget reports whether the robot's current block is a pickup AT slot —
@@ -586,7 +749,17 @@ func (s *Sim) admitToLane(r *Robot, next cell) bool {
 	// collide. So an active dig claims its lane for the lifetime of the order, not
 	// just the ticks its robot is physically inside. (The dig itself is admitted by
 	// the same-origin/mode logic below; only OTHERS are kept out here.)
-	if myMode != "dig" && s.laneHasActiveDig(lane, r.ID) {
+	// NO myMode != "dig" GUARD. There used to be one, and it left a hole: a
+	// FOREIGN dig skipped the claim check entirely and was caught only by the
+	// occupant loop below — which sees nothing while the holding dig is out on a
+	// parking leg. Two digs could interleave on one lane. It was latent only
+	// because nothing submitted two digs to one lane; groups make it reachable,
+	// so the claim check now applies to dig entrants of a different group too.
+	myGroup := ""
+	if r.order != nil {
+		myGroup = r.order.DigGroup
+	}
+	if s.laneClaimedByOtherDigGroup(lane, myGroup) {
 		return false
 	}
 
