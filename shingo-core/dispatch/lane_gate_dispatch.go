@@ -360,7 +360,7 @@ func (d *Dispatcher) dispatchGatedRetrieve(order *orders.Order, target laneGateT
 	// The valve. If the lane is safe now (no dig, bin reachable), append the tail back
 	// to back with the create so the robot never dwells. Else leave it staged for the
 	// evaluator to release on dig completion.
-	park, cause, err := d.laneGateRetrieveCause(target.lane, order, sourceNode)
+	park, cause, err := d.laneGateRetrieveCause(target.lane, order)
 	if err != nil {
 		log.Printf("lane gate: retrieve order %d classifier errored (%v) — leaving staged for the evaluator", order.ID, err)
 		return vendorOrderID, nil

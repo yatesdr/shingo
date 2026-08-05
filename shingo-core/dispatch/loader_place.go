@@ -245,6 +245,53 @@ func applyDeliveryNode(db *store.DB, order *orders.Order, node string) error {
 	return nil
 }
 
+// applySourceNode is applyDeliveryNode's pickup-side twin: it updates
+// source_node and patches the FIRST pickup step in steps_json in the same
+// breath, so a re-pointed order and the blocks it is about to emit cannot
+// disagree. Used by the lane gate when a dig relocates a dwelling retrieve's
+// bin (rebindGatedPickup).
+//
+// First pickup forward, where applyDeliveryNode takes the last dropoff
+// backward: both pick the step the order's own leg owns. A gated retrieve's
+// plan is [wait, pickup, dropoff], and a multi-leg plan's later pickups belong
+// to legs this rebind is not speaking for.
+//
+// Steps-patch failures are logged, not returned, for the same reason
+// applyDeliveryNode swallows them: source_node is the durable fact and the row
+// is already correct; a stale steps_json is a display and replay concern that
+// the next resolve corrects.
+func applySourceNode(db *store.DB, order *orders.Order, node string) error {
+	if err := db.UpdateOrderSourceNode(order.ID, node); err != nil {
+		return err
+	}
+	order.SourceNode = node
+	if order.StepsJSON == "" {
+		return nil
+	}
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
+		log.Printf("dispatch: applySourceNode order %d → %s: steps_json unparseable: %v", order.ID, node, err)
+		return nil
+	}
+	for i := range steps {
+		if steps[i].Action == protocol.ActionPickup {
+			steps[i].Node = node
+			break
+		}
+	}
+	patched, err := json.Marshal(steps)
+	if err != nil {
+		log.Printf("dispatch: applySourceNode order %d → %s: re-marshal: %v", order.ID, node, err)
+		return nil
+	}
+	if uErr := db.UpdateOrderStepsJSON(order.ID, string(patched)); uErr != nil {
+		log.Printf("dispatch: applySourceNode steps_json order %d → %s: %v", order.ID, node, uErr)
+		return nil
+	}
+	order.StepsJSON = string(patched)
+	return nil
+}
+
 // setParkDestination commits the chosen dropoff for a dedicated-loader
 // return leg. Delegates to applyDeliveryNode to keep delivery_node and
 // steps_json in sync; also makes the order in-flight to the chosen node
