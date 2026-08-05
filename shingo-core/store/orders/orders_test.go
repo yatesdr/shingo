@@ -626,6 +626,28 @@ func TestCountByDeliveryNode(t *testing.T) {
 		t.Errorf("CountInFlightByDeliveryNode(LINE1-IN) = %d, want 2", inFlight)
 	}
 
+	// Live is the same status lens as Active (non-terminal), so it agrees at 3
+	// — but the load-bearing distinction is that Live SEES the queued row
+	// InFlight is blind to. That blindness is the whole of Springfield
+	// 2026-08-03: the only guard against re-asking for a carrier was InFlight,
+	// which could not see the orders it had just created because they were still
+	// `queued`, so each evaluation looked like the first and 241 duplicates
+	// piled up. Live includes that queued row. If this ever drifts back to
+	// excluding queued, the dedup in ReplenishLoader stops deduping.
+	live, err := orders.CountLiveByDeliveryNode(db, "LINE1-IN")
+	if err != nil {
+		t.Fatalf("CountLiveByDeliveryNode: %v", err)
+	}
+	if live != 3 {
+		t.Errorf("CountLiveByDeliveryNode(LINE1-IN) = %d, want 3 (includes the queued row InFlight cannot see)", live)
+	}
+	if live != active {
+		t.Errorf("CountLiveByDeliveryNode = %d but CountActiveByDeliveryNode = %d; they share a status lens and must agree", live, active)
+	}
+	if live == inFlight {
+		t.Errorf("Live = InFlight = %d; Live must include queued where InFlight excludes it — this is the dedup contract", live)
+	}
+
 	// Unknown node returns 0, no error.
 	zero, err := orders.CountActiveByDeliveryNode(db, "DOES-NOT-EXIST")
 	if err != nil {
@@ -633,6 +655,73 @@ func TestCountByDeliveryNode(t *testing.T) {
 	}
 	if zero != 0 {
 		t.Errorf("unknown node count = %d, want 0", zero)
+	}
+}
+
+// TestCountLiveByOrigin pins the sizing half of the replenishment bound: a
+// demand episode's OWN live orders, counted by origin. It shares the
+// queued-inclusion contract with CountLiveByDeliveryNode and adds the origin
+// scoping — and the fact that a blank origin matches nothing, which is what
+// keeps an unattributed request from being bounded by someone else's episode.
+func TestCountLiveByOrigin(t *testing.T) {
+	t.Parallel()
+	d := testdb.Open(t)
+	db := d.DB
+
+	const episode = "6f1d3a9c-0b52-4c8e-9a71-2d5f8e0c4b31"
+
+	mk := func(uuid, status, origin string) int64 {
+		o := newPendingOrder(uuid)
+		o.Status = protocol.Status(status)
+		o.DeliveryNode = "LINE1-IN"
+		o.OriginID = origin
+		if err := orders.Create(db, o); err != nil {
+			t.Fatalf("Create %s: %v", uuid, err)
+		}
+		return o.ID
+	}
+	mk("ep-q", "queued", episode)     // this episode, queued — counts
+	mk("ep-d", "dispatched", episode) // this episode, in flight — counts
+	mk("ep-x", "cancelled", episode)  // this episode, terminal — excluded
+	// A different episode and an unattributed order must not count for this one.
+	mk("other", "dispatched", "deadbeef-0000-0000-0000-000000000000") // different episode
+	mk("none", "dispatched", "")                                      // unattributed
+
+	got, err := orders.CountLiveByOrigin(db, episode)
+	if err != nil {
+		t.Fatalf("CountLiveByOrigin: %v", err)
+	}
+	if got != 2 {
+		t.Errorf("CountLiveByOrigin(%s) = %d, want 2 (queued + dispatched, terminal and other-episode excluded)", episode, got)
+	}
+
+	// The queued row MUST count — same contract as the per-node live count, and
+	// the reason the sizing bound can see an outstanding order that has not yet
+	// sourced. Pin it directly so a future "cleanup" cannot reintroduce the
+	// queued exclusion that broke the bound.
+	o := newPendingOrder("ep-q2")
+	o.Status = protocol.StatusQueued
+	o.DeliveryNode = "LINE1-IN"
+	o.OriginID = episode
+	if err := orders.Create(db, o); err != nil {
+		t.Fatalf("Create ep-q2: %v", err)
+	}
+	if got, err := orders.CountLiveByOrigin(db, episode); err != nil {
+		t.Fatalf("CountLiveByOrigin after queued insert: %v", err)
+	} else if got != 3 {
+		t.Errorf("after adding a queued order, CountLiveByOrigin = %d, want 3 — queued must count or the dedup bound is blind to its own orders", got)
+	}
+
+	// An unknown (but well-formed) origin matches nothing: 0, no error. The
+	// empty-string case is deliberately NOT tested here — origin_id is a UUID
+	// column and rejects "" with an ERROR, which is exactly why the caller
+	// (episodeOutstanding) guards the blank case before calling. Pinning the
+	// error at this layer would duplicate that guard; pinning the clean-empty
+	// result on a valid-but-unknown UUID is the contract this function owns.
+	if got, err := orders.CountLiveByOrigin(db, "00000000-0000-0000-0000-000000000000"); err != nil {
+		t.Fatalf("CountLiveByOrigin(unknown): %v", err)
+	} else if got != 0 {
+		t.Errorf("CountLiveByOrigin(unknown UUID) = %d, want 0", got)
 	}
 }
 
