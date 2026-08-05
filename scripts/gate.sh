@@ -477,6 +477,18 @@ stop_shared_pg() {
 # because 4 is this host's answer, not everyone's — on an 8-core laptop the same
 # rule gives 2, and on CI's 2-core runners it gives 1, which is where a
 # hardcoded 4 would thrash hardest.
+# AD-HOC `go test -tags=docker ./...` IS NOT THIS, AND WILL LIE TO YOU.
+#
+# Run by hand it uses the DEFAULT -p, which is GOMAXPROCS — 20 on the dev host
+# against the 4 below. With $SHINGO_TEST_PG set, that is twenty packages' worth
+# of connection pools, each running up to twenty parallel tests, all on one
+# server. OBSERVED: three tests failing at 48-74s that pass in isolation at
+# 25s. Nothing was wrong with them; they are timing-sensitive and lost their
+# margin under load, the same way TestPollerStopHaltsPolling did.
+#
+# So: the gate is the runner to trust. A hand-run of one package is fine and
+# fast — it is `./...` at default parallelism that manufactures failures. If
+# you want the whole suite by hand, pass the same -p this computes.
 docker_p() {
   local cores
   cores="$(nproc 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-4}")"
