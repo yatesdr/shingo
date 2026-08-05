@@ -529,32 +529,42 @@ func (e *Engine) wireEventHandlers() {
 	}, EventGraceExpired)
 
 	// ── Notifications (email alerts) ──────────────────────────────
-	if e.notifier.Enabled() {
-		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFaultedEvent]) {
-			ev := evt.Payload
-			robotID := lookupRobotID(e, ev.OrderID)
-			_ = e.notifier.Send(
-				notify.FaultSubject(),
-				notify.FaultAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.Reason, robotID),
-			)
-		}, EventOrderFaulted)
+	// Subscribers are always registered so toggling the enabled checkbox
+	// at runtime takes effect without a restart. Each handler checks
+	// Enabled() at dispatch time.
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFaultedEvent]) {
+		if !e.notifier.Enabled() {
+			return
+		}
+		ev := evt.Payload
+		robotID := lookupRobotID(e, ev.OrderID)
+		_ = e.notifier.Send(
+			notify.FaultSubject(),
+			notify.FaultAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.Reason, robotID),
+		)
+	}, EventOrderFaulted)
 
-		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
-			ev := evt.Payload
-			robotID := lookupRobotID(e, ev.OrderID)
-			_ = e.notifier.Send(
-				notify.FailSubject(),
-				notify.FailAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.ErrorCode, ev.Detail, robotID),
-			)
-		}, EventOrderFailed)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
+		if !e.notifier.Enabled() {
+			return
+		}
+		ev := evt.Payload
+		robotID := lookupRobotID(e, ev.OrderID)
+		_ = e.notifier.Send(
+			notify.FailSubject(),
+			notify.FailAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.ErrorCode, ev.Detail, robotID),
+		)
+	}, EventOrderFailed)
 
-		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, GraceExpiredEvent]) {
-			ev := evt.Payload
-			robotID := lookupRobotID(e, ev.OrderID)
-			_ = e.notifier.Send(
-				notify.GraceExpiredSubject(),
-				notify.GraceExpiredAlert(ev.OrderID, ev.VendorOrderID, robotID),
-			)
-		}, EventGraceExpired)
-	}
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, GraceExpiredEvent]) {
+		if !e.notifier.Enabled() {
+			return
+		}
+		ev := evt.Payload
+		robotID := lookupRobotID(e, ev.OrderID)
+		_ = e.notifier.Send(
+			notify.GraceExpiredSubject(),
+			notify.GraceExpiredAlert(ev.OrderID, ev.VendorOrderID, robotID),
+		)
+	}, EventGraceExpired)
 }

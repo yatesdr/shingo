@@ -226,14 +226,17 @@
         {{range $i, $r := .Config.Notifications.Recipients}}
         <div class="flex gap-1 mb-1 notif-recipient-row">
           <input type="email" name="notif_recipient_{{$i}}" value="{{$r}}" placeholder="user@company.com" style="flex:2">
-          <button type="button" class="btn btn-danger btn-sm" data-action="removeNotifRecipient">-</button>
+          <button type="button" class="btn btn-danger btn-sm" data-action="removeNotifRecipient">Delete</button>
         </div>
         {{end}}
       </div>
       <button type="button" class="btn btn-sm mb-1" data-action="addNotifRecipient">+ Add Recipient</button>
       <div class="flex gap-1 mb-1">
         <button type="submit" class="btn btn-primary btn-sm">Save</button>
+        <button type="button" class="btn btn-sm" data-action="clearNotifications">Clear</button>
         <button type="button" class="btn btn-sm" id="btn-test-email" data-action="testNotifEmail">Send Test Email</button>
+        <button type="button" class="btn btn-sm" id="btn-test-fault" data-action="testNotifAlert" data-alert-type="fault">Test Fault Alert</button>
+        <button type="button" class="btn btn-sm" id="btn-test-fail" data-action="testNotifAlert" data-alert-type="fail">Test Fail Alert</button>
       </div>
       <div id="notif-test-result" style="display:none;margin-top:0.5rem;" class="mb-1"></div>
     </form>

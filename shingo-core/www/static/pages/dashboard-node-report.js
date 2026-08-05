@@ -3,8 +3,6 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 (function () {
   var body = document.body;
   var dashboardId = body.getAttribute('data-dashboard-id');
-  var demoParam = new URLSearchParams(window.location.search).get('demo');
-  var demoQ = demoParam ? '&demo=' + encodeURIComponent(demoParam) : '';
   var MAX_ROWS = 8;
 
   function tickClock() {
@@ -150,7 +148,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   }
 
   function load() {
-    fetch('/api/dashboards/' + encodeURIComponent(dashboardId) + '/node-report?t=' + Date.now() + demoQ)
+    fetch('/api/dashboards/' + encodeURIComponent(dashboardId) + '/node-report?t=' + Date.now())
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();

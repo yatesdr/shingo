@@ -311,11 +311,6 @@ func (h *Handlers) apiStations(w http.ResponseWriter, r *http.Request) {
 // loader referenced by a node-report dashboard's config_json. Public: the
 // chromeless kiosk reads it.
 func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("demo") == "1" {
-		h.jsonOK(w, demoNodeReport())
-		return
-	}
-
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
@@ -602,70 +597,4 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Cache-Control", "no-store")
 	h.jsonOK(w, resp)
-}
-
-func demoNodeReport() map[string]any {
-	nodes := []struct {
-		name  string
-		group string
-		pc    string
-		occ   bool
-		uop   int
-		active bool
-	}{
-		{"STATION-01", "Lane 1", "PANEL-A-L", true, 24, true},
-		{"STATION-02", "Lane 1", "PANEL-A-R", true, 22, true},
-		{"STATION-03", "Lane 1", "PANEL-B-L", true, 20, true},
-		{"STATION-04", "Lane 2", "", false, 0, false},
-		{"STATION-05", "Lane 2", "BRACKET-F", true, 18, true},
-		{"STATION-06", "Lane 2", "BRACKET-R", true, 16, true},
-		{"STATION-07", "Lane 3", "WELD-WIRE-1", true, 30, true},
-		{"STATION-08", "Lane 3", "WELD-WIRE-2", true, 28, true},
-		{"STATION-09", "Lane 3", "SEAL-STRIP", true, 12, true},
-		{"STATION-10", "Lane 4", "", false, 0, false},
-		{"STATION-11", "Lane 4", "CLIP-SET", true, 14, true},
-		{"STATION-12", "Lane 4", "MOUNT-BKT", true, 26, false},
-		{"STATION-13", "Lane 5", "HINGE-ASSY", true, 20, false},
-		{"STATION-14", "Lane 5", "TRIM-PNL", true, 18, false},
-		{"STATION-15", "Lane 5", "", false, 0, false},
-		{"STATION-16", "Lane 6", "CAVITY-MOLD", true, 8, false},
-		{"STATION-17", "Lane 6", "OVERLAY-S", true, 10, false},
-		{"STATION-18", "Lane 6", "SHIM-KIT", true, 22, false},
-		{"STATION-19", "Lane 7", "SPACER-BLK", true, 16, false},
-		{"STATION-20", "Lane 7", "", false, 0, false},
-		{"STATION-21", "Lane 7", "RETAINER", true, 24, false},
-		{"STATION-22", "Lane 8", "BRACE-L", true, 12, false},
-		{"STATION-23", "Lane 8", "BRACE-R", true, 14, false},
-		{"STATION-24", "Lane 8", "END-CAP", true, 20, false},
-	}
-	rows := make([]map[string]any, 0, len(nodes))
-	for _, n := range nodes {
-		row := map[string]any{
-			"node_name":     n.name,
-			"group_name":    n.group,
-			"occupied":      n.occ,
-			"payload_code":  n.pc,
-			"uop_remaining":  n.uop,
-			"is_active_style": n.active,
-		}
-		if !n.occ && n.pc == "" {
-			delete(row, "payload_code")
-		}
-		rows = append(rows, row)
-	}
-	transit := []map[string]any{
-		{"payload_code": "PANEL-A-L", "dest_node": "STATION-01", "source_node": "", "uop_remaining": 24, "is_empty": false, "is_partial": false},
-		{"payload_code": "SEAL-STRIP", "dest_node": "STATION-09", "source_node": "", "uop_remaining": 20, "is_empty": false, "is_partial": false},
-		{"payload_code": "", "dest_node": "", "source_node": "STATION-07", "uop_remaining": 0, "is_empty": true, "is_partial": false},
-		{"payload_code": "BRACKET-F", "dest_node": "", "source_node": "STATION-05", "uop_remaining": 7, "is_empty": false, "is_partial": true},
-		{"payload_code": "", "dest_node": "", "source_node": "STATION-13", "uop_remaining": 0, "is_empty": true, "is_partial": false},
-		{"payload_code": "WELD-WIRE-2", "dest_node": "STATION-08", "source_node": "", "uop_remaining": 28, "is_empty": false, "is_partial": false},
-	}
-	return map[string]any{
-		"loader_name":   "Demo HFDS Loader",
-		"layout":        "dedicated_positions",
-		"homes_count":   len(nodes),
-		"rows":          rows,
-		"transit":       transit,
-	}
 }
