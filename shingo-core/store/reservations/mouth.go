@@ -271,6 +271,33 @@ func ListDigHolds(q Queryer) ([]DigHold, error) {
 	return out, rows.Err()
 }
 
+// DigHoldOwner returns the order holding a dig on laneID, or 0 if none — the
+// single-lane read behind LaneLock.IsLocked / LockedBy.
+//
+// One row, not a loop: the callers that use it (the lane gate's park decision,
+// the expose-mode extension's ownership check) each ask about ONE lane they
+// already have in hand. The scanning callers do not come through here at all —
+// they filter dig-held lanes out of their candidate query instead.
+func DigHoldOwner(q Queryer, laneID int64) (int64, error) {
+	rows, err := q.Query(
+		`SELECT order_id FROM reservations
+		 WHERE resource_kind='mouth' AND node_id=$1 AND mode=$2 AND state IN ('pending','confirmed')
+		 ORDER BY order_id
+		 LIMIT 1`, laneID, string(ModeDig))
+	if err != nil {
+		return 0, fmt.Errorf("reservations dig-hold-owner: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return 0, rows.Err() // no dig on this lane
+	}
+	var owner int64
+	if err := rows.Scan(&owner); err != nil {
+		return 0, fmt.Errorf("reservations dig-hold-owner scan: %w", err)
+	}
+	return owner, rows.Err()
+}
+
 // laneDepth1Exempt reports whether laneID is a single-slot (depth-1) lane, which
 // is exempt from mouth rows: its one slot's reservation already serializes it
 // (§8). Counts the lane's real (non-synthetic) child slots — a lane with 0 or 1

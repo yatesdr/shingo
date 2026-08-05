@@ -33,16 +33,17 @@ import (
 //
 // ── Why nobody noticed ────────────────────────────────────────────────────
 //
-// The in-memory map is still the grant authority, and the group resolver skips
-// dig-locked lanes from memory (five sites), so no competing order ever binds to
-// the lane. The row is not load-bearing for exclusion today — it is a mirror.
-// And the tripwire that would have reported the divergence, LaneLock.
-// CheckDivergence, has no production caller: its only two call sites are in
-// lane_lock_mirror_test.go. The row vanishes, memory keeps working, nothing logs.
+// At the time, an in-memory map was the grant authority and the group resolver
+// skipped dig-locked lanes from it, so no competing order ever bound to the
+// lane. The row was a mirror, not load-bearing for exclusion. And the tripwire
+// that would have reported the divergence, LaneLock.CheckDivergence, had no
+// production caller at all. The row vanished, memory kept working, nothing
+// logged.
 //
-// That is exactly why this test exists rather than a field measurement. The
-// mirror is about to become the authority; a hold that silently dies at leg one
-// is survivable only while nothing depends on it.
+// That is why this test exists rather than a field measurement — and why it
+// stays now that the map is gone. The row IS the lock today, so a hold that
+// dies at leg one is no longer invisible: it is a lane nothing believes is
+// claimed, with a dig still working it.
 //
 // The early release itself is CORRECT for plain orders — an outbound hold should
 // drop when the bin leaves the lane, an inbound hold when the bin lands. It is
@@ -85,10 +86,15 @@ func TestDigRow_SurvivesChildPickup(t *testing.T) {
 			"laneOwnerFor to the PARENT, and releaseOrderLaneFor drops any mouth row on that lane regardless "+
 			"of mode. Hold A must span the whole reshuffle — every later leg is now running unclaimed.", got, lane)
 	}
-	if d := ll.CheckDivergence(); d != 0 {
-		t.Fatalf("divergence after the first child's pickup = %d, want 0 — memory still holds the lane "+
-			"but the row is gone, which is precisely the mismatch CheckDivergence exists to report and "+
-			"which nothing in production is currently asking it about", d)
+	// And the lock still reports the lane as held. With the rows as the sole
+	// authority this is the same assertion as the count above rather than a
+	// second opinion — which is the point: there is no longer a second place for
+	// the answer to differ.
+	if !ll.IsLocked(lane) {
+		t.Fatal("the lane must still be held after the first child's pickup — the dig is not over")
+	}
+	if got := ll.LockedBy(lane); got != parent.ID {
+		t.Fatalf("lane owner = %d, want the compound parent %d", got, parent.ID)
 	}
 }
 

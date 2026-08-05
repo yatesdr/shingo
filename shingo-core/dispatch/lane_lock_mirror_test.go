@@ -52,7 +52,7 @@ func digRowCount(t *testing.T, db *store.DB, laneID int64) int {
 
 // TestLaneLockMirror_WritesAndClearsDigRow: a db-backed lane lock mirrors its
 // hold to a durable dig mouth row on TryLock and clears it on Unlock, staying in
-// sync (CheckDivergence == 0) throughout.
+// sync throughout.
 func TestLaneLockMirror_WritesAndClearsDigRow(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -67,16 +67,10 @@ func TestLaneLockMirror_WritesAndClearsDigRow(t *testing.T) {
 	if got := digRowCount(t, db, lane); got != 1 {
 		t.Fatalf("dig rows after TryLock = %d, want 1 (mirror)", got)
 	}
-	if d := ll.CheckDivergence(); d != 0 {
-		t.Fatalf("divergence after TryLock = %d, want 0", d)
-	}
 
 	ll.Unlock(lane, o.ID)
 	if got := digRowCount(t, db, lane); got != 0 {
 		t.Fatalf("dig rows after Unlock = %d, want 0 (mirror cleared)", got)
-	}
-	if d := ll.CheckDivergence(); d != 0 {
-		t.Fatalf("divergence after Unlock = %d, want 0", d)
 	}
 }
 
@@ -103,10 +97,18 @@ func TestLaneLockMirror_UnlockByOwnerClearsRows(t *testing.T) {
 	}
 }
 
-// TestLaneLockRestart_DigHoldSurvives simulates a Core restart mid-dig: the
-// durable dig row outlives the in-memory map, RestoreLaneHolds rebuilds the hold
-// at boot (no per-order re-acquire, no lost-race window), and a competitor stays
-// out afterward — in all three modes and through the in-memory path.
+// TestLaneLockRestart_DigHoldSurvives simulates a Core restart mid-dig.
+//
+// This test got SHORTER when the in-memory map was deleted, and the deletion is
+// why. It used to seed a durable row, build a fresh dispatcher, assert its map
+// was empty, call RestoreLaneHolds, and then assert the hold was back. All of
+// that was scaffolding around a rebuild step — and a rebuild step only exists
+// because there was a second place for the answer to live.
+//
+// There is one place now. A fresh dispatcher sees the lane as held immediately,
+// because the row never went anywhere. The property the old test was reaching
+// for — a crash cannot drop a lane hold — is asserted directly instead of
+// through the machinery that used to restore it.
 func TestLaneLockRestart_DigHoldSurvives(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -120,31 +122,23 @@ func TestLaneLockRestart_DigHoldSurvives(t *testing.T) {
 		t.Fatalf("seed dig hold: %v", err)
 	}
 
-	// Fresh Core boot: a new dispatcher whose in-memory lock map starts empty
-	// (NewDispatcher does not restore — the engine does, at boot).
+	// Fresh Core boot. No restore call — there is nothing to restore.
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	if d.laneLock.IsLocked(lane) {
-		t.Fatal("fresh dispatcher must start with an empty lock map (pre-restore)")
-	}
-
-	if err := d.RestoreLaneHolds(); err != nil {
-		t.Fatalf("RestoreLaneHolds: %v", err)
-	}
 	if !d.laneLock.IsLocked(lane) {
-		t.Fatal("lane not restored as held after RestoreLaneHolds")
+		t.Fatal("a fresh dispatcher must see the lane as held: the dig row outlived the process")
 	}
 	if got := d.laneLock.LockedBy(lane); got != parent.ID {
-		t.Fatalf("restored owner = %d, want parent %d", got, parent.ID)
+		t.Fatalf("owner after restart = %d, want parent %d", got, parent.ID)
 	}
-	// A competitor stays out — the durable dig row excludes every mode.
+
+	// A competitor stays out — the dig row excludes every mode.
 	for _, mode := range []reservations.Mode{reservations.ModeInbound, reservations.ModeOutbound, reservations.ModeDig} {
 		if err := reservations.AcquireLanes(db.DB, competitor.ID, mode, "test", lane); err != reservations.ErrReservationConflict {
-			t.Fatalf("competitor %s into restored dig lane: want conflict, got %v", mode, err)
+			t.Fatalf("competitor %s into a dig-held lane: want conflict, got %v", mode, err)
 		}
 	}
-	// The in-memory competitor path is refused too.
 	if d.laneLock.TryLock(lane, competitor.ID) {
-		t.Fatal("competitor TryLock on restored dig lane must fail")
+		t.Fatal("competitor TryLock on a dig-held lane must fail")
 	}
 }
 

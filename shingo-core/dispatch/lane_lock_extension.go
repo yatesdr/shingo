@@ -208,18 +208,6 @@ func (d *Dispatcher) HandleComplexParentTerminalForLaneLock(complexParentID int6
 		complexParentID, entry.laneID)
 }
 
-// RestoreLaneHolds rebuilds the in-memory lane-lock map from the durable dig
-// mouth rows at Core boot, making the rows the restart authority. Run once,
-// before RecoverPendingLaneExtensions and before any dispatch. A crash can no
-// longer drop a lane hold, and the old per-order re-acquire — with its lost-race
-// window — is gone.
-func (d *Dispatcher) RestoreLaneHolds() error {
-	if d.laneLock == nil {
-		return nil
-	}
-	return d.laneLock.RebuildFromRows()
-}
-
 // RecoverPendingLaneExtensions runs at Core boot. Scans the
 // pending_lane_extensions table; for each row whose complex parent
 // is still in a non-terminal status, re-registers the in-memory

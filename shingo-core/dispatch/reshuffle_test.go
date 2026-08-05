@@ -190,46 +190,6 @@ func TestPlanReshuffle_NoShuffleSlots(t *testing.T) {
 	_ = grp // used to pass groupID
 }
 
-func TestLaneLock_PreventsConcurrent(t *testing.T) {
-	t.Parallel()
-	ll := NewLaneLock()
-
-	var laneID int64 = 42
-
-	// TryLock(lane, order 1) -> should succeed
-	if !ll.TryLock(laneID, 1) {
-		t.Fatal("TryLock(lane, order 1) = false, want true")
-	}
-
-	// TryLock(lane, order 2) -> should fail
-	if ll.TryLock(laneID, 2) {
-		t.Fatal("TryLock(lane, order 2) = true, want false (already locked)")
-	}
-
-	// IsLocked -> true
-	if !ll.IsLocked(laneID) {
-		t.Error("IsLocked = false, want true")
-	}
-
-	// LockedBy -> order 1
-	if got := ll.LockedBy(laneID); got != 1 {
-		t.Errorf("LockedBy = %d, want 1", got)
-	}
-
-	// Unlock
-	ll.Unlock(laneID, 1)
-
-	// IsLocked -> false
-	if ll.IsLocked(laneID) {
-		t.Error("IsLocked = true after Unlock, want false")
-	}
-
-	// TryLock(lane, order 3) -> should succeed
-	if !ll.TryLock(laneID, 3) {
-		t.Fatal("TryLock(lane, order 3) = false after unlock, want true")
-	}
-}
-
 func TestCompoundOrderCreation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

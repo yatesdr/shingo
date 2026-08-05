@@ -2,183 +2,122 @@ package binresolver
 
 import (
 	"database/sql"
-	"fmt"
+	"errors"
 	"log"
-	"sync"
 
 	"shingocore/store/reservations"
 )
 
 // LaneLock prevents concurrent reshuffle operations on the same lane.
 //
-// The in-memory map is the fast read path for IsLocked/LockedBy (called inside
-// the group resolver's slot-picking scans) and is authoritative for grant
-// decisions. When constructed with a db, every grant and release is ALSO
-// write-through to a durable dig mouth reservation row (owner = the complex
-// parent) — the dual-write that lets a later phase make the rows the restart-
-// durable authority. A nil db (the memory-only constructor) skips the mirror,
-// so unit tests exercise the map without a database.
+// THE DURABLE ROW IS THE LOCK. There is no in-memory map: a lane is held iff a
+// dig mouth reservation row exists for it, and every question and every change
+// goes to that row. LaneLock is a named wrapper over four reads and writes, kept
+// because "does a dig hold this lane" reads better than an inline query at the
+// four call sites that ask it.
+//
+// It used to be a map with the rows mirrored alongside, memory authoritative for
+// the grant. That arrangement had TWO WRITERS FOR ONE FACT, and it failed
+// exactly the way two writers do: the per-block early release deleted a dig's
+// row at its first unbury leg while memory went on believing the lane was held,
+// and nothing noticed because memory was the one being asked. The fix for the
+// deletion was a mode exemption; the fix for the CLASS is this — one writer.
+//
+// The grant decision is now AcquireLanes' transaction, which takes a
+// transaction-scoped advisory lock on the lane before reading its rows. That is
+// strictly stronger than the mutex it replaces: the mutex serialized one
+// process, the advisory lock serializes every writer against the same row.
+//
+// Two consequences worth knowing at the call sites:
+//
+//   - A dig can now be refused by a NON-dig hold. The map only ever knew about
+//     digs, so a lane an ordinary order was inside looked free to it. Rows know
+//     about every mode, and AcquireLanes refuses dig-versus-anything. This is a
+//     behaviour change and it is the safe direction.
+//   - Depth-1 lanes take no mouth row at all (AcquireLanes exempts them — a
+//     single-slot lane is already serialized by its slot reservation), so
+//     TryLock reports success and IsLocked then reports false. Digs never touch
+//     depth-1 lanes: nothing can be buried in a lane with one slot.
 type LaneLock struct {
-	mu    sync.Mutex
-	lanes map[int64]int64 // laneID -> orderID
-	db    *sql.DB         // nil => memory-only (no durable mirror)
+	db *sql.DB
 }
 
-// NewLaneLock constructs a memory-only lane lock (no durable mirror). Used by
-// tests that exercise the map logic directly.
-func NewLaneLock() *LaneLock {
-	return &LaneLock{lanes: make(map[int64]int64)}
-}
-
-// NewLaneLockWithDB constructs a lane lock whose holds are mirrored to durable
-// dig mouth rows — the production constructor.
+// NewLaneLockWithDB constructs the lane lock. The db is not optional — the rows
+// ARE the lock, so there is nothing for a memory-only variant to be.
 func NewLaneLockWithDB(db *sql.DB) *LaneLock {
-	return &LaneLock{lanes: make(map[int64]int64), db: db}
+	return &LaneLock{db: db}
 }
 
-// mirrorReservedBy tags the dig mouth rows the lane lock writes, for forensics.
+// reservedBy tags the dig mouth rows the lane lock writes, for forensics.
 const mirrorReservedBy = "lanelock"
 
-// TryLock attempts to lock a lane for a given order. Returns false if already locked.
+// TryLock attempts to lock a lane for a given order. Returns false if the lane
+// is already held — by another dig, or by an ordinary order's mouth hold.
 //
-// With a db, the grant is mirrored to a durable dig mouth row. The in-memory map
-// stays authoritative for the grant DECISION (this dual-write phase): a mirror
-// conflict or error is logged as a divergence but does not change the answer, so
-// behavior is identical to the memory-only lock.
+// A read/write error also returns false: FAIL CLOSED. Refusing to start a dig is
+// recoverable (the caller queues and retries); starting one on a lane whose
+// state could not be established is not.
 func (l *LaneLock) TryLock(laneID, orderID int64) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if _, ok := l.lanes[laneID]; ok {
-		return false
+	err := reservations.AcquireLanes(l.db, orderID, reservations.ModeDig, mirrorReservedBy, laneID)
+	if err == nil {
+		return true
 	}
-	if l.db != nil {
-		if err := reservations.AcquireLanes(l.db, orderID, reservations.ModeDig, mirrorReservedBy, laneID); err != nil {
-			log.Printf("lanelock: mirror acquire diverged for lane %d order %d: %v (memory grants; rows out of sync)",
-				laneID, orderID, err)
-		}
+	if !errors.Is(err, reservations.ErrReservationConflict) {
+		log.Printf("lanelock: acquire failed for lane %d order %d: %v (treated as held)", laneID, orderID, err)
 	}
-	l.lanes[laneID] = orderID
-	return true
+	return false
 }
 
-// Unlock releases the lane IF it is held by orderID. A release aimed at a lane
-// held by a DIFFERENT order — the G3 foreign-release class — is REFUSED and
-// logged; a caller passing the wrong owner can no longer free another order's
-// lane. Releasing an unheld lane stays a harmless no-op. The structural fix
-// (owner-scoped reservation rows) arrives at P2; this owner-check kills the class
-// for every caller during the migration window and surfaces any that still pass
-// the wrong owner.
+// Unlock releases the lane IF it is held by orderID. Owner-scoping is structural
+// rather than checked: ReleaseLane's WHERE names the owner, so a release aimed
+// at another order's lane deletes nothing. Releasing an unheld lane is a no-op.
+//
+// This is the ONE path allowed to drop a dig claim — ending the dig is its job.
+// The per-block early handoff goes through ReleaseLaneHandoff, which exempts the
+// dig mode precisely so it cannot do this by accident.
 func (l *LaneLock) Unlock(laneID, orderID int64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if owner, ok := l.lanes[laneID]; ok && owner != orderID {
-		log.Printf("lanelock: refused foreign release of lane %d by order %d (held by %d)",
-			laneID, orderID, owner)
-		return
-	}
-	delete(l.lanes, laneID)
-	if l.db != nil {
-		// ReleaseLane is owner-scoped, so the mirror delete removes exactly this
-		// order's dig row (and heals a divergence where a row lingers with no
-		// memory hold).
-		if err := reservations.ReleaseLane(l.db, orderID, laneID); err != nil {
-			log.Printf("lanelock: mirror release failed for lane %d order %d: %v", laneID, orderID, err)
-		}
+	if err := reservations.ReleaseLane(l.db, orderID, laneID); err != nil {
+		log.Printf("lanelock: release failed for lane %d order %d: %v", laneID, orderID, err)
 	}
 }
 
 // UnlockByOwner releases any lane held by the given order, looked up by owner
 // rather than lane id. Used on failure/cleanup paths where the caller knows the
-// owning order but can't resolve the lane id from the order's children (e.g. a
+// owning order but cannot resolve the lane id from the order's children (e.g. a
 // DB read failed or the children are gone). Safe no-op if the order holds none.
 func (l *LaneLock) UnlockByOwner(orderID int64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for laneID, owner := range l.lanes {
-		if owner == orderID {
-			delete(l.lanes, laneID)
-		}
-	}
-	if l.db != nil {
-		if err := reservations.ReleaseLanesByOwner(l.db, orderID); err != nil {
-			log.Printf("lanelock: mirror release-by-owner failed for order %d: %v", orderID, err)
-		}
+	if err := reservations.ReleaseLanesByOwner(l.db, orderID); err != nil {
+		log.Printf("lanelock: release-by-owner failed for order %d: %v", orderID, err)
 	}
 }
 
-// IsLocked returns true if the lane is currently locked.
+// IsLocked reports whether a dig holds this lane. One row read.
+//
+// FAILS CLOSED: an unreadable lane reports LOCKED. Every caller uses this to
+// decide whether to keep out, and "I could not tell" must not read as "go
+// ahead". The scanning callers do not come through here — they filter dig-held
+// lanes out of their candidate query instead, so this is only ever asked about
+// one lane the caller already has in hand.
 func (l *LaneLock) IsLocked(laneID int64) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	_, ok := l.lanes[laneID]
-	return ok
+	owner, err := reservations.DigHoldOwner(l.db, laneID)
+	if err != nil {
+		log.Printf("lanelock: dig-hold read failed for lane %d: %v (treated as held)", laneID, err)
+		return true
+	}
+	return owner != 0
 }
 
-// LockedBy returns the order ID holding the lock, or 0 if unlocked.
+// LockedBy returns the order ID holding the dig, or 0 if unheld. One row read.
+//
+// Unlike IsLocked this returns 0 on a read error, because its callers compare
+// the result against a specific order id and a fabricated non-zero owner would
+// be a wrong ANSWER rather than a cautious one. A 0 fails those comparisons,
+// which is the cautious outcome there.
 func (l *LaneLock) LockedBy(laneID int64) int64 {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.lanes[laneID]
-}
-
-// RebuildFromRows repopulates the in-memory map from the durable dig mouth rows —
-// the boot step that makes the rows the restart authority. It REPLACES the
-// per-order re-acquire the old boot recovery did: a single bulk read cannot lose
-// a lane to a race the way a per-order TryLock could, so the old lost-race window
-// is gone. Called once at boot, before any dispatch runs. A no-op without a db.
-func (l *LaneLock) RebuildFromRows() error {
-	if l.db == nil {
-		return nil
-	}
-	holds, err := reservations.ListDigHolds(l.db)
+	owner, err := reservations.DigHoldOwner(l.db, laneID)
 	if err != nil {
-		return fmt.Errorf("lanelock rebuild: %w", err)
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.lanes = make(map[int64]int64, len(holds))
-	for _, h := range holds {
-		l.lanes[h.LaneID] = h.OrderID
-	}
-	return nil
-}
-
-// CheckDivergence compares the in-memory lane holds against the durable dig mouth
-// rows and logs any mismatch, returning the count (0 == in sync). A no-op without
-// a db. Because write-through keeps memory and rows in lock-step, a non-zero
-// result signals a mirror bug or a leaked row — a cheap standing tripwire. (A
-// depth-1 lane held in memory has no row by design, but digs never touch depth-1
-// lanes, so that benign case does not arise in practice.)
-func (l *LaneLock) CheckDivergence() int {
-	if l.db == nil {
+		log.Printf("lanelock: dig-hold read failed for lane %d: %v (reporting unheld)", laneID, err)
 		return 0
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	holds, err := reservations.ListDigHolds(l.db)
-	if err != nil {
-		log.Printf("lanelock: divergence check read failed: %v", err)
-		return 0
-	}
-	rowByLane := make(map[int64]int64, len(holds))
-	for _, h := range holds {
-		rowByLane[h.LaneID] = h.OrderID
-	}
-	var diverged int
-	for laneID, owner := range l.lanes {
-		if rowOwner, ok := rowByLane[laneID]; !ok {
-			log.Printf("lanelock: divergence — lane %d held by %d in memory but no dig row", laneID, owner)
-			diverged++
-		} else if rowOwner != owner {
-			log.Printf("lanelock: divergence — lane %d held by %d in memory but %d in rows", laneID, owner, rowOwner)
-			diverged++
-		}
-	}
-	for laneID, owner := range rowByLane {
-		if _, ok := l.lanes[laneID]; !ok {
-			log.Printf("lanelock: divergence — lane %d held by %d in rows but not in memory", laneID, owner)
-			diverged++
-		}
-	}
-	return diverged
+	return owner
 }

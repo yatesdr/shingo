@@ -83,14 +83,6 @@ func (e *Engine) Start() {
 		e.logFn("engine: retired %d leftover reshuffle_restore order(s)", n)
 	}
 
-	// Restore lane holds from the durable dig mouth rows FIRST, before any
-	// dispatch runs: the rows are the restart authority now, so a bulk rebuild
-	// re-establishes every held lane at once (no per-order re-acquire, no
-	// lost-race window). Non-fatal — a fresh DB simply has no rows.
-	if err := e.dispatcher.RestoreLaneHolds(); err != nil {
-		e.logFn("engine: restore lane holds: %v", err)
-	}
-
 	// Recover pending lane-lock-extension LISTENERS from the
 	// pending_lane_extensions table (post-v7 cleanup): the release-on-pickup
 	// arm, whose parameters (target bin, expected from-node) are not in the
