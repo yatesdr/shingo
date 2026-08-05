@@ -203,24 +203,9 @@ jobs:
       # The name is scoped to run AND job: each job now has its own container,
       # so there is nothing to share, and a per-job name keeps that obvious.
       - name: Start shared Postgres
-        run: |
-          set -euo pipefail
-          id=$(docker run -d \
-            -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=postgres \
-            -e PGDATA=/var/lib/postgresql/data/pgdata \
-            --tmpfs /var/lib/postgresql/data:rw,size=2g \
-            -p 127.0.0.1::5432 \
-            postgres:16-alpine \
-            -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
-            -c max_connections=500 -c shared_buffers=256MB)
-          for _ in $(seq 1 60); do
-            docker exec "$id" pg_isready -U test -q && break
-            sleep 1
-          done
-          docker exec "$id" pg_isready -U test
-          port=$(docker port "$id" 5432/tcp | head -1 | sed 's/.*://')
-          echo "SHINGO_TEST_PG=127.0.0.1:$port" >> "$GITHUB_ENV"
-          echo "SHINGO_TEST_PG_TEMPLATE=template_ci_${{ github.run_id }}_docker" >> "$GITHUB_ENV"
+        uses: ./.github/actions/shared-postgres
+        with:
+          template: template_ci_${{ github.run_id }}_docker
 
       - name: Test (Docker integration)
         working-directory: shingo-core
@@ -333,24 +318,9 @@ jobs:
             protocol/go.sum
 
       - name: Start shared Postgres
-        run: |
-          set -euo pipefail
-          id=$(docker run -d \
-            -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=postgres \
-            -e PGDATA=/var/lib/postgresql/data/pgdata \
-            --tmpfs /var/lib/postgresql/data:rw,size=2g \
-            -p 127.0.0.1::5432 \
-            postgres:16-alpine \
-            -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
-            -c max_connections=500 -c shared_buffers=256MB)
-          for _ in $(seq 1 60); do
-            docker exec "$id" pg_isready -U test -q && break
-            sleep 1
-          done
-          docker exec "$id" pg_isready -U test
-          port=$(docker port "$id" 5432/tcp | head -1 | sed 's/.*://')
-          echo "SHINGO_TEST_PG=127.0.0.1:$port" >> "$GITHUB_ENV"
-          echo "SHINGO_TEST_PG_TEMPLATE=template_ci_${{ github.run_id }}_race${{ matrix.shard.id }}" >> "$GITHUB_ENV"
+        uses: ./.github/actions/shared-postgres
+        with:
+          template: template_ci_${{ github.run_id }}_race${{ matrix.shard.id }}
 
       - name: Test (Docker integration, race) — shard ${{ matrix.shard.id }}
         working-directory: shingo-core

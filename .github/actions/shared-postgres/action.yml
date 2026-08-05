@@ -1,0 +1,109 @@
+name: Shared Postgres
+description: >
+  Start one tuned throwaway Postgres for a whole job and export $SHINGO_TEST_PG
+  so shingo-core's testdb uses it instead of starting a container per package.
+
+inputs:
+  template:
+    description: >
+      Name for the pre-migrated template database. Must be unique per job, not
+      merely per run: every job gets its own container, so a shared name would
+      only be misleading.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SHINGO_TEST_PG_TEMPLATE_IN: ${{ inputs.template }}
+      run: |
+        set -uo pipefail
+
+        # A COMPOSITE ACTION RATHER THAN THE SAME 20 LINES IN TWO JOBS.
+        # core.yml runs this from `docker` and from all six `docker-race`
+        # shards; the first time it needed fixing, it needed fixing in two
+        # places, which is exactly how the two copies drift.
+
+        # THE IMAGE IS PULLED EXPLICITLY, WITH RETRIES, AND THAT IS NOT
+        # BELT-AND-BRACES. Sharding took this workflow from two containers a
+        # run to seven, and on the first sharded run two of six shards failed
+        # here inside nine seconds while the other four came up fine. Seven
+        # anonymous pulls landing together is exactly the shape of a Docker Hub
+        # rate limit, and an unretried `docker run` turns that into a red
+        # build that has nothing to do with the code.
+        #
+        # Pulling as its own step also separates "could not get the image" from
+        # "the server would not start", which the combined form could not tell
+        # apart.
+        pull_ok=0
+        for attempt in 1 2 3 4; do
+          if docker pull --quiet postgres:16-alpine; then pull_ok=1; break; fi
+          echo "::warning::postgres image pull attempt $attempt failed; retrying"
+          sleep $(( attempt * 5 ))
+        done
+        if [ "$pull_ok" -ne 1 ]; then
+          echo "::error::could not pull postgres:16-alpine after 4 attempts"
+          exit 1
+        fi
+
+        # TUNED FOR DATA NOBODY KEEPS. fsync, synchronous_commit and
+        # full_page_writes exist to survive a crash; this database does not
+        # survive the job. PGDATA sits on tmpfs for the same reason -- via a
+        # SUBDIRECTORY of the mount, because the entrypoint creates that with
+        # the 0700 postgres-owned permissions initdb insists on, while the
+        # mount point itself lands world-writable and initdb refuses it.
+        # max_connections is raised because every package's pool now lands on
+        # this one server.
+        start_one() {
+          local id ready=0
+          id=$(docker run -d \
+            -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=postgres \
+            -e PGDATA=/var/lib/postgresql/data/pgdata \
+            --tmpfs /var/lib/postgresql/data:rw,size=2g \
+            -p 127.0.0.1::5432 \
+            postgres:16-alpine \
+            -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+            -c max_connections=500 -c shared_buffers=256MB) || return 1
+          [ -n "$id" ] || return 1
+
+          for _ in $(seq 1 60); do
+            if docker exec "$id" pg_isready -U test -q >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            # PRINT THE CONTAINER'S OWN LOGS. Without this the failure is just
+            # a red step with no reason, and on a public repo the run log is
+            # the only thing a reader can get at without a token -- which is
+            # precisely the position the first sharded failure left us in.
+            echo "::warning::postgres never became ready; container log follows"
+            docker logs "$id" 2>&1 | tail -40
+            docker rm -f "$id" >/dev/null 2>&1
+            return 1
+          fi
+
+          local port
+          port=$(docker port "$id" 5432/tcp | head -1 | sed 's/.*://')
+          if [ -z "$port" ]; then
+            echo "::warning::container is up but no host port was mapped"
+            docker rm -f "$id" >/dev/null 2>&1
+            return 1
+          fi
+
+          echo "SHINGO_TEST_PG=127.0.0.1:$port" >> "$GITHUB_ENV"
+          echo "SHINGO_TEST_PG_TEMPLATE=$SHINGO_TEST_PG_TEMPLATE_IN" >> "$GITHUB_ENV"
+          echo "postgres ready on 127.0.0.1:$port (template $SHINGO_TEST_PG_TEMPLATE_IN)"
+          return 0
+        }
+
+        for attempt in 1 2 3; do
+          if start_one; then exit 0; fi
+          echo "::warning::postgres start attempt $attempt failed; retrying"
+          sleep $(( attempt * 5 ))
+        done
+        echo "::error::could not start a shared postgres after 3 attempts"
+        exit 1
