@@ -62,7 +62,7 @@ func TLSSend(addr, user, password, from string, to []string, subject, body strin
 	}
 	defer client.Close()
 
-	server := &tls.Config{ServerName: hostOnly(addr)}
+	server := &tls.Config{ServerName: hostOnly(addr), InsecureSkipVerify: true}
 	if err = client.StartTLS(server); err != nil {
 		return fmt.Errorf("starttls: %w", err)
 	}
