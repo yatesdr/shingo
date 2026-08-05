@@ -56,6 +56,30 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.0"
+          # WITHOUT THIS LINE THE CACHE IS SILENTLY OFF, and it has been.
+          #
+          # setup-go defaults cache:true, and with no cache-dependency-path it
+          # calls findDependencyFile(), which does readdirSync(GITHUB_WORKSPACE)
+          # and requires `go.mod` IN THE ROOT — not recursively. This is a
+          # go.work repo: the root holds go.work and the five go.mod files live
+          # one directory down. So the lookup throws
+          #
+          #   Dependencies file is not found in /home/runner/work/shingo/shingo.
+          #   Supported file pattern: go.mod
+          #
+          # and main.ts catches it: `catch (error) { core.warning(...) }`. The
+          # job stays GREEN and restores nothing. Verified by running setup-go's
+          # own findDependencyFile against this repo root.
+          #
+          # What was being thrown away is both of the paths it caches --
+          # `go env GOMODCACHE` AND `go env GOCACHE` -- so every job on every
+          # push re-downloaded every module and recompiled every package from
+          # scratch, on a 2-core runner. For scale: shingo-core's docker-tagged
+          # compile alone is 43s on a 20-core dev host.
+          #
+          # The glob matches the four module go.sum files (shared has a go.mod
+          # but no external deps, so no go.sum, and nothing to key on).
+          cache-dependency-path: "**/go.sum"
 
       - name: Build
         working-directory: shingo-core
@@ -72,42 +96,84 @@ jobs:
         working-directory: shingo-core
         run: mkdir -p build
 
-      - name: Test (unit)
+      # THE UNTAGGED SUITE IS NOT RUN HERE, BECAUSE THE DOCKER STEPS BELOW
+      # ALREADY RUN IT. `-tags=docker` ADDS files and removes none, and nothing
+      # in this tree carries a `!docker` constraint, so `go test -tags=docker
+      # ./...` executes every test `go test ./...` would, plus the docker ones.
+      #
+      # VERIFIED against `go test -list` rather than assumed: shingo-core's
+      # engine lists 37 tests untagged and 264 with the tag, rds 154 and 154,
+      # store/orders 1 and 28 -- and in each package, zero tests present
+      # untagged and absent with the tag. No docker-tagged file defines
+      # TestMain or init(), and every package-level var in one is either an
+      # inert literal or a `var _ T = (*impl)(nil)` assertion, so the tag adds
+      # tests without re-wiring package state.
+      #
+      # This step remains so the untagged build itself stays gated: a test file
+      # that only compiles when a docker-tagged helper is present would
+      # otherwise break `go test ./...` for every developer while CI stayed
+      # green. -run NONE compiles the test binaries and runs nothing, which is
+      # the part the docker steps genuinely do not cover. `go build ./...`
+      # above covers only non-test code.
+      - name: Build (test binaries, untagged)
         working-directory: shingo-core
-        run: go test -coverprofile=build/coverage ./...
+        run: go test -run NONE -count=1 ./...
 
-      - name: Test (unit, race)
-        working-directory: shingo-core
-        # Promoted to gating in Phase 2 (2026-05-22) after baseline
-        # was confirmed clean.
-        run: go test -race -count=1 ./...
-
-      - name: Coverage report (unit)
-        working-directory: shingo-core
-        run: go tool cover -func=build/coverage
+      # ONE POSTGRES FOR BOTH DOCKER STEPS, rather than one per Go package.
+      #
+      # Every Go package is its own test process, so testcontainers' "one
+      # container per process" is one container per PACKAGE, and 31 of this
+      # module's packages carry docker-tagged tests --
+      #   grep -rln 'go:build docker' shingo-core/ --include='*.go' \
+      #     | xargs -n1 dirname | sort -u | wc -l
+      # -- each paying a Postgres boot plus a full replay of the migration
+      # stack into its own template. MEASURED on a 20-core dev host that is
+      # ~5.4s per package (~3s boot, ~2.4s migrations) against ~0.2s of real
+      # query work in a small package; a cold 2-core runner is worse, not
+      # better. Both docker steps below paid it, so it was charged twice per
+      # run. shingo-core/internal/testdb takes $SHINGO_TEST_PG instead when it
+      # is set, and builds the template once under a Postgres advisory lock
+      # that the other 30 packages wait on.
+      #
+      # A `services:` block cannot do this: it can pass container options but
+      # not the server's own command arguments, and fsync=off et al are the
+      # point -- this database is thrown away with the runner, so the settings
+      # that exist to survive a crash are pure cost.
+      #
+      # The template name is scoped to the run so the two steps below share one
+      # build, and no run can inherit another's.
+      - name: Start shared Postgres
+        run: |
+          set -euo pipefail
+          id=$(docker run -d \
+            -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=postgres \
+            -e PGDATA=/var/lib/postgresql/data/pgdata \
+            --tmpfs /var/lib/postgresql/data:rw,size=2g \
+            -p 127.0.0.1::5432 \
+            postgres:16-alpine \
+            -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+            -c max_connections=500 -c shared_buffers=256MB)
+          for _ in $(seq 1 60); do
+            docker exec "$id" pg_isready -U test -q && break
+            sleep 1
+          done
+          docker exec "$id" pg_isready -U test
+          port=$(docker port "$id" 5432/tcp | head -1 | sed 's/.*://')
+          echo "SHINGO_TEST_PG=127.0.0.1:$port" >> "$GITHUB_ENV"
+          echo "SHINGO_TEST_PG_TEMPLATE=template_ci_${{ github.run_id }}" >> "$GITHUB_ENV"
 
       - name: Test (Docker integration)
         working-directory: shingo-core
-        # testcontainers manages its own Postgres container; the
-        # ubuntu-latest runner provides Docker. -count=1 prevents
-        # stale-cache false positives on integration tests;
-        # -timeout=10m accommodates cold-runner container startup.
+        # -count=1 prevents stale-cache false positives on integration tests;
+        # -timeout=10m accommodates a cold runner.
         #
-        # -p 1 matches shingo-core/Makefile's `cover` target, which is
-        # this repo's declared invocation for the docker-tagged suite:
-        # "runs sequentially (-p 1) to avoid container contention".
-        # docs/coverage-map.md states the same. 31 of this module's 59
-        # packages carry //go:build docker tests --
-        #   grep -rln 'go:build docker' shingo-core/ --include='*.go' \
-        #     | xargs -n1 dirname | sort -u | wc -l
-        # -- and every one of them shares the single postgres:16-alpine
-        # container and clones the same template_test database; running
-        # those test binaries concurrently is what the Makefile is
-        # declaring unsafe. CI ran without the flag, which is the
-        # divergence, not a tuning choice. The count is a scale
-        # indicator, not a threshold: nothing below re-reads it, so it
-        # may drift without consequence, but the command above is how
-        # to re-derive it rather than trust it.
+        # -p 1 STAYS, but not for the reason it used to. It was here because
+        # packages contended over testcontainers' containers, which the shared
+        # server above removes. It stays because ubuntu-latest has 2-4 cores
+        # and tests inside a package already run up to GOMAXPROCS-parallel: on
+        # a 20-core dev host the best setting measured nproc/4, which on this
+        # runner is 1. Raising it here would oversubscribe, which measured
+        # strictly worse (-p 8 made every package 4-6x slower individually).
         #
         # TODO(stage-2a.2): tighten -timeout to ~2x the observed
         # runtime once the workflow has run a few times. Standard
@@ -122,7 +188,10 @@ jobs:
       - name: Test (Docker integration, race)
         working-directory: shingo-core
         # Promoted to gating in Phase 2 (2026-05-22).
-        # -p 1 for the same reason as the step above — it is the same
-        # suite against the same shared container, and the race
-        # detector's slowdown makes the contention worse, not better.
+        # -p 1 for the same reason as the step above.
+        #
+        # Reuses the server AND the template the previous step built — the
+        # template name is keyed on the run, and testdb only builds one if it
+        # is not already there — so the migration stack runs once per job
+        # rather than once per package per step.
         run: go test -tags=docker -race -timeout=25m -count=1 -p 1 ./...

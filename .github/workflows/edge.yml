@@ -45,6 +45,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.0"
+          # Without this, the cache is silently OFF. setup-go defaults
+          # cache:true, and with no cache-dependency-path it requires `go.mod`
+          # in the REPO ROOT (readdirSync, not recursive). This is a go.work
+          # repo: the root has go.work and the go.mod files sit one level down,
+          # so the lookup throws "Dependencies file is not found ... Supported
+          # file pattern: go.mod" — and main.ts catches it into a warning, so
+          # the job stays green having restored nothing. It caches both
+          # GOMODCACHE and GOCACHE, so every job was re-downloading every
+          # module and recompiling from scratch. See core.yml for the full note.
+          cache-dependency-path: "**/go.sum"
 
       - name: Build
         working-directory: shingo-edge
@@ -65,20 +75,25 @@ jobs:
         working-directory: shingo-edge
         run: mkdir -p build
 
-      - name: Test (unit)
+      # THE UNTAGGED SUITE IS NOT RUN HERE, BECAUSE THE DOCKER STEPS BELOW
+      # ALREADY RUN IT — all 1,161 of its tests, and again under -race.
+      # `-tags=docker` ADDS files and removes none, and nothing in this tree
+      # carries a `!docker` constraint, so `go test -tags=docker ./...` executes
+      # every test `go test ./...` would, plus the docker ones. No docker-tagged
+      # file defines TestMain or init(), and every package-level var in one is
+      # an inert literal or a `var _ T = (*impl)(nil)` assertion, so the tag
+      # adds tests without re-wiring package state. See core.yml for the
+      # `go test -list` counts this was verified against.
+      #
+      # This step remains so the untagged BUILD stays gated: a test file that
+      # only compiles when a docker-tagged helper is present would otherwise
+      # break `go test ./...` for every developer while CI stayed green.
+      # -run NONE compiles the test binaries and runs nothing, which is the
+      # part the docker steps do not cover — `go build ./...` above reaches
+      # only non-test code. Mirrors what integration.yml already did.
+      - name: Build (test binaries, untagged)
         working-directory: shingo-edge
-        run: go test -coverprofile=build/coverage ./...
-
-      - name: Test (unit, race)
-        working-directory: shingo-edge
-        # Promoted to gating in Phase 2 (2026-05-22) after the
-        # baseline -race run was confirmed clean and PR 2's lock
-        # fixes landed (sse_race_test.go, warlink_tags_race_test.go).
-        run: go test -race -count=1 ./...
-
-      - name: Coverage report (unit)
-        working-directory: shingo-edge
-        run: go tool cover -func=build/coverage
+        run: go test -run NONE -count=1 ./...
 
       - name: Test (Docker integration)
         working-directory: shingo-edge
