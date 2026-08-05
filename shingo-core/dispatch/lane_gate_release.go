@@ -340,13 +340,9 @@ func (d *Dispatcher) laneGateRetrieveCause(lane *nodes.Node, order *orders.Order
 	if d.laneLock.IsLocked(lane.ID) {
 		return true, "lane-dig-active", nil // a dig holds the lane — everything respects the dig
 	}
-	targetDepth, err := d.db.GetSlotDepth(sourceNode.ID)
-	if err != nil || targetDepth < 1 {
-		return false, "", err // depth-0 (mouth) slot or unreadable — nothing shallower can bury it
-	}
-	blockers, err := findBuriedBlockers(d.db, lane, targetDepth)
+	blockers, err := findBuriedBlockers(d.db, sourceNode.ID)
 	if err != nil {
-		return false, "", err
+		return false, "", err // unreadable lane: the caller logs and leaves the order parked
 	}
 	if len(blockers) > 0 {
 		return true, "lane-target-buried", nil // a shallower bin still sits in front of the wanted slot
