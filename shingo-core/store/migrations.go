@@ -888,6 +888,15 @@ func (db *DB) runVersionedMigrations() error {
 		{75, "add the loader carrier mix (per-loader quota, per-window capability)",
 			v75LoaderCarrierMix,
 			func(q schema.Querier) bool { return schema.TableExists(q, "bin_loader_quotas") }},
+		// v77, not v76: the lane-occupancy migration on reshuffling-work holds
+		// 76 and is unmerged, so this skips it rather than racing it. The gap
+		// is intentional and harmless — this is a list, not a range. Whoever
+		// merges 76 must insert it ABOVE this entry: latestMigrationVersion is
+		// read off the LAST element, so appending 76 after 77 would silently
+		// walk the reported head version backwards.
+		{77, "collect robot localization confidence (samples, low trail, daily roll-ups)",
+			v77RobotConfidence,
+			func(q schema.Querier) bool { return schema.TableExists(q, "robot_confidence_samples") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3450,4 +3459,183 @@ func uuidIndexIsUnique(q schema.Querier) bool {
 		return false
 	}
 	return strings.Contains(def, "UNIQUE")
+}
+
+// v77RobotConfidence creates the localization-confidence collection tables.
+//
+// SEER publishes rbk_report.confidence (0.0–1.0) on every /robotsStatus poll
+// and Core has been discarding it at unmarshal. Nothing retains a history of
+// it anywhere — no %confid% column exists in the RDS MariaDB and the RDS HTTP
+// API has no history endpoint — so there is nothing to backfill and every day
+// uncollected is lost permanently. That is why the shape has to be right now:
+// the screens that read these tables can be rebuilt from correct data at any
+// time, but the data cannot be reconstructed from correct screens.
+//
+// WHY EVERY ROW CARRIES ITS POSITION. Measured at Hopkinsville 2026-08-05:
+// AMR-01/02/04/07 parked together read 0.95–0.97 while AMR-03/05/08 parked
+// together read 0.67–0.79. Four robots look healthy and three look sick, and
+// it is entirely the two parking areas. Any per-robot figure that does not
+// hold location fixed is measuring where the robot spent its shift. A schema
+// of (robot, time, confidence) with position "added later" would produce a
+// week of data that cannot answer the question the table exists for.
+//
+// WHY x/y AND NOT A SEGMENT ID. Snapping a sample to a scene edge is a
+// READ-time concern, deliberately. Nobody gets spatial binning right on the
+// first attempt, and keeping raw coordinates means the binning strategy (grid
+// vs. edge-snap vs. per-station) can be rewritten later against data already
+// collected. A scene_edge_id column would freeze v1 snap logic into history.
+//
+// RELOC_STATUS IS STORED, AND ONLY reloc_status = 1 FEEDS STATISTICS.
+// This is the load-bearing rule of the whole design and it is why the column
+// exists rather than the state being filtered away at write time.
+//
+//	0 = FAILED    stored, EXCLUDED from statistics
+//	1 = SUCCESS   stored, the ONLY state that feeds fleet median,
+//	              residual, segment mean/p05
+//	2 = RELOCING  never stored — the pose estimate is in flight and the
+//	              confidence figure is transient garbage
+//	3 = COMPLETED stored, EXCLUDED from statistics (pose is settled but
+//	              the operator has not confirmed it)
+//
+// A robot sitting in FAILED at a charge point would otherwise drag that
+// location's baseline down for every healthy robot that passes through,
+// corrupting the residual for everyone else — the exact confound the residual
+// exists to remove. Keeping the rows and excluding them by flag means the
+// samples survive for forensics and the decision stays reversible; filtering
+// them at write time would be irreversible and would blind the dataset to the
+// failure it was built to catch.
+//
+// The complement matters just as much: a FAILED sample's confidence NUMBER
+// cannot be trusted, but the FACT of the failure can be, completely. That is
+// what segment_confidence_daily.reloc_failed_samples counts — "this segment
+// produced 14 localization failures this week" is a stronger finding than any
+// percentile and requires no faith in the value at all.
+//
+// reloc_status carries NO DEFAULT, deliberately, while on_task and blocked
+// keep DEFAULT FALSE. For a boolean, false is the quiet default. There is no
+// quiet value for this enum: defaulting it to 1 would mean any row written
+// without the field set silently claims a healthy pose, which is
+// "never coalesce absence into zero" wearing a different costume — and the
+// optimistic direction is the dangerous one. There is exactly one writer and
+// it always has the value, so an unset write should fail rather than lie.
+//
+// Numbered 77 deliberately. 76 is taken by the lane-occupancy migration on
+// the reshuffling-work branch, which is unmerged at the time of writing, so
+// this cannot collide with it whichever lands first. Same reasoning as the
+// numbering note above v71.
+func v77RobotConfidence(tx *sql.Tx) error {
+	// robot_confidence_samples and robot_confidence_low share a column list
+	// exactly. The low table is a DOUBLE-WRITE at sample time, not a
+	// copy-before-drop: it is simpler, and it cannot be missed by a failed
+	// job the way a nightly copy could. Raw expires in days; the low-
+	// confidence trail is the forensic record and outlives it.
+	const sampleColumns = `
+		id           BIGSERIAL,
+		vehicle_id   TEXT             NOT NULL,
+		sampled_at   TIMESTAMPTZ      NOT NULL,
+		confidence   DOUBLE PRECISION NOT NULL,
+		x            DOUBLE PRECISION NOT NULL,
+		y            DOUBLE PRECISION NOT NULL,
+		angle        DOUBLE PRECISION NOT NULL,
+		station      TEXT             NOT NULL DEFAULT '',
+		last_station TEXT             NOT NULL DEFAULT '',
+		order_id     BIGINT           NOT NULL DEFAULT 0,
+		on_task      BOOLEAN          NOT NULL DEFAULT FALSE,
+		blocked      BOOLEAN          NOT NULL DEFAULT FALSE,
+		reloc_status SMALLINT         NOT NULL`
+
+	stmts := []string{
+		// Daily partitions, dropped by partition. A partition DROP is instant
+		// and generates no vacuum work; a DELETE of a week of rows does
+		// neither. No PRIMARY KEY: Postgres requires every partition-key
+		// column in a unique constraint, and (id, sampled_at) would not
+		// constrain anything this table needs constrained.
+		`CREATE TABLE IF NOT EXISTS robot_confidence_samples (` + sampleColumns + `
+		) PARTITION BY RANGE (sampled_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_robot_confidence_samples_vehicle_time
+			ON robot_confidence_samples (vehicle_id, sampled_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_robot_confidence_samples_time
+			ON robot_confidence_samples (sampled_at)`,
+
+		`CREATE TABLE IF NOT EXISTS robot_confidence_low (` + sampleColumns + `
+		) PARTITION BY RANGE (sampled_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_robot_confidence_low_vehicle_time
+			ON robot_confidence_low (vehicle_id, sampled_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_robot_confidence_low_time
+			ON robot_confidence_low (sampled_at)`,
+
+		// The roll-ups are NOT partitioned and NOT expired. 12 robots × 365 is
+		// ~4,400 rows/year and ~400 segments × 365 is ~146,000 rows/year at
+		// roughly 18 MB. They are the only thing that can answer "worse than
+		// last quarter" once the raw rows behind them are gone.
+		//
+		// residual is NULLABLE and that is load-bearing: NULL means "below
+		// minimum coverage — not enough peer-comparable cells to say", which
+		// is the opposite of 0.0 meaning "measured, and exactly average". The
+		// distinction must survive all the way to the renderer.
+		`CREATE TABLE IF NOT EXISTS robot_confidence_daily (
+			day        DATE NOT NULL,
+			vehicle_id TEXT NOT NULL,
+			residual   DOUBLE PRECISION,
+			cells      INTEGER NOT NULL,
+			samples    INTEGER NOT NULL,
+			mean       DOUBLE PRECISION,
+			p05        DOUBLE PRECISION,
+			PRIMARY KEY (day, vehicle_id)
+		)`,
+
+		// The two failure counts are COUNTS OF EVENTS, not statistics over
+		// confidence values, and are the only figures here that need no trust
+		// in the number the robot reported.
+		//
+		// BOTH counts, because one is ambiguous on its own. Fourteen failures
+		// by one robot is a robot problem; fourteen failures by six robots is
+		// a place problem. That is the same lesson as the residual — a bare
+		// aggregate that does not hold its confound fixed ranks the wrong
+		// thing — appearing for the third time in this design.
+		//
+		// mean/p05/min_conf are NULLABLE and that is the point of this table
+		// being able to describe its own worst case. A segment whose every
+		// sample that day was a localization failure has NO valid reading to
+		// average, but it is the most important segment on the floor. Were
+		// these NOT NULL the row could not be written at all, and the segment
+		// would render as ABSENT — which every reader parses as fine. That is
+		// "no data, zero and not applicable must look different"
+		// (docs/ui-style-guide.md) failing silently and in the reassuring
+		// direction, on the one segment where being wrong costs the most.
+		// robot_confidence_daily.residual is nullable for exactly this
+		// reason; these three are the same rule applied consistently.
+		//
+		// NOTE FOR THE ROLL-UP: an aggregate grouped over VALID samples can
+		// never emit a row for a segment that has no valid samples. The job
+		// must union the valid-sample aggregate with the failed-sample
+		// aggregate on (day, area_name, edge_instance), or this case is
+		// silently dropped while every other test still passes.
+		//
+		// edge_instance is resolved by snapping x/y to scene_edges AS THEY
+		// WERE ON THAT DAY. A scene re-sync that renames or re-lays segments
+		// starts a new series; old rows keep the old identity and are not
+		// retro-mapped. That is the right trade — the alternative is
+		// rewriting history — but it means a segment's series can end without
+		// the segment physically changing.
+		`CREATE TABLE IF NOT EXISTS segment_confidence_daily (
+			day                  DATE NOT NULL,
+			area_name            TEXT NOT NULL,
+			edge_instance        TEXT NOT NULL,
+			mean                 DOUBLE PRECISION,
+			p05                  DOUBLE PRECISION,
+			min_conf             DOUBLE PRECISION,
+			samples              INTEGER NOT NULL,
+			robots               INTEGER NOT NULL,
+			reloc_failed_samples INTEGER NOT NULL DEFAULT 0,
+			reloc_failed_robots  INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (day, area_name, edge_instance)
+		)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v77 robot_confidence: %w", err)
+		}
+	}
+	return nil
 }

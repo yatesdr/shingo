@@ -869,6 +869,68 @@ CREATE SEQUENCE public.reservations_id_seq
 
 ALTER SEQUENCE public.reservations_id_seq OWNED BY public.reservations.id;
 
+CREATE TABLE public.robot_confidence_daily (
+    day date NOT NULL,
+    vehicle_id text NOT NULL,
+    residual double precision,
+    cells integer NOT NULL,
+    samples integer NOT NULL,
+    mean double precision,
+    p05 double precision
+);
+
+CREATE TABLE public.robot_confidence_low (
+    id bigint NOT NULL,
+    vehicle_id text NOT NULL,
+    sampled_at timestamp with time zone NOT NULL,
+    confidence double precision NOT NULL,
+    x double precision NOT NULL,
+    y double precision NOT NULL,
+    angle double precision NOT NULL,
+    station text DEFAULT ''::text NOT NULL,
+    last_station text DEFAULT ''::text NOT NULL,
+    order_id bigint DEFAULT 0 NOT NULL,
+    on_task boolean DEFAULT false NOT NULL,
+    blocked boolean DEFAULT false NOT NULL,
+    reloc_status smallint NOT NULL
+)
+PARTITION BY RANGE (sampled_at);
+
+CREATE SEQUENCE public.robot_confidence_low_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.robot_confidence_low_id_seq OWNED BY public.robot_confidence_low.id;
+
+CREATE TABLE public.robot_confidence_samples (
+    id bigint NOT NULL,
+    vehicle_id text NOT NULL,
+    sampled_at timestamp with time zone NOT NULL,
+    confidence double precision NOT NULL,
+    x double precision NOT NULL,
+    y double precision NOT NULL,
+    angle double precision NOT NULL,
+    station text DEFAULT ''::text NOT NULL,
+    last_station text DEFAULT ''::text NOT NULL,
+    order_id bigint DEFAULT 0 NOT NULL,
+    on_task boolean DEFAULT false NOT NULL,
+    blocked boolean DEFAULT false NOT NULL,
+    reloc_status smallint NOT NULL
+)
+PARTITION BY RANGE (sampled_at);
+
+CREATE SEQUENCE public.robot_confidence_samples_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.robot_confidence_samples_id_seq OWNED BY public.robot_confidence_samples.id;
+
 CREATE TABLE public.scene_edges (
     id bigint NOT NULL,
     area_name text NOT NULL,
@@ -924,6 +986,19 @@ ALTER SEQUENCE public.scene_points_id_seq OWNED BY public.scene_points.id;
 CREATE TABLE public.schema_migrations (
     version integer NOT NULL,
     applied_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE public.segment_confidence_daily (
+    day date NOT NULL,
+    area_name text NOT NULL,
+    edge_instance text NOT NULL,
+    mean double precision,
+    p05 double precision,
+    min_conf double precision,
+    samples integer NOT NULL,
+    robots integer NOT NULL,
+    reloc_failed_samples integer DEFAULT 0 NOT NULL,
+    reloc_failed_robots integer DEFAULT 0 NOT NULL
 );
 
 CREATE TABLE public.sourceability_events (
@@ -1071,6 +1146,10 @@ ALTER TABLE ONLY public.production_log ALTER COLUMN id SET DEFAULT nextval('publ
 ALTER TABLE ONLY public.recovery_actions ALTER COLUMN id SET DEFAULT nextval('public.recovery_actions_id_seq'::regclass);
 
 ALTER TABLE ONLY public.reservations ALTER COLUMN id SET DEFAULT nextval('public.reservations_id_seq'::regclass);
+
+ALTER TABLE ONLY public.robot_confidence_low ALTER COLUMN id SET DEFAULT nextval('public.robot_confidence_low_id_seq'::regclass);
+
+ALTER TABLE ONLY public.robot_confidence_samples ALTER COLUMN id SET DEFAULT nextval('public.robot_confidence_samples_id_seq'::regclass);
 
 ALTER TABLE ONLY public.scene_edges ALTER COLUMN id SET DEFAULT nextval('public.scene_edges_id_seq'::regclass);
 
@@ -1265,6 +1344,9 @@ ALTER TABLE ONLY public.recovery_actions
 ALTER TABLE ONLY public.reservations
     ADD CONSTRAINT reservations_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.robot_confidence_daily
+    ADD CONSTRAINT robot_confidence_daily_pkey PRIMARY KEY (day, vehicle_id);
+
 ALTER TABLE ONLY public.scene_edges
     ADD CONSTRAINT scene_edges_area_name_instance_name_key UNIQUE (area_name, instance_name);
 
@@ -1279,6 +1361,9 @@ ALTER TABLE ONLY public.scene_points
 
 ALTER TABLE ONLY public.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+ALTER TABLE ONLY public.segment_confidence_daily
+    ADD CONSTRAINT segment_confidence_daily_pkey PRIMARY KEY (day, area_name, edge_instance);
 
 ALTER TABLE ONLY public.sourceability_events
     ADD CONSTRAINT sourceability_events_pkey PRIMARY KEY (id);
@@ -1382,6 +1467,14 @@ CREATE INDEX idx_recovery_actions_created ON public.recovery_actions USING btree
 CREATE INDEX idx_reservations_bin ON public.reservations USING btree (bin_id);
 
 CREATE INDEX idx_reservations_order ON public.reservations USING btree (order_id);
+
+CREATE INDEX idx_robot_confidence_low_time ON ONLY public.robot_confidence_low USING btree (sampled_at);
+
+CREATE INDEX idx_robot_confidence_low_vehicle_time ON ONLY public.robot_confidence_low USING btree (vehicle_id, sampled_at);
+
+CREATE INDEX idx_robot_confidence_samples_time ON ONLY public.robot_confidence_samples USING btree (sampled_at);
+
+CREATE INDEX idx_robot_confidence_samples_vehicle_time ON ONLY public.robot_confidence_samples USING btree (vehicle_id, sampled_at);
 
 CREATE INDEX idx_scene_edges_area ON public.scene_edges USING btree (area_name);
 
