@@ -490,10 +490,52 @@ textarea { resize: vertical; min-height: 60px; }
  * No transition: a value that is merely sitting still has nothing to animate,
  * and motion here would read as a change that did not happen. */
 .robot-confidence { margin-top: 0.35rem; }
+
+/* THE CHIP GETS AN OPAQUE BACKDROP HERE, AND THIS IS A CONTRAST FIX, NOT A
+ * STYLE PREFERENCE.
+ *
+ * Health chips are `color-mix(in srgb, <token> N%, transparent)` — translucent
+ * by design — and their inks were measured against `--surface` and `--bg`,
+ * which are the only backdrops they had ever been put on. A robot tile is
+ * neither: it is an opaque, SATURATED fill that changes with robot state, and
+ * the tile colour bleeds straight through the wash and destroys the ink
+ * contrast underneath.
+ *
+ * Measured across theme x tile-state x band, the translucent chip failed AA on
+ * 26 of 30 combinations, worst 2.92:1 (dark .chip-below on .robot-offline).
+ * That is the invisible-chip failure again, arriving through a door the
+ * existing guard does not watch: chip_contrast_test.go measures the surfaces it
+ * knows about, and this was a new one.
+ *
+ * Painting the pill opaque makes the ink's backdrop CONSTANT — it no longer
+ * depends on what the robot is doing — which collapses fifteen combinations to
+ * six and lifts the worst case to 5.16:1. robot_tile_contrast_test.go pins all
+ * of them.
+ *
+ * Specificity, not file order: this is (0,2,0) so it beats `.chip-ok` (0,1,0)
+ * outright. style.css does happen to load after components.css, but that is
+ * exactly the coincidence that caused the `.chip` collision documented further
+ * up this file, and it is not something to lean on twice. */
+.robot-tile .robot-confidence {
+  background: var(--elev-surface);
+}
+
+/* The absent marker rides the same opaque backdrop as the value chip (it
+ * carries .robot-confidence too), so it is measured against --elev-surface,
+ * not against the tile. It takes the chip's geometry as well, otherwise the
+ * inherited background renders as a stray box clinging to an em-dash.
+ *
+ * --chip-ink-muted rather than --text-muted: same role, but it is the token
+ * that was actually measured for type on a pill (6.01:1 light against
+ * --text-muted's 4.96:1), and this is the one reading on the page that says
+ * "no measurement exists" — it has to be unmistakably legible, because the
+ * whole point is that it must never be confused with a value of zero. */
 .robot-confidence-none {
-  color: var(--text-muted);
+  color: var(--chip-ink-muted);
   font-size: 0.74rem;
   font-weight: 600;
+  padding: 0.14em 0.55em;
+  border-radius: 999px;
 }
 
 /* Robot state colors */
@@ -610,7 +652,14 @@ textarea { resize: vertical; min-height: 60px; }
 [data-theme="dark"] .robot-busy { background: #0c2d6b; border-color: #58a6ff; color: #58a6ff; }
 [data-theme="dark"] .robot-paused { background: #3d2e00; border-color: #d29922; color: #d29922; }
 [data-theme="dark"] .robot-error { background: #4a1219; border-color: #f85149; color: #f85149; }
-[data-theme="dark"] .robot-offline { background: #2d333b; border-color: #484f58; color: #8b949e; }
+/* Tokenised, and it fixes a real AA failure rather than only Rule 1. The
+ * hand-tuned pair here was #8b949e on #2d333b = 4.14:1, under the 4.5 floor —
+ * the one robot state you read when something is already wrong was the one you
+ * could not read. Recessing the fill to --bg-dark instead of brightening the
+ * ink keeps offline QUIET, which is what it should be: offline is the absence
+ * of state, and "structure recedes, state glows" says the absence should not
+ * shout. Same muted ink, darker ground, 6.06:1. */
+[data-theme="dark"] .robot-offline { background: var(--bg-dark); border-color: var(--border); color: var(--text-muted); }
 
 [data-theme="dark"] .badge-robot-ready { background: #0d3321; color: #3fb950; }
 [data-theme="dark"] .badge-robot-busy { background: #0c2d6b; color: #58a6ff; }
