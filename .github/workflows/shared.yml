@@ -17,10 +17,16 @@ on:
     paths:
       - "shared/**"
       - "protocol/**"
+      # Trigger on this file too. core.yml carries the reasoning: "a gate
+      # whose own edits do not run it cannot report on them" — and it was
+      # exactly this gap that let a restructuring of the jobs below sit
+      # unverified, because nothing in the diff matched any other path.
+      - ".github/workflows/shared.yml"
   pull_request:
     paths:
       - "shared/**"
       - "protocol/**"
+      - ".github/workflows/shared.yml"
   workflow_call:
 
 # See core.yml for rationale - same idempotent burst-coalescing.

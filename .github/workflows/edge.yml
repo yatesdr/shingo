@@ -9,11 +9,17 @@ on:
       # shingo/shared and embeds its stylesheets. Without it here, a
       # change that breaks Edge's build lands with Edge CI never running.
       - "shared/**"
+      # Trigger on this file too. core.yml carries the reasoning: "a gate
+      # whose own edits do not run it cannot report on them" — and it was
+      # exactly this gap that let a restructuring of the jobs below sit
+      # unverified, because nothing in the diff matched any other path.
+      - ".github/workflows/edge.yml"
   pull_request:
     paths:
       - "shingo-edge/**"
       - "protocol/**"
       - "shared/**"
+      - ".github/workflows/edge.yml"
   workflow_call:
 
 # See core.yml for rationale - same idempotent burst-coalescing.

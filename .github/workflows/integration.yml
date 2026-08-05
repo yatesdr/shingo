@@ -13,12 +13,18 @@ on:
       - "shingo-core/**"
       - "shingo-edge/**"
       - "protocol/**"
+      # Trigger on this file too. core.yml carries the reasoning: "a gate
+      # whose own edits do not run it cannot report on them" — and it was
+      # exactly this gap that let a restructuring of the jobs below sit
+      # unverified, because nothing in the diff matched any other path.
+      - ".github/workflows/integration.yml"
   pull_request:
     paths:
       - "integration/**"
       - "shingo-core/**"
       - "shingo-edge/**"
       - "protocol/**"
+      - ".github/workflows/integration.yml"
   workflow_call:
 
 # See core.yml for rationale — same idempotent burst-coalescing.
