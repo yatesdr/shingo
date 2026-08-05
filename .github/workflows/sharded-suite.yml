@@ -88,10 +88,21 @@ jobs:
             < "$GITHUB_WORKSPACE/.shard/pkgs.txt" )
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
+      # The record job runs this binary instead of `go run`-ing the source,
+      # which is what lets it skip actions/setup-go entirely — ~11s of a ~25s
+      # job that gates nothing but still extends the workflow. Built here
+      # because this job already has a toolchain warmed up.
+      - name: Build shardplan for the record job
+        run: |
+          set -euo pipefail
+          cd shingo-core && go build -o "$GITHUB_WORKSPACE/.shard/shardplan" ./scripts/shardplan
+
       - uses: actions/upload-artifact@v4
         with:
           name: shard-pkgs-${{ inputs.cache-prefix }}
-          path: .shard/pkgs.txt
+          path: |
+            .shard/pkgs.txt
+            .shard/shardplan
 
   test:
     needs: plan
@@ -162,15 +173,10 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25.0"
-          cache-dependency-path: |
-            ${{ inputs.module }}/go.sum
-            protocol/go.sum
-
+      # NO CHECKOUT AND NO setup-go. This job needs one stdlib-only binary and
+      # three text files, all of which arrive as artifacts. Cloning the repo and
+      # installing a toolchain to run it cost ~14s of a job that nothing waits
+      # on but that the workflow's duration still includes.
       - uses: actions/download-artifact@v4
         with:
           pattern: shard-*-${{ inputs.cache-prefix }}*
@@ -180,18 +186,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .shard
-          # Absolute paths from find, so the `cd` below cannot break them.
-          logs=$(find "$GITHUB_WORKSPACE/.shard-artifacts" -name 'results-*.log')
-          pkgs=$(find "$GITHUB_WORKSPACE/.shard-artifacts" -name 'pkgs.txt' | head -1)
+          logs=$(find .shard-artifacts -name 'results-*.log')
+          pkgs=$(find .shard-artifacts -name 'pkgs.txt' | head -1)
+          bin=$(find .shard-artifacts -name 'shardplan' | head -1)
           echo "merging $(echo "$logs" | grep -c . || true) shard log(s)"
-          if [ -z "$logs" ] || [ -z "$pkgs" ]; then
-            echo "::warning::no shard artifacts to merge; timings left untouched"
+          if [ -z "$logs" ] || [ -z "$pkgs" ] || [ -z "$bin" ]; then
+            echo "::warning::shard artifacts missing; timings left untouched"
             exit 0
           fi
-          cd shingo-core
-          go run ./scripts/shardplan record \
-            -timings "$GITHUB_WORKSPACE/.shard/timings.json" \
-            $logs < "$pkgs"
+          # Artifacts do not preserve the executable bit.
+          chmod +x "$bin"
+          "$bin" record -timings .shard/timings.json $logs < "$pkgs"
 
       - uses: actions/cache/save@v4
         with:
