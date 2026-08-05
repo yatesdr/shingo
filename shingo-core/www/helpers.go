@@ -261,7 +261,20 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 		// it. Two decimals and no rescaling to a percentage: the figure comes
 		// from an upstream system and an operator comparing this tile against
 		// RoboShop should see the same number, not a derived one.
+		//
+		// NEGATIVE ZERO IS NORMALISED, and it is not hypothetical: Springfield
+		// AMR-04 reported -0 fifteen times in the first two minutes of
+		// collection, while driving and on task. IEEE keeps the sign, so
+		// "%.2f" renders it "-0.00" — which reads as a broken display rather
+		// than as the genuine near-total loss of localization it represents,
+		// and the first thing anyone does with a display they distrust is
+		// ignore it. The STORED value keeps its sign; only the rendering is
+		// normalised. (-0 == 0 is true, so this catches exactly that case and
+		// leaves every real value alone.)
 		"f2": func(f float64) string {
+			if f == 0 {
+				f = 0
+			}
 			return fmt.Sprintf("%.2f", f)
 		},
 		// confidenceBand maps a localization confidence onto the health-chip
