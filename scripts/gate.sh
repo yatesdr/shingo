@@ -375,9 +375,48 @@ stop_shared_pg() {
   sharedPG=""
 }
 
+# docker_p answers how many test binaries to run at once.
+#
+# It used to be a hardcoded `-p 1`, to stop packages fighting over containers.
+# One shared server removes that reason, but the obvious follow-up — turn the
+# packages loose — is WRONG, and measured wrong rather than argued wrong. On
+# this 20-core host, shingo-core's docker suite from a fresh container:
+#
+#   -p 1                183s
+#   -p 2                151s
+#   -p 4                116s   <- best
+#   -p 8                116s, and every package individually 4-6x slower
+#                              (shingocore/engine 16.3s -> 95.3s)
+#   -p 4 -parallel 5    204s
+#   -p 6 -parallel 4    277s
+#
+# The reason -p 8 buys nothing is that THE BOX IS ALREADY BUSY AT -p 1: tests
+# inside a package run up to GOMAXPROCS-parallel, so eight packages at once is
+# ~160 concurrent tests on 20 cores and they thrash. The reason capping
+# -parallel is worse still is the mirror image — the big packages (engine,
+# dispatch, www) get their speed FROM in-package parallelism, and throttling it
+# to hand cores to other packages trades a large win for a small one.
+#
+# So: oversubscribe by about 4x and no more, which is what nproc/4 is. Tests
+# here are mostly waiting on Postgres round-trips rather than burning CPU, which
+# is why some oversubscription wins at all. Derived rather than hardcoded
+# because 4 is this host's answer, not everyone's — on an 8-core laptop the same
+# rule gives 2, and on CI's 2-core runners it gives 1, which is where a
+# hardcoded 4 would thrash hardest.
+docker_p() {
+  local cores
+  cores="$(nproc 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-4}")"
+  case "$cores" in *[!0-9]*|"") cores=4 ;; esac
+  local p=$(( cores / 4 ))
+  [ "$p" -lt 1 ] && p=1
+  [ "$p" -gt 4 ] && p=4
+  echo "$p"
+}
+
 step_docker() {
-  local m failed=0 mods logdir
+  local m failed=0 mods logdir p
   mods="$(docker_modules)"
+  p="$(docker_p)"
   if [ -z "$mods" ]; then
     echo "ok   docker (no module carries a go:build docker test)"
     return 0
@@ -391,7 +430,7 @@ step_docker() {
   # container, which is what they did before this existed. The one thing not to
   # do is fail the gate: the verdict this script returns is about the code.
   if start_shared_pg; then
-    echo "  docker: shared postgres at $SHINGO_TEST_PG (template $SHINGO_TEST_PG_TEMPLATE)"
+    echo "  docker: shared postgres at $SHINGO_TEST_PG (template $SHINGO_TEST_PG_TEMPLATE, -p $p)"
   else
     stop_shared_pg
     unset SHINGO_TEST_PG SHINGO_TEST_PG_TEMPLATE
@@ -401,7 +440,7 @@ step_docker() {
 
   for m in $mods; do
     echo "  docker: $m"
-    ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p 1 ./... >"$logdir/docker-$m.log" 2>&1 ) \
+    ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p "$p" ./... >"$logdir/docker-$m.log" 2>&1 ) \
       || { failed=1; echo "  --- $m ($logdir/docker-$m.log) ---"; grep -Ev '^ok |no test files' "$logdir/docker-$m.log" | head -30; }
   done
   # Explicit teardown as well as the trap: the trap covers the interrupted run,
