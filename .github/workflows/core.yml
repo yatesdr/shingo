@@ -79,6 +79,21 @@ jobs:
           #
           # The glob matches the four module go.sum files (shared has a go.mod
           # but no external deps, so no go.sum, and nothing to key on).
+          #
+          # CONFIRMED ON A RUNNER: before this line the repo had never held a
+          # single setup-go-* cache entry — every entry in the cache registry
+          # was golangci-lint's own, which is why nothing looked wrong. The
+          # first run carrying it saved one.
+          #
+          # KNOWN LIMITATION, deliberately left: this glob hashes the whole
+          # repo, so every workflow computes the SAME key. The first job to
+          # finish saves and the rest skip with "already exists", which means
+          # the stored GOCACHE belongs to whichever small job won the race.
+          # GOMODCACHE is genuinely shared and still worth having; per-module
+          # build artifacts are not cached until the keys are split. Splitting
+          # them wants a module-specific path here and in edge.yml — and NOT in
+          # shared.yml, which has no go.sum to hash and would throw exactly the
+          # way the unset default did.
           cache-dependency-path: "**/go.sum"
 
       - name: Build
