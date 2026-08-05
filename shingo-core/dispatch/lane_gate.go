@@ -417,3 +417,23 @@ func (d *Dispatcher) ReleaseInboundLaneForOrder(orderID int64, dropNodeName stri
 			orderID, owner, dropNodeName, err)
 	}
 }
+
+// laneOccupiedForChild reports whether anything is currently inside a lane the
+// child needs — the Hold B admission read.
+//
+// It asks about the LANE, not about siblings. Any occupant counts: a sibling leg
+// mid-dig, or (structurally impossible while the dig holds the lane, but not
+// assumed here) a foreign order. The question "is someone in there" has one
+// answer and it does not depend on who is asking.
+func (d *Dispatcher) laneOccupiedForChild(sourceNode, destNode *nodes.Node) (bool, error) {
+	for _, laneID := range d.lanesFor(sourceNode, destNode) {
+		occupants, err := reservations.OccupantsOf(d.db.DB, laneID)
+		if err != nil {
+			return false, err
+		}
+		if len(occupants) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}

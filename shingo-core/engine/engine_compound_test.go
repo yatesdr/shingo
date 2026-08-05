@@ -11,6 +11,7 @@ import (
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
+	"shingocore/store/reservations"
 )
 
 // Compound reshuffle order tests (TC-40a, TC-44, TC-45, TC-46, TC-51, TC-52, TC-53, TC-54).
@@ -345,18 +346,27 @@ func TestCompound_SequentialChildDispatch_NoDeliveredCascade(t *testing.T) {
 			}
 		}
 
-		// Cascade guard (the 2026-05-27 invariant): the child AFTER the next
-		// one must stay Pending while its predecessor is in flight — if the
-		// double-advance regresses, two robots dispatch at once.
-		if i+2 < len(children) {
-			after, err := db.GetOrder(children[i+2].ID)
-			if err != nil {
-				t.Fatalf("get child seq+2 after sibling %d: %v", child.Sequence, err)
-			}
-			if after.VendorOrderID != "" {
-				t.Fatalf("cascade: child %d (seq %d) dispatched while sibling %d still in flight — vendor=%s status=%s",
-					after.ID, after.Sequence, children[i+1].Sequence, after.VendorOrderID, after.Status)
-			}
+		// AT MOST ONE CHILD INSIDE THE LANE. This replaces the cascade guard,
+		// which asserted that child i+2 still had an empty VendorOrderID while
+		// child i+1 was in flight — i.e. that no two children were ever
+		// dispatched at once. That property is deliberately retired: two legs of
+		// one reshuffle overlapping is the point of the change, and
+		// TestCompound_TwoChildrenInFlightAtOnce asserts the overlap positively.
+		//
+		// What must NOT happen is two legs inside the lane together, and that is
+		// a statement about the lane, so it is read from the lane: the occupancy
+		// rows, which are taken at dispatch and released when a leg places its
+		// bin. The 2026-05-27 failure it inherits — several robots sent into one
+		// corridor — is caught here exactly as it was before, while legitimate
+		// overlap no longer trips it.
+		occupants, oerr := reservations.OccupantsOf(db.DB, sc.Lane.ID)
+		if oerr != nil {
+			t.Fatalf("read lane occupants after sibling %d: %v", child.Sequence, oerr)
+		}
+		if len(occupants) > 1 {
+			t.Fatalf("%d children are inside lane %s at once (orders %v) after sibling %d — a reshuffle "+
+				"may overlap its legs but only one may be in the lane",
+				len(occupants), sc.Lane.Name, occupants, child.Sequence)
 		}
 	}
 

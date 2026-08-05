@@ -173,27 +173,28 @@ func (d *Dispatcher) CreateCompoundChildrenOnly(parentOrder *orders.Order, plan 
 
 // AdvanceCompoundOrder dispatches the next pending child order in a compound sequence.
 func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
-	// Sibling-in-flight guard: never dispatch the next child while another
-	// sibling is non-pending and non-terminal (sourcing / acknowledged /
-	// dispatched / in_transit / staged / delivered / faulted). Without this,
-	// fireCompleted firing on BOTH (*, Delivered) and (Delivered, Confirmed)
-	// would advance the next child twice across one sibling's lifecycle —
-	// once before the bin lands and again after edge confirm — and the
-	// redundant createCompound→advanceCompound path used to fire a second
-	// dispatch within milliseconds of compound creation. On 2026-05-27 these
-	// stacked to dispatch three robots into the same cross-aisle corridor.
+	// THE SIBLING-IN-FLIGHT GUARD IS GONE. It used to refuse to advance while any
+	// sibling was non-pending and non-terminal, and it was carrying two
+	// properties fused into one condition:
 	//
-	// This guard is sequential-only — it inspects state at call time without
-	// holding a lock. A pg_advisory_lock(parentOrderID) at top/bottom would
-	// close the two-goroutine race; deferred until the audit query (see
-	// SHINGO_TODO "Reshuffle dispatch cascade") shows it has ever fired.
-	children, _ := d.db.ListChildOrders(parentOrderID)
-	for _, c := range children {
-		if c.Status != StatusPending && !protocol.IsTerminal(c.Status) {
-			return nil
-		}
-	}
-
+	//   1. exactly-once dispatch per child — load-bearing, and accidental
+	//   2. one child at a time — the serialization being retired here
+	//
+	// (1) now stands on its own, below: a child that already carries a
+	// VendorOrderID is never dispatched again, keyed on a durable witness rather
+	// than on what its siblings happen to be doing. That separation landed
+	// first, deliberately, because removing this loop with the two still fused
+	// would dispatch every child twice — fireCompleted fires on BOTH
+	// (*, Delivered) and (Delivered, Confirmed), so this function re-enters
+	// across one sibling's lifecycle. The 2026-05-27 incident was one robot's
+	// worth of work dispatched three times, not three legitimate legs.
+	//
+	// (2) is replaced by the LANE gate below, which is a different and narrower
+	// rule: a child waits for the lane it needs to be empty, not for its
+	// siblings to be finished. THAT IS THE WHOLE GAIN. An unbury leg releases its
+	// occupancy when it PLACES its blocker, while it is still driving back and
+	// still non-terminal — so the next leg enters the lane during that return
+	// trip instead of after it. Several children in flight, one inside.
 	next, err := d.db.GetNextChildOrder(parentOrderID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		// A real DB error (connection drop, query/scan failure) is NOT the same
@@ -338,6 +339,28 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
 		}
 		return d.AdvanceCompoundOrder(parentOrderID)
+	}
+
+	// HOLD B, now enforcing. Step 5 made occupancy durable and observable and
+	// deliberately let it arbitrate nothing; this is where it starts to.
+	//
+	// A child may not be sent into a lane something is already inside. With the
+	// sibling loop gone this is the ONLY thing keeping two legs of one reshuffle
+	// out of one lane, and it is a strictly narrower rule: it asks about the
+	// lane, not about the siblings.
+	//
+	// Staying pending is not a failure and not a retry — the sibling's dropoff
+	// completion releases its occupancy and then re-enters this function, so the
+	// wait is exactly as long as the lane is busy.
+	if occupied, err := d.laneOccupiedForChild(sourceNode, destNode); err != nil {
+		// FAIL CLOSED. An unreadable lane is a busy lane: refusing to dispatch
+		// costs a retry on the next event, dispatching into a lane whose state
+		// could not be read costs a collision.
+		log.Printf("dispatch: occupancy read for compound %d child %d: %v (holding the child)", parentOrderID, next.ID, err)
+		return nil
+	} else if occupied {
+		d.dbg("dispatch: compound %d child %d held — a sibling is inside its lane", parentOrderID, next.ID)
+		return nil
 	}
 
 	// EXACTLY-ONCE, per child, independent of any serialization.
