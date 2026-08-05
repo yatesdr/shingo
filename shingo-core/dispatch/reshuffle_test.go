@@ -1336,12 +1336,18 @@ func TestLaneLockExtension_TargetBinPersistedAtScheduling(t *testing.T) {
 	_ = grp
 }
 
-// TestLaneLockExtension_TargetBinRecoveredOnCoreBoot: pre-populate a
-// pending_lane_extensions row with a non-terminal complex parent, call
-// RecoverPendingLaneExtensions, assert the in-memory listener is
-// re-registered with the PERSISTED target bin — not a freshly-derived
-// one. The row's target bin doesn't have to exist in the lane (since
-// we're testing that recovery doesn't re-derive).
+// TestLaneLockExtension_TargetBinRecoveredOnCoreBoot: a listener whose complex
+// parent is still live SURVIVES boot, with the persisted target bin and
+// from-node intact.
+//
+// The assertion moved with the design. It used to read the re-registered
+// in-memory entry; there is no in-memory entry now, because the row is the
+// listener and surviving a restart is what a row does. So it reads the row —
+// which is also what the handler reads, so the test and production are looking
+// at the same thing rather than at a mirror of it.
+//
+// What it still pins is the original point: recovery must not RE-DERIVE the
+// target bin. The row's bin need not exist in the lane, and that is deliberate.
 func TestLaneLockExtension_TargetBinRecoveredOnCoreBoot(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -1375,18 +1381,19 @@ func TestLaneLockExtension_TargetBinRecoveredOnCoreBoot(t *testing.T) {
 		t.Fatalf("RecoverPendingLaneExtensions: %v", err)
 	}
 
-	entry, ok := d.laneHolds.PeekByBin(targetBinID)
-	if !ok {
-		t.Fatal("lane-hold listener not re-registered for persisted target bin")
+	got, err := db.GetPendingLaneExtensionByComplexParent(complexParent.ID)
+	if err != nil {
+		t.Fatalf("listener row for a LIVE parent did not survive boot: %v", err)
 	}
-	if entry.complexParentID != complexParent.ID {
-		t.Errorf("recovered entry complexParentID = %d, want %d", entry.complexParentID, complexParent.ID)
+	if got.TargetBinID != targetBinID {
+		t.Errorf("recovered targetBinID = %d, want %d (recovery must not re-derive the target bin)",
+			got.TargetBinID, targetBinID)
 	}
-	if entry.laneID != laneID {
-		t.Errorf("recovered laneID = %d, want %d", entry.laneID, laneID)
+	if got.LaneID != laneID {
+		t.Errorf("recovered laneID = %d, want %d", got.LaneID, laneID)
 	}
-	if entry.expectedFromNode != expectedFromNode {
-		t.Errorf("recovered expectedFromNode = %d, want %d", entry.expectedFromNode, expectedFromNode)
+	if got.ExpectedFromNodeID != expectedFromNode {
+		t.Errorf("recovered expectedFromNode = %d, want %d", got.ExpectedFromNodeID, expectedFromNode)
 	}
 }
 

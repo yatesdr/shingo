@@ -499,7 +499,7 @@ func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, rea
 // persist failed (logged at the call site), or (b) something else
 // already consumed the row.
 func (d *Dispatcher) extendLaneLockForExposeMode(_ int64, complexParent *orders.Order, _ []*orders.Order) {
-	if d.laneLock == nil || d.laneHolds == nil {
+	if d.laneLock == nil {
 		d.unlockLaneForCompound(complexParent.ID)
 		return
 	}
