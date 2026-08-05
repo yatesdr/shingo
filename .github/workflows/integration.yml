@@ -69,10 +69,6 @@ jobs:
         working-directory: integration
         run: go vet -tags=docker ./...
 
-      - name: Prepare build dir
-        working-directory: integration
-        run: mkdir -p build
-
       - name: Test (default tags)
         working-directory: integration
         # Currently a thin slice — most integration logic is docker-
@@ -86,11 +82,7 @@ jobs:
         # ubuntu-latest runner provides Docker. -count=1 prevents
         # stale-cache false positives; -timeout=10m accommodates
         # cold-runner container startup. Tighten once observed.
-        run: go test -tags=docker -timeout=10m -count=1 -coverprofile=build/coverage-docker ./...
-
-      - name: Coverage report (Docker)
-        working-directory: integration
-        run: go tool cover -func=build/coverage-docker
+        run: go test -tags=docker -timeout=10m -count=1 ./...
 
       - name: Test (Docker integration, race)
         working-directory: integration

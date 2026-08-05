@@ -45,19 +45,12 @@ jobs:
         working-directory: protocol
         run: go build ./...
 
-      - name: Prepare build dir
-        working-directory: protocol
-        run: mkdir -p build
-
       - name: Test
         working-directory: protocol
-        run: go test -v -coverprofile=build/coverage ./...
+        run: go test -v ./...
 
       - name: Test (race)
         working-directory: protocol
         # Promoted to gating in Phase 2 (2026-05-22).
         run: go test -race -count=1 ./...
 
-      - name: Coverage report
-        working-directory: protocol
-        run: go tool cover -func=build/coverage

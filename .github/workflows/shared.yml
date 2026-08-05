@@ -62,18 +62,11 @@ jobs:
         working-directory: shared
         run: go vet ./...
 
-      - name: Prepare build dir
-        working-directory: shared
-        run: mkdir -p build
-
       - name: Test
         working-directory: shared
-        run: go test -v -coverprofile=build/coverage ./...
+        run: go test -v ./...
 
       - name: Test (race)
         working-directory: shared
         run: go test -race -count=1 ./...
 
-      - name: Coverage report
-        working-directory: shared
-        run: go tool cover -func=build/coverage

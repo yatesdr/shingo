@@ -138,248 +138,42 @@ jobs:
         working-directory: shingo-core
         run: go test -run NONE -count=1 ./...
 
-  # THE TWO DOCKER SUITES ARE SEPARATE JOBS, AND THAT IS PURE WALL CLOCK.
+  # BOTH DOCKER SUITES ARE SHARDED, VIA THE SAME REUSABLE WORKFLOW.
   #
-  # They used to be two steps in the job above, so they ran back to back:
-  # MEASURED on this runner, 137s then 334s inside a 568s job. Nothing in the
-  # race run depends on the plain run — same suite, different flag — so the
-  # sum was being paid for no reason. As jobs they overlap, and the workflow
-  # ends when the longest one does instead of when their total does.
+  # They were two steps in the build job, running back to back for no reason —
+  # nothing in the race run depends on the plain one, it is the same suite with
+  # a different flag. MEASURED as steps: 137s then 334s inside a 568s job. As
+  # separate sharded workflows they overlap, and each is bounded by its slowest
+  # shard rather than by its own total.
   #
-  # NO `needs:` ON EITHER, deliberately. Gating them behind `build` would
-  # serialise the very thing this split exists to overlap, for a compile check
-  # that `go test` repeats anyway. The cost is that a genuine compile error is
-  # reported by three jobs at once, which is noise on a run that has already
-  # failed.
+  # The plain suite is shardable at all only because the coverage profile is
+  # gone: six shards would each have produced a partial profile, and a merge
+  # step that silently under-reports coverage is worse than no number.
   #
-  # Each job gets its own checkout, toolchain and Postgres, so the per-job
-  # entry cost (~50-75s) is now paid three times rather than once. That is the
-  # trade: ~150s of wall clock for ~150s of extra runner time, on a public
-  # repo where standard-runner minutes are free.
+  # Six shards for core: 49 packages with a long tail, and the floor is the
+  # single longest package (shingocore/engine, ~20s).
 
   docker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # Full history: TestSchemaConvergesAcrossVintages reads pinned
-          # revisions out of git. See the note in the build job.
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25.0"
-          # Same key as the build job — same module, same dependencies, so
-          # they share a cache rather than fighting over one. See the build
-          # job for why this line has to be here at all.
-          cache-dependency-path: |
-            shingo-core/go.sum
-            protocol/go.sum
-
-      - name: Prepare build dir
-        working-directory: shingo-core
-        run: mkdir -p build
-
-      # ONE POSTGRES FOR THE WHOLE JOB, rather than one per Go package.
-      #
-      # Every Go package is its own test process, so testcontainers' "one
-      # container per process" is one container per PACKAGE, and 31 of this
-      # module's packages carry docker-tagged tests --
-      #   grep -rln 'go:build docker' shingo-core/ --include='*.go' \
-      #     | xargs -n1 dirname | sort -u | wc -l
-      # -- each paying a Postgres boot plus a full replay of the migration
-      # stack into its own template. MEASURED on a 20-core dev host that is
-      # ~5.4s per package (~3s boot, ~2.4s migrations) against ~0.2s of real
-      # query work in a small package; a cold 2-core runner is worse, not
-      # better. shingo-core/internal/testdb takes $SHINGO_TEST_PG instead when
-      # it is set, and builds the template once under a Postgres advisory lock
-      # that the other 30 packages wait on.
-      #
-      # A `services:` block cannot do this: it can pass container options but
-      # not the server's own command arguments, and fsync=off et al are the
-      # point -- this database is thrown away with the runner, so the settings
-      # that exist to survive a crash are pure cost.
-      #
-      # The name is scoped to run AND job: each job now has its own container,
-      # so there is nothing to share, and a per-job name keeps that obvious.
-      - name: Start shared Postgres
-        uses: ./.github/actions/shared-postgres
-        with:
-          template: template_ci_${{ github.run_id }}_docker
-
-      - name: Test (Docker integration)
-        working-directory: shingo-core
-        # -count=1 prevents stale-cache false positives on integration tests;
-        # -timeout=10m accommodates a cold runner.
-        #
-        # -p 1 STAYS, but not for the reason it used to. It was here because
-        # packages contended over testcontainers' containers, which the shared
-        # server above removes. It stays because ubuntu-latest has 2-4 cores
-        # and tests inside a package already run up to GOMAXPROCS-parallel: on
-        # a 20-core dev host the best setting measured nproc/4, which on this
-        # runner is 1. Raising it here would oversubscribe, which measured
-        # strictly worse (-p 8 made every package 4-6x slower individually).
-        run: go test -tags=docker -timeout=10m -count=1 -p 1 -coverprofile=build/coverage-docker ./...
-
-      - name: Coverage report (Docker)
-        working-directory: shingo-core
-        run: go tool cover -func=build/coverage-docker
-
-  # ── The race suite, sharded ──────────────────────────────────────────
-  #
-  # THE LONG POLE OF THIS WORKFLOW: 322s of a 395s run, against 137s for the
-  # same suite without the flag. That is the race detector's usual 5-20x on
-  # memory access, and it buys a guarantee worth keeping for software that
-  # drives AMRs around a plant: a data race cannot reach main. So it is made
-  # cheaper by running the packages side by side, not by running it less often.
-  #
-  # THE PACKAGE LIST IS NEVER WRITTEN DOWN. It is re-derived from `go list` on
-  # every run, because a hardcoded list would be wrong within a month and
-  # would not fail loudly when it was — it would just quietly stop testing
-  # whatever had drifted out of it. The only thing carried between runs is
-  # per-package DURATIONS, and those self-correct: see scripts/shard-plan.py.
-  #
-  # ONE PLAN JOB, NOT A PLAN PER SHARD. Every shard could compute the same
-  # partition independently and take its own slice, which would save this
-  # job's ~30s. It is not worth the failure mode: two shards restoring
-  # different timings caches would compute different partitions, and packages
-  # would be run twice or not at all, silently. Computing it once and handing
-  # the same answer to all six makes divergence impossible.
-
-  race-plan:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25.0"
-          cache-dependency-path: |
-            shingo-core/go.sum
-            protocol/go.sum
-
-      # Rolling key: cache entries are immutable once written, so the key
-      # carries the run id and the prefix in restore-keys picks up the most
-      # recent previous one. A miss is fine — shard-plan falls back to equal
-      # weights and the run is merely less balanced.
-      - uses: actions/cache/restore@v4
-        with:
-          path: .shard/timings.json
-          key: shard-timings-core-${{ github.run_id }}
-          restore-keys: |
-            shard-timings-core-
-
-      # Go, not a shell one-liner and not a script in some other language:
-      # scripts/shardplan is the only part of this that must not be subtly
-      # wrong, and being Go means `go test ./scripts/shardplan` covers the
-      # packer, its determinism, and the partition check. It is also the only
-      # language already in this repo — see shingo-core/scripts/cover_summary.go
-      # for the same pattern.
-      - id: plan
-        run: |
-          set -euo pipefail
-          mkdir -p .shard
-          cd shingo-core
-          go list -tags=docker ./... > ../.shard/pkgs.txt
-          matrix=$(go run ./scripts/shardplan plan \
-            -shards 6 -timings ../.shard/timings.json < ../.shard/pkgs.txt)
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-
-      # Handed to race-record, which prunes timings down to the packages that
-      # still exist. Passing it rather than re-deriving it also means both
-      # halves of a run agree on what the package set was.
-      - uses: actions/upload-artifact@v4
-        with:
-          name: shard-pkgs
-          path: .shard/pkgs.txt
+    uses: ./.github/workflows/sharded-suite.yml
+    with:
+      module: shingo-core
+      shards: 6
+      test-flags: "-timeout=10m"
+      cache-prefix: shard-timings-core-plain-
+      needs-postgres: true
 
   docker-race:
-    needs: race-plan
-    runs-on: ubuntu-latest
-    strategy:
-      # fail-fast off: one shard finding a race must not cancel the others.
-      # Their results are still wanted — both to see whether the failure is
-      # isolated, and so race-record still gets timings for the rest.
-      fail-fast: false
-      matrix:
-        shard: ${{ fromJson(needs.race-plan.outputs.matrix) }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25.0"
-          cache-dependency-path: |
-            shingo-core/go.sum
-            protocol/go.sum
-
-      - name: Start shared Postgres
-        uses: ./.github/actions/shared-postgres
-        with:
-          template: template_ci_${{ github.run_id }}_race${{ matrix.shard.id }}
-
-      - name: Test (Docker integration, race) — shard ${{ matrix.shard.id }}
-        working-directory: shingo-core
-        # NOT -json, deliberately: the timings are parseable from plain output
-        # (shard-plan record reads both), and a race report is a multi-page
-        # stack dump that JSON would make unreadable on the one run where
-        # somebody has to read it.
-        #
-        # pipefail so `tee` cannot mask a failing exit code. -p 1 for the same
-        # reason as the plain docker job: the runner has 2-4 cores and
-        # in-package parallelism already uses them.
-        run: |
-          set -o pipefail
-          mkdir -p ../.shard
-          go test -tags=docker -race -timeout=25m -count=1 -p 1 \
-            ${{ matrix.shard.pkgs }} \
-            | tee ../.shard/results-${{ matrix.shard.id }}.log
-
-      # if: always() — a shard that failed still produced timings for the
-      # packages that did run, and losing them would unbalance the next run.
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: shard-results-${{ matrix.shard.id }}
-          path: .shard/results-${{ matrix.shard.id }}.log
-          if-no-files-found: ignore
-
-  race-record:
-    needs: [race-plan, docker-race]
-    # always(): timings are worth keeping even when a shard went red. This job
-    # never gates anything — it only feeds the next run's balance.
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25.0"
-          cache-dependency-path: |
-            shingo-core/go.sum
-            protocol/go.sum
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: .shard-artifacts
-
-      - name: Merge timings
-        run: |
-          set -euo pipefail
-          mkdir -p .shard
-          find .shard-artifacts -name 'results-*.log' -print
-          cd shingo-core
-          go run ./scripts/shardplan record \
-            -timings ../.shard/timings.json \
-            $(find ../.shard-artifacts -name 'results-*.log') \
-            < ../.shard-artifacts/shard-pkgs/pkgs.txt
-
-      - uses: actions/cache/save@v4
-        with:
-          path: .shard/timings.json
-          key: shard-timings-core-${{ github.run_id }}
+    uses: ./.github/workflows/sharded-suite.yml
+    with:
+      module: shingo-core
+      shards: 6
+      # Promoted to gating in Phase 2 (2026-05-22). The race detector's usual
+      # 5-20x is the price of a data race being unable to reach main, in
+      # software that drives AMRs around a plant. Made cheaper by running the
+      # packages side by side, not by running it less often.
+      test-flags: "-race -timeout=25m"
+      # A SEPARATE TIMINGS CACHE from the plain suite: race durations are
+      # multiples of the plain ones, and one cache would balance both against
+      # the wrong numbers.
+      cache-prefix: shard-timings-core-race-
+      needs-postgres: true
