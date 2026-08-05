@@ -165,14 +165,46 @@ jobs:
   # Six shards for core: 49 packages with a long tail, and the floor is the
   # single longest package (shingocore/engine, ~20s).
 
+  # THE PLAIN SUITE IS ONE JOB, AND IT WAS SHARDED FOR EXACTLY ONE RUN.
+  #
+  # Sharding it looked free — its own chain went 174s to 103s. It was not.
+  # MEASURED across two runs, the workflow got SLOWER, 212s to 250s, because
+  # six extra shards plus their plan and record push the run to 17 concurrent
+  # jobs against a 20-slot limit, and the race shards they compete with went
+  # from 123-156s to 124-175s. The wall clock is set by the race chain, so
+  # speeding up the plain chain at its expense is a straight loss.
+  #
+  # The general rule this leaves: shard a suite when it is long enough that a
+  # shard still dominates its own job entry cost, and when the slots it takes
+  # are not wanted by a longer chain. Race qualifies at ~322s. This does not
+  # at ~174s, and neither does edge's ~30s plain run.
+
   docker:
-    uses: ./.github/workflows/sharded-suite.yml
-    with:
-      module: shingo-core
-      shards: 6
-      test-flags: "-timeout=10m"
-      cache-prefix: shard-timings-core-plain-
-      needs-postgres: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: TestSchemaConvergesAcrossVintages reads pinned
+          # revisions out of git. See the note in the build job.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: |
+            shingo-core/go.sum
+            protocol/go.sum
+
+      - name: Start shared Postgres
+        uses: ./.github/actions/shared-postgres
+        with:
+          template: template_ci_${{ github.run_id }}_docker
+
+      - name: Test (Docker integration)
+        working-directory: shingo-core
+        # -p 1: the runner has 2-4 cores and in-package parallelism already
+        # uses them. On a 20-core dev host the best setting measured nproc/4.
+        run: go test -tags=docker -timeout=10m -count=1 -p 1 ./...
 
   docker-race:
     uses: ./.github/workflows/sharded-suite.yml
