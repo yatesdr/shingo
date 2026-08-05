@@ -187,11 +187,55 @@ step_lint() {
 # gate, and 11s of a ~190s run does not buy that back. The test is genuinely
 # load-fragile and would bite on a slow or busy machine without any help from
 # here — worth hardening on its own terms, and then this can be revisited.
+# Which modules still need an untagged `go test` of their own.
+#
+# NOT ALL OF THEM, WHEN THE DOCKER STEP IS ALSO RUNNING. `-tags=docker` ADDS
+# files and removes none, and nothing in this tree carries a `!docker`
+# constraint — so `go test -tags=docker ./...` runs every test the untagged run
+# would, plus the docker ones.
+#
+# VERIFIED against `go test -list` rather than reasoned about: shingo-core's
+# engine lists 37 tests untagged and 264 with the tag, rds 154 and 154,
+# store/orders 1 and 28 — and in each, zero tests present untagged and absent
+# with the tag. No docker-tagged file defines TestMain or init() either, so the
+# tag does not change how the untagged tests get set up.
+#
+# So running both duplicates 1,929 tests, and cold it duplicates a whole second
+# compile of shingo-core — 21s on this host against 43s for the docker-tagged
+# one. protocol and shared carry no docker tests and are still run here; they
+# are 185 tests and about two seconds.
+#
+# THE `!docker` SEARCH IS THE ENTIRE SAFETY OF THIS. The moment one file
+# excludes itself from the docker build, the superset property is false and
+# skipping the untagged run would silently stop testing that file. Recomputed
+# on every invocation so it cannot go stale, and it fails SAFE: anything found,
+# and every module runs.
+untagged_only_modules() {
+  if grep -rlq 'go:build.*!docker' --include='*.go' "$ROOT" 2>/dev/null; then
+    printf '%s' "$MODULES"
+    return
+  fi
+  local m d dockermods covered
+  dockermods="$(docker_modules)"
+  for m in $MODULES; do
+    covered=0
+    for d in $dockermods; do
+      [ "$m" = "$d" ] && covered=1
+    done
+    [ "$covered" -eq 0 ] && printf '%s ' "$m"
+  done
+}
+
 step_test() {
-  local m failed=0 logdir
+  local m failed=0 logdir mods
+  mods="${1:-$MODULES}"
+  if [ -z "$mods" ]; then
+    echo "ok   tests (every module's untagged tests run inside the docker step)"
+    return 0
+  fi
   logdir="$ROOT/.gate"
   mkdir -p "$logdir" || { echo "FAIL tests — cannot create $logdir"; return 1; }
-  for m in $MODULES; do
+  for m in $mods; do
     ( cd "$ROOT/$m" && go test -count=1 ./... >"$logdir/test-$m.log" 2>&1 ) || {
       echo "  $m:"
       grep -Ev '^ok |no test files' "$logdir/test-$m.log" | head -30
@@ -497,10 +541,17 @@ case "${1:-all}" in
     step_fmt  || rc=1
     step_vet  || rc=1
     step_lint || rc=1
-    step_test || rc=1
+    # Scope is decided BEFORE the tests here, because it decides what the tests
+    # have to cover: when the docker step runs it already runs every untagged
+    # test in the modules that carry docker tests, so only the modules it does
+    # not reach need their own run. See untagged_only_modules. When docker is
+    # out of scope nothing else covers them and every module runs, which is
+    # what `all` does too.
     if step_scope "${2:-}"; then
+      step_test "$(untagged_only_modules)" || rc=1
       step_docker || rc=1
     else
+      step_test || rc=1
       echo "     (docker suites skipped — nothing in this diff can reach one)"
     fi
     ;;
