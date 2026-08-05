@@ -365,9 +365,18 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// point and has its dropoff tail appended when the lane is safe — immediately
 	// when it already is. No-op (and no extra query beyond the lane lookup) for
 	// every other destination, so an unconfigured plant never leaves this line.
+	//
+	// Coordinated orders are excluded, symmetrically with the retrieve branch below:
+	// dispatchGated OVERWRITES steps_json with its own three-step plan, so a
+	// coordinated order taking this branch loses its Edge-authored choreography.
+	// This is a statement of the valve's precondition where the valve is, not the
+	// thing that keeps it true — the live way in was HandleOrderRedirect, and that
+	// is refused at the handler. AssertSimpleNotCoordinated only LOGS, so the plain
+	// path's exclusion of coordinated orders is a tripwire rather than a guard, and
+	// this line is what makes the valve safe on its own terms.
 	if target, gated, err := d.resolveLaneGateTarget(destNode); err != nil {
 		return "", err
-	} else if gated {
+	} else if gated && !order.Coordinated {
 		return d.dispatchGated(order, target, sourceNode, destNode)
 	}
 	// gate_choreography (retrieve direction): a lane-bound RETRIEVE — one whose
@@ -619,6 +628,35 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 		d.replies.SendError(env, p.OrderUUID, "not_found", "order not found or access denied")
 		return
 	}
+
+	// A COORDINATED ORDER CANNOT BE REDIRECTED, and this is not a lane rule.
+	// PrepareRedirect below is destructive — it cancels the vendor order and moves
+	// the row to sourcing — and what follows it is dispatchToFleetCore, which builds
+	// a two-block transport from the source/delivery COLUMNS. An Edge-authored step
+	// plan does not survive that trip whether or not a lane is involved; its waits,
+	// its intermediate legs and its ordering are simply not read.
+	//
+	// With gating on it also destroys the plan on disk: a lane-slot destination
+	// takes the store valve, which overwrites steps_json with [pickup, wait@gate,
+	// dropoff]. The order's own station wait becomes a gate wait and its
+	// choreography is gone.
+	//
+	// Refusing rather than guarding the valve is deliberate. A !Coordinated guard on
+	// the valve alone would make this fall through to UNGATED dispatch — a robot
+	// entering a gate_choreography lane with no gate at all, which is the failure the
+	// gate exists to prevent. That trades a plan bug for a lane-safety bug.
+	//
+	// Refused HERE and not at Edge's API because whether a destination is a gated
+	// lane is Core's configuration; asking Edge to know it would put one decision in
+	// two places. invalid_state for the same reason the release fence uses it: Edge
+	// treats that code as recoverable and any other code terminalizes the Edge row.
+	if order.Coordinated {
+		d.dbg("redirect refused: order %d is coordinated — redirect would discard its step plan", order.ID)
+		d.replies.SendError(env, p.OrderUUID, "invalid_state",
+			"this order carries a multi-step plan and cannot be redirected; cancel it and re-issue")
+		return
+	}
+
 	sourceNode, newDest, err := d.lifecycle.PrepareRedirect(order, p.NewDeliveryNode)
 	if err != nil {
 		if err.Error() == "no source node for redirect" {
