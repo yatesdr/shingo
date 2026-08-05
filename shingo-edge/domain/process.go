@@ -288,6 +288,58 @@ type NodeClaim struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
+// SwapModePressPosition marks a per-position claim synthesized from a
+// press-index parent — one physical seat of the press (front, paired, or
+// second-paired) treated as an independent slot. The parent's SwapMode
+// (two_robot_press_index) is replaced with this value so the planner routes
+// it to the simple per-position builder rather than back into the press-index
+// branch, and so protocol.SwapMode.IsTwoRobot reports false for it.
+//
+// NEVER PERSISTED. store/processes.UpsertClaim rejects it (it is absent from
+// protocol.ConfigurableSwapModes), so style_node_claims never holds this
+// value. A seat carrying it exists only for the life of one changeover.
+const SwapModePressPosition protocol.SwapMode = "press_position"
+
+// SynthesizePressPositionClaim builds a per-position claim from a parent
+// press-index claim. CoreNodeName becomes the position's own name; SwapMode
+// becomes the press_position marker; the press-index-only geometry fields
+// (PairedCoreNode, SecondPairedCoreNode) and the staging fields are zeroed
+// (a single position uses direct trips, no staging hop, no A/B partner).
+// Everything else — PayloadCode, InboundSource, OutboundDestination, Role,
+// UOPCapacity, EvacuateOnChangeover — is copied from the parent.
+//
+// The synthesized claim keeps the PARENT's ID: per-position node tasks
+// reference that ID so wiring lookups resolve back to the real persisted
+// parent row.
+//
+// Lives in domain, not engine, because BOTH the planner and the station view
+// must derive this claim the same way. The planner synthesizes it to build
+// the per-position orders; the view re-synthesizes it so a fanned-out seat
+// renders as a claimed node. Hopkinsville 2026-08-05 (P400, changeover 51,
+// tote → bin): the planner had it, the view did not, and every claim-keyed UI
+// gate failed closed on PLN_02/PLN_05 — the tile lit up release-ready while
+// its modal rendered no buttons at all. Two robots sat at a staged wait for
+// 19 minutes and the operator cancelled both orders to free them. One
+// definition, two callers, so the two can never drift again.
+func SynthesizePressPositionClaim(parent *NodeClaim, coreNodeName string) *NodeClaim {
+	if parent == nil {
+		return nil
+	}
+	c := *parent
+	c.CoreNodeName = coreNodeName
+	c.SwapMode = SwapModePressPosition
+	c.PairedCoreNode = ""
+	c.SecondPairedCoreNode = ""
+	c.InboundStaging = ""
+	c.OutboundStaging = ""
+	// ReuseCompatibleBins is press-index-only; clear it so the
+	// reuse-compatible-bins shortcut doesn't try to apply per-position.
+	c.ReuseCompatibleBins = false
+	// KeepStaged shouldn't trigger inside per-position routing.
+	c.KeepStaged = false
+	return &c
+}
+
 // AllowedPayloads returns the effective set of payload codes this claim
 // accepts. For source nodes with an allowed list, returns that list.
 // Otherwise returns a single-element list with the primary payload code.

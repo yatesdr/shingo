@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/store"
@@ -226,6 +227,27 @@ func fanOutScenario(t *testing.T) (db *store.DB, stationID, pressNodeID, seatNod
 		t.Fatalf("create seat node: %v", err)
 	}
 
+	// The press-index claim the fan-out derives FROM. Only the FRONT position
+	// carries a style_node_claims row; the seat exists solely as this claim's
+	// paired_core_node. That asymmetry is the whole reason a fanned-out seat has
+	// no claim of its own to render from.
+	styleID, err := db.CreateStyle("FANOUT-STYLE", "", processID)
+	if err != nil {
+		t.Fatalf("create style: %v", err)
+	}
+	if err := db.SetActiveStyle(processID, &styleID); err != nil {
+		t.Fatalf("set active style: %v", err)
+	}
+	claimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: styleID, CoreNodeName: "PLN_B1", Role: protocol.ClaimRoleProduce,
+		SwapMode: protocol.SwapModeTwoRobotPressIndex, PayloadCode: "TOTE-A",
+		UOPCapacity: 120, PairedCoreNode: "PLN_B2",
+		InboundSource: "SMN_IN", OutboundDestination: "SMN_OUT",
+	})
+	if err != nil {
+		t.Fatalf("upsert press-index claim: %v", err)
+	}
+
 	res, err := db.Exec(`INSERT INTO process_changeovers (process_id, to_style_id, state, called_by)
 		VALUES (?, 1, 'active', 'test')`, processID)
 	if err != nil {
@@ -233,11 +255,13 @@ func fanOutScenario(t *testing.T) (db *store.DB, stationID, pressNodeID, seatNod
 	}
 	changeoverID, _ := res.LastInsertId()
 
-	// The fan-out: BOTH positions get their own drop task.
+	// The fan-out: BOTH positions get their own drop task. Each records the
+	// press-index claim it was planned from — a synthesized per-position claim
+	// carries its PARENT's ID, so both tasks point at the one front-position row.
 	mkTask := func(nodeID int64) int64 {
 		tres, terr := db.Exec(`INSERT INTO changeover_node_tasks
-			(process_changeover_id, process_node_id, situation, state)
-			VALUES (?, ?, 'drop', 'staging_requested')`, changeoverID, nodeID)
+			(process_changeover_id, process_node_id, from_claim_id, situation, state)
+			VALUES (?, ?, ?, 'drop', 'staging_requested')`, changeoverID, nodeID, claimID)
 		if terr != nil {
 			t.Fatalf("insert task for node %d: %v", nodeID, terr)
 		}
@@ -337,5 +361,117 @@ func TestBuildView_StationlessSeatStaysOffUnrelatedBoards(t *testing.T) {
 		if view.Nodes[i].Node.ID == seatNodeID {
 			t.Fatal("stationless seat leaked onto a board that owns none of the changeover's work")
 		}
+	}
+}
+
+// seatView finds one node's view on a station board, failing the test if the
+// tile is absent (an absent tile is its own regression, pinned above).
+func seatView(t *testing.T, db *store.DB, stationID, nodeID int64) *domain.StationNodeView {
+	t.Helper()
+	view, err := NewStationService(db).BuildView(context.Background(), stationID)
+	if err != nil {
+		t.Fatalf("BuildView: %v", err)
+	}
+	for i := range view.Nodes {
+		if view.Nodes[i].Node.ID == nodeID {
+			return &view.Nodes[i]
+		}
+	}
+	t.Fatalf("node %d missing from station %d view", nodeID, stationID)
+	return nil
+}
+
+// TestBuildView_FannedOutSeatGetsSynthesizedClaim is the regression pin for HK
+// 2026-08-05 (P400 changeover 51, tote -> bin). The seat renders — that was
+// fixed on 2026-07-28 — but it rendered CLAIMLESS, and the operator modal keys
+// its whole action region off the claim. The tile glowed release-ready off the
+// TASK while the modal behind it offered no buttons at all, so two robots sat
+// at a staged wait until the operator cancelled their orders.
+//
+// The view must derive the same per-position claim the planner built.
+func TestBuildView_FannedOutSeatGetsSynthesizedClaim(t *testing.T) {
+	db, stationID, pressNodeID, seatNodeID := fanOutScenario(t)
+
+	seat := seatView(t, db, stationID, seatNodeID)
+	if seat.ActiveClaim == nil {
+		t.Fatal("fanned-out seat has no ActiveClaim — every claim-keyed gate fails closed " +
+			"and its modal renders no release button (HK 2026-08-05)")
+	}
+	if seat.ActiveClaim.CoreNodeName != "PLN_B2" {
+		t.Errorf("synthesized claim CoreNodeName = %q, want the SEAT's own name PLN_B2 — "+
+			"handing it the parent's identity would make the tile act on the parent's work",
+			seat.ActiveClaim.CoreNodeName)
+	}
+	if seat.ActiveClaim.SwapMode != domain.SwapModePressPosition {
+		t.Errorf("synthesized claim SwapMode = %q, want %q",
+			seat.ActiveClaim.SwapMode, domain.SwapModePressPosition)
+	}
+	// Inherited from the parent — the payload physically on the seat.
+	if seat.ActiveClaim.PayloadCode != "TOTE-A" {
+		t.Errorf("synthesized claim PayloadCode = %q, want TOTE-A inherited from the parent claim",
+			seat.ActiveClaim.PayloadCode)
+	}
+	// Geometry fields must be cleared, or the seat reads as its own parent and
+	// the planner/view could fan it out again.
+	if seat.ActiveClaim.PairedCoreNode != "" || seat.ActiveClaim.SecondPairedCoreNode != "" {
+		t.Errorf("synthesized claim kept press-index geometry (paired=%q second=%q), want both cleared",
+			seat.ActiveClaim.PairedCoreNode, seat.ActiveClaim.SecondPairedCoreNode)
+	}
+
+	// The front position must keep its REAL persisted claim, untouched.
+	press := seatView(t, db, stationID, pressNodeID)
+	if press.ActiveClaim == nil || press.ActiveClaim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		t.Errorf("front position claim = %+v, want the persisted two_robot_press_index row", press.ActiveClaim)
+	}
+}
+
+// TestBuildView_FannedOutSeatRoutesToPlainRelease pins the modal path the
+// synthesized claim must land on. operator-modal.js picks its action region in
+// order: manual_swap loader UI, then swap_ready (consolidated two-robot
+// release), then the two_robot "WAITING FOR OTHER ROBOT" hold, then the plain
+// `staged` single-order RELEASE.
+//
+// A fanned-out seat is a standalone evac with no sibling leg, so it must fall
+// all the way through to the LAST branch — the same one the front position used
+// successfully at Hopkinsville. Landing on either two-robot branch would give
+// the operator a disabled WAITING button and reproduce the outage in a new
+// costume, which is why this asserts the misses and not just the hit.
+func TestBuildView_FannedOutSeatRoutesToPlainRelease(t *testing.T) {
+	db, stationID, _, seatNodeID := fanOutScenario(t)
+
+	seat := seatView(t, db, stationID, seatNodeID)
+	if seat.ActiveClaim == nil {
+		t.Fatal("no ActiveClaim; covered by TestBuildView_FannedOutSeatGetsSynthesizedClaim")
+	}
+	if seat.ActiveClaim.SwapMode == protocol.SwapModeManualSwap {
+		t.Error("seat claims manual_swap — the modal would render the loader demand queue, " +
+			"and LoadBin must never stamp a part on an on-deck press position")
+	}
+	if seat.ActiveClaim.SwapMode.IsTwoRobot() {
+		t.Errorf("SwapMode %q reports IsTwoRobot — ComputeSwapReady would gate the seat on a "+
+			"sibling leg it does not have, disabling its release", seat.ActiveClaim.SwapMode)
+	}
+	if seat.SwapReady {
+		t.Error("seat reports swap_ready — the modal would offer the consolidated two-robot " +
+			"release for a standalone evac with no sibling")
+	}
+}
+
+// TestBuildView_IndexedOverSeatStaysClaimless is the blast-radius guard on the
+// fallback: it must fire ONLY for a seat that owns its own task. A same-bin-type
+// press-index seat rides along on the front position's task, owns no work, and
+// renders as a child tile that deliberately offers nothing. Giving it a claim
+// would make it look actionable and re-open the LoadBin hazard the child-tile
+// branch exists to prevent.
+func TestBuildView_IndexedOverSeatStaysClaimless(t *testing.T) {
+	db, stationID, _, seatNodeID, _ := seatScenario(t)
+
+	seat := seatView(t, db, stationID, seatNodeID)
+	if seat.ChangeoverTask != nil {
+		t.Fatal("scenario invariant broken: an indexed_over seat mints no task")
+	}
+	if seat.ActiveClaim != nil {
+		t.Errorf("indexed_over seat was given a claim (%+v) — it owns no work, and a claim "+
+			"makes an on-deck position look actionable", seat.ActiveClaim)
 	}
 }
