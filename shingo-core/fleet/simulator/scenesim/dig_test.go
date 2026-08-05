@@ -124,10 +124,6 @@ func TestDig_ExcludesStoreAcrossLegs(t *testing.T) {
 		if sr != nil && sr.pos.inLane() && digActive {
 			storeEnteredDuringDig = true
 		}
-		if digDoneTick > 0 && !sim.OrderActive("store-1") && !sim.HasBin("S0") {
-			// store placed into S0 after the dig freed it — but the dig dropped S0's
-			// original bin at LINE, so the store re-fills the now-empty shallow slot.
-		}
 		if sim.AllIdle() {
 			storeCompleted = true
 			break
@@ -144,6 +140,20 @@ func TestDig_ExcludesStoreAcrossLegs(t *testing.T) {
 	storeRobot := sim.robots["STORE"]
 	if storeRobot == nil || !storeRobot.idle {
 		t.Error("store did not reach idle")
+	}
+	// And it must have PLACED, not merely finished. The dig empties both S0 and
+	// S1 (blocker and target both unload at LINE), so the store refills the
+	// now-free shallow slot from LINE — an empty S0 here means the store ran to
+	// completion without ever depositing its bin.
+	//
+	// This assertion existed as a comment inside a body-less `if` in the tick
+	// loop (staticcheck SA9003) until 2026-08-04. It was reaching for exactly
+	// this property and could not state it there: mid-loop, !OrderActive("store-1")
+	// is also true BEFORE the store starts, so the predicate fired spuriously on
+	// the early ticks. After settling it is sound — which is where its sibling
+	// TestDig_ReleasesLaneOnCompletion already states the same thing.
+	if !sim.HasBin("S0") {
+		t.Error("the store completed but S0 is empty — it never placed the bin the dig freed room for")
 	}
 	t.Logf("dig+store: dig done @%d, store held out for the whole dig, then completed; settled @%d",
 		digDoneTick, sim.TickCount())
