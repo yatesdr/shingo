@@ -340,6 +340,34 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		return d.AdvanceCompoundOrder(parentOrderID)
 	}
 
+	// EXACTLY-ONCE, per child, independent of any serialization.
+	//
+	// This is the property the sibling-in-flight guard above has been carrying
+	// as a side effect, and it is the load-bearing half of that guard.
+	// fireCompleted fires on BOTH (*, Delivered) and (Delivered, Confirmed), so
+	// AdvanceCompoundOrder re-enters across one sibling's lifecycle; the
+	// createCompound→advanceCompound path used to add a second entry within
+	// milliseconds of creation. Those are re-entries, not parallelism — the
+	// 2026-05-27 incident was ONE robot's worth of work dispatched three times.
+	//
+	// VendorOrderID is the durable witness: it is non-empty once and only once a
+	// child has been handed to the fleet, it survives a crash, and it does not
+	// depend on what any sibling is doing. Re-reading it here rather than
+	// trusting `next` closes the window between GetNextChildOrder and this line.
+	//
+	// Deliberately belt-and-braces for now: the sibling loop still serializes, so
+	// this guard should never fire, and nothing about the plant's behaviour
+	// changes today. It is stated separately so that when the serialization half
+	// is removed, exactly-once does not go with it.
+	if fresh, rErr := d.db.GetOrder(next.ID); rErr != nil {
+		log.Printf("dispatch: re-read child %d before dispatch: %v", next.ID, rErr)
+		return rErr // fail closed: an unverifiable child is not dispatched
+	} else if fresh.VendorOrderID != "" {
+		log.Printf("dispatch: child order %d already dispatched as %s — refusing a second dispatch",
+			next.ID, fresh.VendorOrderID)
+		return nil
+	}
+
 	if err = d.lifecycle.MoveToSourcing(next, "dispatcher", "dispatching reshuffle step"); err != nil {
 		log.Printf("dispatch: child order %d → sourcing: %v", next.ID, err)
 	}

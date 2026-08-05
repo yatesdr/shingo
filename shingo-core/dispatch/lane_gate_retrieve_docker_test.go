@@ -157,7 +157,15 @@ func TestGateChoreo_RetrieveContendedHoldsThenEvaluatorReleases(t *testing.T) {
 
 	// A dig holds the lane: lock it. (Production acquires this in complex_reshuffle /
 	// planning_service; here we take it directly to model "a dig is active".)
-	d.laneLock.TryLock(laneID, 999)
+	//
+	// The owner has to be a REAL order now. The lock used to grant from an
+	// in-memory map and mirror the row on a best-effort basis, so a fabricated
+	// owner id took the lock and merely logged an FK violation on the mirror.
+	// The row IS the lock today: no row, no hold, and TryLock says so.
+	digger := testdb.CreateOrder(t, db)
+	if !d.laneLock.TryLock(laneID, digger.ID) {
+		t.Fatal("TryLock on a free lane must succeed")
+	}
 
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.OrderType = OrderTypeRetrieve
@@ -186,7 +194,7 @@ func TestGateChoreo_RetrieveContendedHoldsThenEvaluatorReleases(t *testing.T) {
 	}
 
 	// The dig clears: drop the lock and fire the evaluator (as EventOrderCompleted would).
-	d.laneLock.Unlock(laneID, 999)
+	d.laneLock.Unlock(laneID, digger.ID)
 	d.EvaluateLaneReleases(laneID)
 
 	appends := backend.ReleaseCalls()
