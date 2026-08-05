@@ -196,3 +196,85 @@ func TestStationWait_ReleaseStillWorks(t *testing.T) {
 			"station. The fence is scoped to gate waits, not to this handler", n, before+1)
 	}
 }
+
+// TestGateTail_StaleStructDoesNotDoubleAppend pins the durable half of the
+// valve/evaluator guard.
+//
+// The valve and the evaluator are the same decision at two moments, and they now
+// serialize on one per-lane key. The mutex alone does not close the window:
+// whichever of the two waits on it still has to notice what the other did WHILE it
+// waited, and only a reload can tell it. The evaluator's callers reload; the valve
+// held the struct it had just built and never looked again.
+//
+// This drives that state directly rather than racing for it. An in-memory order
+// says wait_index 0 — exactly what the valve carries — while the durable row says
+// 1, which is what an evaluator pass that won the race would have left behind.
+// Appending on the strength of the stale struct is a duplicate tail, and duplicate
+// block ids are the one thing SEER rejects outright.
+//
+// WHAT THIS DOES NOT PROVE, stated plainly: that the interleaving is reachable in
+// production. A deterministic red for that would have to re-enter the evaluator
+// from inside the valve's own append, which the per-lane mutex — not reentrant —
+// turns into a deadlock rather than a double append, so the test would hang rather
+// than fail. The window was closed on the structural argument (both writers, one
+// key, one reload) and this pins the reload half of it.
+//
+// MUTATION (verified): delete the reload guard at the top of appendGateTail. The
+// append then goes out on the stale struct and this test's own append-count
+// assertion fires.
+func TestGateTail_StaleStructDoesNotDoubleAppend(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	_, _, s1 := gateRetrieveLane(t, db, "GCSTALE", "GCSTALE-WAIT")
+	line := lineNode(t, db, "GCSTALE-LINE")
+
+	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.OrderType = OrderTypeRetrieve
+		o.SourceNode = s1.Name
+		o.DeliveryNode = line.Name
+		o.Status = "sourcing"
+	})
+	if _, err := d.DispatchDirect(order, s1, line); err != nil {
+		t.Fatalf("DispatchDirect: %v", err)
+	}
+
+	// The lane was clear, so the valve already appended and sealed. That is the
+	// durable state an evaluator pass would have left behind had it won the race.
+	sealed, err := db.GetOrder(order.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if sealed.WaitIndex != 1 {
+		t.Fatalf("fixture: wait_index = %d, want 1 — nothing has appended, so there is no second "+
+			"append for this test to refuse", sealed.WaitIndex)
+	}
+	before := len(backend.ReleaseCalls())
+
+	// The other writer's view: the struct it built before the row moved.
+	stale := *sealed
+	stale.WaitIndex = 0
+	if !IsGateStaged(&stale) {
+		t.Fatal("fixture: the stale struct must read as still awaiting a tail, or the guard under " +
+			"test is not the thing being exercised")
+	}
+
+	if err := d.appendGateTail(&stale, "stale-struct probe"); err != nil {
+		t.Fatalf("appendGateTail on a stale struct returned an error: %v — it should decline "+
+			"quietly, not fail the caller", err)
+	}
+
+	if n := len(backend.ReleaseCalls()); n != before {
+		t.Fatalf("append calls = %d, want 0 — the tail went out twice for one order. The second "+
+			"carries block ids the first already used, which SEER rejects outright", n-before)
+	}
+	final, err := db.GetOrder(order.ID)
+	if err != nil {
+		t.Fatalf("reload after probe: %v", err)
+	}
+	if final.WaitIndex != 1 {
+		t.Errorf("wait_index = %d, want 1 — a declined append must not advance the row", final.WaitIndex)
+	}
+}

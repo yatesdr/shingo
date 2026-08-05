@@ -266,6 +266,21 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, s
 	// The valve. An admitted order gets its tail NOW, back to back with the create,
 	// so the robot has the whole waybill before it finishes its pickup and never
 	// dwells. A contended one is left unsealed at wait_index 0 for the evaluator.
+	//
+	// Under the SAME per-lane key the evaluator takes: from UpdateOrderVendor above,
+	// this order already satisfies IsGateStaged and is already in the evaluator's
+	// candidate set, so an evaluator pass firing now is looking at an order whose
+	// tail this call is about to append. Classifier and append are one decision and
+	// belong inside one critical section.
+	//
+	// Taken HERE and not around the whole function: the fleet create must not hold a
+	// lane, and neither must the failure paths above, which run lifecycle
+	// transitions whose events the evaluator itself subscribes to (the bus dispatches
+	// synchronously on the emitting goroutine, so a lock held across one would
+	// deadlock against itself).
+	unlock := d.laneGates.lock(target.lane.ID)
+	defer unlock()
+
 	park, cause, err := d.laneEntryCause(target.lane, order, destNode)
 	if err != nil {
 		log.Printf("lane gate: order %d classifier errored (%v) — leaving staged for the evaluator", order.ID, err)
@@ -360,6 +375,11 @@ func (d *Dispatcher) dispatchGatedRetrieve(order *orders.Order, target laneGateT
 	// The valve. If the lane is safe now (no dig, bin reachable), append the tail back
 	// to back with the create so the robot never dwells. Else leave it staged for the
 	// evaluator to release on dig completion.
+	//
+	// Same per-lane key as the evaluator, same scope reasoning as the store valve.
+	unlock := d.laneGates.lock(target.lane.ID)
+	defer unlock()
+
 	park, cause, err := d.laneGateRetrieveCause(target.lane, order)
 	if err != nil {
 		log.Printf("lane gate: retrieve order %d classifier errored (%v) — leaving staged for the evaluator", order.ID, err)
@@ -383,9 +403,39 @@ func (d *Dispatcher) dispatchGatedRetrieve(order *orders.Order, target laneGateT
 // The binding is late by construction: the create carried no dropoff block at all,
 // so there is no stale target to correct — the tail's node is taken from
 // order.DeliveryNode as it stands at this instant, via the same pre-append rewrite
-// the operator path uses for a redirect (patchRedirectSegments). That is what lets
-// a later increment re-target a dwelling order simply by updating delivery_node.
+// the lane-gate release path uses for a redirect (patchRedirectSegments). That is
+// what lets a later increment re-target a dwelling order simply by updating
+// delivery_node.
+//
+// ── The durable guard, and why it lives HERE ──────────────────────────────
+// Four sites funnel through this function: the valve's two (at create time, "was
+// the lane open when I made this order") and the evaluator's two (later, "is it
+// open now that something changed"). Same decision, two moments.
+//
+// The evaluator's callers reload the row and re-check IsGateStaged under the
+// per-lane mutex before they get here. The valve's did not — it holds the struct
+// it built moments earlier and never looks again. So a valve that lost the race
+// would append a tail the evaluator had already appended, and duplicate block ids
+// are the one thing SEER rejects outright.
+//
+// Serializing the valve is necessary but NOT sufficient on its own: whichever of
+// the two waits on the mutex still has to notice what the other did while it
+// waited, and only a reload can tell it. So the reload is the floor, taken by
+// every caller, and it is what makes the guard a property of the ROW rather than
+// of whichever in-memory struct happened to reach here first.
+//
+// The evaluator's callers keep their own reload as well — they need the fresh row
+// for the rebind, not only for the guard — and a second read of one fact is not a
+// second writer.
 func (d *Dispatcher) appendGateTail(order *orders.Order, what string) error {
+	if fresh, err := d.db.GetOrder(order.ID); err != nil {
+		return fmt.Errorf("reload gated order %d before append: %w", order.ID, err)
+	} else if fresh == nil || !IsGateStaged(fresh) {
+		d.dbg("%s: order %d is no longer awaiting a tail (wait_index=%d) — another pass appended it",
+			what, order.ID, waitIndexOf(fresh))
+		return nil
+	}
+
 	var steps []resolvedStep
 	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
 		return fmt.Errorf("parse gated plan for order %d: %w", order.ID, err)
@@ -396,4 +446,13 @@ func (d *Dispatcher) appendGateTail(order *orders.Order, what string) error {
 	}
 	d.patchRedirectSegments(segment, order, moreWaits)
 	return d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, what)
+}
+
+// waitIndexOf reports an order's wait index, or -1 when the row is gone. Only for
+// the log line above, where a nil row and a zero index must not read the same.
+func waitIndexOf(o *orders.Order) int {
+	if o == nil {
+		return -1
+	}
+	return o.WaitIndex
 }
