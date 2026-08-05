@@ -49,7 +49,6 @@ type NodeResolver interface {
 // method set.
 type DefaultResolver struct {
 	DB       Store
-	LaneLock *LaneLock
 	DebugLog func(string, ...any)
 }
 
@@ -75,7 +74,7 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 
 	// Delegate to group resolver for NGRP nodes
 	if syntheticNode.NodeTypeCode == protocol.NodeClassNGRP {
-		gr := &GroupResolver{DB: r.DB, LaneLock: r.LaneLock, DebugLog: r.DebugLog}
+		gr := &GroupResolver{DB: r.DB, DebugLog: r.DebugLog}
 		switch mode {
 		case ResolveModeRetrieve:
 			return gr.ResolveRetrieve(syntheticNode, payloadCode)

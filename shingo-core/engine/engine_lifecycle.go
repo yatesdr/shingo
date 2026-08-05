@@ -35,8 +35,6 @@ func (e *Engine) Start() {
 		e.cfg.Messaging.DispatchTopic,
 		resolver,
 	)
-	// Share the lane lock between dispatcher and resolver
-	resolver.LaneLock = e.dispatcher.LaneLock()
 
 	// Initialize tracker if backend supports it
 	if tb, ok := e.fleet.(fleet.TrackingBackend); ok {

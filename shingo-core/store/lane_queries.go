@@ -84,6 +84,50 @@ func (db *DB) NodeStyleOrigins(nodeName string) ([]string, error) {
 	return out, rows.Err()
 }
 
+// ListChildNodesUnlocked is ListChildNodes with dig-held lanes filtered OUT in
+// the query — the candidate read the group resolver scans.
+//
+// It replaces five copies of
+//
+//	for _, child := range children {
+//	    if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) { continue }
+//
+// and it is not an optimisation of that check, it is its deletion. The filter
+// rides a query that was already happening, so it costs no extra round trip, and
+// because the candidate set and the lock state come out of ONE statement there
+// is no gap between fetching a lane and deciding whether it is free.
+//
+// The alternatives were considered and rejected. A per-scan snapshot of the dig
+// holds is wrong in the direction that matters — a dig starting mid-scan stays
+// invisible for the rest of it, and on a `none`-algorithm group nothing
+// downstream catches the stale answer. A memory cache is a permanent obligation
+// bought for an unmeasured gain on a path already doing database work.
+//
+// The lesson this encodes is from the bug that motivated it: the dig row dying
+// at leg one was never a problem of two COPIES of a fact, it was two WRITERS for
+// one fact. Judge any future shape here on that first — one writer, one reader,
+// one statement.
+//
+// Lives at the outer store/ level because it joins nodes to reservations, and
+// cross-aggregate composition is exactly what store/<sub> may not do.
+func (db *DB) ListChildNodesUnlocked(parentID int64) ([]*nodes.Node, error) {
+	rows, err := db.DB.Query(fmt.Sprintf(`SELECT %s %s
+		WHERE n.parent_id = $1
+		  AND NOT EXISTS (
+			SELECT 1 FROM reservations dig_hold
+			WHERE dig_hold.resource_kind = 'mouth'
+			  AND dig_hold.node_id = n.id
+			  AND dig_hold.state IN ('pending','confirmed')
+			  AND dig_hold.mode = $2
+		  )
+		ORDER BY n.name`, nodes.SelectCols, nodes.FromClause), parentID, string(reservations.ModeDig))
+	if err != nil {
+		return nil, fmt.Errorf("list unlocked children of %d: %w", parentID, err)
+	}
+	defer rows.Close()
+	return nodes.ScanNodes(rows)
+}
+
 // LaneAcceptsInbound reports whether a lane currently has no mouth hold that
 // would block an inbound (store) share. It is compatible when every active mouth
 // row is inbound — same-mode sharing is legal (§2) — and incompatible when any

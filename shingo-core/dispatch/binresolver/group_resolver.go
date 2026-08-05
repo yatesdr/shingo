@@ -59,7 +59,6 @@ const (
 // fake and avoid database fixtures.
 type GroupResolver struct {
 	DB       Store
-	LaneLock *LaneLock
 	DebugLog func(string, ...any)
 }
 
@@ -142,9 +141,6 @@ func checkOldestBuried(r *GroupResolver, children []*nodes.Node, payloadCode str
 		if !child.Enabled || child.NodeTypeCode != protocol.NodeClassLANE {
 			continue
 		}
-		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
-			continue
-		}
 		buried, slot, err := r.DB.FindOldestBuriedBin(child.ID, payloadCode)
 		if err != nil || buried == nil {
 			continue
@@ -166,9 +162,6 @@ func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode
 		if !child.Enabled || child.NodeTypeCode != protocol.NodeClassLANE {
 			continue
 		}
-		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
-			continue
-		}
 		buried, slot, err := r.DB.FindBuriedBin(child.ID, payloadCode)
 		if err == nil && buried != nil {
 			return buried, slot, child.ID
@@ -181,7 +174,7 @@ func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode
 // child nodes, finds accessible bins, optionally probes for buried bins, and
 // delegates the algorithm-specific decisions to the strategy.
 func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s retrieveStrategy) (*ResolveResult, error) {
-	children, err := r.DB.ListChildNodes(group.ID)
+	children, err := r.DB.ListChildNodesUnlocked(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
@@ -196,10 +189,6 @@ func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s 
 		}
 
 		if child.NodeTypeCode == protocol.NodeClassLANE {
-			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
-				continue
-			}
-
 			b, err := r.DB.FindSourceBinInLane(child.ID, payloadCode)
 			if err != nil {
 				r.dbg("%s: FindSourceBinInLane lane=%s: %v", s.label, child.Name, err)
@@ -257,7 +246,7 @@ func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s 
 		return &ResolveResult{Node: bestNode, Bin: bestBin}, nil
 	}
 
-	return nil, r.classifyEmptyGroup(group, children, payloadCode)
+	return nil, r.classifyEmptyGroup(group, payloadCode)
 }
 
 // binTimestamp returns the effective timestamp for a bin (LoadedAt if set, else CreatedAt).
@@ -278,8 +267,25 @@ func binTimestamp(b *bins.Bin) time.Time {
 //
 // On any DB error during classification, returns transient.
 func (r *GroupResolver) classifyEmptyGroup(
-	group *nodes.Node, children []*nodes.Node, payloadCode string,
+	group *nodes.Node, payloadCode string,
 ) error {
+	// Reads the UNFILTERED children on purpose. The scan above walks
+	// ListChildNodesUnlocked, which drops dig-held lanes in the query — but a
+	// dig-held lane is still a CONFIGURED lane, and this helper answers a
+	// configuration question. Classifying off the filtered set would make a
+	// group whose only lane is mid-dig report "no enabled child nodes", i.e.
+	// StructuralError, i.e. TERMINAL: a dig would kill every order aimed at that
+	// group instead of making them wait. The golden suite caught exactly that.
+	//
+	// The extra read costs nothing where it sits. This runs only after
+	// resolution has already failed to find anything, and the payload-capability
+	// loop below already issues a query per child.
+	children, err := r.DB.ListChildNodes(group.ID)
+	if err != nil {
+		r.dbg("classifyEmptyGroup: ListChildNodes(%d) error: %v, defaulting to transient", group.ID, err)
+		return fmt.Errorf("no bin of requested payload in node group %s", group.Name)
+	}
+
 	hasEnabled := false
 	for _, child := range children {
 		if child.Enabled {
@@ -345,7 +351,7 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binT
 
 // resolveStoreLKND consolidates matching payload codes first, then picks the emptiest slot.
 func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
-	children, err := r.DB.ListChildNodes(group.ID)
+	children, err := r.DB.ListChildNodesUnlocked(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
@@ -364,10 +370,6 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 		}
 
 		if child.NodeTypeCode == protocol.NodeClassLANE {
-			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
-				continue
-			}
-
 			// Skip lanes with payload restrictions that don't match
 			if payloadCode != "" {
 				lanePayloads, _ := r.DB.GetEffectivePayloads(child.ID)
@@ -475,7 +477,7 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 
 // resolveStoreDPTH packs back-to-front regardless of payload. Prefers lanes over direct children.
 func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
-	children, err := r.DB.ListChildNodes(group.ID)
+	children, err := r.DB.ListChildNodesUnlocked(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
@@ -483,9 +485,6 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 	// First pass: try lanes (deepest empty slot)
 	for _, child := range children {
 		if !child.Enabled || child.NodeTypeCode != protocol.NodeClassLANE {
-			continue
-		}
-		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
 			continue
 		}
 
