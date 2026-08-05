@@ -1,10 +1,12 @@
-package nodes_test
+package helpers_test
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -51,10 +53,10 @@ var exemptDirs = []string{
 // drifting quietly for another year.
 //
 // If this fires on a legitimately new use, the fix is to interpolate
-// nodes.ReachableSQL / nodes.BuriedSQL, not to widen the exemption list.
+// helpers.ReachableSQL / helpers.BuriedSQL, not to widen the exemption list.
 func TestReachabilityHasExactlyOneSpelling(t *testing.T) {
 	t.Parallel()
-	root, err := filepath.Abs(filepath.Join("..", "..")) // shingo-core module root
+	root, err := moduleRoot()
 	if err != nil {
 		t.Fatalf("resolve module root: %v", err)
 	}
@@ -107,14 +109,35 @@ func TestReachabilityHasExactlyOneSpelling(t *testing.T) {
 		t.Fatalf("walk %s: %v", root, err)
 	}
 
-	const home = "store/nodes/lanes.go"
+	const home = "store/internal/helpers/lane_reachability.go"
 	if len(found) != 1 || !strings.HasPrefix(found[0], home+":") {
 		t.Fatalf("the sibling-depth comparison must appear in exactly one place (%s, inside "+
 			"laneBlockerPredicate); found %d:\n  %s\n\n"+
 			"Every occurrence beyond the first is a second definition of reachability. The seven that existed "+
 			"before disagreed about NULL depths, about correlating the sibling scope versus keying it on the lane "+
 			"parameter, and about what a failed read means — and none of that was visible from any one call site. "+
-			"Interpolate nodes.ReachableSQL or nodes.BuriedSQL instead of writing the scan again.",
+			"Interpolate helpers.ReachableSQL or helpers.BuriedSQL instead of writing the scan again.",
 			home, len(found), strings.Join(found, "\n  "))
+	}
+}
+
+// moduleRoot walks up from the test's working directory (the package dir) until
+// it finds go.mod, rather than counting ".." hops — the guard has already moved
+// package once, and a relative-depth walk would have silently started scanning
+// the wrong subtree instead of failing.
+func moduleRoot() (string, error) {
+	dir, err := filepath.Abs(".")
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("no go.mod above %s", dir)
+		}
+		dir = parent
 	}
 }

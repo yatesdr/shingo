@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"shingocore/store/bins"
+	"shingocore/store/internal/helpers"
 	"shingocore/store/nodes"
 	"shingocore/store/reservations"
 )
@@ -127,7 +128,7 @@ func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
 		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC
-		LIMIT 1`, bins.BinJoinQuery, nodes.ReachableSQL("n"))
+		LIMIT 1`, bins.BinJoinQuery, helpers.ReachableSQL("n"))
 	row := db.QueryRow(query, laneID, payloadCode)
 	bin, err := bins.ScanBin(row)
 	if err != nil {
@@ -170,7 +171,7 @@ func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND %s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
-		LIMIT 1`, bins.BinJoinQuery, nodes.BuriedSQL("n")), laneID, payloadCode)
+		LIMIT 1`, bins.BinJoinQuery, helpers.BuriedSQL("n")), laneID, payloadCode)
 	bin, err := bins.ScanBin(row)
 	if err != nil {
 		return nil, nil, fmt.Errorf("no buried bin in lane %d", laneID)
@@ -195,7 +196,7 @@ func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC
-		LIMIT 1`, bins.BinJoinQuery, nodes.BuriedSQL("n")), laneID, payloadCode)
+		LIMIT 1`, bins.BinJoinQuery, helpers.BuriedSQL("n")), laneID, payloadCode)
 	bin, err := bins.ScanBin(row)
 	if err != nil {
 		return nil, nil, fmt.Errorf("no buried bin in lane %d", laneID)

@@ -19,7 +19,6 @@ import (
 
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
-	"shingocore/store/nodes"
 )
 
 // Bin is the bin domain entity. The struct lives in shingocore/domain
@@ -111,7 +110,7 @@ const PayloadBinTypeAdvisoryClause = `
 // A var rather than a const now, since it is composed at init. Every caller
 // interpolates it with fmt.Sprintf, so nothing needed a constant.
 var AccessibleEmptyOrder = `
-	ORDER BY (n.parent_id IS NULL OR n.depth IS NULL OR ` + nodes.ReachableSQL("n") + `) DESC,
+	ORDER BY (n.parent_id IS NULL OR n.depth IS NULL OR ` + helpers.ReachableSQL("n") + `) DESC,
 	         COALESCE(n.depth, 0) ASC,
 	         b.id ASC
 	LIMIT 1`
