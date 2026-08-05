@@ -516,9 +516,31 @@ func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *n
 
 // checkOwnership verifies the envelope sender owns the order.
 // Core-role senders (e.g. UI-initiated actions) are always allowed.
+//
+// A COMPOUND CHILD IS NEVER STATION-COMMANDABLE. `ParentOrderID != nil` means
+// Core created this order as a step of something it is running — a reshuffle leg
+// — and no station has standing to release, cancel, redirect or file a receipt
+// against one. All four handlers behind getOwnedOrder inherit this.
+//
+// It is needed because station_id does NOT mean what the comparison below assumes
+// for such an order. A leg inherits its parent's station_id (compound.go), and the
+// parent is a real station-originated retrieve, so the comparison passes. And a
+// station can genuinely hold a row for a leg: the reconcile heals an Edge with
+// every active order for the asking station (CoreDataService.unlistedFor →
+// ListActiveOrdersByStation), and that query carries no parent filter, so legs are
+// projected down and Edge creates rows for them.
+//
+// station_id is doing three jobs — authorization, addressing, attribution — and
+// only the first is wrong here. Hence a separate structural discriminator rather
+// than blanking the column: blanking would lose the audit actor on the compound
+// Fail/Cancel paths, and a new originating-station column would duplicate
+// origin_id/origin_class, which is already copied parent→child.
 func (d *Dispatcher) checkOwnership(env *protocol.Envelope, order *orders.Order) bool {
 	if env.Src.Role == protocol.RoleCore {
 		return true
+	}
+	if order.ParentOrderID != nil {
+		return false
 	}
 	return env.Src.Station == order.StationID
 }
