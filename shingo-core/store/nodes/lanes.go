@@ -146,30 +146,21 @@ func BlockersInFrontOf(db *sql.DB, slotNodeID int64) ([]*Node, error) {
 	return ScanNodes(rows)
 }
 
-// IsSlotAccessible returns true if no occupied slots exist at a shallower depth in the same lane.
+// IsSlotAccessible returns true if no occupied slots exist at a shallower depth
+// in the same lane — the emptiness of BlockersInFrontOf, and nothing more. It
+// stays a named question because two call sites want only the boolean; it is
+// not a second implementation of one.
+//
+// It fails CLOSED: an unreadable lane returns false, and the error alongside it.
+// Callers must not read that false as "reachable, no blockers" — the point of
+// returning both is that "I could not tell" and "nothing is in the way" are
+// different answers and only one of them is safe to drive a robot on.
 func IsSlotAccessible(db *sql.DB, slotNodeID int64) (bool, error) {
-	slot, err := Get(db, slotNodeID)
+	blockers, err := BlockersInFrontOf(db, slotNodeID)
 	if err != nil {
 		return false, err
 	}
-	if slot.ParentID == nil {
-		return true, nil
-	}
-	if slot.Depth == nil {
-		return true, nil // no depth = accessible
-	}
-
-	var count int
-	err = db.QueryRow(`
-		SELECT COUNT(*) FROM nodes sib
-		JOIN bins b ON b.node_id = sib.id
-		WHERE sib.parent_id = $1 AND sib.id != $2
-		  AND sib.depth IS NOT NULL AND sib.depth < $3
-	`, *slot.ParentID, slotNodeID, *slot.Depth).Scan(&count)
-	if err != nil {
-		return false, err
-	}
-	return count == 0, nil
+	return len(blockers) == 0, nil
 }
 
 // FindStoreSlotInLane finds the deepest empty, UNRESERVED slot in a lane for
