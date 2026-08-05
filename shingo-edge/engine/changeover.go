@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -92,17 +93,20 @@ func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNod
 	return diffs
 }
 
-// pressPositionSwapMode marks a synthesized per-position press-index
-// claim emitted by FanOutPressIndexDifferentBinType. The parent's
-// SwapMode (two_robot_press_index) is replaced with this value on each
-// synthesized claim so the planner routes them to the simple per-
-// position builder rather than back into the press-index branch.
+// pressPositionSwapMode is the planner's local name for
+// domain.SwapModePressPosition — the marker stamped on every synthesized
+// per-position claim so the planner routes it to the simple per-position
+// builder rather than back into the press-index branch.
 //
-// The marker is in-memory only — synthesized claims live in the diff
-// list for a single planChangeover call and never get persisted to
-// style_node_claims, so the schema's swap_mode column never sees this
-// value and steady-state code paths don't need to know it exists.
-const pressPositionSwapMode protocol.SwapMode = "press_position"
+// The definition moved to domain (2026-08-05) because the station view has
+// to derive the same claim: a fanned-out seat owns a task and an order but
+// has no style_node_claims row, so the view must synthesize one to render it
+// as claimed. See domain.SynthesizePressPositionClaim for that scar.
+//
+// Still never persisted — UpsertClaim rejects it — so steady-state DB rows
+// never carry this value. What changed is that VIEW code now does need to
+// know it exists; the old comment here claimed it never would.
+const pressPositionSwapMode = domain.SwapModePressPosition
 
 // FanOutPressIndexDifferentBinType rewrites a press-index Swap/Evacuate
 // diff into one per-position diff whenever the from-claim's payload bin
@@ -291,32 +295,12 @@ func fanOutPositions(parent ChangeoverNodeDiff) []ChangeoverNodeDiff {
 	return diffs
 }
 
-// synthesizePressPositionClaim builds a per-position claim from a
-// parent press-index claim. CoreNodeName is set to the position's name;
-// SwapMode is the press_position marker; press-index-only fields
-// (PairedCoreNode, SecondPairedCoreNode) are zeroed; staging fields are
-// zeroed (per-position uses direct trips). Other fields (PayloadCode,
-// InboundSource, OutboundDestination, Role, UOPCapacity, etc.) are
-// copied from the parent.
-//
-// The synthesized claim's ID is the parent's ID. Per-position node
-// tasks reference this ID so wiring lookups can resolve back to the
-// real persisted parent claim — the synthesized in-memory object is
-// only used by the planner for routing.
+// synthesizePressPositionClaim is the planner's local name for
+// domain.SynthesizePressPositionClaim. The body moved to domain so the
+// station view derives per-position claims through the SAME function —
+// see that doc comment for why (Hopkinsville 2026-08-05).
 func synthesizePressPositionClaim(parent *processes.NodeClaim, coreNodeName string) *processes.NodeClaim {
-	c := *parent
-	c.CoreNodeName = coreNodeName
-	c.SwapMode = pressPositionSwapMode
-	c.PairedCoreNode = ""
-	c.SecondPairedCoreNode = ""
-	c.InboundStaging = ""
-	c.OutboundStaging = ""
-	// ReuseCompatibleBins is press-index-only; clear it so the
-	// reuse-compatible-bins shortcut doesn't try to apply per-position.
-	c.ReuseCompatibleBins = false
-	// KeepStaged shouldn't trigger inside per-position routing.
-	c.KeepStaged = false
-	return &c
+	return domain.SynthesizePressPositionClaim(parent, coreNodeName)
 }
 
 // FanOutPressIndexCrossMode emits per-position Drop or Add diffs for

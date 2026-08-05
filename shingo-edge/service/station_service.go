@@ -33,6 +33,88 @@ func claimsByCoreNode(db *sql.DB, styleID int64) (map[string]processes.NodeClaim
 	return out, nil
 }
 
+// pressPositionClaimsForBoard derives the per-position claim for every press
+// seat that a fanned-out changeover gave its OWN task, keyed by process node
+// ID. Returns nil when the board has no changeover tasks, which is the steady
+// state — this costs nothing on an ordinary poll.
+//
+// The seats it covers have no style_node_claims row by design: the planner
+// synthesizes their claims in memory and UpsertClaim refuses to persist the
+// press_position marker. Before Hopkinsville 2026-08-05 the view simply had no
+// route to them, so they rendered as unclaimed nodes with no actions — see the
+// call site in BuildView for the incident.
+//
+// Derivation is deliberately the planner's own: the node task records the
+// claim it was planned from (FromClaimID/ToClaimID → the PARENT press-index
+// row, since a synthesized claim carries its parent's ID), and
+// domain.SynthesizePressPositionClaim is the same function the planner used.
+// Anything that fails a check is left claimless rather than given an invented
+// claim — a wrong claim is worse than none.
+func pressPositionClaimsForBoard(
+	db *sql.DB,
+	nodes []processes.Node,
+	nodeTasks map[int64]processes.NodeTask,
+	activeClaims, targetClaims map[string]processes.NodeClaim,
+) map[int64]*processes.NodeClaim {
+	if len(nodeTasks) == 0 {
+		return nil
+	}
+	out := map[int64]*processes.NodeClaim{}
+	// Parent claims are shared by the seats of one press, so read each at most
+	// once. A failed read caches nil and is not retried per seat.
+	parents := map[int64]*processes.NodeClaim{}
+	for _, node := range nodes {
+		if node.CoreNodeName == "" {
+			continue
+		}
+		if _, ok := activeClaims[node.CoreNodeName]; ok {
+			continue
+		}
+		if _, ok := targetClaims[node.CoreNodeName]; ok {
+			continue
+		}
+		task, ok := nodeTasks[node.ID]
+		if !ok {
+			continue
+		}
+		// Drop and Swap carry the seat's current material on FromClaimID; Add
+		// only ever has ToClaimID. Prefer From — it names the payload physically
+		// sitting on the seat, which is what an evac release acts on.
+		claimID := task.FromClaimID
+		if claimID == nil {
+			claimID = task.ToClaimID
+		}
+		if claimID == nil {
+			continue
+		}
+		parent, loaded := parents[*claimID]
+		if !loaded {
+			p, err := processes.GetClaim(db, *claimID)
+			if err != nil {
+				p = nil
+			}
+			parents[*claimID] = p
+			parent = p
+		}
+		if parent == nil {
+			continue
+		}
+		// Only a press-index parent fans out into per-position seats, and the
+		// seat must be one this parent actually names. Together these keep the
+		// fallback to exactly the shape the planner produced: any other
+		// claimless node owning a task is a different problem and stays
+		// claimless.
+		if parent.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+			continue
+		}
+		if parent.PairedCoreNode != node.CoreNodeName && parent.SecondPairedCoreNode != node.CoreNodeName {
+			continue
+		}
+		out[node.ID] = domain.SynthesizePressPositionClaim(parent, node.CoreNodeName)
+	}
+	return out
+}
+
 // LoaderResolver resolves the Core-owned loader aggregate a node belongs to, for
 // the operator view. It is consumer-defined HERE (service sits below engine, so it
 // cannot import the engine's LoaderStore); the engine injects its flag-selected
@@ -401,6 +483,10 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	if process.TargetStyleID != nil {
 		targetClaims, _ = claimsByCoreNode(s.db.DB, *process.TargetStyleID)
 	}
+	// Press-index fan-out claims, computed ONCE for the whole board for the same
+	// reason as loaderPayloads/runtimes/boardOrders above — never a query inside
+	// the tile loop. Empty (and free) on any board without an active changeover.
+	pressPositionClaims := pressPositionClaimsForBoard(s.db.DB, nodes, nodeTaskMap, activeClaims, targetClaims)
 	nodeIDs := make([]int64, 0, len(nodes))
 	nodeKeys := make([]orders.NodeKey, 0, len(nodes))
 	for _, node := range nodes {
@@ -501,6 +587,24 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 			if l, lerr := s.loaders.LoaderForNode(domain.NodeID(node.CoreNodeName)); lerr == nil && l != nil {
 				nodeView.ActiveClaim = l.SynthClaim(domain.NodeID(node.CoreNodeName))
 			}
+		}
+		// Press-index fan-out fallback — the same move as the loader fallback
+		// above, for the other node kind that owns work but no claim row. When a
+		// changeover FANS OUT (different bin types across the index, e.g. tote →
+		// bin) each press position gets its OWN task and order instead of riding
+		// along on the front position's. Those seats have no style_node_claims
+		// row — press_position claims are in-memory only — so the view saw a
+		// claimless node and every claim-keyed gate failed closed.
+		//
+		// Hopkinsville 2026-08-05, P400 changeover 51: PLN_02/PLN_05 each held a
+		// robot at a staged wait needing a RELEASE. isReleaseReady keys off the
+		// TASK and lit both tiles release-ready; the modal keys off the CLAIM and
+		// rendered no buttons at all. 19 minutes later the operator cancelled both
+		// orders to free the robots and hand-drove the bins out. Deriving the
+		// claim the planner already built closes that split for every claim-keyed
+		// gate at once, not just the one that surfaced.
+		if nodeView.ActiveClaim == nil {
+			nodeView.ActiveClaim = pressPositionClaims[node.ID]
 		}
 		if nodeTask, ok := nodeTaskMap[node.ID]; ok {
 			taskCopy := nodeTask
