@@ -655,14 +655,49 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// robot to an unreachable slot. The full-retrieve path has no post-find
 	// buried check (the NGRP resolver detects buried internally; a FIFO result
 	// is not lane-buried).
+	//
+	// FAIL CLOSED, and note which way this used to lean. The three reads below
+	// were guarded `err == nil`, `serr == nil`, `lerr == nil` — so every one of
+	// them, on failure, fell through to OutcomeFound and dispatched a robot to a
+	// slot nothing had successfully checked. An unreadable lane is a BLOCKED
+	// lane: refusing to move is recoverable, and driving into a lane whose state
+	// you could not read is not. The order waits for the next scan instead.
+	//
+	// storage_rearranging is the honest code for it — "waiting on storage to
+	// become reachable" is exactly what an unanswered reachability question
+	// leaves the order doing.
 	if intent == IntentEmpty && bin.NodeID != nil {
-		if accessible, err := f.db.IsSlotAccessible(*bin.NodeID); err == nil && !accessible {
-			if slot, serr := f.db.GetNode(*bin.NodeID); serr == nil && slot.ParentID != nil {
-				if lane, lerr := f.db.GetNode(*slot.ParentID); lerr == nil && lane.NodeTypeCode == protocol.NodeClassLANE {
+		unreadable := func(what string, err error) SourceResult {
+			f.debug("finder: %s for empty bin %d unreadable (%v) — treating the lane as blocked, not as clear", what, bin.ID, err)
+			return SourceResult{
+				Outcome:     OutcomeWait,
+				QueueCode:   protocol.QueueStorageRearranging,
+				QueueCause:  "finder-accessibility-unreadable",
+				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode},
+			}
+		}
+		accessible, err := f.db.IsSlotAccessible(*bin.NodeID)
+		if err != nil {
+			return unreadable("accessibility", err)
+		}
+		if !accessible {
+			slot, serr := f.db.GetNode(*bin.NodeID)
+			if serr != nil {
+				return unreadable("buried slot", serr)
+			}
+			if slot.ParentID != nil {
+				lane, lerr := f.db.GetNode(*slot.ParentID)
+				if lerr != nil {
+					return unreadable("buried slot's lane", lerr)
+				}
+				if lane.NodeTypeCode == protocol.NodeClassLANE {
 					f.debug("finder: empty bin %d buried at slot %s in lane %s, reshuffle", bin.ID, slot.Name, lane.Name)
 					return SourceResult{Outcome: OutcomeReshuffle, Buried: &BuriedError{Bin: bin, Slot: slot, LaneID: lane.ID}}
 				}
 			}
+			// Buried, but not in a LANE — there is no dig to plan. Unchanged and
+			// deliberately so: this is the NGRP-direct single-file geometry
+			// AuditLaneGeometry warns about at boot, not an error disposition.
 		}
 	}
 

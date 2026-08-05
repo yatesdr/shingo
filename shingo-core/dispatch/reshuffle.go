@@ -301,6 +301,17 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 
 	var available []*nodes.Node
 
+	// A candidate whose reachability could not be READ is not a candidate (D2,
+	// fail closed) — but it is not a fault either, and the difference matters
+	// here more than anywhere else. planBuriedReshuffle maps a bare error from
+	// this function to codeReshuffle, which is TERMINAL; only ErrNoShuffleSlot
+	// is transient. So an unreadable candidate is skipped and counted, and if
+	// the pool then comes up short the shortfall is reported as congestion —
+	// which waits and retries — rather than as geometry, which kills the order.
+	// Silently skipping was safe; silently skipping and then reporting a pool
+	// size as if it were the true one is what this stops.
+	unreadable := 0
+
 	// Pass 1: direct physical children of the group (always accessible).
 	// Reverse-iterate so any depth-carrying direct children are visited
 	// deepest-first — matches the lane-FIFO invariant maintained in Pass 2.
@@ -335,7 +346,11 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 		if excluded[c.Name] {
 			continue
 		}
-		slots, _ := db.ListLaneSlots(c.ID)
+		slots, err := db.ListLaneSlots(c.ID)
+		if err != nil {
+			unreadable++
+			continue
+		}
 		for i := len(slots) - 1; i >= 0; i-- {
 			slot := slots[i]
 			if !slot.Enabled {
@@ -344,7 +359,11 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 			if excluded[slot.Name] {
 				continue
 			}
-			acc, _ := db.IsSlotAccessible(slot.ID)
+			acc, err := db.IsSlotAccessible(slot.ID)
+			if err != nil {
+				unreadable++
+				continue
+			}
 			if !acc {
 				continue
 			}
@@ -359,7 +378,11 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 	}
 
 	if len(available) < count {
-		return nil, fmt.Errorf("%w: need %d shuffle slots but only %d available", ErrNoShuffleSlot, count, len(available))
+		detail := ""
+		if unreadable > 0 {
+			detail = fmt.Sprintf(" (%d candidate(s) unreadable, treated as unusable)", unreadable)
+		}
+		return nil, fmt.Errorf("%w: need %d shuffle slots but only %d available%s", ErrNoShuffleSlot, count, len(available), detail)
 	}
 	return available, nil
 }
