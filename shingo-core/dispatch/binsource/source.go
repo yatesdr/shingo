@@ -79,20 +79,51 @@ func isPartialOf(c Cand, x string) bool { return c.Payload == x && c.UOP > 0 && 
 // need not be. The status reject-set is domain.BinStatus.BlocksPickup — the SAME
 // predicate binresolver.BinUnavailableReason uses, so the loader ranker and the
 // concrete-node path can no longer drift ('staged'/'available' stay pickable).
-func eligible(c Cand, w Want) bool {
-	if c.Claimed || c.Locked || c.Status.BlocksPickup() {
-		return false
+func eligible(c Cand, w Want) bool { return RejectReason(c, w) == "" }
+
+// RejectReason is eligible's answer with the WHY attached: "" when the candidate
+// can satisfy want, otherwise a short stable tag naming the first rule it failed.
+//
+// eligible is defined in terms of this rather than the other way round on
+// purpose. The decision and the explanation are one implementation, so a
+// diagnostic that says "rejected: unconfirmed-full" can never drift from the
+// selector that rejected it — the drift this package's own status-predicate
+// comment was written to end.
+//
+// Tags are ordered as the rules are evaluated, so the tag names the FIRST
+// failure, not every failure.
+func RejectReason(c Cand, w Want) string {
+	switch {
+	case c.Claimed:
+		return "claimed"
+	case c.Locked:
+		return "locked"
+	case c.Status.BlocksPickup():
+		return "status:" + string(c.Status)
 	}
 	switch w.Intent {
 	case Drain:
-		if c.Payload != w.Payload || c.UOP <= 0 {
-			return false
+		switch {
+		case c.Payload == "":
+			return "empty-bin"
+		case c.Payload != w.Payload:
+			return "payload:" + c.Payload
+		case c.UOP <= 0:
+			return "uop<=0"
+		case isFullOf(c, w.Payload) && !c.ManifestConfirmed:
+			return "unconfirmed-full"
 		}
-		return !isFullOf(c, w.Payload) || c.ManifestConfirmed
+		return ""
 	case Fill:
-		return isPartialOf(c, w.Payload) || isEmpty(c)
+		if isPartialOf(c, w.Payload) || isEmpty(c) {
+			return ""
+		}
+		if c.Payload == w.Payload {
+			return "full-not-a-container"
+		}
+		return "payload:" + c.Payload
 	default:
-		return false
+		return "unknown-intent"
 	}
 }
 
