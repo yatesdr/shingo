@@ -4038,28 +4038,34 @@ func v81SceneVersioning(tx *sql.Tx) error {
 		// day a lane changed becomes the day it is most readable rather than
 		// least.
 		//
-		// NULL IS A REAL VALUE HERE and that is why this is two partial
-		// unique indexes rather than a primary key. A sample taken before the
-		// first scene sync has no version — the 14 days of raw already in a
-		// plant database when this deploys are exactly that — and a primary
-		// key cannot hold it, because PK columns are implicitly NOT NULL.
-		// The alternative, a sentinel version id meaning "unknown", is
-		// "never coalesce absence into zero" wearing a foreign key.
+		// A REAL PRIMARY KEY, because version_id is NOT NULL, because there
+		// is no such thing as a reading on a lane with no geometry.
 		//
-		// Partial indexes rather than UNIQUE NULLS NOT DISTINCT, which would
-		// say the same thing in one line and requires Postgres 15. The plants'
-		// server version is not something this migration can check before it
-		// runs, and a migration that fails at deploy is worse than one that is
-		// two lines longer.
+		// An earlier cut of this made version_id nullable and reached for two
+		// partial unique indexes to cover it. That was a bandaid over a
+		// conflation: a lane's FIRST version was being stamped valid_from =
+		// <sync time>, which claims the lane came into existence the moment
+		// Core happened to look, leaving every reading taken before that
+		// instant unversioned. The fix is at the version, not at the index —
+		// a first version opens at -infinity, an open lower bound meaning
+		// "the earliest geometry we know of, and we cannot say when it
+		// began". Provenance is not lost: when we first SAW it is on the diff
+		// row the version points at. valid_from is when it BEGAN; those are
+		// two different facts and treating them as one is what produced the
+		// nullable column.
+		//
+		// A lane that has NEVER been versioned is a different matter and is
+		// handled where it belongs — the roll-up quarantines those samples
+		// and counts them, because "the scene sync has never run" is a defect
+		// to surface, not a NULL to carry in a key.
 		`ALTER TABLE lane_confidence_daily
 		   ADD COLUMN IF NOT EXISTS version_id BIGINT REFERENCES scene_lane_versions(id)`,
+		`DELETE FROM lane_confidence_daily WHERE version_id IS NULL`,
+		`ALTER TABLE lane_confidence_daily ALTER COLUMN version_id SET NOT NULL`,
 		`ALTER TABLE lane_confidence_daily DROP CONSTRAINT IF EXISTS lane_confidence_daily_pkey`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_lane_daily_versioned
-		   ON lane_confidence_daily(day, area_name, lane, version_id)
-		   WHERE version_id IS NOT NULL`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_lane_daily_unversioned
-		   ON lane_confidence_daily(day, area_name, lane)
-		   WHERE version_id IS NULL`,
+		`ALTER TABLE lane_confidence_daily
+		   ADD CONSTRAINT lane_confidence_daily_pkey
+		   PRIMARY KEY (day, area_name, lane, version_id)`,
 	}
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {

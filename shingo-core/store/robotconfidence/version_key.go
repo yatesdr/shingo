@@ -20,11 +20,10 @@ import (
 // VersionResolver supplies, per sample, the id of the lane-geometry version
 // in force when the reading was taken.
 //
-// An interface rather than a direct dependency, so the roll-up can be tested
-// without a scene and so the two packages do not have to import each other.
-// A nil resolver answers "no version", which is the honest state both for a
-// plant that has not synced since versioning landed and for every day of raw
-// already collected before it.
+// An interface rather than a direct dependency, so the two packages do not
+// have to import each other. It is REQUIRED: version_id is NOT NULL, so a
+// roll-up without a resolver would quarantine every sample and silently write
+// nothing, and RollUp rejects that rather than degrading into it.
 type VersionResolver interface {
 	Load(db *sql.DB, from, to time.Time) (VersionLookup, error)
 }
@@ -33,15 +32,6 @@ type VersionResolver interface {
 type VersionLookup interface {
 	At(area, lane string, at time.Time) *int64
 }
-
-// noVersions is used when nothing supplies a resolver.
-type noVersions struct{}
-
-func (noVersions) Load(*sql.DB, time.Time, time.Time) (VersionLookup, error) {
-	return noVersions{}, nil
-}
-
-func (noVersions) At(string, string, time.Time) *int64 { return nil }
 
 // versionSep separates the lane key from its version. \x01 rather than \x00
 // because Segment.Key already uses \x00 between area and lane, and reusing it

@@ -555,9 +555,12 @@ type LaneDaily struct {
 	// corruption for a silent omission, which is this project's signature
 	// failure mode.
 	MapMismatchSamples int
-	// VersionID is the map-object version this lane's geometry was at.
-	// Nullable here and made NOT NULL once the map sync lands; it is what
-	// lets a reader see where a series breaks instead of guessing.
+	// VersionID is the geometry this row describes. NOT NULL in the
+	// database, because there is no such thing as a reading on a lane with
+	// no geometry — a lane's first version opens at -infinity precisely so
+	// that every reading has one. A lane that has never been versioned at
+	// all is a defect, and its samples are quarantined and counted rather
+	// than written with a hole in the key.
 	VersionID *int64
 }
 
@@ -567,16 +570,7 @@ func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
 	if robots == nil {
 		robots = []string{}
 	}
-	// The conflict target has to name the index that actually covers this
-	// row. version_id NULL and version_id set live under two different
-	// partial unique indexes — see migration v81 — because a primary key
-	// cannot hold a nullable column and a sentinel id meaning "unknown"
-	// would be absence coalesced into a foreign key.
-	conflict := "(day, area_name, lane, version_id) WHERE version_id IS NOT NULL"
-	if s.VersionID == nil {
-		conflict = "(day, area_name, lane) WHERE version_id IS NULL"
-	}
-	_, err := db.Exec(fmt.Sprintf(
+	_, err := db.Exec(
 		`INSERT INTO lane_confidence_daily
 		   (day, area_name, lane, p05, p25, p50, p75, p95, samples,
 		    mean_good, samples_good, min_conf, robots, robots_seen,
@@ -584,7 +578,7 @@ func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
 		    reloc_failed_samples, reloc_failed_robots,
 		    map_mismatch_samples, version_id)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-		 ON CONFLICT %s DO UPDATE SET
+		 ON CONFLICT (day, area_name, lane, version_id) DO UPDATE SET
 		   p05 = EXCLUDED.p05, p25 = EXCLUDED.p25, p50 = EXCLUDED.p50,
 		   p75 = EXCLUDED.p75, p95 = EXCLUDED.p95, samples = EXCLUDED.samples,
 		   mean_good = EXCLUDED.mean_good, samples_good = EXCLUDED.samples_good,
@@ -595,7 +589,7 @@ func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
 		   reloc_failed_samples = EXCLUDED.reloc_failed_samples,
 		   reloc_failed_robots = EXCLUDED.reloc_failed_robots,
 		   map_mismatch_samples = EXCLUDED.map_mismatch_samples,
-		   version_id = EXCLUDED.version_id`, conflict),
+		   version_id = EXCLUDED.version_id`,
 		s.Day, s.Area, s.Lane, s.P05, s.P25, s.P50, s.P75, s.P95, s.Samples,
 		s.MeanGood, s.SamplesGood, s.MinConf, s.Robots, robots,
 		s.SentinelSamples, s.SentinelRobots,

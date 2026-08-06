@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"shingocore/store/sceneversion"
 	"strconv"
 	"strings"
 	"time"
@@ -177,26 +176,12 @@ func (h *Handlers) apiSceneDiffs(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	ns := h.engine.NodeService()
-	diffs, err := ns.RecentSceneDiffs(limit)
+	diffs, err := h.engine.NodeService().RecentSceneDiffsWithLanes(limit)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	type diffWithLanes struct {
-		sceneversion.DiffView
-		Lanes []string `json:"lanes"`
-	}
-	out := make([]diffWithLanes, 0, len(diffs))
-	for _, d := range diffs {
-		lanes, err := ns.LanesChangedByDiff(d.ID)
-		if err != nil {
-			h.jsonError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		out = append(out, diffWithLanes{DiffView: d, Lanes: lanes})
-	}
-	h.jsonOK(w, out)
+	h.jsonOK(w, diffs)
 }
 
 func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {

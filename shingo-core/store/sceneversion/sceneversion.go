@@ -154,15 +154,47 @@ func ApplyLaneDiff(db *sql.DB, source, gateHash string, observedAt time.Time,
 		if err != nil {
 			return res, fmt.Errorf("sceneversion: encode shape for %s: %w", ln.Lane, err)
 		}
+		// THE FIRST VERSION OF A LANE IS VALID FROM -INFINITY, and this is the
+		// distinction that makes version_id NOT NULL possible.
+		//
+		// valid_from is when the geometry BEGAN. observed_at — carried on the
+		// diff row this version points at — is when we first SAW it. Those are
+		// different facts and conflating them was the defect: stamping a first
+		// version with the sync time claims the lane came into existence the
+		// moment Core happened to look, which then leaves every reading taken
+		// before that instant with no version at all.
+		//
+		// There is no such thing as a reading on a lane with no geometry. The
+		// honest statement is "this is the earliest geometry we know of, and we
+		// cannot say when it began" — an OPEN lower bound. It claims no
+		// observation we did not make: provenance stays on the diff row.
+		//
+		// beginningOfTime rather than Postgres's '-infinity', which says this
+		// exactly and which pgx's database/sql shim cannot scan back into a
+		// time.Time (it arrives as the string "-infinity"). A concrete year-1
+		// timestamp compares identically against every reading a plant will
+		// ever take, round-trips through the driver, and needs no translation
+		// in the several queries that read this column. It is a BOUND, not a
+		// sentinel: nothing special-cases it and `valid_from <= sampled_at`
+		// simply works.
+		//
+		// A later version keeps the observation time, because for those we do
+		// know when the change happened: between the previous sync and this one.
+		var validFrom *time.Time
+		if exists {
+			validFrom = &observedAt
+		}
 		if _, err := tx.Exec(
 			`INSERT INTO scene_lane_versions
 			   (area_name, lane, shape_hash, def_hash, shape, directed_rows,
 			    twins_agree, disagreement, max_vertex_delta_m, supersedes_id,
 			    diff_id, valid_from)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+			         COALESCE($12::timestamptz, $13::timestamptz))`,
 			ln.Area, ln.Lane, ln.Version.ShapeHash, ln.Version.DefHash,
 			shapeJSON, ln.Version.Directed, ln.Version.TwinsAgree,
-			ln.Version.Disagreement, delta, supersedes, res.DiffID, observedAt); err != nil {
+			ln.Version.Disagreement, delta, supersedes, res.DiffID, validFrom,
+			beginningOfTime); err != nil {
 			return res, fmt.Errorf("sceneversion: insert lane %s: %w", ln.Lane, err)
 		}
 	}
@@ -336,3 +368,12 @@ func nullable(v float64, n int) any {
 }
 
 func isInf(f float64) bool { return f > 1e300 }
+
+// beginningOfTime is the lower bound a lane's FIRST version opens at.
+//
+// Postgres '-infinity' is the exact statement and is unusable here: pgx's
+// database/sql shim returns it as the string "-infinity" and cannot scan it
+// into a time.Time. Year 1 is earlier than any reading a plant will ever take,
+// round-trips cleanly, and keeps every query that reads valid_from free of a
+// translation branch.
+var beginningOfTime = time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)

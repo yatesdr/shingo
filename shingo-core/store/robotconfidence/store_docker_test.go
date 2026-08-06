@@ -32,6 +32,9 @@ func rollUpCfg() robotconfidence.RollUpConfig {
 		SnapTolerance: 2.0,
 		BaselineDays:  14,
 		Coverage:      robotconfidence.DefaultCoverage,
+		// Required, not optional: version_id is NOT NULL, so a roll-up with
+		// no resolver quarantines everything and writes nothing.
+		Versions: store.LaneVersionResolver{},
 	}
 }
 
@@ -81,10 +84,57 @@ func laneOf(instance string) string {
 // can do its job.
 func addNamedSegment(t *testing.T, db *store.DB, area, instance, from, to string, fx, fy, tx, ty float64) {
 	t.Helper()
+	addNamedSegmentNoVersion(t, db, area, instance, from, to, fx, fy, tx, ty)
+	// A synced scene writes a lane version alongside the edge, so a fixture
+	// that skipped it would be testing a plant whose scene sync never ran —
+	// a real state, but not the one most of these tests are about.
+	ensureLaneVersion(t, db, area, laneKeyOf(from, to))
+}
+
+// addNamedSegmentNoVersion inserts the edge and NOTHING ELSE, for the tests
+// that manage lane versions themselves or that mean to exercise the
+// never-versioned case.
+func addNamedSegmentNoVersion(t *testing.T, db *store.DB, area, instance, from, to string, fx, fy, tx, ty float64) {
+	t.Helper()
 	if _, err := db.Exec(
 		`INSERT INTO scene_edges (area_name, instance_name, from_name, to_name, from_x, from_y, to_x, to_y)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, area, instance, from, to, fx, fy, tx, ty); err != nil {
 		t.Fatalf("insert scene edge: %v", err)
+	}
+}
+
+// laneKeyOf mirrors Segment.Lane: the sorted endpoint pair.
+func laneKeyOf(from, to string) string {
+	if to < from {
+		from, to = to, from
+	}
+	return from + "-" + to
+}
+
+// ensureLaneVersion opens a lane's first version if it has none.
+func ensureLaneVersion(t *testing.T, db *store.DB, area, lane string) {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(
+		`SELECT count(*) FROM scene_lane_versions WHERE area_name=$1 AND lane=$2`,
+		area, lane).Scan(&n); err != nil {
+		t.Fatalf("count lane versions: %v", err)
+	}
+	if n > 0 {
+		return
+	}
+	var diffID int64
+	if err := db.QueryRow(
+		`INSERT INTO scene_diffs (source, gate_hash, observed_at)
+		 VALUES ('rds_scene','fixture',$1) RETURNING id`, testDay).Scan(&diffID); err != nil {
+		t.Fatalf("insert diff: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO scene_lane_versions
+		   (area_name, lane, shape_hash, def_hash, shape, directed_rows, diff_id, valid_from)
+		 VALUES ($1,$2,'fx','fx','[]',2,$3,'0001-01-01 00:00:00+00')`,
+		area, lane, diffID); err != nil {
+		t.Fatalf("insert lane version: %v", err)
 	}
 }
 

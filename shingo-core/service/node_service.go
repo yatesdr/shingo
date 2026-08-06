@@ -242,11 +242,35 @@ func (s *NodeService) RecentSceneDiffs(limit int) ([]sceneversion.DiffView, erro
 	return s.db.RecentSceneDiffs(limit)
 }
 
-// LanesChangedByDiff names the lanes one edit touched. This is the part of a
-// diff row that does real work: an engineer reads "what did I touch", not a
-// count of objects.
-func (s *NodeService) LanesChangedByDiff(diffID int64) ([]string, error) {
-	return s.db.LanesChangedByDiff(diffID)
+// SceneDiff is one observed map edit WITH the lanes it touched.
+//
+// Composed here rather than in the handler because www may not reach into a
+// store sub-package for a type — handlers talk to services, which is what
+// keeps the HTTP layer from growing a second opinion about the schema.
+type SceneDiff struct {
+	sceneversion.DiffView
+	// Lanes is the part of a diff row that does real work. An engineer
+	// arrives asking "what did I touch"; "17 objects changed" does not
+	// answer it.
+	Lanes []string `json:"lanes"`
+}
+
+// RecentSceneDiffsWithLanes returns the map change log, newest first, each row
+// carrying the lanes that edit touched.
+func (s *NodeService) RecentSceneDiffsWithLanes(limit int) ([]SceneDiff, error) {
+	diffs, err := s.db.RecentSceneDiffs(limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SceneDiff, 0, len(diffs))
+	for _, d := range diffs {
+		lanes, err := s.db.LanesChangedByDiff(d.ID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, SceneDiff{DiffView: d, Lanes: lanes})
+	}
+	return out, nil
 }
 
 // ListCorrectionsByNode returns the most recent correction entries

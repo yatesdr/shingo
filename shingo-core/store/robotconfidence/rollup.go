@@ -61,8 +61,14 @@ type RollUpResult struct {
 	// sync wrote a row it could not name — see Segment.Keyable.
 	UnkeyableEdges   int
 	UnkeyableSamples int
-	ResidualsNull    int
-	SegmentsFailOnly int
+	// UnversionedSamples counts readings on a lane that has no geometry
+	// version at all. Non-zero means the scene sync has never run since
+	// versioning landed — a defect to surface, not a hole to carry in a key.
+	// A lane that HAS been versioned covers every reading, because its first
+	// version opens at -infinity.
+	UnversionedSamples int
+	ResidualsNull      int
+	SegmentsFailOnly   int
 }
 
 // dayKey truncates to the UTC day the partitions are cut on.
@@ -148,11 +154,16 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 	// The version index resolves, per sample, WHICH geometry the lane had
 	// when the reading was taken. Loaded once for the window rather than
 	// queried per row.
-	resolver := cfg.Versions
-	if resolver == nil {
-		resolver = noVersions{}
+	// A MISSING RESOLVER IS AN ERROR, NOT A DEGRADED MODE. version_id is NOT
+	// NULL, so a roll-up that cannot resolve versions would quarantine every
+	// sample it read and write nothing at all — a total, silent loss of a
+	// day, reported as success. Fail where the misconfiguration is.
+	if cfg.Versions == nil {
+		return res, fmt.Errorf(
+			"robot confidence: roll-up has no version resolver; every sample " +
+				"would be quarantined and the day would silently produce no rows")
 	}
-	versions, err := resolver.Load(db, from, to)
+	versions, err := cfg.Versions.Load(db, from, to)
 	if err != nil {
 		return res, err
 	}
@@ -192,6 +203,14 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 		// A blend of two lanes presented as one measurement is undetectable
 		// by any reader, and at a daily edit cadence it is most days.
 		versionID := versions.At(seg.Area, seg.Lane(), s.SampledAt)
+		// A lane with no version at all cannot be attributed to a geometry,
+		// and inventing one would be the same defect as keying an unnameable
+		// edge on its directed name. Counted and held out — the fix is to
+		// make the scene sync run, not to widen the key.
+		if onPath && versionID == nil {
+			res.UnversionedSamples++
+			return
+		}
 		key := versionedKey(seg.Key(), versionID)
 
 		// QUARANTINE, NOT EXCLUDE. The row stays, the count is recorded, and
@@ -462,8 +481,10 @@ func resolve(in map[string]map[string]*accum) map[string]map[string]CellStat {
 func (r RollUpResult) String() string {
 	return fmt.Sprintf(
 		"day=%s robots=%d lanes=%d samples=%d orphans=%d map_mismatch=%d "+
-			"unkeyable_edges=%d unkeyable_samples=%d residuals_null=%d fail_only_lanes=%d",
+			"unkeyable_edges=%d unkeyable_samples=%d unversioned_samples=%d "+
+			"residuals_null=%d fail_only_lanes=%d",
 		r.Day.Format("2006-01-02"), r.RobotRows, r.SegmentRows,
 		r.SamplesRead, r.Orphans, r.MapMismatch,
-		r.UnkeyableEdges, r.UnkeyableSamples, r.ResidualsNull, r.SegmentsFailOnly)
+		r.UnkeyableEdges, r.UnkeyableSamples, r.UnversionedSamples,
+		r.ResidualsNull, r.SegmentsFailOnly)
 }
