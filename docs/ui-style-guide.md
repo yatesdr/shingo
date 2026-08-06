@@ -702,6 +702,32 @@ part's share, where a drift toward 100% is visible at a glance and reads as the
 alarm it is. When several parts each matter on their own, small multiples beat
 one stack.
 
+**Split the layer when the failure modes differ.** The dual-y-axis ban below and
+the stacked trap above are the same disease in two organs — two things composed
+onto one scale — and it has a third form that arrives disguised as a data question
+rather than a chart question. **Two rates over two populations cannot share a
+scale**, however alike they look and however much they are both "percentages of
+something."
+
+**The test is different denominators, not different causes.** "Different causes"
+is a judgement about the domain, and two engineers will disagree about it in good
+faith. The denominators are in the query: if one rate is measured over *every*
+tick and the other only over the ticks that *produced a value*, they are measured
+over different populations, and you can see that without knowing what a tick is.
+Give them separate layers, separate panels, or small multiples — or redefine the
+measurement so there is genuinely one population, which is the better fix wherever
+the failure has a value that can be counted (see *Never band a conditioned
+statistic*).
+
+The localization work is the worked example, and it carried both rates. A lane's
+**no-estimate rate** is over every tick the robot reported; its **confidence
+aggregate** is over only the ticks that produced an estimate. Each channel is
+blind to exactly the defect the other finds: the no-estimate channel finds all
+nine reflector-less zones at Springfield and none of the LM13→LM14 corridor, and
+the confidence channel finds the corridor and none of the zones. That is not one
+measurement with noise in it; it is two measurements over two populations, and no
+single band can be honest about both.
+
 **The forms we do not draw, and why:**
 
 - **No pie or donut charts.** Angle is read less accurately than length and the
@@ -734,7 +760,7 @@ chart earns its place only where the table cannot answer the question.
 
 ### The numbers themselves
 
-Four rules. The first is the one that gets broken.
+Six rules. The first is the one that gets broken.
 
 **1 — Never print more precision than the measurement supports.**
 
@@ -886,6 +912,106 @@ Three riders:
   `superseded` — and a `default` rendering blank turns every future addition into
   a silent data-loss bug in the UI.
 
+**Corollary — return the question, don't merely expose it.** The rule above puts
+the fix at the **type**, not at the CSS. At an API boundary that has a sharper
+form: **when a value has a state that is indistinguishable from a legitimate
+value, the accessor must RETURN that distinction, not merely make it available.**
+
+*Available* is precisely the mode that has failed, every time, in this codebase.
+`confidence`, `area_ids`, the battery block and `Suspended: false` were all present
+on data Core was already receiving, and all four went untaken for months — not
+because anyone weighed them and declined, but because no signature ever asked.
+Availability is not a safeguard; un-skippability is.
+
+**Worked example.** `fleet.SceneState.DisabledPaths` is an empty slice in two
+different worlds: nothing is disabled, and the envelope has never been observed.
+Springfield has four lanes disabled right now, so a caller reading the slice alone
+renders those four as **enabled** — through the whole window after a boot, again
+after a reconnect, and permanently against a backend that does not implement the
+call at all. That is *no data rendered as zero*, one layer below the renderer, and
+in the reassuring direction. An `ObservedAt.IsZero()` check makes the distinction
+*available*; changing the signature from `GetSceneState() SceneState` to
+**`GetSceneState() (SceneState, bool)`** makes it impossible to skip — the caller
+cannot obtain the value without also being handed the question
+(`shingo-core/fleet/optional.go`).
+
+**The test for whether you have done it: can a caller get the value without the
+question?** A second return value, an `(value, ok)` pair, a sum type — no, and
+that is the point. A `Populated` field beside the data, a documented sentinel, a
+zero value with a comment above it — yes, and each of those is exposure. Exposure
+gets skipped, and it gets skipped silently, which is how a renderer ends up
+holding a distinction that was destroyed three layers upstream.
+
+**5 — Never band a conditioned statistic.**
+
+An aggregate computed over a sample that was **selected by the very thing being
+measured** is not on the same scale as an unconditioned one, and must not be
+rendered as though it were — not banded on the same thresholds, not coloured from
+the same ramp, not printed in the same column.
+
+The general form is the reason this earns its space: **any "% success" whose
+failures drop out of the denominator is this defect.** So is a mean over "valid
+readings", a latency percentile over the requests that returned, a yield-per-hour
+over the hours that produced. What you are holding is not a sample of the
+population; it is a sample of the population *that survived* — and the thing that
+removed the rest is usually exactly what you were trying to see.
+
+Two remedies, in this order. Where the failure has a value, **count it** — a
+localization miss is a confidence of zero — and the aggregate is over the full
+population again, which can be banded honestly. Where the failure has no value to
+count, **suppress the aggregate and render the selection rate instead**: the
+selection rate is over the whole population by construction, and it is the channel
+the defect actually lives in.
+
+**The worked example.** At Springfield, path segments running through one of the
+nine reflector-less zones average **0.897** localization confidence against **0.740**
+for the rest of the plant. They read *better* than the plant. Inside those zones
+the robot produces a good reading or none at all — a failure leaves the value
+channel entirely, reported as a sentinel rather than as a low number — so what
+survives is a **truncated** distribution, not a degraded one, and the zone looks
+healthy because half of its ticks are missing. Banding that conditioned mean
+against zone membership scored **AUC 0.081**: it predicted the dead zones almost
+perfectly *backwards*. A map coloured from it would have painted the nine worst
+areas on the floor the same green as the best.
+
+**Its two siblings are already in this section, and the family is worth naming.**
+*The count that became an estimate* is a true number that misled because its
+**window** did not travel with it. *Never coalesce absence into zero* is a true
+zero that misled because it was an **absence**. This is a true aggregate that
+misleads because its **selection** did not travel with it. In all three the
+arithmetic is correct, and the defect is entirely in what the number failed to
+carry.
+
+**6 — Match the threshold to the statistic it was defined for.**
+
+A threshold defined for an instantaneous reading is not a threshold for a tail
+statistic, and carrying it across produces a chart rather than an error — which is
+why it survives review.
+
+RDS bands robot localization confidence at **0.80 / 0.30**, green above and red
+below. `reference/rds-user-manual.pdf` is explicit about what those cuts colour:
+**one robot's live reading in the robot list.** Applied instead to a per-lane
+**p05** over a week they put **91%** of path segments in the middle band and separated
+nothing — and not because the plant is uniform. It is arithmetic: a tail statistic
+sits systematically below the typical reading, so cuts chosen to be interesting
+against typical readings land off the end of the tail's distribution and
+everything piles up on one side of them. On the **mean** the same two cuts split
+**29% / 71%**, which is a finding. **The thresholds never moved; the statistic
+did.**
+
+**The boundary with "a figure from an upstream system."** The precision table in
+rule 1 says to print an upstream system's figure *exactly as that system publishes
+it, unchanged*, and a reader who has internalised that row will read a vendor's
+thresholds as sanctioned by it too. They are different objects. **Print the
+upstream system's NUMBER unchanged; do not inherit its THRESHOLDS onto a statistic
+they were never defined over.** A number is a measurement and carries its own
+definition with it. A threshold is a *decision about a distribution*, and it is
+only meaningful over the distribution it was drawn on — a percentile of that
+distribution is a different distribution. Adopting a vendor's bands is still the
+right instinct where the operators already read them off the vendor's own screens;
+the adoption is legitimate on the statistic the vendor banded, and on any other
+statistic only once the cuts have been re-derived on it.
+
 ### The palette
 
 Charts, KPI numbers, and other data marks use ONE **curated, vibrant palette**
@@ -974,6 +1100,50 @@ sky / P95 violet; cancellation amber, failure coral; fleet-load avg teal fill,
 peak indigo line, ceiling amber-dashed; footprint two palette hues (teal +
 indigo) with soft fills. KPI heroes white (delta arrows green up / coral down);
 section titles get an indigo tick; the live pill is green.
+
+### Ordinal scales and the semantic triad
+
+**An ordinal scale may not rely on the semantic triad as its only channel.**
+
+`--viz-green` / `--viz-amber` / `--viz-coral` are documented above as **semantic**
+hues for **discrete** states — the chip that reads *Failing* with the word printed
+inside it, where the colour is redundant encoding wrapped around a label. Pressed
+into service as an **ordered ramp** — good, marginal, bad along one axis, on a mark
+that carries no text — they stop being redundant and become the entire encoding,
+and they do not hold it. Measured under deuteranomaly on dark, `--viz-green` and
+`--viz-coral` separate by **ΔE 6.0**: the two *ends* of the scale, the pair a
+reader most needs to tell apart, read as one colour for roughly one man in twelve.
+
+For scale, the categorical ramp holds its worst merely-**adjacent** pair at ΔE 17.0
+under CVD simulation (P19, law 2 above). And this palette has twice been changed
+over a smaller collapse than this one: indigo beside violet at 2.4 protan, fixed by
+reassigning the scale order (P19), and `sourcing` beside `failed` at 2.70, fixed by
+re-picking a token value (see *Status indicators*). Same class of defect, at the
+two values that matter most.
+
+**The rule is not "stop using the triad."** It is the instrument the sequential
+ramp already uses one paragraph above — *steps ordered by luminance so the ramp
+still reads in greyscale* — applied to a scale whose steps happen to be semantic:
+**carry the ordering in a second channel** (stroke weight, dash pattern, size) so
+the encoding survives desaturation, and let hue only confirm what the form already
+says. **Order must survive in greyscale.** This is the same move the Signal palette
+made when hue ran out of room — take the separation on an axis all three
+dichromacies preserve — one level up, at the encoding rather than at the token.
+
+**Two alternatives were measured and rejected. Recorded so they are not
+re-proposed:**
+
+- **The sequential teal ramp** (`--viz-seq-1` … `--viz-seq-5`) is the safer
+  colour: its worst pair measures **9.8**, and it falls between *adjacent* steps
+  rather than between the extremes, which is where a scale's smallest separation
+  belongs. It was rejected for a non-colour reason — it abandons the vendor
+  vocabulary the operators already read on the vendor's own screens (rule 6 in
+  *The numbers themselves* is the other half of that argument), and on the surface
+  that raised this, teal is already spoken for by the reflector mark.
+- **The diverging coral↔teal ramp** is reserved for **signed** data and confidence
+  is not signed. It has a floor, a ceiling and no meaningful zero; putting it on a
+  diverging ramp asserts a midpoint the measurement does not have, and colours
+  "moderate" as neutral.
 
 ## Visual principles
 
