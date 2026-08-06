@@ -166,11 +166,43 @@
   --viz-seq-5: #0b5f57;
 
   /* Diverging (teal <-> coral around a neutral gray) — signed data like
-   * bin-sum drift: teal = positive/above, coral = negative/below, mid = zero. */
+   * bin-sum drift: teal = positive/above, coral = negative/below, mid = zero.
+   *
+   * THE TWO INNER STEPS WERE RE-DERIVED. They were picked by eye and the ramp
+   * was not a ramp: contrast against --elev-surface ran 5.61 / 1.97 / 1.91 /
+   * 1.64 / 4.19 on light and 6.43 / 1.86 / 3.77 / 2.74 / 9.29 on dark, so on
+   * BOTH themes a moderate step receded further into the surface than the
+   * neutral zero it was supposed to be moving away from. A bar chart survives
+   * that; a map segment, whose only channel is colour, does not.
+   *
+   * The defect was recorded in shared/contrast_test.go as latent, "promoted
+   * the moment something renders signed data with it". The localization
+   * board's change annotation renders a signed delta, so it is promoted.
+   *
+   * Solved, not eyeballed — the U8 substrate method: hold hue and saturation,
+   * move only HSL lightness, and target the GEOMETRIC MEAN of the neighbouring
+   * steps' contrasts so the two arms are evenly spaced on a ratio scale,
+   * floored at 3:1 because +-1 is a MARK (a lane stroke, a bar) and not the
+   * near-surface zero. The mid keeps no floor: sitting close to the surface is
+   * how it encodes zero, which is the same exemption the sequential interior
+   * steps carry.
+   *
+   *   light  vs #ffffff : 5.61 / 3.27 / 1.91 / 3.02 / 4.19
+   *   dark   vs #161b22 : 6.43 / 4.91 / 3.77 / 5.91 / 9.29
+   *
+   * Both arms now rise monotonically away from the mid and every adjacent pair
+   * clears the 1.15:1 step-separation floor (min 1.31 dark, 1.39 light).
+   * TestVizDivergingRampIsOrdered asserts all of it; re-derive the same way if
+   * any step moves.
+   *
+   * One property a diverging ramp cannot have: in pure greyscale the two arms
+   * mirror, so lightness carries MAGNITUDE and hue carries SIGN. That is
+   * inherent to the form, not a defect — but it does mean a diverging ramp
+   * must never be the only channel distinguishing above from below. */
   --viz-div-neg-2: #c81e4a;   /* strong coral — most negative */
-  --viz-div-neg-1: #f2a3b3;   /* soft coral */
+  --viz-div-neg-1: #e9607c;   /* soft coral   — re-derived, 3.27:1 */
   --viz-div-mid:   #b7bcc4;   /* neutral gray — zero */
-  --viz-div-pos-1: #86d9cc;   /* soft teal */
+  --viz-div-pos-1: #34a594;   /* soft teal    — re-derived, 3.02:1 */
   --viz-div-pos-2: #0d8b7f;   /* strong teal — most positive */
 
   /* Unified order-status palette (P13) — ONE palette feeds map dots, the
@@ -431,10 +463,14 @@
   --viz-seq-3: #1c8074;
   --viz-seq-4: #2dd4bf;
   --viz-seq-5: #7ff0e1;
+  /* Inner steps re-derived — see the light block for the method and the
+   * measured ratios. Dark ran 6.43 / 1.86 / 3.77 / 2.74 / 9.29, i.e. both
+   * moderate steps DARKER than the neutral mid; it now runs
+   * 6.43 / 4.91 / 3.77 / 5.91 / 9.29. */
   --viz-div-neg-2: #fb7185;
-  --viz-div-neg-1: #7c2b3a;
+  --viz-div-neg-1: #cc6b7d;   /* re-derived, 4.91:1 */
   --viz-div-mid:   #6e7681;
-  --viz-div-pos-1: #1c6b62;
+  --viz-div-pos-1: #2ca89a;   /* re-derived, 5.91:1 */
   --viz-div-pos-2: #2dd4bf;
 
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);

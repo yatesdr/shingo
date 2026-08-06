@@ -341,13 +341,12 @@ func vizFloorCitation(role vizRole, surfaceTok string) string {
 // told apart side by side; the ramp's real minimum today is 1.37:1, so the
 // floor has margin without being decorative.
 //
-// The DIVERGING ramp is deliberately not held to either property here, and
-// that is a finding rather than an oversight: in the light theme its positive
-// arm is not monotonic away from the neutral mid (mid L=0.500, pos-1 L=0.591,
-// pos-2 L=0.201), and mid against neg-1 is 1.03:1 — the two collapse into one
-// grey in greyscale and for anyone reading the chart by lightness. It has no
-// consumers today, so it is latent. It gets promoted the moment something
-// renders signed data with it.
+// The DIVERGING ramp needs a DIFFERENT property and now has its own test —
+// see TestVizDivergingRampIsOrdered below. It used to be excluded here with
+// the note that the defect was latent and would be "promoted the moment
+// something renders signed data with it". The localization board's change
+// annotation renders a signed delta, so it was promoted and the tokens were
+// re-solved.
 func TestVizSequentialRampIsOrdered(t *testing.T) {
 	src := readShared(t, "tokens.css")
 	themes := tokenThemes(t, src)
@@ -385,6 +384,98 @@ func TestVizSequentialRampIsOrdered(t *testing.T) {
 				t.Errorf("Sequential ramp steps collapse — %s theme: --viz-seq-%d (%s) against --viz-seq-%d (%s) is %.2f:1, below the %.2f:1 step-separation floor.\n"+
 					"  Two adjacent magnitudes render as the same fill. Widen the lightness gap between them.",
 					themeName, i+1, hexes[i], i+2, hexes[i+1], sep, minStepSeparation)
+			}
+		}
+	}
+}
+
+// TestVizDivergingRampIsOrdered holds the diverging ramp to the property a
+// diverging ramp actually has, which is not the sequential one.
+//
+// A sequential ramp runs one direction end to end. A diverging ramp has TWO
+// ARMS meeting at a neutral zero, so the contract is that contrast against
+// the surface rises monotonically AWAY FROM THE MIDDLE in both directions.
+// Testing it for end-to-end monotonicity would be testing the wrong thing and
+// it would fail on a correct ramp.
+//
+// Three properties:
+//
+//  1. Each arm rises monotonically away from the mid, against --surface. This
+//     is what the ramp got wrong: both moderate steps used to sit CLOSER to
+//     the surface than the neutral zero, so the ramp read bright, dark, grey,
+//     dark, bright, and a moderate value receded below "normal".
+//
+//  2. Steps +-1 and +-2 clear the non-text floor. They are marks — a lane
+//     stroke, a bar — and SC 1.4.11 applies. The MID is deliberately exempt
+//     for the same reason the sequential interior steps are: sitting close to
+//     the surface is how it encodes zero.
+//
+//  3. Adjacent steps stay separable, on the same 1.15:1 floor the sequential
+//     ramp uses.
+//
+// What is NOT asserted, because a diverging ramp cannot have it: greyscale
+// separability of the two arms. They mirror by construction, so lightness
+// carries magnitude and hue carries sign. The consequence for callers is that
+// a diverging ramp must never be the only channel distinguishing above from
+// below — pair it with position, a label, or a sign.
+func TestVizDivergingRampIsOrdered(t *testing.T) {
+	src := readShared(t, "tokens.css")
+	themes := tokenThemes(t, src)
+	const minStepSeparation = 1.15
+
+	steps := []string{"--viz-div-neg-2", "--viz-div-neg-1", "--viz-div-mid", "--viz-div-pos-1", "--viz-div-pos-2"}
+
+	for _, themeName := range []string{"light", "dark"} {
+		tbl := themes[themeName]
+		surfHex := resolveToken(tbl, "--surface")
+		if !isHex(surfHex) {
+			t.Fatalf("%s theme: --surface resolved to %q", themeName, surfHex)
+		}
+		surf := mustColor(t, surfHex)
+
+		var hexes []string
+		var ratios []float64
+		for _, name := range steps {
+			hex := resolveToken(tbl, name)
+			if !isHex(hex) {
+				t.Fatalf("%s theme: %s resolved to %q, not a hex colour", themeName, name, hex)
+			}
+			hexes = append(hexes, hex)
+			ratios = append(ratios, ContrastRatio(mustColor(t, hex), surf))
+		}
+
+		// (1) each arm rises away from the mid (index 2)
+		for _, arm := range [][2]int{{2, 1}, {1, 0}, {2, 3}, {3, 4}} {
+			inner, outer := arm[0], arm[1]
+			if ratios[outer] <= ratios[inner] {
+				t.Errorf("Diverging ramp NOT ordered — %s theme: %s (%s) is %.2f:1 against --surface (%s) "+
+					"and %s (%s) is %.2f:1, but %s is FURTHER from zero and must contrast more.\n"+
+					"  The ramp doubles back, so a moderate value recedes into the surface further than the neutral does. "+
+					"Re-solve the step's lightness: hold hue and saturation, target the geometric mean of its neighbours, floor at %.1f:1.",
+					themeName, steps[inner], hexes[inner], ratios[inner], surfHex,
+					steps[outer], hexes[outer], ratios[outer], steps[outer], AANonText)
+			}
+		}
+
+		// (2) everything but the mid is a mark
+		for i, name := range steps {
+			if i == 2 {
+				continue
+			}
+			if ratios[i] < AANonText {
+				t.Errorf("Diverging ramp contrast FAIL — %s theme: %s (%s) on --surface (%s) is %.2f:1, below the %.2f:1 floor.\n"+
+					"  Every step but the neutral mid is a MARK (SC 1.4.11). Only the mid may sit near the surface, because that is how it encodes zero.",
+					themeName, name, hexes[i], surfHex, ratios[i], AANonText)
+			}
+		}
+
+		// (3) adjacent steps stay apart
+		for i := 0; i < len(steps)-1; i++ {
+			sep := ContrastRatio(mustColor(t, hexes[i]), mustColor(t, hexes[i+1]))
+			if sep < minStepSeparation {
+				t.Errorf("Diverging ramp steps collapse — %s theme: %s (%s) against %s (%s) is %.2f:1, below the %.2f:1 floor.\n"+
+					"  Two adjacent magnitudes render as the same fill.",
+					themeName, steps[i], hexes[i], steps[i+1], hexes[i+1], sep, minStepSeparation)
 			}
 		}
 	}
