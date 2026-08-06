@@ -4,6 +4,9 @@ package testdb
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +19,27 @@ import (
 // overridden to `sleep` so nothing runs initdb — the reaper decides on labels
 // alone and does not care what is inside.
 const reapProbeImage = "postgres:16-alpine"
+
+// probeOwner returns a labelOwner value unique to this test, so the fixtures it
+// plants are invisible to every other reaper on the machine.
+//
+// WHY THIS IS NOT OPTIONAL. These tests plant a deliberately-EXPIRED container
+// and then assert the reaper collects it. Under `go test ./...` the packages run
+// concurrently against one Docker daemon, and every sibling that starts a
+// database calls reapOrphansBestEffort BEFORE creating its own container
+// (testdb.go) — doing exactly what it is supposed to do, to a fixture that looks
+// exactly like the debris it exists to clear. The fixture vanishes between being
+// planted and being listed, and the assertion fails with removed=[] on a reaper
+// that is working perfectly.
+//
+// That is a genuine race on a global resource, not flakiness to be retried: it
+// passed in isolation and failed in the full suite, on the parent commit as well
+// as on the branch that surfaced it. Scoping the fixture removes the shared
+// resource from the equation rather than narrowing the window.
+func probeOwner(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf("probe-%d-%s", os.Getpid(), strings.ReplaceAll(t.Name(), "/", "_"))
+}
 
 // plantContainer starts a labelled container and registers its forced removal.
 // It returns the ID. Cleanup is unconditional so a failing assertion cannot
@@ -86,22 +110,23 @@ func containerExists(t *testing.T, id string) bool {
 // `go test -timeout=0` run, which is precisely the run nothing can prove dead.
 func TestReapOrphans_RemovesExpiredAndSparesLive(t *testing.T) {
 	now := time.Now()
+	owner := probeOwner(t)
 
 	expired := plantContainer(t, map[string]string{
-		labelOwner:    "1",
+		labelOwner:    owner,
 		labelDeadline: now.Add(-1 * time.Minute).Format(time.RFC3339Nano),
 	})
 	live := plantContainer(t, map[string]string{
-		labelOwner:    "1",
+		labelOwner:    owner,
 		labelDeadline: now.Add(30 * time.Minute).Format(time.RFC3339Nano),
 	})
 	noDeadline := plantContainer(t, map[string]string{
-		labelOwner: "1",
+		labelOwner: owner,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), reapTimeout)
 	defer cancel()
-	removed, err := reapOrphans(ctx, now)
+	removed, err := reapOrphans(ctx, now, owner)
 	if err != nil {
 		t.Fatalf("reapOrphans: %v", err)
 	}
@@ -145,7 +170,7 @@ func TestReapOrphans_IgnoresContainersItDoesNotOwn(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), reapTimeout)
 	defer cancel()
-	removed, err := reapOrphans(ctx, now)
+	removed, err := reapOrphans(ctx, now, probeOwner(t))
 	if err != nil {
 		t.Fatalf("reapOrphans: %v", err)
 	}
@@ -184,8 +209,8 @@ func TestSharedContainer_CarriesReapLabels(t *testing.T) {
 		t.Fatalf("inspect shared container %s: %v", id[:12], err)
 	}
 
-	if info.Config.Labels[labelOwner] != "1" {
-		t.Errorf("shared container missing %s=1; labels=%v", labelOwner, info.Config.Labels)
+	if info.Config.Labels[labelOwner] != ownerHarness {
+		t.Errorf("shared container missing %s=%s; labels=%v", labelOwner, ownerHarness, info.Config.Labels)
 	}
 	raw, ok := info.Config.Labels[labelDeadline]
 	if !ok {

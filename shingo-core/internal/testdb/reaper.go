@@ -67,6 +67,24 @@ const (
 	// entire candidate set: nothing without it is ever listed.
 	labelOwner = "shingo.testdb"
 
+	// ownerHarness is labelOwner's value on every container the harness itself
+	// creates, and the fleet reapOrphansBestEffort collects. It is a constant
+	// rather than per-process on purpose: the reaper's whole job is clearing
+	// containers OTHER processes abandoned, so scoping it to the current process
+	// would defeat it.
+	//
+	// It is a PARAMETER of reapOrphans rather than a hard-coded filter so that
+	// this package's own tests can plant fixtures under a different value and
+	// reap them without racing the fleet. See reaper_test.go: the reaper tests
+	// plant a deliberately-expired container, and any sibling package starting a
+	// database at that moment runs reapOrphansBestEffort BEFORE creating its own
+	// (testdb.go) — which, on one shared Docker daemon, would collect the fixture
+	// out from under the test. That is not hypothetical: it is why
+	// TestReapOrphans_RemovesExpiredAndSparesLive failed under `go test ./...`
+	// while passing in isolation, reporting removed=[] because the container was
+	// already gone when it listed.
+	ownerHarness = "1"
+
 	// labelDeadline carries RFC3339Nano wall time after which the creating
 	// test binary is provably gone. Absent or unparseable means "unknown",
 	// which is treated as live.
@@ -89,7 +107,7 @@ const (
 // entirely rather than writing something a reader would have to special-case:
 // no label is already the "cannot tell, keep it" case.
 func containerLabels(now time.Time) map[string]string {
-	labels := map[string]string{labelOwner: "1"}
+	labels := map[string]string{labelOwner: ownerHarness}
 	if d := containerDeadline(now); !d.IsZero() {
 		labels[labelDeadline] = d.Format(time.RFC3339Nano)
 	}
@@ -130,7 +148,11 @@ func containerDeadline(now time.Time) time.Time {
 // Exited containers are included (All: true) — they hold their anonymous data
 // volume until removed, which is the ~80MB per package the Makefile's
 // clean-testcontainers target exists to recover.
-func reapOrphans(ctx context.Context, now time.Time) ([]string, error) {
+// owner selects the candidate set: only containers carrying labelOwner=owner are
+// listed. Production passes ownerHarness; the reaper's own tests pass a
+// per-run value so their fixtures are invisible to a concurrently-starting
+// sibling's reap.
+func reapOrphans(ctx context.Context, now time.Time, owner string) ([]string, error) {
 	cli, err := testcontainers.NewDockerClientWithOpts(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("reap: docker client: %w", err)
@@ -139,7 +161,7 @@ func reapOrphans(ctx context.Context, now time.Time) ([]string, error) {
 
 	found, err := cli.ContainerList(ctx, container.ListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", labelOwner+"=1")),
+		Filters: filters.NewArgs(filters.Arg("label", labelOwner+"="+owner)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reap: list containers: %w", err)
@@ -181,7 +203,7 @@ func reapOrphansBestEffort() {
 	ctx, cancel := context.WithTimeout(context.Background(), reapTimeout)
 	defer cancel()
 
-	removed, err := reapOrphans(ctx, time.Now())
+	removed, err := reapOrphans(ctx, time.Now(), ownerHarness)
 	if len(removed) > 0 {
 		fmt.Fprintf(os.Stderr, "testdb: reaped %d orphaned container(s) past their declared deadline\n", len(removed))
 	}
