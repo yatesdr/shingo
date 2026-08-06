@@ -910,6 +910,9 @@ func (db *DB) runVersionedMigrations() error {
 		{79, "carry the robot's map hash and active alarms onto every confidence sample",
 			v79ConfidenceMapAndAlarms,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "robot_confidence_samples", "map_md5") }},
+		{80, "confidence aggregates key on the physical lane, and keep both populations",
+			v80LaneConfidenceDaily,
+			func(q schema.Querier) bool { return schema.TableExists(q, "lane_confidence_daily") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3740,6 +3743,103 @@ func v79ConfidenceMapAndAlarms(tx *sql.Tx) error {
 			if _, err := tx.Exec(`ALTER TABLE ` + t + ` ADD COLUMN IF NOT EXISTS ` + col); err != nil {
 				return fmt.Errorf("v79 confidence %s (%s): %w", col, t, err)
 			}
+		}
+	}
+	return nil
+}
+
+// v80LaneConfidenceDaily re-keys the per-place aggregate onto the PHYSICAL
+// LANE and splits the two populations it was conflating.
+//
+// THE KEY WAS WRONG, AND IT WAS WRONG BY UP TO A FACTOR OF TWO. scene_edges
+// stores every drivable lane twice — 405 directed rows at Springfield are 193
+// reciprocal pairs plus 19 genuinely one-way lanes, i.e. 212 pieces of floor.
+// Both rows of a pair have identical geometry, so a sample is exactly as close
+// to one as to the other and the winner was float noise: 81.7% of samples had
+// a second-best directed edge within 5 cm of the best. Aggregating on the
+// directed name therefore split each lane's readings arbitrarily between its
+// twins — LM73-LM14 showed 48 readings and LM14-LM73 showed 116, one piece of
+// floor — so every n, every percentile and every minimum-sample threshold was
+// up to 2x wrong, and a lane could fall below the minimum purely because its
+// twin took the samples. On the lane key the residual ambiguity is 23.6%, and
+// what is left is genuine junction geometry rather than a coin toss.
+//
+// The old table is DROPPED rather than migrated. Its rows are not wrong, they
+// are at the wrong granularity, and there is no arithmetic that recovers one
+// lane's distribution from two arbitrary halves of it. The raw samples are
+// retained for 14 days precisely so the aggregates can be rebuilt when the
+// binning changes — this is the first time that escape hatch has been needed
+// and it is the reason it exists.
+//
+// TWO POPULATIONS, TWO SETS OF COLUMNS, AND THE SPLIT IS THE POINT.
+//
+//	p05/p25/p50/p75/p95   over EVERY tick, a no-estimate counted as the zero
+//	                      it is. Unconditioned, therefore bandable.
+//	mean_good/samples_good over only the ticks that produced a number.
+//	                      CONDITIONED — the sample was selected by the very
+//	                      thing being measured — therefore never bandable.
+//
+// Getting this wrong is not theoretical: banding the conditioned mean against
+// reflector-area membership scored AUC 0.081, i.e. it predicted the dead
+// zones almost perfectly BACKWARDS. Lanes running through a reflector-less
+// zone average 0.897 against 0.740 elsewhere, because inside them the robot
+// produces a good reading or none at all, so what survives is truncated
+// rather than degraded. Both columns exist so the gap between them is
+// visible, and the gap is the finding.
+//
+// FIVE PERCENTILES BECAUSE PERCENTILES DO NOT RE-AGGREGATE. A 14-day p05 is
+// not the mean of fourteen daily p05s. Keeping only p05 — which is what
+// shipped — means the median is gone for every day already rolled up, and no
+// amount of later work recovers it. Five doubles on the cheapest tier in the
+// system.
+//
+// sentinel_* and reloc_failed_* are DIFFERENT FACTS and must not share a
+// column: at Springfield the vendor's FAILED state has never once fired in
+// 10,997 rows, while the no-estimate sentinel is 7.4% of them.
+//
+// robots_seen because a lane's statistics are a mix over whichever robots
+// drove it, and six robots before a change can be six different robots after
+// it. It cannot be added retroactively.
+//
+// version_id is nullable HERE and made NOT NULL when the map sync lands.
+// Nothing accumulates in between: this whole body of work is one deploy.
+func v80LaneConfidenceDaily(tx *sql.Tx) error {
+	stmts := []string{
+		`DROP TABLE IF EXISTS segment_confidence_daily`,
+
+		`CREATE TABLE IF NOT EXISTS lane_confidence_daily (
+			day                  DATE NOT NULL,
+			area_name            TEXT NOT NULL,
+			lane                 TEXT NOT NULL,
+			p05                  DOUBLE PRECISION,
+			p25                  DOUBLE PRECISION,
+			p50                  DOUBLE PRECISION,
+			p75                  DOUBLE PRECISION,
+			p95                  DOUBLE PRECISION,
+			samples              INTEGER NOT NULL,
+			mean_good            DOUBLE PRECISION,
+			samples_good         INTEGER NOT NULL DEFAULT 0,
+			min_conf             DOUBLE PRECISION,
+			robots               INTEGER NOT NULL,
+			robots_seen          TEXT[],
+			sentinel_samples     INTEGER NOT NULL DEFAULT 0,
+			sentinel_robots      INTEGER NOT NULL DEFAULT 0,
+			reloc_failed_samples INTEGER NOT NULL DEFAULT 0,
+			reloc_failed_robots  INTEGER NOT NULL DEFAULT 0,
+			map_mismatch_samples INTEGER NOT NULL DEFAULT 0,
+			version_id           BIGINT,
+			PRIMARY KEY (day, area_name, lane)
+		)`,
+
+		// The robot row gains the same quarantine count. A robot out of step
+		// with the fleet's map is a fact about that robot, and at
+		// Hopkinsville it was also sitting undispatchable.
+		`ALTER TABLE robot_confidence_daily
+		   ADD COLUMN IF NOT EXISTS map_mismatch_samples INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v80 lane_confidence_daily: %w", err)
 		}
 	}
 	return nil

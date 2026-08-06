@@ -40,7 +40,7 @@ func TestCatchUp_RollsUpADayNoTickerWouldHaveReached(t *testing.T) {
 
 	var rows int
 	if err := db.QueryRow(
-		`SELECT count(*) FROM segment_confidence_daily WHERE day=$1`, yesterday).Scan(&rows); err != nil {
+		`SELECT count(*) FROM lane_confidence_daily WHERE day=$1`, yesterday).Scan(&rows); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if rows != 1 {
@@ -102,7 +102,7 @@ func TestCatchUp_IsIdempotentAndQuietWhenCaughtUp(t *testing.T) {
 	}
 
 	var rows int
-	db.QueryRow(`SELECT count(*) FROM segment_confidence_daily WHERE day=$1`, yesterday).Scan(&rows)
+	db.QueryRow(`SELECT count(*) FROM lane_confidence_daily WHERE day=$1`, yesterday).Scan(&rows)
 	if rows != 1 {
 		t.Errorf("segment rows after two passes = %d, want 1", rows)
 	}

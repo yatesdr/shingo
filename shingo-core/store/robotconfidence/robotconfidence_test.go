@@ -203,27 +203,27 @@ func TestSegmentDistance_MeasuresToTheSegmentNotTheLine(t *testing.T) {
 	// A 10 m segment along x. A point well past its end must measure to the
 	// ENDPOINT, not to the infinite line through it — otherwise a robot
 	// parked far beyond a long aisle snaps onto it as though alongside.
-	s := Segment{Area: "a", Instance: "e1", FromX: 0, FromY: 0, ToX: 10, ToY: 0}
-	if d := s.DistanceTo(5, 3); math.Abs(d-3) > 1e-9 {
+	s := Segment{Area: "a", Instance: "e1", FromName: "A", ToName: "B", FromX: 0, FromY: 0, ToX: 10, ToY: 0}
+	if d := s.ChordDistanceTo(5, 3); math.Abs(d-3) > 1e-9 {
 		t.Errorf("alongside: got %v, want 3", d)
 	}
-	if d := s.DistanceTo(14, 0); math.Abs(d-4) > 1e-9 {
+	if d := s.ChordDistanceTo(14, 0); math.Abs(d-4) > 1e-9 {
 		t.Errorf("past the end: got %v, want 4 (to the endpoint)", d)
 	}
-	if d := s.DistanceTo(-3, 4); math.Abs(d-5) > 1e-9 {
+	if d := s.ChordDistanceTo(-3, 4); math.Abs(d-5) > 1e-9 {
 		t.Errorf("before the start: got %v, want 5", d)
 	}
 	// A degenerate zero-length segment must not divide by zero.
 	p := Segment{FromX: 2, FromY: 2, ToX: 2, ToY: 2}
-	if d := p.DistanceTo(2, 5); math.Abs(d-3) > 1e-9 {
+	if d := p.ChordDistanceTo(2, 5); math.Abs(d-3) > 1e-9 {
 		t.Errorf("degenerate segment: got %v, want 3", d)
 	}
 }
 
 func TestSegmentIndex_NearestAndOrphans(t *testing.T) {
 	ix := NewSegmentIndex([]Segment{
-		{Area: "a", Instance: "near", FromX: 0, FromY: 0, ToX: 10, ToY: 0},
-		{Area: "a", Instance: "far", FromX: 0, FromY: 100, ToX: 10, ToY: 100},
+		{Area: "a", Instance: "near", FromName: "A", ToName: "B", FromX: 0, FromY: 0, ToX: 10, ToY: 0},
+		{Area: "a", Instance: "far", FromName: "C", ToName: "D", FromX: 0, FromY: 100, ToX: 10, ToY: 100},
 	})
 	got, ok := ix.Nearest(5, 0.5, 2.0)
 	if !ok || got.Instance != "near" {
@@ -237,15 +237,189 @@ func TestSegmentIndex_NearestAndOrphans(t *testing.T) {
 }
 
 func TestSegmentKeyRoundTrip(t *testing.T) {
-	// Instance names are only unique WITHIN an area (scene_edges is
-	// UNIQUE(area_name, instance_name)), so the key must carry both.
-	s := Segment{Area: "weld-cell", Instance: "LM120"}
-	area, instance := SplitKey(s.Key())
-	if area != "weld-cell" || instance != "LM120" {
-		t.Errorf("round trip gave (%q, %q)", area, instance)
+	// Names are only unique WITHIN an area (scene_edges is UNIQUE(area_name,
+	// instance_name)), so the key must carry both.
+	s := Segment{Area: "weld-cell", Instance: "LM119-LM120", FromName: "LM119", ToName: "LM120"}
+	area, lane := SplitKey(s.Key())
+	if area != "weld-cell" || lane != "LM119-LM120" {
+		t.Errorf("round trip gave (%q, %q)", area, lane)
 	}
-	a2 := Segment{Area: "press", Instance: "LM120"}
+	a2 := Segment{Area: "press", Instance: "LM119-LM120", FromName: "LM119", ToName: "LM120"}
 	if s.Key() == a2.Key() {
-		t.Error("same instance name in two areas must not collide")
+		t.Error("the same lane name in two areas must not collide")
 	}
+}
+
+// The two directed rows of a reciprocal pair are ONE lane.
+//
+// This is the correctness bug. scene_edges stores every drivable lane twice —
+// 405 directed rows at Springfield are 212 physical lanes — and the twins
+// have identical geometry, so which one a sample snapped to was decided by
+// float noise. LM73-LM14 showed 48 readings and LM14-LM73 showed 116, and
+// they are one piece of floor.
+func TestSegmentLane_ReciprocalTwinsShareOneKey(t *testing.T) {
+	fwd := Segment{Area: "a", Instance: "LM73-LM14", FromName: "LM73", ToName: "LM14",
+		FromX: 0, FromY: 0, ToX: 5, ToY: 0}
+	rev := Segment{Area: "a", Instance: "LM14-LM73", FromName: "LM14", ToName: "LM73",
+		FromX: 5, FromY: 0, ToX: 0, ToY: 0}
+	if fwd.Key() != rev.Key() {
+		t.Errorf("reciprocal twins must aggregate as one lane: %q vs %q", fwd.Key(), rev.Key())
+	}
+	if fwd.Lane() != "LM14-LM73" {
+		t.Errorf("Lane() must be the sorted pair, got %q", fwd.Lane())
+	}
+	// The directed name survives as an attribute — it is how a row joins
+	// back to scene_edges — it is simply not the aggregation key.
+	if fwd.Instance == rev.Instance {
+		t.Error("the directed instance names should still differ")
+	}
+	// A genuinely one-way lane has no twin and is unaffected. The
+	// LM13-LM141-LM140-LM14 corridor is entirely one-way, so the strongest
+	// finding in the dataset does not move under this change.
+	oneWay := Segment{Area: "a", Instance: "LM13-LM141", FromName: "LM13", ToName: "LM141"}
+	if oneWay.Key() == fwd.Key() {
+		t.Error("distinct lanes must not collide")
+	}
+}
+
+// A curved lane is measured along its curve, and the difference is metres.
+//
+// LM10-LM113 is the widest bow in the Springfield scene: a DegenerateBezier
+// sitting 1.302 m off its own 7.17 m chord. The class name says nothing —
+// 292 of 405 segments are called DegenerateBezier and most of those are
+// straight lines spelled as a cubic. Only the geometry knows.
+func TestSegmentIndex_CurvedLaneIsMeasuredAlongItsCurve(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	curved := Segment{
+		Area: "a", Instance: "LM10-LM113", FromName: "LM10", ToName: "LM113",
+		FromX: -0.254, FromY: 33.554, ToX: -6.572, ToY: 36.951,
+		Ctrl1X: f(-0.198), Ctrl1Y: f(36.401), Ctrl2X: f(-5.065), Ctrl2Y: f(36.951),
+	}
+	ix := NewSegmentIndex([]Segment{curved})
+
+	// The scene's worst chord departure. dashboard-map.js documents 1.30 m
+	// for this lane and an independent Python recomputation gave 1.302; both
+	// must keep agreeing or the drawn lane and the snapped lane have parted.
+	if dev := ix.MaxDeviation(); math.Abs(dev-1.302) > 0.01 {
+		t.Errorf("MaxDeviation = %.4f m, want ~1.302 m for LM10-LM113", dev)
+	}
+
+	// A point sitting ON the curve at its midpoint is far from the chord.
+	mx, my := curved.cubicPoint(0.5)
+	if d := ix.distanceTo(0, mx, my); d > 0.02 {
+		t.Errorf("a point on the curve should snap to it: got %.4f m", d)
+	}
+	if d := curved.ChordDistanceTo(mx, my); d < 1.0 {
+		t.Errorf("the same point should be far from the CHORD; got %.4f m — "+
+			"if this is small the fixture is no longer a bowed lane", d)
+	}
+}
+
+// Partial or non-finite handles are not a curve.
+//
+// Three of four coordinates describe no cubic, and the renderer would have to
+// invent the fourth. The same rule dashboard-map.js applies, applied here, so
+// the drawn lane and the measured lane cannot disagree about which segments
+// are curved.
+func TestSegment_PartialHandlesAreNotACurve(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	base := Segment{Area: "a", FromName: "A", ToName: "B", FromX: 0, FromY: 0, ToX: 10, ToY: 0}
+	for name, s := range map[string]Segment{
+		"ctrl1 only":    {Ctrl1X: f(1), Ctrl1Y: f(1)},
+		"three of four": {Ctrl1X: f(1), Ctrl1Y: f(1), Ctrl2X: f(2)},
+		"ctrl2 only":    {Ctrl2X: f(2), Ctrl2Y: f(2)},
+		"x without a y": {Ctrl1X: f(1), Ctrl2X: f(2)},
+		"none at all":   {},
+	} {
+		seg := base
+		seg.Ctrl1X, seg.Ctrl1Y, seg.Ctrl2X, seg.Ctrl2Y = s.Ctrl1X, s.Ctrl1Y, s.Ctrl2X, s.Ctrl2Y
+		if seg.Curved() {
+			t.Errorf("%s: must not be treated as a curve", name)
+		}
+		if dev := NewSegmentIndex([]Segment{seg}).MaxDeviation(); dev != 0 {
+			t.Errorf("%s: a non-curve must have zero deviation, got %v", name, dev)
+		}
+	}
+}
+
+// The chord prune must never change an answer.
+//
+// Nearest resolves the best chord candidate first and then skips any segment
+// whose chordDist-deviation cannot beat it. That is only sound because the
+// true distance to a curve differs from the distance to its chord by at most
+// the curve's own maximum departure. This test asserts the property directly
+// against brute force over a spread of geometry — if the bound is ever wrong,
+// the failure is a silently mis-attributed sample, which is exactly the class
+// of bug this whole commit exists to fix.
+func TestSegmentIndex_PruneAgreesWithBruteForce(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	var segs []Segment
+	// A deterministic spread: straight lanes, gentle bows and severe bows,
+	// laid on a grid so many of them are plausible rivals for any sample.
+	for i := 0; i < 40; i++ {
+		x := float64(i%8) * 3
+		y := float64(i/8) * 3
+		s := Segment{
+			Area: "a", Instance: fmt.Sprintf("e%d", i),
+			FromName: fmt.Sprintf("N%d", i), ToName: fmt.Sprintf("N%d", i+1),
+			FromX: x, FromY: y, ToX: x + 2.5, ToY: y + 1.0,
+		}
+		if i%3 != 0 { // two thirds carry handles, with varying bow
+			bow := 0.2 + float64(i%5)
+			s.Ctrl1X, s.Ctrl1Y = f(x+0.8), f(y+bow)
+			s.Ctrl2X, s.Ctrl2Y = f(x+1.7), f(y+bow)
+		}
+		segs = append(segs, s)
+	}
+	ix := NewSegmentIndex(segs)
+
+	brute := func(x, y, tol float64) (string, bool) {
+		best, bestIdx := math.Inf(1), -1
+		for i := range segs {
+			if d := ix.distanceTo(i, x, y); d < best {
+				best, bestIdx = d, i
+			}
+		}
+		if bestIdx < 0 || best > tol {
+			return "", false
+		}
+		return segs[bestIdx].Instance, true
+	}
+
+	const tol = 1.0
+	checked := 0
+	for xi := 0; xi <= 120; xi++ {
+		for yi := 0; yi <= 60; yi++ {
+			x, y := float64(xi)*0.2-1, float64(yi)*0.2-1
+			wantName, wantOK := brute(x, y, tol)
+			got, gotOK := ix.Nearest(x, y, tol)
+			if gotOK != wantOK {
+				t.Fatalf("(%.2f, %.2f): pruned ok=%v, brute ok=%v", x, y, gotOK, wantOK)
+			}
+			if wantOK {
+				// Ties are legitimate — two lanes can be exactly equidistant
+				// — so compare the DISTANCE, which is what the prune claims
+				// to preserve, rather than the winner's name.
+				gotD := ix.distanceTo(indexOf(segs, got.Instance), x, y)
+				wantD := ix.distanceTo(indexOf(segs, wantName), x, y)
+				if math.Abs(gotD-wantD) > 1e-12 {
+					t.Fatalf("(%.2f, %.2f): pruned picked %s at %.9f, brute picked %s at %.9f",
+						x, y, got.Instance, gotD, wantName, wantD)
+				}
+			}
+			checked++
+		}
+	}
+	if checked < 5000 {
+		t.Fatalf("only %d points checked — the sweep is too thin to prove anything", checked)
+	}
+}
+
+func indexOf(segs []Segment, instance string) int {
+	for i := range segs {
+		if segs[i].Instance == instance {
+			return i
+		}
+	}
+	return -1
 }

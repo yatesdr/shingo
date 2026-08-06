@@ -304,7 +304,27 @@ type RawSample struct {
 	X           float64
 	Y           float64
 	RelocStatus int
+	// MapMD5 is the map this robot was localizing against. Empty on rows
+	// written before v79 — which means "not collected", never "no map", and
+	// the roll-up must not quarantine on it.
+	MapMD5 string
 }
+
+// NoEstimate reports whether the tick produced no position estimate at all.
+//
+// The vendor publishes literal -0.0 for confidence when it cannot compute a
+// pose — measured at Springfield as 7.4% of all samples, 811 of 812 of them
+// inside a declared ReflectorArea, against a rate of 1 in 9,538 outside. It
+// is not absence coalesced to zero and it is not a Core bug; it is a real
+// value with a meaning, and the vendor's own colour bands (>0.8, >0.3, >0)
+// do not cover exactly zero either.
+//
+// `<= 0` rather than `== 0` because the wire value is negative zero and
+// because the test must not depend on IEEE sign handling surviving a round
+// trip through the driver. It is safe: the minimum genuine reading ever
+// observed is 0.0849 and only three rows in 11,000 fall between 0 and 0.14,
+// so there is a clean gap with nothing in it.
+func (s RawSample) NoEstimate() bool { return s.Confidence <= 0 }
 
 // ScanSamples streams rows in [from, to) to fn, without materialising the
 // window. The baseline pass covers fourteen days — several hundred thousand
@@ -313,7 +333,7 @@ type RawSample struct {
 // thousand entries regardless of how many samples flow through.
 func ScanSamples(db *sql.DB, from, to time.Time, fn func(RawSample)) error {
 	rows, err := db.Query(
-		`SELECT vehicle_id, confidence, x, y, reloc_status
+		`SELECT vehicle_id, confidence, x, y, reloc_status, coalesce(map_md5, '')
 		 FROM `+TableSamples+`
 		 WHERE sampled_at >= $1 AND sampled_at < $2`, from, to)
 	if err != nil {
@@ -322,7 +342,7 @@ func ScanSamples(db *sql.DB, from, to time.Time, fn func(RawSample)) error {
 	defer rows.Close()
 	for rows.Next() {
 		var s RawSample
-		if err := rows.Scan(&s.VehicleID, &s.Confidence, &s.X, &s.Y, &s.RelocStatus); err != nil {
+		if err := rows.Scan(&s.VehicleID, &s.Confidence, &s.X, &s.Y, &s.RelocStatus, &s.MapMD5); err != nil {
 			return err
 		}
 		fn(s)
@@ -330,10 +350,60 @@ func ScanSamples(db *sql.DB, from, to time.Time, fn func(RawSample)) error {
 	return rows.Err()
 }
 
+// FleetMapMode returns the map hash the most samples in [from, to) were taken
+// against — the fleet's majority map for that window.
+//
+// Empty hashes are excluded from the vote rather than counted as a candidate:
+// they are pre-v79 rows that do not know their map, and letting "unknown" win
+// the majority would quarantine every robot that DOES know. An empty return
+// means nothing is known, and the caller must then quarantine nothing.
+//
+// Ties are broken by the hash itself so the result is deterministic. A tie is
+// a fleet split exactly in half, which is a situation nobody should be
+// resolving by luck twice in a row with different answers.
+func FleetMapMode(db *sql.DB, from, to time.Time) (string, error) {
+	rows, err := db.Query(
+		`SELECT map_md5, count(*) FROM `+TableSamples+`
+		  WHERE sampled_at >= $1 AND sampled_at < $2
+		    AND map_md5 IS NOT NULL AND map_md5 <> ''
+		  GROUP BY map_md5`, from, to)
+	if err != nil {
+		return "", fmt.Errorf("fleet map mode: %w", err)
+	}
+	defer rows.Close()
+	best, bestN := "", 0
+	for rows.Next() {
+		var md5 string
+		var n int
+		if err := rows.Scan(&md5, &n); err != nil {
+			return "", err
+		}
+		if n > bestN || (n == bestN && md5 < best) {
+			best, bestN = md5, n
+		}
+	}
+	return best, rows.Err()
+}
+
 // LoadSegments reads the synced scene's path segments for snapping.
+//
+// THE ENDPOINT NAMES AND THE HANDLES ARE BOTH NEW HERE, AND THE OMISSION OF
+// EITHER WAS A BUG. The names are what make the undirected lane key possible;
+// without them the roll-up could only aggregate on the directed instance name
+// and split every two-way lane's readings between its twins. The handles have
+// been in this table since migration v62 — 294 of Springfield's 405 rows
+// carry a complete pair — and this query not selecting them is the entire
+// reason the snap ran against the chord, re-attributing one sample in five.
+//
+// A comment above Segment used to assert that scene_edges "keeps only the
+// endpoints". It was wrong, and it was load-bearing: it justified a wide snap
+// tolerance and it stopped anyone looking.
 func LoadSegments(db *sql.DB) ([]Segment, error) {
 	rows, err := db.Query(
-		`SELECT area_name, instance_name, from_x, from_y, to_x, to_y FROM scene_edges`)
+		`SELECT area_name, instance_name, from_name, to_name,
+		        from_x, from_y, to_x, to_y,
+		        ctrl1_x, ctrl1_y, ctrl2_x, ctrl2_y
+		   FROM scene_edges`)
 	if err != nil {
 		return nil, fmt.Errorf("load scene edges: %w", err)
 	}
@@ -341,7 +411,9 @@ func LoadSegments(db *sql.DB) ([]Segment, error) {
 	var out []Segment
 	for rows.Next() {
 		var s Segment
-		if err := rows.Scan(&s.Area, &s.Instance, &s.FromX, &s.FromY, &s.ToX, &s.ToY); err != nil {
+		if err := rows.Scan(&s.Area, &s.Instance, &s.FromName, &s.ToName,
+			&s.FromX, &s.FromY, &s.ToX, &s.ToY,
+			&s.Ctrl1X, &s.Ctrl1Y, &s.Ctrl2X, &s.Ctrl2Y); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -364,6 +436,16 @@ type RobotDaily struct {
 	Samples   int
 	Mean      *float64
 	P05       *float64
+	// MapMismatchSamples counts this robot's ticks that were quarantined for
+	// having been taken against a map the rest of the fleet was not on.
+	//
+	// On the ROBOT row as well as the lane row because it is a fact about
+	// the robot: a lane sees a handful of stray ticks and shrugs, while the
+	// robot producing them is the one out of step. At Hopkinsville that
+	// robot was also sitting undispatchable with current_map_invalid, so a
+	// non-zero value here is a maintenance signal and not a data-quality
+	// footnote.
+	MapMismatchSamples int
 }
 
 // UpsertRobotDaily writes one robot's day, replacing any existing row.
@@ -374,62 +456,138 @@ type RobotDaily struct {
 // that could only ever append would make that a manual repair.
 func UpsertRobotDaily(db *sql.DB, r RobotDaily) error {
 	_, err := db.Exec(
-		`INSERT INTO robot_confidence_daily (day, vehicle_id, residual, cells, samples, mean, p05)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7)
+		`INSERT INTO robot_confidence_daily
+		   (day, vehicle_id, residual, cells, samples, mean, p05, map_mismatch_samples)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		 ON CONFLICT (day, vehicle_id) DO UPDATE SET
 		   residual = EXCLUDED.residual, cells = EXCLUDED.cells,
-		   samples = EXCLUDED.samples, mean = EXCLUDED.mean, p05 = EXCLUDED.p05`,
-		r.Day, r.VehicleID, r.Residual, r.Cells, r.Samples, r.Mean, r.P05)
+		   samples = EXCLUDED.samples, mean = EXCLUDED.mean, p05 = EXCLUDED.p05,
+		   map_mismatch_samples = EXCLUDED.map_mismatch_samples`,
+		r.Day, r.VehicleID, r.Residual, r.Cells, r.Samples, r.Mean, r.P05,
+		r.MapMismatchSamples)
 	if err != nil {
 		return fmt.Errorf("upsert robot_confidence_daily: %w", err)
 	}
 	return nil
 }
 
-// SegmentDaily is one row of segment_confidence_daily.
+// LaneDaily is one row of lane_confidence_daily — one physical lane, one day.
 //
-// Mean, P05 and MinConf are pointers because a segment can legitimately have
-// no valid reading to average: if every sample there that day was taken
-// during a failed relocation, the confidence numbers cannot be believed but
-// the failures absolutely can. That is the worst segment on the floor, and it
-// has to be describable — writing 0.0 would make it look catastrophic in a
-// way the data does not support, and omitting the row would make it look
-// fine, which is worse.
+// TWO POPULATIONS, AND KEEPING THEM APART IS THE POINT.
 //
-// The two failure counts are COUNTS OF EVENTS and need no trust in the
-// reported confidence at all. Both are kept because one alone is ambiguous:
-// fourteen failures by one robot is a robot problem, fourteen by six robots
-// is a place problem. They are excluded from Mean/P05/MinConf, all of which
-// are computed over reloc_status = 1 only.
-type SegmentDaily struct {
-	Day                time.Time
-	Area               string
-	Instance           string
-	Mean               *float64
-	P05                *float64
-	MinConf            *float64
-	Samples            int
-	Robots             int
+// P05..P95 are taken over EVERY tick on the lane, with a no-estimate counted
+// as the zero it is. That statistic is not conditioned on the robot having
+// succeeded, so it can be banded honestly and it is what the map draws.
+//
+// MeanGood/SamplesGood are the same lane over only the ticks that produced a
+// number. That figure is CONDITIONED — the sample was selected by the very
+// thing being measured — and it must never be banded on the same scale. The
+// evidence is blunt: segments running through a reflector-less zone average
+// 0.897 against 0.740 elsewhere, because inside those zones the robot
+// produces a good reading or none at all, so what survives is truncated
+// rather than degraded. Banding the conditioned mean against reflector-area
+// membership scored AUC 0.081 — it predicted the dead zones almost perfectly
+// BACKWARDS. Both columns exist so the gap between them is visible, because
+// the gap is itself the finding.
+//
+// MinConf is over the good ticks: the worst genuine reading. Over all ticks
+// it would simply be 0.0 on every lane that ever missed, which says nothing.
+//
+// Every measure is a pointer because a lane can legitimately have nothing to
+// report — a lane whose every tick that day was a localization failure, or a
+// miss, has no mean, and that lane is the worst place on the floor rather
+// than the least interesting. Writing 0.0 makes it look catastrophic in a way
+// the data does not support; omitting the row makes it look fine, which is
+// worse.
+type LaneDaily struct {
+	Day time.Time
+	// Area and Lane are the key. Lane is the UNDIRECTED endpoint pair, so
+	// the two directed rows of a reciprocal pair aggregate as one piece of
+	// floor. See Segment.Lane.
+	Area string
+	Lane string
+	// Percentiles over ALL ticks, misses counted as zero.
+	P05 *float64
+	P25 *float64
+	P50 *float64
+	P75 *float64
+	P95 *float64
+	// Samples is every tick that counted toward the percentiles.
+	Samples int
+	// The conditioned view, kept separately and never banded.
+	MeanGood    *float64
+	SamplesGood int
+	MinConf     *float64
+	// Robots is the count; RobotsSeen is which ones.
+	//
+	// RobotsSeen exists because a lane's statistics are a mix over whichever
+	// robots drove it, and six robots before a change can be six DIFFERENT
+	// robots after it. Location dominates confidence — measured, robots
+	// parked in one area read 0.95-0.97 while robots parked in another read
+	// 0.67-0.79 — so the mirror is true too: change the robot mix and the
+	// lane's numbers move with no geometry cause at all. Without this column
+	// a change annotation cannot tell "my re-route worked" from "AMR-03
+	// stopped driving here", and it cannot be added retroactively.
+	Robots     int
+	RobotsSeen []string
+	// SentinelSamples counts ticks where the robot produced NO estimate
+	// (confidence <= 0). This is a different fact from RelocFailed* and the
+	// two must not share a column: at Springfield the vendor failure state
+	// has never once fired in 10,997 rows while the no-estimate sentinel is
+	// 7.4% of them.
+	SentinelSamples int
+	SentinelRobots  int
+	// RelocFailed* count the vendor's own FAILED state. Counts of events,
+	// needing no trust in the reported number. Both, because one alone is
+	// ambiguous: fourteen failures by one robot is a robot problem, fourteen
+	// by six robots is a place problem.
 	RelocFailedSamples int
 	RelocFailedRobots  int
+	// MapMismatchSamples counts ticks quarantined because the robot was
+	// localizing against a different map than the fleet. They are recorded
+	// rather than silently dropped — a silent exclusion trades a silent
+	// corruption for a silent omission, which is this project's signature
+	// failure mode.
+	MapMismatchSamples int
+	// VersionID is the map-object version this lane's geometry was at.
+	// Nullable here and made NOT NULL once the map sync lands; it is what
+	// lets a reader see where a series breaks instead of guessing.
+	VersionID *int64
 }
 
-// UpsertSegmentDaily writes one segment's day, replacing any existing row.
-func UpsertSegmentDaily(db *sql.DB, s SegmentDaily) error {
+// UpsertLaneDaily writes one lane's day, replacing any existing row.
+func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
+	robots := s.RobotsSeen
+	if robots == nil {
+		robots = []string{}
+	}
 	_, err := db.Exec(
-		`INSERT INTO segment_confidence_daily
-		   (day, area_name, edge_instance, mean, p05, min_conf, samples, robots,
-		    reloc_failed_samples, reloc_failed_robots)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-		 ON CONFLICT (day, area_name, edge_instance) DO UPDATE SET
-		   mean = EXCLUDED.mean, p05 = EXCLUDED.p05, min_conf = EXCLUDED.min_conf,
-		   samples = EXCLUDED.samples, robots = EXCLUDED.robots,
+		`INSERT INTO lane_confidence_daily
+		   (day, area_name, lane, p05, p25, p50, p75, p95, samples,
+		    mean_good, samples_good, min_conf, robots, robots_seen,
+		    sentinel_samples, sentinel_robots,
+		    reloc_failed_samples, reloc_failed_robots,
+		    map_mismatch_samples, version_id)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+		 ON CONFLICT (day, area_name, lane) DO UPDATE SET
+		   p05 = EXCLUDED.p05, p25 = EXCLUDED.p25, p50 = EXCLUDED.p50,
+		   p75 = EXCLUDED.p75, p95 = EXCLUDED.p95, samples = EXCLUDED.samples,
+		   mean_good = EXCLUDED.mean_good, samples_good = EXCLUDED.samples_good,
+		   min_conf = EXCLUDED.min_conf, robots = EXCLUDED.robots,
+		   robots_seen = EXCLUDED.robots_seen,
+		   sentinel_samples = EXCLUDED.sentinel_samples,
+		   sentinel_robots = EXCLUDED.sentinel_robots,
 		   reloc_failed_samples = EXCLUDED.reloc_failed_samples,
-		   reloc_failed_robots = EXCLUDED.reloc_failed_robots`,
-		s.Day, s.Area, s.Instance, s.Mean, s.P05, s.MinConf, s.Samples, s.Robots,
-		s.RelocFailedSamples, s.RelocFailedRobots)
+		   reloc_failed_robots = EXCLUDED.reloc_failed_robots,
+		   map_mismatch_samples = EXCLUDED.map_mismatch_samples,
+		   version_id = EXCLUDED.version_id`,
+		s.Day, s.Area, s.Lane, s.P05, s.P25, s.P50, s.P75, s.P95, s.Samples,
+		s.MeanGood, s.SamplesGood, s.MinConf, s.Robots, robots,
+		s.SentinelSamples, s.SentinelRobots,
+		s.RelocFailedSamples, s.RelocFailedRobots,
+		s.MapMismatchSamples, s.VersionID)
 	if err != nil {
-		return fmt.Errorf("upsert segment_confidence_daily: %w", err)
+		return fmt.Errorf("upsert lane_confidence_daily: %w", err)
 	}
 	return nil
 }

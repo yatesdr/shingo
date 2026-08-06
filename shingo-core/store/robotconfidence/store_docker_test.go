@@ -4,6 +4,8 @@ package robotconfidence_test
 
 import (
 	"database/sql"
+	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -44,11 +46,27 @@ func openWithWindow(t *testing.T) *store.DB {
 	return db
 }
 
+// addSegment inserts a scene edge with NO endpoint names, which is what
+// scene_edges' `NOT NULL DEFAULT ”` permits and what an older sync produced.
+// Segment.Lane falls back to the instance name in that case, so these
+// fixtures keep addressing lanes by the name they were given.
 func addSegment(t *testing.T, db *store.DB, area, instance string, fx, fy, tx, ty float64) {
 	t.Helper()
 	if _, err := db.Exec(
 		`INSERT INTO scene_edges (area_name, instance_name, from_x, from_y, to_x, to_y)
 		 VALUES ($1,$2,$3,$4,$5,$6)`, area, instance, fx, fy, tx, ty); err != nil {
+		t.Fatalf("insert scene edge: %v", err)
+	}
+}
+
+// addNamedSegment inserts a scene edge WITH endpoint names — the shape a
+// current sync writes, and the only shape in which the undirected lane key
+// can do its job.
+func addNamedSegment(t *testing.T, db *store.DB, area, instance, from, to string, fx, fy, tx, ty float64) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO scene_edges (area_name, instance_name, from_name, to_name, from_x, from_y, to_x, to_y)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, area, instance, from, to, fx, fy, tx, ty); err != nil {
 		t.Fatalf("insert scene edge: %v", err)
 	}
 }
@@ -102,9 +120,9 @@ func TestRollUp_FailureOnlySegmentStillGetsARow(t *testing.T) {
 	var mean, p05, minConf sql.NullFloat64
 	var samples, robots, failedSamples, failedRobots int
 	err := db.QueryRow(
-		`SELECT mean, p05, min_conf, samples, robots, reloc_failed_samples, reloc_failed_robots
-		   FROM segment_confidence_daily
-		  WHERE day=$1 AND area_name='area-a' AND edge_instance='CURSED'`,
+		`SELECT mean_good, p05, min_conf, samples_good, robots, reloc_failed_samples, reloc_failed_robots
+		   FROM lane_confidence_daily
+		  WHERE day=$1 AND area_name='area-a' AND lane='CURSED'`,
 		testDay).Scan(&mean, &p05, &minConf, &samples, &robots, &failedSamples, &failedRobots)
 	if err == sql.ErrNoRows {
 		t.Fatal("no row for a segment whose every sample was a localization failure — " +
@@ -148,23 +166,252 @@ func TestRollUp_ValidSegmentKeepsItsMeasures(t *testing.T) {
 		t.Fatalf("roll-up: %v", err)
 	}
 
-	var mean, minConf sql.NullFloat64
-	var samples, robots, failed int
+	var meanGood, minConf, p50 sql.NullFloat64
+	var samples, samplesGood, robots, failed, sentinel int
 	if err := db.QueryRow(
-		`SELECT mean, min_conf, samples, robots, reloc_failed_samples
-		   FROM segment_confidence_daily
-		  WHERE day=$1 AND edge_instance='GOOD'`, testDay).
-		Scan(&mean, &minConf, &samples, &robots, &failed); err != nil {
-		t.Fatalf("read segment row: %v", err)
+		`SELECT mean_good, min_conf, p50, samples, samples_good, robots,
+		        reloc_failed_samples, sentinel_samples
+		   FROM lane_confidence_daily
+		  WHERE day=$1 AND lane='GOOD'`, testDay).
+		Scan(&meanGood, &minConf, &p50, &samples, &samplesGood, &robots, &failed, &sentinel); err != nil {
+		t.Fatalf("read lane row: %v", err)
 	}
-	if !mean.Valid || mean.Float64 < 0.849 || mean.Float64 > 0.851 {
-		t.Errorf("mean = %v, want ~0.85", mean)
+	if !meanGood.Valid || meanGood.Float64 < 0.849 || meanGood.Float64 > 0.851 {
+		t.Errorf("mean_good = %v, want ~0.85", meanGood)
 	}
 	if !minConf.Valid || minConf.Float64 != 0.80 {
 		t.Errorf("min_conf = %v, want 0.80", minConf)
 	}
-	if samples != 2 || robots != 2 || failed != 0 {
-		t.Errorf("samples=%d robots=%d failed=%d, want 2/2/0", samples, robots, failed)
+	// With no misses the two populations coincide, so p50 is a reading some
+	// robot actually reported. NEAREST RANK, not interpolation: over
+	// {0.80, 0.90} that is 0.80, the lower of the two, and NOT the 0.85 the
+	// Median helper would return. The two are different functions on purpose
+	// — a floor-quality figure is worth more as an observed value than as a
+	// smoothed one — and anything reading p50 as "the median" needs to know
+	// that on an even count they disagree.
+	if !p50.Valid || p50.Float64 != 0.80 {
+		t.Errorf("p50 = %v, want 0.80 (nearest rank over two values, not their mean)", p50)
+	}
+	if samples != 2 || samplesGood != 2 || robots != 2 || failed != 0 || sentinel != 0 {
+		t.Errorf("samples=%d good=%d robots=%d failed=%d sentinel=%d, want 2/2/2/0/0",
+			samples, samplesGood, robots, failed, sentinel)
+	}
+}
+
+// The two populations must come apart, and this is the case where getting it
+// wrong inverts the answer.
+//
+// A lane that returns a strong reading half the time and NOTHING the rest is
+// the shape of every reflector-less zone at Springfield. Measured there,
+// lanes running through such a zone average 0.897 against 0.740 elsewhere —
+// they read BETTER than the plant, because the failures leave as no-estimates
+// and what survives is truncated rather than degraded. Banding that
+// conditioned mean scored AUC 0.081, i.e. almost perfectly backwards.
+//
+// So: mean_good must stay high (it is the truth about the readings that
+// happened) and p50 over the full population must collapse (it is the truth
+// about the lane). Both, in the same row, is the only way the map can be
+// honest and the panel can still explain it.
+func TestRollUp_NoEstimateCountsAsZeroInTheBandedStatistic(t *testing.T) {
+	db := openWithWindow(t)
+	addSegment(t, db, "area-a", "HALFBLIND", 0, 0, 10, 0)
+
+	at := testDay.Add(9 * time.Hour)
+	// The vendor publishes literal NEGATIVE zero for "no estimate here", and
+	// a Go source literal cannot express that — `-0.0` is constant-folded to
+	// plain 0.0, which staticcheck rightly flags. Copysign produces the real
+	// wire value, so the fixture is what SEER actually sends rather than
+	// something that merely satisfies the same comparison.
+	noEstimate := math.Copysign(0, -1)
+	var rows []robotconfidence.Sample
+	// Four strong readings and four no-estimates, on one lane, two robots.
+	for i := 0; i < 4; i++ {
+		rows = append(rows,
+			sample("AMR-01", at.Add(time.Duration(i)*time.Minute), 0.98, float64(i), 0, 1),
+			sample("AMR-02", at.Add(time.Duration(i)*time.Minute+30*time.Second), noEstimate, float64(i)+0.5, 0, 1))
+	}
+	insert(t, db, rows...)
+	if _, err := db.RollUpRobotConfidence(testDay, rollUpCfg()); err != nil {
+		t.Fatalf("roll-up: %v", err)
+	}
+
+	var meanGood, p50, p95 sql.NullFloat64
+	var samples, samplesGood, sentinel, sentinelRobots int
+	if err := db.QueryRow(
+		`SELECT mean_good, p50, p95, samples, samples_good, sentinel_samples, sentinel_robots
+		   FROM lane_confidence_daily WHERE day=$1 AND lane='HALFBLIND'`, testDay).
+		Scan(&meanGood, &p50, &p95, &samples, &samplesGood, &sentinel, &sentinelRobots); err != nil {
+		t.Fatalf("read lane row: %v", err)
+	}
+
+	if samples != 8 || samplesGood != 4 || sentinel != 4 || sentinelRobots != 1 {
+		t.Errorf("samples=%d good=%d sentinel=%d sentinelRobots=%d, want 8/4/4/1",
+			samples, samplesGood, sentinel, sentinelRobots)
+	}
+	// The conditioned figure is excellent, and that is CORRECT — it is a true
+	// statement about the readings that were produced.
+	if !meanGood.Valid || meanGood.Float64 < 0.979 || meanGood.Float64 > 0.981 {
+		t.Errorf("mean_good = %v, want ~0.98 — the surviving readings really are that good", meanGood)
+	}
+	// The banded figure collapses, and that is also correct: half the ticks
+	// on this lane produced nothing.
+	if !p50.Valid || p50.Float64 != 0 {
+		t.Errorf("p50 = %v, want 0 — half the ticks produced no estimate, and a "+
+			"median over the full population has to show that", p50)
+	}
+	// The upper tail still sees the good readings, so the row is not simply
+	// zeroed out; the distribution genuinely spans both.
+	if !p95.Valid || p95.Float64 < 0.979 {
+		t.Errorf("p95 = %v, want ~0.98", p95)
+	}
+	// The trap, stated: if the map banded mean_good it would paint this lane
+	// green. That is the AUC 0.081 result, in one row.
+	if meanGood.Float64 <= p50.Float64 {
+		t.Fatal("fixture is wrong: the conditioned mean must exceed the banded median here")
+	}
+}
+
+// A robot on a different map than the fleet is quarantined, counted, and
+// never averaged in.
+//
+// Hopkinsville 2026-08-06: eleven robots on Hop_20 and one connected robot on
+// Hop_21, which RDS was simultaneously reporting as current_map_invalid. Its
+// readings were real readings of real places — snapped against a scene built
+// from a different map.
+func TestRollUp_SamplesFromAnotherMapAreQuarantined(t *testing.T) {
+	db := openWithWindow(t)
+	addSegment(t, db, "area-a", "SHARED", 0, 0, 10, 0)
+
+	at := testDay.Add(9 * time.Hour)
+	withMap := func(s robotconfidence.Sample, md5 string) robotconfidence.Sample {
+		s.MapMD5 = md5
+		return s
+	}
+	var rows []robotconfidence.Sample
+	// Majority: three robots, six readings, on the fleet map.
+	for i := 0; i < 6; i++ {
+		rows = append(rows, withMap(
+			sample(fmt.Sprintf("AMR-0%d", i%3+1), at.Add(time.Duration(i)*time.Minute),
+				0.90, float64(i), 0, 1), "fleet-map"))
+	}
+	// The odd robot out: two readings, wildly different value, other map.
+	rows = append(rows,
+		withMap(sample("AMR-99", at.Add(10*time.Minute), 0.10, 4, 0, 1), "other-map"),
+		withMap(sample("AMR-99", at.Add(11*time.Minute), 0.10, 5, 0, 1), "other-map"))
+	insert(t, db, rows...)
+
+	res, err := db.RollUpRobotConfidence(testDay, rollUpCfg())
+	if err != nil {
+		t.Fatalf("roll-up: %v", err)
+	}
+	if res.MapMismatch != 2 {
+		t.Errorf("result.MapMismatch = %d, want 2 — the count has to reach the log line", res.MapMismatch)
+	}
+
+	var meanGood sql.NullFloat64
+	var samples, mismatch, robots int
+	if err := db.QueryRow(
+		`SELECT mean_good, samples, map_mismatch_samples, robots
+		   FROM lane_confidence_daily WHERE day=$1 AND lane='SHARED'`, testDay).
+		Scan(&meanGood, &samples, &mismatch, &robots); err != nil {
+		t.Fatalf("read lane row: %v", err)
+	}
+	if samples != 6 || mismatch != 2 {
+		t.Errorf("samples=%d mismatch=%d, want 6/2", samples, mismatch)
+	}
+	if robots != 3 {
+		t.Errorf("robots = %d, want 3 — the quarantined robot must not be counted as having driven the lane", robots)
+	}
+	// 0.90 throughout, not dragged toward 0.10.
+	if !meanGood.Valid || meanGood.Float64 < 0.899 || meanGood.Float64 > 0.901 {
+		t.Errorf("mean_good = %v, want 0.90 — the other-map readings must not enter the average", meanGood)
+	}
+
+	// And the robot row names who was out of step, because that is a
+	// maintenance signal rather than a data-quality footnote.
+	var robotMismatch int
+	if err := db.QueryRow(
+		`SELECT map_mismatch_samples FROM robot_confidence_daily
+		  WHERE day=$1 AND vehicle_id='AMR-99'`, testDay).Scan(&robotMismatch); err != nil {
+		t.Fatalf("read robot row: %v", err)
+	}
+	if robotMismatch != 2 {
+		t.Errorf("AMR-99 map_mismatch_samples = %d, want 2", robotMismatch)
+	}
+}
+
+// Rows with no map hash predate v79 and must never be quarantined.
+//
+// "Not collected" is not "wrong map". Treating it as one would quarantine
+// every historical row the first time the job ran after the migration —
+// silently, and in the direction that looks like the plant went quiet.
+func TestRollUp_MissingMapHashIsNotAMismatch(t *testing.T) {
+	db := openWithWindow(t)
+	addSegment(t, db, "area-a", "LEGACY", 0, 0, 10, 0)
+
+	at := testDay.Add(9 * time.Hour)
+	insert(t, db,
+		sample("AMR-01", at, 0.90, 1, 0, 1),                  // no MapMD5 set
+		sample("AMR-02", at.Add(time.Minute), 0.92, 2, 0, 1), // no MapMD5 set
+	)
+	res, err := db.RollUpRobotConfidence(testDay, rollUpCfg())
+	if err != nil {
+		t.Fatalf("roll-up: %v", err)
+	}
+	if res.MapMismatch != 0 {
+		t.Errorf("MapMismatch = %d, want 0 — an empty hash is unknown, not wrong", res.MapMismatch)
+	}
+	var samples int
+	if err := db.QueryRow(
+		`SELECT samples FROM lane_confidence_daily WHERE day=$1 AND lane='LEGACY'`,
+		testDay).Scan(&samples); err != nil {
+		t.Fatalf("read lane row: %v", err)
+	}
+	if samples != 2 {
+		t.Errorf("samples = %d, want 2", samples)
+	}
+}
+
+// Reciprocal twins aggregate as ONE lane.
+//
+// This is the correctness bug the lane key exists for: scene_edges stores
+// every two-way lane twice with identical geometry, so a sample sits exactly
+// as close to one row as to the other and the winner was float noise.
+// LM73-LM14 showed 48 readings and LM14-LM73 showed 116 — one piece of floor,
+// reported as two, each with half the evidence.
+func TestRollUp_ReciprocalTwinsAggregateAsOneLane(t *testing.T) {
+	db := openWithWindow(t)
+	addNamedSegment(t, db, "area-a", "LM73-LM14", "LM73", "LM14", 0, 0, 10, 0)
+	addNamedSegment(t, db, "area-a", "LM14-LM73", "LM14", "LM73", 10, 0, 0, 0)
+
+	at := testDay.Add(9 * time.Hour)
+	var rows []robotconfidence.Sample
+	for i := 0; i < 6; i++ {
+		rows = append(rows, sample("AMR-01", at.Add(time.Duration(i)*time.Minute),
+			0.90, float64(i), 0, 1))
+	}
+	insert(t, db, rows...)
+	if _, err := db.RollUpRobotConfidence(testDay, rollUpCfg()); err != nil {
+		t.Fatalf("roll-up: %v", err)
+	}
+
+	var n, samples int
+	if err := db.QueryRow(
+		`SELECT count(*), coalesce(sum(samples),0) FROM lane_confidence_daily WHERE day=$1`,
+		testDay).Scan(&n, &samples); err != nil {
+		t.Fatalf("count lanes: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("two directed rows for one lane produced %d aggregate rows, want 1 — "+
+			"the samples are being split between twins", n)
+	}
+	if samples != 6 {
+		t.Errorf("total samples = %d, want 6 — no reading may be lost or double-counted", samples)
+	}
+	var lane string
+	db.QueryRow(`SELECT lane FROM lane_confidence_daily WHERE day=$1`, testDay).Scan(&lane)
+	if lane != "LM14-LM73" {
+		t.Errorf("lane = %q, want the sorted pair LM14-LM73", lane)
 	}
 }
 
@@ -182,7 +429,7 @@ func TestRollUp_UntouchedSegmentGetsNoRow(t *testing.T) {
 
 	var n int
 	if err := db.QueryRow(
-		`SELECT count(*) FROM segment_confidence_daily WHERE edge_instance='UNTOUCHED'`).
+		`SELECT count(*) FROM lane_confidence_daily WHERE lane='UNTOUCHED'`).
 		Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
@@ -216,8 +463,8 @@ func TestRollUp_FailedSamplesDoNotEnterTheMean(t *testing.T) {
 	var mean sql.NullFloat64
 	var samples, failed int
 	if err := db.QueryRow(
-		`SELECT mean, samples, reloc_failed_samples FROM segment_confidence_daily
-		  WHERE day=$1 AND edge_instance='MIXED'`, testDay).
+		`SELECT mean_good, samples_good, reloc_failed_samples FROM lane_confidence_daily
+		  WHERE day=$1 AND lane='MIXED'`, testDay).
 		Scan(&mean, &samples, &failed); err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -255,7 +502,7 @@ func TestRollUp_IsIdempotent(t *testing.T) {
 
 	var segRows, robotRows int
 	if err := db.QueryRow(
-		`SELECT count(*) FROM segment_confidence_daily WHERE day=$1`, testDay).Scan(&segRows); err != nil {
+		`SELECT count(*) FROM lane_confidence_daily WHERE day=$1`, testDay).Scan(&segRows); err != nil {
 		t.Fatalf("count segments: %v", err)
 	}
 	if err := db.QueryRow(
