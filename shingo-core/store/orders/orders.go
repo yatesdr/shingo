@@ -844,6 +844,45 @@ func CountLiveByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 	return count, err
 }
 
+// CountLiveCarrierRequestsByDeliveryNode is CountLiveByDeliveryNode narrowed to
+// orders that ASKED FOR A CARRIER — source_intent='empty'. Same queued-included
+// rule, same origin-blindness, same "one order per window" contract; the only
+// difference is WHICH orders count as having spoken for the window.
+//
+// WHY THE NARROWING EXISTS. The contract this guard enforces is the one its
+// commit named: "a demand that already asked for a carrier must not ask again."
+// A swap's EVAC leg never asked for a carrier — it is a return trip bringing a
+// spent bin back — yet it names the home as its delivery node, so the unnarrowed
+// count read it as an outstanding ask. Springfield 2026-08-05: evac 4186
+// (ALN_006 -> SMN_030, queued on waiting_for_partner) held SMN_030's window for
+// 8h57m. Its supply sibling 4185 could not source because SMN_030 was empty, and
+// the replenishment that would have put a carrier there was refused because 4186
+// was "already asking". Neither leg could move. The lineside bin ran to -575 UOP.
+//
+// WHAT STILL COUNTS, and why 2026-08-03 does not come back. The 241 duplicate
+// retrieve_empty orders that motivated the original guard were carrier requests
+// — source_intent='empty' — so they still count, and a demand that has asked
+// still cannot ask again. Only returns (complex evac legs, moves) stop counting.
+//
+// WHY A RETURN CAN SAFELY STOP COUNTING. A swap is sequenced: the supply leg
+// lifts the full bin OFF the home before the evac brings the spent one back, so
+// the two never contend for the slot. If the supply leg dies first,
+// HandleSwapPeerTerminal cancels the evac. And a return that is actually MOVING
+// is still caught by CheckDropoffCapacity's in-flight arm, which runs before
+// this check — that arm answers the physical question ("is there room"), this
+// one answers the logical question ("have I already asked").
+//
+// source_intent is stamped once at intake by SourceIntentForType and is 'empty'
+// for exactly OrderTypeRetrieveEmpty, which is the shape every replenishment
+// carrier pull takes (loader_replenish.go admitReplenishOrder).
+func CountLiveCarrierRequestsByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
+	var count int
+	err := db.QueryRow(fmt.Sprintf(
+		`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND source_intent = 'empty' AND status NOT IN (%s)`,
+		protocol.TerminalStatusSQLList()), deliveryNode).Scan(&count)
+	return count, err
+}
+
 // UpdateRobotID rewrites just the robot_id field.
 func UpdateRobotID(db *sql.DB, id int64, robotID string) error {
 	_, err := db.Exec(`UPDATE orders SET robot_id=$1, updated_at=$3 WHERE id=$2`, robotID, id, clock.Now().UTC())
