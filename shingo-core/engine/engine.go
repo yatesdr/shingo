@@ -23,6 +23,7 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"shingo/protocol/types"
 	"shingocore/config"
@@ -121,6 +122,17 @@ type Engine struct {
 	// Deliberately not persisted — losing it on restart is correct, and costs
 	// one extra row per robot to re-establish.
 	confidence *robotConfidenceSampler
+
+	// lastSceneSync is when the previous scene observation landed, so a diff
+	// row can record the WINDOW an edit happened in rather than only the
+	// moment it was noticed. A diff row is one observed edit, and two edits
+	// between syncs are one row — without the lower bound, "when" is
+	// unbounded on the early side.
+	//
+	// Nil until the first sync, which is a real state: the first diff has no
+	// window and must not claim one. Touched only from the scene-sync path,
+	// which is serialised by e.sceneSyncing.
+	lastSceneSync *time.Time
 }
 
 func New(c Config) *Engine {

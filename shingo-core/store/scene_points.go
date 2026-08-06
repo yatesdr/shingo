@@ -4,7 +4,12 @@ package store
 // file preserves the *store.DB method surface so external callers don't
 // need to change.
 
-import "shingocore/store/scene"
+import (
+	"time"
+
+	"shingocore/store/scene"
+	"shingocore/store/sceneversion"
+)
 
 func (db *DB) UpsertScenePoint(sp *scene.Point) error {
 	return scene.Upsert(db.DB, sp)
@@ -40,4 +45,12 @@ func (db *DB) DeleteSceneEdgesByArea(areaName string) error {
 
 func (db *DB) ListSceneAreas() ([]string, error) {
 	return scene.ListAreas(db.DB)
+}
+
+// ApplyLaneVersions records one scene edit: a diff row plus a version row per
+// lane that actually moved. Delegates to store/sceneversion, matching the
+// shape of the other sub-package delegates so callers see one *store.DB API.
+func (db *DB) ApplyLaneVersions(source, gateHash string, observedAt time.Time,
+	previousSync *time.Time, areas []string, lanes []sceneversion.Lane) (sceneversion.DiffResult, error) {
+	return sceneversion.ApplyLaneDiff(db.DB, source, gateHash, observedAt, previousSync, areas, lanes)
 }

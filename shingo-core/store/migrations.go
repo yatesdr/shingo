@@ -3916,6 +3916,13 @@ func v81SceneVersioning(tx *sql.Tx) error {
 			lane               TEXT NOT NULL,
 			shape_hash         TEXT NOT NULL,
 			def_hash           TEXT NOT NULL,
+			-- The geometry itself, in canonical direction. A version row that
+			-- cannot reproduce the shape it versions cannot answer "how was
+			-- this before we touched it", which is one of the four questions
+			-- this table exists for; and max_vertex_delta_m is measured FROM
+			-- it, so without it the magnitude is only computable at the
+			-- instant of the sync and never again. ~100 bytes a row.
+			shape              JSONB NOT NULL,
 			directed_rows      SMALLINT NOT NULL,
 			twins_agree        BOOLEAN NOT NULL DEFAULT TRUE,
 			disagreement       TEXT NOT NULL DEFAULT '',

@@ -38,13 +38,14 @@ func TestSyncScenePoints_CarriesControlHandles(t *testing.T) {
 			// otherwise reach the renderer, which has to invent the fourth.
 			{
 				InstanceName: "LM1-LM2", ClassName: "DegenerateBezier",
+				FromName: "LM1", ToName: "LM2",
 				FromX: 1, FromY: 1, ToX: 2, ToY: 2,
 				Ctrl1: &fleet.ScenePos{X: 1.5, Y: 9},
 			},
 		},
 	}}
 
-	SyncScenePoints(db, noopLog, areas)
+	SyncScenePoints(db, noopLog, areas, "", nil)
 
 	curved := db.edges["SPR/LM10-LM113"]
 	if curved == nil {

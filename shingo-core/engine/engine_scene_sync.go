@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"time"
 
 	"shingocore/fleet"
 	"shingocore/scenesync"
@@ -29,7 +30,34 @@ func (e *Engine) emitNodeChange(nodeID int64, nodeName, action string) {
 // not structural equivalence, for assignment. The conversion is
 // free at runtime.
 func (e *Engine) SyncScenePoints(areas []fleet.SceneArea) (int, map[string]string) {
-	return scenesync.SyncScenePoints(e.db, scenesync.LogFn(e.logFn), areas)
+	gate, prev := e.sceneGate()
+	return scenesync.SyncScenePoints(e.db, scenesync.LogFn(e.logFn), areas, gate, prev)
+}
+
+// sceneGate reports the scene hash this sync is being taken against, and when
+// the previous one landed.
+//
+// The hash is what says a sync is an EDIT rather than a restart: SceneSync
+// today fires on a fleet reconnect, which is restart-shaped, so without it
+// every Core bounce would look like a map change. It arrives on the
+// /robotsStatus envelope that Core already polls every two seconds.
+//
+// An empty hash means the fleet backend has not been polled yet or does not
+// publish one. The diff still runs — a real edit must not be missed because
+// the gate was unknown — but it is recorded as ungated so a reader can tell
+// "the scene hash moved" from "we looked and could not tell".
+func (e *Engine) sceneGate() (string, *time.Time) {
+	p, ok := e.fleet.(fleet.SceneStateProvider)
+	if !ok {
+		return "", nil
+	}
+	state, seen := p.GetSceneState()
+	if !seen {
+		return "", nil
+	}
+	prev := e.lastSceneSync
+	e.lastSceneSync = &state.ObservedAt
+	return state.SceneMD5, prev
 }
 
 // SyncFleetNodes creates nodes for new scene locations and removes
@@ -52,5 +80,6 @@ func (e *Engine) SceneSync() (int, int, int, error) {
 	if !ok {
 		return 0, 0, 0, fmt.Errorf("fleet backend does not support scene sync")
 	}
-	return scenesync.Sync(e.db, scenesync.LogFn(e.logFn), e.emitNodeChange, syncer, &e.sceneSyncing)
+	gate, prev := e.sceneGate()
+	return scenesync.Sync(e.db, scenesync.LogFn(e.logFn), e.emitNodeChange, syncer, &e.sceneSyncing, gate, prev)
 }

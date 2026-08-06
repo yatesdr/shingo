@@ -9,12 +9,15 @@ import (
 	"shingocore/fleet"
 	"shingocore/store/nodes"
 	"shingocore/store/scene"
+	"shingocore/store/sceneversion"
+	"time"
 )
 
 // fakeStore is an in-memory implementation of scenesync.Store. It's
 // intentionally minimal — enough to drive the functions under test
 // without pulling in a real Postgres connection.
 type fakeStore struct {
+	laneDiffs []laneDiffCall
 	// scene_points keyed by area_name + "/" + instance_name.
 	points map[string]*scene.Point
 
@@ -197,7 +200,7 @@ func (r *recordingChange) on(nodeID int64, nodeName, action string) {
 func TestSyncScenePoints_Empty(t *testing.T) {
 	t.Parallel()
 	db := newFakeStore()
-	total, loc := SyncScenePoints(db, noopLog, nil)
+	total, loc := SyncScenePoints(db, noopLog, nil, "", nil)
 	if total != 0 {
 		t.Errorf("total = %d, want 0", total)
 	}
@@ -232,7 +235,7 @@ func TestSyncScenePoints_AdvancedAndBins(t *testing.T) {
 		},
 	}
 
-	total, loc := SyncScenePoints(db, noopLog, areas)
+	total, loc := SyncScenePoints(db, noopLog, areas, "", nil)
 
 	// 2 advanced + 1 bin in AreaA, 1 bin in AreaB = 4 points upserted.
 	if total != 4 {
@@ -282,7 +285,7 @@ func TestSyncScenePoints_DeletePerAreaCalled(t *testing.T) {
 	areas := []fleet.SceneArea{
 		{Name: "AreaA", AdvancedPoints: []fleet.ScenePoint{{InstanceName: "fresh", ClassName: "AP"}}},
 	}
-	_, _ = SyncScenePoints(db, noopLog, areas)
+	_, _ = SyncScenePoints(db, noopLog, areas, "", nil)
 
 	if _, ok := db.points["AreaA/stale"]; ok {
 		t.Errorf("stale point in AreaA should have been deleted before re-upsert")
@@ -301,7 +304,7 @@ func TestSyncScenePoints_ErrorsLoggedNotFatal(t *testing.T) {
 	areas := []fleet.SceneArea{
 		{Name: "AreaA", AdvancedPoints: []fleet.ScenePoint{{InstanceName: "ap1", ClassName: "AP"}}},
 	}
-	total, _ := SyncScenePoints(db, rec.log, areas)
+	total, _ := SyncScenePoints(db, rec.log, areas, "", nil)
 	// The function still increments total even on upsert error — it
 	// doesn't short-circuit. That's the current behaviour; documenting
 	// it with this assertion keeps a regression visible.
@@ -326,10 +329,14 @@ func TestSyncScenePoints_ReconcilesStaleAreas(t *testing.T) {
 		{
 			Name:           "RealArea",
 			AdvancedPoints: []fleet.ScenePoint{{InstanceName: "ap1", ClassName: "AP"}},
-			Edges:          []fleet.SceneEdge{{InstanceName: "e1"}},
+			// Endpoint names, because an edge without them has no lane key
+			// and scene sync now refuses to store it — see
+			// RejectUnnameableEdge. A fixture that omitted them was
+			// asserting that the defect gets written.
+			Edges: []fleet.SceneEdge{{InstanceName: "e1", FromName: "LM1", ToName: "LM2"}},
 		},
 	}
-	_, _ = SyncScenePoints(db, noopLog, areas)
+	_, _ = SyncScenePoints(db, noopLog, areas, "", nil)
 
 	if _, ok := db.points["GhostArea/ghost-pt"]; ok {
 		t.Errorf("stale area point not swept (ghost would persist on the Robot Map)")
@@ -353,7 +360,7 @@ func TestSyncScenePoints_EmptyPayloadDoesNotSweep(t *testing.T) {
 	_ = db.UpsertScenePoint(&scene.Point{AreaName: "AreaA", InstanceName: "keep-pt"})
 	_ = db.UpsertSceneEdge(&scene.Edge{AreaName: "AreaA", InstanceName: "keep-edge"})
 
-	_, _ = SyncScenePoints(db, noopLog, nil)
+	_, _ = SyncScenePoints(db, noopLog, nil, "", nil)
 
 	if _, ok := db.points["AreaA/keep-pt"]; !ok {
 		t.Errorf("empty payload wrongly swept existing scene point")
@@ -600,7 +607,7 @@ func TestSync_HappyPath(t *testing.T) {
 	}
 	var running atomic.Bool
 
-	total, created, deleted, err := Sync(db, noopLog, nil, syncer, &running)
+	total, created, deleted, err := Sync(db, noopLog, nil, syncer, &running, "", nil)
 	if err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
@@ -628,7 +635,7 @@ func TestSync_RejectsConcurrent(t *testing.T) {
 	var running atomic.Bool
 	running.Store(true) // pretend another Sync is already going
 
-	_, _, _, err := Sync(db, noopLog, nil, syncer, &running)
+	_, _, _, err := Sync(db, noopLog, nil, syncer, &running, "", nil)
 	if err == nil {
 		t.Fatal("Sync returned nil error while another run was in progress")
 	}
@@ -647,7 +654,7 @@ func TestSync_SyncerError(t *testing.T) {
 	syncer := &fakeSyncer{err: wantErr}
 	var running atomic.Bool
 
-	total, created, deleted, err := Sync(db, noopLog, nil, syncer, &running)
+	total, created, deleted, err := Sync(db, noopLog, nil, syncer, &running, "", nil)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -659,4 +666,37 @@ func TestSync_SyncerError(t *testing.T) {
 	if running.Load() {
 		t.Errorf("running flag still true after Sync errored out")
 	}
+}
+
+// ListSceneEdges returns what is stored, so the lane diff can run before the
+// replace destroys it.
+func (f *fakeStore) ListSceneEdges() ([]*scene.Edge, error) {
+	out := make([]*scene.Edge, 0, len(f.edges))
+	for _, e := range f.edges {
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// ApplyLaneVersions records what the diff saw. The fake keeps the calls
+// rather than dropping them: the ORDER matters — the diff has to run while
+// the previous geometry still exists — and a fake that silently succeeded
+// would let that regress unnoticed.
+func (f *fakeStore) ApplyLaneVersions(source, gateHash string, observedAt time.Time,
+	previousSync *time.Time, areas []string, lanes []sceneversion.Lane) (sceneversion.DiffResult, error) {
+	f.laneDiffs = append(f.laneDiffs, laneDiffCall{
+		Source: source, GateHash: gateHash, Areas: areas, Lanes: lanes,
+		EdgesAtCallTime: len(f.edges),
+	})
+	return sceneversion.DiffResult{DiffID: int64(len(f.laneDiffs))}, nil
+}
+
+// laneDiffCall records one ApplyLaneVersions call and, critically, how many
+// edges were still stored when it happened.
+type laneDiffCall struct {
+	Source          string
+	GateHash        string
+	Areas           []string
+	Lanes           []sceneversion.Lane
+	EdgesAtCallTime int
 }

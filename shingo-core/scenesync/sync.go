@@ -15,10 +15,12 @@ package scenesync
 import (
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"shingocore/fleet"
 	"shingocore/store/nodes"
 	"shingocore/store/scene"
+	"shingocore/store/sceneversion"
 )
 
 // Store is the narrow persistence surface scene sync requires.
@@ -27,6 +29,13 @@ type Store interface {
 	DeleteScenePointsByArea(areaName string) error
 	UpsertScenePoint(sp *scene.Point) error
 	DeleteSceneEdgesByArea(areaName string) error
+	// ListSceneEdges reads what is stored BEFORE the replace destroys it.
+	// The lane diff is only computable while both states exist.
+	ListSceneEdges() ([]*scene.Edge, error)
+	// ApplyLaneVersions records the edit: one diff row, one version row per
+	// lane that actually moved.
+	ApplyLaneVersions(source, gateHash string, observedAt time.Time,
+		previousSync *time.Time, areas []string, lanes []sceneversion.Lane) (sceneversion.DiffResult, error)
 	UpsertSceneEdge(se *scene.Edge) error
 	ListSceneAreas() ([]string, error)
 	GetNodeTypeByCode(code string) (*nodes.NodeType, error)
@@ -47,7 +56,14 @@ type NodeChangeFn func(nodeID int64, nodeName, action string)
 // SyncScenePoints persists fleet scene areas to the database.
 // Returns the total number of points synced and a map of bin
 // location instanceName → areaName.
-func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea) (int, map[string]string) {
+func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea,
+	gateHash string, previousSync *time.Time) (int, map[string]string) {
+	// THE DIFF RUNS FIRST, AND THAT ORDERING IS THE POINT. Everything below
+	// deletes an area's edges and re-inserts them, so once the loop starts
+	// the previous geometry is gone and nothing can measure how far anything
+	// moved. Recording the edit has to happen while both states exist.
+	DiffLanesBeforeReplace(db, log, areas, gateHash, time.Now(), previousSync)
+
 	locationSet := make(map[string]string)
 	fetched := make(map[string]bool, len(areas))
 	total := 0
@@ -98,6 +114,18 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea) (int, map[str
 		// Drivable path segments (advanced curves) — the scene's real
 		// connectivity, consumed by the robot-map travel network.
 		for _, ed := range area.Edges {
+			// An edge with no endpoint names is storable and useless: it has
+			// no lane key, so it can carry no version row and every sample
+			// landing on it is quarantined by the roll-up. Refusing it here
+			// is the fix that makes the quarantine unnecessary; the
+			// quarantine stays because the rows already in the database
+			// cannot be un-written.
+			if RejectUnnameableEdge(ed.FromName, ed.ToName) {
+				log("scenesync: refusing edge %q in area %s — endpoint names %q/%q "+
+					"give it no lane key, so nothing could aggregate or version it",
+					ed.InstanceName, area.Name, ed.FromName, ed.ToName)
+				continue
+			}
 			se := &scene.Edge{
 				AreaName:     area.Name,
 				InstanceName: ed.InstanceName,
@@ -259,7 +287,8 @@ func UpdateNodeZones(db Store, log LogFn, onChange NodeChangeFn, locationSet map
 // node table. Guarded by the provided atomic bool to prevent concurrent
 // runs. Returns (total points synced, nodes created, nodes deleted,
 // error).
-func Sync(db Store, log LogFn, onChange NodeChangeFn, syncer fleet.SceneSyncer, syncing *atomic.Bool) (int, int, int, error) {
+func Sync(db Store, log LogFn, onChange NodeChangeFn, syncer fleet.SceneSyncer,
+	syncing *atomic.Bool, gateHash string, previousSync *time.Time) (int, int, int, error) {
 	if !syncing.CompareAndSwap(false, true) {
 		return 0, 0, 0, fmt.Errorf("scene sync already in progress")
 	}
@@ -269,7 +298,7 @@ func Sync(db Store, log LogFn, onChange NodeChangeFn, syncer fleet.SceneSyncer, 
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	total, locSet := SyncScenePoints(db, log, areas)
+	total, locSet := SyncScenePoints(db, log, areas, gateHash, previousSync)
 	created, deleted := SyncFleetNodes(db, log, onChange, locSet)
 	return total, created, deleted, nil
 }
