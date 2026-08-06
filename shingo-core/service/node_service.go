@@ -10,6 +10,8 @@ import (
 	"shingocore/store/nodes"
 	"shingocore/store/registry"
 	"shingocore/store/scene"
+	"shingocore/store/sceneversion"
+	"time"
 )
 
 // NodeService centralizes the node-assignment composite flow that used
@@ -212,6 +214,39 @@ func (s *NodeService) ListScenePointsByClass(className string) ([]*scene.Point, 
 // as its travel network and routes robots along them.
 func (s *NodeService) ListSceneEdges() ([]*scene.Edge, error) {
 	return s.db.ListSceneEdges()
+}
+
+// ── The scene as it was, not merely as it is ───────────────────────────────
+//
+// These take an INSTANT rather than defaulting to now. A query written against
+// "the current map" returns different attribution for the same historical
+// sample before and after an edit, which is the failure scene versioning
+// exists to prevent — so a caller that wants now says so.
+
+// SceneAreasAt returns the declared areas in force at an instant.
+//
+// These come from the ROBOT's own .smap, not from RDS: RDS's /scene returns
+// advancedAreaList: [] and has never exposed them. Nothing else in the system
+// can answer "where are the reflector zones".
+func (s *NodeService) SceneAreasAt(at time.Time) ([]sceneversion.AreaView, error) {
+	return s.db.SceneAreasAt(at)
+}
+
+// SceneReflectorsAt returns the reflector positions in force at an instant.
+func (s *NodeService) SceneReflectorsAt(at time.Time) ([]sceneversion.ReflectorView, error) {
+	return s.db.SceneReflectorsAt(at)
+}
+
+// RecentSceneDiffs returns the map change log, newest first.
+func (s *NodeService) RecentSceneDiffs(limit int) ([]sceneversion.DiffView, error) {
+	return s.db.RecentSceneDiffs(limit)
+}
+
+// LanesChangedByDiff names the lanes one edit touched. This is the part of a
+// diff row that does real work: an engineer reads "what did I touch", not a
+// count of objects.
+func (s *NodeService) LanesChangedByDiff(diffID int64) ([]string, error) {
+	return s.db.LanesChangedByDiff(diffID)
 }
 
 // ListCorrectionsByNode returns the most recent correction entries

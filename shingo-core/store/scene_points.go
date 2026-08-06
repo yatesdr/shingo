@@ -54,3 +54,27 @@ func (db *DB) ApplyLaneVersions(source, gateHash string, observedAt time.Time,
 	previousSync *time.Time, areas []string, lanes []sceneversion.Lane) (sceneversion.DiffResult, error) {
 	return sceneversion.ApplyLaneDiff(db.DB, source, gateHash, observedAt, previousSync, areas, lanes)
 }
+
+// ── Scene versioning read side ─────────────────────────────────────────────
+//
+// Every one of these takes an INSTANT. None of them means "current"
+// implicitly: a query written against "the current map" returns different
+// attribution for the same historical sample before and after an edit, which
+// is the failure the versioning exists to prevent. A caller that wants now
+// passes now, visibly.
+
+func (db *DB) SceneAreasAt(at time.Time) ([]sceneversion.AreaView, error) {
+	return sceneversion.AreasAt(db.DB, at)
+}
+
+func (db *DB) SceneReflectorsAt(at time.Time) ([]sceneversion.ReflectorView, error) {
+	return sceneversion.ReflectorsAt(db.DB, at)
+}
+
+func (db *DB) RecentSceneDiffs(limit int) ([]sceneversion.DiffView, error) {
+	return sceneversion.RecentDiffs(db.DB, limit)
+}
+
+func (db *DB) LanesChangedByDiff(diffID int64) ([]string, error) {
+	return sceneversion.LanesChangedByDiff(db.DB, diffID)
+}

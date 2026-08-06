@@ -227,6 +227,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/fleet/robot-groups", h.apiRobotGroups)
 			r.Get("/map/points", h.apiScenePoints)
 			r.Get("/map/edges", h.apiSceneEdges)
+			// Structure lives beside structure. Areas and reflectors are not
+			// owned by the page that first needed them.
+			r.Get("/map/areas", h.apiSceneAreas)
+			r.Get("/map/reflectors", h.apiSceneReflectors)
+			r.Get("/map/diffs", h.apiSceneDiffs)
 			r.Get("/stations", h.apiStations)
 			r.Get("/plant/timezone", h.apiPlantTimezone)
 

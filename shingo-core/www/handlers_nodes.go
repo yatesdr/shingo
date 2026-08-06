@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"shingocore/store/sceneversion"
 	"strconv"
 	"strings"
+	"time"
 
 	"shingocore/domain"
 	"shingocore/engine"
@@ -95,6 +97,106 @@ func (h *Handlers) apiSceneEdges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.jsonOK(w, edges)
+}
+
+// ── The scene's own structure: areas and reflectors ────────────────────────
+//
+// Deliberately BESIDE /api/map/points and /api/map/edges rather than under a
+// page-specific prefix. Structure is not owned by whichever page first needed
+// it: the moment areas live under a confidence URL, the second consumer either
+// re-implements them or imports a confidence endpoint to draw a wall.
+//
+// Both take an optional ?at=<RFC3339> and default to now. The parameter is the
+// point — the scene is versioned, and a reader asking what the map looked like
+// last Tuesday must not be silently answered with today's.
+
+// atParam resolves the instant a scene query is asked about.
+//
+// A malformed timestamp is an ERROR, not a silent fallback to now. Quietly
+// answering a different question than the one asked is how a reader ends up
+// comparing this week's geometry against last week's numbers and concluding
+// something moved.
+func atParam(r *http.Request) (time.Time, error) {
+	raw := r.URL.Query().Get("at")
+	if raw == "" {
+		return time.Now(), nil
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("at: %q is not an RFC3339 timestamp", raw)
+	}
+	return t, nil
+}
+
+// apiSceneAreas returns the declared map areas in force at an instant.
+//
+// The class is the field to render. Measured, the count of reflectors inside a
+// zone has no predictive power over its no-estimate rate and the sign runs
+// backwards; what predicts is whether it is a ReflectorArea. The count travels
+// as provenance — "this declared reflector zone contains zero reflectors" is
+// the most actionable sentence this work produced — and must not drive a mark.
+func (h *Handlers) apiSceneAreas(w http.ResponseWriter, r *http.Request) {
+	at, err := atParam(r)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	areas, err := h.engine.NodeService().SceneAreasAt(at)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, areas)
+}
+
+// apiSceneReflectors returns reflector positions in force at an instant.
+func (h *Handlers) apiSceneReflectors(w http.ResponseWriter, r *http.Request) {
+	at, err := atParam(r)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	reflectors, err := h.engine.NodeService().SceneReflectorsAt(at)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, reflectors)
+}
+
+// apiSceneDiffs returns the map change log, newest first, each row carrying
+// the lanes it touched.
+//
+// This is what replaces a curated findings list on the diagnostic page: a
+// standing narrative goes stale within a week, while "what changed, and to
+// what" is the question an engineer actually arrives with.
+func (h *Handlers) apiSceneDiffs(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	ns := h.engine.NodeService()
+	diffs, err := ns.RecentSceneDiffs(limit)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	type diffWithLanes struct {
+		sceneversion.DiffView
+		Lanes []string `json:"lanes"`
+	}
+	out := make([]diffWithLanes, 0, len(diffs))
+	for _, d := range diffs {
+		lanes, err := ns.LanesChangedByDiff(d.ID)
+		if err != nil {
+			h.jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out = append(out, diffWithLanes{DiffView: d, Lanes: lanes})
+	}
+	h.jsonOK(w, out)
 }
 
 func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
