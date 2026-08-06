@@ -487,3 +487,102 @@ func TestSamples_NilAreaIDsStoresEmptyNotNull(t *testing.T) {
 		t.Errorf("area_ids = %s, want {}", areas)
 	}
 }
+
+// ── v79: the map the reading was taken on, and the alarms standing at the time ──
+
+// map_md5 and alarm_codes round-trip, and alarm_codes binds as a real
+// INTEGER[].
+//
+// SAME REASONING AS THE AREA_IDS TEST, DIFFERENT GO TYPE. Whether a Go slice
+// binds to a Postgres array through pgx's database/sql shim is a driver
+// property; []string was verified for TEXT[] at v78 and that result says
+// nothing about []int32 → INTEGER[]. `int` is deliberately not used: it is
+// platform-width and has no fixed Postgres partner.
+//
+// The alarm codes here are the real ones. 54018 is "reflectors in map not
+// enough" and has been standing on every Springfield robot since the week of
+// 2026-06-08; 54020 is "reflectors match failed". A row that carries a
+// no-estimate reading AND the alarm explaining it is the join that did not
+// exist, and it is the whole reason for the column.
+func TestSamples_MapMD5AndAlarmCodesRoundTrip(t *testing.T) {
+	db := testdb.Open(t)
+	if err := robotconfidence.EnsurePartitions(db.DB, testDay); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	with := func(s robotconfidence.Sample, md5 string, codes []int32) robotconfidence.Sample {
+		s.MapMD5 = md5
+		s.AlarmCodes = codes
+		return s
+	}
+	// AMR-02 is the interesting row: a sentinel reading, on the majority
+	// map, with the alarm that explains it standing at the same instant.
+	insert(t, db,
+		with(sample("AMR-01", testDay.Add(time.Hour), 0.95, 1, 1, 1), "a54877f0", []int32{}),
+		with(sample("AMR-02", testDay.Add(2*time.Hour), 0.30, 2, 2, 1), "a54877f0", []int32{54018}),
+		with(sample("AMR-03", testDay.Add(3*time.Hour), 0.90, 3, 3, 1), "e8bd9f08", []int32{54018, 54020}),
+	)
+
+	for _, tc := range []struct {
+		robot, md5, codes string
+	}{
+		{"AMR-01", "a54877f0", "{}"},
+		{"AMR-02", "a54877f0", "{54018}"},
+		{"AMR-03", "e8bd9f08", "{54018,54020}"},
+	} {
+		var md5, codes string
+		if err := db.QueryRow(
+			`SELECT map_md5, alarm_codes::text FROM robot_confidence_samples WHERE vehicle_id = $1`,
+			tc.robot).Scan(&md5, &codes); err != nil {
+			t.Fatalf("%s: scan: %v", tc.robot, err)
+		}
+		if md5 != tc.md5 {
+			t.Errorf("%s: map_md5 = %q, want %q", tc.robot, md5, tc.md5)
+		}
+		if codes != tc.codes {
+			t.Errorf("%s: alarm_codes = %s, want %s", tc.robot, codes, tc.codes)
+		}
+	}
+
+	// The low trail carries both too. A forensic row that has lost the map
+	// it was taken on cannot be quarantined later, and the trail outlives
+	// the raw samples by 76 days.
+	var lowMD5, lowCodes string
+	if err := db.QueryRow(
+		`SELECT map_md5, alarm_codes::text FROM robot_confidence_low WHERE vehicle_id = 'AMR-02'`).
+		Scan(&lowMD5, &lowCodes); err != nil {
+		t.Fatalf("low trail scan: %v", err)
+	}
+	if lowMD5 != "a54877f0" || lowCodes != "{54018}" {
+		t.Errorf("low trail = (%q, %s), want (\"a54877f0\", {54018})", lowMD5, lowCodes)
+	}
+}
+
+// A nil AlarmCodes stores as '{}' ("looked, none active"), never NULL.
+//
+// Same rule as area_ids, and it matters more here because "no alarms" is the
+// normal case: if nil leaked through as NULL, the overwhelming majority of
+// rows would claim the alarms were never collected and the pre-v79 marker
+// would be worthless.
+func TestSamples_NilAlarmCodesStoresEmptyNotNull(t *testing.T) {
+	db := testdb.Open(t)
+	if err := robotconfidence.EnsurePartitions(db.DB, testDay); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	insert(t, db, sample("AMR-01", testDay.Add(time.Hour), 0.95, 1, 1, 1)) // AlarmCodes left nil
+
+	var isNull bool
+	var codes string
+	if err := db.QueryRow(
+		`SELECT alarm_codes IS NULL, coalesce(alarm_codes::text, '<null>')
+		   FROM robot_confidence_samples WHERE vehicle_id = 'AMR-01'`).
+		Scan(&isNull, &codes); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if isNull {
+		t.Error("a nil AlarmCodes must store as '{}', not NULL — NULL is reserved for pre-v79 rows")
+	}
+	if codes != "{}" {
+		t.Errorf("alarm_codes = %s, want {}", codes)
+	}
+}

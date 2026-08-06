@@ -1,5 +1,7 @@
 package fleet
 
+import "time"
+
 // RobotLister provides robot status and control capabilities.
 // Web handlers type-assert Backend to this interface.
 type RobotLister interface {
@@ -140,7 +142,12 @@ type RobotStatus struct {
 	// zone" from "this robot is losing localization", so it travels with
 	// every sample rather than being resolved later — RDS keeps no history
 	// of it and its /scene advancedAreaList is empty.
-	AreaIDs        []string
+	AreaIDs []string
+	// MapMD5 hashes the robot's own loaded map. It is per robot on purpose:
+	// a fleet is not guaranteed to be on one map, and when it is not, every
+	// place-keyed statistic computed from these robots is mixing two frames.
+	// See rds.RbkReport.CurrentMapMD5.
+	MapMD5         string
 	NetworkDelay   int
 	CurrentStation string
 	LastStation    string
@@ -153,13 +160,73 @@ type RobotStatus struct {
 	LiftError      int
 	BatteryV       float64
 	BatteryA       float64
-	CtrlTemp       float64
-	CtrlHumi       float64
-	CtrlVoltage    float64
-	Version        string
-	TaskStatus     int
+	// Battery pack telemetry. Nothing in this system has ever retained a
+	// battery time-series — RDS has no column for it and its
+	// t_batterylevelrecord is empty — so this poll is the only place it can
+	// come from. BatteryMaxChargeA/V carry the vendor's -1.0 "unknown"
+	// sentinel at some plants and are not always a measurement.
+	BatteryTemp       float64
+	BatteryCycle      int
+	BatteryChargeA    float64
+	BatteryChargeV    float64
+	BatteryMaxChargeA float64
+	BatteryMaxChargeV float64
+	BatteryManualConn bool
+	CtrlTemp          float64
+	CtrlHumi          float64
+	CtrlVoltage       float64
+	Version           string
+	TaskStatus        int
+	// Suspended is now read from the fleet rather than asserted. It was
+	// hardcoded false while Undispatchable.Suspended sat unread on the wire.
 	Suspended      bool
+	Undispatchable Undispatchable
 	Alarms         []RobotAlarm
+}
+
+// Undispatchable is the fleet's own account of why a robot is not taking
+// work — vendor-neutral mirror of RDS's undispatchable_reason.
+//
+// MapInvalid is the field with no other source in the system, and it is not
+// hypothetical: Hopkinsville 2026-08-06 had a connected robot held out of
+// service with MapInvalid true while the rest of the fleet ran a different
+// map. Status is the vendor's own enum rather than a bool because it
+// distinguishes "dispatchable" from the several ways of not being so.
+type Undispatchable struct {
+	MapInvalid       bool
+	UnconfirmedReloc bool
+	LowBattery       bool
+	Disconnect       bool
+	Suspended        bool
+	Status           int
+	Unlock           int
+}
+
+// SceneState carries the fleet-wide facts that arrive on the /robotsStatus
+// ENVELOPE rather than on any robot in it.
+//
+// It is read back from a cache rather than fetched, and that is deliberate.
+// Core already polls /robotsStatus every 2 seconds; adding a second call for
+// data that is already arriving is the exact shape of bug this whole line of
+// work exists because of. The adapter captures the envelope on the way past.
+type SceneState struct {
+	// SceneMD5 hashes the RDS scene. Empty means the fleet backend has not
+	// been polled yet — never treat it as "the scene has no hash".
+	SceneMD5 string
+	// DisabledPaths are lane ids an operator switched off. A disabled lane
+	// accumulates no samples, so a map drawn from telemetry alone shows it
+	// as never-driven; this is what tells the difference.
+	DisabledPaths  []string
+	DisabledPoints []string
+	// ObservedAt is when the envelope was captured. Zero means never.
+	ObservedAt time.Time
+}
+
+// SceneStateProvider is implemented by fleet backends that can report the
+// scene-level envelope. Optional: a backend without it simply has no scene
+// hash and no disabled-lane list, which every consumer must tolerate.
+type SceneStateProvider interface {
+	GetSceneState() SceneState
 }
 
 // RobotAlarm is a vendor-neutral active robot alarm (Q-026). JSON tags match

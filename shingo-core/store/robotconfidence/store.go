@@ -54,11 +54,41 @@ type Sample struct {
 	// normal case of a robot in no area. A NULL in this column means the row
 	// predates migration v78, not that the robot was outside every area.
 	AreaIDs []string
+	// MapMD5 is the hash of the map THIS robot was localizing against when
+	// the reading was taken.
+	//
+	// It is on the sample row and not merely on a scene table because a
+	// fleet is not guaranteed to be on one map. Measured at Hopkinsville
+	// 2026-08-06: eleven robots on Hop_20 and one on Hop_21. A sample from
+	// the odd robot out is snapped, at roll-up, against scene_edges built
+	// from a different map — so this column is what lets that row be
+	// quarantined instead of silently mixed into a lane average. Recovering
+	// it afterwards is impossible: nothing else records which map a given
+	// tick was taken under.
+	MapMD5 string
+	// AlarmCodes are the robot's active alarm codes at sample time.
+	//
+	// They were never dropped at unmarshal — rds.RbkReport.Alarms is decoded
+	// and fleet.RobotStatus.Alarms is populated — they simply never reached
+	// a durable row. The codes live on mission_telemetry attached to mission
+	// ENDPOINTS, so a no-estimate reading here cannot be joined to the alarm
+	// that accompanied it. 54018 ("reflectors in map not enough") names the
+	// exact zones it is complaining about and has been standing on every
+	// Springfield robot since June; one column links the symptom to the
+	// diagnosis in a single row.
+	//
+	// []int32 and not []int: pgx carries an int4 array codec, and `int` is
+	// platform-width with no fixed Postgres partner. The same caution v78
+	// applied to []string → TEXT[] — whether a Go slice binds to a Postgres
+	// array through the database/sql shim is a driver property, not
+	// something the compiler can answer, so it is asserted by a round-trip
+	// test rather than assumed.
+	AlarmCodes []int32
 }
 
 const insertSampleSQL = `INSERT INTO %s
-	(vehicle_id, sampled_at, confidence, x, y, angle, station, last_station, order_id, on_task, blocked, reloc_status, area_ids)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`
+	(vehicle_id, sampled_at, confidence, x, y, angle, station, last_station, order_id, on_task, blocked, reloc_status, area_ids, map_md5, alarm_codes)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`
 
 // InsertBatch writes one poll tick's worth of samples in a single
 // transaction, double-writing anything below lowThreshold into
@@ -99,8 +129,15 @@ func InsertBatch(db *sql.DB, samples []Sample, lowThreshold float64) error {
 		if areaIDs == nil {
 			areaIDs = []string{}
 		}
+		// Same rule for alarms: '{}' is "we looked and there were none",
+		// NULL would be "we did not look". The writer always looked.
+		alarms := s.AlarmCodes
+		if alarms == nil {
+			alarms = []int32{}
+		}
 		if _, err := rawStmt.Exec(s.VehicleID, s.SampledAt, s.Confidence, s.X, s.Y, s.Angle,
-			s.Station, s.LastStation, s.OrderID, s.OnTask, s.Blocked, s.RelocStatus, areaIDs); err != nil {
+			s.Station, s.LastStation, s.OrderID, s.OnTask, s.Blocked, s.RelocStatus, areaIDs,
+			s.MapMD5, alarms); err != nil {
 			return fmt.Errorf("robot confidence: insert sample: %w", err)
 		}
 		if s.Confidence >= lowThreshold {
@@ -114,7 +151,8 @@ func InsertBatch(db *sql.DB, samples []Sample, lowThreshold float64) error {
 			defer lowStmt.Close()
 		}
 		if _, err := lowStmt.Exec(s.VehicleID, s.SampledAt, s.Confidence, s.X, s.Y, s.Angle,
-			s.Station, s.LastStation, s.OrderID, s.OnTask, s.Blocked, s.RelocStatus, areaIDs); err != nil {
+			s.Station, s.LastStation, s.OrderID, s.OnTask, s.Blocked, s.RelocStatus, areaIDs,
+			s.MapMD5, alarms); err != nil {
 			return fmt.Errorf("robot confidence: insert low: %w", err)
 		}
 	}

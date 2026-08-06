@@ -36,6 +36,22 @@ type robotConfidenceSampler struct {
 	ordersAt time.Time
 }
 
+// alarmCodes flattens the robot's active alarms to their codes for the
+// sample row.
+//
+// Codes only, deliberately. The severity and the description are stable per
+// code and belong in a lookup, not repeated on tens of thousands of rows a
+// day; what the row needs is the join key. Returns a non-nil empty slice so
+// the column records "looked, none active" rather than NULL, which after
+// v79 would mean "not collected".
+func alarmCodes(alarms []fleet.RobotAlarm) []int32 {
+	out := make([]int32, 0, len(alarms))
+	for _, a := range alarms {
+		out = append(out, int32(a.Code))
+	}
+	return out
+}
+
 // sampleRobotConfidence evaluates one poll's worth of robots against the
 // write rule and stores whatever survives.
 func (e *Engine) sampleRobotConfidence(robots []fleet.RobotStatus, now time.Time) {
@@ -98,6 +114,8 @@ func (e *Engine) sampleRobotConfidence(robots []fleet.RobotStatus, now time.Time
 			Blocked:     r.Blocked,
 			RelocStatus: r.RelocStatus,
 			AreaIDs:     r.AreaIDs,
+			MapMD5:      r.MapMD5,
+			AlarmCodes:  alarmCodes(r.Alarms),
 		})
 	}
 	if len(batch) == 0 {

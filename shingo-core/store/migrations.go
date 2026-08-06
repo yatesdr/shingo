@@ -902,6 +902,14 @@ func (db *DB) runVersionedMigrations() error {
 		{78, "carry the robot's advanced-area membership onto every confidence sample",
 			v78ConfidenceAreaIDs,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "robot_confidence_samples", "area_ids") }},
+		// 79 is the next free number ON THIS BRANCH (main runs 1-68, 71-75,
+		// 77; 78 is the area_ids commit above). It is NOT a number to copy
+		// out of a design document: 76 and a SECOND 77 are held by the
+		// unmerged reshuffling-work branch, so whoever merges resolves this
+		// against whatever actually landed first.
+		{79, "carry the robot's map hash and active alarms onto every confidence sample",
+			v79ConfidenceMapAndAlarms,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "robot_confidence_samples", "map_md5") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3678,6 +3686,60 @@ func v78ConfidenceAreaIDs(tx *sql.Tx) error {
 	for _, t := range []string{"robot_confidence_samples", "robot_confidence_low"} {
 		if _, err := tx.Exec(`ALTER TABLE ` + t + ` ADD COLUMN IF NOT EXISTS area_ids TEXT[]`); err != nil {
 			return fmt.Errorf("v78 confidence area_ids (%s): %w", t, err)
+		}
+	}
+	return nil
+}
+
+// v79ConfidenceMapAndAlarms adds the map hash and the active alarm codes to
+// both sample tables.
+//
+// MAP_MD5 — WHY A PLACE STATISTIC NEEDS TO KNOW WHICH MAP IT WAS TAKEN ON.
+// Every per-lane figure in this system is computed by snapping a sample's
+// x/y to scene_edges. That is only meaningful if the robot was localizing
+// against the same map scene_edges describes, and a fleet is not guaranteed
+// to be on one map. Measured at Hopkinsville 2026-08-06: eleven robots on
+// Hop_20 and AMR-11 on Hop_21, connected, with RDS reporting
+// current_map_invalid and holding it undispatchable. Its samples were being
+// stored and would have been snapped against the majority map's geometry —
+// a real reading of a real place, attributed to the wrong floor.
+//
+// The column is what lets the roll-up quarantine those rows instead of
+// averaging them in. It cannot be reconstructed afterwards: nothing else
+// anywhere records which map a given tick was taken under, and RDS keeps no
+// history of it.
+//
+// ALARM_CODES — THE JOIN THAT DID NOT EXIST. The codes are not new to the
+// process; rds.RbkReport.Alarms has been decoded all along and
+// fleet.RobotStatus.Alarms populated from it. What was missing was a durable
+// row carrying them NEXT TO a reading. Today the only retained copy lives in
+// mission_telemetry.robot_alarms_json, attached to mission endpoints, so a
+// no-estimate sample cannot be joined to the alarm that accompanied it —
+// which is how "reflectors in map not enough" (54018, standing on every
+// Springfield robot since the week of 2026-06-08 and naming the exact nine
+// zones it means) took two days of archaeology to connect to the readings it
+// explains.
+//
+// NULLABLE, AND NULL MEANS "NOT COLLECTED" — the same rule as v78's
+// area_ids and robot_confidence_daily.residual. Rows written before this
+// migration genuinely do not know their map or their alarms; '{}' would
+// claim the robot was on no map and raising no alarms, both of which are
+// measurements nobody made. The writer always sets both, so NULL marks
+// exactly the pre-migration window and nothing else.
+//
+// INTEGER[] rather than a delimited string, for the reason v78 gives about
+// TEXT[]: the value is a list, and any separator becomes a convention
+// somebody has to remember. Whether a Go slice binds to a Postgres array
+// through pgx's database/sql shim is a driver property rather than a
+// compile-time one, so both columns are covered by round-trip tests against
+// a real server.
+func v79ConfidenceMapAndAlarms(tx *sql.Tx) error {
+	// ALTER on the partitioned parent cascades to every existing partition.
+	for _, t := range []string{"robot_confidence_samples", "robot_confidence_low"} {
+		for _, col := range []string{"map_md5 TEXT", "alarm_codes INTEGER[]"} {
+			if _, err := tx.Exec(`ALTER TABLE ` + t + ` ADD COLUMN IF NOT EXISTS ` + col); err != nil {
+				return fmt.Errorf("v79 confidence %s (%s): %w", col, t, err)
+			}
 		}
 	}
 	return nil

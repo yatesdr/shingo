@@ -2,9 +2,38 @@ package rds
 
 // --- Robot types ---
 
+// RobotsStatusResponse is the /robotsStatus envelope. Report is per robot;
+// the fields beside it are FLEET-WIDE and belong to no robot at all, which is
+// why they were invisible for as long as they were — every consumer of this
+// endpoint reached straight past the envelope for .Report.
 type RobotsStatusResponse struct {
 	Response
 	Report []RobotStatus `json:"report,omitempty"`
+	// SceneMD5 hashes the RDS scene — the same scene scenesync mirrors into
+	// scene_points/scene_edges. It moves when the scene does, so it is the
+	// change gate for that sync, which today has no schedule at all and
+	// re-runs only when Core reconnects to the fleet.
+	//
+	// NOT to be confused with rbk_report.current_map_md5, which hashes the
+	// robot's own onboard .smap. They are different artifacts on different
+	// transports and either can move without the other.
+	SceneMD5 string `json:"scene_md5"`
+	// DisablePaths / DisablePoints are the lanes and points an operator has
+	// switched off in RoboShop. A disabled lane can never accumulate a
+	// sample, so anything drawing "traversed vs not" from telemetry alone
+	// renders it as never-driven — true of the data and false of the plant,
+	// and false in the reassuring direction. Four lanes are disabled at
+	// Springfield as of 2026-08-06 (LM108-LM40, LM40-LM108, LM11-LM40,
+	// LM40-LM11); Hopkinsville has none.
+	DisablePaths  []DisabledID `json:"disable_paths"`
+	DisablePoints []DisabledID `json:"disable_points"`
+}
+
+// DisabledID is the vendor's one-key wrapper around a disabled lane or point
+// id. It is an object rather than a bare string on the wire; unwrapping it
+// here keeps that shape out of every consumer.
+type DisabledID struct {
+	ID string `json:"id"`
 }
 
 type RobotStatus struct {
@@ -18,6 +47,30 @@ type RobotStatus struct {
 	BasicInfo        RobotBasicInfo `json:"basic_info"`
 	RbkReport        RbkReport      `json:"rbk_report"`
 	CurrentOrder     any            `json:"current_order"`
+	// UndispatchableReason is RDS's own account of why a robot is not taking
+	// work. mapRobotStatus used to hardcode Suspended: false behind a
+	// "Phase 2" comment while this struct sat on the wire unread — a
+	// constant standing in for a measurement, which is worse than a dropped
+	// field: a drop looks like never-having-had-it, a constant looks like an
+	// answer.
+	UndispatchableReason UndispatchableReason `json:"undispatchable_reason"`
+}
+
+// UndispatchableReason is the seven-field struct RDS publishes per robot.
+//
+// CurrentMapInvalid is the one with no other source. Measured at
+// Hopkinsville 2026-08-06: eleven robots on map Hop_20 and AMR-11 on Hop_21
+// with CurrentMapInvalid true and DispatchableStatus 2 — a connected robot
+// held out of service because of its map, on a fleet split across two maps,
+// and nothing in Core could see any part of it.
+type UndispatchableReason struct {
+	CurrentMapInvalid  bool `json:"current_map_invalid"`
+	UnconfirmedReloc   bool `json:"unconfirmed_reloc"`
+	LowBattery         bool `json:"low_battery"`
+	Disconnect         bool `json:"disconnect"`
+	Suspended          bool `json:"suspended"`
+	DispatchableStatus int  `json:"dispatchable_status"`
+	Unlock             int  `json:"unlock"`
 }
 
 type RobotBasicInfo struct {
@@ -97,6 +150,52 @@ type RbkReport struct {
 	Voltage             float64     `json:"voltage"`
 	Current             float64     `json:"current"`
 	Alarms              RbkAlarms   `json:"alarms"`
+	// CurrentMapMD5 hashes the robot's OWN onboard .smap — the artifact that
+	// holds the reflector positions and the ReflectorArea polygons, none of
+	// which RDS exposes (its /scene returns advancedAreaList: []).
+	//
+	// It arrives on a poll Core already makes 43,200 times a day and was
+	// discarded at unmarshal, which cost this project two things. It is the
+	// change gate for pulling the map at all, so the expensive 7.3 MB fetch
+	// can fire when the map moves instead of on a calendar. And because it
+	// is PER ROBOT it is the only way to see a fleet that is not all on one
+	// map: measured at Hopkinsville 2026-08-06, eleven robots on Hop_20 and
+	// one on Hop_21. A sample from a robot on a different map is being
+	// snapped to a scene it is not localizing against, so this is a
+	// correctness input to the roll-up and not only an observability one.
+	//
+	// Do NOT use the top-level model_md5 for this. That hashes the robot
+	// MODEL definition and is byte-identical at both plants, which is the
+	// proof it is not about the map.
+	CurrentMapMD5 string `json:"current_map_md5"`
+	// CurrentMap is the loaded map's name. Measured identical to
+	// basic_info.current_map on all 24 robots across both plants
+	// 2026-08-06; it lives here too so a name and its hash can be read from
+	// one object rather than paired across two.
+	CurrentMap string `json:"current_map"`
+	// --- battery and thermal ---
+	//
+	// The whole block is published every 2 s and was discarded at unmarshal,
+	// which is the confidence bug repeating: shingo keeps NO battery
+	// time-series, RDS's t_robotstatusrecord has no battery column and its
+	// t_batterylevelrecord is empty, so this poll is the only source of
+	// battery history the system could ever have. Two AMR incidents across
+	// both plants have already been diagnosed without it.
+	//
+	// basic_info.controller_temp is already carried, so today the controller
+	// is observable and the battery is not, which is the wrong way round.
+	BatteryTemperature float64 `json:"battery_temperature"`
+	BatteryCycle       int     `json:"battery_cycle"`
+	BatteryChargeCurr  float64 `json:"battery_charge_current"`
+	BatteryChargeVolt  float64 `json:"battery_charge_voltage"`
+	// MaxCharge* are the pack's rated ceilings, and they are NOT always a
+	// measurement: Springfield reports 19.68 A / 54.8 V while Hopkinsville
+	// reports -1.0 for both, which is the vendor's "unknown" sentinel and
+	// not a negative current. Anything deriving a percentage-of-rated figure
+	// has to test for it — a ratio against -1 is silently backwards.
+	BatteryMaxChargeCurr float64 `json:"battery_max_charge_current"`
+	BatteryMaxChargeVolt float64 `json:"battery_max_charge_voltage"`
+	BatteryManualConn    bool    `json:"battery_is_manually_connected"`
 }
 
 // RbkAlarms is the robot's active-alarm snapshot (SEER rbk_report.alarms,

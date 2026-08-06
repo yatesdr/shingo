@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"shingocore/fleet"
@@ -29,6 +30,13 @@ type Adapter struct {
 	faultGrace   time.Duration
 	poller       *rds.Poller
 	debugLog     func(string, ...any)
+
+	// sceneMu guards the scene envelope captured from the most recent
+	// GetRobotsStatus. Read by any goroutine via GetSceneState, written only
+	// by the robot poll — a mutex rather than the poll's own goroutine
+	// discipline, because the readers are HTTP handlers.
+	sceneMu    sync.RWMutex
+	sceneState fleet.SceneState
 }
 
 // New creates a new Seer RDS adapter.
@@ -161,15 +169,36 @@ func (a *Adapter) Tracker() fleet.OrderTracker {
 // --- fleet.RobotLister ---
 
 func (a *Adapter) GetRobotsStatus() ([]fleet.RobotStatus, error) {
-	robots, err := a.client.GetRobotsStatus()
+	resp, err := a.client.GetRobotsStatusFull()
 	if err != nil {
 		return nil, err
 	}
-	result := make([]fleet.RobotStatus, len(robots))
-	for i, r := range robots {
+	// Capture the fleet-wide envelope on the way past. Core polls this
+	// endpoint every 2 seconds already; fetching scene_md5 and the disabled
+	// lanes separately would be a second call for data that is arriving
+	// anyway, which is the failure mode this whole line of work exists
+	// because of.
+	a.sceneMu.Lock()
+	a.sceneState = mapSceneState(resp, time.Now())
+	a.sceneMu.Unlock()
+
+	result := make([]fleet.RobotStatus, len(resp.Report))
+	for i, r := range resp.Report {
 		result[i] = mapRobotStatus(r)
 	}
 	return result, nil
+}
+
+// GetSceneState implements fleet.SceneStateProvider.
+//
+// Returns the zero value (empty hash, zero ObservedAt) until the first robot
+// poll lands. Callers must treat that as "not yet known" and never as "the
+// scene has no hash" — the difference decides whether a sync is skipped or
+// forced, and defaulting it either way is a decision made by accident.
+func (a *Adapter) GetSceneState() fleet.SceneState {
+	a.sceneMu.RLock()
+	defer a.sceneMu.RUnlock()
+	return a.sceneState
 }
 
 func (a *Adapter) SetAvailability(vehicleID string, available bool) error {

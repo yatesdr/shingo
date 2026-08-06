@@ -115,6 +115,21 @@ func formatOccupancy(robots []string) string {
 
 // GetRobotsStatus retrieves status for all robots.
 func (c *Client) GetRobotsStatus() ([]RobotStatus, error) {
+	resp, err := c.GetRobotsStatusFull()
+	if err != nil {
+		return nil, err
+	}
+	return resp.Report, nil
+}
+
+// GetRobotsStatusFull retrieves the whole /robotsStatus envelope.
+//
+// Callers that only want robots should use GetRobotsStatus. This exists
+// because the envelope also carries scene_md5 and the disabled-lane list,
+// which belong to no robot and are therefore invisible to anything that
+// reaches straight for .Report — which was everything, for as long as this
+// endpoint has been polled.
+func (c *Client) GetRobotsStatusFull() (*RobotsStatusResponse, error) {
 	var resp RobotsStatusResponse
 	if err := c.get("/robotsStatus", &resp); err != nil {
 		return nil, err
@@ -122,7 +137,7 @@ func (c *Client) GetRobotsStatus() ([]RobotStatus, error) {
 	if err := checkResponse(&resp.Response); err != nil {
 		return nil, err
 	}
-	return resp.Report, nil
+	return &resp, nil
 }
 
 // SetDispatchable sets dispatchability for robots.

@@ -75,9 +75,17 @@ func (s *SimulatorBackend) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 			// model, and "this robot is in no special area" is the honest
 			// sim answer rather than "we never looked". Written explicitly
 			// so a reader does not have to infer it from the zero value.
-			AreaIDs:        []string{},
-			Confidence:     0.95,
-			RelocStatus:    1,
+			AreaIDs:     []string{},
+			Confidence:  0.95,
+			RelocStatus: 1,
+			// One map, named, and the SAME hash on every simulated robot.
+			// The whole point of carrying a per-robot map hash is that a
+			// real fleet can be split across maps; a sim fleet never is, and
+			// stamping a constant here means the roll-up's map-mismatch
+			// quarantine sees a unanimous fleet and quarantines nothing —
+			// which is the correct sim behaviour and is now asserted rather
+			// than arrived at by every robot sharing the empty string.
+			MapMD5:         "sim-map-md5",
 			CurrentStation: loc,
 		})
 	}
