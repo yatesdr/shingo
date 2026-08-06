@@ -494,6 +494,14 @@ func (db *DB) CountLiveOrdersByDeliveryNode(deliveryNode string) (int, error) {
 	return orders.CountLiveByDeliveryNode(db.DB, deliveryNode)
 }
 
+// CountLiveCarrierRequestsByDeliveryNode counts every non-terminal order that
+// asked for a CARRIER at a node — queued included, origin-blind, returns
+// excluded. "Has a carrier already been asked for here". See
+// orders.CountLiveCarrierRequestsByDeliveryNode.
+func (db *DB) CountLiveCarrierRequestsByDeliveryNode(deliveryNode string) (int, error) {
+	return orders.CountLiveCarrierRequestsByDeliveryNode(db.DB, deliveryNode)
+}
+
 func (db *DB) UpdateOrderRobotID(id int64, robotID string) error {
 	return orders.UpdateRobotID(db.DB, id, robotID)
 }
