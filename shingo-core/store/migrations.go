@@ -913,6 +913,9 @@ func (db *DB) runVersionedMigrations() error {
 		{80, "confidence aggregates key on the physical lane, and keep both populations",
 			v80LaneConfidenceDaily,
 			func(q schema.Querier) bool { return schema.TableExists(q, "lane_confidence_daily") }},
+		{81, "version the scene: a map edit becomes an event with a magnitude",
+			v81SceneVersioning,
+			func(q schema.Querier) bool { return schema.TableExists(q, "scene_lane_versions") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3840,6 +3843,193 @@ func v80LaneConfidenceDaily(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v80 lane_confidence_daily: %w", err)
+		}
+	}
+	return nil
+}
+
+// v81SceneVersioning makes a map edit a first-class event.
+//
+// THE PROBLEM IT SOLVES. Core has never recorded that the scene changed. It
+// mirrors RDS's scene into scene_points/scene_edges by DELETING each area and
+// re-inserting it, so the previous state is gone before anything reads it,
+// and nothing anywhere carries a hash, a version or a date. The consequence
+// is the question this whole line of work exists to answer — "I re-routed
+// that lane Tuesday, did it help?" — being unanswerable in principle rather
+// than merely unimplemented: there is no before.
+//
+// FOUR TABLES, TWO TRANSPORTS, ONE TIMELINE.
+//
+// Lanes come from RDS /scene, gated by its scene_md5. Areas and reflectors
+// come from the robot's own .smap, gated by the per-robot current_map_md5.
+// Two sources, two gates, two clocks — and an engineer who moved a lane and
+// re-drew a reflector zone in the same sitting did ONE edit. scene_diffs is
+// the row that relates them: both version streams carry diff_id, so "what
+// changed on Tuesday" is one join rather than two timelines somebody has to
+// align by eye.
+//
+// SUPERSEDES_ID IS NOT OPTIONAL, AND max_vertex_delta_m IMPLIES IT.
+// Movement is measured FROM something, so the column is not well defined
+// without naming the predecessor. The same link is what carries a lane's
+// history across a rename: the lane key is a sorted endpoint pair, so
+// renaming one point changes the key and orphans everything before it. The
+// diff log records the rename; this is the chain a query actually walks.
+// NULL means "the first version we ever saw", which is a real state and a
+// different one from "unchanged".
+//
+// WHY A LANE VERSION IS NOT A MAP VERSION. Keying the roll-up to the .smap's
+// version would break every lane's series whenever any object anywhere in the
+// plant moved — at a daily edit cadence, most lanes most days, which is the
+// exact property the magnitude column exists to avoid. It is also the wrong
+// provenance: the .smap describes a different artifact on a different
+// transport from the travel network the lanes live in.
+func v81SceneVersioning(tx *sql.Tx) error {
+	stmts := []string{
+		// One row per OBSERVED edit. Not per authored edit — nobody is typing
+		// anything, and two changes between syncs are one row. previous_sync
+		// is therefore load-bearing: it is the window inside which the change
+		// happened, and without it "when" is unbounded on the early side.
+		`CREATE TABLE IF NOT EXISTS scene_diffs (
+			id              BIGSERIAL PRIMARY KEY,
+			source          TEXT        NOT NULL,
+			gate_hash       TEXT        NOT NULL,
+			observed_at     TIMESTAMPTZ NOT NULL,
+			previous_sync   TIMESTAMPTZ,
+			objects_added   INTEGER     NOT NULL DEFAULT 0,
+			objects_changed INTEGER     NOT NULL DEFAULT 0,
+			objects_removed INTEGER     NOT NULL DEFAULT 0,
+			median_delta_m  DOUBLE PRECISION,
+			max_delta_m     DOUBLE PRECISION,
+			renames         JSONB
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_scene_diffs_observed ON scene_diffs(observed_at DESC)`,
+
+		// Per-lane geometry versions, derived from scene_edges.
+		//
+		// twins_agree records whether the lane's two directed rows still
+		// mirror. All 193 Springfield pairs did on 2026-08-06, including
+		// their Bezier handles, so lane grain is safe — and this is what
+		// makes the day it stops being safe a query rather than a surprise.
+		`CREATE TABLE IF NOT EXISTS scene_lane_versions (
+			id                 BIGSERIAL PRIMARY KEY,
+			area_name          TEXT NOT NULL,
+			lane               TEXT NOT NULL,
+			shape_hash         TEXT NOT NULL,
+			def_hash           TEXT NOT NULL,
+			directed_rows      SMALLINT NOT NULL,
+			twins_agree        BOOLEAN NOT NULL DEFAULT TRUE,
+			disagreement       TEXT NOT NULL DEFAULT '',
+			max_vertex_delta_m DOUBLE PRECISION,
+			supersedes_id      BIGINT REFERENCES scene_lane_versions(id),
+			diff_id            BIGINT NOT NULL REFERENCES scene_diffs(id),
+			valid_from         TIMESTAMPTZ NOT NULL,
+			valid_to           TIMESTAMPTZ
+		)`,
+		// The lookup the roll-up makes per sample: which version was in force
+		// on this lane at this instant.
+		`CREATE INDEX IF NOT EXISTS idx_scene_lane_versions_current
+		   ON scene_lane_versions(area_name, lane, valid_from DESC)`,
+		// At most one open version per lane. A second one means a sync wrote
+		// a version without closing its predecessor, which would make the
+		// temporal lookup ambiguous and is not a state to discover later.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_scene_lane_versions_one_open
+		   ON scene_lane_versions(area_name, lane) WHERE valid_to IS NULL`,
+
+		// The .smap archive. BYTEA of gzipped bytes rather than JSONB: this
+		// is never queried into — the parsed tables are what queries read —
+		// and JSONB stores per-object keys undeduplicated across 264,588
+		// scan points, so it would be larger than the text it replaced and
+		// cost a parse on every insert. Measured: 7.31 MB of .smap gzips to
+		// 1.11 MB.
+		//
+		// The scan cloud is a SEPARATE column because it is 85-87% of the
+		// bytes and the least likely thing anyone asks for. Everything else
+		// — areas, reflectors, points, curves, annotation lines — is about
+		// 1 MB gzipped at the 5x map, which is a complete history for ~365
+		// MB a year. Ageing the cloud out on its own is what makes the byte
+		// cap govern the residue instead of the record.
+		`CREATE TABLE IF NOT EXISTS scene_map_versions (
+			id            BIGSERIAL PRIMARY KEY,
+			map_name      TEXT        NOT NULL,
+			content_sha   TEXT        NOT NULL,
+			map_md5       TEXT        NOT NULL DEFAULT '',
+			source_robot  TEXT        NOT NULL DEFAULT '',
+			body_gz       BYTEA,
+			scan_cloud_gz BYTEA,
+			raw_bytes     BIGINT      NOT NULL DEFAULT 0,
+			synced_at     TIMESTAMPTZ NOT NULL,
+			superseded_at TIMESTAMPTZ,
+			diff_id       BIGINT REFERENCES scene_diffs(id),
+			UNIQUE (map_name, content_sha)
+		)`,
+
+		// Areas, temporally versioned. class_name is the column that replaces
+		// reflector_count as the thing anything renders from: measured, the
+		// count of reflectors inside a zone has NO predictive power over its
+		// no-estimate rate and the sign runs backwards, while every
+		// ReflectorArea carrying traffic loses 23-71% of its readings and
+		// neither LocConfigArea loses any.
+		//
+		// reflector_count is still stored — one integer, the input to any
+		// future coverage work, and "this declared reflector zone contains
+		// zero reflectors" is the most actionable sentence this project has
+		// produced. It must not drive a mark, a badge or a band.
+		`CREATE TABLE IF NOT EXISTS scene_areas (
+			id                 BIGSERIAL PRIMARY KEY,
+			area_name          TEXT NOT NULL,
+			class_name         TEXT NOT NULL,
+			polygon            JSONB NOT NULL,
+			reflector_count    INTEGER NOT NULL DEFAULT 0,
+			color_pen          BIGINT,
+			color_brush        BIGINT,
+			properties         JSONB,
+			shape_hash         TEXT NOT NULL,
+			def_hash           TEXT NOT NULL,
+			max_vertex_delta_m DOUBLE PRECISION,
+			supersedes_id      BIGINT REFERENCES scene_areas(id),
+			diff_id            BIGINT NOT NULL REFERENCES scene_diffs(id),
+			map_version_id     BIGINT REFERENCES scene_map_versions(id),
+			valid_from         TIMESTAMPTZ NOT NULL,
+			valid_to           TIMESTAMPTZ
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_scene_areas_current
+		   ON scene_areas(area_name, valid_from DESC)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_scene_areas_one_open
+		   ON scene_areas(area_name) WHERE valid_to IS NULL`,
+
+		// Reflectors, temporally versioned. Identity is the position itself:
+		// the vendor gives them no id, and the index in the list is not
+		// stable across edits.
+		//
+		// width is NULLABLE and that is the point — three of Springfield's
+		// seventy-one carry no width at all, and 0.0 would claim a
+		// zero-width reflector, a measurement nobody made.
+		`CREATE TABLE IF NOT EXISTS scene_reflectors (
+			id             BIGSERIAL PRIMARY KEY,
+			kind           TEXT NOT NULL,
+			x              DOUBLE PRECISION NOT NULL,
+			y              DOUBLE PRECISION NOT NULL,
+			width          DOUBLE PRECISION,
+			shape_hash     TEXT NOT NULL,
+			supersedes_id  BIGINT REFERENCES scene_reflectors(id),
+			diff_id        BIGINT NOT NULL REFERENCES scene_diffs(id),
+			map_version_id BIGINT REFERENCES scene_map_versions(id),
+			valid_from     TIMESTAMPTZ NOT NULL,
+			valid_to       TIMESTAMPTZ
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_scene_reflectors_current
+		   ON scene_reflectors(shape_hash, valid_from DESC)`,
+
+		// The roll-up's link to the geometry it described. Left NULLABLE
+		// here rather than folded into the primary key: the key change is a
+		// real PK swap and belongs with the writer that populates it, not
+		// with the table that first offers the column.
+		`ALTER TABLE lane_confidence_daily
+		   ADD COLUMN IF NOT EXISTS version_id BIGINT REFERENCES scene_lane_versions(id)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v81 scene versioning: %w", err)
 		}
 	}
 	return nil
