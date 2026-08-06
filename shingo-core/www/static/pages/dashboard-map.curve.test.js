@@ -45,9 +45,30 @@ function check(name, cond, detail) {
 // Same injection technique as dashboard-map.stall.test.js: dashboard-map.js is
 // an IIFE, so one __export call goes in just before it closes rather than
 // stripping the wrapper and changing scoping for every `var` in the file.
-// tnodes/tadj/sceneEdges are REASSIGNED inside the module, so they are handed
-// out through accessors — an exported array reference would go stale the first
-// time buildGraph ran and every assertion after that would read the old graph.
+// tnodes/tadj/sceneEdges/points are REASSIGNED inside the module, and so is
+// `proj` (computeView reconfigures it for the plant's orientation), so all of
+// them are handed out through accessors — an exported reference would go stale
+// the first time buildGraph ran and every assertion after that would read the
+// old graph, or the old projection.
+//
+// The geometry itself now lives in components/scene-geom.js. vm runs a SCRIPT,
+// not a module, so BOTH files have their ES module syntax stripped and are
+// evaluated into ONE context: scene-geom's top-level declarations become
+// context globals, and dashboard-map.js's stripped imports then resolve to them
+// through the ordinary scope chain — the same single set of bindings the
+// browser's module loader hands it.
+function loadSceneGeom(ctx) {
+    const file = path.join(__dirname, '..', 'components', 'scene-geom.js');
+    const raw = fs.readFileSync(file, 'utf8');
+    const src = raw.replace(/^export /mg, '');
+    if (src === raw) {
+        throw new Error('components/scene-geom.js no longer declares its exports as ' +
+            '"export function"/"export var" at line start, which this harness strips to ' +
+            'run it as a script; update loadSceneGeom in dashboard-map.curve.test.js');
+    }
+    vm.runInContext(src, ctx);
+}
+
 function load() {
     const ctx = {
         console: console,
@@ -81,13 +102,19 @@ function load() {
     let exported = null;
     ctx.__export = function (o) { exported = o; };
     vm.createContext(ctx);
+    loadSceneGeom(ctx);
 
     const file = path.join(__dirname, 'dashboard-map.js');
     const raw = fs.readFileSync(file, 'utf8');
-    const stripped = raw.replace(/^import[^;]+;\s*/m, '');
+    // /g, not one shot: dashboard-map.js imports from two modules now, and a
+    // non-global strip would leave the second `import` in a script vm cannot
+    // parse — a failure that reads as a syntax error, not as a stale harness.
+    const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
     const INJECT = '  __export({ buildGraph: buildGraph, drawAisles: drawAisles,' +
-        ' cubicLength: cubicLength, cubicPoint: cubicPoint,' +
+        ' computeView: computeView,' +
         ' setEdges: function (v) { sceneEdges = v; },' +
+        ' setPoints: function (v) { points = v; },' +
+        ' proj: function (x, y) { return proj(x, y); },' +
         ' tnodes: function () { return tnodes; }, tadj: function () { return tadj; },' +
         ' graphScale: function () { return graphScale; } });\n})();\n';
     const src = stripped.replace(/\}\)\(\);\s*$/, INJECT);
@@ -97,6 +124,11 @@ function load() {
     }
     vm.runInContext(src, ctx);
     if (!exported) throw new Error('__export was not reached inside dashboard-map.js');
+    // cubicPoint/cubicLength are scene-geom's now. Taken off the context rather
+    // than re-require()d, so what the assertions measure is the very binding
+    // dashboard-map.js weighed its graph with.
+    exported.cubicPoint = ctx.cubicPoint;
+    exported.cubicLength = ctx.cubicLength;
     return exported;
 }
 
@@ -130,9 +162,33 @@ const STRAIGHT = {
     from_name: 'LM100', to_name: 'AP102',
     from_x: -0.544, from_y: 11.787, to_x: 0.886, to_y: 11.807,
 };
+// A lane SEER stores in one direction only. Springfield's 405 directed edges
+// are 212 physical lanes, which is 193 reciprocal pairs and 19 of these; both
+// kinds have to come out of the dedup as exactly one drawn aisle.
+const ONE_WAY = {
+    instance_name: 'AP102-LM10', class_name: 'StraightPath',
+    from_name: 'AP102', to_name: 'LM10',
+    from_x: STRAIGHT.to_x, from_y: STRAIGHT.to_y,
+    to_x: CURVED.from_x, to_y: CURVED.from_y,
+};
 
 function chord(e) {
     return Math.hypot(e.to_x - e.from_x, e.to_y - e.from_y);
+}
+
+// The same physical lane as SEER's other stored direction: endpoints swapped,
+// and the handle pair swapped with them (the same curve read end-to-start).
+function reverseOf(e) {
+    const r = {
+        instance_name: e.to_name + '-' + e.from_name, class_name: e.class_name,
+        from_name: e.to_name, to_name: e.from_name,
+        from_x: e.to_x, from_y: e.to_y, to_x: e.from_x, to_y: e.from_y,
+    };
+    if (e.ctrl1_x !== undefined) {
+        r.ctrl1_x = e.ctrl2_x; r.ctrl1_y = e.ctrl2_y;
+        r.ctrl2_x = e.ctrl1_x; r.ctrl2_y = e.ctrl1_y;
+    }
+    return r;
 }
 
 function drawnFor(m, edges) {
@@ -345,6 +401,90 @@ console.log('drawAisles');
     check('a mixed network draws one of each',
         tags.length === 2 && tags[0] === 'line' && tags[1] === 'path',
         JSON.stringify(tags));
+})();
+
+(function oneElementPerPHYSICALLane() {
+    const m = load();
+    // ONE DRAWN AISLE PER PHYSICAL LANE, handed both stored directions of the
+    // same lane. Springfield stores most of its network both ways — 405
+    // directed edges over 212 physical lanes — so a renderer walking the
+    // adjacency lists straight through paints nearly every aisle TWICE: double
+    // stroke weight where the map is meant to be faint connective tissue, a
+    // curve laid over its own mirror, and twice the DOM on a kiosk that
+    // rebuilds the scene every SSE tick.
+    //
+    // The dedup has always been there and nothing asserted it. Every other
+    // fixture here hands drawAisles a single directed edge, which the dedup
+    // cannot get wrong — the reciprocal entry it must collapse is the one
+    // buildGraph synthesises, and buildGraph's own `some(e.n === b)` guard
+    // hides a broken key until two REAL twins arrive together.
+    const drawn = drawnFor(m, [
+        CURVED, reverseOf(CURVED), STRAIGHT, reverseOf(STRAIGHT), ONE_WAY,
+    ]);
+    check('5 directed edges over 3 physical lanes draw 3 elements',
+        drawn.length === 3,
+        'got ' + drawn.length + ': ' + JSON.stringify(drawn.map(function (d) { return d.tag; })));
+    const tags = drawn.map(function (d) { return d.tag; }).sort();
+    check('the survivor of each pair keeps its shape — one <path>, two <line>s',
+        JSON.stringify(tags) === JSON.stringify(['line', 'line', 'path']),
+        JSON.stringify(tags));
+})();
+
+// --- the projection ------------------------------------------------------
+//
+// NOT covered by anything above, and the gap had teeth. Every fixture in this
+// file is wider than it is tall, so proj() resolves to its unrotated [x, −y]
+// branch throughout — theDrawnCubicIsTheSceneGeometry says as much in its own
+// comment. Springfield is the other way round: its drivable network measures
+// 55.5 m across (x −52.6…2.85) by 83.2 m deep (y −22.38…60.85), so the live
+// kiosk runs the ROTATED branch and no assertion here ever touched it. An
+// extraction that dropped the rotation would have passed the whole suite and
+// letterboxed the real floor into a thin vertical strip.
+
+console.log('projection');
+
+(function orientationFollowsThePlantFootprint() {
+    // computeView is what decides orientation, from the FULL-plant extent, and
+    // it is driven here rather than a predicate tested in isolation — the
+    // decision and the projector it configures are the pair that has to agree.
+    const tall = load();
+    tall.setPoints([{ pos_x: -52.6, pos_y: -22.38 }, { pos_x: 2.85, pos_y: 60.85 }]);
+    tall.computeView();
+    const t = tall.proj(3, 7);
+    check('a taller-than-wide plant projects rotated — [y, x]',
+        t[0] === 7 && t[1] === 3, JSON.stringify(t));
+
+    // The same extent transposed: 83.2 m across by 55.5 m deep.
+    const wide = load();
+    wide.setPoints([{ pos_x: -22.38, pos_y: -52.6 }, { pos_x: 60.85, pos_y: 2.85 }]);
+    wide.computeView();
+    // BOTH directions asserted deliberately. "Rotate always" and "rotate never"
+    // are the two ways this breaks, each still renders a map, and each is wrong
+    // on only one of the two footprints — one check would catch one of them.
+    const w = wide.proj(3, 7);
+    check('a wider-than-tall plant projects unrotated — [x, −y]',
+        w[0] === 3 && w[1] === -7, JSON.stringify(w));
+})();
+
+(function theRotatedBranchIsExactly90CW() {
+    const m = load();
+    m.setPoints([{ pos_x: -52.6, pos_y: -22.38 }, { pos_x: 2.85, pos_y: 60.85 }]);
+    m.computeView();
+    // The rotated branch is documented as "90° CW of the (x, −y) base image".
+    // Screen Y points down, so a 90° CW turn maps (a, b) → (−b, a); applied to
+    // the base that is exactly (y, x). Asserted as the composition rather than
+    // as the literal pair, so the two spellings cannot drift apart — and over
+    // the real corners of the Springfield footprint, where a sign slip that
+    // vanishes at the origin does not.
+    let worst = 0;
+    [[0, 0], [1, 0], [0, 1], [-3.5, 12.25], [-52.6, 60.85], [2.85, -22.38]].forEach(function (p) {
+        const base = [p[0], -p[1]];       // the unrotated projection
+        const cw = [-base[1], base[0]];   // turned 90° CW, screen Y down
+        const got = m.proj(p[0], p[1]);
+        worst = Math.max(worst, Math.hypot(got[0] - cw[0], got[1] - cw[1]));
+    });
+    check('the rotated branch is exactly 90° CW of the unrotated image',
+        worst < 1e-12, 'max separation ' + worst);
 })();
 
 // --- helpers -------------------------------------------------------------

@@ -45,6 +45,13 @@
 // geometry says which one a given lane is.
 
 import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+// The scene-drawing substrate — projection, cubic arithmetic, lane identity —
+// lives in components/scene-geom.js so a second scene page can draw the same
+// network without inheriting this file's viewport, comets and SSE wiring.
+// Core-local, not shared/: Edge draws no scene (docs/ui-style-guide.md).
+import {
+  makeProjector, dist2, isCoord, cubicLength, cubicPathD, laneKey
+} from '/static/components/scene-geom.js';
 
 (function () {
   var body = document.body;
@@ -183,14 +190,13 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   var FEED_MAX_AGE_MS = 3 * 60 * 1000; // events older than 3 min are dropped
   var FEED_MAX_ITEMS = 5;
 
-  // proj maps world (x, y) to screen coords. Y is negated (world up -> screen
-  // down). When the plant footprint is taller than wide, the whole map rotates
-  // 90° CW so its long axis fills a landscape monitor instead of being
-  // letterboxed into a thin central strip.
-  function proj(x, y) {
-    if (rotate90) return [y, x]; // 90° CW of the (x, -y) base image
-    return [x, -y];
-  }
+  // proj maps world (x, y) to screen coords — see scene-geom.js for the
+  // projection itself. It is a VARIABLE, not a function declaration, because
+  // the projection is configured by orientation: computeView reassigns it the
+  // moment it learns the plant footprint, and everything that projects runs
+  // after computeView. The `false` here is the same starting orientation the
+  // old module-state flag had, so the first frame is unchanged.
+  var proj = makeProjector(false);
 
   // ── header chrome ──────────────────────────────────────────────────
   function tickClock() {
@@ -596,7 +602,11 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     var minWx = Math.min.apply(null, wx), maxWx = Math.max.apply(null, wx);
     var minWy = Math.min.apply(null, wy), maxWy = Math.max.apply(null, wy);
     // Orientation is based on the FULL plant so a zoomed-in ROI never flips.
+    // This is the ONLY place orientation is decided, so it is the only place
+    // the projector is rebuilt — the flag itself is still read directly by the
+    // robot chevron, which counter-rotates against it.
     rotate90 = (maxWy - minWy) > (maxWx - minWx);
+    proj = makeProjector(rotate90);
 
     // Full-plant screen-space bbox (stable reference for clamping + minimap viewBox)
     var fsx = [], fsy = [];
@@ -769,46 +779,6 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     for (var i = 0; i < tnodes.length; i++) if (!tadj[i]) tadj[i] = [];
     lens.sort(function (a, b) { return a - b; });
     graphScale = lens[Math.floor(lens.length / 2)] || 0;
-  }
-
-  function dist2(p, q) { var dx = p.x - q.x, dy = p.y - q.y; return dx * dx + dy * dy; }
-
-  // isCoord is isFinite plus a type check, and the type check is the point:
-  // isFinite(null) is TRUE because null coerces to 0, and 0 is a real
-  // coordinate on a plant map. A JSON null on one handle would otherwise
-  // become a control point at the origin and sweep the lane across the floor
-  // — the same failure the all-zero sentinel exists to prevent, arriving one
-  // layer later.
-  function isCoord(v) { return typeof v === 'number' && isFinite(v); }
-
-  // CUBIC_SAMPLES is the polyline resolution used to measure a curved segment.
-  // 24 is well past the point where more samples change a Springfield lane
-  // length in the third decimal, and this runs once per edge per graph rebuild,
-  // not per frame.
-  var CUBIC_SAMPLES = 24;
-
-  // cubicPoint evaluates the cubic Bezier p0 → (c[0],c[1]) → (c[2],c[3]) → p3
-  // at t, in world coordinates.
-  function cubicPoint(p0, c, p3, t) {
-    var mt = 1 - t, a = mt * mt * mt, b = 3 * mt * mt * t, d = 3 * mt * t * t, e = t * t * t;
-    return {
-      x: a * p0.x + b * c[0] + d * c[2] + e * p3.x,
-      y: a * p0.y + b * c[1] + d * c[3] + e * p3.y
-    };
-  }
-
-  // cubicLength is the driven distance along a curved segment. The chord is
-  // what the graph used to weigh, and on Springfield's bowed lanes it is up to
-  // 24% short — which makes the shortest path prefer a route the robot does
-  // not actually find shorter.
-  function cubicLength(p0, c, p3) {
-    var total = 0, prev = p0;
-    for (var i = 1; i <= CUBIC_SAMPLES; i++) {
-      var pt = cubicPoint(p0, c, p3, i / CUBIC_SAMPLES);
-      total += Math.sqrt(dist2(prev, pt));
-      prev = pt;
-    }
-    return total;
   }
 
   function nearestTNode(wx, wy) {
@@ -1200,7 +1170,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
         var edges = tadj[ai] || [];
         for (var ei = 0; ei < edges.length; ei++) {
           var bi = edges[ei].n;
-          var ekey = ai < bi ? ai + '_' + bi : bi + '_' + ai;
+          var ekey = laneKey(ai, bi);
           if (seen[ekey]) continue; seen[ekey] = true;
           var mpa = proj(tnodes[ai].x, tnodes[ai].y);
           var mpb = proj(tnodes[bi].x, tnodes[bi].y);
@@ -1607,7 +1577,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // the shape the fleet actually drives. <path> needs fill:none explicitly:
   // SVG's default fill is black, and a filled aisle would blot the floor.
   //
-  // The dedup keeps the a<b entry, whose handles were stored in the a→b
+  // The laneKey dedup keeps the a<b entry, whose handles were stored in the a→b
   // direction by buildGraph, so the control points project across in order.
   function drawAisles(svg, nodeR) {
     if (tnodes.length < 2) return;
@@ -1615,15 +1585,14 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     for (var a = 0; a < tadj.length; a++) {
       var edges = tadj[a] || [];
       for (var e = 0; e < edges.length; e++) {
-        var b = edges[e].n, key = a < b ? a + '_' + b : b + '_' + a;
+        var b = edges[e].n, key = laneKey(a, b);
         if (seen[key]) continue; seen[key] = true;
         var pa = proj(tnodes[a].x, tnodes[a].y), pb = proj(tnodes[b].x, tnodes[b].y);
         var ctl = edges[e].c;
         if (ctl) {
           var q1 = proj(ctl[0], ctl[1]), q2 = proj(ctl[2], ctl[3]);
           svg.appendChild(svgEl('path', {
-            d: 'M' + pa[0] + ' ' + pa[1] + 'C' + q1[0] + ' ' + q1[1] +
-               ' ' + q2[0] + ' ' + q2[1] + ' ' + pb[0] + ' ' + pb[1],
+            d: cubicPathD(pa, q1, q2, pb),
             fill: 'none',
             class: 'map-aisle', 'stroke-width': nodeR * 0.48
           }));

@@ -46,6 +46,25 @@ function check(name, cond, detail) {
 // a harness-supplied __export just before the IIFE closes. If the module's
 // shape changes so the injection no longer applies, load() throws with a
 // message naming what to fix rather than failing an assertion obscurely.
+//
+// Nothing below tests geometry, but dashboard-map.js configures its projector
+// at module scope from components/scene-geom.js, so the module does not
+// EVALUATE without it. vm runs a script, not a module: scene-geom's exports are
+// stripped to plain declarations and evaluated into the same context, where the
+// stripped imports resolve to them. Same technique, spelled out, in
+// dashboard-map.curve.test.js.
+function loadSceneGeom(ctx) {
+    const file = path.join(__dirname, '..', 'components', 'scene-geom.js');
+    const raw = fs.readFileSync(file, 'utf8');
+    const src = raw.replace(/^export /mg, '');
+    if (src === raw) {
+        throw new Error('components/scene-geom.js no longer declares its exports as ' +
+            '"export function"/"export var" at line start, which this harness strips to ' +
+            'run it as a script; update loadSceneGeom in dashboard-map.stall.test.js');
+    }
+    vm.runInContext(src, ctx);
+}
+
 function load() {
     const ctx = {
         console: console,
@@ -82,10 +101,13 @@ function load() {
     let exported = null;
     ctx.__export = function (o) { exported = o; };
     vm.createContext(ctx);
+    loadSceneGeom(ctx);
 
     const file = path.join(__dirname, 'dashboard-map.js');
     const raw = fs.readFileSync(file, 'utf8');
-    const stripped = raw.replace(/^import[^;]+;\s*/m, '');
+    // /g, not one shot: dashboard-map.js imports from two modules now, and a
+    // non-global strip leaves the second `import` in a script vm cannot parse.
+    const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
     const INJECT = '  __export({ mergeRobot: mergeRobot, isMoving: isMoving, isStalled: isStalled,' +
         ' laneVisible: laneVisible, robots: robots,' +
         ' MOVE_LINGER_MS: MOVE_LINGER_MS, STALL_MS: STALL_MS });\n})();\n';
