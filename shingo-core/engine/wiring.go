@@ -30,6 +30,8 @@ package engine
 
 import (
 	"fmt"
+	"sync"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/eventbus"
@@ -532,17 +534,61 @@ func (e *Engine) wireEventHandlers() {
 	// Subscribers are always registered so toggling the enabled checkbox
 	// at runtime takes effect without a restart. Each handler checks
 	// Enabled() at dispatch time.
+	//
+	// Fault emails are buffered: the order must remain faulted for 3
+	// minutes before the alert fires. A recovery within that window
+	// cancels the pending email. Fail and GraceExpired fire immediately.
+
+	var faultTimersMu sync.Mutex
+	faultTimers := make(map[int64]*time.Timer)
+
+	const faultBufferDuration = 3 * time.Minute
+
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFaultedEvent]) {
 		if !e.notifier.Enabled() {
 			return
 		}
 		ev := evt.Payload
 		robotID := lookupRobotID(e, ev.OrderID)
-		_ = e.notifier.Send(
-			notify.FaultSubject(),
-			notify.FaultAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.Reason, robotID),
-		)
+
+		faultTimersMu.Lock()
+		if existing, ok := faultTimers[ev.OrderID]; ok {
+			existing.Stop()
+		}
+		faultTimers[ev.OrderID] = time.AfterFunc(faultBufferDuration, func() {
+			faultTimersMu.Lock()
+			delete(faultTimers, ev.OrderID)
+			faultTimersMu.Unlock()
+			_ = e.notifier.Send(
+				notify.FaultSubject(robotID),
+				notify.FaultAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.Reason, robotID),
+			)
+		})
+		faultTimersMu.Unlock()
 	}, EventOrderFaulted)
+
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFaultedRecoveredEvent]) {
+		if !e.notifier.Enabled() {
+			return
+		}
+		ev := evt.Payload
+		robotID := ev.RobotID
+		if robotID == "" {
+			robotID = lookupRobotID(e, ev.OrderID)
+		}
+
+		faultTimersMu.Lock()
+		if existing, ok := faultTimers[ev.OrderID]; ok {
+			existing.Stop()
+			delete(faultTimers, ev.OrderID)
+		}
+		faultTimersMu.Unlock()
+
+		_ = e.notifier.Send(
+			notify.FaultClearedSubject(robotID),
+			notify.FaultClearedAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, robotID),
+		)
+	}, EventOrderFaultedRecovered)
 
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
 		if !e.notifier.Enabled() {
@@ -551,7 +597,7 @@ func (e *Engine) wireEventHandlers() {
 		ev := evt.Payload
 		robotID := lookupRobotID(e, ev.OrderID)
 		_ = e.notifier.Send(
-			notify.FailSubject(),
+			notify.FailSubject(robotID),
 			notify.FailAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.ErrorCode, ev.Detail, robotID),
 		)
 	}, EventOrderFailed)

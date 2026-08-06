@@ -74,14 +74,48 @@ func GraceExpiredAlert(orderID int64, vendorOrderID, robotID string) string {
 	return b.String()
 }
 
-func FaultSubject() string {
-	return fmt.Sprintf("Shingo Fault Alert - %s", time.Now().Format("2006-01-02 15:04:05"))
+func FaultSubject(robotID string) string {
+	if robotID != "" {
+		return fmt.Sprintf("Shingo Fault Alert - Robot %s", robotID)
+	}
+	return "Shingo Fault Alert"
 }
 
-func FailSubject() string {
-	return fmt.Sprintf("Shingo Order Failure - %s", time.Now().Format("2006-01-02 15:04:05"))
+func FailSubject(robotID string) string {
+	if robotID != "" {
+		return fmt.Sprintf("Shingo Order Failure - Robot %s", robotID)
+	}
+	return "Shingo Order Failure"
 }
 
 func GraceExpiredSubject() string {
-	return fmt.Sprintf("Shingo Grace Period Expired - %s", time.Now().Format("2006-01-02 15:04:05"))
+	return "Shingo Grace Period Expired"
+}
+
+func FaultClearedSubject(robotID string) string {
+	if robotID != "" {
+		return fmt.Sprintf("Shingo Fault Cleared - Robot %s", robotID)
+	}
+	return "Shingo Fault Cleared"
+}
+
+func FaultClearedAlert(orderID int64, edgeUUID, stationID, robotID string) string {
+	var b strings.Builder
+	b.WriteString("SHINGO FAULT CLEARED\n")
+	b.WriteString("====================\n\n")
+	b.WriteString(fmt.Sprintf("Order ID:     %d\n", orderID))
+	if edgeUUID != "" {
+		b.WriteString(fmt.Sprintf("Edge UUID:    %s\n", edgeUUID))
+	}
+	if stationID != "" {
+		b.WriteString(fmt.Sprintf("Station:      %s\n", stationID))
+	}
+	if robotID != "" {
+		b.WriteString(fmt.Sprintf("Robot ID:     %s\n", robotID))
+	}
+	b.WriteString(fmt.Sprintf("Time:         %s\n", time.Now().Format(time.RFC1123)))
+	b.WriteString("\n")
+	b.WriteString("The faulted order has recovered and resumed normal operation.\n")
+	b.WriteString("\n\n\n")
+	return b.String()
 }

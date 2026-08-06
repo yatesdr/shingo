@@ -178,7 +178,7 @@ func (h *Handlers) handleConfigTestEmail(w http.ResponseWriter, r *http.Request)
 
 func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request) {
 	alertType := r.URL.Query().Get("type")
-	if alertType != "fault" && alertType != "fail" {
+	if alertType != "fault" && alertType != "fail" && alertType != "cleared" {
 		http.Error(w, "type must be fault or fail", http.StatusBadRequest)
 		return
 	}
@@ -200,13 +200,17 @@ func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request)
 	}
 
 	var subject, body string
+	testRobotID := "ROBOT-42"
 	switch alertType {
 	case "fault":
-		subject = notify.FaultSubject()
-		body = notify.FaultAlert(99999, "test-edge-uuid", "STATION-01", "Simulated fault for testing", "ROBOT-42")
+		subject = notify.FaultSubject(testRobotID)
+		body = notify.FaultAlert(99999, "test-edge-uuid", "STATION-01", "Simulated fault for testing", testRobotID)
 	case "fail":
-		subject = notify.FailSubject()
-		body = notify.FailAlert(99999, "test-edge-uuid", "STATION-01", "SIM_FAULT", "Simulated order failure for testing", "ROBOT-42")
+		subject = notify.FailSubject(testRobotID)
+		body = notify.FailAlert(99999, "test-edge-uuid", "STATION-01", "SIM_FAULT", "Simulated order failure for testing", testRobotID)
+	case "cleared":
+		subject = notify.FaultClearedSubject(testRobotID)
+		body = notify.FaultClearedAlert(99999, "test-edge-uuid", "STATION-01", testRobotID)
 	}
 
 	addr := fmt.Sprintf("%s:%d", n.SMTPHost, n.SMTPPort)
