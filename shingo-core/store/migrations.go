@@ -4027,12 +4027,39 @@ func v81SceneVersioning(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_scene_reflectors_current
 		   ON scene_reflectors(shape_hash, valid_from DESC)`,
 
-		// The roll-up's link to the geometry it described. Left NULLABLE
-		// here rather than folded into the primary key: the key change is a
-		// real PK swap and belongs with the writer that populates it, not
-		// with the table that first offers the column.
+		// The roll-up's link to the geometry it described, and the key change
+		// that goes with it.
+		//
+		// WHY THE DAY IS NO LONGER THE GRAIN. Maps are edited close to daily,
+		// so an edit at 14:00 Tuesday produces one Tuesday row mixing six
+		// hours of old geometry with ten of new — a blend presented as a
+		// measurement, undetectable by any reader. Keying on the version
+		// splits that into two rows, each describing one geometry, and the
+		// day a lane changed becomes the day it is most readable rather than
+		// least.
+		//
+		// NULL IS A REAL VALUE HERE and that is why this is two partial
+		// unique indexes rather than a primary key. A sample taken before the
+		// first scene sync has no version — the 14 days of raw already in a
+		// plant database when this deploys are exactly that — and a primary
+		// key cannot hold it, because PK columns are implicitly NOT NULL.
+		// The alternative, a sentinel version id meaning "unknown", is
+		// "never coalesce absence into zero" wearing a foreign key.
+		//
+		// Partial indexes rather than UNIQUE NULLS NOT DISTINCT, which would
+		// say the same thing in one line and requires Postgres 15. The plants'
+		// server version is not something this migration can check before it
+		// runs, and a migration that fails at deploy is worse than one that is
+		// two lines longer.
 		`ALTER TABLE lane_confidence_daily
 		   ADD COLUMN IF NOT EXISTS version_id BIGINT REFERENCES scene_lane_versions(id)`,
+		`ALTER TABLE lane_confidence_daily DROP CONSTRAINT IF EXISTS lane_confidence_daily_pkey`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_lane_daily_versioned
+		   ON lane_confidence_daily(day, area_name, lane, version_id)
+		   WHERE version_id IS NOT NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_lane_daily_unversioned
+		   ON lane_confidence_daily(day, area_name, lane)
+		   WHERE version_id IS NULL`,
 	}
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {

@@ -33,6 +33,11 @@ type RollUpConfig struct {
 	// BaselineDays is the trailing window the fleet median is computed over.
 	BaselineDays int
 	Coverage     Coverage
+	// Versions resolves which geometry a lane had when a sample was taken.
+	// Nil means no scene versioning is available, and every row is written
+	// with a NULL version — the honest answer, and what every day of raw
+	// collected before the versioning landed genuinely is.
+	Versions VersionResolver
 }
 
 // RollUpResult reports what the job did, for the caller's log line.
@@ -140,6 +145,18 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 		return res, err
 	}
 
+	// The version index resolves, per sample, WHICH geometry the lane had
+	// when the reading was taken. Loaded once for the window rather than
+	// queried per row.
+	resolver := cfg.Versions
+	if resolver == nil {
+		resolver = noVersions{}
+	}
+	versions, err := resolver.Load(db, from, to)
+	if err != nil {
+		return res, err
+	}
+
 	dayRC := map[string]map[string]*accum{} // robot -> lane -> accum (good ticks)
 	laneAll := map[string][]float64{}       // lane -> every tick, misses as 0
 	laneGood := map[string][]float64{}      // lane -> ticks that produced a number
@@ -170,7 +187,12 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 			res.UnkeyableSamples++
 			return
 		}
-		key := seg.Key()
+		// The key carries the geometry version, so an edit at 14:00 splits
+		// the day into one row per geometry instead of averaging across it.
+		// A blend of two lanes presented as one measurement is undetectable
+		// by any reader, and at a daily edit cadence it is most days.
+		versionID := versions.At(seg.Area, seg.Lane(), s.SampledAt)
+		key := versionedKey(seg.Key(), versionID)
 
 		// QUARANTINE, NOT EXCLUDE. The row stays, the count is recorded, and
 		// nothing about the lane's statistics is computed from it. Dropping
@@ -290,6 +312,10 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 		if !onPath || !seg.Keyable() {
 			return
 		}
+		// The baseline deliberately does NOT split by version: it is the
+		// fleet's typical reading at a place over fourteen days, and a lane
+		// that was edited mid-window still describes one piece of floor for
+		// the purpose of comparing robots to each other on it.
 		key := seg.Key()
 		if baseRC[s.VehicleID] == nil {
 			baseRC[s.VehicleID] = map[string]*accum{}
@@ -376,7 +402,9 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 			RelocFailedRobots:  len(segFailedRobots[key]),
 			MapMismatchSamples: laneMismatch[key],
 		}
-		row.Area, row.Lane = SplitKey(key)
+		laneKey, versionID := splitVersionedKey(key)
+		row.Area, row.Lane = SplitKey(laneKey)
+		row.VersionID = versionID
 		if len(all) > 0 {
 			p05, p25, p50 := Percentile(all, 0.05), Percentile(all, 0.25), Percentile(all, 0.50)
 			p75, p95 := Percentile(all, 0.75), Percentile(all, 0.95)

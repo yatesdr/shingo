@@ -3,7 +3,9 @@ package store
 import (
 	"time"
 
+	"database/sql"
 	"shingocore/store/robotconfidence"
+	"shingocore/store/sceneversion"
 )
 
 // Delegates to the robotconfidence sub-package, matching the shape of
@@ -40,4 +42,21 @@ func (db *DB) RollUpRobotConfidence(day time.Time, cfg robotconfidence.RollUpCon
 // what decides whether the roll-up runs. See store/robotconfidence/catchup.go.
 func (db *DB) CatchUpRobotConfidence(now time.Time, retentionDays int, cfg robotconfidence.RollUpConfig) ([]robotconfidence.RollUpResult, error) {
 	return robotconfidence.CatchUp(db.DB, now, retentionDays, cfg)
+}
+
+// LaneVersionResolver adapts store/sceneversion to robotconfidence's
+// VersionResolver so the roll-up can ask "which geometry did this lane have
+// when this reading was taken".
+//
+// It lives HERE rather than in either package because Go matches interfaces
+// nominally, not structurally, on a return type: sceneversion cannot name
+// robotconfidence.VersionLookup without importing it, and having the two
+// import each other for one adapter would be a cycle waiting to happen. This
+// file already delegates between them.
+type LaneVersionResolver struct{}
+
+// Load reads every lane version overlapping the window, once, rather than
+// issuing a query per sample.
+func (LaneVersionResolver) Load(db *sql.DB, from, to time.Time) (robotconfidence.VersionLookup, error) {
+	return sceneversion.LoadLaneVersionIndex(db, from, to)
 }

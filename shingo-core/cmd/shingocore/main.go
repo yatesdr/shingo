@@ -527,6 +527,11 @@ func main() {
 						SnapTolerance: cfg.RobotConfidence.SnapToleranceMetres,
 						BaselineDays:  cfg.RobotConfidence.BaselineDays,
 						Coverage:      robotconfidence.DefaultCoverage,
+						// Resolves which geometry each lane had when a reading
+						// was taken, so an edit part-way through a day splits
+						// it into one row per geometry instead of averaging
+						// across the change.
+						Versions: store.LaneVersionResolver{},
 					})
 				if err != nil {
 					log.Printf("shingocore: robot confidence: roll-up: %v", err)

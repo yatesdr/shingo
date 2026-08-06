@@ -299,7 +299,13 @@ func DropOldPartitions(db *sql.DB, table string, keepDays int, now time.Time) (i
 // RawSample is one row as the roll-up reads it back: only the columns the
 // aggregation needs.
 type RawSample struct {
-	VehicleID   string
+	VehicleID string
+	// SampledAt is when the reading was taken, and the roll-up needs it to
+	// resolve WHICH geometry the lane had at that instant. A day is no
+	// longer a fine enough grain for that: maps are edited close to daily,
+	// so an edit at 14:00 splits the day into two geometries and a row that
+	// averaged across it would be a blend presented as a measurement.
+	SampledAt   time.Time
 	Confidence  float64
 	X           float64
 	Y           float64
@@ -333,7 +339,7 @@ func (s RawSample) NoEstimate() bool { return s.Confidence <= 0 }
 // thousand entries regardless of how many samples flow through.
 func ScanSamples(db *sql.DB, from, to time.Time, fn func(RawSample)) error {
 	rows, err := db.Query(
-		`SELECT vehicle_id, confidence, x, y, reloc_status, coalesce(map_md5, '')
+		`SELECT vehicle_id, sampled_at, confidence, x, y, reloc_status, coalesce(map_md5, '')
 		 FROM `+TableSamples+`
 		 WHERE sampled_at >= $1 AND sampled_at < $2`, from, to)
 	if err != nil {
@@ -342,7 +348,7 @@ func ScanSamples(db *sql.DB, from, to time.Time, fn func(RawSample)) error {
 	defer rows.Close()
 	for rows.Next() {
 		var s RawSample
-		if err := rows.Scan(&s.VehicleID, &s.Confidence, &s.X, &s.Y, &s.RelocStatus, &s.MapMD5); err != nil {
+		if err := rows.Scan(&s.VehicleID, &s.SampledAt, &s.Confidence, &s.X, &s.Y, &s.RelocStatus, &s.MapMD5); err != nil {
 			return err
 		}
 		fn(s)
@@ -561,7 +567,16 @@ func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
 	if robots == nil {
 		robots = []string{}
 	}
-	_, err := db.Exec(
+	// The conflict target has to name the index that actually covers this
+	// row. version_id NULL and version_id set live under two different
+	// partial unique indexes — see migration v81 — because a primary key
+	// cannot hold a nullable column and a sentinel id meaning "unknown"
+	// would be absence coalesced into a foreign key.
+	conflict := "(day, area_name, lane, version_id) WHERE version_id IS NOT NULL"
+	if s.VersionID == nil {
+		conflict = "(day, area_name, lane) WHERE version_id IS NULL"
+	}
+	_, err := db.Exec(fmt.Sprintf(
 		`INSERT INTO lane_confidence_daily
 		   (day, area_name, lane, p05, p25, p50, p75, p95, samples,
 		    mean_good, samples_good, min_conf, robots, robots_seen,
@@ -569,7 +584,7 @@ func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
 		    reloc_failed_samples, reloc_failed_robots,
 		    map_mismatch_samples, version_id)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-		 ON CONFLICT (day, area_name, lane) DO UPDATE SET
+		 ON CONFLICT %s DO UPDATE SET
 		   p05 = EXCLUDED.p05, p25 = EXCLUDED.p25, p50 = EXCLUDED.p50,
 		   p75 = EXCLUDED.p75, p95 = EXCLUDED.p95, samples = EXCLUDED.samples,
 		   mean_good = EXCLUDED.mean_good, samples_good = EXCLUDED.samples_good,
@@ -580,7 +595,7 @@ func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
 		   reloc_failed_samples = EXCLUDED.reloc_failed_samples,
 		   reloc_failed_robots = EXCLUDED.reloc_failed_robots,
 		   map_mismatch_samples = EXCLUDED.map_mismatch_samples,
-		   version_id = EXCLUDED.version_id`,
+		   version_id = EXCLUDED.version_id`, conflict),
 		s.Day, s.Area, s.Lane, s.P05, s.P25, s.P50, s.P75, s.P95, s.Samples,
 		s.MeanGood, s.SamplesGood, s.MinConf, s.Robots, robots,
 		s.SentinelSamples, s.SentinelRobots,
