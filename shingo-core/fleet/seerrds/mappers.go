@@ -99,6 +99,7 @@ func mapRobotStatus(r rds.RobotStatus) fleet.RobotStatus {
 		Angle:          r.RbkReport.Angle,
 		Confidence:     r.RbkReport.Confidence,
 		RelocStatus:    r.RbkReport.RelocStatus,
+		AreaIDs:        r.RbkReport.AreaIDs,
 		NetworkDelay:   r.NetworkDelay,
 		CurrentStation: r.RbkReport.CurrentStation,
 		LastStation:    r.RbkReport.LastStation,

@@ -97,6 +97,7 @@ func (e *Engine) sampleRobotConfidence(robots []fleet.RobotStatus, now time.Time
 			OnTask:      r.Busy,
 			Blocked:     r.Blocked,
 			RelocStatus: r.RelocStatus,
+			AreaIDs:     r.AreaIDs,
 		})
 	}
 	if len(batch) == 0 {

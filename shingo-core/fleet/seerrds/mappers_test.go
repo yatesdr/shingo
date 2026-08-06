@@ -1,6 +1,8 @@
 package seerrds
 
 import (
+	"encoding/json"
+	"math"
 	"reflect"
 	"testing"
 
@@ -8,6 +10,58 @@ import (
 	"shingocore/fleet"
 	"shingocore/rds"
 )
+
+// TestMapRobotStatus_LocalizationFromWire decodes a real /robotsStatus
+// fragment and asserts the three localization fields survive both the JSON
+// tags and the mapper.
+//
+// IT DECODES JSON ON PURPOSE. The recurring defect in this struct is not a
+// mapping mistake, it is a field SEER sends that Core never declared —
+// confidence went unnoticed for months that way, and area_ids was the next
+// one. A test built from a Go literal cannot catch that class at all: it
+// asserts against the very struct that is missing the field. Only a decode
+// from the wire's own shape can.
+//
+// The fragment is trimmed from Springfield 2026-08-06, AMR-10 inside area 8.
+func TestMapRobotStatus_LocalizationFromWire(t *testing.T) {
+	t.Parallel()
+	const wire = `{
+		"vehicle_id": "AMR-10",
+		"connection_status": 1,
+		"basic_info": {"current_area": ["Area-01"], "current_map": "SPRAMRMAP"},
+		"rbk_report": {
+			"x": -0.68, "y": 0.88, "angle": 1.6,
+			"confidence": -0.0,
+			"reloc_status": 1,
+			"area_ids": ["8"],
+			"current_station": "LM1"
+		}
+	}`
+	var in rds.RobotStatus
+	if err := json.Unmarshal([]byte(wire), &in); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := mapRobotStatus(in)
+
+	if !reflect.DeepEqual(got.AreaIDs, []string{"8"}) {
+		t.Errorf("AreaIDs = %#v, want [8] — the field SEER sends and Core must not drop", got.AreaIDs)
+	}
+	// -0.0 is the vendor's "no estimate in this area" sentinel. It must
+	// arrive intact and NEGATIVE: a carry that normalised it to +0.0 would
+	// erase the only thing separating it from a genuine zero reading.
+	if got.Confidence != 0 || math.Signbit(got.Confidence) != true {
+		t.Errorf("Confidence = %v (signbit %v), want negative zero",
+			got.Confidence, math.Signbit(got.Confidence))
+	}
+	if got.RelocStatus != 1 {
+		t.Errorf("RelocStatus = %d, want 1 — the sentinel is a zone, not a failed pose", got.RelocStatus)
+	}
+	// basic_info.current_area is a DIFFERENT namespace (the RDS scene area)
+	// and must not be confused for the robot's advanced-area membership.
+	if reflect.DeepEqual(in.BasicInfo.CurrentArea, got.AreaIDs) {
+		t.Error("current_area and area_ids must not be conflated — they disagree by design")
+	}
+}
 
 // TestMapState_KnownStates verifies every documented RDS state maps to the
 // expected canonical protocol status.

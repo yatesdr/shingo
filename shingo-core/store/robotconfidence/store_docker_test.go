@@ -396,3 +396,94 @@ func TestSamples_RelocStatusHasNoDefault(t *testing.T) {
 		t.Fatal("an insert omitting reloc_status must fail, not default to SUCCESS")
 	}
 }
+
+// ── v78: the area membership that explains a -0.0 reading ──────────────────
+
+// area_ids round-trips as a real TEXT[], including the multi-element case.
+//
+// THIS TEST IS THE VERIFICATION, NOT A FORMALITY. shingo-core talks to
+// Postgres through pgx's database/sql shim and has no lib/pq, so there is no
+// pq.Array to lean on — two other call sites in this repo worked around its
+// absence with explicit placeholders rather than binding a slice. Whether a
+// bare []string binds to TEXT[] through that path is a property of the
+// driver, not something the type checker can answer, so it is asserted here
+// against a real server. If this fails, the column type is the thing to
+// change, not the assertion.
+func TestSamples_AreaIDsRoundTrip(t *testing.T) {
+	db := testdb.Open(t)
+	if err := robotconfidence.EnsurePartitions(db.DB, testDay); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	withAreas := func(s robotconfidence.Sample, areas []string) robotconfidence.Sample {
+		s.AreaIDs = areas
+		return s
+	}
+	// Confidence 0.30 on the area-8 row so it also lands in the low trail —
+	// the sentinel is exactly the case the forensic table exists to hold.
+	insert(t, db,
+		withAreas(sample("AMR-01", testDay.Add(time.Hour), 0.95, 1, 1, 1), []string{}),
+		withAreas(sample("AMR-02", testDay.Add(2*time.Hour), 0.30, 2, 2, 1), []string{"8"}),
+		withAreas(sample("AMR-03", testDay.Add(3*time.Hour), 0.90, 3, 3, 1), []string{"8", "12"}),
+	)
+
+	for _, tc := range []struct {
+		robot string
+		want  string
+	}{
+		{"AMR-01", "{}"},
+		{"AMR-02", "{8}"},
+		{"AMR-03", "{8,12}"},
+	} {
+		var got string
+		if err := db.QueryRow(
+			`SELECT area_ids::text FROM robot_confidence_samples WHERE vehicle_id = $1`,
+			tc.robot).Scan(&got); err != nil {
+			t.Fatalf("%s: scan: %v", tc.robot, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: area_ids = %s, want %s", tc.robot, got, tc.want)
+		}
+	}
+
+	// The double-write must carry it too, or the forensic trail loses the one
+	// field that says whether a low reading was a zone or a lost robot.
+	var lowAreas string
+	if err := db.QueryRow(
+		`SELECT area_ids::text FROM robot_confidence_low WHERE vehicle_id = 'AMR-02'`).
+		Scan(&lowAreas); err != nil {
+		t.Fatalf("low trail scan: %v", err)
+	}
+	if lowAreas != "{8}" {
+		t.Errorf("low trail area_ids = %s, want {8}", lowAreas)
+	}
+}
+
+// A nil slice must store as '{}' ("in no area"), never as NULL.
+//
+// After v78 there is exactly one writer and it always knows the answer, so
+// NULL in this column can only ever mean "this row predates the migration".
+// Letting a nil Go slice through as NULL would blur those two together and
+// destroy the only marker of the pre-v78 window.
+func TestSamples_NilAreaIDsStoresEmptyNotNull(t *testing.T) {
+	db := testdb.Open(t)
+	if err := robotconfidence.EnsurePartitions(db.DB, testDay); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	insert(t, db, sample("AMR-01", testDay.Add(time.Hour), 0.95, 1, 1, 1)) // AreaIDs left nil
+
+	var isNull bool
+	var areas string
+	if err := db.QueryRow(
+		`SELECT area_ids IS NULL, coalesce(area_ids::text, '<null>')
+		   FROM robot_confidence_samples WHERE vehicle_id = 'AMR-01'`).
+		Scan(&isNull, &areas); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if isNull {
+		t.Error("a nil AreaIDs must store as '{}', not NULL — NULL is reserved for pre-v78 rows")
+	}
+	if areas != "{}" {
+		t.Errorf("area_ids = %s, want {}", areas)
+	}
+}

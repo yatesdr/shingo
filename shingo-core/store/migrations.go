@@ -897,6 +897,11 @@ func (db *DB) runVersionedMigrations() error {
 		{77, "collect robot localization confidence (samples, low trail, daily roll-ups)",
 			v77RobotConfidence,
 			func(q schema.Querier) bool { return schema.TableExists(q, "robot_confidence_samples") }},
+		// 78, not 76: see the numbering note above v77 — 76 is still held by
+		// the unmerged lane-occupancy migration on reshuffling-work.
+		{78, "carry the robot's advanced-area membership onto every confidence sample",
+			v78ConfidenceAreaIDs,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "robot_confidence_samples", "area_ids") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -3635,6 +3640,44 @@ func v77RobotConfidence(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v77 robot_confidence: %w", err)
+		}
+	}
+	return nil
+}
+
+// v78ConfidenceAreaIDs adds the robot's advanced-area membership to both
+// sample tables.
+//
+// WHY THIS IS URGENT RATHER THAN NICE. SEER publishes confidence as literal
+// -0.0 while a robot is inside certain map areas — measured at Springfield
+// 2026-08-06, 7.4% of all samples, every one of them inside area "8", with
+// the reading recovering to ~0.83 on the first tick outside at unchanged
+// speed and unchanged reloc_status. Without this column the raw table cannot
+// tell "the plant does not localize here" apart from "this robot is losing
+// its position", which are opposite findings with opposite owners. RDS keeps
+// no history of area membership and its /scene returns advancedAreaList: [],
+// so a tick that lands without it is not recoverable later. Same shape as
+// confidence itself: cheap now, impossible afterwards.
+//
+// NULLABLE, AND NULL MEANS "NOT COLLECTED". Rows written before this
+// migration genuinely do not know which area they were taken in, and '{}'
+// would claim they were taken outside every area — a measurement that was
+// never made, in the reassuring direction. New writes always set the column,
+// so NULL marks exactly the pre-migration window and nothing else. This is
+// the same NULL-vs-zero rule as robot_confidence_daily.residual, applied to
+// a different type.
+//
+// TEXT[] rather than a delimited string: the value is a list, ids are opaque
+// vendor strings, and any separator we picked would be a convention someone
+// has to remember and something a future id could contain. Postgres has the
+// type; use it.
+func v78ConfidenceAreaIDs(tx *sql.Tx) error {
+	// ALTER on the partitioned parent cascades to every existing partition,
+	// so this is one statement per table regardless of how many days are
+	// already on disk.
+	for _, t := range []string{"robot_confidence_samples", "robot_confidence_low"} {
+		if _, err := tx.Exec(`ALTER TABLE ` + t + ` ADD COLUMN IF NOT EXISTS area_ids TEXT[]`); err != nil {
+			return fmt.Errorf("v78 confidence area_ids (%s): %w", t, err)
 		}
 	}
 	return nil

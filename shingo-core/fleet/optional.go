@@ -129,8 +129,18 @@ type RobotStatus struct {
 	// RelocStatus is the localization state machine (0=FAILED, 1=SUCCESS,
 	// 2=RELOCING, 3=COMPLETED); Confidence is only meaningful outside
 	// RELOCING. See rds.RbkReport for the full enum.
-	Confidence     float64
-	RelocStatus    int
+	//
+	// A Confidence of exactly -0.0 is the vendor's "no estimate here"
+	// sentinel and is explained by AreaIDs, not by the robot being lost.
+	Confidence  float64
+	RelocStatus int
+	// AreaIDs is the robot's current advanced-area membership on its own
+	// map (rbk_report.area_ids), nil or empty for most of the plant. It is
+	// the only thing that distinguishes "confidence unavailable in this
+	// zone" from "this robot is losing localization", so it travels with
+	// every sample rather than being resolved later — RDS keeps no history
+	// of it and its /scene advancedAreaList is empty.
+	AreaIDs        []string
 	NetworkDelay   int
 	CurrentStation string
 	LastStation    string

@@ -46,14 +46,34 @@ type RbkReport struct {
 	// Confidence is the robot's own localization confidence, 0.0–1.0. The
 	// vendor's operator UI bands it >0.8 green, >0.3 yellow, else red
 	// (rds-user-manual.pdf); the HMI tile reuses those exact cuts.
-	Confidence     float64 `json:"confidence"`
-	BatteryLevel   float64 `json:"battery_level"`
-	Charging       bool    `json:"charging"`
-	CurrentStation string  `json:"current_station"`
-	LastStation    string  `json:"last_station"`
-	TaskStatus     int     `json:"task_status"`
-	Blocked        bool    `json:"blocked"`
-	Emergency      bool    `json:"emergency"`
+	//
+	// SEER publishes literal -0.0 here as a SENTINEL, not a measurement:
+	// measured at Springfield 2026-08-06, every tick a robot spends inside
+	// map area 8 reads -0.0 and the first tick outside it returns to ~0.83,
+	// at the same speed and with reloc_status unchanged at 1. It means "no
+	// reflector-based estimate available here", and the whole fleet stands
+	// on alarm 54018 ("reflectors in map not enough") naming that area. It
+	// is NOT a confidence of zero and must never be averaged as one — see
+	// AreaIDs below, which is what makes the distinction recoverable.
+	Confidence float64 `json:"confidence"`
+	// AreaIDs is the robot's CURRENT advanced-area membership from its own
+	// onboard map — the ids it is standing inside right now, usually empty.
+	//
+	// This is NOT BasicInfo.CurrentArea. They are different namespaces and
+	// they do not agree: CurrentArea is the RDS *scene* area ("Area-01",
+	// matching scene_edges.area_name, one value across all of Springfield),
+	// while this is the robot map's advanced-area id ("8"). Only this one
+	// explains the confidence sentinel, and only this one is unrecoverable
+	// — RDS's /scene returns advancedAreaList: [] and keeps no history, so
+	// a tick not stored here is gone.
+	AreaIDs        []string `json:"area_ids"`
+	BatteryLevel   float64  `json:"battery_level"`
+	Charging       bool     `json:"charging"`
+	CurrentStation string   `json:"current_station"`
+	LastStation    string   `json:"last_station"`
+	TaskStatus     int      `json:"task_status"`
+	Blocked        bool     `json:"blocked"`
+	Emergency      bool     `json:"emergency"`
 	// RelocStatus is the localization state machine, documented twice in
 	// "Robokit API Protocol" (API 1021 and the rbk_report field table):
 	//

@@ -71,6 +71,11 @@ func (s *SimulatorBackend) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 			// (on-task and stationary) is what fires in sim — but sim rows
 			// carry no spatial signal and no segment statistic should be
 			// read from them.
+			// Empty, not nil-by-omission: the simulator has no advanced-area
+			// model, and "this robot is in no special area" is the honest
+			// sim answer rather than "we never looked". Written explicitly
+			// so a reader does not have to infer it from the zero value.
+			AreaIDs:        []string{},
 			Confidence:     0.95,
 			RelocStatus:    1,
 			CurrentStation: loc,
