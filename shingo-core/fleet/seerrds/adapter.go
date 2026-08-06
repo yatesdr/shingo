@@ -37,6 +37,11 @@ type Adapter struct {
 	// discipline, because the readers are HTTP handlers.
 	sceneMu    sync.RWMutex
 	sceneState fleet.SceneState
+	// sceneSeen is false until the first envelope lands. Kept as its own
+	// flag rather than inferred from a zero value, because every field of
+	// SceneState has a legitimate empty state and none of them can stand in
+	// for "never observed".
+	sceneSeen bool
 }
 
 // New creates a new Seer RDS adapter.
@@ -179,7 +184,7 @@ func (a *Adapter) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 	// anyway, which is the failure mode this whole line of work exists
 	// because of.
 	a.sceneMu.Lock()
-	a.sceneState = mapSceneState(resp, time.Now())
+	a.sceneState, a.sceneSeen = mapSceneState(resp, time.Now()), true
 	a.sceneMu.Unlock()
 
 	result := make([]fleet.RobotStatus, len(resp.Report))
@@ -191,14 +196,15 @@ func (a *Adapter) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 
 // GetSceneState implements fleet.SceneStateProvider.
 //
-// Returns the zero value (empty hash, zero ObservedAt) until the first robot
-// poll lands. Callers must treat that as "not yet known" and never as "the
-// scene has no hash" — the difference decides whether a sync is skipped or
-// forced, and defaulting it either way is a decision made by accident.
-func (a *Adapter) GetSceneState() fleet.SceneState {
+// The bool is false until the first robot poll lands, and a caller that gets
+// false must not read the value as data. An empty DisabledPaths there means
+// "we have not looked", not "nothing is switched off" — and Springfield has
+// four lanes switched off right now, so treating the two alike renders them
+// as enabled for the whole window after a boot or a reconnect.
+func (a *Adapter) GetSceneState() (fleet.SceneState, bool) {
 	a.sceneMu.RLock()
 	defer a.sceneMu.RUnlock()
-	return a.sceneState
+	return a.sceneState, a.sceneSeen
 }
 
 func (a *Adapter) SetAvailability(vehicleID string, available bool) error {

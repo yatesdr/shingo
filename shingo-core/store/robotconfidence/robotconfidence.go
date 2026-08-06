@@ -263,17 +263,10 @@ func (s Segment) Curved() bool {
 // that includes the LM13-LM141-LM140-LM14 corridor, which is the strongest
 // finding in the dataset. Its numbers do not move under this change. Worth
 // knowing before somebody reads that as a discrepancy.
-// A row with no endpoint names falls back to its directed instance name.
-// scene_edges declares from_name/to_name NOT NULL DEFAULT ”, so a scene
-// synced by an older Core — or any row written before those columns were
-// populated — carries two empty strings. Sorting those gives "-" for EVERY
-// such row, which would silently merge the entire plant into one lane and
-// produce a single aggregate that looks like a real measurement. Falling back
-// keeps such rows separate and merely un-merged, which is the pre-existing
-// behaviour and the safe direction.
+// Returns "" when the segment has no endpoint names — see Keyable.
 func (s Segment) Lane() string {
-	if s.FromName == "" || s.ToName == "" {
-		return s.Instance
+	if !s.Keyable() {
+		return ""
 	}
 	a, b := s.FromName, s.ToName
 	if b < a {
@@ -281,6 +274,33 @@ func (s Segment) Lane() string {
 	}
 	return a + "-" + b
 }
+
+// Keyable reports whether this segment can be aggregated at all.
+//
+// scene_edges declares from_name/to_name NOT NULL with an empty-string
+// default, so a scene synced by an older Core carries two empty names and
+// there is no honest lane key to be made from them.
+//
+// THE TEMPTING FIX IS WORSE THAN THE PROBLEM. Falling back to the directed
+// instance name looks harmless and is not: those rows would key at 405-lane
+// granularity while every other row in the same table keys at 212, with
+// nothing in the schema saying which is which. That is the same defect as a
+// silent drop — a number that looks measured and is not comparable to the row
+// beside it — wearing a different hat. Sorting two empty names is no better:
+// every such row keys the same way and the whole plant merges into one
+// aggregate that reads like a real measurement.
+//
+// So an unkeyable edge is QUARANTINED, exactly as a foreign-map sample is.
+// The segment stays IN the index deliberately — dropping it would let its
+// samples snap to whichever neighbour happens to be within tolerance, and at
+// Springfield 23.6% of samples have a rival lane within 5 cm, so that is a
+// near-certain silent misattribution rather than a theoretical one. Instead
+// the sample lands here, is counted, and is excluded from every statistic,
+// with both counts reaching the job's log line.
+//
+// The real fix is upstream — scene sync should refuse to write an edge it
+// cannot name — and this is the guard that says so out loud until it does.
+func (s Segment) Keyable() bool { return s.FromName != "" && s.ToName != "" }
 
 // Key is the segment's identity in the roll-up maps and in
 // lane_confidence_daily.

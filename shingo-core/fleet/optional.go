@@ -210,23 +210,40 @@ type Undispatchable struct {
 // data that is already arriving is the exact shape of bug this whole line of
 // work exists because of. The adapter captures the envelope on the way past.
 type SceneState struct {
-	// SceneMD5 hashes the RDS scene. Empty means the fleet backend has not
-	// been polled yet — never treat it as "the scene has no hash".
+	// SceneMD5 hashes the RDS scene.
 	SceneMD5 string
 	// DisabledPaths are lane ids an operator switched off. A disabled lane
 	// accumulates no samples, so a map drawn from telemetry alone shows it
-	// as never-driven; this is what tells the difference.
+	// as never-driven — true of the data, false of the plant, and false in
+	// the reassuring direction. This is what tells the difference.
 	DisabledPaths  []string
 	DisabledPoints []string
-	// ObservedAt is when the envelope was captured. Zero means never.
+	// ObservedAt is when the envelope was captured.
 	ObservedAt time.Time
 }
 
 // SceneStateProvider is implemented by fleet backends that can report the
-// scene-level envelope. Optional: a backend without it simply has no scene
-// hash and no disabled-lane list, which every consumer must tolerate.
+// scene-level envelope. Optional: a backend without it has no scene hash and
+// no disabled-lane list, which every consumer must tolerate.
+//
+// THE BOOL IS NOT OPTIONAL AND IT IS NOT DEFENSIVE. It reports whether the
+// envelope has EVER been observed, and it exists because the two states this
+// type can be in are indistinguishable by value: "we have not polled yet" and
+// "nothing is disabled" both produce an empty DisabledPaths. Springfield has
+// four disabled lanes right now, so during every window before the first
+// successful poll — boot, reconnect, a backend that does not implement this
+// at all — a consumer reading the slice alone renders those four as enabled.
+// That is precisely the false reassurance the field was carried to prevent.
+//
+// Returning (SceneState, bool) rather than leaning on ObservedAt.IsZero()
+// makes the distinction impossible to skip rather than merely available: the
+// caller cannot get the value without also being handed the question. This is
+// "no data, zero and not applicable must look different" (see
+// docs/ui-style-guide.md) enforced at the type, which is where that rule says
+// it belongs — a renderer cannot recover a difference that was destroyed
+// upstream.
 type SceneStateProvider interface {
-	GetSceneState() SceneState
+	GetSceneState() (SceneState, bool)
 }
 
 // RobotAlarm is a vendor-neutral active robot alarm (Q-026). JSON tags match

@@ -423,3 +423,43 @@ func indexOf(segs []Segment, instance string) int {
 	}
 	return -1
 }
+
+// An edge with no endpoint names cannot be keyed, and must not pretend to be.
+//
+// scene_edges declares from_name/to_name NOT NULL with an empty default, so
+// an older sync leaves them blank. The tempting fallbacks are both wrong in
+// the same way: keying on the directed instance name puts those rows at
+// 405-lane granularity in a table where everything else is at 212, and
+// sorting two empty names merges the whole plant into one aggregate. Either
+// produces a number that looks measured and is not comparable to the row
+// beside it.
+func TestSegment_UnnamedEndpointsAreNotKeyable(t *testing.T) {
+	named := Segment{Area: "a", Instance: "LM1-LM2", FromName: "LM1", ToName: "LM2"}
+	if !named.Keyable() || named.Lane() == "" {
+		t.Fatal("a fully named segment must be keyable")
+	}
+	for name, s := range map[string]Segment{
+		"both blank": {Area: "a", Instance: "LM1-LM2"},
+		"from blank": {Area: "a", Instance: "LM1-LM2", ToName: "LM2"},
+		"to blank":   {Area: "a", Instance: "LM1-LM2", FromName: "LM1"},
+	} {
+		if s.Keyable() {
+			t.Errorf("%s: must not be keyable", name)
+		}
+		// Not the instance name, and not "-". Empty, so nothing downstream
+		// can mistake it for an identity.
+		if got := s.Lane(); got != "" {
+			t.Errorf("%s: Lane() = %q, want \"\" — a fallback here would key "+
+				"this row at a different granularity than the rest of the table", name, got)
+		}
+	}
+	// Two unkeyable edges must not collapse onto each other either.
+	a := Segment{Area: "x", Instance: "E1"}
+	b := Segment{Area: "x", Instance: "E2"}
+	if a.Keyable() || b.Keyable() {
+		t.Fatal("fixture: both should be unkeyable")
+	}
+	if a.Lane() != "" || b.Lane() != "" {
+		t.Error("unkeyable segments must not produce a shared lane identity")
+	}
+}

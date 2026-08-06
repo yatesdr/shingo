@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,17 +47,33 @@ func openWithWindow(t *testing.T) *store.DB {
 	return db
 }
 
-// addSegment inserts a scene edge with NO endpoint names, which is what
-// scene_edges' `NOT NULL DEFAULT ”` permits and what an older sync produced.
-// Segment.Lane falls back to the instance name in that case, so these
-// fixtures keep addressing lanes by the name they were given.
+// addSegment inserts a properly named scene edge, deriving both endpoint
+// names from the instance so a fixture can still be addressed by one label.
+// Use laneOf to build the key a query should look for.
 func addSegment(t *testing.T, db *store.DB, area, instance string, fx, fy, tx, ty float64) {
+	t.Helper()
+	addNamedSegment(t, db, area, instance, instance+"A", instance+"B", fx, fy, tx, ty)
+}
+
+// addUnnamedSegment inserts an edge with NO endpoint names — what
+// scene_edges' NOT NULL empty-string default permits, and what an older sync
+// produced. Such an edge is UNKEYABLE and its samples are quarantined; see
+// Segment.Keyable.
+func addUnnamedSegment(t *testing.T, db *store.DB, area, instance string, fx, fy, tx, ty float64) {
 	t.Helper()
 	if _, err := db.Exec(
 		`INSERT INTO scene_edges (area_name, instance_name, from_x, from_y, to_x, to_y)
 		 VALUES ($1,$2,$3,$4,$5,$6)`, area, instance, fx, fy, tx, ty); err != nil {
 		t.Fatalf("insert scene edge: %v", err)
 	}
+}
+
+// laneOf is the lane key addSegment's edge aggregates onto — the sorted
+// endpoint pair, which is what the roll-up writes and what a query must ask
+// for. Going through the same rule the production code uses, rather than
+// hardcoding the string, keeps the fixtures honest if that rule ever moves.
+func laneOf(instance string) string {
+	return robotconfidence.Segment{FromName: instance + "A", ToName: instance + "B"}.Lane()
 }
 
 // addNamedSegment inserts a scene edge WITH endpoint names — the shape a
@@ -122,8 +139,8 @@ func TestRollUp_FailureOnlySegmentStillGetsARow(t *testing.T) {
 	err := db.QueryRow(
 		`SELECT mean_good, p05, min_conf, samples_good, robots, reloc_failed_samples, reloc_failed_robots
 		   FROM lane_confidence_daily
-		  WHERE day=$1 AND area_name='area-a' AND lane='CURSED'`,
-		testDay).Scan(&mean, &p05, &minConf, &samples, &robots, &failedSamples, &failedRobots)
+		  WHERE day=$1 AND area_name='area-a' AND lane=$2`,
+		testDay, laneOf("CURSED")).Scan(&mean, &p05, &minConf, &samples, &robots, &failedSamples, &failedRobots)
 	if err == sql.ErrNoRows {
 		t.Fatal("no row for a segment whose every sample was a localization failure — " +
 			"the roll-up is aggregating over valid samples instead of unioning with failures")
@@ -172,7 +189,7 @@ func TestRollUp_ValidSegmentKeepsItsMeasures(t *testing.T) {
 		`SELECT mean_good, min_conf, p50, samples, samples_good, robots,
 		        reloc_failed_samples, sentinel_samples
 		   FROM lane_confidence_daily
-		  WHERE day=$1 AND lane='GOOD'`, testDay).
+		  WHERE day=$1 AND lane=$2`, testDay, laneOf("GOOD")).
 		Scan(&meanGood, &minConf, &p50, &samples, &samplesGood, &robots, &failed, &sentinel); err != nil {
 		t.Fatalf("read lane row: %v", err)
 	}
@@ -239,7 +256,7 @@ func TestRollUp_NoEstimateCountsAsZeroInTheBandedStatistic(t *testing.T) {
 	var samples, samplesGood, sentinel, sentinelRobots int
 	if err := db.QueryRow(
 		`SELECT mean_good, p50, p95, samples, samples_good, sentinel_samples, sentinel_robots
-		   FROM lane_confidence_daily WHERE day=$1 AND lane='HALFBLIND'`, testDay).
+		   FROM lane_confidence_daily WHERE day=$1 AND lane=$2`, testDay, laneOf("HALFBLIND")).
 		Scan(&meanGood, &p50, &p95, &samples, &samplesGood, &sentinel, &sentinelRobots); err != nil {
 		t.Fatalf("read lane row: %v", err)
 	}
@@ -312,7 +329,7 @@ func TestRollUp_SamplesFromAnotherMapAreQuarantined(t *testing.T) {
 	var samples, mismatch, robots int
 	if err := db.QueryRow(
 		`SELECT mean_good, samples, map_mismatch_samples, robots
-		   FROM lane_confidence_daily WHERE day=$1 AND lane='SHARED'`, testDay).
+		   FROM lane_confidence_daily WHERE day=$1 AND lane=$2`, testDay, laneOf("SHARED")).
 		Scan(&meanGood, &samples, &mismatch, &robots); err != nil {
 		t.Fatalf("read lane row: %v", err)
 	}
@@ -363,8 +380,8 @@ func TestRollUp_MissingMapHashIsNotAMismatch(t *testing.T) {
 	}
 	var samples int
 	if err := db.QueryRow(
-		`SELECT samples FROM lane_confidence_daily WHERE day=$1 AND lane='LEGACY'`,
-		testDay).Scan(&samples); err != nil {
+		`SELECT samples FROM lane_confidence_daily WHERE day=$1 AND lane=$2`,
+		testDay, laneOf("LEGACY")).Scan(&samples); err != nil {
 		t.Fatalf("read lane row: %v", err)
 	}
 	if samples != 2 {
@@ -429,7 +446,7 @@ func TestRollUp_UntouchedSegmentGetsNoRow(t *testing.T) {
 
 	var n int
 	if err := db.QueryRow(
-		`SELECT count(*) FROM lane_confidence_daily WHERE lane='UNTOUCHED'`).
+		`SELECT count(*) FROM lane_confidence_daily WHERE lane=$1`, laneOf("UNTOUCHED")).
 		Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
@@ -464,7 +481,7 @@ func TestRollUp_FailedSamplesDoNotEnterTheMean(t *testing.T) {
 	var samples, failed int
 	if err := db.QueryRow(
 		`SELECT mean_good, samples_good, reloc_failed_samples FROM lane_confidence_daily
-		  WHERE day=$1 AND lane='MIXED'`, testDay).
+		  WHERE day=$1 AND lane=$2`, testDay, laneOf("MIXED")).
 		Scan(&mean, &samples, &failed); err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -831,5 +848,70 @@ func TestSamples_NilAlarmCodesStoresEmptyNotNull(t *testing.T) {
 	}
 	if codes != "{}" {
 		t.Errorf("alarm_codes = %s, want {}", codes)
+	}
+}
+
+// A reading on an edge with no endpoint names is counted, not guessed at.
+//
+// The edge stays in the index deliberately: dropping it would send its
+// samples onto whichever neighbour is within tolerance, and at Springfield
+// 23.6% of samples have a rival lane within 5 cm, so that is a near-certain
+// silent misattribution. Instead the reading lands here, is excluded from
+// every statistic, and both counts reach the job's log line — the same
+// treatment a foreign-map sample gets, for the same reason.
+func TestRollUp_UnkeyableEdgeIsQuarantinedNotGuessed(t *testing.T) {
+	db := openWithWindow(t)
+	// One properly named lane, and one the old sync left unnamed, far apart
+	// so neither can steal the other's samples.
+	addNamedSegment(t, db, "area-a", "LM1-LM2", "LM1", "LM2", 0, 0, 10, 0)
+	addUnnamedSegment(t, db, "area-a", "NAMELESS", 0, 60, 10, 60)
+
+	at := testDay.Add(9 * time.Hour)
+	insert(t, db,
+		sample("AMR-01", at, 0.90, 5, 0, 1),
+		sample("AMR-01", at.Add(time.Minute), 0.20, 5, 60, 1),
+		sample("AMR-02", at.Add(2*time.Minute), 0.20, 6, 60, 1),
+	)
+
+	res, err := db.RollUpRobotConfidence(testDay, rollUpCfg())
+	if err != nil {
+		t.Fatalf("roll-up: %v", err)
+	}
+	if res.UnkeyableEdges != 1 {
+		t.Errorf("UnkeyableEdges = %d, want 1", res.UnkeyableEdges)
+	}
+	if res.UnkeyableSamples != 2 {
+		t.Errorf("UnkeyableSamples = %d, want 2 — the readings have to be counted, "+
+			"not absorbed", res.UnkeyableSamples)
+	}
+	// Both numbers must reach the log line, or the defect is invisible to
+	// anyone not reading the struct.
+	if !strings.Contains(res.String(), "unkeyable_edges=1") ||
+		!strings.Contains(res.String(), "unkeyable_samples=2") {
+		t.Errorf("log line omits the counts: %s", res.String())
+	}
+
+	// Exactly one lane row, and it is the named one at its own value. The
+	// 0.20 readings must not have leaked into it.
+	var n int
+	if err := db.QueryRow(
+		`SELECT count(*) FROM lane_confidence_daily WHERE day=$1`, testDay).Scan(&n); err != nil {
+		t.Fatalf("count lanes: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("got %d lane rows, want 1 — an unkeyable edge must not produce one", n)
+	}
+	var lane string
+	var meanGood sql.NullFloat64
+	if err := db.QueryRow(
+		`SELECT lane, mean_good FROM lane_confidence_daily WHERE day=$1`, testDay).
+		Scan(&lane, &meanGood); err != nil {
+		t.Fatalf("read lane row: %v", err)
+	}
+	if lane != "LM1-LM2" {
+		t.Errorf("lane = %q, want LM1-LM2", lane)
+	}
+	if !meanGood.Valid || meanGood.Float64 < 0.899 || meanGood.Float64 > 0.901 {
+		t.Errorf("mean_good = %v, want 0.90 — the unkeyable readings must not enter it", meanGood)
 	}
 }

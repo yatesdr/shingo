@@ -47,7 +47,15 @@ type RollUpResult struct {
 	// a non-zero value here means a robot is out of step with the scene the
 	// numbers are computed against, and nothing else in the system can see
 	// that.
-	MapMismatch      int
+	MapMismatch int
+	// UnkeyableEdges counts scene edges that carry no endpoint names and so
+	// cannot be aggregated onto a physical lane; UnkeyableSamples counts the
+	// readings that landed on one. Both, because one alone is ambiguous:
+	// four defective edges nobody drives is a housekeeping note, four that
+	// carry a shift's traffic is a hole in the data. Non-zero means scene
+	// sync wrote a row it could not name — see Segment.Keyable.
+	UnkeyableEdges   int
+	UnkeyableSamples int
 	ResidualsNull    int
 	SegmentsFailOnly int
 }
@@ -90,6 +98,16 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 	segments, err := LoadSegments(db)
 	if err != nil {
 		return res, err
+	}
+	// Unkeyable edges stay in the index on purpose — see Segment.Keyable.
+	// Dropping them would send their samples onto whichever neighbour is
+	// within tolerance, which at this plant is a near-certainty rather than
+	// a risk. Counted here so the defect is a number in the log rather than
+	// an absence somebody has to notice.
+	for _, s := range segments {
+		if !s.Keyable() {
+			res.UnkeyableEdges++
+		}
 	}
 	index := NewSegmentIndex(segments)
 
@@ -142,6 +160,15 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 		seg, onPath := index.Nearest(s.X, s.Y, cfg.SnapTolerance)
 		if !onPath {
 			res.Orphans++
+		}
+		// A reading that landed on an edge with no endpoint names has no
+		// lane to be attributed to. Counted and dropped, never guessed at:
+		// keying it on the directed instance name would put it in the same
+		// table at a different granularity, which is the failure this whole
+		// commit is about.
+		if onPath && !seg.Keyable() {
+			res.UnkeyableSamples++
+			return
 		}
 		key := seg.Key()
 
@@ -260,7 +287,7 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 			return
 		}
 		seg, onPath := index.Nearest(s.X, s.Y, cfg.SnapTolerance)
-		if !onPath {
+		if !onPath || !seg.Keyable() {
 			return
 		}
 		key := seg.Key()
@@ -406,7 +433,9 @@ func resolve(in map[string]map[string]*accum) map[string]map[string]CellStat {
 // String renders the result as the job's one-line summary.
 func (r RollUpResult) String() string {
 	return fmt.Sprintf(
-		"day=%s robots=%d lanes=%d samples=%d orphans=%d map_mismatch=%d residuals_null=%d fail_only_lanes=%d",
+		"day=%s robots=%d lanes=%d samples=%d orphans=%d map_mismatch=%d "+
+			"unkeyable_edges=%d unkeyable_samples=%d residuals_null=%d fail_only_lanes=%d",
 		r.Day.Format("2006-01-02"), r.RobotRows, r.SegmentRows,
-		r.SamplesRead, r.Orphans, r.MapMismatch, r.ResidualsNull, r.SegmentsFailOnly)
+		r.SamplesRead, r.Orphans, r.MapMismatch,
+		r.UnkeyableEdges, r.UnkeyableSamples, r.ResidualsNull, r.SegmentsFailOnly)
 }

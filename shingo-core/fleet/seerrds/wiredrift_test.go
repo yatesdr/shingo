@@ -36,6 +36,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
+
+	"shingocore/fleet"
 
 	"shingocore/rds"
 )
@@ -402,5 +405,84 @@ func TestMapperAssignsFromTheWire(t *testing.T) {
 			"If the fleet does not publish it, leave the field off rather than asserting a "+
 			"value: a dropped field reads as never-having-had-it, a constant reads as an answer. "+
 			"(This is the check Suspended: false would have failed for months.)", name)
+	}
+}
+
+// ── The scene envelope, and the state it must not be confused with ─────────
+
+// GetSceneState must report "never polled" as something other than "nothing
+// disabled".
+//
+// Both are an empty DisabledPaths, and Springfield has four lanes switched
+// off right now — so a consumer that reads the slice alone renders those four
+// as enabled for every window before the first successful poll: boot,
+// reconnect, or a backend that does not implement this at all. That is
+// exactly the false reassurance the field was carried to prevent, and it is
+// the guide's own rule ("no data, zero and not applicable must look
+// different") failing at the type rather than at the CSS.
+//
+// Asserted through the interface rather than the concrete adapter, because
+// the property belongs to the contract: any backend added later has to keep
+// it.
+func TestSceneState_NeverPolledIsNotNothingDisabled(t *testing.T) {
+	var p fleet.SceneStateProvider = New(Config{BaseURL: "http://127.0.0.1:1", Timeout: time.Millisecond})
+
+	state, ok := p.GetSceneState()
+	if ok {
+		t.Fatal("a freshly constructed adapter has never seen the envelope and must report so")
+	}
+	if len(state.DisabledPaths) != 0 || !state.ObservedAt.IsZero() {
+		t.Errorf("unobserved state should be empty, got %+v", state)
+	}
+
+	// After an observation with genuinely nothing disabled, the VALUE is
+	// identical and only the flag separates them. That is the whole point:
+	// if the flag were dropped these two cases would be one.
+	a := p.(*Adapter)
+	a.sceneMu.Lock()
+	a.sceneState, a.sceneSeen = mapSceneState(&rds.RobotsStatusResponse{SceneMD5: "abc"}, time.Now()), true
+	a.sceneMu.Unlock()
+
+	observed, ok := p.GetSceneState()
+	if !ok {
+		t.Fatal("after an observation the flag must be true")
+	}
+	if len(observed.DisabledPaths) != 0 {
+		t.Fatalf("fixture: this case must also have an empty slice, got %v", observed.DisabledPaths)
+	}
+	if observed.ObservedAt.IsZero() {
+		t.Error("an observed state must carry when it was observed")
+	}
+}
+
+// The envelope's disabled lanes are unwrapped from the vendor's object form,
+// and blanks are dropped rather than becoming empty ids.
+//
+// Four lanes are disabled at Springfield as of 2026-08-06 and none at
+// Hopkinsville, so this is read straight off the captured fixtures: the
+// numbers are the plant's, not a hand-built literal.
+func TestSceneState_DisabledPathsComeOffTheWire(t *testing.T) {
+	want := map[string]int{"springfield": 4, "hopkinsville": 0}
+	for plant, path := range fixtures {
+		raw, err := os.ReadFile(filepath.FromSlash(path))
+		if err != nil {
+			t.Fatalf("read fixture: %v", err)
+		}
+		var resp rds.RobotsStatusResponse
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			t.Fatalf("%s: parse: %v", plant, err)
+		}
+		state := mapSceneState(&resp, time.Now())
+		if got := len(state.DisabledPaths); got != want[plant] {
+			t.Errorf("%s: %d disabled paths, want %d", plant, got, want[plant])
+		}
+		if state.SceneMD5 == "" {
+			t.Errorf("%s: scene_md5 did not survive the envelope", plant)
+		}
+		for _, id := range state.DisabledPaths {
+			if id == "" {
+				t.Errorf("%s: an empty id reached the list", plant)
+			}
+		}
 	}
 }
