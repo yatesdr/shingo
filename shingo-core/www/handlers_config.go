@@ -178,8 +178,8 @@ func (h *Handlers) handleConfigTestEmail(w http.ResponseWriter, r *http.Request)
 
 func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request) {
 	alertType := r.URL.Query().Get("type")
-	if alertType != "fault" && alertType != "fail" && alertType != "cleared" {
-		http.Error(w, "type must be fault or fail", http.StatusBadRequest)
+	if alertType != "fault" && alertType != "fail" && alertType != "cleared" && alertType != "chain" {
+		http.Error(w, "type must be fault, fail, cleared, or chain", http.StatusBadRequest)
 		return
 	}
 
@@ -199,8 +199,43 @@ func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var subject, body string
+	addr := fmt.Sprintf("%s:%d", n.SMTPHost, n.SMTPPort)
+	sendMail := notify.PlainSend
+	if n.SMTPTLS {
+		sendMail = notify.TLSSend
+	}
 	testRobotID := "ROBOT-42"
+
+	if alertType == "chain" {
+		msgID := notify.GenerateMessageID("fault-chain-test")
+		subject := notify.FaultSubject(testRobotID)
+		body := notify.FaultAlert(99999, "test-edge-uuid", "STATION-01", "Simulated fault for chain testing", testRobotID)
+		if err := sendMail(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, subject, body, notify.WithMessageID(msgID)); err != nil {
+			log.Printf("config: test chain fault failed: %v", err)
+			json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "Fault email failed: " + err.Error()})
+			return
+		}
+
+		time.Sleep(2 * time.Second)
+
+		clearSubject := notify.FaultClearedSubject(testRobotID)
+		clearBody := notify.FaultClearedAlert(99999, "test-edge-uuid", "STATION-01", testRobotID, "3 m 0 s")
+		if err := sendMail(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, clearSubject, clearBody,
+			notify.WithMessageID(notify.GenerateMessageID("cleared-chain-test")),
+			notify.WithInReplyTo(msgID),
+			notify.WithReferences(msgID),
+		); err != nil {
+			log.Printf("config: test chain cleared failed: %v", err)
+			json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "Fault sent, but cleared email failed: " + err.Error()})
+			return
+		}
+
+		log.Printf("config: test chain sent to %d recipient(s)", len(n.Recipients))
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": fmt.Sprintf("Test fault chain sent to %d recipient(s) — check email threading", len(n.Recipients))})
+		return
+	}
+
+	var subject, body string
 	switch alertType {
 	case "fault":
 		subject = notify.FaultSubject(testRobotID)
@@ -210,10 +245,9 @@ func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request)
 		body = notify.FailAlert(99999, "test-edge-uuid", "STATION-01", "SIM_FAULT", "Simulated order failure for testing", testRobotID)
 	case "cleared":
 		subject = notify.FaultClearedSubject(testRobotID)
-		body = notify.FaultClearedAlert(99999, "test-edge-uuid", "STATION-01", testRobotID)
+		body = notify.FaultClearedAlert(99999, "test-edge-uuid", "STATION-01", testRobotID, "")
 	}
 
-	addr := fmt.Sprintf("%s:%d", n.SMTPHost, n.SMTPPort)
 	var sendErr error
 	if n.SMTPTLS {
 		sendErr = notify.TLSSend(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, subject, body)

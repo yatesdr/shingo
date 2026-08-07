@@ -1,14 +1,17 @@
 package notify
 
 import (
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/mail"
 	"net/smtp"
+	"time"
 )
 
-func PlainSend(addr, user, password, from string, to []string, subject, body string) error {
+func PlainSend(addr, user, password, from string, to []string, subject, body string, opts ...SendOption) error {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", addr, err)
@@ -27,7 +30,7 @@ func PlainSend(addr, user, password, from string, to []string, subject, body str
 		}
 	}
 
-	msg := formatMessage(from, to, subject, body)
+	msg := formatMessage(from, to, subject, body, opts...)
 	if err = client.Mail(from); err != nil {
 		return fmt.Errorf("smtp mail from: %w", err)
 	}
@@ -49,7 +52,7 @@ func PlainSend(addr, user, password, from string, to []string, subject, body str
 	return client.Quit()
 }
 
-func TLSSend(addr, user, password, from string, to []string, subject, body string) error {
+func TLSSend(addr, user, password, from string, to []string, subject, body string, opts ...SendOption) error {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", addr, err)
@@ -72,7 +75,7 @@ func TLSSend(addr, user, password, from string, to []string, subject, body strin
 			return fmt.Errorf("smtp auth: %w", err)
 		}
 	}
-	msg := formatMessage(from, to, subject, body)
+	msg := formatMessage(from, to, subject, body, opts...)
 	if err = client.Mail(from); err != nil {
 		return fmt.Errorf("smtp mail from: %w", err)
 	}
@@ -94,11 +97,43 @@ func TLSSend(addr, user, password, from string, to []string, subject, body strin
 	return client.Quit()
 }
 
+type sendOptions struct {
+	messageID  string
+	inReplyTo  string
+	references string
+}
+
+type SendOption func(*sendOptions)
+
+func WithMessageID(id string) SendOption {
+	return func(o *sendOptions) { o.messageID = id }
+}
+
+func WithInReplyTo(id string) SendOption {
+	return func(o *sendOptions) { o.inReplyTo = id }
+}
+
+func WithReferences(id string) SendOption {
+	return func(o *sendOptions) { o.references = id }
+}
+
+func GenerateMessageID(prefix string) string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	ts := time.Now().Format("20060102-150405")
+	return fmt.Sprintf("<%s-%s-%s@shingo>", prefix, ts, hex.EncodeToString(b))
+}
+
 func FormatMessage(from string, to []string, subject, body string) string {
 	return formatMessage(from, to, subject, body)
 }
 
-func formatMessage(from string, to []string, subject, body string) string {
+func formatMessage(from string, to []string, subject, body string, opts ...SendOption) string {
+	var o sendOptions
+	for _, fn := range opts {
+		fn(&o)
+	}
+
 	rfcFrom := from
 	if _, err := mail.ParseAddress(from); err != nil {
 		rfcFrom = fmt.Sprintf("<%s>", from)
@@ -109,6 +144,15 @@ func formatMessage(from string, to []string, subject, body string) string {
 		for _, r := range to[1:] {
 			msg += fmt.Sprintf("To: %s\r\n", r)
 		}
+	}
+	if o.messageID != "" {
+		msg += fmt.Sprintf("Message-ID: %s\r\n", o.messageID)
+	}
+	if o.inReplyTo != "" {
+		msg += fmt.Sprintf("In-Reply-To: %s\r\n", o.inReplyTo)
+	}
+	if o.references != "" {
+		msg += fmt.Sprintf("References: %s\r\n", o.references)
 	}
 	msg += fmt.Sprintf("Subject: %s\r\n", subject)
 	msg += "MIME-Version: 1.0\r\n"

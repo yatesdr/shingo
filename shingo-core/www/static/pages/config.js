@@ -60,7 +60,7 @@ async function testNotifAlert(btn) {
     el.textContent = 'Error: ' + err.message;
   } finally {
     btn.disabled = false;
-    btn.textContent = alertType === 'fault' ? 'Test Fault Alert' : alertType === 'fail' ? 'Test Fail Alert' : 'Test Fault Cleared';
+    btn.textContent = alertType === 'fault' ? 'Test Fault Alert' : alertType === 'fail' ? 'Test Fail Alert' : alertType === 'cleared' ? 'Test Fault Cleared' : 'Test Fault Chain (sending...)';
   }
 }
 

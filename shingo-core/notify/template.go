@@ -99,7 +99,7 @@ func FaultClearedSubject(robotID string) string {
 	return "Shingo Fault Cleared"
 }
 
-func FaultClearedAlert(orderID int64, edgeUUID, stationID, robotID string) string {
+func FaultClearedAlert(orderID int64, edgeUUID, stationID, robotID, timeFaulted string) string {
 	var b strings.Builder
 	b.WriteString("SHINGO FAULT CLEARED\n")
 	b.WriteString("====================\n\n")
@@ -112,6 +112,9 @@ func FaultClearedAlert(orderID int64, edgeUUID, stationID, robotID string) strin
 	}
 	if robotID != "" {
 		b.WriteString(fmt.Sprintf("Robot ID:     %s\n", robotID))
+	}
+	if timeFaulted != "" {
+		b.WriteString(fmt.Sprintf("Time Faulted: %s\n", timeFaulted))
 	}
 	b.WriteString(fmt.Sprintf("Time:         %s\n", time.Now().Format(time.RFC1123)))
 	b.WriteString("\n")

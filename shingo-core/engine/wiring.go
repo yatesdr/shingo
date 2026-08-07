@@ -538,9 +538,24 @@ func (e *Engine) wireEventHandlers() {
 	// Fault emails are buffered: the order must remain faulted for 3
 	// minutes before the alert fires. A recovery within that window
 	// cancels the pending email. Fail and GraceExpired fire immediately.
+	//
+	// Fault and Cleared emails are threaded: the fault email carries a
+	// Message-ID header; the cleared email replies to it so email
+	// clients group them as a conversation.
+
+	type faultSentInfo struct {
+		messageID   string
+		sentAt      time.Time
+		robotID     string
+		edgeUUID    string
+		stationID   string
+	}
 
 	var faultTimersMu sync.Mutex
 	faultTimers := make(map[int64]*time.Timer)
+
+	var faultSentMu sync.Mutex
+	faultSent := make(map[int64]faultSentInfo)
 
 	const faultBufferDuration = 3 * time.Minute
 
@@ -559,10 +574,23 @@ func (e *Engine) wireEventHandlers() {
 			faultTimersMu.Lock()
 			delete(faultTimers, ev.OrderID)
 			faultTimersMu.Unlock()
-			_ = e.notifier.Send(
+
+			msgID := notify.GenerateMessageID(fmt.Sprintf("fault-%d", ev.OrderID))
+			_ = e.notifier.SendWithHeaders(
 				notify.FaultSubject(robotID),
 				notify.FaultAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.Reason, robotID),
+				notify.WithMessageID(msgID),
 			)
+
+			faultSentMu.Lock()
+			faultSent[ev.OrderID] = faultSentInfo{
+				messageID: msgID,
+				sentAt:    time.Now(),
+				robotID:   robotID,
+				edgeUUID:  ev.EdgeUUID,
+				stationID: ev.StationID,
+			}
+			faultSentMu.Unlock()
 		})
 		faultTimersMu.Unlock()
 	}, EventOrderFaulted)
@@ -584,9 +612,32 @@ func (e *Engine) wireEventHandlers() {
 		}
 		faultTimersMu.Unlock()
 
-		_ = e.notifier.Send(
+		var opts []notify.SendOption
+		var timeFaulted string
+
+		faultSentMu.Lock()
+		if info, ok := faultSent[ev.OrderID]; ok {
+			d := time.Since(info.sentAt).Round(time.Second)
+			timeFaulted = fmt.Sprintf("%d m %d s", int(d.Minutes()), int(d.Seconds())%60)
+			opts = []notify.SendOption{
+				notify.WithInReplyTo(info.messageID),
+				notify.WithReferences(info.messageID),
+				notify.WithMessageID(notify.GenerateMessageID(fmt.Sprintf("cleared-%d", ev.OrderID))),
+			}
+			delete(faultSent, ev.OrderID)
+			if ev.EdgeUUID == "" {
+				ev.EdgeUUID = info.edgeUUID
+			}
+			if ev.StationID == "" {
+				ev.StationID = info.stationID
+			}
+		}
+		faultSentMu.Unlock()
+
+		_ = e.notifier.SendWithHeaders(
 			notify.FaultClearedSubject(robotID),
-			notify.FaultClearedAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, robotID),
+			notify.FaultClearedAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, robotID, timeFaulted),
+			opts...,
 		)
 	}, EventOrderFaultedRecovered)
 
