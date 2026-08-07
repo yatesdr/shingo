@@ -78,6 +78,16 @@ func (db *DB) AreaWindows(from, to time.Time) (map[string]*robotconfidence.AreaW
 	return robotconfidence.AreaWindows(db.DB, from, to)
 }
 
+// LaneWindowBetween and PlantWindowBetween back the change annotation: the
+// days either side of an edit, and what the whole plant did over the same days.
+func (db *DB) LaneWindowBetween(area, lane string, from, to time.Time) (*robotconfidence.LaneWindow, error) {
+	return robotconfidence.LaneWindowBetween(db.DB, area, lane, from, to)
+}
+
+func (db *DB) PlantWindowBetween(from, to time.Time) (*robotconfidence.LaneWindow, error) {
+	return robotconfidence.PlantWindowBetween(db.DB, from, to)
+}
+
 // AreaClassLookup adapts store/sceneversion to robotconfidence's
 // AreaClassResolver, so the zone roll-up can label each row with the class of
 // zone it describes without the two packages importing each other.

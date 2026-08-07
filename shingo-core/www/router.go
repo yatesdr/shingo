@@ -258,6 +258,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			// The localization overlay for the robots page: lane state, zones,
 			// reflectors and the map change log. Geometry stays on /api/map/edges.
 			r.Get("/robots/localization", h.apiLocalizationBoard)
+			// The change annotation for one lane, on demand -- most lanes have
+			// never been edited, so it is not folded into the board payload.
+			r.Get("/robots/lane-change", h.apiLaneChange)
 
 			// Operations Overview (plant footprint)
 			r.Get("/footprint", h.apiFootprint)

@@ -250,3 +250,84 @@ func AreaWindows(db *sql.DB, from, to time.Time) (map[string]*AreaWindow, error)
 	}
 	return out, nil
 }
+
+// LaneWindowBetween sums one lane's daily rows over an arbitrary day range.
+//
+// The change annotation needs the days BEFORE an edit and the days AFTER it,
+// which is a different question from "the last 7 days" — the boundary is the
+// edit, not the calendar. Same summing, narrower key.
+func LaneWindowBetween(db *sql.DB, area, lane string, from, to time.Time) (*LaneWindow, error) {
+	rows, err := db.Query(
+		`SELECT day, samples, samples_good, sentinel_samples, robots,
+		        coalesce(conf_hist, '{}')
+		   FROM lane_confidence_daily
+		  WHERE area_name = $1 AND lane = $2 AND day >= $3 AND day < $4`,
+		area, lane, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("lane window between: %w", err)
+	}
+	defer rows.Close()
+
+	w := &LaneWindow{Area: area, Lane: lane}
+	days := map[string]bool{}
+	for rows.Next() {
+		var day time.Time
+		var hist string
+		var samples, good, sentinel, nrobots int
+		if err := rows.Scan(&day, &samples, &good, &sentinel, &nrobots, &hist); err != nil {
+			return nil, err
+		}
+		_ = nrobots // robots_seen has no proportions, so the "5 of 6 in common"
+		// clause the plan asks for cannot be built from it -- see the grain
+		// decision in §9. Read and discarded rather than silently unselected.
+		w.Samples += samples
+		w.SamplesGood += good
+		w.SentinelSamples += sentinel
+		days[day.Format("2006-01-02")] = true
+		if h, ok := HistFromSlice(parsePGInt32Array(hist)); ok {
+			w.Hist.Merge(h)
+		} else {
+			w.HistIncomplete = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	w.Days = len(days)
+	return w, nil
+}
+
+// PlantWindowBetween is the same sum over EVERY lane, which is the baseline the
+// annotation is required to carry.
+//
+// WITHOUT IT A LANE TAKES CREDIT FOR THE WEATHER. A lane that rose 0.09 while
+// the whole plant rose 0.08 has not improved by 0.09; it has improved by 0.01.
+// Eleven characters on the face of the annotation defeat an entire class of
+// false attribution, which is why the plan makes this mandatory rather than a
+// toggle.
+func PlantWindowBetween(db *sql.DB, from, to time.Time) (*LaneWindow, error) {
+	rows, err := db.Query(
+		`SELECT samples, samples_good, sentinel_samples, coalesce(conf_hist, '{}')
+		   FROM lane_confidence_daily WHERE day >= $1 AND day < $2`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("plant window between: %w", err)
+	}
+	defer rows.Close()
+	w := &LaneWindow{Area: "", Lane: "*"}
+	for rows.Next() {
+		var hist string
+		var samples, good, sentinel int
+		if err := rows.Scan(&samples, &good, &sentinel, &hist); err != nil {
+			return nil, err
+		}
+		w.Samples += samples
+		w.SamplesGood += good
+		w.SentinelSamples += sentinel
+		if h, ok := HistFromSlice(parsePGInt32Array(hist)); ok {
+			w.Hist.Merge(h)
+		} else {
+			w.HistIncomplete = true
+		}
+	}
+	return w, rows.Err()
+}

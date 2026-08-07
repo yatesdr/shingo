@@ -2578,3 +2578,15 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .lb-zones-tbl td { padding:2px 4px; color:var(--text-muted); font-variant-numeric:tabular-nums; }
 .lb-zones-tbl tbody tr:hover { background:var(--elev-raised); }
 .lb-undrawn { color:var(--text-muted); font-size:.65rem; border:1px solid currentColor; border-radius:6px; padding:0 4px; }
+#lb-map.lb-dragging { cursor:grabbing; }
+.lb-change { width:100%; border-collapse:collapse; font-size:.78rem; margin-top:4px; }
+.lb-change td { padding:3px 4px; color:var(--text-muted); vertical-align:top; }
+.lb-change td:first-child { color:var(--text-muted); white-space:nowrap; }
+.lb-change.lb-thin { opacity:.55; }
+.lb-change-hd { font-size:.78rem; color:var(--text-strong); margin-top:4px; }
+.lb-plant { color:var(--text-muted); font-size:.72rem; }
+.lb-better { color:var(--viz-green); }
+.lb-worse  { color:var(--viz-coral); }
+.lb-neutral { color:var(--text-strong); }
+.lb-warn-inline { color:var(--viz-amber); }
+.lb-suppressed { color:var(--viz-amber); font-size:.72rem; line-height:1.4; }

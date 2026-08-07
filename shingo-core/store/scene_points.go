@@ -61,6 +61,12 @@ func (db *DB) LanesChangedIn(from, to time.Time) (map[string]bool, error) {
 	return sceneversion.LanesChangedIn(db.DB, from, to)
 }
 
+// LaneLastChange reports when a lane's geometry last changed and by how far.
+// A first version does not count. See sceneversion.LastChange.
+func (db *DB) LaneLastChange(area, lane string) (time.Time, *float64, bool, error) {
+	return sceneversion.LastChange(db.DB, area, lane)
+}
+
 // ApplyMapSnapshot archives one observed .smap and versions its areas and
 // reflectors. See sceneversion.ApplyMapSnapshot.
 func (db *DB) ApplyMapSnapshot(snap sceneversion.MapSnapshot, previousSync *time.Time) (sceneversion.MapSyncResult, error) {

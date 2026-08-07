@@ -235,3 +235,23 @@ func LanesChangedIn(db *sql.DB, from, to time.Time) (map[string]bool, error) {
 	}
 	return out, rows.Err()
 }
+
+// LastChange is when a lane's geometry last actually changed, and by how far.
+//
+// A FIRST VERSION IS NOT A CHANGE. Every lane has one and it opens at the
+// beginning of time, so a query that merely found the newest version would
+// report every lane in the plant as freshly edited. A change supersedes
+// something.
+func LastChange(db *sql.DB, area, lane string) (at time.Time, deltaM *float64, ok bool, err error) {
+	e := db.QueryRow(
+		`SELECT valid_from, max_vertex_delta_m FROM scene_lane_versions
+		  WHERE area_name=$1 AND lane=$2 AND supersedes_id IS NOT NULL
+		  ORDER BY valid_from DESC LIMIT 1`, area, lane).Scan(&at, &deltaM)
+	if e == sql.ErrNoRows {
+		return time.Time{}, nil, false, nil
+	}
+	if e != nil {
+		return time.Time{}, nil, false, fmt.Errorf("sceneversion: last change: %w", e)
+	}
+	return at, deltaM, true, nil
+}

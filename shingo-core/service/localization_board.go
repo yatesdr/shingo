@@ -338,3 +338,138 @@ func bandFor(p50 *float64, samples int) BoardBand {
 		return BandBlind
 	}
 }
+
+// ── The change annotation ──────────────────────────────────────────────────
+//
+// The board answers "how is this lane". The annotation answers the different
+// question an engineer actually arrives with: "I changed this — did it help?"
+//
+// ITS WINDOWS ARE BOUNDED BY THE EDIT, NOT BY A CALENDAR DAY. A lane edited at
+// 14:12 Tuesday splits Tuesday, so a day-grained before/after would compare a
+// mixture to a mixture. The version boundary is the boundary.
+
+// LaneChange is the before/after of one edit, with the guards on the face of it.
+type LaneChange struct {
+	ChangedAt time.Time `json:"changed_at"`
+	// MovedM is how far the geometry moved. Null when the change was a redraw
+	// (a lane that gained or lost a vertex has no distance) rather than a move.
+	MovedM *float64 `json:"moved_m"`
+
+	// NoEstimateBefore/After LEAD, and that ordering is guard #1. Inside a
+	// reflector-declared zone a robot returns a clean reading or none at all,
+	// so routing INTO a bad zone makes the conditioned average go UP while
+	// things get worse. The miss rate is the honest signal; the average is not.
+	NoEstimateBefore float64 `json:"no_estimate_before"`
+	NoEstimateAfter  float64 `json:"no_estimate_after"`
+	// SuppressP50 is guard #1's teeth: when the miss rate moved materially the
+	// p50 delta is not comparable across the edit and must not be shown as if
+	// it were. The reason travels with it so the panel can say why.
+	SuppressP50 bool   `json:"suppress_p50"`
+	Suppressed  string `json:"suppressed,omitempty"`
+
+	P50Before *float64 `json:"p50_before"`
+	P50After  *float64 `json:"p50_after"`
+	// PlantDelta is guard #2, and it is NOT optional. A lane that rose 0.09
+	// while the plant rose 0.08 has improved by 0.01, not by 0.09.
+	PlantDelta *float64 `json:"plant_delta"`
+
+	// Both counts and both window lengths, on the face of it — guard #3. The
+	// guide's own worked failure is a true count that misled every document
+	// carrying it, because the window did not travel with it.
+	NBefore    int `json:"n_before"`
+	NAfter     int `json:"n_after"`
+	DaysBefore int `json:"days_before"`
+	DaysAfter  int `json:"days_after"`
+
+	// BelowMinN greys the annotation rather than hiding it — guard #4.
+	// Absence reads as fine.
+	BelowMinN bool `json:"below_min_n"`
+}
+
+// P50Delta is the raw movement, or nil when either side is unknown.
+func (c LaneChange) P50Delta() *float64 {
+	if c.P50Before == nil || c.P50After == nil {
+		return nil
+	}
+	d := *c.P50After - *c.P50Before
+	return &d
+}
+
+// noEstimateMovedMaterially is guard #1's threshold.
+//
+// Ten points. Below that the two conditioned figures are comparable enough to
+// put side by side; above it they are measuring different populations and the
+// delta is an artifact of what survived, not of what changed.
+const noEstimateMovedMaterially = 0.10
+
+// LaneChangeAt builds the annotation for a lane's most recent edit.
+//
+// Returns ok=false when the lane has never been edited — which is most lanes,
+// and is not an error. There is nothing to annotate on a lane nobody touched.
+func (s *NodeService) LaneChangeAt(area, lane string, now time.Time) (LaneChange, bool, error) {
+	var out LaneChange
+	at, moved, ok, err := s.db.LaneLastChange(area, lane)
+	if err != nil || !ok {
+		return out, false, err
+	}
+	out.ChangedAt, out.MovedM = at, moved
+
+	// Day-aligned either side of the edit, because the stored rows are daily.
+	// The edit day itself belongs to NEITHER window: it is a mixture of both
+	// geometries, and assigning it to one side would put readings taken before
+	// the change into the "after" column.
+	editDay := at.UTC().Truncate(24 * time.Hour)
+	beforeTo := editDay
+	beforeFrom := beforeTo.AddDate(0, 0, -14)
+	afterFrom := editDay.AddDate(0, 0, 1)
+	afterTo := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
+
+	before, err := s.db.LaneWindowBetween(area, lane, beforeFrom, beforeTo)
+	if err != nil {
+		return out, false, err
+	}
+	after, err := s.db.LaneWindowBetween(area, lane, afterFrom, afterTo)
+	if err != nil {
+		return out, false, err
+	}
+	out.NBefore, out.NAfter = before.Samples, after.Samples
+	out.DaysBefore, out.DaysAfter = before.Days, after.Days
+	out.BelowMinN = before.Samples < BoardMinSamples || after.Samples < BoardMinSamples
+
+	rate := func(w *robotconfidence.LaneWindow) float64 {
+		if w.Samples == 0 {
+			return 0
+		}
+		return float64(w.SentinelSamples) / float64(w.Samples)
+	}
+	out.NoEstimateBefore, out.NoEstimateAfter = rate(before), rate(after)
+	if d := out.NoEstimateAfter - out.NoEstimateBefore; d > noEstimateMovedMaterially || d < -noEstimateMovedMaterially {
+		out.SuppressP50 = true
+		out.Suppressed = fmt.Sprintf("the no-estimate rate moved %.0f points",
+			(out.NoEstimateAfter-out.NoEstimateBefore)*100)
+	}
+
+	if v, ok := before.PercentileEstimate(0.50); ok {
+		out.P50Before = &v
+	}
+	if v, ok := after.PercentileEstimate(0.50); ok {
+		out.P50After = &v
+	}
+
+	// The plant over the SAME days, so the comparison is like for like.
+	pb, err := s.db.PlantWindowBetween(beforeFrom, beforeTo)
+	if err != nil {
+		return out, false, err
+	}
+	pa, err := s.db.PlantWindowBetween(afterFrom, afterTo)
+	if err != nil {
+		return out, false, err
+	}
+	if b, ok1 := pb.PercentileEstimate(0.50); ok1 {
+		if a, ok2 := pa.PercentileEstimate(0.50); ok2 {
+			d := a - b
+			out.PlantDelta = &d
+		}
+	}
+	return out, true, nil
+}

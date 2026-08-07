@@ -212,3 +212,29 @@ func (h *Handlers) apiLocalizationBoard(w http.ResponseWriter, r *http.Request) 
 	}
 	h.jsonOK(w, board)
 }
+
+// apiLaneChange serves the change annotation for one lane's most recent edit.
+//
+// Its own endpoint rather than a field on the board payload: most lanes have
+// never been edited, so folding it in would compute a before/after for 212
+// lanes to answer a question about the one the reader clicked.
+func (h *Handlers) apiLaneChange(w http.ResponseWriter, r *http.Request) {
+	area := r.URL.Query().Get("area")
+	lane := r.URL.Query().Get("lane")
+	if area == "" || lane == "" {
+		h.jsonError(w, "area and lane are required", http.StatusBadRequest)
+		return
+	}
+	ch, ok, err := h.engine.NodeService().LaneChangeAt(area, lane, time.Now())
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		// Never edited is not an error and not an empty annotation — it is a
+		// different answer, and the page renders it as one.
+		h.jsonOK(w, map[string]any{"changed": false})
+		return
+	}
+	h.jsonOK(w, map[string]any{"changed": true, "annotation": ch})
+}

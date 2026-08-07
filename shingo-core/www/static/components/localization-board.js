@@ -91,6 +91,7 @@ export function createBoard(root, opts) {
         showChanges: true, showReflectors: true,
         selected: null,      // lane key: area + lane, as serverLaneKey builds it
         focusDiff: null,     // diff id — dims lanes that edit did not touch
+        change: null,        // the selected lane's annotation, fetched on select
         robots: [],
         // Viewport. scale/tx/ty are the screen transform; strokes divide by
         // scale so they hold their SCREEN size — a lane that thickened as you
@@ -193,34 +194,60 @@ export function createBoard(root, opts) {
         state.scale = s2;
         applyTransform();
     }
+    // ── pan / zoom, taken from the kiosk map's shape ─────────────────────
+    //
+    // NO setPointerCapture, AND THAT IS THE WHOLE FIX. Capturing the pointer
+    // on the SVG redirects every subsequent pointer event to the SVG itself,
+    // so `pointerup`'s target was ALWAYS #lb-map and never the lane under the
+    // cursor -- closest('[data-lane]') found nothing and clicking a lane did
+    // nothing at all. dashboard-map.js has never had this bug because it never
+    // captures: mousedown on the host, mousemove/mouseup on WINDOW.
+    //
+    // Listening on window rather than the element is also what makes the drag
+    // feel right: the pan keeps tracking when the cursor leaves the map, and
+    // releasing outside still ends it, instead of the map sticking to the
+    // pointer until you come back.
     map.addEventListener('wheel', function (e) {
         e.preventDefault();
         const r = map.getBoundingClientRect();
-        zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 0.89);
+        // Gentle per-notch, same 1.12 the kiosk uses -- a full wheel click
+        // should nudge, not jump.
+        zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY > 0 ? 1 / 1.12 : 1.12);
     }, { passive: false });
 
-    let drag = null;
-    map.addEventListener('pointerdown', function (e) {
+    let drag = null, suppressClick = false;
+    map.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return;
         drag = { x: e.clientX, y: e.clientY, tx: state.tx, ty: state.ty, moved: 0 };
-        map.setPointerCapture(e.pointerId);
+        map.classList.add('lb-dragging');
     });
-    map.addEventListener('pointermove', function (e) {
+    window.addEventListener('mousemove', function (e) {
         if (!drag) return;
         const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-        drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
+        if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = 1;
         state.tx = drag.tx + dx; state.ty = drag.ty + dy;
         applyTransform();
     });
-    map.addEventListener('pointerup', function (e) {
-        // A DRAG MUST NOT REGISTER AS A SELECTION. Without the threshold every
-        // pan that ends over a lane silently changes what the panel describes.
-        const wasDrag = drag && drag.moved > 4;
+    window.addEventListener('mouseup', function () {
+        if (!drag) return;
+        // A drag that ends over a lane must not also select it.
+        if (drag.moved) suppressClick = true;
         drag = null;
-        map.releasePointerCapture(e.pointerId);
-        if (wasDrag) return;
-        const t = e.target.closest && e.target.closest('[data-lane]');
-        select(t ? t.dataset.lane : null);
+        map.classList.remove('lb-dragging');
     });
+
+    // Selection rides on `click`, not on pointerup, so the browser resolves the
+    // target the ordinary way -- the element actually under the cursor.
+    map.addEventListener('click', function (e) {
+        if (suppressClick) { suppressClick = false; return; }
+        let t = e.target;
+        while (t && t !== map && !(t.getAttribute && t.getAttribute('data-lane'))) t = t.parentNode;
+        const id = (t && t.getAttribute) ? t.getAttribute('data-lane') : null;
+        // Clicking the selected lane again clears it, the way the kiosk map
+        // toggles a focused robot.
+        select(id === state.selected ? null : id);
+    });
+
     map.addEventListener('dblclick', fit);
 
     function fit() {
@@ -469,7 +496,84 @@ export function createBoard(root, opts) {
         });
     }
 
-    function select(key) { state.selected = key; draw(); drawPanel(); }
+    function select(key) {
+        state.selected = key;
+        state.change = null;
+        draw();
+        drawPanel();
+        if (!key) return;
+        // Fetched per selection rather than carried on the board payload: most
+        // lanes have never been edited, so folding it in would compute a
+        // before/after for every lane to answer a question about one.
+        const row = laneRows().find(function (r) { return r.key === key; });
+        if (!row || !row.st) return;
+        const q = '?area=' + encodeURIComponent(row.st.area) + '&lane=' + encodeURIComponent(row.st.lane);
+        const get = o.fetchChange ? o.fetchChange(row.st.area, row.st.lane)
+            : fetch('/api/robots/lane-change' + q).then(function (r) { return r.json(); });
+        get.then(function (d) {
+            if (state.selected !== key) return; // selection moved on
+            state.change = d && d.changed ? d.annotation : { none: true };
+            drawPanel();
+        }).catch(function () { /* the panel simply omits it */ });
+    }
+
+    // annotationBlock renders the four guards, or says plainly why it cannot.
+    function annotationBlock() {
+        const c = state.change;
+        if (!c) return '';
+        if (c.none) {
+            return '<div class="lb-hist-title">Change</div>' +
+                '<p class="lb-note">This lane has never been edited. Nothing to compare — ' +
+                'and that is a different statement from "no effect".</p>';
+        }
+        const pct = function (v) { return (v * 100).toFixed(0) + '%'; };
+        const moved = (c.moved_m === null || c.moved_m === undefined)
+            ? 'redrawn (no distance — it gained or lost a vertex)'
+            : 'moved ' + Number(c.moved_m).toFixed(2) + ' m';
+        let rows = '';
+        // GUARD 1: the miss rate leads, and the p50 is suppressed when it moved.
+        rows += '<tr><td>no estimate</td><td>' + pct(c.no_estimate_before) + ' → ' +
+            pct(c.no_estimate_after) + '</td><td>' +
+            (c.suppress_p50 ? '<span class="lb-warn-inline">moved</span>' : 'unchanged') + '</td></tr>';
+        if (c.suppress_p50) {
+            rows += '<tr><td colspan="3" class="lb-suppressed">p50 delta withheld — ' +
+                (c.suppressed || 'the miss rate moved') +
+                ', so the two averages are over different populations and are not comparable.</td></tr>';
+        } else {
+            const d = (c.p50_before !== null && c.p50_after !== null)
+                ? (c.p50_after - c.p50_before) : null;
+            // GUARD 5: ink follows what is ATTRIBUTABLE. A lane that rose with
+            // the plant shows neutral, not the success colour.
+            let cls = 'lb-neutral';
+            if (d !== null && c.plant_delta !== null && c.plant_delta !== undefined) {
+                const attributable = d - c.plant_delta;
+                if (attributable > 0.02) cls = 'lb-better';
+                else if (attributable < -0.02) cls = 'lb-worse';
+            }
+            rows += '<tr><td>p50</td><td>' + fmtP(c.p50_before) + ' → ' + fmtP(c.p50_after) +
+                '</td><td class="' + cls + '">' +
+                (d === null ? '—' : (d >= 0 ? '+' : '') + d.toFixed(2)) +
+                // GUARD 2: the plant baseline, always, never a toggle.
+                (c.plant_delta === null || c.plant_delta === undefined ? ''
+                    : ' <span class="lb-plant">plant ' + (c.plant_delta >= 0 ? '+' : '') +
+                      Number(c.plant_delta).toFixed(2) + '</span>') +
+                '</td></tr>';
+        }
+        // GUARD 3: both counts AND both window lengths, on the face of it.
+        rows += '<tr><td>n</td><td colspan="2">' + c.n_before + ' before (' + c.days_before +
+            ' d) · ' + c.n_after + ' after (' + c.days_after + ' d)</td></tr>';
+
+        return '<div class="lb-hist-title">Change</div>' +
+            '<div class="lb-change-hd">changed ' + new Date(c.changed_at).toLocaleString() +
+            ' · ' + moved + '</div>' +
+            // GUARD 4: grey below the minimum, never absent. Absence reads as fine.
+            '<table class="lb-change' + (c.below_min_n ? ' lb-thin' : '') + '"><tbody>' +
+            rows + '</tbody></table>' +
+            (c.below_min_n ? '<p class="lb-warn">Below the minimum n on one side of the ' +
+                'edit. Shown greyed rather than hidden — an absent number reads as fine.</p>' : '') +
+            '<p class="lb-note">A diff can say what changed and when, never why. ' +
+            'No author, no reason — nobody types anything.</p>';
+    }
 
     function drawPanel() {
         if (!state.board) { panel.innerHTML = ''; return; }
@@ -517,7 +621,8 @@ export function createBoard(root, opts) {
             (st.hist_incomplete
                 ? '<p class="lb-warn">Part of this window has no stored distribution, so the ' +
                   'percentile covers less than the label claims.</p>' : '') +
-            histBlock(st.hist, 'Distribution');
+            histBlock(st.hist, 'Distribution') +
+            annotationBlock();
     }
 
     // ZONES ARE LISTED FROM THEIR NUMBERS, NOT FROM THEIR SHAPE.
