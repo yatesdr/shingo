@@ -30,6 +30,15 @@ set -euo pipefail
 #                            for "running process but no discoverable config"
 #                            is an error exit, not a confirm).
 
+# Remember the invocation before the arg loop consumes it and before the `cd`
+# below, so the re-exec after `git pull` is faithful.
+#
+# ORIG_ARGS especially: the loop shifts, so "$@" is EMPTY by the time the pull
+# runs. A re-exec using "$@" there would silently drop --yes and turn an
+# unattended fleet update into a confirm prompt that hangs forever.
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+ORIG_ARGS=("$@")
+
 LEGACY_CONFIG_ARG=""
 ASSUME_YES=no
 while [[ $# -gt 0 ]]; do
@@ -156,8 +165,33 @@ config_from_unit() {
     parse_config_flag "$line"
 }
 
-echo "==> Pulling latest changes..."
-git pull
+# Pull, then re-exec if this script itself changed.
+#
+# Without this the installer pulls a new version of ITSELF and then finishes
+# the run as the OLD one. git replaces a tracked file by writing a temp and
+# renaming over it -- measured, a fresh inode every pull -- so the running bash
+# keeps reading the original content through its open fd. That is safe (there
+# is no torn read or byte-offset hazard here; renaming is what makes it safe),
+# but it means every fix to this script lands one run late. The config
+# discovery fix above is exactly that case: pull it at a plant, and the run
+# that pulled it still discovers the old way.
+#
+# So: hash this file before and after. Unchanged, carry on in-process.
+# Changed, exec a fresh bash on the new file so the run uses the logic it just
+# fetched. The sentinel keeps the second run from pulling again, so it cannot
+# loop. Verified at 72 KB with a mid-run pull: args preserved, one pass, the
+# post-pull logic is what executes.
+if [ -z "${SHINGO_INSTALL_REEXEC:-}" ]; then
+    self_before=$(sha256sum "$SELF" | cut -d' ' -f1)
+    echo "==> Pulling latest changes..."
+    git pull
+    self_after=$(sha256sum "$SELF" | cut -d' ' -f1)
+    if [ "$self_before" != "$self_after" ]; then
+        echo "==> That pull updated the installer -- restarting with the new version."
+        export SHINGO_INSTALL_REEXEC=1
+        exec bash "$SELF" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
+    fi
+fi
 
 # ----------------------------------------------------------------------
 # Discovery
