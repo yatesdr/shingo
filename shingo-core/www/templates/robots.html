@@ -5,6 +5,16 @@
     <span class="text-muted text-sm" id="robot-count">{{len .Robots}} robots</span>
   </div>
 
+  <!-- The localization board. This page was a stub: a tile grid answering
+       "which robots are there". The map answers the question the same reader
+       actually arrives with — WHERE does localization fail, and what changed on
+       the map — and the fleet grid stays below it, unchanged. -->
+  <div id="localization-board" class="mb-2"></div>
+
+  <div class="flex flex-between mb-2">
+    <h2 class="text-sm text-muted">Fleet</h2>
+  </div>
+
   <div class="filter-bar">
     <input type="text" id="robot-search" placeholder="Filter by name..." data-action-input="filterRobots">
     <select id="robot-state-filter" data-action-change="filterRobots">

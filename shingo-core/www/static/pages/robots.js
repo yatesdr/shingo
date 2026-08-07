@@ -1,6 +1,7 @@
 import { api, debounce, delegateActions, el, hideModal, showModal, uiConfirm } from '/static/app.js';
 import { reconcileList, onSSE } from '/static/shared/utils.js';
 import { createRobotTile, updateRobotTile } from '/static/components/RobotTile.js';
+import { createBoard } from '/static/components/localization-board.js';
 
 var currentRobotVehicle = '';
 
@@ -142,3 +143,32 @@ onSSE('robot-update', debounce(function(robots) {
 
   filterRobots();
 }, 2000));
+
+
+// ── The localization board ────────────────────────────────────────────────
+//
+// Booted after the tiles so a slow map fetch never delays the fleet list, which
+// is what someone opening this page in a hurry came for. Robot positions are
+// pushed in from the SSE feed the page already consumes rather than polled
+// again — the fourth refusal of a second poll in this line of work.
+var board = null;
+
+function bootLocalizationBoard() {
+  var root = document.getElementById('localization-board');
+  if (!root) return;
+  board = createBoard(root, {});
+  board.load().catch(function (err) {
+    root.innerHTML = '<p class="lb-empty">Could not load the localization board: ' +
+      (err && err.message ? err.message : err) + '</p>';
+  });
+}
+
+export function pushRobotPositionsToBoard(robots) {
+  if (board) board.setRobots(robots || []);
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootLocalizationBoard);
+} else {
+  bootLocalizationBoard();
+}
