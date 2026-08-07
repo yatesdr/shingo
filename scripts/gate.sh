@@ -15,14 +15,21 @@
 # shared had been in no workflow at all before that — its seven drift-guard
 # tests ran nowhere.
 #
-# NO -race HERE, DELIBERATELY. Race detection costs 2-4x and CI runs it on
-# every push, so locally you would be paying that multiple for a signal
-# arriving ninety seconds later anyway. The local gate's job is "this
-# compiles and behaves"; CI's job is "and it is race-free". If you are
-# actually touching lock acquisition, goroutine spawns, or map/channel/atomic
-# access, run it TARGETED -- `go test -race -run TestRace_ ./thatpkg/...` --
-# rather than module-wide. Stated explicitly because the cautious instinct is
-# to add -race back, and module-wide race runs cost 25-35 minutes each.
+# -race IS SCOPED, NOT ABSENT — and it used to be absent. This header said
+# "NO -race HERE, DELIBERATELY", on the reasoning that module-wide race runs
+# cost 25-35 minutes and CI runs them anyway. The cost argument was right and
+# the conclusion was wrong: a data race on Engine.lastSceneSync shipped on the
+# localization branch behind a comment asserting a serialisation the call graph
+# did not provide, and no invocation of this script could have found it. "Run it
+# targeted if you think you touched concurrency" only works on someone who
+# already knows they did.
+#
+# So `race` runs the detector over ./engine/... and ./www/... — the two packages
+# where a concurrent caller arrives WITHOUT anyone writing a goroutine (the
+# reconnect path, and one goroutine per HTTP request). Scoped to two packages it
+# is about a minute; module-wide it is half an hour. See step_race.
+#
+# It is in `full`, not in `all`. The bare gate stays the fast one.
 #
 # DOCKER SUITES ARE SCOPED, NOT SKIPPED. See `scope` below.
 #
@@ -30,9 +37,11 @@
 #   bash scripts/gate.sh                  fmt, vet, lint, unit tests
 #   bash scripts/gate.sh scope [BASE]     say whether the docker suites are needed
 #                                         (exit 0 = needed, 1 = not needed)
+#   bash scripts/gate.sh race             -race over ./engine/... and ./www/...
+#                                         (borrows WSL's cgo on Windows)
 #   bash scripts/gate.sh docker           run the docker suites (no -race)
-#   bash scripts/gate.sh full [BASE]      the four, then docker only if scope says so
-#   bash scripts/gate.sh fmt|vet|lint|test  one step
+#   bash scripts/gate.sh full [BASE]      the four, then race, then docker if scope says so
+#   bash scripts/gate.sh fmt|vet|lint|test|race  one step
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -313,11 +322,83 @@ step_docker() {
   return $failed
 }
 
+# ── Race ─────────────────────────────────────────────────────────────
+#
+# SCOPED, NOT MODULE-WIDE, AND THAT IS WHY IT CAN EXIST AT ALL.
+#
+# The header above says module-wide race runs cost 25-35 minutes, which is why
+# this script had no race mode and why the local gate is "compiles and behaves"
+# while CI is "and it is race-free". That reasoning is sound and it left a real
+# hole: a data race on Engine.lastSceneSync shipped on this branch behind a
+# comment asserting a serialisation the call graph did not provide, and NO MODE
+# OF THIS SCRIPT COULD HAVE FOUND IT.
+#
+# So the answer is not "add -race to step_test" — it is to run the detector over
+# the two packages where this codebase actually spawns goroutines against shared
+# engine state:
+#
+#   engine/  the connection loop, the reconnect goroutine, the refresh loops
+#   www/     HTTP handlers, which are one goroutine per request by construction
+#
+# Those two are where a concurrent caller arrives without anyone writing a
+# goroutine, which is the shape that gets missed. Everything else in the tree is
+# CI's job.
+#
+# CGO IS REQUIRED AND WINDOWS DOES NOT HAVE IT. `go test -race` needs a C
+# toolchain; the dev host has none, so this step re-enters through WSL and pays
+# the 9p bridge crossing the header measures at 10-20x. That is affordable
+# because the scope is two packages — measured at roughly a minute — and
+# unaffordable module-wide, which is the same trade the header already makes.
+RACE_PKGS="./engine/... ./www/..."
+
+step_race() {
+  local rcmd rrc
+  rcmd="cd \"$ROOT/shingo-core\" && CGO_ENABLED=1 go test -race -count=1 -timeout=15m $RACE_PKGS"
+
+  if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+    # Already inside WSL — run directly.
+    ( eval "$rcmd" >"$ROOT/.gate/race.log" 2>&1 ); rrc=$?
+  elif command -v go >/dev/null 2>&1 && [ "${CGO_ENABLED:-}" = "1" ] && command -v gcc >/dev/null 2>&1; then
+    # A host that genuinely has a C toolchain (a Linux or macOS dev box).
+    ( eval "$rcmd" >"$ROOT/.gate/race.log" 2>&1 ); rrc=$?
+  elif command -v wsl.exe >/dev/null 2>&1; then
+    # Windows: re-enter through WSL, which is the only place cgo exists here.
+    # The path is translated rather than assumed — a worktree is not always
+    # under /mnt/c.
+    local wslroot
+    wslroot="$(wsl.exe -d Ubuntu -- wslpath -a "$(pwd -W 2>/dev/null || pwd)" 2>/dev/null | tr -d '\r\0')"
+    if [ -z "$wslroot" ]; then
+      echo "FAIL race — could not translate $ROOT into a WSL path"
+      return 1
+    fi
+    ( wsl.exe -d Ubuntu -- bash -lc "cd '$wslroot/shingo-core' && CGO_ENABLED=1 go test -race -count=1 -timeout=15m $RACE_PKGS" \
+        >"$ROOT/.gate/race.log" 2>&1 ); rrc=$?
+  else
+    echo "FAIL race — no cgo toolchain and no WSL to borrow one from"
+    echo "  install WSL, or run on a host with gcc: go test -race $RACE_PKGS"
+    return 1
+  fi
+
+  if [ "$rrc" -eq 0 ]; then
+    echo "ok   race ($RACE_PKGS)"
+    return 0
+  fi
+  echo "FAIL race ($ROOT/.gate/race.log)"
+  # WARNING: DATA RACE is the line that matters and it is not near the end, so
+  # grep for it rather than tailing.
+  grep -A 24 'WARNING: DATA RACE' "$ROOT/.gate/race.log" | head -60
+  grep -Ev '^ok |no test files' "$ROOT/.gate/race.log" | head -20
+  return 1
+}
+
+mkdir -p "$ROOT/.gate" 2>/dev/null || true
+
 case "${1:-all}" in
   fmt)   step_fmt  || rc=1 ;;
   vet)   step_vet  || rc=1 ;;
   lint)  step_lint || rc=1 ;;
   test)  step_test || rc=1 ;;
+  race)  step_race || rc=1 ;;
   # EXIT CODE IS THE VERDICT: 0 = docker needed, 1 = not needed. It used to
   # `exit 0` unconditionally, which made the answer readable only by a human
   # reading the text — so nothing could gate on it. `if bash scripts/gate.sh
@@ -330,6 +411,7 @@ case "${1:-all}" in
     step_vet  || rc=1
     step_lint || rc=1
     step_test || rc=1
+    step_race || rc=1
     if step_scope "${2:-}"; then
       step_docker || rc=1
     else
@@ -344,7 +426,7 @@ case "${1:-all}" in
     step_lint || rc=1
     step_test || rc=1
     ;;
-  *) echo "usage: bash scripts/gate.sh [fmt|vet|lint|test|scope|docker|full] [BASE]" >&2; exit 2 ;;
+  *) echo "usage: bash scripts/gate.sh [fmt|vet|lint|test|race|scope|docker|full] [BASE]" >&2; exit 2 ;;
 esac
 
 if [ "$rc" -eq 0 ]; then echo "gate: clean"; else echo "gate: FAILED"; fi

@@ -130,8 +130,24 @@ type Engine struct {
 	// unbounded on the early side.
 	//
 	// Nil until the first sync, which is a real state: the first diff has no
-	// window and must not claim one. Touched only from the scene-sync path,
-	// which is serialised by e.sceneSyncing.
+	// window and must not claim one.
+	//
+	// GUARDED BY sceneGateMu, AND e.sceneSyncing IS NOT THAT GUARD. This
+	// comment used to claim the field was "touched only from the scene-sync
+	// path, which is serialised by e.sceneSyncing", and the call graph does not
+	// provide that on either half of the sentence:
+	//
+	//   - SceneSync computes the gate BEFORE handing the atomic to
+	//     scenesync.Sync, so the CompareAndSwap that serialises syncs happens
+	//     after both callers have already read and written this field.
+	//   - SyncScenePoints reaches sceneGate without touching sceneSyncing at
+	//     all, and is reachable straight from an HTTP handler.
+	//
+	// Three goroutines can arrive together: handleNodeSyncFleet,
+	// handleSceneSync, and the reconnect goroutine in checkConnectionStatus. A
+	// comment promising a guarantee the code does not make is worse than no
+	// comment, because it is the reason nobody looked.
+	sceneGateMu   sync.Mutex
 	lastSceneSync *time.Time
 }
 

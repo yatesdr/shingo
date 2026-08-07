@@ -4058,10 +4058,39 @@ func v81SceneVersioning(tx *sql.Tx) error {
 		// handled where it belongs — the roll-up quarantines those samples
 		// and counts them, because "the scene sync has never run" is a defect
 		// to surface, not a NULL to carry in a key.
+		//
+		// A CONSTRAINT GETS ITS OWN STATEMENT. IT MAY NEVER RIDE ON
+		// `ADD COLUMN IF NOT EXISTS`.
+		//
+		// This is the general rule and it was learned here. v80 above creates
+		// lane_confidence_daily with a bare `version_id BIGINT`, so by the time
+		// this migration runs the column ALWAYS exists — and Postgres skips the
+		// whole ADD COLUMN subcommand when it does, silently including any
+		// REFERENCES / CHECK / UNIQUE clause riding on it. This statement used
+		// to read `ADD COLUMN IF NOT EXISTS version_id BIGINT REFERENCES
+		// scene_lane_versions(id)`, which meant the foreign key was never
+		// created on any database, while the SET NOT NULL below — a separate
+		// statement — applied normally. The column looked constrained in the
+		// migration and in every document, and was not.
+		//
+		// Nothing caught it because internal/schemadump compared two databases
+		// against EACH OTHER: both were built through this same migration, so
+		// both were wrong in the same way and they converged. A guard that
+		// compares a thing to itself cannot see a property both copies lack.
+		//
+		// DROP-then-ADD rather than a bare ADD, because Postgres has no
+		// `ADD CONSTRAINT IF NOT EXISTS` and this migration must stay
+		// re-runnable against a database that already carries the constraint —
+		// the same shape the primary key below uses, for the same reason.
 		`ALTER TABLE lane_confidence_daily
-		   ADD COLUMN IF NOT EXISTS version_id BIGINT REFERENCES scene_lane_versions(id)`,
+		   ADD COLUMN IF NOT EXISTS version_id BIGINT`,
 		`DELETE FROM lane_confidence_daily WHERE version_id IS NULL`,
 		`ALTER TABLE lane_confidence_daily ALTER COLUMN version_id SET NOT NULL`,
+		`ALTER TABLE lane_confidence_daily
+		   DROP CONSTRAINT IF EXISTS lane_confidence_daily_version_id_fkey`,
+		`ALTER TABLE lane_confidence_daily
+		   ADD CONSTRAINT lane_confidence_daily_version_id_fkey
+		   FOREIGN KEY (version_id) REFERENCES scene_lane_versions(id)`,
 		`ALTER TABLE lane_confidence_daily DROP CONSTRAINT IF EXISTS lane_confidence_daily_pkey`,
 		`ALTER TABLE lane_confidence_daily
 		   ADD CONSTRAINT lane_confidence_daily_pkey

@@ -32,6 +32,11 @@ type fakeStore struct {
 	nodeTypes map[string]*nodes.NodeType
 
 	// Knobs for error injection.
+	// replaceCalls records the area name of every ReplaceAreaScene, in order,
+	// so a test can assert an area was swapped as ONE operation rather than a
+	// delete followed by N inserts.
+	replaceCalls []string
+
 	errDelete     error
 	errUpsert     error
 	errCreate     error
@@ -95,6 +100,42 @@ func (f *fakeStore) UpsertSceneEdge(se *scene.Edge) error {
 	}
 	cp := *se
 	f.edges[f.key(se.AreaName, se.InstanceName)] = &cp
+	return nil
+}
+
+// ReplaceAreaScene models the real transaction: the area's rows are swapped as
+// a unit, and a failure leaves the PREVIOUS scene in place rather than a
+// half-written one.
+//
+// Modelling the rollback matters — a fake that deleted first and then failed
+// would let a test pass while production lost an area, which is the shape of
+// bug the transaction exists to prevent.
+func (f *fakeStore) ReplaceAreaScene(areaName string, points []*scene.Point, edges []*scene.Edge) error {
+	f.replaceCalls = append(f.replaceCalls, areaName)
+	if f.errUpsert != nil {
+		return f.errUpsert
+	}
+	if f.errDelete != nil {
+		return f.errDelete
+	}
+	for k, sp := range f.points {
+		if sp.AreaName == areaName {
+			delete(f.points, k)
+		}
+	}
+	for k, se := range f.edges {
+		if se.AreaName == areaName {
+			delete(f.edges, k)
+		}
+	}
+	for _, sp := range points {
+		cp := *sp
+		f.points[f.key(sp.AreaName, sp.InstanceName)] = &cp
+	}
+	for _, se := range edges {
+		cp := *se
+		f.edges[f.key(se.AreaName, se.InstanceName)] = &cp
+	}
 	return nil
 }
 
@@ -295,24 +336,85 @@ func TestSyncScenePoints_DeletePerAreaCalled(t *testing.T) {
 	}
 }
 
-func TestSyncScenePoints_ErrorsLoggedNotFatal(t *testing.T) {
+// A FAILED AREA KEEPS ITS PREVIOUS SCENE, AND IS NOT COUNTED AS SYNCED.
+//
+// This test used to assert the opposite half of that sentence. It pinned
+// `total` at 1 on a failing write with the note "counts attempts, not
+// successes" — a characterisation of the old loop, which upserted row by row on
+// the bare connection and logged each failure. That number was a count of
+// things this function tried to do, published from a function whose doc comment
+// says it returns "the total number of points synced": a figure that reads as
+// measured and is not, which is the defect class this branch exists to remove.
+//
+// Under the per-area transaction the answer is unambiguous. A failure rolls the
+// area back, so nothing was synced, so nothing is counted — and the area still
+// holds the scene it had before, rather than a partial one that looks complete.
+// The sync as a whole still does not abort: other areas proceed, which is the
+// part of "errors logged, not fatal" worth keeping.
+func TestSyncScenePoints_FailedAreaRollsBackAndIsNotCounted(t *testing.T) {
 	t.Parallel()
 	db := newFakeStore()
-	db.errUpsert = errors.New("boom")
 	rec := &recordingLog{}
+
+	// AreaA already holds a scene. It must survive a failed re-sync intact.
+	_ = db.UpsertScenePoint(&scene.Point{AreaName: "AreaA", InstanceName: "existing"})
+	db.errUpsert = errors.New("boom")
 
 	areas := []fleet.SceneArea{
 		{Name: "AreaA", AdvancedPoints: []fleet.ScenePoint{{InstanceName: "ap1", ClassName: "AP"}}},
 	}
 	total, _ := SyncScenePoints(db, rec.log, areas, "", nil)
-	// The function still increments total even on upsert error — it
-	// doesn't short-circuit. That's the current behaviour; documenting
-	// it with this assertion keeps a regression visible.
-	if total != 1 {
-		t.Errorf("total = %d, want 1 (counts attempts, not successes)", total)
+
+	if total != 0 {
+		t.Errorf("total = %d, want 0 — a rolled-back area synced nothing, and "+
+			"reporting an attempt as a sync is a number that looks measured", total)
+	}
+	if _, ok := db.points["AreaA/existing"]; !ok {
+		t.Error("the previous scene was lost on a failed replace — a reader must see " +
+			"the whole OLD set, never a gap")
+	}
+	if _, ok := db.points["AreaA/ap1"]; ok {
+		t.Error("a row from the failed replace was written — the swap is not atomic")
 	}
 	if len(rec.lines) == 0 {
-		t.Errorf("expected at least one log line for upsert error")
+		t.Error("expected a log line naming the failed area")
+	}
+}
+
+// The area is swapped as ONE operation, not a delete followed by N inserts.
+//
+// Asserted on the call sequence rather than the outcome, because the outcome is
+// identical either way — that is exactly why the gap survived so long. Only the
+// sequence can tell "deleted, then re-inserted, with a window in between" from
+// "swapped". Same reasoning as TestSyncScenePoints_DiffsBeforeItDestroys.
+func TestSyncScenePoints_ReplacesAnAreaInOneOperation(t *testing.T) {
+	t.Parallel()
+	db := newFakeStore()
+
+	areas := []fleet.SceneArea{
+		{
+			Name:           "AreaA",
+			AdvancedPoints: []fleet.ScenePoint{{InstanceName: "ap1", ClassName: "AP"}},
+			Edges: []fleet.SceneEdge{{
+				InstanceName: "LM1-LM2", ClassName: "StraightPath",
+				FromName: "LM1", ToName: "LM2",
+			}},
+		},
+	}
+	if _, _ = SyncScenePoints(db, noopLog, areas, "", nil); len(db.replaceCalls) != 1 {
+		t.Fatalf("ReplaceAreaScene called %d times for one area, want 1: %v",
+			len(db.replaceCalls), db.replaceCalls)
+	}
+	if db.replaceCalls[0] != "AreaA" {
+		t.Errorf("replaced %q, want AreaA", db.replaceCalls[0])
+	}
+	// And the points and edges went in together — a transaction that carried
+	// only one of the two would still leave the other visibly out of step.
+	if _, ok := db.points["AreaA/ap1"]; !ok {
+		t.Error("point missing after replace")
+	}
+	if _, ok := db.edges["AreaA/LM1-LM2"]; !ok {
+		t.Error("edge missing after replace")
 	}
 }
 

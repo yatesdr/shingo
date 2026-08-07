@@ -47,7 +47,12 @@ var migrationOnlyTables = map[string]string{
 	"robot_confidence_daily":    "added by v77 — the permanent per-robot residual roll-up",
 	"robot_confidence_low":      "added by v77 — the long-retention low-confidence forensic trail",
 	"robot_confidence_samples":  "added by v77 — raw localization-confidence samples, daily partitions",
-	"segment_confidence_daily":  "added by v77 — the permanent per-segment roll-up",
+	"lane_confidence_daily":     "added by v80 — the permanent per-LANE roll-up, replacing segment_confidence_daily (which v80 drops: its rows were at the directed-segment granularity, which is half a lane)",
+	"scene_diffs":               "added by v81 — one row per OBSERVED map edit; the join that relates an RDS /scene edit to a robot .smap edit made in the same sitting",
+	"scene_lane_versions":       "added by v81 — per-lane geometry versions, what lane_confidence_daily.version_id points at",
+	"scene_map_versions":        "added by v81 — the archived .smap blob, gzipped, scan cloud in its own column",
+	"scene_areas":               "added by v81 — declared map areas, temporally versioned, parsed from the robot .smap",
+	"scene_reflectors":          "added by v81 — reflector positions, temporally versioned; identity IS the position",
 	"sourceability_events":      "added by a numbered migration after the baseline was frozen",
 	"style_claims":              "added by a numbered migration after the baseline was frozen",
 	"supply_refusals":           "added by a numbered migration after the baseline was frozen",
@@ -91,6 +96,33 @@ func TestBaselineDDL_DeclaresEveryTable(t *testing.T) {
 	for tbl := range migrationOnlyTables {
 		if declared[tbl] {
 			t.Errorf("migrationOnlyTables names %q, but the baseline DDL now declares it — drop the entry", tbl)
+		}
+	}
+
+	// AND IT DECAYS THE OTHER WAY, which is the direction that actually bit.
+	//
+	// An entry naming a table that no longer SHIPS is the same stale claim
+	// wearing the opposite sign, and the check above cannot see it: it only
+	// asks whether the baseline has taken the table over, never whether the
+	// table still exists. segment_confidence_daily sat in this list describing
+	// "the permanent per-segment roll-up" for the whole of the localization
+	// branch, while v80 dropped it — the list read as a decision about a table
+	// nobody could load.
+	//
+	// This is the third guard on this schema found reading the wrong property,
+	// and it is here because the fix for the other two would not have caught
+	// this one either.
+	shipping := make(map[string]bool, len(shipped))
+	for _, tbl := range shipped {
+		shipping[tbl] = true
+	}
+	for tbl := range migrationOnlyTables {
+		if tbl == "schema_migrations" {
+			continue // the runner's own bookkeeping; created outside the dump path
+		}
+		if !shipping[tbl] {
+			t.Errorf("migrationOnlyTables names %q, but no such table is in the shipped schema — "+
+				"a migration dropped it and the entry outlived it. Drop the entry.", tbl)
 		}
 	}
 }

@@ -47,7 +47,17 @@ func scanPoints(rows *sql.Rows) ([]*Point, error) {
 }
 
 // Upsert inserts or updates a scene point keyed by (area_name, instance_name).
-func Upsert(db *sql.DB, sp *Point) error {
+// execer is whatever can run a statement — *sql.DB or *sql.Tx.
+//
+// The upserts take this rather than *sql.DB so ReplaceArea can run the very
+// same statements inside a transaction. Two copies of an upsert, one for the
+// autocommit path and one for the transactional path, is how the two drift and
+// how a column added to one stops being written by the other.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func Upsert(db execer, sp *Point) error {
 	_, err := db.Exec(`INSERT INTO scene_points (area_name, instance_name, class_name, point_name, group_name, label, pos_x, pos_y, pos_z, dir, properties_json, synced_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
 		ON CONFLICT (area_name, instance_name) DO UPDATE SET
@@ -127,7 +137,7 @@ func scanEdge(row interface{ Scan(...any) error }) (*Edge, error) {
 // an area before re-inserting it, so the UPDATE branch only runs when two
 // areas share an instance name — rare, and exactly the case where a stale
 // handle would survive unnoticed.
-func UpsertEdge(db *sql.DB, se *Edge) error {
+func UpsertEdge(db execer, se *Edge) error {
 	_, err := db.Exec(`INSERT INTO scene_edges (area_name, instance_name, class_name, from_name, to_name, from_x, from_y, to_x, to_y, ctrl1_x, ctrl1_y, ctrl2_x, ctrl2_y, synced_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
 		ON CONFLICT (area_name, instance_name) DO UPDATE SET
@@ -166,6 +176,61 @@ func ListEdges(db *sql.DB) ([]*Edge, error) {
 func DeleteEdgesByArea(db *sql.DB, areaName string) error {
 	_, err := db.Exec(`DELETE FROM scene_edges WHERE area_name=$1`, areaName)
 	return err
+}
+
+// ReplaceArea swaps one area's entire scene — points AND edges — inside one
+// transaction, so a concurrent reader sees the whole old set or the whole new
+// set and never a gap.
+//
+// WHY THIS IS ONE STATEMENT AND NOT SIX. Scene sync mirrors RDS by deleting an
+// area and re-inserting it. Done as autocommit statements — which is what this
+// was — the delete commits on its own, and for the length of the re-insert that
+// area HAS NO EDGES in the database. Anything reading scene_edges in that
+// window gets a partial network, and the reader that matters is the confidence
+// roll-up: LoadSegments is a single unqualified SELECT taken once per run, so a
+// roll-up landing there builds its snap index without that area and every
+// sample inside it fails to snap.
+//
+// Those samples are not mismatched, not unkeyable and not unversioned. They
+// land in `orphans`, which is a log line, so the day quietly loses an area's
+// lanes and the only trace is a number nobody diffs. On a plant that syncs on
+// every fleet reconnect — Springfield restarted fifteen times in seven days —
+// that is an ordinary Tuesday, not a corner case.
+//
+// go test -race cannot see this. It finds Go memory races; this is a reader
+// observing a half-applied set of COMMITTED ROWS, which is a transaction
+// boundary bug and invisible to the detector. It needed a transaction, not a
+// mutex.
+//
+// An empty points/edges pair is a legitimate call and means "this area is gone,
+// remove it" — the stale-area sweep uses exactly that.
+func ReplaceArea(db *sql.DB, areaName string, points []*Point, edges []*Edge) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("scene: begin replace of area %s: %w", areaName, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+
+	if _, err := tx.Exec(`DELETE FROM scene_points WHERE area_name=$1`, areaName); err != nil {
+		return fmt.Errorf("scene: delete points for area %s: %w", areaName, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM scene_edges WHERE area_name=$1`, areaName); err != nil {
+		return fmt.Errorf("scene: delete edges for area %s: %w", areaName, err)
+	}
+	for _, sp := range points {
+		if err := Upsert(tx, sp); err != nil {
+			return fmt.Errorf("scene: upsert point %s in area %s: %w", sp.InstanceName, areaName, err)
+		}
+	}
+	for _, se := range edges {
+		if err := UpsertEdge(tx, se); err != nil {
+			return fmt.Errorf("scene: upsert edge %s in area %s: %w", se.InstanceName, areaName, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("scene: commit replace of area %s: %w", areaName, err)
+	}
+	return nil
 }
 
 // ListAreas returns the distinct area names stored across scene points and

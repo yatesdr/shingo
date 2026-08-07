@@ -443,6 +443,29 @@ CREATE TABLE public.inventory_delta_dedup (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE public.lane_confidence_daily (
+    day date NOT NULL,
+    area_name text NOT NULL,
+    lane text NOT NULL,
+    p05 double precision,
+    p25 double precision,
+    p50 double precision,
+    p75 double precision,
+    p95 double precision,
+    samples integer NOT NULL,
+    mean_good double precision,
+    samples_good integer DEFAULT 0 NOT NULL,
+    min_conf double precision,
+    robots integer NOT NULL,
+    robots_seen text[],
+    sentinel_samples integer DEFAULT 0 NOT NULL,
+    sentinel_robots integer DEFAULT 0 NOT NULL,
+    reloc_failed_samples integer DEFAULT 0 NOT NULL,
+    reloc_failed_robots integer DEFAULT 0 NOT NULL,
+    map_mismatch_samples integer DEFAULT 0 NOT NULL,
+    version_id bigint NOT NULL
+);
+
 CREATE TABLE public.lineside_buckets (
     id bigint NOT NULL,
     station text NOT NULL,
@@ -876,7 +899,8 @@ CREATE TABLE public.robot_confidence_daily (
     cells integer NOT NULL,
     samples integer NOT NULL,
     mean double precision,
-    p05 double precision
+    p05 double precision,
+    map_mismatch_samples integer DEFAULT 0 NOT NULL
 );
 
 CREATE TABLE public.robot_confidence_low (
@@ -892,7 +916,10 @@ CREATE TABLE public.robot_confidence_low (
     order_id bigint DEFAULT 0 NOT NULL,
     on_task boolean DEFAULT false NOT NULL,
     blocked boolean DEFAULT false NOT NULL,
-    reloc_status smallint NOT NULL
+    reloc_status smallint NOT NULL,
+    area_ids text[],
+    map_md5 text,
+    alarm_codes integer[]
 )
 PARTITION BY RANGE (sampled_at);
 
@@ -918,7 +945,10 @@ CREATE TABLE public.robot_confidence_samples (
     order_id bigint DEFAULT 0 NOT NULL,
     on_task boolean DEFAULT false NOT NULL,
     blocked boolean DEFAULT false NOT NULL,
-    reloc_status smallint NOT NULL
+    reloc_status smallint NOT NULL,
+    area_ids text[],
+    map_md5 text,
+    alarm_codes integer[]
 )
 PARTITION BY RANGE (sampled_at);
 
@@ -930,6 +960,57 @@ CREATE SEQUENCE public.robot_confidence_samples_id_seq
     CACHE 1;
 
 ALTER SEQUENCE public.robot_confidence_samples_id_seq OWNED BY public.robot_confidence_samples.id;
+
+CREATE TABLE public.scene_areas (
+    id bigint NOT NULL,
+    area_name text NOT NULL,
+    class_name text NOT NULL,
+    polygon jsonb NOT NULL,
+    reflector_count integer DEFAULT 0 NOT NULL,
+    color_pen bigint,
+    color_brush bigint,
+    properties jsonb,
+    shape_hash text NOT NULL,
+    def_hash text NOT NULL,
+    max_vertex_delta_m double precision,
+    supersedes_id bigint,
+    diff_id bigint NOT NULL,
+    map_version_id bigint,
+    valid_from timestamp with time zone NOT NULL,
+    valid_to timestamp with time zone
+);
+
+CREATE SEQUENCE public.scene_areas_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.scene_areas_id_seq OWNED BY public.scene_areas.id;
+
+CREATE TABLE public.scene_diffs (
+    id bigint NOT NULL,
+    source text NOT NULL,
+    gate_hash text NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    previous_sync timestamp with time zone,
+    objects_added integer DEFAULT 0 NOT NULL,
+    objects_changed integer DEFAULT 0 NOT NULL,
+    objects_removed integer DEFAULT 0 NOT NULL,
+    median_delta_m double precision,
+    max_delta_m double precision,
+    renames jsonb
+);
+
+CREATE SEQUENCE public.scene_diffs_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.scene_diffs_id_seq OWNED BY public.scene_diffs.id;
 
 CREATE TABLE public.scene_edges (
     id bigint NOT NULL,
@@ -958,6 +1039,55 @@ CREATE SEQUENCE public.scene_edges_id_seq
 
 ALTER SEQUENCE public.scene_edges_id_seq OWNED BY public.scene_edges.id;
 
+CREATE TABLE public.scene_lane_versions (
+    id bigint NOT NULL,
+    area_name text NOT NULL,
+    lane text NOT NULL,
+    shape_hash text NOT NULL,
+    def_hash text NOT NULL,
+    shape jsonb NOT NULL,
+    directed_rows smallint NOT NULL,
+    twins_agree boolean DEFAULT true NOT NULL,
+    disagreement text DEFAULT ''::text NOT NULL,
+    max_vertex_delta_m double precision,
+    supersedes_id bigint,
+    diff_id bigint NOT NULL,
+    valid_from timestamp with time zone NOT NULL,
+    valid_to timestamp with time zone
+);
+
+CREATE SEQUENCE public.scene_lane_versions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.scene_lane_versions_id_seq OWNED BY public.scene_lane_versions.id;
+
+CREATE TABLE public.scene_map_versions (
+    id bigint NOT NULL,
+    map_name text NOT NULL,
+    content_sha text NOT NULL,
+    map_md5 text DEFAULT ''::text NOT NULL,
+    source_robot text DEFAULT ''::text NOT NULL,
+    body_gz bytea,
+    scan_cloud_gz bytea,
+    raw_bytes bigint DEFAULT 0 NOT NULL,
+    synced_at timestamp with time zone NOT NULL,
+    superseded_at timestamp with time zone,
+    diff_id bigint
+);
+
+CREATE SEQUENCE public.scene_map_versions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.scene_map_versions_id_seq OWNED BY public.scene_map_versions.id;
+
 CREATE TABLE public.scene_points (
     id bigint NOT NULL,
     area_name text NOT NULL,
@@ -983,22 +1113,32 @@ CREATE SEQUENCE public.scene_points_id_seq
 
 ALTER SEQUENCE public.scene_points_id_seq OWNED BY public.scene_points.id;
 
+CREATE TABLE public.scene_reflectors (
+    id bigint NOT NULL,
+    kind text NOT NULL,
+    x double precision NOT NULL,
+    y double precision NOT NULL,
+    width double precision,
+    shape_hash text NOT NULL,
+    supersedes_id bigint,
+    diff_id bigint NOT NULL,
+    map_version_id bigint,
+    valid_from timestamp with time zone NOT NULL,
+    valid_to timestamp with time zone
+);
+
+CREATE SEQUENCE public.scene_reflectors_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.scene_reflectors_id_seq OWNED BY public.scene_reflectors.id;
+
 CREATE TABLE public.schema_migrations (
     version integer NOT NULL,
     applied_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE TABLE public.segment_confidence_daily (
-    day date NOT NULL,
-    area_name text NOT NULL,
-    edge_instance text NOT NULL,
-    mean double precision,
-    p05 double precision,
-    min_conf double precision,
-    samples integer NOT NULL,
-    robots integer NOT NULL,
-    reloc_failed_samples integer DEFAULT 0 NOT NULL,
-    reloc_failed_robots integer DEFAULT 0 NOT NULL
 );
 
 CREATE TABLE public.sourceability_events (
@@ -1151,9 +1291,19 @@ ALTER TABLE ONLY public.robot_confidence_low ALTER COLUMN id SET DEFAULT nextval
 
 ALTER TABLE ONLY public.robot_confidence_samples ALTER COLUMN id SET DEFAULT nextval('public.robot_confidence_samples_id_seq'::regclass);
 
+ALTER TABLE ONLY public.scene_areas ALTER COLUMN id SET DEFAULT nextval('public.scene_areas_id_seq'::regclass);
+
+ALTER TABLE ONLY public.scene_diffs ALTER COLUMN id SET DEFAULT nextval('public.scene_diffs_id_seq'::regclass);
+
 ALTER TABLE ONLY public.scene_edges ALTER COLUMN id SET DEFAULT nextval('public.scene_edges_id_seq'::regclass);
 
+ALTER TABLE ONLY public.scene_lane_versions ALTER COLUMN id SET DEFAULT nextval('public.scene_lane_versions_id_seq'::regclass);
+
+ALTER TABLE ONLY public.scene_map_versions ALTER COLUMN id SET DEFAULT nextval('public.scene_map_versions_id_seq'::regclass);
+
 ALTER TABLE ONLY public.scene_points ALTER COLUMN id SET DEFAULT nextval('public.scene_points_id_seq'::regclass);
+
+ALTER TABLE ONLY public.scene_reflectors ALTER COLUMN id SET DEFAULT nextval('public.scene_reflectors_id_seq'::regclass);
 
 ALTER TABLE ONLY public.sourceability_events ALTER COLUMN id SET DEFAULT nextval('public.sourceability_events_id_seq'::regclass);
 
@@ -1247,6 +1397,9 @@ ALTER TABLE ONLY public.inbox
 
 ALTER TABLE ONLY public.inventory_delta_dedup
     ADD CONSTRAINT inventory_delta_dedup_pkey PRIMARY KEY (station, scope_kind, scope_key, epoch);
+
+ALTER TABLE ONLY public.lane_confidence_daily
+    ADD CONSTRAINT lane_confidence_daily_pkey PRIMARY KEY (day, area_name, lane, version_id);
 
 ALTER TABLE ONLY public.lineside_buckets
     ADD CONSTRAINT lineside_buckets_node_pair_style_part_key UNIQUE (core_node_name, pair_key, style_id, part_number);
@@ -1347,11 +1500,26 @@ ALTER TABLE ONLY public.reservations
 ALTER TABLE ONLY public.robot_confidence_daily
     ADD CONSTRAINT robot_confidence_daily_pkey PRIMARY KEY (day, vehicle_id);
 
+ALTER TABLE ONLY public.scene_areas
+    ADD CONSTRAINT scene_areas_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.scene_diffs
+    ADD CONSTRAINT scene_diffs_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.scene_edges
     ADD CONSTRAINT scene_edges_area_name_instance_name_key UNIQUE (area_name, instance_name);
 
 ALTER TABLE ONLY public.scene_edges
     ADD CONSTRAINT scene_edges_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.scene_lane_versions
+    ADD CONSTRAINT scene_lane_versions_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.scene_map_versions
+    ADD CONSTRAINT scene_map_versions_map_name_content_sha_key UNIQUE (map_name, content_sha);
+
+ALTER TABLE ONLY public.scene_map_versions
+    ADD CONSTRAINT scene_map_versions_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.scene_points
     ADD CONSTRAINT scene_points_area_name_instance_name_key UNIQUE (area_name, instance_name);
@@ -1359,11 +1527,11 @@ ALTER TABLE ONLY public.scene_points
 ALTER TABLE ONLY public.scene_points
     ADD CONSTRAINT scene_points_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.scene_reflectors
+    ADD CONSTRAINT scene_reflectors_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
-
-ALTER TABLE ONLY public.segment_confidence_daily
-    ADD CONSTRAINT segment_confidence_daily_pkey PRIMARY KEY (day, area_name, edge_instance);
 
 ALTER TABLE ONLY public.sourceability_events
     ADD CONSTRAINT sourceability_events_pkey PRIMARY KEY (id);
@@ -1476,11 +1644,23 @@ CREATE INDEX idx_robot_confidence_samples_time ON ONLY public.robot_confidence_s
 
 CREATE INDEX idx_robot_confidence_samples_vehicle_time ON ONLY public.robot_confidence_samples USING btree (vehicle_id, sampled_at);
 
+CREATE INDEX idx_scene_areas_current ON public.scene_areas USING btree (area_name, valid_from DESC);
+
+CREATE UNIQUE INDEX idx_scene_areas_one_open ON public.scene_areas USING btree (area_name) WHERE (valid_to IS NULL);
+
+CREATE INDEX idx_scene_diffs_observed ON public.scene_diffs USING btree (observed_at DESC);
+
 CREATE INDEX idx_scene_edges_area ON public.scene_edges USING btree (area_name);
+
+CREATE INDEX idx_scene_lane_versions_current ON public.scene_lane_versions USING btree (area_name, lane, valid_from DESC);
+
+CREATE UNIQUE INDEX idx_scene_lane_versions_one_open ON public.scene_lane_versions USING btree (area_name, lane) WHERE (valid_to IS NULL);
 
 CREATE INDEX idx_scene_points_area ON public.scene_points USING btree (area_name);
 
 CREATE INDEX idx_scene_points_class ON public.scene_points USING btree (class_name);
+
+CREATE INDEX idx_scene_reflectors_current ON public.scene_reflectors USING btree (shape_hash, valid_from DESC);
 
 CREATE INDEX idx_sourceability_events_key_time ON public.sourceability_events USING btree (process_key, style_id, observed_at DESC);
 
@@ -1546,6 +1726,9 @@ ALTER TABLE ONLY public.corrections
 ALTER TABLE ONLY public.corrections
     ADD CONSTRAINT corrections_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id);
 
+ALTER TABLE ONLY public.lane_confidence_daily
+    ADD CONSTRAINT lane_confidence_daily_version_id_fkey FOREIGN KEY (version_id) REFERENCES public.scene_lane_versions(id);
+
 ALTER TABLE ONLY public.node_bin_types
     ADD CONSTRAINT node_bin_types_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
 
@@ -1602,3 +1785,30 @@ ALTER TABLE ONLY public.reservations
 
 ALTER TABLE ONLY public.reservations
     ADD CONSTRAINT reservations_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id);
+
+ALTER TABLE ONLY public.scene_areas
+    ADD CONSTRAINT scene_areas_diff_id_fkey FOREIGN KEY (diff_id) REFERENCES public.scene_diffs(id);
+
+ALTER TABLE ONLY public.scene_areas
+    ADD CONSTRAINT scene_areas_map_version_id_fkey FOREIGN KEY (map_version_id) REFERENCES public.scene_map_versions(id);
+
+ALTER TABLE ONLY public.scene_areas
+    ADD CONSTRAINT scene_areas_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES public.scene_areas(id);
+
+ALTER TABLE ONLY public.scene_lane_versions
+    ADD CONSTRAINT scene_lane_versions_diff_id_fkey FOREIGN KEY (diff_id) REFERENCES public.scene_diffs(id);
+
+ALTER TABLE ONLY public.scene_lane_versions
+    ADD CONSTRAINT scene_lane_versions_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES public.scene_lane_versions(id);
+
+ALTER TABLE ONLY public.scene_map_versions
+    ADD CONSTRAINT scene_map_versions_diff_id_fkey FOREIGN KEY (diff_id) REFERENCES public.scene_diffs(id);
+
+ALTER TABLE ONLY public.scene_reflectors
+    ADD CONSTRAINT scene_reflectors_diff_id_fkey FOREIGN KEY (diff_id) REFERENCES public.scene_diffs(id);
+
+ALTER TABLE ONLY public.scene_reflectors
+    ADD CONSTRAINT scene_reflectors_map_version_id_fkey FOREIGN KEY (map_version_id) REFERENCES public.scene_map_versions(id);
+
+ALTER TABLE ONLY public.scene_reflectors
+    ADD CONSTRAINT scene_reflectors_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES public.scene_reflectors(id);

@@ -29,6 +29,13 @@ type Store interface {
 	DeleteScenePointsByArea(areaName string) error
 	UpsertScenePoint(sp *scene.Point) error
 	DeleteSceneEdgesByArea(areaName string) error
+	// ReplaceAreaScene swaps one area's points and edges in ONE transaction.
+	//
+	// The per-area delete-then-insert used to run as loose autocommit
+	// statements, which left a window where an area had no edges at all — and
+	// the confidence roll-up reading scene_edges in that window silently loses
+	// every sample in that area to `orphans`. See scene.ReplaceArea.
+	ReplaceAreaScene(areaName string, points []*scene.Point, edges []*scene.Edge) error
 	// ListSceneEdges reads what is stored BEFORE the replace destroys it.
 	// The lane diff is only computable while both states exist.
 	ListSceneEdges() ([]*scene.Edge, error)
@@ -69,12 +76,19 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea,
 	total := 0
 	for _, area := range areas {
 		fetched[area.Name] = true
-		if err := db.DeleteScenePointsByArea(area.Name); err != nil {
-			log("scenesync: delete points for area %s: %v", area.Name, err)
-		}
-		if err := db.DeleteSceneEdgesByArea(area.Name); err != nil {
-			log("scenesync: delete edges for area %s: %v", area.Name, err)
-		}
+		// EVERY ROW FOR THIS AREA IS BUILT FIRST, THEN HANDED OVER IN ONE
+		// TRANSACTION. The loop used to delete and then upsert row by row on
+		// the bare connection, which committed the delete on its own and left
+		// the area with no edges for the length of the re-insert — a window the
+		// confidence roll-up reads straight through, losing every sample in
+		// that area to `orphans` with nothing but a log line to show for it.
+		// See scene.ReplaceArea.
+		//
+		// Building the slices first also means a row this function REFUSES —
+		// an edge with no endpoint names — is refused before anything is
+		// written, rather than after the old rows are already gone.
+		points := make([]*scene.Point, 0, len(area.AdvancedPoints)+len(area.BinLocations))
+		edges := make([]*scene.Edge, 0, len(area.Edges))
 		for _, ap := range area.AdvancedPoints {
 			sp := &scene.Point{
 				AreaName:       area.Name,
@@ -87,9 +101,7 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea,
 				Dir:            ap.Dir,
 				PropertiesJSON: ap.PropertiesJSON,
 			}
-			if err := db.UpsertScenePoint(sp); err != nil {
-				log("scenesync: upsert point %s: %v", ap.InstanceName, err)
-			}
+			points = append(points, sp)
 			total++
 		}
 		for _, bin := range area.BinLocations {
@@ -106,9 +118,7 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea,
 				PosZ:           bin.PosZ,
 				PropertiesJSON: bin.PropertiesJSON,
 			}
-			if err := db.UpsertScenePoint(sp); err != nil {
-				log("scenesync: upsert point %s: %v", bin.InstanceName, err)
-			}
+			points = append(points, sp)
 			total++
 		}
 		// Drivable path segments (advanced curves) — the scene's real
@@ -150,8 +160,20 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea,
 				se.Ctrl1X, se.Ctrl1Y = &c1x, &c1y
 				se.Ctrl2X, se.Ctrl2Y = &c2x, &c2y
 			}
-			if err := db.UpsertSceneEdge(se); err != nil {
-				log("scenesync: upsert edge %s: %v", ed.InstanceName, err)
+			edges = append(edges, se)
+		}
+
+		// ONE TRANSACTION PER AREA. A failure leaves the area exactly as it
+		// was — the whole old set, not a half-written new one — and says so.
+		// The old loop logged each row and carried on, which on a mid-loop
+		// failure left the area holding a partial scene indistinguishable from
+		// a complete one.
+		if err := db.ReplaceAreaScene(area.Name, points, edges); err != nil {
+			log("scenesync: replace area %s: %v — the area keeps its previous "+
+				"scene; nothing partial was written", area.Name, err)
+			total -= len(points)
+			for _, bin := range area.BinLocations {
+				delete(locationSet, bin.InstanceName)
 			}
 		}
 	}
@@ -171,11 +193,14 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea,
 			if fetched[name] {
 				continue
 			}
-			if err := db.DeleteScenePointsByArea(name); err != nil {
-				log("scenesync: reconcile: delete points for stale area %s: %v", name, err)
-			}
-			if err := db.DeleteSceneEdgesByArea(name); err != nil {
-				log("scenesync: reconcile: delete edges for stale area %s: %v", name, err)
+			// Replacing a stale area with nothing is the same operation as
+			// replacing it with rows, so it takes the same transaction: points
+			// and edges go together or neither goes. Sweeping them as two
+			// autocommit deletes left a window where an area had points and no
+			// edges, which reads as a real area that nothing can drive to.
+			if err := db.ReplaceAreaScene(name, nil, nil); err != nil {
+				log("scenesync: reconcile: sweep stale area %s: %v", name, err)
+				continue
 			}
 			log("scenesync: reconcile: swept stale scene area %q (absent from fleet payload)", name)
 		}
