@@ -226,6 +226,11 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 	areaRobots := map[string]map[string]bool{}
 	areaSentinel := map[string]int{}
 	areaSentinelRobots := map[string]map[string]bool{}
+	// The distributions. Built alongside the raw slices rather than derived
+	// from them afterwards, so the histogram sees exactly the population the
+	// percentiles are taken over -- deriving it later is how the two drift.
+	laneHist := map[string]*Hist{}
+	areaHist := map[string]*Hist{}
 
 	err = ScanSamples(db, from, to, func(s RawSample) {
 		res.SamplesRead++
@@ -327,6 +332,10 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 				areaRobots[id] = map[string]bool{}
 			}
 			areaRobots[id][s.VehicleID] = true
+			if areaHist[id] == nil {
+				areaHist[id] = &Hist{}
+			}
+			areaHist[id].Add(s.Confidence)
 			if s.NoEstimate() {
 				areaAll[id] = append(areaAll[id], 0)
 				areaSentinel[id]++
@@ -368,6 +377,10 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 			laneRobots[key] = map[string]bool{}
 		}
 		laneRobots[key][s.VehicleID] = true
+		if laneHist[key] == nil {
+			laneHist[key] = &Hist{}
+		}
+		laneHist[key].Add(s.Confidence)
 
 		// THE FULL POPULATION, WITH A MISS COUNTED AS THE ZERO IT IS. This is
 		// the statistic the map bands, and it is only bandable because it is
@@ -517,6 +530,9 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 			RelocFailedRobots:  len(segFailedRobots[key]),
 			MapMismatchSamples: laneMismatch[key],
 		}
+		if h := laneHist[key]; h != nil {
+			row.ConfHist = *h
+		}
 		laneKey, versionID := splitVersionedKey(key)
 		row.Area, row.Lane = SplitKey(laneKey)
 		row.VersionID = versionID
@@ -576,6 +592,9 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 			RobotsSeen:      sortedKeys(areaRobots[id]),
 			SentinelSamples: areaSentinel[id],
 			SentinelRobots:  len(areaSentinelRobots[id]),
+		}
+		if h := areaHist[id]; h != nil {
+			row.ConfHist = *h
 		}
 		p05, p25, p50 := Percentile(all, 0.05), Percentile(all, 0.25), Percentile(all, 0.50)
 		p75, p95 := Percentile(all, 0.75), Percentile(all, 0.95)

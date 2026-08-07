@@ -581,6 +581,10 @@ type LaneDaily struct {
 	// corruption for a silent omission, which is this project's signature
 	// failure mode.
 	MapMismatchSamples int
+	// ConfHist is the day's confidence distribution, 51 bins. It is what
+	// makes a WINDOW answerable: percentiles do not re-aggregate, histograms
+	// do. See histogram.go.
+	ConfHist Hist
 	// VersionID is the geometry this row describes. NOT NULL in the
 	// database, because there is no such thing as a reading on a lane with
 	// no geometry — a lane's first version opens at the beginning of time
@@ -603,8 +607,8 @@ func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
 		    mean_good, samples_good, min_conf, robots, robots_seen,
 		    sentinel_samples, sentinel_robots,
 		    reloc_failed_samples, reloc_failed_robots,
-		    map_mismatch_samples, version_id)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+		    map_mismatch_samples, version_id, conf_hist)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		 ON CONFLICT (day, area_name, lane, version_id) DO UPDATE SET
 		   p05 = EXCLUDED.p05, p25 = EXCLUDED.p25, p50 = EXCLUDED.p50,
 		   p75 = EXCLUDED.p75, p95 = EXCLUDED.p95, samples = EXCLUDED.samples,
@@ -616,12 +620,13 @@ func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
 		   reloc_failed_samples = EXCLUDED.reloc_failed_samples,
 		   reloc_failed_robots = EXCLUDED.reloc_failed_robots,
 		   map_mismatch_samples = EXCLUDED.map_mismatch_samples,
-		   version_id = EXCLUDED.version_id`,
+		   version_id = EXCLUDED.version_id,
+		   conf_hist = EXCLUDED.conf_hist`,
 		s.Day, s.Area, s.Lane, s.P05, s.P25, s.P50, s.P75, s.P95, s.Samples,
 		s.MeanGood, s.SamplesGood, s.MinConf, s.Robots, robots,
 		s.SentinelSamples, s.SentinelRobots,
 		s.RelocFailedSamples, s.RelocFailedRobots,
-		s.MapMismatchSamples, s.VersionID)
+		s.MapMismatchSamples, s.VersionID, s.ConfHist.Slice())
 	if err != nil {
 		return fmt.Errorf("upsert lane_confidence_daily: %w", err)
 	}
@@ -661,6 +666,9 @@ type AreaDaily struct {
 	RobotsSeen      []string
 	SentinelSamples int
 	SentinelRobots  int
+	// ConfHist is the zone's distribution for the day, same 51-bin structure
+	// as the lane row. This is the row that would have overflowed a smallint.
+	ConfHist Hist
 }
 
 // UpsertAreaDaily writes one zone's day, replacing any existing row.
@@ -673,8 +681,8 @@ func UpsertAreaDaily(db *sql.DB, s AreaDaily) error {
 		`INSERT INTO area_confidence_daily
 		   (day, area_name, class_name, p05, p25, p50, p75, p95, samples,
 		    mean_good, samples_good, min_conf, robots, robots_seen,
-		    sentinel_samples, sentinel_robots)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+		    sentinel_samples, sentinel_robots, conf_hist)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		 ON CONFLICT (day, area_name) DO UPDATE SET
 		   class_name = EXCLUDED.class_name,
 		   p05 = EXCLUDED.p05, p25 = EXCLUDED.p25, p50 = EXCLUDED.p50,
@@ -683,10 +691,11 @@ func UpsertAreaDaily(db *sql.DB, s AreaDaily) error {
 		   min_conf = EXCLUDED.min_conf, robots = EXCLUDED.robots,
 		   robots_seen = EXCLUDED.robots_seen,
 		   sentinel_samples = EXCLUDED.sentinel_samples,
-		   sentinel_robots = EXCLUDED.sentinel_robots`,
+		   sentinel_robots = EXCLUDED.sentinel_robots,
+		   conf_hist = EXCLUDED.conf_hist`,
 		s.Day, s.AreaName, s.ClassName, s.P05, s.P25, s.P50, s.P75, s.P95,
 		s.Samples, s.MeanGood, s.SamplesGood, s.MinConf, s.Robots, robots,
-		s.SentinelSamples, s.SentinelRobots)
+		s.SentinelSamples, s.SentinelRobots, s.ConfHist.Slice())
 	if err != nil {
 		return fmt.Errorf("upsert area_confidence_daily: %w", err)
 	}

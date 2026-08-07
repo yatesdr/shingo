@@ -3834,6 +3834,35 @@ func v80LaneConfidenceDaily(tx *sql.Tx) error {
 			reloc_failed_robots  INTEGER NOT NULL DEFAULT 0,
 			map_mismatch_samples INTEGER NOT NULL DEFAULT 0,
 			version_id           BIGINT,
+			-- THE HISTOGRAM IS WHAT MAKES A WINDOW ANSWERABLE. Percentiles do
+			-- not re-aggregate: seven daily p50s cannot be combined into a
+			-- weekly p50, which is the same argument that stores five
+			-- percentiles instead of one. Summing daily histograms
+			-- element-wise does work, so every window the board offers -- 24 h,
+			-- 7 d, 30 d, since-last-change -- is a lookup against the permanent
+			-- record rather than a re-run of the Go-side snap over raw.
+			--
+			-- Two of those windows are otherwise IMPOSSIBLE, not merely slow.
+			-- Raw is retained fourteen days, so 30 d cannot be served at all
+			-- and "since this lane's last geometry change" exceeds fourteen
+			-- days for any lane nobody has edited recently.
+			--
+			-- 51 bins: index 0 is the no-estimate SENTINEL, which is a point
+			-- and not a range, and indices 1..50 are genuine readings at width
+			-- 0.02 -- chosen so the vendor's 0.30 and 0.80 band edges fall
+			-- exactly on bin edges. One structure therefore carries both
+			-- populations: the whole array is the all-ticks distribution the
+			-- map bands, and the array without index 0 is the conditioned view
+			-- the panel shows.
+			--
+			-- INTEGER[] rather than the SMALLINT[] the plan specified. At the
+			-- stated target -- 40 robots on a 2-second poll, 1.728 M readings a
+			-- day -- a busy zone's bin exceeds smallint's 32,767 and wraps
+			-- silently into a wrong histogram that still renders. Lane rows
+			-- would have fitted; area rows would not, and one type for both is
+			-- what keeps the merge arithmetic honest. ~204 B on a ~194 B row,
+			-- inside the under-100 MB/year budget.
+			conf_hist            INTEGER[],
 			PRIMARY KEY (day, area_name, lane)
 		)`,
 
@@ -4195,6 +4224,11 @@ func v82AreaAndPlantDaily(tx *sql.Tx) error {
 			robots_seen      TEXT[],
 			sentinel_samples INTEGER NOT NULL DEFAULT 0,
 			sentinel_robots  INTEGER NOT NULL DEFAULT 0,
+			-- Same structure as lane_confidence_daily.conf_hist, and the same
+			-- reason: a zone's 30-day window has to come from the permanent
+			-- record. See v80 for the bin layout and the INTEGER[] argument --
+			-- the area row is the one that would have overflowed smallint.
+			conf_hist        INTEGER[],
 			PRIMARY KEY (day, area_name)
 		)`,
 		// The page reads "worst zones on this day" and "this zone over time".

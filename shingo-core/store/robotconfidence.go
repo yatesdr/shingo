@@ -63,6 +63,21 @@ func (LaneVersionResolver) Load(db *sql.DB, from, to time.Time) (robotconfidence
 	return sceneversion.LoadLaneVersionIndex(db, from, to)
 }
 
+// LaneWindows sums lane_confidence_daily over [from, to) into one distribution
+// per lane, so a board window is a read of the permanent record rather than a
+// re-run of the snap over raw. See robotconfidence.LaneWindows.
+func (db *DB) LaneWindows(from, to time.Time) (map[string]*robotconfidence.LaneWindow, error) {
+	return robotconfidence.LaneWindows(db.DB, from, to)
+}
+
+// AreaWindows sums area_confidence_daily over [from, to) into one distribution
+// per zone. See robotconfidence.AreaWindows -- zone statistics and zone
+// geometry arrive on different transports, so this is keyed on the zone id
+// alone and needs no polygon.
+func (db *DB) AreaWindows(from, to time.Time) (map[string]*robotconfidence.AreaWindow, error) {
+	return robotconfidence.AreaWindows(db.DB, from, to)
+}
+
 // AreaClassLookup adapts store/sceneversion to robotconfidence's
 // AreaClassResolver, so the zone roll-up can label each row with the class of
 // zone it describes without the two packages importing each other.

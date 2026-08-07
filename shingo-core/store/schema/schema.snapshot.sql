@@ -30,7 +30,8 @@ CREATE TABLE public.area_confidence_daily (
     robots integer NOT NULL,
     robots_seen text[],
     sentinel_samples integer DEFAULT 0 NOT NULL,
-    sentinel_robots integer DEFAULT 0 NOT NULL
+    sentinel_robots integer DEFAULT 0 NOT NULL,
+    conf_hist integer[]
 );
 
 CREATE TABLE public.audit_log (
@@ -482,7 +483,8 @@ CREATE TABLE public.lane_confidence_daily (
     reloc_failed_samples integer DEFAULT 0 NOT NULL,
     reloc_failed_robots integer DEFAULT 0 NOT NULL,
     map_mismatch_samples integer DEFAULT 0 NOT NULL,
-    version_id bigint NOT NULL
+    version_id bigint NOT NULL,
+    conf_hist integer[]
 );
 
 CREATE TABLE public.lineside_buckets (
