@@ -121,6 +121,41 @@ parse_config_flag() {
     echo "$val"
 }
 
+# Parse `--config <path>` out of a systemd unit's ExecStart.
+#
+# THE DURABLE SIGNAL, AND THE ONE DISCOVERY WAS MISSING. The running process's
+# cmdline is the best evidence of which config is live -- but it exists only
+# while the service is UP, and stopping the service is the most natural thing an
+# operator does before reinstalling. That is precisely when discovery fell
+# through to scanning the filesystem.
+#
+# Measured at Hopkinsville 2026-08-07: with the service stopped, the scan found
+# three stray shingocore.yaml files -- a copy inside the checkout, a `shingo-test`
+# tree pointing at localhost, and a pre-FHS relic under /opt -- so `--yes`
+# correctly refused to guess and the install aborted with the service already
+# down. Springfield had survived the same code path only because it happened to
+# carry exactly one stray file.
+#
+# The unit says what the operator DECLARED. It is present whether the process is
+# or not, it survives a stop, and it is what the service will actually run with.
+# `systemctl show` is preferred over reading the file so drop-in overrides are
+# honoured; the file is the fallback for a box where systemctl cannot answer.
+#
+# This yields the FHS path on an already-migrated box, which is not "legacy" at
+# all -- and that is fine: LEGACY_IS_FHS below turns it into REINSTALL, so the
+# config is left in place and nothing is copied over itself. It is the same
+# value the running-process branch already produces on a live migrated box. A
+# unit still pointing at a pre-FHS path correctly selects MIGRATION instead.
+config_from_unit() {
+    local unit="$1" line=""
+    line=$(systemctl show "$unit" -p ExecStart --value 2>/dev/null || true)
+    if [ -z "$line" ]; then
+        line=$(grep -h '^ExecStart=' "/etc/systemd/system/$unit" 2>/dev/null | tail -1 || true)
+    fi
+    [ -z "$line" ] && return 0
+    parse_config_flag "$line"
+}
+
 echo "==> Pulling latest changes..."
 git pull
 
@@ -153,7 +188,9 @@ fi
 #    a. --legacy-config flag.
 #    b. --config arg of the running process.
 #    c. <cwd>/shingocore.yaml (the binary's default search path).
-#    d. Bounded scan of /home/*/, /opt/*/, /srv/*/ for shingocore.yaml.
+#    d. --config on the systemd unit's ExecStart. Works with the service
+#       STOPPED, which is when the scan below used to have to guess.
+#    e. Bounded scan of /home/*/, /opt/*/, /srv/*/ for shingocore.yaml.
 LEGACY_CONFIG=""
 
 if [ -n "$LEGACY_CONFIG_ARG" ]; then
@@ -171,6 +208,14 @@ elif [ -n "$CORE_PID" ]; then
     elif [ -n "$CORE_CWD" ] && [ -f "$CORE_CWD/shingocore.yaml" ]; then
         LEGACY_CONFIG="$CORE_CWD/shingocore.yaml"
         echo "    legacy config (cwd default):     $LEGACY_CONFIG"
+    fi
+fi
+
+if [ -z "$LEGACY_CONFIG" ]; then
+    unit_cfg=$(config_from_unit "shingo-core.service")
+    if [ -n "$unit_cfg" ] && [ -f "$unit_cfg" ]; then
+        LEGACY_CONFIG="$unit_cfg"
+        echo "    legacy config (systemd unit):    $LEGACY_CONFIG"
     fi
 fi
 
