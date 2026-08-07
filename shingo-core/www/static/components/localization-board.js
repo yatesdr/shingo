@@ -30,7 +30,7 @@ export const BAND_TOKEN = {
     blind: 'var(--viz-coral)',
     // Not a band — the absence of one. Substrate grey, so a lane nobody drove
     // reads as "no answer" rather than as a measured one.
-    nodata: 'var(--text-tertiary)'
+    nodata: 'var(--text-muted)'
 };
 const BAND_LABEL = {
     good: 'good (≥ 0.80)', fair: 'fair (0.30–0.80)', poor: 'poor (> 0)',
@@ -322,7 +322,7 @@ export function createBoard(root, opts) {
             const pts = a.polygon.map(function (p) { const q = P(p.x, p.y); return q[0] + ',' + q[1]; }).join(' ');
             const solid = a.class === 'ReflectorArea';
             zg.appendChild(svg('polygon', {
-                points: pts, fill: 'none', stroke: 'var(--text-tertiary)',
+                points: pts, fill: 'none', stroke: 'var(--text-muted)',
                 'stroke-width': 1, 'data-w': solid ? 1.1 : 0.8,
                 'data-dash': solid ? null : '4 3', opacity: solid ? 0.7 : 0.45
             }));
@@ -333,7 +333,7 @@ export function createBoard(root, opts) {
             a.polygon.forEach(function (p) { const q = P(p.x, p.y); cx += q[0]; cy += q[1]; });
             const t = svg('text', {
                 x: cx / a.polygon.length, y: cy / a.polygon.length,
-                fill: 'var(--text-tertiary)', 'font-size': 9, 'data-fs': 9,
+                fill: 'var(--text-muted)', 'font-size': 9, 'data-fs': 9,
                 'text-anchor': 'middle', opacity: 0.75
             });
             t.textContent = a.name;
@@ -578,8 +578,8 @@ export function createBoard(root, opts) {
             h.sentinel + '</title></rect>' +
             '<path d="' + h.line + '" transform="translate(14,0)" fill="none" ' +
             'stroke="var(--viz-primary)" stroke-width="1.4"/>' +
-            '<text x="0" y="68" font-size="7" fill="var(--text-tertiary)">0 (no est.)</text>' +
-            '<text x="220" y="68" font-size="7" fill="var(--text-tertiary)" text-anchor="end">1.0</text>' +
+            '<text x="0" y="68" font-size="7" fill="var(--text-muted)">0 (no est.)</text>' +
+            '<text x="220" y="68" font-size="7" fill="var(--text-muted)" text-anchor="end">1.0</text>' +
             '</svg>';
     }
 
