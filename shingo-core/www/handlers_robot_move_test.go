@@ -5,7 +5,6 @@ package www
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 	"testing"
 
 	"shingocore/fleet/simulator"
@@ -84,13 +83,22 @@ func TestRobotMove_MakesNoOrder(t *testing.T) {
 	}
 }
 
-// TestRobotMove_RefusesAnOccupiedDestination keeps the occupancy pre-flight
-// that shipped with the old door.
+// A BIN AT THE DESTINATION IS NOT AN OBSTACLE TO A MOVE.
 //
-// Nothing downstream would catch this. The block carries no binTask, so the
-// position gate waves it through — a robot would drive to a spot that already
-// holds a bin, arrive, and stop, and the operator would find out by watching.
-func TestRobotMove_RefusesAnOccupiedDestination(t *testing.T) {
+// This test used to assert the opposite, and its own rationale is what gives it
+// away: it kept "the occupancy pre-flight that shipped with the old door" on the
+// grounds that otherwise "a robot would drive to a spot that already holds a
+// bin, arrive, and stop, and the operator would find out by watching."
+//
+// Arriving and stopping is what being sent somewhere MEANS. This endpoint picks
+// up nothing, places nothing and writes no order row -- the form says so in as
+// many words -- so a bin already at the node is scenery, not a conflict. The
+// gate was a dropoff-capacity check inherited from the order door, asking
+// whether a BIN COULD BE PLACED there, applied to a command that places none.
+//
+// It also refused the case the endpoint is most useful for: sending a robot to
+// a node precisely BECAUSE something is there and somebody wants eyes on it.
+func TestRobotMove_AnOccupiedDestinationIsNotAnObstacle(t *testing.T) {
 	t.Parallel()
 	sim := simulator.New()
 	h, db := testHandlersWithSim(t, sim)
@@ -99,22 +107,21 @@ func TestRobotMove_RefusesAnOccupiedDestination(t *testing.T) {
 
 	resp, status := moveRobotTo(t, h, sd.LineNode.Name)
 
-	if status == http.StatusOK {
-		t.Fatalf("sending a robot to an occupied node returned 200 — it will arrive and stop. body=%+v", resp)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a bin at the destination cannot refuse a "+
+			"command that places no bin. body=%+v", status, resp)
 	}
-	if status != http.StatusConflict {
-		t.Errorf("status = %d, want %d: the spot being taken is a conflict with plant state, not a malformed request", status, http.StatusConflict)
+	if resp.Error != "" {
+		t.Errorf("carried an error %q on a successful move", resp.Error)
 	}
-	if resp.Error == "" {
-		t.Error("rejection carried no message")
+	if resp.Destination != sd.LineNode.Name {
+		t.Errorf("destination = %q, want %q", resp.Destination, sd.LineNode.Name)
 	}
-	if !strings.Contains(resp.Error, sd.LineNode.Name) {
-		t.Errorf("message %q does not name the node the operator has to clear", resp.Error)
-	}
-
-	// Refused before the fleet call, so no robot was moved.
-	if sim.OrderCount() != 0 {
-		t.Errorf("fleet order count = %d, want 0 — the refusal came too late", sim.OrderCount())
+	// The robot really was dispatched -- the point is that it goes, not merely
+	// that the handler stopped objecting.
+	if sim.OrderCount() != 1 {
+		t.Errorf("fleet order count = %d, want 1 — the move was accepted but no "+
+			"robot was sent", sim.OrderCount())
 	}
 }
 

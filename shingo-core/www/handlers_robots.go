@@ -120,14 +120,29 @@ func (h *Handlers) apiRobotMoveTo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The occupancy gate, kept. It was written for the order door and its
-	// reason survives the door: a robot sent to an occupied spot arrives and
-	// stops, and the operator finds out by watching. Nothing downstream would
-	// catch it either — the block carries no binTask, so the position gate
-	// waves it through. This is the only place left to refuse.
-	if h.rejectIfOccupied(w, destNode) {
-		return
-	}
+	// NO OCCUPANCY GATE, AND THAT IS THE POINT OF THIS ENDPOINT.
+	//
+	// This used to call rejectIfOccupied and refuse the move with 409 and
+	// "Waiting for a slot at ALN_003 — 1 bin there now". That gate asks whether
+	// a BIN CAN BE DROPPED at the destination, and this command drops nothing:
+	// no bin is picked up, no bin is placed, no order row is written. The robot
+	// drives there and parks. A bin already sitting at the node is not an
+	// obstacle to that, it is scenery.
+	//
+	// The old comment argued the gate "was written for the order door and its
+	// reason survives the door", because a robot sent to an occupied spot
+	// arrives and stops. It does arrive and stop — that is what being sent
+	// somewhere means. Nothing is left half-done, no slot is consumed, and
+	// nothing downstream is waiting on it.
+	//
+	// Worse, it refused the case the endpoint is most useful for: sending a
+	// robot to a node precisely BECAUSE something is there and someone wants
+	// eyes on it. The gate turned a positioning command into one that only
+	// works where nothing is happening.
+	//
+	// PreviewDropoffCapacity still guards the real order doors, and
+	// /api/dispatch/preview-capacity still serves the manual-order form for the
+	// two tabs that create orders.
 
 	// No order row means no order id to build a vendor id from, and nothing for
 	// an ExternalID to correlate back to — so it is left empty rather than

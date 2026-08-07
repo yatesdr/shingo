@@ -57,23 +57,6 @@ func (h *Handlers) resolveDropoff(w http.ResponseWriter, nodeName string) *domai
 	return destNode
 }
 
-// rejectIfOccupied answers the request and reports true when the destination
-// already holds a bin.
-//
-// Separate from resolveDropoff on purpose, even though two of the three callers
-// run them back to back. The bin-move door has to get its same-node refusal in
-// between: the occupancy gate would otherwise catch most same-node moves
-// incidentally and tell the operator to go clear a node whose only occupant is
-// the bin they are moving. Folding both into one call would quietly put the
-// generic answer back in front of the specific one.
-func (h *Handlers) rejectIfOccupied(w http.ResponseWriter, destNode *domain.Node) bool {
-	if preview := h.engine.Dispatcher().PreviewDropoffCapacity(destNode.Name); preview.Blocked {
-		h.jsonError(w, preview.Reason, http.StatusConflict)
-		return true
-	}
-	return false
-}
-
 // iconSpriteHTML is the vendored Lucide sprite (shared/icons.svg), read once at
 // init and injected into layout.html via {{iconSprite}} so page markup can
 // reference symbols with <use href="#icon-…">. It's a trusted first-party asset,
