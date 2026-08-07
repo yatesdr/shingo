@@ -314,6 +314,25 @@ type RawSample struct {
 	// written before v79 — which means "not collected", never "no map", and
 	// the roll-up must not quarantine on it.
 	MapMD5 string
+	// AreaIDs are the declared map areas the robot reported itself inside,
+	// as the VENDOR sees them — which is what makes the zone roll-up an
+	// attribution rather than a re-derivation.
+	//
+	// ONE SAMPLE, MANY AREAS, BY DESIGN. SEER areas overlap, so a reading can
+	// belong to several at once and this is a list rather than a column. It
+	// is also why zone totals do not sum to the plant total, and why nothing
+	// may add them up.
+	//
+	// Re-deriving membership from the polygons would be a second opinion:
+	// Core would be computing where the robot WAS while the robot reported
+	// where it THOUGHT it was, and on a localization dashboard the second is
+	// the one that explains the reading. NULL means "predates v78", never
+	// "outside every area".
+	//
+	// Stored unpadded as the wire sends it ("8"); the map stores "08". Run
+	// scenemap.NormalizeAreaID before comparing — the join silently returns
+	// nothing otherwise, which is a quiet zero exactly where the finding is.
+	AreaIDs []string
 }
 
 // NoEstimate reports whether the tick produced no position estimate at all.
@@ -339,7 +358,8 @@ func (s RawSample) NoEstimate() bool { return s.Confidence <= 0 }
 // thousand entries regardless of how many samples flow through.
 func ScanSamples(db *sql.DB, from, to time.Time, fn func(RawSample)) error {
 	rows, err := db.Query(
-		`SELECT vehicle_id, sampled_at, confidence, x, y, reloc_status, coalesce(map_md5, '')
+		`SELECT vehicle_id, sampled_at, confidence, x, y, reloc_status,
+		        coalesce(map_md5, ''), coalesce(area_ids, '{}')
 		 FROM `+TableSamples+`
 		 WHERE sampled_at >= $1 AND sampled_at < $2`, from, to)
 	if err != nil {
@@ -348,9 +368,15 @@ func ScanSamples(db *sql.DB, from, to time.Time, fn func(RawSample)) error {
 	defer rows.Close()
 	for rows.Next() {
 		var s RawSample
-		if err := rows.Scan(&s.VehicleID, &s.SampledAt, &s.Confidence, &s.X, &s.Y, &s.RelocStatus, &s.MapMD5); err != nil {
+		// area_ids arrives as Postgres's array LITERAL, not as a slice: the
+		// pgx database/sql shim binds []string on the way in and cannot scan
+		// one on the way out. See parsePGTextArray.
+		var areaIDs string
+		if err := rows.Scan(&s.VehicleID, &s.SampledAt, &s.Confidence, &s.X, &s.Y,
+			&s.RelocStatus, &s.MapMD5, &areaIDs); err != nil {
 			return err
 		}
+		s.AreaIDs = parsePGTextArray(areaIDs)
 		fn(s)
 	}
 	return rows.Err()
@@ -557,7 +583,8 @@ type LaneDaily struct {
 	MapMismatchSamples int
 	// VersionID is the geometry this row describes. NOT NULL in the
 	// database, because there is no such thing as a reading on a lane with
-	// no geometry — a lane's first version opens at -infinity precisely so
+	// no geometry — a lane's first version opens at the beginning of time
+	// (a year-1 timestamp, not Postgres '-infinity') precisely so
 	// that every reading has one. A lane that has never been versioned at
 	// all is a defect, and its samples are quarantined and counted rather
 	// than written with a hole in the key.
@@ -597,6 +624,130 @@ func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
 		s.MapMismatchSamples, s.VersionID)
 	if err != nil {
 		return fmt.Errorf("upsert lane_confidence_daily: %w", err)
+	}
+	return nil
+}
+
+// ── The zone roll-up, and the plant-day record ─────────────────────────────
+
+// AreaDaily is one declared zone's day.
+//
+// ONE READING CAN BE IN SEVERAL ZONES, so these rows do not partition the day
+// and `samples` DOES NOT SUM to the plant total. SEER areas overlap by design
+// and the robot reports membership as a list; adding this column across rows
+// is the same class of error as adding percentages.
+type AreaDaily struct {
+	Day      time.Time
+	AreaName string
+	// ClassName is the field measured to predict anything — every
+	// ReflectorArea carrying traffic loses 23-71% of its readings and neither
+	// LocConfigArea loses any. Denormalised onto the row so a reader is not
+	// forced through a temporal join to scene_areas for the one column that
+	// matters. Empty when the map sync has not run yet, which is a real state
+	// and different from a zone with no class.
+	ClassName string
+	// P05..P95 are over EVERY tick with a no-estimate counted as the zero it
+	// is. Unconditioned, therefore bandable.
+	P05, P25, P50, P75, P95 *float64
+	Samples                 int
+	// MeanGood is over only the ticks that produced a number. CONDITIONED —
+	// selected by the very thing being measured — therefore never bandable.
+	// This is the table where that mistake is most tempting, because the zone
+	// IS the reflector-area membership that scored AUC 0.081 backwards.
+	MeanGood        *float64
+	SamplesGood     int
+	MinConf         *float64
+	Robots          int
+	RobotsSeen      []string
+	SentinelSamples int
+	SentinelRobots  int
+}
+
+// UpsertAreaDaily writes one zone's day, replacing any existing row.
+func UpsertAreaDaily(db *sql.DB, s AreaDaily) error {
+	robots := s.RobotsSeen
+	if robots == nil {
+		robots = []string{}
+	}
+	_, err := db.Exec(
+		`INSERT INTO area_confidence_daily
+		   (day, area_name, class_name, p05, p25, p50, p75, p95, samples,
+		    mean_good, samples_good, min_conf, robots, robots_seen,
+		    sentinel_samples, sentinel_robots)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+		 ON CONFLICT (day, area_name) DO UPDATE SET
+		   class_name = EXCLUDED.class_name,
+		   p05 = EXCLUDED.p05, p25 = EXCLUDED.p25, p50 = EXCLUDED.p50,
+		   p75 = EXCLUDED.p75, p95 = EXCLUDED.p95, samples = EXCLUDED.samples,
+		   mean_good = EXCLUDED.mean_good, samples_good = EXCLUDED.samples_good,
+		   min_conf = EXCLUDED.min_conf, robots = EXCLUDED.robots,
+		   robots_seen = EXCLUDED.robots_seen,
+		   sentinel_samples = EXCLUDED.sentinel_samples,
+		   sentinel_robots = EXCLUDED.sentinel_robots`,
+		s.Day, s.AreaName, s.ClassName, s.P05, s.P25, s.P50, s.P75, s.P95,
+		s.Samples, s.MeanGood, s.SamplesGood, s.MinConf, s.Robots, robots,
+		s.SentinelSamples, s.SentinelRobots)
+	if err != nil {
+		return fmt.Errorf("upsert area_confidence_daily: %w", err)
+	}
+	return nil
+}
+
+// PlantDaily is the day's record for everything that has no lane to hang on.
+//
+// THESE COUNTS HAD NOWHERE PERMANENT TO LIVE. Four of them reached a log line
+// and nothing else, while the raw samples behind them expire at 14 days — so
+// "was the plant like this in August" stopped being answerable a fortnight
+// after it was true. They cannot go on lane_confidence_daily because every one
+// of them is a fact about a reading with NO LANE: an unkeyable edge has no lane
+// key, an orphan snapped to nothing, an unversioned reading has no geometry.
+type PlantDaily struct {
+	Day         time.Time
+	SamplesRead int
+	// OrphanSamples snapped to no lane at all. Also the only counter that can
+	// absorb a roll-up landing mid-scene-replace, which is why it is worth
+	// keeping even now that the replace is transactional.
+	OrphanSamples int
+	// UnkeyableEdges counts SCENE ROWS, not samples. The unit differs from
+	// every other column here and the two must never be summed.
+	UnkeyableEdges      int
+	UnkeyableSamples    int
+	UnversionedSamples  int
+	MapMismatchSamples  int
+	UnattributedSamples int
+	RobotRows           int
+	LaneRows            int
+	AreaRows            int
+	ResidualsNull       int
+	LanesFailOnly       int
+}
+
+// UpsertPlantDaily writes the plant's day, replacing any existing row.
+func UpsertPlantDaily(db *sql.DB, s PlantDaily) error {
+	_, err := db.Exec(
+		`INSERT INTO plant_confidence_daily
+		   (day, samples_read, orphan_samples, unkeyable_edges, unkeyable_samples,
+		    unversioned_samples, map_mismatch_samples, unattributed_samples,
+		    robot_rows, lane_rows, area_rows, residuals_null, lanes_fail_only)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		 ON CONFLICT (day) DO UPDATE SET
+		   samples_read = EXCLUDED.samples_read,
+		   orphan_samples = EXCLUDED.orphan_samples,
+		   unkeyable_edges = EXCLUDED.unkeyable_edges,
+		   unkeyable_samples = EXCLUDED.unkeyable_samples,
+		   unversioned_samples = EXCLUDED.unversioned_samples,
+		   map_mismatch_samples = EXCLUDED.map_mismatch_samples,
+		   unattributed_samples = EXCLUDED.unattributed_samples,
+		   robot_rows = EXCLUDED.robot_rows,
+		   lane_rows = EXCLUDED.lane_rows,
+		   area_rows = EXCLUDED.area_rows,
+		   residuals_null = EXCLUDED.residuals_null,
+		   lanes_fail_only = EXCLUDED.lanes_fail_only`,
+		s.Day, s.SamplesRead, s.OrphanSamples, s.UnkeyableEdges, s.UnkeyableSamples,
+		s.UnversionedSamples, s.MapMismatchSamples, s.UnattributedSamples,
+		s.RobotRows, s.LaneRows, s.AreaRows, s.ResidualsNull, s.LanesFailOnly)
+	if err != nil {
+		return fmt.Errorf("upsert plant_confidence_daily: %w", err)
 	}
 	return nil
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"shingocore/scenemap"
 )
 
 // The nightly roll-up. Raw samples expire; these aggregates do not, and they
@@ -34,17 +36,38 @@ type RollUpConfig struct {
 	BaselineDays int
 	Coverage     Coverage
 	// Versions resolves which geometry a lane had when a sample was taken.
-	// Nil means no scene versioning is available, and every row is written
-	// with a NULL version — the honest answer, and what every day of raw
-	// collected before the versioning landed genuinely is.
+	//
+	// REQUIRED. version_id is NOT NULL, so a roll-up without a resolver would
+	// quarantine every sample and silently write nothing at all — a total loss
+	// of a day, reported as success — and RollUp rejects that rather than
+	// degrading into it.
+	//
+	// This comment used to say the opposite: that nil meant "every row is
+	// written with a NULL version, the honest answer". That described the
+	// model the primary-key change replaced, and it sat eight lines above the
+	// code that now makes nil an error. A field's own documentation is the
+	// first thing a caller reads.
 	Versions VersionResolver
+	// AreaClasses labels each zone row with the kind of zone it describes.
+	//
+	// OPTIONAL, unlike Versions, and the asymmetry is deliberate. A missing
+	// version resolver loses a whole day; a missing class resolver costs one
+	// descriptive column while the zone statistics stay correct. Refusing to
+	// write a day's measurements to protect a label would be the wrong trade.
+	AreaClasses AreaClassResolver
 }
 
 // RollUpResult reports what the job did, for the caller's log line.
 type RollUpResult struct {
-	Day         time.Time
-	RobotRows   int
-	SegmentRows int
+	Day       time.Time
+	RobotRows int
+	// LaneRows and LanesFailOnly were SegmentRows and SegmentsFailOnly. The
+	// rows they count have been per-LANE since the aggregate stopped keying on
+	// the directed segment; the names were the last thing still saying
+	// "segment", and a field name that describes the previous grain is how a
+	// reader re-derives the wrong denominator.
+	LaneRows    int
+	AreaRows    int
 	SamplesRead int
 	Orphans     int
 	// MapMismatch counts samples quarantined for having been taken on a
@@ -65,10 +88,26 @@ type RollUpResult struct {
 	// version at all. Non-zero means the scene sync has never run since
 	// versioning landed — a defect to surface, not a hole to carry in a key.
 	// A lane that HAS been versioned covers every reading, because its first
-	// version opens at -infinity.
+	// version opens at the beginning of time.
+	//
+	// (Stored as a year-1 timestamp, NOT Postgres '-infinity', which says the
+	// bound exactly and cannot be scanned back into a time.Time through pgx's
+	// database/sql shim. Three comments in this package used to say
+	// "-infinity" flatly, so a reader grepping the DDL for it found nothing.
+	// See sceneversion.beginningOfTime.)
 	UnversionedSamples int
-	ResidualsNull      int
-	SegmentsFailOnly   int
+	// UnattributedSamples counts readings held out for a reloc_status that is
+	// neither SUCCESS nor FAILED — state 3 is stored at both plants.
+	//
+	// IT USED TO BE COUNTED NOWHERE. The roll-up returned early on it, so a
+	// sample that was read, snapped cleanly, taken on the right map and on a
+	// versioned lane could still vanish from every total. The comment above
+	// the branch grouped states 0 and 3 as "feed no statistic", but 0 reaches
+	// a durable column and 3 reached nothing at all — a silent exclusion
+	// inside the code written to remove silent exclusions.
+	UnattributedSamples int
+	ResidualsNull       int
+	LanesFailOnly       int
 }
 
 // dayKey truncates to the UTC day the partitions are cut on.
@@ -180,6 +219,13 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 	robotVals := map[string][]float64{}
 	robotSeen := map[string]bool{}
 	robotMismatch := map[string]int{}
+	// Zone accumulators. Keyed on the NORMALISED area id, so the robot "8" and
+	// the map "08" are one zone rather than two that never join.
+	areaAll := map[string][]float64{}
+	areaGood := map[string][]float64{}
+	areaRobots := map[string]map[string]bool{}
+	areaSentinel := map[string]int{}
+	areaSentinelRobots := map[string]map[string]bool{}
 
 	err = ScanSamples(db, from, to, func(s RawSample) {
 		res.SamplesRead++
@@ -189,44 +235,31 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 		if !onPath {
 			res.Orphans++
 		}
-		// A reading that landed on an edge with no endpoint names has no
-		// lane to be attributed to. Counted and dropped, never guessed at:
-		// keying it on the directed instance name would put it in the same
-		// table at a different granularity, which is the failure this whole
-		// commit is about.
-		if onPath && !seg.Keyable() {
-			res.UnkeyableSamples++
-			return
-		}
-		// The key carries the geometry version, so an edit at 14:00 splits
-		// the day into one row per geometry instead of averaging across it.
-		// A blend of two lanes presented as one measurement is undetectable
-		// by any reader, and at a daily edit cadence it is most days.
-		versionID := versions.At(seg.Area, seg.Lane(), s.SampledAt)
-		// A lane with no version at all cannot be attributed to a geometry,
-		// and inventing one would be the same defect as keying an unnameable
-		// edge on its directed name. Counted and held out — the fix is to
-		// make the scene sync run, not to widen the key.
-		if onPath && versionID == nil {
-			res.UnversionedSamples++
-			return
-		}
-		key := versionedKey(seg.Key(), versionID)
 
-		// QUARANTINE, NOT EXCLUDE. The row stays, the count is recorded, and
-		// nothing about the lane's statistics is computed from it. Dropping
-		// it quietly would trade a silent corruption for a silent omission,
-		// and a lane that suddenly reads on a third of its usual n with no
-		// explanation is the harder of the two to notice.
+		// -- gates that disqualify the READING, not just its lane -----------
 		//
-		// An EMPTY hash is never a mismatch: those rows predate v79 and do
-		// not know their map. Treating "not collected" as "wrong map" would
-		// quarantine every historical row on the first run.
+		// THE ORDER CHANGED, AND THE ORDER IS THE ARGUMENT. The lane
+		// quarantines used to sit above everything, so a sample whose LANE
+		// could not be named was dropped from the robot figure and from its
+		// zones too. But "which lane was this on" and "how well is this robot
+		// localizing" are different questions, and only the first is
+		// unanswerable here. A reading on an unkeyable edge is still a real
+		// reading, by a real robot, inside a real zone.
+		//
+		// A foreign-map reading is the exception and stays above everything:
+		// it is not a reading of this plant at all, so nothing below may count
+		// it.
+		//
+		// QUARANTINE, NOT EXCLUDE. The count is recorded and no statistic is
+		// computed from it. An EMPTY hash is never a mismatch: those rows
+		// predate v79 and do not know their map.
 		if fleetMap != "" && s.MapMD5 != "" && s.MapMD5 != fleetMap {
 			res.MapMismatch++
 			robotMismatch[s.VehicleID]++
-			if onPath {
-				laneMismatch[key]++
+			if onPath && seg.Keyable() {
+				if v := versions.At(seg.Area, seg.Lane(), s.SampledAt); v != nil {
+					laneMismatch[versionedKey(seg.Key(), v)]++
+				}
 			}
 			return
 		}
@@ -238,45 +271,109 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 			// Distinct robots as well as raw count: fourteen failures by one
 			// robot is a robot problem, fourteen by six robots is a place
 			// problem, and the bare count cannot tell them apart.
-			if onPath {
-				segFailed[key]++
-				if segFailedRobots[key] == nil {
-					segFailedRobots[key] = map[string]bool{}
+			if onPath && seg.Keyable() {
+				if v := versions.At(seg.Area, seg.Lane(), s.SampledAt); v != nil {
+					key := versionedKey(seg.Key(), v)
+					segFailed[key]++
+					if segFailedRobots[key] == nil {
+						segFailedRobots[key] = map[string]bool{}
+					}
+					segFailedRobots[key][s.VehicleID] = true
 				}
-				segFailedRobots[key][s.VehicleID] = true
 			}
 			return
 		}
 		if s.RelocStatus != 1 {
-			return // COMPLETED: settled but unconfirmed, held out of statistics
+			// COMPLETED: settled but unconfirmed. Held out of every statistic
+			// and now COUNTED, which it was not before -- see
+			// UnattributedSamples.
+			res.UnattributedSamples++
+			return
 		}
 
-		// The robot's own mean is over readings it actually produced, so a
-		// no-estimate is excluded here rather than counted as zero: this is
-		// a figure ABOUT THE ROBOT, and a robot is not degraded by driving
-		// through a zone the plant cannot localize in. The lane statistic
-		// below makes the opposite choice for the opposite reason.
+		// -- the robot own figure -------------------------------------------
 		//
-		// Orphans stay in: it is descriptive of everything that robot
-		// reported, and dropping readings because they failed to snap would
-		// quietly reshape it.
+		// Over readings it actually produced, so a no-estimate is excluded
+		// here rather than counted as zero: this is a figure ABOUT THE ROBOT,
+		// and a robot is not degraded by driving through a zone the plant
+		// cannot localize in. The lane and zone statistics below make the
+		// opposite choice for the opposite reason.
+		//
+		// Orphans stay in, and so now do readings whose lane could not be
+		// keyed or versioned: this is descriptive of everything that robot
+		// reported, and dropping readings because Core could not name the
+		// floor under them would quietly reshape it.
 		if !s.NoEstimate() {
 			robotVals[s.VehicleID] = append(robotVals[s.VehicleID], s.Confidence)
 		}
+
+		// -- zone attribution: one reading, many zones ----------------------
+		//
+		// INDEPENDENT OF THE LANE, deliberately. A zone is not a lane: a
+		// reading that snapped to nothing, or to an edge Core cannot name,
+		// still happened somewhere the robot could name. Gating zones on the
+		// lane would lose exactly the readings a dead zone produces most of.
+		//
+		// Membership is the ROBOT's own, from rbk_report.area_ids, normalised
+		// because the robot says "8" and the map says "08" -- a join on the
+		// literal strings returns no rows and no error, a quiet zero exactly
+		// where the finding should be.
+		for _, raw := range s.AreaIDs {
+			id := scenemap.NormalizeAreaID(raw)
+			if id == "" {
+				continue
+			}
+			if areaRobots[id] == nil {
+				areaRobots[id] = map[string]bool{}
+			}
+			areaRobots[id][s.VehicleID] = true
+			if s.NoEstimate() {
+				areaAll[id] = append(areaAll[id], 0)
+				areaSentinel[id]++
+				if areaSentinelRobots[id] == nil {
+					areaSentinelRobots[id] = map[string]bool{}
+				}
+				areaSentinelRobots[id][s.VehicleID] = true
+				continue
+			}
+			areaAll[id] = append(areaAll[id], s.Confidence)
+			areaGood[id] = append(areaGood[id], s.Confidence)
+		}
+
+		// -- lane attribution ------------------------------------------------
 		if !onPath {
 			return
 		}
+		// A reading that landed on an edge with no endpoint names has no lane
+		// to be attributed to. Counted and held out of the LANE statistics,
+		// never guessed at: keying it on the directed instance name would put
+		// it in the same table at a different granularity.
+		if !seg.Keyable() {
+			res.UnkeyableSamples++
+			return
+		}
+		// The key carries the geometry version, so an edit at 14:00 splits the
+		// day into one row per geometry instead of averaging across it.
+		versionID := versions.At(seg.Area, seg.Lane(), s.SampledAt)
+		if versionID == nil {
+			// A lane with no version at all cannot be attributed to a
+			// geometry, and inventing one would be the same defect as keying
+			// an unnameable edge on its directed name.
+			res.UnversionedSamples++
+			return
+		}
+		key := versionedKey(seg.Key(), versionID)
 
 		if laneRobots[key] == nil {
 			laneRobots[key] = map[string]bool{}
 		}
 		laneRobots[key][s.VehicleID] = true
 
-		// THE FULL POPULATION, WITH A MISS COUNTED AS THE ZERO IT IS. This
-		// is the statistic the map bands, and it is only bandable because
-		// it is unconditioned: a lane that returns 0.98 half the time and
-		// nothing the rest reads as 0.49 here and as 0.98 in mean_good, and
-		// the difference between those two columns is the whole finding.
+		// THE FULL POPULATION, WITH A MISS COUNTED AS THE ZERO IT IS. This is
+		// the statistic the map bands, and it is only bandable because it is
+		// unconditioned: a lane that returns 0.98 half the time and nothing
+		// the rest reads as 0.49 here and as 0.98 in mean_good, and the
+		// difference between those two columns is the whole finding.
 		if s.NoEstimate() {
 			laneAll[key] = append(laneAll[key], 0)
 			laneSentinel[key]++
@@ -289,10 +386,9 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 		laneAll[key] = append(laneAll[key], s.Confidence)
 		laneGood[key] = append(laneGood[key], s.Confidence)
 
-		// The residual compares robots to each other at the same place, so
-		// it reads good ticks only — a miss is a property of the floor and
-		// would otherwise be charged to whichever robot happened to drive
-		// there.
+		// The residual compares robots to each other at the same place, so it
+		// reads good ticks only -- a miss is a property of the floor and would
+		// otherwise be charged to whichever robot happened to drive there.
 		if dayRC[s.VehicleID] == nil {
 			dayRC[s.VehicleID] = map[string]*accum{}
 		}
@@ -440,12 +536,86 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 			// The row is still written: this lane is the worst place on the
 			// floor, not the least interesting, and an absent row reads as
 			// fine to every human who sees it.
-			res.SegmentsFailOnly++
+			res.LanesFailOnly++
 		}
 		if err := UpsertLaneDaily(db, row); err != nil {
 			return res, err
 		}
-		res.SegmentRows++
+		res.LaneRows++
+	}
+
+	// -- Write the zone rows ------------------------------------------------
+	//
+	// ONE READING CAN BE IN SEVERAL ZONES, so these rows do not partition the
+	// day and their `samples` does not sum to SamplesRead. SEER areas overlap
+	// by design; the robot reports membership as a list and this preserves it.
+	//
+	// The class label is resolved AT THE DAY being rolled up, not at now. A
+	// zone re-declared between then and now describes a different thing, and
+	// stamping last Tuesday with today's class is the defect the lane
+	// versioning exists to prevent, one table over.
+	var classes map[string]string
+	if cfg.AreaClasses != nil {
+		var cerr error
+		classes, cerr = cfg.AreaClasses.ClassesAt(db, from)
+		if cerr != nil {
+			// Logged by the caller through the returned error only if fatal;
+			// here it is not. A missing label must not cost the measurement.
+			classes = nil
+		}
+	}
+	for id, all := range areaAll {
+		good := areaGood[id]
+		row := AreaDaily{
+			Day:             from,
+			AreaName:        id,
+			ClassName:       classes[id],
+			Samples:         len(all),
+			SamplesGood:     len(good),
+			Robots:          len(areaRobots[id]),
+			RobotsSeen:      sortedKeys(areaRobots[id]),
+			SentinelSamples: areaSentinel[id],
+			SentinelRobots:  len(areaSentinelRobots[id]),
+		}
+		p05, p25, p50 := Percentile(all, 0.05), Percentile(all, 0.25), Percentile(all, 0.50)
+		p75, p95 := Percentile(all, 0.75), Percentile(all, 0.95)
+		row.P05, row.P25, row.P50, row.P75, row.P95 = &p05, &p25, &p50, &p75, &p95
+		if len(good) > 0 {
+			mean, minConf := Mean(good), Min(good)
+			row.MeanGood, row.MinConf = &mean, &minConf
+		}
+		// len(good) == 0 leaves MeanGood and MinConf NULL rather than 0.0: a
+		// zone where every reading was a no-estimate has no valid reading to
+		// average, and 0.0 would read as a catastrophic measurement rather
+		// than an absent one. That zone is the most important one on the map.
+		if err := UpsertAreaDaily(db, row); err != nil {
+			return res, err
+		}
+		res.AreaRows++
+	}
+
+	// -- Write the plant row ------------------------------------------------
+	//
+	// LAST, because it records what the rest of this function did. Every count
+	// here reached a log line and nothing else before this table existed, and
+	// the raw samples behind them expire at 14 days -- so a fortnight after any
+	// interesting day, "was the plant like this" stopped being answerable.
+	if err := UpsertPlantDaily(db, PlantDaily{
+		Day:                 from,
+		SamplesRead:         res.SamplesRead,
+		OrphanSamples:       res.Orphans,
+		UnkeyableEdges:      res.UnkeyableEdges,
+		UnkeyableSamples:    res.UnkeyableSamples,
+		UnversionedSamples:  res.UnversionedSamples,
+		MapMismatchSamples:  res.MapMismatch,
+		UnattributedSamples: res.UnattributedSamples,
+		RobotRows:           res.RobotRows,
+		LaneRows:            res.LaneRows,
+		AreaRows:            res.AreaRows,
+		ResidualsNull:       res.ResidualsNull,
+		LanesFailOnly:       res.LanesFailOnly,
+	}); err != nil {
+		return res, err
 	}
 	return res, nil
 }
@@ -480,11 +650,11 @@ func resolve(in map[string]map[string]*accum) map[string]map[string]CellStat {
 // String renders the result as the job's one-line summary.
 func (r RollUpResult) String() string {
 	return fmt.Sprintf(
-		"day=%s robots=%d lanes=%d samples=%d orphans=%d map_mismatch=%d "+
+		"day=%s robots=%d lanes=%d areas=%d samples=%d orphans=%d map_mismatch=%d "+
 			"unkeyable_edges=%d unkeyable_samples=%d unversioned_samples=%d "+
-			"residuals_null=%d fail_only_lanes=%d",
-		r.Day.Format("2006-01-02"), r.RobotRows, r.SegmentRows,
+			"unattributed_samples=%d residuals_null=%d fail_only_lanes=%d",
+		r.Day.Format("2006-01-02"), r.RobotRows, r.LaneRows, r.AreaRows,
 		r.SamplesRead, r.Orphans, r.MapMismatch,
 		r.UnkeyableEdges, r.UnkeyableSamples, r.UnversionedSamples,
-		r.ResidualsNull, r.SegmentsFailOnly)
+		r.UnattributedSamples, r.ResidualsNull, r.LanesFailOnly)
 }

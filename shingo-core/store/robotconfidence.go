@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"database/sql"
+
+	"shingocore/scenemap"
 	"shingocore/store/robotconfidence"
 	"shingocore/store/sceneversion"
 )
@@ -59,4 +61,29 @@ type LaneVersionResolver struct{}
 // issuing a query per sample.
 func (LaneVersionResolver) Load(db *sql.DB, from, to time.Time) (robotconfidence.VersionLookup, error) {
 	return sceneversion.LoadLaneVersionIndex(db, from, to)
+}
+
+// AreaClassLookup adapts store/sceneversion to robotconfidence's
+// AreaClassResolver, so the zone roll-up can label each row with the class of
+// zone it describes without the two packages importing each other.
+type AreaClassLookup struct{}
+
+// ClassesAt reads the areas in force at an instant and returns id -> class.
+//
+// TEMPORAL, not current. A zone re-declared from LocConfigArea to
+// ReflectorArea is a different zone for the purpose of reading a historical
+// day, and labelling last Tuesday's rows with today's class is the same defect
+// the lane versioning exists to prevent, one table over.
+func (AreaClassLookup) ClassesAt(db *sql.DB, at time.Time) (map[string]string, error) {
+	areas, err := sceneversion.AreasAt(db, at)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(areas))
+	for _, a := range areas {
+		// The map stores "08" and the robot reports "8". Both sides are
+		// normalised so the join is on one spelling.
+		out[scenemap.NormalizeAreaID(a.Name)] = a.Class
+	}
+	return out, nil
 }

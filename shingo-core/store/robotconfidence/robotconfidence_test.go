@@ -463,3 +463,38 @@ func TestSegment_UnnamedEndpointsAreNotKeyable(t *testing.T) {
 		t.Error("unkeyable segments must not produce a shared lane identity")
 	}
 }
+
+// The Postgres TEXT[] literal parser, including the quoting nobody's area ids
+// need today. A parser that only handles today is how this class arrives.
+func TestParsePGTextArray(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want []string
+	}{
+		{`{}`, []string{}},
+		{`{8}`, []string{"8"}},
+		{`{8,12}`, []string{"8", "12"}},
+		{`{01,02,11}`, []string{"01", "02", "11"}},
+		// Postgres quotes an element containing a comma, and the split must
+		// not happen inside the quotes.
+		{`{"a,b",c}`, []string{"a,b", "c"}},
+		// A quote inside a quoted element is backslash-escaped.
+		{`{"a\"b"}`, []string{`a"b`}},
+		{`{"a\\b"}`, []string{`a\b`}},
+		// Not an array at all: NULL comes back as the empty string, and a
+		// caller must get "no areas", never a one-element slice holding junk.
+		{``, nil},
+		{`null`, nil},
+	} {
+		got := parsePGTextArray(tc.in)
+		if len(got) != len(tc.want) {
+			t.Errorf("parsePGTextArray(%q) = %#v, want %#v", tc.in, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("parsePGTextArray(%q)[%d] = %q, want %q", tc.in, i, got[i], tc.want[i])
+			}
+		}
+	}
+}

@@ -53,6 +53,8 @@ var migrationOnlyTables = map[string]string{
 	"scene_map_versions":        "added by v81 — the archived .smap blob, gzipped, scan cloud in its own column",
 	"scene_areas":               "added by v81 — declared map areas, temporally versioned, parsed from the robot .smap",
 	"scene_reflectors":          "added by v81 — reflector positions, temporally versioned; identity IS the position",
+	"area_confidence_daily":     "added by v82 — the per-ZONE roll-up. One reading can be in several zones (SEER areas overlap), so its samples column does not sum to the plant total",
+	"plant_confidence_daily":    "added by v82 — the plant-day record for counts that have no lane to hang on: orphans, unkeyable, unversioned, unattributed",
 	"sourceability_events":      "added by a numbered migration after the baseline was frozen",
 	"style_claims":              "added by a numbered migration after the baseline was frozen",
 	"supply_refusals":           "added by a numbered migration after the baseline was frozen",

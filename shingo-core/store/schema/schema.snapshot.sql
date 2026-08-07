@@ -14,6 +14,25 @@ CREATE SEQUENCE public.admin_users_id_seq
 
 ALTER SEQUENCE public.admin_users_id_seq OWNED BY public.admin_users.id;
 
+CREATE TABLE public.area_confidence_daily (
+    day date NOT NULL,
+    area_name text NOT NULL,
+    class_name text DEFAULT ''::text NOT NULL,
+    p05 double precision,
+    p25 double precision,
+    p50 double precision,
+    p75 double precision,
+    p95 double precision,
+    samples integer NOT NULL,
+    mean_good double precision,
+    samples_good integer DEFAULT 0 NOT NULL,
+    min_conf double precision,
+    robots integer NOT NULL,
+    robots_seen text[],
+    sentinel_samples integer DEFAULT 0 NOT NULL,
+    sentinel_robots integer DEFAULT 0 NOT NULL
+);
+
 CREATE TABLE public.audit_log (
     id bigint NOT NULL,
     entity_type text NOT NULL,
@@ -818,6 +837,22 @@ CREATE SEQUENCE public.pending_restocks_id_seq
 
 ALTER SEQUENCE public.pending_restocks_id_seq OWNED BY public.pending_restocks.id;
 
+CREATE TABLE public.plant_confidence_daily (
+    day date NOT NULL,
+    samples_read bigint DEFAULT 0 NOT NULL,
+    orphan_samples bigint DEFAULT 0 NOT NULL,
+    unkeyable_edges integer DEFAULT 0 NOT NULL,
+    unkeyable_samples bigint DEFAULT 0 NOT NULL,
+    unversioned_samples bigint DEFAULT 0 NOT NULL,
+    map_mismatch_samples bigint DEFAULT 0 NOT NULL,
+    unattributed_samples bigint DEFAULT 0 NOT NULL,
+    robot_rows integer DEFAULT 0 NOT NULL,
+    lane_rows integer DEFAULT 0 NOT NULL,
+    area_rows integer DEFAULT 0 NOT NULL,
+    residuals_null integer DEFAULT 0 NOT NULL,
+    lanes_fail_only integer DEFAULT 0 NOT NULL
+);
+
 CREATE TABLE public.process_styles (
     process_id text NOT NULL,
     style_id text NOT NULL,
@@ -1317,6 +1352,9 @@ ALTER TABLE ONLY public.admin_users
 ALTER TABLE ONLY public.admin_users
     ADD CONSTRAINT admin_users_username_key UNIQUE (username);
 
+ALTER TABLE ONLY public.area_confidence_daily
+    ADD CONSTRAINT area_confidence_daily_pkey PRIMARY KEY (day, area_name);
+
 ALTER TABLE ONLY public.audit_log
     ADD CONSTRAINT audit_log_pkey PRIMARY KEY (id);
 
@@ -1482,6 +1520,9 @@ ALTER TABLE ONLY public.pending_restocks
 ALTER TABLE ONLY public.pending_restocks
     ADD CONSTRAINT pending_restocks_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.plant_confidence_daily
+    ADD CONSTRAINT plant_confidence_daily_pkey PRIMARY KEY (day);
+
 ALTER TABLE ONLY public.process_styles
     ADD CONSTRAINT process_styles_pkey PRIMARY KEY (process_id, style_id);
 
@@ -1545,6 +1586,8 @@ ALTER TABLE ONLY public.test_commands
 CREATE INDEX cell_config_station_idx ON public.cell_config USING btree (station);
 
 CREATE UNIQUE INDEX edge_registry_station_uid_key ON public.edge_registry USING btree (station_uid) WHERE (station_uid <> ''::text);
+
+CREATE INDEX idx_area_confidence_daily_area ON public.area_confidence_daily USING btree (area_name, day DESC);
 
 CREATE INDEX idx_audit_entity ON public.audit_log USING btree (entity_type, entity_id);
 

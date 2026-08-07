@@ -532,6 +532,10 @@ func main() {
 						// it into one row per geometry instead of averaging
 						// across the change.
 						Versions: store.LaneVersionResolver{},
+						// Labels each zone row with the class of zone it describes.
+						// Optional: a plant whose map sync has not run yet still
+						// gets correct zone statistics, just unlabelled.
+						AreaClasses: store.AreaClassLookup{},
 					})
 				if err != nil {
 					log.Printf("shingocore: robot confidence: roll-up: %v", err)

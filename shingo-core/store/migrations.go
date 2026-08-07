@@ -916,6 +916,9 @@ func (db *DB) runVersionedMigrations() error {
 		{81, "version the scene: a map edit becomes an event with a magnitude",
 			v81SceneVersioning,
 			func(q schema.Querier) bool { return schema.TableExists(q, "scene_lane_versions") }},
+		{82, "the zone roll-up, and a permanent home for the counts with no lane key",
+			v82AreaAndPlantDaily,
+			func(q schema.Querier) bool { return schema.TableExists(q, "plant_confidence_daily") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -4099,6 +4102,108 @@ func v81SceneVersioning(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v81 scene versioning: %w", err)
+		}
+	}
+	return nil
+}
+
+// v82AreaAndPlantDaily adds the two aggregates the lane roll-up cannot hold.
+//
+// ── plant_confidence_daily: the counts that have no lane key ────────────────
+//
+// THIS IS A ONE-WAY DOOR AND IT WAS STANDING OPEN. Four of the roll-up's
+// diagnostic counts reached a log line and nothing else: orphans,
+// unkeyable_edges, unkeyable_samples and unversioned_samples. The raw samples
+// behind them expire at 14 days, so "was the plant like this in August" was
+// unanswerable by construction after a fortnight — and these are exactly the
+// numbers that say whether a quiet day was quiet or was broken.
+//
+// They cannot live on lane_confidence_daily, and the reason is not
+// convenience: a sample counted here is one that HAS NO LANE. An unkeyable
+// edge has no lane key by definition, an orphan snapped to nothing, and an
+// unversioned reading has no geometry to attribute to. A per-lane table cannot
+// hold a fact about the absence of a lane. So the grain is the plant-day.
+//
+// unattributed_samples is new, and it closes a hole nothing had named: the
+// roll-up returns early on any reloc_status that is neither 0 nor 1, counting
+// it nowhere. State 3 is stored at both plants. A sample that is read, snapped
+// cleanly, on the right map, on a versioned lane, and then simply vanishes
+// from every total is the silent-drop defect this whole branch exists to
+// remove, sitting inside the code that removes it.
+//
+// ── area_confidence_daily: one reading, many zones ─────────────────────────
+//
+// ONE-TO-MANY, AND THE COLUMN TOTALS DO NOT SUM TO THE PLANT. SEER areas
+// overlap by design, so a reading inside two zones is counted in both. Adding
+// this table's `samples` across rows does not give the day's sample count and
+// nothing may present it as though it does — the same class of error as
+// summing a percentage.
+//
+// ATTRIBUTION COMES FROM THE ROBOT, NOT FROM THE POLYGONS. rbk_report.area_ids
+// is the vendor's own answer to "which zones is this robot in", collected per
+// sample since v78. Re-deriving it by point-in-polygon would be Core computing
+// where the robot WAS while the robot reported where it THOUGHT it was — and
+// on a localization dashboard the second is the one that explains the reading.
+// It also cannot drift from the map the robot is actually running.
+//
+// class_name is denormalised onto the row on purpose. It is the field measured
+// to predict anything — every ReflectorArea carrying traffic loses 23-71% of
+// its readings and neither LocConfigArea loses any — and a row that cannot say
+// what kind of zone it describes forces every reader back through a temporal
+// join to scene_areas to learn the one thing that matters. Empty when the map
+// sync has not run, which is a real state and different from a zone with no
+// class.
+//
+// The two populations split exactly as they do on the lane row, for exactly
+// the same reason: p05-p95 over every tick with a no-estimate counted as the
+// zero it is, mean_good over only the ticks that produced a number. Banding
+// the conditioned mean against reflector-area membership scored AUC 0.081 —
+// almost perfectly backwards — and this is the table where that mistake is
+// most tempting, because the zone IS the reflector-area membership.
+func v82AreaAndPlantDaily(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS plant_confidence_daily (
+			day                  DATE PRIMARY KEY,
+			samples_read         BIGINT  NOT NULL DEFAULT 0,
+			orphan_samples       BIGINT  NOT NULL DEFAULT 0,
+			unkeyable_edges      INTEGER NOT NULL DEFAULT 0,
+			unkeyable_samples    BIGINT  NOT NULL DEFAULT 0,
+			unversioned_samples  BIGINT  NOT NULL DEFAULT 0,
+			map_mismatch_samples BIGINT  NOT NULL DEFAULT 0,
+			unattributed_samples BIGINT  NOT NULL DEFAULT 0,
+			robot_rows           INTEGER NOT NULL DEFAULT 0,
+			lane_rows            INTEGER NOT NULL DEFAULT 0,
+			area_rows            INTEGER NOT NULL DEFAULT 0,
+			residuals_null       INTEGER NOT NULL DEFAULT 0,
+			lanes_fail_only      INTEGER NOT NULL DEFAULT 0
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS area_confidence_daily (
+			day              DATE NOT NULL,
+			area_name        TEXT NOT NULL,
+			class_name       TEXT NOT NULL DEFAULT '',
+			p05              DOUBLE PRECISION,
+			p25              DOUBLE PRECISION,
+			p50              DOUBLE PRECISION,
+			p75              DOUBLE PRECISION,
+			p95              DOUBLE PRECISION,
+			samples          INTEGER NOT NULL,
+			mean_good        DOUBLE PRECISION,
+			samples_good     INTEGER NOT NULL DEFAULT 0,
+			min_conf         DOUBLE PRECISION,
+			robots           INTEGER NOT NULL,
+			robots_seen      TEXT[],
+			sentinel_samples INTEGER NOT NULL DEFAULT 0,
+			sentinel_robots  INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (day, area_name)
+		)`,
+		// The page reads "worst zones on this day" and "this zone over time".
+		`CREATE INDEX IF NOT EXISTS idx_area_confidence_daily_area
+		   ON area_confidence_daily(area_name, day DESC)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v82 area and plant daily: %w", err)
 		}
 	}
 	return nil
