@@ -49,6 +49,18 @@ func (db *DB) ReplaceAreaScene(areaName string, points []*scene.Point, edges []*
 	return scene.ReplaceArea(db.DB, areaName, points, edges)
 }
 
+// LatestMapVersion reports the newest archived version of one named map, and
+// whether any exists. See sceneversion.LatestMapVersion.
+func (db *DB) LatestMapVersion(mapName string) (sceneversion.MapVersionState, bool, error) {
+	return sceneversion.LatestMapVersion(db.DB, mapName)
+}
+
+// ApplyMapSnapshot archives one observed .smap and versions its areas and
+// reflectors. See sceneversion.ApplyMapSnapshot.
+func (db *DB) ApplyMapSnapshot(snap sceneversion.MapSnapshot, previousSync *time.Time) (sceneversion.MapSyncResult, error) {
+	return sceneversion.ApplyMapSnapshot(db.DB, snap, previousSync)
+}
+
 func (db *DB) ListSceneAreas() ([]string, error) {
 	return scene.ListAreas(db.DB)
 }

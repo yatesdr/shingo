@@ -149,6 +149,19 @@ type Engine struct {
 	// comment, because it is the reason nobody looked.
 	sceneGateMu   sync.Mutex
 	lastSceneSync *time.Time
+	// lastSceneHash is the RDS scene hash the most recent sync was taken
+	// against, so the gate can tell an EDIT from a tick. Deliberately not
+	// persisted: on restart it is empty, the first pass syncs once, and an
+	// unchanged scene rolls its whole transaction back and writes nothing —
+	// so the cost of forgetting is one no-op sync per boot. Persisting it
+	// would trade that for a stored fact that can disagree with the database
+	// it describes.
+	lastSceneHash string
+	// mapSyncFailKey/N throttle repeat reporting of a PERSISTENT map-sync
+	// failure. Guarded by sceneGateMu, which already covers the gate state
+	// these sit beside. See noteMapSyncFailure.
+	mapSyncFailKey string
+	mapSyncFailN   int
 }
 
 func New(c Config) *Engine {

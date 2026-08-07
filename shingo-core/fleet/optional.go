@@ -246,6 +246,25 @@ type SceneStateProvider interface {
 	GetSceneState() (SceneState, bool)
 }
 
+// RobotMapDownloader fetches one robot's onboard map verbatim.
+//
+// Optional, and separate from every other fleet call because it is a different
+// SHAPE of call: megabytes, on demand, from one named robot, rather than the
+// fleet-wide poll everything else here does. A backend without it simply has no
+// area or reflector data — which is the state Core was in before this existed.
+//
+// THIS IS NOT A POLL AND MUST NOT BECOME ONE. The map is fetched only when the
+// hash already arriving on /robotsStatus has moved. The original design refused
+// a second connection to every robot because RDS already aggregates; asking RDS
+// to relay one call to one robot keeps that.
+//
+// Returns the bytes the robot sent, unaltered. The content hash is taken over
+// them, so any re-encoding on the way through would destroy the only thing that
+// makes "this map is unchanged" answerable.
+type RobotMapDownloader interface {
+	DownloadRobotMap(vehicleID, mapName string) ([]byte, error)
+}
+
 // RobotAlarm is a vendor-neutral active robot alarm (Q-026). JSON tags match
 // domain.PrimaryFailureReason's seerRobotAlarm so a marshaled []RobotAlarm
 // feeds the failure classifier directly when snapshotted onto a mission.

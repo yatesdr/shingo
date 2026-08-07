@@ -149,6 +149,41 @@ func RecentDiffs(db *sql.DB, limit int) ([]DiffView, error) {
 	return out, rows.Err()
 }
 
+// MapVersionState is what the map-sync gate needs to decide whether to fetch.
+type MapVersionState struct {
+	// MapMD5 is the robot-reported hash of the newest stored version of this
+	// map. Empty when a version was archived without one.
+	MapMD5 string
+	// SyncedAt is when that version was observed. The daily floor is measured
+	// from here, so a plant whose hash never moves still re-reads once a day.
+	SyncedAt time.Time
+}
+
+// LatestMapVersion returns the newest archived version of one named map.
+//
+// FALSE MEANS "NEVER FETCHED", NOT "UNCHANGED", and the caller must not
+// conflate them — a plant that has never pulled a map has no areas and no
+// reflectors, which is a very different state from one whose map is stable.
+//
+// Keyed on map NAME because that is what a robot reports it is running and
+// what #4011 is asked for. Two maps at one plant (Hopkinsville ran Hop_20 and
+// Hop_21 simultaneously) are two independent version streams, and collapsing
+// them would make each one's changes look like the other's.
+func LatestMapVersion(db *sql.DB, mapName string) (MapVersionState, bool, error) {
+	var st MapVersionState
+	err := db.QueryRow(
+		`SELECT map_md5, synced_at FROM scene_map_versions
+		  WHERE map_name = $1
+		  ORDER BY synced_at DESC, id DESC LIMIT 1`, mapName).Scan(&st.MapMD5, &st.SyncedAt)
+	if err == sql.ErrNoRows {
+		return MapVersionState{}, false, nil
+	}
+	if err != nil {
+		return MapVersionState{}, false, fmt.Errorf("sceneversion: latest map version: %w", err)
+	}
+	return st, true, nil
+}
+
 // LanesChangedByDiff names the lanes one edit touched, which is the part of a
 // diff row that does real work — an engineer reads "what did I touch", not a
 // count.

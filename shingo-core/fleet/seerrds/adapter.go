@@ -207,6 +207,20 @@ func (a *Adapter) GetSceneState() (fleet.SceneState, bool) {
 	return a.sceneState, a.sceneSeen
 }
 
+// mapDownloadTimeout is what one .smap fetch is allowed.
+//
+// Springfield's map is 7.31 MB over a proxied relay, and the adapter's own
+// timeout is tuned for a 2-second poll. Borrowing that would turn a working
+// fetch into what reads as a robot fault. Ninety seconds is roughly two orders
+// of magnitude above the measured transfer and still bounded — this runs on a
+// change, not on a schedule, so a generous ceiling costs nothing.
+const mapDownloadTimeout = 90 * time.Second
+
+// DownloadRobotMap implements fleet.RobotMapDownloader.
+func (a *Adapter) DownloadRobotMap(vehicleID, mapName string) ([]byte, error) {
+	return a.client.DownloadMap(vehicleID, mapName, mapDownloadTimeout)
+}
+
 func (a *Adapter) SetAvailability(vehicleID string, available bool) error {
 	dispatchType := "undispatchable_unignore"
 	if available {

@@ -140,6 +140,13 @@ func (e *Engine) Start() {
 	// Start staged bin expiry sweep
 	go e.stagedBinSweepLoop()
 
+	// Map + scene sync gates. Deliberately NO boot pass, unlike the confidence
+	// roll-up: both gates read the robot cache, which robotRefreshLoop above
+	// fills on its 2-second tick, so a pass at boot would run against an empty
+	// cache and decide nothing. The first tick five minutes in is the earliest
+	// the answer means anything.
+	go e.mapSyncLoop()
+
 	// Demand-episode reconciler: the correctness floor under the notification
 	// close paths. Started AFTER the threshold monitor is constructed (New
 	// builds it) but independently of its startup sweep — the reconciler reads
