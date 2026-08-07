@@ -55,6 +55,12 @@ func (db *DB) LatestMapVersion(mapName string) (sceneversion.MapVersionState, bo
 	return sceneversion.LatestMapVersion(db.DB, mapName)
 }
 
+// LanesChangedIn names the lanes whose geometry changed inside a window. See
+// sceneversion.LanesChangedIn — a first version does not count as a change.
+func (db *DB) LanesChangedIn(from, to time.Time) (map[string]bool, error) {
+	return sceneversion.LanesChangedIn(db.DB, from, to)
+}
+
 // ApplyMapSnapshot archives one observed .smap and versions its areas and
 // reflectors. See sceneversion.ApplyMapSnapshot.
 func (db *DB) ApplyMapSnapshot(snap sceneversion.MapSnapshot, previousSync *time.Time) (sceneversion.MapSyncResult, error) {

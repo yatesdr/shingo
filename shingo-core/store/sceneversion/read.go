@@ -204,3 +204,34 @@ func LanesChangedByDiff(db *sql.DB, diffID int64) ([]string, error) {
 	}
 	return out, rows.Err()
 }
+
+// LanesChangedIn names the lanes whose geometry changed inside [from, to).
+//
+// "CHANGED", NOT "HAS A VERSION". Every lane has a version — the first one
+// opens at the beginning of time — so a query that merely found a version row
+// would mark the entire plant as changed on a board whose only change mark is
+// supposed to answer "what did I touch". A change is a version whose valid_from
+// falls INSIDE the window, which by construction excludes every first version.
+//
+// Returned as the roll-up's own composite key (area \x00 lane) so the caller
+// joins against LaneWindows without re-deriving the separator in a second
+// place.
+func LanesChangedIn(db *sql.DB, from, to time.Time) (map[string]bool, error) {
+	rows, err := db.Query(
+		`SELECT DISTINCT area_name, lane FROM scene_lane_versions
+		  WHERE valid_from >= $1 AND valid_from < $2
+		    AND supersedes_id IS NOT NULL`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("sceneversion: lanes changed in window: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var area, lane string
+		if err := rows.Scan(&area, &lane); err != nil {
+			return nil, err
+		}
+		out[area+"\x00"+lane] = true
+	}
+	return out, rows.Err()
+}

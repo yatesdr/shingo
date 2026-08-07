@@ -1,7 +1,9 @@
 package www
 
 import (
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -150,4 +152,48 @@ func (h *Handlers) apiRobotMoveTo(w http.ResponseWriter, r *http.Request) {
 		"vendor_order_id": vendorOrderID,
 		"destination":     destNode.Name,
 	})
+}
+
+// ── The localization board ─────────────────────────────────────────────────
+
+// boardWindows are the windows the page may ask for.
+//
+// AN ALLOW-LIST, NOT A FREE PARAMETER, and the reason is the one the whole
+// design keeps returning to: a window is only offerable if the record can
+// answer it. These four can, because the daily histograms sum — before that
+// column existed, 30 d could not be served at all against fourteen days of raw
+// and a control offering it would have returned a shorter answer than its own
+// label.
+var boardWindows = map[string]int{
+	"24h": 1,
+	"7d":  7,
+	"30d": 30,
+}
+
+// apiLocalizationBoard serves the robots page's map overlay.
+//
+// STATE ONLY — the page draws geometry from /api/map/edges, which already
+// exists. Two copies of the network under two URLs is the objection that keeps
+// the .smap's curves unparsed, and it does not stop applying because the second
+// copy would be convenient.
+func (h *Handlers) apiLocalizationBoard(w http.ResponseWriter, r *http.Request) {
+	label := r.URL.Query().Get("window")
+	if label == "" {
+		label = "7d"
+	}
+	days, ok := boardWindows[label]
+	if !ok {
+		// A window this cannot serve is a 400, never a silent fallback to one
+		// it can. Quietly answering a different question than the one asked is
+		// how a reader compares last week's numbers against this week's label.
+		h.jsonError(w, fmt.Sprintf("window: %q is not one of 24h, 7d, 30d", label),
+			http.StatusBadRequest)
+		return
+	}
+	board, err := h.engine.NodeService().LocalizationBoardAt(label, days, time.Now())
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, board)
 }
