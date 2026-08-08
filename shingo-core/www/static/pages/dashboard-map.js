@@ -1606,8 +1606,21 @@ import {
     }
   }
 
-  // Faint grid + corner brackets — gives the floor a frame so the scene reads
-  // as a plant view rather than dots in a void.
+  // Faint grid — gives the floor a frame so the scene reads as a plant view
+  // rather than dots in a void.
+  //
+  // THE CORNER BRACKETS ARE GONE, and the reason they read badly is the reason
+  // they looked like a good idea: they were derived from the live view
+  // (view.minX/minY/w/h) rather than from the plant, so they framed the VIEWPORT
+  // instead of the floor. A frame that is redrawn at the new edges on every zoom
+  // and every pan is not a frame — it is four marks that chase the cursor, and
+  // on an auto-following display it never settles, because the ROI re-frames as
+  // robots move. They also read as a box the map was clipped to, which is
+  // exactly what they were not.
+  //
+  // The grid stays: it is keyed to WORLD coordinates, so it slides under the
+  // scene as you pan instead of moving with you, which is what actually conveys
+  // that the floor is a fixed thing you are looking around.
   function drawBackdrop(svg, unit) {
     var step = unit * 0.08;
     var gridW = unit * 0.0012; // stroke width in user units — CSS px wouldn't scale
@@ -1619,17 +1632,6 @@ import {
     for (gy = Math.ceil(y0 / step) * step; gy < y1; gy += step) {
       svg.appendChild(svgEl('line', { x1: x0, y1: gy, x2: x1, y2: gy, class: 'map-grid', 'stroke-width': gridW }));
     }
-    var L = unit * 0.04, inset = unit * 0.015, sw = unit * 0.0025;
-    var corners = [
-      [x0 + inset, y0 + inset, 1, 1], [x1 - inset, y0 + inset, -1, 1],
-      [x0 + inset, y1 - inset, 1, -1], [x1 - inset, y1 - inset, -1, -1]
-    ];
-    corners.forEach(function (c) {
-      svg.appendChild(svgEl('path', {
-        d: 'M' + (c[0] + c[2] * L) + ' ' + c[1] + ' H' + c[0] + ' V' + (c[1] + c[3] * L),
-        class: 'map-bracket', fill: 'none', 'stroke-width': sw
-      }));
-    });
   }
 
   function escapeText(s) {

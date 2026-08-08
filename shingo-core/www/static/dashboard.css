@@ -168,7 +168,6 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 /* Backdrop: faint grid + corner brackets frame the floor. Grid stroke-width is
  * set in JS user units — a CSS width would not scale with the map. */
 .map-grid { stroke: rgba(255, 255, 255, 0.05); }
-.map-bracket { stroke: rgba(120, 160, 210, 0.35); stroke-linecap: round; }
 
 /* Travel network: the scene's synced path segments and receded waypoint dots.
  * Lines carry the structure, so they sit a step brighter than the dots. */
