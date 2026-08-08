@@ -83,10 +83,19 @@ function render(events, telemetry) {
     });
 }
 
-// blockEvent wraps block records the way Core stores them: one BLOCK_FINISHED
-// mission_event carrying the fleet's block array in blocks_json.
+// blockEvent wraps block records the way the mission API SERVES them: one leg
+// row, flagged is_leg, carrying the fleet's block array in blocks_json.
+//
+// is_leg is what the page keys on now. new_state is kept here because the API
+// still sends it verbatim — the raw fleet word stays available for diagnosis —
+// but the page no longer compares against it, so a fixture carrying only
+// new_state would be modelling a payload the server does not produce.
 function blockEvent(blocks) {
-    return { new_state: 'BLOCK_FINISHED', blocks_json: JSON.stringify(blocks) };
+    return {
+        new_state: 'BLOCK_FINISHED',
+        is_leg: true,
+        blocks_json: JSON.stringify(blocks),
+    };
 }
 
 function blk(location, binTask, startTime, terminateTime) {

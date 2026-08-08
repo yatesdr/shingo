@@ -23,46 +23,69 @@ import { onSSE } from '/static/shared/utils.js';
     return d.toLocaleString();
   }
 
-  function stateLabel(state) {
-    if (!state) return '-';
-    var map = {
-      'FINISHED': 'completed', 'delivered': 'completed', 'confirmed': 'completed',
-      'FAILED': 'failed', 'failed': 'failed',
-      'STOPPED': 'cancelled', 'cancelled': 'cancelled',
-      'CREATED': 'created', 'TOBEDISPATCHED': 'dispatched',
-      'RUNNING': 'in_transit', 'WAITING': 'staged'
-    };
-    return map[state] || state;
-  }
+  // THERE IS NO stateLabel HERE ANY MORE, AND THAT IS THE CHANGE.
+  //
+  // This file used to carry its own copy of the vendor→Core state mapping, and
+  // it had drifted from fleet.Backend.MapState — the one the engine actually
+  // dispatches on — in three places: RDS CREATED read as "created" where Core
+  // says dispatched, FINISHED as "completed" where Core says delivered, and
+  // FAILED as "failed" where Core says FAULTED. That last one is not cosmetic:
+  // faulted is the non-terminal grace state with a recovery timer running,
+  // failed is terminal, and the page was reporting a mission dead while Core
+  // still expected it back. It also folded Core's delivered and confirmed into
+  // one invented word, losing "the bin arrived" versus "the operator signed".
+  //
+  // The server now stamps every event with old_status / new_status through that
+  // one mapper (handlers_missions.go), so the page renders what Core believes
+  // instead of a second opinion about it. Two spellings of one mapping is the
+  // failure this codebase keeps paying for; there is now one.
 
-  function stateBadge(state) {
-    var label = stateLabel(state);
-    // 'completed' / 'created' are display labels, not protocol statuses —
-    // map them onto real badge-<status> classes so they pick up the Signal
-    // palette (green / slate) instead of the unstyled grey fallback.
-    var classMap = { completed: 'badge-confirmed', created: 'badge-pending' };
-    var cls = classMap[label] || ('badge-' + label);
-    return '<span class="badge ' + cls + '">' + label + '</span>';
+  // stateBadge renders a CORE status. The raw vendor state rides along as the
+  // tooltip: this is the fleet view, and when a mission stalls what RDS actually
+  // said is the thing worth knowing — so it is one hover away rather than gone.
+  //
+  // No class map. Every value reaching here is a real protocol status, so
+  // badge-<status> resolves against shared/status-classes.css on its own; the
+  // two-entry fixup that used to sit here existed only to rescue the two
+  // invented labels.
+  function stateBadge(status, rawState) {
+    if (!status) return '<span class="badge">-</span>';
+    var title = rawState && rawState !== status ? ' title="fleet reported: ' + rawState + '"' : '';
+    return '<span class="badge badge-' + status + '"' + title + '>' + status + '</span>';
   }
 
   // Duration segments and timeline dots take the hue of the status they are
-  // LABELLED with (see stateLabel), not a hue of their own. This table used
-  // to be independent and disagreed with the badges rendered beside it:
-  // RUNNING is labelled "in_transit" but was painted with the dispatched
-  // blue, TOBEDISPATCHED is labelled "dispatched" but was painted --info
-  // cyan — the two hues were swapped relative to their own badges — and
-  // WAITING ("staged", a benign dwell) was painted --warning amber. Same
-  // "one palette, three renderers" defect P13 fixed for the map's
-  // STATUS_COLOR; keyed off the shared --status-*-dot tokens now, so the
-  // segment, the dot and the badge can't drift apart again.
+  // LABELLED with, not a hue of their own. This table used to be independent
+  // and disagreed with the badges rendered beside it: RUNNING is labelled
+  // "in_transit" but was painted with the dispatched blue, TOBEDISPATCHED is
+  // labelled "dispatched" but was painted --info cyan — the two hues were
+  // swapped relative to their own badges — and WAITING ("staged", a benign
+  // dwell) was painted --warning amber. Same "one palette, three renderers"
+  // defect P13 fixed for the map's STATUS_COLOR; keyed off the shared
+  // --status-*-dot tokens now, so the segment, the dot and the badge can't
+  // drift apart again.
+  //
+  // KEYED ON THE CORE STATUS, NOT THE VENDOR STATE. It used to be keyed on raw
+  // RDS words while the badge beside it was keyed on the mapped label, which is
+  // two vocabularies deciding one row's appearance — the drift above, one level
+  // down. One key now, and it is the one the server sends.
+  //
+  // faulted and cancelled have no --status-*-dot of their own: the palette
+  // covers the progression a healthy order walks, and these two are exits from
+  // it. --warning for faulted says "a timer is running, this may come back",
+  // which is exactly what faulted means and what distinguishes it from failed.
   var stateColors = {
-    'CREATED': 'var(--status-pending-dot)',
-    'TOBEDISPATCHED': 'var(--status-dispatched-dot)',
-    'RUNNING': 'var(--status-in-transit-dot)',
-    'WAITING': 'var(--status-staged-dot)',
-    'FINISHED': 'var(--status-delivered-dot)',
-    'FAILED': 'var(--danger)',
-    'STOPPED': 'var(--text-muted)'
+    'pending': 'var(--status-pending-dot)',
+    'queued': 'var(--status-queued-dot)',
+    'dispatched': 'var(--status-dispatched-dot)',
+    'in_transit': 'var(--status-in-transit-dot)',
+    'staged': 'var(--status-staged-dot)',
+    'reshuffling': 'var(--status-reshuffling-dot)',
+    'delivered': 'var(--status-delivered-dot)',
+    'confirmed': 'var(--status-delivered-dot)',
+    'faulted': 'var(--warning)',
+    'failed': 'var(--danger)',
+    'cancelled': 'var(--text-muted)'
   };
 
   function formatRoute(order) {
@@ -173,16 +196,23 @@ import { onSSE } from '/static/shared/utils.js';
   // And the rule that outlives the drawing: legs sum to the mission duration or
   // the difference is shown as unaccounted. Rescaling to fit would be a lie
   // that looks tidy.
-  var BLOCK_LEG_STATE = 'BLOCK_FINISHED';
-
   // STOPPED is the fleet's teardown state. Read the mission's disposition from
   // the EVENT STREAM rather than the ShinGo order status: the teardown is the
   // fleet's act, the RDS state is where it is recorded, and a ShinGo status can
   // reach a terminal of its own without the fleet ever having stopped anything.
+  //
+  // This one stays a raw comparison on purpose — it is asking what the FLEET
+  // did, so the vendor's own word is the right thing to test.
   var STOPPED_STATE = 'STOPPED';
 
+  // The server marks leg rows (engine.BlockLegState, stamped onto the event view
+  // as is_leg). This used to compare new_state against a local copy of that
+  // marker string, which was a second spelling of a constant that only Core
+  // writes — and the kind that goes stale silently, because a leg row that
+  // stopped matching would simply render as a status transition to a state
+  // nothing recognises.
   function isBlockLegEvent(ev) {
-    return ev && ev.new_state === BLOCK_LEG_STATE;
+    return !!(ev && ev.is_leg);
   }
 
   // parseBlockLegs pulls the stored block records out of the BLOCK_FINISHED
@@ -392,7 +422,7 @@ import { onSSE } from '/static/shared/utils.js';
       var ms = curr - prev;
       if (ms < 0) ms = 0;
       totalMs += ms;
-      segments.push({ state: events[i-1].new_state, ms: ms });
+      segments.push({ status: events[i-1].new_status, ms: ms });
     }
 
     if (totalMs === 0) {
@@ -405,9 +435,10 @@ import { onSSE } from '/static/shared/utils.js';
     for (var j = 0; j < segments.length; j++) {
       var seg = segments[j];
       var pct = Math.max((seg.ms / totalMs) * 100, 1);
-      var color = stateColors[seg.state] || 'var(--text-muted)';
-      html += '<div class="duration-segment" style="flex:' + pct + ';background:' + color + '" title="' + stateLabel(seg.state) + ': ' + formatDuration(seg.ms) + '"></div>';
-      legendHtml += '<span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:' + color + ';vertical-align:middle;margin-right:4px"></span>' + stateLabel(seg.state) + ': ' + formatDuration(seg.ms) + '</span>';
+      var label = seg.status || '-';
+      var color = stateColors[seg.status] || 'var(--text-muted)';
+      html += '<div class="duration-segment" style="flex:' + pct + ';background:' + color + '" title="' + label + ': ' + formatDuration(seg.ms) + '"></div>';
+      legendHtml += '<span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:' + color + ';vertical-align:middle;margin-right:4px"></span>' + label + ': ' + formatDuration(seg.ms) + '</span>';
     }
     bar.innerHTML = html;
     legend.innerHTML = legendHtml;
@@ -445,7 +476,7 @@ import { onSSE } from '/static/shared/utils.js';
       }
 
       html += '<div class="timeline-entry">';
-      html += '<div class="timeline-dot" style="background:' + (stateColors[ev.new_state] || 'var(--text-muted)') + '"></div>';
+      html += '<div class="timeline-dot" style="background:' + (stateColors[ev.new_status] || 'var(--text-muted)') + '"></div>';
       html += '<div class="timeline-body">';
       html += '<div class="timeline-header">';
       html += '<span class="timeline-time">' + formatTime(ev.created_at) + '</span> ';
@@ -465,7 +496,7 @@ import { onSSE } from '/static/shared/utils.js';
               : '<span class="leg-unknown-text">duration unknown</span>')
           + '</div>';
       } else {
-        html += '<div>' + stateBadge(ev.old_state) + ' &rarr; ' + stateBadge(ev.new_state) + '</div>';
+        html += '<div>' + stateBadge(ev.old_status, ev.old_state) + ' &rarr; ' + stateBadge(ev.new_status, ev.new_state) + '</div>';
       }
       if (ev.robot_id) {
         html += '<div class="timeline-meta">';
@@ -475,18 +506,19 @@ import { onSSE } from '/static/shared/utils.js';
         html += '</div>';
       }
 
-      // Show block states if available
-      if (ev.blocks_json && ev.blocks_json !== '[]') {
-        try {
-          var blocks = JSON.parse(ev.blocks_json);
-          if (blocks.length > 0) {
-            html += '<div class="timeline-meta">Blocks: ';
-            for (var b = 0; b < blocks.length; b++) {
-              html += '<span class="badge badge-sm">' + blocks[b].location + ': ' + stateLabel(blocks[b].state) + '</span> ';
-            }
-            html += '</div>';
-          }
-        } catch(e) { console.error('renderEvent blocks parse', e); }
+      // Block states, decoded and mapped server-side (handlers_missions.go) so
+      // these chips speak the same vocabulary as the badge above them. The raw
+      // vendor state stays on the chip's tooltip, as it does on the badge.
+      var blocks = ev.blocks || [];
+      if (blocks.length > 0) {
+        html += '<div class="timeline-meta">Blocks: ';
+        for (var b = 0; b < blocks.length; b++) {
+          var blkTitle = blocks[b].state && blocks[b].state !== blocks[b].status
+            ? ' title="fleet reported: ' + blocks[b].state + '"' : '';
+          html += '<span class="badge badge-sm"' + blkTitle + '>' + blocks[b].location
+            + ': ' + (blocks[b].status || '-') + '</span> ';
+        }
+        html += '</div>';
       }
 
       html += '</div></div>';
@@ -544,7 +576,7 @@ import { onSSE } from '/static/shared/utils.js';
         try { lb = JSON.parse(ev.blocks_json || '[]'); } catch (e) { console.error('event log leg parse', e); }
         what = '<span class="badge badge-staged">leg</span> ' + legLabel(lb[0] || {});
       } else {
-        what = stateBadge(ev.old_state) + ' &rarr; ' + stateBadge(ev.new_state);
+        what = stateBadge(ev.old_status, ev.old_state) + ' &rarr; ' + stateBadge(ev.new_status, ev.new_state);
       }
       html += '<tr>';
       html += '<td style="white-space:nowrap">' + formatTime(ev.created_at) + '</td>';

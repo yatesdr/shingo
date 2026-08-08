@@ -66,7 +66,7 @@ func TestRecordBlockLeg_WritesTimingToMissionEvents(t *testing.T) {
 	}
 	var robotID string
 	for _, ev := range events {
-		if ev.NewState != blockLegState {
+		if ev.NewState != BlockLegState {
 			continue
 		}
 		robotID = ev.RobotID
@@ -85,7 +85,7 @@ func TestRecordBlockLeg_WritesTimingToMissionEvents(t *testing.T) {
 		leg = &got[0]
 	}
 	if leg == nil {
-		t.Fatalf("no %s row written; events=%d", blockLegState, len(events))
+		t.Fatalf("no %s row written; events=%d", BlockLegState, len(events))
 	}
 
 	if leg.BlockID != "b-pickup" || leg.Location != "AP-SOURCE" || leg.BinTask != "Load" {
@@ -125,7 +125,7 @@ func TestRecordBlockLeg_MissingTimesLeaveDurationZero(t *testing.T) {
 
 	found := false
 	for _, ev := range events {
-		if ev.NewState != blockLegState {
+		if ev.NewState != BlockLegState {
 			continue
 		}
 		found = true
@@ -156,7 +156,7 @@ func TestRecordBlockLeg_InvertedTimesDoNotProduceNegativeDuration(t *testing.T) 
 	events, err := db.ListMissionEvents(orderID)
 	testutil.MustNoErr(t, err, "list mission events")
 	for _, ev := range events {
-		if ev.NewState != blockLegState {
+		if ev.NewState != BlockLegState {
 			continue
 		}
 		var got []map[string]any

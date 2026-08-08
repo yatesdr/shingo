@@ -64,14 +64,24 @@ func (e *Engine) handleBlockCompleted(ev BlockCompletedEvent) {
 	}
 }
 
-// blockLegState is the mission_events.new_state marker for a per-block
+// BlockLegState is the mission_events.new_state marker for a per-block
 // completion.
 //
 // Deliberately NOT a vendor OrderState value. These rows are a finer grain
 // than the order-level transitions beside them, so a reader filtering on real
 // vendor states must not pick them up by accident — and one that wants legs
 // can select exactly this.
-const blockLegState = "BLOCK_FINISHED"
+//
+// EXPORTED so the mission-detail handler can recognise a leg row without
+// re-spelling the string. There was a second spelling — a literal in
+// mission-detail.js — and the page now asks the server instead (is_leg on the
+// event view), so this constant is the only place the value appears.
+//
+// That matters more than tidiness. A leg row's new_state is NOT a vendor state,
+// so putting it through fleet.MapState takes the unrecognised-value arm, which
+// answers "dispatched" and logs a line. Every leg row of every mission would
+// have acquired a status it never had, and printed a log line for the privilege.
+const BlockLegState = "BLOCK_FINISHED"
 
 // blockLeg is the per-block record stored in mission_events.blocks_json.
 // Epoch seconds, verbatim from the vendor; DurationSeconds is derived and 0
@@ -135,7 +145,7 @@ func (e *Engine) recordBlockLeg(ev BlockCompletedEvent) {
 		OrderID:       ev.OrderID,
 		VendorOrderID: ev.VendorOrderID,
 		OldState:      "",
-		NewState:      blockLegState,
+		NewState:      BlockLegState,
 		RobotID:       robotID,
 		BlocksJSON:    string(blocks),
 		ErrorsJSON:    "[]",

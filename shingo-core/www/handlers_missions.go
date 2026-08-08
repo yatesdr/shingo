@@ -10,6 +10,8 @@ import (
 
 	"shingo/shared/clock"
 	"shingocore/domain"
+	"shingocore/engine"
+	"shingocore/fleet"
 )
 
 func (h *Handlers) handleMissions(w http.ResponseWriter, r *http.Request) {
@@ -88,9 +90,122 @@ func (h *Handlers) apiGetMission(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"order":     order,
 		"telemetry": telemetry,
-		"events":    events,
+		"events":    h.missionEventViews(events),
 		"history":   history,
 	})
+}
+
+// missionEventView is one mission event plus the Core status its vendor state
+// means. old_state / new_state are kept verbatim beside it.
+//
+// BOTH, NOT EITHER. The page speaks Core's vocabulary because that is what
+// every other surface speaks and what an operator is looking at elsewhere; but
+// this is the FLEET view, and when a mission stalls the thing you need to know
+// is what RDS actually said. Dropping the raw state to tidy the labels would
+// take the diagnostic value out of the one page that exists to carry it.
+type missionEventView struct {
+	*domain.TelemetryEvent
+	OldStatus string `json:"old_status"`
+	NewStatus string `json:"new_status"`
+	// IsLeg marks a per-block completion row rather than an order transition.
+	// The page used to decide this by comparing new_state against its own copy
+	// of the marker string; asking here removes that spelling and keeps the
+	// value in one place (engine.BlockLegState).
+	IsLeg bool `json:"is_leg"`
+	// Blocks is blocks_json decoded and stamped with the same mapping. The
+	// chips under a timeline row are the same vocabulary as the row itself, so
+	// leaving them in vendor words while the badge above them speaks Core's
+	// would be a worse mixture than what this change set out to fix. The raw
+	// blocks_json stays on the row untouched.
+	Blocks []missionBlockView `json:"blocks"`
+}
+
+// missionBlockView is one block snapshot plus the Core status its state means.
+type missionBlockView struct {
+	fleet.BlockSnapshot
+	Status string `json:"status"`
+}
+
+// missionEventViews stamps each event with the Core status its vendor state
+// maps onto.
+//
+// MAPPED HERE RATHER THAN IN THE PAGE, AND THAT IS THE POINT OF THE CHANGE.
+// mission-detail.js carried its own hand-written copy of this mapping and the
+// two had drifted apart on three of seven rows: RDS CREATED read as "created"
+// where Core says dispatched, FINISHED as "completed" where Core says
+// delivered, and — the one that matters — FAILED as "failed" where Core says
+// FAULTED. faulted is the non-terminal grace state with a recovery timer
+// running; failed is terminal. The page was telling an engineer a mission was
+// dead while Core still expected it back. It also collapsed Core's delivered
+// and confirmed into one invented word, losing "the bin arrived" versus "the
+// operator signed for it".
+//
+// So the mapping now comes from the SAME seam the engine dispatches on —
+// fleet.Backend.MapState, which wiring_vendor_status.go uses to decide the
+// order's real status. Two spellings of one mapping is the failure this
+// codebase keeps paying for; there is now one, and the page renders what Core
+// actually believes rather than a second opinion about it.
+//
+// An empty state maps to empty, never through MapState. Leg rows carry no
+// old_state — nothing transitioned — and MapState's default arm answers
+// "dispatched" for anything it does not recognise AND logs it, so passing ""
+// through would both invent a transition and print a line per leg per mission.
+func (h *Handlers) missionEventViews(events []*domain.TelemetryEvent) []missionEventView {
+	out := make([]missionEventView, 0, len(events))
+	for _, ev := range events {
+		view := missionEventView{
+			TelemetryEvent: ev,
+			IsLeg:          ev.NewState == engine.BlockLegState,
+			Blocks:         h.missionBlockViews(ev.BlocksJSON),
+		}
+		// A leg row gets NO status, and that is not an omission. Its new_state
+		// is Core's own per-block marker rather than a vendor state, so there is
+		// no transition to name — the row says "this block finished", and the
+		// page renders it as a leg. Mapping it anyway would put every leg row
+		// through MapState's unrecognised arm and invent "dispatched" for it.
+		if !view.IsLeg {
+			view.OldStatus = h.coreStatusFor(ev.OldState)
+			view.NewStatus = h.coreStatusFor(ev.NewState)
+		}
+		out = append(out, view)
+	}
+	return out
+}
+
+// missionBlockViews decodes one event's blocks_json and stamps each block with
+// the Core status its vendor state means.
+//
+// Unparseable JSON yields no blocks rather than an error: this is a display
+// detail on a diagnostic page, and a malformed snapshot from one poll must not
+// cost the operator the whole timeline. The raw string is still on the row for
+// anyone who needs to look at it.
+func (h *Handlers) missionBlockViews(blocksJSON string) []missionBlockView {
+	if blocksJSON == "" || blocksJSON == "[]" {
+		return nil
+	}
+	var snaps []fleet.BlockSnapshot
+	if err := json.Unmarshal([]byte(blocksJSON), &snaps); err != nil {
+		return nil
+	}
+	out := make([]missionBlockView, 0, len(snaps))
+	for _, s := range snaps {
+		out = append(out, missionBlockView{BlockSnapshot: s, Status: h.coreStatusFor(s.State)})
+	}
+	return out
+}
+
+// coreStatusFor translates one vendor state through the fleet adapter. Empty in,
+// empty out. A nil backend (bare test fixtures) degrades to the raw string
+// rather than panicking on a display path.
+func (h *Handlers) coreStatusFor(vendorState string) string {
+	if vendorState == "" {
+		return ""
+	}
+	backend := h.engine.Fleet()
+	if backend == nil {
+		return vendorState
+	}
+	return backend.MapState(vendorState)
 }
 
 func (h *Handlers) apiMissionStats(w http.ResponseWriter, r *http.Request) {
