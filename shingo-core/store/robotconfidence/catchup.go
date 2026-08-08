@@ -43,6 +43,37 @@ import (
 // The window is bounded by retentionDays because a day whose raw partition has
 // already been dropped can never be rolled up — there is nothing left to read.
 // Looking further back would just re-ask an unanswerable question every tick.
+//
+// DONE IS THE PLANT ROW, NOT THE ROBOT ROW, AND THE DIFFERENCE IS A BUG THIS
+// FIXES. RollUp writes FOUR tables — robot, lane, area, plant — and this check
+// used to ask only whether the ROBOT rows existed. That is one tickbox for four
+// forms, and it fails in two directions:
+//
+//   - A run that wrote the robot rows and then died — a bad scene, a dropped
+//     connection, an unreadable partition — left the day marked done with its
+//     lane and zone rows missing, permanently.
+//   - Worse, adding a new aggregate table marks EVERY past day done on arrival.
+//     lane_confidence_daily and area_confidence_daily both landed after
+//     robot_confidence_daily (migration 77), so every day already rolled up was
+//     skipped forever while the two tables the localization board actually reads
+//     stayed empty.
+//
+// Either way the raw rows behind the gap expire at RawRetentionDays and the
+// aggregates can never be rebuilt — the exact loss this whole file exists to
+// prevent, arriving through the completion check rather than through the ticker.
+//
+// plant_confidence_daily is the right marker because of WHERE RollUp writes it:
+// last, and unconditionally, as the record of what the run did (rollup.go). So
+// its presence means all four writes landed and its absence means they did not.
+// Checking all four tables instead would be wrong in the other direction — a day
+// with no lane-snapped samples legitimately writes no lane rows, and would then
+// be re-rolled on every tick forever, which is the failure the sample check
+// below already exists to avoid.
+//
+// This is also the backfill: a day rolled up before the plant table existed has
+// no plant row, so it becomes pending again and re-rolls into all four tables on
+// the next pass. The upserts are idempotent, so that costs a redundant read and
+// nothing else, and no historical row has to be deleted to trigger it.
 func PendingDays(db *sql.DB, now time.Time, retentionDays int) ([]time.Time, error) {
 	today := dayKey(now)
 	var out []time.Time
@@ -51,7 +82,7 @@ func PendingDays(db *sql.DB, now time.Time, retentionDays int) ([]time.Time, err
 
 		var done bool
 		if err := db.QueryRow(
-			`SELECT EXISTS (SELECT 1 FROM robot_confidence_daily WHERE day = $1)`, day).
+			`SELECT EXISTS (SELECT 1 FROM plant_confidence_daily WHERE day = $1)`, day).
 			Scan(&done); err != nil {
 			return nil, fmt.Errorf("check rolled-up day %s: %w", day.Format("2006-01-02"), err)
 		}
