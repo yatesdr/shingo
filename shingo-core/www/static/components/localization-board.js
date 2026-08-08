@@ -23,6 +23,25 @@ import { makeProjector, cubicPathD, laneKey } from '/static/components/scene-geo
 // one man in twelve. So hue may not carry the ordering alone. Weight steps do,
 // and the map stays legible desaturated to pure greyscale.
 export const BAND_STROKE = { good: 1.3, fair: 2.5, poor: 3.6, blind: 4.2, nodata: 1.3 };
+
+// LANE_HIT_STROKE is the invisible click target laid under every lane, in the
+// same screen-pixel units BAND_STROKE uses.
+//
+// A stroked path is only clickable across its stroke, so the visible weight WAS
+// the hit target — and a `good` lane is 1.3px of it. Selecting one meant landing
+// a click inside a hairline, on a map you can also pan by dragging, which in
+// practice meant missing and re-aiming. The weights above cannot simply grow:
+// they carry the band ordering a second time for the deuteranomaly case, so
+// making them thick enough to hit would flatten the very signal they exist to
+// encode.
+//
+// So the target is separated from the mark. 14 rather than the ~24 a touch
+// guideline would ask for: lanes in a dense aisle sit close together, and a
+// target wide enough to be comfortable in isolation starts swallowing its
+// neighbour. This is the widest value that still resolves adjacent lanes at fit
+// zoom, and zooming in widens the gap without widening the target — which is
+// what the constant screen-size rescale already buys.
+export const LANE_HIT_STROKE = 14;
 export const BAND_TOKEN = {
     good: 'var(--viz-green)',
     fair: 'var(--viz-amber)',
@@ -389,6 +408,24 @@ export function createBoard(root, opts) {
                     'stroke-width': 10, 'data-w': 10, 'stroke-linecap': 'round'
                 }));
             }
+            // The click target, under the mark it belongs to. Transparent and
+            // wide; carries the same data-lane, so the existing walk-up in the
+            // click handler resolves it without knowing it exists.
+            //
+            // pointer-events:stroke is explicit rather than relying on the
+            // default: `visiblePainted` does hit-test a transparent stroke, but
+            // that reads like an accident to anyone changing the fill later, and
+            // the whole element only exists to be hit.
+            //
+            // Appended BEFORE the visible path so the mark still paints on top
+            // and stays the thing that receives a click where it is actually
+            // drawn; the target only picks up the misses either side of it.
+            lg.appendChild(svg('path', {
+                d: d, fill: 'none', stroke: 'transparent',
+                'stroke-width': LANE_HIT_STROKE, 'data-w': LANE_HIT_STROKE,
+                'stroke-linecap': 'round', 'data-lane': row.key,
+                'pointer-events': 'stroke', 'class': 'lb-lane-hit'
+            }));
             const p = svg('path', {
                 d: d, fill: 'none',
                 stroke: BAND_TOKEN[band], opacity: dim ? 0.12 : 1,
