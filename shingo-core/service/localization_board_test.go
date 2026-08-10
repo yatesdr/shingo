@@ -14,10 +14,13 @@ func TestBandFor(t *testing.T) {
 		samples int
 		want    BoardBand
 	}{
-		{"vendor good edge", f(0.80), 100, BandGood},
+		{"good edge", f(0.80), 100, BandGood},
 		{"just under good", f(0.7999), 100, BandFair},
-		{"vendor fair edge", f(0.30), 100, BandFair},
-		{"just under fair", f(0.2999), 100, BandPoor},
+		{"fair edge", f(0.50), 100, BandFair},
+		{"just under fair", f(0.4999), 100, BandWatch},
+		{"watch edge", f(0.30), 100, BandWatch},
+		{"watch middle", f(0.40), 100, BandWatch},
+		{"just under watch", f(0.2999), 100, BandPoor},
 		// EXACTLY ZERO IS ITS OWN BAND. Every reading was a no-estimate, so the
 		// lane is blind — a different finding from "very poor", and the reason
 		// the histogram's sentinel bin is never interpolated.

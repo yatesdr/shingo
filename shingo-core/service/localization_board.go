@@ -25,13 +25,28 @@ import (
 // .smap's curves unparsed. This payload is STATE, keyed by lane, and the page
 // joins it to geometry with the same laneKey() the renderer dedups with.
 
-// BoardBand is the vendor's own four-way split, inherited so the page reads the
-// way RoboShop reads.
+// BoardBand grades a lane's windowed p50 estimate.
+//
+// The outer two cuts DELIBERATELY DIVERGE from the vendor's own. RoboShop and
+// rds-user-manual.pdf band a single robot's LIVE reading at >0.8 green, >0.3
+// yellow, else red. Applied to a windowed median those three bands collapse to
+// a wall of amber: Springfield measured ~29% green / 71% amber / 0% red under
+// them, with the real weak point in the north corridor indistinguishable inside
+// that amber. The fair band was lifted from the vendor's 0.30 floor to 0.50 —
+// what an engineer actually wants to know first is what is slipping — and a
+// WATCH band holds the vendor's original 0.30-0.50 floor as the "degrading, not
+// yet poor" grade. Poor is reserved for what was red under the vendor cuts.
+//
+// The per-robot chip in helpers.go still bands the LIVE reading on the vendor's
+// 0.8/0.3, because that is the statistic those cuts were measured for; the two
+// grade different things and agreeing by accident is worse than disagreeing on
+// purpose.
 type BoardBand string
 
 const (
 	BandGood  BoardBand = "good"  // >= 0.80
-	BandFair  BoardBand = "fair"  // 0.30 - 0.80
+	BandFair  BoardBand = "fair"  // 0.50 - 0.80
+	BandWatch BoardBand = "watch" // 0.30 - 0.50 — slipping, not yet poor
 	BandPoor  BoardBand = "poor"  // > 0
 	BandBlind BoardBand = "blind" // exactly 0 — every reading was a no-estimate
 	// BandNoData is NOT a band, it is the absence of one. Kept distinct because
@@ -327,8 +342,10 @@ func bandFor(p50 *float64, samples int) BoardBand {
 	switch v := *p50; {
 	case v >= 0.80:
 		return BandGood
-	case v >= 0.30:
+	case v >= 0.50:
 		return BandFair
+	case v >= 0.30:
+		return BandWatch
 	case v > 0:
 		return BandPoor
 	default:

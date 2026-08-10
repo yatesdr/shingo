@@ -107,7 +107,7 @@ console.log('bands');
     // dark, green and coral collapse to dE 6.0. Weight is the second channel,
     // and it has to be MONOTONIC across the ordered bands or it carries
     // nothing.
-    const order = ['good', 'fair', 'poor', 'blind'];
+    const order = ['good', 'fair', 'watch', 'poor', 'blind'];
     let mono = true, prev = -Infinity, seen = [];
     order.forEach(function (b) {
         const w = m.BAND_STROKE[b];

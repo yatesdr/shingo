@@ -17,12 +17,12 @@ import { makeProjector, cubicPathD, laneKey } from '/static/components/scene-geo
 
 // BAND_STROKE carries the ordering a SECOND time, in weight.
 //
-// The vendor's triad is the right vocabulary — it is what the plant already
-// reads in RoboShop — but measured under deuteranomaly on dark, green and coral
-// collapse to ΔE 6.0: the two ends of the scale become one colour for roughly
-// one man in twelve. So hue may not carry the ordering alone. Weight steps do,
-// and the map stays legible desaturated to pure greyscale.
-export const BAND_STROKE = { good: 1.3, fair: 2.5, poor: 3.6, blind: 4.2, nodata: 1.3 };
+// The band ramp is green→amber→orange→coral (good to poor). Measured under
+// deuteranomaly on dark, green and coral collapse to ΔE 6.0: the two ends of
+// the scale become one colour for roughly one man in twelve. So hue may not
+// carry the ordering alone. Weight steps do, and the map stays legible
+// desaturated to pure greyscale.
+export const BAND_STROKE = { good: 1.3, fair: 2.5, watch: 3.0, poor: 3.6, blind: 4.2, nodata: 1.3 };
 
 // LANE_HIT_STROKE is the invisible click target laid under every lane, in the
 // same screen-pixel units BAND_STROKE uses.
@@ -45,6 +45,7 @@ export const LANE_HIT_STROKE = 14;
 export const BAND_TOKEN = {
     good: 'var(--viz-green)',
     fair: 'var(--viz-amber)',
+    watch: 'var(--viz-orange)',
     poor: 'var(--viz-coral)',
     blind: 'var(--viz-coral)',
     // Not a band — the absence of one. Substrate grey, so a lane nobody drove
@@ -52,8 +53,8 @@ export const BAND_TOKEN = {
     nodata: 'var(--text-muted)'
 };
 const BAND_LABEL = {
-    good: 'good (≥ 0.80)', fair: 'fair (0.30–0.80)', poor: 'poor (> 0)',
-    blind: 'blind (exactly 0)', nodata: 'no data'
+    good: 'good (≥ 0.80)', fair: 'fair (0.50–0.80)', watch: 'watch (0.30–0.50)',
+    poor: 'poor (< 0.30)', blind: 'blind (exactly 0)', nodata: 'no data'
 };
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -489,7 +490,7 @@ export function createBoard(root, opts) {
         const counts = (state.board && state.board.plant && state.board.plant.bands) || {};
         // Swatches MIRROR the stroke weights, because a legend chip is the one
         // place colour really is the only channel.
-        lg.innerHTML = ['good', 'fair', 'poor', 'blind', 'nodata'].map(function (b) {
+        lg.innerHTML = ['good', 'fair', 'watch', 'poor', 'blind', 'nodata'].map(function (b) {
             const n = counts[b] || 0;
             return '<span class="lb-key"><i style="background:' + BAND_TOKEN[b] +
                 ';height:' + Math.max(2, BAND_STROKE[b]) + 'px"></i>' +

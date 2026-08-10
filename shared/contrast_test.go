@@ -197,6 +197,7 @@ var vizRoles = map[string]vizRole{
 	"--viz-sky":    vizMark,
 	"--viz-teal":   vizMark,
 	"--viz-amber":  vizMark,
+	"--viz-orange": vizMark,
 	"--viz-coral":  vizMark,
 	"--viz-green":  vizMark,
 

@@ -2570,6 +2570,7 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .lb-band { display:inline-block; font-size:.75rem; padding:2px 8px; border-radius:10px; margin-bottom:8px;
   border:1px solid currentColor; }
 .lb-band-good{color:var(--viz-green)} .lb-band-fair{color:var(--viz-amber)}
+.lb-band-watch{color:var(--viz-orange)}
 .lb-band-poor,.lb-band-blind{color:var(--viz-coral)} .lb-band-nodata{color:var(--text-muted)}
 .lb-hist-title { font-size:.75rem; color:var(--text-muted); margin-top:10px; }
 .lb-hist { width:100%; height:auto; margin-top:4px; }

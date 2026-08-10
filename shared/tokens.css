@@ -124,6 +124,7 @@
   --viz-sky: #0284c7;
   --viz-teal: #0d9488;
   --viz-amber: #b45309;
+  --viz-orange: #c2410c;          /* between amber and coral in the ramp; see dark block */
   --viz-coral: #e11d48;
   --viz-green: #059669;
 
@@ -434,6 +435,7 @@
   --viz-sky: #38bdf8;
   --viz-teal: #2dd4bf;
   --viz-amber: #facc5b;
+  --viz-orange: #f97316;          /* sits between amber and coral in the band ramp */
   --viz-coral: #fb7185;
   --viz-green: #34d399;
 
