@@ -179,7 +179,7 @@ export function createBoard(root, opts) {
     // Picking an AMR switches the whole board into that robot's world: every
     // lane recolours to its performance, and the "plant" baseline becomes the
     // robot's aggregate. Fleet is the default and the way back. The list comes
-    // from /api/robots/status rather than the SSE position feed, because a
+    // from /api/robots rather than the SSE position feed, because a
     // parked or disconnected AMR — exactly the one a reader wants to inspect —
     // may carry no current position and still have a confidence record.
     const robotSel = root.querySelector('#lb-robot');
@@ -769,9 +769,14 @@ export function createBoard(root, opts) {
 // populateRobotFilter fills the AMR dropdown once, preserving any current
 // selection. Sorted by vehicle id so the list is stable across the 2s SSE
 // refreshes that could otherwise retrigger it.
+//
+// /api/robots returns fleet.RobotStatus with NO json tags, so Go marshals the
+// field names verbatim — VehicleID in PascalCase, not vehicle_id. The SSE
+// position feed is a different code path that snake-cases; do not assume the
+// two agree.
 function populateRobotFilter(sel, state) {
-    fetch('/api/robots/status').then(function (r) { return r.json(); }).then(function (robots) {
-        const ids = (robots || []).map(function (r) { return r.vehicle_id; })
+    fetch('/api/robots').then(function (r) { return r.json(); }).then(function (robots) {
+        const ids = (robots || []).map(function (r) { return r.VehicleID || r.vehicle_id; })
             .filter(Boolean).sort();
         const prev = sel.value;
         // Rebuild only when the set changed, so a refresh that finds the same
