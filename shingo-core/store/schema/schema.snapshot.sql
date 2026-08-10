@@ -870,9 +870,9 @@ CREATE TABLE public.plant_confidence_daily (
     robot_rows integer DEFAULT 0 NOT NULL,
     lane_rows integer DEFAULT 0 NOT NULL,
     area_rows integer DEFAULT 0 NOT NULL,
-    lane_robot_rows integer DEFAULT 0 NOT NULL,
     residuals_null integer DEFAULT 0 NOT NULL,
-    lanes_fail_only integer DEFAULT 0 NOT NULL
+    lanes_fail_only integer DEFAULT 0 NOT NULL,
+    lane_robot_rows integer DEFAULT 0 NOT NULL
 );
 
 CREATE TABLE public.process_styles (
