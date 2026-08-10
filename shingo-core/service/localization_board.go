@@ -204,7 +204,15 @@ const BoardMinSamples = 20
 // The window is day-grained and `to` is exclusive, matching the roll-up's own
 // day boundaries — a board that sliced days differently from the table it reads
 // would report partial days as short ones.
-func (s *NodeService) LocalizationBoardAt(label string, days int, to time.Time) (LocalizationBoard, error) {
+//
+// A non-empty vehicleID switches the whole board into that robot's world: every
+// lane is read from lane_robot_confidence_daily, so it carries only that AMR's
+// ticks, and the plant baseline — which is the element-wise merge of the lanes —
+// becomes the robot's aggregate rather than the fleet's. The board needs no other
+// change because the lane and the lane×robot grains share columns and a window
+// type; the filter is a WHERE clause on the same query. An empty vehicleID is the
+// fleet view and reads lane_confidence_daily as before.
+func (s *NodeService) LocalizationBoardAt(label string, days int, to time.Time, vehicleID string) (LocalizationBoard, error) {
 	var out LocalizationBoard
 	if days <= 0 {
 		return out, fmt.Errorf("localization board: window must be at least one day, got %d", days)
@@ -214,7 +222,13 @@ func (s *NodeService) LocalizationBoardAt(label string, days int, to time.Time) 
 	out.Window = BoardWindow{Label: label, From: fromDay, To: toDay, RequestedDays: days}
 	out.MinSamples = BoardMinSamples
 
-	windows, err := s.db.LaneWindows(fromDay, toDay)
+	var windows map[string]*robotconfidence.LaneWindow
+	var err error
+	if vehicleID != "" {
+		windows, err = s.db.LaneRobotWindows(fromDay, toDay, vehicleID)
+	} else {
+		windows, err = s.db.LaneWindows(fromDay, toDay)
+	}
 	if err != nil {
 		return out, err
 	}

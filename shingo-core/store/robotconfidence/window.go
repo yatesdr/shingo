@@ -129,8 +129,65 @@ func LaneWindows(db *sql.DB, from, to time.Time) (map[string]*LaneWindow, error)
 	return out, nil
 }
 
-// parsePGInt32Array decodes Postgres's INTEGER[] output form.
-//
+// LaneRobotWindows sums lane_robot_confidence_daily over [from, to) for one
+// robot. It is the per-AMR cut of LaneWindows: same window, same aggregation,
+// same LaneWindow return type — every lane is restricted to the ticks that one
+// vehicle produced. An empty vehicleID answers nothing; the caller falls back to
+// LaneWindows for the fleet view rather than passing "" here.
+func LaneRobotWindows(db *sql.DB, from, to time.Time, vehicleID string) (map[string]*LaneWindow, error) {
+	rows, err := db.Query(
+		`SELECT day, area_name, lane, version_id, samples, samples_good,
+		        sentinel_samples, coalesce(conf_hist, '{}')
+		   FROM lane_robot_confidence_daily
+		  WHERE day >= $1 AND day < $2 AND vehicle_id = $3`, from, to, vehicleID)
+	if err != nil {
+		return nil, fmt.Errorf("lane robot windows: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string]*LaneWindow{}
+	versions := map[string]map[int64]bool{}
+	days := map[string]map[string]bool{}
+	for rows.Next() {
+		var day time.Time
+		var area, lane, hist string
+		var versionID sql.NullInt64
+		var samples, good, sentinel int
+		if err := rows.Scan(&day, &area, &lane, &versionID, &samples, &good,
+			&sentinel, &hist); err != nil {
+			return nil, err
+		}
+		key := area + "\x00" + lane
+		w := out[key]
+		if w == nil {
+			w = &LaneWindow{Area: area, Lane: lane}
+			out[key] = w
+			versions[key] = map[int64]bool{}
+			days[key] = map[string]bool{}
+		}
+		w.Samples += samples
+		w.SamplesGood += good
+		w.SentinelSamples += sentinel
+		days[key][day.Format("2006-01-02")] = true
+		if versionID.Valid {
+			versions[key][versionID.Int64] = true
+		}
+		if h, ok := HistFromSlice(parsePGInt32Array(hist)); ok {
+			w.Hist.Merge(h)
+		} else {
+			w.HistIncomplete = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for key, w := range out {
+		w.Versions = len(versions[key])
+		w.Days = len(days[key])
+	}
+	return out, nil
+}
+
 // Same driver limitation as parsePGTextArray and the same reason it exists:
 // pgx's database/sql shim binds a slice IN and cannot scan one back OUT, so
 // the value arrives as the literal "{0,3,11}". Integer arrays need no quoting,

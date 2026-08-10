@@ -113,6 +113,7 @@ export function createBoard(root, opts) {
         focusDiff: null,     // diff id — dims lanes that edit did not touch
         change: null,        // the selected lane's annotation, fetched on select
         robots: [],
+        robot: '',            // vehicle_id filter; '' is the fleet view
         // Viewport. scale/tx/ty are the screen transform; strokes divide by
         // scale so they hold their SCREEN size — a lane that thickened as you
         // zoomed would hide the geometry underneath it, and at 5× map zoomed
@@ -124,6 +125,9 @@ export function createBoard(root, opts) {
     root.innerHTML =
         '<div class="lb-controls">' +
         '  <div class="lb-seg" id="lb-window"></div>' +
+        '  <label class="lb-toggle lb-robot-pick"><select id="lb-robot">' +
+        '    <option value="">Fleet</option>' +
+        '  </select></label>' +
         '  <label class="lb-toggle"><input type="checkbox" id="lb-changes" checked> Changes</label>' +
         '  <label class="lb-toggle"><input type="checkbox" id="lb-refl" checked> Reflectors</label>' +
         '  <span class="lb-spacer"></span>' +
@@ -169,6 +173,22 @@ export function createBoard(root, opts) {
         });
         winWrap.appendChild(b);
     });
+
+    // ── robot selector ───────────────────────────────────────────────────
+    //
+    // Picking an AMR switches the whole board into that robot's world: every
+    // lane recolours to its performance, and the "plant" baseline becomes the
+    // robot's aggregate. Fleet is the default and the way back. The list comes
+    // from /api/robots/status rather than the SSE position feed, because a
+    // parked or disconnected AMR — exactly the one a reader wants to inspect —
+    // may carry no current position and still have a confidence record.
+    const robotSel = root.querySelector('#lb-robot');
+    robotSel.addEventListener('change', function () {
+        state.robot = robotSel.value;
+        load();
+    });
+    populateRobotFilter(robotSel, state);
+
     root.querySelector('#lb-changes').addEventListener('change', function (e) {
         state.showChanges = e.target.checked; draw();
     });
@@ -277,10 +297,13 @@ export function createBoard(root, opts) {
 
     // ── data ─────────────────────────────────────────────────────────────
     async function load() {
+        // The robot param rides on the board URL only; the edges never change
+        // with the filter, so they are not refetched. An empty robot is fleet.
+        const robotParam = state.robot ? '&robot=' + encodeURIComponent(state.robot) : '';
         const [edges, board] = await Promise.all([
             o.fetchEdges ? o.fetchEdges() : fetch('/api/map/edges').then(function (r) { return r.json(); }),
-            o.fetchBoard ? o.fetchBoard(state.window)
-                : fetch('/api/robots/localization?window=' + state.window).then(function (r) { return r.json(); })
+            o.fetchBoard ? o.fetchBoard(state.window, state.robot)
+                : fetch('/api/robots/localization?window=' + state.window + robotParam).then(function (r) { return r.json(); })
         ]);
         state.edges = edges || [];
         state.board = board || null;
@@ -622,7 +645,11 @@ export function createBoard(root, opts) {
 
         if (!state.selected) {
             const p = state.board.plant;
-            panel.innerHTML = '<div class="lb-hd">Plant</div>' +
+            // Under a robot filter the "plant" baseline IS that robot's
+            // aggregate — the lanes it drove, merged — so the header names it
+            // rather than saying "Plant". Fleet view keeps the plant label.
+            const scope = state.robot ? state.robot : 'Plant';
+            panel.innerHTML = '<div class="lb-hd">' + scope + '</div>' +
                 '<p class="lb-note">Select a lane for its distribution and history.</p>' +
                 statBlock('readings', p.samples) +
                 statBlock('p50 (all ticks)', fmtP(p.p50_estimate)) +
@@ -729,8 +756,32 @@ export function createBoard(root, opts) {
     return {
         load: load,
         setRobots: function (list) { state.robots = list || []; draw(); },
+        setRobot: function (id) {
+            state.robot = id || '';
+            if (robotSel.value !== state.robot) robotSel.value = state.robot;
+            load();
+        },
         _state: state,
         _laneRows: laneRows
     };
+}
+
+// populateRobotFilter fills the AMR dropdown once, preserving any current
+// selection. Sorted by vehicle id so the list is stable across the 2s SSE
+// refreshes that could otherwise retrigger it.
+function populateRobotFilter(sel, state) {
+    fetch('/api/robots/status').then(function (r) { return r.json(); }).then(function (robots) {
+        const ids = (robots || []).map(function (r) { return r.vehicle_id; })
+            .filter(Boolean).sort();
+        const prev = sel.value;
+        // Rebuild only when the set changed, so a refresh that finds the same
+        // fleet does not blow away the open dropdown mid-selection.
+        const same = sel.options.length === ids.length + 1 &&
+            ids.every(function (id, i) { return sel.options[i + 1].value === id; });
+        if (same) return;
+        sel.innerHTML = '<option value="">Fleet</option>' +
+            ids.map(function (id) { return '<option value="' + id + '">' + id + '</option>'; }).join('');
+        if (prev && ids.indexOf(prev) >= 0) sel.value = prev;
+    }).catch(function () { /* the dropdown stays at Fleet; the board still loads */ });
 }
 

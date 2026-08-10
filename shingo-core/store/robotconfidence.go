@@ -70,6 +70,13 @@ func (db *DB) LaneWindows(from, to time.Time) (map[string]*robotconfidence.LaneW
 	return robotconfidence.LaneWindows(db.DB, from, to)
 }
 
+// LaneRobotWindows is LaneWindows scoped to one vehicle. The map filter on the
+// board calls this; an empty vehicleID never reaches here (the caller uses
+// LaneWindows for fleet). See robotconfidence.LaneRobotWindows.
+func (db *DB) LaneRobotWindows(from, to time.Time, vehicleID string) (map[string]*robotconfidence.LaneWindow, error) {
+	return robotconfidence.LaneRobotWindows(db.DB, from, to, vehicleID)
+}
+
 // AreaWindows sums area_confidence_daily over [from, to) into one distribution
 // per zone. See robotconfidence.AreaWindows -- zone statistics and zone
 // geometry arrive on different transports, so this is keyed on the zone id

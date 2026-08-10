@@ -487,6 +487,25 @@ CREATE TABLE public.lane_confidence_daily (
     conf_hist integer[]
 );
 
+CREATE TABLE public.lane_robot_confidence_daily (
+    day date NOT NULL,
+    area_name text NOT NULL,
+    lane text NOT NULL,
+    vehicle_id text NOT NULL,
+    p05 double precision,
+    p25 double precision,
+    p50 double precision,
+    p75 double precision,
+    p95 double precision,
+    samples integer NOT NULL,
+    mean_good double precision,
+    samples_good integer DEFAULT 0 NOT NULL,
+    min_conf double precision,
+    sentinel_samples integer DEFAULT 0 NOT NULL,
+    version_id bigint NOT NULL,
+    conf_hist integer[]
+);
+
 CREATE TABLE public.lineside_buckets (
     id bigint NOT NULL,
     station text NOT NULL,
@@ -851,6 +870,7 @@ CREATE TABLE public.plant_confidence_daily (
     robot_rows integer DEFAULT 0 NOT NULL,
     lane_rows integer DEFAULT 0 NOT NULL,
     area_rows integer DEFAULT 0 NOT NULL,
+    lane_robot_rows integer DEFAULT 0 NOT NULL,
     residuals_null integer DEFAULT 0 NOT NULL,
     lanes_fail_only integer DEFAULT 0 NOT NULL
 );
@@ -1441,6 +1461,9 @@ ALTER TABLE ONLY public.inventory_delta_dedup
 ALTER TABLE ONLY public.lane_confidence_daily
     ADD CONSTRAINT lane_confidence_daily_pkey PRIMARY KEY (day, area_name, lane, version_id);
 
+ALTER TABLE ONLY public.lane_robot_confidence_daily
+    ADD CONSTRAINT lane_robot_confidence_daily_pkey PRIMARY KEY (day, area_name, lane, version_id, vehicle_id);
+
 ALTER TABLE ONLY public.lineside_buckets
     ADD CONSTRAINT lineside_buckets_node_pair_style_part_key UNIQUE (core_node_name, pair_key, style_id, part_number);
 
@@ -1773,6 +1796,9 @@ ALTER TABLE ONLY public.corrections
 
 ALTER TABLE ONLY public.lane_confidence_daily
     ADD CONSTRAINT lane_confidence_daily_version_id_fkey FOREIGN KEY (version_id) REFERENCES public.scene_lane_versions(id);
+
+ALTER TABLE ONLY public.lane_robot_confidence_daily
+    ADD CONSTRAINT lane_robot_confidence_daily_version_id_fkey FOREIGN KEY (version_id) REFERENCES public.scene_lane_versions(id);
 
 ALTER TABLE ONLY public.node_bin_types
     ADD CONSTRAINT node_bin_types_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;

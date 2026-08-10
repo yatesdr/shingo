@@ -108,6 +108,10 @@ type RollUpResult struct {
 	UnattributedSamples int
 	ResidualsNull       int
 	LanesFailOnly       int
+	// LaneRobotRows counts per-lane-per-robot rows. Same lifetime as
+	// LaneRows (kept forever); same pass, just keyed by vehicle too. See
+	// lane_robot_confidence_daily.
+	LaneRobotRows int
 }
 
 // dayKey truncates to the UTC day the partitions are cut on.
@@ -231,6 +235,17 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 	// percentiles are taken over -- deriving it later is how the two drift.
 	laneHist := map[string]*Hist{}
 	areaHist := map[string]*Hist{}
+	// Per-lane-per-robot grain, for the map's ?robot= filter. Keyed by the
+	// lane's versioned key + vehicle_id, so it is a finer cut of the SAME
+	// conditioned population laneHist accumulates over (orphan/unkeyable/
+	// unversioned samples have already returned above). The snap already ran
+	// for the lane; this reuses its result and adds map entries, nothing more.
+	laneRobotAll := map[string][]float64{}
+	laneRobotGood := map[string][]float64{}
+	laneRobotHist := map[string]*Hist{}
+	laneRobotSent := map[string]int{}
+	laneRobotKey := map[string]string{} // composite key -> lane versioned key (for splitKey later)
+	laneRobotVeh := map[string]string{} // composite key -> vehicle_id
 
 	err = ScanSamples(db, from, to, func(s RawSample) {
 		res.SamplesRead++
@@ -382,6 +397,17 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 		}
 		laneHist[key].Add(s.Confidence)
 
+		// The per-lane-per-robot grain: same accumulation as the lane, keyed by
+		// the lane's versioned key + vehicle. The composite key is built once
+		// here and used for the all/good/hist/sentinel maps below.
+		rkey := key + "\x03" + s.VehicleID
+		laneRobotKey[rkey] = key
+		laneRobotVeh[rkey] = s.VehicleID
+		if laneRobotHist[rkey] == nil {
+			laneRobotHist[rkey] = &Hist{}
+		}
+		laneRobotHist[rkey].Add(s.Confidence)
+
 		// THE FULL POPULATION, WITH A MISS COUNTED AS THE ZERO IT IS. This is
 		// the statistic the map bands, and it is only bandable because it is
 		// unconditioned: a lane that returns 0.98 half the time and nothing
@@ -394,10 +420,14 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 				laneSentinelRobots[key] = map[string]bool{}
 			}
 			laneSentinelRobots[key][s.VehicleID] = true
+			laneRobotAll[rkey] = append(laneRobotAll[rkey], 0)
+			laneRobotSent[rkey]++
 			return
 		}
 		laneAll[key] = append(laneAll[key], s.Confidence)
 		laneGood[key] = append(laneGood[key], s.Confidence)
+		laneRobotAll[rkey] = append(laneRobotAll[rkey], s.Confidence)
+		laneRobotGood[rkey] = append(laneRobotGood[rkey], s.Confidence)
 
 		// The residual compares robots to each other at the same place, so it
 		// reads good ticks only -- a miss is a property of the floor and would
@@ -560,6 +590,47 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 		res.LaneRows++
 	}
 
+	// -- Write the lane-per-robot rows ----------------------------------------
+	//
+	// SAME SAMPLES, DIFFERENT DENOMINATOR. The lane row above answers "how is
+	// this lane"; this row answers "how is this lane AS THIS ROBOT SEES IT",
+	// which is the view the map switches to when an operator picks one AMR.
+	// The lane is the union of its robots and the robot is the union of its
+	// lanes, and neither union recovers the intersection — so this grain is
+	// its own row, written on the same single pass, not a GROUP BY in SQL.
+	for rkey := range laneRobotKey {
+		all := laneRobotAll[rkey]
+		good := laneRobotGood[rkey]
+		laneKey, versionID := splitVersionedKey(laneRobotKey[rkey])
+		area, lane := SplitKey(laneKey)
+		row := LaneRobotDaily{
+			Day:             from,
+			Area:            area,
+			Lane:            lane,
+			VehicleID:       laneRobotVeh[rkey],
+			Samples:         len(all),
+			SamplesGood:     len(good),
+			SentinelSamples: laneRobotSent[rkey],
+			VersionID:       versionID,
+		}
+		if h := laneRobotHist[rkey]; h != nil {
+			row.ConfHist = *h
+		}
+		if len(all) > 0 {
+			p05, p25, p50 := Percentile(all, 0.05), Percentile(all, 0.25), Percentile(all, 0.50)
+			p75, p95 := Percentile(all, 0.75), Percentile(all, 0.95)
+			row.P05, row.P25, row.P50, row.P75, row.P95 = &p05, &p25, &p50, &p75, &p95
+		}
+		if len(good) > 0 {
+			mean, minConf := Mean(good), Min(good)
+			row.MeanGood, row.MinConf = &mean, &minConf
+		}
+		if err := UpsertLaneRobotDaily(db, row); err != nil {
+			return res, err
+		}
+		res.LaneRobotRows++
+	}
+
 	// -- Write the zone rows ------------------------------------------------
 	//
 	// ONE READING CAN BE IN SEVERAL ZONES, so these rows do not partition the
@@ -631,6 +702,7 @@ func RollUp(db *sql.DB, day time.Time, cfg RollUpConfig) (RollUpResult, error) {
 		RobotRows:           res.RobotRows,
 		LaneRows:            res.LaneRows,
 		AreaRows:            res.AreaRows,
+		LaneRobotRows:       res.LaneRobotRows,
 		ResidualsNull:       res.ResidualsNull,
 		LanesFailOnly:       res.LanesFailOnly,
 	}); err != nil {
@@ -669,10 +741,10 @@ func resolve(in map[string]map[string]*accum) map[string]map[string]CellStat {
 // String renders the result as the job's one-line summary.
 func (r RollUpResult) String() string {
 	return fmt.Sprintf(
-		"day=%s robots=%d lanes=%d areas=%d samples=%d orphans=%d map_mismatch=%d "+
+		"day=%s robots=%d lanes=%d lane_robot=%d areas=%d samples=%d orphans=%d map_mismatch=%d "+
 			"unkeyable_edges=%d unkeyable_samples=%d unversioned_samples=%d "+
 			"unattributed_samples=%d residuals_null=%d fail_only_lanes=%d",
-		r.Day.Format("2006-01-02"), r.RobotRows, r.LaneRows, r.AreaRows,
+		r.Day.Format("2006-01-02"), r.RobotRows, r.LaneRows, r.LaneRobotRows, r.AreaRows,
 		r.SamplesRead, r.Orphans, r.MapMismatch,
 		r.UnkeyableEdges, r.UnkeyableSamples, r.UnversionedSamples,
 		r.UnattributedSamples, r.ResidualsNull, r.LanesFailOnly)

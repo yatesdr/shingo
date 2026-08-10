@@ -191,6 +191,11 @@ var boardWindows = map[string]int{
 // exists. Two copies of the network under two URLs is the objection that keeps
 // the .smap's curves unparsed, and it does not stop applying because the second
 // copy would be convenient.
+//
+// ?robot= is the per-AMR filter. Absent or empty is the fleet view. A value that
+// is not a known vehicle is a 400 rather than a silent fall-through to fleet: a
+// page that asked for AMR-99 and got the whole fleet would show the user the
+// answer to a question they did not ask, exactly the window-label failure.
 func (h *Handlers) apiLocalizationBoard(w http.ResponseWriter, r *http.Request) {
 	label := r.URL.Query().Get("window")
 	if label == "" {
@@ -205,7 +210,22 @@ func (h *Handlers) apiLocalizationBoard(w http.ResponseWriter, r *http.Request) 
 			http.StatusBadRequest)
 		return
 	}
-	board, err := h.engine.NodeService().LocalizationBoardAt(label, days, time.Now())
+	robot := r.URL.Query().Get("robot")
+	if robot != "" {
+		known := false
+		for _, rb := range h.engine.GetAllCachedRobots() {
+			if rb.VehicleID == robot {
+				known = true
+				break
+			}
+		}
+		if !known {
+			h.jsonError(w, fmt.Sprintf("robot: %q is not a known vehicle", robot),
+				http.StatusBadRequest)
+			return
+		}
+	}
+	board, err := h.engine.NodeService().LocalizationBoardAt(label, days, time.Now(), robot)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

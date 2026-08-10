@@ -595,6 +595,37 @@ type LaneDaily struct {
 	VersionID *int64
 }
 
+// LaneRobotDaily is one lane's day for ONE robot — the grain the map's
+// ?robot= filter reads. Same columns and population as LaneDaily, minus the
+// across-robot rollups (robots / robots_seen: there is only one) and plus
+// VehicleID in the key. See v83LaneRobotConfidenceDaily for why this table
+// exists alongside lane_confidence_daily rather than replacing it.
+type LaneRobotDaily struct {
+	Day       time.Time
+	Area      string
+	Lane      string
+	VehicleID string
+	// Percentiles over ALL of this robot's ticks on the lane, misses as zero.
+	P05         *float64
+	P25         *float64
+	P50         *float64
+	P75         *float64
+	P95         *float64
+	Samples     int
+	MeanGood    *float64
+	SamplesGood int
+	MinConf     *float64
+	// SentinelSamples counts this robot's no-estimate ticks on the lane. A
+	// map-mismatch count is deliberately absent: a foreign-map reading is
+	// held out of every lane grain before the lane key is even built, so the
+	// count here would always be zero, and an always-zero column reads as
+	// "measured and clean" rather than "not in this grain." The lane and
+	// robot tables carry the real mismatch counts.
+	SentinelSamples int
+	ConfHist        Hist
+	VersionID       *int64
+}
+
 // UpsertLaneDaily writes one lane's day, replacing any existing row.
 func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
 	robots := s.RobotsSeen
@@ -629,6 +660,30 @@ func UpsertLaneDaily(db *sql.DB, s LaneDaily) error {
 		s.MapMismatchSamples, s.VersionID, s.ConfHist.Slice())
 	if err != nil {
 		return fmt.Errorf("upsert lane_confidence_daily: %w", err)
+	}
+	return nil
+}
+
+// UpsertLaneRobotDaily writes one lane's day for one robot, replacing any
+// existing row.
+func UpsertLaneRobotDaily(db *sql.DB, s LaneRobotDaily) error {
+	_, err := db.Exec(
+		`INSERT INTO lane_robot_confidence_daily
+		   (day, area_name, lane, vehicle_id, p05, p25, p50, p75, p95, samples,
+		    mean_good, samples_good, min_conf, sentinel_samples, version_id, conf_hist)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+		 ON CONFLICT (day, area_name, lane, version_id, vehicle_id) DO UPDATE SET
+		   p05 = EXCLUDED.p05, p25 = EXCLUDED.p25, p50 = EXCLUDED.p50,
+		   p75 = EXCLUDED.p75, p95 = EXCLUDED.p95, samples = EXCLUDED.samples,
+		   mean_good = EXCLUDED.mean_good, samples_good = EXCLUDED.samples_good,
+		   min_conf = EXCLUDED.min_conf, sentinel_samples = EXCLUDED.sentinel_samples,
+		   version_id = EXCLUDED.version_id,
+		   conf_hist = EXCLUDED.conf_hist`,
+		s.Day, s.Area, s.Lane, s.VehicleID, s.P05, s.P25, s.P50, s.P75, s.P95,
+		s.Samples, s.MeanGood, s.SamplesGood, s.MinConf, s.SentinelSamples,
+		s.VersionID, s.ConfHist.Slice())
+	if err != nil {
+		return fmt.Errorf("upsert lane_robot_confidence_daily: %w", err)
 	}
 	return nil
 }
@@ -727,8 +782,13 @@ type PlantDaily struct {
 	RobotRows           int
 	LaneRows            int
 	AreaRows            int
-	ResidualsNull       int
-	LanesFailOnly       int
+	// LaneRobotRows mirrors LaneRows at the lane×robot grain. The completion
+	// marker records what this run did, and a day rolled up with the per-robot
+	// grain populated is a different fact from one that was not — weeks later
+	// that is the only way to tell from the marker alone.
+	LaneRobotRows int
+	ResidualsNull int
+	LanesFailOnly int
 }
 
 // UpsertPlantDaily writes the plant's day, replacing any existing row.
@@ -737,8 +797,8 @@ func UpsertPlantDaily(db *sql.DB, s PlantDaily) error {
 		`INSERT INTO plant_confidence_daily
 		   (day, samples_read, orphan_samples, unkeyable_edges, unkeyable_samples,
 		    unversioned_samples, map_mismatch_samples, unattributed_samples,
-		    robot_rows, lane_rows, area_rows, residuals_null, lanes_fail_only)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		    robot_rows, lane_rows, area_rows, lane_robot_rows, residuals_null, lanes_fail_only)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		 ON CONFLICT (day) DO UPDATE SET
 		   samples_read = EXCLUDED.samples_read,
 		   orphan_samples = EXCLUDED.orphan_samples,
@@ -750,11 +810,12 @@ func UpsertPlantDaily(db *sql.DB, s PlantDaily) error {
 		   robot_rows = EXCLUDED.robot_rows,
 		   lane_rows = EXCLUDED.lane_rows,
 		   area_rows = EXCLUDED.area_rows,
+		   lane_robot_rows = EXCLUDED.lane_robot_rows,
 		   residuals_null = EXCLUDED.residuals_null,
 		   lanes_fail_only = EXCLUDED.lanes_fail_only`,
 		s.Day, s.SamplesRead, s.OrphanSamples, s.UnkeyableEdges, s.UnkeyableSamples,
 		s.UnversionedSamples, s.MapMismatchSamples, s.UnattributedSamples,
-		s.RobotRows, s.LaneRows, s.AreaRows, s.ResidualsNull, s.LanesFailOnly)
+		s.RobotRows, s.LaneRows, s.AreaRows, s.LaneRobotRows, s.ResidualsNull, s.LanesFailOnly)
 	if err != nil {
 		return fmt.Errorf("upsert plant_confidence_daily: %w", err)
 	}

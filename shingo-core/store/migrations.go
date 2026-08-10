@@ -919,6 +919,9 @@ func (db *DB) runVersionedMigrations() error {
 		{82, "the zone roll-up, and a permanent home for the counts with no lane key",
 			v82AreaAndPlantDaily,
 			func(q schema.Querier) bool { return schema.TableExists(q, "plant_confidence_daily") }},
+		{83, "per-lane-per-robot confidence grain, so the map can filter by AMR",
+			v83LaneRobotConfidenceDaily,
+			func(q schema.Querier) bool { return schema.TableExists(q, "lane_robot_confidence_daily") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -4238,6 +4241,63 @@ func v82AreaAndPlantDaily(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v82 area and plant daily: %w", err)
+		}
+	}
+	return nil
+}
+
+// v83LaneRobotConfidenceDaily adds the per-lane-per-robot grain the map needs to
+// filter by AMR.
+//
+// lane_confidence_daily (v80) merges every robot that drove a lane into one
+// histogram, and that merge is irreducible: once summed you cannot pull one
+// robot's readings back out. So "?robot=AMR-06" is unanswerable from it — the
+// robots_seen column records WHO drove the lane, not HOW each did. This table
+// carries the same grain as lane_confidence_daily plus vehicle_id, so a robot
+// filter is a WHERE clause rather than a re-snap over expiring raw.
+//
+// SAME COLUMNS, SAME POPULATION, SAME RETENTION as lane_confidence_daily. The
+// per-lane roll-up already excludes orphan/unkeyable/unversioned samples, and
+// this grain inherits that scoping — it is a finer cut of the same conditioned
+// set, not a re-derivation of the robot's own (unconditioned) figure. Kept
+// forever alongside the other daily aggregates: at ~12 robots x ~212 lanes it
+// is ~470-680 rows/day at Springfield, ~25 MB/year, and it is the only thing
+// that can answer "where did AMR-12 struggle last quarter" once raw expires.
+//
+// version_id is NOT NULL and the FK is declared inline, because this table is
+// new: it does not carry the nullable-version history that made v80+v81 a
+// two-step add/drop/constraint dance on lane_confidence_daily.
+func v83LaneRobotConfidenceDaily(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS lane_robot_confidence_daily (
+			day                  DATE NOT NULL,
+			area_name            TEXT NOT NULL,
+			lane                 TEXT NOT NULL,
+			vehicle_id           TEXT NOT NULL,
+			p05                  DOUBLE PRECISION,
+			p25                  DOUBLE PRECISION,
+			p50                  DOUBLE PRECISION,
+			p75                  DOUBLE PRECISION,
+			p95                  DOUBLE PRECISION,
+			samples              INTEGER NOT NULL,
+			mean_good            DOUBLE PRECISION,
+			samples_good         INTEGER NOT NULL DEFAULT 0,
+			min_conf             DOUBLE PRECISION,
+			sentinel_samples     INTEGER NOT NULL DEFAULT 0,
+			version_id           BIGINT NOT NULL REFERENCES scene_lane_versions(id),
+			conf_hist            INTEGER[],
+			PRIMARY KEY (day, area_name, lane, version_id, vehicle_id)
+		)`,
+		// The completion marker records what a run did. A day rolled up with
+		// the per-robot grain populated is a different fact from one that was
+		// not, and weeks later — once raw has expired — the marker is the only
+		// way to tell. Same column the other row counts have.
+		`ALTER TABLE plant_confidence_daily
+		   ADD COLUMN IF NOT EXISTS lane_robot_rows INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v83 lane_robot_confidence_daily: %w", err)
 		}
 	}
 	return nil
