@@ -18,13 +18,12 @@ import (
 )
 
 // ═══════════════════════════════════════════════════════════════════════
-// Test router — covers handlers_production.go and handlers_material.go.
+// Test router — covers handlers_production.go.
 //
-// Both file's primary page handlers (handleProduction, handleMaterial,
-// handleMaterialPartial) render templates and are not exercised. The
-// API endpoints in handlers_production.go and the package-level helpers
-// in handlers_material.go (buildStationViews, enrichViewBinState) are
-// fully testable.
+// The primary page handler (handleProduction, handleProductionPartial)
+// renders templates and is not exercised. The API endpoints in
+// handlers_production.go and the package-level helpers
+// (buildStationViews, enrichViewBinState) are fully testable.
 // ═══════════════════════════════════════════════════════════════════════
 
 func newProdMaterialRouter(t *testing.T) (*Handlers, *chi.Mux) {

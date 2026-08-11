@@ -80,7 +80,7 @@ type Handlers struct {
 // Route layout:
 //
 //	/events                — SSE stream (shop floor live updates)
-//	/                      — Public pages (material, orders, production, changeover, operator HMI)
+//	/                      — Public pages (production, orders, changeover, operator HMI)
 //	/login, /logout        — Authentication
 //	/config, /processes, …  — Admin-only pages (adminMiddleware)
 //	/api/* (public)        — Shop floor actions (confirm, request, release, changeover, orders)
@@ -219,8 +219,22 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Get("/status", h.apiStatus)
 
 		// ── Public pages (shop floor — no auth) ─────────────────
-		r.Get("/", h.handleMaterial)
-		r.Get("/material", h.handleMaterial)
+		r.Get("/", h.handleProduction)
+		// Permanent redirect from the /material era.
+		r.Get("/material", func(w http.ResponseWriter, req *http.Request) {
+			target := "/production"
+			if q := req.URL.RawQuery; q != "" {
+				target += "?" + q
+			}
+			http.Redirect(w, req, target, http.StatusMovedPermanently)
+		})
+		r.Get("/material/partial", func(w http.ResponseWriter, req *http.Request) {
+			target := "/production/partial"
+			if q := req.URL.RawQuery; q != "" {
+				target += "?" + q
+			}
+			http.Redirect(w, req, target, http.StatusMovedPermanently)
+		})
 		r.Get("/orders", h.handleOrders)
 		// Permanent redirect for any operator bookmark from the
 		// /kanbans era. The URL was renamed to /orders to match
@@ -243,7 +257,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Get("/changeover", h.handleChangeover)
 		r.Get("/changeover/partial", h.handleChangeoverPartial)
 		r.Get("/orders/partial", h.handleOrdersPartial)
-		r.Get("/material/partial", h.handleMaterialPartial)
+		r.Get("/production/partial", h.handleProductionPartial)
 
 		// Operator station HMI views are public (shop floor monitors)
 		r.Get("/operator/station/{id}", h.handleOperatorStationDisplay)
@@ -262,7 +276,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Get("/manual-order", h.handleManualOrder)
 			r.Get("/manual-message", h.handleManualMessage)
 			r.Get("/diagnostics", h.handleDiagnostics)
-			r.Get("/lineside-buckets", h.handleLinesideBuckets)
 			r.Get("/replenishment", h.handleReplenishment)
 		})
 
@@ -344,6 +357,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Get("/daily-counts", h.apiGetDailyCounts)
 			r.Get("/core-nodes", h.apiGetCoreNodes)
 			r.Get("/payload-catalog", h.apiListPayloadCatalog)
+
+			// Lineside buckets (public — embedded on Production page)
+			r.Post("/lineside/buckets/{id}/clear", h.apiAdminClearLinesideBucket)
+			r.Post("/lineside/buckets/{id}/qty", h.apiAdminEditLinesideBucketQty)
 
 			// ── Admin API (auth required) ───────────────────────
 			r.Group(func(r chi.Router) {
@@ -468,12 +485,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Post("/manual-message", h.apiSendManualMessage)
 				r.Post("/diagnostics/outbox/replay", h.apiReplayOutbox)
 				r.Post("/diagnostics/orders/sync", h.apiRequestOrderStatusSync)
-
-				// Lineside buckets admin (engineer override — clear or edit
-				// the lineside bucket chip the operator HMI shows for parts
-				// pulled to lineside during release).
-				r.Post("/admin/lineside/buckets/{id}/clear", h.apiAdminClearLinesideBucket)
-				r.Post("/admin/lineside/buckets/{id}/qty", h.apiAdminEditLinesideBucketQty)
 			})
 		})
 	})

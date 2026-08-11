@@ -20,8 +20,8 @@ import (
 // half-rendered page with a 200 already on the wire.
 //
 // Not hypothetical. RemainingUOP became RemainingUOPCached in the UOP
-// bin-as-truth refactor (0fe4a9ca, 2026-05-02); partials/material-body.html
-// kept the old name at three sites, and Edge's Status page has died mid-<td>
+// bin-as-truth refactor (0fe4a9ca, 2026-05-02); partials/production-body.html
+// kept the old name at three sites, and Edge's Production page has died mid-<td>
 // on any node carrying a runtime state ever since — losing the UOP column, the
 // actions column, all three modals and the footer. It was found by opening the
 // page, not by anything here.

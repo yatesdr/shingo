@@ -427,7 +427,7 @@ export function tagSelect(inputId, plcSelectId) {
 
 // --- Process selector navigation handlers ---
 // Templates that emit `<select data-action-change="navigateToProcess">`
-// (changeover.html, material.html) or `="navigateToProcessOrOrders"`
+// (changeover.html, production.html) or `="navigateToProcessOrOrders"`
 // (orders.html) pull these in via their per-page handler map. The
 // pre-SPRINT-3 auto-dispatcher resolved them through `window[verb]`;
 // after the dispatcher went away these need to be in the page's

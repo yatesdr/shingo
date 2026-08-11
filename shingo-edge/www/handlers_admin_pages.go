@@ -39,6 +39,7 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
 		"WarLinkConnected":  mgr.IsWarLinkConnected(),
+		"Shifts":            shiftList,
 		"ShiftsJSON":        template.JS(shiftsJSON),
 	}
 	h.renderTemplate(w, r, "config.html", data)

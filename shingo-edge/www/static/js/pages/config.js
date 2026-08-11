@@ -331,6 +331,101 @@ async function syncPayloadCatalog() {
     setTimeout(function () { btn.disabled = false; }, 1500);
 }
 
+// ─── Shift management ─────────────────────────────────
+
+var _nextShiftNumber = 1;
+
+(function initShiftNumbers() {
+    var rows = document.querySelectorAll('.shift-row');
+    var nums = [];
+    rows.forEach(function(row) {
+        var n = parseInt(row.getAttribute('data-shift-number') || '0', 10);
+        if (n > 0) nums.push(n);
+    });
+    if (nums.length > 0) _nextShiftNumber = Math.max.apply(null, nums) + 1;
+})();
+
+function addShiftRow() {
+    var container = document.getElementById('shift-rows');
+    if (container.querySelectorAll('.shift-row').length >= 3) {
+        toast('Maximum 3 shifts allowed', 'warning');
+        return;
+    }
+    var num = _nextShiftNumber++;
+    var row = document.createElement('div');
+    row.className = 'shift-row';
+    row.setAttribute('data-shift-number', String(num));
+    row.style.cssText = 'display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap;margin-bottom:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:var(--radius)';
+    row.innerHTML = '' +
+        '<div class="form-group" style="margin:0;flex:1;min-width:10rem">' +
+        '<label>Name</label>' +
+        '<input type="text" class="form-input shift-name" placeholder="Shift name">' +
+        '</div>' +
+        '<div class="form-group" style="margin:0;width:8rem">' +
+        '<label>Start Time</label>' +
+        '<input type="time" class="form-input shift-start">' +
+        '</div>' +
+        '<div class="form-group" style="margin:0;width:8rem">' +
+        '<label>End Time</label>' +
+        '<input type="time" class="form-input shift-end">' +
+        '</div>' +
+        '<button class="btn btn-sm btn-danger" data-action="removeShiftRow" title="Remove shift">Remove</button>';
+    container.appendChild(row);
+    updateAddShiftButton();
+}
+
+function removeShiftRow() {
+    var container = document.getElementById('shift-rows');
+    if (container.querySelectorAll('.shift-row').length <= 1) {
+        var row = container.querySelector('.shift-row');
+        row.querySelector('.shift-name').value = '';
+        row.querySelector('.shift-start').value = '';
+        row.querySelector('.shift-end').value = '';
+        return;
+    }
+    this.closest('.shift-row').remove();
+    renumberShiftRows();
+    updateAddShiftButton();
+}
+
+function renumberShiftRows() {
+    var rows = document.querySelectorAll('.shift-row');
+    rows.forEach(function(row, i) {
+        row.setAttribute('data-shift-number', String(i + 1));
+    });
+    _nextShiftNumber = rows.length + 1;
+}
+
+function updateAddShiftButton() {
+    var btn = document.getElementById('add-shift-btn');
+    if (!btn) return;
+    var count = document.querySelectorAll('.shift-row').length;
+    btn.disabled = count >= 3;
+}
+
+async function saveShifts() {
+    var rows = document.querySelectorAll('.shift-row');
+    var shifts = [];
+    rows.forEach(function(row, i) {
+        var name = row.querySelector('.shift-name').value.trim();
+        var start = row.querySelector('.shift-start').value;
+        var end = row.querySelector('.shift-end').value;
+        if (!name && !start && !end) return;
+        shifts.push({
+            shift_number: i + 1,
+            name: name,
+            start_time: start,
+            end_time: end
+        });
+    });
+    try {
+        await api.put('/api/shifts', shifts);
+        toast('Shifts saved', 'success');
+    } catch(e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
 loadBackupStatus();
 loadBackups();
 
@@ -343,6 +438,7 @@ loadBackups();
 // single-source.
 delegateActions(document.body, {
     addBrokerRow,
+    addShiftRow,
     backupFingerprint,
     backupFormData,
     changePassword,
@@ -352,11 +448,14 @@ delegateActions(document.body, {
     loadBackupStatus,
     loadBackups,
     removeBrokerRow,
+    removeShiftRow,
+    renumberShiftRows,
     runBackupNow,
     saveBackupConfig,
     saveCoreAPI,
     saveIdentity,
     saveMessaging,
+    saveShifts,
     saveWarLink,
     setBackupConnectionStatus,
     setBackupOperationStatus,
@@ -365,5 +464,6 @@ delegateActions(document.body, {
     syncPayloadCatalog,
     testBackupConfig,
     testBroker,
-    testCoreAPI
+    testCoreAPI,
+    updateAddShiftButton
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

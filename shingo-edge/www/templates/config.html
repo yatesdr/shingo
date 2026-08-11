@@ -213,8 +213,10 @@
     </div>
 </div>
 
-<div class="card">
-    <div class="card-header"><strong>Security</strong></div>
+<div class="card" style="margin-bottom:1rem">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+        <strong>Security</strong>
+    </div>
     <div class="card-body" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">
         <div class="form-group" style="margin:0;min-width:14rem">
             <label>Current Password</label>
@@ -229,6 +231,53 @@
             <input type="password" id="pw-confirm" class="form-input">
         </div>
         <button class="btn btn-primary" data-action="changePassword">Change Password</button>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+        <strong>Shifts</strong>
+        <button class="btn btn-sm" id="add-shift-btn" data-action="addShiftRow" {{if ge (len .Shifts) 3}}disabled title="Maximum 3 shifts"{{end}}>+ Add Shift</button>
+    </div>
+    <div class="card-body">
+        <div id="shift-rows">
+            {{range .Shifts}}
+            <div class="shift-row" data-shift-number="{{.ShiftNumber}}" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap;margin-bottom:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:var(--radius)">
+                <div class="form-group" style="margin:0;flex:1;min-width:10rem">
+                    <label>Name</label>
+                    <input type="text" class="form-input shift-name" value="{{.Name}}" placeholder="Shift name">
+                </div>
+                <div class="form-group" style="margin:0;width:8rem">
+                    <label>Start Time</label>
+                    <input type="time" class="form-input shift-start" value="{{.StartTime}}">
+                </div>
+                <div class="form-group" style="margin:0;width:8rem">
+                    <label>End Time</label>
+                    <input type="time" class="form-input shift-end" value="{{.EndTime}}">
+                </div>
+                <button class="btn btn-sm btn-danger" data-action="removeShiftRow" title="Remove shift">Remove</button>
+            </div>
+            {{else}}
+            <div class="shift-row" data-shift-number="1" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap;margin-bottom:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:var(--radius)">
+                <div class="form-group" style="margin:0;flex:1;min-width:10rem">
+                    <label>Name</label>
+                    <input type="text" class="form-input shift-name" placeholder="Shift name">
+                </div>
+                <div class="form-group" style="margin:0;width:8rem">
+                    <label>Start Time</label>
+                    <input type="time" class="form-input shift-start">
+                </div>
+                <div class="form-group" style="margin:0;width:8rem">
+                    <label>End Time</label>
+                    <input type="time" class="form-input shift-end">
+                </div>
+                <button class="btn btn-sm btn-danger" data-action="removeShiftRow" title="Remove shift">Remove</button>
+            </div>
+            {{end}}
+        </div>
+        <div style="margin-top:0.75rem">
+            <button class="btn btn-primary" data-action="saveShifts">Save Shifts</button>
+        </div>
     </div>
 </div>
 

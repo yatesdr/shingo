@@ -89,7 +89,7 @@ func (h *Handlers) apiAdminClearLinesideBucket(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshProduction")
 }
 
 // apiAdminEditLinesideBucketQty sets the bucket to a specific qty.
@@ -111,5 +111,5 @@ func (h *Handlers) apiAdminEditLinesideBucketQty(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshProduction")
 }

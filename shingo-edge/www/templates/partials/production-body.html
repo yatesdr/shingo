@@ -1,4 +1,13 @@
-{{define "material-body"}}
+{{define "production-body"}}
+{{if $.Processes}}
+<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem">
+    <select class="form-input" style="width:14rem;font-size:0.85rem" data-action-change="navigateToProcess">
+        {{range $.Processes}}
+        <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+    </select>
+</div>
+{{end}}
 {{if .StationViews}}
 {{range .StationViews}}
 <div class="card" style="margin-bottom:1rem">

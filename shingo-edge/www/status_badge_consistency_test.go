@@ -14,7 +14,7 @@ import (
 // the status colorization.
 //
 // The test is intentionally narrow: it inspects the canonical
-// order-status partials (orders-body.html, material-body.html) and
+// order-status partials (orders-body.html, production-body.html) and
 // fails if a status-bearing span lacks the badge-{{.Status}} modifier.
 //
 // Why: round-3 #1 regression flagged that Edge admin status badges
@@ -37,10 +37,10 @@ func TestEdgeStatusBadgesUseSharedClasses(t *testing.T) {
 			label: "orders partial status cell",
 		},
 		{
-			path:  filepath.Join("templates", "partials", "material-body.html"),
+			path:  filepath.Join("templates", "partials", "production-body.html"),
 			want:  `class="badge badge-{{.Status}}"`,
 			veto:  `class="status-badge">{{.Status}}`,
-			label: "material partial per-order status",
+			label: "production partial per-order status",
 		},
 	}
 

@@ -1,49 +1,214 @@
 {{template "header" .}}
 
-<div style="display:flex;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.75rem">
-    {{if .Processes}}
-    <select class="form-input" style="width:14rem" id="prod-line-select" data-action-change="onProdLineChange">
-        {{range .Processes}}
-        <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
-        {{end}}
-    </select>
-    {{end}}
-
-    <div style="display:flex;align-items:center;gap:0.35rem">
-        <button class="btn btn-sm" data-action="changeDate:-1" title="Previous day">&larr;</button>
-        <input type="date" id="prod-date" class="form-input" style="width:10rem" value="{{.Date}}" data-action-change="onProdDateChange">
-        <button class="btn btn-sm" data-action="changeDate:1" title="Next day">&rarr;</button>
+<div class="card" style="margin-bottom:0.75rem">
+    <div class="card-header" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+        <strong>Production</strong>
+        <span style="margin-left:auto;font-size:0.85rem;color:var(--text-muted)">
+            Current: <strong>{{if .CurrentStyle}}{{.CurrentStyle}}{{else}}None{{end}}</strong>
+            {{if .TargetStyle}} | Target: <strong>{{.TargetStyle}}</strong>{{end}}
+        </span>
     </div>
-
-    <span id="style-toggle" data-action="cycleStyle" style="margin-left:auto;font-size:0.85rem;cursor:pointer;user-select:none" title="Click to cycle styles">
-        {{if .FilterStyleName}}
-            Style: <strong>{{.FilterStyleName}}</strong>
-        {{else}}
-            Style: <strong>All</strong>
-        {{end}}
-    </span>
+    <div class="card-body" style="padding:0">
+        <div id="production-content"
+     hx-get="/production/partial?process={{.ActiveProcessID}}"
+     hx-trigger="refreshProduction from:body, sse:order-update throttle:5s, sse:order-completed, sse:order-failed, sse:counter-update throttle:10s"
+     hx-swap="innerHTML"
+     hx-ext="sse"
+     sse-connect="/events">
+     {{template "production-body" .}}
+        </div>
+    </div>
 </div>
 
-<div class="card">
-    <div class="card-body" style="overflow-x:auto">
-        <table class="table" id="production-table">
-            <thead id="production-thead"></thead>
-            <tbody id="production-tbody"></tbody>
+<!-- Manual Order -->
+<div class="card" style="margin-top:1rem">
+    <div class="card-header" style="display:flex;align-items:center;gap:0.75rem">
+        <strong>Manual Order</strong>
+        <button class="btn btn-sm btn-secondary" data-action="syncNodes" id="sync-nodes-btn" title="Re-fetch node list from core">Sync Nodes</button>
+    </div>
+    <div class="card-body">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0.75rem">
+            <div class="form-group" style="margin:0">
+                <label>Type</label>
+                <select id="mo-type" class="form-input" data-action-change="updateOrderForm">
+                    <option value="move">Move</option>
+                    <option value="retrieve">Retrieve</option>
+                    <option value="complex">Complex (Dwell)</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin:0" id="mo-node-group">
+                <label>Process Node</label>
+                <select id="mo-node" class="form-input" data-action-change="autofillNodeDefaults">
+                    <option value="">-- Select --</option>
+                    {{range .ProcessNodes}}
+                    <option value="{{.ID}}" data-core-node="{{.CoreNodeName}}">{{.Name}}</option>
+                    {{end}}
+                </select>
+            </div>
+            <div class="form-group" style="margin:0" id="mo-pickup-group">
+                <label>Source Node</label>
+                <select id="mo-pickup" class="form-input">
+                    <option value="">-- Select --</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin:0" id="mo-delivery-group">
+                <label id="mo-delivery-label">Delivery Node</label>
+                <select id="mo-delivery" class="form-input">
+                    <option value="">-- Select --</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin:0" id="mo-staging-group">
+                <label>Staging Node</label>
+                <select id="mo-staging" class="form-input">
+                    <option value="">-- Select --</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin:0">
+                <label>Qty</label>
+                <input type="number" id="mo-qty" class="form-input" value="1" min="1">
+            </div>
+        </div>
+        <div style="text-align:right;margin-top:0.75rem">
+            <button class="btn btn-sm btn-primary" data-action="createOrder">Create Order</button>
+        </div>
+    </div>
+</div>
+
+<!-- Lineside Buckets -->
+<div class="card" style="margin-top:1rem">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+        <strong>Lineside Buckets</strong>
+        <span style="font-size:0.85rem;color:var(--text-muted)">Part chips currently kitted at nodes</span>
+    </div>
+    <div class="card-body" style="padding:0;overflow-x:auto">
+        <table class="table" id="lineside-table">
+            <thead>
+                <tr>
+                    <th>Process</th>
+                    <th>Station</th>
+                    <th>Node</th>
+                    <th>Style</th>
+                    <th>Part</th>
+                    <th>State</th>
+                    <th style="text-align:right;">Qty</th>
+                    <th style="width:220px;">Edit Qty</th>
+                    <th style="width:120px;">Clear</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .LinesideRows}}
+                <tr data-bucket-id="{{.BucketID}}">
+                    <td>{{.ProcessName}}</td>
+                    <td>{{.StationName}}</td>
+                    <td>{{.NodeName}}</td>
+                    <td>{{.StyleName}}</td>
+                    <td class="mono">{{.PartNumber}}</td>
+                    <td>
+                        {{if eq .State "active"}}<span class="badge">active</span>{{else}}<span class="badge text-muted">{{.State}}</span>{{end}}
+                    </td>
+                    <td style="text-align:right;" class="mono">{{.Qty}}</td>
+                    <td>
+                        <div class="flex gap-1">
+                            <input type="number" min="0" value="{{.Qty}}" class="lineside-qty-input" style="width:90px;">
+                            <button class="btn btn-sm btn-primary" data-action="editLinesideBucket">Apply</button>
+                        </div>
+                        <div class="lineside-warn text-muted" style="font-size:0.8rem;display:none;"></div>
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-danger" data-action="clearLinesideBucket">Clear</button>
+                    </td>
+                </tr>
+                {{else}}
+                <tr><td colspan="9" class="empty-cell" style="text-align:center;padding:1rem;">No lineside buckets — no parts currently kitted at any node.</td></tr>
+                {{end}}
+            </tbody>
         </table>
-        {{if not .Shifts}}
-        <p class="empty-cell">No shifts configured. Go to <a href="/config">Config</a> to define shifts.</p>
-        {{end}}
+    </div>
+</div>
+
+<!-- Shift Production Graph -->
+<div class="card" style="margin-top:1rem">
+    <div class="card-header" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+        <strong>Shift Production</strong>
+        <select class="form-input" style="width:16rem" id="shift-process-select" data-action-change="onShiftProcessChange">
+            {{range .Processes}}
+            <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
+            {{end}}
+        </select>
+        <span style="margin-left:auto;font-size:0.85rem;color:var(--text-muted)" id="shift-graph-date"></span>
+    </div>
+    <div class="card-body">
+        <canvas id="shift-production-chart" style="width:100%;height:260px"></canvas>
     </div>
 </div>
 
 <div id="page-data"
      data-shifts='{{.ShiftsJSON}}'
      data-hourly-counts='{{.HourlyCountsJSON}}'
-     data-styles='{{.StylesJSON}}'
-     data-active-line-id="{{.ActiveProcessID}}"
-     data-filter-style-id="{{.FilterStyleID}}"
-     data-date="{{.Date}}">
+     data-today-date="{{.TodayDate}}"
+     data-active-process-id="{{.ActiveProcessID}}"
+     data-nodes='{{.NodesJSON}}'
+     data-core-nodes='{{.CoreNodesJSON}}'>
+</div>
+
+<!-- View Bin Contents Modal -->
+<div class="modal-overlay" id="view-bin-modal">
+    <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+            <span id="view-bin-title">Bin Contents</span>
+            <button class="btn btn-sm" data-action="hideModal:view-bin-modal">&times;</button>
+        </div>
+        <div class="card-body" id="view-bin-body"></div>
+        <div class="modal-footer">
+            <button class="btn" data-action="hideModal:view-bin-modal">Close</button>
+        </div>
+    </div>
+</div>
+<!-- Page JS extracted to /static/js/pages/production.js; loaded once below all
+     modal markup so DOM lookups inside the helpers resolve. -->
+
+
+<!-- Request Empty Bin Modal -->
+<div class="modal-overlay" id="request-empty-modal">
+    <div class="modal" style="max-width:400px">
+        <div class="modal-header">
+            <span>Request Empty Bin</span>
+            <button class="btn btn-sm" data-action="hideModal:request-empty-modal">&times;</button>
+        </div>
+        <div class="card-body">
+            <input type="hidden" id="re-node-id">
+            <div class="form-group">
+                <label>Request empty bin compatible with:</label>
+                <select id="re-payload" class="form-input"></select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" data-action="hideModal:request-empty-modal">Cancel</button>
+            <button class="btn btn-primary" data-action="submitRequestEmpty">Request</button>
+        </div>
+    </div>
+</div>
+<!-- Load Bin Modal (Manual Swap nodes) -->
+<div class="modal-overlay" id="load-bin-modal">
+    <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+            <span>Load Bin</span>
+            <button class="btn btn-sm" data-action="closeLoadBinModal">&times;</button>
+        </div>
+        <div class="card-body">
+            <input type="hidden" id="rb-node-id">
+            <input type="hidden" id="rb-payload-code">
+            <div class="form-group" style="margin-bottom:0.75rem">
+                <label>Payload</label>
+                <select id="rb-payload" class="form-input" data-action-change="onLoadPayloadChanged"></select>
+            </div>
+            <div id="rb-manifest-rows" style="margin-bottom:0.5rem"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" data-action="closeLoadBinModal">Cancel</button>
+            <button class="btn btn-primary" data-action="submitLoadBin">Confirm Load</button>
+        </div>
+    </div>
 </div>
 <script type="module" src="/static/js/pages/production.js?v={{cacheBust}}"></script>
-
 {{template "footer" .}}
