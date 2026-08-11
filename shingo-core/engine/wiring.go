@@ -557,7 +557,7 @@ func (e *Engine) wireEventHandlers() {
 	var faultSentMu sync.Mutex
 	faultSent := make(map[int64]faultSentInfo)
 
-	const faultBufferDuration = 3 * time.Minute
+	const faultBufferDuration = 1 * time.Minute
 
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFaultedEvent]) {
 		if !e.notifier.Enabled() {
